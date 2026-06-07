@@ -1297,7 +1297,7 @@ pub struct TtlManager {
     upstream_minification_ttl: Duration,
     upstream_compression_ttl: Duration,
     upstream_proxy_cache_preferences_ttl: Duration,
-    site_image_poison_config_ttl: Duration,
+    site_image_rights_config_ttl: Duration,
     yara_rule_content_ttl: Duration,
     yara_rules_manifest_ttl: Duration,
     genesis_key_transition_ttl: Duration,
@@ -1324,7 +1324,7 @@ impl Default for TtlManager {
             upstream_minification_ttl: Duration::from_secs(3600),
             upstream_compression_ttl: Duration::from_secs(3600),
             upstream_proxy_cache_preferences_ttl: Duration::from_secs(3600),
-            site_image_poison_config_ttl: Duration::from_secs(3600),
+            site_image_rights_config_ttl: Duration::from_secs(3600),
             yara_rule_content_ttl: Duration::from_secs(3600),
             yara_rules_manifest_ttl: Duration::from_secs(3600),
             genesis_key_transition_ttl: Duration::from_secs(86400),
@@ -1381,7 +1381,7 @@ impl TtlManager {
             SignedRecordType::UpstreamProxyCachePreferences => {
                 self.upstream_proxy_cache_preferences_ttl
             }
-            SignedRecordType::SiteImagePoisonConfig => self.site_image_poison_config_ttl,
+            SignedRecordType::SiteImagePoisonConfig => self.site_image_rights_config_ttl,
             SignedRecordType::YaraRuleContent => self.yara_rule_content_ttl,
             SignedRecordType::YaraRulesManifest => self.yara_rules_manifest_ttl,
             SignedRecordType::GenesisKeyTransition => self.genesis_key_transition_ttl,

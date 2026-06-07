@@ -41,7 +41,7 @@ pub struct StaticFileHandler {
     theme_config: ThemeConfig,
     directory_template_path: Option<String>,
     minifier_client: Option<MinifierClient>,
-    image_poison_config: Option<MeshImageProtectionConfig>,
+    image_rights_config: Option<MeshImageProtectionConfig>,
 }
 
 pub struct NormalizedLocation {

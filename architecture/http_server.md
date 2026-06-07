@@ -8,7 +8,7 @@ The HTTP Server module (`src/http/`) is the core request handling component of S
 - **Request routing** to backends (Static, Upstream, Serverless, FastCGI, PHP, CGI, AppServer, Mesh, AxumDynamic plugins)
 - **WAF integration** with early and full request/body scanning
 - **WebSocket proxy** with bidirectional tunnel and WAF inspection
-- **Response transformation** including compression, minification, and image poisoning
+- **Response transformation** including compression, minification, and image rights marking
 - **Security headers injection** (HSTS, CSP, CORS, etc.)
 - **Connection and bandwidth limiting**
 - **Static file serving** with caching headers and range support
@@ -27,7 +27,7 @@ The HTTP Server module (`src/http/`) is the core request handling component of S
 | **early_parse** | `early_parse.rs` | Early HTTP request parsing for fast-path routing |
 | **internal_handlers** | `internal_handlers.rs` | Internal endpoints: `/__internal__/drain`, `/__internal__/health`, etc. |
 | **response_helpers** | `response_helpers.rs` | Security header application, response building helpers |
-| **response_transform** | `response_transform.rs` | Compression, minification, image poisoning |
+| **response_transform** | `response_transform.rs` | Compression, minification, image rights marking |
 | **validation_helpers** | `validation_helpers.rs` | WebSocket upgrade validation |
 | **directory_viewer** | `directory_viewer.rs` | Directory listing for static serving |
 | **file_manager** | `file_manager.rs` | File management operations |
@@ -299,7 +299,7 @@ If content-type is upload, validate with YARA scanning and size limits.
 - Prepare upstream target with URL/headers/timeouts
 - Check body buffering policy for ErasedHttpClient streaming
 - Forward request via `send_request_streaming_generic()` or `send_request_with_body_and_timeout()`
-- Apply response transforms (minification, compression, image poisoning)
+- Apply response transforms (minification, compression, image rights marking)
 - Inject security headers
 
 ### Phase 18: Request Logging (lines 3848-3869)
@@ -376,10 +376,10 @@ Rejects TLS on HTTP port when `strict_protocol_validation` is enabled.
 
 ### Image Poison Cache
 ```rust
-const IMAGE_POISON_CACHE_MAX_CAPACITY: u64 = 1000;
-const IMAGE_POISON_CACHE_TTL_SECS: u64 = 3600;
+const IMAGE_RIGHTS_CACHE_MAX_CAPACITY: u64 = 1000;
+const IMAGE_RIGHTS_CACHE_TTL_SECS: u64 = 3600;
 ```
-L1 cache with site-prefix invalidation via `invalidate_image_poison_cache_for_site()`.
+L1 cache with site-prefix invalidation via `invalidate_image_rights_cache_for_site()`.
 
 ### Request Log Rate Limiting
 ```rust

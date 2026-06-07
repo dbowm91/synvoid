@@ -87,7 +87,7 @@ pub struct MeshTransportManager {
         Arc<RwLock<LruCache<String, (crate::config::MeshCompressionConfig, Instant)>>>,
     minification_cache:
         Arc<RwLock<LruCache<String, (crate::config::MeshMinificationConfig, Instant)>>>,
-    image_poison_cache:
+    image_rights_cache:
         Arc<RwLock<LruCache<String, (synvoid_config::site::SiteImagePoisonConfig, Instant)>>>,
     proxy_cache_preferences_cache:
         Arc<RwLock<LruCache<String, (crate::protocol::ProxyCachePreferences, Instant)>>>,
@@ -95,7 +95,7 @@ pub struct MeshTransportManager {
     image_protection_inflight: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     compression_inflight: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     minification_inflight: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
-    image_poison_inflight: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+    image_rights_inflight: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     proxy_cache_preferences_inflight: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     // Metrics counters
     image_protection_cache_hits: AtomicU64,
@@ -104,8 +104,8 @@ pub struct MeshTransportManager {
     compression_cache_misses: AtomicU64,
     minification_cache_hits: AtomicU64,
     minification_cache_misses: AtomicU64,
-    image_poison_cache_hits: AtomicU64,
-    image_poison_cache_misses: AtomicU64,
+    image_rights_cache_hits: AtomicU64,
+    image_rights_cache_misses: AtomicU64,
     proxy_cache_preferences_cache_hits: AtomicU64,
     proxy_cache_preferences_cache_misses: AtomicU64,
 }
@@ -122,7 +122,7 @@ impl MeshTransportManager {
             LruCache::with_expiry_duration_and_capacity(Duration::from_secs(300), 1000);
         let minification_cache =
             LruCache::with_expiry_duration_and_capacity(Duration::from_secs(300), 1000);
-        let image_poison_cache =
+        let image_rights_cache =
             LruCache::with_expiry_duration_and_capacity(Duration::from_secs(300), 1000);
         let proxy_cache_preferences_cache =
             LruCache::with_expiry_duration_and_capacity(Duration::from_secs(300), 1000);
@@ -147,12 +147,12 @@ impl MeshTransportManager {
             image_protection_cache: Arc::new(RwLock::new(image_protection_cache)),
             compression_cache: Arc::new(RwLock::new(compression_cache)),
             minification_cache: Arc::new(RwLock::new(minification_cache)),
-            image_poison_cache: Arc::new(RwLock::new(image_poison_cache)),
+            image_rights_cache: Arc::new(RwLock::new(image_rights_cache)),
             proxy_cache_preferences_cache: Arc::new(RwLock::new(proxy_cache_preferences_cache)),
             image_protection_inflight: Arc::new(Mutex::new(HashMap::new())),
             compression_inflight: Arc::new(Mutex::new(HashMap::new())),
             minification_inflight: Arc::new(Mutex::new(HashMap::new())),
-            image_poison_inflight: Arc::new(Mutex::new(HashMap::new())),
+            image_rights_inflight: Arc::new(Mutex::new(HashMap::new())),
             proxy_cache_preferences_inflight: Arc::new(Mutex::new(HashMap::new())),
             image_protection_cache_hits: AtomicU64::new(0),
             image_protection_cache_misses: AtomicU64::new(0),
@@ -160,8 +160,8 @@ impl MeshTransportManager {
             compression_cache_misses: AtomicU64::new(0),
             minification_cache_hits: AtomicU64::new(0),
             minification_cache_misses: AtomicU64::new(0),
-            image_poison_cache_hits: AtomicU64::new(0),
-            image_poison_cache_misses: AtomicU64::new(0),
+            image_rights_cache_hits: AtomicU64::new(0),
+            image_rights_cache_misses: AtomicU64::new(0),
             proxy_cache_preferences_cache_hits: AtomicU64::new(0),
             proxy_cache_preferences_cache_misses: AtomicU64::new(0),
         }
@@ -1030,15 +1030,15 @@ impl MeshTransportManager {
         .await
     }
 
-    pub async fn get_image_poison_config_for_site(
+    pub async fn get_image_rights_config_for_site(
         &self,
         upstream_id: &str,
-    ) -> Option<synvoid_config::site::SiteImagePoisonConfig> {
+    ) -> Option<synvoid_config::site::SiteImageRightsConfig> {
         self.fetch_cached_config(
             upstream_id,
-            "site_image_poison_config:",
+            "site_image_rights_config:",
             |parsed| {
-                Some(synvoid_config::site::SiteImagePoisonConfig {
+                Some(synvoid_config::site::SiteImageRightsConfig {
                     enabled: parsed.get("enabled").and_then(|v| v.as_bool()),
                     level: parsed
                         .get("level")
@@ -1067,11 +1067,11 @@ impl MeshTransportManager {
                     edge_only: parsed.get("edge_only").and_then(|v| v.as_bool()),
                 })
             },
-            &self.image_poison_cache,
-            &self.image_poison_inflight,
-            &self.image_poison_cache_hits,
-            &self.image_poison_cache_misses,
-            "image_poison",
+            &self.image_rights_cache,
+            &self.image_rights_inflight,
+            &self.image_rights_cache_hits,
+            &self.image_rights_cache_misses,
+            "image_rights",
         )
         .await
     }
@@ -1236,30 +1236,30 @@ impl MeshTransportManager {
         };
 
         for (site_id, site_config) in sites.iter() {
-            let image_poison_config = &site_config.image_poison;
+            let image_rights_config = &site_config.image_rights;
             let static_config = &site_config.r#static;
 
             let image_protection_json = serde_json::json!({
-                "enabled": image_poison_config.enabled,
-                "min_size_bytes": image_poison_config.max_dimension.map(|v| v as u64),
-                "whitelist_patterns": image_poison_config.whitelist_patterns,
+                "enabled": image_rights_config.enabled,
+                "min_size_bytes": image_rights_config.max_dimension.map(|v| v as u64),
+                "whitelist_patterns": image_rights_config.whitelist_patterns,
             });
             let image_protection_key = format!("upstream_image_protection:{}", site_id);
             if let Ok(bytes) = serde_json::to_vec(&image_protection_json) {
                 record_store.store_and_announce(image_protection_key, bytes, 3600);
             }
 
-            let site_image_poison_json = serde_json::json!({
-                "enabled": image_poison_config.enabled,
-                "level": image_poison_config.level,
-                "intensity": image_poison_config.intensity,
-                "seed": image_poison_config.seed,
-                "max_dimension": image_poison_config.max_dimension,
-                "jpeg_quality": image_poison_config.jpeg_quality,
+            let site_image_rights_json = serde_json::json!({
+                "enabled": image_rights_config.enabled,
+                "level": image_rights_config.level,
+                "intensity": image_rights_config.intensity,
+                "seed": image_rights_config.seed,
+                "max_dimension": image_rights_config.max_dimension,
+                "jpeg_quality": image_rights_config.jpeg_quality,
             });
-            let site_image_poison_key = format!("site_image_poison_config:{}", site_id);
-            if let Ok(bytes) = serde_json::to_vec(&site_image_poison_json) {
-                record_store.store_and_announce(site_image_poison_key, bytes, 3600);
+            let site_image_rights_key = format!("site_image_rights_config:{}", site_id);
+            if let Ok(bytes) = serde_json::to_vec(&site_image_rights_json) {
+                record_store.store_and_announce(site_image_rights_key, bytes, 3600);
             }
 
             let minification_json = serde_json::json!({
@@ -1301,30 +1301,30 @@ impl MeshTransportManager {
             return;
         };
 
-        let image_poison_config = &site_config.image_poison;
+        let image_rights_config = &site_config.image_rights;
         let static_config = &site_config.r#static;
 
         let image_protection_json = serde_json::json!({
-            "enabled": image_poison_config.enabled,
-            "min_size_bytes": image_poison_config.max_dimension.map(|v| v as u64),
-            "whitelist_patterns": image_poison_config.whitelist_patterns,
+            "enabled": image_rights_config.enabled,
+            "min_size_bytes": image_rights_config.max_dimension.map(|v| v as u64),
+            "whitelist_patterns": image_rights_config.whitelist_patterns,
         });
         let image_protection_key = format!("upstream_image_protection:{}", site_id);
         if let Ok(bytes) = serde_json::to_vec(&image_protection_json) {
             record_store.store_and_announce(image_protection_key, bytes, 3600);
         }
 
-        let site_image_poison_json = serde_json::json!({
-            "enabled": image_poison_config.enabled,
-            "level": image_poison_config.level,
-            "intensity": image_poison_config.intensity,
-            "seed": image_poison_config.seed,
-            "max_dimension": image_poison_config.max_dimension,
-            "jpeg_quality": image_poison_config.jpeg_quality,
+        let site_image_rights_json = serde_json::json!({
+            "enabled": image_rights_config.enabled,
+            "level": image_rights_config.level,
+            "intensity": image_rights_config.intensity,
+            "seed": image_rights_config.seed,
+            "max_dimension": image_rights_config.max_dimension,
+            "jpeg_quality": image_rights_config.jpeg_quality,
         });
-        let site_image_poison_key = format!("site_image_poison_config:{}", site_id);
-        if let Ok(bytes) = serde_json::to_vec(&site_image_poison_json) {
-            record_store.store_and_announce(site_image_poison_key, bytes, 3600);
+        let site_image_rights_key = format!("site_image_rights_config:{}", site_id);
+        if let Ok(bytes) = serde_json::to_vec(&site_image_rights_json) {
+            record_store.store_and_announce(site_image_rights_key, bytes, 3600);
         }
 
         let minification_json = serde_json::json!({

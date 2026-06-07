@@ -354,8 +354,8 @@ impl HttpServer {
                     .await
                 })
             },
-            |body, site_id, last_modified, poison_config| async move {
-                crate::http::apply_image_poisoning(body, site_id, last_modified, poison_config)
+            |body, site_id, last_modified, rights_config| async move {
+                crate::http::apply_image_rights_marking(body, site_id, last_modified, rights_config)
                     .await
             },
             crate::metrics::record_http_request_latency,

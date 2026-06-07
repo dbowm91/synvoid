@@ -12,19 +12,19 @@ use crate::process::{CpuOffloadStats, CpuTaskKind};
 
 pub static CPU_TASK_ACTIVE_MINIFY: AtomicU64 = AtomicU64::new(0);
 pub static CPU_TASK_ACTIVE_GET_COMPRESSED: AtomicU64 = AtomicU64::new(0);
-pub static CPU_TASK_ACTIVE_POISON_IMAGE: AtomicU64 = AtomicU64::new(0);
+pub static CPU_TASK_ACTIVE_IMAGE_RIGHTS: AtomicU64 = AtomicU64::new(0);
 pub static CPU_TASK_ACTIVE_YARA_SCAN: AtomicU64 = AtomicU64::new(0);
 pub static CPU_TASK_ACTIVE_WASM_EXECUTE: AtomicU64 = AtomicU64::new(0);
 pub static CPU_TASK_ACTIVE_SERVERLESS_INVOKE: AtomicU64 = AtomicU64::new(0);
 pub static CPU_TASK_QUEUED_MINIFY: AtomicU64 = AtomicU64::new(0);
 pub static CPU_TASK_QUEUED_GET_COMPRESSED: AtomicU64 = AtomicU64::new(0);
-pub static CPU_TASK_QUEUED_POISON_IMAGE: AtomicU64 = AtomicU64::new(0);
+pub static CPU_TASK_QUEUED_IMAGE_RIGHTS: AtomicU64 = AtomicU64::new(0);
 pub static CPU_TASK_QUEUED_YARA_SCAN: AtomicU64 = AtomicU64::new(0);
 pub static CPU_TASK_QUEUED_WASM_EXECUTE: AtomicU64 = AtomicU64::new(0);
 pub static CPU_TASK_QUEUED_SERVERLESS_INVOKE: AtomicU64 = AtomicU64::new(0);
 pub static CPU_TASK_COMPLETED_MINIFY: AtomicU64 = AtomicU64::new(0);
 pub static CPU_TASK_COMPLETED_GET_COMPRESSED: AtomicU64 = AtomicU64::new(0);
-pub static CPU_TASK_COMPLETED_POISON_IMAGE: AtomicU64 = AtomicU64::new(0);
+pub static CPU_TASK_COMPLETED_IMAGE_RIGHTS: AtomicU64 = AtomicU64::new(0);
 pub static CPU_TASK_COMPLETED_YARA_SCAN: AtomicU64 = AtomicU64::new(0);
 pub static CPU_TASK_COMPLETED_WASM_EXECUTE: AtomicU64 = AtomicU64::new(0);
 pub static CPU_TASK_COMPLETED_SERVERLESS_INVOKE: AtomicU64 = AtomicU64::new(0);
@@ -44,19 +44,19 @@ pub fn snapshot_static_cpu_offload_stats(worker_rss_bytes: u64) -> CpuOffloadSta
     CpuOffloadStats {
         queued_minify: CPU_TASK_QUEUED_MINIFY.load(Ordering::Relaxed),
         queued_get_compressed: CPU_TASK_QUEUED_GET_COMPRESSED.load(Ordering::Relaxed),
-        queued_poison_image: CPU_TASK_QUEUED_POISON_IMAGE.load(Ordering::Relaxed),
+        queued_poison_image: CPU_TASK_QUEUED_IMAGE_RIGHTS.load(Ordering::Relaxed),
         queued_yara_scan: CPU_TASK_QUEUED_YARA_SCAN.load(Ordering::Relaxed),
         queued_wasm_execute: CPU_TASK_QUEUED_WASM_EXECUTE.load(Ordering::Relaxed),
         queued_serverless_invoke: CPU_TASK_QUEUED_SERVERLESS_INVOKE.load(Ordering::Relaxed),
         active_minify: CPU_TASK_ACTIVE_MINIFY.load(Ordering::Relaxed),
         active_get_compressed: CPU_TASK_ACTIVE_GET_COMPRESSED.load(Ordering::Relaxed),
-        active_poison_image: CPU_TASK_ACTIVE_POISON_IMAGE.load(Ordering::Relaxed),
+        active_poison_image: CPU_TASK_ACTIVE_IMAGE_RIGHTS.load(Ordering::Relaxed),
         active_yara_scan: CPU_TASK_ACTIVE_YARA_SCAN.load(Ordering::Relaxed),
         active_wasm_execute: CPU_TASK_ACTIVE_WASM_EXECUTE.load(Ordering::Relaxed),
         active_serverless_invoke: CPU_TASK_ACTIVE_SERVERLESS_INVOKE.load(Ordering::Relaxed),
         completed_minify: CPU_TASK_COMPLETED_MINIFY.load(Ordering::Relaxed),
         completed_get_compressed: CPU_TASK_COMPLETED_GET_COMPRESSED.load(Ordering::Relaxed),
-        completed_poison_image: CPU_TASK_COMPLETED_POISON_IMAGE.load(Ordering::Relaxed),
+        completed_poison_image: CPU_TASK_COMPLETED_IMAGE_RIGHTS.load(Ordering::Relaxed),
         completed_yara_scan: CPU_TASK_COMPLETED_YARA_SCAN.load(Ordering::Relaxed),
         completed_wasm_execute: CPU_TASK_COMPLETED_WASM_EXECUTE.load(Ordering::Relaxed),
         completed_serverless_invoke: CPU_TASK_COMPLETED_SERVERLESS_INVOKE.load(Ordering::Relaxed),
@@ -82,7 +82,7 @@ pub fn increment_task_kind_queued(task_kind: CpuTaskKind) {
             CPU_TASK_QUEUED_GET_COMPRESSED.fetch_add(1, Ordering::Relaxed);
         }
         CpuTaskKind::PoisonImage => {
-            CPU_TASK_QUEUED_POISON_IMAGE.fetch_add(1, Ordering::Relaxed);
+            CPU_TASK_QUEUED_IMAGE_RIGHTS.fetch_add(1, Ordering::Relaxed);
         }
         CpuTaskKind::YaraScan => {
             CPU_TASK_QUEUED_YARA_SCAN.fetch_add(1, Ordering::Relaxed);
@@ -111,7 +111,7 @@ pub fn decrement_task_kind_queued(task_kind: CpuTaskKind) {
             );
         }
         CpuTaskKind::PoisonImage => {
-            let _ = CPU_TASK_QUEUED_POISON_IMAGE.fetch_update(
+            let _ = CPU_TASK_QUEUED_IMAGE_RIGHTS.fetch_update(
                 Ordering::Relaxed,
                 Ordering::Relaxed,
                 |v| v.checked_sub(1),
@@ -148,7 +148,7 @@ pub fn increment_task_kind_active(task_kind: CpuTaskKind) {
             CPU_TASK_ACTIVE_GET_COMPRESSED.fetch_add(1, Ordering::Relaxed);
         }
         CpuTaskKind::PoisonImage => {
-            CPU_TASK_ACTIVE_POISON_IMAGE.fetch_add(1, Ordering::Relaxed);
+            CPU_TASK_ACTIVE_IMAGE_RIGHTS.fetch_add(1, Ordering::Relaxed);
         }
         CpuTaskKind::YaraScan => {
             CPU_TASK_ACTIVE_YARA_SCAN.fetch_add(1, Ordering::Relaxed);
@@ -177,7 +177,7 @@ pub fn decrement_task_kind_active(task_kind: CpuTaskKind) {
             );
         }
         CpuTaskKind::PoisonImage => {
-            let _ = CPU_TASK_ACTIVE_POISON_IMAGE.fetch_update(
+            let _ = CPU_TASK_ACTIVE_IMAGE_RIGHTS.fetch_update(
                 Ordering::Relaxed,
                 Ordering::Relaxed,
                 |v| v.checked_sub(1),
@@ -214,7 +214,7 @@ pub fn increment_task_kind_completed(task_kind: CpuTaskKind) {
             CPU_TASK_COMPLETED_GET_COMPRESSED.fetch_add(1, Ordering::Relaxed);
         }
         CpuTaskKind::PoisonImage => {
-            CPU_TASK_COMPLETED_POISON_IMAGE.fetch_add(1, Ordering::Relaxed);
+            CPU_TASK_COMPLETED_IMAGE_RIGHTS.fetch_add(1, Ordering::Relaxed);
         }
         CpuTaskKind::YaraScan => {
             CPU_TASK_COMPLETED_YARA_SCAN.fetch_add(1, Ordering::Relaxed);
@@ -232,7 +232,7 @@ pub fn cpu_task_kind_label(task_kind: CpuTaskKind) -> &'static str {
     match task_kind {
         CpuTaskKind::Minify => "minify",
         CpuTaskKind::GetCompressed => "get_compressed",
-        CpuTaskKind::PoisonImage => "poison_image",
+        CpuTaskKind::PoisonImage => "image_rights",
         CpuTaskKind::YaraScan => "yara_scan",
         CpuTaskKind::WasmExecute => "wasm_execute",
         CpuTaskKind::ServerlessInvoke => "serverless_invoke",
@@ -305,7 +305,7 @@ mod tests {
         );
         assert_eq!(
             cpu_task_kind_label(CpuTaskKind::PoisonImage),
-            "poison_image"
+            "image_rights"
         );
         assert_eq!(cpu_task_kind_label(CpuTaskKind::YaraScan), "yara_scan");
         assert_eq!(

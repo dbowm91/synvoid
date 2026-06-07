@@ -51,7 +51,7 @@ fn should_stream_http3_upstream(route_target: &RouteTarget, headers: &HeaderMap)
         .unwrap_or(false)
         || route_target
             .site_config
-            .image_poison
+            .image_rights
             .enabled
             .unwrap_or(false)
         || route_target

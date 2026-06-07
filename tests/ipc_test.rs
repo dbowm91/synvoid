@@ -1027,7 +1027,7 @@ mod ipc_tests {
     );
 
     roundtrip_test!(
-        test_roundtrip_poison_image_request,
+        test_roundtrip_image_rights_request,
         Message::PoisonImageRequest {
             request_id: 789,
             site_id: "gallery".to_string(),
@@ -1042,7 +1042,7 @@ mod ipc_tests {
     );
 
     roundtrip_test!(
-        test_roundtrip_poison_image_response,
+        test_roundtrip_image_rights_response,
         Message::PoisonImageResponse {
             request_id: 789,
             poisoned_body: vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00],
@@ -1050,7 +1050,7 @@ mod ipc_tests {
     );
 
     roundtrip_test!(
-        test_roundtrip_poison_image_error_full,
+        test_roundtrip_image_rights_error_full,
         Message::PoisonImageError {
             request_id: 999,
             error: "Image too large".to_string(),

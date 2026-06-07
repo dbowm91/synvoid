@@ -1525,7 +1525,7 @@ impl MeshProxy {
         let tm = tm.unwrap();
 
         let image_protection = tm.get_image_protection_for_site(upstream_id).await;
-        let image_poison_config = tm.get_image_poison_config_for_site(upstream_id).await;
+        let image_rights_config = tm.get_image_rights_config_for_site(upstream_id).await;
         let compression = tm.get_compression_for_site(upstream_id).await;
         let minification = tm.get_minification_for_site(upstream_id).await;
 
@@ -1553,7 +1553,7 @@ impl MeshProxy {
 
         if !has_record_store
             && image_protection.is_none()
-            && image_poison_config.is_none()
+            && image_rights_config.is_none()
             && compression.is_none()
             && minification.is_none()
         {
@@ -1581,7 +1581,7 @@ impl MeshProxy {
         };
 
         let transform_flags = format!(
-            "min:{}:{}:{}:{},img:{}:{},poison:{}:{}:{}",
+            "min:{}:{}:{}:{},img:{}:{},rights:{}:{}:{}",
             minification
                 .as_ref()
                 .and_then(|c| c.enabled)
@@ -1606,15 +1606,15 @@ impl MeshProxy {
                 .as_ref()
                 .and_then(|c| c.min_size_bytes)
                 .unwrap_or(102400) as u64,
-            image_poison_config
+            image_rights_config
                 .as_ref()
                 .and_then(|c| c.enabled)
                 .unwrap_or(false),
-            image_poison_config
+            image_rights_config
                 .as_ref()
                 .and_then(|c| c.intensity)
                 .unwrap_or(0.5),
-            image_poison_config
+            image_rights_config
                 .as_ref()
                 .and_then(|c| c.jpeg_quality)
                 .unwrap_or(85),
@@ -1738,11 +1738,11 @@ impl MeshProxy {
 
                     if !whitelisted {
                         transformed = self
-                            .apply_image_poisoning(
+                            .apply_image_rights_marking(
                                 transformed,
                                 upstream_id,
                                 last_modified.clone(),
-                                image_poison_config.as_ref(),
+                                image_rights_config.as_ref(),
                             )
                             .await;
                     }
@@ -1833,12 +1833,12 @@ impl MeshProxy {
         response
     }
 
-    async fn apply_image_poisoning(
+    async fn apply_image_rights_marking(
         &self,
         body: Bytes,
         site_id: &str,
         last_modified: Option<String>,
-        poison_config: Option<&synvoid_config::site::SiteImagePoisonConfig>,
+        rights_config: Option<&synvoid_config::site::SiteImageRightsConfig>,
     ) -> Bytes {
         if body.is_empty() {
             return body;
@@ -1855,7 +1855,7 @@ impl MeshProxy {
             if let Some(ref record_store) = *rs {
                 let dht_key = crate::dht::keys::DhtKey::poisoned_image(site_id, &original_hash);
                 if let Some(record) = record_store.get_record(&dht_key.as_str()) {
-                    tracing::debug!("DHT poisoned image cache hit for {}", dht_key.as_str());
+                    tracing::debug!("DHT marked image cache hit for {}", dht_key.as_str());
                     return Bytes::from(record.value.clone());
                 }
             }
@@ -1871,39 +1871,35 @@ impl MeshProxy {
 
         let socket_path = std::path::PathBuf::from(&cpu_worker_socket);
 
-        let client = crate::stubs::static_files_stub::client::PoisonImageClient::new(socket_path);
+        let client = crate::stubs::static_files_stub::client::ImageRightsClient::new(socket_path);
 
         match client
-            .poison_image(
+            .mark_image_rights(
                 site_id,
                 body.to_vec(),
                 last_modified,
-                poison_config.and_then(|c| c.level.clone()),
-                poison_config.and_then(|c| c.intensity),
-                poison_config.and_then(|c| c.seed),
-                poison_config.and_then(|c| c.max_dimension),
-                poison_config.and_then(|c| c.jpeg_quality),
+                rights_config.and_then(|c| c.level.clone()),
+                rights_config.and_then(|c| c.intensity),
+                rights_config.and_then(|c| c.seed),
+                rights_config.and_then(|c| c.max_dimension),
+                rights_config.and_then(|c| c.jpeg_quality),
             )
             .await
         {
-            Ok(poisoned) => {
+            Ok(marked) => {
                 let dht_key = crate::dht::keys::DhtKey::poisoned_image(site_id, &original_hash);
                 let dht_key_str = dht_key.as_str().to_string();
                 {
                     let rs = self.record_store.read();
                     if let Some(ref record_store) = *rs {
-                        record_store.store_and_announce(
-                            dht_key_str.clone(),
-                            poisoned.clone(),
-                            3600,
-                        );
-                        tracing::debug!("Stored poisoned image in DHT: {}", dht_key_str);
+                        record_store.store_and_announce(dht_key_str.clone(), marked.clone(), 3600);
+                        tracing::debug!("Stored marked image in DHT: {}", dht_key_str);
                     }
                 }
-                Bytes::from(poisoned)
+                Bytes::from(marked)
             }
             Err(e) => {
-                tracing::debug!("Image poisoning failed: {}", e);
+                tracing::debug!("Image rights marking failed: {}", e);
                 body
             }
         }

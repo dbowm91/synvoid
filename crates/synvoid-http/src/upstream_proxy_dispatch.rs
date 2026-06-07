@@ -45,14 +45,14 @@ pub async fn handle_pass_upstream_proxy_phase<PoisonFn, PoisonFut>(
     on_upstream_success: impl Fn(),
     on_upstream_failure: impl Fn(),
     on_error_egress: impl Fn(u64),
-    poison_image: PoisonFn,
+    mark_image_rights: PoisonFn,
 ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error>
 where
     PoisonFn: Fn(
         Bytes,
         String,
         Option<String>,
-        Option<synvoid_config::site::SiteImagePoisonConfig>,
+        Option<synvoid_config::site::SiteImageRightsConfig>,
     ) -> PoisonFut,
     PoisonFut: std::future::Future<Output = Bytes>,
 {
@@ -106,7 +106,7 @@ where
         on_upstream_success,
         on_upstream_failure,
         on_error_egress,
-        poison_image,
+        mark_image_rights,
     )
     .await
 }

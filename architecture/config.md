@@ -166,7 +166,7 @@ pub struct SiteConfig {
     pub app_server: SiteAppServerConfig,
     pub serverless: Option<ServerlessConfig>,
     pub serverless_only: bool,
-    pub image_poison: SiteImagePoisonConfig,
+    pub image_rights: SiteImageRightsConfig,
     pub file_manager: SiteFileManagerConfig,
 }
 ```
@@ -403,7 +403,7 @@ Each site has 28 configuration sections:
 24. **tunnel** (`SiteTunnelConfig`) - Site tunnel settings
 25. **app_server** (`SiteAppServerConfig`) - Granian app server
 26. **serverless** - Serverless function config
-27. **image_poison** - Image poisoning config
+27. **image_rights** - Image rights marking config
 28. **file_manager** - File manager config
 
 ### Upstream Configuration

@@ -357,14 +357,14 @@ pub mod static_files_stub {
     //! Stub static file types. Root crate provides the real implementation.
 
     pub mod client {
-        pub struct PoisonImageClient;
+        pub struct ImageRightsClient;
 
-        impl PoisonImageClient {
+        impl ImageRightsClient {
             pub fn new(_socket_path: impl AsRef<std::path::Path>) -> Self {
-                PoisonImageClient
+                ImageRightsClient
             }
 
-            pub async fn poison_image(
+            pub async fn mark_image_rights(
                 &self,
                 _site_id: &str,
                 _body: Vec<u8>,

@@ -256,7 +256,7 @@ pub fn process_cpu_task_request_sync(
             max_dimension,
             jpeg_quality,
         } => {
-            let poisoned_body = image_poisoning::poison_image_sync(
+            let poisoned_body = image_poisoning::mark_image_rights_sync(
                 state,
                 &site_id,
                 body,

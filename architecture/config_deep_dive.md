@@ -123,7 +123,7 @@ SiteConfig (per-domain)
 ├── tunnel: SiteTunnelConfig
 ├── serverless: Option<ServerlessConfig>
 ├── serverless_only: bool
-├── image_poison: SiteImagePoisonConfig
+├── image_rights: SiteImageRightsConfig
 └── file_manager: SiteFileManagerConfig
 ```
 

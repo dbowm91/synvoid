@@ -499,7 +499,7 @@ upstream_format = "127.0.0.1:{port}"
 
 ## CPU Offload IPC Pool Environment Overrides
 
-These environment variables control bounded async IPC offload concurrency for CPU-task clients (`AsyncMinifierClient` and `PoisonImageClient`):
+These environment variables control bounded async IPC offload concurrency for CPU-task clients (`AsyncMinifierClient` and `ImageRightsClient`):
 
 - `SYNVOID_CPU_TASK_POOL_MAX_CONNECTIONS`:
   - Default: `4`

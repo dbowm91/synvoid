@@ -43,7 +43,9 @@ pub use defensive::{
 pub use error_pages::{SiteErrorPagesConfig, SiteThemeConfig};
 pub use file_manager::SiteFileManagerConfig;
 pub use listen::{SiteInfo, SiteListenConfig, UpstreamConfig};
-pub use misc::{SiteImagePoisonConfig, SiteLoggingConfig, SiteWorkerPoolConfig};
+pub use misc::{
+    SiteImagePoisonConfig, SiteImageRightsConfig, SiteLoggingConfig, SiteWorkerPoolConfig,
+};
 pub use network::{
     SitePortConfig, SiteProtocolFilterConfig, SiteTcpConfig, SiteTunnelConfig, SiteUdpConfig,
     SiteUdpPortConfig,
@@ -121,8 +123,8 @@ pub struct SiteConfig {
     pub serverless: Option<super::serverless::ServerlessConfig>,
     #[serde(default)]
     pub serverless_only: bool,
-    #[serde(default)]
-    pub image_poison: SiteImagePoisonConfig,
+    #[serde(default, alias = "image_poison")]
+    pub image_rights: SiteImageRightsConfig,
     #[serde(default)]
     pub file_manager: SiteFileManagerConfig,
 }
@@ -165,7 +167,7 @@ impl SiteConfig {
             app_server: Default::default(),
             serverless: Default::default(),
             serverless_only: Default::default(),
-            image_poison: Default::default(),
+            image_rights: Default::default(),
             file_manager: Default::default(),
         }
     }

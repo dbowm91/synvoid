@@ -18,12 +18,12 @@ pub struct SiteWorkerPoolConfig {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
-pub struct SiteImagePoisonConfig {
+pub struct SiteImageRightsConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
-    #[serde(default = "default_poison_level")]
+    #[serde(default = "default_rights_level")]
     pub level: Option<String>,
-    #[serde(default = "default_poison_intensity")]
+    #[serde(default = "default_rights_intensity")]
     pub intensity: Option<f32>,
     #[serde(default)]
     pub seed: Option<u64>,
@@ -37,11 +37,14 @@ pub struct SiteImagePoisonConfig {
     pub edge_only: Option<bool>,
 }
 
-fn default_poison_level() -> Option<String> {
+/// Deprecated compatibility alias. Use `SiteImageRightsConfig`.
+pub type SiteImagePoisonConfig = SiteImageRightsConfig;
+
+fn default_rights_level() -> Option<String> {
     Some("standard".to_string())
 }
 
-fn default_poison_intensity() -> Option<f32> {
+fn default_rights_intensity() -> Option<f32> {
     Some(0.5)
 }
 

@@ -610,7 +610,7 @@ impl AdminState {
                     tracing::error!("Failed to reload synced site config for {}: {}", site_id, e);
                 } else {
                     tracing::info!("Successfully applied synced site config for {}", site_id);
-                    crate::http::invalidate_image_poison_cache_for_site(&site_id);
+                    crate::http::invalidate_image_rights_cache_for_site(&site_id);
                 }
             }
         });

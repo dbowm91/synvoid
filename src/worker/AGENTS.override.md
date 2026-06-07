@@ -67,7 +67,7 @@ UnifiedServer worker (`run_unified_server_worker`).
   `CompressionTask` and `StaticWorkerState` field references but is at the
   worker-module level.
 - `src/worker/image_poisoning.rs` (visibility: `pub(in crate::worker)`) -
-  `poison_image_sync` consumed by `cpu_task::dispatch`.
+  `mark_image_rights_sync` consumed by `cpu_task::dispatch`.
 - `src/worker/connection.rs` (visibility: `pub(super)`) - the original
   `WorkerState` + `create_waf` helper used by the worker bootstraps; **this
   is a different module from `cpu_task::connection`** and must be referenced

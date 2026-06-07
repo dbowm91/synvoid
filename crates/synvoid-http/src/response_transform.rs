@@ -9,7 +9,7 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use std::sync::LazyLock;
 
-use synvoid_config::site::{SiteImagePoisonConfig, SiteStaticConfig};
+use synvoid_config::site::{SiteImageRightsConfig, SiteStaticConfig};
 use synvoid_static_files::minifier::MinifierGenerator;
 
 pub trait MeshMinificationConfigLike {
@@ -128,7 +128,7 @@ impl MeshCompressionConfigLike for synvoid_mesh::mesh::config::MeshCompressionCo
 
 pub struct ResponseTransformConfig<'a> {
     pub minification: Option<MinificationSettings<'a>>,
-    pub image_poisoning: Option<ImagePoisonSettings<'a>>,
+    pub image_rights: Option<ImageRightsSettings<'a>>,
     pub compression: Option<CompressionSettings<'a>>,
 }
 
@@ -140,7 +140,7 @@ pub struct MinificationSettings<'a> {
     pub _marker: std::marker::PhantomData<&'a ()>,
 }
 
-pub struct ImagePoisonSettings<'a> {
+pub struct ImageRightsSettings<'a> {
     pub enabled: bool,
     pub min_size: u64,
     pub whitelist_patterns: Option<&'a Vec<String>>,
@@ -180,9 +180,9 @@ impl<'a> ResponseTransformConfig<'a> {
             }
         });
 
-        let image_poisoning = image_protection.and_then(|i| {
+        let image_rights = image_protection.and_then(|i| {
             if i.enabled().unwrap_or(false) {
-                Some(ImagePoisonSettings {
+                Some(ImageRightsSettings {
                     enabled: true,
                     min_size: i.min_size_bytes().unwrap_or(100 * 1024) as u64,
                     whitelist_patterns: i.whitelist_patterns(),
@@ -208,7 +208,7 @@ impl<'a> ResponseTransformConfig<'a> {
 
         Self {
             minification,
-            image_poisoning,
+            image_rights,
             compression,
         }
     }
@@ -216,7 +216,7 @@ impl<'a> ResponseTransformConfig<'a> {
     #[allow(clippy::borrowed_box)]
     pub fn from_static_config(
         static_config: &'a SiteStaticConfig,
-        image_poison_config: &'a SiteImagePoisonConfig,
+        image_rights_config: &'a SiteImageRightsConfig,
     ) -> Self {
         let minification = if static_config.enable_minification.unwrap_or(false) {
             Some(MinificationSettings {
@@ -230,11 +230,11 @@ impl<'a> ResponseTransformConfig<'a> {
             None
         };
 
-        let image_poisoning = if image_poison_config.enabled.unwrap_or(false) {
-            Some(ImagePoisonSettings {
+        let image_rights = if image_rights_config.enabled.unwrap_or(false) {
+            Some(ImageRightsSettings {
                 enabled: true,
-                min_size: image_poison_config.max_dimension.unwrap_or(4096) as u64,
-                whitelist_patterns: image_poison_config.whitelist_patterns.as_ref(),
+                min_size: image_rights_config.max_dimension.unwrap_or(4096) as u64,
+                whitelist_patterns: image_rights_config.whitelist_patterns.as_ref(),
                 _marker: std::marker::PhantomData,
             })
         } else {
@@ -254,7 +254,7 @@ impl<'a> ResponseTransformConfig<'a> {
 
         Self {
             minification,
-            image_poisoning,
+            image_rights,
             compression,
         }
     }

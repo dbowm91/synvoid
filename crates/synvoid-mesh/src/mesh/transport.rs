@@ -1366,31 +1366,31 @@ impl MeshTransport {
             return;
         };
 
-        let image_poison_config = &site_config.image_poison;
+        let image_rights_config = &site_config.image_rights;
         let static_config = &site_config.r#static;
 
         let image_protection_json = serde_json::json!({
-            "enabled": image_poison_config.enabled,
-            "min_size_bytes": image_poison_config.max_dimension.map(|v| v as u64),
-            "whitelist_patterns": image_poison_config.whitelist_patterns,
+            "enabled": image_rights_config.enabled,
+            "min_size_bytes": image_rights_config.max_dimension.map(|v| v as u64),
+            "whitelist_patterns": image_rights_config.whitelist_patterns,
         });
         let image_protection_key = format!("upstream_image_protection:{}", site_id);
         if let Ok(bytes) = serde_json::to_vec(&image_protection_json) {
             record_store.store_and_announce(image_protection_key, bytes, 3600);
         }
 
-        let site_image_poison_json = serde_json::json!({
-            "enabled": image_poison_config.enabled,
-            "level": image_poison_config.level,
-            "intensity": image_poison_config.intensity,
-            "seed": image_poison_config.seed,
-            "max_dimension": image_poison_config.max_dimension,
-            "jpeg_quality": image_poison_config.jpeg_quality,
-            "edge_only": image_poison_config.edge_only,
+        let site_image_rights_json = serde_json::json!({
+            "enabled": image_rights_config.enabled,
+            "level": image_rights_config.level,
+            "intensity": image_rights_config.intensity,
+            "seed": image_rights_config.seed,
+            "max_dimension": image_rights_config.max_dimension,
+            "jpeg_quality": image_rights_config.jpeg_quality,
+            "edge_only": image_rights_config.edge_only,
         });
-        let site_image_poison_key = format!("site_image_poison_config:{}", site_id);
-        if let Ok(bytes) = serde_json::to_vec(&site_image_poison_json) {
-            record_store.store_and_announce(site_image_poison_key, bytes, 3600);
+        let site_image_rights_key = format!("site_image_rights_config:{}", site_id);
+        if let Ok(bytes) = serde_json::to_vec(&site_image_rights_json) {
+            record_store.store_and_announce(site_image_rights_key, bytes, 3600);
         }
 
         let minification_json = serde_json::json!({

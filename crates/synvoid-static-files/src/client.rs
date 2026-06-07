@@ -1406,11 +1406,11 @@ impl AsyncMinifierClient {
     }
 }
 
-static POISON_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
+static IMAGE_RIGHTS_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 const FILE_BACKED_PAYLOAD_THRESHOLD_BYTES: usize = 256 * 1024;
 
 #[derive(Debug)]
-pub enum PoisonImageClientError {
+pub enum ImageRightsClientError {
     ConnectionFailed(String),
     SendFailed(String),
     ReceiveFailed(String),
@@ -1418,24 +1418,24 @@ pub enum PoisonImageClientError {
     Backpressure(String),
     PayloadTooLarge(String),
     InvalidRequest(String),
-    PoisoningFailed(String),
+    MarkingFailed(String),
 }
 
-impl std::fmt::Display for PoisonImageClientError {
+impl std::fmt::Display for ImageRightsClientError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PoisonImageClientError::ConnectionFailed(e) => write!(f, "Connection failed: {}", e),
-            PoisonImageClientError::SendFailed(e) => write!(f, "Send failed: {}", e),
-            PoisonImageClientError::ReceiveFailed(e) => write!(f, "Receive failed: {}", e),
-            PoisonImageClientError::Timeout => write!(f, "Request timed out"),
-            PoisonImageClientError::Backpressure(e) => write!(f, "CPU task backpressure: {}", e),
-            PoisonImageClientError::PayloadTooLarge(e) => {
+            ImageRightsClientError::ConnectionFailed(e) => write!(f, "Connection failed: {}", e),
+            ImageRightsClientError::SendFailed(e) => write!(f, "Send failed: {}", e),
+            ImageRightsClientError::ReceiveFailed(e) => write!(f, "Receive failed: {}", e),
+            ImageRightsClientError::Timeout => write!(f, "Request timed out"),
+            ImageRightsClientError::Backpressure(e) => write!(f, "CPU task backpressure: {}", e),
+            ImageRightsClientError::PayloadTooLarge(e) => {
                 write!(f, "CPU task payload/output too large: {}", e)
             }
-            PoisonImageClientError::InvalidRequest(e) => {
+            ImageRightsClientError::InvalidRequest(e) => {
                 write!(f, "Invalid CPU task request: {}", e)
             }
-            PoisonImageClientError::PoisoningFailed(e) => write!(f, "Poisoning failed: {}", e),
+            ImageRightsClientError::MarkingFailed(e) => write!(f, "Poisoning failed: {}", e),
         }
     }
 }
@@ -1467,43 +1467,43 @@ fn map_cpu_task_error_for_minifier(
     }
 }
 
-fn map_cpu_task_error_for_poison(
+fn map_cpu_task_error_for_image_rights(
     code: synvoid_ipc::CpuTaskErrorCode,
     message: String,
-) -> PoisonImageClientError {
+) -> ImageRightsClientError {
     match code {
         synvoid_ipc::CpuTaskErrorCode::Timeout => {
             record_cpu_offload_timeout();
-            PoisonImageClientError::Timeout
+            ImageRightsClientError::Timeout
         }
         synvoid_ipc::CpuTaskErrorCode::QueueSaturated => {
             record_cpu_offload_rejection();
-            PoisonImageClientError::Backpressure(message)
+            ImageRightsClientError::Backpressure(message)
         }
         synvoid_ipc::CpuTaskErrorCode::PayloadTooLarge => {
             record_cpu_offload_rejection();
-            PoisonImageClientError::PayloadTooLarge(message)
+            ImageRightsClientError::PayloadTooLarge(message)
         }
         synvoid_ipc::CpuTaskErrorCode::InvalidRequest => {
             record_cpu_offload_rejection();
-            PoisonImageClientError::InvalidRequest(message)
+            ImageRightsClientError::InvalidRequest(message)
         }
         synvoid_ipc::CpuTaskErrorCode::InternalError => {
-            PoisonImageClientError::PoisoningFailed(message)
+            ImageRightsClientError::MarkingFailed(message)
         }
     }
 }
 
-fn map_pool_acquire_error_for_poison(err: MinifierClientError) -> PoisonImageClientError {
+fn map_pool_acquire_error_for_image_rights(err: MinifierClientError) -> ImageRightsClientError {
     match err {
-        MinifierClientError::ConnectionFailed(e) => PoisonImageClientError::ConnectionFailed(e),
-        MinifierClientError::SendFailed(e) => PoisonImageClientError::SendFailed(e),
-        MinifierClientError::ReceiveFailed(e) => PoisonImageClientError::ReceiveFailed(e),
-        MinifierClientError::Timeout => PoisonImageClientError::Timeout,
-        MinifierClientError::Backpressure(e) => PoisonImageClientError::Backpressure(e),
-        MinifierClientError::PayloadTooLarge(e) => PoisonImageClientError::PayloadTooLarge(e),
-        MinifierClientError::InvalidRequest(e) => PoisonImageClientError::InvalidRequest(e),
-        MinifierClientError::MinificationFailed(e) => PoisonImageClientError::PoisoningFailed(e),
+        MinifierClientError::ConnectionFailed(e) => ImageRightsClientError::ConnectionFailed(e),
+        MinifierClientError::SendFailed(e) => ImageRightsClientError::SendFailed(e),
+        MinifierClientError::ReceiveFailed(e) => ImageRightsClientError::ReceiveFailed(e),
+        MinifierClientError::Timeout => ImageRightsClientError::Timeout,
+        MinifierClientError::Backpressure(e) => ImageRightsClientError::Backpressure(e),
+        MinifierClientError::PayloadTooLarge(e) => ImageRightsClientError::PayloadTooLarge(e),
+        MinifierClientError::InvalidRequest(e) => ImageRightsClientError::InvalidRequest(e),
+        MinifierClientError::MinificationFailed(e) => ImageRightsClientError::MarkingFailed(e),
     }
 }
 
@@ -1520,16 +1520,16 @@ fn map_pool_acquire_error_for_yara(err: MinifierClientError) -> YaraScanClientEr
     }
 }
 
-impl std::error::Error for PoisonImageClientError {}
+impl std::error::Error for ImageRightsClientError {}
 
 #[derive(Clone)]
-pub struct PoisonImageClient {
+pub struct ImageRightsClient {
     socket_path: PathBuf,
     timeout_ms: u64,
     pool: AsyncCpuTaskConnectionPool,
 }
 
-impl PoisonImageClient {
+impl ImageRightsClient {
     pub fn new(socket_path: PathBuf) -> Self {
         let limits = AsyncCpuPoolLimits::from_env_or_default();
         Self {
@@ -1548,7 +1548,7 @@ impl PoisonImageClient {
         self
     }
 
-    pub async fn poison_image(
+    pub async fn mark_image_rights(
         &self,
         site_id: &str,
         body: Vec<u8>,
@@ -1558,14 +1558,14 @@ impl PoisonImageClient {
         seed: Option<u64>,
         max_dimension: Option<u32>,
         jpeg_quality: Option<u8>,
-    ) -> Result<Vec<u8>, PoisonImageClientError> {
+    ) -> Result<Vec<u8>, ImageRightsClientError> {
         let connection = self
             .pool
             .acquire_for_task_kind(synvoid_ipc::CpuTaskKind::PoisonImage, self.timeout_ms)
             .await
-            .map_err(map_pool_acquire_error_for_poison)?;
+            .map_err(map_pool_acquire_error_for_image_rights)?;
 
-        let request_id = POISON_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
+        let request_id = IMAGE_RIGHTS_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
         let deadline_unix_ms = synvoid_utils::current_timestamp()
             .saturating_mul(1000)
             .saturating_add(self.timeout_ms);
@@ -1579,12 +1579,12 @@ impl PoisonImageClient {
                 Ok(file) => file,
                 Err(e) => {
                     self.pool.release(&connection);
-                    return Err(PoisonImageClientError::SendFailed(e.to_string()));
+                    return Err(ImageRightsClientError::SendFailed(e.to_string()));
                 }
             };
             if let Err(e) = temp_file.write_all(&body) {
                 self.pool.release(&connection);
-                return Err(PoisonImageClientError::SendFailed(e.to_string()));
+                return Err(ImageRightsClientError::SendFailed(e.to_string()));
             }
             let payload_path = temp_file.path().to_string_lossy().to_string();
             temp_payload_file = Some(temp_file);
@@ -1639,7 +1639,7 @@ impl PoisonImageClient {
                 } else {
                     self.pool.evict(&connection).await;
                 }
-                return Err(map_pool_acquire_error_for_poison(
+                return Err(map_pool_acquire_error_for_image_rights(
                     map_async_cpu_task_dispatch_error_for_minifier(err),
                 ));
             }
@@ -1670,7 +1670,7 @@ impl PoisonImageClient {
                 error,
             } => {
                 if resp_id == request_id {
-                    return Err(PoisonImageClientError::PoisoningFailed(error));
+                    return Err(ImageRightsClientError::MarkingFailed(error));
                 }
             }
             synvoid_ipc::Message::CpuTaskError {
@@ -1680,13 +1680,13 @@ impl PoisonImageClient {
                 ..
             } => {
                 if resp_id == request_id {
-                    return Err(map_cpu_task_error_for_poison(code, message));
+                    return Err(map_cpu_task_error_for_image_rights(code, message));
                 }
             }
             _ => {}
         }
 
-        Err(PoisonImageClientError::ReceiveFailed(
+        Err(ImageRightsClientError::ReceiveFailed(
             "CPU task response channel closed before matching response".to_string(),
         ))
     }
@@ -1938,6 +1938,12 @@ impl YaraScanClient {
     }
 }
 
+/// Deprecated compatibility alias. Use `ImageRightsClient`.
+pub type PoisonImageClient = ImageRightsClient;
+
+/// Deprecated compatibility alias. Use `ImageRightsClientError`.
+pub type PoisonImageClientError = ImageRightsClientError;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2042,7 +2048,7 @@ mod tests {
         with_pool_env(None, None, || {});
         let socket_path = PathBuf::from("/tmp/nonexistent-static-worker.sock");
         let minifier = AsyncMinifierClient::new(socket_path.clone());
-        let poison = PoisonImageClient::new(socket_path.clone());
+        let image_rights = ImageRightsClient::new(socket_path.clone());
         let yara = YaraScanClient::new(socket_path);
 
         let minifier_stats = minifier.pool_stats().await;
@@ -2050,10 +2056,10 @@ mod tests {
         assert_eq!(minifier_stats.pooled_connections, 0);
         assert_eq!(minifier_stats.evictions, 0);
 
-        let poison_stats = poison.pool_stats().await;
-        assert_eq!(poison_stats.active_in_flight, 0);
-        assert_eq!(poison_stats.pooled_connections, 0);
-        assert_eq!(poison_stats.evictions, 0);
+        let image_rights_stats = image_rights.pool_stats().await;
+        assert_eq!(image_rights_stats.active_in_flight, 0);
+        assert_eq!(image_rights_stats.pooled_connections, 0);
+        assert_eq!(image_rights_stats.evictions, 0);
 
         let yara_stats = yara.pool_stats().await;
         assert_eq!(yara_stats.active_in_flight, 0);

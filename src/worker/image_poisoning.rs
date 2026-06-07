@@ -8,13 +8,13 @@ fn parse_protection_level(level: &str) -> ProtectionLevel {
         "l1" | "light" => ProtectionLevel::Light,
         "l2" | "standard" | "l3" | "enhanced" | "strong" => ProtectionLevel::Standard,
         _ => {
-            tracing::warn!(level = %level, "Unknown image poison protection level, defaulting to Standard");
+            tracing::warn!(level = %level, "Unknown image rights protection level, defaulting to Standard");
             ProtectionLevel::Standard
         }
     }
 }
 
-pub(in crate::worker) fn poison_image_sync(
+pub(in crate::worker) fn mark_image_rights_sync(
     state: &CpuWorkerState,
     site_id: &str,
     body: Vec<u8>,
@@ -33,12 +33,12 @@ pub(in crate::worker) fn poison_image_sync(
         let config_manager = match state.config_manager.read() {
             Ok(guard) => guard,
             Err(_) => {
-                tracing::warn!("Config lock poisoned, using default image poison config");
+                tracing::warn!("Config lock poisoned, using default image rights config");
                 return body;
             }
         };
         if let Some(site_config) = config_manager.sites.get(site_id) {
-            let cfg = &site_config.image_poison;
+            let cfg = &site_config.image_rights;
             let enabled = cfg.enabled.unwrap_or(false);
             let level = level_override
                 .as_deref()
@@ -84,7 +84,7 @@ pub(in crate::worker) fn poison_image_sync(
         Err(e) => {
             tracing::warn!(
                 error = %e,
-                "Image poisoning failed, returning original body (fail-open)"
+                "Image rights marking failed, returning original body (fail-open)"
             );
             body
         }

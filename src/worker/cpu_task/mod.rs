@@ -357,7 +357,7 @@ pub async fn run_cpu_worker(
                                     max_dimension,
                                     jpeg_quality,
                                 } => {
-                                    let poisoned = image_poisoning::poison_image_sync(
+                                    let poisoned = image_poisoning::mark_image_rights_sync(
                                         &ipc_state,
                                         &site_id,
                                         body,
@@ -376,7 +376,7 @@ pub async fn run_cpu_worker(
                                         .await
                                     {
                                         tracing::warn!(
-                                            "Failed to send poison image response for request {}: {}",
+                                            "Failed to send image rights response for request {}: {}",
                                             request_id,
                                             e
                                         );

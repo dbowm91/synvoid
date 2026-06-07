@@ -281,7 +281,7 @@ mod tests {
     use tempfile::{Builder, NamedTempFile};
 
     #[test]
-    fn test_apply_file_backed_payload_poison_image_success_and_cleanup() {
+    fn test_apply_file_backed_payload_image_rights_success_and_cleanup() {
         let mut temp_file = Builder::new()
             .prefix("synvoid-cpu-task-")
             .tempfile_in(std::env::temp_dir())

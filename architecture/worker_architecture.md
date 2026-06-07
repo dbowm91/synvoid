@@ -29,7 +29,7 @@ Keep these inline in the unified worker:
 
 Offload to CPU workers when the work becomes expensive:
 - minification and compression
-- image transforms and poisoning
+- image transforms and rights marking
 - YARA scanning
 - WASM/plugin execution
 - serverless execution

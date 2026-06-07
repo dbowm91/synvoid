@@ -25,14 +25,14 @@ pub async fn maybe_handle_fastcgi_or_php_backend<PoisonFn, PoisonFut>(
     alt_svc: &Option<String>,
     main_config: &Arc<MainConfig>,
     render_error_page: impl Fn(u16, Option<&str>) -> String,
-    poison_image: PoisonFn,
+    mark_image_rights: PoisonFn,
 ) -> Option<Response<BoxBody<Bytes, Infallible>>>
 where
     PoisonFn: Fn(
         Bytes,
         String,
         Option<String>,
-        Option<synvoid_config::site::SiteImagePoisonConfig>,
+        Option<synvoid_config::site::SiteImageRightsConfig>,
     ) -> PoisonFut,
     PoisonFut: std::future::Future<Output = Bytes>,
 {
@@ -135,15 +135,15 @@ where
             }
 
             let static_config = &target.site_config.r#static;
-            let image_poison_config = &target.site_config.image_poison;
+            let image_rights_config = &target.site_config.image_rights;
             let config =
-                ResponseTransformConfig::from_static_config(static_config, image_poison_config);
+                ResponseTransformConfig::from_static_config(static_config, image_rights_config);
 
             if let Some(ref min_settings) = config.minification {
                 body = apply_minification(body, content_type, min_settings);
             }
 
-            if let Some(ref img_settings) = config.image_poisoning {
+            if let Some(ref img_settings) = config.image_rights {
                 let body_len = body.len() as u64;
                 let mut is_image = content_type
                     .map(|ct| ct.starts_with("image/"))
@@ -155,11 +155,11 @@ where
 
                 if is_image && in_range {
                     if !is_whitelisted_path(img_settings.whitelist_patterns, path) {
-                        body = poison_image(
+                        body = mark_image_rights(
                             body,
                             site_id.to_string(),
                             None,
-                            Some(image_poison_config.clone()),
+                            Some(image_rights_config.clone()),
                         )
                         .await;
                     }

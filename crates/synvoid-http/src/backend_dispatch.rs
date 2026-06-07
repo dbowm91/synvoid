@@ -86,7 +86,7 @@ pub async fn handle_pass_backend_dispatch<W, OnLogFn, QuicTunnelFn, PoisonFn, Po
     dispatch_ctx: BackendDispatchContext<'_, W>,
     on_request_log: OnLogFn,
     quictunnel_request: QuicTunnelFn,
-    poison_image: PoisonFn,
+    mark_image_rights: PoisonFn,
 ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error>
 where
     W: synvoid_proxy::protocol::trait_def::WafCoreBackend
@@ -122,7 +122,7 @@ where
             Bytes,
             String,
             Option<String>,
-            Option<synvoid_config::site::SiteImagePoisonConfig>,
+            Option<synvoid_config::site::SiteImageRightsConfig>,
         ) -> PoisonFut
         + Clone,
     PoisonFut: Future<Output = Bytes>,
@@ -272,7 +272,7 @@ where
         dispatch_ctx.alt_svc,
         dispatch_ctx.main_config,
         |status, message| waf.as_ref().render_page(status, message),
-        poison_image.clone(),
+        mark_image_rights.clone(),
     )
     .await
     {
@@ -432,7 +432,7 @@ where
                 rm.record_egress(egress_len, EgressDirection::Error);
             }
         },
-        poison_image,
+        mark_image_rights,
     )
     .await
 }

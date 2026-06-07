@@ -122,7 +122,7 @@ pub struct HttpRequestPostludeContext<'a, W> {
 pub async fn handle_http_request_postlude<W, QuicTunnelFn, PoisonFn, PoisonFut, RecordLatencyFn>(
     ctx: HttpRequestPostludeContext<'_, W>,
     quic_tunnel_request: QuicTunnelFn,
-    poison_image: PoisonFn,
+    mark_image_rights: PoisonFn,
     record_http_request_latency: RecordLatencyFn,
 ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error>
 where
@@ -147,7 +147,7 @@ where
             Bytes,
             String,
             Option<String>,
-            Option<synvoid_config::site::SiteImagePoisonConfig>,
+            Option<synvoid_config::site::SiteImageRightsConfig>,
         ) -> PoisonFut
         + Clone,
     PoisonFut: std::future::Future<Output = Bytes>,
@@ -405,7 +405,7 @@ where
         backend_ctx,
         request_log,
         quic_tunnel_request,
-        poison_image,
+        mark_image_rights,
     )
     .await?;
 

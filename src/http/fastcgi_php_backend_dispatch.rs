@@ -6,7 +6,7 @@ use http::Response;
 use http_body_util::combinators::BoxBody;
 
 use crate::config::MainConfig;
-use crate::http::apply_image_poisoning;
+use crate::http::apply_image_rights_marking;
 use crate::router::{RouteTarget, Router};
 use crate::waf::WafCore;
 
@@ -43,7 +43,7 @@ pub async fn maybe_handle_fastcgi_or_php_backend(
             waf.error_page_manager
                 .render_page_with_theme(status, message, site_theme.as_ref())
         },
-        apply_image_poisoning,
+        apply_image_rights_marking,
     )
     .await
 }

@@ -50,14 +50,14 @@ pub async fn handle_buffered_upstream_request<PoisonFn, PoisonFut>(
     on_upstream_success: impl Fn(),
     on_upstream_failure: impl Fn(),
     on_error_egress: impl Fn(u64),
-    poison_image: PoisonFn,
+    mark_image_rights: PoisonFn,
 ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error>
 where
     PoisonFn: Fn(
         Bytes,
         String,
         Option<String>,
-        Option<synvoid_config::site::SiteImagePoisonConfig>,
+        Option<synvoid_config::site::SiteImageRightsConfig>,
     ) -> PoisonFut,
     PoisonFut: Future<Output = Bytes>,
 {
@@ -126,7 +126,7 @@ where
                 accept_encoding,
                 #[cfg(feature = "mesh")]
                 mesh_transport,
-                poison_image,
+                mark_image_rights,
             )
             .await;
             let body = transformed.body;

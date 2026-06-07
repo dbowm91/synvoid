@@ -11,6 +11,7 @@ pub mod file_manager;
 pub mod file_manager_ui;
 pub mod headers;
 pub mod image_poisoning;
+pub mod image_rights;
 pub mod internal_endpoint_dispatch;
 pub mod internal_handlers;
 pub mod mesh_backend_dispatch;
@@ -40,6 +41,6 @@ pub mod webdav;
 pub mod websocket_dispatch;
 pub mod websocket_upgrade_dispatch;
 
-pub use image_poisoning::{apply_image_poisoning, invalidate_image_poison_cache_for_site};
+pub use image_rights::{apply_image_rights_marking, invalidate_image_rights_cache_for_site};
 pub use response_builder::fallback_error_boxed;
 pub use server::HttpServer;

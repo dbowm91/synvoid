@@ -1,9 +1,10 @@
 pub mod client;
 pub mod directory;
 pub mod image_poisoning;
+pub mod image_rights;
 pub mod minifier;
 
-pub use image_poisoning::{apply_image_poisoning, invalidate_image_poison_cache_for_site};
+pub use image_rights::{apply_image_rights_marking, invalidate_image_rights_cache_for_site};
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -62,7 +63,7 @@ pub struct StaticFileHandler {
     directory_template_path: Option<String>,
     minifier_client: Option<client::MinifierClient>,
     #[allow(dead_code)]
-    image_poison_config: Option<MeshImageProtectionConfig>,
+    image_rights_config: Option<MeshImageProtectionConfig>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -186,7 +187,7 @@ impl StaticFileHandler {
                 theme_config,
                 directory_template_path: None,
                 minifier_client,
-                image_poison_config: mesh_image_protection.clone(),
+                image_rights_config: mesh_image_protection.clone(),
             });
         }
 
@@ -260,7 +261,7 @@ impl StaticFileHandler {
             theme_config,
             directory_template_path,
             minifier_client,
-            image_poison_config: mesh_image_protection.clone(),
+            image_rights_config: mesh_image_protection.clone(),
         })
     }
 

@@ -3,7 +3,7 @@ use http::HeaderMap;
 use std::future::Future;
 use std::sync::Arc;
 
-use synvoid_config::site::SiteImagePoisonConfig;
+use synvoid_config::site::SiteImageRightsConfig;
 use synvoid_ipc::CpuTaskPolicy;
 #[cfg(feature = "mesh")]
 use synvoid_mesh::mesh::transport::MeshTransportManager;
@@ -28,10 +28,10 @@ pub async fn transform_upstream_response<PoisonFn, PoisonFut>(
     last_modified: Option<String>,
     accept_encoding: Option<&str>,
     #[cfg(feature = "mesh")] mesh_transport: &Option<Arc<MeshTransportManager>>,
-    poison_image: PoisonFn,
+    mark_image_rights: PoisonFn,
 ) -> TransformedUpstreamResponse
 where
-    PoisonFn: Fn(Bytes, String, Option<String>, Option<SiteImagePoisonConfig>) -> PoisonFut,
+    PoisonFn: Fn(Bytes, String, Option<String>, Option<SiteImageRightsConfig>) -> PoisonFut,
     PoisonFut: Future<Output = Bytes>,
 {
     let upstream_body_len = body.len() as u64;
@@ -73,10 +73,10 @@ where
 
     #[cfg(feature = "mesh")]
     if let Some(ref mt) = mesh_transport {
-        let (minification, image_protection, image_poison_config, compression) = tokio::join!(
+        let (minification, image_protection, image_rights_config, compression) = tokio::join!(
             mt.get_minification_for_site(site_id),
             mt.get_image_protection_for_site(site_id),
-            mt.get_image_poison_config_for_site(site_id),
+            mt.get_image_rights_config_for_site(site_id),
             mt.get_compression_for_site(site_id),
         );
 
@@ -95,7 +95,7 @@ where
             body_len = body.len() as u64;
         }
 
-        if let Some(ref img_settings) = config.image_poisoning {
+        if let Some(ref img_settings) = config.image_rights {
             let mut is_image = content_type
                 .as_ref()
                 .map(|ct| ct.starts_with("image/"))
@@ -111,11 +111,11 @@ where
                     path,
                 )
             {
-                body = poison_image(
+                body = mark_image_rights(
                     body,
                     site_id.to_string(),
                     last_modified.clone(),
-                    image_poison_config.clone(),
+                    image_rights_config.clone(),
                 )
                 .await;
                 body_len = body.len() as u64;
@@ -149,10 +149,10 @@ where
     }
 
     let static_config = &target.site_config.r#static;
-    let image_poison_config = &target.site_config.image_poison;
+    let image_rights_config = &target.site_config.image_rights;
     let config = crate::response_transform::ResponseTransformConfig::from_static_config(
         static_config,
-        image_poison_config,
+        image_rights_config,
     );
 
     if let Some(ref min_settings) = config.minification {
@@ -164,7 +164,7 @@ where
         body_len = body.len() as u64;
     }
 
-    if let Some(ref img_settings) = config.image_poisoning {
+    if let Some(ref img_settings) = config.image_rights {
         let mut is_image = content_type
             .as_ref()
             .map(|ct| ct.starts_with("image/"))
@@ -180,11 +180,11 @@ where
                 path,
             )
         {
-            body = poison_image(
+            body = mark_image_rights(
                 body,
                 site_id.to_string(),
                 last_modified.clone(),
-                Some(image_poison_config.clone()),
+                Some(image_rights_config.clone()),
             )
             .await;
             body_len = body.len() as u64;

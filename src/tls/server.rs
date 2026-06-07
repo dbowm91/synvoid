@@ -871,7 +871,7 @@ impl HttpsServer {
             .r#static
             .enable_minification
             .unwrap_or(false)
-            || target.site_config.image_poison.enabled.unwrap_or(false)
+            || target.site_config.image_rights.enabled.unwrap_or(false)
             || target
                 .site_config
                 .r#static
