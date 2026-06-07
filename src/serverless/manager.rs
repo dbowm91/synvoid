@@ -488,7 +488,7 @@ impl ServerlessManager {
                         .transport
                         .read()
                         .as_ref()
-                        .map(|t| t.config.node_id().to_string())
+                        .map(|t| t.get_mesh_config().node_id().to_string())
                         .unwrap_or_else(|| "unknown".to_string());
                     let value = serde_json::json!({
                         "function_name": func_def.name,
@@ -568,7 +568,7 @@ impl ServerlessManager {
                 .transport
                 .read()
                 .as_ref()
-                .map(|t| t.config.node_id().to_string())
+                .map(|t| t.get_mesh_config().node_id().to_string())
                 .unwrap_or_else(|| "unknown".to_string());
             let value = serde_json::json!({
                 "function_name": func_def.name,

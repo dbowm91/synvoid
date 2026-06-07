@@ -259,7 +259,7 @@ impl AttackDetector {
     pub async fn check_request(
         &self,
         client_ip: IpAddr,
-        method: &http::Method,
+        _method: &http::Method,
         path: &str,
         query_string: Option<&str>,
         headers: &http::HeaderMap,

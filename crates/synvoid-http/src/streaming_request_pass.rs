@@ -5,21 +5,23 @@ use bytes::Bytes;
 use http::Response;
 use http_body_util::combinators::BoxBody;
 
-use synvoid_config::MainConfig;
 #[cfg(feature = "mesh")]
 use http_body_util::{BodyExt, Full};
+use synvoid_config::MainConfig;
 #[cfg(feature = "mesh")]
 use synvoid_http_client::StreamingWafBody;
 use synvoid_http_client::StreamingWafScanner;
 use synvoid_proxy::client_registry::UpstreamClientRegistry;
-use synvoid_proxy::RouteTarget;
 #[cfg(feature = "mesh")]
 use synvoid_proxy::BackendType;
+use synvoid_proxy::RouteTarget;
 
-use crate::streaming_request_fast_path::StreamingRequestFastPathOutcome;
-use crate::streaming_waf_upstream_dispatch::{handle_streaming_waf_upstream_pass, StreamingWafUpstreamError};
 #[cfg(feature = "mesh")]
 use crate::response_builder::build_response_with_alt_svc;
+use crate::streaming_request_fast_path::StreamingRequestFastPathOutcome;
+use crate::streaming_waf_upstream_dispatch::{
+    handle_streaming_waf_upstream_pass, StreamingWafUpstreamError,
+};
 
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_streaming_request_pass<S, ServerlessStatusFn, PermissionDeniedFn>(
@@ -33,7 +35,9 @@ pub async fn handle_streaming_request_pass<S, ServerlessStatusFn, PermissionDeni
     alt_svc: &Option<String>,
     main_config: &Arc<MainConfig>,
     upstream_client_registry: &Arc<UpstreamClientRegistry>,
-    #[cfg(feature = "mesh")] serverless_manager: &Option<Arc<synvoid_serverless::ServerlessManager>>,
+    #[cfg(feature = "mesh")] serverless_manager: &Option<
+        Arc<synvoid_serverless::ServerlessManager>,
+    >,
     _on_serverless_status: ServerlessStatusFn,
     on_permission_denied: PermissionDeniedFn,
 ) -> Result<StreamingRequestFastPathOutcome, hyper::Error>
@@ -83,15 +87,13 @@ where
                     }
                     Err(e) => {
                         tracing::error!("Streaming serverless error: {}", e);
-                        StreamingRequestFastPathOutcome::Respond(
-                            build_response_with_alt_svc(
-                                500,
-                                "Internal Server Error".to_string(),
-                                "text/plain",
-                                alt_svc,
-                                main_config,
-                            ),
-                        )
+                        StreamingRequestFastPathOutcome::Respond(build_response_with_alt_svc(
+                            500,
+                            "Internal Server Error".to_string(),
+                            "text/plain",
+                            alt_svc,
+                            main_config,
+                        ))
                     }
                 },
             );
@@ -113,8 +115,8 @@ where
     .await
     {
         Ok(response) => Ok(StreamingRequestFastPathOutcome::Respond(response)),
-        Err(StreamingWafUpstreamError::PermissionDenied) => {
-            Ok(StreamingRequestFastPathOutcome::Respond(on_permission_denied()))
-        }
+        Err(StreamingWafUpstreamError::PermissionDenied) => Ok(
+            StreamingRequestFastPathOutcome::Respond(on_permission_denied()),
+        ),
     }
 }

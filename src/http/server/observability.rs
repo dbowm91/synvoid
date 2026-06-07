@@ -5,79 +5,13 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::config::MainConfig;
-use crate::metrics::bandwidth::{BandwidthProtocol, EgressDirection};
-use crate::metrics::{RequestLogPayload, WorkerMetrics};
+use crate::metrics::RequestLogPayload;
 use crate::process::current_timestamp;
 use crate::process::ipc::WorkerId;
 use crate::process::ipc_transport::IpcStream;
 
 static REQUEST_LOG_RATE_LIMITER: AtomicU32 = AtomicU32::new(0);
 static REQUEST_LOG_RATE_LIMITER_RESET: AtomicU64 = AtomicU64::new(0);
-
-#[allow(dead_code)]
-pub(crate) struct RequestMetrics {
-    pub(super) site_id: String,
-    pub(super) metrics: Arc<WorkerMetrics>,
-}
-
-#[allow(dead_code)]
-impl RequestMetrics {
-    pub(super) fn record_start(&self) {
-        self.metrics.record_site_request_start(&self.site_id);
-    }
-
-    pub(super) fn record_blocked(&self) {
-        self.metrics.record_site_blocked(&self.site_id);
-    }
-
-    pub(super) fn record_challenged(&self) {
-        self.metrics.record_site_challenged(&self.site_id);
-    }
-
-    pub(super) fn record_proxied(&self) {
-        self.metrics.record_site_proxied(&self.site_id);
-    }
-
-    pub(super) fn record_upstream_success(&self) {
-        self.metrics.record_site_upstream_success(&self.site_id);
-    }
-
-    pub(super) fn record_upstream_failure(&self) {
-        self.metrics.record_site_upstream_failure(&self.site_id);
-    }
-
-    pub(super) fn record_request_end(&self, latency_ms: u64) {
-        self.metrics
-            .record_site_request_end(&self.site_id, latency_ms);
-    }
-
-    pub(super) fn record_egress(&self, bytes: u64, direction: EgressDirection) {
-        self.metrics
-            .bandwidth
-            .record_egress(bytes, BandwidthProtocol::Http, direction);
-        self.metrics
-            .bandwidth
-            .record_site_egress(&self.site_id, bytes);
-    }
-}
-
-impl synvoid_http::BackendDispatchMetrics for RequestMetrics {
-    fn record_proxied(&self) {
-        RequestMetrics::record_proxied(self);
-    }
-
-    fn record_upstream_success(&self) {
-        RequestMetrics::record_upstream_success(self);
-    }
-
-    fn record_upstream_failure(&self) {
-        RequestMetrics::record_upstream_failure(self);
-    }
-
-    fn record_egress(&self, bytes: u64, direction: EgressDirection) {
-        RequestMetrics::record_egress(self, bytes, direction);
-    }
-}
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn send_request_log_if_enabled(

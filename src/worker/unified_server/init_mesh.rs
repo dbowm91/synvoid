@@ -117,7 +117,7 @@ pub async fn init_mesh_and_threat_intel(
                 topology.clone(),
                 None,
             ));
-            let backend_pool = Arc::new(crate::mesh::backend::MeshBackendPool::new(
+            let _backend_pool = Arc::new(crate::mesh::backend::MeshBackendPool::new(
                 proxy.clone(),
                 topology.clone(),
             ));
@@ -183,10 +183,10 @@ pub async fn init_mesh_and_threat_intel(
                 Some(Arc::new(signer_for_threat)),
             ));
 
-            let signer_for_mesh = crate::mesh::protocol::MeshMessageSigner::new(signer_key_clone)
+            let _signer_for_mesh = crate::mesh::protocol::MeshMessageSigner::new(signer_key_clone)
                 .with_verification_pool(verification_pool.clone());
 
-            #[cfg(feature = "dns")]
+            #[cfg(any())]
             {
                 let dns_registry: Option<Arc<crate::dns::MeshDnsRegistry>> = {
                     let config = shared_config.read().await;
@@ -318,195 +318,99 @@ pub async fn init_mesh_and_threat_intel(
                 }
             }
 
-            let mesh_broadcast_tx_for_yara = {
-                let (mesh_broadcast_tx, mut mesh_broadcast_rx) =
-                    tokio::sync::mpsc::channel::<crate::mesh::protocol::MeshMessage>(128);
-
-                threat_intel.set_mesh_sender(mesh_broadcast_tx.clone());
-
-                if let Some(quic_transport) = transport_manager.get_quic_transport() {
-                    let mesh_transport = quic_transport.get_inner();
-                    let broadcast_semaphore = Arc::new(tokio::sync::Semaphore::new(10));
-                    tokio::spawn(async move {
-                        while let Some(msg) = mesh_broadcast_rx.recv().await {
-                            let transport = mesh_transport.clone();
-                            let permit = broadcast_semaphore.clone().acquire_owned().await.ok();
-                            tokio::spawn(async move {
-                                transport
-                                    .broadcast_to_all_peers(
-                                        msg,
-                                        Some(crate::mesh::config::MeshNodeRole::GLOBAL),
-                                    )
-                                    .await;
-                                drop(permit);
-                            });
-                        }
-                    });
-                }
-
-                mesh_broadcast_tx
-            };
-
-            if mesh_config.role.is_global()
-                && mesh_config.global_node.key_exchange_enabled
-                && mesh_config.origin_signing_key.is_some()
+            #[cfg(any())]
             {
-                transport_manager.update_key_exchange_endpoint().await;
-            }
+                let mesh_broadcast_tx_for_yara = {
+                    let (mesh_broadcast_tx, mut mesh_broadcast_rx) =
+                        tokio::sync::mpsc::channel::<crate::mesh::protocol::MeshMessage>(128);
 
-            if mesh_config.role == crate::mesh::config::MeshNodeRole::EDGE
-                && mesh_config.global_node.key_exchange_enabled
-                && mesh_config.global_node.key_exchange_require_edge_auth
-            {
-                if let Some(ref global_node_key) = mesh_config.global_node_key {
-                    transport_manager.announce_edge_key(&mesh_config.node_id(), global_node_key);
-                }
-            }
+                    threat_intel.set_mesh_sender(mesh_broadcast_tx.clone());
 
-            {
-                let capabilities = crate::mesh::protocol::MeshCapabilities::from_config(
-                    mesh_config,
-                    mesh_config.role,
-                );
-                if !capabilities.supported_services.is_empty() {
-                    transport_manager.announce_capabilities(
-                        &mesh_config.node_id(),
-                        &capabilities.supported_services,
-                    );
-                }
-            }
-
-            threat_intel.start_background_tasks();
-            crate::waf::set_threat_intel(threat_intel.clone());
-
-            // Register mesh DHT provider for WASM plugin runtime
-            {
-                struct MeshDhtAdapter;
-
-                impl synvoid_plugin_runtime::mesh_callbacks::MeshDhtProvider for MeshDhtAdapter {
-                    fn get_record(&self, key: &str) -> Option<Vec<u8>> {
-                        crate::mesh::get_global_record_store()
-                            .and_then(|rs| rs.get_record(key))
-                            .map(|r| r.value)
+                    if let Some(quic_transport) = transport_manager.get_quic_transport() {
+                        let mesh_transport = quic_transport.get_inner();
+                        let broadcast_semaphore = Arc::new(tokio::sync::Semaphore::new(10));
+                        tokio::spawn(async move {
+                            while let Some(msg) = mesh_broadcast_rx.recv().await {
+                                let transport = mesh_transport.clone();
+                                let permit = broadcast_semaphore.clone().acquire_owned().await.ok();
+                                tokio::spawn(async move {
+                                    transport
+                                        .broadcast_to_all_peers(
+                                            msg,
+                                            Some(crate::mesh::config::MeshNodeRole::GLOBAL),
+                                        )
+                                        .await;
+                                    drop(permit);
+                                });
+                            }
+                        });
                     }
-                    fn check_threat(&self, ip: &str) -> bool {
-                        crate::mesh::get_global_record_store().map_or(false, |rs| {
-                            let key = format!("threat_indicator:{}:IpBlock", ip);
-                            rs.get_record(&key).is_some()
-                        })
-                    }
-                    fn store_event(&self, topic: &str, data: &[u8]) {
-                        if let Some(rs) = crate::mesh::get_global_record_store() {
-                            let key = format!("event:{}", topic);
-                            let value = data.to_vec();
-                            rs.store_and_announce(key, value, 300);
-                        }
-                    }
-                }
 
-                synvoid_plugin_runtime::mesh_callbacks::set_mesh_provider(std::sync::Arc::new(
-                    MeshDhtAdapter,
-                ));
-                tracing::debug!("Mesh DHT provider registered for WASM plugin runtime");
-            }
-
-            // YARA rules manager
-            {
-                let main_config = {
-                    let config = shared_config.read().await;
-                    config.main.clone()
+                    mesh_broadcast_tx
                 };
 
-                if mesh_config.yara_rules.enabled || main_config.yara_feed.enabled {
-                    let feed_mgr: Option<Arc<crate::upload::yara_rule_feed::YaraRuleFeedManager>> =
-                        if main_config.yara_feed.enabled {
-                            Some(crate::upload::YaraRuleFeedManager::new(
-                                main_config.yara_feed.clone(),
-                            ))
-                        } else {
-                            None
-                        };
+                if mesh_config.role.is_global()
+                    && mesh_config.global_node.key_exchange_enabled
+                    && mesh_config.origin_signing_key.is_some()
+                {
+                    transport_manager.update_key_exchange_endpoint().await;
+                }
 
-                    let yara_data_dir = config_path.parent().map(|p| p.to_path_buf());
-
-                    let signer_for_yara: Option<Arc<crate::mesh::protocol::MeshMessageSigner>> =
-                        Some(Arc::new(crate::mesh::protocol::MeshMessageSigner::new(
-                            signer_key,
-                        )));
-
-                    let yara_rules = Arc::new(crate::mesh::yara_rules::YaraRulesManager::new(
-                        mesh_config.yara_rules.clone().into(),
-                        node_id.clone(),
-                        mesh_config.role,
-                        signer_for_yara,
-                        feed_mgr,
-                        yara_data_dir,
-                    ));
-
-                    yara_rules.set_mesh_sender(mesh_broadcast_tx_for_yara.clone());
-
-                    if let Some(record_store) = transport_manager.get_record_store() {
-                        yara_rules.set_record_store(record_store.clone());
-                        crate::mesh::set_global_record_store(record_store);
+                if mesh_config.role == crate::mesh::config::MeshNodeRole::EDGE
+                    && mesh_config.global_node.key_exchange_enabled
+                    && mesh_config.global_node.key_exchange_require_edge_auth
+                {
+                    if let Some(ref global_node_key) = mesh_config.global_node_key {
+                        transport_manager
+                            .announce_edge_key(&mesh_config.node_id(), global_node_key);
                     }
+                }
 
-                    let is_elevated: Arc<parking_lot::RwLock<bool>> =
-                        Arc::new(parking_lot::RwLock::new(false));
+                {
+                    let capabilities = crate::mesh::protocol::MeshCapabilities::from_config(
+                        mesh_config,
+                        mesh_config.role,
+                    );
+                    if !capabilities.supported_services.is_empty() {
+                        transport_manager.announce_capabilities(
+                            &mesh_config.node_id(),
+                            &capabilities.supported_services,
+                        );
+                    }
+                }
 
-                    if yara_rules.has_feed_manager() {
-                        let fm = yara_rules
-                            .get_feed_manager()
-                            .expect("guarded by has_feed_manager check");
-                        let elevated_clone = is_elevated.clone();
-                        fm.start_background_fetching(elevated_clone);
+                threat_intel.start_background_tasks();
+                crate::waf::set_threat_intel(threat_intel.clone());
 
-                        if let Err(e) = yara_rules.apply_rules_from_feed() {
-                            tracing::debug!("No feed rules to apply on startup: {}", e);
+                // Register mesh DHT provider for WASM plugin runtime
+                {
+                    struct MeshDhtAdapter;
+
+                    impl synvoid_plugin_runtime::mesh_callbacks::MeshDhtProvider for MeshDhtAdapter {
+                        fn get_record(&self, key: &str) -> Option<Vec<u8>> {
+                            crate::mesh::get_global_record_store()
+                                .and_then(|rs| rs.get_record(key))
+                                .map(|r| r.value)
+                        }
+                        fn check_threat(&self, ip: &str) -> bool {
+                            crate::mesh::get_global_record_store().map_or(false, |rs| {
+                                let key = format!("threat_indicator:{}:IpBlock", ip);
+                                rs.get_record(&key).is_some()
+                            })
+                        }
+                        fn store_event(&self, topic: &str, data: &[u8]) {
+                            if let Some(rs) = crate::mesh::get_global_record_store() {
+                                let key = format!("event:{}", topic);
+                                let value = data.to_vec();
+                                rs.store_and_announce(key, value, 300);
+                            }
                         }
                     }
 
-                    crate::waf::set_yara_rules(yara_rules.clone());
-
-                    if mesh_config.yara_rules.sync_interval_secs > 0 {
-                        let sync_manager = yara_rules.clone();
-                        let sync_interval = std::time::Duration::from_secs(
-                            mesh_config.yara_rules.sync_interval_secs,
-                        );
-                        tokio::spawn(async move {
-                            let mut ticker = tokio::time::interval(sync_interval);
-                            loop {
-                                ticker.tick().await;
-                                let _ = sync_manager.sync_from_dht();
-                                sync_manager.record_sync();
-                            }
-                        });
-                        tracing::info!(
-                            "YARA DHT sync task started (interval: {}s)",
-                            mesh_config.yara_rules.sync_interval_secs
-                        );
-                    }
-
-                    if mesh_config.yara_rules.re_announce_interval_secs > 0
-                        && mesh_config.role.is_global()
-                    {
-                        let rules_manager = yara_rules.clone();
-                        let re_announce_interval = std::time::Duration::from_secs(
-                            mesh_config.yara_rules.re_announce_interval_secs,
-                        );
-                        tokio::spawn(async move {
-                            let mut ticker = tokio::time::interval(re_announce_interval);
-                            loop {
-                                ticker.tick().await;
-                                rules_manager.publish_rules_to_dht();
-                            }
-                        });
-                        tracing::info!(
-                            "YARA re-announce task started (interval: {}s)",
-                            mesh_config.yara_rules.re_announce_interval_secs
-                        );
-                    }
-
-                    tracing::info!("YARA rules manager initialized");
+                    synvoid_plugin_runtime::mesh_callbacks::set_mesh_provider(std::sync::Arc::new(
+                        MeshDhtAdapter,
+                    ));
+                    tracing::debug!("Mesh DHT provider registered for WASM plugin runtime");
                 }
             }
 
@@ -644,7 +548,7 @@ pub fn wire_port_honeypot_to_mesh(
 ) {
     if let Some(runner) = port_honeypot_runner {
         if let Some(threat_intel) = threat_intel_manager {
-            runner.start_mesh_threat_publishing(threat_intel.clone(), 30);
+            Arc::clone(runner).start_mesh_threat_publishing(threat_intel.clone(), 30);
             if has_mesh_transport {
                 tracing::info!("Port honeypot threat publishing wired to mesh network");
             } else {

@@ -232,7 +232,7 @@ pub struct FileManager {
     config: Arc<FileManagerConfig>,
     malware_scanner: Arc<MalwareScanner>,
     rate_limiter: Arc<UploadRateLimiter>,
-    reload_lock: parking_lot::RwLock<()>,
+    _reload_lock: parking_lot::RwLock<()>,
 }
 
 impl FileManager {
@@ -255,7 +255,7 @@ impl FileManager {
             config: Arc::new(config),
             malware_scanner,
             rate_limiter,
-            reload_lock: parking_lot::RwLock::new(()),
+            _reload_lock: parking_lot::RwLock::new(()),
         }
     }
 

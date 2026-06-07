@@ -311,7 +311,7 @@ impl AuthManager {
             return Err(AuthError::InvalidUsername);
         }
 
-        for (i, &byte) in username_bytes.iter().enumerate() {
+        for &byte in username_bytes.iter() {
             if byte == b'\0' || byte == b'\n' || byte == b'\r' || byte == b'\t' {
                 return Err(AuthError::InvalidUsername);
             }

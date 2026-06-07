@@ -14,10 +14,12 @@ use synvoid_config::{HttpConfig, MainConfig};
 use synvoid_metrics::bandwidth::{BandwidthProtocol, EgressDirection};
 use synvoid_metrics::{WorkerInlineCpuPhase, WorkerMetrics};
 use synvoid_proxy::client_registry::UpstreamClientRegistry;
-use synvoid_proxy::{BackendType, Router};
 use synvoid_proxy::protocol::trait_def::WafCoreBackend;
+use synvoid_proxy::{BackendType, Router};
 
-use crate::backend_dispatch::{handle_pass_backend_dispatch, BackendDispatchContext, BackendDispatchMetrics};
+use crate::backend_dispatch::{
+    handle_pass_backend_dispatch, BackendDispatchContext, BackendDispatchMetrics,
+};
 use crate::buffered_request_waf_dispatch::maybe_handle_buffered_request_waf;
 use crate::http_request_flow::RequestLogFn;
 use crate::request_preparation::PreparedRequest;
@@ -102,8 +104,7 @@ pub struct HttpRequestPostludeContext<'a, W> {
     pub ipc: Option<Arc<Mutex<synvoid_ipc::AsyncIpcStream>>>,
     pub worker_id: Option<synvoid_ipc::WorkerId>,
     pub start: Instant,
-    pub app_servers:
-        &'a Option<Arc<RwLock<HashMap<String, Arc<GranianSupervisor>>>>>,
+    pub app_servers: &'a Option<Arc<RwLock<HashMap<String, Arc<GranianSupervisor>>>>>,
     pub axum_router_lookup: Option<&'a dyn crate::AxumDynamicRouterLookup>,
     pub plugin_backend: Option<&'a dyn crate::WasmFilterBackend>,
     pub upstream_client_registry: &'a Arc<UpstreamClientRegistry>,
@@ -125,20 +126,30 @@ pub async fn handle_http_request_postlude<W, QuicTunnelFn, PoisonFn, PoisonFut, 
     record_http_request_latency: RecordLatencyFn,
 ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error>
 where
-    W: BufferedRequestWaf + WafCoreBackend + UploadValidationWaf + WafErrorPageRenderer + Send + Sync + 'static,
+    W: BufferedRequestWaf
+        + WafCoreBackend
+        + UploadValidationWaf
+        + WafErrorPageRenderer
+        + Send
+        + Sync
+        + 'static,
     QuicTunnelFn: Fn(
         http::Method,
         &str,
         Option<&http::HeaderMap>,
         Option<Bytes>,
         Option<Duration>,
-    ) -> futures::future::BoxFuture<'static, anyhow::Result<synvoid_http_client::HttpResponse>>,
+    ) -> futures::future::BoxFuture<
+        'static,
+        anyhow::Result<synvoid_http_client::HttpResponse>,
+    >,
     PoisonFn: Fn(
-        Bytes,
-        String,
-        Option<String>,
-        Option<synvoid_config::site::SiteImagePoisonConfig>,
-    ) -> PoisonFut + Clone,
+            Bytes,
+            String,
+            Option<String>,
+            Option<synvoid_config::site::SiteImagePoisonConfig>,
+        ) -> PoisonFut
+        + Clone,
     PoisonFut: std::future::Future<Output = Bytes>,
     RecordLatencyFn: Fn(u64),
 {
@@ -298,7 +309,9 @@ where
                         BandwidthProtocol::Http,
                         EgressDirection::Blocked,
                     );
-                    metrics.bandwidth.record_site_egress(&site_id_for_egress, body_len);
+                    metrics
+                        .bandwidth
+                        .record_site_egress(&site_id_for_egress, body_len);
                 }
             }
         },
@@ -312,9 +325,7 @@ where
             }
         },
         || start.elapsed().as_millis() as u64,
-        |status, message| {
-            waf.render_page_with_theme(status, Some(message), None)
-        },
+        |status, message| waf.render_page_with_theme(status, Some(message), None),
         |tar_path| waf.generate_tarpit_response(tar_path),
     )
     .await
@@ -373,7 +384,9 @@ where
         start,
         user_agent: user_agent.as_deref(),
         alt_svc,
-        req_metrics: req_metrics.as_ref().map(|rm| rm as &dyn BackendDispatchMetrics),
+        req_metrics: req_metrics
+            .as_ref()
+            .map(|rm| rm as &dyn BackendDispatchMetrics),
         metrics,
         request_body_size,
         body_slice: &body_slice,

@@ -4,8 +4,8 @@
 //! header helpers, and response construction primitives.
 
 pub mod app_server_backend_dispatch;
-pub mod backend_dispatch;
 pub mod axum_dynamic_dispatch;
+pub mod backend_dispatch;
 pub mod body_policy;
 pub mod buffered_request_waf_dispatch;
 pub mod cgi_backend_dispatch;
@@ -22,12 +22,12 @@ pub mod http3_route_dispatch;
 pub mod http3_streaming_upstream_dispatch;
 pub mod http3_terminal;
 pub mod http3_waf_dispatch;
+pub mod http_request_flow;
+pub mod http_request_postlude;
 pub mod internal_endpoint_dispatch;
 pub mod internal_handlers;
 pub mod listener;
 pub mod mesh_backend_dispatch;
-pub mod http_request_flow;
-pub mod http_request_postlude;
 pub mod request_frontdoor;
 pub mod request_parse;
 pub mod request_preparation;
@@ -58,8 +58,10 @@ pub mod websocket_dispatch;
 pub mod websocket_upgrade_dispatch;
 
 pub use app_server_backend_dispatch::maybe_handle_app_server_backend;
-pub use backend_dispatch::{handle_pass_backend_dispatch, BackendDispatchContext, BackendDispatchMetrics};
 pub use axum_dynamic_dispatch::{maybe_handle_axum_dynamic_backend, AxumDynamicRouterLookup};
+pub use backend_dispatch::{
+    handle_pass_backend_dispatch, BackendDispatchContext, BackendDispatchMetrics,
+};
 pub use body_policy::{collect_and_scan_request_body, BodyPolicyError, RequestBodyWaf};
 pub use buffered_request_waf_dispatch::maybe_handle_buffered_request_waf;
 pub use cgi_backend_dispatch::maybe_handle_cgi_backend;
@@ -81,13 +83,13 @@ pub use http3_route_dispatch::handle_http3_found_route;
 pub use http3_streaming_upstream_dispatch::handle_http3_streaming_upstream_pass;
 pub use http3_terminal::{finalize_http3_request, maybe_handle_http3_terminal_route_result};
 pub use http3_waf_dispatch::{maybe_handle_http3_waf_decision, Http3WafDecisionOutcome};
+pub use http_request_flow::{prepare_http_request_flow, HttpRequestFlowOutcome};
+pub use http_request_postlude::{handle_http_request_postlude, HttpRequestPostludeContext};
 pub use internal_endpoint_dispatch::{dispatch_internal_endpoint, InternalEndpointDispatch};
 pub use internal_handlers::{
     handle_drain_request, handle_drain_status_request, handle_health_request, handle_ready_request,
     DrainStatusSnapshot, HttpDrainControl,
 };
-pub use http_request_flow::{prepare_http_request_flow, HttpRequestFlowOutcome};
-pub use http_request_postlude::{handle_http_request_postlude, HttpRequestPostludeContext};
 #[cfg(feature = "mesh")]
 pub use mesh_backend_dispatch::maybe_handle_mesh_backend;
 pub use request_frontdoor::{

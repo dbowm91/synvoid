@@ -58,7 +58,7 @@ pub fn run_mesh_agent_mode(config_path: Option<PathBuf>, _foreground: bool) {
             main_config.blocklist_limits.clone(),
         ));
 
-        let cp = match init_mesh_control_plane(&main_config, block_store).await {
+        let _cp = match init_mesh_control_plane(&main_config, block_store).await {
             Some(cp) => cp,
             None => {
                 tracing::error!("Mesh is disabled or failed to initialize. Mesh agent exiting.");
@@ -235,8 +235,6 @@ pub async fn init_mesh_control_plane(
         Some(Arc::new(crate::mesh::protocol::MeshMessageSigner::new(
             signer_key,
         ))),
-        None::<Arc<dyn crate::dns::resolver::DnsResolver>>,
-        None::<Arc<crate::dns::MeshDnsRegistry>>,
     )
     .await
     {

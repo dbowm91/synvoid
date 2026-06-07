@@ -1150,12 +1150,12 @@ pub async fn get_dht_stats(
     _auth: OptionalAuth,
 ) -> Result<Json<DhtStatsResponse>, StatusCode> {
     if let Some(transport) = &state.mesh.mesh_transport {
-        if let Some(routing_mgr) = &transport.routing_manager {
+        if let Some(routing_mgr) = transport.get_routing_manager() {
             let total_peers = routing_mgr.total_peers().await;
             let bucket_count = routing_mgr.bucket_stats().await.len();
 
             let (record_count, pending_announces, cache_hits, cache_misses) =
-                if let Some(record_mgr) = &transport.record_store {
+                if let Some(record_mgr) = transport.get_record_store() {
                     let stats = record_mgr.get_stats();
                     (
                         stats.record_count,
@@ -1168,7 +1168,7 @@ pub async fn get_dht_stats(
                 };
 
             return Ok(Json(DhtStatsResponse {
-                node_id: transport.config.node_id().to_string(),
+                node_id: transport.get_mesh_config().node_id().to_string(),
                 total_peers,
                 bucket_count,
                 record_count,

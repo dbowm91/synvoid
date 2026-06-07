@@ -73,7 +73,7 @@ impl TarpitHandler {
                 yield bytes::Bytes::from(format!("<p>{}</p>\n", sentence));
 
                 // Add some links to keep them busy
-                for i in 0..5 {
+                for i in 0..links_per_page {
                     let random_path = format!("{}-{}", path_seed, i);
                     let link_text = chain.generate_sentence(2, 4);
                     yield bytes::Bytes::from(format!(

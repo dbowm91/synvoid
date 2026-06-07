@@ -152,7 +152,7 @@ pub struct MeshExtensionRuntime {
     enabled: bool,
     transport_manager: Option<Arc<crate::mesh::transports::MeshTransportManager>>,
     threat_intel: Option<Arc<crate::mesh::threat_intel::ThreatIntelligenceManager>>,
-    signer: Option<Arc<crate::mesh::protocol::MeshMessageSigner>>,
+    _signer: Option<Arc<crate::mesh::protocol::MeshMessageSigner>>,
 }
 
 #[cfg(feature = "mesh")]
@@ -168,7 +168,7 @@ impl MeshExtensionRuntime {
             enabled,
             transport_manager,
             threat_intel,
-            signer,
+            _signer: signer,
         }
     }
 

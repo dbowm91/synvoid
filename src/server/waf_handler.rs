@@ -187,6 +187,7 @@ pub fn format_session_cookie(name: &str, value: &str, max_age: u64) -> String {
     )
 }
 
+#[allow(async_fn_in_trait)]
 pub trait ProtocolAdapter: Send + Sync {
     fn name(&self) -> &'static str;
     fn is_tls(&self) -> bool;

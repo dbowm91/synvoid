@@ -193,25 +193,150 @@ pub mod waf_stub {
 pub mod block_store {
     //! Stub BlockStore. Root crate provides the real implementation.
 
-    pub struct BlockStore;
+    use parking_lot::RwLock;
+    use std::collections::HashMap;
+    use std::net::IpAddr;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use synvoid_config::DenyListLimitsConfig;
+
+    #[derive(Debug, Clone)]
+    pub struct BlockEntry {
+        pub ip: String,
+        pub reason: String,
+        pub blocked_at: u64,
+        pub ban_expire_seconds: u64,
+        pub site_scope: String,
+        pub access_count: u64,
+        pub last_access: u64,
+    }
+
+    impl BlockEntry {
+        pub fn new(
+            ip: IpAddr,
+            reason: String,
+            ban_expire_seconds: u64,
+            site_scope: String,
+        ) -> Self {
+            let now = synvoid_utils::safe_unix_timestamp();
+            Self {
+                ip: ip.to_string(),
+                reason,
+                blocked_at: now,
+                ban_expire_seconds,
+                site_scope,
+                access_count: 0,
+                last_access: now,
+            }
+        }
+
+        pub fn is_permanent(&self) -> bool {
+            self.ban_expire_seconds == 0
+        }
+
+        pub fn is_expired(&self) -> bool {
+            if self.is_permanent() {
+                return false;
+            }
+            let now = synvoid_utils::safe_unix_timestamp();
+            now > self.blocked_at + self.ban_expire_seconds
+        }
+
+        pub fn key(site_scope: &str, ip: &IpAddr) -> String {
+            format!("block:{}:{}", site_scope, ip)
+        }
+
+        pub fn update_access(&mut self) {
+            self.access_count = self.access_count.saturating_add(1);
+            self.last_access = synvoid_utils::safe_unix_timestamp();
+        }
+    }
+
+    pub struct BlockStore {
+        enabled: bool,
+        #[allow(dead_code)]
+        persist_path: Option<PathBuf>,
+        #[allow(dead_code)]
+        config: DenyListLimitsConfig,
+        entries: Arc<RwLock<HashMap<String, BlockEntry>>>,
+    }
+
+    pub trait BlockStoreApi: Send + Sync {
+        fn block_ip(&self, ip: IpAddr, reason: &str, ttl_secs: u64, site_scope: &str) -> bool;
+        fn is_blocked(&self, ip: &IpAddr, site_scope: &str) -> bool;
+        fn unblock_ip(&self, ip: &IpAddr, site_scope: &str) -> bool;
+        fn get_all_entries(&self) -> Vec<BlockEntry>;
+    }
 
     impl BlockStore {
-        pub fn new() -> Self {
-            BlockStore
+        pub fn new(
+            _enabled: bool,
+            data_dir: Option<PathBuf>,
+            config: DenyListLimitsConfig,
+        ) -> Self {
+            let persist_path = data_dir.map(|d| d.join("blocks.json"));
+            Self {
+                enabled: _enabled,
+                persist_path,
+                config,
+                entries: Arc::new(RwLock::new(HashMap::new())),
+            }
         }
 
-        pub fn is_blocked(&self, _ip: &std::net::IpAddr) -> bool {
-            false
+        pub fn is_enabled(&self) -> bool {
+            self.enabled
         }
 
-        pub fn block_ip(
-            &self,
-            _ip: std::net::IpAddr,
-            _reason: &str,
-            _ttl_secs: u64,
-            _site_scope: &str,
-        ) -> bool {
+        pub fn is_blocked(&self, ip: &IpAddr, site_scope: &str) -> bool {
+            if !self.enabled {
+                return false;
+            }
+            let key = BlockEntry::key(site_scope, ip);
+            self.entries.read().contains_key(&key)
+        }
+
+        pub fn block_ip(&self, ip: IpAddr, reason: &str, ttl_secs: u64, site_scope: &str) -> bool {
+            if !self.enabled {
+                return false;
+            }
+            let key = BlockEntry::key(site_scope, &ip);
+            let entry = BlockEntry::new(ip, reason.to_string(), ttl_secs, site_scope.to_string());
+            self.entries.write().insert(key, entry);
             true
+        }
+
+        pub fn unblock_ip(&self, ip: &IpAddr, site_scope: &str) -> bool {
+            if !self.enabled {
+                return false;
+            }
+            let key = BlockEntry::key(site_scope, ip);
+            self.entries.write().remove(&key).is_some()
+        }
+
+        pub fn get_all_entries(&self) -> Vec<BlockEntry> {
+            if !self.enabled {
+                return Vec::new();
+            }
+            self.entries.read().values().cloned().collect()
+        }
+    }
+
+    impl BlockStoreApi for BlockStore {
+        fn block_ip(&self, ip: IpAddr, reason: &str, ttl_secs: u64, site_scope: &str) -> bool {
+            self.block_ip(ip, reason, ttl_secs, site_scope)
+        }
+
+        fn is_blocked(&self, ip: &IpAddr, site_scope: &str) -> bool {
+            self.is_blocked(ip, site_scope)
+        }
+
+        fn unblock_ip(&self, ip: &IpAddr, site_scope: &str) -> bool {
+            self.unblock_ip(ip, site_scope)
+        }
+
+        fn get_all_entries(&self) -> Vec<BlockEntry> {
+            self.get_all_entries()
         }
     }
 }

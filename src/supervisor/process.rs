@@ -18,6 +18,7 @@ use crate::RunningFlag;
 use super::state::{SupervisorState, SupervisorStateTrackers};
 
 const DRAIN_POLL_INTERVAL_MS: u64 = 100;
+#[allow(dead_code)]
 const DEFAULT_DRAIN_TIMEOUT_SECS: u64 = 30;
 
 /// Supervisor process for managing worker lifecycle.

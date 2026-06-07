@@ -1,5 +1,5 @@
-use bytes::Bytes;
 use async_trait::async_trait;
+use bytes::Bytes;
 use http::Response;
 use http_body_util::combinators::BoxBody;
 use http_body_util::BodyExt;
@@ -16,9 +16,9 @@ use synvoid_metrics::WorkerMetrics;
 use synvoid_proxy::{RouteResult, RouteTarget, Router};
 use synvoid_waf::ConnectionLimiter;
 
+use crate::body_policy::RequestBodyWaf;
 use crate::body_policy::{collect_and_scan_request_body, BodyPolicyError};
 use crate::challenge_paths::maybe_handle_challenge_paths;
-use crate::body_policy::RequestBodyWaf;
 use crate::challenge_paths::ChallengePathWaf;
 use crate::request_parse::{
     early_waf_decision, extract_request_metadata, should_skip_waf_from_trust_cookie,
@@ -258,11 +258,7 @@ pub enum RequestPreparationOutcome {
 
 #[async_trait]
 pub trait BufferedRequestWaf:
-    crate::EarlyWafHooks
-    + RequestBodyWaf
-    + ChallengePathWaf
-    + Send
-    + Sync
+    crate::EarlyWafHooks + RequestBodyWaf + ChallengePathWaf + Send + Sync
 {
     fn error_page_theme(&self) -> &synvoid_config::theme::ThemeConfig;
 
@@ -279,11 +275,7 @@ pub trait BufferedRequestWaf:
 
     fn honeypot_ban_duration_secs(&self) -> u64;
 
-    fn stream_tarpit(
-        &self,
-        path: &str,
-        user_agent: Option<&str>,
-    ) -> TarpitStream;
+    fn stream_tarpit(&self, path: &str, user_agent: Option<&str>) -> TarpitStream;
 
     fn generate_tarpit_response(&self, path: &str) -> String;
 
@@ -378,8 +370,8 @@ where
             let len = content_length as u64;
             m.bandwidth.record_ingress(len, BandwidthProtocol::Http);
             m.bandwidth.record_site_ingress(&host, len);
+        }
     }
-}
 
     if let Some(response) = maybe_handle_challenge_paths(
         &path,
@@ -409,14 +401,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn prepare_request_after_preflight<
-    W,
-    OnLimitLogFn,
-    FinalLogFn,
-    PassFn,
-    PassFut,
-    DropFn,
->(
+pub async fn prepare_request_after_preflight<W, OnLimitLogFn, FinalLogFn, PassFn, PassFut, DropFn>(
     preflight: RequestPreflight,
     client_ip: IpAddr,
     router: &Arc<Router>,
@@ -519,13 +504,10 @@ where
         }
     };
 
-    let render_block_page = |status: u16, message: &str| {
-        waf.render_page_with_theme(status, Some(message), None)
-    };
+    let render_block_page =
+        |status: u16, message: &str| waf.render_page_with_theme(status, Some(message), None);
 
-    let stream_tarpit = |path: &str, user_agent: Option<&str>| {
-        waf.stream_tarpit(path, user_agent)
-    };
+    let stream_tarpit = |path: &str, user_agent: Option<&str>| waf.stream_tarpit(path, user_agent);
 
     let body = match maybe_handle_streaming_request_fast_path(
         &target,

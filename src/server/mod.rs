@@ -46,7 +46,7 @@ struct ServerSharedState {
     worker_id: Option<WorkerId>,
     serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
     app_servers: Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>,
-    http_runtime_context: Option<
+    _http_runtime_context: Option<
         HttpRuntimeContext<
             RootWafProcessor,
             RouterRouteResolver,
@@ -905,7 +905,7 @@ impl UnifiedServer {
             worker_id: self.worker_id,
             serverless_manager: self.serverless_manager.clone(),
             app_servers: self.app_servers.clone(),
-            http_runtime_context,
+            _http_runtime_context: http_runtime_context,
         });
 
         let http_jh = {

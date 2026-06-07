@@ -135,7 +135,7 @@ pub fn create_admin_router(
         .with_threat_level_manager(threat_level_manager)
         .with_rule_feed_manager(rule_feed_manager)
         .with_mesh_transport(mesh_transport.clone())
-        .with_org_key_manager(mesh_transport.map(|m| m.org_key_manager.clone()));
+        .with_org_key_manager(mesh_transport.as_ref().map(|m| m.get_org_key_manager()));
 
     #[cfg(feature = "icmp-filter")]
     {
@@ -791,17 +791,19 @@ fn build_router_from_state(
         middleware::yara_rate_limit::yara_rate_limit_middleware,
     );
 
-    let mut router = Router::new()
-        .nest("/api", api_routes)
-        .route("/api/openapi.json", get(openapi::get_openapi_json));
+    let router = {
+        let router = Router::new()
+            .nest("/api", api_routes)
+            .route("/api/openapi.json", get(openapi::get_openapi_json));
 
-    #[cfg(feature = "swagger-ui")]
-    {
-        router = router.merge(
+        #[cfg(feature = "swagger-ui")]
+        let router = router.merge(
             SwaggerUi::new("/api/docs")
                 .url("/api/openapi.json", openapi::synvoidOpenApi::openapi()),
         );
-    }
+
+        router
+    };
 
     router
         .route("/health", get(health_check))
@@ -912,7 +914,7 @@ pub async fn start_admin_server(
     let admin_state_builder = admin_state_builder
         .with_yara_rules(yara_rules)
         .with_mesh_transport(mesh_transport.clone())
-        .with_org_key_manager(mesh_transport.map(|m| m.org_key_manager.clone()));
+        .with_org_key_manager(mesh_transport.as_ref().map(|m| m.get_org_key_manager()));
 
     #[cfg(feature = "icmp-filter")]
     {

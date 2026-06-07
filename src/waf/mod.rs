@@ -107,7 +107,7 @@ pub struct WafCore {
     pub block_store: Option<Arc<BlockStore>>,
     pub config: WafConfig,
     pub whitelist: Arc<HashSet<IpAddr>>,
-    tarpit_generator: Arc<crate::tarpit::MarkovChain>,
+    _tarpit_generator: Arc<crate::tarpit::MarkovChain>,
     tarpit_defaults: crate::config::TarpitDefaults,
     pub threat_level: Option<Arc<ThreatLevelManager>>,
     pub violation_tracker: Option<Arc<ViolationTracker>>,
@@ -384,7 +384,7 @@ impl WafCore {
             block_store,
             config: waf_config,
             whitelist: Arc::new(whitelist_set),
-            tarpit_generator,
+            _tarpit_generator: tarpit_generator,
             tarpit_defaults,
             threat_level,
             violation_tracker,
@@ -564,7 +564,7 @@ impl WafCore {
         &self,
         ip: IpAddr,
         path: &str,
-        method: &str,
+        _method: &str,
         user_agent: Option<&str>,
     ) -> Option<WafDecision> {
         if let Some(matched) = self.sensitive_endpoint_manager.check(path) {
@@ -986,11 +986,7 @@ impl synvoid_http::BufferedRequestWaf for WafCore {
         self.honeypot_ban_duration_secs
     }
 
-    fn stream_tarpit(
-        &self,
-        path: &str,
-        user_agent: Option<&str>,
-    ) -> synvoid_http::TarpitStream {
+    fn stream_tarpit(&self, path: &str, user_agent: Option<&str>) -> synvoid_http::TarpitStream {
         Box::pin(WafCore::stream_tarpit(self, path, user_agent))
     }
 

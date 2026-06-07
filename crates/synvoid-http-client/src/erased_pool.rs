@@ -99,7 +99,6 @@ pub struct PoolKey {
 
 #[derive(Debug)]
 pub struct Http1PooledConnection {
-    io: Option<TokioIo<tokio::net::TcpStream>>,
     authority: http::uri::Authority,
     sender: Option<http1_client::SendRequest<BoxErasedBody>>,
 }
@@ -117,7 +116,6 @@ impl Http1PooledConnection {
             )
         })?;
         Ok(Self {
-            io: None,
             authority,
             sender: Some(sender),
         })
@@ -149,7 +147,6 @@ impl Http1PooledConnection {
     #[cfg(test)]
     pub fn new_for_test(authority: http::uri::Authority) -> Self {
         Self {
-            io: None,
             authority,
             sender: None,
         }

@@ -13,7 +13,7 @@ use http_body_util::combinators::BoxBody;
 use metrics::counter;
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::net::TcpListener;
@@ -23,16 +23,13 @@ use tokio::sync::Semaphore;
 #[allow(unused_imports)]
 use crate::http::shared_handler::SharedRequestHandler;
 use crate::http_client::ErasedHttpClient;
-use request_preparation::RequestPreparationOutcome;
+use synvoid_http::RequestPreparationOutcome;
 
 mod accept_loop;
-mod backend_dispatch;
 mod connection_types;
 mod observability;
-mod request_preparation;
-mod traffic_control;
 
-pub(crate) use observability::{send_request_log_if_enabled, RequestMetrics};
+pub(crate) use observability::send_request_log_if_enabled;
 
 use connection_types::*;
 
@@ -54,39 +51,6 @@ use crate::router::Router;
 use crate::waf::{FloodDecision, FloodProtector, WafCore};
 use crate::worker::drain_state::WorkerDrainState;
 use tokio::sync::RwLock;
-
-struct PassBackendDispatchContext<'a> {
-    app_servers:
-        &'a Option<Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>>,
-    site_id: &'a str,
-    target: &'a crate::router::RouteTarget,
-    path: &'a str,
-    waf: &'a Arc<WafCore>,
-    client_ip: IpAddr,
-    router: &'a Arc<Router>,
-    parts: &'a http::request::Parts,
-    method: &'a http::Method,
-    full_body_arc: &'a Arc<Bytes>,
-    ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
-    worker_id: Option<crate::process::ipc::WorkerId>,
-    main_config: &'a Arc<MainConfig>,
-    method_str: &'a str,
-    start: std::time::Instant,
-    user_agent: Option<&'a str>,
-    alt_svc: &'a Option<String>,
-    req_metrics: &'a Option<RequestMetrics>,
-    metrics: &'a Option<Arc<WorkerMetrics>>,
-    request_body_size: u64,
-    body_slice: &'a Option<Arc<Bytes>>,
-    upstream_client_registry: &'a Arc<UpstreamClientRegistry>,
-    client: &'a HttpClient,
-    #[cfg(feature = "mesh")]
-    serverless_manager: &'a Option<Arc<crate::serverless::manager::ServerlessManager>>,
-    #[cfg(feature = "mesh")]
-    mesh_transport: &'a Option<Arc<MeshTransportManager>>,
-    #[cfg(feature = "mesh")]
-    mesh_backend_pool: &'a Option<Arc<MeshBackendPool>>,
-}
 
 pub struct HttpServer {
     addr: SocketAddr,
@@ -258,7 +222,7 @@ impl HttpServer {
     }
 
     #[allow(unused_assignments)]
-    pub(super) async fn handle_request(
+    async fn handle_request(
         req: hyper::Request<hyper::body::Incoming>,
         client_addr: SocketAddr,
         local_addr: Option<SocketAddr>,
@@ -282,7 +246,7 @@ impl HttpServer {
         >,
         #[cfg(feature = "mesh")] mesh_backend_pool: Option<Arc<MeshBackendPool>>,
         upstream_client_registry: Arc<UpstreamClientRegistry>,
-        erased_http_client: ErasedHttpClient,
+        _erased_http_client: ErasedHttpClient,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
         let request_queue_started_at = Instant::now();
         let _permit = match connection_limit.clone().acquire_owned().await {
@@ -354,31 +318,31 @@ impl HttpServer {
 
         synvoid_http::handle_http_request_postlude(
             synvoid_http::HttpRequestPostludeContext {
-            prepared,
-            client_ip,
-            router: &router,
-            waf: &waf,
-            client: &client,
-            alt_svc: &alt_svc,
-            main_config: &main_config,
-            http_config: &http_config,
-            metrics: &metrics,
-            ipc: ipc.clone(),
-            worker_id,
-            start,
-            app_servers: &app_servers,
-            axum_router_lookup,
-            plugin_backend,
-            upstream_client_registry: &upstream_client_registry,
-            request_drop: Arc::clone(&request_drop),
-            request_log: send_request_log_if_enabled,
-            #[cfg(feature = "mesh")]
-            serverless_manager: &serverless_manager,
-            #[cfg(feature = "mesh")]
-            mesh_transport: &mesh_transport,
-            #[cfg(feature = "mesh")]
-            mesh_backend_pool: &mesh_backend_pool,
-        },
+                prepared,
+                client_ip,
+                router: &router,
+                waf: &waf,
+                client: &client,
+                alt_svc: &alt_svc,
+                main_config: &main_config,
+                http_config: &http_config,
+                metrics: &metrics,
+                ipc: ipc.clone(),
+                worker_id,
+                start,
+                app_servers: &app_servers,
+                axum_router_lookup,
+                plugin_backend,
+                upstream_client_registry: &upstream_client_registry,
+                request_drop: Arc::clone(&request_drop),
+                request_log: send_request_log_if_enabled,
+                #[cfg(feature = "mesh")]
+                serverless_manager: &serverless_manager,
+                #[cfg(feature = "mesh")]
+                mesh_transport: &mesh_transport,
+                #[cfg(feature = "mesh")]
+                mesh_backend_pool: &mesh_backend_pool,
+            },
             |method, url, headers, body, timeout| {
                 let url = url.to_string();
                 let headers = headers.cloned();

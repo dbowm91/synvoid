@@ -20,7 +20,7 @@ use crate::protocol::{
     MeshMessage, MeshPeerInfo, ThreatIndicator, ThreatSeverity, ThreatType, MESH_MESSAGE_VERSION,
 };
 use crate::reputation::{ReputationConfig, ReputationManager};
-use crate::stubs::block_store::BlockStore;
+use crate::stubs::block_store::BlockStoreApi;
 use crate::stubs::metrics;
 use crate::stubs::waf_stub::threat_intel::feed_client::{ThreatFeedIndicator, ThreatFeedPayload};
 
@@ -190,7 +190,7 @@ const MAX_PENDING_INDICATORS: usize = 10000;
 
 pub struct ThreatIntelligenceManager {
     config: Arc<ThreatIntelligenceConfigInternal>,
-    block_store: Arc<BlockStore>,
+    block_store: Arc<dyn BlockStoreApi + Send + Sync>,
     reputation: Arc<ReputationManager>,
     node_id: String,
     node_role: MeshNodeRole,
@@ -224,7 +224,7 @@ struct PersistedThreatStore {
 impl ThreatIntelligenceManager {
     pub fn new(
         config: ThreatIntelligenceConfigInternal,
-        block_store: Arc<BlockStore>,
+        block_store: Arc<dyn BlockStoreApi + Send + Sync>,
         node_id: String,
         node_role: MeshNodeRole,
         signer: Option<Arc<crate::protocol::MeshMessageSigner>>,
@@ -234,7 +234,7 @@ impl ThreatIntelligenceManager {
 
     pub fn new_for_standalone(
         config: ThreatIntelligenceConfigInternal,
-        block_store: Arc<BlockStore>,
+        block_store: Arc<dyn BlockStoreApi + Send + Sync>,
         node_id: String,
         node_role: MeshNodeRole,
         signer: Option<Arc<crate::protocol::MeshMessageSigner>>,
@@ -252,7 +252,7 @@ impl ThreatIntelligenceManager {
 
     fn new_inner(
         config: ThreatIntelligenceConfigInternal,
-        block_store: Arc<BlockStore>,
+        block_store: Arc<dyn BlockStoreApi + Send + Sync>,
         node_id: String,
         node_role: MeshNodeRole,
         signer: Option<Arc<crate::protocol::MeshMessageSigner>>,
@@ -354,7 +354,7 @@ impl ThreatIntelligenceManager {
 
     pub fn from_external_config(
         config: ThreatIntelligenceConfig,
-        block_store: Arc<BlockStore>,
+        block_store: Arc<dyn BlockStoreApi + Send + Sync>,
         node_id: String,
         node_role: MeshNodeRole,
         signer: Option<Arc<crate::protocol::MeshMessageSigner>>,
@@ -424,7 +424,7 @@ impl ThreatIntelligenceManager {
         self.reputation.clone()
     }
 
-    pub fn get_block_store(&self) -> Arc<BlockStore> {
+    pub fn get_block_store(&self) -> Arc<dyn BlockStoreApi + Send + Sync> {
         self.block_store.clone()
     }
 

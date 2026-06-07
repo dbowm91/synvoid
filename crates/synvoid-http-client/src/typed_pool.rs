@@ -83,11 +83,7 @@ impl TypedConnectionPool {
         }
     }
 
-    pub fn get_client_for_authority(
-        &self,
-        authority: &str,
-        is_http2: bool,
-    ) -> Arc<TypedClientEntry> {
+    fn get_client_for_authority(&self, authority: &str, is_http2: bool) -> Arc<TypedClientEntry> {
         let key = TypedPoolKey::new(
             authority.to_string(),
             is_http2,

@@ -829,6 +829,10 @@ impl MeshTransport {
         self.routing_manager.clone()
     }
 
+    pub fn get_org_key_manager(&self) -> Arc<crate::org_key_manager::OrgKeyManager> {
+        self.org_key_manager.clone()
+    }
+
     pub fn set_routing_manager(&mut self, manager: Arc<crate::dht::routing::DhtRoutingManager>) {
         self.routing_manager = Some(manager);
     }

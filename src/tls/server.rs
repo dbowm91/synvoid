@@ -617,7 +617,7 @@ impl HttpsServer {
         >,
         metrics: Option<Arc<crate::metrics::WorkerMetrics>>,
         _drain_state: Option<Arc<crate::worker::drain_state::WorkerDrainState>>,
-        #[cfg(feature = "mesh")] mesh_config: Option<Arc<crate::mesh::config::MeshConfig>>,
+        #[cfg(feature = "mesh")] _mesh_config: Option<Arc<crate::mesh::config::MeshConfig>>,
         #[cfg(feature = "mesh")] mesh_transport: Option<
             Arc<crate::mesh::transports::MeshTransportManager>,
         >,
@@ -637,7 +637,7 @@ impl HttpsServer {
             >,
         >,
         upstream_client_registry: Arc<UpstreamClientRegistry>,
-        erased_http_client: ErasedHttpClient,
+        _erased_http_client: ErasedHttpClient,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
         let client_ip = client_addr.ip();
         let path = req

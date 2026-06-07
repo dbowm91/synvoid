@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use bytes::Bytes;
-use http::{Request, Response, StatusCode};
+use http::{Request, Response};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
 

@@ -5,10 +5,10 @@ use std::time::Instant;
 use tokio::sync::Mutex;
 
 use synvoid_config::{HttpConfig, MainConfig};
+use synvoid_http_client::StreamingWafScanner;
 use synvoid_metrics::WorkerMetrics;
 use synvoid_proxy::client_registry::UpstreamClientRegistry;
 use synvoid_proxy::Router;
-use synvoid_http_client::StreamingWafScanner;
 
 use crate::request_frontdoor::{
     prepare_request_frontdoor, RequestFrontdoorContext, RequestFrontdoorOutcome,
@@ -60,22 +60,24 @@ pub async fn prepare_http_request_flow<W, D, S>(
     request_drop: Arc<dyn Fn() + Send + Sync>,
     request_log: RequestLogFn,
     #[cfg(feature = "mesh")] mesh_config: &Option<Arc<synvoid_mesh::MeshConfig>>,
-    #[cfg(feature = "mesh")] mesh_transport: &Option<Arc<synvoid_mesh::transports::MeshTransportManager>>,
-    #[cfg(feature = "mesh")] serverless_manager: &Option<Arc<synvoid_serverless::ServerlessManager>>,
+    #[cfg(feature = "mesh")] mesh_transport: &Option<
+        Arc<synvoid_mesh::transports::MeshTransportManager>,
+    >,
+    #[cfg(feature = "mesh")] serverless_manager: &Option<
+        Arc<synvoid_serverless::ServerlessManager>,
+    >,
     upstream_client_registry: &Arc<UpstreamClientRegistry>,
-    ) -> Result<HttpRequestFlowOutcome, hyper::Error>
+) -> Result<HttpRequestFlowOutcome, hyper::Error>
 where
     W: BufferedRequestWaf + crate::RequestBodyWaf<StreamingScanner = S>,
     S: StreamingWafScanner + Send + Sync + Unpin + 'static,
     D: HttpDrainControl,
 {
     let request_preparation_started_at = Instant::now();
-    let record_inline_phase = |phase: synvoid_metrics::WorkerInlineCpuPhase, started_at: Instant| {
+    let record_inline_phase = |phase: synvoid_metrics::WorkerInlineCpuPhase,
+                               started_at: Instant| {
         if let Some(metrics) = &metrics {
-            metrics.record_inline_cpu_phase_time_ms(
-                phase,
-                started_at.elapsed().as_millis() as u64,
-            );
+            metrics.record_inline_cpu_phase_time_ms(phase, started_at.elapsed().as_millis() as u64);
         }
     };
 
@@ -366,8 +368,5 @@ where
         request_preparation_started_at,
     );
 
-    Ok(HttpRequestFlowOutcome {
-        client_ip,
-        outcome,
-    })
+    Ok(HttpRequestFlowOutcome { client_ip, outcome })
 }

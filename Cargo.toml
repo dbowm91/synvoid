@@ -20,17 +20,17 @@ path = "src/bin/server.rs"
 
 [features]
 default = ["socket-handoff", "mesh", "dns", "erased_pool", "swagger-ui"]
-dns = ["synvoid-config/dns", "synvoid-tls/dns", "synvoid-dns", "synvoid-http/dns", "dep:hickory-proto", "dep:hickory-resolver", "dep:tokio-dstip", "dep:cryptoki", "dep:getrandom"]
+dns = ["synvoid-config/dns", "synvoid-tls/dns", "synvoid-dns", "synvoid-dns/mesh", "synvoid-http/dns", "dep:hickory-proto", "dep:hickory-resolver", "dep:tokio-dstip", "dep:cryptoki", "dep:getrandom"]
 socket-handoff = []
 wireguard = ["synvoid-tunnel/wireguard"]
 icmp-filter = ["dep:synvoid-icmp-filter"]
 flood-ebpf = ["dep:aya"]
 origin_key_exchange = ["synvoid-integrity/origin_key_exchange"]
 audit = []
-post-quantum = []  # Marker feature; PQ TLS handled by rustls prefer-post-quantum
+post-quantum = ["synvoid-http-client/post-quantum"]  # Marker feature; PQ TLS handled by rustls prefer-post-quantum
 verify-pq = []
 tun-rs = ["synvoid-tunnel/tun-rs"]
-mesh = ["synvoid-config/mesh", "synvoid-http/mesh", "synvoid-static-files/mesh", "synvoid-serverless/mesh", "dep:openraft", "dep:synvoid-mesh", "synvoid-mesh/mesh"]
+mesh = ["synvoid-config/mesh", "synvoid-http/mesh", "synvoid-static-files/mesh", "synvoid-serverless/mesh", "dep:openraft", "dep:synvoid-mesh", "synvoid-mesh/mesh", "synvoid-block-store/mesh", "synvoid-honeypot/mesh"]
 buffer = ["synvoid-utils/buffer"]
 erased_pool = []
 rkyv = []

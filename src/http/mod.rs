@@ -14,7 +14,6 @@ pub mod image_poisoning;
 pub mod internal_endpoint_dispatch;
 pub mod internal_handlers;
 pub mod mesh_backend_dispatch;
-pub mod request_frontdoor;
 pub mod request_parse;
 pub mod response_builder;
 pub mod response_helpers;

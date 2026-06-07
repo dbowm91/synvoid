@@ -28,9 +28,9 @@ use crate::mesh_backend_dispatch::maybe_handle_mesh_backend;
 use crate::serverless_backend_dispatch::maybe_handle_serverless_backend;
 use crate::spin_backend_dispatch::maybe_handle_spin_backend;
 use crate::static_backend_dispatch::maybe_handle_static_backend;
+use crate::upload_validation_dispatch::{maybe_handle_upload_validation, UploadValidationWaf};
 use crate::upstream_proxy_dispatch::handle_pass_upstream_proxy_phase;
 use crate::upstream_proxy_dispatch_plan::prepare_upstream_proxy_dispatch_plan;
-use crate::upload_validation_dispatch::{maybe_handle_upload_validation, UploadValidationWaf};
 use crate::wasm_filter_dispatch::{
     maybe_handle_wasm_request_filter, WafErrorPageRenderer, WasmFilterBackend,
 };
@@ -96,31 +96,35 @@ where
         + Sync
         + 'static,
     OnLogFn: Fn(
-        Option<Arc<Mutex<synvoid_ipc::AsyncIpcStream>>>,
-        Option<synvoid_ipc::WorkerId>,
-        &Arc<MainConfig>,
-        IpAddr,
-        &str,
-        &str,
-        u16,
-        u64,
-        &str,
-        Option<&str>,
-        bool,
-    ) + Clone,
+            Option<Arc<Mutex<synvoid_ipc::AsyncIpcStream>>>,
+            Option<synvoid_ipc::WorkerId>,
+            &Arc<MainConfig>,
+            IpAddr,
+            &str,
+            &str,
+            u16,
+            u64,
+            &str,
+            Option<&str>,
+            bool,
+        ) + Clone,
     QuicTunnelFn: Fn(
         http::Method,
         &str,
         Option<&http::HeaderMap>,
         Option<Bytes>,
         Option<std::time::Duration>,
-    ) -> futures::future::BoxFuture<'static, anyhow::Result<synvoid_http_client::HttpResponse>>,
+    ) -> futures::future::BoxFuture<
+        'static,
+        anyhow::Result<synvoid_http_client::HttpResponse>,
+    >,
     PoisonFn: Fn(
-        Bytes,
-        String,
-        Option<String>,
-        Option<synvoid_config::site::SiteImagePoisonConfig>,
-    ) -> PoisonFut + Clone,
+            Bytes,
+            String,
+            Option<String>,
+            Option<synvoid_config::site::SiteImagePoisonConfig>,
+        ) -> PoisonFut
+        + Clone,
     PoisonFut: Future<Output = Bytes>,
 {
     let waf = Arc::clone(dispatch_ctx.waf);
