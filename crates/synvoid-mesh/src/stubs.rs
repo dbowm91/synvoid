@@ -407,7 +407,6 @@ pub mod upload_stub {
     //! Stub upload types. Root crate provides the real implementation.
 
     pub mod yara_rule_feed {
-        use parking_lot::RwLock;
         use std::sync::Arc;
 
         pub struct YaraRuleFeedManager;

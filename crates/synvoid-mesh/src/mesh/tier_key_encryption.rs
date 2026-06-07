@@ -93,6 +93,7 @@ impl TierKeyEncryption {
         Self { master_key }
     }
 
+    #[allow(deprecated)]
     pub fn encrypt_for_transmission(
         &self,
         tier_key_bytes: &[u8],
@@ -118,6 +119,7 @@ impl TierKeyEncryption {
         }
     }
 
+    #[allow(deprecated)]
     pub fn decrypt_for_transmission(
         &self,
         encrypted_data: &[u8],
@@ -140,6 +142,7 @@ impl TierKeyEncryption {
             .map_err(|e| TierKeyEncryptionError::Decryption(e.to_string()))
     }
 
+    #[allow(deprecated)]
     pub fn encrypt_tier_key_data(
         &self,
         org_id: &str,
@@ -170,6 +173,7 @@ impl TierKeyEncryption {
         })
     }
 
+    #[allow(deprecated)]
     pub fn decrypt_tier_key_data(
         &self,
         encrypted: &EncryptedTierKeyData,
@@ -233,6 +237,7 @@ impl TierKeyEncryption {
         Ok(okm)
     }
 
+    #[allow(deprecated)]
     fn encrypt_privileged_internal(
         &self,
         record_type: PrivilegedRecordType,
@@ -260,6 +265,7 @@ impl TierKeyEncryption {
         })
     }
 
+    #[allow(deprecated)]
     fn decrypt_privileged_internal(
         &self,
         encrypted: &EncryptedPrivilegedData,

@@ -46,7 +46,7 @@ pub struct Router {
     cleaned_site_domain_suffixes: HashMap<String, Vec<Arc<str>>>,
     location_matchers: HashMap<String, LocationMatcher>,
     site_map: HashMap<String, Arc<SiteConfig>>,
-    server_port: u16,
+    _server_port: u16,
 }
 
 type SiteMaps = (
@@ -147,7 +147,7 @@ impl Router {
             cleaned_site_domain_suffixes,
             location_matchers,
             site_map,
-            server_port: main_config.server.port,
+            _server_port: main_config.server.port,
         };
 
         Self::log_configuration(&listen_map, &router.default_servers);
@@ -1408,7 +1408,7 @@ impl Default for Router {
             cleaned_site_domain_suffixes: HashMap::new(),
             location_matchers: HashMap::new(),
             site_map: HashMap::new(),
-            server_port: 80,
+            _server_port: 80,
         }
     }
 }

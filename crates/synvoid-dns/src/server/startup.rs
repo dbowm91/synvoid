@@ -120,7 +120,7 @@ impl DnsServer {
         let udp_state = state.clone();
         let geoip_lookup_udp = geoip_lookup.clone();
         let acme_dns_challenges_udp = self.acme_dns_challenges.clone();
-        let cookie_server_udp = self.cookie_server.clone();
+        let _cookie_server_udp = self.cookie_server.clone();
 
         tokio::spawn(async move {
             let DnsHandlerState {

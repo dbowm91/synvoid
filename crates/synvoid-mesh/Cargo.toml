@@ -11,6 +11,8 @@ path = "src/lib.rs"
 default = []
 mesh = ["dep:openraft", "synvoid-serverless/mesh"]
 dns = []
+audit = []
+verify-pq = []
 
 [dependencies]
 synvoid-core = { path = "../synvoid-core" }

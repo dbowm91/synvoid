@@ -933,9 +933,9 @@ impl ZoneTransfer {
                         if target_parts.is_empty() {
                             target_parts.push("");
                         }
-                        let mut total_len = 0;
+                        let mut _total_len = 0;
                         for part in &target_parts {
-                            total_len += 1 + part.len();
+                            _total_len += 1 + part.len();
                         }
                         let mut nsec_data = Vec::new();
                         for part in &target_parts {

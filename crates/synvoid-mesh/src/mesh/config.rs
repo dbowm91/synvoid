@@ -3,8 +3,6 @@ use parking_lot::RwLock;
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::fmt;
-
 use synvoid_config::site::ProxyUpstreamConfig;
 
 pub use synvoid_config::mesh::MeshNodeRole;

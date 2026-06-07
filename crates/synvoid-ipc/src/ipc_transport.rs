@@ -33,7 +33,7 @@ impl AsyncIpcTransport for UnixStream {
         use std::os::unix::io::AsRawFd;
 
         let sock_ref = SockRef::from(self);
-        let raw_fd = sock_ref.as_raw_fd();
+        let _raw_fd = sock_ref.as_raw_fd();
 
         #[repr(C)]
         struct UCred {
@@ -42,8 +42,8 @@ impl AsyncIpcTransport for UnixStream {
             gid: libc::gid_t,
         }
 
-        let cred: UCred = unsafe { std::mem::zeroed() };
-        let cred_len = size_of::<UCred>() as libc::socklen_t;
+        let _cred: UCred = unsafe { std::mem::zeroed() };
+        let _cred_len = size_of::<UCred>() as libc::socklen_t;
 
         #[cfg(target_os = "linux")]
         {
@@ -89,7 +89,7 @@ pub struct IpcStream {
     inner: Box<dyn AsyncIpcTransport>,
     read_buffer: Vec<u8>,
     signer: Option<Arc<IpcSigner>>,
-    enforce_signing: bool,
+    _enforce_signing: bool,
 }
 
 pub struct IpcListener {
@@ -238,7 +238,7 @@ impl IpcStream {
             inner: Box::new(stream),
             read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
             signer: None,
-            enforce_signing: false,
+            _enforce_signing: false,
         }
     }
 
@@ -248,7 +248,7 @@ impl IpcStream {
             inner: Box::new(stream),
             read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
             signer: Some(signer),
-            enforce_signing: true,
+            _enforce_signing: true,
         }
     }
 
@@ -265,7 +265,7 @@ impl IpcStream {
             inner: Box::new(stream),
             read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
             signer,
-            enforce_signing,
+            _enforce_signing: enforce_signing,
         }
     }
 
@@ -275,7 +275,7 @@ impl IpcStream {
             inner: Box::new(pipe),
             read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
             signer: None,
-            enforce_signing: false,
+            _enforce_signing: false,
         }
     }
 
@@ -285,7 +285,7 @@ impl IpcStream {
             inner: Box::new(pipe),
             read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
             signer: Some(signer),
-            enforce_signing: true,
+            _enforce_signing: true,
         }
     }
 
@@ -302,7 +302,7 @@ impl IpcStream {
             inner: Box::new(pipe),
             read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
             signer,
-            enforce_signing,
+            _enforce_signing: enforce_signing,
         }
     }
 
@@ -336,7 +336,7 @@ impl IpcStream {
                         inner: Box::new(client),
                         read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
                         signer: None,
-                        enforce_signing: false,
+                        _enforce_signing: false,
                     });
                 }
                 Err(e) if e.kind() == io::ErrorKind::NotFound && attempts < max_attempts => {
@@ -366,7 +366,7 @@ impl IpcStream {
                         inner: Box::new(client),
                         read_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
                         signer: Some(signer),
-                        enforce_signing: true,
+                        _enforce_signing: true,
                     });
                 }
                 Err(e) if e.kind() == io::ErrorKind::NotFound && attempts < max_attempts => {
@@ -468,7 +468,7 @@ impl IpcStream {
             inner: self.inner,
             read_buffer: self.read_buffer,
             signer: Some(signer),
-            enforce_signing: true,
+            _enforce_signing: true,
         }
     }
 

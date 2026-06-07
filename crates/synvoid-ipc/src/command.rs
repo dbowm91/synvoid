@@ -13,14 +13,14 @@ use super::ipc_signed::{IpcSigner, SignedIpcMessage};
 
 pub struct CommandClient {
     socket_path: Option<PathBuf>,
-    grpc_addr: Option<String>,
-    use_tls: bool,
+    _grpc_addr: Option<String>,
+    _use_tls: bool,
     method: super::ipc::CommandMethod,
 }
 
 impl CommandClient {
     pub fn new(socket_path: Option<PathBuf>, grpc_addr: Option<String>, use_tls: bool) -> Self {
-        let method = if let Some(ref addr) = grpc_addr {
+        let method = if let Some(ref _addr) = grpc_addr {
             super::ipc::CommandMethod::GRpc
         } else if socket_path.as_ref().map(|p| p.exists()).unwrap_or(false) {
             #[cfg(unix)]
@@ -44,8 +44,8 @@ impl CommandClient {
 
         Self {
             socket_path,
-            grpc_addr,
-            use_tls,
+            _grpc_addr: grpc_addr,
+            _use_tls: use_tls,
             method,
         }
     }

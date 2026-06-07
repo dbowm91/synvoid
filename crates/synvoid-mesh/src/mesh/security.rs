@@ -67,6 +67,7 @@ impl SecureConfigManager {
         self.encryption_key.read().is_some()
     }
 
+    #[allow(deprecated)]
     pub fn encrypt_value(&self, plaintext: &str) -> Result<SecureConfigValue, SecureConfigError> {
         let key = self.encryption_key.read();
         let key = key.as_ref().ok_or(SecureConfigError::NoEncryptionKey)?;
@@ -92,6 +93,7 @@ impl SecureConfigManager {
         })
     }
 
+    #[allow(deprecated)]
     pub fn decrypt_value(
         &self,
         encrypted: &SecureConfigValue,

@@ -328,6 +328,7 @@ impl MeshDataEncryption {
         key
     }
 
+    #[allow(deprecated)]
     pub fn encrypt(&self, plaintext: &[u8]) -> Option<Vec<u8>> {
         use rand::{RngCore, SeedableRng};
         let key = self.encryption_key.read();
@@ -354,6 +355,7 @@ impl MeshDataEncryption {
         Some(result)
     }
 
+    #[allow(deprecated)]
     pub fn decrypt(&self, data: &[u8]) -> Option<Vec<u8>> {
         if data.len() < 12 {
             return None;

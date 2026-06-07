@@ -95,7 +95,7 @@ pub struct UploadValidator {
     sandbox: Arc<Sandbox>,
     malware_scanner: Option<Arc<MalwareScanner>>,
     config: UploadConfig,
-    reload_lock: parking_lot::RwLock<()>,
+    _reload_lock: parking_lot::RwLock<()>,
     #[cfg(feature = "mesh")]
     yara_rules: Option<Arc<synvoid_mesh::yara_rules::YaraRulesManager>>,
 }
@@ -130,7 +130,7 @@ impl UploadValidator {
             sandbox,
             malware_scanner,
             config,
-            reload_lock: parking_lot::RwLock::new(()),
+            _reload_lock: parking_lot::RwLock::new(()),
             yara_rules,
         })
     }
@@ -160,7 +160,7 @@ impl UploadValidator {
             sandbox,
             malware_scanner,
             config,
-            reload_lock: parking_lot::RwLock::new(()),
+            _reload_lock: parking_lot::RwLock::new(()),
         })
     }
 

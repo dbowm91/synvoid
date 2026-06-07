@@ -62,7 +62,7 @@ pub trait QuicTunnelSender: Send + Sync + 'static {
 }
 
 pub struct ProxyServer<W: WafProcessor> {
-    client: HttpClient,
+    _client: HttpClient,
     revalidation_client: HttpClient,
     erased_client: ErasedHttpClient,
     upstream_url: String,
@@ -201,7 +201,7 @@ impl<W: WafProcessor> ProxyServer<W> {
 
         ProxyServer {
             erased_client: ErasedHttpClient::new(100),
-            client,
+            _client: client,
             revalidation_client,
             upstream_url,
             waf,

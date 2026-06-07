@@ -1337,7 +1337,7 @@ impl YaraRulesManager {
                 YaraRuleSource::MeshGlobal => "Mesh",
                 YaraRuleSource::MeshEdgeApproved => "MeshApproved",
             };
-            fm.add_to_history_inline(version.clone(), rules, source_str.to_string());
+            let _ = fm.add_to_history_inline(version.clone(), rules, source_str.to_string());
         }
 
         self.rule_change_tracker.write().record_change(&version);

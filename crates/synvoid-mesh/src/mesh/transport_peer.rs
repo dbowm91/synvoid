@@ -983,10 +983,6 @@ impl MeshTransport {
                 )
                 .await;
             }
-            #[cfg(not(feature = "dns"))]
-            _ => {
-                tracing::debug!("DNS messages not available without dns feature");
-            }
             MeshMessage::Ping {
                 request_id,
                 node_id: _,
@@ -2000,7 +1996,7 @@ impl MeshTransport {
 
     pub(crate) async fn handle_upstream_ownership_challenge(
         &self,
-        peer_id: &str,
+        _peer_id: &str,
         request_id: &str,
         upstream_id: &str,
         challenge_type: &crate::protocol::OwnershipChallengeType,
@@ -3354,7 +3350,7 @@ impl MeshTransport {
 
     async fn handle_http_proxy_stream(
         &self,
-        header_str: &str,
+        _header_str: &str,
         http_data: Vec<u8>,
         send_stream: &mut SendStream,
         topology: &MeshTopology,

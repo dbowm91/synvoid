@@ -40,6 +40,7 @@ impl CertDistManager {
         }
     }
 
+    #[allow(deprecated)]
     pub fn distribute_cert(
         &self,
         site_id: &str,
@@ -78,6 +79,7 @@ impl CertDistManager {
         })
     }
 
+    #[allow(deprecated)]
     pub fn receive_cert(
         &self,
         encrypted: &EncryptedCertData,
@@ -155,6 +157,7 @@ impl CertDistManager {
         Ok(re_encrypted)
     }
 
+    #[allow(deprecated)]
     fn distribute_cert_with_key(
         &self,
         site_id: &str,

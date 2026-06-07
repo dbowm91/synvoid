@@ -11,21 +11,21 @@ const FCGI_VERSION: u8 = 1;
 const FCGI_HEADER_SIZE: usize = 8;
 
 const FCGI_BEGIN_REQUEST: u8 = 1;
-const FCGI_ABORT_REQUEST: u8 = 2;
+const _FCGI_ABORT_REQUEST: u8 = 2;
 const FCGI_END_REQUEST: u8 = 3;
 const FCGI_PARAMS: u8 = 4;
 const FCGI_STDIN: u8 = 5;
 const FCGI_STDOUT: u8 = 6;
 const FCGI_STDERR: u8 = 7;
-const FCGI_DATA: u8 = 8;
-const FCGI_GET_VALUES: u8 = 9;
-const FCGI_GET_VALUES_RESULT: u8 = 10;
-const FCGI_UNKOWN_TYPE: u8 = 11;
+const _FCGI_DATA: u8 = 8;
+const _FCGI_GET_VALUES: u8 = 9;
+const _FCGI_GET_VALUES_RESULT: u8 = 10;
+const _FCGI_UNKOWN_TYPE: u8 = 11;
 
-const FCGI_REQUEST_COMPLETE: u8 = 0;
-const FCGI_CANT_MULTIPLEX: u8 = 1;
-const FCGI_OVERLOADED: u8 = 2;
-const FCGI_UNKNOWN_ROLE: u8 = 3;
+const _FCGI_REQUEST_COMPLETE: u8 = 0;
+const _FCGI_CANT_MULTIPLEX: u8 = 1;
+const _FCGI_OVERLOADED: u8 = 2;
+const _FCGI_UNKNOWN_ROLE: u8 = 3;
 
 pub struct FastCgiRecord {
     pub version: u8,
@@ -375,7 +375,7 @@ impl StreamingFastCgiClient {
         Ok(())
     }
 
-    fn build_begin_request(request_id: u16, keep_alive: bool) -> Vec<u8> {
+    fn build_begin_request(_request_id: u16, keep_alive: bool) -> Vec<u8> {
         let mut data = vec![0u8; 8];
         data[0] = 0;
         data[1] = if keep_alive { 1 } else { 0 };
@@ -516,15 +516,15 @@ fn encode_varint(mut value: u64) -> Vec<u8> {
 }
 
 struct FastCgiRecordReader {
-    header_buf: BytesMut,
-    content_buf: BytesMut,
+    _header_buf: BytesMut,
+    _content_buf: BytesMut,
 }
 
 impl FastCgiRecordReader {
     fn new() -> Self {
         FastCgiRecordReader {
-            header_buf: BytesMut::with_capacity(FCGI_HEADER_SIZE),
-            content_buf: BytesMut::with_capacity(65536),
+            _header_buf: BytesMut::with_capacity(FCGI_HEADER_SIZE),
+            _content_buf: BytesMut::with_capacity(65536),
         }
     }
 

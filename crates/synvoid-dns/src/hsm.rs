@@ -33,7 +33,7 @@ pub enum Algorithm {
 }
 
 impl Algorithm {
-    pub fn to_cryptoki_mechanism(&self) -> cryptoki::mechanism::Mechanism {
+    pub fn to_cryptoki_mechanism(&self) -> cryptoki::mechanism::Mechanism<'_> {
         use cryptoki::mechanism::eddsa::{EddsaParams, EddsaSignatureScheme};
         use cryptoki::mechanism::Mechanism;
         match self {

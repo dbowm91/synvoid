@@ -37,7 +37,7 @@ pub struct MlKemKeyExchangeService {
     session_manager: Arc<SessionManager<MlKem768>>,
     node_public_key: Arc<RwLock<Option<MlKem768PublicKey>>>,
     key_generated_at: Arc<RwLock<Option<Instant>>>,
-    key_max_age_secs: u64,
+    _key_max_age_secs: u64,
 }
 
 impl MlKemKeyExchangeService {
@@ -47,7 +47,7 @@ impl MlKemKeyExchangeService {
             session_manager,
             node_public_key: Arc::new(RwLock::new(None)),
             key_generated_at: Arc::new(RwLock::new(None)),
-            key_max_age_secs: 3600,
+            _key_max_age_secs: 3600,
         }
     }
 

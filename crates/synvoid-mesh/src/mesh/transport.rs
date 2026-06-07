@@ -2231,6 +2231,7 @@ impl MeshTransport {
         Ok(())
     }
 
+    #[allow(dead_code)]
     async fn mesh_accept_loop(
         self: Arc<MeshTransport>,
         mut incoming: mpsc::Receiver<synvoid_tunnel::quic::runtime::IncomingConnection>,
@@ -2254,6 +2255,7 @@ impl MeshTransport {
         }
     }
 
+    #[allow(dead_code)]
     async fn handle_incoming_peer_connection(
         &self,
         incoming: synvoid_tunnel::quic::runtime::IncomingConnection,
@@ -2545,6 +2547,7 @@ impl MeshTransport {
         tracing::info!("Mesh transport stopped");
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn bootstrap_from_seeds(&self) -> Result<(), MeshTransportError> {
         let verified_seeds = self.config.get_verified_seeds();
 

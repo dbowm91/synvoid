@@ -403,6 +403,7 @@ impl NodeIdentityConfig {
         pbkdf2_hmac_array::<Sha256, 32>(passphrase.as_bytes(), salt, 100_000)
     }
 
+    #[allow(deprecated)]
     pub(crate) fn encrypt_key(
         &self,
         plaintext: &[u8],
@@ -441,6 +442,7 @@ impl NodeIdentityConfig {
         }
     }
 
+    #[allow(deprecated)]
     pub(crate) fn decrypt_key(
         &self,
         ciphertext: &[u8],

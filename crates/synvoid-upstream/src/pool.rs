@@ -299,7 +299,7 @@ impl Backend {
     }
 
     #[inline]
-    pub fn connection_scope(&self) -> ConnectionGuard {
+    pub fn connection_scope(&self) -> ConnectionGuard<'_> {
         self.increment_connections();
         ConnectionGuard { backend: self }
     }

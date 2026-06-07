@@ -22,6 +22,7 @@ impl AcmeDnsChallenge {
 
     /// Prepare a DNS-01 challenge by computing the expected TXT record value.
     /// The value is the SHA-256 hash of the key authorization, base64url encoded.
+    #[allow(deprecated)]
     pub fn prepare_challenge(&self, domain: &str, key_authorization: &str) -> String {
         use base64::Engine;
         use sha2::Digest;

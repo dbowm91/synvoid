@@ -125,7 +125,7 @@ impl ConnectionLimits {
         Ok(())
     }
 
-    pub fn try_acquire_connection(&self) -> Result<ConnectionGuard, ConnectionLimitError> {
+    pub fn try_acquire_connection(&self) -> Result<ConnectionGuard<'_>, ConnectionLimitError> {
         if self.graceful_shutdown.get() {
             return Err(ConnectionLimitError::GracefulShutdown);
         }
@@ -147,7 +147,7 @@ impl ConnectionLimits {
         })
     }
 
-    pub fn try_acquire_query(&self) -> Result<QueryGuard, ConnectionLimitError> {
+    pub fn try_acquire_query(&self) -> Result<QueryGuard<'_>, ConnectionLimitError> {
         if self.graceful_shutdown.get() {
             return Err(ConnectionLimitError::GracefulShutdown);
         }
