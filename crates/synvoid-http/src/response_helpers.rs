@@ -99,6 +99,7 @@ mod tests {
     #[test]
     fn test_apply_security_headers_hsts() {
         let config = SiteSecurityHeadersConfig {
+            enabled: Some(true),
             strict_transport_security: Some("max-age=31536000".to_string()),
             ..default_security_config()
         };
