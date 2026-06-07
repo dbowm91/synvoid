@@ -3,10 +3,10 @@
 
 use std::sync::Arc;
 
-use crate::config::ConfigManager;
 use crate::honeypot_port::{PortHoneypotConfig, PortHoneypotRunner};
 use crate::server::UnifiedServer;
-use crate::upload::UploadValidator;
+use synvoid_config::ConfigManager;
+use synvoid_upload::UploadValidator;
 use tokio::sync::RwLock;
 
 /// Start background tasks for WAF components (ASN cleanup, etc.).

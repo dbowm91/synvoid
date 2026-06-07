@@ -7,11 +7,11 @@ use std::time::Duration;
 
 use tokio::sync::RwLock;
 
-use crate::app_server::{GranianConfig, GranianSupervisor};
-use crate::config::ConfigManager;
 use crate::plugin::get_global_plugin_manager;
-use crate::process::WorkerId;
 use crate::server::UnifiedServer;
+use synvoid_app_server::{GranianConfig, GranianSupervisor};
+use synvoid_config::ConfigManager;
+use synvoid_ipc::WorkerId;
 
 /// Initialize the global serverless manager from config (if enabled).
 /// Returns `None` if the serverless subsystem is disabled or fails to start.

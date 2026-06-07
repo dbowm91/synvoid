@@ -1,5 +1,5 @@
-use crate::process::WorkerId;
 use crate::worker::metrics::WorkerMetrics;
+use synvoid_ipc::WorkerId;
 
 pub trait BaseWorkerState: Send + Sync {
     fn worker_id(&self) -> &WorkerId;

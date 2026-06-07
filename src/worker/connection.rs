@@ -5,11 +5,11 @@ use std::time::Instant;
 use parking_lot::RwLock;
 use tokio::sync::{watch, Mutex as TokioMutex};
 
-use crate::config::ConfigManager;
-use crate::metrics::WorkerMetrics;
-use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
-use crate::process::WorkerId;
 use crate::{DrainFlag, RunningFlag};
+use synvoid_config::ConfigManager;
+use synvoid_ipc::ipc_transport::IpcStream as AsyncIpcStream;
+use synvoid_ipc::WorkerId;
+use synvoid_metrics::WorkerMetrics;
 
 #[derive(Clone)]
 // SAFETY_REASON: Debugging - stored for introspection

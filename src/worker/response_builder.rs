@@ -5,8 +5,8 @@ use std::time::{Instant, SystemTime};
 use tokio::task;
 
 use super::cpu_task::state::{CompressionTask, CpuWorkerState};
-use crate::process::CpuTaskResult;
-use crate::static_files::minifier;
+use synvoid_ipc::CpuTaskResult;
+use synvoid_static_files::minifier;
 
 pub(in crate::worker) fn process_minify_request(
     state: &CpuWorkerState,

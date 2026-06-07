@@ -10,8 +10,8 @@ use std::os::windows::io::RawSocket as RawFd;
 
 use tokio::sync::Mutex;
 
-use crate::DrainFlag;
 use synvoid_http::{DrainStatusSnapshot, HttpDrainControl};
+use synvoid_utils::DrainFlag;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum RequestType {

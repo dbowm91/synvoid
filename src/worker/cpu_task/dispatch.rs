@@ -5,11 +5,11 @@ use std::time::Instant;
 
 use ::metrics::{counter, gauge, histogram};
 
-use crate::process::{
-    CpuTaskErrorCode, CpuTaskKind, CpuTaskPayload, CpuTaskPolicy, CpuTaskResult, Message,
-};
 use crate::worker::image_rights;
 use crate::worker::response_builder;
+use synvoid_ipc::{
+    CpuTaskErrorCode, CpuTaskKind, CpuTaskPayload, CpuTaskPolicy, CpuTaskResult, Message,
+};
 
 use super::metrics::{
     cpu_task_kind_label, decrement_task_kind_active, decrement_task_kind_queued,

@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
-#[cfg(feature = "mesh")]
-use crate::mesh::threat_intel::ThreatIntelligenceManager;
-#[cfg(feature = "mesh")]
-use crate::mesh::yara_rules::YaraRulesManager;
 use crate::plugin::GlobalPluginManager;
-use crate::serverless::registry::ServerlessRegistry;
-use crate::upload::UploadValidator;
+#[cfg(feature = "mesh")]
+use synvoid_mesh::threat_intel::ThreatIntelligenceManager;
+#[cfg(feature = "mesh")]
+use synvoid_mesh::yara_rules::YaraRulesManager;
+use synvoid_serverless::registry::ServerlessRegistry;
+use synvoid_upload::UploadValidator;
 
 pub struct RequestServices {
     #[cfg(feature = "mesh")]

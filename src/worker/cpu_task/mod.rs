@@ -16,14 +16,14 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::Mutex as TokioMutex;
 
-use crate::config::ConfigManager;
-use crate::process::ipc_signed::IpcSigner;
-use crate::process::{CpuTaskPayload, Message};
-use crate::static_files::minifier;
 use crate::worker::connect;
 use crate::worker::image_rights;
 use crate::worker::response_builder;
 use crate::{DrainFlag, RunningFlag};
+use synvoid_config::ConfigManager;
+use synvoid_ipc::ipc_signed::IpcSigner;
+use synvoid_ipc::{CpuTaskPayload, Message};
+use synvoid_static_files::minifier;
 
 use self::connection::handle_minify_client_connection;
 use self::dispatch::process_cpu_task_request_sync;

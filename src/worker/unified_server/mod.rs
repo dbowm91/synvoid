@@ -30,9 +30,9 @@ use super::context::RequestServices;
 use super::drain_state::WorkerDrainState;
 use super::metrics::WorkerMetrics;
 use crate::plugin::get_global_plugin_manager;
-use crate::process::WorkerId;
 use crate::server::UnifiedServer;
 use crate::{DrainFlag, RunningFlag};
+use synvoid_ipc::WorkerId;
 
 pub use state::{
     setup_unified_server_panic_handler, UnifiedServerWorkerArgs, UnifiedServerWorkerState,

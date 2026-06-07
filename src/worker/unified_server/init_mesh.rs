@@ -10,12 +10,12 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 #[cfg(feature = "mesh")]
-use crate::mesh::threat_intel::ThreatIntelligenceManager;
+use synvoid_mesh::threat_intel::ThreatIntelligenceManager;
 #[cfg(feature = "mesh")]
-use crate::mesh::transports::MeshTransportManager;
+use synvoid_mesh::transports::MeshTransportManager;
 
-use crate::config::ConfigManager;
 use crate::server::UnifiedServer;
+use synvoid_config::ConfigManager;
 
 /// Bundled resources produced by the mesh initialization phase.
 pub struct MeshInit {
@@ -117,7 +117,7 @@ pub async fn init_mesh_and_threat_intel(
                 topology.clone(),
                 None,
             ));
-            let _backend_pool = Arc::new(crate::mesh::backend::MeshBackendPool::new(
+            let backend_pool = Arc::new(crate::mesh::backend::MeshBackendPool::new(
                 proxy.clone(),
                 topology.clone(),
             ));
@@ -183,7 +183,7 @@ pub async fn init_mesh_and_threat_intel(
                 Some(Arc::new(signer_for_threat)),
             ));
 
-            let _signer_for_mesh = crate::mesh::protocol::MeshMessageSigner::new(signer_key_clone)
+            let signer_for_mesh = crate::mesh::protocol::MeshMessageSigner::new(signer_key_clone)
                 .with_verification_pool(verification_pool.clone());
 
             #[cfg(any())]

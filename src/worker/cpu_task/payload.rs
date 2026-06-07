@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use ::metrics::counter;
 use std::sync::atomic::Ordering;
 
-use crate::process::{CpuTaskKind, CpuTaskPayload, CpuTaskPolicy, Message};
+use synvoid_ipc::{CpuTaskKind, CpuTaskPayload, CpuTaskPolicy, Message};
 
 use super::metrics::{cpu_task_kind_label, CPU_TASK_REJECTED_TOTAL, CPU_TASK_TIMEOUT_TOTAL};
 

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::metrics::payloads::HealthStatus;
+use synvoid_metrics::payloads::HealthStatus;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExtensionFailurePolicy {

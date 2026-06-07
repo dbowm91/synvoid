@@ -7,8 +7,8 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 
-use crate::metrics::TimingStatsPayload;
-use crate::process::{CpuOffloadStats, CpuTaskKind};
+use synvoid_ipc::{CpuOffloadStats, CpuTaskKind};
+use synvoid_metrics::TimingStatsPayload;
 
 pub static CPU_TASK_ACTIVE_MINIFY: AtomicU64 = AtomicU64::new(0);
 pub static CPU_TASK_ACTIVE_GET_COMPRESSED: AtomicU64 = AtomicU64::new(0);

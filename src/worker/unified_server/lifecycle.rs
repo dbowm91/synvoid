@@ -9,9 +9,9 @@ use tokio::sync::Mutex as TokioMutex;
 use tokio::task::JoinHandle;
 
 use super::state::{wait_for_drain, UnifiedServerWorkerState};
-use crate::process::{current_timestamp, Message};
-use crate::static_files::client::get_global_async_cpu_offload_stats;
 use crate::worker::common::collect_current_process_usage;
+use synvoid_ipc::{current_timestamp, Message};
+use synvoid_static_files::client::get_global_async_cpu_offload_stats;
 
 pub fn spawn_heartbeat_task(state: UnifiedServerWorkerState) -> JoinHandle<()> {
     tokio::spawn(async move {

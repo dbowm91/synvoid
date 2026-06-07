@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
-use crate::process::{IpcStream, Message};
+use synvoid_ipc::{IpcStream, Message};
 
 use super::dispatch::process_cpu_task_request_sync;
 use super::payload::deadline_timeout_error;

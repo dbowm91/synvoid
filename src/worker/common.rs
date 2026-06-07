@@ -5,12 +5,12 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 use sysinfo::System;
 
-use crate::config::ConfigManager;
-use crate::process::{
+use crate::{DrainFlag, RunningFlag};
+use synvoid_config::ConfigManager;
+use synvoid_ipc::{
     connect_to_supervisor, current_timestamp, IpcStream, Message, RequestLogPayload, WorkerId,
     WorkerMetricsPayload,
 };
-use crate::{DrainFlag, RunningFlag};
 
 pub use crate::common::setup_panic_handler;
 
@@ -250,7 +250,7 @@ pub fn handle_shutdown_message(
     }
 }
 
-use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
+use synvoid_ipc::ipc_transport::IpcStream as AsyncIpcStream;
 use tokio::sync::Mutex as TokioMutex;
 
 #[derive(Clone)]

@@ -6,11 +6,11 @@ use std::time::Instant;
 
 use tokio::sync::Mutex as TokioMutex;
 
-use crate::config::ConfigManager;
-use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
-use crate::static_files::minifier;
-use crate::upload::yara_scanner::YaraScanner;
 use crate::{DrainFlag, RunningFlag};
+use synvoid_config::ConfigManager;
+use synvoid_ipc::ipc_transport::IpcStream as AsyncIpcStream;
+use synvoid_static_files::minifier;
+use synvoid_upload::yara_scanner::YaraScanner;
 
 #[derive(Clone)]
 pub struct CpuWorkerArgs {

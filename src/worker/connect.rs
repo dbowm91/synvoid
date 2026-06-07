@@ -2,10 +2,10 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::process::ipc_signed::IpcSigner;
-use crate::process::ipc_transport::IpcEndpoint;
-use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
-use crate::process::{connect_to_supervisor, IpcStream};
+use synvoid_ipc::ipc_signed::IpcSigner;
+use synvoid_ipc::ipc_transport::IpcEndpoint;
+use synvoid_ipc::ipc_transport::IpcStream as AsyncIpcStream;
+use synvoid_ipc::{connect_to_supervisor, IpcStream};
 
 #[cfg(test)]
 mod tests {

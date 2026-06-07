@@ -2,10 +2,10 @@
 
 use std::sync::Arc;
 
-use crate::upload::yara_scanner::{YaraRulesSource, YaraScanner};
+use synvoid_upload::yara_scanner::{YaraRulesSource, YaraScanner};
 
 pub fn build_yara_scanner_from_main_config(
-    main_config: &crate::config::MainConfig,
+    main_config: &synvoid_config::MainConfig,
 ) -> Option<Arc<YaraScanner>> {
     let defaults = &main_config.defaults.upload;
     if !defaults.scan_with_yara {
