@@ -63,21 +63,19 @@ tokio = { version = "1", features = ["full"] }
 hyper = { version = "1", features = ["http1", "http2", "server", "client"] }
 hyper-util = { version = "0.1", features = ["tokio", "server-auto", "server-graceful", "http1", "http2", "client", "client-legacy"] }
 hyper-rustls = { version = "0.27", features = ["http2"] }
-# rustls-native-certs moved to synvoid-http-client
+# rustls-native-certs: moved to synvoid-http-client (see plans/root_dependency_ownership.md)
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["fs", "cors"] }
 axum = { version = "0.8", features = ["ws", "macros", "json"] }
 axum-extra = { version = "0.10", features = ["typed-header"] }
 http-body = "1"
 http-body-util = "0.1"
-# tokio-util removed (0 uses in root; synvoid-static-files owns this)
+# tokio-util: removed; owned by synvoid-static-files (see plans/root_dependency_ownership.md)
 bytes = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# Serialization - postcard for default, rkyv for high-performance paths
+# postcard for distributed state, rkyv (renamed to avoid lightningcss conflict) for high-perf paths
 postcard = { version = "1", features = ["alloc"] }
-# rkyv for zero-copy - uses renamed dependency to avoid lightningcss conflict
-# Use package = "rkyv" to rename it
 rkyv = { package = "rkyv", version = "0.8", features = ["std", "alloc"] }
 
 toml = "0.8"
@@ -86,14 +84,13 @@ bitflags = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
-# isbot moved to synvoid-waf
+# isbot: moved to synvoid-waf (see plans/root_dependency_ownership.md)
 stegoeggo = "0.2"
 regex = "1"
 parking_lot = "0.12"
 dashmap = "7.0.0-rc2"
 arc-swap = "1"
 moka = { version = "0.12", features = ["sync", "future"] }
-matchit = "0.7"
 memmap2 = "0.9"
 metrics = "0.22"
 metrics-exporter-prometheus = "0.18"
@@ -111,7 +108,6 @@ notify = "9.0.0-rc.3"
 aho-corasick = "1.1"
 unicode-normalization = "0.1"
 libinjectionrs = "0.1"
-bloomfilter = "2"
 serde_bytes = "0.11"
 synvoid-cli = { path = "crates/synvoid-cli" }
 synvoid-config = { path = "crates/synvoid-config" }
@@ -133,7 +129,7 @@ getrandom = { version = "0.2", features = ["std"], optional = true }
 tokio-dstip = { version = "0.1", optional = true }
 
 clap = { version = "4", features = ["derive"] }
-# infer removed (0 uses in root; synvoid-app-handlers owns this dep)
+# infer: removed; owned by synvoid-app-handlers (see plans/root_dependency_ownership.md)
 yara-x = { version = "1.15", default-features = false, features = ["default-modules", "linkme"] }
 tempfile = "3"
 uuid = { version = "1", features = ["v4", "serde"] }
@@ -147,11 +143,7 @@ tar = "0.4"
 pqc = { path = "pqc", features = ["async"] }
 zeroize = { version = "1", features = ["derive"] }
 
-# Minification - all moved to synvoid-static-files
-# lightningcss removed (0 uses in root)
-# minify-html removed (0 uses in root)
-# minify-js removed (0 uses in root)
-# brotli removed from root (0 uses in prod code; synvoid-static-files owns this dep)
+# Minification deps: all moved to synvoid-static-files (see plans/root_dependency_ownership.md)
 
 # File system utilities
 walkdir = "2"
@@ -163,9 +155,9 @@ rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 tokio-rustls = "0.26"
 rustls = { version = "0.23", features = ["prefer-post-quantum", "aws-lc-rs"] }
 rustls-pki-types = "1"
-# rustls-post-quantum removed (0 direct uses; prefer-post-quantum feature on rustls handles PQ)
+# rustls-post-quantum: removed; PQ handled by rustls `prefer-post-quantum` + `aws-lc-rs` features (see plans/root_dependency_ownership.md)
 x509-parser = "0.16"
-# instant-acme moved to synvoid-tls
+# instant-acme: moved to synvoid-tls (see plans/root_dependency_ownership.md)
 
 # Post-Quantum Cryptography (aws-lc-rs with unstable for ML-DSA)
 aws-lc-rs = { version = "1", features = ["unstable"] }
@@ -180,11 +172,10 @@ cryptoki = { version = "0.12", optional = true }
 quinn = { version = "0.11", features = ["runtime-tokio"] }
 h3 = "0.0.8"
 h3-quinn = "0.0.10"
-rcgen = "0.13"
 webpki-roots = "0.26"
 
 # GeoIP support
-# maxminddb removed (0 uses in root; synvoid-geoip owns this dep)
+# maxminddb: removed; owned by synvoid-geoip (see plans/root_dependency_ownership.md)
 zip = "2"
 
 # Dynamic plugin loading
@@ -217,22 +208,22 @@ synvoid-vpn-client = { path = "crates/synvoid-vpn-client" }
 synvoid-static-files = { path = "crates/synvoid-static-files" }
 
 # WASM support for plugins
-# wasmtime moved to synvoid-plugin-runtime (plugin facade re-exports the runtime crate)
+# wasmtime: moved to synvoid-plugin-runtime (see plans/root_dependency_ownership.md)
 
 # URL parsing (already used elsewhere)
 url = "2"
 
 # WireGuard (optional - requires defguard_boringtun)
-# defguard_boringtun moved to synvoid-tunnel
+# defguard_boringtun: moved to synvoid-tunnel (see plans/root_dependency_ownership.md)
 
 # Unix domain socket support for HTTP client
-# hyperlocal moved to synvoid-http-client
+# hyperlocal: moved to synvoid-http-client (see plans/root_dependency_ownership.md)
 
 # Syslog support
 syslog = "6"
 
 # systemd readiness notification
-# sd-notify removed (0 uses in root)
+# sd-notify: removed (see plans/root_dependency_ownership.md)
 
 # Logging facade
 log = "0.4"
@@ -244,7 +235,7 @@ utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"], optional =
 prost = "0.14"
 prost-build = "0.14"
 lru_time_cache = "0.11"
-# linked-hash-map removed (0 uses in root or extracted crates)
+# linked-hash-map: removed (see plans/root_dependency_ownership.md)
 indexmap = "2"
 ahash = "0.8"
 smallvec = "1"
@@ -258,8 +249,6 @@ rand_core_06 = { package = "rand_core", version = "0.6" }
 hkdf = "0.12"
 hmac = "0.12"
 socket2 = "0.6"
-httparse = "1"
-pbkdf2 = "0.12"
 sha1 = "0.10"
 sha3 = "0.10"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
