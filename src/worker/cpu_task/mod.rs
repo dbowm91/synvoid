@@ -21,7 +21,7 @@ use crate::process::ipc_signed::IpcSigner;
 use crate::process::{CpuTaskPayload, Message};
 use crate::static_files::minifier;
 use crate::worker::connect;
-use crate::worker::image_poisoning;
+use crate::worker::image_rights;
 use crate::worker::response_builder;
 use crate::{DrainFlag, RunningFlag};
 
@@ -357,7 +357,7 @@ pub async fn run_cpu_worker(
                                     max_dimension,
                                     jpeg_quality,
                                 } => {
-                                    let poisoned = image_poisoning::mark_image_rights_sync(
+                                    let poisoned = image_rights::mark_image_rights_sync(
                                         &ipc_state,
                                         &site_id,
                                         body,

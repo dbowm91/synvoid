@@ -718,7 +718,7 @@ crates/synvoid-config/src/
 │   ├── network.rs          # Site network config
 │   ├── protocol_features.rs # gRPC, WebSocket
 │   ├── app_server.rs       # Granian app server
-│   ├── misc.rs             # SiteImagePoison, SiteLogging, SiteWorkerPool configs
+│   ├── misc.rs             # SiteImageRightsConfig (compat alias SiteImagePoisonConfig), SiteLogging, SiteWorkerPool configs
 │   └── file_manager.rs     # File manager config
 ├── bandwidth.rs            # Bandwidth tracking config
 ├── geoip.rs                # GeoIP configuration

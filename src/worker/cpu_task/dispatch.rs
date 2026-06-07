@@ -8,7 +8,7 @@ use ::metrics::{counter, gauge, histogram};
 use crate::process::{
     CpuTaskErrorCode, CpuTaskKind, CpuTaskPayload, CpuTaskPolicy, CpuTaskResult, Message,
 };
-use crate::worker::image_poisoning;
+use crate::worker::image_rights;
 use crate::worker::response_builder;
 
 use super::metrics::{
@@ -256,7 +256,7 @@ pub fn process_cpu_task_request_sync(
             max_dimension,
             jpeg_quality,
         } => {
-            let poisoned_body = image_poisoning::mark_image_rights_sync(
+            let poisoned_body = image_rights::mark_image_rights_sync(
                 state,
                 &site_id,
                 body,

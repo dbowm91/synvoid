@@ -14,7 +14,7 @@ use synvoid_proxy::{BackendType, RouteTarget, Router};
 const FORBIDDEN_RESPONSE_HEADERS: &[&str] = &["server", "x-powered-by", "connection", "keep-alive"];
 
 #[allow(clippy::too_many_arguments)]
-pub async fn maybe_handle_fastcgi_or_php_backend<PoisonFn, PoisonFut>(
+pub async fn maybe_handle_fastcgi_or_php_backend<MarkImageRightsFn, MarkImageRightsFut>(
     target: &RouteTarget,
     router: &Arc<Router>,
     site_id: &str,
@@ -25,16 +25,16 @@ pub async fn maybe_handle_fastcgi_or_php_backend<PoisonFn, PoisonFut>(
     alt_svc: &Option<String>,
     main_config: &Arc<MainConfig>,
     render_error_page: impl Fn(u16, Option<&str>) -> String,
-    mark_image_rights: PoisonFn,
+    mark_image_rights: MarkImageRightsFn,
 ) -> Option<Response<BoxBody<Bytes, Infallible>>>
 where
-    PoisonFn: Fn(
+    MarkImageRightsFn: Fn(
         Bytes,
         String,
         Option<String>,
         Option<synvoid_config::site::SiteImageRightsConfig>,
-    ) -> PoisonFut,
-    PoisonFut: std::future::Future<Output = Bytes>,
+    ) -> MarkImageRightsFut,
+    MarkImageRightsFut: std::future::Future<Output = Bytes>,
 {
     use crate::response_transform::{
         apply_minification, is_whitelisted_path, path_looks_like_image, ResponseTransformConfig,

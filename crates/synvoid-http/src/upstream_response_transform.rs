@@ -16,7 +16,7 @@ pub struct TransformedUpstreamResponse {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn transform_upstream_response<PoisonFn, PoisonFut>(
+pub async fn transform_upstream_response<MarkImageRightsFn, MarkImageRightsFut>(
     target: &RouteTarget,
     router: &Arc<Router>,
     path: &str,
@@ -28,11 +28,12 @@ pub async fn transform_upstream_response<PoisonFn, PoisonFut>(
     last_modified: Option<String>,
     accept_encoding: Option<&str>,
     #[cfg(feature = "mesh")] mesh_transport: &Option<Arc<MeshTransportManager>>,
-    mark_image_rights: PoisonFn,
+    mark_image_rights: MarkImageRightsFn,
 ) -> TransformedUpstreamResponse
 where
-    PoisonFn: Fn(Bytes, String, Option<String>, Option<SiteImageRightsConfig>) -> PoisonFut,
-    PoisonFut: Future<Output = Bytes>,
+    MarkImageRightsFn:
+        Fn(Bytes, String, Option<String>, Option<SiteImageRightsConfig>) -> MarkImageRightsFut,
+    MarkImageRightsFut: Future<Output = Bytes>,
 {
     let upstream_body_len = body.len() as u64;
     let (mut body, mut body_len) =

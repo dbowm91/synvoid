@@ -25,7 +25,7 @@ pub mod traits;
 pub mod unified_server;
 
 mod connection;
-mod image_poisoning;
+mod image_rights;
 mod response_builder;
 
 pub use traits::{BaseWorkerState, WorkerLifecycle};

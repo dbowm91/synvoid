@@ -23,7 +23,7 @@ use crate::response_helpers::apply_security_headers;
 use crate::upstream_response_transform::transform_upstream_response;
 
 #[allow(clippy::too_many_arguments)]
-pub async fn handle_buffered_upstream_request<PoisonFn, PoisonFut>(
+pub async fn handle_buffered_upstream_request<MarkImageRightsFn, MarkImageRightsFut>(
     target: &RouteTarget,
     router: &Arc<Router>,
     path: &str,
@@ -50,16 +50,16 @@ pub async fn handle_buffered_upstream_request<PoisonFn, PoisonFut>(
     on_upstream_success: impl Fn(),
     on_upstream_failure: impl Fn(),
     on_error_egress: impl Fn(u64),
-    mark_image_rights: PoisonFn,
+    mark_image_rights: MarkImageRightsFn,
 ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error>
 where
-    PoisonFn: Fn(
+    MarkImageRightsFn: Fn(
         Bytes,
         String,
         Option<String>,
         Option<synvoid_config::site::SiteImageRightsConfig>,
-    ) -> PoisonFut,
-    PoisonFut: Future<Output = Bytes>,
+    ) -> MarkImageRightsFut,
+    MarkImageRightsFut: Future<Output = Bytes>,
 {
     let resp = if synvoid_http_client::is_quictunnel_url(&target.upstream) {
         quictunnel_request(

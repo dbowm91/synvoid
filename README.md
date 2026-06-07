@@ -13,7 +13,7 @@ The `UnifiedServerWorker` keeps socket accept, TLS, HTTP parsing, routing, WAF c
 The Supervisor owns worker lifecycle, zero-downtime rotations, Raft/DHT mesh coordination, and the gRPC control API.
 
 ### 3. Bounded CPU Offload
-Dedicated CPU workers handle bounded heavy jobs such as minification, compression, image poisoning, and other explicit transforms.
+Dedicated CPU workers handle bounded heavy jobs such as minification, compression, image rights marking (steganographic / metadata signaling), and other explicit transforms.
 
 ### 4. Linux Optimization
 Linux offers the best support for CPU affinity and kernel networking primitives. Advanced shared-port deployments are supported, but they are not the default model.

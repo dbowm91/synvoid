@@ -66,7 +66,7 @@ UnifiedServer worker (`run_unified_server_worker`).
   the Minify/Compress responses consumed by `cpu_task::dispatch`. Holds
   `CompressionTask` and `StaticWorkerState` field references but is at the
   worker-module level.
-- `src/worker/image_poisoning.rs` (visibility: `pub(in crate::worker)`) -
+- `src/worker/image_rights.rs` (visibility: `pub(in crate::worker)`) -
   `mark_image_rights_sync` consumed by `cpu_task::dispatch`.
 - `src/worker/connection.rs` (visibility: `pub(super)`) - the original
   `WorkerState` + `create_waf` helper used by the worker bootstraps; **this

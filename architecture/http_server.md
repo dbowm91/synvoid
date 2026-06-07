@@ -325,11 +325,13 @@ pub enum StaticResponseBody {
    - Buffered: `spawn_blocking` read then `Full::new(body_bytes).boxed()`
 4. Apply compression based on `Accept-Encoding`
 
-### Image Poisoning
+### Image Rights Marking
 ```rust
 IMAGE_PROTECTION_REGEX = r"\.(?:jpe?g|png|gif|webp|bmp|svg|ico)(?:\?|$)"
 ```
 Applied to images > minimum size, not whitelisted, with caching by site+hash.
+This is steganographic rights marking (metadata / watermark signaling), not
+adversarial image perturbation.
 
 ---
 
@@ -374,7 +376,7 @@ fn is_tls_client_hello(bytes: &[u8]) -> bool {
 ```
 Rejects TLS on HTTP port when `strict_protocol_validation` is enabled.
 
-### Image Poison Cache
+### Image Rights Cache
 ```rust
 const IMAGE_RIGHTS_CACHE_MAX_CAPACITY: u64 = 1000;
 const IMAGE_RIGHTS_CACHE_TTL_SECS: u64 = 3600;

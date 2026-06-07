@@ -81,12 +81,18 @@ pub struct BackendDispatchContext<'a, W> {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn handle_pass_backend_dispatch<W, OnLogFn, QuicTunnelFn, PoisonFn, PoisonFut>(
+pub async fn handle_pass_backend_dispatch<
+    W,
+    OnLogFn,
+    QuicTunnelFn,
+    MarkImageRightsFn,
+    MarkImageRightsFut,
+>(
     on_upgrade: Option<hyper::upgrade::OnUpgrade>,
     dispatch_ctx: BackendDispatchContext<'_, W>,
     on_request_log: OnLogFn,
     quictunnel_request: QuicTunnelFn,
-    mark_image_rights: PoisonFn,
+    mark_image_rights: MarkImageRightsFn,
 ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error>
 where
     W: synvoid_proxy::protocol::trait_def::WafCoreBackend
@@ -118,14 +124,14 @@ where
         'static,
         anyhow::Result<synvoid_http_client::HttpResponse>,
     >,
-    PoisonFn: Fn(
+    MarkImageRightsFn: Fn(
             Bytes,
             String,
             Option<String>,
             Option<synvoid_config::site::SiteImageRightsConfig>,
-        ) -> PoisonFut
+        ) -> MarkImageRightsFut
         + Clone,
-    PoisonFut: Future<Output = Bytes>,
+    MarkImageRightsFut: Future<Output = Bytes>,
 {
     let waf = Arc::clone(dispatch_ctx.waf);
 

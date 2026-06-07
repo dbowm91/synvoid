@@ -119,10 +119,16 @@ pub struct HttpRequestPostludeContext<'a, W> {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn handle_http_request_postlude<W, QuicTunnelFn, PoisonFn, PoisonFut, RecordLatencyFn>(
+pub async fn handle_http_request_postlude<
+    W,
+    QuicTunnelFn,
+    MarkImageRightsFn,
+    MarkImageRightsFut,
+    RecordLatencyFn,
+>(
     ctx: HttpRequestPostludeContext<'_, W>,
     quic_tunnel_request: QuicTunnelFn,
-    mark_image_rights: PoisonFn,
+    mark_image_rights: MarkImageRightsFn,
     record_http_request_latency: RecordLatencyFn,
 ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error>
 where
@@ -143,14 +149,14 @@ where
         'static,
         anyhow::Result<synvoid_http_client::HttpResponse>,
     >,
-    PoisonFn: Fn(
+    MarkImageRightsFn: Fn(
             Bytes,
             String,
             Option<String>,
             Option<synvoid_config::site::SiteImageRightsConfig>,
-        ) -> PoisonFut
+        ) -> MarkImageRightsFut
         + Clone,
-    PoisonFut: std::future::Future<Output = Bytes>,
+    MarkImageRightsFut: std::future::Future<Output = Bytes>,
     RecordLatencyFn: Fn(u64),
 {
     let HttpRequestPostludeContext {

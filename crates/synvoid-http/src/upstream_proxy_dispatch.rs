@@ -20,7 +20,7 @@ use crate::handle_streaming_upstream_response;
 use crate::upstream_proxy_dispatch_plan::UpstreamProxyDispatchPlan;
 
 #[allow(clippy::too_many_arguments)]
-pub async fn handle_pass_upstream_proxy_phase<PoisonFn, PoisonFut>(
+pub async fn handle_pass_upstream_proxy_phase<MarkImageRightsFn, MarkImageRightsFut>(
     target: &RouteTarget,
     router: &Arc<Router>,
     path: &str,
@@ -45,16 +45,16 @@ pub async fn handle_pass_upstream_proxy_phase<PoisonFn, PoisonFut>(
     on_upstream_success: impl Fn(),
     on_upstream_failure: impl Fn(),
     on_error_egress: impl Fn(u64),
-    mark_image_rights: PoisonFn,
+    mark_image_rights: MarkImageRightsFn,
 ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error>
 where
-    PoisonFn: Fn(
+    MarkImageRightsFn: Fn(
         Bytes,
         String,
         Option<String>,
         Option<synvoid_config::site::SiteImageRightsConfig>,
-    ) -> PoisonFut,
-    PoisonFut: std::future::Future<Output = Bytes>,
+    ) -> MarkImageRightsFut,
+    MarkImageRightsFut: std::future::Future<Output = Bytes>,
 {
     if let Some(streaming) = dispatch_plan.streaming {
         let erased_body = ErasedBodyImpl::from_full(Full::new(full_body_arc.as_ref().clone()));

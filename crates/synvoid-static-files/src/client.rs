@@ -1435,7 +1435,9 @@ impl std::fmt::Display for ImageRightsClientError {
             ImageRightsClientError::InvalidRequest(e) => {
                 write!(f, "Invalid CPU task request: {}", e)
             }
-            ImageRightsClientError::MarkingFailed(e) => write!(f, "Poisoning failed: {}", e),
+            ImageRightsClientError::MarkingFailed(e) => {
+                write!(f, "Image rights marking failed: {}", e)
+            }
         }
     }
 }
