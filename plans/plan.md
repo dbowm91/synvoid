@@ -54,7 +54,7 @@ When the hyper-util API issue is resolved, implement HTTP/2 pooling:
 | Spin Runtime | `src/spin/runtime.rs` | 289-303 |
 | WafCore | `src/waf/mod.rs` | 172-199 |
 | HickoryRecursor DNSSEC | `src/dns/resolver.rs` | 693-702 |
-| HTTP/3 Body Collection | `src/http3/server.rs` | 340-398 |
+| HTTP/3 Request Flow | `src/http3/server.rs` | 238-282 |
 | collect_body_with_chunk_waf | `src/http/server.rs` | 4666-4700 |
 | CertResolver | `src/tls/cert_resolver.rs` | 215-253 |
 | filter.rs | `src/filter/common.rs` | 74-96 (deny/allow check) |

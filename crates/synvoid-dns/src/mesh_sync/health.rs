@@ -1,6 +1,6 @@
 use super::*;
-use synvoid_utils::current_timestamp;
 use metrics::gauge;
+use synvoid_utils::current_timestamp;
 
 impl MeshDnsRegistry {
     pub async fn update_anycast_health(

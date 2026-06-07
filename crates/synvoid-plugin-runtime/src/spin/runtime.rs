@@ -8,9 +8,9 @@ use http::{HeaderMap, Response};
 use parking_lot::RwLock;
 use wasmtime::{Config, Engine, OptLevel};
 
-use crate::wasm_runtime::{WasmResourceLimits, WasmRuntime};
 use crate::spin::kv_store::SpinKvStore;
 use crate::spin::manifest::Manifest;
+use crate::wasm_runtime::{WasmResourceLimits, WasmRuntime};
 
 #[derive(Debug, Clone)]
 pub struct SpinRuntimeConfig {

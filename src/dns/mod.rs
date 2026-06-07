@@ -8,8 +8,8 @@
 pub use synvoid_dns::*;
 
 #[cfg(feature = "mesh")]
+pub use synvoid_dns::anycast_sync;
+#[cfg(feature = "mesh")]
 pub use synvoid_dns::mesh_dnssec;
 #[cfg(feature = "mesh")]
 pub use synvoid_dns::mesh_sync;
-#[cfg(feature = "mesh")]
-pub use synvoid_dns::anycast_sync;

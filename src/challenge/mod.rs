@@ -8,13 +8,15 @@ pub use synvoid_challenge::pow::{has_leading_zeros, has_leading_zeros_ct, solve_
 pub use synvoid_challenge::types::*;
 
 mod mesh_pow;
-pub use mesh_pow::{MeshAuditResult, MeshPowConfig, MeshPowManager, MeshPowResult, MeshPowSolution};
+pub use mesh_pow::{
+    MeshAuditResult, MeshPowConfig, MeshPowManager, MeshPowResult, MeshPowSolution,
+};
 
-use synvoid_theme::{ChallengePageTemplate, ThemeConfig};
-use synvoid_utils::current_timestamp;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::net::IpAddr;
+use synvoid_theme::{ChallengePageTemplate, ThemeConfig};
+use synvoid_utils::current_timestamp;
 
 struct ChallengeAttempt {
     count: u32,

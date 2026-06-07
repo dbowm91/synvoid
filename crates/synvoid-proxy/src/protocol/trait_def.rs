@@ -1,6 +1,6 @@
 use super::types::{ProtocolMetrics, ProtocolRequest, ProtocolResponse, ProtocolType};
-use synvoid_upstream::UpstreamPool;
 use std::sync::Arc;
+use synvoid_upstream::UpstreamPool;
 
 pub trait WafCoreBackend: Send + Sync + 'static {}
 
@@ -17,11 +17,7 @@ pub trait ProtocolHandler: Send + Sync {
 
     fn parse_response(&self, data: &[u8]) -> Result<ProtocolResponse, ProtocolError>;
 
-    fn apply_waf(
-        &self,
-        request: &mut ProtocolRequest,
-        waf: &Arc<dyn WafCoreBackend>,
-    ) -> WafAction;
+    fn apply_waf(&self, request: &mut ProtocolRequest, waf: &Arc<dyn WafCoreBackend>) -> WafAction;
 
     fn select_upstream(
         &self,

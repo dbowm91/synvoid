@@ -9,7 +9,6 @@
 //! - Expiration-based cleanup
 //! - Graceful shutdown with data flush
 
-use synvoid_config::DenyListLimitsConfig;
 use ahash::AHashMap;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -18,6 +17,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use synvoid_config::DenyListLimitsConfig;
 use tokio::sync::mpsc;
 
 use synvoid_waf::mitigation::{MitigationProvider, SizedMitigationProvider};

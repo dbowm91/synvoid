@@ -162,7 +162,9 @@ pub trait TarpitService: Send + Sync + 'static {
         &self,
         path: &str,
         user_agent: Option<&str>,
-    ) -> Pin<Box<dyn futures_core::Stream<Item = Result<Bytes, std::io::Error>> + Send + Sync + 'static>>;
+    ) -> Pin<
+        Box<dyn futures_core::Stream<Item = Result<Bytes, std::io::Error>> + Send + Sync + 'static>,
+    >;
 }
 
 #[cfg(test)]

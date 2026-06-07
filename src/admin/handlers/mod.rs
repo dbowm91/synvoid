@@ -1,6 +1,6 @@
-pub use synvoid_admin::handlers::stats;
 pub use synvoid_admin::handlers::logs;
 pub use synvoid_admin::handlers::probes;
+pub use synvoid_admin::handlers::stats;
 pub use synvoid_admin::handlers::system;
 
 pub mod alerting;

@@ -1,9 +1,5 @@
-use super::state::{AdminStateProvider, AggregatedMetrics};
 use super::common::OptionalAuth;
-use synvoid_metrics::payloads::HealthStatus;
-use synvoid_metrics::TimingStatsPayload;
-use synvoid_metrics::{get_proxy_cache_hits, get_proxy_cache_misses};
-use synvoid_static_files::client::get_global_async_cpu_offload_stats;
+use super::state::{AdminStateProvider, AggregatedMetrics};
 use axum::{
     extract::{Query, State},
     http::StatusCode,
@@ -11,6 +7,10 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use synvoid_metrics::payloads::HealthStatus;
+use synvoid_metrics::TimingStatsPayload;
+use synvoid_metrics::{get_proxy_cache_hits, get_proxy_cache_misses};
+use synvoid_static_files::client::get_global_async_cpu_offload_stats;
 use utoipa::ToSchema;
 
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]

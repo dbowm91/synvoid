@@ -5,6 +5,7 @@ edition = "2021"
 
 [features]
 mesh = ["synvoid-config/mesh", "dep:synvoid-mesh", "synvoid-mesh/mesh"]
+dns = []
 
 [dependencies]
 synvoid-core = { path = "../synvoid-core" }
@@ -13,21 +14,30 @@ synvoid-metrics = { path = "../synvoid-metrics" }
 synvoid-waf = { path = "../synvoid-waf" }
 synvoid-challenge = { path = "../synvoid-challenge" }
 synvoid-http-client = { path = "../synvoid-http-client" }
+synvoid-app-server = { path = "../synvoid-app-server" }
+synvoid-app-handlers = { path = "../synvoid-app-handlers" }
 synvoid-proxy = { path = "../synvoid-proxy" }
+synvoid-upload = { path = "../synvoid-upload" }
+synvoid-plugin-runtime = { path = "../synvoid-plugin-runtime" }
+synvoid-utils = { path = "../synvoid-utils" }
 synvoid-mesh = { path = "../synvoid-mesh", optional = true }
+synvoid-serverless = { path = "../synvoid-serverless" }
 synvoid-static-files = { path = "../synvoid-static-files" }
 synvoid-ipc = { path = "../synvoid-ipc" }
 ahash = "0.8"
 anyhow = "1"
 bytes = "1"
+async-trait = "0.1"
 futures = "0.3"
 dashmap = "7.0.0-rc2"
 http = "1"
 http-body = "1"
 http-body-util = "0.1"
+axum = { workspace = true, features = ["json", "macros"] }
 hyper = { version = "1", features = ["http1", "http2", "server"] }
 hyper-util = { version = "0.1", features = ["tokio", "server-auto", "server-graceful", "http1", "http2"] }
 tokio = { version = "1", features = ["rt", "net", "time", "sync", "macros", "io-util"] }
+tokio-tungstenite = "0.28"
 tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
 metrics = "0.22"
@@ -36,6 +46,8 @@ chrono = "0.4"
 rand = "0.9"
 sha1 = "0.10"
 base64 = "0.22"
+h3 = "0.0.8"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 regex = "1"
 

@@ -4,9 +4,9 @@ use std::future::Future;
 use std::sync::Arc;
 
 use synvoid_config::site::SiteImagePoisonConfig;
+use synvoid_ipc::CpuTaskPolicy;
 #[cfg(feature = "mesh")]
 use synvoid_mesh::mesh::transport::MeshTransportManager;
-use synvoid_ipc::CpuTaskPolicy;
 use synvoid_proxy::{RouteTarget, Router};
 
 pub struct TransformedUpstreamResponse {

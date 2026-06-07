@@ -15,13 +15,7 @@ use crate::response_builder::{build_response_with_alt_svc, fallback_error_boxed}
 use crate::response_helpers::format_secure_http_only_cookie;
 
 pub trait ChallengePathWaf {
-    fn block_ip_for_honeypot(
-        &self,
-        ip: IpAddr,
-        reason: &str,
-        duration_secs: u64,
-        scope: &str,
-    );
+    fn block_ip_for_honeypot(&self, ip: IpAddr, reason: &str, duration_secs: u64, scope: &str);
 
     fn generate_challenge_page(
         &self,
@@ -155,11 +149,8 @@ where
             CssAssetAction::RedirectWithCookie => {
                 let verified_cookie_name = waf.css_verified_cookie_name();
                 let window_secs = waf.css_window_secs();
-                let cookie = format_secure_http_only_cookie(
-                    &verified_cookie_name,
-                    "verified",
-                    window_secs,
-                );
+                let cookie =
+                    format_secure_http_only_cookie(&verified_cookie_name, "verified", window_secs);
                 let response = Response::builder()
                     .status(http::StatusCode::FOUND)
                     .header(http::header::LOCATION, "/")

@@ -1,6 +1,7 @@
 use std::net::IpAddr;
 
-use synvoid_waf::WafDecision;
+use http::HeaderMap;
+use synvoid_waf::{request_sanitization::RequestSanitizer, WafDecision};
 
 pub trait EarlyWafHooks {
     fn verify_trust_token(&self, client_ip: IpAddr, token: &str) -> bool;
@@ -132,6 +133,29 @@ pub fn early_waf_decision<W: EarlyWafHooks>(
     } else {
         waf.check_early(client_ip, path, cookies, None)
     }
+}
+
+pub fn sanitize_and_resolve_client_ip(
+    headers: &mut HeaderMap,
+    trusted_proxies: &[String],
+    client_ip: IpAddr,
+) -> IpAddr {
+    let sanitizer = RequestSanitizer::new(trusted_proxies.to_vec(), true);
+    sanitizer.sanitize_request_headers(headers, client_ip);
+    sanitizer
+        .get_real_ip(headers, client_ip)
+        .unwrap_or(client_ip)
+}
+
+pub fn resolve_client_ip(
+    headers: &HeaderMap,
+    trusted_proxies: &[String],
+    client_ip: IpAddr,
+) -> IpAddr {
+    let sanitizer = RequestSanitizer::new(trusted_proxies.to_vec(), true);
+    sanitizer
+        .get_real_ip(headers, client_ip)
+        .unwrap_or(client_ip)
 }
 
 #[cfg(test)]

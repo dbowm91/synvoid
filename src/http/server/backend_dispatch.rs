@@ -5,257 +5,77 @@ pub(super) async fn handle_pass_backend_dispatch(
     on_upgrade: Option<hyper::upgrade::OnUpgrade>,
     dispatch_ctx: PassBackendDispatchContext<'_>,
 ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
-    // ============================================================================
-    // SECTION 15: Backend Dispatch (WebSocket, AxumDynamic, Static, Upstream)
-    // ============================================================================
-    if let Some(ref rm) = dispatch_ctx.req_metrics {
-        rm.record_proxied();
-    }
-    if let Some(response) = maybe_handle_websocket_upgrade(
-        on_upgrade,
-        dispatch_ctx.app_servers,
-        dispatch_ctx.site_id,
-        dispatch_ctx.target,
-        dispatch_ctx.path,
-        dispatch_ctx.waf,
-        dispatch_ctx.client_ip,
-        &dispatch_ctx.parts.headers,
-        handle_websocket_to_appserver,
-        handle_websocket_tunnel,
-    )
-    .await
-    {
-        return response;
-    }
+    let plugin_backend = dispatch_ctx
+        .router
+        .plugin_manager()
+        .and_then(|pm| pm.downcast_ref::<crate::plugin::PluginManager>())
+        .map(|pm| pm as &dyn synvoid_http::WasmFilterBackend);
+    let axum_router_lookup = dispatch_ctx
+        .router
+        .plugin_manager()
+        .and_then(|pm| pm.downcast_ref::<crate::plugin::PluginManager>())
+        .map(|pm| pm as &dyn synvoid_http::AxumDynamicRouterLookup);
 
-    if let Some(resp) = maybe_handle_axum_dynamic_backend(
-        dispatch_ctx.router,
-        dispatch_ctx.target,
-        dispatch_ctx.site_id,
-        dispatch_ctx.path,
-        dispatch_ctx.parts,
-        dispatch_ctx.alt_svc,
-        dispatch_ctx.main_config,
-    )
-    .await
-    {
-        return Ok(resp);
-    }
-
-    if let Some(resp) = maybe_handle_static_backend(
-        dispatch_ctx.target,
-        dispatch_ctx.path,
-        dispatch_ctx.method,
-        &dispatch_ctx.parts.headers,
-    )
-    .await
-    {
-        return Ok(resp);
-    }
-
-    #[cfg(feature = "mesh")]
-    if matches!(
+    let is_appserver = matches!(
         dispatch_ctx.target.backend_type,
-        crate::router::BackendType::Serverless
-    ) {
-        if let Some(response) = maybe_handle_serverless_backend(
-            dispatch_ctx.serverless_manager,
-            dispatch_ctx.mesh_transport,
-            dispatch_ctx.method,
-            dispatch_ctx.path,
-            dispatch_ctx.parts,
-            dispatch_ctx.full_body_arc,
-            dispatch_ctx.ipc.clone(),
-            dispatch_ctx.worker_id,
-            dispatch_ctx.main_config,
-            dispatch_ctx.client_ip,
-            dispatch_ctx.method_str,
-            dispatch_ctx.start,
-            dispatch_ctx.site_id,
-            dispatch_ctx.user_agent,
-            dispatch_ctx.alt_svc,
-            send_request_log_if_enabled,
-        )
-        .await
-        {
-            return response;
-        }
-    }
-
-    if let Some(response) = maybe_handle_spin_backend(
-        dispatch_ctx.target,
-        dispatch_ctx.site_id,
-        dispatch_ctx.path,
-        dispatch_ctx.parts,
-        dispatch_ctx.full_body_arc,
-        dispatch_ctx.ipc.clone(),
-        dispatch_ctx.worker_id,
-        dispatch_ctx.main_config,
-        dispatch_ctx.client_ip,
-        dispatch_ctx.method_str,
-        dispatch_ctx.start,
-        dispatch_ctx.user_agent,
-        dispatch_ctx.alt_svc,
-        send_request_log_if_enabled,
-    )
-    .await
-    {
-        return Ok(response);
-    }
-
-    if let Some(response) = maybe_handle_fastcgi_or_php_backend(
-        dispatch_ctx.target,
-        dispatch_ctx.router,
-        dispatch_ctx.waf,
-        dispatch_ctx.site_id,
-        dispatch_ctx.path,
-        dispatch_ctx.method,
-        dispatch_ctx.parts,
-        dispatch_ctx.full_body_arc,
-        dispatch_ctx.alt_svc,
-        dispatch_ctx.main_config,
-    )
-    .await
-    {
-        return Ok(response);
-    }
-
-    if let Some(response) = maybe_handle_cgi_backend(
-        dispatch_ctx.target,
-        dispatch_ctx.site_id,
-        dispatch_ctx.path,
-        dispatch_ctx.method,
-        dispatch_ctx.parts,
-        dispatch_ctx.full_body_arc,
-        dispatch_ctx.client_ip,
-        dispatch_ctx.alt_svc,
-        dispatch_ctx.main_config,
-    )
-    .await
-    {
-        return Ok(response);
-    }
-
-    if let Some(response) = maybe_handle_app_server_backend(
-        dispatch_ctx.app_servers,
-        dispatch_ctx.target,
-        dispatch_ctx.site_id,
-        dispatch_ctx.path,
-        dispatch_ctx.method,
-        dispatch_ctx.parts,
-        dispatch_ctx.full_body_arc,
-        dispatch_ctx.alt_svc,
-        dispatch_ctx.main_config,
-    )
-    .await
-    {
-        return Ok(response);
-    }
-
-    #[cfg(feature = "mesh")]
-    if let Some(response) = maybe_handle_mesh_backend(
-        dispatch_ctx.mesh_backend_pool,
-        dispatch_ctx.target,
-        dispatch_ctx.site_id,
-        dispatch_ctx.path,
-        dispatch_ctx.parts,
-        dispatch_ctx.full_body_arc,
-        dispatch_ctx.main_config,
-        dispatch_ctx.alt_svc,
-        dispatch_ctx.metrics,
-        dispatch_ctx.request_body_size,
-        || {
-            if let Some(rm) = dispatch_ctx.req_metrics {
-                rm.record_upstream_success();
-            }
-        },
-        || {
-            if let Some(rm) = dispatch_ctx.req_metrics {
-                rm.record_upstream_failure();
-            }
-        },
-    )
-    .await
-    {
-        return response;
-    }
-
-    if let Some(response) = maybe_handle_wasm_request_filter(
-        dispatch_ctx.router,
-        dispatch_ctx.target,
-        dispatch_ctx.path,
-        dispatch_ctx.method,
-        dispatch_ctx.parts,
-        dispatch_ctx.body_slice,
-        dispatch_ctx.client_ip,
-        dispatch_ctx.waf,
-        dispatch_ctx.alt_svc,
-        dispatch_ctx.main_config,
-        |status| {
-            send_request_log_if_enabled(
-                dispatch_ctx.ipc.clone(),
-                dispatch_ctx.worker_id,
-                dispatch_ctx.main_config,
-                dispatch_ctx.client_ip,
-                dispatch_ctx.method_str,
-                dispatch_ctx.path,
-                status,
-                dispatch_ctx.start.elapsed().as_millis() as u64,
-                dispatch_ctx.site_id,
-                dispatch_ctx.user_agent,
-                false,
-            );
-        },
-    ) {
-        return Ok(response);
-    }
-
-    let content_type = dispatch_ctx
-        .parts
-        .headers
-        .get("content-type")
-        .and_then(|v| v.to_str().ok());
-    if let Some(response) = maybe_handle_upload_validation(
-        dispatch_ctx.waf,
-        &dispatch_ctx.target.site_id,
-        dispatch_ctx.path,
-        dispatch_ctx.client_ip,
-        dispatch_ctx.full_body_arc,
-        dispatch_ctx.alt_svc,
-        dispatch_ctx.main_config,
-        content_type,
-    )
-    .await
-    {
-        return Ok(response);
-    }
-
-    let dispatch_plan = prepare_upstream_proxy_dispatch_plan(
-        dispatch_ctx.target,
-        dispatch_ctx.path,
-        dispatch_ctx.main_config,
-        dispatch_ctx.full_body_arc.len() as u64,
-        dispatch_ctx.client_ip,
-        dispatch_ctx.parts,
-        dispatch_ctx.upstream_client_registry,
-        dispatch_ctx.client,
+        crate::router::BackendType::AppServer
     );
+    let appserver_socket_path = if is_appserver {
+        if let Some(servers) = dispatch_ctx.app_servers {
+            let servers_read = servers.read().await;
+            servers_read
+                .get(dispatch_ctx.site_id)
+                .map(|supervisor| supervisor.config().resolve_socket_path())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
-    handle_pass_upstream_proxy_phase(
-        dispatch_ctx.target,
-        dispatch_ctx.router,
-        dispatch_ctx.path,
-        dispatch_ctx.site_id,
-        dispatch_ctx.method,
-        dispatch_ctx.parts,
-        dispatch_ctx.full_body_arc,
-        dispatch_plan,
-        dispatch_ctx.alt_svc,
-        dispatch_ctx.main_config,
-        dispatch_ctx.metrics,
-        dispatch_ctx.request_body_size,
+    let backend_ctx = synvoid_http::BackendDispatchContext {
+        is_appserver,
+        appserver_socket_path,
+        app_servers: dispatch_ctx.app_servers,
+        axum_router_lookup,
+        plugin_backend,
+        target: dispatch_ctx.target,
+        site_id: dispatch_ctx.site_id,
+        path: dispatch_ctx.path,
+        waf: dispatch_ctx.waf,
+        client_ip: dispatch_ctx.client_ip,
+        router: dispatch_ctx.router,
+        parts: dispatch_ctx.parts,
+        method: dispatch_ctx.method,
+        full_body_arc: dispatch_ctx.full_body_arc,
+        ipc: dispatch_ctx.ipc.clone(),
+        worker_id: dispatch_ctx.worker_id,
+        main_config: dispatch_ctx.main_config,
+        method_str: dispatch_ctx.method_str,
+        start: dispatch_ctx.start,
+        user_agent: dispatch_ctx.user_agent,
+        alt_svc: dispatch_ctx.alt_svc,
+        req_metrics: dispatch_ctx
+            .req_metrics
+            .as_ref()
+            .map(|rm| rm as &dyn synvoid_http::BackendDispatchMetrics),
+        metrics: dispatch_ctx.metrics,
+        request_body_size: dispatch_ctx.request_body_size,
+        body_slice: dispatch_ctx.body_slice,
+        upstream_client_registry: dispatch_ctx.upstream_client_registry,
+        client: dispatch_ctx.client,
         #[cfg(feature = "mesh")]
-        dispatch_ctx.mesh_transport,
+        serverless_manager: dispatch_ctx.serverless_manager,
+        #[cfg(feature = "mesh")]
+        mesh_transport: dispatch_ctx.mesh_transport,
+        #[cfg(feature = "mesh")]
+        mesh_backend_pool: dispatch_ctx.mesh_backend_pool,
+    };
+
+    synvoid_http::handle_pass_backend_dispatch(
+        on_upgrade,
+        backend_ctx,
+        send_request_log_if_enabled,
         |method, url, headers, body, timeout| {
             let url = url.to_string();
             let headers = headers.cloned();
@@ -269,21 +89,6 @@ pub(super) async fn handle_pass_backend_dispatch(
                 )
                 .await
             })
-        },
-        || {
-            if let Some(rm) = dispatch_ctx.req_metrics {
-                rm.record_upstream_success();
-            }
-        },
-        || {
-            if let Some(rm) = dispatch_ctx.req_metrics {
-                rm.record_upstream_failure();
-            }
-        },
-        |egress_len| {
-            if let Some(rm) = dispatch_ctx.req_metrics {
-                rm.record_egress(egress_len, EgressDirection::Error);
-            }
         },
         |body, site_id, last_modified, poison_config| async move {
             crate::http::apply_image_poisoning(body, site_id, last_modified, poison_config).await

@@ -2,13 +2,13 @@
 
 use super::trait_def::{ProtocolError, ProtocolHandler, WafAction, WafCoreBackend};
 use super::types::{ProtocolMetrics, ProtocolRequest, ProtocolResponse, ProtocolType};
-use synvoid_upstream::{Backend, UpstreamPool};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
 };
+use synvoid_upstream::{Backend, UpstreamPool};
 
 const GRPC_FRAME_HEADER_SIZE: usize = 5;
 const GRPC_COMPRESSION_MASK: u8 = 0x01;

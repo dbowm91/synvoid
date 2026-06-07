@@ -242,9 +242,7 @@ pub async fn get_workers<S: AdminStateProvider>(
     State(state): State<Arc<S>>,
     _auth: OptionalAuth,
 ) -> Result<Json<Vec<WorkerStatusResponse>>, StatusCode> {
-    let pm = state
-        .process_manager()
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let pm = state.process_manager().ok_or(StatusCode::NOT_FOUND)?;
     let worker_metrics = pm.get_worker_metrics();
 
     let workers: Vec<WorkerStatusResponse> = worker_metrics
@@ -307,9 +305,7 @@ pub async fn restart_worker<S: AdminStateProvider>(
     Path(worker_id): Path<String>,
     _auth: OptionalAuth,
 ) -> Result<Json<StatusResponse>, StatusCode> {
-    let pm = state
-        .process_manager()
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let pm = state.process_manager().ok_or(StatusCode::NOT_FOUND)?;
 
     pm.restart_worker_by_id(&worker_id).map_err(|e| {
         tracing::error!("Failed to restart worker {}: {}", worker_id, e);
@@ -354,9 +350,7 @@ pub async fn batch_restart_workers<S: AdminStateProvider>(
     _auth: OptionalAuth,
     Json(req): Json<BatchRestartRequest>,
 ) -> Result<Json<BatchRestartResponse>, StatusCode> {
-    let pm = state
-        .process_manager()
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let pm = state.process_manager().ok_or(StatusCode::NOT_FOUND)?;
 
     let mut restarted = Vec::new();
     let mut failed = Vec::new();
@@ -448,9 +442,7 @@ pub async fn get_worker_count<S: AdminStateProvider>(
     State(state): State<Arc<S>>,
     _auth: OptionalAuth,
 ) -> Result<Json<WorkerCountResponse>, StatusCode> {
-    let pm = state
-        .process_manager()
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let pm = state.process_manager().ok_or(StatusCode::NOT_FOUND)?;
 
     let current = pm.get_running_worker_count();
     let config_arc = state.config();
@@ -479,9 +471,7 @@ pub async fn scale_workers<S: AdminStateProvider>(
     _auth: OptionalAuth,
     Json(req): Json<ScaleWorkersRequest>,
 ) -> Result<Json<ScaleWorkersResponse>, StatusCode> {
-    let pm = state
-        .process_manager()
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let pm = state.process_manager().ok_or(StatusCode::NOT_FOUND)?;
 
     let current = pm.get_running_worker_count();
     let config_arc = state.config();
@@ -560,9 +550,7 @@ pub async fn get_supervisor<S: AdminStateProvider>(
     State(state): State<Arc<S>>,
     _auth: OptionalAuth,
 ) -> Result<Json<SupervisorProcessStatusResponse>, StatusCode> {
-    let pm = state
-        .process_manager()
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let pm = state.process_manager().ok_or(StatusCode::NOT_FOUND)?;
 
     let status_file_path = get_supervisor_status_file_path();
 

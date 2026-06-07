@@ -113,7 +113,10 @@ impl AnycastZoneSync {
         self
     }
 
-    pub fn with_mesh_transport(mut self, transport: Arc<synvoid_mesh::transport::MeshTransport>) -> Self {
+    pub fn with_mesh_transport(
+        mut self,
+        transport: Arc<synvoid_mesh::transport::MeshTransport>,
+    ) -> Self {
         self.mesh_transport = Some(transport);
         self
     }

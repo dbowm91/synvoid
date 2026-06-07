@@ -20,41 +20,10 @@ use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 use tokio::sync::Semaphore;
 
-use crate::http::app_server_backend_dispatch::maybe_handle_app_server_backend;
-use crate::http::axum_dynamic_dispatch::maybe_handle_axum_dynamic_backend;
-use crate::http::buffered_request_waf_dispatch::maybe_handle_buffered_request_waf;
-use crate::http::cgi_backend_dispatch::maybe_handle_cgi_backend;
-use crate::http::fastcgi_php_backend_dispatch::maybe_handle_fastcgi_or_php_backend;
-use crate::http::internal_endpoint_dispatch::{
-    dispatch_internal_endpoint, InternalEndpointDispatch,
-};
-#[cfg(feature = "mesh")]
-use crate::http::mesh_backend_dispatch::maybe_handle_mesh_backend;
-#[cfg(feature = "mesh")]
-use crate::http::serverless_backend_dispatch::maybe_handle_serverless_backend;
 #[allow(unused_imports)]
 use crate::http::shared_handler::SharedRequestHandler;
-#[cfg(feature = "mesh")]
-use crate::http::special_request_paths::{
-    maybe_handle_special_request_paths, SpecialRequestDispatch,
-};
-use crate::http::spin_backend_dispatch::maybe_handle_spin_backend;
-use crate::http::static_backend_dispatch::maybe_handle_static_backend;
-use crate::http::streaming_request_fast_path::{
-    maybe_handle_streaming_request_fast_path, StreamingRequestFastPathOutcome,
-};
-use crate::http::streaming_waf_decision::maybe_handle_streaming_waf_decision;
-use crate::http::upload_validation_dispatch::maybe_handle_upload_validation;
-use crate::http::upstream_proxy_dispatch::handle_pass_upstream_proxy_phase;
-use crate::http::upstream_proxy_dispatch_plan::prepare_upstream_proxy_dispatch_plan;
-use crate::http::wasm_filter_dispatch::maybe_handle_wasm_request_filter;
-use crate::http::websocket_dispatch::{handle_websocket_to_appserver, handle_websocket_tunnel};
-use crate::http::websocket_upgrade_dispatch::maybe_handle_websocket_upgrade;
 use crate::http_client::ErasedHttpClient;
-use request_preparation::{
-    prepare_request_before_buffered_waf, PreparedRequest, RequestPreparationContext,
-    RequestPreparationOutcome,
-};
+use request_preparation::RequestPreparationOutcome;
 
 mod accept_loop;
 mod backend_dispatch;
@@ -72,17 +41,14 @@ use crate::config::MainConfig;
 #[allow(unused_imports)]
 use crate::http::headers;
 #[allow(unused_imports)]
-use crate::http_client::{
-    create_http_client_with_config, HttpClient,
-};
+use crate::http_client::{create_http_client_with_config, HttpClient};
 #[cfg(feature = "mesh")]
 use crate::mesh::config::MeshConfig;
 #[cfg(feature = "mesh")]
 use crate::mesh::transports::MeshTransportManager;
 #[cfg(feature = "mesh")]
 use crate::mesh::MeshBackendPool;
-use crate::metrics::bandwidth::{BandwidthProtocol, EgressDirection};
-use crate::metrics::{WorkerInlineCpuPhase, WorkerMetrics};
+use crate::metrics::WorkerMetrics;
 use crate::proxy::client_registry::UpstreamClientRegistry;
 use crate::router::Router;
 use crate::waf::{FloodDecision, FloodProtector, WafCore};
@@ -293,7 +259,7 @@ impl HttpServer {
 
     #[allow(unused_assignments)]
     pub(super) async fn handle_request(
-        mut req: hyper::Request<hyper::body::Incoming>,
+        req: hyper::Request<hyper::body::Incoming>,
         client_addr: SocketAddr,
         local_addr: Option<SocketAddr>,
         router: Arc<Router>,
@@ -338,303 +304,102 @@ impl HttpServer {
         }
 
         let start = std::time::Instant::now();
-        let request_preparation_started_at = Instant::now();
-        let record_inline_phase = |phase: WorkerInlineCpuPhase, started_at: Instant| {
-            if let Some(metrics) = &metrics {
-                metrics.record_inline_cpu_phase_time_ms(
-                    phase,
-                    started_at.elapsed().as_millis() as u64,
-                );
-            }
+        let request_drop: Arc<dyn Fn() + Send + Sync> = {
+            let http_conn = http_conn.clone();
+            Arc::new(move || http_conn.request_drop())
         };
-        let client_ip = client_addr.ip();
-        // Sanitize X-Forwarded-For headers based on trusted proxies.
-        let client_ip = {
-            let sanitizer =
-                crate::waf::RequestSanitizer::new(main_config.server.trusted_proxies.clone(), true);
-            sanitizer.sanitize_request_headers(req.headers_mut(), client_ip);
-            sanitizer
-                .get_real_ip(req.headers(), client_ip)
-                .unwrap_or(client_ip)
-        };
-        let path = req
-            .uri()
-            .path_and_query()
-            .map(|pq| pq.path())
-            .unwrap_or("/")
-            .to_string();
-
-        let req = {
-            let req = match dispatch_internal_endpoint(
-                req,
-                &path,
-                client_ip,
-                &drain_state,
-                &alt_svc,
-                &main_config,
-            )
-            .await?
-            {
-                InternalEndpointDispatch::Handled(response) => {
-                    record_inline_phase(
-                        WorkerInlineCpuPhase::RequestPreparation,
-                        request_preparation_started_at,
-                    );
-                    return Ok(response);
-                }
-                InternalEndpointDispatch::NotHandled(req) => req,
-            };
-
-            let req = {
-                #[cfg(feature = "mesh")]
-                {
-                    match maybe_handle_special_request_paths(
-                        req,
-                        &path,
-                        client_ip,
-                        &alt_svc,
-                        &main_config,
-                        &mesh_config,
-                        &mesh_transport,
-                    )
-                    .await?
-                    {
-                        SpecialRequestDispatch::Handled(response) => {
-                            record_inline_phase(
-                                WorkerInlineCpuPhase::RequestPreparation,
-                                request_preparation_started_at,
-                            );
-                            return Ok(response);
-                        }
-                        SpecialRequestDispatch::NotHandled(req) => req,
-                    }
-                }
-                #[cfg(not(feature = "mesh"))]
-                {
-                    req
-                }
-            };
-
-            req
-        };
-
-        let conn_guard = match traffic_control::maybe_enforce_request_traffic_limits(
+        let flow = synvoid_http::prepare_http_request_flow(
+            req,
+            client_addr.ip(),
+            local_addr,
+            &drain_state,
+            &router,
             &waf,
-            client_ip,
-            &path,
-            start,
-            &ipc,
-            worker_id,
             &alt_svc,
             &main_config,
+            &http_config,
+            &metrics,
+            ipc.clone(),
+            worker_id,
+            start,
+            Arc::clone(&request_drop),
+            send_request_log_if_enabled,
+            #[cfg(feature = "mesh")]
+            &mesh_config,
+            #[cfg(feature = "mesh")]
+            &mesh_transport,
+            #[cfg(feature = "mesh")]
+            &serverless_manager,
+            &upstream_client_registry,
         )
-        .await
-        {
-            traffic_control::TrafficControlOutcome::Continue { conn_guard } => conn_guard,
-            traffic_control::TrafficControlOutcome::Respond(response) => {
-                record_inline_phase(
-                    WorkerInlineCpuPhase::RequestPreparation,
-                    request_preparation_started_at,
-                );
+        .await?;
+
+        let client_ip = flow.client_ip;
+        let prepared = match flow.outcome {
+            RequestPreparationOutcome::Continue(prepared) => prepared,
+            RequestPreparationOutcome::Respond(response) => {
                 return Ok(response);
             }
         };
 
-        let prepared = match prepare_request_before_buffered_waf(RequestPreparationContext {
-            req,
+        let _drain_guard = DrainGuard::new(drain_state);
+        let plugin_backend = router
+            .plugin_manager()
+            .and_then(|pm| pm.downcast_ref::<crate::plugin::PluginManager>())
+            .map(|pm| pm as &dyn synvoid_http::WasmFilterBackend);
+        let axum_router_lookup = router
+            .plugin_manager()
+            .and_then(|pm| pm.downcast_ref::<crate::plugin::PluginManager>())
+            .map(|pm| pm as &dyn synvoid_http::AxumDynamicRouterLookup);
+
+        synvoid_http::handle_http_request_postlude(
+            synvoid_http::HttpRequestPostludeContext {
+            prepared,
             client_ip,
-            local_addr,
             router: &router,
             waf: &waf,
+            client: &client,
             alt_svc: &alt_svc,
             main_config: &main_config,
             http_config: &http_config,
             metrics: &metrics,
-            http_conn: &http_conn,
             ipc: ipc.clone(),
             worker_id,
             start,
+            app_servers: &app_servers,
+            axum_router_lookup,
+            plugin_backend,
             upstream_client_registry: &upstream_client_registry,
+            request_drop: Arc::clone(&request_drop),
+            request_log: send_request_log_if_enabled,
             #[cfg(feature = "mesh")]
             serverless_manager: &serverless_manager,
-            conn_guard: conn_guard.as_ref(),
-        })
-        .await?
-        {
-            RequestPreparationOutcome::Continue(prepared) => prepared,
-            RequestPreparationOutcome::Respond(response) => {
-                record_inline_phase(
-                    WorkerInlineCpuPhase::RequestPreparation,
-                    request_preparation_started_at,
-                );
-                return Ok(response);
-            }
-        };
-        record_inline_phase(
-            WorkerInlineCpuPhase::RequestPreparation,
-            request_preparation_started_at,
-        );
-
-        let PreparedRequest {
-            on_upgrade,
-            target,
-            parts,
-            method,
-            path,
-            user_agent,
-            skip_waf,
-            full_body_arc,
-            request_body_size,
-            body_slice,
-        } = prepared;
-        let site_id = target.site_id.to_string();
-        let query_string = parts.uri.query();
-        let body_slice_ref = body_slice.as_ref().map(Arc::clone);
-        let body_slice_ref: Option<&[u8]> = body_slice_ref.as_ref().map(|v| v.as_ref() as &[u8]);
-
-        let _drain_guard = DrainGuard::new(drain_state);
-        let req_metrics = metrics.as_ref().map(|m| RequestMetrics {
-            site_id: site_id.to_string(),
-            metrics: Arc::clone(m),
-        });
-        if let Some(ref rm) = req_metrics {
-            rm.record_start();
-        }
-        if let Some(metrics) = &metrics {
-            metrics.record_body_buffering_bytes(request_body_size);
-        }
-        let method_str = method.to_string();
-
-        let response = {
-            let buffered_waf_started_at = Instant::now();
-            if let Some(response) = maybe_handle_buffered_request_waf(
-                &waf,
-                &target,
-                skip_waf,
-                &site_id,
-                client_ip,
-                &method_str,
-                &path,
-                query_string,
-                &parts.headers,
-                body_slice_ref,
-                user_agent.as_deref(),
-                &http_config,
-                &alt_svc,
-                &main_config,
-                || http_conn.request_drop(),
-                |status, latency_ms| {
-                    send_request_log_if_enabled(
-                        ipc.clone(),
-                        worker_id,
-                        &main_config,
-                        client_ip,
-                        &method_str,
-                        &path,
-                        status,
-                        latency_ms,
-                        &site_id,
-                        user_agent.as_deref(),
-                        false,
+            #[cfg(feature = "mesh")]
+            mesh_transport: &mesh_transport,
+            #[cfg(feature = "mesh")]
+            mesh_backend_pool: &mesh_backend_pool,
+        },
+            |method, url, headers, body, timeout| {
+                let url = url.to_string();
+                let headers = headers.cloned();
+                Box::pin(async move {
+                    crate::http_client::send_request_via_quic_tunnel(
+                        method,
+                        &url,
+                        headers.as_ref(),
+                        body,
+                        timeout,
                     )
-                },
-                || {
-                    if let Some(rm) = &req_metrics {
-                        rm.record_blocked();
-                    }
-                },
-                |body_len| {
-                    if let Some(rm) = &req_metrics {
-                        rm.record_egress(body_len, EgressDirection::Blocked);
-                    }
-                    if let Some(m) = &metrics {
-                        m.bandwidth.record_egress(
-                            body_len,
-                            BandwidthProtocol::Http,
-                            EgressDirection::Blocked,
-                        );
-                        m.bandwidth.record_site_egress(&site_id, body_len);
-                    }
-                },
-                |body_len| {
-                    if let Some(rm) = &req_metrics {
-                        rm.record_challenged();
-                        rm.record_egress(body_len, EgressDirection::Challenged);
-                    }
-                },
-                || start.elapsed().as_millis() as u64,
-            )
-            .await
-            {
-                record_inline_phase(WorkerInlineCpuPhase::BufferedWaf, buffered_waf_started_at);
-                return Ok(response);
-            }
-            record_inline_phase(WorkerInlineCpuPhase::BufferedWaf, buffered_waf_started_at);
-
-            let backend_dispatch_started_at = Instant::now();
-            let dispatch_ctx = PassBackendDispatchContext {
-                app_servers: &app_servers,
-                site_id: &site_id,
-                target: &target,
-                path: &path,
-                waf: &waf,
-                client_ip,
-                router: &router,
-                parts: &parts,
-                method: &method,
-                full_body_arc: &full_body_arc,
-                ipc: ipc.clone(),
-                worker_id,
-                main_config: &main_config,
-                method_str: &method_str,
-                start,
-                user_agent: user_agent.as_deref(),
-                alt_svc: &alt_svc,
-                req_metrics: &req_metrics,
-                metrics: &metrics,
-                request_body_size,
-                body_slice: &body_slice,
-                upstream_client_registry: &upstream_client_registry,
-                client: &client,
-                #[cfg(feature = "mesh")]
-                serverless_manager: &serverless_manager,
-                #[cfg(feature = "mesh")]
-                mesh_transport: &mesh_transport,
-                #[cfg(feature = "mesh")]
-                mesh_backend_pool: &mesh_backend_pool,
-            };
-            let response =
-                backend_dispatch::handle_pass_backend_dispatch(on_upgrade, dispatch_ctx).await;
-            record_inline_phase(
-                WorkerInlineCpuPhase::BackendDispatch,
-                backend_dispatch_started_at,
-            );
-            response
-        };
-
-        let latency_ms = start.elapsed().as_millis() as u64;
-        if let Some(ref rm) = req_metrics {
-            rm.record_request_end(latency_ms);
-        }
-        crate::metrics::record_http_request_latency(latency_ms);
-
-        let status = response.as_ref().map(|r| r.status().as_u16()).unwrap_or(0);
-        let ipc_clone = ipc.clone();
-        send_request_log_if_enabled(
-            ipc_clone,
-            worker_id,
-            &main_config,
-            client_ip,
-            &method_str,
-            &path,
-            status,
-            latency_ms,
-            &site_id,
-            user_agent.as_deref(),
-            false,
-        );
-
-        response
+                    .await
+                })
+            },
+            |body, site_id, last_modified, poison_config| async move {
+                crate::http::apply_image_poisoning(body, site_id, last_modified, poison_config)
+                    .await
+            },
+            crate::metrics::record_http_request_latency,
+        )
+        .await
     }
 }
 

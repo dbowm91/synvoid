@@ -4,6 +4,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use arc_swap::ArcSwapOption;
+use async_trait::async_trait;
+use http::HeaderMap;
 
 pub mod adapters;
 pub mod asn_tracker;
@@ -124,6 +126,43 @@ pub struct WafCore {
 }
 
 impl synvoid_proxy::protocol::trait_def::WafCoreBackend for WafCore {}
+
+#[async_trait]
+impl synvoid_http::Http3RequestWaf for WafCore {
+    async fn check_request_full(
+        &self,
+        site_id: Option<&str>,
+        ip: IpAddr,
+        method: &str,
+        path: &str,
+        query: Option<&str>,
+        headers: &HeaderMap,
+        body: Option<&[u8]>,
+        ua: Option<&str>,
+        ja4_hash: Option<&str>,
+        site_bot_config: Option<&synvoid_config::site::SiteBotConfig>,
+    ) -> synvoid_proxy::WafDecision {
+        WafCore::check_request_full(
+            self,
+            site_id,
+            ip,
+            method,
+            path,
+            query,
+            headers,
+            body,
+            ua,
+            ja4_hash,
+            site_bot_config,
+            None,
+        )
+        .await
+    }
+
+    fn generate_tarpit_response(&self, path: &str) -> String {
+        WafCore::generate_tarpit_response(self, path)
+    }
+}
 
 pub use crate::worker::context::RequestServices;
 
@@ -836,13 +875,7 @@ impl synvoid_http::request_parse::EarlyWafHooks for WafCore {
 }
 
 impl synvoid_http::ChallengePathWaf for WafCore {
-    fn block_ip_for_honeypot(
-        &self,
-        ip: IpAddr,
-        reason: &str,
-        duration_secs: u64,
-        scope: &str,
-    ) {
+    fn block_ip_for_honeypot(&self, ip: IpAddr, reason: &str, duration_secs: u64, scope: &str) {
         WafCore::block_ip_for_honeypot(self, ip, reason, duration_secs, scope);
     }
 
@@ -883,6 +916,30 @@ impl synvoid_http::ChallengePathWaf for WafCore {
     }
 }
 
+impl synvoid_http::UploadValidationWaf for WafCore {
+    fn get_upload_validator(&self) -> Option<Arc<crate::upload::UploadValidator>> {
+        WafCore::get_upload_validator(self)
+    }
+
+    fn block_ip_with_threat_intel(
+        &self,
+        ip: IpAddr,
+        reason: &str,
+        duration_secs: u64,
+        scope: &str,
+    ) {
+        WafCore::block_ip_with_threat_intel(self, ip, reason, duration_secs, scope)
+    }
+
+    fn render_upload_validation_error_page(
+        &self,
+        status_code: u16,
+        message: Option<&str>,
+    ) -> String {
+        self.error_page_manager.render_page(status_code, message)
+    }
+}
+
 impl synvoid_http::RequestBodyWaf for WafCore {
     type StreamingScanner = crate::waf::attack_detection::StreamingWafCore;
 
@@ -892,6 +949,83 @@ impl synvoid_http::RequestBodyWaf for WafCore {
 
     fn check_request_body(&self, chunk: &[u8]) -> (bool, Option<synvoid_waf::WafDecision>) {
         WafCore::check_request_body(self, chunk)
+    }
+}
+
+impl synvoid_http::WafErrorPageRenderer for WafCore {
+    fn render_page(&self, status: u16, message: Option<&str>) -> String {
+        self.error_page_manager.render_page(status, message)
+    }
+}
+
+#[async_trait]
+impl synvoid_http::BufferedRequestWaf for WafCore {
+    fn error_page_theme(&self) -> &crate::theme::ThemeConfig {
+        self.error_page_manager.theme()
+    }
+
+    fn render_page_with_theme(
+        &self,
+        status: u16,
+        message: Option<&str>,
+        override_theme: Option<&crate::theme::ThemeConfig>,
+    ) -> String {
+        self.error_page_manager
+            .render_page_with_theme(status, message, override_theme)
+    }
+
+    fn connection_limiter(&self) -> Option<Arc<ConnectionLimiter>> {
+        self.connection_limiter.clone()
+    }
+
+    fn is_over_bandwidth_limit(&self) -> bool {
+        WafCore::is_over_bandwidth_limit(self)
+    }
+
+    fn honeypot_ban_duration_secs(&self) -> u64 {
+        self.honeypot_ban_duration_secs
+    }
+
+    fn stream_tarpit(
+        &self,
+        path: &str,
+        user_agent: Option<&str>,
+    ) -> synvoid_http::TarpitStream {
+        Box::pin(WafCore::stream_tarpit(self, path, user_agent))
+    }
+
+    fn generate_tarpit_response(&self, path: &str) -> String {
+        WafCore::generate_tarpit_response(self, path)
+    }
+
+    async fn check_request_full(
+        &self,
+        site_id: Option<&str>,
+        ip: IpAddr,
+        method: &str,
+        path: &str,
+        query: Option<&str>,
+        headers: &HeaderMap,
+        body: Option<&[u8]>,
+        ua: Option<&str>,
+        ja4_hash: Option<&str>,
+        site_bot_config: Option<&synvoid_config::site::SiteBotConfig>,
+    ) -> synvoid_waf::WafDecision {
+        WafCore::check_request_full(
+            self,
+            site_id,
+            ip,
+            method,
+            path,
+            query,
+            headers,
+            body,
+            ua,
+            ja4_hash,
+            site_bot_config,
+            None,
+        )
+        .await
     }
 }
 

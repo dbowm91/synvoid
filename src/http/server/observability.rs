@@ -61,6 +61,24 @@ impl RequestMetrics {
     }
 }
 
+impl synvoid_http::BackendDispatchMetrics for RequestMetrics {
+    fn record_proxied(&self) {
+        RequestMetrics::record_proxied(self);
+    }
+
+    fn record_upstream_success(&self) {
+        RequestMetrics::record_upstream_success(self);
+    }
+
+    fn record_upstream_failure(&self) {
+        RequestMetrics::record_upstream_failure(self);
+    }
+
+    fn record_egress(&self, bytes: u64, direction: EgressDirection) {
+        RequestMetrics::record_egress(self, bytes, direction);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn send_request_log_if_enabled(
     ipc: Option<Arc<tokio::sync::Mutex<IpcStream>>>,

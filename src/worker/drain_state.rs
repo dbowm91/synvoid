@@ -11,6 +11,7 @@ use std::os::windows::io::RawSocket as RawFd;
 use tokio::sync::Mutex;
 
 use crate::DrainFlag;
+use synvoid_http::{DrainStatusSnapshot, HttpDrainControl};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum RequestType {
@@ -252,6 +253,42 @@ impl WorkerDrainState {
 
         let mut start = self.drain_start.lock().await;
         *start = None;
+    }
+}
+
+#[async_trait::async_trait]
+impl HttpDrainControl for WorkerDrainState {
+    async fn start_drain(&self, drain_id: u64) -> bool {
+        WorkerDrainState::start_drain(self, drain_id).await
+    }
+
+    fn stop_accepting(&self) {
+        WorkerDrainState::stop_accepting(self);
+    }
+
+    async fn get_status(&self) -> DrainStatusSnapshot {
+        let status = WorkerDrainState::get_status(self).await;
+        DrainStatusSnapshot {
+            drain_id: status.drain_id,
+            is_draining: status.is_draining,
+            active_connections: status.active_connections,
+            idle_connections: status.idle_connections,
+            connections_drained: status.connections_drained,
+            drain_elapsed_secs: status.drain_elapsed_secs,
+            drain_complete: status.drain_complete,
+            stopped_accepting: status.stopped_accepting,
+            short_requests: status.short_requests,
+            long_requests: status.long_requests,
+            streaming_requests: status.streaming_requests,
+        }
+    }
+
+    fn is_draining(&self) -> bool {
+        WorkerDrainState::is_draining(self)
+    }
+
+    fn is_stopped_accepting(&self) -> bool {
+        WorkerDrainState::is_stopped_accepting(self)
     }
 }
 

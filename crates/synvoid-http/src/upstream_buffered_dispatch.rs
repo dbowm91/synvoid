@@ -45,7 +45,8 @@ pub async fn handle_buffered_upstream_request<PoisonFn, PoisonFut>(
         Option<&http::HeaderMap>,
         Option<Bytes>,
         Option<std::time::Duration>,
-    ) -> BoxFuture<'static, anyhow::Result<synvoid_http_client::HttpResponse>>,
+    )
+        -> BoxFuture<'static, anyhow::Result<synvoid_http_client::HttpResponse>>,
     on_upstream_success: impl Fn(),
     on_upstream_failure: impl Fn(),
     on_error_egress: impl Fn(u64),

@@ -1040,9 +1040,7 @@ impl synvoid_admin::handlers::state::AdminStateProvider for AdminState {
         self.waf_tracking.suspicious_word_tracker.as_ref()
     }
 
-    fn upstream_error_tracker(
-        &self,
-    ) -> Option<&std::sync::Arc<crate::waf::UpstreamErrorTracker>> {
+    fn upstream_error_tracker(&self) -> Option<&std::sync::Arc<crate::waf::UpstreamErrorTracker>> {
         self.waf_tracking.upstream_error_tracker.as_ref()
     }
 

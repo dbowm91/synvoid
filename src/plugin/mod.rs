@@ -177,6 +177,35 @@ impl Default for PluginManager {
     }
 }
 
+impl synvoid_http::AxumDynamicRouterLookup for PluginManager {
+    fn get_axum_router(&self) -> Option<Arc<Router>> {
+        PluginManager::get_axum_router(self)
+    }
+
+    fn get_axum_router_by_name(&self, name: &str) -> Option<Arc<Router>> {
+        PluginManager::get_axum_router_by_name(self, name)
+    }
+}
+
+impl synvoid_http::WasmFilterBackend for PluginManager {
+    fn apply_wasm_filters(
+        &self,
+        request: Request<Bytes>,
+        env: std::collections::HashMap<String, String>,
+    ) -> Result<WasmFilterResult, WasmPluginError> {
+        PluginManager::apply_wasm_filters(self, request, env)
+    }
+
+    fn apply_wasm_filters_with_plugins(
+        &self,
+        request: Request<Bytes>,
+        plugin_names: &[String],
+        env: std::collections::HashMap<String, String>,
+    ) -> Result<WasmFilterResult, WasmPluginError> {
+        PluginManager::apply_wasm_filters_with_plugins(self, request, plugin_names, env)
+    }
+}
+
 // ─── PluginAppManager (lifecycle management) ─────────────────────────────────
 
 /// Manages plugin lifecycle: load, unload, reload, and hot-reload via file watching.

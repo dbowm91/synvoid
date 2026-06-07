@@ -4,10 +4,12 @@ Specialized guidance for proxy routing and cache key construction.
 
 ## Hot Path
 
-`src/proxy/mod.rs` — Upstream proxy, cookie/cache key construction executes on every request. Critical hot path:
+`crates/synvoid-proxy/src/server.rs` — Canonical upstream proxy implementation, cookie/cache key construction executes on every request. Critical hot path:
 - Every allocation compounds at 1000K rps
 - Avoid O(n) operations; prefer O(1) lookups
 - Use thread-local buffers and object pools
+
+`src/proxy/mod.rs` is now a compatibility shim over `synvoid-proxy`; prefer the extracted crate for new work.
 
 ## Module-Specific Patterns
 
@@ -59,9 +61,9 @@ required_token.as_bytes().ct_eq(token.as_bytes()).into()
 
 ## Upstream Pool Fixes (2026-05-23)
 
-### Retry Config Now Applied from from_config()
+### Retry Config Now Applied via `with_upstream_pool()`
 
-`ProxyServer::from_config()` now properly calls `with_upstream_pool()` to apply retry and buffering configuration. Retries were previously always disabled even when configured.
+`ProxyServer::with_upstream_pool()` is the supported path for applying retry and buffering configuration. Callers should pass the configured pool plus retry/buffering settings before using the proxy server. Retries were previously easy to omit in the root implementation, so keep the explicit wiring in mind when touching call sites.
 
 ### TypedConnectionPool plaintext consistency
 

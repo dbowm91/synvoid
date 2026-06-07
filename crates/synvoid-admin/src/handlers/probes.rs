@@ -1,5 +1,4 @@
 use super::state::AdminStateProvider;
-use synvoid_ipc::current_timestamp;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -8,6 +7,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::sync::Arc;
+use synvoid_ipc::current_timestamp;
 use utoipa::ToSchema;
 
 use super::common::{

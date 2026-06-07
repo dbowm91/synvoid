@@ -14,18 +14,16 @@ use tokio::io::AsyncReadExt;
 
 use synvoid_config::site::{SiteStaticConfig, SiteStaticThemeConfig};
 #[cfg(feature = "mesh")]
-use synvoid_config::{
-    MeshCompressionConfig, MeshImageProtectionConfig, MeshMinificationConfig,
-};
+use synvoid_config::{MeshCompressionConfig, MeshImageProtectionConfig, MeshMinificationConfig};
 #[cfg(not(feature = "mesh"))]
 pub type MeshCompressionConfig = ();
 #[cfg(not(feature = "mesh"))]
 pub type MeshImageProtectionConfig = ();
 #[cfg(not(feature = "mesh"))]
 pub type MeshMinificationConfig = ();
+use minifier::MinifierCache;
 use synvoid_app_handlers::mime::MIME_REGISTRY;
 use synvoid_theme::ThemeConfig;
-use minifier::MinifierCache;
 
 #[derive(Clone)]
 pub struct NormalizedLocation {
@@ -1025,9 +1023,9 @@ fn httpdate_parse_http_date(s: &str) -> Result<SystemTime, std::io::Error> {
 }
 
 fn httpdate_fmt_http_date(time: SystemTime) -> std::io::Result<String> {
-    let duration = time.duration_since(SystemTime::UNIX_EPOCH).map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "time before epoch")
-    })?;
+    let duration = time
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "time before epoch"))?;
     let secs = duration.as_secs();
 
     let (year, month, day, hour, min, sec, weekday) = unix_to_ymdhms(secs);

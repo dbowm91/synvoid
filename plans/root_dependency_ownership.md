@@ -87,7 +87,7 @@ Actions: `KEEP_ROOT`, `MOVE_TO_EXISTING_CRATE`, `REMOVE_FROM_ROOT`, `FEATURE_FOR
 | quinn | QUIC | ROOT (mesh/http3) | KEEP_ROOT | 45 uses in root |
 | h3 | HTTP/3 | ROOT (http3) | KEEP_ROOT | 2 uses in root |
 | h3-quinn | H3 Quinn bridge | ROOT (http3) | KEEP_ROOT | 2 uses in root |
-| tokio-tungstenite | WebSocket | ROOT (proxy) | KEEP_ROOT | 32 uses in root |
+| tokio-tungstenite | WebSocket proxy | synvoid-http | REMOVE_FROM_ROOT | Root websocket shim delegates to synvoid-http; no direct root uses remain |
 | tonic | gRPC | ROOT (mesh) | KEEP_ROOT | 9 uses in root |
 | tonic-reflection | gRPC reflection | ROOT (mesh) | KEEP_ROOT | 0 uses but gRPC server |
 | tonic-prost | gRPC prost | ROOT (mesh) | KEEP_ROOT | 0 uses but gRPC |
@@ -100,8 +100,8 @@ Actions: `KEEP_ROOT`, `MOVE_TO_EXISTING_CRATE`, `REMOVE_FROM_ROOT`, `FEATURE_FOR
 
 | Dependency | Current root reason | True owner crate | Action | Notes |
 |---|---|---|---|---|
-| fastcgi-client | FastCGI | ROOT (fastcgi) | KEEP_ROOT | 1 use in root |
-| wasmtime | WASM runtime | synvoid-plugin-runtime | KEEP_ROOT_FOR_NOW | 1 use in root; plugin loading |
+| fastcgi-client | FastCGI | synvoid-app-handlers | REMOVE_FROM_ROOT | Root fastcgi shim delegates to synvoid-app-handlers; direct root use is gone |
+| wasmtime | WASM runtime | synvoid-plugin-runtime | REMOVE_FROM_ROOT | 0 direct uses in root; plugin facade re-exports the runtime crate |
 | libloading | Dynamic loading | ROOT (plugin) | KEEP_ROOT | 9 uses in root |
 | lightningcss | CSS parsing | ROOT (static_files) | KEEP_ROOT | 2 uses in root |
 | minify-html | HTML minify | ROOT (static_files) | KEEP_ROOT | 1 use in root |

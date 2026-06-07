@@ -3,10 +3,10 @@ use std::sync::Arc;
 use hyper_util::rt::TokioIo;
 use parking_lot::Mutex;
 
-use crate::waf::traffic_shaper::ConnectionLimiter;
-use crate::waf::ConnectionToken;
 use crate::worker::drain_state::WorkerDrainState;
 use crate::RunningFlag;
+
+pub(super) use synvoid_http::ConnectionTokenGuard;
 
 pub(super) const HTTP_VALID_METHODS: &[&str] = &[
     "GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH", "CONNECT", "TRACE",
@@ -139,38 +139,6 @@ impl Drop for DrainGuard {
     fn drop(&mut self) {
         if let Some(ref state) = self.state {
             state.decrement_active();
-        }
-    }
-}
-
-pub(super) struct ConnectionTokenGuard {
-    limiter: Arc<ConnectionLimiter>,
-    token: Arc<Mutex<Option<ConnectionToken>>>,
-}
-
-impl ConnectionTokenGuard {
-    pub(super) fn new(limiter: Arc<ConnectionLimiter>, token: ConnectionToken) -> Self {
-        Self {
-            limiter,
-            token: Arc::new(Mutex::new(Some(token))),
-        }
-    }
-
-    pub(super) fn release_and_acquire(
-        &self,
-        new_token: ConnectionToken,
-    ) -> Option<ConnectionToken> {
-        let mut guard = self.token.lock();
-        let old_token = guard.take();
-        *guard = Some(new_token);
-        old_token
-    }
-}
-
-impl Drop for ConnectionTokenGuard {
-    fn drop(&mut self) {
-        if let Some(token) = self.token.lock().take() {
-            self.limiter.release(token);
         }
     }
 }

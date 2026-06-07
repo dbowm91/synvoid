@@ -144,11 +144,7 @@ impl MinifierClient {
         let start = std::time::Instant::now();
         loop {
             if start.elapsed().as_millis() as u64 > self.timeout_ms {
-                send_cpu_task_cancel_sync(
-                    &mut ipc,
-                    request_id,
-                    synvoid_ipc::CpuTaskKind::Minify,
-                );
+                send_cpu_task_cancel_sync(&mut ipc, request_id, synvoid_ipc::CpuTaskKind::Minify);
                 record_cpu_offload_timeout();
                 return Err(MinifierClientError::Timeout);
             }

@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use crate::waf::WafCore;
 
-pub use synvoid_http::BodyPolicyError;
 use synvoid_http::collect_and_scan_request_body as collect_and_scan_request_body_impl;
+pub use synvoid_http::BodyPolicyError;
 
 pub async fn collect_and_scan_request_body(
     body: hyper::body::Incoming,

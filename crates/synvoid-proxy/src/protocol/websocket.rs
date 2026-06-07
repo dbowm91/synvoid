@@ -2,11 +2,11 @@
 
 use super::trait_def::{ProtocolError, ProtocolHandler, WafAction, WafCoreBackend};
 use super::types::{ProtocolMetrics, ProtocolRequest, ProtocolResponse, ProtocolType};
-use synvoid_upstream::{Backend, UpstreamPool};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use synvoid_upstream::{Backend, UpstreamPool};
 
 const WS_FRAME_HEADER_MIN: usize = 2;
 const WS_FRAME_HEADER_MAX: usize = 14;

@@ -545,6 +545,19 @@ impl MeshTransportManager {
             .and_then(|qt| qt.get_inner().get_http01_challenge(token))
     }
 
+    pub fn maybe_get_http01_challenge(&self, token: &str) -> Option<String> {
+        #[cfg(feature = "dns")]
+        {
+            return self.get_http01_challenge(token);
+        }
+
+        #[cfg(not(feature = "dns"))]
+        {
+            let _ = token;
+            None
+        }
+    }
+
     #[cfg(feature = "dns")]
     pub fn get_dns01_challenge(
         &self,
