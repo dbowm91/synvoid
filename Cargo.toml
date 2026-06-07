@@ -70,7 +70,7 @@ axum = { version = "0.8", features = ["ws", "macros", "json"] }
 axum-extra = { version = "0.10", features = ["typed-header"] }
 http-body = "1"
 http-body-util = "0.1"
-tokio-util = { version = "0.7", features = ["io"] }
+# tokio-util removed (0 uses in root; synvoid-static-files owns this)
 bytes = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -133,7 +133,7 @@ getrandom = { version = "0.2", features = ["std"], optional = true }
 tokio-dstip = { version = "0.1", optional = true }
 
 clap = { version = "4", features = ["derive"] }
-infer = "0.16"
+# infer removed (0 uses in root; synvoid-app-handlers owns this dep)
 yara-x = { version = "1.15", default-features = false, features = ["default-modules", "linkme"] }
 tempfile = "3"
 uuid = { version = "1", features = ["v4", "serde"] }
@@ -147,11 +147,11 @@ tar = "0.4"
 pqc = { path = "pqc", features = ["async"] }
 zeroize = { version = "1", features = ["derive"] }
 
-# Minification
-lightningcss = "1.0.0-alpha.71"
-minify-html = "0.18"
-minify-js = "0.6"
-brotli = "6"
+# Minification - all moved to synvoid-static-files
+# lightningcss removed (0 uses in root)
+# minify-html removed (0 uses in root)
+# minify-js removed (0 uses in root)
+# brotli removed from root (0 uses in prod code; synvoid-static-files owns this dep)
 
 # File system utilities
 walkdir = "2"
@@ -184,7 +184,7 @@ rcgen = "0.13"
 webpki-roots = "0.26"
 
 # GeoIP support
-maxminddb = { version = "0.27", features = ["mmap"] }
+# maxminddb removed (0 uses in root; synvoid-geoip owns this dep)
 zip = "2"
 
 # Dynamic plugin loading

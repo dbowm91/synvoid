@@ -1,17 +1,19 @@
 //! SynVoid HTTP/3 (QUIC) server.
 //!
-//! **BLOCKER**: `src/http3/server.rs` still owns the QUIC transport glue and
-//! imports concrete root types: `WafCore`, `Router`, `WorkerMetrics`,
-//! `WorkerDrainState`, `UpstreamClientRegistry`, `HttpClient`,
-//! `FloodProtector`, and `FloodDecision`.
+//! **STATUS**: `src/http3/server.rs` stays in root (`KEEP_ROOT_UNTIL_WAFCORE_TRAIT_EXTENSION`).
 //!
-//! Resolved prerequisites already exist in extracted crates:
-//! - `synvoid_waf::WafProcessor` (trait for WafCore)
-//! - `synvoid_proxy::routing::RouteResolver` (trait for Router)
-//! - `synvoid_core::metrics::MetricsSink` (trait for WorkerMetrics)
-//! - `synvoid_core::drain::DrainState` (trait for WorkerDrainState)
+//! Dependency inventory (HTC-Q01) found 10 concrete root dependencies.
+//! 9 of 12 are already in extracted crates:
+//!   `Router` (synvoid-proxy), `FloodProtector`/`FloodDecision` (synvoid-waf),
+//!   `HttpClient` (synvoid-http-client), `UpstreamClientRegistry` (synvoid-proxy),
+//!   `WorkerMetrics` (synvoid-metrics), `Http3Config`/`MainConfig` (synvoid-config),
+//!   `ConnectionLimiter` (synvoid-waf).
 //!
-//! Remaining blockers are the root-owned fields and call sites in
-//! `src/http3/server.rs`, plus request-flow glue that still depends on the
-//! concrete `UpstreamClientRegistry` (struct in synvoid-proxy, no trait yet),
-//! `HttpClient`, `FloodProtector`, and `FloodDecision`.
+//! Root-owned blockers that prevent moving the server:
+//!   - `WafCore` — `WafProcessor` trait covers request/body checks but not
+//!     `connection_limiter`, `is_over_bandwidth_limit`, or `streaming()` accessors.
+//!     Needs `WafProcessor` extension or a new `WafAccess` trait.
+//!   - `WorkerDrainState` — `DrainState` trait exists in synvoid-core but the struct
+//!     is stored and unused in server.rs methods (low effort, just pass trait object).
+//!
+//! Platform utility `bind_udp_reuse` (root `src/platform/socket.rs`) stays in root.

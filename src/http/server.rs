@@ -20,8 +20,6 @@ use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 use tokio::sync::Semaphore;
 
-#[allow(unused_imports)]
-use crate::http::shared_handler::SharedRequestHandler;
 use crate::http_client::ErasedHttpClient;
 use synvoid_http::RequestPreparationOutcome;
 
@@ -35,8 +33,7 @@ use connection_types::*;
 
 use crate::config::HttpConfig;
 use crate::config::MainConfig;
-#[allow(unused_imports)]
-use crate::http::headers;
+
 #[allow(unused_imports)]
 use crate::http_client::{create_http_client_with_config, HttpClient};
 #[cfg(feature = "mesh")]
@@ -46,7 +43,7 @@ use crate::mesh::transports::MeshTransportManager;
 #[cfg(feature = "mesh")]
 use crate::mesh::MeshBackendPool;
 use crate::metrics::WorkerMetrics;
-use crate::proxy::client_registry::UpstreamClientRegistry;
+use synvoid_proxy::UpstreamClientRegistry;
 use crate::router::Router;
 use crate::waf::{FloodDecision, FloodProtector, WafCore};
 use crate::worker::drain_state::WorkerDrainState;
@@ -253,7 +250,7 @@ impl HttpServer {
             Ok(p) => p,
             Err(_) => {
                 tracing::error!("Connection limit semaphore closed");
-                return Ok(crate::http::response_builder::build_response_with_alt_svc(
+                return Ok(synvoid_http::response_builder::build_response_with_alt_svc(
                     503,
                     "Service Unavailable".to_string(),
                     "text/plain",
@@ -370,7 +367,7 @@ impl HttpServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::http::response_transform::path_looks_like_image;
+    use synvoid_http::response_transform::path_looks_like_image;
     use crate::mesh::proxy::get_cached_regex;
 
     #[test]

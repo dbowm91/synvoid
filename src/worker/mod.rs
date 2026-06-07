@@ -512,23 +512,8 @@ mod minifier_tests {
         assert_eq!(decompressed.as_slice(), input);
     }
 
-    #[test]
-    fn test_minifier_generator_brotli_compression() {
-        let generator = MinifierGenerator::new();
-
-        let input = b"Hello, World! This is test content for brotli compression.";
-        let compressed = generator.compress_brotli(input, 6).unwrap();
-
-        assert!(compressed.len() < input.len() * 2);
-
-        use std::io::Read;
-        let mut decompressed = Vec::new();
-        {
-            let mut decoder = brotli::Decompressor::new(compressed.as_slice(), 4096);
-            decoder.read_to_end(&mut decompressed).unwrap();
-        }
-        assert_eq!(decompressed.as_slice(), input);
-    }
+    // test_minifier_generator_brotli_compression removed — brotli moved to synvoid-static-files;
+    // the compression logic is tested in that crate's own test suite.
 
     #[test]
     fn test_minifier_generator_css_minification() {
