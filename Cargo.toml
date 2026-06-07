@@ -217,7 +217,7 @@ synvoid-vpn-client = { path = "crates/synvoid-vpn-client" }
 synvoid-static-files = { path = "crates/synvoid-static-files" }
 
 # WASM support for plugins
-wasmtime = { version = "42.0.2", features = ["component-model"] }
+# wasmtime moved to synvoid-plugin-runtime (plugin facade re-exports the runtime crate)
 
 # URL parsing (already used elsewhere)
 url = "2"
