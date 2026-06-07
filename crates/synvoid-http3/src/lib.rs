@@ -1,15 +1,15 @@
 //! SynVoid HTTP/3 (QUIC) server.
 //!
-//! **BLOCKER**: Cannot move `src/http3/server.rs` yet because it depends on
-//! root-only types: `WafCore`, `Router`, `WorkerMetrics`, `WorkerDrainState`,
-//! `UpstreamClientRegistry`, `StreamingWafDecision`, etc.
+//! **BLOCKER**: `src/http3/server.rs` still owns the QUIC transport glue and
+//! imports concrete root types: `WafCore`, `Router`, `WorkerMetrics`,
+//! `WorkerDrainState`, and `UpstreamClientRegistry`.
 //!
-//! To complete extraction, the following traits are needed in synvoid-waf or
-//! synvoid-core:
-//! - `WafProcessor` trait abstracting WafCore::check_request / check_request_body
-//! - `Router` trait for route resolution
-//! - `WorkerMetrics` trait for metrics emission
-//! - `DrainState` trait for graceful shutdown
+//! Resolved prerequisites already exist in extracted crates:
+//! - `synvoid_waf::WafProcessor`
+//! - `synvoid_proxy::routing::RouteResolver`
+//! - `synvoid_core::metrics::MetricsSink`
+//! - `synvoid_core::drain::DrainState`
 //!
-//! Once these traits exist, http3/server.rs can depend on trait objects
-//! instead of concrete root types.
+//! Remaining blockers are the root-owned fields and call sites in
+//! `src/http3/server.rs`, plus any request-flow glue that still depends on the
+//! concrete `UpstreamClientRegistry` or `StreamingWafDecision` path.
