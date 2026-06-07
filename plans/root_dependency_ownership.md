@@ -1,7 +1,7 @@
 # Root Dependency Ownership Matrix
 
 > Status: Refreshed as part of MDM-R01 (measurement-driven modularization pass).
-> Last updated: 2026-06-07
+> Last updated: 2026-06-07 (SDC-C03: dead root upload files deleted)
 > Scope: Every direct dependency in root `Cargo.toml` plus the
 > "focus first" / "heavy root" lists in
 > `plans/measurement_driven_modularization_cleanup.md` § 5.
@@ -84,7 +84,7 @@ attribute uses.
 |---|---|---|---|---|
 | `tokio-rustls` | KEEP_ROOT_FOR_NOW | root | Used in `src/tls/server.rs`, `src/dns/hsm.rs`, `src/dns/doh.rs`; also in `synvoid-tls`, `synvoid-http-client` | Cannot remove while `src/tls/server.rs` is root-owned. |
 | `rustls` | KEEP_ROOT_FOR_NOW | root | `src/tls/*` and `src/http3/server.rs`; also in `synvoid-tls`, `synvoid-http-client`, `synvoid-mesh`, `synvoid-block-store` | Same. |
-| `aws-lc-rs` | KEEP_ROOT_FOR_NOW | root | 0 direct root uses, but root pulls in `yara-x` which uses `aws-lc-rs` (via patch) | Pure transitive for root; the patch in `[patch.crates-io]` keeps it pinned. Cannot remove while `yara-x` is in root. |
+| `aws-lc-rs` | KEEP_ROOT_FOR_NOW | root | 0 direct root uses; was previously pulled in transitively via root `yara-x` | Pure transitive for root; the patch in `[patch.crates-io]` keeps wasmtime pinned. May be removable from root after further analysis (yara-x no longer in root). |
 
 ### HSM / PKCS#11
 
@@ -102,7 +102,7 @@ attribute uses.
 
 | Dependency | Action | True owner | Evidence | Notes |
 |---|---|---|---|---|
-| `yara-x` | KEEP_ROOT_FOR_NOW | root + `synvoid-upload` | 2 uses in `src/upload/yara_scanner.rs`; also 2 uses in `crates/synvoid-upload/src/yara_scanner.rs` | Root upload module uses directly for YARA scanning. Tracked in MDM-S01. |
+| `yara-x` | **KEEP_REMOVED** | `synvoid-upload` + `synvoid-mesh` | 0 root uses (dead `src/upload/*.rs` files deleted in SDC-C03); `rg "use yara_x" src/` = 0 hits; `cargo tree -p synvoid -i yara-x` confirms dep only via `synvoid-upload` and `synvoid-mesh` | Root dep removed in SDC-D02 (2026-06-07). |
 
 ### Schema / OpenAPI
 
@@ -177,7 +177,7 @@ These are the rest of the direct deps in root `Cargo.toml`. Rows marked
 | `aho-corasick` | KEEP_ROOT_FOR_NOW | root + crates | Pattern matching (WAF) | Foundation. |
 | `unicode-normalization` | KEEP_ROOT_FOR_NOW | root | Unicode normalization in WAF | Foundation. |
 | `libinjectionrs` | KEEP_ROOT_FOR_NOW | root | SQLi detection | Required by root WAF. |
-| `tempfile` | KEEP_ROOT_FOR_NOW | root | 3 root uses in `src/process/socket_fd.rs`, `src/upload/sandbox.rs`, `src/worker/cpu_task/payload.rs` | Required by root. |
+| `tempfile` | KEEP_ROOT_FOR_NOW | root | 2 root uses in `src/process/socket_fd.rs`, `src/worker/cpu_task/payload.rs`; dead `src/upload/sandbox.rs` removed in SDC-C03 | Required by root. |
 | `uuid` | KEEP_ROOT_FOR_NOW | root + crates | Unique IDs | Foundation. |
 | `pin-project-lite` | KEEP_ROOT_FOR_NOW | root + crates | Pin projection | Foundation. |
 | `bcrypt` | KEEP_ROOT_FOR_NOW | root | Password hashing in challenge | Required. |

@@ -77,13 +77,7 @@ pub fn Mesh() -> Html {
                                 if let Some(v) = obj.get("dht").and_then(|v| v.as_bool()) {
                                     config.dht_enabled = Some(v);
                                 }
-                                if let Some(v) = obj.get("wireguard").and_then(|v| v.as_object()) {
-                                    if let Some(enabled) =
-                                        v.get("enabled").and_then(|v| v.as_bool())
-                                    {
-                                        config.wireguard_enabled = Some(enabled);
-                                    }
-                                }
+
                                 edited_config.set(config);
                             }
                         }
@@ -270,25 +264,7 @@ pub fn Mesh() -> Html {
                                 </label>
                             </div>
 
-                            <div>
-                                <label class="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        checked={edited_config.wireguard_enabled.unwrap_or(false)}
-                                        onchange={{
-                                            let edited_config = edited_config.clone();
-                                            Callback::from(move |e: Event| {
-                                                let input: web_sys::HtmlInputElement = e.target_unchecked_into();
-                                                let mut cfg = (*edited_config).clone();
-                                                cfg.wireguard_enabled = Some(input.checked());
-                                                edited_config.set(cfg);
-                                            })
-                                        }}
-                                        class="w-4 h-4 rounded border-default bg-tertiary accent-blue-600"
-                                    />
-                                    <span class="text-primary">{ "Enable WireGuard" }</span>
-                                </label>
-                            </div>
+
 
                             <div class="pt-4 border-t border-default">
                                 <button

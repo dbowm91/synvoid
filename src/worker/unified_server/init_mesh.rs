@@ -117,10 +117,6 @@ pub async fn init_mesh_and_threat_intel(
                 topology.clone(),
                 None,
             ));
-            let backend_pool = Arc::new(crate::mesh::backend::MeshBackendPool::new(
-                proxy.clone(),
-                topology.clone(),
-            ));
 
             // Use global_node_key if available, otherwise HKDF-derive from node_id.
             let signer_key = if let Some(ref key) = mesh_config.global_node_key {
@@ -182,9 +178,6 @@ pub async fn init_mesh_and_threat_intel(
                 mesh_config.role,
                 Some(Arc::new(signer_for_threat)),
             ));
-
-            let signer_for_mesh = crate::mesh::protocol::MeshMessageSigner::new(signer_key_clone)
-                .with_verification_pool(verification_pool.clone());
 
             #[cfg(any())]
             {
@@ -305,6 +298,12 @@ pub async fn init_mesh_and_threat_intel(
                          Global nodes are required to serve DNS."
                     );
                 }
+                let backend_pool = Arc::new(crate::mesh::backend::MeshBackendPool::new(
+                    proxy.clone(),
+                    topology.clone(),
+                ));
+                let signer_for_mesh = crate::mesh::protocol::MeshMessageSigner::new(signer_key_clone)
+                    .with_verification_pool(verification_pool.clone());
                 if let Err(e) = crate::mesh::backend::initialize_mesh_transports(
                     &mesh_config,
                     transport_manager.clone(),

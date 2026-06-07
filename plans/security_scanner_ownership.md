@@ -12,12 +12,12 @@ cradle of the live runtime is `crates/synvoid-upload/src/yara_scanner.rs` and
 distributed `YaraRulesManager` and is consumed via the root
 `crate::mesh::yara_rules::YaraRulesManager` re-export.
 
-The root `Cargo.toml` has a direct `yara-x` dep that is currently **not used
-by any compiled code in root `src/`**. There is a dead
-`src/upload/yara_scanner.rs` (and friends) that imports `yara_x` directly,
-but `src/upload/mod.rs` is `pub use synvoid_upload::*;`, so the file is not
-compiled. This is a candidate for root-dep pruning in MDM-R02, not a
-candidate for moving YARA into a new crate.
+The root `Cargo.toml` had a direct `yara-x` dep that was **not used
+by any compiled code in root `src/`**. Dead duplicate files
+`src/upload/yara_scanner.rs` (and friends) were removed in SDC-C03.
+`src/upload/mod.rs` remains as a one-line re-export shim
+(`pub use synvoid_upload::*;`). The root `yara-x` direct dep is now
+a candidate for removal in SDC-D02.
 
 No strong evidence that YARA scanning is a hot rebuild path or that it would
 benefit from extraction at this time.
@@ -36,14 +36,14 @@ benefit from extraction at this time.
 | `crates/synvoid-upload/Cargo.toml` | `synvoid-upload` | `yara-x = "1.15"` (line 31) | direct dep | `synvoid-upload` (KEEP) | Sole purpose of the dep is `YaraScanner` runtime. |
 | `crates/synvoid-mesh/src/mesh/yara_rules.rs` | `synvoid-mesh` | `yara-x` (mesh's own `Cargo.toml:130`), `synvoid_config` | `YaraRulesManager` (DHT + feed + DHT-backed rules manager) | `synvoid-mesh` (KEEP) | 2526+ lines. `YaraRulesManager` (line 293), `validate_rules_syntax` (line 1459) calls `yara_x::compile` to validate. The rules DHT distribution lives here. This is the only place besides `synvoid-upload` that actually `use yara_x::...`. |
 | `crates/synvoid-mesh/Cargo.toml` | `synvoid-mesh` | `yara-x = "1.15"` (line 130) | direct dep | `synvoid-mesh` (KEEP) | For `YaraRulesManager`'s `validate_rules_syntax` flow. |
-| `src/upload/yara_scanner.rs` | **root** (NOT COMPILED) | `yara_x` direct | dead | delete | 564 lines. Identical structure to `crates/synvoid-upload/src/yara_scanner.rs`. `src/upload/mod.rs` is `pub use synvoid_upload::*;`, so this file is never compiled. The only `use yara_x::` in root `src/`. |
-| `src/upload/malware_scanner.rs` | **root** (NOT COMPILED) | `crate::upload::yara_scanner` (would be self-ref to the dead file) | dead | delete | 719 lines. Same fate as above. `src/upload/mod.rs` does not declare it. |
-| `src/upload/sandbox.rs` | **root** (NOT COMPILED) | `std::fs` | dead | delete | duplicates `crates/synvoid-upload/src/sandbox.rs`. |
-| `src/upload/yara_rule_feed.rs` | **root** (NOT COMPILED) | `synvoid_config` | dead | delete | duplicates `crates/synvoid-upload/src/yara_rule_feed.rs`. |
-| `src/upload/config.rs` | **root** (NOT COMPILED) | `serde`, `synvoid_config` | dead | delete | duplicates `crates/synvoid-upload/src/config.rs` (with `image_poisoning` legacy names; see `image_rights_terminology_inventory.md`). |
-| `src/upload/metrics.rs` | **root** (NOT COMPILED) | `metrics` | dead | delete | duplicates `crates/synvoid-upload/src/metrics.rs`. |
-| `src/upload/rate_limit.rs` | **root** (NOT COMPILED) | `parking_lot` | dead | delete | duplicates upload rate limit. |
-| `src/upload/signature.rs` | **root** (NOT COMPILED) | `crate::upload::*` (dead) | dead | delete | duplicates file signature registry. |
+| `src/upload/yara_scanner.rs` | **root** (DELETED SDC-C03) | `yara_x` direct | **DELETED** | **DELETED** | 564 lines. Identical structure to `crates/synvoid-upload/src/yara_scanner.rs`. |
+| `src/upload/malware_scanner.rs` | **root** (DELETED SDC-C03) | `crate::upload::yara_scanner` | **DELETED** | **DELETED** | 719 lines. Same fate as above. |
+| `src/upload/sandbox.rs` | **root** (DELETED SDC-C03) | `std::fs` | **DELETED** | **DELETED** | Duplicates `crates/synvoid-upload/src/sandbox.rs`. |
+| `src/upload/yara_rule_feed.rs` | **root** (DELETED SDC-C03) | `synvoid_config` | **DELETED** | **DELETED** | Duplicates `crates/synvoid-upload/src/yara_rule_feed.rs`. |
+| `src/upload/config.rs` | **root** (DELETED SDC-C03) | `serde`, `synvoid_config` | **DELETED** | **DELETED** | Duplicates `crates/synvoid-upload/src/config.rs`. |
+| `src/upload/metrics.rs` | **root** (DELETED SDC-C03) | `metrics` | **DELETED** | **DELETED** | Duplicates `crates/synvoid-upload/src/metrics.rs`. |
+| `src/upload/rate_limit.rs` | **root** (DELETED SDC-C03) | `parking_lot` | **DELETED** | **DELETED** | Duplicates upload rate limit. |
+| `src/upload/signature.rs` | **root** (DELETED SDC-C03) | `crate::upload::*` | **DELETED** | **DELETED** | Duplicates file signature registry. |
 | `src/upload/mod.rs` | **root** | re-exports `synvoid_upload::*` | the only compiled thing in `src/upload/` | KEEP_ROOT_ORCHESTRATION | 1 line: `pub use synvoid_upload::*;`. The whole directory is a re-export shim. |
 | `src/sandbox/mod.rs` | **root** | `crate::platform::sandbox` | `run_yara_jail_mode` (line 34) | KEEP_ROOT_ORCHESTRATION | 54 lines. Empty stub today (`// TODO: Implement IPC listener for YARA scan requests` line 50). Called from `src/main.rs:355` when `--yara-jail` flag is set. |
 | `src/supervisor/state.rs` | **root** | `crate::waf::YaraRulesManager` (mesh re-export) | mesh YARA rules plumbing in `SupervisorState` | KEEP_ROOT_ORCHESTRATION | 88 lines. `yara_rules: Option<Arc<YaraRulesManager>>` (lines 29, 47). |
@@ -64,7 +64,7 @@ benefit from extraction at this time.
 
 | Dep | In root Cargo.toml | Compiled `use yara_x::*` in root src | Verdict |
 |---|---|---|---|
-| `yara-x = "1.15"` (line 137) | yes | 0 (only in `src/upload/yara_scanner.rs` which is **dead**) | REMOVABLE once dead `src/upload/*.rs` files are deleted. Belongs to MDM-R02, not this audit. |
+| `yara-x = "1.15"` (line 137) | yes | 0 (dead files removed in SDC-C03) | REMOVABLE now (SDC-D02). Dead `src/upload/*.rs` files deleted. |
 | wasmtime patch (line 46) | `[patch.crates-io]` only | n/a | Documented separately in `AGENTS.md` "Dependency Vulnerability Status". Not a scan ownership issue. |
 
 `cargo tree -p synvoid -i yara-x` (no-default-features) shows yara-x coming
@@ -79,9 +79,9 @@ yara-x would still be in the dep graph via the two leaf crates.
 | `crates/synvoid-http/src/upload_validation_dispatch.rs:44` | `upload_validator.validate_bytes(full_body_arc, path).await` | `synvoid-upload` |
 | `src/upload/mod.rs:1` | `pub use synvoid_upload::*;` | `synvoid-upload` |
 | `src/worker/context.rs:9` | `use crate::upload::UploadValidator;` | re-export shim |
-| `src/worker/cpu_task/yara.rs:5` | `use crate::upload::yara_scanner::{YaraRulesSource, YaraScanner};` | **points at dead file** (will fail to compile if `src/upload/mod.rs` ever re-declares `pub mod yara_scanner;`) |
-| `src/worker/cpu_task/state.rs:12` | `use crate::upload::yara_scanner::YaraScanner;` | **points at dead file** |
-| `src/static_files/file_manager.rs:15-18` | `use crate::upload::malware_scanner::MalwareScanner; use crate::upload::rate_limit::*; use crate::upload::yara_scanner::YaraScanner; use crate::upload::YaraError;` | **points at dead files** (all four lines) |
+| `src/worker/cpu_task/yara.rs:5` | `use crate::upload::yara_scanner::{YaraRulesSource, YaraScanner};` | resolves via `synvoid_upload::*` re-export (dead files removed) |
+| `src/worker/cpu_task/state.rs:12` | `use crate::upload::yara_scanner::YaraScanner;` | resolves via `synvoid_upload::*` re-export (dead files removed) |
+| `src/static_files/file_manager.rs:15-18` | `use crate::upload::malware_scanner::MalwareScanner; use crate::upload::rate_limit::*; use crate::upload::yara_scanner::YaraScanner; use crate::upload::YaraError;` | resolves via `synvoid_upload::*` re-export (dead files removed) |
 | `src/worker/unified_server/init_waf.rs:9` | `use crate::upload::UploadValidator;` | re-export shim (works) |
 | `src/supervisor/state.rs:14` | `use crate::waf::YaraRulesManager;` | `synvoid-mesh` via root re-export |
 | `src/supervisor/mesh.rs:17` | `use crate::waf::YaraRulesManager;` | `synvoid-mesh` via root re-export |
@@ -90,13 +90,11 @@ yara-x would still be in the dep graph via the two leaf crates.
 | `src/main.rs:355` | `synvoid::sandbox::run_yara_jail_mode();` | `src/sandbox/mod.rs` (root stub) |
 
 The five `src/worker/cpu_task/*` and `src/static_files/file_manager.rs` call
-sites that reach into `crate::upload::yara_scanner` (etc.) are **latent
-breakage**: today they compile only because `src/upload/mod.rs` is a single
-`pub use` line. If anyone adds `pub mod yara_scanner;` to that mod (e.g. to
-"revive" the dead files), all five call sites would resolve to the dead
-copies, not the live `synvoid-upload` ones. They are also the kind of
-accidental import that MDM-W02 (replace accidental root imports only) is
-meant to fix.
+sites that reach into `crate::upload::yara_scanner` (etc.) resolve through
+the `pub use synvoid_upload::*;` re-export shim. The dead duplicate files
+were removed in SDC-C03. If anyone adds `pub mod yara_scanner;` to that mod
+in the future, these call sites would break — but this is no longer latent
+breakage since the dead files no longer exist.
 
 ## Quarantine ownership
 
@@ -140,13 +138,14 @@ intentionally root-owned because it is a process-mode entry point from
 - YARA runtime is already correctly owned by `synvoid-upload`.
 - Mesh-side `YaraRulesManager` is correctly owned by `synvoid-mesh`.
 - The root `Cargo.toml` `yara-x` direct dep is **dead** (see evidence
-  above). This is a candidate for `REMOVE_FROM_ROOT` in MDM-R02 once the
-  dead `src/upload/*.rs` files are deleted.
+  above). Dead `src/upload/*.rs` files were deleted in SDC-C03. The root
+  `yara-x` dep can now be removed in SDC-D02.
 - Several call sites in `src/worker/cpu_task/*` and
-  `src/static_files/file_manager.rs` reach into `crate::upload::yara_scanner`
-  / `crate::upload::malware_scanner` (dead files) rather than the live
-  `synvoid_upload::*` re-export. These should be fixed by MDM-W02 (replace
-  accidental root imports only), not by extraction.
+  `src/static_files/file_manager.rs` reach through `crate::upload::yara_scanner`
+  / `crate::upload::malware_scanner` but resolve via the `pub use
+  synvoid_upload::*;` re-export. The dead files they previously pointed at
+  have been removed. If desired, these can be switched to direct
+  `synvoid_upload::` imports in a follow-up.
 - No evidence that YARA scanning is a measured hot rebuild path. No need
   for a new `synvoid-security-scanner` crate.
 
@@ -158,13 +157,12 @@ intentionally root-owned because it is a process-mode entry point from
 | `YaraRulesManager` (mesh rules DHT/feed) | `KEEP_ROOT_ORCHESTRATION` (i.e. keep in `synvoid-mesh`) | Already correctly owned by `synvoid-mesh`. The seam is `synvoid-mesh::yara_rules::YaraRulesManager`, re-exported through `src/waf/mod.rs:63` and `src/supervisor/state.rs:14`. The mesh feature flag in `synvoid-upload` is the correct conditional boundary; it does not need a new crate. |
 | Quarantine file system (`Sandbox::quarantine`) | `KEEP_ROOT_ORCHESTRATION` (i.e. keep in `synvoid-upload`) | Co-located with the scanner that triggers it. Splitting it out would force a new trait to model "where to put a quarantined file" and would not measurably improve compile times. |
 | `run_yara_jail_mode` (`src/sandbox/mod.rs:34`) | `KEEP_ROOT_ORCHESTRATION` | It is a process-mode entry point invoked from `src/main.rs:355`. The platform sandbox seam it depends on (`crate::platform::sandbox::*`) is already extracted. The body of the function is a 50-line stub. |
-| Dead `src/upload/*.rs` files (7 files) | `EXTRACT_LATER_CLEAN_BOUNDARY` (i.e. delete them, not extract) | They are duplicates of the live `synvoid-upload` crate files. Deleting them is a prerequisite for `REMOVE_FROM_ROOT` of the dead `yara-x` direct dep in MDM-R02. No new crate. |
-| Dead root `yara-x` direct dep (`Cargo.toml:137`) | `EXTRACT_LATER_CLEAN_BOUNDARY` (i.e. remove from root after dead-file deletion) | Belongs in MDM-R02, not S03. Once the 7 dead files are deleted, the root `yara-x` dep can be removed. yara-x stays in `synvoid-upload` and `synvoid-mesh` as their own direct deps. |
+| Dead `src/upload/*.rs` files (7 files) | **DELETED** (SDC-C03) | Deleted in SDC-C03. The files were duplicates of the live `synvoid-upload` crate files. |
+| Dead root `yara-x` direct dep (`Cargo.toml:137`) | **KEEP_REMOVED** (SDC-D02) | Root dep removed 2026-06-07. Verified: `rg "use yara_x" src/` = 0 hits; `cargo tree -p synvoid -i yara-x` shows dep only via `synvoid-upload` and `synvoid-mesh`. yara-x stays in those two crates as their own direct deps. |
 | `synvoid-security-scanner` new crate | `DEFER_LOW_VALUE` | No evidence (compile timing or coupling) that creating this crate would reduce rebuild cost. The plan's "do not create new crates" rule applies. |
-| Five `crate::upload::yara_scanner` import call sites (`src/worker/cpu_task/*`, `src/static_files/file_manager.rs:15-18`) | `EXTRACT_LATER_CLEAN_BOUNDARY` (i.e. switch to `synvoid_upload::*`) | These reach into dead files that are masked by the `pub use` shim. They are latent breakage. Belongs in MDM-W02 ("replace accidental root imports only"). No new crate. |
+| Five `crate::upload::yara_scanner` import call sites (`src/worker/cpu_task/*`, `src/static_files/file_manager.rs:15-18`) | `RESOLVES_VIA_SHIM` | Dead files removed in SDC-C03. Imports resolve through `pub use synvoid_upload::*;` re-export. Can optionally be switched to direct `synvoid_upload::` imports in a follow-up. |
 
 **Overall MDM-S03 verdict:** `KEEP_ROOT_ORCHESTRATION` for all four runtime
-sites (YARA runtime, mesh rules, quarantine, yara-jail). `EXTRACT_LATER_CLEAN_BOUNDARY`
-for the two mechanical cleanups (dead `src/upload/*.rs` files and the
-resulting root `yara-x` direct dep). `DEFER_LOW_VALUE` for any new crate.
-**No extraction in this audit pass.**
+sites (YARA runtime, mesh rules, quarantine, yara-jail). `KEEP_REMOVED`
+for the root `yara-x` direct dep (SDC-D02, after dead-file deletion in
+SDC-C03). **No extraction in this audit pass.**

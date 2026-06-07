@@ -160,16 +160,20 @@ impl Component for TierKeys {
                                         class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg"
                                         placeholder="org_xxx"
                                         value={self.issue_org_id.clone()}
-                                        oninput={ctx.link().callback(|e| Msg::SetOrgId(e.target().unwrap().value()))}
+                                        oninput={ctx.link().callback(|e: InputEvent| {
+                                            let input: web_sys::HtmlInputElement = e.target_unchecked_into();
+                                            Msg::SetOrgId(input.value())
+                                        })}
                                     />
                                 </div>
                                 <div class="mb-4">
                                     <label class="block text-sm font-medium mb-2">{ "Tier Level" }</label>
                                     <select
                                         class="w-full px-3 py-2 bg-tertiary border border-default rounded-lg"
-                                        value={self.issue_tier}
-                                        onchange={ctx.link().callback(|e| {
-                                            let val = e.target().unwrap().value();
+                                        value={self.issue_tier.to_string()}
+                                        onchange={ctx.link().callback(|e: Event| {
+                                            let input: web_sys::HtmlInputElement = e.target_unchecked_into();
+                                            let val = input.value();
                                             Msg::SetTier(val.parse().unwrap_or(1))
                                         })}
                                     >

@@ -8075,7 +8075,6 @@ dependencies = [
  "windows-sys 0.59.0",
  "x25519-dalek",
  "x509-parser 0.16.0",
- "yara-x",
  "zeroize",
  "zip 2.4.2",
 ]

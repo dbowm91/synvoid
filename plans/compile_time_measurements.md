@@ -20,9 +20,9 @@ output was captured to `/tmp/measurement_run.txt`. The summary lines are:
 | `cargo check -p synvoid-static-files` | incremental (warm) | 0.35s | Smallest leaf measured |
 | `cargo check -p synvoid-ipc` | incremental (warm) | 0.26s | Trivial crate |
 | `cargo check --lib --no-default-features` | incremental (warm) | 19.10s | Root orchestration; recompiled root lib + 0 transitive crates (warm) |
-| `cargo check --no-default-features --features mesh` | partial clean | **FAILED** (38.91s wall) | Pre-existing error in `src/worker/unified_server/init_mesh.rs` (E0425 `backend_pool`, `signer_for_mesh`); see "Pre-existing failures" below |
+| `cargo check --no-default-features --features mesh` | incremental (warm) | 4.14s | Compiles cleanly after SDC-A02 fix (was E0425 in init_mesh.rs) |
 | `cargo check --no-default-features --features dns` | incremental (warm) | 19.14s | Compiles cleanly |
-| `cargo check --no-default-features --features mesh,dns` | incremental (cached) | 34.03s wall, user 0.24s | Stale target dir held the build lock; cargo did no fresh work — only lock-wait + Finish (misleading wall time) |
+| `cargo check --no-default-features --features mesh,dns` | incremental (warm) | 7.94s | Compiles cleanly after SDC-A02 fix |
 | `cargo check --workspace --all-targets` | mixed | **FAILED** (8.75s wall) | Pre-existing errors in `admin-ui` (5 E0277/E0282/E0609 + missing `tempfile` / `sha2` deps in yew pages) |
 
 ### Per-crate incremental edits
@@ -53,13 +53,10 @@ These are not measurement-side failures — they are real compile errors in
 the current tree and were observed during the run. The MDM pass must not
 regress them, but also is not required to fix them.
 
-* `cargo check --no-default-features --features mesh`
-  * `error[E0425]: cannot find value 'backend_pool' in this scope`
-    at `src/worker/unified_server/init_mesh.rs:311`
-  * `error[E0425]: cannot find value 'signer_for_mesh' in this scope`
-    at `src/worker/unified_server/init_mesh.rs:313`
-  * Both errors come from bindings named `_backend_pool` / `_signer_for_mesh`
-    being used as `backend_pool` / `signer_for_mesh` later in the function.
+* ~~`cargo check --no-default-features --features mesh`~~ — **Fixed in SDC-A02** (2026-06-07).
+  * `backend_pool` and `signer_for_mesh` were defined after an early return
+    in `init_mesh.rs`, making them unreachable. Moved definitions into the
+    `#[cfg(not(feature = "dns"))]` block where they are consumed.
 * `cargo check --workspace --all-targets`
   * `admin-ui` lib + lib-test fail with 5 errors in Yew/leptos pages
     (`E0277`, `E0282`, `E0609`) and `unresolved import 'sha2'`,
@@ -161,21 +158,37 @@ edit-frequency visible in the existing plan docs
     `crates/synvoid-block-store`. **Defer (no measurement) —
     `plans/persistence_ownership.md` (MDM-S02) will gather data.**
 * **mesh/Raft**
-  * The mesh feature does not compile cleanly today (pre-existing
-    E0425 errors above) and no incremental measurement was taken.
-    Hot spot is currently un-measurable. **Defer (no measurement) —
-    `plans/mesh_consensus_boundary.md` is the right surface for a
-    future decision once the feature compiles.**
+  * The mesh feature now compiles cleanly (fixed in SDC-A02).
+    Warm touch measurement: 4.14s. Future mesh/Raft decisions can
+    reference `plans/mesh_consensus_boundary.md`.
+
+## Stability cleanup follow-up
+
+SDC pass completed 2026-06-07. Results:
+
+- `cargo check --lib --no-default-features`: PASS (1.11s)
+- `cargo check --no-default-features --features dns`: PASS (51.64s)
+- `cargo check --no-default-features --features mesh`: PASS (34.90s) [was FAILING before SDC-A02]
+- `cargo check --no-default-features --features mesh,dns`: PASS (35.08s)
+- `cargo check -p synvoid-upload`: PASS (51.08s)
+- `cargo check -p synvoid-mesh --features mesh`: PASS (51.25s)
+- `cargo check --workspace --all-targets`: **FAILED** — 4 pre-existing errors:
+  - `myapp-dynamic` (lib test): E0507 `cannot move out of *app` (app crate, not SynVoid)
+  - `synvoid-ipc` (lib test): E0432 unresolved import `sha2` (test dep missing)
+  - `admin-ui`: 5 E0277/E0282/E0609 + missing `tempfile`/`sha2` (pre-existing, documented above)
+  - `synvoid-mesh` (lib test): 4 errors in edge_replica test (test-only, not lib)
+
+Note: Times are incremental (warm cache). First-touch times are significantly higher (see Raw run above).
 
 ## Notes for follow-up
 
 * The root `cargo check --no-default-features` (19.10s) is the most
   common iteration profile. Improvements here would benefit the most
   developers.
-* The `mesh` feature compile failure is the most concrete actionable
-  finding from this measurement pass. Fixing it would unblock
-  measurement of the mesh-influenced hot spots and is a prerequisite
-  for the mesh/Raft decision in MDM-H01/H02.
+* The `mesh` feature compile failure was fixed in SDC-A02 (2026-06-07).
+  `backend_pool` and `signer_for_mesh` were defined after an unreachable
+  early return in `init_mesh.rs`. Fix: moved definitions into the
+  `#[cfg(not(feature = "dns"))]` block where they are consumed.
 * The 95.60s first-touch on `src/proxy/mod.rs` is a one-off cold
   cache cost. It does not justify extraction on its own, but it does
   show that the proxy shim is a critical compile fan-in point — any

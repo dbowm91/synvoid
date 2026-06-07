@@ -130,7 +130,6 @@ tokio-dstip = { version = "0.1", optional = true }
 
 clap = { version = "4", features = ["derive"] }
 # infer: removed; owned by synvoid-app-handlers (see plans/root_dependency_ownership.md)
-yara-x = { version = "1.15", default-features = false, features = ["default-modules", "linkme"] }
 tempfile = "3"
 uuid = { version = "1", features = ["v4", "serde"] }
 pin-project-lite = "0.2"
