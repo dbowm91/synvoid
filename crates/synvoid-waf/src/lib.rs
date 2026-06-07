@@ -3,6 +3,7 @@
 //! This crate provides the core WAF attack detection logic independent of
 //! HTTP server, supervisor, worker, mesh, DNS, and admin subsystems.
 
+pub mod access;
 pub mod attack_detection;
 pub mod bot;
 pub mod endpoints;

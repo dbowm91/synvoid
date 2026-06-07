@@ -1,6 +1,9 @@
 pub mod client;
 pub mod directory;
+pub mod image_poisoning;
 pub mod minifier;
+
+pub use image_poisoning::{apply_image_poisoning, invalidate_image_poison_cache_for_site};
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

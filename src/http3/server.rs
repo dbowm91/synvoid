@@ -13,6 +13,7 @@ use crate::proxy::client_registry::UpstreamClientRegistry;
 use crate::router::Router;
 use crate::waf::{FloodDecision, FloodProtector, WafCore};
 use crate::worker::drain_state::WorkerDrainState;
+use synvoid_waf::access::WafAccess;
 
 pub struct Http3Server {
     addr: SocketAddr,
@@ -220,7 +221,7 @@ impl Http3Server {
             remote_addr,
             &self.trusted_proxies,
             &self.router,
-            self.waf.connection_limiter.as_ref(),
+            self.waf.connection_limiter().as_ref(),
             self.waf.is_over_bandwidth_limit(),
         )
         .await
@@ -266,7 +267,7 @@ impl Http3Server {
             self.waf.streaming(),
             self.waf.streaming(),
             connection_guard.as_ref(),
-            self.waf.connection_limiter.as_ref(),
+            self.waf.connection_limiter().as_ref(),
             &self.main_config,
             &self.client,
             &self.upstream_client_registry,

@@ -4,7 +4,7 @@
 
 ## Summary
 
-Six modules remain root-only. All share a common pattern: they depend on root-concrete types (`ConfigManager`, `verify_admin_token`, `Router`, `WafCore`, etc.) that are not available in extracted crates. Three modules (`directory_viewer`, `file_manager`, `webdav`) follow an identical dependency pattern and could move to `synvoid-static-files` once a shared auth seam exists.
+Five modules remain root-only. All share a common pattern: they depend on root-concrete types (`ConfigManager`, `verify_admin_token`, `Router`, `WafCore`, etc.) that are not available in extracted crates. `image_poisoning.rs` was extracted in HWS-S02 — its canonical implementation now lives in `synvoid-static-files` and the root file is a compatibility shim. Three modules (`directory_viewer`, `file_manager`, `webdav`) follow an identical dependency pattern and could move to `synvoid-static-files` once a shared auth seam exists.
 
 ## Classification Table
 
@@ -14,7 +14,7 @@ Six modules remain root-only. All share a common pattern: they depend on root-co
 | `directory_viewer.rs` (222 lines) | Depends on admin auth, ConfigManager, static_files directory rendering, theme | `crate::admin::verify_admin_token`, `crate::config::ConfigManager`, `crate::static_files::directory::{render_directory_listing, DirectoryListingParams}`, `crate::theme::ThemeConfig` | `synvoid-static-files` | `AdminAuth` trait (shared with file_manager, webdav); `ConfigManager` access via `Arc<dyn ConfigAccessor>` | Medium |
 | `file_manager.rs` (394 lines) | Depends on admin auth, ConfigManager, FileManager from static_files, MIME registry | `crate::admin::verify_admin_token`, `crate::config::ConfigManager`, `crate::static_files::file_manager::FileManager`, `crate::mime::MIME_REGISTRY`, `crate::static_files::file_manager::FileManagerConfig`, `crate::upload::rate_limit::RateLimitConfig` | `synvoid-static-files` | Same `AdminAuth` trait; MIME registry access via trait or static import | Medium |
 | `file_manager_ui.rs` (363 lines) | Depends on admin auth, ConfigManager, theme rendering | `crate::admin::verify_admin_token`, `crate::config::ConfigManager`, `crate::theme::{ThemeConfig, ThemeRenderer}` | `synvoid-theme` | Same `AdminAuth` trait; theme rendering is already in `synvoid-theme` | Medium |
-| `image_poisoning.rs` (98 lines) | Depends on `SiteImagePoisonConfig` config type and `PoisonImageClient` from static_files | `crate::config::site::SiteImagePoisonConfig`, `crate::static_files::client::PoisonImageClient` | `synvoid-static-files` | Config type `SiteImagePoisonConfig` moves to `synvoid-static-files` or becomes a generic struct; `PoisonImageClient` already in static_files | High |
+| `image_poisoning.rs` | **Extracted (HWS-S02)** — root file is now a `pub use synvoid_static_files::image_poisoning::*;` shim | — | `synvoid-static-files` | Done | Done |
 | `webdav.rs` (773 lines) | Depends on admin auth, ConfigManager, FileManager from static_files | `crate::admin::verify_admin_token`, `crate::config::ConfigManager`, `crate::static_files::file_manager::FileManager` | `synvoid-static-files` | Same `AdminAuth` trait as directory_viewer/file_manager | Medium |
 
 ## Dependency Pattern Analysis
@@ -50,7 +50,7 @@ This module cannot be extracted without first defining trait abstractions for al
 
 ## Extraction Priority Order
 
-1. **`image_poisoning.rs`** → `synvoid-static-files` (smallest, fewest deps, config type can move)
+1. ~~**`image_poisoning.rs`** → `synvoid-static-files`~~ **Done (HWS-S02)**
 2. **`directory_viewer.rs`** → `synvoid-static-files` (shared auth pattern, small module)
 3. **`file_manager_ui.rs`** → `synvoid-theme` (UI-only, theme is primary dep)
 4. **`file_manager.rs`** → `synvoid-static-files` (larger but follows same pattern as directory_viewer)
@@ -59,16 +59,13 @@ This module cannot be extracted without first defining trait abstractions for al
 
 ## Ownership Decisions (HTC-H07)
 
-### image_poisoning.rs
+### image_poisoning.rs (DONE — HWS-S02)
 
 | Field | Decision |
 |-------|----------|
 | **Module** | `image_poisoning.rs` (98 lines) |
-| **Target crate** | `synvoid-static-files` |
-| **Reasoning** | Smallest root-only module. Its only root dependency is `SiteImagePoisonConfig` (a plain config struct from `synvoid-config`) and `PoisonImageClient` (already lives in `synvoid-static-files::client`). The cache logic (`IMAGE_POISON_CACHE`) is self-contained with no root infrastructure dependencies. Moving this module eliminates the only root code that calls `PoisonImageClient`. |
-| **Required seams** | Move `SiteImagePoisonConfig` from `synvoid-config` to `synvoid-static-files` (or add `synvoid-config` as a dependency of `synvoid-static-files` for this single type). `PoisonImageClient` is already in `synvoid-static-files::client`. |
-| **Estimated effort** | **small** — move config struct, relocate 98 lines, update imports. |
-| **Dependencies that must move first** | None. Both `SiteImagePoisonConfig` (config struct) and `PoisonImageClient` (IPC client) are already available in extracted crates. |
+| **Status** | **Extracted.** Canonical implementation now in `crates/synvoid-static-files/src/image_poisoning.rs`. Root file is a `pub use` compatibility shim. |
+| **Result** | `synvoid-static-files` gained `moka`, `sha2`, `hex` deps. No cycle introduced. Root `src/http/mod.rs` path preserved. |
 
 ### file_manager.rs + file_manager_ui.rs
 

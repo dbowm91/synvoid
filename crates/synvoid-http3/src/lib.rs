@@ -1,6 +1,6 @@
 //! SynVoid HTTP/3 (QUIC) server.
 //!
-//! **STATUS**: `src/http3/server.rs` stays in root (`KEEP_ROOT_UNTIL_WAFCORE_TRAIT_EXTENSION`).
+//! **STATUS**: `src/http3/server.rs` stays in root (`KEEP_ROOT_UNTIL_WAFACCESS_USED`).
 //!
 //! Dependency inventory (HTC-Q01) found 10 concrete root dependencies.
 //! 9 of 12 are already in extracted crates:
@@ -10,9 +10,10 @@
 //!   `ConnectionLimiter` (synvoid-waf).
 //!
 //! Root-owned blockers that prevent moving the server:
-//!   - `WafCore` — `WafProcessor` trait covers request/body checks but not
-//!     `connection_limiter`, `is_over_bandwidth_limit`, or `streaming()` accessors.
-//!     Needs `WafProcessor` extension or a new `WafAccess` trait.
+//!   - `WafCore` — `WafAccess` trait (synvoid-waf) now covers `connection_limiter`,
+//!     `is_over_bandwidth_limit`, and `streaming()` accessors. Remaining blocker:
+//!     `self.waf.as_ref()` cast for `Http3RequestWaf` dispatch requires concrete
+//!     `WafCore` type, and the struct stores `Arc<WafCore>` directly.
 //!   - `WorkerDrainState` — `DrainState` trait exists in synvoid-core but the struct
 //!     is stored and unused in server.rs methods (low effort, just pass trait object).
 //!

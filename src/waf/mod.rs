@@ -1025,6 +1025,22 @@ impl synvoid_http::BufferedRequestWaf for WafCore {
     }
 }
 
+impl synvoid_waf::access::WafAccess for WafCore {
+    type StreamingScanner = crate::waf::attack_detection::StreamingWafCore;
+
+    fn connection_limiter(&self) -> Option<Arc<ConnectionLimiter>> {
+        self.connection_limiter.clone()
+    }
+
+    fn is_over_bandwidth_limit(&self) -> bool {
+        WafCore::is_over_bandwidth_limit(self)
+    }
+
+    fn streaming(&self) -> Option<Self::StreamingScanner> {
+        WafCore::streaming(self)
+    }
+}
+
 pub static UPLOAD_VALIDATOR: std::sync::OnceLock<Arc<crate::upload::UploadValidator>> =
     std::sync::OnceLock::new();
 

@@ -43,10 +43,10 @@ use crate::mesh::transports::MeshTransportManager;
 #[cfg(feature = "mesh")]
 use crate::mesh::MeshBackendPool;
 use crate::metrics::WorkerMetrics;
-use synvoid_proxy::UpstreamClientRegistry;
 use crate::router::Router;
 use crate::waf::{FloodDecision, FloodProtector, WafCore};
 use crate::worker::drain_state::WorkerDrainState;
+use synvoid_proxy::UpstreamClientRegistry;
 use tokio::sync::RwLock;
 
 pub struct HttpServer {
@@ -367,8 +367,8 @@ impl HttpServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use synvoid_http::response_transform::path_looks_like_image;
     use crate::mesh::proxy::get_cached_regex;
+    use synvoid_http::response_transform::path_looks_like_image;
 
     #[test]
     fn test_is_valid_http_request_start_valid_methods() {

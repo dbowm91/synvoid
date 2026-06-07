@@ -67,6 +67,10 @@ Actions: `KEEP_ROOT`, `MOVE_TO_EXISTING_CRATE`, `REMOVE_FROM_ROOT`, `FEATURE_FOR
 | h3 | ✅ | ✅ | ❌ | `http3/server.rs` only (1 use) | KEEP_ROOT | 1 use; root http3 server uses directly |
 | h3-quinn | ✅ | ❌ | ❌ | `http3/server.rs` only (1 use) | KEEP_ROOT | 1 use; root http3 server uses directly |
 
+## Image Poisoning Ownership
+
+The `image_poisoning` module was moved from `src/http/image_poisoning.rs` to `crates/synvoid-static-files/src/image_poisoning.rs`. The root file is now a `pub use` shim. This did NOT make any root dependencies removable — `moka`, `sha2`, and `hex` all have extensive remaining root usage in admin, waf, dns, challenge, honeypot, and other modules.
+
 ## Recommended Removals (No Root Usage)
 
 ### Removed (HTC-R02 Batch 1 — 2026-06-07)
