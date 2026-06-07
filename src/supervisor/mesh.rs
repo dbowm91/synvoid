@@ -2,19 +2,19 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 #[cfg(feature = "mesh")]
-use crate::block_store::BlockStore;
+use crate::waf::YaraRulesManager;
 #[cfg(feature = "mesh")]
-use crate::config::{ConfigManager, MainConfig};
+use synvoid_block_store::BlockStore;
 #[cfg(feature = "mesh")]
-use crate::mesh::threat_intel::{ThreatIntelligenceConfig, ThreatIntelligenceManager};
+use synvoid_config::{ConfigManager, MainConfig};
 #[cfg(feature = "mesh")]
-use crate::mesh::{
+use synvoid_mesh::threat_intel::{ThreatIntelligenceConfig, ThreatIntelligenceManager};
+#[cfg(feature = "mesh")]
+use synvoid_mesh::{
     backend::create_record_store, backend::MeshBackendPool,
     crypto_verification::CryptoVerificationPool, dht::routing::DhtRoutingManager, proxy::MeshProxy,
     topology::MeshTopology, transports::MeshTransportManager,
 };
-#[cfg(feature = "mesh")]
-use crate::waf::YaraRulesManager;
 
 #[cfg(feature = "mesh")]
 pub struct MeshControlPlane {

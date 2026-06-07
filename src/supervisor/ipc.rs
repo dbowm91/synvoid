@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
-use crate::process::{ErrorCode, ErrorSeverity, Message, ProcessManager, WorkerId};
+use synvoid_ipc::ipc_transport::IpcStream as AsyncIpcStream;
+use synvoid_ipc::{ErrorCode, ErrorSeverity, Message, ProcessManager, WorkerId};
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metrics::WorkerMetricsPayload;
+    use synvoid_metrics::WorkerMetricsPayload;
 
     #[tokio::test]
     async fn test_worker_started_message_parsing() {

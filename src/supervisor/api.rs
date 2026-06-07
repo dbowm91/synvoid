@@ -1,9 +1,9 @@
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
-use crate::process::ProcessManager;
 use crate::supervisor::state::SupervisorState;
-use crate::tls::config::InternalTlsConfig;
+use synvoid_ipc::ProcessManager;
+use synvoid_tls::config::InternalTlsConfig;
 use tonic::transport::{Identity, ServerTlsConfig};
 
 // Import generated types

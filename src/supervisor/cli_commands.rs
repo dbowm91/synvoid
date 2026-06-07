@@ -2,12 +2,12 @@ use std::path::PathBuf;
 #[cfg(feature = "mesh")]
 use std::sync::Arc;
 
-use crate::config::MainConfig;
+use synvoid_config::MainConfig;
+use synvoid_ipc::{CommandClient, PidFileManager, SupervisorCommand};
 #[cfg(feature = "mesh")]
-use crate::mesh::protocol::MeshMessageSigner;
+use synvoid_mesh::protocol::MeshMessageSigner;
 #[cfg(feature = "mesh")]
-use crate::mesh::threat_intel::ThreatIntelligenceManager;
-use crate::process::{CommandClient, PidFileManager, SupervisorCommand};
+use synvoid_mesh::threat_intel::ThreatIntelligenceManager;
 
 pub fn handle_status(
     control_addr: Option<String>,

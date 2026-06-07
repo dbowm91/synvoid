@@ -1,10 +1,10 @@
-use crate::process::ipc_transport::IpcStream as AsyncIpcStream;
-use crate::process::{
+use crate::supervisor::state::SupervisorState;
+use std::sync::Arc;
+use synvoid_ipc::ipc_transport::IpcStream as AsyncIpcStream;
+use synvoid_ipc::{
     CommandResponse, ProcessManager, StatusStats, SupervisorCommand, SupervisorStatus,
     ThreatSummary,
 };
-use crate::supervisor::state::SupervisorState;
-use std::sync::Arc;
 
 pub async fn handle_supervisor_command(
     ipc: &mut AsyncIpcStream,

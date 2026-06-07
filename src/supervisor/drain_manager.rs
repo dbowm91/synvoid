@@ -9,7 +9,7 @@ use parking_lot::RwLock;
 use tokio::sync::Mutex;
 
 use crate::drain::{DrainStatus, WorkerDrainState};
-use crate::process::{IpcStream, Message, WorkerId};
+use synvoid_ipc::{IpcStream, Message, WorkerId};
 
 static DRAIN_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 

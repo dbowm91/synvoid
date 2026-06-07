@@ -1,17 +1,17 @@
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 
-use crate::block_store::BlockStore;
-use crate::config::ConfigManager;
 use crate::waf::{
     ProbeTracker, RuleFeedManagerForWaf, SuspiciousWordTracker, ThreatLevelManager,
     UpstreamErrorTracker,
 };
 
 #[cfg(feature = "mesh")]
-use crate::mesh::threat_intel::ThreatIntelligenceManager;
-#[cfg(feature = "mesh")]
 use crate::waf::YaraRulesManager;
+use synvoid_block_store::BlockStore;
+use synvoid_config::ConfigManager;
+#[cfg(feature = "mesh")]
+use synvoid_mesh::threat_intel::ThreatIntelligenceManager;
 
 #[derive(Clone)]
 pub struct SupervisorState {
