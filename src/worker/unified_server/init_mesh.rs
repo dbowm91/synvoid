@@ -302,8 +302,9 @@ pub async fn init_mesh_and_threat_intel(
                     proxy.clone(),
                     topology.clone(),
                 ));
-                let signer_for_mesh = crate::mesh::protocol::MeshMessageSigner::new(signer_key_clone)
-                    .with_verification_pool(verification_pool.clone());
+                let signer_for_mesh =
+                    crate::mesh::protocol::MeshMessageSigner::new(signer_key_clone)
+                        .with_verification_pool(verification_pool.clone());
                 if let Err(e) = crate::mesh::backend::initialize_mesh_transports(
                     &mesh_config,
                     transport_manager.clone(),

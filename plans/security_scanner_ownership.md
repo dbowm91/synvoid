@@ -73,28 +73,32 @@ yara-x would still be in the dep graph via the two leaf crates.
 
 ## Cross-crate call sites (live, not dead)
 
-| Caller | Call site | Target |
+> **Note (HWD-U03):** The `crate::upload::X` paths shown in this table are
+> **historical**. The U01 inventory (see bottom of this file) confirmed that
+> all 15 upload call sites now use `synvoid_upload::` directly. Zero
+> `crate::upload::X` submodule references remain in live code.
+
+| Caller | Current import | Target |
 |---|---|---|
-| `crates/synvoid-http/src/upload_validation_dispatch.rs:9` | `use synvoid_upload::{is_upload_content_type, UploadValidationError, UploadValidator};` | `synvoid-upload` |
-| `crates/synvoid-http/src/upload_validation_dispatch.rs:44` | `upload_validator.validate_bytes(full_body_arc, path).await` | `synvoid-upload` |
-| `src/upload/mod.rs:1` | `pub use synvoid_upload::*;` | `synvoid-upload` |
-| `src/worker/context.rs:9` | `use crate::upload::UploadValidator;` | re-export shim |
-| `src/worker/cpu_task/yara.rs:5` | `use crate::upload::yara_scanner::{YaraRulesSource, YaraScanner};` | resolves via `synvoid_upload::*` re-export (dead files removed) |
-| `src/worker/cpu_task/state.rs:12` | `use crate::upload::yara_scanner::YaraScanner;` | resolves via `synvoid_upload::*` re-export (dead files removed) |
-| `src/static_files/file_manager.rs:15-18` | `use crate::upload::malware_scanner::MalwareScanner; use crate::upload::rate_limit::*; use crate::upload::yara_scanner::YaraScanner; use crate::upload::YaraError;` | resolves via `synvoid_upload::*` re-export (dead files removed) |
-| `src/worker/unified_server/init_waf.rs:9` | `use crate::upload::UploadValidator;` | re-export shim (works) |
+| `crates/synvoid-http/src/upload_validation_dispatch.rs:9` | `use synvoid_upload::{is_upload_content_type, UploadValidationError, UploadValidator};` | `synvoid-upload` (direct) |
+| `crates/synvoid-http/src/upload_validation_dispatch.rs:44` | `upload_validator.validate_bytes(full_body_arc, path).await` | `synvoid-upload` (direct) |
+| `src/upload/mod.rs:1` | `pub use synvoid_upload::*;` | `synvoid-upload` (re-export shim) |
+| `src/worker/context.rs:9` | `use synvoid_upload::UploadValidator;` | `synvoid-upload` (direct) |
+| `src/worker/cpu_task/yara.rs:5` | `use synvoid_upload::yara_scanner::{YaraRulesSource, YaraScanner};` | `synvoid-upload` (direct) |
+| `src/worker/cpu_task/state.rs:13` | `use synvoid_upload::yara_scanner::YaraScanner;` | `synvoid-upload` (direct) |
+| `src/static_files/file_manager.rs:15-18` | `use synvoid_upload::{malware_scanner::MalwareScanner, rate_limit::*, yara_scanner::YaraScanner, YaraError};` | `synvoid-upload` (direct) |
+| `src/worker/unified_server/init_waf.rs:9` | `use synvoid_upload::UploadValidator;` | `synvoid-upload` (direct) |
 | `src/supervisor/state.rs:14` | `use crate::waf::YaraRulesManager;` | `synvoid-mesh` via root re-export |
 | `src/supervisor/mesh.rs:17` | `use crate::waf::YaraRulesManager;` | `synvoid-mesh` via root re-export |
 | `src/startup/mod.rs:12` | `use crate::waf::YaraRulesManager;` | `synvoid-mesh` via root re-export |
 | `src/waf/mod.rs:63` | `pub use crate::mesh::yara_rules::YaraRulesManager;` | `synvoid-mesh` |
 | `src/main.rs:355` | `synvoid::sandbox::run_yara_jail_mode();` | `src/sandbox/mod.rs` (root stub) |
 
-The five `src/worker/cpu_task/*` and `src/static_files/file_manager.rs` call
-sites that reach into `crate::upload::yara_scanner` (etc.) resolve through
-the `pub use synvoid_upload::*;` re-export shim. The dead duplicate files
-were removed in SDC-C03. If anyone adds `pub mod yara_scanner;` to that mod
-in the future, these call sites would break — but this is no longer latent
-breakage since the dead files no longer exist.
+All upload call sites previously routed through the `pub use synvoid_upload::*;`
+re-export shim (dead files removed in SDC-C03). They have since been migrated
+to direct `synvoid_upload::` imports (HWD-U01). The re-export shim remains
+for broad caller compatibility but is no longer on the hot path for these
+specific call sites.
 
 ## Quarantine ownership
 
@@ -166,3 +170,57 @@ intentionally root-owned because it is a process-mode entry point from
 sites (YARA runtime, mesh rules, quarantine, yara-jail). `KEEP_REMOVED`
 for the root `yara-x` direct dep (SDC-D02, after dead-file deletion in
 SDC-C03). **No extraction in this audit pass.**
+
+---
+
+## HWD-U01: Upload Import Inventory (2026-06-08)
+
+> `rg` search for `crate::upload::(yara_scanner|malware_scanner|rate_limit|sandbox|config|metrics|signature|yara_rule_feed)` across `src crates` returned **zero results**.
+> `rg` search for `use crate::upload::` across `src crates` also returned **zero results**.
+
+**All upload submodule imports now use `synvoid_upload::` directly.** No
+`crate::upload::` submodule references remain anywhere in the codebase. The
+old cross-crate call sites documented in the "Cross-crate call sites" table
+above (lines 78–90) have been migrated since MDM-S03 was written.
+
+### Full import inventory
+
+| File | Line | Current import | Preferred import | Action | Notes |
+|---|---|---|---|---|---|
+| `src/upload/mod.rs` | 1 | `pub use synvoid_upload::*;` (root re-export shim) | `synvoid_upload::` (direct) | `KEEP` | 1-line re-export. Root compatibility seam. |
+| `crates/synvoid-http/src/upload_validation_dispatch.rs` | 9 | `use synvoid_upload::{is_upload_content_type, UploadValidationError, UploadValidator};` | `synvoid_upload::` (direct) | `KEEP` | Already correct. |
+| `src/worker/context.rs` | 9 | `use synvoid_upload::UploadValidator;` | `synvoid_upload::` (direct) | `KEEP` | Already migrated. |
+| `src/worker/cpu_task/state.rs` | 13 | `use synvoid_upload::yara_scanner::YaraScanner;` | `synvoid_upload::` (direct) | `KEEP` | Already migrated. |
+| `src/worker/cpu_task/yara.rs` | 5 | `use synvoid_upload::yara_scanner::{YaraRulesSource, YaraScanner};` | `synvoid_upload::` (direct) | `KEEP` | Already migrated. |
+| `src/static_files/file_manager.rs` | 15 | `use synvoid_upload::malware_scanner::MalwareScanner;` | `synvoid_upload::` (direct) | `KEEP` | Already migrated. |
+| `src/static_files/file_manager.rs` | 16 | `use synvoid_upload::rate_limit::{RateLimitConfig, UploadRateLimiter};` | `synvoid_upload::` (direct) | `KEEP` | Already migrated. |
+| `src/static_files/file_manager.rs` | 17 | `use synvoid_upload::yara_scanner::YaraScanner;` | `synvoid_upload::` (direct) | `KEEP` | Already migrated. |
+| `src/static_files/file_manager.rs` | 18 | `use synvoid_upload::YaraError;` | `synvoid_upload::` (direct) | `KEEP` | Already migrated. |
+| `src/static_files/file_manager.rs` | 241 | `synvoid_upload::yara_scanner::YaraRulesSource::Bundled` | `synvoid_upload::` (direct) | `KEEP` | Inline use path, already direct. |
+| `src/static_files/file_manager.rs` | 766 | `synvoid_upload::signature::global_signature_registry()` | `synvoid_upload::` (direct) | `KEEP` | Inline use path, already direct. |
+| `src/static_files/file_manager.rs` | 792 | `synvoid_upload::signature::global_signature_registry()` | `synvoid_upload::` (direct) | `KEEP` | Inline use path, already direct. |
+| `src/http/file_manager.rs` | 375 | `use synvoid_upload::rate_limit::RateLimitConfig;` | `synvoid_upload::` (direct) | `KEEP` | Already migrated. |
+| `src/worker/unified_server/init_waf.rs` | 9 | `use synvoid_upload::UploadValidator;` | `synvoid_upload::` (direct) | `KEEP` | Already migrated. |
+
+### Summary
+
+- **`crate::upload::X` submodule references remaining:** 0
+- **`synvoid_upload::X` direct references:** 15 (all already correct)
+- **`crate::upload::` broader pattern (`use crate::upload::`):** 0
+
+**No imports need to change.** The migration from `crate::upload::X` to
+`synvoid_upload::X` is already complete. The `src/upload/mod.rs` re-export
+shim (`pub use synvoid_upload::*;`) is the only root-side upload code and
+should be retained as the root compatibility seam.
+
+**Baseline:** `cargo check --lib --no-default-features` passes (103 warnings, 0 errors).
+
+### Recommendations for HWD-U01
+
+Since the import migration is already done, the remaining work items are:
+
+1. **Remove root `yara-x` direct dep** from root `Cargo.toml` (SDC-D02, already documented).
+2. **No `crate::upload::X` to `synvoid_upload::X` conversion needed** — already complete.
+3. The `src/upload/mod.rs` re-export shim can optionally be removed in a future
+   pass if all downstream consumers are confirmed to use `synvoid_upload::`
+   directly, but this is low priority since it's a 1-line file.

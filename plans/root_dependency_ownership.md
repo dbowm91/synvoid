@@ -1,7 +1,7 @@
 # Root Dependency Ownership Matrix
 
 > Status: Refreshed as part of MDM-R01 (measurement-driven modularization pass).
-> Last updated: 2026-06-07 (SDC-C03: dead root upload files deleted)
+> Last updated: 2026-06-08 (HWD-U03: upload import state reflected in yara-x row)
 > Scope: Every direct dependency in root `Cargo.toml` plus the
 > "focus first" / "heavy root" lists in
 > `plans/measurement_driven_modularization_cleanup.md` § 5.
@@ -102,7 +102,7 @@ attribute uses.
 
 | Dependency | Action | True owner | Evidence | Notes |
 |---|---|---|---|---|
-| `yara-x` | **KEEP_REMOVED** | `synvoid-upload` + `synvoid-mesh` | 0 root uses (dead `src/upload/*.rs` files deleted in SDC-C03); `rg "use yara_x" src/` = 0 hits; `cargo tree -p synvoid -i yara-x` confirms dep only via `synvoid-upload` and `synvoid-mesh` | Root dep removed in SDC-D02 (2026-06-07). |
+| `yara-x` | **KEEP_REMOVED** | `synvoid-upload` + `synvoid-mesh` | 0 root uses (dead `src/upload/*.rs` files deleted in SDC-C03); `rg "use yara_x" src/` = 0 hits; `cargo tree -p synvoid -i yara-x` confirms dep only via `synvoid-upload` and `synvoid-mesh` | Root dep removed in SDC-D02 (2026-06-07). Upload import migration (HWD-U01) confirmed: all 15 upload call sites use `synvoid_upload::` directly; zero `crate::upload::X` submodule refs remain. Root `src/upload/mod.rs` re-export shim retained for compatibility. |
 
 ### Schema / OpenAPI
 

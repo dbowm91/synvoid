@@ -4,6 +4,7 @@
 **Date**: 2026-06-07
 **Updated**: 2026-06-07 (HWS-Q01–Q03)
 **Updated**: 2026-06-07 (MDM-Q01–Q03 — refresh + import reduction + ownership decision)
+**Updated**: 2026-06-08 (HWD-H04 — H02 deferral recorded)
 
 ## Summary
 
@@ -102,7 +103,7 @@ These types are defined in extracted crates and merely re-exported by root. They
 
 | Type | Root location | Trait seam in extracted crate | Effort |
 |------|---------------|-------------------------------|--------|
-| `WafCore` | `src/waf/mod.rs:97` | `WafProcessor` + `WafAccess` + `Http3RequestWaf` — all 3 WafAccess accessors now used via trait. Remaining: `self.waf.as_ref()` for `Http3RequestWaf` dispatch requires concrete type | **WafAccess resolved**; remaining blocker is `Http3RequestWaf` trait object or generic struct |
+| `WafCore` | `src/waf/mod.rs:97` | `WafProcessor` + `WafAccess` + `Http3RequestWaf` — all 3 WafAccess accessors now used via trait. Remaining: `self.waf.as_ref()` for `Http3RequestWaf` dispatch requires concrete type | **H02 deferred** — `Http3RequestWaf` IS object-safe but `WafAccess` is not (associated type `StreamingScanner`). Retry requires `WafAccess` refactor |
 | `WorkerDrainState` | `src/worker/drain_state.rs:23` | `DrainState` trait exists in synvoid-core, `WorkerDrainStateAdapter` wraps it | Low — stored but unused in server.rs methods; just pass `Option<Arc<dyn DrainState>>` |
 
 ### Standalone functions (no ownership concern)
@@ -138,12 +139,19 @@ To resolve this, one of:
 
 The `Http3RequestWaf` dispatch blocker prevents moving `server.rs` to an extracted crate. The `bind_udp_reuse` platform utility and `WorkerDrainState` are minor and solvable, but the `Http3RequestWaf` requirement is structural.
 
+### H02 deferral (2026-06-08)
+
+Strategy A (`Arc<dyn Http3RequestWaf>`) was investigated and found **blocked by `WafAccess`**, not by `Http3RequestWaf`. `Http3RequestWaf` itself IS object-safe (no generics, no `Self` returns, no associated types). However, `Http3Server` also calls `WafAccess` methods on `self.waf` (lines 224, 225, 267, 268, 270), and `WafAccess` has the associated type `StreamingScanner` (`streaming() -> Option<Self::StreamingScanner>`), making it **not object-safe**. A composite trait `dyn Http3WafBackend: Http3RequestWaf + WafAccess` would also fail because `WafAccess` is not object-safe. See `plans/hwd_h02_deferred.md` for full details.
+
+**Prerequisites for retry:** Remove `StreamingScanner` associated type from `WafAccess` and return a boxed trait object instead, or refactor `streaming()` callers.
+
 ### Next steps
 
-1. Verify `Http3RequestWaf` is object-safe (check for `Self` returns, generics, async)
-2. If object-safe: change `waf: Arc<WafCore>` to `waf: Arc<dyn Http3RequestWaf>` in struct
-3. If not object-safe: create thin wrapper trait or make struct generic
-4. Then reassess `MOVE_READY`
+1. ~~Verify `Http3RequestWaf` is object-safe~~ ✅ confirmed object-safe
+2. ~~If object-safe: change `waf: Arc<WafCore>` to `waf: Arc<dyn Http3RequestWaf>`~~ **BLOCKED** — `WafAccess` not object-safe
+3. Refactor `WafAccess` to remove `StreamingScanner` associated type (return `Option<Box<dyn StreamingWafScanner>>`)
+4. Then re-evaluate `Arc<dyn Http3RequestWaf>` or composite trait object
+5. Then reassess `MOVE_READY`
 
 ---
 

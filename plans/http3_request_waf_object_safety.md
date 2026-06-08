@@ -83,6 +83,18 @@ Call site in `src/server/mod.rs` would need `.clone()` on the `Arc<dyn ...>` —
 
 **Not implemented in this task.** Strategy A is documented for future execution. The change is a one-line field type swap with no behavioral impact.
 
+## HWD-H04: H02 Deferral Record (2026-06-08)
+
+Strategy A was attempted but **blocked by `WafAccess`**, not by `Http3RequestWaf`.
+
+- `Http3RequestWaf` IS object-safe (confirmed above).
+- `Http3Server` also calls `WafAccess` methods on `self.waf` at lines 224, 225, 267, 268, 270.
+- `WafAccess` has `type StreamingScanner: Send + Sync + 'static` and `fn streaming(&self) -> Option<Self::StreamingScanner>`, making it **not object-safe**.
+- A composite trait `Arc<dyn Http3WafBackend>` (combining `Http3RequestWaf + WafAccess`) also fails because `WafAccess` is not object-safe.
+- Boxing `streaming()` requires a unified `StreamingWafScanner` trait across `synvoid-http` and `synvoid-http-client`, plus changes to 3+ dispatch functions — out of scope.
+
+**Deferred** until `WafAccess` is refactored to remove the `StreamingScanner` associated type. See `plans/hwd_h02_deferred.md`.
+
 ## Acceptance
 
 Acceptance checks (compilation verification) run against the current workspace state — no source changes were made.
