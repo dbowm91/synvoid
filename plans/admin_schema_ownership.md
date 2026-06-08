@@ -235,3 +235,261 @@ to **run MDM-M02** (compile-time measurement) and re-evaluate this
 decision if `cargo check -p synvoid-config` or `cargo check --workspace
 --all-targets` is dominated by `utoipa`/`schemars` derive expansion. That
 is a measurement-driven question that this audit cannot answer.
+
+---
+
+# RHP-A01: Admin/Schema Ownership Audit Refresh (2026-06-08)
+
+> Refresh pass on the admin/schema ownership audit.
+
+## Inspection findings (refresh, 2026-06-08)
+
+**Search command**:
+
+```bash
+rg -n "utoipa|ToSchema|OpenApi|schemars|JsonSchema|swagger|export-openapi|export-api-spec" \
+   src/ crates/ admin-ui/ Cargo.toml
+```
+
+**Refreshed totals**:
+
+| Metric | root `src/` | extracted `crates/` |
+|---|---:|---:|
+| utoipa / ToSchema / OpenApi mentions | **529** (24 files) | **313** (50 files) |
+| schemars / JsonSchema mentions | **4** (3 files) | **361** (67 files) |
+| `#[utoipa::path(...)]` route annotations | **217** (20 files) | **33** (4 files in `synvoid-admin`) |
+| `admin-ui/` matches | **0** | n/a |
+
+**Binary-only export flags** (unchanged from MDM-A01):
+
+- `--export-openapi` and `--export-api-spec` are defined in
+  `crates/synvoid-cli/src/lib.rs:175,178` (bool fields) and read only
+  in `src/main.rs:34,44`.
+- Both branches print JSON via `serde_json::to_string_pretty` and
+  call `std::process::exit(0)`. **No runtime consumer** (no admin
+  HTTP route, no background task).
+- `schemars::schema_for!(MainConfig)` is called at
+  `src/main.rs:36`; `synvoidOpenApi::openapi_json()` is called at
+  `src/main.rs:46`.
+
+**Root `src/admin/mod.rs` swagger-ui feature gate** (unchanged):
+
+- Line 17: `pub use openapi::synvoidOpenApi;`
+- Line 37: `use utoipa::OpenApi;`
+- Lines 38-39: `#[cfg(feature = "swagger-ui")] use utoipa_swagger_ui::SwaggerUi;`
+- Lines 799-802: `SwaggerUi::new("/api/docs").url("/api/openapi.json", openapi::synvoidOpenApi::openapi())`
+
+**Manifest entries** (unchanged):
+
+- Root `Cargo.toml:22`: `default = ["socket-handoff", "mesh", "dns", "erased_pool", "swagger-ui"]` — swagger-ui is **default-on**.
+- Root `Cargo.toml:39`: `swagger-ui = ["dep:utoipa-swagger-ui"]`.
+- Root `Cargo.toml:231-233`: `schemars = "0.8"`, `utoipa = { version = "5", features = ["axum_extras", "chrono"] }`, `utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"], optional = true }`.
+
+## Per-file table (refresh)
+
+| File | Owner | Dep | User-facing? | Candidate owner | Notes |
+|------|-------|-----|--------------|-----------------|-------|
+| `src/admin/openapi.rs` (1611 lines) | root | utoipa | Yes (CLI export) | `synvoid-admin` (deferred) | Spec composer; 85 utoipa mentions |
+| `src/admin/handlers/config.rs` (197 lines) | root | utoipa, schemars | Yes | `synvoid-admin` (deferred) | Largest single-file consumer |
+| `src/admin/handlers/*.rs` (19 files) | root | utoipa | Yes | `synvoid-admin` (deferred) | Cross subsystem boundaries (mesh, waf, config, sites) |
+| `src/admin/schema.rs` | root | utoipa | Yes | `synvoid-admin` (deferred) | Schema helpers |
+| `src/admin/state.rs` | root | utoipa | Yes | `synvoid-admin` (deferred) | Admin state types |
+| `src/admin/mod.rs` | root | utoipa, utoipa-swagger-ui | Yes | `synvoid-admin` (deferred) | Includes Swagger UI mount at lines 799-802 |
+| `src/main.rs` | root | utoipa, schemars | CLI export | root (binary-only) | `--export-openapi` / `--export-api-spec` |
+| `src/mesh/dht/mod.rs` | root (mesh shim) | schemars | Yes (config schema) | `synvoid-mesh` (deferred) | `JsonSchema` derive |
+
+## RHP-A01 conclusion
+
+**Defer**, same as MDM-A02. The schema/OpenAPI ownership is
+structurally correct. No source code changes were made in this audit
+pass. RHP-A02 (next) makes the decision affirmative (see below).
+
+---
+
+# RHP-A02: Root Schema Dependency Ownership Decision (2026-06-08)
+
+> Decision pass on whether the root binary's `utoipa` / `schemars` /
+> `utoipa-swagger-ui` direct dependencies remain justified given the
+> post-RHP-A01 evidence. No source code changes.
+
+## 1. Inspection findings summary
+
+The RHP-A01 audit (this document, just above) confirmed:
+
+- **utoipa in root `src/`**: 529 mentions across 24 files, dominated
+  by `src/admin/openapi.rs` (85) and `src/admin/handlers/config.rs`
+  (197). The 24 files are nearly all under `src/admin/handlers/*`
+  (19 files, ~217 `#[utoipa::path]` annotations) plus
+  `src/admin/openapi.rs`, `src/admin/schema.rs`,
+  `src/admin/state.rs`, `src/admin/mod.rs`, and `src/main.rs`.
+- **schemars in root `src/`**: 4 mentions across 3 files
+  (`src/main.rs:36` for `schemars::schema_for!(MainConfig)`,
+  `src/admin/handlers/config.rs` for `use schemars::schema_for;`,
+  `src/mesh/dht/mod.rs` for `use schemars::JsonSchema;`).
+- **utoipa-swagger-ui in root `src/`**: 1 use at
+  `src/admin/mod.rs:799-802`, feature-gated by `swagger-ui`
+  (`Cargo.toml:22,39`), default-on.
+- **`--export-openapi` and `--export-api-spec` are binary-only**:
+  defined in `crates/synvoid-cli/src/lib.rs:175,178`, read **only**
+  in `src/main.rs:34,44`. Both code paths print JSON and `exit(0)`.
+  **No runtime consumer** (no admin HTTP route, no background task).
+- The OpenAPI spec composer is root-owned: `src/admin/openapi.rs`
+  (1611 lines), re-exported as `synvoidOpenApi` at
+  `src/admin/mod.rs:17` and consumed by `src/main.rs:45`.
+- `synvoid-admin` already declares its own `utoipa`, `schemars`, and
+  `utoipa-swagger-ui` deps in `crates/synvoid-admin/Cargo.toml:19-21,42`,
+  but it **does not own the live admin HTTP server**; it owns 6
+  handler files plus a `schema.rs`, all re-exported by root.
+
+## 2. Classification per dependency
+
+| Dependency | Classification | Reason |
+|---|---|---|
+| `utoipa` | **KEEP_ROOT_FOR_BINARY_EXPORT** | The spec composer (`src/admin/openapi.rs`) and 19 of 24 root consumers (`src/admin/handlers/*`) are root-owned. `src/main.rs:45` consumes `synvoidOpenApi` for the `--export-api-spec` path. `utoipa::OpenApi` is the trait import at `src/admin/mod.rs:37` that the spec composer depends on. Root cannot drop this dep. |
+| `schemars` | **KEEP_ROOT_FOR_BINARY_EXPORT** | The single `schemars::schema_for!(MainConfig)` call at `src/main.rs:36` is what powers `--export-openapi`. The 2 other root mentions (`src/admin/handlers/config.rs`, `src/mesh/dht/mod.rs`) are re-exports / `JsonSchema` derives that would either need to follow their parent types or be removed if config / mesh DHT move. The dominant `schemars` footprint is in `synvoid-config` (already crate-local). |
+| `utoipa-swagger-ui` | **KEEP_ROOT_FOR_BINARY_EXPORT** | Single root use at `src/admin/mod.rs:799-802` mounts Swagger UI at `/api/docs` against the root-owned `synvoidOpenApi::openapi()` value. The `swagger-ui` feature is default-on (`Cargo.toml:22`). |
+
+## 3. Decision: KEEP_ROOT_FOR_BINARY_EXPORT
+
+This decision matches the plan's default recommendation in
+`plans/remaining_http_runtime_and_schema_path.md` § 7:
+
+> "Keep root schema export if it is used only by binary flags such as
+> --export-openapi / --export-api-spec and does not dominate compile
+> timing. Move only if measurements show schemars/utoipa are a hot path."
+
+RHP-A01 already confirmed `--export-openapi` / `--export-api-spec`
+have no runtime consumer — they are binary-only CLI paths. The spec
+composer (`src/admin/openapi.rs`) is root-owned and structurally
+required. The 19 root admin handler files that consume `utoipa` are
+intentionally not in `synvoid-admin` because they cross subsystem
+boundaries (mesh, waf, config, sites) and the plan's § 2 non-goal is
+"do not move worker or supervisor" — the admin handler set that
+orchestrates those layers is implicitly out of scope. Moving the spec
+composer to `synvoid-admin` would require moving all 24 root admin
+handler files with it; this is out of scope for this pass and is not
+justified by any current measurement.
+
+`synvoid-admin` already owns its own `utoipa`/`schemars`/
+`utoipa-swagger-ui` deps for its 6-file partial handler set, so the
+question is not "can it own these?" — it can. The question is
+"does the root binary compile OpenAPI directly enough to justify a
+root direct dep?" — and the answer is yes, because
+`src/main.rs:34,44` and `src/admin/openapi.rs` are root-owned and
+compile-time required for the export feature.
+
+**Rejected alternatives**:
+
+| Option | Why rejected |
+|---|---|
+| `MOVE_TO_SYNVOID_ADMIN` | Would require moving all 24 root `utoipa`-using files (or at minimum the spec composer + every handler it references through `#[utoipa::path]`). Out of scope per plan § 2 non-goal. |
+| `FEATURE_GATE_SCHEMA_DERIVES` | Would add a `schema` feature flag across 53 `synvoid-config` files, 22 root admin handler files, and the spec composer. Maintenance cost is high. The existing `swagger-ui` feature flag (root `Cargo.toml:22,39`) is already the minimal schema-related feature gate. |
+| `CREATE_SYNVOID_SCHEMA_LATER` | Premature — the dominant `schemars` owner (`synvoid-config`) is already in its own crate. A new `synvoid-schema` crate would just re-export the same `MainConfig` and admin DTOs without removing any root dep. |
+| `DEFER_LOW_VALUE` | Considered, but `KEEP_ROOT_FOR_BINARY_EXPORT` is a positive, evidence-grounded decision (not a punt). |
+
+## 4. Re-evaluation preconditions
+
+This decision is conditional. The following would each be sufficient
+cause to revisit it and re-run the audit:
+
+1. **MDM-M02 measurements show `utoipa`/`schemars` dominate
+   `cargo check -p synvoid` or `cargo check --workspace --all-targets`
+   timings.** Currently no such measurement exists. A profile that
+   shows, for example, `utoipa` macro expansion contributing >20% of
+   root binary compile time would justify splitting the spec composer
+   into `synvoid-admin` and forcing a bigger admin handler extraction.
+2. **A new runtime consumer of the OpenAPI surface appears** — e.g.
+   the admin server begins serving the live spec via an HTTP route
+   consumed by the UI at request time, or a remote admin client
+   fetches the spec over the mesh. Today the spec is exported only
+   via one-shot CLI flags; if that changes, the ownership question
+   also changes (the spec would then be a live data-plane artifact,
+   not a build-time export).
+3. **The admin handler set consolidates into `synvoid-admin`**, which
+   would only happen if the plan's § 2 non-goal "do not move
+   worker/supervisor" is relaxed and the cross-subsystem admin
+   endpoints are extracted. Multi-month refactor, not in any active plan.
+4. **The `swagger-ui` feature is removed or moved to default-off.**
+   This would let `utoipa-swagger-ui` become a `FEATURE_FORWARD_ONLY`
+   candidate.
+
+## 5. MDM-M02 measurement follow-up needed
+
+Per the plan's § 7 default, the next concrete action item is to
+**run MDM-M02** — a compile-time measurement of:
+
+- `cargo clean && cargo check -p synvoid 2>&1 | tee /tmp/synvoid-check.log`
+  — record wall-clock time, and `cargo build --timings` for a
+  per-crate breakdown.
+- `cargo clean && cargo check --workspace --all-targets 2>&1 | tee /tmp/workspace-check.log`
+  — same.
+- Optionally, use `cargo nextest` or `cargo llvm-lines` to attribute
+  compile time to specific crates.
+
+If the measurement shows `utoipa`/`schemars` contribute less than
+~20% of root binary compile time, this decision stands. If they
+contribute more, re-open RHP-A02 with the measurements attached.
+
+**No source code changes in this decision pass.** RHP-A02 is
+documentation only.
+
+---
+
+# RHP-A03: Stale Schema Imports Cleanup (2026-06-08)
+
+> Cleanup pass: replace any root `schemars`/`utoipa` imports where
+> the symbol has been moved to an extracted crate.
+
+## Search results
+
+| Search | Result |
+|--------|--------|
+| `rg -n "use schemars::" src/` | 2 statements (main.rs, admin/handlers/config.rs) |
+| `rg -n "use utoipa::" src/` | 33 statements across 24 files |
+| `rg -n "pub use schemars\|pub use utoipa" crates/` | **0 matches** — no extracted crate re-exports these symbols |
+
+## Findings
+
+Every root import already points at the upstream `schemars`/`utoipa`
+crate, which is the canonical home. No extracted crate has **moved**
+any of these symbols, so there is nothing to redirect.
+
+Reasons each import was left alone:
+
+1. **Root struct derives are root-owned.** The structs that derive
+   `#[derive(utoipa::ToSchema)]` or `#[derive(schemars::JsonSchema)]`
+   live in root. The `use utoipa::ToSchema;` import at the top of
+   those files is mandatory to bring the derive macro into scope.
+2. **The spec composer (`src/admin/openapi.rs`) is root-owned.** The
+   `use utoipa::OpenApi;` at `src/admin/mod.rs:37` is required
+   because `synvoidOpenApi` (defined in root) implements
+   `utoipa::OpenApi`.
+3. **`schemars::schema_for!(MainConfig)` at `src/main.rs:36`** powers
+   `--export-openapi`. The call is binary-only and uses the upstream
+   crate directly.
+4. **`src/mesh/dht/mod.rs`'s `use schemars::JsonSchema;`** is for the
+   root mesh shim's DHT types. The DHT schema derives are used by
+   the spec composer (`src/admin/openapi.rs`).
+5. **`utoipa_swagger_ui::SwaggerUi` at `src/admin/mod.rs:799-802`**
+   is the only root consumer; `synvoid-admin` declares the dep but
+   no caller enables the crate's `swagger-ui` feature flag from
+   root.
+
+## Validation
+
+| Command | Result |
+|---------|--------|
+| `cargo check --lib --no-default-features` | 2 errors (pre-existing Send-bound at `src/http/server/accept_loop.rs:154`) |
+| `cargo check --workspace --all-targets` | 3 errors (pre-existing, same file) |
+
+No new errors introduced.
+
+## Verdict
+
+**No stale imports exist.** Zero files modified. The schema
+imports are all already canonical (pointing at the upstream crate
+that owns the macro/trait).
+
+## File:line changes
+
+**None.**

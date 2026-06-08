@@ -258,6 +258,97 @@ substantive content already lives in the focus-first table above. The
 Cargo.toml history went from 20 historical comment lines (across 17
 dependencies) to 14 brief one-liner references.
 
+### MDM-R02 batch 2 — 2026-06-08 (RHP-R02 from remaining_http_runtime_and_schema_path.md)
+
+| Dependency | Reason | Already in extracted crate |
+|---|---|---|
+| `x509-parser` | 0 root uses; pulled in transitively | `synvoid-tls`, `synvoid-mesh` |
+| `openraft-legacy` | 0 uses anywhere; only pinned by root | n/a |
+| `prost-build` | 0 uses anywhere; was in wrong section | n/a (was wrongly in [dependencies]) |
+
+Source: see "RHP-R01: Root Dependency Ownership Matrix Refresh (2026-06-08)"
+Findings table below for the full 27-dep review that fed into this batch.
+
+---
+
+# RHP-R01: Root Dependency Ownership Matrix Refresh (2026-06-08)
+
+> Refresh pass on the focus list of 27 root dependencies.
+> Identifies which can be removed (RHP-R02 batch 2 candidates) and
+> which are mis-classified in the prior MDM-R01 matrix.
+
+## Findings
+
+| Dependency | Classification | Evidence (use count + file locations) | Notes |
+|---|---|---|---|
+| `hyper` | KEEP_ROOT_FOR_NOW | 55 uses across `src/http/websocket_*`, `src/http/server*`, `src/dns/doh.rs`, `src/tls/server.rs`, `src/http_client/*`; also in `synvoid-http`, `synvoid-http-client`, `synvoid-proxy` | Plan rule: "Do not prune hyper/tower/axum while root HTTP server/admin still require them" |
+| `hyper-util` | KEEP_ROOT_FOR_NOW | 8 uses in `src/http_client/typed_pool.rs`, `src/http_client/erased_pool.rs`, `src/http/server/connection_types.rs`, `src/dns/doh.rs`, `src/tls/server.rs`; also in `synvoid-http`, `synvoid-http-client` | Required by `http_client/` and `http/server/connection_types.rs` |
+| `hyper-rustls` | KEEP_ROOT_FOR_NOW | 3 direct uses in `src/http_client/typed_pool.rs`; dep already in `crates/synvoid-http-client/Cargo.toml` | Move would require moving the http_client tree (out of scope) |
+| `tower` | KEEP_ROOT_FOR_NOW | 1 use + macros in `src/admin/handlers/*`, `src/admin/middleware.rs`, `src/admin/mod.rs`, `src/admin/ws/*`, `src/http/directory_viewer.rs`, `src/http/file_manager*.rs`, `src/http/webdav.rs`, `src/plugin/*` | Note: MDM-R01 row of "1 use + 32 macros" is now reduced to 1 use + macros after RHP-S03 refactor |
+| `tower-http` | KEEP_ROOT_FOR_NOW | `src/admin/mod.rs` (CORS + ServeDir) | Tied to admin server |
+| `axum` | KEEP_ROOT_FOR_NOW | 49 use lines + macros in 32 root files; also in `synvoid-admin`, `synvoid-app-handlers`, `synvoid-plugin-runtime` | Cannot move while root `src/admin/handlers/*` (23 files) and `src/plugin/mod.rs` use it |
+| `axum-extra` | MOVE_TO_EXISTING_CRATE | 1 use in `src/admin/handlers/common.rs` (typed headers) | Dep already in `crates/synvoid-admin/Cargo.toml:15`. Move requires source code movement (out of scope) |
+| `rusqlite` | KEEP_ROOT_FOR_NOW | 4 root modules: `src/dns/store.rs`, `src/dns/trust_anchor.rs`, `src/honeypot_port/storage.rs`, `src/waf/threat_level/persistence/sqlite.rs`; also in `synvoid-dns`, `synvoid-honeypot`, `synvoid-block-store` | Cannot remove until the root sqlite sites are consolidated. Tracked in MDM-S02 |
+| `tokio-rustls` | KEEP_ROOT_FOR_NOW | Used in `src/tls/server.rs`, `src/dns/hsm.rs`, `src/dns/doh.rs`; also in `synvoid-tls`, `synvoid-http-client` | Cannot remove while `src/tls/server.rs` is root-owned |
+| `rustls` | KEEP_ROOT_FOR_NOW | `src/tls/*` and `src/http3/server.rs`; also in `synvoid-tls`, `synvoid-http-client`, `synvoid-mesh`, `synvoid-block-store` | Same |
+| `x509-parser` | **REMOVE_FROM_ROOT (RHP-R02 batch 2)** | 0 root uses (MDM-R01 row claiming `src/tls/`, `src/waf/` usage was stale — no longer exists) | Already declared in `synvoid-tls` and `synvoid-mesh` `Cargo.toml` |
+| `aws-lc-rs` | KEEP_ROOT_FOR_NOW | 0 direct root uses; was previously pulled in transitively via root `yara-x` | Pure transitive for root; the patch in `[patch.crates-io]` keeps wasmtime pinned. May be removable from root after further analysis (yara-x no longer in root) |
+| `quinn` | KEEP_ROOT_FOR_NOW | 3 root modules: `src/dns/doq.rs`, `src/http3/server.rs`, `src/tcp/listener.rs`; also in `synvoid-http3` | Plan rule: "Do not prune quinn/h3/h3-quinn while HTTP3 server remains root-owned" |
+| `h3` | KEEP_ROOT_FOR_NOW | 2 uses in `src/http3/server.rs`; also in `synvoid-http3` | Same |
+| `h3-quinn` | KEEP_ROOT_FOR_NOW | 1 use in `src/http3/server.rs` (also declared in `synvoid-http3` and `synvoid-http` `Cargo.toml` but not imported there) | Same |
+| `schemars` | KEEP_ROOT_FOR_BINARY_EXPORT (RHP-A02) | 3 root sites: `src/main.rs:36`, `src/admin/handlers/config.rs`, `src/mesh/dht/mod.rs` | Re-classified from KEEP_ROOT_FOR_NOW. See RHP-A02 in `plans/admin_schema_ownership.md` |
+| `utoipa` | KEEP_ROOT_FOR_BINARY_EXPORT (RHP-A02) | 529 root mentions across 24 files (dominated by `src/admin/openapi.rs` and `src/admin/handlers/config.rs`) | Same reclassification as schemars |
+| `utoipa-swagger-ui` | KEEP_ROOT_FOR_BINARY_EXPORT (RHP-A02) | 1 use at `src/admin/mod.rs:799-802`, feature-gated by `swagger-ui`, default-on | Same |
+| `prost` | KEEP_ROOT_FOR_NOW (deferred removal) | 0 root uses; consumers in `synvoid-mesh` only | Removal requires first declaring it in `synvoid-mesh/Cargo.toml` (cross-crate change) |
+| `prost-build` | **REMOVE_FROM_ROOT (RHP-R02 batch 2)** | 0 uses anywhere; declared in wrong section (`[dependencies]` instead of `[build-dependencies]`) | Both `build.rs` files actually use `tonic-prost-build` |
+| `openraft` | KEEP_ROOT_FOR_NOW | 0 direct root uses; 16+ uses in `crates/synvoid-mesh/src/mesh/raft/*.rs`; optional via `mesh` feature | Plan rule: "Do not prune openraft while root mesh feature still directly enables it" |
+| `openraft-legacy` | **REMOVE_FROM_ROOT (RHP-R02 batch 2)** | 0 uses anywhere; not declared in any crate; only pinned by root (MDM-R01 row claiming "Required by synvoid-mesh's Cargo.toml" was stale) | Not in any Cargo.toml |
+| `libloading` | KEEP_ROOT_FOR_NOW | 1 use in `src/plugin/axum_loader.rs: use libloading::{Library, Symbol};`; same use in `crates/synvoid-plugin-runtime/src/axum_loader.rs` | Root `src/plugin/mod.rs` is the canonical `PluginManager` |
+| `walkdir` | KEEP_ROOT_FOR_NOW | 1 use in `src/static_files/file_manager.rs` | Required by root |
+| `flate2` | KEEP_ROOT_FOR_NOW | Used in root `src/static_files/file_manager.rs` and crates | Required by root |
+| `tar` | KEEP_ROOT_FOR_NOW | 2 uses in `src/static_files/file_manager.rs` | Required by root |
+| `tempfile` | KEEP_ROOT_FOR_NOW | 2 root uses in `src/process/socket_fd.rs`, `src/worker/cpu_task/payload.rs` | Required by root |
+| `sha2` | KEEP_ROOT_FOR_NOW | Used by root IPC, signing, etc. | Required by root |
+
+## Summary (RHP-R01)
+
+- **27 deps reviewed** from the plan § 8 focus list.
+- **3 strong `REMOVE_FROM_ROOT` candidates** for RHP-R02 batch 1
+  (all confirmed and removed): x509-parser, openraft-legacy,
+  prost-build.
+- **1 `MOVE_TO_EXISTING_CRATE` candidate**: `axum-extra` (root use
+  mirrors `synvoid-admin`'s; dep already declared in
+  `crates/synvoid-admin/Cargo.toml:15`).
+- **1 deferred `REMOVE_FROM_ROOT` candidate**: `prost` (0 root uses
+  but consumers in `synvoid-mesh`; requires cross-crate change to
+  add it to `synvoid-mesh`'s Cargo.toml first).
+- **0 `UNKNOWN_INVESTIGATE` items** — every focus dep has a clear,
+  evidence-based classification.
+- **Most surprising findings**:
+  - The MDM-R01 `tower` count of "1 use + 32 macros" is overstated —
+    actual root grep returns 0 direct `tower::` references after
+    RHP-S03 refactor.
+  - The MDM-R01 `x509-parser` and `openraft-legacy` rows describe use
+    sites that no longer exist.
+  - `h3-quinn` is declared in `synvoid-http3`/`synvoid-http`
+    `Cargo.toml` but never imported anywhere except root
+    `src/http3/server.rs`.
+
+Verification (after removal):
+
+```text
+cargo check --lib --no-default-features             2 Send errors (pre-existing baseline)
+cargo check --workspace --all-targets               3 Send errors (pre-existing baseline)
+cargo test --workspace --no-run                     3 Send errors (pre-existing baseline)
+```
+
+No items failed and needed `KEEP_ROOT_FOR_NOW` restoration. The
+pre-existing Send bound errors in `src/http/server/accept_loop.rs:154`
+(per plan § 8; 2 errors in `cargo check --lib --no-default-features`,
+3 errors in `cargo check --workspace --all-targets` and
+`cargo test --workspace --no-run`) were unchanged. `prost` was deferred
+(cross-crate change required; see RHP-R01 Findings table).
+
 ## Verification
 
 ```bash

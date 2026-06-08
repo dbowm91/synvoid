@@ -5317,19 +5317,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "openraft-legacy"
-version = "0.10.0-alpha.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc9b53ebd47aa95e84d184921e31220aaa7db91d874ec1f39d6851bf16db74ad"
-dependencies = [
- "futures",
- "openraft",
- "openraft-macros",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "openraft-macros"
 version = "0.10.0-alpha.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7983,7 +7970,6 @@ dependencies = [
  "nix 0.29.0",
  "notify",
  "openraft",
- "openraft-legacy",
  "parking_lot",
  "pin-project-lite",
  "postcard",
@@ -7991,7 +7977,6 @@ dependencies = [
  "proptest",
  "proptest-derive",
  "prost",
- "prost-build",
  "quinn",
  "rand 0.9.4",
  "rand_core 0.6.4",
@@ -8075,7 +8060,6 @@ dependencies = [
  "webpki-roots 0.26.11",
  "windows-sys 0.59.0",
  "x25519-dalek",
- "x509-parser 0.16.0",
  "zeroize",
  "zip 2.4.2",
 ]
@@ -8605,6 +8589,7 @@ name = "synvoid-platform"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "socket2 0.6.4",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -9222,7 +9207,6 @@ dependencies = [
  "signal-hook-registry",
  "socket2 0.6.4",
  "tokio-macros",
- "tracing",
  "windows-sys 0.61.2",
 ]
 

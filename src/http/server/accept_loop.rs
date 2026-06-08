@@ -3,25 +3,7 @@ use super::*;
 pub(super) async fn run_accept_loop(
     addr: SocketAddr,
     mut shutdown_rx: broadcast::Receiver<()>,
-    router: Arc<Router>,
-    waf: Arc<WafCore>,
-    client: HttpClient,
-    flood_protector: Option<Arc<FloodProtector>>,
-    http_config: HttpConfig,
-    alt_svc: Option<String>,
-    main_config: Arc<MainConfig>,
-    drain_state: Option<Arc<WorkerDrainState>>,
-    #[cfg(feature = "mesh")] mesh_config: Option<Arc<MeshConfig>>,
-    #[cfg(feature = "mesh")] mesh_transport: Option<Arc<MeshTransportManager>>,
-    metrics: Option<Arc<WorkerMetrics>>,
-    ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
-    worker_id: Option<crate::process::ipc::WorkerId>,
-    serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
-    connection_limit: Arc<Semaphore>,
-    app_servers: Option<Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>>,
-    #[cfg(feature = "mesh")] mesh_backend_pool: Option<Arc<MeshBackendPool>>,
-    upstream_client_registry: Arc<UpstreamClientRegistry>,
-    erased_http_client: ErasedHttpClient,
+    runtime: HttpServerRuntime,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let std_listener = crate::platform::socket::bind_tcp_reuse(addr)?;
     let listener = TcpListener::from_std(std_listener)?;
@@ -30,9 +12,9 @@ pub(super) async fn run_accept_loop(
         addr
     );
 
-    let header_read_timeout = Duration::from_secs(http_config.header_read_timeout_secs);
-    let max_headers = http_config.max_headers;
-    let max_buf_size = http_config.max_request_size;
+    let header_read_timeout = Duration::from_secs(runtime.http_config.header_read_timeout_secs);
+    let max_headers = runtime.http_config.max_headers;
+    let max_buf_size = runtime.http_config.max_request_size;
 
     loop {
         tokio::select! {
@@ -47,7 +29,7 @@ pub(super) async fn run_accept_loop(
 
                         let local_addr = stream.local_addr().ok();
 
-                        if let Some(ref fp) = flood_protector {
+                        if let Some(ref fp) = runtime.flood_protector {
                             match fp.check_tcp_connection(client_ip) {
                                 FloodDecision::Blackholed => {
                                     counter!("synvoid.http.flood_blackhole").increment(1);
@@ -61,26 +43,27 @@ pub(super) async fn run_accept_loop(
                             }
                         }
 
-                        let router = router.clone();
-                        let waf = waf.clone();
-                        let client = client.clone();
-                        let alt_svc = alt_svc.clone();
-                        let main_config = main_config.clone();
-                        let drain_state = drain_state.clone();
-                        let http_config = http_config.clone();
+                        let router = runtime.router.clone();
+                        let waf = runtime.waf.clone();
+                        let client = runtime.client.clone();
+                        let alt_svc = runtime.alt_svc.clone();
+                        let main_config = runtime.main_config.clone();
+                        let drain_state = runtime.drain_state.clone();
+                        let http_config = runtime.http_config.clone();
                         #[cfg(feature = "mesh")]
-                        let mesh_config = mesh_config.clone();
+                        let mesh_config = runtime.mesh_config.clone();
                         #[cfg(feature = "mesh")]
-                        let mesh_transport = mesh_transport.clone();
-                        let metrics = metrics.clone();
-                        let ipc = ipc.clone();
-                        let serverless_manager = serverless_manager.clone();
-                        let connection_limit = connection_limit.clone();
-                        let app_servers = app_servers.clone();
+                        let mesh_transport = runtime.mesh_transport.clone();
+                        let metrics = runtime.metrics.clone();
+                        let ipc = runtime.ipc.clone();
+                        let worker_id = runtime.worker_id;
+                        let serverless_manager = runtime.backends.serverless_manager.clone();
+                        let connection_limit = runtime.connection_limit.clone();
+                        let app_servers = runtime.backends.app_servers.clone();
                         #[cfg(feature = "mesh")]
-                        let mesh_backend_pool = mesh_backend_pool.clone();
-                        let upstream_client_registry = upstream_client_registry.clone();
-                        let erased_http_client = erased_http_client.clone();
+                        let mesh_backend_pool = runtime.mesh_backend_pool.clone();
+                        let upstream_client_registry = runtime.upstream_client_registry.clone();
+                        let erased_http_client = runtime.erased_http_client.clone();
 
                         let (initial_bytes, stream_for_conn) = if http_config.strict_protocol_validation {
                             let mut peek_buf = [0u8; 16];

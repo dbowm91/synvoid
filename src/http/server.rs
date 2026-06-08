@@ -49,31 +49,64 @@ pub(crate) use observability::send_request_log_if_enabled;
 
 use connection_types::*;
 
+/// Per-tenant backend handles that are each owned by a different subsystem
+/// (serverless runtime, app-server supervisor map, plugin manager).
+///
+/// Grouped separately from `HttpServerRuntime` so the per-request call
+/// site can read `runtime.backends.serverless` rather than threading
+/// three independent `Option<Arc<...>>` fields. Each field is
+/// independently `None`/replaceable.
+#[derive(Clone, Default)]
+pub(crate) struct HttpAppBackends {
+    pub serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
+    pub app_servers:
+        Option<Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>>,
+    /// Type-erased handle to the root `PluginManager`. Cast to
+    /// `&dyn synvoid_http::WasmFilterBackend` and
+    /// `&dyn synvoid_http::AxumDynamicRouterLookup` at the use site
+    /// (the existing `downcast_ref` pattern at server.rs:309, 313).
+    pub plugin_manager: Option<Arc<dyn std::any::Any + Send + Sync>>,
+}
+
+/// Composition struct that groups the long-lived "what the HTTP server
+/// has" dependencies into a single cloneable bag. Introduced in RHP-S03
+/// so that `run_accept_loop` and `HttpServer::handle_request` can take
+/// one `HttpServerRuntime` parameter instead of 20+ concrete parameters,
+/// and so that the accept loop clones the bag once per connection
+/// instead of cloning each dependency once per connection.
+///
+/// Root-only (per `plans/server_runtime_context_design.md` §3.1):
+/// `WafCore`, `WorkerDrainState`, `FloodProtector`, and `PluginManager`
+/// (via `dyn Any`) all live in root.
+#[derive(Clone)]
+pub(crate) struct HttpServerRuntime {
+    pub router: Arc<Router>,
+    pub waf: Arc<WafCore>,
+    pub flood_protector: Option<Arc<FloodProtector>>,
+    pub client: HttpClient,
+    pub http_config: HttpConfig,
+    pub alt_svc: Option<String>,
+    pub main_config: Arc<MainConfig>,
+    pub drain_state: Option<Arc<WorkerDrainState>>,
+    pub metrics: Option<Arc<WorkerMetrics>>,
+    pub ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
+    pub worker_id: Option<crate::process::ipc::WorkerId>,
+    pub connection_limit: Arc<Semaphore>,
+    pub upstream_client_registry: Arc<UpstreamClientRegistry>,
+    pub erased_http_client: ErasedHttpClient,
+    pub backends: HttpAppBackends,
+    #[cfg(feature = "mesh")]
+    pub mesh_config: Option<Arc<MeshConfig>>,
+    #[cfg(feature = "mesh")]
+    pub mesh_transport: Option<Arc<MeshTransportManager>>,
+    #[cfg(feature = "mesh")]
+    pub mesh_backend_pool: Option<Arc<MeshBackendPool>>,
+}
+
 pub struct HttpServer {
     addr: SocketAddr,
-    router: Arc<Router>,
-    waf: Arc<WafCore>,
-    flood_protector: Option<Arc<FloodProtector>>,
-    client: HttpClient,
     shutdown_rx: broadcast::Receiver<()>,
-    http_config: HttpConfig,
-    alt_svc: Option<String>,
-    main_config: Arc<MainConfig>,
-    drain_state: Option<Arc<WorkerDrainState>>,
-    #[cfg(feature = "mesh")]
-    mesh_config: Option<Arc<MeshConfig>>,
-    #[cfg(feature = "mesh")]
-    mesh_transport: Option<Arc<MeshTransportManager>>,
-    metrics: Option<Arc<WorkerMetrics>>,
-    ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
-    worker_id: Option<crate::process::ipc::WorkerId>,
-    serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
-    connection_limit: Arc<Semaphore>,
-    app_servers: Option<Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>>,
-    #[cfg(feature = "mesh")]
-    mesh_backend_pool: Option<Arc<MeshBackendPool>>,
-    upstream_client_registry: Arc<UpstreamClientRegistry>,
-    erased_http_client: ErasedHttpClient,
+    runtime: HttpServerRuntime,
 }
 
 impl HttpServer {
@@ -93,31 +126,34 @@ impl HttpServer {
 
         let max_connections = http_config.max_connections as usize;
 
-        Self {
-            addr,
+        let runtime = HttpServerRuntime {
             router: Arc::new(router),
             waf,
             flood_protector: None,
             client,
-            shutdown_rx,
             http_config,
             alt_svc: None,
             main_config: Arc::new(main_config),
             drain_state: None,
+            metrics: None,
+            ipc: None,
+            worker_id: None,
+            connection_limit: Arc::new(Semaphore::new(max_connections)),
+            upstream_client_registry: Arc::new(UpstreamClientRegistry::new()),
+            erased_http_client: ErasedHttpClient::new(100),
+            backends: HttpAppBackends::default(),
             #[cfg(feature = "mesh")]
             mesh_config: None,
             #[cfg(feature = "mesh")]
             mesh_transport: None,
-            metrics: None,
-            ipc: None,
-            worker_id: None,
-            serverless_manager: None,
-            connection_limit: Arc::new(Semaphore::new(max_connections)),
-            app_servers: None,
             #[cfg(feature = "mesh")]
             mesh_backend_pool: None,
-            upstream_client_registry: Arc::new(UpstreamClientRegistry::new()),
-            erased_http_client: ErasedHttpClient::new(100),
+        };
+
+        Self {
+            addr,
+            shutdown_rx,
+            runtime,
         }
     }
 
@@ -125,12 +161,12 @@ impl HttpServer {
         mut self,
         manager: Arc<crate::serverless::manager::ServerlessManager>,
     ) -> Self {
-        self.serverless_manager = Some(manager);
+        self.runtime.backends.serverless_manager = Some(manager);
         self
     }
 
     pub fn with_metrics(mut self, metrics: Arc<WorkerMetrics>) -> Self {
-        self.metrics = Some(metrics);
+        self.runtime.metrics = Some(metrics);
         self
     }
 
@@ -139,35 +175,35 @@ impl HttpServer {
         ipc: Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>,
         worker_id: crate::process::ipc::WorkerId,
     ) -> Self {
-        self.ipc = Some(ipc);
-        self.worker_id = Some(worker_id);
+        self.runtime.ipc = Some(ipc);
+        self.runtime.worker_id = Some(worker_id);
         self
     }
 
     pub fn with_flood_protector(mut self, flood_protector: Arc<FloodProtector>) -> Self {
-        self.flood_protector = Some(flood_protector);
+        self.runtime.flood_protector = Some(flood_protector);
         self
     }
 
     pub fn with_alt_svc(mut self, alt_svc: String) -> Self {
-        self.alt_svc = Some(alt_svc);
+        self.runtime.alt_svc = Some(alt_svc);
         self
     }
 
     pub fn with_drain_state(mut self, drain_state: Arc<WorkerDrainState>) -> Self {
-        self.drain_state = Some(drain_state);
+        self.runtime.drain_state = Some(drain_state);
         self
     }
 
     #[cfg(feature = "mesh")]
     pub fn with_mesh_config(mut self, mesh_config: Option<Arc<MeshConfig>>) -> Self {
-        self.mesh_config = mesh_config;
+        self.runtime.mesh_config = mesh_config;
         self
     }
 
     #[cfg(feature = "mesh")]
     pub fn with_mesh_transport(mut self, transport: Option<Arc<MeshTransportManager>>) -> Self {
-        self.mesh_transport = transport;
+        self.runtime.mesh_transport = transport;
         self
     }
 
@@ -177,45 +213,19 @@ impl HttpServer {
             Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>,
         >,
     ) -> Self {
-        self.app_servers = app_servers;
+        self.runtime.backends.app_servers = app_servers;
         self
     }
 
     #[cfg(feature = "mesh")]
     pub fn with_mesh_backend_pool(mut self, pool: Option<Arc<MeshBackendPool>>) -> Self {
-        self.mesh_backend_pool = pool;
+        self.runtime.mesh_backend_pool = pool;
         self
     }
 
     #[cfg(feature = "mesh")]
     pub async fn serve(self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        accept_loop::run_accept_loop(
-            self.addr,
-            self.shutdown_rx,
-            self.router,
-            self.waf,
-            self.client,
-            self.flood_protector,
-            self.http_config,
-            self.alt_svc,
-            self.main_config,
-            self.drain_state,
-            #[cfg(feature = "mesh")]
-            self.mesh_config,
-            #[cfg(feature = "mesh")]
-            self.mesh_transport,
-            self.metrics,
-            self.ipc,
-            self.worker_id,
-            self.serverless_manager,
-            self.connection_limit,
-            self.app_servers,
-            #[cfg(feature = "mesh")]
-            self.mesh_backend_pool,
-            self.upstream_client_registry,
-            self.erased_http_client,
-        )
-        .await
+        accept_loop::run_accept_loop(self.addr, self.shutdown_rx, self.runtime).await
     }
 
     #[allow(unused_assignments)]

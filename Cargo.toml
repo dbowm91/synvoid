@@ -155,7 +155,7 @@ tokio-rustls = "0.26"
 rustls = { version = "0.23", features = ["prefer-post-quantum", "aws-lc-rs"] }
 rustls-pki-types = "1"
 # rustls-post-quantum: removed; PQ handled by rustls `prefer-post-quantum` + `aws-lc-rs` features (see plans/root_dependency_ownership.md)
-x509-parser = "0.16"
+# x509-parser: removed from root (RHP-R02 batch 1); declared in synvoid-tls and synvoid-mesh
 # instant-acme: moved to synvoid-tls (see plans/root_dependency_ownership.md)
 
 # Post-Quantum Cryptography (aws-lc-rs with unstable for ML-DSA)
@@ -232,7 +232,7 @@ schemars = "0.8"
 utoipa = { version = "5", features = ["axum_extras", "chrono"] }
 utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"], optional = true }
 prost = "0.14"
-prost-build = "0.14"
+# prost-build: removed from root (RHP-R02 batch 1); 0 uses anywhere; was in wrong [dependencies] section
 lru_time_cache = "0.11"
 # linked-hash-map: removed (see plans/root_dependency_ownership.md)
 indexmap = "2"
@@ -260,7 +260,7 @@ tonic-prost = "0.14"
 
 # Raft consensus for global nodes
 openraft = { version = "0.10.0-alpha.18", features = ["serde"], optional = true }
-openraft-legacy = "0.10.0-alpha.18"
+# openraft-legacy: removed from root (RHP-R02 batch 1); 0 uses anywhere
 async-stream = "0.3.6"
 bincode = "1.3"
 

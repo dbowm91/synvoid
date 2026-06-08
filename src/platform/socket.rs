@@ -356,45 +356,5 @@ pub fn is_reuse_port_available() -> bool {
     crate::platform::is_reuse_port_supported()
 }
 
-pub fn bind_tcp_reuse(addr: std::net::SocketAddr) -> io::Result<std::net::TcpListener> {
-    use socket2::{Domain, Protocol, Socket, Type};
-
-    let domain = if addr.is_ipv6() {
-        Domain::IPV6
-    } else {
-        Domain::IPV4
-    };
-
-    let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
-
-    socket.set_reuse_address(true)?;
-    if is_reuse_port_available() {
-        socket.set_reuse_port(true)?;
-    }
-
-    socket.bind(&addr.into())?;
-    socket.listen(1024)?;
-
-    Ok(socket.into())
-}
-
-pub fn bind_udp_reuse(addr: std::net::SocketAddr) -> io::Result<std::net::UdpSocket> {
-    use socket2::{Domain, Protocol, Socket, Type};
-
-    let domain = if addr.is_ipv6() {
-        Domain::IPV6
-    } else {
-        Domain::IPV4
-    };
-
-    let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
-
-    socket.set_reuse_address(true)?;
-    if is_reuse_port_available() {
-        socket.set_reuse_port(true)?;
-    }
-
-    socket.bind(&addr.into())?;
-
-    Ok(socket.into())
-}
+pub use synvoid_platform::socket_bind::bind_tcp_reuse;
+pub use synvoid_platform::socket_bind::bind_udp_reuse;

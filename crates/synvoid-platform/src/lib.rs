@@ -6,12 +6,14 @@
 
 pub mod fs;
 pub mod sandbox;
+pub mod socket_bind;
 
 pub use fs::{PlatformPaths, SecureDir};
 pub use sandbox::{
     ProcessSandbox, SandboxBackend, SandboxCapabilities, SandboxError, SandboxLevel, SandboxPaths,
     StubSandbox,
 };
+pub use socket_bind::{bind_tcp_reuse, bind_udp_reuse, is_reuse_port_available};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Platform {

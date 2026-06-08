@@ -5,7 +5,6 @@ use tokio::sync::broadcast;
 
 use metrics::{counter, gauge};
 
-use crate::worker::drain_state::WorkerDrainState;
 use synvoid_config::http::Http3Config;
 use synvoid_config::MainConfig;
 use synvoid_http_client::{create_http_client_with_config, HttpClient};
@@ -30,7 +29,6 @@ pub struct Http3Server {
     flood_protector: Option<Arc<FloodProtector>>,
     client: HttpClient,
     upstream_client_registry: Arc<UpstreamClientRegistry>,
-    drain_state: Option<Arc<WorkerDrainState>>,
     metrics: Option<Arc<WorkerMetrics>>,
     shutdown_rx: broadcast::Receiver<()>,
     trusted_proxies: Vec<String>,
@@ -59,7 +57,6 @@ impl Http3Server {
             flood_protector: None,
             client,
             upstream_client_registry: Arc::new(UpstreamClientRegistry::new()),
-            drain_state: None,
             metrics: None,
             shutdown_rx,
             trusted_proxies,
@@ -69,11 +66,6 @@ impl Http3Server {
 
     pub fn with_flood_protector(mut self, flood_protector: Arc<FloodProtector>) -> Self {
         self.flood_protector = Some(flood_protector);
-        self
-    }
-
-    pub fn with_drain_state(mut self, drain_state: Arc<WorkerDrainState>) -> Self {
-        self.drain_state = Some(drain_state);
         self
     }
 

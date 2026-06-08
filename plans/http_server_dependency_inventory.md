@@ -334,3 +334,83 @@ cargo check --workspace --all-targets   # final validation per plan §6
 
 Results captured at the bottom of this file.
 
+---
+
+# RHP-S01: HTTP Server Dependency Inventory Refresh (2026-06-08)
+
+> Refresh pass on `src/http/server.rs` (496 lines) and its 3 live
+> submodules after the latest cleanup passes (WafAccess object-safety,
+> HTTP/3 WAF dyn, upload import cleanup).
+
+## Inspection findings (refresh, 2026-06-08)
+
+`src/http/server.rs` (496 lines) wires 3 submodules via `mod`
+declarations on lines 44-46: `accept_loop`, `connection_types`,
+`observability`. No other files are compiled into the module graph.
+
+**Three orphan files** exist at `src/http/server/` (totaling 914
+lines: `backend_dispatch.rs` 348, `request_preparation.rs` 455,
+`traffic_control.rs` 111). Verified via `rg` that `server.rs` does
+not declare them, and they are not referenced from any other file in
+`src/http/`. They are 1:1 duplicates of types that already live
+canonically in `synvoid-http` (`synvoid_http::request_preparation`,
+`synvoid_http::traffic_control`, `synvoid_http::backend_dispatch`).
+**Not compiled**, **not referenced** — they are pre-staged artifacts
+of an in-progress refactor and are out of scope for this inventory.
+
+## Per-dependency table (refresh)
+
+The 30 distinct concrete dependencies identified in MDM-H01 (live
+module graph only — orphan files excluded) are still accurate as of
+2026-06-08. The RHP-S01 refresh confirmed:
+
+| Class | Count |
+|-------|-------|
+| Total distinct concrete dependencies | 30 |
+| Already with trait seams in extracted crates | 8 (WAF bounds, drain, plugin, axum lookup) |
+| Concrete concrete-only types (no seam) | 22 |
+| Strong removal candidate | 1 (`ErasedHttpClient` — threaded through 4 functions, never read in any body) |
+
+## Threading analysis
+
+The most aggressively threaded dependencies (passed to 4-5 functions
+each):
+
+- `WorkerDrainState` (5) — now in `HttpServerRuntime.drain_state` after RHP-S03
+- `MainConfig` (5)
+- `Router` (4) — by `Arc`
+- `WafCore` (4) — by `Arc`
+- `HttpConfig` (4)
+- `WorkerMetrics` (4)
+- All three `Mesh*` cfg-gated types (4 each, gated)
+- `ServerlessManager` (4)
+- `HttpClient` (4)
+- `GranianSupervisor` (4)
+- `IpcStream` (4)
+- `WorkerId` (4)
+- `UpstreamClientRegistry` (4)
+- `ErasedHttpClient` (4) — **dead** (prefixed with `_` at server.rs:246)
+
+## Trait-seam candidates (deferred)
+
+| Candidate | Trait | Effort | Notes |
+|-----------|-------|--------|-------|
+| `FloodChecker` | small, low priority | future wave | Used in accept_loop.rs only |
+| `HttpClientBackend` | medium, only if struct moves | future wave | Used by-value and by-ref |
+| `UpstreamClientRegistry` trait | small, only if struct moves | future wave | Already in synvoid-proxy |
+| `WorkerMetrics` extension | high (20+ methods) | dedicated metrics pass | MetricsSink too narrow |
+| `DrainCounter` | small, future "DrainHandle" wave | future wave | `HttpDrainControl` already exists |
+
+## RHP-S01 summary
+
+- Live module graph unchanged since MDM-H01: 30 dependencies, 8 with
+  trait seams.
+- 3 pre-staged orphan files (914 lines total) are not compiled and
+  are 1:1 duplicates of canonical `synvoid-http` types; recommend
+  removal as a separate cleanup task (or `git restore --staged` if
+  they are pre-staged and not needed).
+- `ErasedHttpClient` is the strongest removal candidate (dead code).
+  RHP-S03 design recommends deletion in a follow-up RHP-S03b.
+- No new trait seams are needed for this pass; existing ones are
+  sufficient.
+

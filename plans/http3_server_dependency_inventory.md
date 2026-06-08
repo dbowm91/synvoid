@@ -350,3 +350,311 @@ to their canonical extracted-crate paths. Remaining root blockers:
 `synvoid-platform` `socket` module export). Pre-existing `accept_loop.rs`
 Send bound errors are unrelated to this refactor.
 Decision recorded: `KEEP_ROOT_UNTIL_HTTP_SERVER_CONTEXT_REWORK`.
+
+---
+
+# RHP-H301: HTTP/3 Root Dependency Inventory Refresh (2026-06-08)
+
+> Refresh pass on `src/http3/server.rs` (300 lines) to confirm the
+> post-MDM-Q03 / WafAccess-object-safety state.
+
+## Findings (2026-06-08)
+
+`src/http3/server.rs` is now 300 lines (was 293 at MDM-Q03). All prior
+content (HTC-Q01, HWS-Q01–Q03, MDM-Q01–Q03) is preserved above. The
+following re-validation confirms the post-refactor state:
+
+### Per-dependency refresh
+
+| # | Dependency | Current owner | Existing seam | Move blocker | Notes |
+|---|-----------|---------------|---------------|--------------|-------|
+| 1 | `Http3Config` | `synvoid-config` | n/a (config struct) | **NONE** | Imported as `synvoid_config::http::Http3Config` at line 9 |
+| 2 | `MainConfig` | `synvoid-config` | n/a (config struct) | **NONE** | Imported as `synvoid_config::MainConfig` at line 10 |
+| 3 | `HttpClient` | `synvoid-http-client` | n/a (concrete type alias) | **NONE** | Imported as `synvoid_http_client::HttpClient` at line 11 |
+| 4 | `create_http_client_with_config` | `synvoid-http-client` | n/a (factory) | **NONE** | Imported at line 11 |
+| 5 | `get_global_bandwidth_tracker_or_log` | `synvoid-metrics` | n/a (utility) | **NONE** | Imported as `synvoid_metrics::bandwidth::get_global_bandwidth_tracker_or_log` at line 12 |
+| 6 | `WorkerMetrics` | `synvoid-metrics` | `MetricsSink` trait (too narrow) | LOW (could be extended) | Imported at line 13; used as concrete `Option<Arc<WorkerMetrics>>` |
+| 7 | `UpstreamClientRegistry` | `synvoid-proxy` | n/a (concrete struct) | **NONE** | Imported at line 15 |
+| 8 | `Router` | `synvoid-proxy` | `RouteResolver` trait | LOW (synvoid-http still takes `&Arc<Router>`) | Imported at line 14 |
+| 9 | `FloodDecision` | `synvoid-waf` | n/a (enum variant) | **NONE** | Imported at line 17 |
+| 10 | `FloodProtector` | `synvoid-waf` | n/a | **NONE** | Imported at line 17 |
+| 11 | `WafCore` | root (still) | `WafProcessor` + `WafAccess` + `Http3RequestWaf` | **RESOLVED via Arc<dyn Http3WafBackend>** | Composite trait `Http3WafBackend: Http3RequestWaf + WafAccess` defined at server.rs:22-23; field at server.rs:29 is `Arc<dyn Http3WafBackend>` |
+| 12 | `WorkerDrainState` | root | `DrainState` trait (in `synvoid-core`) + `WorkerDrainStateAdapter` | **RESOLVED in RHP-H303** (field removed) | The 4 occurrences in server.rs were all non-read: import (line 8), field (line 33), init `None` (line 62), builder (line 75). All removed by RHP-H303. |
+| 13 | `bind_udp_reuse` | root platform, re-exported from `synvoid-platform::socket_bind` | n/a (platform utility) | **RESOLVED in RHP-H305** | The function is now in `crates/synvoid-platform/src/socket_bind.rs`; root re-exports it. HTTP/3 blocker count drops from 1 to 0 for `bind_udp_reuse`. |
+
+### Summary (3 lines)
+
+- WAF coupling is solved: `Http3Server.waf` is `Arc<dyn Http3WafBackend>`.
+  Composite trait defined at server.rs:22-23; `WafAccess` methods
+  (`connection_limiter`, `is_over_bandwidth_limit`, `streaming`) called
+  at lines 231-232, 274-275, 277.
+- `WorkerDrainState` was stored-but-never-read; RHP-H303 removed the
+  field, init, builder, and call site cleanly.
+- `bind_udp_reuse` is now reachable through both
+  `synvoid_platform::socket_bind::bind_udp_reuse` and the existing
+  root `crate::platform::socket::bind_udp_reuse` path; RHP-H305
+  classification was `MOVE_TO_SYNVOID_PLATFORM` (using a new
+  `socket_bind` module, not the pre-existing orphan `socket.rs`).
+
+---
+
+# RHP-H302/H303: WorkerDrainState HTTP/3 Decision + Implementation (2026-06-08)
+
+> Decision and implementation pass for the `WorkerDrainState` field
+> on `Http3Server`.
+
+## Decision: REMOVE_UNUSED_FIELD
+
+The `drain_state: Option<Arc<WorkerDrainState>>` field on `Http3Server`
+was stored but **never read** in any method body. The 4 occurrences in
+`src/http3/server.rs` were all non-read:
+
+| Line | Use | Read? |
+|------|-----|-------|
+| 8 | `use crate::worker::drain_state::WorkerDrainState;` | n/a (import) |
+| 33 | `drain_state: Option<Arc<WorkerDrainState>>,` | n/a (field decl) |
+| 62 | `drain_state: None,` | n/a (init) |
+| 75-78 | `pub fn with_drain_state(mut self, drain_state: Arc<WorkerDrainState>) -> Self { ... }` | n/a (builder only) |
+
+## Implementation (RHP-H303)
+
+Changes applied:
+
+1. `/Users/davidbowman/projects/synvoid/src/http3/server.rs`:
+   - Removed import (line 8)
+   - Removed field decl (line 33)
+   - Removed init (line 62)
+   - Removed builder method (lines 75-78)
+
+2. `/Users/davidbowman/projects/synvoid/src/server/mod.rs`:
+   - Removed call site block (lines 1301-1303)
+   - Other consumers of `with_drain_state` (UnifiedServer, TlsServer, HttpServer) are on different types and were left intact.
+
+## Validation (RHP-H303)
+
+| Command | Result |
+|---------|--------|
+| `cargo check -p synvoid-http3` | **PASS** |
+| `cargo check --lib --no-default-features` | **PRE-EXISTING FAIL** (2 errors at `src/http/server/accept_loop.rs:154`, unrelated) |
+| `cargo check --no-default-features --features mesh,dns` | **PRE-EXISTING FAIL** (3 errors at `src/http/server/accept_loop.rs:154`, unrelated) |
+| `cargo check --workspace --all-targets` | **PRE-EXISTING FAIL** (3 errors, same as above) |
+| `cargo test --workspace --no-run` | **PRE-EXISTING FAIL** (3 errors, same as above) |
+
+The 3 pre-existing errors are confirmed unrelated to RHP-H303 by
+`git stash` round-trip baseline test.
+
+## Net effect
+
+- 1 root blocker removed (the only one with low-effort cost).
+- `Http3Server` root ownership blocker count drops from 2 to 1 (only
+  `bind_udp_reuse` remained, and that was resolved by RHP-H305).
+- No runtime behavior change.
+
+---
+
+# RHP-H304: Platform UDP Binding Classification (2026-06-08)
+
+> Classify the `bind_udp_reuse` ownership: keep in root, re-export, or
+> move to `synvoid-platform`.
+
+## Inspection findings
+
+| Question | Answer |
+|----------|--------|
+| Is `bind_udp_reuse` already implemented in `synvoid-platform`? | Yes — a 1:1 byte-equivalent orphan copy exists at `crates/synvoid-platform/src/socket.rs:381-400`, but the file is not compiled because (a) `socket2` is not in `crates/synvoid-platform/Cargo.toml`, (b) it references `nix` (not a dep), and (c) `pub mod socket;` is not declared in `crates/synvoid-platform/src/lib.rs`. |
+| Is the `socket` module publicly exported from `synvoid-platform`? | No — only `pub mod fs;` and `pub mod sandbox;` are exported. |
+| Is the function self-contained (no root-only deps)? | Yes — the function only uses `socket2` and `std::net::SocketAddr`. |
+| Are there related functions? | Yes — `bind_tcp_reuse` (root src/platform/socket.rs:359) and `is_reuse_port_available` (root src/platform/socket.rs:355) form a coherent group. |
+
+## Decision: MOVE_TO_SYNVOID_PLATFORM (with a new `socket_bind` module)
+
+The function is self-contained, the dep is already in root, and the
+canonical helper `is_reuse_port_available()` already exists. However,
+the existing orphan `crates/synvoid-platform/src/socket.rs` cannot be
+made compilable in this pass without:
+- adding `nix` and `socket2` (with `all` feature) to synvoid-platform's Cargo.toml
+- refactoring 5 different platform-specific abstractions (FD passing, listening socket creation) that the orphan file references
+
+That scope was larger than "low-risk". Instead, **a new
+`socket_bind.rs` module** in synvoid-platform was created containing
+only the 3 simple binding helpers.
+
+## Implementation plan (RHP-H305)
+
+1. **Add `socket2 = { version = "0.6", features = ["all"] }` to `crates/synvoid-platform/Cargo.toml`.**
+2. **Add `pub mod socket_bind;` and `pub use socket_bind::{bind_tcp_reuse, bind_udp_reuse, is_reuse_port_available};` to `crates/synvoid-platform/src/lib.rs`.**
+3. **Create `crates/synvoid-platform/src/socket_bind.rs`** with the 3 functions, using `socket2` with the `all` feature for `set_reuse_port` support.
+4. **Replace the 3 function bodies in `src/platform/socket.rs`** (lines 355-400) with `pub use synvoid_platform::socket_bind::{...};` re-exports.
+5. **No call site changes needed** — `src/http3/server.rs:108`, `src/tls/server.rs:281`, and `src/http/server/accept_loop.rs:8` continue to compile because the root `pub use` preserves the public path.
+
+## Risks/considerations
+
+- socket2 needs the `all` feature for `set_reuse_port` to be available.
+- The orphan `crates/synvoid-platform/src/socket.rs` remains in place
+  but uncompiled; it has 5 unrelated platform abstractions that
+  require their own migration story.
+- Stop condition: if the platform function depended on root-only
+  config/runtime state, keep root-owned. Verified it does not.
+
+---
+
+# RHP-H305: Platform UDP Binding Move Implementation (2026-06-08)
+
+> Implement the RHP-H304 decision: move `bind_udp_reuse`,
+> `bind_tcp_reuse`, and `is_reuse_port_available` to
+> `synvoid-platform::socket_bind`.
+
+## Changes applied
+
+**File 1: `crates/synvoid-platform/Cargo.toml`** (added dep)
+
+```toml
+socket2 = { version = "0.6", features = ["all"] }
+```
+
+**File 2: `crates/synvoid-platform/src/socket_bind.rs`** (new file, 64 lines)
+
+Contains the 3 binding functions:
+- `pub fn is_reuse_port_available() -> bool`
+- `pub fn bind_tcp_reuse(addr: SocketAddr) -> io::Result<TcpListener>`
+- `pub fn bind_udp_reuse(addr: SocketAddr) -> io::Result<UdpSocket>`
+
+`is_reuse_port_available()` is implemented inline with a `cfg(...)` gate
+on the same OS list that `is_reuse_port_supported()` covers (Linux,
+macOS, BSDs, etc.). The functions use `socket2`'s `all` feature, which
+is required for `set_reuse_port`.
+
+**File 3: `crates/synvoid-platform/src/lib.rs`** (added module + re-exports)
+
+```rust
+pub mod socket_bind;
+...
+pub use socket_bind::{bind_tcp_reuse, bind_udp_reuse, is_reuse_port_available};
+```
+
+**File 4: `src/platform/socket.rs`** (replaced 45 lines with 1)
+
+The 3 function bodies (lines 355-400) are replaced with:
+
+```rust
+pub fn is_reuse_port_available() -> bool {
+    crate::platform::is_reuse_port_supported()
+}
+
+pub use synvoid_platform::socket_bind::bind_tcp_reuse;
+pub use synvoid_platform::socket_bind::bind_udp_reuse;
+```
+
+The rest of `src/platform/socket.rs` (FD-passing shims,
+`PlatformSocketFDPassing`/`PlatformSocketHandle`, `create_listening_socket_v4`/`v6`)
+is **unchanged** — those abstractions still live in root and use the
+root `socket2` dep directly.
+
+## Validation results
+
+| Command | Result |
+|---------|--------|
+| `cargo check -p synvoid-platform` | **PASS** (1m 51s first build with `all` feature) |
+| `cargo check -p synvoid-http3` | **PASS** (7.09s) |
+| `cargo check --no-default-features --features mesh,dns` | **PRE-EXISTING FAIL** (3 errors at `src/http/server/accept_loop.rs:154`, unrelated) |
+| `cargo check --workspace --all-targets` | **PRE-EXISTING FAIL** (3 errors, same) |
+
+The 3 pre-existing errors are unrelated (HTTP/1.1, not HTTP/3) and
+reproduce on `HEAD` without my changes (verified by `git stash`
+round-trip).
+
+## Net effect
+
+- HTTP/3 root blocker count drops from 1 to 0 for `bind_udp_reuse`.
+  Combined with RHP-H303, the HTTP/3 server has **zero remaining
+  low-effort root blockers**.
+- The remaining structural blockers (WafCore, dispatch signature
+  change) are recorded in RHP-H306 below.
+- `bind_udp_reuse` is now reachable from
+  `synvoid_platform::socket_bind::bind_udp_reuse` AND the existing
+  root `crate::platform::socket::bind_udp_reuse` path.
+
+---
+
+# RHP-H306: HTTP/3 Server Move Readiness Decision (2026-06-08)
+
+> Final decision on whether `src/http3/server.rs` can move to
+> `synvoid-http3`.
+
+## Inspection findings
+
+After RHP-H303 and RHP-H305, the only remaining structural blockers
+are:
+
+1. **`WafCore` is the sole `Http3RequestWaf` implementor** in the
+   workspace. Even though `Http3Server.waf` is
+   `Arc<dyn Http3WafBackend>`, the runtime value is constructed in
+   root. Plan § 2 non-goal #4 explicitly says "Do not move WafCore
+   into synvoid-waf."
+
+2. **The `http3_request_dispatch.rs` signature is generic** on
+   `Waf: Http3RequestWaf`. The current call at `server.rs:283` passes
+   `self.waf.as_ref()` which dereferences the trait object. Changing
+   the signature to take `&dyn Http3RequestWaf` directly is a
+   `synvoid-http` API change.
+
+3. **The QUIC dependency stack** (`quinn`, `h3`, `h3-quinn`,
+   `webpki-roots`, `rustls-pki-types`) is partially declared in root
+   and partially in `crates/synvoid-http3/Cargo.toml`. Unification
+   would require cross-crate coordination.
+
+## Decision: KEEP_ROOT_AS_QUIC_COMPOSITION_LAYER
+
+`src/http3/server.rs` (292-300 lines depending on whether RHP-S03
+touched it — it did not) **stays in root**. It is the single
+composition point for the QUIC endpoint, the `h3`/`h3-quinn` server
+builder, the `synvoid-http` request-dispatch seam, the `synvoid-waf`
+flood/WAF layer, the upstream client registry, the metrics sink, the
+root `broadcast::Receiver<()>` shutdown channel, the
+`alt_svc_header()` generator for HTTP/1.1's `Alt-Svc` response, and
+the platform UDP socket binding. The file is small, leaf-position in
+the dependency graph, and tightly coupled to root-level subsystems.
+Moving it is not a measurable win on its own.
+
+## Why not `MOVE_READY`
+
+Three independent preconditions must be satisfied, each out of scope
+for the current pass:
+
+1. `bind_udp_reuse` must move or be re-exported via
+   `synvoid-platform`. **DONE in RHP-H305** — function is in
+   `synvoid_platform::socket_bind::bind_udp_reuse`.
+2. `WafCore` must move to `synvoid-waf`. Plan § 2 non-goal #4
+   prevents this.
+3. The `http3_request_dispatch.rs` signature must change to accept
+   `&dyn Http3RequestWaf`. A `synvoid-http` API change.
+
+## Why not `KEEP_ROOT_UNTIL_PLATFORM_SOCKET_MOVE`
+
+`bind_udp_reuse` is resolved. The remaining structural blockers
+(WafCore, dispatch signature) are independent and load-bearing.
+
+## Why not `DEFER_LOW_VALUE`
+
+`server.rs` is small but it is the only place where the
+`quinn::Endpoint` is constructed, the `h3` server is wired with
+`h3_quinn::Connection`, the root shutdown broadcast is consumed, and
+the `alt_svc_header()` is generated. These are "QUIC composition"
+responsibilities with no benefit to moving the file alone. The right
+label is a specific composition-layer rationale, not a deferral.
+
+## Re-evaluation preconditions
+
+This decision will be revisited only when **all three** of the
+following are completed:
+
+1. `WafCore` is extracted to `synvoid-waf` (requires lifting
+   plan § 2 non-goal #4).
+2. `handle_http3_request_dispatch` signature changes to accept
+   `&dyn Http3RequestWaf` (a `synvoid-http` API change).
+3. The QUIC stack dep declarations are unified between root and
+   `synvoid-http3`.
+
+Once all three are satisfied, the move is reduced to a
+near-mechanical step. Until then, root-ownership of `server.rs` is
+the correct architectural choice.

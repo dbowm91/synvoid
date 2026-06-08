@@ -8,3 +8,4 @@ description = "Platform detection, filesystem utilities, and sandbox primitives 
 thiserror = "2"
 tracing = "0.1"
 libc = "0.2"
+socket2 = { version = "0.6", features = ["all"] }

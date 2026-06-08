@@ -1298,10 +1298,6 @@ impl UnifiedServer {
             server = server.with_flood_protector(fp);
         }
 
-        if let Some(ds) = state.drain_state.clone() {
-            server = server.with_drain_state(ds);
-        }
-
         if let Some(metrics) = state.metrics.clone() {
             server = server.with_metrics(metrics);
         }
