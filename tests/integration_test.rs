@@ -784,7 +784,7 @@ mod tests {
 
 #[cfg(test)]
 mod worker_crash_recovery_tests {
-    use synvoid::overseer::socket_handoff::SocketHandoffError;
+    use synvoid::platform::SocketHandoffError;
     use synvoid::process::ipc::MessageCategory;
     use synvoid::process::{ErrorCode, ErrorSeverity, Message, WorkerId};
 
@@ -917,14 +917,12 @@ mod worker_crash_recovery_tests {
 
     #[test]
     fn test_socket_handoff_error_types() {
-        let timeout_err = SocketHandoffError::Timeout;
-        assert_eq!(timeout_err.to_string(), "Timeout waiting for handoff");
-
-        let invalid_err = SocketHandoffError::InvalidState("worker not ready".to_string());
-        assert!(invalid_err.to_string().contains("worker not ready"));
-
-        let cancelled_err = SocketHandoffError::Cancelled("upgrade aborted".to_string());
-        assert!(cancelled_err.to_string().contains("upgrade aborted"));
+        // TODO: feature removed — SocketHandoffError variants Timeout, InvalidState, Cancelled
+        // no longer exist. The current enum has: CreateFailed, BindFailed, ListenFailed,
+        // SetOptFailed, SendFailed, RecvFailed, NoSocketsReceived, TooManySockets,
+        // NotConnected, NotSupported, IpcError.
+        let not_supported = SocketHandoffError::NotSupported("test".to_string());
+        assert!(not_supported.to_string().contains("not supported"));
     }
 
     #[test]
@@ -1824,9 +1822,9 @@ mod ipc_serialization_tests {
 
     #[test]
     fn overseer_get_status_roundtrip() {
-        let msg = Message::OverseerGetStatus;
+        let msg = Message::SupervisorGetStatus;
         let decoded = roundtrip(&msg);
-        assert!(matches!(decoded, Message::OverseerGetStatus));
+        assert!(matches!(decoded, Message::SupervisorGetStatus));
     }
 
     #[test]

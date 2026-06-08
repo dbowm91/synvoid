@@ -267,7 +267,7 @@ pub(crate) fn solve_pow_sync(challenge: &str, difficulty: u8) -> Option<String> 
         let input = format!("{}{}", challenge, nonce);
         let hash = Sha256::digest(input.as_bytes());
 
-        if crate::challenge::pow::has_leading_zeros(&hash, zeros) {
+        if super::has_leading_zeros(&hash, zeros) {
             return Some(nonce.to_string());
         }
     }

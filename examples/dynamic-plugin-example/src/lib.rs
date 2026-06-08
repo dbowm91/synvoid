@@ -86,6 +86,7 @@ mod tests {
 
             let app = &*router;
             let response = app
+                .clone()
                 .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
                 .await
                 .unwrap();

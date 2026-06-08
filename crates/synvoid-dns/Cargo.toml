@@ -57,3 +57,6 @@ rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 subtle = "2"
 uuid = { version = "1", features = ["v4"] }
 zeroize = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3"

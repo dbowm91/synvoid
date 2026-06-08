@@ -794,7 +794,7 @@ mod ipc_tests {
             timestamp: 1000,
             static_cache_hits: 500,
             static_cache_misses: 50,
-            cpu_offload_stats: synvoid::process::ipc::StaticCpuOffloadStats::default(),
+            cpu_offload_stats: synvoid::process::ipc::CpuOffloadStats::default(),
         }
     );
 

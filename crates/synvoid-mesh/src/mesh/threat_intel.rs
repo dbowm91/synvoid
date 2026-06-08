@@ -2241,7 +2241,7 @@ mod tests {
             fingerprint_ttl_secs: 3600,
             high_severity_threshold: 70,
         };
-        let block_store = Arc::new(BlockStore::new(false, None, Default::default()));
+        let block_store = Arc::new(crate::stubs::block_store::BlockStore::new(false, None, Default::default()));
         ThreatIntelligenceManager::new(
             config,
             block_store,
@@ -2330,10 +2330,10 @@ mod tests {
         };
 
         let feed_client_content =
-            crate::stubs::waf_stub::threat_intel::feed_client::ThreatFeedClient::get_signable_content(&payload);
+            crate::stubs::waf_stub::threat_intel::feed_client::ThreatFeedPayload::get_signable_content(&payload);
 
         assert_eq!(
-            our_content, feed_client_content,
+            our_content.into_bytes(), feed_client_content,
             "Signable content must match ThreatFeedClient format"
         );
     }

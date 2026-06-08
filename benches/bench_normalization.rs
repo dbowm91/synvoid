@@ -1,7 +1,8 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use http::HeaderMap;
 use std::sync::Arc;
-use synvoid::waf::attack_detection::{AttackDetectionConfig, AttackDetector, InputNormalizer};
+use synvoid::waf::attack_detection::{AttackDetectionConfig, AttackDetector};
+use synvoid::waf::attack_detection::normalizer::InputNormalizer;
 
 fn benchmark_normalize_benign(c: &mut Criterion) {
     let normalizer = InputNormalizer::new();
@@ -84,6 +85,7 @@ fn benchmark_normalize_all_small(c: &mut Criterion) {
         }
         b.iter(|| {
             let _ = detector.check_request(
+                std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
                 &http::Method::GET,
                 request.path,
                 request.query,
@@ -122,6 +124,7 @@ fn benchmark_normalize_all_with_body(c: &mut Criterion) {
         }
         b.iter(|| {
             let _ = detector.check_request(
+                std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
                 &http::Method::POST,
                 request.path,
                 request.query,
@@ -150,6 +153,7 @@ fn benchmark_normalize_large_body(c: &mut Criterion) {
         );
         b.iter(|| {
             let _ = detector.check_request(
+                std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
                 &http::Method::POST,
                 "/api/submit",
                 None,

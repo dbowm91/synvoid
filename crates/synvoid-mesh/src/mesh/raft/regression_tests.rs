@@ -1145,7 +1145,7 @@ mod regression_tests {
         let timestamp = 1000u64;
 
         let signable_content =
-            get_anti_entropy_request_signable_content(request_id, node_id, &[], timestamp);
+            get_anti_entropy_request_signable_content(request_id, node_id, &[], timestamp, "test-nonce");
 
         let verify_format = format!("{},{},{}", request_id, node_id, from_version);
 

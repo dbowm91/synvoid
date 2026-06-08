@@ -24,7 +24,7 @@ use tokio::sync::RwLock as TokioRwLock;
 static WHITELIST_REGEX_CACHE: LazyLock<DashMap<String, Option<regex::Regex>>> =
     LazyLock::new(DashMap::new);
 
-pub(crate) fn get_cached_regex(pattern: &str) -> Option<regex::Regex> {
+pub fn get_cached_regex(pattern: &str) -> Option<regex::Regex> {
     WHITELIST_REGEX_CACHE
         .entry(pattern.to_string())
         .or_insert_with(|| regex::Regex::new(pattern).ok())

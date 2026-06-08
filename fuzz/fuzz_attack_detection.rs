@@ -6,6 +6,8 @@
 //! path, query) and passes them through [`AttackDetector::check_request`]
 //! to verify that pattern matching does not panic on adversarial input.
 
+use std::net::IpAddr;
+
 use http::Method;
 use libfuzzer_sys::fuzz_target;
 use synvoid::waf::attack_detection::{AttackDetectionConfig, AttackDetector};
@@ -33,6 +35,7 @@ fuzz_target!(|data: &[u8]| {
     let detector = AttackDetector::new(config);
 
     let _ = detector.check_request(
+        "127.0.0.1".parse::<IpAddr>().unwrap(),
         &method,
         &path,
         query.as_deref(),

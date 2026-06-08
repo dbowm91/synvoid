@@ -35,3 +35,6 @@ dns = []
 icmp-filter = []
 mesh = ["dep:ed25519-dalek"]
 rkyv = []
+
+[dev-dependencies]
+tempfile = "3"

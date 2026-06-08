@@ -1735,7 +1735,7 @@ mod mesh_pki_tests {
     ) -> (Vec<u8>, Vec<u8>) {
         let leaf_key = rcgen::KeyPair::generate().unwrap();
         let mut params = rcgen::CertificateParams::new(vec![format!("{}.mesh", node_id)]).unwrap();
-        params.is_ca = rcgen::IsCa::NotCa;
+        params.is_ca = rcgen::IsCa::NoCa;
         let leaf_cert = params.signed_by(&leaf_key, ca_cert, ca_key).unwrap();
         let cert_der = leaf_cert.der().to_vec();
         let raw_pubkey =

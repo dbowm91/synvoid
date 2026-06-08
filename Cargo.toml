@@ -289,6 +289,7 @@ libfuzzer-sys = "0.4"
 proptest = "1.5"
 proptest-derive = "0.4"
 criterion = { version = "0.5", features = ["html_reports"] }
+wasmtime = "42.0.2"
 
 [[bench]]
 name = "bench_attack_detection"
@@ -314,3 +315,11 @@ harness = false
 name = "bench_dns"
 harness = false
 required-features = ["dns"]
+
+[[bench]]
+name = "bench_wasm"
+harness = false
+
+[[bench]]
+name = "bench_attack_detection_wave10"
+harness = false

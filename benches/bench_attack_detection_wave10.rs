@@ -1,7 +1,10 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use http::{HeaderMap, Method};
+use std::net::IpAddr;
 use std::sync::Arc;
 use synvoid::waf::attack_detection::{AttackDetectionConfig, AttackDetector};
+
+const TEST_IP: IpAddr = IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1));
 
 fn benchmark_attack_detection_common(c: &mut Criterion) {
     let config = AttackDetectionConfig::default();
@@ -20,7 +23,7 @@ fn benchmark_attack_detection_common(c: &mut Criterion) {
     for input in &benign_inputs {
         group.bench_with_input(BenchmarkId::new("benign", input), input, |b, path| {
             b.iter(|| {
-                let _ = detector.check_request(&Method::GET, path, None, &headers, None);
+                let _ = detector.check_request(TEST_IP, &Method::GET, path, None, &headers, None);
             });
         });
     }
@@ -45,8 +48,14 @@ fn benchmark_attack_detection_sqli(c: &mut Criterion) {
     for (i, input) in sqli_inputs.iter().enumerate() {
         group.bench_with_input(BenchmarkId::new("query", i), input, |b, query| {
             b.iter(|| {
-                let _ =
-                    detector.check_request(&Method::GET, "/search", Some(query), &headers, None);
+                let _ = detector.check_request(
+                    TEST_IP,
+                    &Method::GET,
+                    "/search",
+                    Some(query),
+                    &headers,
+                    None,
+                );
             });
         });
     }
@@ -71,8 +80,14 @@ fn benchmark_attack_detection_xss(c: &mut Criterion) {
     for (i, input) in xss_inputs.iter().enumerate() {
         group.bench_with_input(BenchmarkId::new("query", i), input, |b, query| {
             b.iter(|| {
-                let _ =
-                    detector.check_request(&Method::GET, "/search", Some(query), &headers, None);
+                let _ = detector.check_request(
+                    TEST_IP,
+                    &Method::GET,
+                    "/search",
+                    Some(query),
+                    &headers,
+                    None,
+                );
             });
         });
     }
@@ -80,45 +95,13 @@ fn benchmark_attack_detection_xss(c: &mut Criterion) {
     group.finish();
 }
 
-fn benchmark_anomaly_scoring(c: &mut Criterion) {
-    let config = AttackDetectionConfig::default();
-    let detector = Arc::new(AttackDetector::new(config));
-    let headers = HeaderMap::new();
-
-    let mut group = c.benchmark_group("anomaly_scoring");
-
-    group.bench_function("benign_request", |b| {
-        b.iter(|| {
-            let _ = detector.check_request_anomaly_scoring(
-                &Method::GET,
-                "/api/users/123",
-                None,
-                &headers,
-                None,
-            );
-        });
-    });
-
-    group.bench_function("sqli_attack", |b| {
-        b.iter(|| {
-            let _ = detector.check_request_anomaly_scoring(
-                &Method::GET,
-                "/search",
-                Some("q=1' OR '1'='1"),
-                &headers,
-                None,
-            );
-        });
-    });
-
-    group.finish();
-}
+// TODO: feature removed — check_request_anomaly_scoring method no longer exists on AttackDetector
+// fn benchmark_anomaly_scoring(c: &mut Criterion) { ... }
 
 criterion_group!(
     benches,
     benchmark_attack_detection_common,
     benchmark_attack_detection_sqli,
     benchmark_attack_detection_xss,
-    benchmark_anomaly_scoring
 );
 criterion_main!(benches);
