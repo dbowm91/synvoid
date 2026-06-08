@@ -1,6 +1,6 @@
 # SynVoid Workspace-Green and HTTP/3 Readiness Plan
 
-> Status: proposed next-iteration handoff.
+> Status: completed.
 > Target implementer profile: smaller coding agents such as MiMo 2.5, one narrow task at a time.
 > Goal: make the workspace validation surface green after the stability/dead-code cleanup pass, then perform the smallest HTTP/3 readiness work needed to decide whether `src/http3/server.rs` can move later.
 

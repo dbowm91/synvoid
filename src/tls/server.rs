@@ -1210,7 +1210,7 @@ impl HttpsServer {
                     .get("content-type")
                     .and_then(|v| v.to_str().ok());
                 if let Some(ct) = content_type {
-                    if crate::upload::is_upload_content_type(ct) {
+                    if synvoid_upload::is_upload_content_type(ct) {
                         if let Some(upload_validator) = waf.get_upload_validator() {
                             let effective_config = upload_validator.get_effective_config(&path);
                             if effective_config.scan_with_yara
@@ -1245,15 +1245,15 @@ impl HttpsServer {
                                     }
                                     Err(e) => {
                                         let (status, message) = match &e {
-                                            crate::upload::UploadValidationError::SizeExceeded { .. } => (
+                                            synvoid_upload::UploadValidationError::SizeExceeded { .. } => (
                                                 413,
                                                 "Upload size exceeds maximum allowed",
                                             ),
-                                            crate::upload::UploadValidationError::TypeNotAllowed { .. } => (
+                                            synvoid_upload::UploadValidationError::TypeNotAllowed { .. } => (
                                                 415,
                                                 "Upload file type not allowed",
                                             ),
-                                            crate::upload::UploadValidationError::MalwareDetected { matches } => {
+                                            synvoid_upload::UploadValidationError::MalwareDetected { matches } => {
                                                 tracing::warn!(
                                                     path = %path,
                                                     client_ip = %client_ip,

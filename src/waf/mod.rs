@@ -820,7 +820,7 @@ impl WafCore {
         None
     }
 
-    pub fn get_upload_validator(&self) -> Option<Arc<crate::upload::UploadValidator>> {
+    pub fn get_upload_validator(&self) -> Option<Arc<synvoid_upload::UploadValidator>> {
         get_upload_validator()
     }
 
@@ -917,7 +917,7 @@ impl synvoid_http::ChallengePathWaf for WafCore {
 }
 
 impl synvoid_http::UploadValidationWaf for WafCore {
-    fn get_upload_validator(&self) -> Option<Arc<crate::upload::UploadValidator>> {
+    fn get_upload_validator(&self) -> Option<Arc<synvoid_upload::UploadValidator>> {
         WafCore::get_upload_validator(self)
     }
 
@@ -1041,14 +1041,14 @@ impl synvoid_waf::access::WafAccess for WafCore {
     }
 }
 
-pub static UPLOAD_VALIDATOR: std::sync::OnceLock<Arc<crate::upload::UploadValidator>> =
+pub static UPLOAD_VALIDATOR: std::sync::OnceLock<Arc<synvoid_upload::UploadValidator>> =
     std::sync::OnceLock::new();
 
-pub fn get_upload_validator() -> Option<Arc<crate::upload::UploadValidator>> {
+pub fn get_upload_validator() -> Option<Arc<synvoid_upload::UploadValidator>> {
     UPLOAD_VALIDATOR.get().cloned()
 }
 
-pub fn set_upload_validator(validator: Arc<crate::upload::UploadValidator>) {
+pub fn set_upload_validator(validator: Arc<synvoid_upload::UploadValidator>) {
     let _ = UPLOAD_VALIDATOR.set(validator);
 }
 

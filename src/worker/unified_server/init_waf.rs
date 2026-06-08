@@ -20,7 +20,7 @@ pub async fn init_upload_validator(config: &Arc<RwLock<ConfigManager>>) {
     let upload_config = {
         let config = config.read().await;
         let defaults = &config.main.defaults.upload;
-        crate::upload::UploadConfig {
+        synvoid_upload::UploadConfig {
             enabled: defaults.enabled,
             max_size: defaults.max_size.clone(),
             memory_threshold: defaults.memory_threshold.clone(),
@@ -37,8 +37,8 @@ pub async fn init_upload_validator(config: &Arc<RwLock<ConfigManager>>) {
             max_uploads_per_hour: 200,
             max_bytes_per_minute: "100MB".to_string(),
             burst_allowance: 5,
-            allowed_types: crate::upload::AllowedTypesConfig {
-                mode: crate::upload::AllowedTypesMode::Allowlist,
+            allowed_types: synvoid_upload::AllowedTypesConfig {
+                mode: synvoid_upload::AllowedTypesMode::Allowlist,
                 mime_types: defaults.allowed_types.mime_types.clone(),
             },
             paths: Vec::new(),

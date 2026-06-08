@@ -12,10 +12,10 @@ use tokio::fs;
 use walkdir::WalkDir;
 
 use crate::config::site::SiteStaticConfig;
-use crate::upload::malware_scanner::MalwareScanner;
-use crate::upload::rate_limit::{RateLimitConfig, UploadRateLimiter};
-use crate::upload::yara_scanner::YaraScanner;
-use crate::upload::YaraError;
+use synvoid_upload::malware_scanner::MalwareScanner;
+use synvoid_upload::rate_limit::{RateLimitConfig, UploadRateLimiter};
+use synvoid_upload::yara_scanner::YaraScanner;
+use synvoid_upload::YaraError;
 
 fn make_blocked_extensions_set() -> HashSet<String> {
     BLOCKED_EXTENSIONS
@@ -238,7 +238,7 @@ pub struct FileManager {
 impl FileManager {
     pub fn new(config: FileManagerConfig) -> Self {
         let malware_scanner = if config.scan_on_upload {
-            match YaraScanner::new(crate::upload::yara_scanner::YaraRulesSource::Bundled) {
+            match YaraScanner::new(synvoid_upload::yara_scanner::YaraRulesSource::Bundled) {
                 Ok(scanner) => Arc::new(MalwareScanner::with_yara(Some(scanner))),
                 Err(e) => {
                     tracing::warn!("Failed to create YARA scanner for FileManager: {}, using built-in rules only", e);
@@ -763,7 +763,7 @@ impl FileManager {
         }
 
         if !self.config.allowed_mime_types.is_empty() {
-            let registry = crate::upload::signature::global_signature_registry();
+            let registry = synvoid_upload::signature::global_signature_registry();
             if let Some(detected) = registry.detect(&data) {
                 let detected_mime = detected.detected_mime_types.first();
                 if let Some(mime) = detected_mime {
@@ -789,7 +789,7 @@ impl FileManager {
                     .iter()
                     .any(|m| m == &claimed_mime)
                 {
-                    let registry = crate::upload::signature::global_signature_registry();
+                    let registry = synvoid_upload::signature::global_signature_registry();
                     if let Some(detected) = registry.detect(&data) {
                         if detected
                             .detected_mime_types

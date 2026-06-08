@@ -372,7 +372,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_file_manager_creation() {
-        use crate::upload::rate_limit::RateLimitConfig;
+        use synvoid_upload::rate_limit::RateLimitConfig;
         let config = FileManagerConfig {
             enabled: true,
             root_path: PathBuf::from("/tmp"),
