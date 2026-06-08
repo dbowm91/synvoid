@@ -81,20 +81,19 @@ Call site in `src/server/mod.rs` would need `.clone()` on the `Arc<dyn ...>` —
 
 ## WGH-H03: Implementation
 
-**Not implemented in this task.** Strategy A is documented for future execution. The change is a one-line field type swap with no behavioral impact.
+**IMPLEMENTED (2026-06-08).** The WafAccess object-safety refactor was completed as part of HWD-H02. See `plans/hwd_h02_deferred.md` for the full change set.
 
-## HWD-H04: H02 Deferral Record (2026-06-08)
+## HWD-H04: H02 Deferral Record (2026-06-08) → RESOLVED
 
-Strategy A was attempted but **blocked by `WafAccess`**, not by `Http3RequestWaf`.
+Strategy A was initially blocked by `WafAccess`, not by `Http3RequestWaf`.
 
 - `Http3RequestWaf` IS object-safe (confirmed above).
 - `Http3Server` also calls `WafAccess` methods on `self.waf` at lines 224, 225, 267, 268, 270.
-- `WafAccess` has `type StreamingScanner: Send + Sync + 'static` and `fn streaming(&self) -> Option<Self::StreamingScanner>`, making it **not object-safe**.
-- A composite trait `Arc<dyn Http3WafBackend>` (combining `Http3RequestWaf + WafAccess`) also fails because `WafAccess` is not object-safe.
-- Boxing `streaming()` requires a unified `StreamingWafScanner` trait across `synvoid-http` and `synvoid-http-client`, plus changes to 3+ dispatch functions — out of scope.
+- `WafAccess` had `type StreamingScanner: Send + Sync + 'static` and `fn streaming(&self) -> Option<Self::StreamingScanner>`, making it not object-safe.
+- A composite trait `Arc<dyn Http3WafBackend>` (combining `Http3RequestWaf + WafAccess`) also failed because `WafAccess` was not object-safe.
 
-**Deferred** until `WafAccess` is refactored to remove the `StreamingScanner` associated type. See `plans/hwd_h02_deferred.md`.
+**Resolved**: `StreamingScanner` associated type removed from `WafAccess`. `streaming()` now returns `Option<Box<dyn StreamingWafScanner>>` with a unified trait in `synvoid-core`. A composite trait `Http3WafBackend: Http3RequestWaf + WafAccess` was introduced and `Http3Server.waf` is now `Arc<dyn Http3WafBackend>`.
 
 ## Acceptance
 
-Acceptance checks (compilation verification) run against the current workspace state — no source changes were made.
+Strategy A is **IMPLEMENTED**. `Http3Server.waf` is now `Arc<dyn Http3WafBackend>`.

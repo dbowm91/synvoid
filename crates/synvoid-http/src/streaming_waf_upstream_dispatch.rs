@@ -26,21 +26,18 @@ pub enum StreamingWafUpstreamError {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn handle_streaming_waf_upstream_pass<S>(
+pub async fn handle_streaming_waf_upstream_pass(
     target: &RouteTarget,
     path: &str,
     method: &http::Method,
     parts: &http::request::Parts,
     body: hyper::body::Incoming,
     client_ip: std::net::IpAddr,
-    streaming_waf: Option<S>,
+    streaming_waf: Option<Box<dyn StreamingWafScanner>>,
     alt_svc: &Option<String>,
     main_config: &Arc<MainConfig>,
     upstream_client_registry: &Arc<UpstreamClientRegistry>,
-) -> Result<Response<BoxBody<Bytes, Infallible>>, StreamingWafUpstreamError>
-where
-    S: StreamingWafScanner + Send + Sync + Unpin + 'static,
-{
+) -> Result<Response<BoxBody<Bytes, Infallible>>, StreamingWafUpstreamError> {
     let upstream_target =
         PreparedUpstreamTarget::new(&target.upstream, path, Some(&target.site_config.proxy));
     let headers_to_filter = build_headers_to_filter_for_site(

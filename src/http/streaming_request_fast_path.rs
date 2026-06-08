@@ -66,7 +66,9 @@ where
             )
         },
         |body| async move {
-            let streaming_waf = waf.streaming();
+            let streaming_waf = waf
+                .streaming()
+                .map(|s| Box::new(s) as Box<dyn synvoid_http::shared_handler::StreamingWafScanner>);
             synvoid_http::handle_streaming_request_pass(
                 target,
                 path,

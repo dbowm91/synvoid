@@ -13,17 +13,10 @@ use crate::traffic_shaper::ConnectionLimiter;
 /// - Bandwidth limit checks (monthly bandwidth caps)
 /// - Streaming WAF scanner access (body-scanning for chunked uploads)
 ///
-/// The streaming scanner type is an associated type because different crates
-/// (root `synvoid` and `synvoid-waf`) have their own `StreamingWafCore`
-/// implementations wrapping different `AttackDetector` types.
-///
 /// Methods like `check_request_full`, `generate_tarpit_response`, and
 /// `stream_tarpit` are already covered by traits in `synvoid-http`
 /// (`Http3RequestWaf`, `BufferedRequestWaf`) and do not belong here.
 pub trait WafAccess: Send + Sync + 'static {
-    /// The concrete streaming WAF scanner type produced by this implementation.
-    type StreamingScanner: Send + Sync + 'static;
-
     /// Returns the connection limiter, if configured.
     ///
     /// Callers use this to enforce per-IP and global connection rate limits
@@ -35,5 +28,5 @@ pub trait WafAccess: Send + Sync + 'static {
 
     /// Returns a streaming WAF scanner for body/chunk inspection, if attack
     /// detection is enabled.
-    fn streaming(&self) -> Option<Self::StreamingScanner>;
+    fn streaming(&self) -> Option<Box<dyn synvoid_core::streaming_waf::StreamingWafScanner>>;
 }

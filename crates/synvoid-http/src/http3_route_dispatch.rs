@@ -21,7 +21,7 @@ use crate::traffic_control::{maybe_enforce_http3_site_connection_limits, Connect
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
 #[allow(clippy::too_many_arguments)]
-pub async fn handle_http3_found_route<S, W>(
+pub async fn handle_http3_found_route<W>(
     start: Instant,
     route_target: &RouteTarget,
     stream_scanned_upstream_mode: bool,
@@ -33,7 +33,7 @@ pub async fn handle_http3_found_route<S, W>(
     request_stream: &mut W,
     max_request_size: usize,
     body_bytes: Vec<u8>,
-    streaming_waf: Option<S>,
+    streaming_waf: Option<Box<dyn synvoid_http_client::StreamingWafScanner>>,
     connection_guard: Option<&ConnectionTokenGuard>,
     connection_limiter: Option<&Arc<ConnectionLimiter>>,
     main_config: &Arc<MainConfig>,
@@ -43,7 +43,6 @@ pub async fn handle_http3_found_route<S, W>(
     metrics: Option<&Arc<WorkerMetrics>>,
 ) -> Result<(), BoxError>
 where
-    S: synvoid_http_client::StreamingWafScanner + Send + Sync + Unpin + 'static,
     W: Http3RequestStream,
 {
     if let Err(e) = maybe_enforce_http3_site_connection_limits(

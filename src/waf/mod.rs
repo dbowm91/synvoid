@@ -941,10 +941,9 @@ impl synvoid_http::UploadValidationWaf for WafCore {
 }
 
 impl synvoid_http::RequestBodyWaf for WafCore {
-    type StreamingScanner = crate::waf::attack_detection::StreamingWafCore;
-
-    fn streaming(&self) -> Option<Self::StreamingScanner> {
+    fn streaming(&self) -> Option<Box<dyn synvoid_http::shared_handler::StreamingWafScanner>> {
         WafCore::streaming(self)
+            .map(|s| Box::new(s) as Box<dyn synvoid_http::shared_handler::StreamingWafScanner>)
     }
 
     fn check_request_body(&self, chunk: &[u8]) -> (bool, Option<synvoid_waf::WafDecision>) {
@@ -1026,8 +1025,6 @@ impl synvoid_http::BufferedRequestWaf for WafCore {
 }
 
 impl synvoid_waf::access::WafAccess for WafCore {
-    type StreamingScanner = crate::waf::attack_detection::StreamingWafCore;
-
     fn connection_limiter(&self) -> Option<Arc<ConnectionLimiter>> {
         self.connection_limiter.clone()
     }
@@ -1036,8 +1033,9 @@ impl synvoid_waf::access::WafAccess for WafCore {
         WafCore::is_over_bandwidth_limit(self)
     }
 
-    fn streaming(&self) -> Option<Self::StreamingScanner> {
+    fn streaming(&self) -> Option<Box<dyn synvoid_core::streaming_waf::StreamingWafScanner>> {
         WafCore::streaming(self)
+            .map(|s| Box::new(s) as Box<dyn synvoid_core::streaming_waf::StreamingWafScanner>)
     }
 }
 

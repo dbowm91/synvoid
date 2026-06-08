@@ -16,28 +16,10 @@ use crate::response_builder::{
     fallback_error_boxed,
 };
 
-#[derive(Debug, Clone)]
-pub enum StreamingWafDecision {
-    Continue,
-    Block(u16, String),
-}
-
-pub trait StreamingWafScanner {
-    fn scan_chunk(&mut self, chunk: &[u8]) -> StreamingWafDecision;
-}
-
-impl StreamingWafScanner for synvoid_waf::attack_detection::StreamingWafCore {
-    fn scan_chunk(&mut self, chunk: &[u8]) -> StreamingWafDecision {
-        match synvoid_waf::attack_detection::StreamingWafCore::scan_chunk(self, chunk) {
-            synvoid_waf::attack_detection::StreamingWafDecision::Continue => {
-                StreamingWafDecision::Continue
-            }
-            synvoid_waf::attack_detection::StreamingWafDecision::Block(status, message) => {
-                StreamingWafDecision::Block(status, message)
-            }
-        }
-    }
-}
+// Re-export the unified StreamingWafScanner trait and StreamingWafDecision from
+// synvoid-http-client. The duplicate local definitions were removed in the
+// StreamingWafScanner unification pass.
+pub use synvoid_http_client::{StreamingWafDecision, StreamingWafScanner};
 
 pub struct SharedRequestHandler;
 

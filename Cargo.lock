@@ -8411,6 +8411,7 @@ dependencies = [
  "serde",
  "serde_json",
  "synvoid-config",
+ "synvoid-core",
  "tokio",
  "tracing",
  "webpki-roots 0.26.11",

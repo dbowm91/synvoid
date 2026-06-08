@@ -5,7 +5,6 @@ use std::time::Instant;
 use tokio::sync::Mutex;
 
 use synvoid_config::{HttpConfig, MainConfig};
-use synvoid_http_client::StreamingWafScanner;
 use synvoid_metrics::WorkerMetrics;
 use synvoid_proxy::client_registry::UpstreamClientRegistry;
 use synvoid_proxy::Router;
@@ -43,7 +42,7 @@ pub struct HttpRequestFlowOutcome {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn prepare_http_request_flow<W, D, S>(
+pub async fn prepare_http_request_flow<W, D>(
     req: hyper::Request<hyper::body::Incoming>,
     client_ip: IpAddr,
     local_addr: Option<SocketAddr>,
@@ -69,8 +68,7 @@ pub async fn prepare_http_request_flow<W, D, S>(
     upstream_client_registry: &Arc<UpstreamClientRegistry>,
 ) -> Result<HttpRequestFlowOutcome, hyper::Error>
 where
-    W: BufferedRequestWaf + crate::RequestBodyWaf<StreamingScanner = S>,
-    S: StreamingWafScanner + Send + Sync + Unpin + 'static,
+    W: BufferedRequestWaf + crate::RequestBodyWaf,
     D: HttpDrainControl,
 {
     let request_preparation_started_at = Instant::now();

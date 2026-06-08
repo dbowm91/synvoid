@@ -2,9 +2,7 @@ use std::sync::Arc;
 
 use crate::buffer::{BufferPool, PooledBuf};
 use crate::waf::attack_detection::{AttackDetectionResult, AttackDetector};
-use synvoid_http::shared_handler::{
-    StreamingWafDecision as HttpStreamingWafDecision, StreamingWafScanner,
-};
+use synvoid_http_client::{StreamingWafDecision as HttpStreamingWafDecision, StreamingWafScanner};
 
 const DEFAULT_CHUNK_SIZE: usize = 4096;
 const DEFAULT_MAX_BUFFERED_BYTES: usize = 2 * 1024 * 1024;
@@ -400,17 +398,6 @@ impl StreamingWafScanner for StreamingWafCore {
             StreamingWafDecision::Continue => HttpStreamingWafDecision::Continue,
             StreamingWafDecision::Block(status, message) => {
                 HttpStreamingWafDecision::Block(status, message)
-            }
-        }
-    }
-}
-
-impl synvoid_http_client::StreamingWafScanner for StreamingWafCore {
-    fn scan_chunk(&mut self, chunk: &[u8]) -> synvoid_http_client::StreamingWafDecision {
-        match StreamingWafCore::scan_chunk(self, chunk) {
-            StreamingWafDecision::Continue => synvoid_http_client::StreamingWafDecision::Continue,
-            StreamingWafDecision::Block(status, message) => {
-                synvoid_http_client::StreamingWafDecision::Block(status, message)
             }
         }
     }

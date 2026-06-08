@@ -102,7 +102,7 @@ fn build_plain_error_response(status: StatusCode, content_type: &'static str) ->
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn handle_http3_streaming_upstream_pass<S, W>(
+pub async fn handle_http3_streaming_upstream_pass<W>(
     start: Instant,
     route_target: &RouteTarget,
     path: &str,
@@ -112,14 +112,13 @@ pub async fn handle_http3_streaming_upstream_pass<S, W>(
     client_ip: IpAddr,
     request_stream: &mut W,
     max_request_size: usize,
-    streaming_waf: Option<S>,
+    streaming_waf: Option<Box<dyn StreamingWafScanner>>,
     main_config: &Arc<MainConfig>,
     upstream_client_registry: &Arc<UpstreamClientRegistry>,
     bandwidth: Option<&Arc<BandwidthTracker>>,
     metrics: Option<&Arc<WorkerMetrics>>,
 ) -> Result<(), BoxError>
 where
-    S: StreamingWafScanner + Send + Sync + Unpin + 'static,
     W: Http3RequestStream,
 {
     let upstream_target = PreparedUpstreamTarget::new(

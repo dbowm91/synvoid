@@ -24,14 +24,14 @@ use crate::streaming_waf_upstream_dispatch::{
 };
 
 #[allow(clippy::too_many_arguments)]
-pub async fn handle_streaming_request_pass<S, ServerlessStatusFn, PermissionDeniedFn>(
+pub async fn handle_streaming_request_pass<ServerlessStatusFn, PermissionDeniedFn>(
     target: &RouteTarget,
     path: &str,
     method: &http::Method,
     parts: &http::request::Parts,
     body: hyper::body::Incoming,
     client_ip: std::net::IpAddr,
-    streaming_waf: Option<S>,
+    streaming_waf: Option<Box<dyn StreamingWafScanner>>,
     alt_svc: &Option<String>,
     main_config: &Arc<MainConfig>,
     upstream_client_registry: &Arc<UpstreamClientRegistry>,
@@ -42,7 +42,6 @@ pub async fn handle_streaming_request_pass<S, ServerlessStatusFn, PermissionDeni
     on_permission_denied: PermissionDeniedFn,
 ) -> Result<StreamingRequestFastPathOutcome, hyper::Error>
 where
-    S: StreamingWafScanner + Send + Sync + Unpin + 'static,
     ServerlessStatusFn: FnOnce(u16),
     PermissionDeniedFn: FnOnce() -> Response<BoxBody<Bytes, Infallible>>,
 {

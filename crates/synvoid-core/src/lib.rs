@@ -10,6 +10,7 @@ pub mod ids;
 pub mod metrics;
 pub mod request;
 pub mod routing;
+pub mod streaming_waf;
 pub mod time;
 pub mod url;
 pub mod verdict;

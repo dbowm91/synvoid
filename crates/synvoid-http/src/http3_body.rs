@@ -6,7 +6,8 @@ use http::{header, Response, StatusCode};
 use metrics::counter;
 
 use crate::headers::generate_stealth_timestamp;
-use crate::shared_handler::{StreamingWafDecision, StreamingWafScanner};
+use crate::shared_handler::StreamingWafScanner;
+use synvoid_http_client::StreamingWafDecision;
 
 #[async_trait]
 pub trait Http3RequestStream {
@@ -57,16 +58,15 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn collect_http3_request_body<S, W>(
+pub async fn collect_http3_request_body<W>(
     stream_scanned_upstream_mode: bool,
     max_request_size: usize,
     client_ip: IpAddr,
-    mut streaming_waf: Option<S>,
+    mut streaming_waf: Option<Box<dyn StreamingWafScanner>>,
     request_stream: &mut W,
 ) -> Result<Http3BodyCollectionOutcome, W::Error>
 where
     W: Http3RequestStream,
-    S: StreamingWafScanner + Send + Unpin,
 {
     if stream_scanned_upstream_mode {
         return Ok(Http3BodyCollectionOutcome::Continue(Http3CollectedBody {

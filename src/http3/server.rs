@@ -5,7 +5,6 @@ use tokio::sync::broadcast;
 
 use metrics::{counter, gauge};
 
-use crate::waf::WafCore;
 use crate::worker::drain_state::WorkerDrainState;
 use synvoid_config::http::Http3Config;
 use synvoid_config::MainConfig;
@@ -17,11 +16,17 @@ use synvoid_proxy::UpstreamClientRegistry;
 use synvoid_waf::access::WafAccess;
 use synvoid_waf::{FloodDecision, FloodProtector};
 
+/// Composite trait combining the WAF capabilities needed by HTTP/3:
+/// request-level WAF checks (`Http3RequestWaf`) plus infrastructure access
+/// (`WafAccess`: connection limiter, bandwidth, streaming scanner).
+pub trait Http3WafBackend: synvoid_http::Http3RequestWaf + WafAccess {}
+impl<T> Http3WafBackend for T where T: synvoid_http::Http3RequestWaf + WafAccess {}
+
 pub struct Http3Server {
     addr: SocketAddr,
     config: Http3Config,
     router: Arc<Router>,
-    waf: Arc<WafCore>,
+    waf: Arc<dyn Http3WafBackend>,
     flood_protector: Option<Arc<FloodProtector>>,
     client: HttpClient,
     upstream_client_registry: Arc<UpstreamClientRegistry>,
@@ -37,7 +42,7 @@ impl Http3Server {
         addr: SocketAddr,
         config: Http3Config,
         router: Router,
-        waf: Arc<WafCore>,
+        waf: Arc<dyn Http3WafBackend>,
         main_config: MainConfig,
         shutdown_rx: broadcast::Receiver<()>,
     ) -> Self {

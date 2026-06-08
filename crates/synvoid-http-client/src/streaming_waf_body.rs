@@ -2,15 +2,7 @@ use std::net::IpAddr;
 
 use bytes::Bytes;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum StreamingWafDecision {
-    Continue,
-    Block(u16, String),
-}
-
-pub trait StreamingWafScanner {
-    fn scan_chunk(&mut self, chunk: &[u8]) -> StreamingWafDecision;
-}
+pub use synvoid_core::streaming_waf::{StreamingWafDecision, StreamingWafScanner};
 
 /// A streaming body wrapper that performs WAF scanning on chunks as they pass through.
 /// This enables true streaming: body is scanned and forwarded without full buffering.

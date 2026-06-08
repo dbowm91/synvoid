@@ -31,7 +31,8 @@ pub async fn handle_streaming_waf_upstream_pass(
         parts,
         body,
         client_ip,
-        waf.streaming(),
+        waf.streaming()
+            .map(|s| Box::new(s) as Box<dyn synvoid_http::shared_handler::StreamingWafScanner>),
         alt_svc,
         main_config,
         upstream_client_registry,

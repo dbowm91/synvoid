@@ -5,12 +5,15 @@
 **Updated**: 2026-06-07 (HWS-Q01–Q03)
 **Updated**: 2026-06-07 (MDM-Q01–Q03 — refresh + import reduction + ownership decision)
 **Updated**: 2026-06-08 (HWD-H04 — H02 deferral recorded)
+**Updated**: 2026-06-08 (WafAccess object-safety resolved, Http3WafBackend trait introduced)
 
 ## Summary
 
 `src/http3/server.rs` imports **10 concrete root-owned types** across 8 `crate::` import lines. Two of these (`WafCore`, `WorkerDrainState`) are root-defined structs with no trait seam in extracted crates. The remaining 8 are re-exports from extracted crates (`synvoid-proxy`, `synvoid-waf`, `synvoid-http-client`, `synvoid-metrics`, `synvoid-config`). The `prepare_http3_request_dispatch` and `handle_http3_request_dispatch` functions in `synvoid-http` also take some of these concrete types directly in their signatures.
 
-**HWS-Q01–Q03 update**: The `WafAccess` trait is now actively used in server.rs (imported at line 15, methods called at lines 224, 225, 267, 268, 270). The 3 accessor methods (`connection_limiter`, `is_over_bandwidth_limit`, `streaming`) no longer access WafCore fields directly. Remaining blocker: `self.waf.as_ref()` at line 276 for `Http3RequestWaf` dispatch still requires concrete `WafCore`.
+**HWS-Q01–Q03 update**: The `WafAccess` trait is now actively used in server.rs (imported at line 15, methods called at lines 224, 225, 267, 268, 270). The 3 accessor methods (`connection_limiter`, `is_over_bandwidth_limit`, `streaming`) no longer access WafCore fields directly.
+
+**WafAccess refactor (2026-06-08)**: `WafAccess` is now object-safe — `StreamingScanner` associated type removed, `streaming()` returns `Option<Box<dyn StreamingWafScanner>>`. `Http3Server.waf` is now `Arc<dyn Http3WafBackend>` (composite trait `Http3RequestWaf + WafAccess`). The remaining root blockers are `accept_loop.rs` Send bound errors (pre-existing) and `WorkerDrainState` (root-owned, low-impact).
 
 ---
 
@@ -18,7 +21,7 @@
 
 | # | Concrete dependency | Import line | Struct field line | Existing seam | Missing seam | Action | Notes |
 |---|---------------------|-------------|-------------------|---------------|--------------|--------|-------|
-| 1 | `WafCore` | 14 | 21 | `WafProcessor` (synvoid-waf) + **`WafAccess`** (synvoid-waf) + `Http3RequestWaf` (synvoid-http) | `as_ref()` for `Http3RequestWaf` dispatch still requires concrete type | **WafAccess resolved** — all 3 accessors now use trait methods; remaining blocker is `self.waf.as_ref()` for `Http3RequestWaf` dispatch | `WafAccess` imported at line 15, used at lines 224, 225, 267, 268, 270. `self.waf.as_ref()` at line 276 still needs concrete `WafCore` |
+| 1 | `WafCore` | 14 | 21 | `WafProcessor` (synvoid-waf) + **`WafAccess`** (synvoid-waf) + `Http3RequestWaf` (synvoid-http) | **RESOLVED** — `Http3Server.waf` is now `Arc<dyn Http3WafBackend>` (no longer concrete `Arc<WafCore>`) | **COMPLETED** — WafAccess is object-safe; `Http3WafBackend` composite trait (`Http3RequestWaf + WafAccess`) used for dispatch | `WafAccess` refactored: `StreamingScanner` associated type removed, `streaming()` returns `Box<dyn StreamingWafScanner>`. See `plans/hwd_h02_deferred.md` |
 | 2 | `FloodProtector` | 14 | 22 | **None** — `FloodProtector` is a struct in `synvoid_waf::flood` | No trait abstraction for `check_tcp_connection()` | Already in extracted crate `synvoid-waf` — no root ownership issue; can be used directly from `synvoid_waf::FloodProtector` | Used at lines 62, 159 (`fp.check_tcp_connection(client_ip)`) |
 | 3 | `FloodDecision` | 14 | — (enum variant only) | **None** — enum in `synvoid_waf::flood` | No seam needed — it's a simple value enum | Already in extracted crate — no action needed | Used at lines 160, 164, 168 in match arms |
 | 4 | `Router` | 13 | 20 | `RouteResolver` trait (synvoid-proxy) + `RouterRouteResolver` adapter | `prepare_http3_request_dispatch` takes `&Arc<Router>` directly, not `&dyn RouteResolver` | Already in extracted crate `synvoid-proxy` — but `prepare_http3_request_dispatch` still takes concrete `Arc<Router>` | Root re-exports `pub use synvoid_proxy::router::*;` at `src/router.rs:1`. The dispatch function signature in `synvoid-http` would need changing to accept `&dyn RouteResolver` |
@@ -103,8 +106,8 @@ These types are defined in extracted crates and merely re-exported by root. They
 
 | Type | Root location | Trait seam in extracted crate | Effort |
 |------|---------------|-------------------------------|--------|
-| `WafCore` | `src/waf/mod.rs:97` | `WafProcessor` + `WafAccess` + `Http3RequestWaf` — all 3 WafAccess accessors now used via trait. Remaining: `self.waf.as_ref()` for `Http3RequestWaf` dispatch requires concrete type | **H02 deferred** — `Http3RequestWaf` IS object-safe but `WafAccess` is not (associated type `StreamingScanner`). Retry requires `WafAccess` refactor |
-| `WorkerDrainState` | `src/worker/drain_state.rs:23` | `DrainState` trait exists in synvoid-core, `WorkerDrainStateAdapter` wraps it | Low — stored but unused in server.rs methods; just pass `Option<Arc<dyn DrainState>>` |
+| `WafCore` | `src/waf/mod.rs:97` | `WafProcessor` + `WafAccess` + `Http3RequestWaf` — all now object-safe. `Http3Server.waf` is `Arc<dyn Http3WafBackend>` | **COMPLETED** — WafAccess refactored; `Http3WafBackend` composite trait in use |
+| `WorkerDrainState` | `src/worker/drain_state.rs:23` | `DrainState` trait exists in synvoid-core, `WorkerDrainStateAdapter` wraps it | Low — stored but unused in server.rs methods; remaining root blocker after WafAccess refactor |
 
 ### Standalone functions (no ownership concern)
 
@@ -139,19 +142,22 @@ To resolve this, one of:
 
 The `Http3RequestWaf` dispatch blocker prevents moving `server.rs` to an extracted crate. The `bind_udp_reuse` platform utility and `WorkerDrainState` are minor and solvable, but the `Http3RequestWaf` requirement is structural.
 
-### H02 deferral (2026-06-08)
+### H02 deferral (2026-06-08) → RESOLVED (2026-06-08)
 
-Strategy A (`Arc<dyn Http3RequestWaf>`) was investigated and found **blocked by `WafAccess`**, not by `Http3RequestWaf`. `Http3RequestWaf` itself IS object-safe (no generics, no `Self` returns, no associated types). However, `Http3Server` also calls `WafAccess` methods on `self.waf` (lines 224, 225, 267, 268, 270), and `WafAccess` has the associated type `StreamingScanner` (`streaming() -> Option<Self::StreamingScanner>`), making it **not object-safe**. A composite trait `dyn Http3WafBackend: Http3RequestWaf + WafAccess` would also fail because `WafAccess` is not object-safe. See `plans/hwd_h02_deferred.md` for full details.
+Strategy A (`Arc<dyn Http3RequestWaf>`) was initially blocked by `WafAccess` not being object-safe. The `WafAccess` refactor has been completed: `StreamingScanner` associated type removed, `streaming()` returns `Option<Box<dyn StreamingWafScanner>>`, and a unified `StreamingWafScanner` trait exists in `synvoid-core`. A composite trait `Http3WafBackend: Http3RequestWaf + WafAccess` was introduced and `Http3Server.waf` is now `Arc<dyn Http3WafBackend>`.
 
-**Prerequisites for retry:** Remove `StreamingScanner` associated type from `WafAccess` and return a boxed trait object instead, or refactor `streaming()` callers.
+### Remaining root blockers
+
+1. **`accept_loop.rs` Send bound** — Pre-existing errors at `src/http/server/accept_loop.rs:171` (not introduced by WafAccess refactor)
+2. **`WorkerDrainState`** — Root-owned struct, stored but unused in server methods; low-impact, solvable by replacing with `Option<Arc<dyn DrainState>>`
 
 ### Next steps
 
 1. ~~Verify `Http3RequestWaf` is object-safe~~ ✅ confirmed object-safe
-2. ~~If object-safe: change `waf: Arc<WafCore>` to `waf: Arc<dyn Http3RequestWaf>`~~ **BLOCKED** — `WafAccess` not object-safe
-3. Refactor `WafAccess` to remove `StreamingScanner` associated type (return `Option<Box<dyn StreamingWafScanner>>`)
-4. Then re-evaluate `Arc<dyn Http3RequestWaf>` or composite trait object
-5. Then reassess `MOVE_READY`
+2. ~~If object-safe: change `waf: Arc<WafCore>` to `waf: Arc<dyn Http3RequestWaf>`~~ ✅ done — `waf: Arc<dyn Http3WafBackend>`
+3. ~~Refactor `WafAccess` to remove `StreamingScanner` associated type (return `Option<Box<dyn StreamingWafScanner>>`)~~ ✅ done
+4. ~~Then re-evaluate `Arc<dyn Http3RequestWaf>` or composite trait object~~ ✅ `Arc<dyn Http3WafBackend>` in use
+5. Remaining: `accept_loop.rs` Send bound fix, `WorkerDrainState` → `Arc<dyn DrainState>`
 
 ---
 
@@ -166,7 +172,7 @@ Strategy A (`Arc<dyn Http3RequestWaf>`) was investigated and found **blocked by 
 | Total distinct concrete root imports | 10 (`Http3Config`, `MainConfig`, `HttpClient`, `create_http_client_with_config`, `get_global_bandwidth_tracker_or_log`, `WorkerMetrics`, `UpstreamClientRegistry`, `Router`, `FloodDecision`, `FloodProtector`, `WafCore`, `WorkerDrainState`, `bind_udp_reuse`) |
 | Already moved to extracted crate (clean root → crate replacement possible) | 9 |
 | Covered by WafProcessor / WafAccess (no replacement needed) | 1 (`WafAccess` is already used at lines 224, 225, 267, 268, 270) |
-| Still root-only (cannot replace without trait/external reorg) | 3 (`WafCore`, `WorkerDrainState`, `bind_udp_reuse`) |
+| Still root-only (cannot replace without trait/external reorg) | 2 (`WorkerDrainState`, `bind_udp_reuse`) |
 
 ## Refreshed Classification
 
@@ -182,11 +188,11 @@ Strategy A (`Arc<dyn Http3RequestWaf>`) was investigated and found **blocked by 
 | 8 | `Router` | 13 | **Already moved** — `synvoid_proxy::Router` | Concrete; `RouteResolver` trait exists in synvoid-proxy but the synvoid-http dispatch functions take `&Arc<Router>`. |
 | 9 | `FloodDecision` | 14 | **Already moved** — `synvoid_waf::FloodDecision` (re-exported via `src/waf/flood/mod.rs`) | Clean. |
 | 10 | `FloodProtector` | 14 | **Already moved** — `synvoid_waf::FloodProtector` | Clean. |
-| 11 | `WafCore` | 14, 22, 38, 51, 276 | **Root-only.** `Http3RequestWaf` impl is in root; `self.waf.as_ref()` (line 276) dispatches to `handle_http3_request_dispatch` which expects `waf: &Waf` where `Waf: Http3RequestWaf`. **Covered by WafAccess** for the 3 accessors used at lines 224, 225, 267, 268, 270; **NOT covered** for the dispatch at line 276. | The remaining blocker for moving `src/http3/server.rs` is structural: `WafCore` is the only implementor of `Http3RequestWaf` and lives in root. |
+| 11 | `WafCore` | 14, 22, 38, 51, 276 | **RESOLVED.** `Http3Server.waf` is now `Arc<dyn Http3WafBackend>` (composite trait `Http3RequestWaf + WafAccess`). WafAccess is object-safe after `StreamingScanner` associated type removal. | `WafAccess` refactored; see `plans/hwd_h02_deferred.md` |
 | 12 | `WorkerDrainState` | 15, 26, 55, 68 | **Root-only.** Struct in `src/worker/drain_state.rs`. Stored as field but never accessed in any server method body (no method reads/writes it after construction). | Could be replaced with `Option<Arc<dyn DrainState>>` if `Http3Server` accepted the trait; the builder `with_drain_state` would need to take the trait object. |
 | 13 | `bind_udp_reuse` (inline) | 101 | **Root platform utility** (function defined in `src/platform/socket.rs`). `synvoid-platform` has a same-named function in its (private) `socket` module, but it is **not** publicly exported from `synvoid-platform`. | Stop condition hit during Q02: cannot replace without making `crates/synvoid-platform/src/socket.rs` public, which is a separate cross-cutting change. |
 
-**Net result for Q01**: 10 of 12 distinct concrete dependencies are clean root → crate replacements; 3 (`WafCore`, `WorkerDrainState`, `bind_udp_reuse`) remain root-only. Of the 3, `bind_udp_reuse` is solvable in a follow-up by exporting the `socket` module from `synvoid-platform`; `WafCore` and `WorkerDrainState` are deferred by plan §2 (WafCore is explicitly off-limits; WorkerDrainState is part of worker which is also off-limits).
+**Net result for Q01**: 10 of 12 distinct concrete dependencies are clean root → crate replacements; 2 (`WorkerDrainState`, `bind_udp_reuse`) remain root-only. `WafCore` has been resolved via the WafAccess object-safety refactor — `Http3Server.waf` is now `Arc<dyn Http3WafBackend>`.
 
 ---
 
@@ -336,10 +342,11 @@ cargo check --no-default-features --features mesh,dns                 # HWS-Q02 
 cargo check --workspace --all-targets                                 # HWS-Q03 ✅ (with pre-existing init_mesh.rs error noted)
 ```
 
-**Status (HWS-Q01–Q03, MDM-Q01–Q03)**: WafAccess trait actively used. All
+**Status (HWS-Q01–Q03, MDM-Q01–Q03)**: WafAccess trait actively used and now object-safe.
+`Http3Server.waf` is `Arc<dyn Http3WafBackend>` (composite trait). All
 non-root-owned root imports in `src/http3/server.rs` have been redirected
-to their canonical extracted-crate paths. `Http3RequestWaf` dispatch
-remains as the structural blocker for HTTP3 server movement, with the
-secondary blockers being `WorkerDrainState` (root-owned) and
-`bind_udp_reuse` (needs `synvoid-platform` `socket` module export).
+to their canonical extracted-crate paths. Remaining root blockers:
+`WorkerDrainState` (root-owned, low-impact) and `bind_udp_reuse` (needs
+`synvoid-platform` `socket` module export). Pre-existing `accept_loop.rs`
+Send bound errors are unrelated to this refactor.
 Decision recorded: `KEEP_ROOT_UNTIL_HTTP_SERVER_CONTEXT_REWORK`.

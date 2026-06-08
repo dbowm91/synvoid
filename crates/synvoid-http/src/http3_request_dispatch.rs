@@ -76,7 +76,7 @@ fn should_stream_http3_upstream(route_target: &RouteTarget, headers: &HeaderMap)
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn handle_http3_request_dispatch<Waf, S, W>(
+pub async fn handle_http3_request_dispatch<Waf, W>(
     start: Instant,
     route_result: &RouteResult,
     path: &str,
@@ -88,8 +88,8 @@ pub async fn handle_http3_request_dispatch<Waf, S, W>(
     client_ip: IpAddr,
     request_stream: &mut W,
     max_request_size: usize,
-    streaming_waf_for_body: Option<S>,
-    streaming_waf_for_upstream: Option<S>,
+    streaming_waf_for_body: Option<Box<dyn crate::shared_handler::StreamingWafScanner>>,
+    streaming_waf_for_upstream: Option<Box<dyn crate::shared_handler::StreamingWafScanner>>,
     connection_guard: Option<&ConnectionTokenGuard>,
     connection_limiter: Option<&Arc<ConnectionLimiter>>,
     main_config: &Arc<MainConfig>,
@@ -101,12 +101,6 @@ pub async fn handle_http3_request_dispatch<Waf, S, W>(
 ) -> Result<(), BoxError>
 where
     Waf: Http3RequestWaf + ?Sized,
-    S: crate::shared_handler::StreamingWafScanner
-        + synvoid_http_client::StreamingWafScanner
-        + Send
-        + Sync
-        + Unpin
-        + 'static,
     W: Http3RequestStream,
 {
     let stream_scanned_upstream_mode = match route_result {

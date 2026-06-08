@@ -12,9 +12,7 @@ pub enum BodyPolicyError {
 }
 
 pub trait RequestBodyWaf {
-    type StreamingScanner: crate::shared_handler::StreamingWafScanner + Unpin;
-
-    fn streaming(&self) -> Option<Self::StreamingScanner>;
+    fn streaming(&self) -> Option<Box<dyn crate::shared_handler::StreamingWafScanner>>;
     fn check_request_body(&self, chunk: &[u8]) -> (bool, Option<synvoid_waf::WafDecision>);
 }
 
