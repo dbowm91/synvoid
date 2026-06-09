@@ -466,11 +466,8 @@ impl MeshTransport {
                     return;
                 }
 
-                if !self.verify_signer_node_binding(
-                    node_id,
-                    signer_public_key,
-                    "DHT sync request",
-                ) {
+                if !self.verify_signer_node_binding(node_id, signer_public_key, "DHT sync request")
+                {
                     return;
                 }
             }
@@ -574,11 +571,7 @@ impl MeshTransport {
             return;
         }
 
-        if !self.verify_signer_node_binding(
-            from_peer,
-            signer_public_key,
-            "DHT sync response",
-        ) {
+        if !self.verify_signer_node_binding(from_peer, signer_public_key, "DHT sync response") {
             return;
         }
 

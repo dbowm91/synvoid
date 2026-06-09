@@ -384,11 +384,25 @@ pub fn validate_peer_role(
     pow_public_key: Option<&str>,
     member_certificate: Option<&MemberCertificate>,
     org_public_key: Option<&OrgPublicKey>,
+    raft_attestation: Option<&SignedRaftAttestation>,
+    allow_v1_raft_attestations: bool,
 ) -> Result<(), String> {
     // Try Organization Trust Chain first if available for Edge nodes
     if role.is_edge() {
         if let (Some(cert), Some(org_key)) = (member_certificate, org_public_key) {
-            if let Ok(()) =
+            // Prefer value-bound Raft attestation path when attestation is available
+            if raft_attestation.is_some() {
+                // When an attestation is explicitly provided, use it exclusively.
+                // Reject if the attestation is invalid rather than falling through.
+                return validate_member_certificate_with_raft_attestation(
+                    cert,
+                    org_key,
+                    authorized_global_pubkeys,
+                    peer_node_id,
+                    raft_attestation,
+                    allow_v1_raft_attestations,
+                );
+            } else if let Ok(()) =
                 validate_member_certificate(cert, org_key, authorized_global_pubkeys, peer_node_id)
             {
                 return Ok(());
@@ -1018,6 +1032,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            false,
         );
         assert!(result.is_err());
         assert!(result
@@ -1052,6 +1068,8 @@ mod tests {
             Some(&public),
             None,
             None,
+            None,
+            false,
         );
         assert!(result.is_ok());
     }
@@ -1077,6 +1095,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            false,
         );
         assert!(result.is_ok());
     }
@@ -1105,6 +1125,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            false,
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("has been revoked"));
@@ -1128,6 +1150,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            false,
         );
         assert!(result.is_err());
     }
@@ -1150,6 +1174,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            false,
         );
         assert!(result.is_err());
     }
@@ -1177,6 +1203,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            false,
         );
         assert!(result.is_err());
     }
@@ -1202,6 +1230,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            false,
         );
         assert!(result.is_err());
     }
@@ -1226,6 +1256,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            false,
         );
         assert!(result.is_err());
         assert!(result
@@ -1254,6 +1286,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            false,
         );
         assert!(result.is_err());
     }
@@ -1289,6 +1323,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            false,
         );
         assert!(result.is_ok(), "Origin validation failed: {:?}", result);
     }
@@ -1320,6 +1356,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            false,
         );
         assert!(result.is_err());
         assert!(result
@@ -1359,6 +1397,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            false,
         );
         assert!(result.is_err());
         assert!(result
@@ -1400,6 +1440,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            false,
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("has been revoked"));
@@ -1514,6 +1556,8 @@ mod tests {
             Some(&public),
             None,
             None,
+            None,
+            false,
         );
         assert!(result.is_ok(), "PoW validation failed: {:?}", result);
     }
@@ -1542,6 +1586,8 @@ mod tests {
             Some(&public),
             None,
             None,
+            None,
+            false,
         );
         assert!(result.is_ok());
     }
@@ -1577,6 +1623,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            false,
         );
         assert!(result.is_ok());
     }
@@ -1604,6 +1652,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            false,
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("future timestamp"));
@@ -1626,6 +1676,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            false,
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("invalid public key encoding"));
@@ -1658,6 +1710,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            false,
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("has been revoked"));
@@ -1686,6 +1740,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            false,
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("has been revoked"));
@@ -1722,6 +1778,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            false,
         );
         assert!(result.is_err());
         assert!(result
@@ -1751,6 +1809,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            false,
         );
         assert!(result.is_ok());
     }
@@ -1799,6 +1859,8 @@ mod tests {
             Some(&origin_public),
             None,
             None,
+            None,
+            false,
         );
         assert!(
             result.is_ok(),
@@ -1831,6 +1893,8 @@ mod tests {
             Some(&public),
             None,
             None,
+            None,
+            false,
         );
         assert!(result_with_pow_only.is_err(), "Should require signature");
         let err_pow = result_with_pow_only.unwrap_err();
@@ -1855,6 +1919,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            false,
         );
         assert!(result_with_signature_only.is_err(), "Should require PoW");
         let err_sig = result_with_signature_only.unwrap_err();
@@ -1879,6 +1945,8 @@ mod tests {
             Some(&public),
             None,
             None,
+            None,
+            false,
         );
         assert!(
             result_with_both.is_ok(),
@@ -2828,6 +2896,268 @@ mod tests {
         assert!(
             result.is_err(),
             "V1 attestation should be rejected when allow_v1_raft_attestations=false: {:?}",
+            result
+        );
+    }
+
+    // --- validate_peer_role Raft attestation integration tests ---
+
+    fn setup_edge_org_test() -> (
+        crate::organization::OrgKey,
+        crate::organization::OrgPublicKey,
+        crate::organization::MemberCertificate,
+        [u8; 32],
+        String,
+    ) {
+        let (global_secret, global_public_b64) = generate_test_keypair();
+        let (org_secret, _org_public_b64) = generate_different_keypair(0x10);
+        let org_key = crate::organization::OrgKey {
+            key_id: "org-key-1".to_string(),
+            private_key: org_secret.to_vec(),
+            public_key: ed25519_dalek::SigningKey::from_bytes(&org_secret)
+                .verifying_key()
+                .as_bytes()
+                .to_vec(),
+            created_at: synvoid_utils::current_timestamp(),
+            issued_by: None,
+        };
+        let org_pub_key = crate::organization::OrgPublicKey::new("test-org".to_string(), &org_key);
+        let cert = crate::organization::MemberCertificate::new(
+            "peer-1".to_string(),
+            "test-org".to_string(),
+            &org_key,
+            30,
+        );
+        (org_key, org_pub_key, cert, global_secret, global_public_b64)
+    }
+
+    fn make_v2_raft_attestation(
+        global_secret: &[u8; 32],
+        org_pub_key: &crate::organization::OrgPublicKey,
+    ) -> SignedRaftAttestation {
+        let global_signing_key = ed25519_dalek::SigningKey::from_bytes(global_secret);
+        let value_hash =
+            RaftAttestation::compute_value_hash(&org_pub_key.get_signable_data().as_bytes());
+        let attestation = RaftAttestation {
+            leader_id: "leader-1".to_string(),
+            commit_index: 42,
+            namespace: crate::raft::Namespace::Org,
+            key_id: org_pub_key.key_id.clone(),
+            timestamp: synvoid_utils::current_timestamp(),
+            value_hash: Some(value_hash.clone()),
+        };
+        SignedRaftAttestation::from_attestation(
+            attestation,
+            "global-node-1".to_string(),
+            &global_signing_key,
+            Some(value_hash),
+        )
+    }
+
+    #[test]
+    fn test_validate_peer_role_edge_with_raft_attestation_passes() {
+        let (_org_key, org_pub_key, cert, global_secret, global_public_b64) = setup_edge_org_test();
+        let signed_att = make_v2_raft_attestation(&global_secret, &org_pub_key);
+
+        let result = validate_peer_role(
+            &crate::config::MeshNodeRole::EDGE,
+            &[global_public_b64],
+            "peer-1",
+            None,
+            None,
+            0,
+            300,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&cert),
+            Some(&org_pub_key),
+            Some(&signed_att),
+            false,
+        );
+        assert!(
+            result.is_ok(),
+            "EDGE with valid V2 Raft attestation should pass: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_validate_peer_role_edge_without_attestation_falls_back_to_quorum() {
+        let (_org_key, org_pub_key, cert, _global_secret, global_public_b64) =
+            setup_edge_org_test();
+
+        // No attestation and no quorum sigs -> should fail
+        let result = validate_peer_role(
+            &crate::config::MeshNodeRole::EDGE,
+            &[global_public_b64],
+            "peer-1",
+            None,
+            None,
+            0,
+            300,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&cert),
+            Some(&org_pub_key),
+            None,
+            false,
+        );
+        assert!(
+            result.is_err(),
+            "EDGE without attestation and without quorum sigs should fail: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_validate_peer_role_edge_wrong_value_hash_rejected() {
+        let (_org_key, org_pub_key, cert, global_secret, global_public_b64) = setup_edge_org_test();
+        let global_signing_key = ed25519_dalek::SigningKey::from_bytes(&global_secret);
+
+        // Create attestation with wrong value hash
+        let wrong_value_hash = RaftAttestation::compute_value_hash(b"wrong-value");
+        let attestation = RaftAttestation {
+            leader_id: "leader-1".to_string(),
+            commit_index: 42,
+            namespace: crate::raft::Namespace::Org,
+            key_id: org_pub_key.key_id.clone(),
+            timestamp: synvoid_utils::current_timestamp(),
+            value_hash: Some(wrong_value_hash.clone()),
+        };
+        let signed_att = SignedRaftAttestation::from_attestation(
+            attestation,
+            "global-node-1".to_string(),
+            &global_signing_key,
+            Some(wrong_value_hash),
+        );
+
+        let result = validate_peer_role(
+            &crate::config::MeshNodeRole::EDGE,
+            &[global_public_b64],
+            "peer-1",
+            None,
+            None,
+            0,
+            300,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&cert),
+            Some(&org_pub_key),
+            Some(&signed_att),
+            false,
+        );
+        assert!(
+            result.is_err(),
+            "EDGE with wrong value hash should be rejected: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_validate_peer_role_edge_v1_attestation_rejected_by_default() {
+        let (_org_key, org_pub_key, cert, global_secret, global_public_b64) = setup_edge_org_test();
+        let global_signing_key = ed25519_dalek::SigningKey::from_bytes(&global_secret);
+
+        // V1 attestation: no value_hash, protocol_version=1
+        let attestation = RaftAttestation {
+            leader_id: "leader-1".to_string(),
+            commit_index: 42,
+            namespace: crate::raft::Namespace::Org,
+            key_id: org_pub_key.key_id.clone(),
+            timestamp: synvoid_utils::current_timestamp(),
+            value_hash: None,
+        };
+        let mut signed_att = SignedRaftAttestation {
+            attestation,
+            signer_node_id: "global-node-1".to_string(),
+            signer_public_key: URL_SAFE_NO_PAD
+                .encode(global_signing_key.verifying_key().as_bytes()),
+            signature: Vec::new(),
+            protocol_version: 1,
+        };
+        let sig = global_signing_key.sign(&signed_att.signable_content());
+        signed_att.signature = sig.to_bytes().to_vec();
+
+        let result = validate_peer_role(
+            &crate::config::MeshNodeRole::EDGE,
+            &[global_public_b64],
+            "peer-1",
+            None,
+            None,
+            0,
+            300,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&cert),
+            Some(&org_pub_key),
+            Some(&signed_att),
+            false,
+        );
+        assert!(
+            result.is_err(),
+            "EDGE with V1 attestation should be rejected when allow_v1=false: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_validate_peer_role_edge_v1_attestation_accepted_when_allowed() {
+        let (_org_key, org_pub_key, cert, global_secret, global_public_b64) = setup_edge_org_test();
+        let global_signing_key = ed25519_dalek::SigningKey::from_bytes(&global_secret);
+
+        // V1 attestation: no value_hash, protocol_version=1
+        let attestation = RaftAttestation {
+            leader_id: "leader-1".to_string(),
+            commit_index: 42,
+            namespace: crate::raft::Namespace::Org,
+            key_id: org_pub_key.key_id.clone(),
+            timestamp: synvoid_utils::current_timestamp(),
+            value_hash: None,
+        };
+        let mut signed_att = SignedRaftAttestation {
+            attestation,
+            signer_node_id: "global-node-1".to_string(),
+            signer_public_key: URL_SAFE_NO_PAD
+                .encode(global_signing_key.verifying_key().as_bytes()),
+            signature: Vec::new(),
+            protocol_version: 1,
+        };
+        let sig = global_signing_key.sign(&signed_att.signable_content());
+        signed_att.signature = sig.to_bytes().to_vec();
+
+        let result = validate_peer_role(
+            &crate::config::MeshNodeRole::EDGE,
+            &[global_public_b64],
+            "peer-1",
+            None,
+            None,
+            0,
+            300,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&cert),
+            Some(&org_pub_key),
+            Some(&signed_att),
+            true,
+        );
+        assert!(
+            result.is_ok(),
+            "EDGE with V1 attestation should pass when allow_v1=true: {:?}",
             result
         );
     }

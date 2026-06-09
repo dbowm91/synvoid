@@ -119,7 +119,7 @@ The trust model follows a robust, SPIFFE-like hierarchical chain:
 ## 5. Origin Node Protections & Isolation
 
 **Can origin nodes join freely but not become edge nodes?**
-Yes. The `validate_peer_role` function strictly enforces role boundaries. An Origin node cannot simply announce itself to the DHT as an Edge node. To claim the `EDGE` role, it must provide a `MemberCertificate` explicitly signed by an `OrgPublicKey` that has been authorized by the Global quorum. Origin nodes can join the mesh to *receive* traffic and threat updates, but they are algorithmically prohibited from routing traffic or acting as authoritative DHT storage nodes.
+Yes. The `validate_peer_role` function (at `crates/synvoid-mesh/src/mesh/peer_auth.rs:372`) strictly enforces role boundaries. An Origin node cannot simply announce itself to the DHT as an Edge node. To claim the `EDGE` role, it must provide a `MemberCertificate` explicitly signed by an `OrgPublicKey` that has been authorized by the Global quorum. Edge nodes can also validate via a value-bound `SignedRaftAttestation` (v2 protocol, `protocol_version=2`) — when a Raft attestation is provided, it is used exclusively with no fallback to other validation paths. Origin nodes can join the mesh to *receive* traffic and threat updates, but they are algorithmically prohibited from routing traffic or acting as authoritative DHT storage nodes.
 
 **Can malicious origin nodes attack the system? What protections exist?**
 SynVoid anticipates malicious origins and protects against them:

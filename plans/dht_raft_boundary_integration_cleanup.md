@@ -19,12 +19,12 @@ Strong pieces already present:
 - V2 Raft attestations reject missing or mismatched value hashes.
 - `NodePublicKeyResolver` and `verify_envelope_signer_binding(...)` exist.
 
-Remaining work is mostly integration:
+All integration items are now resolved:
 
-- signer/node binding helper exists but is not visibly applied in the DHT message handlers;
-- DHT sync request/response handlers still appear to ignore signature fields;
-- edge peer validation still calls the older quorum-only certificate path before the value-bound Raft-attested path;
-- tests and docs should be updated to lock in these final invariants.
+- ✅ signer/node binding is enforced at the transport layer for all DHT message types via `verify_signer_node_binding()` in `transport_dht.rs`;
+- ✅ DHT sync request/response handlers verify signatures and apply records through `handle_sync_response_verified`;
+- ✅ edge peer validation routes through `validate_member_certificate_with_raft_attestation` when an attestation is supplied;
+- ✅ tests and docs have been updated to lock in these invariants.
 
 ## Target invariants
 
@@ -34,7 +34,7 @@ Remaining work is mostly integration:
 4. DHT-distributed authority artifacts cannot be accepted on the basis of a structurally plausible attestation.
 5. The docs must no longer describe signer binding or Raft value binding as future work if implemented.
 
-## Phase 1: Wire signer/node binding into DHT envelope handlers
+## Phase 1: Wire signer/node binding into DHT envelope handlers ✅ IMPLEMENTED
 
 Files to inspect:
 
@@ -79,7 +79,7 @@ Acceptance criteria:
 - Missing binding for a Global Node path is rejected.
 - Soft-state permissive mode remains explicitly configurable rather than accidental.
 
-## Phase 2: Verify DHT sync request/response envelopes
+## Phase 2: Verify DHT sync request/response envelopes ✅ IMPLEMENTED
 
 Files to inspect:
 
@@ -111,7 +111,9 @@ Acceptance criteria:
 - Valid signed sync request/response accepted.
 - Sync records still pass per-record validation before storage.
 
-## Phase 3: Route edge peer validation through value-bound Raft attestations
+## Phase 3: Route edge peer validation through value-bound Raft attestations ✅ IMPLEMENTED
+
+Implementation: `validate_peer_role` now accepts `raft_attestation: Option<&SignedRaftAttestation>` and `allow_v1_raft_attestations: bool`. Edge nodes route through `validate_member_certificate_with_raft_attestation` when attestation is supplied. V1 attestations are rejected by default unless `allow_v1_raft_attestations=true`.
 
 Files to inspect:
 
@@ -142,7 +144,7 @@ Acceptance criteria:
 - Edge member certificate with malformed/wrong-value Raft attestation rejects.
 - Old V1 attestations reject by default unless compatibility is explicitly enabled.
 
-## Phase 4: Tighten value-bound Raft attestation coverage
+## Phase 4: Tighten value-bound Raft attestation coverage ✅ IMPLEMENTED
 
 Files to inspect:
 
@@ -235,21 +237,21 @@ Acceptance criteria:
 
 ## Suggested implementation order
 
-1. Add `RecordStoreManager`-level signer-binding resolver/helper.
-2. Apply signer binding to anti-entropy and record-push handlers.
-3. Implement sync request/response envelope verification and ingress storage.
-4. Route Edge peer validation through value-bound Raft attestation when supplied.
-5. Extend value-hash binding to remaining authority artifacts.
-6. Add focused adversarial tests.
-7. Update documentation and verification matrix.
+1. ✅ Add `RecordStoreManager`-level signer-binding resolver/helper.
+2. ✅ Apply signer binding to anti-entropy and record-push handlers.
+3. ✅ Implement sync request/response envelope verification and ingress storage.
+4. ✅ Route Edge peer validation through value-bound Raft attestation when supplied.
+5. ✅ Extend value-hash binding to remaining authority artifacts.
+6. ✅ Add focused adversarial tests.
+7. ✅ Update documentation and verification matrix.
 
 ## Final acceptance checklist
 
-- DHT push, anti-entropy, and sync envelopes are signed and verified by default.
-- DHT envelope signer keys are bound to claimed node identity for strict/global paths.
-- Sync response records cannot be applied without envelope verification and per-record ingress validation.
-- Edge member validation accepts value-bound Raft-attested org keys without requiring quorum signatures.
-- V2 Raft attestations require exact value hash binding.
-- Authority artifacts beyond org keys use value-bound attestations where applicable.
-- Tests cover wrong signer, wrong node, unsigned sync, tampered sync records, wrong attested value, and V1 compatibility behavior.
-- Docs match actual enforcement.
+- ✅ DHT push, anti-entropy, and sync envelopes are signed and verified by default.
+- ✅ DHT envelope signer keys are bound to claimed node identity for strict/global paths.
+- ✅ Sync response records cannot be applied without envelope verification and per-record ingress validation.
+- ✅ Edge member validation accepts value-bound Raft-attested org keys without requiring quorum signatures.
+- ✅ V2 Raft attestations require exact value hash binding.
+- ✅ Authority artifacts beyond org keys use value-bound attestations where applicable.
+- ✅ Tests cover wrong signer, wrong node, unsigned sync, tampered sync records, wrong attested value, and V1 compatibility behavior.
+- ✅ Docs match actual enforcement.

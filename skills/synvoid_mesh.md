@@ -31,13 +31,19 @@ pub fn validate_peer_role(
     revoked_nodes: Option<&GlobalNodeRevocationList>,
     global_node_attestation_key: Option<&str>, // For Origin: Global's key
     global_node_attestation_sig: Option<&str>, // For Origin: Global's signature
+    pow_nonce: Option<u64>,                    // For Edge: PoW nonce (required for Edge)
+    pow_public_key: Option<&str>,              // For Edge: PoW public key (required for Edge)
+    member_certificate: Option<&MemberCertificate>, // For Edge: member certificate
+    org_public_key: Option<&OrgPublicKey>,          // For Edge: org public key
+    raft_attestation: Option<&SignedRaftAttestation>, // For Edge: value-bound Raft attestation
+    allow_v1_raft_attestations: bool,               // Allow legacy v1 attestations without value_hash
 ) -> Result<(), String>
 ```
 
 | Role | Challenge Format | Verification |
 |------|-----------------|---------------|
 | Global | `"{node_id}:{timestamp}"` | Check pubkey in authorized list, verify signature |
-| Edge | `"edge:{node_id}:{timestamp}"` | Verify self-signature |
+| Edge | `"edge:{node_id}:{timestamp}"` | Verify self-signature. If `member_certificate` + `org_public_key` provided: try `validate_member_certificate_with_raft_attestation()` (quorum signatures OR value-bound Raft attestation); if `raft_attestation` is None, falls back to quorum-only `validate_member_certificate()`; if `raft_attestation` is Some but validation fails, returns error immediately (no PoW fallback). If no certificate, requires PoW (`pow_nonce` + `pow_public_key`). |
 | Origin | `"origin:{node_id}:{timestamp}"` | Verify self-signature + Global attestation |
 
 ## Upstream ID Format
@@ -299,9 +305,9 @@ validate_edge_node_pow(pow_public_key, pow_nonce) {
 
 | File | Purpose |
 |------|---------|
-| `src/mesh/peer_auth.rs` | `validate_edge_node_pow()`, `validate_peer_role()` with PoW params |
-| `src/mesh/transport.rs` | Pass `pow_nonce`, `pow_public_key` to validation |
-| `src/mesh/discovery.rs` | Pass PoW credentials from peer hello |
+| `src/mesh/peer_auth.rs` | `validate_edge_node_pow()`, `validate_peer_role()` with PoW + certificate + Raft attestation params |
+| `src/mesh/transport.rs` | Pass `pow_nonce`, `pow_public_key`, `member_certificate`, `org_public_key`, `raft_attestation` to validation |
+| `src/mesh/discovery.rs` | Pass PoW credentials and attestation from peer hello |
 
 ## Multi-Genesis Key Support (W2.2)
 

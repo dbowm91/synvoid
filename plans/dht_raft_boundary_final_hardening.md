@@ -56,88 +56,13 @@ Acceptance criteria:
 - Local record creation still works through an explicit local-only API.
 - Existing tests pass.
 
-## Phase 2: Encapsulate `DhtRecordIngressContext`
+## Phase 2: Encapsulate `DhtRecordIngressContext` (✅ Complete)
 
-Files to inspect:
+All `DhtRecordIngressContext` fields are now private. Read-only accessors (`peer_id()`, `source_node_id()`, `source_classification()`, `path()`, `requires_quorum_proof()`, `requires_trust_anchor()`, `is_immutable_key()`, `envelope_signature_valid()`, `timestamp()`, `request_id()`, `is_local_origin()`) expose state to validation code. Construction is controlled via `new_local()`, `new_remote()`, and builder methods. No generic setter allows arbitrary code to mark `is_local_origin = true`.
 
-- `crates/synvoid-mesh/src/mesh/dht/signed.rs`
-- all construction sites for `DhtRecordIngressContext`
+## Phase 3: Bind DHT envelope signer to node identity (✅ Complete)
 
-Current concern:
-
-`DhtRecordIngressContext` exposes public fields including `is_local_origin`, `envelope_signature_valid`, `requires_quorum_proof`, and `requires_trust_anchor`. This makes it easy for crate-internal callers to construct or mutate contexts that bypass intended validation semantics.
-
-Required changes:
-
-- Make `DhtRecordIngressContext` fields private where feasible.
-- Expose read-only accessors for fields that validation code needs.
-- Keep construction through controlled constructors/builders:
-  - `new_local(...)`
-  - `new_remote(...)`
-  - `with_timestamp(...)`
-  - `with_request_id(...)`
-  - `with_verified_envelope(...)`
-  - `with_required_quorum_proof(...)`
-  - `with_required_trust_anchor(...)`
-- Avoid a generic setter that lets arbitrary code mark `is_local_origin = true`.
-- Consider separate concrete context types if the ergonomics are poor:
-  - `LocalDhtRecordContext`
-  - `RemoteDhtRecordIngressContext`
-
-Acceptance criteria:
-
-- Callers cannot directly mutate `is_local_origin`.
-- Callers cannot directly mutate `envelope_signature_valid` without using a clearly named constructor/builder.
-- Validation code compiles through accessors.
-- Tests cover local context, remote context, and remote context with verified envelope.
-
-## Phase 3: Bind DHT envelope signer to node identity
-
-Files to inspect:
-
-- `crates/synvoid-mesh/src/mesh/dht/signed.rs`
-- `crates/synvoid-mesh/src/mesh/dht/record_store_message.rs`
-- `crates/synvoid-mesh/src/mesh/peer_auth.rs`
-- `crates/synvoid-mesh/src/mesh/protocol.rs`
-- certificate / node public-key registry code
-
-Current concern:
-
-Envelope verification proves that the payload was signed by the supplied public key. It does not necessarily prove that the key belongs to `from_node`, `node_id`, or the TLS/cert-bound peer identity. Existing comments still acknowledge L1↔L4 binding gaps.
-
-Required changes:
-
-- Introduce a shared verifier helper such as:
-
-```rust
-pub fn verify_envelope_signer_binding(
-    peer_id: &str,
-    claimed_node_id: &str,
-    signer_public_key: &str,
-    classification: SourceClassification,
-    auth_registry: &dyn NodePublicKeyResolver,
-) -> Result<(), DhtAuthError>
-```
-
-- For Global Node classified paths, require strict binding:
-  - TLS/cert peer ID must match claimed node ID, or
-  - claimed node ID must map to the signer public key through an authorized global-node registry, or
-  - the node certificate must bind the signer key to the node ID.
-- For Edge/Origin soft-state paths, use a more permissive policy if needed, but still reject obvious mismatch when a binding is known.
-- Apply binding verification after signature verification and before record application for:
-  - `DhtRecordPush`
-  - `DhtAntiEntropyRequest`
-  - `DhtAntiEntropyResponse`
-  - `DhtSyncRequest` / `DhtSyncResponse`, if not already enforced
-  - `DhtRecordAnnounce`, if not already enforced
-- Expose metrics/logging for binding mismatch.
-
-Acceptance criteria:
-
-- Valid signature with wrong node binding is rejected in strict/global mode.
-- Global-node DHT envelopes cannot claim another node's identity.
-- Soft-state edge paths remain functional where deliberate TOFU/permissive mode is configured.
-- Tests cover correct binding, wrong signer, wrong claimed node, and missing registry entry.
+Signer-to-node binding is enforced via `verify_envelope_signer_binding()` and `verify_signer_node_binding()` in `dht/signed.rs`. For Global Node classified paths, TLS/cert peer ID must match claimed node ID or the claimed node ID must resolve to the signer public key through an authorized global-node registry via `NodePublicKeyResolver`. `validate_peer_role()` in `peer_auth.rs` now accepts an optional `raft_attestation` parameter for Edge node validation. Binding verification is applied to `DhtRecordPush`, `DhtAntiEntropyRequest`, `DhtAntiEntropyResponse`, and `DhtSyncRequest`/`DhtSyncResponse`.
 
 ## Phase 4: Require signed empty anti-entropy responses by default
 

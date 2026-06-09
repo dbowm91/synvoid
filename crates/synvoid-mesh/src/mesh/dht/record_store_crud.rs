@@ -198,7 +198,11 @@ impl RecordStoreManager {
             return false;
         }
 
-        self.store_record_verified_internal(record, source_reputation, ingress_ctx.is_local_origin())
+        self.store_record_verified_internal(
+            record,
+            source_reputation,
+            ingress_ctx.is_local_origin(),
+        )
     }
 
     pub(crate) fn store_record_global(&self, mut record: DhtRecord, is_local_origin: bool) -> bool {

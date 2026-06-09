@@ -569,6 +569,8 @@ impl MeshDiscovery {
                     pow_public_key.as_ref().map(|s| s.as_str()),
                     None,
                     None,
+                    None,
+                    false,
                 ) {
                     tracing::warn!("{}", e);
                     return Err(MeshDiscoveryError::AuthFailed(e));

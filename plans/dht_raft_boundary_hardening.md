@@ -222,8 +222,8 @@ Acceptance criteria:
 3. ~~Make remote DHT ingestion use explicit context and proof validation.~~ ✅ Done — `store_record()` is `pub(crate)`, `store_local_record()` added, all callers updated
 4. ~~Patch `DhtAntiEntropyRequest` and `DhtRecordPush` signature/binding gaps.~~ ✅ Done — envelope signatures enforced, signer_public_key verified against authorized global nodes
 5. ~~Implement signed Raft attestations and update peer-auth validation.~~ ✅ Done — `SignedRaftAttestation` binds to exact value digest via `value_hash`, protocol version bumped to 2, v1 backward compat
-6. Add adversarial regression tests.
-7. Update docs to reflect enforced boundary.
+6. ~~Add adversarial regression tests.~~ ✅ Done
+7. ~~Update docs to reflect enforced boundary.~~ ✅ Done
 8. Narrow Raft transport coupling behind a trait if time remains.
 
 ## Out of scope for this pass
@@ -243,5 +243,5 @@ Acceptance criteria:
 - Remote DHT writes require explicit ingress validation context. ✅
 - `DhtAntiEntropyRequest` and `DhtRecordPush` are fully signed/bound or rejected by default. ✅
 - Raft attestations are cryptographically verified, not structurally trusted. ✅
-- Tests cover forged, stale, replayed, unsigned, wrong-signer, wrong-namespace, and wrong-value cases. (Phase 6 pending)
-- Docs accurately describe the enforced architecture. (Phase 7 in progress)
+- Tests cover forged, stale, replayed, unsigned, wrong-signer, wrong-namespace, and wrong-value cases. ✅
+- Docs accurately describe the enforced architecture. ✅

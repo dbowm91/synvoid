@@ -2391,6 +2391,8 @@ impl MeshTransport {
                     pow_public_key.as_ref().map(|s| s.as_str()),
                     member_certificate.as_ref(),
                     org_public_key.as_ref(),
+                    None,
+                    false,
                 ) {
                     tracing::warn!("Node verification failed for {}: {}", node_id, e);
                     return Err(MeshTransportError::AuthFailed(e));
@@ -2946,6 +2948,8 @@ impl MeshTransport {
                     None,
                     member_certificate.as_ref(),
                     org_public_key.as_ref(),
+                    None,
+                    false,
                 ) {
                     tracing::warn!("Node Ed25519 verification failed for {}: {}", node_id, e);
                     return Err(MeshTransportError::AuthFailed(e));

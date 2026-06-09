@@ -212,7 +212,9 @@ impl std::fmt::Display for SignerBindingError {
         match self {
             Self::EmptySignerPublicKey => write!(f, "signer public key is empty"),
             Self::InvalidPublicKeyEncoding => write!(f, "signer public key has invalid encoding"),
-            Self::NodeNotInRegistry => write!(f, "claimed node ID not found in authorized key registry"),
+            Self::NodeNotInRegistry => {
+                write!(f, "claimed node ID not found in authorized key registry")
+            }
             Self::KeyMismatch { expected, actual } => {
                 write!(
                     f,
@@ -2380,7 +2382,10 @@ mod tests {
 
         assert_eq!(ctx.peer_id(), peer_id);
         assert_eq!(ctx.source_node_id(), source_node_id);
-        assert_eq!(ctx.source_classification(), SourceClassification::GlobalNode);
+        assert_eq!(
+            ctx.source_classification(),
+            SourceClassification::GlobalNode
+        );
         assert_eq!(ctx.path(), IngressPath::Announce);
         assert!(!ctx.is_local_origin());
         assert!(!ctx.envelope_signature_valid());
@@ -3572,7 +3577,10 @@ mod tests {
         assert!(!ctx.is_local_origin());
         assert!(!ctx.envelope_signature_valid());
         assert!(!ctx.is_local());
-        assert_eq!(ctx.source_classification(), SourceClassification::GlobalNode);
+        assert_eq!(
+            ctx.source_classification(),
+            SourceClassification::GlobalNode
+        );
     }
 
     // --- Envelope signer binding tests ---

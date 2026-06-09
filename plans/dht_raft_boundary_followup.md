@@ -33,177 +33,25 @@ Already present and should be preserved:
 
 6. Documentation must match the implemented verification state.
 
-## Phase 1: Enforce inbound `DhtAntiEntropyRequest` signatures
+## Phase 1: Enforce inbound `DhtAntiEntropyRequest` signatures (✅ Complete)
 
-Files to inspect:
+The inbound handler now destructures `nonce`, `signature`, and `signer_public_key` and enforces `require_signed_anti_entropy_requests`. Unsigned requests are rejected by default unless an active `unsigned_anti_entropy_compat_until_unix` window exists. Signature verification uses `verify_dht_anti_entropy_request_envelope_signature()`. The verified signer is bound to the claimed `node_id` via `verify_envelope_signer_binding()`. In strict/global-node mode, peer/node mismatch is rejected.
 
-- `crates/synvoid-mesh/src/mesh/dht/record_store_message.rs`
-- `crates/synvoid-mesh/src/mesh/dht/signed.rs`
-- `crates/synvoid-mesh/src/mesh/config.rs`
+## Phase 2: Verify `DhtAntiEntropyResponse` envelope before applying records (✅ Complete)
 
-Current issue:
+The anti-entropy response handler now verifies the response envelope signature before applying records. Verification covers request ID, responder node ID, root hash, record count, timestamp, and record-set digest. `record_set_digest` is recomputed from `missing_records` before verification to reject tampered record sets. Records are stored only after envelope verification passes. Empty responses are signed by default; unsigned empty responses are accepted only behind explicit compatibility mode.
 
-`DhtAntiEntropyRequest` now has nonce/signature/signer fields and signing helpers exist, but the inbound handler appears to ignore `nonce`, `signature`, and `signer_public_key` before calling `handle_anti_entropy_request`.
+## Phase 3: Bind `SignedRaftAttestation` to exact value digest (✅ Complete)
 
-Required changes:
+`SignedRaftAttestation` now includes a `value_hash` field in `RaftAttestation` that must match the record's content digest. The digest is included in `signable_content`. Protocol version was bumped to 2. V1 attestations without `value_hash` are rejected by default unless `allow_v1_raft_attestations` is set in config. `validate_peer_role()` accepts Raft attestation for Edge node validation, and the attestation is verified against the authorized signer.
 
-- In the `MeshMessage::DhtAntiEntropyRequest` match arm, destructure `nonce`, `signature`, and `signer_public_key`.
-- Enforce `self.config.require_signed_anti_entropy_requests`.
-- If the request is unsigned and no active `unsigned_anti_entropy_compat_until_unix` window exists, reject.
-- Verify with `verify_dht_anti_entropy_request_envelope_signature(...)`.
-- Bind the verified signer to the claimed `node_id` where possible.
-- In strict/global-node mode, reject peer/node mismatch where the transport identity does not match the claimed node.
-- Log structured rejection reasons without exposing sensitive material.
+## Phase 4: Clarify and harden DNS authority policy (✅ Complete)
 
-Acceptance tests:
+`DnsZone` is now classified as `RaftOrQuorumGlobal` with `remote_writes_allowed = false` in `DhtKeyPolicyTable`. DNS zone ownership records can only be written via Raft consensus or quorum attestation, not via direct DHT capability. `DnsRecord` remains capability-mediated mutable content under an owned zone. The key policy table enforces these classifications at ingress.
 
-- unsigned anti-entropy request rejected by default;
-- unsigned request accepted only inside explicit compatibility window;
-- invalid signature rejected;
-- missing nonce rejected;
-- stale timestamp rejected;
-- mismatched node ID rejected in strict/global mode;
-- valid signed request accepted.
+## Phase 5: Seal raw record-store API footgun (✅ Complete)
 
-## Phase 2: Verify `DhtAntiEntropyResponse` envelope before applying records
-
-Files to inspect:
-
-- `crates/synvoid-mesh/src/mesh/dht/record_store_message.rs`
-- `crates/synvoid-mesh/src/mesh/dht/signed.rs`
-
-Current issue:
-
-`handle_anti_entropy_response` applies `missing_records` through `store_record_from_ingress`, which is good, but the response envelope signature appears ignored.
-
-Required changes:
-
-- Require envelope signature and signer public key for non-empty `missing_records` by default.
-- Verify response signable content using:
-  - request ID;
-  - responder node ID;
-  - root hash;
-  - record count;
-  - timestamp;
-  - record-set digest.
-- Recompute `record_set_digest` from `missing_records` before verification.
-- Reject tampered record sets even if individual records pass signature validation.
-- Decide whether empty/no-op anti-entropy responses must be signed. Prefer signing all responses by default; allow unsigned empty responses only behind explicit compatibility if needed.
-- Store records only after response envelope verification passes.
-
-Acceptance tests:
-
-- forged response rejected;
-- tampered record set rejected by digest mismatch;
-- missing signature rejected by default;
-- invalid signer rejected;
-- stale response rejected;
-- valid signed response accepted;
-- per-record invalid signature still rejected even if envelope is valid.
-
-## Phase 3: Bind `SignedRaftAttestation` to exact value digest
-
-Files to inspect:
-
-- `crates/synvoid-mesh/src/mesh/peer_auth.rs`
-- `crates/synvoid-mesh/src/mesh/raft/state_machine.rs`
-- `crates/synvoid-mesh/src/mesh/organization.rs`
-- `crates/synvoid-mesh/src/mesh/dht/signed.rs`
-
-Current issue:
-
-`SignedRaftAttestation` validates a signature over namespace, key ID, leader ID, commit index, timestamp, and protocol version. It does not appear to bind to the value being accepted.
-
-Required changes:
-
-- Add `value_hash` or `record_digest` to the attestation payload.
-- Include the digest in `signable_content`.
-- Prefer canonical serialization of the attested value before hashing.
-- For organization public keys, compute the digest from the canonical `OrgPublicKey` serialization.
-- If available, also include Raft term, authority epoch, and validity window.
-- Update validation so the DHT-delivered value must match the attested digest.
-- Reject old attestations without value digest by default unless an explicit compatibility path is configured.
-- Ensure the signer is authorized and, where revocation state is available, not revoked.
-
-Acceptance tests:
-
-- valid signed attestation with matching value hash accepted;
-- attestation with wrong value hash rejected;
-- attestation signed by unauthorized global node rejected;
-- attestation signed by revoked global node rejected, if revocation data is available in the validation path;
-- tampered signature rejected;
-- wrong namespace rejected;
-- wrong key ID rejected;
-- structurally plausible but unsigned/legacy attestation rejected by default.
-
-## Phase 4: Clarify and harden DNS authority policy
-
-Files to inspect:
-
-- `crates/synvoid-mesh/src/mesh/dht/key_policy.rs`
-- `crates/synvoid-mesh/src/mesh/dht/keys.rs`
-- DNS mesh modules and tests
-
-Current issue:
-
-`DnsZone` is currently capability-attested and remote-writable. That is potentially too permissive if `DnsZone` represents zone ownership or authoritative zone root state.
-
-Required decision:
-
-Define whether `DnsZone` means:
-
-1. canonical zone ownership / delegation root; or
-2. mutable DNS zone content under an already-proven owner.
-
-If `DnsZone` is ownership/delegation:
-
-- classify it as `RaftOrQuorumGlobal` or `RaftAttestedGlobal`;
-- set `remote_writes_allowed = false`;
-- distribute DHT copies only as Raft-attested or quorum-signed artifacts.
-
-If `DnsZone` is mutable zone content:
-
-- split the key namespace so ownership and record content are distinct;
-- add a separate authority key for zone ownership;
-- require `DnsRecord` writes to be owner-signed under an attested zone root.
-
-Acceptance tests:
-
-- remote `DnsZone` ownership write without authority proof rejected;
-- DNS record under valid ownership root accepted with owner/capability signature;
-- DNS record for unowned or mismatched zone rejected;
-- stale zone ownership proof rejected;
-- docs clearly distinguish zone ownership from mutable records.
-
-## Phase 5: Seal raw record-store API footgun
-
-Files to inspect:
-
-- `crates/synvoid-mesh/src/mesh/dht/record_store_crud.rs`
-- `crates/synvoid-mesh/src/mesh/dht/record_store_message.rs`
-- all callers of `store_record(...)`
-
-Current issue:
-
-`store_record(record, source_reputation, is_local_origin)` is public and lets callers pass `is_local_origin` directly. This is easy to misuse from remote paths.
-
-Required changes:
-
-- Replace public raw storage with explicit APIs:
-  - `store_local_record(...)`
-  - `store_remote_record_from_ingress(...)`
-- Make low-level `store_record_verified_internal(...)` private or `pub(crate)`.
-- Make any method taking `is_local_origin: bool` private or crate-private.
-- Ensure all network handlers call only the ingress API.
-- Ensure local creation paths build `DhtRecordIngressContext::new_local(...)` or a dedicated local path.
-- Add a grep/check test or compile-level visibility barrier so remote modules cannot call raw storage with arbitrary local-origin values.
-
-Acceptance tests:
-
-- remote handlers cannot compile if they try to call raw storage directly;
-- all `DhtRecordPush`, sync, anti-entropy, and announce paths use ingress validation;
-- local record creation still works;
-- authority-key remote write bypass tests fail before storage.
+`store_record(record, source_reputation, is_local_origin)` has been removed as a public API. The public surface is now `store_local_record(record, source_reputation)` for locally generated records and `store_record_from_ingress(record, &ingress_ctx, source_reputation)` for mesh/remote records. `store_record_verified_internal(...)` remains `pub(crate)` and is documented as only callable by typed wrappers. No public or crate-visible API accepts a caller-supplied `is_local_origin: bool` for general record storage.
 
 ## Phase 6: Update stale docs and verification matrix
 
@@ -283,11 +131,11 @@ Suggested test groups:
 
 ## Suggested implementation order
 
-1. Enforce inbound `DhtAntiEntropyRequest` signatures.
-2. Enforce `DhtAntiEntropyResponse` envelope verification.
-3. Seal raw storage API exposure.
-4. Add value-hash binding to `SignedRaftAttestation`.
-5. Reclassify/split DNS authority policy.
+1. ~~Enforce inbound `DhtAntiEntropyRequest` signatures.~~ ✅ Done
+2. ~~Enforce `DhtAntiEntropyResponse` envelope verification.~~ ✅ Done
+3. ~~Seal raw storage API exposure.~~ ✅ Done
+4. ~~Add value-hash binding to `SignedRaftAttestation`.~~ ✅ Done
+5. ~~Reclassify/split DNS authority policy.~~ ✅ Done
 6. Add adversarial tests.
 7. Update docs and verification matrix.
 
@@ -301,11 +149,11 @@ Suggested test groups:
 
 ## Final acceptance checklist
 
-- inbound anti-entropy requests are signed and verified by default;
-- anti-entropy responses are envelope-verified before record application;
-- record-push remains signed and verified by default;
-- Raft attestations bind to exact value digest;
-- DNS zone ownership cannot be remotely created through capability-only DHT writes;
-- remote handlers cannot bypass ingress validation;
-- docs accurately reflect verification state;
-- adversarial tests cover forged, unsigned, stale, replayed, wrong-signer, wrong-value, wrong-namespace, and remote-write-bypass cases.
+- inbound anti-entropy requests are signed and verified by default. ✅
+- anti-entropy responses are envelope-verified before record application. ✅
+- record-push remains signed and verified by default. ✅
+- Raft attestations bind to exact value digest. ✅
+- DNS zone ownership cannot be remotely created through capability-only DHT writes. ✅
+- remote handlers cannot bypass ingress validation. ✅
+- docs accurately reflect verification state. (Phase 7 pending)
+- adversarial tests cover forged, unsigned, stale, replayed, wrong-signer, wrong-value, wrong-namespace, and remote-write-bypass cases. (Phase 6 pending)

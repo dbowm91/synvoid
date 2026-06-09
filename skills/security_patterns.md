@@ -516,7 +516,7 @@ fn rand_f32() -> f32 {
 | Origin | Ed25519 self-signature + Global attestation | `"origin:{node_id}:{timestamp}"` |
 
 **Key functions**:
-- `validate_peer_role()` - main entry point, dispatches by role
+- `validate_peer_role()` - main entry point, dispatches by role; for Edge nodes with member certificate and org key, routes through Raft attestation validation when `raft_attestation` is `Some`
 - `validate_edge_node()` - verifies self-signature
 - `validate_origin_node()` - verifies self-signature + global attestation
 - `validate_global_node()` - verifies against authorized keys
@@ -711,12 +711,19 @@ pub fn validate_peer_role(
     // ... existing params ...
     pow_nonce: Option<u64>,
     pow_public_key: Option<&str>,
+    raft_attestation: Option<&SignedRaftAttestation>,
+    allow_v1_raft_attestations: bool,
 ) -> Result<(), String> {
     if let (Some(nonce), Some(pubkey)) = (pow_nonce, pow_public_key) {
         // PoW path - validate using NodeId::verify_pow()
         validate_edge_node_pow(pubkey, nonce)
     } else {
         // Ed25519 signature path (original)
+        // For Edge nodes with member cert + org key:
+        //   raft_attestation Some -> validate_member_certificate_with_raft_attestation
+        //     (accepts quorum sigs OR value-bound Raft attestation)
+        //   raft_attestation None -> validate_member_certificate (quorum-only)
+        //   raft_attestation Some but invalid -> error immediately
         validate_edge_node(node_id, peer_public_key, peer_signature, ...)
     }
 }
@@ -1267,6 +1274,8 @@ validate_peer_role(
     // ...
     self.revocation_list.as_ref().map(|r| r.as_ref()),
     // ...
+    raft_attestation,           // Option<&SignedRaftAttestation>
+    allow_v1_raft_attestations, // bool
 )
 ```
 

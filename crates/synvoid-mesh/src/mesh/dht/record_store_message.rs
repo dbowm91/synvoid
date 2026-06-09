@@ -270,8 +270,7 @@ impl RecordStoreManager {
                 let has_auth = !signature.is_empty()
                     && signer_public_key.as_ref().is_some_and(|s| !s.is_empty());
                 if !has_auth {
-                    let compat_active =
-                        compat_until.is_some_and(|deadline| now_unix < deadline);
+                    let compat_active = compat_until.is_some_and(|deadline| now_unix < deadline);
                     if require_signed && !compat_active {
                         tracing::warn!(
                             "DhtAntiEntropyResponse from {} rejected: missing envelope signature (require_signed_anti_entropy_requests={}, compat_until={:?}, now={})",
@@ -973,8 +972,8 @@ mod tests {
         let secret = [0x42u8; 32];
         let signing_key = ed25519_dalek::SigningKey::from_bytes(&secret);
         let verifying_key = signing_key.verifying_key();
-        let pk_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(verifying_key.as_bytes());
+        let pk_b64 =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(verifying_key.as_bytes());
 
         let content = crate::dht::signed::get_anti_entropy_response_signable_content(
             "req1",
@@ -986,17 +985,16 @@ mod tests {
         );
         let signature = signing_key.sign(&content);
 
-        let result =
-            crate::dht::signed::verify_dht_anti_entropy_response_envelope_signature_bytes(
-                "req1",
-                "responder_node",
-                &[],
-                0,
-                1234567890,
-                &[],
-                signature.to_bytes().as_ref(),
-                Some(&pk_b64),
-            );
+        let result = crate::dht::signed::verify_dht_anti_entropy_response_envelope_signature_bytes(
+            "req1",
+            "responder_node",
+            &[],
+            0,
+            1234567890,
+            &[],
+            signature.to_bytes().as_ref(),
+            Some(&pk_b64),
+        );
         assert!(result);
     }
 }
