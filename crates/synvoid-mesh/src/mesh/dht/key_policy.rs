@@ -67,11 +67,11 @@ impl DhtKeyPolicyTable {
             },
 
             DnsZone(_) => DhtKeyPolicy {
-                authority_class: DhtRecordAuthorityClass::CapabilityAttested,
+                authority_class: DhtRecordAuthorityClass::RaftOrQuorumGlobal,
                 ttl_required: false,
                 immutable_after_create: false,
-                remote_writes_allowed: true,
-                required_capability: Some("dns"),
+                remote_writes_allowed: false,
+                required_capability: None,
             },
 
             DnsRecord(_, _) => DhtKeyPolicy {
@@ -256,12 +256,12 @@ mod tests {
         let policy = DhtKeyPolicyTable::policy_for_key(&DnsZone("example.com".into()));
         assert_eq!(
             policy.authority_class,
-            DhtRecordAuthorityClass::CapabilityAttested
+            DhtRecordAuthorityClass::RaftOrQuorumGlobal
         );
         assert!(!policy.ttl_required);
         assert!(!policy.immutable_after_create);
-        assert!(policy.remote_writes_allowed);
-        assert_eq!(policy.required_capability, Some("dns"));
+        assert!(!policy.remote_writes_allowed);
+        assert!(policy.required_capability.is_none());
     }
 
     #[test]
@@ -424,10 +424,44 @@ mod tests {
     }
 
     #[test]
+    fn test_dns_zone_remote_write_denied() {
+        let key = DhtKey::DnsZone("example.com".into());
+        assert!(
+            is_remote_write_denied(&key),
+            "DnsZone ownership must not be mutable through remote DHT capability alone"
+        );
+        let policy = DhtKeyPolicyTable::policy_for_key(&key);
+        assert_eq!(
+            policy.authority_class,
+            DhtRecordAuthorityClass::RaftOrQuorumGlobal,
+            "DnsZone requires Raft or quorum attestation for writes"
+        );
+        assert!(
+            policy.required_capability.is_none(),
+            "DnsZone should not require a capability since it requires Raft/quorum proof"
+        );
+    }
+
+    #[test]
+    fn test_dns_record_still_allows_remote_writes() {
+        let key = DhtKey::DnsRecord("example.com".into(), "www".into());
+        assert!(
+            !is_remote_write_denied(&key),
+            "DnsRecord should still allow remote writes via capability attestation"
+        );
+        let policy = DhtKeyPolicyTable::policy_for_key(&key);
+        assert_eq!(
+            policy.authority_class,
+            DhtRecordAuthorityClass::CapabilityAttested
+        );
+        assert_eq!(policy.required_capability, Some("dns"));
+    }
+
+    #[test]
     fn test_is_remote_write_denied() {
         assert!(is_remote_write_denied(&Organization("org1".into())));
         assert!(!is_remote_write_denied(&NodeInfo("n1".into())));
-        assert!(!is_remote_write_denied(&DnsZone("example.com".into())));
+        assert!(is_remote_write_denied(&DnsZone("example.com".into())));
 
         let policy = DhtKeyPolicyTable::policy_for_key_str("unknown_foo:bar");
         assert!(!policy.remote_writes_allowed);

@@ -189,14 +189,57 @@ impl RecordStoreManager {
                 node_id,
                 local_root_hash,
                 interested_keys,
-                timestamp: _,
-                ..
+                timestamp,
+                nonce,
+                signature,
+                signer_public_key,
             } => {
                 tracing::debug!(
                     "Received DhtAntiEntropyRequest from {} for {} keys",
                     from_node,
                     interested_keys.len()
                 );
+
+                let require_signed = self.config.require_signed_anti_entropy_requests;
+                let compat_until = self.config.unsigned_anti_entropy_compat_until_unix;
+                let now_unix = synvoid_utils::safe_unix_timestamp();
+                let has_auth = !signature.is_empty()
+                    && signer_public_key.as_ref().is_some_and(|s| !s.is_empty())
+                    && !nonce.is_empty();
+                if !has_auth {
+                    let compat_active = compat_until.is_some_and(|deadline| now_unix < deadline);
+                    if require_signed && !compat_active {
+                        tracing::warn!(
+                            "DhtAntiEntropyRequest from {} rejected: missing envelope signature/nonce (require_signed_anti_entropy_requests={}, compat_until={:?}, now={})",
+                            from_node,
+                            require_signed,
+                            compat_until,
+                            now_unix
+                        );
+                        return None;
+                    }
+                    tracing::warn!(
+                        "DhtAntiEntropyRequest from {} accepted without signature (legacy compat window active or signing disabled)",
+                        from_node
+                    );
+                } else {
+                    if !crate::dht::signed::verify_dht_anti_entropy_request_envelope_signature(
+                        &request_id,
+                        &node_id,
+                        &local_root_hash,
+                        *timestamp,
+                        &nonce,
+                        &signature,
+                        signer_public_key.as_deref(),
+                    ) {
+                        tracing::warn!(
+                            "DhtAntiEntropyRequest from {} rejected: invalid envelope signature",
+                            from_node
+                        );
+                        return None;
+                    }
+                }
+
                 self.handle_anti_entropy_request(
                     request_id,
                     local_root_hash,
@@ -205,21 +248,66 @@ impl RecordStoreManager {
                 )
             }
             MeshMessage::DhtAntiEntropyResponse {
-                request_id: _,
-                root_hash: _,
+                request_id,
+                root_hash,
                 proof_keys: _,
                 proof_hashes: _,
                 missing_records,
-                timestamp: _,
-                signature: _,
-                signer_public_key: _,
+                timestamp,
+                signature,
+                signer_public_key,
             } => {
                 tracing::debug!(
                     "Received DhtAntiEntropyResponse from {} with {} records",
                     from_node,
                     missing_records.len()
                 );
-                std::mem::drop(self.handle_anti_entropy_response(message, from_node));
+
+                let mut envelope_verified = false;
+                if !missing_records.is_empty() {
+                    let require_signed = self.config.require_signed_anti_entropy_requests;
+                    let compat_until = self.config.unsigned_anti_entropy_compat_until_unix;
+                    let now_unix = synvoid_utils::safe_unix_timestamp();
+                    let has_auth = !signature.is_empty()
+                        && signer_public_key.as_ref().is_some_and(|s| !s.is_empty());
+                    if !has_auth {
+                        let compat_active =
+                            compat_until.is_some_and(|deadline| now_unix < deadline);
+                        if require_signed && !compat_active {
+                            tracing::warn!(
+                                "DhtAntiEntropyResponse from {} rejected: missing envelope signature (require_signed_anti_entropy_requests={}, compat_until={:?}, now={})",
+                                from_node,
+                                require_signed,
+                                compat_until,
+                                now_unix
+                            );
+                            return None;
+                        }
+                        tracing::warn!(
+                            "DhtAntiEntropyResponse from {} accepted without signature (legacy compat window active or signing disabled)",
+                            from_node
+                        );
+                    } else {
+                        if !crate::dht::signed::verify_dht_anti_entropy_response_envelope_signature(
+                            request_id,
+                            from_node,
+                            root_hash,
+                            missing_records,
+                            *timestamp,
+                            signature,
+                            signer_public_key.as_deref(),
+                        ) {
+                            tracing::warn!(
+                                "DhtAntiEntropyResponse from {} rejected: invalid envelope signature",
+                                from_node
+                            );
+                            return None;
+                        }
+                        envelope_verified = true;
+                    }
+                }
+
+                self.handle_anti_entropy_response(message, from_node, envelope_verified);
                 None
             }
             MeshMessage::DhtRecordPush {
@@ -493,7 +581,12 @@ impl RecordStoreManager {
         })
     }
 
-    pub async fn handle_anti_entropy_response(&self, response: &MeshMessage, from_node: &str) {
+    pub async fn handle_anti_entropy_response(
+        &self,
+        response: &MeshMessage,
+        from_node: &str,
+        envelope_verified: bool,
+    ) {
         if !self.config.enabled {
             return;
         }
@@ -525,7 +618,8 @@ impl RecordStoreManager {
             from_node.to_string(),
             crate::dht::signed::SourceClassification::Unknown,
             crate::dht::signed::IngressPath::AntiEntropy,
-        );
+        )
+        .with_envelope_signature(envelope_verified);
 
         for record in missing_records {
             if self.store_record_from_ingress(record.clone(), &ingress_ctx, reputation) {

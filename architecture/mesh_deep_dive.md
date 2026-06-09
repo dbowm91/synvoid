@@ -84,27 +84,25 @@ MeshProxy is the critical routing component that coordinates mesh traffic betwee
 
 ### Current DHT Verification Split
 
-The transport layer now enforces node-ID binding for `DhtRecordAnnounce`, `DhtSyncRequest`, and `DhtAntiEntropyRequest`. Signed snapshot and sync request/response paths are also in place. The remaining weak spots are the anti-entropy request and record-push paths.
+All DHT message types are now fully verified. The transport layer enforces node-ID binding, envelope signature verification, and signer identity validation for every message path.
 
-| Message Type | Verification Status | Gap Description |
-|--------------|---------------------|-----------------|
-| `DhtRecordAnnounce` | ✅ Verified | Peer binding and message signature are enforced before record ingestion |
+| Message Type | Verification Status | Details |
+|--------------|---------------------|---------|
+| `DhtRecordAnnounce` | ✅ Verified | Peer binding and message signature enforced before record ingestion |
 | `DhtSnapshotRequest` | ✅ Verified | Signature required; rate-limited and stake-checked |
-| `DhtSnapshotResponse` | ✅ Verified | Signature and timestamp are checked before snapshot apply |
-| `DhtSyncRequest` | ✅ Verified by default | Signed requests are verified; unsigned compatibility fallback remains config-controlled |
-| `DhtSyncResponse` | ✅ Verified | Signature and timestamp are checked before apply |
-| `DhtAntiEntropyRequest` | ⚠️ Partial | Peer/node binding is enforced, but `signer_public_key` is still unused in verification |
-| `DhtAntiEntropyResponse` | ✅ Verified | Signature verified |
-| `DhtRecordPush` | ⚠️ Partial | Timestamp is validated, but the message has no signature field |
+| `DhtSnapshotResponse` | ✅ Verified | Signature and timestamp checked before snapshot apply |
+| `DhtSyncRequest` | ✅ Verified by default | Signed requests verified; unsigned compatibility fallback is config-controlled and off by default |
+| `DhtSyncResponse` | ✅ Verified | Signature and timestamp checked before apply |
+| `DhtAntiEntropyRequest` | ✅ Verified | Envelope signature over `DhtAntiEntropyRequestSignable` verified; `signer_public_key` validated against authorized global node keys on global nodes; unsigned requests rejected by default (compatibility window optional) |
+| `DhtAntiEntropyResponse` | ✅ Verified | Envelope signature verified; record set digest recomputed and tampered sets rejected |
+| `DhtRecordPush` | ✅ Verified by default | Envelope signature required; records without valid signatures rejected (compatibility window optional) |
 
-**Mitigating Factors:**
+**Design notes:**
 - All DHT communication requires TLS 1.3 encryption (transport layer)
 - Global nodes use Raft consensus for canonical authority, providing implicit authority for committed records
 - Authority-adjacent DHT records (org keys, verified upstreams) require signed Raft attestation or quorum proof
 - Reputation systems and audit logs help detect anomalous behavior
 - Deprecated quorum/commit message types (`DhtRecordCommit`, `QuorumStoreRequest`, `QuorumSignatureResp`) were removed from the protocol; older docs that mention them are stale.
-
-These limitations are known architectural constraints. Future revisions may address gaps based on threat model evolution and performance requirements.
 
 ---
 
@@ -121,7 +119,8 @@ The following table clarifies which subsystem owns each category of mesh state. 
 | **Routing policies** | DHT | `RecordStoreManager` | Eventual | Advisory, TTL-bound. Signed by originating node. |
 | **Provider info** | DHT | `RecordStoreManager` | Eventual | Advisory, TTL-bound. Announced via `DhtRecordAnnounce`. |
 | **Capability attestations** | DHT | `RecordStoreManager` | Eventual | Soft-state. Signed by the attesting node. |
-| **DNS records** | DHT | `RecordStoreManager` | Eventual | Per-tenant zone ownership. TTL-bound. |
+| **DNS zone ownership** | Raft/Quorum | `RecordStoreManager` | Eventual (proof-gated) | Raft or quorum attestation required; not mutable through remote DHT writes. |
+| **DNS records** | DHT | `RecordStoreManager` | Eventual | Per-tenant zone ownership. Capability-attested with DNS capability. TTL-bound. |
 | **YARA rules** | DHT | `RecordStoreManager` | Eventual | Signed by global nodes. Content-addressed keys. |
 | **Tier keys** | Local | In-process memory | N/A | Derived from org keys; never stored in DHT. |
 | **Peer reputation** | Local | In-process memory | N/A | Per-node behavioral scoring. Not distributed. |
@@ -139,4 +138,6 @@ The following table clarifies which subsystem owns each category of mesh state. 
 
 4. **Edge nodes verify independently.** Edge nodes cache Raft-derived artifacts (via `EdgeReplicaManager`) and gossip them to peers, but independently verify signatures against the Raft state machine before accepting them.
 
-5. **Remote DHT writes require ingress validation.** All remote DHT writes (sync, anti-entropy, record push) require explicit ingress validation context: node-ID binding, message signatures, and TLS 1.3 transport encryption.
+5. **Remote DHT writes require ingress validation.** All remote DHT writes (sync, anti-entropy, record push) require explicit ingress validation: node-ID binding, message signature verification, and TLS 1.3 transport encryption. Unsigned messages are rejected by default; optional compatibility windows are config-controlled and off by default.
+
+6. **Low-level store access is restricted.** Raw `store_record()` is `pub(crate)`; remote paths must use `store_record_from_ingress()` which enforces key-policy and proof requirements. Local creation uses `store_local_record()` which always sets `is_local_origin = true`.

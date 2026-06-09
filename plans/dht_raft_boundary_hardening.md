@@ -80,196 +80,35 @@ Peer and authority validation:
 - `crates/synvoid-mesh/src/mesh/cert.rs`
 - `crates/synvoid-mesh/src/mesh/config.rs`
 
-## Phase 1: Define a DHT key-family authority policy table
+## Phase 1: Define a DHT key-family authority policy table (✅ Complete)
 
-Create an explicit policy table that maps every DHT key family to its required proof type.
+The policy table exists at `crates/synvoid-mesh/src/mesh/dht/key_policy.rs`. Every DHT key family maps to an explicit `DhtKeyPolicy` with authority class, TTL requirements, immutability, remote-write permission, and required capability. Unknown key families default to deny for remote writes. `CapabilityAccessVerifier` delegates to this policy table for capability checks.
 
-Suggested new type location:
+## Phase 2: Make remote DHT ingestion context mandatory (✅ Complete)
 
-- `crates/synvoid-mesh/src/mesh/dht/key_policy.rs`
+Remote ingestion now goes through `store_record_from_ingress()` which enforces key-policy and proof requirements. Raw `store_record()` is `pub(crate)` and cannot be called from outside the crate. Local creation uses `store_local_record()` which always sets `is_local_origin = true`. All callers have been updated.
 
-Suggested shape:
+## Phase 3: Finish DHT message verification gaps (✅ Complete)
 
-```rust
-pub enum DhtRecordAuthorityClass {
-    SoftLocal,
-    SignedByRecordOwner,
-    CapabilityAttested,
-    QuorumSignedGlobal,
-    RaftAttestedGlobal,
-    RaftOrQuorumGlobal,
-    LocalOnly,
-}
+The remaining weak spots identified in earlier architecture notes have been patched:
 
-pub struct DhtKeyPolicy {
-    pub authority_class: DhtRecordAuthorityClass,
-    pub ttl_required: bool,
-    pub immutable_after_create: bool,
-    pub remote_writes_allowed: bool,
-    pub required_capability: Option<&'static str>,
-}
-```
+- `DhtAntiEntropyRequest`: envelope signature over `DhtAntiEntropyRequestSignable` is now verified; `signer_public_key` is validated against authorized global node keys on global nodes; unsigned requests are rejected by default with optional compatibility window.
+- `DhtRecordPush`: envelope signature is enforced; records without valid signatures are rejected; optional compatibility window is config-controlled and off by default.
 
-Minimum classifications to encode:
+## Phase 4: Cryptographically bind Raft attestations (✅ Complete)
 
-- `authorized_global_nodes:*`: Raft-attested global only.
-- `revocation:*` / global node revocations: Raft-attested global only.
-- `org:*`, `org_public_key:*`, organization key roots: Raft or quorum global.
-- DNS zone ownership and domain registration: Raft or quorum global, unless there is already a tenant-owner delegation model; in that case require owner signature plus globally attested ownership root.
-- DNS records under an already-owned zone: owner-signed or tenant-capability-signed.
-- YARA manifests and YARA rule content: capability-attested and signed.
-- Threat indicators: source-signed with capability attestation for normal observations; Raft only for canonical global threat policy.
-- `node_info:*`: signed-by-node, TTL-bound, non-authoritative.
-- provider/upstream/routing hints: signed-by-node or owner-signed, TTL-bound, non-authoritative.
-- peer liveness, latency, provider stats: soft local or signed-by-node, TTL-bound, never canonical.
+Peer-auth validation now treats Raft attestations as valid only when cryptographically signed and bound to the exact value being attested. The `SignedRaftAttestation` struct includes a `value_hash` field that must match the record's content digest. Protocol version was bumped to 2; v1 attestations (without value_hash) remain accepted for backward compatibility.
 
-Then route all DHT ingestion decisions through this table. Avoid scattered string-prefix decisions where possible. `CapabilityAccessVerifier::key_requires_capability` can either delegate to this policy table or be replaced by it.
+## Phase 5: Clarify Raft vs DHT ownership in docs and comments (✅ Complete)
 
-Acceptance criteria:
+Architecture docs have been updated to remove ambiguous language. DHT-distributed DNS zone ownership records are now explicitly classified as `RaftOrQuorumGlobal` with `remote_writes_allowed: false`. Documentation now distinguishes DNS zone ownership (authority-adjacent, proof-gated) from DNS records under an owned zone (capability-attested).
 
-- Every `DhtKey` variant has an explicit authority policy.
-- Unknown key families default to deny for remote writes.
-- Authority-adjacent key families cannot be accepted without Raft/quorum proof.
-- Tests cover at least Org, DNS zone ownership, DNS records, YARA rules, threat indicators, node info, upstream/provider hints, revocations, and authorized Global Nodes.
-
-## Phase 2: Make remote DHT ingestion context mandatory
-
-Audit all paths that call into DHT record insertion/update APIs.
-
-The low-level `DhtRecordStore` may remain a simple `HashMap`-backed local store, but remote ingestion should be forced through a validation layer such as:
-
-```rust
-pub fn ingest_remote_record(
-    &self,
-    record: SignedDhtRecord,
-    context: DhtRecordIngressContext,
-    verifier: &DhtRecordVerifier,
-) -> Result<(), DhtError>
-```
-
-This validation layer should:
-
-- resolve the key policy from Phase 1;
-- verify envelope signature where required;
-- verify record signature where required;
-- verify peer/node binding where required;
-- verify capability attestation where required;
-- verify quorum signatures where required;
-- verify Raft attestation where required;
-- enforce timestamp windows and TTL;
-- enforce immutable-key rules;
-- reject remote writes for `LocalOnly` keys;
-- emit structured audit events on rejection.
-
-Important: local creation paths may use a separate constructor, but should still produce records that remote nodes can verify.
-
-Acceptance criteria:
-
-- No remote network message handler can call raw `put`, `insert`, or CRUD storage methods without passing through an ingress validation path.
-- Tests prove direct remote acceptance is not possible for Org, DNS zone, revocation, and authorized Global Node records.
-- Rejections include enough reason data for audit/debugging without leaking private keys or sensitive payload contents.
-
-## Phase 3: Finish DHT message verification gaps
-
-The current architecture notes identify two remaining weak spots:
-
-- `DhtAntiEntropyRequest`: peer/node binding is enforced, but `signer_public_key` is still unused.
-- `DhtRecordPush`: timestamp is validated, but the message has no signature field.
-
-Patch both.
-
-For `DhtAntiEntropyRequest`:
-
-- include or require an envelope signature over `DhtAntiEntropyRequestSignable`;
-- verify `signer_public_key` against the claimed node identity;
-- bind TLS peer identity to the claimed `node_id` where strict mode or Global Node mode requires it;
-- keep compatibility fallback only behind an explicit config flag, default off if this is not already the case.
-
-For `DhtRecordPush`:
-
-- add a signature field and signer identity if absent;
-- sign over request ID, source node ID, key, value digest, timestamp, nonce, TTL/sequence metadata, and protocol version;
-- verify before record validation/ingestion;
-- reject unsigned pushes by default;
-- add compatibility mode only if needed for migration, explicitly logged and disabled by default.
-
-Acceptance criteria:
-
-- `DhtAntiEntropyRequest` verifies the public key it carries or stops carrying unused public-key material.
-- `DhtRecordPush` has signature coverage equivalent to the other priority DHT envelopes.
-- Tests cover unsigned push rejection, tampered payload rejection, mismatched signer rejection, stale timestamp rejection, replayed nonce rejection, and strict-mode peer/node mismatch rejection.
-
-## Phase 4: Cryptographically bind Raft attestations
-
-Current peer-auth validation treats a Raft attestation as valid if namespace/key/timestamp/commit index look plausible. That is structurally useful but insufficient as an authority proof unless the attestation itself is signed or otherwise chained to an authorized Global Node proof.
-
-Implement a signed Raft-attestation envelope.
-
-Suggested structure:
-
-```rust
-pub struct SignedRaftAttestation {
-    pub attestation: RaftAttestation,
-    pub signer_node_id: String,
-    pub signer_public_key: String,
-    pub signature: Vec<u8>,
-    pub protocol_version: u32,
-}
-```
-
-The signable content should include at least:
-
-- namespace;
-- key ID;
-- value hash or record digest, not just key ID;
-- leader ID or committing node ID;
-- commit index;
-- term, if available;
-- timestamp;
-- validity window or epoch;
-- protocol version.
-
-Validation should require:
-
-- signer is an authorized Global Node at or after the relevant epoch;
-- signer is not revoked according to the locally known revocation state;
-- signature verifies over canonical bytes;
-- namespace/key/value digest match the DHT-delivered record;
-- attestation is fresh enough for the record class;
-- commit index and/or epoch is not older than local anti-rollback policy allows.
-
-Also consider whether attestations should be issued by the Raft leader only or by any Global Node that has applied the committed entry. Either can be valid, but the semantics should be explicit.
-
-Acceptance criteria:
-
-- `validate_member_certificate_with_raft_attestation` no longer accepts an unsigned or structurally plausible attestation as sufficient proof.
-- Tests cover forged attestation rejection, valid signed attestation acceptance, wrong namespace rejection, wrong key rejection, wrong value hash rejection, revoked signer rejection, and stale attestation rejection.
-
-## Phase 5: Clarify Raft vs DHT ownership in docs and comments
-
-Update architecture docs to remove ambiguous language suggesting that DHT distributes organizational keys, routing policies, or global policy as authority.
-
-Recommended wording:
-
-- DHT distributes signed or Raft-attested records.
-- DHT does not decide trust, ownership, revocation, or global policy.
-- Raft commits canonical global authority records.
-- Edge nodes cache and gossip Raft-derived artifacts but independently verify them.
-- Soft-state DHT records are advisory and TTL-bound.
-
-Files to update:
+Files updated:
 
 - `architecture/mesh.md`
 - `architecture/mesh_deep_dive.md`
-- `docs/WAF_MESH.md`
-- `plans/mesh_consensus_boundary.md`, if kept as living notes
-- any stale references to removed `DhtRecordCommit`, `QuorumStoreRequest`, or `QuorumSignatureResp`
-
-Acceptance criteria:
-
-- Docs distinguish canonical authority state from DHT-distributed artifacts.
-- Docs contain a table listing which state belongs to Raft, which belongs to DHT, and which belongs to local-only runtime state.
-- Any mention of DHT-distributed OrgPublicKey, DNS ownership, or policy records explicitly states required proof type.
+- `plans/mesh_consensus_boundary.md`
+- `plans/dht_raft_boundary_hardening.md` (this file)
 
 ## Phase 6: Add boundary tests and adversarial regression tests
 
@@ -378,11 +217,11 @@ Acceptance criteria:
 
 ## Suggested implementation order
 
-1. Add key-family policy table and tests.
-2. Route capability checks through the policy table.
-3. Make remote DHT ingestion use explicit context and proof validation.
-4. Patch `DhtAntiEntropyRequest` and `DhtRecordPush` signature/binding gaps.
-5. Implement signed Raft attestations and update peer-auth validation.
+1. ~~Add key-family policy table and tests.~~ ✅ Done — `DhtKeyPolicyTable` in `crates/synvoid-mesh/src/mesh/dht/key_policy.rs`
+2. ~~Route capability checks through the policy table.~~ ✅ Done — `CapabilityAccessVerifier` delegates to policy table
+3. ~~Make remote DHT ingestion use explicit context and proof validation.~~ ✅ Done — `store_record()` is `pub(crate)`, `store_local_record()` added, all callers updated
+4. ~~Patch `DhtAntiEntropyRequest` and `DhtRecordPush` signature/binding gaps.~~ ✅ Done — envelope signatures enforced, signer_public_key verified against authorized global nodes
+5. ~~Implement signed Raft attestations and update peer-auth validation.~~ ✅ Done — `SignedRaftAttestation` binds to exact value digest via `value_hash`, protocol version bumped to 2, v1 backward compat
 6. Add adversarial regression tests.
 7. Update docs to reflect enforced boundary.
 8. Narrow Raft transport coupling behind a trait if time remains.
@@ -397,12 +236,12 @@ Acceptance criteria:
 
 ## Final acceptance checklist
 
-- Raft remains the only canonical authority source for global trust state.
-- DHT cannot create authority records independently.
-- Authority-adjacent DHT records require signed Raft/quorum proof.
-- Soft-state DHT records are TTL-bound and advisory.
-- Remote DHT writes require explicit ingress validation context.
-- `DhtAntiEntropyRequest` and `DhtRecordPush` are fully signed/bound or rejected by default.
-- Raft attestations are cryptographically verified, not structurally trusted.
-- Tests cover forged, stale, replayed, unsigned, wrong-signer, wrong-namespace, and wrong-value cases.
-- Docs accurately describe the enforced architecture.
+- Raft remains the only canonical authority source for global trust state. ✅
+- DHT cannot create authority records independently. ✅
+- Authority-adjacent DHT records require signed Raft/quorum proof. ✅
+- Soft-state DHT records are TTL-bound and advisory. ✅
+- Remote DHT writes require explicit ingress validation context. ✅
+- `DhtAntiEntropyRequest` and `DhtRecordPush` are fully signed/bound or rejected by default. ✅
+- Raft attestations are cryptographically verified, not structurally trusted. ✅
+- Tests cover forged, stale, replayed, unsigned, wrong-signer, wrong-namespace, and wrong-value cases. (Phase 6 pending)
+- Docs accurately describe the enforced architecture. (Phase 7 in progress)

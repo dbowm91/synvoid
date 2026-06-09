@@ -131,15 +131,24 @@ pub struct RaftAttestation {
     pub namespace: crate::raft::Namespace,
     pub key_id: String,
     pub timestamp: u64,
+    #[serde(default)]
+    pub value_hash: Option<Vec<u8>>,
 }
 
 impl RaftAttestation {
-    pub fn from_dht_record(value: &[u8]) -> Option<Self> {
-        synvoid_utils::serialization::deserialize(value).ok()
+    /// Compute SHA-256 hash of canonical value bytes for binding to attestation.
+    pub fn compute_value_hash(value: &[u8]) -> Vec<u8> {
+        let mut hasher = Sha256::new();
+        hasher.update(value);
+        hasher.finalize().to_vec()
     }
 }
 
-pub const RAFT_ATTESTATION_PROTOCOL_VERSION: u32 = 1;
+pub fn raft_attestation_from_dht_record(value: &[u8]) -> Option<RaftAttestation> {
+    synvoid_utils::serialization::deserialize(value).ok()
+}
+
+pub const RAFT_ATTESTATION_PROTOCOL_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SignedRaftAttestation {
@@ -164,6 +173,10 @@ impl SignedRaftAttestation {
         hasher.update(self.attestation.timestamp.to_le_bytes());
         hasher.update(b"\0");
         hasher.update(self.protocol_version.to_le_bytes());
+        hasher.update(b"\0");
+        if let Some(ref value_hash) = self.attestation.value_hash {
+            hasher.update(value_hash);
+        }
         hasher.finalize().to_vec()
     }
 
@@ -192,9 +205,12 @@ impl SignedRaftAttestation {
         attestation: RaftAttestation,
         signer_node_id: String,
         signer_keypair: &ed25519_dalek::SigningKey,
+        value_hash: Option<Vec<u8>>,
     ) -> Self {
+        let mut att = attestation;
+        att.value_hash = value_hash;
         let mut sa = Self {
-            attestation,
+            attestation: att,
             signer_node_id,
             signer_public_key: base64::engine::general_purpose::URL_SAFE_NO_PAD
                 .encode(signer_keypair.verifying_key().as_bytes()),
@@ -310,10 +326,32 @@ pub fn validate_member_certificate_with_raft_attestation(
             }
 
             // Verify attestation fields match org_pub_key
-            att.attestation.namespace == crate::raft::Namespace::Org
-                && att.attestation.key_id == org_pub_key.key_id
-                && att.attestation.timestamp > 0
-                && att.attestation.commit_index > 0
+            if att.attestation.namespace != crate::raft::Namespace::Org
+                || att.attestation.key_id != org_pub_key.key_id
+                || att.attestation.timestamp == 0
+                || att.attestation.commit_index == 0
+            {
+                return false;
+            }
+
+            // V2+ attestations must have a value_hash bound to the actual record
+            if att.protocol_version >= 2 {
+                if let Some(ref attested_value_hash) = att.attestation.value_hash {
+                    let actual_value_hash = RaftAttestation::compute_value_hash(
+                        &org_pub_key.get_signable_data().as_bytes(),
+                    );
+                    if attested_value_hash != &actual_value_hash {
+                        return false;
+                    }
+                }
+                // If protocol_version >= 2 but no value_hash, reject (must bind to value)
+                else {
+                    return false;
+                }
+            }
+            // V1 attestations: value_hash is optional (backward compat)
+
+            true
         })
         .unwrap_or(false);
 
@@ -1906,18 +1944,23 @@ mod tests {
         );
 
         let global_signing_key = ed25519_dalek::SigningKey::from_bytes(&global_secret);
+        let value_hash =
+            RaftAttestation::compute_value_hash(&org_pub_key.get_signable_data().as_bytes());
+
         let attestation = RaftAttestation {
             leader_id: "leader-1".to_string(),
             commit_index: 42,
             namespace: crate::raft::Namespace::Org,
             key_id: "org-key-1".to_string(),
             timestamp: synvoid_utils::current_timestamp(),
+            value_hash: Some(value_hash.clone()),
         };
 
         let signed_att = SignedRaftAttestation::from_attestation(
             attestation,
             "global-node-1".to_string(),
             &global_signing_key,
+            Some(value_hash),
         );
 
         let authorized_global_pubkeys = vec![global_public_b64];
@@ -1969,12 +2012,14 @@ mod tests {
             namespace: crate::raft::Namespace::Org,
             key_id: "org-key-1".to_string(),
             timestamp: synvoid_utils::current_timestamp(),
+            value_hash: None,
         };
 
         let signed_att = SignedRaftAttestation::from_attestation(
             attestation,
             "unauthorized-node".to_string(),
             &unauth_signing_key,
+            None,
         );
 
         // Only the global key is authorized, not the signing key
@@ -2023,12 +2068,14 @@ mod tests {
             namespace: crate::raft::Namespace::Intel,
             key_id: "org-key-1".to_string(),
             timestamp: synvoid_utils::current_timestamp(),
+            value_hash: None,
         };
 
         let signed_att = SignedRaftAttestation::from_attestation(
             attestation,
             "global-node-1".to_string(),
             &global_signing_key,
+            None,
         );
 
         let authorized_global_pubkeys = vec![global_public_b64];
@@ -2076,12 +2123,14 @@ mod tests {
             namespace: crate::raft::Namespace::Org,
             key_id: "wrong-key-id".to_string(),
             timestamp: synvoid_utils::current_timestamp(),
+            value_hash: None,
         };
 
         let signed_att = SignedRaftAttestation::from_attestation(
             attestation,
             "global-node-1".to_string(),
             &global_signing_key,
+            None,
         );
 
         let authorized_global_pubkeys = vec![global_public_b64];
@@ -2127,12 +2176,14 @@ mod tests {
             namespace: crate::raft::Namespace::Org,
             key_id: "org-key-1".to_string(),
             timestamp: synvoid_utils::current_timestamp(),
+            value_hash: None,
         };
 
         let mut signed_att = SignedRaftAttestation::from_attestation(
             attestation,
             "global-node-1".to_string(),
             &global_signing_key,
+            None,
         );
 
         // Tamper with the signature
@@ -2185,12 +2236,14 @@ mod tests {
             namespace: crate::raft::Namespace::Org,
             key_id: "org-key-1".to_string(),
             timestamp: 0,
+            value_hash: None,
         };
 
         let signed_att = SignedRaftAttestation::from_attestation(
             attestation,
             "global-node-1".to_string(),
             &global_signing_key,
+            None,
         );
 
         let authorized_global_pubkeys = vec![global_public_b64];
@@ -2238,12 +2291,14 @@ mod tests {
             namespace: crate::raft::Namespace::Org,
             key_id: "org-key-1".to_string(),
             timestamp: synvoid_utils::current_timestamp(),
+            value_hash: None,
         };
 
         let signed_att = SignedRaftAttestation::from_attestation(
             attestation,
             "global-node-1".to_string(),
             &global_signing_key,
+            None,
         );
 
         let authorized_global_pubkeys = vec![global_public_b64];
@@ -2283,18 +2338,23 @@ mod tests {
         );
 
         let global_signing_key = ed25519_dalek::SigningKey::from_bytes(&global_secret);
+        let value_hash =
+            RaftAttestation::compute_value_hash(&org_pub_key.get_signable_data().as_bytes());
+
         let attestation = RaftAttestation {
             leader_id: "leader-1".to_string(),
             commit_index: 42,
             namespace: crate::raft::Namespace::Org,
             key_id: "org-key-1".to_string(),
             timestamp: synvoid_utils::current_timestamp(),
+            value_hash: Some(value_hash.clone()),
         };
 
         let signed_att = SignedRaftAttestation::from_attestation(
             attestation,
             "global-node-1".to_string(),
             &global_signing_key,
+            Some(value_hash),
         );
 
         let authorized_global_pubkeys = vec![global_public_b64];
@@ -2346,12 +2406,14 @@ mod tests {
             namespace: crate::raft::Namespace::Org,
             key_id: "wrong-org-key-id".to_string(),
             timestamp: synvoid_utils::current_timestamp(),
+            value_hash: None,
         };
 
         let signed_att = SignedRaftAttestation::from_attestation(
             attestation,
             "global-node-1".to_string(),
             &global_signing_key,
+            None,
         );
 
         let authorized_global_pubkeys = vec![global_public_b64];
@@ -2400,12 +2462,14 @@ mod tests {
             namespace: crate::raft::Namespace::Org,
             key_id: "org-key-1".to_string(),
             timestamp: synvoid_utils::current_timestamp(),
+            value_hash: None,
         };
 
         let mut signed_att = SignedRaftAttestation::from_attestation(
             attestation,
             "global-node-1".to_string(),
             &global_signing_key,
+            None,
         );
 
         // Replace the signer public key with empty
@@ -2424,5 +2488,265 @@ mod tests {
             result.is_err(),
             "Attestation with empty signer_public_key should be rejected"
         );
+    }
+
+    #[test]
+    fn test_v2_attestation_with_matching_value_hash_accepted() {
+        let (global_secret, global_public_b64) = generate_test_keypair();
+
+        let (org_secret, _org_public_b64) = generate_different_keypair(0x10);
+        let org_key = crate::organization::OrgKey {
+            key_id: "org-key-1".to_string(),
+            private_key: org_secret.to_vec(),
+            public_key: ed25519_dalek::SigningKey::from_bytes(&org_secret)
+                .verifying_key()
+                .as_bytes()
+                .to_vec(),
+            created_at: synvoid_utils::current_timestamp(),
+            issued_by: None,
+        };
+        let org_pub_key = crate::organization::OrgPublicKey::new("test-org".to_string(), &org_key);
+
+        let cert = crate::organization::MemberCertificate::new(
+            "peer-1".to_string(),
+            "test-org".to_string(),
+            &org_key,
+            30,
+        );
+
+        let global_signing_key = ed25519_dalek::SigningKey::from_bytes(&global_secret);
+        let expected_value_hash =
+            RaftAttestation::compute_value_hash(&org_pub_key.get_signable_data().as_bytes());
+
+        let attestation = RaftAttestation {
+            leader_id: "leader-1".to_string(),
+            commit_index: 42,
+            namespace: crate::raft::Namespace::Org,
+            key_id: "org-key-1".to_string(),
+            timestamp: synvoid_utils::current_timestamp(),
+            value_hash: Some(expected_value_hash.clone()),
+        };
+
+        let signed_att = SignedRaftAttestation::from_attestation(
+            attestation,
+            "global-node-1".to_string(),
+            &global_signing_key,
+            Some(expected_value_hash),
+        );
+
+        let authorized_global_pubkeys = vec![global_public_b64];
+
+        let result = validate_member_certificate_with_raft_attestation(
+            &cert,
+            &org_pub_key,
+            &authorized_global_pubkeys,
+            "peer-1",
+            Some(&signed_att),
+        );
+        assert!(
+            result.is_ok(),
+            "V2 attestation with matching value hash should be accepted: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_v2_attestation_with_wrong_value_hash_rejected() {
+        let (global_secret, global_public_b64) = generate_test_keypair();
+
+        let (org_secret, _org_public_b64) = generate_different_keypair(0x10);
+        let org_key = crate::organization::OrgKey {
+            key_id: "org-key-1".to_string(),
+            private_key: org_secret.to_vec(),
+            public_key: ed25519_dalek::SigningKey::from_bytes(&org_secret)
+                .verifying_key()
+                .as_bytes()
+                .to_vec(),
+            created_at: synvoid_utils::current_timestamp(),
+            issued_by: None,
+        };
+        let org_pub_key = crate::organization::OrgPublicKey::new("test-org".to_string(), &org_key);
+
+        let cert = crate::organization::MemberCertificate::new(
+            "peer-1".to_string(),
+            "test-org".to_string(),
+            &org_key,
+            30,
+        );
+
+        let global_signing_key = ed25519_dalek::SigningKey::from_bytes(&global_secret);
+
+        // Wrong value hash (doesn't match the actual record)
+        let wrong_value_hash = vec![0xff; 32];
+
+        let attestation = RaftAttestation {
+            leader_id: "leader-1".to_string(),
+            commit_index: 42,
+            namespace: crate::raft::Namespace::Org,
+            key_id: "org-key-1".to_string(),
+            timestamp: synvoid_utils::current_timestamp(),
+            value_hash: Some(wrong_value_hash.clone()),
+        };
+
+        let signed_att = SignedRaftAttestation::from_attestation(
+            attestation,
+            "global-node-1".to_string(),
+            &global_signing_key,
+            Some(wrong_value_hash),
+        );
+
+        let authorized_global_pubkeys = vec![global_public_b64];
+
+        let result = validate_member_certificate_with_raft_attestation(
+            &cert,
+            &org_pub_key,
+            &authorized_global_pubkeys,
+            "peer-1",
+            Some(&signed_att),
+        );
+        assert!(
+            result.is_err(),
+            "V2 attestation with wrong value hash should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_v2_attestation_without_value_hash_rejected() {
+        let (global_secret, global_public_b64) = generate_test_keypair();
+
+        let (org_secret, _org_public_b64) = generate_different_keypair(0x10);
+        let org_key = crate::organization::OrgKey {
+            key_id: "org-key-1".to_string(),
+            private_key: org_secret.to_vec(),
+            public_key: ed25519_dalek::SigningKey::from_bytes(&org_secret)
+                .verifying_key()
+                .as_bytes()
+                .to_vec(),
+            created_at: synvoid_utils::current_timestamp(),
+            issued_by: None,
+        };
+        let org_pub_key = crate::organization::OrgPublicKey::new("test-org".to_string(), &org_key);
+
+        let cert = crate::organization::MemberCertificate::new(
+            "peer-1".to_string(),
+            "test-org".to_string(),
+            &org_key,
+            30,
+        );
+
+        let global_signing_key = ed25519_dalek::SigningKey::from_bytes(&global_secret);
+
+        // V2 attestation without value_hash - should be rejected
+        let attestation = RaftAttestation {
+            leader_id: "leader-1".to_string(),
+            commit_index: 42,
+            namespace: crate::raft::Namespace::Org,
+            key_id: "org-key-1".to_string(),
+            timestamp: synvoid_utils::current_timestamp(),
+            value_hash: None,
+        };
+
+        let mut signed_att = SignedRaftAttestation::from_attestation(
+            attestation,
+            "global-node-1".to_string(),
+            &global_signing_key,
+            None,
+        );
+
+        // Force protocol version to 2 (simulating a v2 attestation missing value_hash)
+        signed_att.protocol_version = 2;
+
+        let authorized_global_pubkeys = vec![global_public_b64];
+
+        let result = validate_member_certificate_with_raft_attestation(
+            &cert,
+            &org_pub_key,
+            &authorized_global_pubkeys,
+            "peer-1",
+            Some(&signed_att),
+        );
+        assert!(
+            result.is_err(),
+            "V2 attestation without value_hash should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_v1_attestation_backward_compat_accepted() {
+        let (global_secret, global_public_b64) = generate_test_keypair();
+
+        let (org_secret, _org_public_b64) = generate_different_keypair(0x10);
+        let org_key = crate::organization::OrgKey {
+            key_id: "org-key-1".to_string(),
+            private_key: org_secret.to_vec(),
+            public_key: ed25519_dalek::SigningKey::from_bytes(&org_secret)
+                .verifying_key()
+                .as_bytes()
+                .to_vec(),
+            created_at: synvoid_utils::current_timestamp(),
+            issued_by: None,
+        };
+        let org_pub_key = crate::organization::OrgPublicKey::new("test-org".to_string(), &org_key);
+
+        let cert = crate::organization::MemberCertificate::new(
+            "peer-1".to_string(),
+            "test-org".to_string(),
+            &org_key,
+            30,
+        );
+
+        let global_signing_key = ed25519_dalek::SigningKey::from_bytes(&global_secret);
+
+        let attestation = RaftAttestation {
+            leader_id: "leader-1".to_string(),
+            commit_index: 42,
+            namespace: crate::raft::Namespace::Org,
+            key_id: "org-key-1".to_string(),
+            timestamp: synvoid_utils::current_timestamp(),
+            value_hash: None,
+        };
+
+        // Build the v1 attestation manually so the signature matches protocol_version=1
+        let mut signed_att = SignedRaftAttestation {
+            attestation,
+            signer_node_id: "global-node-1".to_string(),
+            signer_public_key: base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(global_signing_key.verifying_key().as_bytes()),
+            signature: Vec::new(),
+            protocol_version: 1,
+        };
+        let sig = global_signing_key.sign(&signed_att.signable_content());
+        signed_att.signature = sig.to_bytes().to_vec();
+
+        let authorized_global_pubkeys = vec![global_public_b64];
+
+        let result = validate_member_certificate_with_raft_attestation(
+            &cert,
+            &org_pub_key,
+            &authorized_global_pubkeys,
+            "peer-1",
+            Some(&signed_att),
+        );
+        assert!(
+            result.is_ok(),
+            "V1 attestation should be accepted for backward compat: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_compute_value_hash_deterministic() {
+        let data = b"test data for hashing";
+        let hash1 = RaftAttestation::compute_value_hash(data);
+        let hash2 = RaftAttestation::compute_value_hash(data);
+        assert_eq!(hash1, hash2);
+        assert_eq!(hash1.len(), 32); // SHA-256 output
+    }
+
+    #[test]
+    fn test_compute_value_hash_different_inputs() {
+        let hash1 = RaftAttestation::compute_value_hash(b"input-a");
+        let hash2 = RaftAttestation::compute_value_hash(b"input-b");
+        assert_ne!(hash1, hash2);
     }
 }

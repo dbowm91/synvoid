@@ -696,11 +696,32 @@ pub struct AuthorityFreshnessConfig {
 
 Records older than `max_authority_staleness_secs` are rejected for critical authority key families (genesis key transitions, revoked nodes). This prevents replay of stale revocations or key rotations.
 
+### store_record Visibility Change
+
+`store_record()` is now `pub(crate)` — only callable within the mesh crate. External callers must use:
+- `store_local_record()` — for locally-originated records (`is_local_origin=true`)
+- `store_record_from_ingress()` — for remote/mesh writes (performs full ingress validation)
+
+This enforces the DHT/Raft boundary: local writes bypass ingress checks, while remote writes go through the full policy table and signature verification pipeline.
+
+### DnsZone Remote Write Blocking
+
+`DnsZone` records are now classified as `RaftOrQuorumGlobal` with `remote_writes_allowed=false` in the key policy table. This means:
+- DNS zone records can only be written via Raft consensus or quorum attestation
+- Direct DHT capability writes (e.g., `CapabilityAttested`) are rejected for `dns_zone:*` keys
+- This prevents a compromised node from modifying DNS zones via DHT capability alone
+
 ### Ingress Validation Summary
 
 | Check | Before | After |
 |-------|--------|-------|
+| DhtAntiEntropyRequest envelope signature | Not verified | Verified (signs request_id, node_id, root_hash, timestamp, nonce) |
+| DhtAntiEntropyResponse envelope signature | Not verified | Verified (signs request_id, responder_node_id, root_hash, record_count, timestamp, record_set_digest) |
 | DhtAntiEntropyRequest signer | Not verified | Verified against authorized global keys |
+| DhtRecordPush envelope signature | Not verified | Verified (signs request_id, node_id, records, hop_count, nonce, timestamp) |
 | DhtRecordPush signature | Partially enforced | Fully enforced |
+| SignedRaftAttestation | Structural-only | v2: Ed25519 signature with value_hash binding |
+| DnsZone writes | CapabilityAttested | RaftOrQuorumGlobal (remote_writes_allowed=false) |
 | Authority record freshness | No staleness check | Configurable staleness window |
 | Key family authorization | Scattered logic | Centralized DhtKeyPolicyTable |
+| store_record visibility | pub | pub(crate) with pub store_local_record for local writes |

@@ -142,7 +142,7 @@ impl OrgKeyManager {
         };
         record.content_hash = record.compute_content_hash();
 
-        store.store_record(record, 100, true);
+        store.store_local_record(record, 100);
 
         Ok(())
     }
@@ -289,7 +289,7 @@ impl OrgKeyManager {
                 request_id: None,
             };
             record.content_hash = record.compute_content_hash();
-            store.store_record(record, 100, true);
+            store.store_local_record(record, 100);
             tracing::info!("Stored GlobalNodeRevocation in DHT (fallback)");
             return Ok(());
         }
@@ -336,7 +336,7 @@ impl OrgKeyManager {
         };
         record.content_hash = record.compute_content_hash();
 
-        store.store_record(record, 100, true);
+        store.store_local_record(record, 100);
 
         Ok(())
     }
@@ -595,7 +595,7 @@ impl OrgKeyManager {
         };
         record.content_hash = record.compute_content_hash();
 
-        store.store_record(record, 100, true);
+        store.store_local_record(record, 100);
         Ok(())
     }
 

@@ -471,7 +471,7 @@ When a value is written via DHT (for non-Raft namespaces):
 3. Quorum verification confirms sufficient DHT peer acknowledgments.
 4. Value is usable by all mesh peers, but remains soft-state (advisory and TTL-bound).
 
-Remote DHT writes require explicit ingress validation context (node-ID binding, message signatures). `DhtAntiEntropyRequest` and `DhtRecordPush` are fully signed/bound at the transport layer.
+Remote DHT writes require explicit ingress validation (node-ID binding, message signatures, envelope verification). `DhtAntiEntropyRequest` and `DhtRecordPush` are fully signed/bound at the transport layer. Raw `store_record()` is `pub(crate)`; remote paths use `store_record_from_ingress()` which enforces key-policy and proof requirements.
 
 ### Constant-Time Comparison
 

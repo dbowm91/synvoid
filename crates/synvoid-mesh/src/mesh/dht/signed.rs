@@ -482,6 +482,76 @@ pub fn get_anti_entropy_response_signable_content(
     .unwrap_or_default()
 }
 
+pub fn verify_dht_anti_entropy_response_envelope_signature(
+    request_id: &str,
+    responder_node_id: &str,
+    root_hash: &[u8],
+    missing_records: &[crate::protocol::DhtRecord],
+    timestamp: u64,
+    signature: &[u8],
+    signer_public_key: Option<&str>,
+) -> bool {
+    let record_set_digest = compute_record_set_digest(missing_records);
+    verify_dht_anti_entropy_response_envelope_signature_bytes(
+        request_id,
+        responder_node_id,
+        root_hash,
+        missing_records.len(),
+        timestamp,
+        &record_set_digest,
+        signature,
+        signer_public_key,
+    )
+}
+
+pub fn verify_dht_anti_entropy_response_envelope_signature_bytes(
+    request_id: &str,
+    responder_node_id: &str,
+    root_hash: &[u8],
+    record_count: usize,
+    timestamp: u64,
+    record_set_digest: &[u8],
+    signature: &[u8],
+    signer_public_key: Option<&str>,
+) -> bool {
+    use ed25519_dalek::Verifier;
+    let Some(signer_public_key) = signer_public_key else {
+        return false;
+    };
+    if signature.is_empty() {
+        return false;
+    }
+    let content = get_anti_entropy_response_signable_content(
+        request_id,
+        responder_node_id,
+        root_hash,
+        record_count,
+        timestamp,
+        record_set_digest,
+    );
+    if content.is_empty() {
+        return false;
+    }
+    let pk_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(signer_public_key)
+    {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+    if pk_bytes.len() != 32 || signature.len() != 64 {
+        return false;
+    }
+    let mut pk_array = [0u8; 32];
+    pk_array.copy_from_slice(&pk_bytes);
+    let mut sig_array = [0u8; 64];
+    sig_array.copy_from_slice(signature);
+    match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
+        Ok(pk) => pk
+            .verify(&content, &ed25519_dalek::Signature::from_bytes(&sig_array))
+            .is_ok(),
+        Err(_) => false,
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuorumProofSignable<'a> {
     pub request_id: &'a str,
@@ -1402,6 +1472,7 @@ impl TtlManager {
 mod tests {
     use super::*;
     use crate::protocol::DhtRecordVerificationError;
+    use ed25519_dalek::Signer;
 
     #[test]
     fn test_signed_record_creation() {
@@ -3054,5 +3125,303 @@ mod tests {
 
         let result = record.verify_for_ingress(&ctx, &access_control);
         assert!(result.is_ok());
+    }
+
+    // ========================================================================
+    // Phase 7: Adversarial regression tests for DHT/Raft boundary hardening
+    // ========================================================================
+
+    fn make_test_keypair(seed: u8) -> (ed25519_dalek::SigningKey, String) {
+        let mut secret = [0u8; 32];
+        secret[0] = seed;
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&secret);
+        let public = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(signing_key.verifying_key().as_bytes());
+        (signing_key, public)
+    }
+
+    // --- Anti-entropy request envelope signature tests ---
+
+    #[test]
+    fn test_anti_entropy_request_valid_signature_accepted() {
+        let (signer, public_key) = make_test_keypair(0x01);
+        let request_id = "req-001";
+        let node_id = "node-alpha";
+        let local_root_hash = b"root_hash_bytes";
+        let timestamp = synvoid_utils::safe_unix_timestamp();
+        let nonce = "nonce-abc-123";
+
+        let content = get_anti_entropy_request_signable_content(
+            request_id,
+            node_id,
+            local_root_hash,
+            timestamp,
+            nonce,
+        );
+        let signature = signer.sign(&content).to_bytes().to_vec();
+
+        assert!(verify_dht_anti_entropy_request_envelope_signature(
+            request_id,
+            node_id,
+            local_root_hash,
+            timestamp,
+            nonce,
+            &signature,
+            Some(&public_key),
+        ));
+    }
+
+    #[test]
+    fn test_anti_entropy_request_empty_signature_rejected() {
+        let (_signer, public_key) = make_test_keypair(0x01);
+
+        assert!(!verify_dht_anti_entropy_request_envelope_signature(
+            "req-001",
+            "node-alpha",
+            b"root_hash",
+            synvoid_utils::safe_unix_timestamp(),
+            "nonce",
+            &[], // empty signature
+            Some(&public_key),
+        ));
+    }
+
+    #[test]
+    fn test_anti_entropy_request_empty_nonce_rejected() {
+        let (signer, public_key) = make_test_keypair(0x01);
+        let timestamp = synvoid_utils::safe_unix_timestamp();
+
+        let content = get_anti_entropy_request_signable_content(
+            "req-001",
+            "node-alpha",
+            b"root_hash",
+            timestamp,
+            "", // empty nonce
+        );
+        let signature = signer.sign(&content).to_bytes().to_vec();
+
+        assert!(!verify_dht_anti_entropy_request_envelope_signature(
+            "req-001",
+            "node-alpha",
+            b"root_hash",
+            timestamp,
+            "", // empty nonce
+            &signature,
+            Some(&public_key),
+        ));
+    }
+
+    #[test]
+    fn test_anti_entropy_request_wrong_signer_rejected() {
+        let (signer, _public_key) = make_test_keypair(0x01);
+        let (_wrong_signer, wrong_public_key) = make_test_keypair(0x02);
+        let timestamp = synvoid_utils::safe_unix_timestamp();
+
+        let content = get_anti_entropy_request_signable_content(
+            "req-001",
+            "node-alpha",
+            b"root_hash",
+            timestamp,
+            "nonce",
+        );
+        // Sign with signer but verify against wrong_public_key
+        let signature = signer.sign(&content).to_bytes().to_vec();
+
+        assert!(!verify_dht_anti_entropy_request_envelope_signature(
+            "req-001",
+            "node-alpha",
+            b"root_hash",
+            timestamp,
+            "nonce",
+            &signature,
+            Some(&wrong_public_key),
+        ));
+    }
+
+    #[test]
+    fn test_anti_entropy_request_tampered_content_rejected() {
+        let (signer, public_key) = make_test_keypair(0x01);
+        let timestamp = synvoid_utils::safe_unix_timestamp();
+
+        // Sign with one set of content
+        let content = get_anti_entropy_request_signable_content(
+            "req-001",
+            "node-alpha",
+            b"root_hash",
+            timestamp,
+            "nonce",
+        );
+        let signature = signer.sign(&content).to_bytes().to_vec();
+
+        // Verify with tampered data (different node_id)
+        assert!(!verify_dht_anti_entropy_request_envelope_signature(
+            "req-001",
+            "tampered-node-id", // tampered
+            b"root_hash",
+            timestamp,
+            "nonce",
+            &signature,
+            Some(&public_key),
+        ));
+
+        // Verify with tampered root hash
+        assert!(!verify_dht_anti_entropy_request_envelope_signature(
+            "req-001",
+            "node-alpha",
+            b"different_root_hash", // tampered
+            timestamp,
+            "nonce",
+            &signature,
+            Some(&public_key),
+        ));
+
+        // Verify with tampered timestamp
+        assert!(!verify_dht_anti_entropy_request_envelope_signature(
+            "req-001",
+            "node-alpha",
+            b"root_hash",
+            timestamp + 1000, // tampered
+            "nonce",
+            &signature,
+            Some(&public_key),
+        ));
+    }
+
+    // --- Anti-entropy response envelope signature tests ---
+
+    #[test]
+    fn test_anti_entropy_response_valid_signature_accepted() {
+        let (signer, public_key) = make_test_keypair(0x01);
+        let request_id = "req-001";
+        let responder_node_id = "node-beta";
+        let root_hash = b"root_hash_bytes";
+        let timestamp = synvoid_utils::safe_unix_timestamp();
+
+        let records = vec![crate::protocol::DhtRecord {
+            key: "upstream:example.com".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "node-beta".to_string(),
+            signature: Vec::new(),
+            signer_public_key: None,
+            content_hash: Vec::new(),
+            quorum_proof: Vec::new(),
+            request_id: None,
+        }];
+
+        let record_set_digest = compute_record_set_digest(&records);
+        let content = get_anti_entropy_response_signable_content(
+            request_id,
+            responder_node_id,
+            root_hash,
+            records.len(),
+            timestamp,
+            &record_set_digest,
+        );
+        let signature = signer.sign(&content).to_bytes().to_vec();
+
+        assert!(verify_dht_anti_entropy_response_envelope_signature(
+            request_id,
+            responder_node_id,
+            root_hash,
+            &records,
+            timestamp,
+            &signature,
+            Some(&public_key),
+        ));
+    }
+
+    #[test]
+    fn test_anti_entropy_response_tampered_digest_rejected() {
+        let (signer, public_key) = make_test_keypair(0x01);
+        let request_id = "req-001";
+        let responder_node_id = "node-beta";
+        let root_hash = b"root_hash_bytes";
+        let timestamp = synvoid_utils::safe_unix_timestamp();
+
+        let records = vec![crate::protocol::DhtRecord {
+            key: "upstream:example.com".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "node-beta".to_string(),
+            signature: Vec::new(),
+            signer_public_key: None,
+            content_hash: Vec::new(),
+            quorum_proof: Vec::new(),
+            request_id: None,
+        }];
+
+        let record_set_digest = compute_record_set_digest(&records);
+        let content = get_anti_entropy_response_signable_content(
+            request_id,
+            responder_node_id,
+            root_hash,
+            records.len(),
+            timestamp,
+            &record_set_digest,
+        );
+        let signature = signer.sign(&content).to_bytes().to_vec();
+
+        // Verify with a different root hash (simulating tampered digest)
+        let tampered_root_hash = b"different_root_hash";
+        assert!(!verify_dht_anti_entropy_response_envelope_signature(
+            request_id,
+            responder_node_id,
+            tampered_root_hash, // tampered
+            &records,
+            timestamp,
+            &signature,
+            Some(&public_key),
+        ));
+    }
+
+    #[test]
+    fn test_anti_entropy_response_empty_signature_rejected() {
+        let (_signer, public_key) = make_test_keypair(0x01);
+
+        let records = vec![];
+        assert!(!verify_dht_anti_entropy_response_envelope_signature(
+            "req-001",
+            "node-beta",
+            b"root_hash",
+            &records,
+            synvoid_utils::safe_unix_timestamp(),
+            &[], // empty signature
+            Some(&public_key),
+        ));
+    }
+
+    #[test]
+    fn test_anti_entropy_response_wrong_signer_rejected() {
+        let (signer, _public_key) = make_test_keypair(0x01);
+        let (_wrong_signer, wrong_public_key) = make_test_keypair(0x02);
+        let timestamp = synvoid_utils::safe_unix_timestamp();
+
+        let records = vec![];
+        let record_set_digest = compute_record_set_digest(&records);
+        let content = get_anti_entropy_response_signable_content(
+            "req-001",
+            "node-beta",
+            b"root_hash",
+            records.len(),
+            timestamp,
+            &record_set_digest,
+        );
+        // Sign with signer but verify against wrong_public_key
+        let signature = signer.sign(&content).to_bytes().to_vec();
+
+        assert!(!verify_dht_anti_entropy_response_envelope_signature(
+            "req-001",
+            "node-beta",
+            b"root_hash",
+            &records,
+            timestamp,
+            &signature,
+            Some(&wrong_public_key),
+        ));
     }
 }

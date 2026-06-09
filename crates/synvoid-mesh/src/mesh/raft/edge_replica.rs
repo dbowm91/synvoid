@@ -82,7 +82,11 @@ impl EdgeReplicaManager {
     }
 
     /// Check freshness of a Raft-derived record against the configured thresholds.
-    pub fn check_freshness(&self, record_timestamp: u64, namespace: &Namespace) -> FreshnessCheckResult {
+    pub fn check_freshness(
+        &self,
+        record_timestamp: u64,
+        namespace: &Namespace,
+    ) -> FreshnessCheckResult {
         let now = synvoid_utils::safe_unix_timestamp();
         if record_timestamp >= now {
             return FreshnessCheckResult::Fresh;

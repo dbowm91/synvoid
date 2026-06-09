@@ -170,7 +170,13 @@ impl RecordStoreManager {
         false
     }
 
-    pub fn store_record(
+    /// Store a record originating locally on this node. The `is_local_origin` flag is
+    /// always `true` — remote/mesh writes should use `store_record_from_ingress`.
+    pub fn store_local_record(&self, record: DhtRecord, source_reputation: i64) -> bool {
+        self.store_record_verified_internal(record, source_reputation, true)
+    }
+
+    pub(crate) fn store_record(
         &self,
         record: DhtRecord,
         source_reputation: i64,
@@ -918,7 +924,7 @@ impl RecordStoreManager {
             request_id: None,
         };
 
-        let stored = self.store_record(record.clone(), 100, true);
+        let stored = self.store_local_record(record.clone(), 100);
         if stored {
             self.queue_for_announce(record);
             tracing::info!("Published global node public key for node {}", self.node_id);
@@ -973,7 +979,7 @@ impl RecordStoreManager {
             request_id: None,
         };
 
-        let stored = self.store_record(record.clone(), 100, true);
+        let stored = self.store_local_record(record.clone(), 100);
         if stored {
             self.queue_for_announce(record.clone());
             tracing::debug!("Stored and queued record for announce: {}", key);
@@ -1298,24 +1304,24 @@ mod tests {
     }
 
     #[test]
-    fn test_remote_dns_zone_requires_capability_verifier() {
+    fn test_remote_dns_zone_denied_by_key_policy() {
         let signer = crate::protocol::MeshMessageSigner::new([8u8; 32]);
         let mesh_config = crate::config::MeshConfig::default();
         let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
 
-        let store_no_cap = RecordStoreManager::new(
+        let store = RecordStoreManager::new(
             crate::dht::RecordStoreConfig::default(),
             "test-global-node".to_string(),
             crate::config::MeshNodeRole::GLOBAL,
             None,
-            access_control.clone(),
+            access_control,
             None,
         );
         let record = build_signed_remote_record("dns_zone:example.com", &signer);
-        let result = store_no_cap.store_record_verified_internal(record, 100, false);
+        let result = store.store_record_verified_internal(record, 100, false);
         assert!(
-            result,
-            "Remote DnsZone with valid signature succeeds on global node without capability verifier (capability check is enforced at ingress, not store level for global nodes)"
+            !result,
+            "DnsZone ownership must not be mutable through remote DHT capability alone; requires Raft or quorum attestation"
         );
     }
 
@@ -1583,10 +1589,10 @@ mod tests {
             request_id: None,
         };
 
-        let result = store.store_record(record, 100, true);
+        let result = store.store_local_record(record, 100);
         assert!(
             !result,
-            "store_record rejects unsigned records even for local origin"
+            "store_local_record rejects unsigned records even for local origin"
         );
     }
 
@@ -1605,8 +1611,8 @@ mod tests {
         );
 
         let record = build_signed_remote_record("node_info:test-node", &signer);
-        let result = store.store_record(record, 100, true);
-        assert!(result, "store_record accepts signed local record");
+        let result = store.store_local_record(record, 100);
+        assert!(result, "store_local_record accepts signed local record");
     }
 
     #[test]

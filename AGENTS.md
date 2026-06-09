@@ -87,7 +87,7 @@ cargo check --no-default-features --features mesh,dns
 | `src/worker/mod.rs` (CPU offload) | `src/worker/cpu_task/` (split 2026-06) — see `mod.rs`, `state.rs`, `metrics.rs`, `payload.rs`, `dispatch.rs`, `connection.rs`, `yara.rs` |
 | `src/worker/unified_server.rs` (monolithic) | `src/worker/unified_server/` (split 2026-06) — see `state.rs`, `init_apps.rs`, `init_waf.rs`, `init_mesh.rs`, `init_runtime.rs`, `init_config.rs`, `lifecycle.rs` |
 | `DhtKeyPolicy` | `crates/synvoid-mesh/src/mesh/dht/key_policy.rs` (new module) |
-| `SignedRaftAttestation` | `crates/synvoid-mesh/src/mesh/peer_auth.rs` (new struct) |
+| `SignedRaftAttestation` | `crates/synvoid-mesh/src/mesh/peer_auth.rs` (v2: binds to value digest via `value_hash`) |
 | `ConsensusTransport` trait | `crates/synvoid-mesh/src/mesh/raft/consensus.rs` (new module) |
 | `AuthorityFreshnessConfig` | `crates/synvoid-mesh/src/mesh/config.rs` (new struct) |
 
@@ -182,7 +182,7 @@ These items require significant architectural work and are correctly deferred:
 |----|-------|--------|
 | MESH-14 | Source Node ID Binding Validation | Partial validation exists (node_id bound to TLS), but no TLS cert chain validation for global nodes - requires PKI hierarchy, trust model changes |
 | HTTP2-POOL | ErasedHttpClient HTTP/2 pooling | `Http2PooledConnection` is empty stub - hyper-util API requires background task management per connection |
-| MR-4 | DHT ingress auth hardening | ✅ Resolved: `DhtAntiEntropyRequest` signer_public_key is now verified against authorized global node keys; `DhtRecordPush` signature is enforced. Breaking protocol changes completed. |
+| MR-4 | DHT ingress auth hardening | ✅ Resolved: `DhtAntiEntropyRequest` and response now verify envelope signatures; `DhtRecordPush` envelope signature enforced; `SignedRaftAttestation` v2 binds to value digest; `DnsZone` requires Raft/quorum (no direct DHT writes); `store_record` is `pub(crate)` with `store_local_record` for local writes. Breaking protocol changes completed. |
 
 Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.override.md`](skills/AGENTS.override.md) for the full index.
 
@@ -202,10 +202,10 @@ The consolidated implementation plan is at [`plans/plan.md`](plans/plan.md).
 - **SAFE_HEADERS**: `src/proxy/cache.rs:97-126` has 28 headers
 - **ConfigManager**: `crates/synvoid-config/src/lib.rs:113`
 - **DhtSyncRequest**: `src/mesh/transport_dht.rs:308-380` - signed by default with a config-controlled unsigned compatibility fallback; node binding is enforced in transport.
-- **DhtAntiEntropyRequest**: `src/mesh/transport_peer.rs:738-751` - node binding enforced, `signer_public_key` now verified against authorized global node keys (✅ MR-4 fixed).
-- **DhtRecordPush**: `src/mesh/dht/signed.rs:44-47` - signature field exists and is enforced (✅ MR-4 fixed).
-- **DhtKeyPolicyTable**: `crates/synvoid-mesh/src/mesh/dht/key_policy.rs` - centralizes key family authority policies for DHT ingress validation.
-- **SignedRaftAttestation**: `crates/synvoid-mesh/src/mesh/peer_auth.rs` - requires cryptographic proof, not just structural attestation.
+- **DhtAntiEntropyRequest**: `src/mesh/transport_peer.rs:738-751` - node binding enforced, `signer_public_key` now verified against authorized global node keys; **envelope signature also verified** (✅ MR-4 fixed). Both request and response verify envelope signatures via `verify_dht_anti_entropy_request_envelope_signature()` / `verify_dht_anti_entropy_response_envelope_signature()` in `dht/signed.rs`.
+- **DhtRecordPush**: `src/mesh/dht/signed.rs:44-47` - signature field exists and is enforced; **envelope signature also verified** (✅ MR-4 fixed).
+- **DhtKeyPolicyTable**: `crates/synvoid-mesh/src/mesh/dht/key_policy.rs` - centralizes key family authority policies for DHT ingress validation. **DnsZone** uses `RaftOrQuorumGlobal` authority with `remote_writes_allowed=false` — DNS zone records can only be written via Raft consensus or quorum attestation, not via direct DHT capability.
+- **SignedRaftAttestation**: `crates/synvoid-mesh/src/mesh/peer_auth.rs` - requires cryptographic proof, not just structural attestation. **v2 protocol** binds attestation to value digest (`value_hash` field in `RaftAttestation`, `protocol_version=2`); v1 compat preserved for attestations without value_hash.
 - **ConsensusTransport**: `crates/synvoid-mesh/src/mesh/raft/consensus.rs` - decouples Raft consensus from mesh transport layer.
 - **AuthorityFreshnessConfig**: `crates/synvoid-mesh/src/mesh/config.rs` - defines stale-state behavior for authority records.
 - **DNS Cookie Server**: `src/dns/cookie.rs` - fully wired via `validate_cookie()` in query.rs:645-662

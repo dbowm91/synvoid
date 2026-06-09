@@ -996,16 +996,25 @@ Raft consensus attestations now require cryptographic proof, not just structural
 
 ```rust
 pub struct SignedRaftAttestation {
-    pub node_id: String,
-    pub term: u64,
-    pub log_index: u64,
-    pub signature: Vec<u8>,
+    pub attestation: RaftAttestation,
+    pub signer_node_id: String,
     pub signer_public_key: String,
+    pub signature: Vec<u8>,
+    pub protocol_version: u32,  // v2: RAFT_ATTESTATION_PROTOCOL_VERSION = 2
+}
+
+pub struct RaftAttestation {
+    pub leader_id: String,
+    pub commit_index: u64,
+    pub namespace: Namespace,
+    pub key_id: String,
     pub timestamp: u64,
+    #[serde(default)]
+    pub value_hash: Option<Vec<u8>>,  // v2: binds attestation to value digest
 }
 ```
 
-**Before**: Raft attestation was structural-only (any node could assert membership). **After**: Attestation carries an Ed25519 signature over `(node_id, term, log_index, timestamp)`, verified against authorized global node keys.
+**Before**: Raft attestation was structural-only (any node could assert membership). **After (v2)**: Attestation carries an Ed25519 signature over `(namespace, key_id, leader_id, commit_index, timestamp, protocol_version, value_hash)`, verified against authorized global node keys. The `value_hash` field (SHA-256 of the value) binds the attestation to a specific DHT value, preventing replay across different values. v1 attestations without `value_hash` are still accepted for backward compatibility.
 
 ### ConsensusTransport Trait
 
@@ -1044,7 +1053,10 @@ pub struct AuthorityFreshnessConfig {
 
 The MR-4 gaps have been closed:
 
-- **`DhtAntiEntropyRequest`**: `signer_public_key` is now verified against the authorized global node key list. The request is rejected if the signer is not an authorized global node.
-- **`DhtRecordPush`**: Signature field is enforced. Records without valid signatures are rejected during ingress.
+- **`DhtAntiEntropyRequest`**: Envelope signature verified via `verify_dht_anti_entropy_request_envelope_signature()` — signs `(request_id, node_id, local_root_hash, timestamp, nonce)` and verifies against the sender's public key. `signer_public_key` is also checked against the authorized global node key list. The request is rejected if the envelope signature is invalid or the signer is not an authorized global node.
+- **`DhtAntiEntropyResponse`**: Envelope signature verified via `verify_dht_anti_entropy_response_envelope_signature()` — signs `(request_id, responder_node_id, root_hash, record_count, timestamp, record_set_digest)`. Responses with missing records but no valid envelope signature are rejected when `require_signed_anti_entropy_requests=true` (outside the compat window).
+- **`DhtRecordPush`**: Envelope signature verified via `verify_dht_record_push_envelope_signature_bytes()` — signs `(request_id, node_id, records, hop_count, nonce, timestamp)`. Records without valid envelope signatures are rejected during ingress.
+
+**Note**: All three message types have a configurable unsigned compatibility window (`unsigned_anti_entropy_compat_until_unix`) for rolling upgrades. When `require_signed_anti_entropy_requests=false` or the compat window is active, unsigned messages are accepted with a warning log.
 
 These changes are breaking protocol changes — older nodes that send unsigned or incorrectly signed messages will be rejected by updated nodes.
