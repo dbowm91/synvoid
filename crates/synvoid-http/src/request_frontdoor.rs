@@ -30,21 +30,21 @@ pub enum RequestFrontdoorOutcome {
     Respond(Response<BoxBody<Bytes, Infallible>>),
 }
 
-pub struct RequestFrontdoorContext<'a, D> {
+pub struct RequestFrontdoorContext<D> {
     pub req: hyper::Request<hyper::body::Incoming>,
     pub client_ip: IpAddr,
     pub local_addr: Option<SocketAddr>,
-    pub drain_state: &'a Option<Arc<D>>,
-    pub alt_svc: &'a Option<String>,
-    pub main_config: &'a Arc<MainConfig>,
+    pub drain_state: Option<Arc<D>>,
+    pub alt_svc: Option<String>,
+    pub main_config: Arc<MainConfig>,
     #[cfg(feature = "mesh")]
-    pub mesh_config: &'a Option<Arc<MeshConfig>>,
+    pub mesh_config: Option<Arc<MeshConfig>>,
     #[cfg(feature = "mesh")]
-    pub mesh_transport: &'a Option<Arc<MeshTransportManager>>,
+    pub mesh_transport: Option<Arc<MeshTransportManager>>,
 }
 
 pub async fn prepare_request_frontdoor<D: HttpDrainControl>(
-    ctx: RequestFrontdoorContext<'_, D>,
+    ctx: RequestFrontdoorContext<D>,
 ) -> Result<RequestFrontdoorOutcome, hyper::Error> {
     let RequestFrontdoorContext {
         mut req,
@@ -71,15 +71,25 @@ pub async fn prepare_request_frontdoor<D: HttpDrainControl>(
         .unwrap_or("/")
         .to_string();
 
-    let req =
-        match dispatch_internal_endpoint(req, &path, client_ip, drain_state, alt_svc, main_config)
-            .await?
-        {
-            InternalEndpointDispatch::Handled(response) => {
-                return Ok(RequestFrontdoorOutcome::Respond(response));
-            }
-            InternalEndpointDispatch::NotHandled(req) => req,
-        };
+    let drain_state_for_dispatch = drain_state;
+    let alt_svc_for_dispatch = alt_svc.clone();
+    let main_config_for_dispatch = Arc::clone(&main_config);
+
+    let req = match dispatch_internal_endpoint(
+        req,
+        &path,
+        client_ip,
+        drain_state_for_dispatch,
+        alt_svc_for_dispatch,
+        main_config_for_dispatch,
+    )
+    .await?
+    {
+        InternalEndpointDispatch::Handled(response) => {
+            return Ok(RequestFrontdoorOutcome::Respond(response));
+        }
+        InternalEndpointDispatch::NotHandled(req) => req,
+    };
 
     #[cfg(feature = "mesh")]
     let req = match maybe_handle_special_request_paths(

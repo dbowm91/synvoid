@@ -744,9 +744,9 @@ pub async fn send_request_streaming(
 }
 
 pub async fn send_request_streaming_generic<B>(
-    client: &Client<HttpsConnector<HttpConnector>, B>,
+    client: Client<HttpsConnector<HttpConnector>, B>,
     method: Method,
-    url: &str,
+    url: String,
     body: B,
     headers: http::HeaderMap,
     timeout: Option<Duration>,

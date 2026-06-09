@@ -70,9 +70,9 @@ pub async fn handle_streaming_waf_upstream_pass(
 
     Ok(
         match send_request_streaming_generic(
-            streaming_client.as_ref(),
+            streaming_client.as_ref().clone(),
             method.clone(),
-            &upstream_target.url,
+            upstream_target.url.clone(),
             erased_body,
             forward_header_map,
             Some(upstream_target.timeout),

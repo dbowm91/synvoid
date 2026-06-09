@@ -25,16 +25,16 @@ use crate::streaming_waf_upstream_dispatch::{
 
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_streaming_request_pass<ServerlessStatusFn, PermissionDeniedFn>(
-    target: &RouteTarget,
-    path: &str,
-    method: &http::Method,
-    parts: &http::request::Parts,
+    target: RouteTarget,
+    path: String,
+    method: http::Method,
+    parts: http::request::Parts,
     body: hyper::body::Incoming,
     client_ip: std::net::IpAddr,
     streaming_waf: Option<Box<dyn StreamingWafScanner>>,
-    alt_svc: &Option<String>,
-    main_config: &Arc<MainConfig>,
-    upstream_client_registry: &Arc<UpstreamClientRegistry>,
+    alt_svc: Option<String>,
+    main_config: Arc<MainConfig>,
+    upstream_client_registry: Arc<UpstreamClientRegistry>,
     #[cfg(feature = "mesh")] serverless_manager: &Option<
         Arc<synvoid_serverless::ServerlessManager>,
     >,
@@ -57,8 +57,8 @@ where
                             500,
                             "Internal Server Error".to_string(),
                             "text/plain",
-                            alt_svc,
-                            main_config,
+                            &alt_svc,
+                            main_config.as_ref(),
                         ),
                     ));
                 }
@@ -67,8 +67,8 @@ where
             return Ok(
                 match synvoid_serverless::manager::handle_serverless_function_streaming(
                     sm,
-                    method,
-                    path,
+                    &method,
+                    &path,
                     &parts.headers,
                     body_bytes,
                     synvoid_serverless::CallerContext::local(),
@@ -90,8 +90,8 @@ where
                             500,
                             "Internal Server Error".to_string(),
                             "text/plain",
-                            alt_svc,
-                            main_config,
+                            &alt_svc,
+                            main_config.as_ref(),
                         ))
                     }
                 },
@@ -100,16 +100,16 @@ where
     }
 
     match handle_streaming_waf_upstream_pass(
-        target,
-        path,
-        method,
-        parts,
+        &target,
+        &path,
+        &method,
+        &parts,
         body,
         client_ip,
         streaming_waf,
-        alt_svc,
-        main_config,
-        upstream_client_registry,
+        &alt_svc,
+        &main_config,
+        &upstream_client_registry,
     )
     .await
     {

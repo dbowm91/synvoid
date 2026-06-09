@@ -43,41 +43,41 @@ pub trait BackendDispatchMetrics: Send + Sync {
     fn record_egress(&self, bytes: u64, direction: EgressDirection);
 }
 
-pub struct BackendDispatchContext<'a, W> {
+pub struct BackendDispatchContext<W> {
     pub is_appserver: bool,
     pub appserver_socket_path: Option<PathBuf>,
     pub app_servers:
-        &'a Option<Arc<RwLock<HashMap<String, Arc<synvoid_app_server::GranianSupervisor>>>>>,
-    pub axum_router_lookup: Option<&'a dyn crate::AxumDynamicRouterLookup>,
-    pub plugin_backend: Option<&'a dyn WasmFilterBackend>,
-    pub target: &'a RouteTarget,
-    pub site_id: &'a str,
-    pub path: &'a str,
-    pub waf: &'a Arc<W>,
+        Option<Arc<RwLock<HashMap<String, Arc<synvoid_app_server::GranianSupervisor>>>>>,
+    pub axum_router_lookup: Option<Arc<dyn crate::AxumDynamicRouterLookup + Send + Sync>>,
+    pub plugin_backend: Option<Arc<dyn WasmFilterBackend + Send + Sync>>,
+    pub target: RouteTarget,
+    pub site_id: String,
+    pub path: String,
+    pub waf: Arc<W>,
     pub client_ip: IpAddr,
-    pub router: &'a Arc<Router>,
-    pub parts: &'a http::request::Parts,
-    pub method: &'a http::Method,
-    pub full_body_arc: &'a Arc<Bytes>,
+    pub router: Arc<Router>,
+    pub parts: http::request::Parts,
+    pub method: http::Method,
+    pub full_body_arc: Arc<Bytes>,
     pub ipc: Option<Arc<Mutex<synvoid_ipc::AsyncIpcStream>>>,
     pub worker_id: Option<synvoid_ipc::WorkerId>,
-    pub main_config: &'a Arc<MainConfig>,
-    pub method_str: &'a str,
+    pub main_config: Arc<MainConfig>,
+    pub method_str: String,
     pub start: Instant,
-    pub user_agent: Option<&'a str>,
-    pub alt_svc: &'a Option<String>,
-    pub req_metrics: Option<&'a dyn BackendDispatchMetrics>,
-    pub metrics: &'a Option<Arc<WorkerMetrics>>,
+    pub user_agent: Option<String>,
+    pub alt_svc: Option<String>,
+    pub req_metrics: Option<Arc<dyn BackendDispatchMetrics>>,
+    pub metrics: Option<Arc<WorkerMetrics>>,
     pub request_body_size: u64,
-    pub body_slice: &'a Option<Arc<Bytes>>,
-    pub upstream_client_registry: &'a Arc<UpstreamClientRegistry>,
-    pub client: &'a synvoid_http_client::HttpClient,
+    pub body_slice: Option<Arc<Bytes>>,
+    pub upstream_client_registry: Arc<UpstreamClientRegistry>,
+    pub client: synvoid_http_client::HttpClient,
     #[cfg(feature = "mesh")]
-    pub serverless_manager: &'a Option<Arc<synvoid_serverless::ServerlessManager>>,
+    pub serverless_manager: Option<Arc<synvoid_serverless::ServerlessManager>>,
     #[cfg(feature = "mesh")]
-    pub mesh_transport: &'a Option<Arc<synvoid_mesh::mesh::transports::MeshTransportManager>>,
+    pub mesh_transport: Option<Arc<synvoid_mesh::mesh::transports::MeshTransportManager>>,
     #[cfg(feature = "mesh")]
-    pub mesh_backend_pool: &'a Option<Arc<synvoid_mesh::mesh::MeshBackendPool>>,
+    pub mesh_backend_pool: Option<Arc<synvoid_mesh::mesh::MeshBackendPool>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -89,7 +89,7 @@ pub async fn handle_pass_backend_dispatch<
     MarkImageRightsFut,
 >(
     on_upgrade: Option<hyper::upgrade::OnUpgrade>,
-    dispatch_ctx: BackendDispatchContext<'_, W>,
+    dispatch_ctx: BackendDispatchContext<W>,
     on_request_log: OnLogFn,
     quictunnel_request: QuicTunnelFn,
     mark_image_rights: MarkImageRightsFn,
@@ -113,43 +113,84 @@ where
             &str,
             Option<&str>,
             bool,
-        ) + Clone,
+        ) + Clone
+        + Send
+        + Sync
+        + 'static,
     QuicTunnelFn: Fn(
-        http::Method,
-        &str,
-        Option<&http::HeaderMap>,
-        Option<Bytes>,
-        Option<std::time::Duration>,
-    ) -> futures::future::BoxFuture<
-        'static,
-        anyhow::Result<synvoid_http_client::HttpResponse>,
-    >,
+            http::Method,
+            &str,
+            Option<http::HeaderMap>,
+            Option<Bytes>,
+            Option<std::time::Duration>,
+        )
+            -> futures::future::BoxFuture<'static, anyhow::Result<synvoid_http_client::HttpResponse>>
+        + Send
+        + 'static,
     MarkImageRightsFn: Fn(
             Bytes,
             String,
             Option<String>,
             Option<synvoid_config::site::SiteImageRightsConfig>,
         ) -> MarkImageRightsFut
-        + Clone,
-    MarkImageRightsFut: Future<Output = Bytes>,
+        + Clone
+        + Send
+        + 'static,
+    MarkImageRightsFut: Future<Output = Bytes> + Send + 'static,
 {
-    let waf = Arc::clone(dispatch_ctx.waf);
+    let BackendDispatchContext {
+        is_appserver,
+        appserver_socket_path,
+        app_servers,
+        axum_router_lookup,
+        plugin_backend,
+        target,
+        site_id,
+        path,
+        waf,
+        client_ip,
+        router,
+        parts,
+        method,
+        full_body_arc,
+        ipc,
+        worker_id,
+        main_config,
+        method_str,
+        start,
+        user_agent,
+        alt_svc,
+        req_metrics,
+        metrics,
+        request_body_size,
+        body_slice,
+        upstream_client_registry,
+        client,
+        #[cfg(feature = "mesh")]
+        serverless_manager,
+        #[cfg(feature = "mesh")]
+        mesh_transport,
+        #[cfg(feature = "mesh")]
+        mesh_backend_pool,
+    } = dispatch_ctx;
 
-    if let Some(rm) = dispatch_ctx.req_metrics {
+    let req_metrics = req_metrics;
+
+    if let Some(rm) = req_metrics.clone() {
         rm.record_proxied();
     }
 
     if let Some(response) = maybe_handle_websocket_upgrade(
         on_upgrade,
-        dispatch_ctx.is_appserver,
-        dispatch_ctx.appserver_socket_path.clone(),
-        dispatch_ctx.target.clone(),
-        &dispatch_ctx.target.upstream,
-        dispatch_ctx.path,
-        &waf,
-        dispatch_ctx.client_ip,
-        &dispatch_ctx.parts.headers,
-        dispatch_ctx.target.site_config.websocket.clone(),
+        is_appserver,
+        appserver_socket_path.clone(),
+        target.clone(),
+        target.upstream.to_string(),
+        path.clone(),
+        waf.clone(),
+        client_ip,
+        parts.headers.clone(),
+        target.site_config.websocket.clone(),
         |upgraded, socket_path, target, path, waf, client_ip, ws_config| async move {
             let waf: Arc<dyn synvoid_proxy::protocol::trait_def::WafCoreBackend> = waf;
             crate::handle_websocket_to_appserver(
@@ -174,13 +215,13 @@ where
     }
 
     if let Some(resp) = maybe_handle_axum_dynamic_backend(
-        dispatch_ctx.axum_router_lookup,
-        dispatch_ctx.target,
-        dispatch_ctx.site_id,
-        dispatch_ctx.path,
-        dispatch_ctx.parts,
-        dispatch_ctx.alt_svc,
-        dispatch_ctx.main_config,
+        axum_router_lookup.clone(),
+        target.clone(),
+        site_id.clone(),
+        path.clone(),
+        parts.clone(),
+        alt_svc.clone(),
+        Arc::clone(&main_config),
     )
     .await
     {
@@ -188,10 +229,10 @@ where
     }
 
     if let Some(resp) = maybe_handle_static_backend(
-        dispatch_ctx.target,
-        dispatch_ctx.path,
-        dispatch_ctx.method,
-        &dispatch_ctx.parts.headers,
+        target.clone(),
+        path.clone(),
+        method.clone(),
+        parts.headers.clone(),
     )
     .await
     {
@@ -199,17 +240,17 @@ where
     }
 
     #[cfg(feature = "mesh")]
-    if dispatch_ctx.is_appserver {
+    if is_appserver {
         if let Some(response) = maybe_handle_app_server_backend(
-            dispatch_ctx.app_servers,
-            dispatch_ctx.target,
-            dispatch_ctx.site_id,
-            dispatch_ctx.path,
-            dispatch_ctx.method,
-            dispatch_ctx.parts,
-            dispatch_ctx.full_body_arc,
-            dispatch_ctx.alt_svc,
-            dispatch_ctx.main_config,
+            app_servers.clone(),
+            target.clone(),
+            site_id.clone(),
+            path.clone(),
+            method.clone(),
+            parts.clone(),
+            full_body_arc.clone(),
+            alt_svc.clone(),
+            Arc::clone(&main_config),
         )
         .await
         {
@@ -217,27 +258,24 @@ where
         }
     }
 
-    if matches!(
-        dispatch_ctx.target.backend_type,
-        synvoid_proxy::BackendType::Serverless
-    ) {
+    if matches!(target.backend_type, synvoid_proxy::BackendType::Serverless) {
         #[cfg(feature = "mesh")]
         if let Some(response) = maybe_handle_serverless_backend(
-            dispatch_ctx.serverless_manager,
-            dispatch_ctx.mesh_transport,
-            dispatch_ctx.method,
-            dispatch_ctx.path,
-            dispatch_ctx.parts,
-            dispatch_ctx.full_body_arc,
-            dispatch_ctx.ipc.clone(),
-            dispatch_ctx.worker_id,
-            dispatch_ctx.main_config,
-            dispatch_ctx.client_ip,
-            dispatch_ctx.method_str,
-            dispatch_ctx.start,
-            dispatch_ctx.site_id,
-            dispatch_ctx.user_agent,
-            dispatch_ctx.alt_svc,
+            &serverless_manager,
+            &mesh_transport,
+            &method,
+            &path,
+            &parts,
+            &full_body_arc,
+            ipc.clone(),
+            worker_id,
+            &main_config,
+            client_ip,
+            &method_str,
+            start,
+            &site_id,
+            user_agent.as_deref(),
+            &alt_svc,
             on_request_log.clone(),
         )
         .await
@@ -247,19 +285,19 @@ where
     }
 
     if let Some(response) = maybe_handle_spin_backend(
-        dispatch_ctx.target,
-        dispatch_ctx.site_id,
-        dispatch_ctx.path,
-        dispatch_ctx.parts,
-        dispatch_ctx.full_body_arc,
-        dispatch_ctx.ipc.clone(),
-        dispatch_ctx.worker_id,
-        dispatch_ctx.main_config,
-        dispatch_ctx.client_ip,
-        dispatch_ctx.method_str,
-        dispatch_ctx.start,
-        dispatch_ctx.user_agent,
-        dispatch_ctx.alt_svc,
+        target.clone(),
+        site_id.clone(),
+        path.clone(),
+        parts.clone(),
+        full_body_arc.clone(),
+        ipc.clone(),
+        worker_id,
+        Arc::clone(&main_config),
+        client_ip,
+        method_str.clone(),
+        start,
+        user_agent.clone(),
+        alt_svc.clone(),
         on_request_log.clone(),
     )
     .await
@@ -268,16 +306,19 @@ where
     }
 
     if let Some(response) = maybe_handle_fastcgi_or_php_backend(
-        dispatch_ctx.target,
-        dispatch_ctx.router,
-        dispatch_ctx.site_id,
-        dispatch_ctx.path,
-        dispatch_ctx.method,
-        dispatch_ctx.parts,
-        dispatch_ctx.full_body_arc,
-        dispatch_ctx.alt_svc,
-        dispatch_ctx.main_config,
-        |status, message| waf.as_ref().render_page(status, message),
+        target.clone(),
+        Arc::clone(&router),
+        site_id.clone(),
+        path.clone(),
+        method.clone(),
+        parts.clone(),
+        full_body_arc.clone(),
+        alt_svc.clone(),
+        Arc::clone(&main_config),
+        {
+            let waf = Arc::clone(&waf);
+            move |status, message| waf.as_ref().render_page(status, message)
+        },
         mark_image_rights.clone(),
     )
     .await
@@ -286,16 +327,19 @@ where
     }
 
     if let Some(response) = maybe_handle_cgi_backend(
-        dispatch_ctx.target,
-        dispatch_ctx.site_id,
-        dispatch_ctx.path,
-        dispatch_ctx.method,
-        dispatch_ctx.parts,
-        dispatch_ctx.full_body_arc,
-        dispatch_ctx.client_ip,
-        dispatch_ctx.alt_svc,
-        dispatch_ctx.main_config,
-        |status, message| waf.as_ref().render_page(status, message),
+        target.clone(),
+        site_id.clone(),
+        path.clone(),
+        method.clone(),
+        parts.clone(),
+        full_body_arc.clone(),
+        client_ip,
+        alt_svc.clone(),
+        Arc::clone(&main_config),
+        {
+            let waf = Arc::clone(&waf);
+            move |status, message| waf.as_ref().render_page(status, message)
+        },
     )
     .await
     {
@@ -303,15 +347,15 @@ where
     }
 
     if let Some(response) = maybe_handle_app_server_backend(
-        dispatch_ctx.app_servers,
-        dispatch_ctx.target,
-        dispatch_ctx.site_id,
-        dispatch_ctx.path,
-        dispatch_ctx.method,
-        dispatch_ctx.parts,
-        dispatch_ctx.full_body_arc,
-        dispatch_ctx.alt_svc,
-        dispatch_ctx.main_config,
+        app_servers.clone(),
+        target.clone(),
+        site_id.clone(),
+        path.clone(),
+        method.clone(),
+        parts.clone(),
+        full_body_arc.clone(),
+        alt_svc.clone(),
+        Arc::clone(&main_config),
     )
     .await
     {
@@ -320,24 +364,30 @@ where
 
     #[cfg(feature = "mesh")]
     if let Some(response) = maybe_handle_mesh_backend(
-        dispatch_ctx.mesh_backend_pool,
-        dispatch_ctx.target,
-        dispatch_ctx.site_id,
-        dispatch_ctx.path,
-        dispatch_ctx.parts,
-        dispatch_ctx.full_body_arc,
-        dispatch_ctx.main_config,
-        dispatch_ctx.alt_svc,
-        dispatch_ctx.metrics,
-        dispatch_ctx.request_body_size,
-        || {
-            if let Some(rm) = dispatch_ctx.req_metrics {
-                rm.record_upstream_success();
+        &mesh_backend_pool,
+        &target,
+        &site_id,
+        &path,
+        &parts,
+        &full_body_arc,
+        &main_config,
+        &alt_svc,
+        &metrics,
+        request_body_size,
+        {
+            let req_metrics = req_metrics.clone();
+            move || {
+                if let Some(rm) = req_metrics.clone() {
+                    rm.record_upstream_success();
+                }
             }
         },
-        || {
-            if let Some(rm) = dispatch_ctx.req_metrics {
-                rm.record_upstream_failure();
+        {
+            let req_metrics = req_metrics.clone();
+            move || {
+                if let Some(rm) = req_metrics.clone() {
+                    rm.record_upstream_failure();
+                }
             }
         },
     )
@@ -347,28 +397,28 @@ where
     }
 
     if let Some(response) = maybe_handle_wasm_request_filter(
-        dispatch_ctx.plugin_backend,
-        dispatch_ctx.target,
-        dispatch_ctx.path,
-        dispatch_ctx.method,
-        dispatch_ctx.parts,
-        dispatch_ctx.body_slice,
-        dispatch_ctx.client_ip,
+        plugin_backend.as_deref(),
+        &target,
+        &path,
+        &method,
+        &parts,
+        &body_slice,
+        client_ip,
         waf.as_ref(),
-        dispatch_ctx.alt_svc,
-        dispatch_ctx.main_config,
+        &alt_svc,
+        &main_config,
         |status| {
             on_request_log(
-                dispatch_ctx.ipc.clone(),
-                dispatch_ctx.worker_id,
-                dispatch_ctx.main_config,
-                dispatch_ctx.client_ip,
-                dispatch_ctx.method_str,
-                dispatch_ctx.path,
+                ipc.clone(),
+                worker_id,
+                &main_config,
+                client_ip,
+                &method_str,
+                &path,
                 status,
-                dispatch_ctx.start.elapsed().as_millis() as u64,
-                dispatch_ctx.site_id,
-                dispatch_ctx.user_agent,
+                start.elapsed().as_millis() as u64,
+                &site_id,
+                user_agent.as_deref(),
                 false,
             );
         },
@@ -376,19 +426,19 @@ where
         return Ok(response);
     }
 
-    let content_type = dispatch_ctx
-        .parts
+    let content_type = parts
         .headers
         .get("content-type")
-        .and_then(|v| v.to_str().ok());
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
     if let Some(response) = maybe_handle_upload_validation(
-        &waf,
-        &dispatch_ctx.target.site_id,
-        dispatch_ctx.path,
-        dispatch_ctx.client_ip,
-        dispatch_ctx.full_body_arc,
-        dispatch_ctx.alt_svc,
-        dispatch_ctx.main_config,
+        Arc::clone(&waf),
+        target.site_id.to_string(),
+        path.clone(),
+        client_ip,
+        full_body_arc.clone(),
+        alt_svc.clone(),
+        Arc::clone(&main_config),
         content_type,
     )
     .await
@@ -397,45 +447,54 @@ where
     }
 
     let dispatch_plan = prepare_upstream_proxy_dispatch_plan(
-        dispatch_ctx.target,
-        dispatch_ctx.path,
-        dispatch_ctx.main_config,
-        dispatch_ctx.full_body_arc.len() as u64,
-        dispatch_ctx.client_ip,
-        dispatch_ctx.parts,
-        dispatch_ctx.upstream_client_registry,
-        dispatch_ctx.client,
+        &target,
+        &path,
+        &main_config,
+        full_body_arc.len() as u64,
+        client_ip,
+        &parts,
+        &upstream_client_registry,
+        &client,
     );
 
     handle_pass_upstream_proxy_phase(
-        dispatch_ctx.target,
-        dispatch_ctx.router,
-        dispatch_ctx.path,
-        dispatch_ctx.site_id,
-        dispatch_ctx.method,
-        dispatch_ctx.parts,
-        dispatch_ctx.full_body_arc,
+        target,
+        router,
+        path,
+        site_id,
+        method,
+        parts,
+        full_body_arc,
         dispatch_plan,
-        dispatch_ctx.alt_svc,
-        dispatch_ctx.main_config,
-        dispatch_ctx.metrics,
-        dispatch_ctx.request_body_size,
+        alt_svc,
+        main_config,
+        metrics,
+        request_body_size,
         #[cfg(feature = "mesh")]
-        dispatch_ctx.mesh_transport,
+        mesh_transport,
         quictunnel_request,
-        || {
-            if let Some(rm) = dispatch_ctx.req_metrics {
-                rm.record_upstream_success();
+        {
+            let req_metrics = req_metrics.clone();
+            move || {
+                if let Some(rm) = req_metrics.clone() {
+                    rm.record_upstream_success();
+                }
             }
         },
-        || {
-            if let Some(rm) = dispatch_ctx.req_metrics {
-                rm.record_upstream_failure();
+        {
+            let req_metrics = req_metrics.clone();
+            move || {
+                if let Some(rm) = req_metrics.clone() {
+                    rm.record_upstream_failure();
+                }
             }
         },
-        |egress_len| {
-            if let Some(rm) = dispatch_ctx.req_metrics {
-                rm.record_egress(egress_len, EgressDirection::Error);
+        {
+            let req_metrics = req_metrics.clone();
+            move |egress_len| {
+                if let Some(rm) = req_metrics.clone() {
+                    rm.record_egress(egress_len, EgressDirection::Error);
+                }
             }
         },
         mark_image_rights,

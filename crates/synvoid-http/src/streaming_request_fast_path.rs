@@ -37,12 +37,13 @@ pub async fn maybe_handle_streaming_request_fast_path<
     handle_non_pass_decision: DecisionFn,
 ) -> Result<StreamingRequestFastPathOutcome, hyper::Error>
 where
-    CheckFn: FnOnce() -> CheckFut,
-    CheckFut: Future<Output = WafDecision>,
-    PassFn: FnOnce(hyper::body::Incoming) -> PassFut,
-    PassFut: Future<Output = Result<StreamingRequestFastPathOutcome, hyper::Error>>,
-    DecisionFn: FnOnce(WafDecision) -> DecisionFut,
-    DecisionFut: Future<Output = Option<Response<BoxBody<Bytes, Infallible>>>>,
+    CheckFn: FnOnce() -> CheckFut + Send + 'static,
+    CheckFut: Future<Output = WafDecision> + Send + 'static,
+    PassFn: FnOnce(hyper::body::Incoming) -> PassFut + Send + 'static,
+    PassFut:
+        Future<Output = Result<StreamingRequestFastPathOutcome, hyper::Error>> + Send + 'static,
+    DecisionFn: FnOnce(WafDecision) -> DecisionFut + Send + 'static,
+    DecisionFut: Future<Output = Option<Response<BoxBody<Bytes, Infallible>>>> + Send + 'static,
 {
     let content_length_u64: Option<u64> = parts
         .headers

@@ -21,23 +21,23 @@ use crate::upstream_proxy_dispatch_plan::UpstreamProxyDispatchPlan;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_pass_upstream_proxy_phase<MarkImageRightsFn, MarkImageRightsFut>(
-    target: &RouteTarget,
-    router: &Arc<Router>,
-    path: &str,
-    site_id: &str,
-    method: &http::Method,
-    parts: &http::request::Parts,
-    full_body_arc: &Arc<Bytes>,
+    target: RouteTarget,
+    router: Arc<Router>,
+    path: String,
+    site_id: String,
+    method: http::Method,
+    parts: http::request::Parts,
+    full_body_arc: Arc<Bytes>,
     dispatch_plan: UpstreamProxyDispatchPlan,
-    alt_svc: &Option<String>,
-    main_config: &Arc<MainConfig>,
-    metrics: &Option<Arc<WorkerMetrics>>,
+    alt_svc: Option<String>,
+    main_config: Arc<MainConfig>,
+    metrics: Option<Arc<WorkerMetrics>>,
     request_body_size: u64,
-    #[cfg(feature = "mesh")] mesh_transport: &Option<Arc<MeshTransportManager>>,
+    #[cfg(feature = "mesh")] mesh_transport: Option<Arc<MeshTransportManager>>,
     quictunnel_request: impl Fn(
         http::Method,
         &str,
-        Option<&http::HeaderMap>,
+        Option<http::HeaderMap>,
         Option<Bytes>,
         Option<std::time::Duration>,
     )
@@ -59,9 +59,9 @@ where
     if let Some(streaming) = dispatch_plan.streaming {
         let erased_body = ErasedBodyImpl::from_full(Full::new(full_body_arc.as_ref().clone()));
         let request_result = send_request_streaming_generic(
-            streaming.client.as_ref(),
+            streaming.client.as_ref().clone(),
             method.clone(),
-            &dispatch_plan.upstream_target.url,
+            dispatch_plan.upstream_target.url.clone(),
             erased_body,
             streaming.forward_headers,
             Some(dispatch_plan.upstream_target.timeout),
@@ -73,7 +73,7 @@ where
             target,
             site_id,
             request_body_size,
-            &dispatch_plan.headers_to_filter,
+            dispatch_plan.headers_to_filter.clone(),
             dispatch_plan.upstream_target.max_response_size,
             alt_svc,
             main_config,
@@ -85,6 +85,13 @@ where
         .await;
     }
 
+    let dispatch_plan_forwarding_client = dispatch_plan.forwarding_client;
+    let dispatch_plan_upstream_url = dispatch_plan.upstream_target.url;
+    let dispatch_plan_upstream_timeout = dispatch_plan.upstream_target.timeout;
+    let dispatch_plan_upstream_max_response_size = dispatch_plan.upstream_target.max_response_size;
+    let dispatch_plan_headers_to_filter = dispatch_plan.headers_to_filter;
+    let quictunnel_request = quictunnel_request;
+    let mark_image_rights = mark_image_rights;
     handle_buffered_upstream_request(
         target,
         router,
@@ -93,9 +100,11 @@ where
         method,
         parts,
         full_body_arc,
-        &dispatch_plan.forwarding_client,
-        &dispatch_plan.upstream_target,
-        &dispatch_plan.headers_to_filter,
+        dispatch_plan_forwarding_client,
+        dispatch_plan_upstream_url,
+        dispatch_plan_upstream_timeout,
+        dispatch_plan_upstream_max_response_size,
+        dispatch_plan_headers_to_filter,
         alt_svc,
         main_config,
         metrics,

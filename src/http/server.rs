@@ -283,25 +283,25 @@ impl HttpServer {
             req,
             client_addr.ip(),
             local_addr,
-            &drain_state,
-            &router,
-            &waf,
-            &alt_svc,
-            &main_config,
-            &http_config,
-            &metrics,
+            drain_state.clone(),
+            Arc::clone(&router),
+            Arc::clone(&waf),
+            alt_svc.clone(),
+            Arc::clone(&main_config),
+            http_config.clone(),
+            metrics.clone(),
             ipc.clone(),
             worker_id,
             start,
             Arc::clone(&request_drop),
             send_request_log_if_enabled,
             #[cfg(feature = "mesh")]
-            &mesh_config,
+            mesh_config.clone(),
             #[cfg(feature = "mesh")]
-            &mesh_transport,
+            mesh_transport.clone(),
             #[cfg(feature = "mesh")]
-            &serverless_manager,
-            &upstream_client_registry,
+            serverless_manager.clone(),
+            Arc::clone(&upstream_client_registry),
         )
         .await?;
 
@@ -314,52 +314,57 @@ impl HttpServer {
         };
 
         let _drain_guard = DrainGuard::new(drain_state);
-        let plugin_backend = router
+        let plugin_backend_arc: Option<Arc<dyn synvoid_http::WasmFilterBackend + Send + Sync>> =
+            router
+                .plugin_manager()
+                .and_then(|pm| {
+                    let arc_any: Arc<dyn std::any::Any + Send + Sync> = Arc::clone(pm);
+                    arc_any.downcast::<crate::plugin::PluginManager>().ok()
+                })
+                .map(|arc| arc as Arc<dyn synvoid_http::WasmFilterBackend + Send + Sync>);
+        let axum_router_lookup_arc: Option<
+            Arc<dyn synvoid_http::AxumDynamicRouterLookup + Send + Sync>,
+        > = router
             .plugin_manager()
-            .and_then(|pm| pm.downcast_ref::<crate::plugin::PluginManager>())
-            .map(|pm| pm as &dyn synvoid_http::WasmFilterBackend);
-        let axum_router_lookup = router
-            .plugin_manager()
-            .and_then(|pm| pm.downcast_ref::<crate::plugin::PluginManager>())
-            .map(|pm| pm as &dyn synvoid_http::AxumDynamicRouterLookup);
+            .and_then(|pm| {
+                let arc_any: Arc<dyn std::any::Any + Send + Sync> = Arc::clone(pm);
+                arc_any.downcast::<crate::plugin::PluginManager>().ok()
+            })
+            .map(|arc| arc as Arc<dyn synvoid_http::AxumDynamicRouterLookup + Send + Sync>);
 
         synvoid_http::handle_http_request_postlude(
             synvoid_http::HttpRequestPostludeContext {
                 prepared,
                 client_ip,
-                router: &router,
-                waf: &waf,
-                client: &client,
-                alt_svc: &alt_svc,
-                main_config: &main_config,
-                http_config: &http_config,
-                metrics: &metrics,
+                router: Arc::clone(&router),
+                waf: Arc::clone(&waf),
+                client: client.clone(),
+                alt_svc: alt_svc.clone(),
+                main_config: Arc::clone(&main_config),
+                http_config: http_config.clone(),
+                metrics: metrics.clone(),
                 ipc: ipc.clone(),
                 worker_id,
                 start,
-                app_servers: &app_servers,
-                axum_router_lookup,
-                plugin_backend,
-                upstream_client_registry: &upstream_client_registry,
+                app_servers: app_servers.clone(),
+                axum_router_lookup: axum_router_lookup_arc,
+                plugin_backend: plugin_backend_arc,
+                upstream_client_registry: Arc::clone(&upstream_client_registry),
                 request_drop: Arc::clone(&request_drop),
                 request_log: send_request_log_if_enabled,
                 #[cfg(feature = "mesh")]
-                serverless_manager: &serverless_manager,
+                serverless_manager: serverless_manager.clone(),
                 #[cfg(feature = "mesh")]
-                mesh_transport: &mesh_transport,
+                mesh_transport: mesh_transport.clone(),
                 #[cfg(feature = "mesh")]
-                mesh_backend_pool: &mesh_backend_pool,
+                mesh_backend_pool: mesh_backend_pool.clone(),
             },
             |method, url, headers, body, timeout| {
                 let url = url.to_string();
-                let headers = headers.cloned();
+                let headers = headers;
                 Box::pin(async move {
                     crate::http_client::send_request_via_quic_tunnel(
-                        method,
-                        &url,
-                        headers.as_ref(),
-                        body,
-                        timeout,
+                        method, &url, headers, body, timeout,
                     )
                     .await
                 })

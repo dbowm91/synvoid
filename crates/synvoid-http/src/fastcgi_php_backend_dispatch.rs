@@ -15,15 +15,15 @@ const FORBIDDEN_RESPONSE_HEADERS: &[&str] = &["server", "x-powered-by", "connect
 
 #[allow(clippy::too_many_arguments)]
 pub async fn maybe_handle_fastcgi_or_php_backend<MarkImageRightsFn, MarkImageRightsFut>(
-    target: &RouteTarget,
-    router: &Arc<Router>,
-    site_id: &str,
-    path: &str,
-    method: &http::Method,
-    parts: &http::request::Parts,
-    full_body_arc: &Arc<Bytes>,
-    alt_svc: &Option<String>,
-    main_config: &Arc<MainConfig>,
+    target: RouteTarget,
+    router: Arc<Router>,
+    site_id: String,
+    path: String,
+    method: http::Method,
+    parts: http::request::Parts,
+    full_body_arc: Arc<Bytes>,
+    alt_svc: Option<String>,
+    main_config: Arc<MainConfig>,
     render_error_page: impl Fn(u16, Option<&str>) -> String,
     mark_image_rights: MarkImageRightsFn,
 ) -> Option<Response<BoxBody<Bytes, Infallible>>>
@@ -56,8 +56,8 @@ where
             502,
             body,
             "text/html",
-            alt_svc,
-            main_config,
+            &alt_svc,
+            &main_config,
         ));
     };
 
@@ -69,7 +69,7 @@ where
         {
             match php_client
                 .execute(
-                    method,
+                    &method,
                     &parts.uri,
                     &parts.headers,
                     body_bytes_for_fcgi.clone(),
@@ -85,8 +85,8 @@ where
                         502,
                         body,
                         "text/html",
-                        alt_svc,
-                        main_config,
+                        &alt_svc,
+                        &main_config,
                     ));
                 }
             }
@@ -97,7 +97,7 @@ where
     let pool = get_pool(&socket.to_string(), &fcgi_config);
     match pool
         .execute(
-            method,
+            &method,
             &parts.uri,
             &parts.headers,
             body_bytes_for_fcgi,
@@ -114,7 +114,7 @@ where
                     let policy = synvoid_ipc::CpuTaskPolicy::FailOpenWithLog;
                     match client
                         .request_wasm_transform(
-                            site_id,
+                            &site_id,
                             plugin_names,
                             response.status.as_u16(),
                             body.to_vec(),
@@ -149,15 +149,15 @@ where
                     .map(|ct| ct.starts_with("image/"))
                     .unwrap_or(false);
                 if !is_image {
-                    is_image = path_looks_like_image(path);
+                    is_image = path_looks_like_image(&path);
                 }
                 let in_range = body_len >= img_settings.min_size;
 
                 if is_image && in_range {
-                    if !is_whitelisted_path(img_settings.whitelist_patterns, path) {
+                    if !is_whitelisted_path(img_settings.whitelist_patterns, &path) {
                         body = mark_image_rights(
                             body,
-                            site_id.to_string(),
+                            site_id.clone(),
                             None,
                             Some(image_rights_config.clone()),
                         )
@@ -190,8 +190,8 @@ where
                     500,
                     crate::reason_phrase(500).to_string(),
                     "text/plain",
-                    alt_svc,
-                    main_config,
+                    &alt_svc,
+                    &main_config,
                 )
             }))
         }
@@ -201,8 +201,8 @@ where
                 502,
                 body,
                 "text/html",
-                alt_svc,
-                main_config,
+                &alt_svc,
+                &main_config,
             ))
         }
     }

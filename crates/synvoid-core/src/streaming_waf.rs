@@ -22,7 +22,7 @@ pub trait StreamingWafScanner: Send + Sync {
     fn scan_chunk(&mut self, chunk: &[u8]) -> StreamingWafDecision;
 }
 
-impl StreamingWafScanner for Box<dyn StreamingWafScanner> {
+impl<T: StreamingWafScanner + ?Sized> StreamingWafScanner for Box<T> {
     fn scan_chunk(&mut self, chunk: &[u8]) -> StreamingWafDecision {
         (**self).scan_chunk(chunk)
     }

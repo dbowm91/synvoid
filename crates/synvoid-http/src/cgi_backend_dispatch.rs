@@ -13,15 +13,15 @@ use synvoid_config::MainConfig;
 use synvoid_proxy::{BackendType, RouteTarget};
 
 pub async fn maybe_handle_cgi_backend(
-    target: &RouteTarget,
-    site_id: &str,
-    path: &str,
-    method: &http::Method,
-    parts: &http::request::Parts,
-    full_body_arc: &Arc<Bytes>,
+    target: RouteTarget,
+    site_id: String,
+    path: String,
+    method: http::Method,
+    parts: http::request::Parts,
+    full_body_arc: Arc<Bytes>,
     client_ip: IpAddr,
-    alt_svc: &Option<String>,
-    main_config: &Arc<MainConfig>,
+    alt_svc: Option<String>,
+    main_config: Arc<MainConfig>,
     render_error_page: impl Fn(u16, Option<&str>) -> String,
 ) -> Option<Response<BoxBody<Bytes, Infallible>>> {
     if !matches!(target.backend_type, BackendType::Cgi) {
@@ -34,7 +34,7 @@ pub async fn maybe_handle_cgi_backend(
                 let body_bytes_for_cgi: Bytes = full_body_arc.as_ref().clone();
                 match handler
                     .execute(
-                        method,
+                        &method,
                         &parts.uri,
                         &parts.headers,
                         body_bytes_for_cgi,
@@ -57,8 +57,8 @@ pub async fn maybe_handle_cgi_backend(
                             status,
                             render_error_page(status, Some(&format!("CGI Error: {}", e))),
                             "text/plain",
-                            alt_svc,
-                            main_config,
+                            &alt_svc,
+                            &main_config,
                         ));
                     }
                 }
@@ -74,8 +74,8 @@ pub async fn maybe_handle_cgi_backend(
                     500,
                     render_error_page(500, Some(&format!("CGI Configuration Error: {}", e))),
                     "text/plain",
-                    alt_svc,
-                    main_config,
+                    &alt_svc,
+                    &main_config,
                 ));
             }
         }
@@ -89,7 +89,7 @@ pub async fn maybe_handle_cgi_backend(
         502,
         render_error_page(502, Some("Backend misconfigured: no CGI root configured")),
         "text/plain",
-        alt_svc,
-        main_config,
+        &alt_svc,
+        &main_config,
     ))
 }

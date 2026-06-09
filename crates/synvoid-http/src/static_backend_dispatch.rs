@@ -8,10 +8,10 @@ use std::convert::Infallible;
 use synvoid_proxy::{BackendType, RouteTarget};
 
 pub async fn maybe_handle_static_backend(
-    target: &RouteTarget,
-    path: &str,
-    method: &http::Method,
-    headers: &http::HeaderMap,
+    target: RouteTarget,
+    path: String,
+    method: http::Method,
+    headers: http::HeaderMap,
 ) -> Option<Response<BoxBody<Bytes, Infallible>>> {
     if !matches!(target.backend_type, BackendType::Static) {
         return None;
@@ -37,8 +37,8 @@ pub async fn maybe_handle_static_backend(
 
     match static_handler
         .serve(
-            path,
-            method,
+            &path,
+            &method,
             accept_encoding.as_deref(),
             if_none_match.as_deref(),
             if_modified_since.as_deref(),

@@ -17,13 +17,13 @@ pub trait AxumDynamicRouterLookup: Send + Sync {
 }
 
 pub async fn maybe_handle_axum_dynamic_backend(
-    router_lookup: Option<&dyn AxumDynamicRouterLookup>,
-    target: &RouteTarget,
-    site_id: &str,
-    path: &str,
-    parts: &http::request::Parts,
-    alt_svc: &Option<String>,
-    main_config: &Arc<MainConfig>,
+    router_lookup: Option<Arc<dyn AxumDynamicRouterLookup + Send + Sync>>,
+    target: RouteTarget,
+    site_id: String,
+    path: String,
+    parts: http::request::Parts,
+    alt_svc: Option<String>,
+    main_config: Arc<MainConfig>,
 ) -> Option<Response<BoxBody<Bytes, Infallible>>> {
     if !matches!(target.backend_type, BackendType::AxumDynamic) {
         return None;
@@ -69,8 +69,8 @@ pub async fn maybe_handle_axum_dynamic_backend(
                     500,
                     format!("Plugin error: {}", e),
                     "text/plain",
-                    alt_svc,
-                    main_config,
+                    &alt_svc,
+                    main_config.as_ref(),
                 ),
             });
         }

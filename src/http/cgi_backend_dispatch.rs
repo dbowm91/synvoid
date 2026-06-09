@@ -24,15 +24,15 @@ pub async fn maybe_handle_cgi_backend(
     waf: &Arc<WafCore>,
 ) -> Option<Response<BoxBody<Bytes, Infallible>>> {
     synvoid_http::maybe_handle_cgi_backend(
-        target,
-        site_id,
-        path,
-        method,
-        parts,
-        full_body_arc,
+        target.clone(),
+        site_id.to_string(),
+        path.to_string(),
+        method.clone(),
+        parts.clone(),
+        full_body_arc.clone(),
         client_ip,
-        alt_svc,
-        main_config,
+        alt_svc.clone(),
+        Arc::clone(main_config),
         |status, message| {
             let site_theme = target
                 .site_config

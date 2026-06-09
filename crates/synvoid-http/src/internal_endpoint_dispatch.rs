@@ -22,9 +22,9 @@ pub async fn dispatch_internal_endpoint<D: HttpDrainControl>(
     req: hyper::Request<hyper::body::Incoming>,
     path: &str,
     client_ip: IpAddr,
-    drain_state: &Option<Arc<D>>,
-    alt_svc: &Option<String>,
-    main_config: &Arc<MainConfig>,
+    drain_state: Option<Arc<D>>,
+    alt_svc: Option<String>,
+    main_config: Arc<MainConfig>,
 ) -> Result<InternalEndpointDispatch, hyper::Error> {
     match classify_internal_endpoint(path, client_ip, drain_state.is_some()) {
         InternalEndpointAction::Drain => {

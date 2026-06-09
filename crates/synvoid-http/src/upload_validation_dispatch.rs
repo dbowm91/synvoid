@@ -21,27 +21,27 @@ pub trait UploadValidationWaf {
 }
 
 pub async fn maybe_handle_upload_validation<W: UploadValidationWaf>(
-    waf: &Arc<W>,
-    target_site_id: &str,
-    path: &str,
+    waf: Arc<W>,
+    target_site_id: String,
+    path: String,
     client_ip: IpAddr,
-    full_body_arc: &Arc<Bytes>,
-    alt_svc: &Option<String>,
-    main_config: &Arc<MainConfig>,
-    content_type: Option<&str>,
+    full_body_arc: Arc<Bytes>,
+    alt_svc: Option<String>,
+    main_config: Arc<MainConfig>,
+    content_type: Option<String>,
 ) -> Option<Response<BoxBody<Bytes, Infallible>>> {
     let content_type = content_type?;
-    if !is_upload_content_type(content_type) {
+    if !is_upload_content_type(&content_type) {
         return None;
     }
 
     let upload_validator = waf.get_upload_validator()?;
-    let effective_config = upload_validator.get_effective_config(path);
+    let effective_config = upload_validator.get_effective_config(&path);
     if !effective_config.scan_with_yara && effective_config.max_size_bytes == 0 {
         return None;
     }
 
-    match upload_validator.validate_bytes(full_body_arc, path).await {
+    match upload_validator.validate_bytes(&full_body_arc, &path).await {
         Ok(result) => {
             if result.is_clean() {
                 return None;
@@ -54,15 +54,15 @@ pub async fn maybe_handle_upload_validation<W: UploadValidationWaf>(
                 matches = ?result.yara_matches,
                 "Malware detected in upload, blocking client IP"
             );
-            waf.block_ip_with_threat_intel(client_ip, "malware_upload", 3600, target_site_id);
+            waf.block_ip_with_threat_intel(client_ip, "malware_upload", 3600, &target_site_id);
             let body = waf
                 .render_upload_validation_error_page(403, Some("Upload blocked: malware detected"));
             Some(crate::response_builder::build_response_with_alt_svc(
                 403,
                 body,
                 "text/html",
-                alt_svc,
-                main_config,
+                &alt_svc,
+                &main_config,
             ))
         }
         Err(e) => {
@@ -84,7 +84,7 @@ pub async fn maybe_handle_upload_validation<W: UploadValidationWaf>(
                         client_ip,
                         "malware_upload",
                         3600,
-                        target_site_id,
+                        &target_site_id,
                     );
                     (403, "Upload blocked: malware detected")
                 }
@@ -96,8 +96,8 @@ pub async fn maybe_handle_upload_validation<W: UploadValidationWaf>(
                 status,
                 body,
                 "text/html",
-                alt_svc,
-                main_config,
+                &alt_svc,
+                &main_config,
             ))
         }
     }

@@ -111,15 +111,15 @@ pub enum TrafficControlOutcome {
 pub async fn maybe_enforce_request_traffic_limits<LogFn>(
     connection_limiter: Option<Arc<ConnectionLimiter>>,
     client_ip: IpAddr,
-    path: &str,
+    path: String,
     start: Instant,
     is_over_bandwidth_limit: bool,
-    alt_svc: &Option<String>,
-    main_config: &Arc<MainConfig>,
+    alt_svc: Option<String>,
+    main_config: Arc<MainConfig>,
     mut on_log: LogFn,
 ) -> TrafficControlOutcome
 where
-    LogFn: FnMut(u16, u64, &str, &str, &str, Option<&str>, bool),
+    LogFn: FnMut(u16, u64, &str, &str, &str, Option<&str>, bool) + Send + 'static,
 {
     let connection_token = if let Some(ref conn_limiter) = connection_limiter {
         match conn_limiter.try_acquire("_http_", client_ip).await {
@@ -132,7 +132,7 @@ where
                     start.elapsed().as_millis() as u64,
                     "internal",
                     "UNKNOWN",
-                    path,
+                    &path,
                     None,
                     true,
                 );
@@ -140,8 +140,8 @@ where
                     503,
                     "Too Many Connections".to_string(),
                     "application/json",
-                    alt_svc,
-                    main_config,
+                    &alt_svc,
+                    main_config.as_ref(),
                 ));
             }
         }
@@ -163,7 +163,7 @@ where
             start.elapsed().as_millis() as u64,
             "internal",
             "UNKNOWN",
-            path,
+            &path,
             None,
             true,
         );
@@ -171,8 +171,8 @@ where
             503,
             "Monthly Bandwidth Limit Exceeded".to_string(),
             "text/plain",
-            alt_svc,
-            main_config,
+            &alt_svc,
+            main_config.as_ref(),
         ));
     }
 

@@ -14,7 +14,7 @@ use synvoid_config::MainConfig;
 use synvoid_mesh::mesh::transport::MeshTransportManager;
 use synvoid_metrics::bandwidth::{BandwidthProtocol, EgressDirection};
 use synvoid_metrics::WorkerMetrics;
-use synvoid_proxy::executor::PreparedUpstreamTarget;
+
 use synvoid_proxy::{apply_response_size_limit, filter_response_headers_buf};
 use synvoid_proxy::{RouteTarget, Router};
 
@@ -24,25 +24,27 @@ use crate::upstream_response_transform::transform_upstream_response;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_buffered_upstream_request<MarkImageRightsFn, MarkImageRightsFut>(
-    target: &RouteTarget,
-    router: &Arc<Router>,
-    path: &str,
-    site_id: &str,
-    method: &http::Method,
-    parts: &http::request::Parts,
-    full_body_arc: &Arc<Bytes>,
-    forwarding_client: &synvoid_http_client::HttpClient,
-    upstream_target: &PreparedUpstreamTarget,
-    headers_to_filter: &ahash::AHashSet<http::header::HeaderName>,
-    alt_svc: &Option<String>,
-    main_config: &Arc<MainConfig>,
-    metrics: &Option<Arc<WorkerMetrics>>,
+    target: RouteTarget,
+    router: Arc<Router>,
+    path: String,
+    site_id: String,
+    method: http::Method,
+    parts: http::request::Parts,
+    full_body_arc: Arc<Bytes>,
+    forwarding_client: Arc<synvoid_http_client::HttpClient>,
+    upstream_url: String,
+    upstream_timeout: std::time::Duration,
+    upstream_max_response_size: Option<usize>,
+    headers_to_filter: ahash::AHashSet<http::header::HeaderName>,
+    alt_svc: Option<String>,
+    main_config: Arc<MainConfig>,
+    metrics: Option<Arc<WorkerMetrics>>,
     request_body_size: u64,
-    #[cfg(feature = "mesh")] mesh_transport: &Option<Arc<MeshTransportManager>>,
+    #[cfg(feature = "mesh")] mesh_transport: Option<Arc<MeshTransportManager>>,
     quictunnel_request: impl Fn(
         http::Method,
         &str,
-        Option<&http::HeaderMap>,
+        Option<http::HeaderMap>,
         Option<Bytes>,
         Option<std::time::Duration>,
     )
@@ -64,19 +66,19 @@ where
     let resp = if synvoid_http_client::is_quictunnel_url(&target.upstream) {
         quictunnel_request(
             method.clone(),
-            &upstream_target.url,
-            Some(&parts.headers),
+            &upstream_url,
+            Some(parts.headers.clone()),
             Some(full_body_arc.as_ref().clone()),
-            Some(upstream_target.timeout),
+            Some(upstream_timeout),
         )
         .await
     } else {
         synvoid_http_client::send_request_with_body_and_timeout(
-            forwarding_client,
+            forwarding_client.as_ref(),
             method.clone(),
-            &upstream_target.url,
+            &upstream_url,
             Some(full_body_arc.as_ref().clone()),
-            Some(upstream_target.timeout),
+            Some(upstream_timeout),
         )
         .await
     };
@@ -97,27 +99,28 @@ where
                 .and_then(|v| v.to_str().ok())
                 .map(|s| s.to_string());
             let headers: http::HeaderMap =
-                filter_response_headers_buf(&resp.headers, headers_to_filter);
+                filter_response_headers_buf(&resp.headers, &headers_to_filter);
             let body = resp.body;
-            if apply_response_size_limit(&body, upstream_target.max_response_size).is_err() {
+            if apply_response_size_limit(&body, upstream_max_response_size).is_err() {
                 return Ok(build_response_with_alt_svc(
                     502,
                     "Bad Gateway".to_string(),
                     "text/plain",
-                    alt_svc,
-                    main_config,
+                    &alt_svc,
+                    &main_config,
                 ));
             }
 
             let accept_encoding = parts
                 .headers
                 .get("accept-encoding")
-                .and_then(|v: &http::HeaderValue| v.to_str().ok());
+                .and_then(|v: &http::HeaderValue| v.to_str().ok())
+                .map(|s| s.to_string());
             let transformed = transform_upstream_response(
-                target,
-                router,
-                path,
-                site_id,
+                target.clone(),
+                router.clone(),
+                path.clone(),
+                site_id.clone(),
                 headers,
                 body,
                 status,
@@ -125,7 +128,7 @@ where
                 last_modified,
                 accept_encoding,
                 #[cfg(feature = "mesh")]
-                mesh_transport,
+                mesh_transport.clone(),
                 mark_image_rights,
             )
             .await;
@@ -133,17 +136,17 @@ where
             let body_len = transformed.body_len;
             let headers = transformed.headers;
 
-            if let Some(m) = metrics {
+            if let Some(m) = &metrics {
                 m.bandwidth
                     .record_proxied(request_body_size, body_len, &target.upstream);
                 m.bandwidth
-                    .record_site_proxied(site_id, request_body_size, body_len);
+                    .record_site_proxied(&site_id, request_body_size, body_len);
                 m.bandwidth.record_egress(
                     body_len,
                     BandwidthProtocol::Http,
                     EgressDirection::Proxied,
                 );
-                m.bandwidth.record_site_egress(site_id, body_len);
+                m.bandwidth.record_site_egress(&site_id, body_len);
             }
 
             let mut builder = Response::builder().status(status);
@@ -156,7 +159,7 @@ where
                 }
             }
 
-            if let Some(alt_svc) = alt_svc {
+            if let Some(alt_svc) = &alt_svc {
                 builder = builder.header("Alt-Svc", alt_svc.as_str());
             }
 
@@ -171,8 +174,8 @@ where
                     500,
                     crate::reason_phrase(500).to_string(),
                     "text/plain",
-                    alt_svc,
-                    main_config,
+                    &alt_svc,
+                    &main_config,
                 )
             }))
         }
@@ -185,8 +188,8 @@ where
                 502,
                 error_body,
                 "text/plain",
-                alt_svc,
-                main_config,
+                &alt_svc,
+                &main_config,
             ))
         }
     }

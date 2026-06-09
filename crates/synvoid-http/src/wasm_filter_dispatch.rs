@@ -30,7 +30,7 @@ pub trait WafErrorPageRenderer {
 }
 
 pub fn maybe_handle_wasm_request_filter(
-    plugin_backend: Option<&dyn WasmFilterBackend>,
+    plugin_backend: Option<&(dyn WasmFilterBackend + Send + Sync)>,
     target: &RouteTarget,
     path: &str,
     method: &http::Method,

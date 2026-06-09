@@ -994,8 +994,8 @@ impl GranianSupervisor {
     pub async fn forward_request(
         &self,
         method: http::Method,
-        path: &str,
-        headers: &http::HeaderMap<http::HeaderValue>,
+        path: String,
+        headers: http::HeaderMap<http::HeaderValue>,
         body: Bytes,
     ) -> Result<http::Response<Bytes>, String> {
         let socket_path = self.config.resolve_socket_path();
@@ -1021,7 +1021,7 @@ impl GranianSupervisor {
             method,
             &url,
             Some(body),
-            headers.clone(),
+            headers,
             Some(std::time::Duration::from_secs(30)),
         )
         .await

@@ -49,7 +49,7 @@ where
 {
     let is_appserver = matches!(target.backend_type, BackendType::AppServer);
     let appserver_socket_path = if is_appserver {
-        if let Some(servers) = app_servers {
+        if let Some(servers) = app_servers.clone() {
             let servers_read = servers.read().await;
             servers_read
                 .get(site_id)
@@ -66,11 +66,11 @@ where
         is_appserver,
         appserver_socket_path,
         target.clone(),
-        &target.upstream,
-        path,
-        waf,
+        target.upstream.to_string(),
+        path.to_string(),
+        Arc::clone(waf),
         client_ip,
-        headers,
+        headers.clone(),
         target.site_config.websocket.clone(),
         on_appserver,
         on_tunnel,

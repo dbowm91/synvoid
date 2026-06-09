@@ -2,12 +2,11 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Instant;
 
-use tokio::sync::Mutex;
-
 use synvoid_config::{HttpConfig, MainConfig};
 use synvoid_metrics::WorkerMetrics;
 use synvoid_proxy::client_registry::UpstreamClientRegistry;
 use synvoid_proxy::Router;
+use tokio::sync::Mutex;
 
 use crate::request_frontdoor::{
     prepare_request_frontdoor, RequestFrontdoorContext, RequestFrontdoorOutcome,
@@ -16,8 +15,7 @@ use crate::request_preparation::{
     prepare_request_after_preflight, prepare_request_preflight, RequestPreflight,
     RequestPreflightOutcome, RequestPreparationOutcome,
 };
-use crate::response_builder::build_response_with_alt_svc;
-use crate::streaming_request_pass::handle_streaming_request_pass;
+use crate::streaming_request_fast_path::StreamingRequestFastPathOutcome;
 use crate::traffic_control::{maybe_enforce_request_traffic_limits, TrafficControlOutcome};
 use crate::BufferedRequestWaf;
 use crate::HttpDrainControl;
@@ -46,46 +44,41 @@ pub async fn prepare_http_request_flow<W, D>(
     req: hyper::Request<hyper::body::Incoming>,
     client_ip: IpAddr,
     local_addr: Option<SocketAddr>,
-    drain_state: &Option<Arc<D>>,
-    router: &Arc<Router>,
-    waf: &Arc<W>,
-    alt_svc: &Option<String>,
-    main_config: &Arc<MainConfig>,
-    http_config: &HttpConfig,
-    metrics: &Option<Arc<WorkerMetrics>>,
+    drain_state: Option<Arc<D>>,
+    router: Arc<Router>,
+    waf: Arc<W>,
+    alt_svc: Option<String>,
+    main_config: Arc<MainConfig>,
+    http_config: HttpConfig,
+    metrics: Option<Arc<WorkerMetrics>>,
     ipc: Option<Arc<Mutex<synvoid_ipc::AsyncIpcStream>>>,
     worker_id: Option<synvoid_ipc::WorkerId>,
     start: Instant,
     request_drop: Arc<dyn Fn() + Send + Sync>,
     request_log: RequestLogFn,
-    #[cfg(feature = "mesh")] mesh_config: &Option<Arc<synvoid_mesh::MeshConfig>>,
-    #[cfg(feature = "mesh")] mesh_transport: &Option<
+    #[cfg(feature = "mesh")] mesh_config: Option<Arc<synvoid_mesh::MeshConfig>>,
+    #[cfg(feature = "mesh")] mesh_transport: Option<
         Arc<synvoid_mesh::transports::MeshTransportManager>,
     >,
-    #[cfg(feature = "mesh")] serverless_manager: &Option<
+    #[cfg(feature = "mesh")] _serverless_manager: Option<
         Arc<synvoid_serverless::ServerlessManager>,
     >,
-    upstream_client_registry: &Arc<UpstreamClientRegistry>,
+    _upstream_client_registry: Arc<UpstreamClientRegistry>,
 ) -> Result<HttpRequestFlowOutcome, hyper::Error>
 where
-    W: BufferedRequestWaf + crate::RequestBodyWaf,
-    D: HttpDrainControl,
+    W: BufferedRequestWaf + crate::RequestBodyWaf + Send + Sync + 'static,
+    D: HttpDrainControl + Send + Sync + 'static,
 {
     let request_preparation_started_at = Instant::now();
-    let record_inline_phase = |phase: synvoid_metrics::WorkerInlineCpuPhase,
-                               started_at: Instant| {
-        if let Some(metrics) = &metrics {
-            metrics.record_inline_cpu_phase_time_ms(phase, started_at.elapsed().as_millis() as u64);
-        }
-    };
-
+    let alt_svc_for_frontdoor = alt_svc.clone();
+    let main_config_for_frontdoor = Arc::clone(&main_config);
     let frontdoor = match prepare_request_frontdoor(RequestFrontdoorContext {
         req,
         client_ip,
         local_addr,
         drain_state,
-        alt_svc,
-        main_config,
+        alt_svc: alt_svc_for_frontdoor,
+        main_config: main_config_for_frontdoor,
         #[cfg(feature = "mesh")]
         mesh_config,
         #[cfg(feature = "mesh")]
@@ -95,7 +88,8 @@ where
     {
         RequestFrontdoorOutcome::Continue(frontdoor) => frontdoor,
         RequestFrontdoorOutcome::Respond(response) => {
-            record_inline_phase(
+            record_request_preparation_phase(
+                &metrics,
                 synvoid_metrics::WorkerInlineCpuPhase::RequestPreparation,
                 request_preparation_started_at,
             );
@@ -110,19 +104,23 @@ where
     let client_ip = frontdoor.client_ip;
     let path = frontdoor.path;
 
+    let alt_svc_for_traffic = alt_svc.clone();
+    let main_config_for_traffic_fn = Arc::clone(&main_config);
+    let main_config_for_traffic_cb = Arc::clone(&main_config);
+    let ipc_for_traffic = ipc.clone();
     let conn_guard = match maybe_enforce_request_traffic_limits(
         waf.connection_limiter(),
         client_ip,
-        &path,
+        path.clone(),
         start,
         waf.is_over_bandwidth_limit(),
-        alt_svc,
-        main_config,
-        |status, latency_ms, site_id, method, path, user_agent, is_internal| {
+        alt_svc_for_traffic,
+        main_config_for_traffic_fn,
+        move |status, latency_ms, site_id, method, path, user_agent, is_internal| {
             request_log(
-                ipc.clone(),
+                ipc_for_traffic.clone(),
                 worker_id,
-                main_config,
+                &main_config_for_traffic_cb,
                 client_ip,
                 method,
                 path,
@@ -138,7 +136,8 @@ where
     {
         TrafficControlOutcome::Continue { conn_guard } => conn_guard,
         TrafficControlOutcome::Respond(response) => {
-            record_inline_phase(
+            record_request_preparation_phase(
+                &metrics,
                 synvoid_metrics::WorkerInlineCpuPhase::RequestPreparation,
                 request_preparation_started_at,
             );
@@ -149,20 +148,25 @@ where
         }
     };
 
-    let waf_ref = waf.as_ref();
+    let alt_svc_for_preflight = alt_svc.clone();
+    let main_config_for_preflight_fn = Arc::clone(&main_config);
+    let main_config_for_preflight_cb = Arc::clone(&main_config);
+    let router_for_preflight = Arc::clone(&router);
+    let waf_for_preflight = Arc::clone(&waf);
+    let ipc_for_preflight = ipc.clone();
     let preflight = match prepare_request_preflight(
         frontdoor_req,
         client_ip,
         local_addr,
-        router,
-        waf_ref,
-        alt_svc,
-        main_config,
-        |status, site_id, bypassed, method, path, user_agent| {
+        router_for_preflight,
+        waf_for_preflight,
+        alt_svc_for_preflight,
+        main_config_for_preflight_fn,
+        move |status, site_id, bypassed, method, path, user_agent| {
             request_log(
-                ipc.clone(),
+                ipc_for_preflight.clone(),
                 worker_id,
-                main_config,
+                &main_config_for_preflight_cb,
                 client_ip,
                 method,
                 path,
@@ -184,7 +188,8 @@ where
     {
         RequestPreflightOutcome::Continue(preflight) => preflight,
         RequestPreflightOutcome::Respond(response) => {
-            record_inline_phase(
+            record_request_preparation_phase(
+                &metrics,
                 synvoid_metrics::WorkerInlineCpuPhase::RequestPreparation,
                 request_preparation_started_at,
             );
@@ -212,94 +217,16 @@ where
     let path_for_log = path.clone();
     let user_agent_for_log = user_agent.clone();
     let site_id_for_log = site_id.clone();
-    let parts_for_pass = parts.clone();
-    let target_for_pass = target.clone();
+    let handle_pass =
+        move |body| async move { Ok(StreamingRequestFastPathOutcome::Continue(body)) };
 
-    let handle_pass = {
-        let waf = Arc::clone(waf);
-        let target = target_for_pass.clone();
-        let parts = parts_for_pass.clone();
-        let alt_svc = alt_svc.clone();
-        let main_config = Arc::clone(main_config);
-        #[cfg(feature = "mesh")]
-        let serverless_manager = serverless_manager.clone();
-        let upstream_client_registry = Arc::clone(upstream_client_registry);
-        let ipc = ipc.clone();
-        let user_agent_for_log = user_agent_for_log.clone();
-        let method_for_log = method_for_log.clone();
-        let path_for_log = path_for_log.clone();
-        let site_id_for_log = site_id_for_log.clone();
-        move |body| {
-            let target = target.clone();
-            let parts = parts.clone();
-            let alt_svc = alt_svc.clone();
-            let main_config = Arc::clone(&main_config);
-            #[cfg(feature = "mesh")]
-            let serverless_manager = serverless_manager.clone();
-            let upstream_client_registry = Arc::clone(&upstream_client_registry);
-            let ipc = ipc.clone();
-            let user_agent_for_log = user_agent_for_log.clone();
-            let method_for_log = method_for_log.clone();
-            let path_for_log = path_for_log.clone();
-            let site_id_for_log = site_id_for_log.clone();
-            let streaming_waf = waf.streaming();
-            async move {
-                handle_streaming_request_pass(
-                    &target,
-                    &path_for_log,
-                    &method_for_log,
-                    &parts,
-                    body,
-                    client_ip,
-                    streaming_waf,
-                    &alt_svc,
-                    &main_config,
-                    &upstream_client_registry,
-                    #[cfg(feature = "mesh")]
-                    &serverless_manager,
-                    |status| {
-                        request_log(
-                            ipc.clone(),
-                            worker_id,
-                            &main_config,
-                            client_ip,
-                            method_for_log.as_str(),
-                            &path_for_log,
-                            status,
-                            start.elapsed().as_millis() as u64,
-                            &site_id_for_log,
-                            user_agent_for_log.as_deref(),
-                            false,
-                        );
-                    },
-                    || {
-                        let body = waf.render_page_with_theme(
-                            403,
-                            Some("Forbidden"),
-                            target
-                                .site_config
-                                .error_pages
-                                .theme
-                                .as_ref()
-                                .map(|theme_config| {
-                                    theme_config.to_theme_config(waf.error_page_theme())
-                                })
-                                .as_ref(),
-                        );
-                        build_response_with_alt_svc(
-                            403,
-                            body,
-                            "text/html",
-                            &alt_svc,
-                            main_config.as_ref(),
-                        )
-                    },
-                )
-                .await
-            }
-        }
-    };
-
+    let alt_svc_for_after = alt_svc;
+    let main_config_for_after = main_config;
+    let metrics_for_after = metrics.clone();
+    let ipc_for_after_limit = ipc.clone();
+    let main_config_for_after_limit = Arc::clone(&main_config_for_after);
+    let ipc_for_after_final = ipc.clone();
+    let main_config_for_after_final = Arc::clone(&main_config_for_after);
     let outcome = prepare_request_after_preflight(
         RequestPreflight {
             on_upgrade,
@@ -314,18 +241,18 @@ where
         },
         client_ip,
         router,
-        waf_ref,
-        main_config,
+        waf,
+        main_config_for_after,
         http_config,
-        metrics,
-        alt_svc,
-        conn_guard.as_ref(),
+        metrics_for_after,
+        alt_svc_for_after,
+        conn_guard,
         start,
-        |status, latency_ms, site_id, method, path, user_agent, is_internal| {
+        move |status, latency_ms, site_id, method, path, user_agent, is_internal| {
             request_log(
-                ipc.clone(),
+                ipc_for_after_limit.clone(),
                 worker_id,
-                main_config,
+                &main_config_for_after_limit,
                 client_ip,
                 method,
                 path,
@@ -336,11 +263,11 @@ where
                 is_internal,
             );
         },
-        |status, bypassed| {
+        move |status, bypassed| {
             request_log(
-                ipc.clone(),
+                ipc_for_after_final.clone(),
                 worker_id,
-                main_config,
+                &main_config_for_after_final,
                 client_ip,
                 method_for_log.as_str(),
                 &path_for_log,
@@ -361,10 +288,21 @@ where
     )
     .await?;
 
-    record_inline_phase(
+    record_request_preparation_phase(
+        &metrics,
         synvoid_metrics::WorkerInlineCpuPhase::RequestPreparation,
         request_preparation_started_at,
     );
 
     Ok(HttpRequestFlowOutcome { client_ip, outcome })
+}
+
+fn record_request_preparation_phase(
+    metrics: &Option<Arc<WorkerMetrics>>,
+    phase: synvoid_metrics::WorkerInlineCpuPhase,
+    started_at: Instant,
+) {
+    if let Some(metrics) = metrics {
+        metrics.record_inline_cpu_phase_time_ms(phase, started_at.elapsed().as_millis() as u64);
+    }
 }

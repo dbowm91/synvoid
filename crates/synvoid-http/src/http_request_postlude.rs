@@ -91,31 +91,31 @@ impl BackendDispatchMetrics for RequestMetricsAdapter {
     }
 }
 
-pub struct HttpRequestPostludeContext<'a, W> {
+pub struct HttpRequestPostludeContext<W> {
     pub prepared: PreparedRequest,
     pub client_ip: IpAddr,
-    pub router: &'a Arc<Router>,
-    pub waf: &'a Arc<W>,
-    pub client: &'a synvoid_http_client::HttpClient,
-    pub alt_svc: &'a Option<String>,
-    pub main_config: &'a Arc<MainConfig>,
-    pub http_config: &'a HttpConfig,
-    pub metrics: &'a Option<Arc<WorkerMetrics>>,
+    pub router: Arc<Router>,
+    pub waf: Arc<W>,
+    pub client: synvoid_http_client::HttpClient,
+    pub alt_svc: Option<String>,
+    pub main_config: Arc<MainConfig>,
+    pub http_config: HttpConfig,
+    pub metrics: Option<Arc<WorkerMetrics>>,
     pub ipc: Option<Arc<Mutex<synvoid_ipc::AsyncIpcStream>>>,
     pub worker_id: Option<synvoid_ipc::WorkerId>,
     pub start: Instant,
-    pub app_servers: &'a Option<Arc<RwLock<HashMap<String, Arc<GranianSupervisor>>>>>,
-    pub axum_router_lookup: Option<&'a dyn crate::AxumDynamicRouterLookup>,
-    pub plugin_backend: Option<&'a dyn crate::WasmFilterBackend>,
-    pub upstream_client_registry: &'a Arc<UpstreamClientRegistry>,
+    pub app_servers: Option<Arc<RwLock<HashMap<String, Arc<GranianSupervisor>>>>>,
+    pub axum_router_lookup: Option<Arc<dyn crate::AxumDynamicRouterLookup + Send + Sync>>,
+    pub plugin_backend: Option<Arc<dyn crate::WasmFilterBackend + Send + Sync>>,
+    pub upstream_client_registry: Arc<UpstreamClientRegistry>,
     pub request_drop: Arc<dyn Fn() + Send + Sync>,
     pub request_log: RequestLogFn,
     #[cfg(feature = "mesh")]
-    pub serverless_manager: &'a Option<Arc<synvoid_serverless::ServerlessManager>>,
+    pub serverless_manager: Option<Arc<synvoid_serverless::ServerlessManager>>,
     #[cfg(feature = "mesh")]
-    pub mesh_transport: &'a Option<Arc<synvoid_mesh::mesh::transports::MeshTransportManager>>,
+    pub mesh_transport: Option<Arc<synvoid_mesh::mesh::transports::MeshTransportManager>>,
     #[cfg(feature = "mesh")]
-    pub mesh_backend_pool: &'a Option<Arc<synvoid_mesh::mesh::MeshBackendPool>>,
+    pub mesh_backend_pool: Option<Arc<synvoid_mesh::mesh::MeshBackendPool>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -126,7 +126,7 @@ pub async fn handle_http_request_postlude<
     MarkImageRightsFut,
     RecordLatencyFn,
 >(
-    ctx: HttpRequestPostludeContext<'_, W>,
+    ctx: HttpRequestPostludeContext<W>,
     quic_tunnel_request: QuicTunnelFn,
     mark_image_rights: MarkImageRightsFn,
     record_http_request_latency: RecordLatencyFn,
@@ -140,24 +140,26 @@ where
         + Sync
         + 'static,
     QuicTunnelFn: Fn(
-        http::Method,
-        &str,
-        Option<&http::HeaderMap>,
-        Option<Bytes>,
-        Option<Duration>,
-    ) -> futures::future::BoxFuture<
-        'static,
-        anyhow::Result<synvoid_http_client::HttpResponse>,
-    >,
+            http::Method,
+            &str,
+            Option<http::HeaderMap>,
+            Option<Bytes>,
+            Option<Duration>,
+        )
+            -> futures::future::BoxFuture<'static, anyhow::Result<synvoid_http_client::HttpResponse>>
+        + Send
+        + 'static,
     MarkImageRightsFn: Fn(
             Bytes,
             String,
             Option<String>,
             Option<synvoid_config::site::SiteImageRightsConfig>,
         ) -> MarkImageRightsFut
-        + Clone,
-    MarkImageRightsFut: std::future::Future<Output = Bytes>,
-    RecordLatencyFn: Fn(u64),
+        + Clone
+        + Send
+        + 'static,
+    MarkImageRightsFut: std::future::Future<Output = Bytes> + Send + 'static,
+    RecordLatencyFn: Fn(u64) + Send + 'static,
 {
     let HttpRequestPostludeContext {
         prepared,
@@ -201,8 +203,6 @@ where
 
     let site_id = target.site_id.to_string();
     let method_str = method.to_string();
-    let body_slice_ref = body_slice.as_ref().map(Arc::clone);
-    let body_slice_ref: Option<&[u8]> = body_slice_ref.as_ref().map(|v| v.as_ref() as &[u8]);
     let target_for_waf = target.clone();
     let parts_for_waf = parts.clone();
     let query_string = parts_for_waf.uri.query();
@@ -214,6 +214,7 @@ where
     let method_str_for_log = method_str.clone();
     let path_for_log = path.clone();
     let user_agent_for_log = user_agent.clone();
+    let user_agent_for_waf_check = user_agent.clone();
 
     let req_metrics = metrics.as_ref().map(|m| RequestMetricsAdapter {
         site_id: site_id.clone(),
@@ -228,39 +229,50 @@ where
     }
 
     let buffered_waf_started_at = Instant::now();
+    let _body_slice_for_closure = body_slice.as_ref().map(|arc| arc.as_ref().clone());
+    let site_id_for_closure = site_id.clone();
+    let method_str_for_closure = method_str.clone();
+    let path_for_closure = path.clone();
+    let user_agent_for_closure = user_agent.clone();
+    let headers_for_waf_for_check_for_closure = headers_for_waf_for_check.clone();
+    let site_bot_config_for_waf_for_closure = site_bot_config_for_waf.clone();
+    let query_string_for_closure = query_string.map(|s| s.to_string());
+    let waf_for_closure = Arc::clone(&waf);
     if let Some(response) = maybe_handle_buffered_request_waf(
-        &target_for_waf,
+        target_for_waf,
         skip_waf,
-        &site_id,
+        site_id.clone(),
         client_ip,
-        &method_str,
-        &path,
-        query_string,
-        &headers_for_waf,
-        body_slice_ref,
-        user_agent.as_deref(),
-        http_config,
-        alt_svc,
-        main_config,
-        || {
-            let waf = Arc::clone(waf);
-            let site_id = site_id.clone();
-            let method_str = method_str.clone();
-            let path = path.clone();
-            let body_slice_ref = body_slice_ref;
-            let user_agent = user_agent.clone();
+        method_str.clone(),
+        path.clone(),
+        query_string.map(|s| s.to_string()),
+        headers_for_waf,
+        body_slice.as_ref().map(|arc| arc.as_ref().clone()),
+        user_agent_for_waf_check,
+        http_config.clone(),
+        alt_svc.clone(),
+        Arc::clone(&main_config),
+        move || {
+            let waf = Arc::clone(&waf_for_closure);
+            let site_id = site_id_for_closure.clone();
+            let method_str = method_str_for_closure.clone();
+            let path = path_for_closure.clone();
+            let user_agent = user_agent_for_closure.clone();
+            let headers_for_waf_for_check = headers_for_waf_for_check_for_closure.clone();
+            let site_bot_config_for_waf = site_bot_config_for_waf_for_closure.clone();
+            let query_string = query_string_for_closure.clone();
             async move {
-                waf.check_request_full(
-                    Some(site_id.as_str()),
+                waf.check_request_full_owned(
+                    Some(site_id),
                     client_ip,
-                    method_str.as_str(),
-                    &path,
+                    method_str,
+                    path,
                     query_string,
-                    &headers_for_waf_for_check,
-                    body_slice_ref,
-                    user_agent.as_deref(),
+                    headers_for_waf_for_check,
                     None,
-                    Some(&site_bot_config_for_waf),
+                    user_agent,
+                    None,
+                    Some(site_bot_config_for_waf),
                 )
                 .await
             }
@@ -272,9 +284,8 @@ where
             }
         },
         {
-            let request_log = request_log;
             let ipc = ipc.clone();
-            let main_config = Arc::clone(main_config);
+            let main_config = Arc::clone(&main_config);
             let site_id = site_id_for_log.clone();
             let method_str = method_str_for_log.clone();
             let path = path_for_log.clone();
@@ -305,6 +316,8 @@ where
         },
         {
             let req_metrics = req_metrics.clone();
+            let metrics = metrics.clone();
+            let site_id_for_egress = site_id_for_egress.clone();
             move |body_len| {
                 if let Some(ref rm) = req_metrics {
                     rm.record_egress(body_len, EgressDirection::Blocked);
@@ -331,20 +344,26 @@ where
             }
         },
         || start.elapsed().as_millis() as u64,
-        |status, message| waf.render_page_with_theme(status, Some(message), None),
-        |tar_path| waf.generate_tarpit_response(tar_path),
+        {
+            let waf = Arc::clone(&waf);
+            move |status, message| waf.render_page_with_theme(status, Some(message), None)
+        },
+        {
+            let waf = Arc::clone(&waf);
+            move |tar_path| waf.generate_tarpit_response(tar_path)
+        },
     )
     .await
     {
         record_inline_phase(
-            metrics,
+            &metrics,
             WorkerInlineCpuPhase::BufferedWaf,
             buffered_waf_started_at,
         );
         return Ok(response);
     }
     record_inline_phase(
-        metrics,
+        &metrics,
         WorkerInlineCpuPhase::BufferedWaf,
         buffered_waf_started_at,
     );
@@ -356,7 +375,7 @@ where
 
     let is_appserver = matches!(target.backend_type, BackendType::AppServer);
     let appserver_socket_path = if is_appserver {
-        if let Some(servers) = app_servers {
+        if let Some(servers) = app_servers.clone() {
             let servers_read = servers.read().await;
             servers_read
                 .get(&site_id)
@@ -374,28 +393,28 @@ where
         app_servers,
         axum_router_lookup,
         plugin_backend,
-        target: &target,
-        site_id: &site_id,
-        path: &path,
+        target,
+        site_id: site_id.clone(),
+        path: path.clone(),
         waf,
         client_ip,
         router,
-        parts: &parts,
-        method: &method,
-        full_body_arc: &full_body_arc,
+        parts,
+        method,
+        full_body_arc,
         ipc: ipc.clone(),
         worker_id,
-        main_config,
-        method_str: &method_str,
+        main_config: Arc::clone(&main_config),
+        method_str: method_str.clone(),
         start,
-        user_agent: user_agent.as_deref(),
-        alt_svc,
+        user_agent: user_agent.clone(),
+        alt_svc: alt_svc.clone(),
         req_metrics: req_metrics
-            .as_ref()
-            .map(|rm| rm as &dyn BackendDispatchMetrics),
-        metrics,
+            .clone()
+            .map(|rm| Arc::new(rm) as Arc<dyn BackendDispatchMetrics>),
+        metrics: metrics.clone(),
         request_body_size,
-        body_slice: &body_slice,
+        body_slice,
         upstream_client_registry,
         client,
         #[cfg(feature = "mesh")]
@@ -416,7 +435,7 @@ where
     .await?;
 
     record_inline_phase(
-        metrics,
+        &metrics,
         WorkerInlineCpuPhase::BackendDispatch,
         backend_dispatch_started_at,
     );
@@ -431,7 +450,7 @@ where
     request_log(
         ipc,
         worker_id,
-        main_config,
+        &main_config,
         client_ip,
         &method_str,
         &path,

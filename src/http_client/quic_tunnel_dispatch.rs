@@ -12,7 +12,7 @@ pub fn is_quictunnel_url(url: &str) -> bool {
 pub async fn send_request_via_quic_tunnel(
     method: Method,
     url: &str,
-    headers: Option<&HeaderMap>,
+    headers: Option<HeaderMap>,
     body: Option<Bytes>,
     timeout: Option<Duration>,
 ) -> Result<HttpResponse> {

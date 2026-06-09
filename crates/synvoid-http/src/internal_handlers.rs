@@ -38,9 +38,9 @@ pub trait HttpDrainControl: Send + Sync + 'static {
 
 pub async fn handle_drain_request<D: HttpDrainControl>(
     _req: hyper::Request<hyper::body::Incoming>,
-    drain_state: &Arc<D>,
-    alt_svc: &Option<String>,
-    main_config: &Arc<MainConfig>,
+    drain_state: Arc<D>,
+    alt_svc: Option<String>,
+    main_config: Arc<MainConfig>,
 ) -> Result<BoxBodyResponse, hyper::Error> {
     let drain_id = current_timestamp_millis();
 
@@ -55,16 +55,16 @@ pub async fn handle_drain_request<D: HttpDrainControl>(
         status_code,
         body,
         "application/json",
-        alt_svc,
-        main_config,
+        &alt_svc,
+        main_config.as_ref(),
     ))
 }
 
 pub async fn handle_drain_status_request<D: HttpDrainControl>(
     _req: hyper::Request<hyper::body::Incoming>,
-    drain_state: &Arc<D>,
-    alt_svc: &Option<String>,
-    main_config: &Arc<MainConfig>,
+    drain_state: Arc<D>,
+    alt_svc: Option<String>,
+    main_config: Arc<MainConfig>,
 ) -> Result<BoxBodyResponse, hyper::Error> {
     let status = drain_state.get_status().await;
     let body = serde_json::to_string(&status).unwrap_or_else(|_| "{}".to_string());
@@ -73,15 +73,15 @@ pub async fn handle_drain_status_request<D: HttpDrainControl>(
         200,
         body,
         "application/json",
-        alt_svc,
-        main_config,
+        &alt_svc,
+        main_config.as_ref(),
     ))
 }
 
 pub async fn handle_health_request<D: HttpDrainControl>(
-    drain_state: &Option<Arc<D>>,
-    alt_svc: &Option<String>,
-    _main_config: &Arc<MainConfig>,
+    drain_state: Option<Arc<D>>,
+    alt_svc: Option<String>,
+    _main_config: Arc<MainConfig>,
 ) -> Result<BoxBodyResponse, hyper::Error> {
     let (status_code, body) = if let Some(state) = drain_state {
         let status = state.get_status().await;
@@ -126,9 +126,9 @@ pub async fn handle_health_request<D: HttpDrainControl>(
 }
 
 pub async fn handle_ready_request<D: HttpDrainControl>(
-    drain_state: &Option<Arc<D>>,
-    alt_svc: &Option<String>,
-    _main_config: &Arc<MainConfig>,
+    drain_state: Option<Arc<D>>,
+    alt_svc: Option<String>,
+    _main_config: Arc<MainConfig>,
 ) -> Result<BoxBodyResponse, hyper::Error> {
     let (status_code, body) = if let Some(state) = drain_state {
         let status = state.get_status().await;

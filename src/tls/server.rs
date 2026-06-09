@@ -948,9 +948,9 @@ impl HttpsServer {
                 let stream_body = StreamingWafBody::new(body, streaming_waf, client_ip);
                 let erased_body = ErasedBodyImpl::new(stream_body);
                 match send_request_streaming_generic(
-                    streaming_client.as_ref(),
+                    streaming_client.as_ref().clone(),
                     method.clone(),
-                    &upstream_target.url,
+                    upstream_target.url.clone(),
                     erased_body,
                     forward_headers,
                     Some(upstream_target.timeout),
@@ -1609,15 +1609,18 @@ impl HttpsServer {
                 // AppServer (Granian) backend dispatch
                 if matches!(target.backend_type, crate::router::BackendType::AppServer) {
                     if let Some(ref app_servers) = app_servers {
-                        let app_servers_read = app_servers.read().await;
-                        if let Some(supervisor) = app_servers_read.get(target.site_id.as_ref()) {
+                        let supervisor = {
+                            let app_servers_read = app_servers.read().await;
+                            app_servers_read.get(target.site_id.as_ref()).cloned()
+                        };
+                        if let Some(supervisor) = supervisor {
                             let body_bytes_for_appserver: Bytes = body_bytes.clone();
 
                             match supervisor
                                 .forward_request(
                                     method,
-                                    &parts.uri.to_string(),
-                                    &parts.headers,
+                                    parts.uri.to_string(),
+                                    parts.headers.clone(),
                                     body_bytes_for_appserver,
                                 )
                                 .await

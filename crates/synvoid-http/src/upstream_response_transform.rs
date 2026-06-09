@@ -17,17 +17,17 @@ pub struct TransformedUpstreamResponse {
 
 #[allow(clippy::too_many_arguments)]
 pub async fn transform_upstream_response<MarkImageRightsFn, MarkImageRightsFut>(
-    target: &RouteTarget,
-    router: &Arc<Router>,
-    path: &str,
-    site_id: &str,
+    target: RouteTarget,
+    router: Arc<Router>,
+    path: String,
+    site_id: String,
     mut headers: HeaderMap,
     body: Bytes,
     status: u16,
     content_type: Option<String>,
     last_modified: Option<String>,
-    accept_encoding: Option<&str>,
-    #[cfg(feature = "mesh")] mesh_transport: &Option<Arc<MeshTransportManager>>,
+    accept_encoding: Option<String>,
+    #[cfg(feature = "mesh")] mesh_transport: Option<Arc<MeshTransportManager>>,
     mark_image_rights: MarkImageRightsFn,
 ) -> TransformedUpstreamResponse
 where
@@ -42,7 +42,7 @@ where
                 let policy = CpuTaskPolicy::FailOpenWithLog;
                 match client
                     .request_wasm_transform(
-                        site_id,
+                        &site_id,
                         plugin_names,
                         status,
                         body.to_vec(),
@@ -75,10 +75,10 @@ where
     #[cfg(feature = "mesh")]
     if let Some(ref mt) = mesh_transport {
         let (minification, image_protection, image_rights_config, compression) = tokio::join!(
-            mt.get_minification_for_site(site_id),
-            mt.get_image_protection_for_site(site_id),
-            mt.get_image_rights_config_for_site(site_id),
-            mt.get_compression_for_site(site_id),
+            mt.get_minification_for_site(&site_id),
+            mt.get_image_protection_for_site(&site_id),
+            mt.get_image_rights_config_for_site(&site_id),
+            mt.get_compression_for_site(&site_id),
         );
 
         let config = crate::response_transform::ResponseTransformConfig::from_mesh_config(
@@ -102,19 +102,19 @@ where
                 .map(|ct| ct.starts_with("image/"))
                 .unwrap_or(false);
             if !is_image {
-                is_image = crate::response_transform::path_looks_like_image(path);
+                is_image = crate::response_transform::path_looks_like_image(&path);
             }
 
             if is_image
                 && body_len >= img_settings.min_size
                 && !crate::response_transform::is_whitelisted_path(
                     img_settings.whitelist_patterns,
-                    path,
+                    &path,
                 )
             {
                 body = mark_image_rights(
                     body,
-                    site_id.to_string(),
+                    site_id.clone(),
                     last_modified.clone(),
                     image_rights_config.clone(),
                 )
@@ -126,7 +126,7 @@ where
         if let Some(ref comp_settings) = config.compression {
             let (compressed_body, encoding) = crate::response_transform::apply_compression(
                 body.clone(),
-                accept_encoding,
+                accept_encoding.as_deref(),
                 comp_settings,
             );
 
@@ -171,19 +171,19 @@ where
             .map(|ct| ct.starts_with("image/"))
             .unwrap_or(false);
         if !is_image {
-            is_image = crate::response_transform::path_looks_like_image(path);
+            is_image = crate::response_transform::path_looks_like_image(&path);
         }
 
         if is_image
             && body_len >= img_settings.min_size
             && !crate::response_transform::is_whitelisted_path(
                 img_settings.whitelist_patterns,
-                path,
+                &path,
             )
         {
             body = mark_image_rights(
                 body,
-                site_id.to_string(),
+                site_id.clone(),
                 last_modified.clone(),
                 Some(image_rights_config.clone()),
             )
@@ -195,7 +195,7 @@ where
     if let Some(ref comp_settings) = config.compression {
         let (compressed_body, encoding) = crate::response_transform::apply_compression(
             body.clone(),
-            accept_encoding,
+            accept_encoding.as_deref(),
             comp_settings,
         );
 

@@ -24,15 +24,15 @@ pub async fn maybe_handle_fastcgi_or_php_backend(
     main_config: &Arc<MainConfig>,
 ) -> Option<Response<BoxBody<Bytes, Infallible>>> {
     synvoid_http::maybe_handle_fastcgi_or_php_backend(
-        target,
-        router,
-        site_id,
-        path,
-        method,
-        parts,
-        full_body_arc,
-        alt_svc,
-        main_config,
+        target.clone(),
+        Arc::clone(router),
+        site_id.to_string(),
+        path.to_string(),
+        method.clone(),
+        parts.clone(),
+        full_body_arc.clone(),
+        alt_svc.clone(),
+        Arc::clone(main_config),
         |status, message| {
             let site_theme = target
                 .site_config

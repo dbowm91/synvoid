@@ -21,14 +21,14 @@ use crate::{reason_phrase, response_builder::build_response_with_alt_svc};
 #[allow(clippy::too_many_arguments)]
 pub async fn handle_streaming_upstream_response(
     request_result: anyhow::Result<Response<Incoming>>,
-    target: &RouteTarget,
-    site_id: &str,
+    target: RouteTarget,
+    site_id: String,
     request_body_size: u64,
-    headers_to_filter: &AHashSet<http::header::HeaderName>,
+    headers_to_filter: AHashSet<http::header::HeaderName>,
     max_response_size: Option<usize>,
-    alt_svc: &Option<String>,
-    main_config: &Arc<MainConfig>,
-    metrics: &Option<Arc<WorkerMetrics>>,
+    alt_svc: Option<String>,
+    main_config: Arc<MainConfig>,
+    metrics: Option<Arc<WorkerMetrics>>,
     on_upstream_success: impl Fn(),
     on_upstream_failure: impl Fn(),
     on_error_egress: impl Fn(u64),
@@ -51,29 +51,29 @@ pub async fn handle_streaming_upstream_response(
                 .map(|v| v.contains("chunked"))
                 .unwrap_or(false);
 
-            if let Some(m) = metrics {
+            if let Some(m) = &metrics {
                 m.bandwidth
                     .record_proxied(request_body_size, body_len, &target.upstream);
                 m.bandwidth
-                    .record_site_proxied(site_id, request_body_size, body_len);
+                    .record_site_proxied(&site_id, request_body_size, body_len);
                 m.bandwidth.record_egress(
                     body_len,
                     BandwidthProtocol::Http,
                     EgressDirection::Proxied,
                 );
-                m.bandwidth.record_site_egress(site_id, body_len);
+                m.bandwidth.record_site_egress(&site_id, body_len);
             }
 
             let status = resp_parts.status.as_u16();
             let filtered_headers =
-                filter_response_headers_buf(&resp_parts.headers, headers_to_filter);
+                filter_response_headers_buf(&resp_parts.headers, &headers_to_filter);
             let mut builder = Response::builder().status(status);
             for (key, value) in filtered_headers.iter() {
                 if let Ok(v) = value.to_str() {
                     builder = builder.header(key.as_str(), v);
                 }
             }
-            if let Some(alt_svc) = alt_svc {
+            if let Some(alt_svc) = &alt_svc {
                 builder = builder.header("Alt-Svc", alt_svc.as_str());
             }
             let builder = apply_security_headers(
@@ -93,8 +93,8 @@ pub async fn handle_streaming_upstream_response(
                         502,
                         "Bad Gateway".to_string(),
                         "text/plain",
-                        alt_svc,
-                        main_config,
+                        &alt_svc,
+                        &main_config,
                     ));
                 }
 
@@ -112,8 +112,8 @@ pub async fn handle_streaming_upstream_response(
                             500,
                             reason_phrase(500).to_string(),
                             "text/plain",
-                            alt_svc,
-                            main_config,
+                            &alt_svc,
+                            &main_config,
                         )
                     }));
             }
@@ -126,19 +126,19 @@ pub async fn handle_streaming_upstream_response(
                             502,
                             "Bad Gateway".to_string(),
                             "text/plain",
-                            alt_svc,
-                            main_config,
+                            &alt_svc,
+                            &main_config,
                         ));
                     }
 
                     let body_len = body_bytes.len() as u64;
-                    if let Some(m) = metrics {
+                    if let Some(m) = &metrics {
                         m.bandwidth.record_egress(
                             body_len,
                             BandwidthProtocol::Http,
                             EgressDirection::Proxied,
                         );
-                        m.bandwidth.record_site_egress(site_id, body_len);
+                        m.bandwidth.record_site_egress(&site_id, body_len);
                     }
 
                     Ok(builder
@@ -148,8 +148,8 @@ pub async fn handle_streaming_upstream_response(
                                 500,
                                 reason_phrase(500).to_string(),
                                 "text/plain",
-                                alt_svc,
-                                main_config,
+                                &alt_svc,
+                                &main_config,
                             )
                         }))
                 }
@@ -162,8 +162,8 @@ pub async fn handle_streaming_upstream_response(
                                 500,
                                 reason_phrase(500).to_string(),
                                 "text/plain",
-                                alt_svc,
-                                main_config,
+                                &alt_svc,
+                                &main_config,
                             )
                         }))
                 }
@@ -178,8 +178,8 @@ pub async fn handle_streaming_upstream_response(
                 502,
                 error_body,
                 "text/plain",
-                alt_svc,
-                main_config,
+                &alt_svc,
+                &main_config,
             ))
         }
     }

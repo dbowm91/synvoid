@@ -1000,11 +1000,11 @@ impl synvoid_http::BufferedRequestWaf for WafCore {
         method: &str,
         path: &str,
         query: Option<&str>,
-        headers: &HeaderMap,
+        headers: &http::HeaderMap,
         body: Option<&[u8]>,
         ua: Option<&str>,
         ja4_hash: Option<&str>,
-        site_bot_config: Option<&synvoid_config::site::SiteBotConfig>,
+        site_bot_config: Option<&crate::config::site::SiteBotConfig>,
     ) -> synvoid_waf::WafDecision {
         WafCore::check_request_full(
             self,
@@ -1018,6 +1018,36 @@ impl synvoid_http::BufferedRequestWaf for WafCore {
             ua,
             ja4_hash,
             site_bot_config,
+            None,
+        )
+        .await
+    }
+
+    async fn check_request_full_owned(
+        self: Arc<Self>,
+        site_id: Option<String>,
+        ip: IpAddr,
+        method: String,
+        path: String,
+        query: Option<String>,
+        headers: http::HeaderMap,
+        body: Option<bytes::Bytes>,
+        ua: Option<String>,
+        ja4_hash: Option<String>,
+        site_bot_config: Option<crate::config::site::SiteBotConfig>,
+    ) -> synvoid_waf::WafDecision {
+        WafCore::check_request_full(
+            &self,
+            site_id.as_deref(),
+            ip,
+            &method,
+            &path,
+            query.as_deref(),
+            &headers,
+            body.as_deref(),
+            ua.as_deref(),
+            ja4_hash.as_deref(),
+            site_bot_config.as_ref(),
             None,
         )
         .await

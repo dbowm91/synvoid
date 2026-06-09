@@ -70,9 +70,9 @@ pub async fn resolve_full_request_waf_decision<
 >(
     decision: WafDecision,
     client_ip: IpAddr,
-    http_config: &HttpConfig,
-    alt_svc: &Option<String>,
-    main_config: &Arc<MainConfig>,
+    http_config: HttpConfig,
+    alt_svc: Option<String>,
+    main_config: Arc<MainConfig>,
     mut on_drop: DropFn,
     mut on_log: LogFn,
     mut on_blocked: BlockedFn,
@@ -126,8 +126,8 @@ where
                     429,
                     "Too many requests".to_string(),
                     "text/plain",
-                    alt_svc,
-                    main_config,
+                    &alt_svc,
+                    &main_config,
                 ));
             }
             record_stall_start();
@@ -141,8 +141,8 @@ where
                         408,
                         "Request timeout".to_string(),
                         "text/plain",
-                        alt_svc,
-                        main_config,
+                        &alt_svc,
+                        &main_config,
                     ))
                 }
             }
@@ -156,8 +156,8 @@ where
                 status,
                 body,
                 "text/html",
-                alt_svc,
-                main_config,
+                &alt_svc,
+                &main_config,
             ))
         }
         WafDecision::Challenge(_type, html) => {
@@ -167,8 +167,8 @@ where
                 200,
                 html,
                 "text/html",
-                alt_svc,
-                main_config,
+                &alt_svc,
+                &main_config,
             ))
         }
         WafDecision::ChallengeWithCookie {
@@ -190,8 +190,8 @@ where
                 html,
                 "text/html",
                 &cookie,
-                alt_svc,
-                main_config,
+                &alt_svc,
+                &main_config,
             ))
         }
         WafDecision::Tarpit(tar_path) => {
@@ -203,8 +203,8 @@ where
                 200,
                 html,
                 "text/html",
-                alt_svc,
-                main_config,
+                &alt_svc,
+                &main_config,
             ))
         }
         WafDecision::Pass => FullWafDecisionOutcome::Pass,

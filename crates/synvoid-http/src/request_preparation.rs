@@ -54,17 +54,17 @@ pub async fn prepare_request_preflight<W, LogFn, DropFn>(
     req: hyper::Request<hyper::body::Incoming>,
     client_ip: IpAddr,
     local_addr: Option<SocketAddr>,
-    router: &Arc<Router>,
-    waf: &W,
-    alt_svc: &Option<String>,
-    main_config: &Arc<MainConfig>,
+    router: Arc<Router>,
+    waf: Arc<W>,
+    alt_svc: Option<String>,
+    main_config: Arc<MainConfig>,
     mut on_log: LogFn,
     mut on_drop: DropFn,
 ) -> Result<RequestPreflightOutcome, hyper::Error>
 where
-    W: BufferedRequestWaf,
-    LogFn: FnMut(u16, &str, bool, &str, &str, Option<&str>),
-    DropFn: FnMut(),
+    W: BufferedRequestWaf + Send + Sync + 'static,
+    LogFn: FnMut(u16, &str, bool, &str, &str, Option<&str>) + Send + 'static,
+    DropFn: FnMut() + Send + 'static,
 {
     let mut req = req;
     let is_ws_upgrade = validate_websocket_upgrade(req.headers());
@@ -77,7 +77,7 @@ where
     let (parts, body) = req.into_parts();
     let (method, path, host, user_agent, cookies) = extract_request_metadata(&parts);
     let cookies_ref = cookies.as_deref();
-    let skip_waf = should_skip_waf_from_trust_cookie(waf, client_ip, cookies_ref);
+    let skip_waf = should_skip_waf_from_trust_cookie(waf.as_ref(), client_ip, cookies_ref);
     if skip_waf {
         tracing::debug!(
             "Bypassing WAF check due to valid trust token for {}",
@@ -85,7 +85,7 @@ where
         );
     }
 
-    let early_decision = early_waf_decision(waf, client_ip, &path, cookies_ref, skip_waf);
+    let early_decision = early_waf_decision(waf.as_ref(), client_ip, &path, cookies_ref, skip_waf);
 
     match early_decision {
         synvoid_proxy::WafDecision::Drop => {
@@ -131,8 +131,8 @@ where
                     html,
                     "text/html",
                     &cookie,
-                    alt_svc,
-                    main_config,
+                    &alt_svc,
+                    main_config.as_ref(),
                 ),
             ));
         }
@@ -150,8 +150,8 @@ where
                     200,
                     html,
                     "text/html",
-                    alt_svc,
-                    main_config,
+                    &alt_svc,
+                    main_config.as_ref(),
                 ),
             ));
         }
@@ -170,8 +170,8 @@ where
                     status,
                     body,
                     "text/html",
-                    alt_svc,
-                    main_config,
+                    &alt_svc,
+                    main_config.as_ref(),
                 ),
             ));
         }
@@ -198,8 +198,8 @@ where
                     404,
                     "Not Found".to_string(),
                     "text/plain",
-                    alt_svc,
-                    main_config,
+                    &alt_svc,
+                    main_config.as_ref(),
                 ),
             ));
         }
@@ -218,8 +218,8 @@ where
                     500,
                     crate::response_builder::reason_phrase(500).to_string(),
                     "text/plain",
-                    alt_svc,
-                    main_config,
+                    &alt_svc,
+                    main_config.as_ref(),
                 ),
             ));
         }
@@ -292,6 +292,22 @@ pub trait BufferedRequestWaf:
         ja4_hash: Option<&str>,
         site_bot_config: Option<&synvoid_config::site::SiteBotConfig>,
     ) -> synvoid_proxy::WafDecision;
+
+    async fn check_request_full_owned(
+        self: Arc<Self>,
+        site_id: Option<String>,
+        ip: IpAddr,
+        method: String,
+        path: String,
+        query: Option<String>,
+        headers: http::HeaderMap,
+        body: Option<bytes::Bytes>,
+        ua: Option<String>,
+        ja4_hash: Option<String>,
+        site_bot_config: Option<synvoid_config::site::SiteBotConfig>,
+    ) -> synvoid_proxy::WafDecision
+    where
+        Self: Sync;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -306,17 +322,17 @@ pub async fn finalize_request_preparation<W, LogFn>(
     body: hyper::body::Incoming,
     client_ip: IpAddr,
     host: String,
-    waf: &W,
+    waf: Arc<W>,
     honeypot_ban_duration_secs: u64,
-    main_config: &Arc<MainConfig>,
-    http_config: &HttpConfig,
-    metrics: &Option<Arc<WorkerMetrics>>,
-    alt_svc: &Option<String>,
+    main_config: Arc<MainConfig>,
+    http_config: HttpConfig,
+    metrics: Option<Arc<WorkerMetrics>>,
+    alt_svc: Option<String>,
     mut on_log: LogFn,
 ) -> Result<RequestPreparationOutcome, hyper::Error>
 where
-    W: BufferedRequestWaf,
-    LogFn: FnMut(u16, bool),
+    W: BufferedRequestWaf + Send + Sync + 'static,
+    LogFn: FnMut(u16, bool) + Send + 'static,
 {
     let content_length: Option<usize> = parts
         .headers
@@ -326,7 +342,7 @@ where
 
     let (full_body, request_body_size) = match collect_and_scan_request_body(
         body,
-        waf,
+        waf.as_ref(),
         client_ip,
         content_length,
         http_config.max_streaming_body_size,
@@ -340,8 +356,8 @@ where
                     403,
                     "Request blocked by WAF".to_string(),
                     "text/plain",
-                    alt_svc,
-                    main_config,
+                    &alt_svc,
+                    main_config.as_ref(),
                 ),
             ));
         }
@@ -351,8 +367,8 @@ where
                     413,
                     "Request body too large".to_string(),
                     "text/plain",
-                    alt_svc,
-                    main_config,
+                    &alt_svc,
+                    main_config.as_ref(),
                 ),
             ));
         }
@@ -376,11 +392,11 @@ where
     if let Some(response) = maybe_handle_challenge_paths(
         &path,
         client_ip,
-        waf,
+        waf.as_ref(),
         honeypot_ban_duration_secs,
         &parts,
-        main_config,
-        alt_svc,
+        main_config.as_ref(),
+        &alt_svc,
         &mut on_log,
     ) {
         return Ok(RequestPreparationOutcome::Respond(response));
@@ -404,13 +420,13 @@ where
 pub async fn prepare_request_after_preflight<W, OnLimitLogFn, FinalLogFn, PassFn, PassFut, DropFn>(
     preflight: RequestPreflight,
     client_ip: IpAddr,
-    router: &Arc<Router>,
-    waf: &W,
-    main_config: &Arc<MainConfig>,
-    http_config: &HttpConfig,
-    metrics: &Option<Arc<WorkerMetrics>>,
-    alt_svc: &Option<String>,
-    conn_guard: Option<&ConnectionTokenGuard>,
+    router: Arc<Router>,
+    waf: Arc<W>,
+    main_config: Arc<MainConfig>,
+    http_config: HttpConfig,
+    metrics: Option<Arc<WorkerMetrics>>,
+    alt_svc: Option<String>,
+    conn_guard: Option<ConnectionTokenGuard>,
     start: std::time::Instant,
     mut on_limit_log: OnLimitLogFn,
     on_final_log: FinalLogFn,
@@ -418,12 +434,13 @@ pub async fn prepare_request_after_preflight<W, OnLimitLogFn, FinalLogFn, PassFn
     request_drop: DropFn,
 ) -> Result<RequestPreparationOutcome, hyper::Error>
 where
-    W: BufferedRequestWaf,
-    OnLimitLogFn: FnMut(u16, u64, &str, &str, &str, Option<&str>, bool),
-    FinalLogFn: FnMut(u16, bool),
-    PassFn: FnOnce(hyper::body::Incoming) -> PassFut,
-    PassFut: Future<Output = Result<StreamingRequestFastPathOutcome, hyper::Error>>,
-    DropFn: FnOnce(),
+    W: BufferedRequestWaf + Send + Sync + 'static,
+    OnLimitLogFn: FnMut(u16, u64, &str, &str, &str, Option<&str>, bool) + Send + 'static,
+    FinalLogFn: FnMut(u16, bool) + Send + 'static,
+    PassFn: FnOnce(hyper::body::Incoming) -> PassFut + Send + 'static,
+    PassFut:
+        Future<Output = Result<StreamingRequestFastPathOutcome, hyper::Error>> + Send + 'static,
+    DropFn: FnOnce() + Send + 'static,
 {
     let RequestPreflight {
         on_upgrade,
@@ -473,62 +490,87 @@ where
                     503,
                     "Too Many Connections".to_string(),
                     "application/json",
-                    alt_svc,
-                    main_config,
+                    &alt_svc,
+                    main_config.as_ref(),
                 ),
             ));
         }
     }
 
-    let check_request_full = || {
-        let site_id = site_id.clone();
-        let method = method.clone();
-        let path = path.clone();
-        let parts = parts.clone();
-        let target = target.clone();
-        let user_agent = user_agent.clone();
+    let check_site_id = site_id.clone();
+    let check_method = method.clone();
+    let check_path = path.clone();
+    let check_parts = parts.clone();
+    let check_target = target.clone();
+    let check_user_agent = user_agent.clone();
+    let check_waf = Arc::clone(&waf);
+    let check_request_full = move || {
+        let site_id = check_site_id.clone();
+        let method = check_method.clone();
+        let path = check_path.clone();
+        let parts = check_parts.clone();
+        let target = check_target.clone();
+        let user_agent = check_user_agent.clone();
+        let waf = Arc::clone(&check_waf);
         async move {
-            waf.check_request_full(
-                Some(site_id.as_str()),
+            waf.check_request_full_owned(
+                Some(site_id),
                 client_ip,
-                method.as_str(),
-                &path,
-                parts.uri.query(),
-                &parts.headers,
+                method.to_string(),
+                path,
+                parts.uri.query().map(|s| s.to_string()),
+                parts.headers,
                 None,
-                user_agent.as_deref(),
+                user_agent,
                 None,
-                Some(&target.site_config.bot),
+                Some(target.site_config.bot.clone()),
             )
             .await
         }
     };
 
-    let render_block_page =
-        |status: u16, message: &str| waf.render_page_with_theme(status, Some(message), None);
+    let render_block_page = {
+        let waf = Arc::clone(&waf);
+        move |status: u16, message: &str| waf.render_page_with_theme(status, Some(message), None)
+    };
 
-    let stream_tarpit = |path: &str, user_agent: Option<&str>| waf.stream_tarpit(path, user_agent);
+    let stream_tarpit = {
+        let waf = Arc::clone(&waf);
+        move |path: &str, user_agent: Option<&str>| waf.stream_tarpit(path, user_agent)
+    };
 
     let body = match maybe_handle_streaming_request_fast_path(
         &target,
-        router,
+        &router,
         skip_waf,
         &parts,
         body,
         check_request_full,
         handle_pass,
-        |decision| async {
-            maybe_handle_streaming_waf_decision(
-                decision,
-                request_drop,
-                render_block_page,
-                stream_tarpit,
-                http_config,
-                user_agent.as_deref(),
-                alt_svc,
-                main_config,
-            )
-            .await
+        {
+            let http_config = http_config.clone();
+            let user_agent = user_agent.clone();
+            let alt_svc = alt_svc.clone();
+            let main_config = Arc::clone(&main_config);
+            move |decision| {
+                let http_config = http_config.clone();
+                let user_agent = user_agent.clone();
+                let alt_svc = alt_svc.clone();
+                let main_config = Arc::clone(&main_config);
+                async move {
+                    maybe_handle_streaming_waf_decision(
+                        decision,
+                        request_drop,
+                        render_block_page,
+                        stream_tarpit,
+                        &http_config,
+                        user_agent.as_deref(),
+                        &alt_svc,
+                        main_config.as_ref(),
+                    )
+                    .await
+                }
+            }
         },
     )
     .await?
@@ -550,7 +592,7 @@ where
         body,
         client_ip,
         host,
-        waf,
+        waf.clone(),
         waf.honeypot_ban_duration_secs(),
         main_config,
         http_config,
@@ -575,13 +617,13 @@ pub async fn prepare_request_before_buffered_waf<
     req: hyper::Request<hyper::body::Incoming>,
     client_ip: IpAddr,
     local_addr: Option<SocketAddr>,
-    router: &Arc<Router>,
-    waf: &W,
-    alt_svc: &Option<String>,
-    main_config: &Arc<MainConfig>,
-    http_config: &HttpConfig,
-    metrics: &Option<Arc<WorkerMetrics>>,
-    conn_guard: Option<&ConnectionTokenGuard>,
+    router: Arc<Router>,
+    waf: Arc<W>,
+    alt_svc: Option<String>,
+    main_config: Arc<MainConfig>,
+    http_config: HttpConfig,
+    metrics: Option<Arc<WorkerMetrics>>,
+    conn_guard: Option<ConnectionTokenGuard>,
     start: std::time::Instant,
     mut preflight_on_log: PreflightLogFn,
     mut preflight_request_drop: PreflightDropFn,
@@ -591,15 +633,21 @@ pub async fn prepare_request_before_buffered_waf<
     request_drop_after_preflight: DropFn,
 ) -> Result<RequestPreparationOutcome, hyper::Error>
 where
-    W: BufferedRequestWaf,
-    PreflightLogFn: FnMut(u16, &str, bool, &str, &str, Option<&str>),
-    PreflightDropFn: FnMut(),
-    OnLimitLogFn: FnMut(u16, u64, &str, &str, &str, Option<&str>, bool),
-    FinalLogFn: FnMut(u16, bool),
-    PassFn: FnOnce(hyper::body::Incoming) -> PassFut,
-    PassFut: Future<Output = Result<StreamingRequestFastPathOutcome, hyper::Error>>,
-    DropFn: FnOnce(),
+    W: BufferedRequestWaf + Send + Sync + 'static,
+    PreflightLogFn: FnMut(u16, &str, bool, &str, &str, Option<&str>) + Send + 'static,
+    PreflightDropFn: FnMut() + Send + 'static,
+    OnLimitLogFn: FnMut(u16, u64, &str, &str, &str, Option<&str>, bool) + Send + 'static,
+    FinalLogFn: FnMut(u16, bool) + Send + 'static,
+    PassFn: FnOnce(hyper::body::Incoming) -> PassFut + Send + 'static,
+    PassFut:
+        Future<Output = Result<StreamingRequestFastPathOutcome, hyper::Error>> + Send + 'static,
+    DropFn: FnOnce() + Send + 'static,
 {
+    let router_for_after = Arc::clone(&router);
+    let waf_for_after = Arc::clone(&waf);
+    let main_config_for_after = Arc::clone(&main_config);
+    let alt_svc_for_after = alt_svc.clone();
+
     let preflight = match prepare_request_preflight(
         req,
         client_ip,
@@ -608,10 +656,10 @@ where
         waf,
         alt_svc,
         main_config,
-        |status, site_id, bypassed, method, path, user_agent| {
+        move |status, site_id, bypassed, method, path, user_agent| {
             preflight_on_log(status, site_id, bypassed, method, path, user_agent);
         },
-        || {
+        move || {
             preflight_request_drop();
         },
     )
@@ -626,12 +674,12 @@ where
     let outcome = prepare_request_after_preflight(
         preflight,
         client_ip,
-        router,
-        waf,
-        main_config,
+        router_for_after,
+        waf_for_after,
+        main_config_for_after,
         http_config,
         metrics,
-        alt_svc,
+        alt_svc_for_after,
         conn_guard,
         start,
         on_limit_log,

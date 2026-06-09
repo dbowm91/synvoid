@@ -23,11 +23,11 @@ pub async fn maybe_handle_websocket_upgrade<
     is_appserver: bool,
     appserver_socket_path: Option<PathBuf>,
     target: TTarget,
-    upstream: &str,
-    path: &str,
-    waf: &Arc<WafT>,
+    upstream: String,
+    path: String,
+    waf: Arc<WafT>,
     client_ip: IpAddr,
-    headers: &http::HeaderMap,
+    headers: http::HeaderMap,
     ws_config: SiteWebSocketConfig,
     on_appserver: AppServerFn,
     on_tunnel: TunnelFn,
@@ -61,18 +61,18 @@ where
 {
     let upgraded = on_upgrade?;
     let target_clone = target.clone();
-    let path_clone = path.to_string();
-    let waf_clone = waf.clone();
+    let waf_clone = Arc::clone(&waf);
 
     tracing::info!(
         client_ip = %client_ip,
-        path = %path_clone,
+        path = %path,
         upstream = %upstream,
         "WebSocket upgrade request accepted"
     );
 
     if is_appserver {
         if let Some(socket_path) = appserver_socket_path {
+            let path_clone = path.clone();
             tokio::spawn(async move {
                 on_appserver(
                     upgraded,
@@ -85,7 +85,7 @@ where
                 )
                 .await;
             });
-            return Some(Ok(build_websocket_response(headers)));
+            return Some(Ok(build_websocket_response(&headers)));
         }
     }
 
@@ -93,7 +93,7 @@ where
         on_tunnel(
             upgraded,
             target_clone,
-            path_clone,
+            path,
             waf_clone,
             client_ip,
             ws_config,
@@ -101,5 +101,5 @@ where
         .await;
     });
 
-    Some(Ok(build_websocket_response(headers)))
+    Some(Ok(build_websocket_response(&headers)))
 }

@@ -13,29 +13,33 @@ use synvoid_config::MainConfig;
 use synvoid_proxy::{BackendType, RouteTarget};
 
 pub async fn maybe_handle_app_server_backend(
-    app_servers: &Option<Arc<RwLock<HashMap<String, Arc<GranianSupervisor>>>>>,
-    target: &RouteTarget,
-    site_id: &str,
-    path: &str,
-    method: &http::Method,
-    parts: &http::request::Parts,
-    full_body_arc: &Arc<Bytes>,
-    alt_svc: &Option<String>,
-    main_config: &Arc<MainConfig>,
+    app_servers: Option<Arc<RwLock<HashMap<String, Arc<GranianSupervisor>>>>>,
+    target: RouteTarget,
+    site_id: String,
+    path: String,
+    method: http::Method,
+    parts: http::request::Parts,
+    full_body_arc: Arc<Bytes>,
+    alt_svc: Option<String>,
+    main_config: Arc<MainConfig>,
 ) -> Option<Response<BoxBody<Bytes, Infallible>>> {
     if !matches!(target.backend_type, BackendType::AppServer) {
         return None;
     }
 
     if let Some(app_servers) = app_servers {
-        let app_servers_read = app_servers.read().await;
-        if let Some(supervisor) = app_servers_read.get(site_id) {
+        let supervisor = {
+            let app_servers_read = app_servers.read().await;
+            app_servers_read.get(&site_id).cloned()
+        };
+
+        if let Some(supervisor) = supervisor {
             let body_bytes_for_appserver: Bytes = full_body_arc.as_ref().clone();
             match supervisor
                 .forward_request(
-                    method.clone(),
-                    &parts.uri.to_string(),
-                    &parts.headers,
+                    method,
+                    parts.uri.to_string(),
+                    parts.headers.clone(),
                     body_bytes_for_appserver,
                 )
                 .await
@@ -52,8 +56,8 @@ pub async fn maybe_handle_app_server_backend(
                         502,
                         format!("Backend Error: {}", e),
                         "text/plain",
-                        alt_svc,
-                        main_config,
+                        &alt_svc,
+                        &main_config,
                     ));
                 }
             }
@@ -68,7 +72,7 @@ pub async fn maybe_handle_app_server_backend(
         502,
         "Backend misconfigured: app server not available".to_string(),
         "text/plain",
-        alt_svc,
-        main_config,
+        &alt_svc,
+        &main_config,
     ))
 }

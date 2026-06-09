@@ -172,9 +172,9 @@ where
         let method = method.clone();
         async move {
             send_request_streaming_generic(
-                streaming_client.as_ref(),
+                streaming_client.as_ref().clone(),
                 method,
-                &upstream_url,
+                upstream_url,
                 erased_body,
                 forward_header_map,
                 upstream_timeout,

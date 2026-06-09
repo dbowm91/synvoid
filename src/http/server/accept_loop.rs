@@ -1,5 +1,123 @@
 use super::*;
 
+struct HttpConnectionService {
+    client_addr: SocketAddr,
+    local_addr: Option<SocketAddr>,
+    router: Arc<Router>,
+    waf: Arc<WafCore>,
+    client: HttpClient,
+    alt_svc: Option<String>,
+    main_config: Arc<MainConfig>,
+    drain_state: Option<Arc<WorkerDrainState>>,
+    http_config: HttpConfig,
+    #[cfg(feature = "mesh")]
+    mesh_config: Option<Arc<MeshConfig>>,
+    #[cfg(feature = "mesh")]
+    mesh_transport: Option<Arc<MeshTransportManager>>,
+    metrics: Option<Arc<WorkerMetrics>>,
+    http_conn: Arc<HttpConnection>,
+    ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
+    worker_id: Option<crate::process::ipc::WorkerId>,
+    serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
+    connection_limit: Arc<Semaphore>,
+    app_servers: Option<Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>>,
+    #[cfg(feature = "mesh")]
+    mesh_backend_pool: Option<Arc<MeshBackendPool>>,
+    upstream_client_registry: Arc<UpstreamClientRegistry>,
+    erased_http_client: ErasedHttpClient,
+}
+
+impl hyper::service::Service<hyper::Request<hyper::body::Incoming>> for HttpConnectionService {
+    type Response = Response<BoxBody<Bytes, Infallible>>;
+    type Error = hyper::Error;
+    type Future = std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>,
+    >;
+
+    fn call(&self, req: hyper::Request<hyper::body::Incoming>) -> Self::Future {
+        let client_addr = self.client_addr;
+        let local_addr = self.local_addr;
+        let router = self.router.clone();
+        let waf = self.waf.clone();
+        let client = self.client.clone();
+        let alt_svc = self.alt_svc.clone();
+        let main_config = self.main_config.clone();
+        let drain_state = self.drain_state.clone();
+        let http_config = self.http_config.clone();
+        #[cfg(feature = "mesh")]
+        let mesh_config = self.mesh_config.clone();
+        #[cfg(feature = "mesh")]
+        let mesh_transport = self.mesh_transport.clone();
+        let metrics = self.metrics.clone();
+        let http_conn = self.http_conn.clone();
+        let ipc = self.ipc.clone();
+        let worker_id = self.worker_id;
+        let serverless_manager = self.serverless_manager.clone();
+        let connection_limit = self.connection_limit.clone();
+        let app_servers = self.app_servers.clone();
+        #[cfg(feature = "mesh")]
+        let mesh_backend_pool = self.mesh_backend_pool.clone();
+        let upstream_client_registry = self.upstream_client_registry.clone();
+        let erased_http_client = self.erased_http_client.clone();
+
+        Box::pin(async move {
+            #[cfg(feature = "mesh")]
+            {
+                super::HttpServer::handle_request(
+                    req,
+                    client_addr,
+                    local_addr,
+                    router,
+                    waf,
+                    client,
+                    alt_svc,
+                    main_config,
+                    drain_state,
+                    http_config,
+                    mesh_config,
+                    mesh_transport,
+                    metrics,
+                    http_conn,
+                    ipc,
+                    worker_id,
+                    serverless_manager,
+                    connection_limit,
+                    app_servers,
+                    mesh_backend_pool,
+                    upstream_client_registry,
+                    erased_http_client,
+                )
+                .await
+            }
+            #[cfg(not(feature = "mesh"))]
+            {
+                super::HttpServer::handle_request(
+                    req,
+                    client_addr,
+                    local_addr,
+                    router,
+                    waf,
+                    client,
+                    alt_svc,
+                    main_config,
+                    drain_state,
+                    http_config,
+                    metrics,
+                    http_conn,
+                    ipc,
+                    worker_id,
+                    serverless_manager,
+                    connection_limit,
+                    app_servers,
+                    upstream_client_registry,
+                    erased_http_client,
+                )
+                .await
+            }
+        })
+    }
+}
+
 pub(super) async fn run_accept_loop(
     addr: SocketAddr,
     mut shutdown_rx: broadcast::Receiver<()>,
@@ -100,7 +218,6 @@ pub(super) async fn run_accept_loop(
                         };
 
                         let http_conn = Arc::new(HttpConnection::new(stream_for_conn, initial_bytes));
-                        let http_conn_clone = http_conn.clone();
 
                         let io = match http_conn.take_stream() {
                             Some(io) => io,
@@ -110,53 +227,47 @@ pub(super) async fn run_accept_loop(
                             }
                         };
 
-                        let conn = hyper::server::conn::http1::Builder::new()
-                            .header_read_timeout(header_read_timeout)
-                            .max_headers(max_headers)
-                            .max_buf_size(max_buf_size)
-                            .serve_connection(io, hyper::service::service_fn(move |req| {
-                                let router = router.clone();
-                                let waf = waf.clone();
-                                let client = client.clone();
-                                let alt_svc = alt_svc.clone();
-                                let main_config = main_config.clone();
-                                let local_addr = local_addr;
-                                let drain_state = drain_state.clone();
-                                let http_config = http_config.clone();
-                                #[cfg(feature = "mesh")]
-                                let mesh_config = mesh_config.clone();
-                                #[cfg(feature = "mesh")]
-                                let mesh_transport = mesh_transport.clone();
-                                let metrics = metrics.clone();
-                                let http_conn = http_conn_clone.clone();
-                                let ipc_for_request = ipc.clone();
-                                let worker_id_for_request = worker_id;
-                                let serverless_manager = serverless_manager.clone();
-                                let connection_limit = connection_limit.clone();
-                                let app_servers = app_servers.clone();
-                                #[cfg(feature = "mesh")]
-                                let mesh_backend_pool = mesh_backend_pool.clone();
-                                let upstream_client_registry = upstream_client_registry.clone();
-                                let erased_http_client = erased_http_client.clone();
-                                async move {
-                                    #[cfg(feature = "mesh")]
-                                    {
-                                        super::HttpServer::handle_request(req, client_addr, local_addr, router, waf, client, alt_svc, main_config, drain_state, http_config, mesh_config, mesh_transport, metrics, http_conn, ipc_for_request, worker_id_for_request, serverless_manager, connection_limit, app_servers, mesh_backend_pool, upstream_client_registry, erased_http_client).await
-                                    }
-                                    #[cfg(not(feature = "mesh"))]
-                                    {
-                                        super::HttpServer::handle_request(req, client_addr, local_addr, router, waf, client, alt_svc, main_config, drain_state, http_config, metrics, http_conn, ipc_for_request, worker_id_for_request, serverless_manager, connection_limit, app_servers, upstream_client_registry, erased_http_client).await
-                                    }
-                                }
-                            }))
-                            .with_upgrades();
-
+                        let http_conn_for_task = http_conn.clone();
                         tokio::spawn(async move {
+                            let http_conn_for_service = http_conn_for_task.clone();
+                            let service = HttpConnectionService {
+                                client_addr,
+                                local_addr,
+                                router,
+                                waf,
+                                client,
+                                alt_svc,
+                                main_config,
+                                drain_state,
+                                http_config,
+                                #[cfg(feature = "mesh")]
+                                mesh_config,
+                                #[cfg(feature = "mesh")]
+                                mesh_transport,
+                                metrics,
+                                http_conn: http_conn_for_service,
+                                ipc,
+                                worker_id,
+                                serverless_manager,
+                                connection_limit,
+                                app_servers,
+                                #[cfg(feature = "mesh")]
+                                mesh_backend_pool,
+                                upstream_client_registry,
+                                erased_http_client,
+                            };
+                            let conn = hyper::server::conn::http1::Builder::new()
+                                .header_read_timeout(header_read_timeout)
+                                .max_headers(max_headers)
+                                .max_buf_size(max_buf_size)
+                                .serve_connection(io, service)
+                                .with_upgrades();
+
                             if let Err(e) = conn.await {
                                 tracing::debug!("HTTP connection error: {}", e);
                             }
-                            if http_conn.should_drop() {
-                                if let Some(stream) = http_conn.take_stream() {
+                            if http_conn_for_task.should_drop() {
+                                if let Some(stream) = http_conn_for_task.take_stream() {
                                     drop(stream);
                                 }
                             }

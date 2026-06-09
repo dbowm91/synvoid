@@ -27,7 +27,7 @@ pub fn maybe_handle_wasm_request_filter(
         .plugin_manager()
         .and_then(|pm| pm.downcast_ref::<crate::plugin::PluginManager>());
     synvoid_http::maybe_handle_wasm_request_filter(
-        pm.map(|pm| pm as &dyn synvoid_http::WasmFilterBackend),
+        pm.map(|pm| pm as &(dyn synvoid_http::WasmFilterBackend + Send + Sync)),
         target,
         path,
         method,

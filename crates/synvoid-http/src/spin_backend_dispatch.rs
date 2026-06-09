@@ -16,19 +16,19 @@ use synvoid_plugin_runtime::spin::handler::{
 use synvoid_proxy::{BackendType, RouteTarget};
 
 pub async fn maybe_handle_spin_backend(
-    target: &RouteTarget,
-    site_id: &str,
-    path: &str,
-    parts: &http::request::Parts,
-    full_body_arc: &Arc<Bytes>,
+    target: RouteTarget,
+    site_id: String,
+    path: String,
+    parts: http::request::Parts,
+    full_body_arc: Arc<Bytes>,
     ipc: Option<Arc<tokio::sync::Mutex<synvoid_ipc::AsyncIpcStream>>>,
     worker_id: Option<synvoid_ipc::WorkerId>,
-    main_config: &Arc<MainConfig>,
+    main_config: Arc<MainConfig>,
     client_ip: IpAddr,
-    method_str: &str,
+    method_str: String,
     start: Instant,
-    user_agent: Option<&str>,
-    alt_svc: &Option<String>,
+    user_agent: Option<String>,
+    alt_svc: Option<String>,
     on_log: impl Fn(
         Option<Arc<tokio::sync::Mutex<synvoid_ipc::AsyncIpcStream>>>,
         Option<synvoid_ipc::WorkerId>,
@@ -56,8 +56,8 @@ pub async fn maybe_handle_spin_backend(
             502,
             "Spin backend misconfigured: no spin_app_name".to_string(),
             "text/plain",
-            alt_svc,
-            main_config,
+            &alt_svc,
+            &main_config,
         ));
     };
 
@@ -72,14 +72,14 @@ pub async fn maybe_handle_spin_backend(
             502,
             format!("Spin app '{}' not found", spin_app_name),
             "text/plain",
-            alt_svc,
-            main_config,
+            &alt_svc,
+            &main_config,
         ));
     };
 
     let handler = SpinHttpHandler::new(runtime);
-    let spin_request = SpinRequest::new(parts.method.clone(), path.to_string())
-        .with_headers(parts.headers.clone())
+    let spin_request = SpinRequest::new(parts.method, path.clone())
+        .with_headers(parts.headers)
         .with_env(HashMap::new());
 
     let body_for_spin = full_body_arc.as_ref().clone();
@@ -95,14 +95,14 @@ pub async fn maybe_handle_spin_backend(
             on_log(
                 ipc,
                 worker_id,
-                main_config,
+                &main_config,
                 client_ip,
-                method_str,
-                path,
+                &method_str,
+                &path,
                 status.as_u16(),
                 start.elapsed().as_millis() as u64,
-                site_id,
-                user_agent,
+                &site_id,
+                user_agent.as_deref(),
                 false,
             );
             let mut response_builder = Response::builder().status(status);
@@ -122,8 +122,8 @@ pub async fn maybe_handle_spin_backend(
                 502,
                 format!("Spin Error: {}", e),
                 "text/plain",
-                alt_svc,
-                main_config,
+                &alt_svc,
+                &main_config,
             ))
         }
     }

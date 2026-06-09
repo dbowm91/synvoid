@@ -42,10 +42,10 @@ pub async fn maybe_handle_special_request_paths(
     req: hyper::Request<hyper::body::Incoming>,
     path: &str,
     client_ip: IpAddr,
-    alt_svc: &Option<String>,
-    main_config: &Arc<MainConfig>,
-    mesh_config: &Option<Arc<MeshConfig>>,
-    mesh_transport: &Option<Arc<MeshTransportManager>>,
+    alt_svc: Option<String>,
+    main_config: Arc<MainConfig>,
+    mesh_config: Option<Arc<MeshConfig>>,
+    mesh_transport: Option<Arc<MeshTransportManager>>,
 ) -> Result<SpecialRequestDispatch, hyper::Error> {
     if should_handle_key_exchange_path(path) {
         if let Some(ref mesh_cfg) = mesh_config {
@@ -65,8 +65,8 @@ pub async fn maybe_handle_special_request_paths(
                                 400,
                                 format!("Failed to read request body: {}", e),
                                 "application/json",
-                                alt_svc,
-                                main_config,
+                                &alt_svc,
+                                main_config.as_ref(),
                             ),
                         ));
                     }
@@ -130,8 +130,8 @@ pub async fn maybe_handle_special_request_paths(
                         response.0.as_u16(),
                         response.1,
                         "application/json",
-                        alt_svc,
-                        main_config,
+                        &alt_svc,
+                        main_config.as_ref(),
                     ),
                 ));
             }
