@@ -911,6 +911,11 @@ pub struct MeshDhtConfig {
     /// even if `require_signed_record_push` is false.
     #[serde(default)]
     pub unsigned_record_push_compat_until_unix: Option<u64>,
+    /// When false, Raft attestations with protocol_version < 2 (without value_hash)
+    /// are rejected. Set to true during migration from v1 to v2 attestations.
+    /// Default: false (v1 attestations rejected).
+    #[serde(default)]
+    pub allow_v1_raft_attestations: bool,
 }
 
 fn default_announce_rate_limit_max_requests() -> u32 {
@@ -1115,6 +1120,7 @@ impl Default for MeshDhtConfig {
             unsigned_anti_entropy_compat_until_unix: None,
             require_signed_record_push: true,
             unsigned_record_push_compat_until_unix: None,
+            allow_v1_raft_attestations: false,
         }
     }
 }

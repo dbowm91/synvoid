@@ -176,15 +176,6 @@ impl RecordStoreManager {
         self.store_record_verified_internal(record, source_reputation, true)
     }
 
-    pub(crate) fn store_record(
-        &self,
-        record: DhtRecord,
-        source_reputation: i64,
-        is_local_origin: bool,
-    ) -> bool {
-        self.store_record_verified_internal(record, source_reputation, is_local_origin)
-    }
-
     pub fn store_record_from_ingress(
         &self,
         record: DhtRecord,
@@ -199,15 +190,15 @@ impl RecordStoreManager {
             tracing::warn!(
                 "Ingress verification failed for record {} from {} via {:?}: {:?}",
                 record.key,
-                ingress_ctx.source_node_id,
-                ingress_ctx.path,
+                ingress_ctx.source_node_id(),
+                ingress_ctx.path(),
                 e
             );
             crate::stubs::metrics::record_dht_store_operation(false);
             return false;
         }
 
-        self.store_record_verified_internal(record, source_reputation, ingress_ctx.is_local_origin)
+        self.store_record_verified_internal(record, source_reputation, ingress_ctx.is_local_origin())
     }
 
     pub(crate) fn store_record_global(&self, mut record: DhtRecord, is_local_origin: bool) -> bool {

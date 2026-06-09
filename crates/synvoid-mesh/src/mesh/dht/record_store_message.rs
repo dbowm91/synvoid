@@ -264,47 +264,45 @@ impl RecordStoreManager {
                 );
 
                 let mut envelope_verified = false;
-                if !missing_records.is_empty() {
-                    let require_signed = self.config.require_signed_anti_entropy_requests;
-                    let compat_until = self.config.unsigned_anti_entropy_compat_until_unix;
-                    let now_unix = synvoid_utils::safe_unix_timestamp();
-                    let has_auth = !signature.is_empty()
-                        && signer_public_key.as_ref().is_some_and(|s| !s.is_empty());
-                    if !has_auth {
-                        let compat_active =
-                            compat_until.is_some_and(|deadline| now_unix < deadline);
-                        if require_signed && !compat_active {
-                            tracing::warn!(
-                                "DhtAntiEntropyResponse from {} rejected: missing envelope signature (require_signed_anti_entropy_requests={}, compat_until={:?}, now={})",
-                                from_node,
-                                require_signed,
-                                compat_until,
-                                now_unix
-                            );
-                            return None;
-                        }
+                let require_signed = self.config.require_signed_anti_entropy_requests;
+                let compat_until = self.config.unsigned_anti_entropy_compat_until_unix;
+                let now_unix = synvoid_utils::safe_unix_timestamp();
+                let has_auth = !signature.is_empty()
+                    && signer_public_key.as_ref().is_some_and(|s| !s.is_empty());
+                if !has_auth {
+                    let compat_active =
+                        compat_until.is_some_and(|deadline| now_unix < deadline);
+                    if require_signed && !compat_active {
                         tracing::warn!(
-                            "DhtAntiEntropyResponse from {} accepted without signature (legacy compat window active or signing disabled)",
+                            "DhtAntiEntropyResponse from {} rejected: missing envelope signature (require_signed_anti_entropy_requests={}, compat_until={:?}, now={})",
+                            from_node,
+                            require_signed,
+                            compat_until,
+                            now_unix
+                        );
+                        return None;
+                    }
+                    tracing::warn!(
+                        "DhtAntiEntropyResponse from {} accepted without signature (legacy compat window active or signing disabled)",
+                        from_node
+                    );
+                } else {
+                    if !crate::dht::signed::verify_dht_anti_entropy_response_envelope_signature(
+                        request_id,
+                        from_node,
+                        root_hash,
+                        missing_records,
+                        *timestamp,
+                        signature,
+                        signer_public_key.as_deref(),
+                    ) {
+                        tracing::warn!(
+                            "DhtAntiEntropyResponse from {} rejected: invalid envelope signature",
                             from_node
                         );
-                    } else {
-                        if !crate::dht::signed::verify_dht_anti_entropy_response_envelope_signature(
-                            request_id,
-                            from_node,
-                            root_hash,
-                            missing_records,
-                            *timestamp,
-                            signature,
-                            signer_public_key.as_deref(),
-                        ) {
-                            tracing::warn!(
-                                "DhtAntiEntropyResponse from {} rejected: invalid envelope signature",
-                                from_node
-                            );
-                            return None;
-                        }
-                        envelope_verified = true;
+                        return None;
                     }
+                    envelope_verified = true;
                 }
 
                 self.handle_anti_entropy_response(message, from_node, envelope_verified);
@@ -510,15 +508,37 @@ impl RecordStoreManager {
                 from_node,
                 self.node_id
             );
+
+            let mut signature = Vec::new();
+            let mut signer_public_key = None;
+            let ts = MeshMessage::generate_timestamp();
+            let root_hash_value = local_root_hash.to_vec();
+            {
+                let rs = self.record_state.read();
+                if let Some(ref signer) = rs.mesh_signer {
+                    let record_set_digest = crate::dht::signed::compute_record_set_digest(&[]);
+                    let content = crate::dht::signed::get_anti_entropy_response_signable_content(
+                        request_id,
+                        &self.node_id,
+                        &root_hash_value,
+                        0,
+                        ts,
+                        &record_set_digest,
+                    );
+                    signature = signer.sign(&content);
+                    signer_public_key = Some(signer.get_public_key());
+                }
+            }
+
             return Some(MeshMessage::DhtAntiEntropyResponse {
                 request_id: request_id.into(),
                 root_hash: local_root_hash.to_vec(),
                 proof_keys: interested_keys.to_vec(),
                 proof_hashes: Vec::new(),
                 missing_records: Vec::new(),
-                timestamp: MeshMessage::generate_timestamp(),
-                signature: Vec::new(),
-                signer_public_key: None,
+                timestamp: ts,
+                signature,
+                signer_public_key,
             });
         }
 
@@ -931,5 +951,52 @@ mod tests {
         assert_eq!(proto.signature, vec![1, 2, 3]);
         assert_eq!(proto.timestamp, 12345);
         assert_eq!(proto.signer_public_key, Some("test_pk".to_string()));
+    }
+
+    #[test]
+    fn test_anti_entropy_empty_response_signable_content() {
+        let content = crate::dht::signed::get_anti_entropy_response_signable_content(
+            "req1",
+            "responder_node",
+            &[1, 2, 3],
+            0,
+            1234567890,
+            &[4, 5, 6],
+        );
+        assert!(!content.is_empty());
+    }
+
+    #[test]
+    fn test_anti_entropy_empty_response_signature_verification() {
+        use ed25519_dalek::Signer;
+
+        let secret = [0x42u8; 32];
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&secret);
+        let verifying_key = signing_key.verifying_key();
+        let pk_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(verifying_key.as_bytes());
+
+        let content = crate::dht::signed::get_anti_entropy_response_signable_content(
+            "req1",
+            "responder_node",
+            &[],
+            0,
+            1234567890,
+            &[],
+        );
+        let signature = signing_key.sign(&content);
+
+        let result =
+            crate::dht::signed::verify_dht_anti_entropy_response_envelope_signature_bytes(
+                "req1",
+                "responder_node",
+                &[],
+                0,
+                1234567890,
+                &[],
+                signature.to_bytes().as_ref(),
+                Some(&pk_b64),
+            );
+        assert!(result);
     }
 }

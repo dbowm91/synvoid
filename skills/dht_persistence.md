@@ -702,6 +702,10 @@ Records older than `max_authority_staleness_secs` are rejected for critical auth
 - `store_local_record()` — for locally-originated records (`is_local_origin=true`)
 - `store_record_from_ingress()` — for remote/mesh writes (performs full ingress validation)
 
+The old `store_record(record, source_reputation, is_local_origin)` method has been removed (was dead code). All remote writes go through `store_record_from_ingress()` with a typed `DhtRecordIngressContext`. All local writes go through `store_local_record()`.
+
+`DhtRecordIngressContext` fields are now private. Use accessor methods: `peer_id()`, `source_node_id()`, `source_classification()`, `path()`, `requires_quorum_proof()`, `requires_trust_anchor()`, `is_immutable_key()`, `envelope_signature_valid()`, `timestamp()`, `request_id()`, `is_local_origin()`. Construction is controlled: `new_local()` for local writes, `new_remote()` for remote writes.
+
 This enforces the DHT/Raft boundary: local writes bypass ingress checks, while remote writes go through the full policy table and signature verification pipeline.
 
 ### DnsZone Remote Write Blocking
@@ -716,7 +720,7 @@ This enforces the DHT/Raft boundary: local writes bypass ingress checks, while r
 | Check | Before | After |
 |-------|--------|-------|
 | DhtAntiEntropyRequest envelope signature | Not verified | Verified (signs request_id, node_id, root_hash, timestamp, nonce) |
-| DhtAntiEntropyResponse envelope signature | Not verified | Verified (signs request_id, responder_node_id, root_hash, record_count, timestamp, record_set_digest) |
+| DhtAntiEntropyResponse envelope signature | Not verified | Verified for all responses (empty and non-empty); signs request_id, responder_node_id, root_hash, record_count, timestamp, record_set_digest |
 | DhtAntiEntropyRequest signer | Not verified | Verified against authorized global keys |
 | DhtRecordPush envelope signature | Not verified | Verified (signs request_id, node_id, records, hop_count, nonce, timestamp) |
 | DhtRecordPush signature | Partially enforced | Fully enforced |

@@ -84,18 +84,18 @@ MeshProxy is the critical routing component that coordinates mesh traffic betwee
 
 ### Current DHT Verification Split
 
-All DHT message types are now fully verified. The transport layer enforces node-ID binding, envelope signature verification, and signer identity validation for every message path.
+All DHT message types are now fully verified. The transport layer enforces node-ID binding, envelope signature verification, signer-to-node binding, and signer identity validation for every message path on global nodes.
 
-| Message Type | Verification Status | Details |
-|--------------|---------------------|---------|
-| `DhtRecordAnnounce` | ✅ Verified | Peer binding and message signature enforced before record ingestion |
-| `DhtSnapshotRequest` | ✅ Verified | Signature required; rate-limited and stake-checked |
-| `DhtSnapshotResponse` | ✅ Verified | Signature and timestamp checked before snapshot apply |
-| `DhtSyncRequest` | ✅ Verified by default | Signed requests verified; unsigned compatibility fallback is config-controlled and off by default |
-| `DhtSyncResponse` | ✅ Verified | Signature and timestamp checked before apply |
-| `DhtAntiEntropyRequest` | ✅ Verified | Envelope signature over `DhtAntiEntropyRequestSignable` verified; `signer_public_key` validated against authorized global node keys on global nodes; unsigned requests rejected by default (compatibility window optional) |
-| `DhtAntiEntropyResponse` | ✅ Verified | Envelope signature verified; record set digest recomputed and tampered sets rejected |
-| `DhtRecordPush` | ✅ Verified by default | Envelope signature required; records without valid signatures rejected (compatibility window optional) |
+| Message Type | Envelope Sig | Signer Binding | Details |
+|--------------|-------------|----------------|---------|
+| `DhtRecordAnnounce` | ✅ | ✅ | Peer binding and message signature enforced before record ingestion |
+| `DhtSnapshotRequest` | ✅ | ✅ | Signature required; rate-limited and stake-checked |
+| `DhtSnapshotResponse` | ✅ | ✅ | Signature and timestamp checked before snapshot apply |
+| `DhtSyncRequest` | ✅ | ✅ | Signed requests verified; unsigned compatibility fallback is config-controlled and off by default |
+| `DhtSyncResponse` | ✅ | ✅ | Signature and timestamp checked before apply |
+| `DhtAntiEntropyRequest` | ✅ | ✅ | Envelope signature verified; `signer_public_key` validated against authorized global node keys; signer-to-node binding enforced via `verify_envelope_signer_binding()` |
+| `DhtAntiEntropyResponse` | ✅ | ✅ | Envelope signature verified for all responses (empty and non-empty); record set digest recomputed and tampered sets rejected |
+| `DhtRecordPush` | ✅ | ✅ | Envelope signature required; signer-to-node binding enforced; records without valid signatures rejected (compatibility window optional) |
 
 **Design notes:**
 - All DHT communication requires TLS 1.3 encryption (transport layer)

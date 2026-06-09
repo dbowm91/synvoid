@@ -780,6 +780,7 @@ impl MeshTransport {
                 missing_records,
                 timestamp,
                 signature,
+                signer_public_key,
                 ..
             } => {
                 self.handle_dht_anti_entropy_response(
@@ -787,6 +788,7 @@ impl MeshTransport {
                     missing_records,
                     timestamp,
                     &signature,
+                    signer_public_key.as_deref(),
                 )
                 .await;
             }
@@ -1300,6 +1302,14 @@ impl MeshTransport {
                             "DhtRecordPush from {} rejected: invalid envelope signature",
                             peer_id
                         );
+                        return Ok(());
+                    }
+
+                    if !self.verify_signer_node_binding(
+                        peer_id,
+                        signer_public_key.as_deref(),
+                        "DhtRecordPush",
+                    ) {
                         return Ok(());
                     }
                 }

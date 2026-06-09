@@ -555,3 +555,40 @@ The magic number `0x53524D53` is checked on deserialization. If absent, the data
 - Data replacement on install
 - 10K-entry large dataset
 - Binary value (0x00-0xFF) preservation
+
+## Wave 15: Raft Attestation Hardening (W15)
+
+### SignedRaftAttestation V2 Protocol
+
+**Location**: `crates/synvoid-mesh/src/mesh/peer_auth.rs`
+
+V2 attestations bind to a specific DHT value via `value_hash`:
+
+```rust
+pub struct SignedRaftAttestation {
+    pub attestation: RaftAttestation,
+    pub signer_node_id: String,
+    pub signer_public_key: String,
+    pub signature: Vec<u8>,
+    pub protocol_version: u32,  // v2: RAFT_ATTESTATION_PROTOCOL_VERSION = 2
+}
+
+pub struct RaftAttestation {
+    pub leader_id: String,
+    pub commit_index: u64,
+    pub namespace: Namespace,
+    pub key_id: String,
+    pub timestamp: u64,
+    pub value_hash: Option<Vec<u8>>,  // v2: binds attestation to value digest
+}
+```
+
+V1 attestations without `value_hash` (protocol_version < 2) are **rejected by default**. Set `allow_v1_raft_attestations=true` in config to permit them during migration from V1 to V2. V2 attestations with `value_hash` continue to work normally.
+
+### Envelope Signer-to-Node Binding
+
+Envelope signer-to-node binding is enforced for all signed DHT message types on global nodes via `verify_envelope_signer_binding()`. This verifies the public key used to sign an envelope belongs to the claimed sender node.
+
+**Applies to**: `DhtSyncRequest`, `DhtSyncResponse`, `DhtAntiEntropyRequest`, `DhtAntiEntropyResponse`, `DhtRecordPush`.
+
+**Mechanism**: `NodePublicKeyResolver` trait provides pluggable key resolution. Called via `MeshTransport::verify_signer_node_binding()` during message processing on global nodes.

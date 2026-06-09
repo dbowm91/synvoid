@@ -99,6 +99,40 @@ fn replay_result_reason(replay_result: crate::protocol::ReplayResult) -> &'stati
 }
 
 impl MeshTransport {
+    /// Verify that the envelope signer's public key matches the authorized key
+    /// for the claimed node identity. Only enforced on global nodes.
+    pub(crate) fn verify_signer_node_binding(
+        &self,
+        claimed_node_id: &str,
+        signer_public_key: Option<&str>,
+        context: &str,
+    ) -> bool {
+        if !self.config.role.is_global() {
+            return true;
+        }
+        let Some(pk_str) = signer_public_key else {
+            return true;
+        };
+        if pk_str.is_empty() {
+            return true;
+        }
+        let Ok(pk_bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(pk_str) else {
+            return true;
+        };
+        let cert_mgr = self.cert_manager.read();
+        if let Some(expected_key) = cert_mgr.get_global_node_key(claimed_node_id) {
+            if pk_bytes != expected_key {
+                tracing::warn!(
+                    "{} rejected: signer_public_key does not match authorized key for node {}",
+                    context,
+                    claimed_node_id
+                );
+                return false;
+            }
+        }
+        true
+    }
+
     pub(crate) async fn handle_dht_snapshot_request(
         &self,
         from_peer: &str,
@@ -431,6 +465,14 @@ impl MeshTransport {
                     );
                     return;
                 }
+
+                if !self.verify_signer_node_binding(
+                    node_id,
+                    signer_public_key,
+                    "DHT sync request",
+                ) {
+                    return;
+                }
             }
         }
 
@@ -532,6 +574,14 @@ impl MeshTransport {
             return;
         }
 
+        if !self.verify_signer_node_binding(
+            from_peer,
+            signer_public_key,
+            "DHT sync response",
+        ) {
+            return;
+        }
+
         if let Some(ref record_store) = self.record_store {
             let signer = self.mesh_signer.as_ref();
             record_store.handle_sync_response_verified(records, from_peer, signer);
@@ -614,25 +664,12 @@ impl MeshTransport {
 
             // Phase 3: Verify signer_public_key matches the claimed node_id
             // against authorized global node keys (binds L2 envelope signer to L4 node identity)
-            if self.config.role.is_global() {
-                if let Some(pk_str) = signer_public_key {
-                    if !pk_str.is_empty() {
-                        if let Ok(pk_bytes) =
-                            base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(pk_str)
-                        {
-                            let cert_mgr = self.cert_manager.read();
-                            if let Some(expected_key) = cert_mgr.get_global_node_key(node_id) {
-                                if pk_bytes != expected_key {
-                                    tracing::warn!(
-                                        "DHT anti-entropy request from {} rejected: signer_public_key does not match authorized key for node {}",
-                                        from_peer, node_id
-                                    );
-                                    return;
-                                }
-                            }
-                        }
-                    }
-                }
+            if !self.verify_signer_node_binding(
+                node_id,
+                signer_public_key,
+                "DHT anti-entropy request",
+            ) {
+                return;
             }
         }
 
@@ -748,6 +785,7 @@ impl MeshTransport {
         missing_records: Vec<crate::protocol::DhtRecord>,
         timestamp: u64,
         signature: &[u8],
+        signer_public_key: Option<&str>,
     ) {
         tracing::debug!(
             "Received DHT anti-entropy response from {} ({} missing records)",
@@ -772,6 +810,14 @@ impl MeshTransport {
                 "DHT anti-entropy response from {} rejected: missing envelope signature",
                 from_peer
             );
+            return;
+        }
+
+        if !self.verify_signer_node_binding(
+            from_peer,
+            signer_public_key,
+            "DHT anti-entropy response",
+        ) {
             return;
         }
 

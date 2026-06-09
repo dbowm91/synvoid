@@ -69,17 +69,17 @@ pub enum SourceClassification {
 
 #[derive(Debug, Clone)]
 pub struct DhtRecordIngressContext {
-    pub peer_id: String,
-    pub source_node_id: String,
-    pub source_classification: SourceClassification,
-    pub path: IngressPath,
-    pub requires_quorum_proof: bool,
-    pub requires_trust_anchor: bool,
-    pub is_immutable_key: bool,
-    pub envelope_signature_valid: bool,
-    pub timestamp: u64,
-    pub request_id: Option<String>,
-    pub is_local_origin: bool,
+    peer_id: String,
+    source_node_id: String,
+    source_classification: SourceClassification,
+    path: IngressPath,
+    requires_quorum_proof: bool,
+    requires_trust_anchor: bool,
+    is_immutable_key: bool,
+    envelope_signature_valid: bool,
+    timestamp: u64,
+    request_id: Option<String>,
+    is_local_origin: bool,
 }
 
 impl DhtRecordIngressContext {
@@ -150,9 +150,125 @@ impl DhtRecordIngressContext {
         self
     }
 
+    pub fn peer_id(&self) -> &str {
+        &self.peer_id
+    }
+
+    pub fn source_node_id(&self) -> &str {
+        &self.source_node_id
+    }
+
+    pub fn source_classification(&self) -> SourceClassification {
+        self.source_classification
+    }
+
+    pub fn path(&self) -> IngressPath {
+        self.path
+    }
+
+    pub fn requires_quorum_proof(&self) -> bool {
+        self.requires_quorum_proof
+    }
+
+    pub fn requires_trust_anchor(&self) -> bool {
+        self.requires_trust_anchor
+    }
+
+    pub fn is_immutable_key(&self) -> bool {
+        self.is_immutable_key
+    }
+
+    pub fn envelope_signature_valid(&self) -> bool {
+        self.envelope_signature_valid
+    }
+
+    pub fn timestamp(&self) -> u64 {
+        self.timestamp
+    }
+
+    pub fn request_id(&self) -> Option<&str> {
+        self.request_id.as_deref()
+    }
+
+    pub fn is_local_origin(&self) -> bool {
+        self.is_local_origin
+    }
+
     pub fn is_local(&self) -> bool {
         self.source_classification == SourceClassification::LocalNode
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SignerBindingError {
+    EmptySignerPublicKey,
+    InvalidPublicKeyEncoding,
+    NodeNotInRegistry,
+    KeyMismatch { expected: String, actual: String },
+}
+
+impl std::fmt::Display for SignerBindingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EmptySignerPublicKey => write!(f, "signer public key is empty"),
+            Self::InvalidPublicKeyEncoding => write!(f, "signer public key has invalid encoding"),
+            Self::NodeNotInRegistry => write!(f, "claimed node ID not found in authorized key registry"),
+            Self::KeyMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "signer public key does not match authorized key for node (expected={}, actual={})",
+                    expected, actual
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for SignerBindingError {}
+
+pub trait NodePublicKeyResolver {
+    fn get_authorized_key(&self, node_id: &str) -> Option<String>;
+}
+
+impl NodePublicKeyResolver for std::collections::HashMap<String, String> {
+    fn get_authorized_key(&self, node_id: &str) -> Option<String> {
+        self.get(node_id).cloned()
+    }
+}
+
+pub fn verify_envelope_signer_binding(
+    claimed_node_id: &str,
+    signer_public_key: &str,
+    resolver: &dyn NodePublicKeyResolver,
+) -> Result<(), SignerBindingError> {
+    if signer_public_key.is_empty() {
+        return Err(SignerBindingError::EmptySignerPublicKey);
+    }
+
+    let pk_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(signer_public_key)
+        .map_err(|_| SignerBindingError::InvalidPublicKeyEncoding)?;
+
+    if pk_bytes.len() != 32 {
+        return Err(SignerBindingError::InvalidPublicKeyEncoding);
+    }
+
+    let expected_key = resolver
+        .get_authorized_key(claimed_node_id)
+        .ok_or(SignerBindingError::NodeNotInRegistry)?;
+
+    let expected_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(&expected_key)
+        .map_err(|_| SignerBindingError::InvalidPublicKeyEncoding)?;
+
+    if pk_bytes != expected_bytes {
+        return Err(SignerBindingError::KeyMismatch {
+            expected: expected_key,
+            actual: signer_public_key.to_string(),
+        });
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2244,11 +2360,11 @@ mod tests {
         let source_node_id = "node123".to_string();
         let ctx = DhtRecordIngressContext::new_local(source_node_id.clone());
 
-        assert_eq!(ctx.source_node_id, source_node_id);
-        assert_eq!(ctx.source_classification, SourceClassification::LocalNode);
-        assert_eq!(ctx.path, IngressPath::LocalCreate);
-        assert!(ctx.is_local_origin);
-        assert!(ctx.envelope_signature_valid);
+        assert_eq!(ctx.source_node_id(), source_node_id);
+        assert_eq!(ctx.source_classification(), SourceClassification::LocalNode);
+        assert_eq!(ctx.path(), IngressPath::LocalCreate);
+        assert!(ctx.is_local_origin());
+        assert!(ctx.envelope_signature_valid());
     }
 
     #[test]
@@ -2262,12 +2378,12 @@ mod tests {
             IngressPath::Announce,
         );
 
-        assert_eq!(ctx.peer_id, peer_id);
-        assert_eq!(ctx.source_node_id, source_node_id);
-        assert_eq!(ctx.source_classification, SourceClassification::GlobalNode);
-        assert_eq!(ctx.path, IngressPath::Announce);
-        assert!(!ctx.is_local_origin);
-        assert!(!ctx.envelope_signature_valid);
+        assert_eq!(ctx.peer_id(), peer_id);
+        assert_eq!(ctx.source_node_id(), source_node_id);
+        assert_eq!(ctx.source_classification(), SourceClassification::GlobalNode);
+        assert_eq!(ctx.path(), IngressPath::Announce);
+        assert!(!ctx.is_local_origin());
+        assert!(!ctx.envelope_signature_valid());
     }
 
     #[test]
@@ -2279,11 +2395,11 @@ mod tests {
             .with_timestamp(1000)
             .with_request_id(Some("req123".to_string()));
 
-        assert!(ctx.requires_quorum_proof);
-        assert!(ctx.requires_trust_anchor);
-        assert!(ctx.is_immutable_key);
-        assert_eq!(ctx.timestamp, 1000);
-        assert_eq!(ctx.request_id, Some("req123".to_string()));
+        assert!(ctx.requires_quorum_proof());
+        assert!(ctx.requires_trust_anchor());
+        assert!(ctx.is_immutable_key());
+        assert_eq!(ctx.timestamp(), 1000);
+        assert_eq!(ctx.request_id(), Some("req123"));
     }
 
     #[test]
@@ -3422,6 +3538,89 @@ mod tests {
             timestamp,
             &signature,
             Some(&wrong_public_key),
+        ));
+    }
+
+    // ========================================================================
+    // Phase 8: Adversarial regression tests for DHT/Raft boundary hardening
+    // ========================================================================
+
+    // --- Ingress context encapsulation tests ---
+
+    #[test]
+    fn test_ingress_context_fields_are_encapsulated() {
+        let ctx = DhtRecordIngressContext::new_local("node1".to_string());
+        assert!(ctx.is_local_origin());
+        assert!(ctx.envelope_signature_valid());
+        assert_eq!(ctx.source_classification(), SourceClassification::LocalNode);
+        assert_eq!(ctx.path(), IngressPath::LocalCreate);
+        assert!(!ctx.requires_quorum_proof());
+        assert!(!ctx.requires_trust_anchor());
+        assert!(!ctx.is_immutable_key());
+        assert!(ctx.timestamp() > 0);
+        assert!(ctx.request_id().is_none());
+    }
+
+    #[test]
+    fn test_remote_ingress_context_is_not_local_origin() {
+        let ctx = DhtRecordIngressContext::new_remote(
+            "peer1".to_string(),
+            "node1".to_string(),
+            SourceClassification::GlobalNode,
+            IngressPath::Push,
+        );
+        assert!(!ctx.is_local_origin());
+        assert!(!ctx.envelope_signature_valid());
+        assert!(!ctx.is_local());
+        assert_eq!(ctx.source_classification(), SourceClassification::GlobalNode);
+    }
+
+    // --- Envelope signer binding tests ---
+
+    #[test]
+    fn test_verify_envelope_signer_binding_correct_key() {
+        let key_bytes = [0x42u8; 32];
+        let key_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&key_bytes);
+        let mut registry = std::collections::HashMap::new();
+        registry.insert("node1".to_string(), key_b64.clone());
+        let result = verify_envelope_signer_binding("node1", &key_b64, &registry);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_verify_envelope_signer_binding_wrong_key() {
+        let key1 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&[0x42u8; 32]);
+        let key2 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&[0x99u8; 32]);
+        let mut registry = std::collections::HashMap::new();
+        registry.insert("node1".to_string(), key1);
+        let result = verify_envelope_signer_binding("node1", &key2, &registry);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            SignerBindingError::KeyMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn test_verify_envelope_signer_binding_node_not_in_registry() {
+        let key_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&[0x42u8; 32]);
+        let registry = std::collections::HashMap::new();
+        let result = verify_envelope_signer_binding("unknown_node", &key_b64, &registry);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            SignerBindingError::NodeNotInRegistry
+        ));
+    }
+
+    #[test]
+    fn test_verify_envelope_signer_binding_empty_key() {
+        let registry = std::collections::HashMap::new();
+        let result = verify_envelope_signer_binding("node1", "", &registry);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            SignerBindingError::EmptySignerPublicKey
         ));
     }
 }

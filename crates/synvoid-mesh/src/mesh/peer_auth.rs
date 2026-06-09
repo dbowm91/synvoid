@@ -279,6 +279,7 @@ pub fn validate_member_certificate_with_raft_attestation(
     authorized_global_pubkeys: &[String],
     peer_node_id: &str,
     raft_attestation: Option<&SignedRaftAttestation>,
+    allow_v1_raft_attestations: bool,
 ) -> Result<(), String> {
     // 1. Verify cert belongs to this node
     if cert.mesh_id != peer_node_id {
@@ -349,7 +350,10 @@ pub fn validate_member_certificate_with_raft_attestation(
                     return false;
                 }
             }
-            // V1 attestations: value_hash is optional (backward compat)
+            // V1 attestations: reject unless allow_v1_raft_attestations is enabled
+            else if !allow_v1_raft_attestations {
+                return false;
+            }
 
             true
         })
@@ -1912,6 +1916,7 @@ mod tests {
             &authorized_global_pubkeys,
             "peer-1",
             None,
+            false,
         );
         assert!(result.is_err());
         assert!(result
@@ -1971,6 +1976,7 @@ mod tests {
             &authorized_global_pubkeys,
             "peer-1",
             Some(&signed_att),
+            false,
         );
         assert!(
             result.is_ok(),
@@ -2031,6 +2037,7 @@ mod tests {
             &authorized_global_pubkeys,
             "peer-1",
             Some(&signed_att),
+            false,
         );
         assert!(result.is_err(), "Unauthorized signer should be rejected");
     }
@@ -2086,6 +2093,7 @@ mod tests {
             &authorized_global_pubkeys,
             "peer-1",
             Some(&signed_att),
+            false,
         );
         assert!(result.is_err(), "Wrong namespace should be rejected");
     }
@@ -2141,6 +2149,7 @@ mod tests {
             &authorized_global_pubkeys,
             "peer-1",
             Some(&signed_att),
+            false,
         );
         assert!(result.is_err(), "Wrong key_id should be rejected");
     }
@@ -2199,6 +2208,7 @@ mod tests {
             &authorized_global_pubkeys,
             "peer-1",
             Some(&signed_att),
+            false,
         );
         assert!(result.is_err(), "Tampered signature should be rejected");
     }
@@ -2254,6 +2264,7 @@ mod tests {
             &authorized_global_pubkeys,
             "peer-1",
             Some(&signed_att),
+            false,
         );
         assert!(result.is_err(), "Zero timestamp should be rejected");
     }
@@ -2309,6 +2320,7 @@ mod tests {
             &authorized_global_pubkeys,
             "peer-1",
             Some(&signed_att),
+            false,
         );
         assert!(result.is_err(), "Zero commit_index should be rejected");
     }
@@ -2365,6 +2377,7 @@ mod tests {
             &authorized_global_pubkeys,
             "peer-1",
             Some(&signed_att),
+            false,
         );
         assert!(
             result.is_ok(),
@@ -2424,6 +2437,7 @@ mod tests {
             &authorized_global_pubkeys,
             "peer-1",
             Some(&signed_att),
+            false,
         );
         assert!(
             result.is_err(),
@@ -2483,6 +2497,7 @@ mod tests {
             &authorized_global_pubkeys,
             "peer-1",
             Some(&signed_att),
+            false,
         );
         assert!(
             result.is_err(),
@@ -2542,6 +2557,7 @@ mod tests {
             &authorized_global_pubkeys,
             "peer-1",
             Some(&signed_att),
+            false,
         );
         assert!(
             result.is_ok(),
@@ -2603,6 +2619,7 @@ mod tests {
             &authorized_global_pubkeys,
             "peer-1",
             Some(&signed_att),
+            false,
         );
         assert!(
             result.is_err(),
@@ -2664,6 +2681,7 @@ mod tests {
             &authorized_global_pubkeys,
             "peer-1",
             Some(&signed_att),
+            false,
         );
         assert!(
             result.is_err(),
@@ -2726,10 +2744,11 @@ mod tests {
             &authorized_global_pubkeys,
             "peer-1",
             Some(&signed_att),
+            true, // allow_v1_raft_attestations=true for backward compat test
         );
         assert!(
             result.is_ok(),
-            "V1 attestation should be accepted for backward compat: {:?}",
+            "V1 attestation should be accepted when allow_v1_raft_attestations=true: {:?}",
             result
         );
     }
@@ -2748,5 +2767,68 @@ mod tests {
         let hash1 = RaftAttestation::compute_value_hash(b"input-a");
         let hash2 = RaftAttestation::compute_value_hash(b"input-b");
         assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_v1_attestation_rejected_by_default() {
+        let (global_secret, global_public_b64) = generate_test_keypair();
+
+        let (org_secret, _org_public_b64) = generate_different_keypair(0x10);
+        let org_key = crate::organization::OrgKey {
+            key_id: "org-key-1".to_string(),
+            private_key: org_secret.to_vec(),
+            public_key: ed25519_dalek::SigningKey::from_bytes(&org_secret)
+                .verifying_key()
+                .as_bytes()
+                .to_vec(),
+            created_at: synvoid_utils::current_timestamp(),
+            issued_by: None,
+        };
+        let org_pub_key = crate::organization::OrgPublicKey::new("test-org".to_string(), &org_key);
+
+        let cert = crate::organization::MemberCertificate::new(
+            "peer-1".to_string(),
+            "test-org".to_string(),
+            &org_key,
+            30,
+        );
+
+        let global_signing_key = ed25519_dalek::SigningKey::from_bytes(&global_secret);
+
+        let attestation = RaftAttestation {
+            leader_id: "leader-1".to_string(),
+            commit_index: 42,
+            namespace: crate::raft::Namespace::Org,
+            key_id: "org-key-1".to_string(),
+            timestamp: synvoid_utils::current_timestamp(),
+            value_hash: None,
+        };
+
+        let mut signed_att = SignedRaftAttestation {
+            attestation,
+            signer_node_id: "global-node-1".to_string(),
+            signer_public_key: base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(global_signing_key.verifying_key().as_bytes()),
+            signature: Vec::new(),
+            protocol_version: 1,
+        };
+        let sig = global_signing_key.sign(&signed_att.signable_content());
+        signed_att.signature = sig.to_bytes().to_vec();
+
+        let authorized_global_pubkeys = vec![global_public_b64];
+
+        let result = validate_member_certificate_with_raft_attestation(
+            &cert,
+            &org_pub_key,
+            &authorized_global_pubkeys,
+            "peer-1",
+            Some(&signed_att),
+            false,
+        );
+        assert!(
+            result.is_err(),
+            "V1 attestation should be rejected when allow_v1_raft_attestations=false: {:?}",
+            result
+        );
     }
 }

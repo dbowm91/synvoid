@@ -163,6 +163,7 @@ pub struct RecordStoreConfig {
     pub unsigned_record_push_compat_until_unix: Option<u64>,
     pub require_signed_anti_entropy_requests: bool,
     pub unsigned_anti_entropy_compat_until_unix: Option<u64>,
+    pub allow_v1_raft_attestations: bool,
 }
 
 impl Default for RecordStoreConfig {
@@ -198,6 +199,7 @@ impl Default for RecordStoreConfig {
             unsigned_record_push_compat_until_unix: None,
             require_signed_anti_entropy_requests: true,
             unsigned_anti_entropy_compat_until_unix: None,
+            allow_v1_raft_attestations: false,
         }
     }
 }

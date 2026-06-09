@@ -60,6 +60,7 @@ pub fn create_record_store(
         unsigned_record_push_compat_until_unix: dht_config.unsigned_record_push_compat_until_unix,
         require_signed_anti_entropy_requests: dht_config.require_signed_anti_entropy_requests,
         unsigned_anti_entropy_compat_until_unix: dht_config.unsigned_anti_entropy_compat_until_unix,
+        allow_v1_raft_attestations: dht_config.allow_v1_raft_attestations,
     };
 
     let access_control = DhtAccessControl::new(config);
