@@ -6,7 +6,7 @@ description = "Persistent IP block store with LRU eviction and disk persistence"
 
 [features]
 default = []
-mesh = ["dep:synvoid-mesh"]
+mesh = ["dep:synvoid-mesh", "synvoid-mesh/mesh"]
 
 [dependencies]
 synvoid-config = { path = "../synvoid-config" }
