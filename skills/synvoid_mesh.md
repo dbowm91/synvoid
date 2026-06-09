@@ -928,7 +928,7 @@ Configured in `DhtAccessControl::global_signature_required_keys`.
 1. **Origin**: `store_record_global()` stores record as `PendingQuorum`, starts quorum request
 2. **Quorum**: Global nodes sign and return quorum signatures
 3. **Commit**: `commit_record_after_quorum()` attaches `quorum_proof` (the collected signatures) to the record
-4. **Propagation**: `DhtRecordCommit` message carries the proof; receiving nodes verify it
+4. **Propagation**: Commit notification is sent to peers; receiving nodes verify against Raft state machine
 5. **Sync/Gossip**: Records in sensitive namespaces carry `quorum_proof` via sync responses
 
 ### Key APIs
@@ -963,3 +963,88 @@ let record = DhtRecord {
 | `src/mesh/dht/signed.rs` | `verify_quorum_proof()`, `MIN_QUORUM_PROOF_SIGNATURES` |
 | `src/mesh/dht/record_store_crud.rs` | Quorum-proof enforcement in `store_record_global()`, `apply_sync()` |
 | `src/mesh/dht/record_store_message.rs` | `commit_record_after_quorum()` attaches proof, `handle_record_commit()` verifies |
+
+---
+
+## DHT/Raft Boundary Hardening (2026-06)
+
+### DHT Key Policy Table
+
+**Location**: `crates/synvoid-mesh/src/mesh/dht/key_policy.rs`
+
+Centralizes key family authority policies for DHT ingress validation. Each DHT key prefix (e.g., `verified_upstream:`, `threat_indicator:`, `yara_rule:`) has an associated policy defining which key families are authorized to write records under that prefix.
+
+```rust
+pub struct DhtKeyPolicyTable {
+    policies: HashMap<String, KeyFamilyPolicy>,
+}
+
+pub struct KeyFamilyPolicy {
+    pub allowed_key_families: Vec<KeyFamily>,
+    pub require_signature: bool,
+    pub require_quorum_proof: bool,
+}
+```
+
+**Purpose**: Replaces scattered validation logic with a single lookup table. All remote DHT writes consult the policy table before acceptance.
+
+### SignedRaftAttestation
+
+**Location**: `crates/synvoid-mesh/src/mesh/peer_auth.rs`
+
+Raft consensus attestations now require cryptographic proof, not just structural attestation:
+
+```rust
+pub struct SignedRaftAttestation {
+    pub node_id: String,
+    pub term: u64,
+    pub log_index: u64,
+    pub signature: Vec<u8>,
+    pub signer_public_key: String,
+    pub timestamp: u64,
+}
+```
+
+**Before**: Raft attestation was structural-only (any node could assert membership). **After**: Attestation carries an Ed25519 signature over `(node_id, term, log_index, timestamp)`, verified against authorized global node keys.
+
+### ConsensusTransport Trait
+
+**Location**: `crates/synvoid-mesh/src/mesh/raft/consensus.rs`
+
+Decouples Raft consensus logic from the mesh transport layer. Previously, Raft state machine operations were tightly coupled to `MeshTransport`. The new trait provides a clean interface:
+
+```rust
+#[async_trait]
+pub trait ConsensusTransport: Send + Sync {
+    async fn send_vote_request(&self, target: &str, request: VoteRequest) -> Result<VoteResponse>;
+    async fn send_append_entries(&self, target: &str, request: AppendEntriesRequest) -> Result<AppendEntriesResponse>;
+    async fn send_install_snapshot(&self, target: &str, request: InstallSnapshotRequest) -> Result<InstallSnapshotResponse>;
+}
+```
+
+**Benefit**: Raft consensus can be tested independently of mesh networking. The mesh transport implements this trait, but the Raft state machine no longer depends on mesh internals.
+
+### AuthorityFreshnessConfig
+
+**Location**: `crates/synvoid-mesh/src/mesh/config.rs`
+
+Defines stale-state behavior for authority records in DHT:
+
+```rust
+pub struct AuthorityFreshnessConfig {
+    pub max_authority_staleness_secs: u64,      // Default: 3600 (1 hour)
+    pub require_freshness_for_critical_keys: bool, // Default: true
+    pub freshness_check_enabled: bool,           // Default: true
+}
+```
+
+**Purpose**: Prevents acceptance of stale authority records (e.g., outdated genesis key transitions, revoked node records) in DHT sync and anti-entropy. Records older than `max_authority_staleness_secs` are rejected when `freshness_check_enabled` is true.
+
+### DhtAntiEntropyRequest and DhtRecordPush Verification (MR-4 Resolved)
+
+The MR-4 gaps have been closed:
+
+- **`DhtAntiEntropyRequest`**: `signer_public_key` is now verified against the authorized global node key list. The request is rejected if the signer is not an authorized global node.
+- **`DhtRecordPush`**: Signature field is enforced. Records without valid signatures are rejected during ingress.
+
+These changes are breaking protocol changes — older nodes that send unsigned or incorrectly signed messages will be rejected by updated nodes.

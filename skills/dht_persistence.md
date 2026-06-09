@@ -179,19 +179,18 @@ const CURRENT_SCHEMA_VERSION: u32 = 1;
 Records requiring quorum use a two-phase commit to prevent gossip of unconfirmed state:
 
 1. **Phase 1 (Pending)**: Record stored with `DhtRecordStatus::PendingQuorum` in `DhtRecordEntry.status`. Hidden from `get_record()` and `get_all_records()` but exists locally.
-2. **Phase 2 (Commit)**: On quorum approval, `commit_record_after_quorum()` transitions to `Live`, queues for announce, sends `DhtRecordCommit` to peers.
+2. **Phase 2 (Commit)**: On quorum approval, `commit_record_after_quorum()` transitions to `Live`, queues for announce, and notifies peers.
 
 Key types:
 - `DhtRecordStatus` enum (`PendingQuorum`, `Live`) in `src/mesh/protocol.rs` with `Default::default()` = `Live`
-- `DhtRecordCommit` message (proto field 171) — sent to peers after commit
-- `QuorumSignatureProto` — serializes signatures in commit messages
+- `QuorumSignatureProto` — serializes quorum signatures attached to records
 
 Key methods:
 - `store_record_global()` — stores quorum-requiring records as `PendingQuorum` before starting quorum
-- `commit_record_after_quorum()` — transitions to `Live`, announces, sends `DhtRecordCommit`
+- `commit_record_after_quorum()` — transitions to `Live`, announces, notifies peers
 - `abort_pending_record()` — removes record on rejection/timeout
 - `get_record()` / `get_all_records()` — filter out `PendingQuorum` records
-- `handle_record_commit()` — handles incoming `DhtRecordCommit` on receiving nodes
+- Peer notification uses standard DHT sync/gossip paths with quorum proof verification
 
 ```rust
 // DhtRecordEntry now includes status
@@ -660,3 +659,48 @@ When `true`: Falls back to `payload.data.len() < 100` heuristic with LEGACY-pref
 ```
 
 This prevents remote attackers from claiming to be a different node by setting `source_node_id` to a victim node.
+
+## DHT Ingress Validation (2026-06)
+
+### Key Policy Table
+
+**Location**: `crates/synvoid-mesh/src/mesh/dht/key_policy.rs`
+
+All remote DHT writes are now validated against a centralized key policy table. The `DhtKeyPolicyTable` maps DHT key prefixes to policies that define:
+
+- Which key families are authorized to write records
+- Whether signatures are required
+- Whether quorum proofs are required
+
+```rust
+// In store_record(), before accepting a remote record:
+let policy = key_policy_table.get_policy_for_key(&record.key);
+if policy.require_signature && record.signature.is_none() {
+    return false; // Reject unsigned record
+}
+```
+
+### AuthorityFreshnessConfig
+
+**Location**: `crates/synvoid-mesh/src/mesh/config.rs`
+
+Stale authority records are rejected during DHT sync and anti-entropy:
+
+```rust
+pub struct AuthorityFreshnessConfig {
+    pub max_authority_staleness_secs: u64,      // Default: 3600
+    pub require_freshness_for_critical_keys: bool, // Default: true
+    pub freshness_check_enabled: bool,           // Default: true
+}
+```
+
+Records older than `max_authority_staleness_secs` are rejected for critical authority key families (genesis key transitions, revoked nodes). This prevents replay of stale revocations or key rotations.
+
+### Ingress Validation Summary
+
+| Check | Before | After |
+|-------|--------|-------|
+| DhtAntiEntropyRequest signer | Not verified | Verified against authorized global keys |
+| DhtRecordPush signature | Partially enforced | Fully enforced |
+| Authority record freshness | No staleness check | Configurable staleness window |
+| Key family authorization | Scattered logic | Centralized DhtKeyPolicyTable |

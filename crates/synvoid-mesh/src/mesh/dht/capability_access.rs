@@ -1,4 +1,5 @@
 use crate::dht::capability_attestation::CapabilityAttestation;
+use crate::dht::key_policy::{DhtKeyPolicyTable, DhtRecordAuthorityClass};
 use crate::dht::keys::DhtKey;
 use std::sync::Arc;
 
@@ -33,13 +34,11 @@ impl CapabilityAccessVerifier {
 
     pub fn key_requires_capability(key: &str) -> Option<(&'static str, &'static str)> {
         let dht_key = DhtKey::from_str(key);
-        match dht_key {
-            DhtKey::YaraRulesManifest { .. } => Some(("waf", "YaraRulesManifest")),
-            DhtKey::YaraRuleContent { .. } => Some(("waf", "YaraRuleContent")),
-            DhtKey::ThreatIndicator(_, _) => Some(("threat_intel", "ThreatIndicator")),
-            DhtKey::DnsZone(_) => Some(("dns", "DnsZone")),
-            DhtKey::DnsRecord(_, _) => Some(("dns", "DnsRecord")),
-            DhtKey::DnsDomainRegistration(_) => Some(("dns", "DnsDomainReg")),
+        let policy = DhtKeyPolicyTable::policy_for_key(&dht_key);
+        match policy.authority_class {
+            DhtRecordAuthorityClass::CapabilityAttested => policy
+                .required_capability
+                .map(|cap| (cap, key_type_name(&dht_key))),
             _ => None,
         }
     }
@@ -97,6 +96,57 @@ impl CapabilityAccessVerifier {
             }
             None => false,
         }
+    }
+}
+
+fn key_type_name(key: &DhtKey) -> &'static str {
+    match key {
+        DhtKey::YaraRulesManifest { .. } => "YaraRulesManifest",
+        DhtKey::YaraRuleContent { .. } => "YaraRuleContent",
+        DhtKey::YaraCompiledRuleContent { .. } => "YaraCompiledRuleContent",
+        DhtKey::YaraChunk { .. } => "YaraChunk",
+        DhtKey::YaraCompiledChunk { .. } => "YaraCompiledChunk",
+        DhtKey::ThreatIndicator(_, _) => "ThreatIndicator",
+        DhtKey::DnsZone(_) => "DnsZone",
+        DhtKey::DnsRecord(_, _) => "DnsRecord",
+        DhtKey::DnsDomainRegistration(_) => "DnsDomainReg",
+        DhtKey::Organization(_) => "Organization",
+        DhtKey::OrgPublicKey(_) => "OrgPublicKey",
+        DhtKey::TierKey(_, _) => "TierKey",
+        DhtKey::MemberCertificate(_, _) => "MemberCertificate",
+        DhtKey::GlobalNodeList => "GlobalNodeList",
+        DhtKey::OrgNameReservation(_) => "OrgNameReservation",
+        DhtKey::VerifiedUpstream(_) => "VerifiedUpstream",
+        DhtKey::TierClaim(_) => "TierClaim",
+        DhtKey::GlobalNodeProof { .. } => "GlobalNodeProof",
+        DhtKey::NodeCertBinding { .. } => "NodeCertBinding",
+        DhtKey::GenesisKeyTransition { .. } => "GenesisKeyTransition",
+        DhtKey::RevokedGlobalNode { .. } => "RevokedGlobalNode",
+        DhtKey::NodeInfo(_) => "NodeInfo",
+        DhtKey::NodeHealth(_) => "NodeHealth",
+        DhtKey::NodeLoad(_) => "NodeLoad",
+        DhtKey::GlobalNodeHeartbeat(_) => "GlobalNodeHeartbeat",
+        DhtKey::NodeCapability { .. } => "NodeCapability",
+        DhtKey::EdgeAttestation { .. } => "EdgeAttestation",
+        DhtKey::CapabilityAttestation { .. } => "CapabilityAttestation",
+        DhtKey::GlobalNodePublicKey(_) => "GlobalNodePublicKey",
+        DhtKey::OriginReachability { .. } => "OriginReachability",
+        DhtKey::VerificationTask { .. } => "VerificationTask",
+        DhtKey::OriginPenalty { .. } => "OriginPenalty",
+        DhtKey::Upstream(_) => "Upstream",
+        DhtKey::AnycastNode(_) => "AnycastNode",
+        DhtKey::UpstreamImageProtection(_) => "UpstreamImageProtection",
+        DhtKey::UpstreamMinification(_) => "UpstreamMinification",
+        DhtKey::UpstreamCompression(_) => "UpstreamCompression",
+        DhtKey::UpstreamProxyCachePreferences(_) => "UpstreamProxyCachePreferences",
+        DhtKey::SiteImagePoisonConfig(_) => "SiteImagePoisonConfig",
+        DhtKey::SiteContentVersion { .. } => "SiteContentVersion",
+        DhtKey::UpstreamOwnershipChallenge(_) => "UpstreamOwnershipChallenge",
+        DhtKey::ServerlessFunction { .. } => "ServerlessFunction",
+        DhtKey::BehavioralFingerprint { .. } => "BehavioralFingerprint",
+        DhtKey::TransformedContent { .. } => "TransformedContent",
+        DhtKey::PoisonedImage { .. } => "PoisonedImage",
+        DhtKey::SiteScoped { .. } => "SiteScoped",
     }
 }
 

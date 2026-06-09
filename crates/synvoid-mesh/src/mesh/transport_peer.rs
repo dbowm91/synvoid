@@ -1229,6 +1229,150 @@ impl MeshTransport {
                     }
                 }
             }
+            MeshMessage::DhtRecordPush {
+                request_id,
+                records,
+                hop_count,
+                seen_node_ids,
+                timestamp,
+                nonce,
+                signature,
+                signer_public_key,
+            } => {
+                if self
+                    .validate_peer_node_id_binding(peer_id, peer_id)
+                    .is_err()
+                {
+                    tracing::debug!(
+                        "DhtRecordPush from {} rejected: peer binding failed",
+                        peer_id
+                    );
+                    return Ok(());
+                }
+
+                if !crate::dht::signed::validate_message_timestamp(timestamp) {
+                    tracing::warn!(
+                        "DhtRecordPush from {} rejected: timestamp too old or far in future",
+                        peer_id
+                    );
+                    return Ok(());
+                }
+
+                let require_signed = self
+                    .config
+                    .dht
+                    .as_ref()
+                    .map(|d| d.require_signed_record_push)
+                    .unwrap_or(true);
+                let compat_until = self
+                    .config
+                    .dht
+                    .as_ref()
+                    .and_then(|d| d.unsigned_record_push_compat_until_unix);
+                let now_unix = synvoid_utils::safe_unix_timestamp();
+                let has_auth = !signature.is_empty()
+                    && signer_public_key.as_ref().is_some_and(|s| !s.is_empty())
+                    && !nonce.is_empty();
+                if !has_auth {
+                    let compat_active = compat_until.is_some_and(|deadline| now_unix < deadline);
+                    if require_signed && !compat_active {
+                        tracing::warn!(
+                            "DhtRecordPush from {} rejected: missing envelope signature/nonce (require_signed_record_push={}, compat_until={:?}, now={})",
+                            peer_id,
+                            require_signed,
+                            compat_until,
+                            now_unix
+                        );
+                        return Ok(());
+                    }
+                } else {
+                    if !crate::dht::signed::verify_dht_record_push_envelope_signature_bytes(
+                        &request_id,
+                        peer_id,
+                        &records,
+                        hop_count,
+                        &nonce,
+                        timestamp,
+                        &signature,
+                        signer_public_key.as_deref(),
+                    ) {
+                        tracing::warn!(
+                            "DhtRecordPush from {} rejected: invalid envelope signature",
+                            peer_id
+                        );
+                        return Ok(());
+                    }
+                }
+
+                let replay_state = self
+                    .peer_connections
+                    .get(peer_id)
+                    .map(|conn| conn.replay_protection.clone());
+                if let Some(replay_protection) = replay_state {
+                    let replay_result = replay_protection
+                        .write()
+                        .await
+                        .check_and_add(&nonce, timestamp);
+                    if !matches!(replay_result, crate::protocol::ReplayResult::Valid) {
+                        tracing::warn!(
+                            "DhtRecordPush from {} rejected: replay protection {}",
+                            peer_id,
+                            match replay_result {
+                                crate::protocol::ReplayResult::FutureTimestamp =>
+                                    "future_timestamp",
+                                crate::protocol::ReplayResult::ExpiredTimestamp =>
+                                    "expired_timestamp",
+                                crate::protocol::ReplayResult::ReplayDetected => "replay_detected",
+                                crate::protocol::ReplayResult::Valid => "valid",
+                            }
+                        );
+                        return Ok(());
+                    }
+                }
+
+                if let Some(ref record_store) = self.record_store {
+                    if seen_node_ids.contains(&self.config.node_id()) {
+                        tracing::debug!("DhtRecordPush already seen by this node, skipping");
+                        return Ok(());
+                    }
+
+                    let reputation = self
+                        .topology
+                        .get_peer_audit_reputation(peer_id)
+                        .await
+                        .map(|rep| (rep * 100.0) as i64)
+                        .unwrap_or(0);
+
+                    let ingress_ctx = crate::dht::signed::DhtRecordIngressContext::new_remote(
+                        peer_id.to_string(),
+                        peer_id.to_string(),
+                        crate::dht::signed::SourceClassification::Unknown,
+                        crate::dht::signed::IngressPath::Push,
+                    );
+
+                    for record in records.iter() {
+                        record_store.store_record_from_ingress(
+                            record.clone(),
+                            &ingress_ctx,
+                            reputation,
+                        );
+                        record_store.init_propagation_state(&record.key);
+                    }
+                    record_store.compute_merkle_tree();
+
+                    if hop_count < 5 {
+                        let ack = MeshMessage::DhtRecordPushAck {
+                            request_id: format!("{}-ack", request_id).into(),
+                            original_request_id: request_id.clone(),
+                            node_id: self.config.node_id().into(),
+                            accepted: true,
+                            missing_keys: Vec::new(),
+                            timestamp: MeshMessage::generate_timestamp(),
+                        };
+                        let _ = self.send_datagram_to_peer(peer_id, &ack).await;
+                    }
+                }
+            }
             _ => {
                 tracing::trace!(
                     "Received unhandled datagram type from {}: {:?}",

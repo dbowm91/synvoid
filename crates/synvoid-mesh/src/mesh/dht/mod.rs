@@ -1,6 +1,7 @@
 pub mod capability_access;
 pub mod capability_attestation;
 pub mod edge_attestation;
+pub mod key_policy;
 pub mod keys;
 pub mod merkle;
 pub mod network_policy;

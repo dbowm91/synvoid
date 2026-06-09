@@ -10,8 +10,7 @@ use openraft::type_config::alias::{SnapshotMetaOf, StoredMembershipOf};
 use openraft::Raft;
 use tokio::sync::broadcast;
 
-use crate::backend::MeshBackendPool;
-use crate::proxy::MeshProxy;
+use super::consensus::ConsensusTransport;
 use crate::raft::network::MeshRaftNetworkFactory;
 use crate::raft::state_machine::{
     GlobalRegistry, GlobalRegistryConfig, GlobalRegistryLogStorage, GlobalRegistryRuntimeConfig,
@@ -43,8 +42,7 @@ impl RaftInstance {
     pub async fn new(
         node_id: u64,
         db_path: PathBuf,
-        backend_pool: Arc<MeshBackendPool>,
-        proxy: Arc<MeshProxy>,
+        transport: Arc<dyn ConsensusTransport>,
         is_observer: bool,
         observer_tags: Vec<String>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
@@ -58,7 +56,7 @@ impl RaftInstance {
 
         let registry = GlobalRegistry::new(config)?;
 
-        let network_factory = MeshRaftNetworkFactory::new(backend_pool, proxy);
+        let network_factory = MeshRaftNetworkFactory::new(transport);
 
         let raft = Raft::new(
             node_id,

@@ -9,8 +9,8 @@ The Mesh module (`src/mesh/`) is SynVoid's peer-to-peer networking subsystem tha
 The Mesh module is responsible for:
 
 - **Peer-to-peer connectivity**: Establishing encrypted QUIC/WireGuard tunnels between SynVoid nodes across the internet, even behind NATs.
-- **Service discovery via DHT**: Distributing routing policies, provider information, and organizational keys using a Kademlia-style distributed hash table.
-- **Distributed consensus**: Global nodes participate in a Raft cluster to agree on OrgPublicKey and ThreatIntel records with strong consistency guarantees.
+- **Service discovery via DHT**: Distributing signed or Raft-attested records (routing policies, provider info, DNS records) via a Kademlia-style distributed hash table. DHT records are advisory and TTL-bound; DHT does not decide trust, ownership, or global policy.
+- **Distributed consensus**: Global nodes participate in a Raft cluster to commit canonical authority records (OrgPublicKey, ThreatIntel, GlobalNodeRevocationList) with strong consistency guarantees. Raft is the only source of canonical global trust state.
 - **Organization management**: Managing multi-tenant isolation using tiered keys, member certificates, and capability attestations.
 - **Post-quantum cryptography**: Hybrid Ed25519+ML-DSA signatures and ML-KEM-768 key exchange to protect against quantum adversaries.
 - **Distributed DNS**: DNSSEC-validated DNS resolution over the mesh with per-tenant zone ownership.
@@ -253,9 +253,9 @@ src/mesh/kem/
 
 DHT and Raft serve distinct roles but share infrastructure:
 
-1. **DHT (Kademlia)** is responsible for **eventual consistency** across the broader mesh network. All nodes participate in the DHT for storing and retrieving records (routing policies, provider info, org keys, DNS records). DHT uses a routing table with k-buckets and parallel queries to locate records across the network.
+1. **DHT (Kademlia)** is responsible for **eventual consistency** across the broader mesh network. All nodes participate in the DHT for storing and retrieving records (routing policies, provider info, DNS records). DHT uses a routing table with k-buckets and parallel queries to locate records across the network. DHT records are soft-state: advisory, TTL-bound, and never a source of canonical authority. Authority-adjacent DHT records (e.g., org keys, verified upstreams) require a signed Raft attestation or quorum proof for acceptance.
 
-2. **Raft** is responsible for **strong consistency** within the Global Node tier only. Global nodes form a Raft cluster to agree on critical records: `Namespace::Org` (OrgPublicKey), `Namespace::Intel` (ThreatIntel), and `Namespace::Revocation` (GlobalNodeRevocationList). Raft provides linearizable reads via ConsistentRead RPC.
+2. **Raft** is responsible for **strong consistency** within the Global Node tier only. Global nodes form a Raft cluster to commit canonical authority records: `Namespace::Org` (OrgPublicKey), `Namespace::Intel` (ThreatIntel), and `Namespace::Revocation` (GlobalNodeRevocationList). Raft is the only source of canonical global trust state — it decides ownership, trust, and revocation. Raft provides linearizable reads via ConsistentRead RPC. Edge nodes cache and gossip Raft-derived artifacts but independently verify them against the Raft state machine.
 
 ### Integration Points
 
@@ -461,14 +461,17 @@ pub fn get_global_record_store() -> Option<Arc<RecordStoreManager>> { ... }
 When a value is committed through Raft:
 1. `RaftInstance` gets a commit notification.
 2. Value is written to `GlobalRegistryStateMachine`.
-3. Committed value is published to the DHT via `MeshTransport`.
+3. Committed value is published to the DHT via `MeshTransport` for broader distribution.
 4. `MeshProxy` receives the update and propagates to peers.
+5. Edge nodes cache Raft-derived artifacts (via `EdgeReplicaManager`) and independently verify them.
 
 When a value is written via DHT (for non-Raft namespaces):
 1. `MeshTransport` writes to `RecordStoreManager`.
 2. `TtlManager` tracks expiry.
-3. `QuorumVerifier` confirms quorum signatures.
-4. Value is usable by all mesh peers.
+3. Quorum verification confirms sufficient DHT peer acknowledgments.
+4. Value is usable by all mesh peers, but remains soft-state (advisory and TTL-bound).
+
+Remote DHT writes require explicit ingress validation context (node-ID binding, message signatures). `DhtAntiEntropyRequest` and `DhtRecordPush` are fully signed/bound at the transport layer.
 
 ### Constant-Time Comparison
 

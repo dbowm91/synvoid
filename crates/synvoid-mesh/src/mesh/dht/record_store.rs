@@ -710,3 +710,9 @@ mod record_store_message;
 mod record_store_persist;
 #[path = "record_store_sync.rs"]
 mod record_store_sync;
+
+impl crate::raft::consensus::RecordReader for RecordStoreManager {
+    fn get_record_value(&self, key: &str) -> Option<Vec<u8>> {
+        self.get_record(key).map(|r| r.value)
+    }
+}

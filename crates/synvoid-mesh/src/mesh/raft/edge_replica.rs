@@ -6,15 +6,37 @@ use moka::sync::Cache;
 use parking_lot::Mutex;
 use rusqlite::{params, Connection};
 
+use crate::config::AuthorityFreshnessConfig;
 use crate::raft::state_machine::{AuthorizedGlobalNode, Namespace, OrgPublicKey, ThreatIntel};
 
 const EDGE_REPLICA_CACHE_MAX_ITEMS: u64 = 10000;
 const EDGE_REPLICA_CACHE_TTL_SECS: u64 = 300;
 
+/// Result of freshness validation on a Raft-derived authority artifact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FreshnessCheckResult {
+    /// Record is within the freshness window.
+    Fresh,
+    /// Record is stale but within grace period. Accept with warning.
+    StaleWithinGrace { stale_secs: u64 },
+    /// Record exceeds hard limit. Should be rejected.
+    StaleHardLimit { stale_secs: u64 },
+}
+
+/// Tracks stale-authority state for metrics and logging.
+#[derive(Debug, Clone, Default)]
+pub struct StaleAuthorityMetrics {
+    pub stale_authority_detected: u64,
+    pub degraded_mode_entries: u64,
+    pub stale_records_rejected: u64,
+}
+
 #[derive(Clone)]
 pub struct EdgeReplicaManager {
     db: Arc<Mutex<Connection>>,
     cache: Cache<String, CachedRecord>,
+    freshness_config: AuthorityFreshnessConfig,
+    metrics: Arc<Mutex<StaleAuthorityMetrics>>,
 }
 
 #[derive(Clone)]
@@ -26,6 +48,13 @@ struct CachedRecord {
 
 impl EdgeReplicaManager {
     pub fn new(data_dir: PathBuf) -> Result<Self, rusqlite::Error> {
+        Self::new_with_freshness_config(data_dir, AuthorityFreshnessConfig::default())
+    }
+
+    pub fn new_with_freshness_config(
+        data_dir: PathBuf,
+        freshness_config: AuthorityFreshnessConfig,
+    ) -> Result<Self, rusqlite::Error> {
         std::fs::create_dir_all(&data_dir).ok();
         let db_path = data_dir.join("read_replica.db");
         let db = Connection::open(&db_path)?;
@@ -37,12 +66,60 @@ impl EdgeReplicaManager {
             .time_to_live(Duration::from_secs(EDGE_REPLICA_CACHE_TTL_SECS))
             .build();
 
-        tracing::info!("EdgeReplicaManager initialized at {:?}", db_path);
+        tracing::info!(
+            "EdgeReplicaManager initialized at {:?} (policy_grace={}s, revocation_limit={}s)",
+            db_path,
+            freshness_config.global_policy_grace_secs,
+            freshness_config.revocation_hard_limit_secs,
+        );
 
         Ok(Self {
             db: Arc::new(Mutex::new(db)),
             cache,
+            freshness_config,
+            metrics: Arc::new(Mutex::new(StaleAuthorityMetrics::default())),
         })
+    }
+
+    /// Check freshness of a Raft-derived record against the configured thresholds.
+    pub fn check_freshness(&self, record_timestamp: u64, namespace: &Namespace) -> FreshnessCheckResult {
+        let now = synvoid_utils::safe_unix_timestamp();
+        if record_timestamp >= now {
+            return FreshnessCheckResult::Fresh;
+        }
+        let stale_secs = now.saturating_sub(record_timestamp);
+
+        match namespace {
+            Namespace::Revocation => {
+                if stale_secs <= self.freshness_config.revocation_hard_limit_secs {
+                    FreshnessCheckResult::Fresh
+                } else {
+                    FreshnessCheckResult::StaleHardLimit { stale_secs }
+                }
+            }
+            Namespace::Org | Namespace::AuthorizedGlobalNodes => {
+                if stale_secs <= self.freshness_config.global_policy_grace_secs {
+                    FreshnessCheckResult::Fresh
+                } else {
+                    FreshnessCheckResult::StaleWithinGrace { stale_secs }
+                }
+            }
+            Namespace::Intel => {
+                if self.freshness_config.threat_intel_stale_local {
+                    // Threat intel: fail open local, always accept
+                    FreshnessCheckResult::Fresh
+                } else if stale_secs <= self.freshness_config.global_policy_grace_secs {
+                    FreshnessCheckResult::Fresh
+                } else {
+                    FreshnessCheckResult::StaleWithinGrace { stale_secs }
+                }
+            }
+        }
+    }
+
+    /// Get a snapshot of current stale-authority metrics.
+    pub fn stale_metrics(&self) -> StaleAuthorityMetrics {
+        self.metrics.lock().clone()
     }
 
     fn init_schema(db: &Connection) -> Result<(), rusqlite::Error> {
@@ -351,11 +428,71 @@ impl EdgeReplicaManager {
         key_id: &str,
         value: &[u8],
     ) -> Result<(), rusqlite::Error> {
+        // Extract record timestamp for freshness check.
+        // Each record type embeds a created_at/authorized_at/revoked_at field.
+        let record_timestamp = Self::extract_record_timestamp(namespace, value);
+
+        if let Some(ts) = record_timestamp {
+            match self.check_freshness(ts, namespace) {
+                FreshnessCheckResult::Fresh => {}
+                FreshnessCheckResult::StaleWithinGrace { stale_secs } => {
+                    tracing::warn!(
+                        namespace = ?namespace,
+                        key = key_id,
+                        stale_secs,
+                        "Stale authority artifact within grace window - accepting with last valid state"
+                    );
+                    self.metrics.lock().stale_authority_detected += 1;
+                }
+                FreshnessCheckResult::StaleHardLimit { stale_secs } => {
+                    tracing::warn!(
+                        namespace = ?namespace,
+                        key = key_id,
+                        stale_secs,
+                        limit = match namespace {
+                            Namespace::Revocation => self.freshness_config.revocation_hard_limit_secs,
+                            _ => self.freshness_config.ca_epoch_hard_limit_secs,
+                        },
+                        "Stale authority artifact exceeds hard limit - rejecting record"
+                    );
+                    self.metrics.lock().stale_records_rejected += 1;
+                    self.metrics.lock().stale_authority_detected += 1;
+                    return Ok(());
+                }
+            }
+        }
+
         match namespace {
             Namespace::Org => self.update_org_key(key_id, value),
             Namespace::Intel => self.update_threat_intel(key_id, value),
             Namespace::Revocation => self.update_revocation(key_id, value),
             Namespace::AuthorizedGlobalNodes => self.update_authorized_global_node(key_id, value),
+        }
+    }
+
+    /// Extract the embedded timestamp from a serialized record for freshness checks.
+    fn extract_record_timestamp(namespace: &Namespace, value: &[u8]) -> Option<u64> {
+        match namespace {
+            Namespace::Org => {
+                let key: OrgPublicKey = postcard::from_bytes(value).ok()?;
+                Some(key.created_at)
+            }
+            Namespace::Intel => {
+                let intel: ThreatIntel = postcard::from_bytes(value).ok()?;
+                Some(intel.created_at)
+            }
+            Namespace::Revocation => {
+                #[derive(serde::Deserialize)]
+                struct RevocationWithTimestamp {
+                    revoked_at: u64,
+                }
+                let rev: RevocationWithTimestamp = postcard::from_bytes(value).ok()?;
+                Some(rev.revoked_at)
+            }
+            Namespace::AuthorizedGlobalNodes => {
+                let node: AuthorizedGlobalNode = postcard::from_bytes(value).ok()?;
+                Some(node.authorized_at)
+            }
         }
     }
 
@@ -468,8 +605,15 @@ impl EdgeReplicaManager {
 }
 
 pub fn create_edge_replica_manager(data_dir: Option<PathBuf>) -> Option<EdgeReplicaManager> {
+    create_edge_replica_manager_with_freshness(data_dir, AuthorityFreshnessConfig::default())
+}
+
+pub fn create_edge_replica_manager_with_freshness(
+    data_dir: Option<PathBuf>,
+    freshness_config: AuthorityFreshnessConfig,
+) -> Option<EdgeReplicaManager> {
     let data_dir = data_dir?.join("edge_replica");
-    EdgeReplicaManager::new(data_dir).ok()
+    EdgeReplicaManager::new_with_freshness_config(data_dir, freshness_config).ok()
 }
 
 #[cfg(test)]

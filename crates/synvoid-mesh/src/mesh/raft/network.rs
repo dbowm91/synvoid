@@ -16,17 +16,15 @@ use openraft::RaftTypeConfig;
 use tokio::io::AsyncReadExt;
 use tokio::sync::RwLock;
 
-use crate::backend::MeshBackendPool;
+use super::consensus::ConsensusTransport;
 use crate::protocol::{
     ArcStr, MeshMessage, RaftMsgType, RaftPayload as MeshRaftPayload, RaftSnapshotFrame,
 };
-use crate::proxy::MeshProxy;
 
 const SNAPSHOT_CHUNK_SIZE: usize = 64 * 1024;
 
 pub struct MeshRaftNetwork<C: RaftTypeConfig> {
-    _backend: Arc<MeshBackendPool>,
-    proxy: Arc<MeshProxy>,
+    transport: Arc<dyn ConsensusTransport>,
     target: String,
     _observer_tags: Option<Vec<String>>,
     pending_responses: Arc<RwLock<HashMap<String, tokio::sync::oneshot::Sender<Vec<u8>>>>>,
@@ -35,14 +33,12 @@ pub struct MeshRaftNetwork<C: RaftTypeConfig> {
 
 impl<C: RaftTypeConfig> MeshRaftNetwork<C> {
     pub fn new(
-        backend: Arc<MeshBackendPool>,
-        proxy: Arc<MeshProxy>,
+        transport: Arc<dyn ConsensusTransport>,
         target: String,
         observer_tags: Option<Vec<String>>,
     ) -> Self {
         Self {
-            _backend: backend,
-            proxy,
+            transport,
             target,
             _observer_tags: observer_tags,
             pending_responses: Arc::new(RwLock::new(HashMap::new())),
@@ -66,30 +62,9 @@ impl<C: RaftTypeConfig> MeshRaftNetwork<C> {
             payload,
         };
 
-        let transport_arc = self.proxy.get_transport();
-        let transport = {
-            let guard = transport_arc.read();
-            guard.clone()
-        };
-
-        let transport = match transport {
-            Some(t) => t,
-            None => {
-                return Err(RPCError::Unreachable(Unreachable::new(
-                    &std::io::Error::new(
-                        std::io::ErrorKind::NotConnected,
-                        "Transport not available",
-                    ),
-                )));
-            }
-        };
-
         let mut last_error = None;
         for attempt in 0..=MAX_RETRIES {
-            match transport
-                .send_message_to_peer_with_response(&self.target, &raft_msg)
-                .await
-            {
+            match self.transport.send_rpc(&self.target, &raft_msg).await {
                 Ok(response_data) => return Ok(response_data),
                 Err(e) => {
                     last_error = Some(e);
@@ -114,7 +89,9 @@ impl<C: RaftTypeConfig> MeshRaftNetwork<C> {
             self.target
         );
         let err = last_error.unwrap();
-        Err(RPCError::Unreachable(Unreachable::new(&err)))
+        Err(RPCError::Unreachable(Unreachable::new(
+            &std::io::Error::new(std::io::ErrorKind::ConnectionRefused, err.to_string()),
+        )))
     }
 
     pub async fn handle_response(&self, request_id: &str, data: Vec<u8>) {
@@ -170,24 +147,6 @@ impl RaftNetworkV2<crate::raft::state_machine::GlobalRegistryConfig>
         SnapshotResponse<crate::raft::state_machine::GlobalRegistryConfig>,
         StreamingError<crate::raft::state_machine::GlobalRegistryConfig>,
     > {
-        let transport_arc = self.proxy.get_transport();
-        let transport = {
-            let guard = transport_arc.read();
-            guard.clone()
-        };
-
-        let transport = match transport {
-            Some(t) => t,
-            None => {
-                return Err(StreamingError::Unreachable(Unreachable::new(
-                    &std::io::Error::new(
-                        std::io::ErrorKind::NotConnected,
-                        "Transport not available",
-                    ),
-                )));
-            }
-        };
-
         let target = self.target.clone();
         let meta = postcard::to_stdvec(&snapshot.meta)
             .map_err(|e| StreamingError::Unreachable(Unreachable::new(&e)))?;
@@ -228,10 +187,15 @@ impl RaftNetworkV2<crate::raft::state_machine::GlobalRegistryConfig>
             },
         };
 
-        transport
-            .send_message_to_peer(&target, &raft_msg)
+        self.transport
+            .send_fire_and_forget(&target, &raft_msg)
             .await
-            .map_err(|e| StreamingError::Unreachable(Unreachable::new(&e)))?;
+            .map_err(|e| {
+                StreamingError::Unreachable(Unreachable::new(&std::io::Error::new(
+                    std::io::ErrorKind::ConnectionRefused,
+                    e.to_string(),
+                )))
+            })?;
 
         let chunk_size = SNAPSHOT_CHUNK_SIZE;
         let mut offset = 0u64;
@@ -265,10 +229,15 @@ impl RaftNetworkV2<crate::raft::state_machine::GlobalRegistryConfig>
                 },
             };
 
-            transport
-                .send_message_to_peer(&target, &chunk_msg)
+            self.transport
+                .send_fire_and_forget(&target, &chunk_msg)
                 .await
-                .map_err(|e| StreamingError::Unreachable(Unreachable::new(&e)))?;
+                .map_err(|e| {
+                    StreamingError::Unreachable(Unreachable::new(&std::io::Error::new(
+                        std::io::ErrorKind::ConnectionRefused,
+                        e.to_string(),
+                    )))
+                })?;
 
             offset += this_chunk_size as u64;
         }
@@ -305,16 +274,14 @@ impl RaftNetworkV2<crate::raft::state_machine::GlobalRegistryConfig>
 
 #[derive(Clone)]
 pub struct MeshRaftNetworkFactory {
-    backend: Arc<MeshBackendPool>,
-    proxy: Arc<MeshProxy>,
+    transport: Arc<dyn ConsensusTransport>,
     observer_tags: Vec<String>,
 }
 
 impl MeshRaftNetworkFactory {
-    pub fn new(backend: Arc<MeshBackendPool>, proxy: Arc<MeshProxy>) -> Self {
+    pub fn new(transport: Arc<dyn ConsensusTransport>) -> Self {
         Self {
-            backend,
-            proxy,
+            transport,
             observer_tags: Vec::new(),
         }
     }
@@ -341,8 +308,7 @@ impl openraft::network::RaftNetworkFactory<crate::raft::state_machine::GlobalReg
             self.observer_tags
         );
         MeshRaftNetwork::new(
-            self.backend.clone(),
-            self.proxy.clone(),
+            self.transport.clone(),
             target.to_string(),
             Some(self.observer_tags.clone()),
         )

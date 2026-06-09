@@ -6,8 +6,8 @@ The SynVoid Mesh is an experimental peer-to-peer network layer designed to trans
 
 The mesh follows a hierarchical structure inspired by decentralized networks but optimized for low-latency security operations.
 
-- **Global Nodes (Authorities):** A small set of trusted nodes that act as directory authorities. They maintain a full map of the network and handle peer admission using **Raft consensus** for state consistency.
-- **Edge Nodes (WAFs):** Standard WAF instances that connect to Global nodes for discovery and to other Edge nodes for data exchange.
+- **Global Nodes (Authorities):** A small set of trusted nodes that maintain the canonical Raft cluster. They commit authoritative records (OrgPublicKey, ThreatIntel, GlobalNodeRevocationList) via Raft consensus. Global nodes also participate in DHT for broader record distribution, but DHT is advisory only — Raft is the source of truth for trust and ownership.
+- **Edge Nodes (WAFs):** Standard WAF instances that connect to Global nodes for discovery and to other Edge nodes for data exchange. Edge nodes cache and gossip Raft-derived artifacts but independently verify them.
 - **Origin Nodes:** WAFs that are directly connected to upstream application servers. They announce routes for their protected services through the mesh.
 
 ## Core Technologies
@@ -26,15 +26,18 @@ SynVoid Mesh is designed for future-proof security, utilizing hybrid key exchang
 
 ### 3. Distributed Discovery (DHT)
 Peer and service discovery are handled via a Kademlia-based **Distributed Hash Table (DHT)**.
-- **Capability Attestations:** Nodes sign and publish their capabilities (e.g., "I can proxy example.com") to the DHT.
+- **Signed/Raft-Attested Records**: DHT distributes signed or Raft-attested records. DHT does not decide trust, ownership, revocation, or global policy — it is a transport layer for record distribution.
+- **Capability Attestations:** Nodes sign and publish their capabilities (e.g., "I can proxy example.com") to the DHT. These records are soft-state: advisory and TTL-bound.
+- **Authority-Adjacent Records**: Records in sensitive namespaces (org keys, verified upstreams) require a signed Raft attestation or quorum proof for acceptance.
 - **Hierarchical Routing:** [RESERVED/PLANNED] Future multi-region topology feature using Bloom filters and regional hubs for memory-efficient route announcement checking. Not yet active. See [`hierarchical_routing.rs`](src/mesh/hierarchical_routing.rs) for implementation details.
 
 ### 4. Raft Consensus
-Global nodes use Raft consensus (`src/mesh/raft/*.rs`) for state consistency:
-- **Leader Election:** Global nodes elect a leader to coordinate state changes
-- **Log Replication:** State changes are replicated across Global nodes via Raft log
-- **Quorum Requirements:** Write operations require quorum (2/3) of Global nodes
-- **Note:** Quorum deadlock risk during network partition (see MESH-15)
+Global nodes use Raft consensus (`src/mesh/raft/*.rs`) for **canonical global authority**:
+- **Leader Election:** Global nodes elect a leader to coordinate state changes.
+- **Log Replication:** Authority records are replicated across Global nodes via Raft log.
+- **Quorum Requirements:** Write operations require quorum (2/3) of Global nodes.
+- **Canonical Authority:** Raft commits are the single source of truth for OrgPublicKey, ThreatIntel, and GlobalNodeRevocationList. DHT records for these namespaces are derived from Raft commits, not created independently.
+- **Note:** Quorum deadlock risk during network partition (see MESH-15).
 
 ---
 
@@ -90,14 +93,50 @@ The transport layer now enforces node-ID binding for `DhtRecordAnnounce`, `DhtSy
 | `DhtSnapshotResponse` | ✅ Verified | Signature and timestamp are checked before snapshot apply |
 | `DhtSyncRequest` | ✅ Verified by default | Signed requests are verified; unsigned compatibility fallback remains config-controlled |
 | `DhtSyncResponse` | ✅ Verified | Signature and timestamp are checked before apply |
-| `DhtAntiEntropyRequest` | ⚠️ Partial | Peer/node binding is enforced, but `signer_public_key` is still unused |
+| `DhtAntiEntropyRequest` | ⚠️ Partial | Peer/node binding is enforced, but `signer_public_key` is still unused in verification |
 | `DhtAntiEntropyResponse` | ✅ Verified | Signature verified |
 | `DhtRecordPush` | ⚠️ Partial | Timestamp is validated, but the message has no signature field |
 
 **Mitigating Factors:**
 - All DHT communication requires TLS 1.3 encryption (transport layer)
-- Global nodes use Raft consensus for state consistency, providing implicit authority
+- Global nodes use Raft consensus for canonical authority, providing implicit authority for committed records
+- Authority-adjacent DHT records (org keys, verified upstreams) require signed Raft attestation or quorum proof
 - Reputation systems and audit logs help detect anomalous behavior
 - Deprecated quorum/commit message types (`DhtRecordCommit`, `QuorumStoreRequest`, `QuorumSignatureResp`) were removed from the protocol; older docs that mention them are stale.
 
 These limitations are known architectural constraints. Future revisions may address gaps based on threat model evolution and performance requirements.
+
+---
+
+## State Ownership Table
+
+The following table clarifies which subsystem owns each category of mesh state. This boundary is enforced at the code level — DHT cannot create authority records independently, and Raft does not manage soft-state record distribution.
+
+| State Category | Owner | Storage | Consistency | Notes |
+|----------------|-------|---------|-------------|-------|
+| **OrgPublicKey** | Raft | `GlobalRegistryStateMachine` | Linearizable | Canonical authority. DHT copies are derived from Raft commits. |
+| **ThreatIntel** | Raft | `GlobalRegistryStateMachine` | Linearizable | Canonical authority. Published to DHT for broader distribution. |
+| **GlobalNodeRevocationList** | Raft | `GlobalRegistryStateMachine` | Linearizable | Also distributed via DHT for fast local revocation checks. |
+| **AuthorizedGlobalNodes** | Raft | `GlobalRegistryStateMachine` | Linearizable | Node admission requires Raft consensus. |
+| **Routing policies** | DHT | `RecordStoreManager` | Eventual | Advisory, TTL-bound. Signed by originating node. |
+| **Provider info** | DHT | `RecordStoreManager` | Eventual | Advisory, TTL-bound. Announced via `DhtRecordAnnounce`. |
+| **Capability attestations** | DHT | `RecordStoreManager` | Eventual | Soft-state. Signed by the attesting node. |
+| **DNS records** | DHT | `RecordStoreManager` | Eventual | Per-tenant zone ownership. TTL-bound. |
+| **YARA rules** | DHT | `RecordStoreManager` | Eventual | Signed by global nodes. Content-addressed keys. |
+| **Tier keys** | Local | In-process memory | N/A | Derived from org keys; never stored in DHT. |
+| **Peer reputation** | Local | In-process memory | N/A | Per-node behavioral scoring. Not distributed. |
+| **Behavioral fingerprints** | Local | In-process memory | N/A | Per-peer. Shared via mesh only when explicitly propagated. |
+| **TLS certificates** | Local | `MeshCertManager` | N/A | Node identity. Pinned fingerprints for verification. |
+| **Session state (KEM)** | Local | `SessionManager` | N/A | Ephemeral key exchange sessions. |
+
+### Boundary Rules
+
+1. **Raft is the only canonical authority source.** DHT cannot independently create, modify, or revoke authority records (OrgPublicKey, ThreatIntel, GlobalNodeRevocationList, AuthorizedGlobalNodes).
+
+2. **DHT records are soft-state.** All DHT records are advisory, TTL-bound, and subject to eviction. They never override Raft-committed state.
+
+3. **Authority-adjacent DHT records require proof.** Records in sensitive namespaces (e.g., org keys, verified upstreams) require a signed Raft attestation or quorum proof for acceptance by receiving nodes.
+
+4. **Edge nodes verify independently.** Edge nodes cache Raft-derived artifacts (via `EdgeReplicaManager`) and gossip them to peers, but independently verify signatures against the Raft state machine before accepting them.
+
+5. **Remote DHT writes require ingress validation.** All remote DHT writes (sync, anti-entropy, record push) require explicit ingress validation context: node-ID binding, message signatures, and TLS 1.3 transport encryption.

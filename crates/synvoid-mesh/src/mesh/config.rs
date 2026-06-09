@@ -16,6 +16,70 @@ use crate::organization::ADMIN_ORG_ID;
 pub use crate::reputation::ReputationConfig;
 pub use crate::threat_intel::ThreatIntelligenceConfig;
 
+/// Configuration for stale authority artifact handling.
+///
+/// Defines fail-open/fail-closed behavior when Raft-derived authority
+/// artifacts (org keys, threat intel, revocations, global node auth)
+/// become stale relative to expected freshness windows.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AuthorityFreshnessConfig {
+    /// Grace period for normal global policy updates before fail-closed.
+    /// Default: 3600 (1 hour)
+    #[serde(default = "default_global_policy_grace_secs")]
+    pub global_policy_grace_secs: u64,
+    /// Hard limit for revocation freshness. Revocations exceeding this
+    /// are fail-closed for global nodes. Default: 300 (5 minutes)
+    #[serde(default = "default_revocation_hard_limit_secs")]
+    pub revocation_hard_limit_secs: u64,
+    /// Hard limit for CA/trust-root epoch staleness. Default: 86400 (24 hours)
+    #[serde(default = "default_ca_epoch_hard_limit_secs")]
+    pub ca_epoch_hard_limit_secs: u64,
+    /// When true, stale threat intel falls back to local rules.
+    /// Default: true (fail open local)
+    #[serde(default = "default_threat_intel_stale_local")]
+    pub threat_intel_stale_local: bool,
+    /// When true, peer discovery uses cached peers/bootstrap seeds
+    /// when authoritative source is stale. Default: true
+    #[serde(default = "default_peer_discovery_degraded")]
+    pub peer_discovery_degraded: bool,
+    /// TTL for DHT soft-state entries. Expired entries are removed
+    /// from routing decisions naturally. Default: 300 (5 minutes)
+    #[serde(default = "default_dht_soft_state_ttl_secs")]
+    pub dht_soft_state_ttl_secs: u64,
+}
+
+fn default_global_policy_grace_secs() -> u64 {
+    3600
+}
+fn default_revocation_hard_limit_secs() -> u64 {
+    300
+}
+fn default_ca_epoch_hard_limit_secs() -> u64 {
+    86400
+}
+fn default_threat_intel_stale_local() -> bool {
+    true
+}
+fn default_peer_discovery_degraded() -> bool {
+    true
+}
+fn default_dht_soft_state_ttl_secs() -> u64 {
+    300
+}
+
+impl Default for AuthorityFreshnessConfig {
+    fn default() -> Self {
+        Self {
+            global_policy_grace_secs: 3600,
+            revocation_hard_limit_secs: 300,
+            ca_epoch_hard_limit_secs: 86400,
+            threat_intel_stale_local: true,
+            peer_discovery_degraded: true,
+            dht_soft_state_ttl_secs: 300,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct YaraRulesMeshConfig {
     #[serde(default = "default_yara_mesh_enabled")]
@@ -600,6 +664,8 @@ pub struct MeshConfig {
     pub mlkem: Option<MeshMlKemConfig>,
     #[serde(default)]
     pub seed_tofu: Option<SeedTofuConfig>,
+    #[serde(default)]
+    pub authority_freshness: AuthorityFreshnessConfig,
     #[serde(skip)]
     cached_pow: Arc<RwLock<Option<(u64, std::time::Instant)>>>,
 }

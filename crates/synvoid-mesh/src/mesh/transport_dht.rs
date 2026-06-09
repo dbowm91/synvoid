@@ -278,7 +278,8 @@ impl MeshTransport {
 
         if let Some(ref record_store) = self.record_store {
             let signer = self.mesh_signer.as_ref();
-            let applied = record_store.verify_and_apply_snapshot(records, version, signer);
+            let applied =
+                record_store.verify_and_apply_snapshot(records, version, signer, from_peer);
             tracing::info!(
                 "Applied {} records from DHT snapshot (version: {})",
                 applied,
@@ -609,6 +610,29 @@ impl MeshTransport {
                     from_peer
                 );
                 return;
+            }
+
+            // Phase 3: Verify signer_public_key matches the claimed node_id
+            // against authorized global node keys (binds L2 envelope signer to L4 node identity)
+            if self.config.role.is_global() {
+                if let Some(pk_str) = signer_public_key {
+                    if !pk_str.is_empty() {
+                        if let Ok(pk_bytes) =
+                            base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(pk_str)
+                        {
+                            let cert_mgr = self.cert_manager.read();
+                            if let Some(expected_key) = cert_mgr.get_global_node_key(node_id) {
+                                if pk_bytes != expected_key {
+                                    tracing::warn!(
+                                        "DHT anti-entropy request from {} rejected: signer_public_key does not match authorized key for node {}",
+                                        from_peer, node_id
+                                    );
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -1338,5 +1362,376 @@ mod tests {
         })
         .unwrap_or_default();
         assert_eq!(content, direct);
+    }
+
+    #[test]
+    fn test_verify_anti_entropy_request_signature_rejects_wrong_signer_key() {
+        let signer_a = MeshMessageSigner::new([1u8; 32]);
+        let signer_b = MeshMessageSigner::new([2u8; 32]);
+        let request_id = "anti-req-wrong-key";
+        let node_id = "node-x";
+        let local_root_hash: Vec<u8> = vec![1, 2, 3, 4];
+        let timestamp = synvoid_utils::safe_unix_timestamp();
+        let nonce = "anti-nonce-wrong-key";
+        let content = crate::dht::signed::get_anti_entropy_request_signable_content(
+            request_id,
+            node_id,
+            &local_root_hash,
+            timestamp,
+            nonce,
+        );
+        // Sign with signer_a but verify with signer_b's public key
+        let signature = signer_a.sign(&content);
+        let valid = verify_dht_anti_entropy_request_signature(
+            request_id,
+            node_id,
+            &local_root_hash,
+            timestamp,
+            nonce,
+            &signature,
+            Some(&signer_b.get_public_key()),
+        );
+        assert!(
+            !valid,
+            "anti-entropy signature must reject when signer_public_key doesn't match actual signer"
+        );
+    }
+
+    #[test]
+    fn test_record_push_envelope_signature_rejects_unsigned_when_required() {
+        let valid = verify_dht_record_push_envelope_signature_bytes(
+            "push-req-unsigned",
+            "node-r",
+            &[build_dht_record("org:test", b"v")],
+            1,
+            "nonce-unsigned",
+            synvoid_utils::safe_unix_timestamp(),
+            &[],
+            None,
+        );
+        assert!(!valid, "unsigned push must reject when signature is empty");
+    }
+
+    #[test]
+    fn test_record_push_envelope_signature_rejects_tampered_signature() {
+        let signer = MeshMessageSigner::new([20u8; 32]);
+        let request_id = "push-req-tamper";
+        let node_id = "node-r";
+        let records = vec![build_dht_record("org:test", b"v")];
+        let hop_count = 1;
+        let nonce = "push-nonce-tamper";
+        let timestamp = synvoid_utils::safe_unix_timestamp();
+        let content = crate::dht::signed::get_dht_record_push_envelope_signable_content(
+            request_id, node_id, &records, hop_count, nonce, timestamp,
+        );
+        let mut signature = signer.sign(&content);
+        // Tamper with the signature
+        signature[0] ^= 0xFF;
+        let valid = verify_dht_record_push_envelope_signature_bytes(
+            request_id,
+            node_id,
+            &records,
+            hop_count,
+            nonce,
+            timestamp,
+            &signature,
+            Some(&signer.get_public_key()),
+        );
+        assert!(!valid, "tampered record push signature must reject");
+    }
+
+    #[test]
+    fn test_record_push_replay_protection_rejects_duplicate_nonce() {
+        let mut replay = crate::protocol::ReplayProtection::new();
+        let timestamp = synvoid_utils::safe_unix_timestamp();
+        let first = replay.check_and_add("push-replay-nonce", timestamp);
+        let second = replay.check_and_add("push-replay-nonce", timestamp);
+        assert!(
+            matches!(first, crate::protocol::ReplayResult::Valid),
+            "first push with nonce should be valid"
+        );
+        assert!(
+            matches!(second, crate::protocol::ReplayResult::ReplayDetected),
+            "replayed push nonce must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_record_push_replay_protection_rejects_expired_timestamp() {
+        let mut replay = crate::protocol::ReplayProtection::new();
+        let stale = synvoid_utils::safe_unix_timestamp()
+            .saturating_sub(crate::protocol::REPLAY_WINDOW_SECS + 1);
+        let result = replay.check_and_add("push-expired-nonce", stale);
+        assert!(
+            matches!(result, crate::protocol::ReplayResult::ExpiredTimestamp),
+            "push with expired timestamp must reject"
+        );
+    }
+
+    #[test]
+    fn test_verify_sync_request_signature_rejects_wrong_signer_key() {
+        let signer_a = MeshMessageSigner::new([30u8; 32]);
+        let signer_b = MeshMessageSigner::new([31u8; 32]);
+        let request_id = "sync-wrong-key";
+        let node_id = "node-a";
+        let from_version = 5;
+        let timestamp = synvoid_utils::safe_unix_timestamp();
+        let nonce = "nonce-wrong-key";
+        let content = crate::dht::signed::get_sync_request_signable_content(
+            request_id,
+            node_id,
+            from_version,
+            timestamp,
+            nonce,
+        );
+        let signature = signer_a.sign(&content);
+        let valid = verify_dht_sync_request_signature(
+            request_id,
+            node_id,
+            from_version,
+            timestamp,
+            nonce,
+            &signature,
+            Some(&signer_b.get_public_key()),
+        );
+        assert!(
+            !valid,
+            "sync request signature must reject when signer_public_key doesn't match actual signer"
+        );
+    }
+
+    #[test]
+    fn test_verify_sync_request_signature_rejects_missing_public_key() {
+        let signer = MeshMessageSigner::new([32u8; 32]);
+        let request_id = "sync-missing-key";
+        let node_id = "node-c";
+        let from_version = 1;
+        let timestamp = synvoid_utils::safe_unix_timestamp();
+        let nonce = "nonce-missing-key";
+        let content = crate::dht::signed::get_sync_request_signable_content(
+            request_id,
+            node_id,
+            from_version,
+            timestamp,
+            nonce,
+        );
+        let signature = signer.sign(&content);
+        let valid = verify_dht_sync_request_signature(
+            request_id,
+            node_id,
+            from_version,
+            timestamp,
+            nonce,
+            &signature,
+            None,
+        );
+        assert!(!valid, "missing public key must reject");
+    }
+
+    #[test]
+    fn test_verify_sync_request_signature_accepts_empty_nonce() {
+        let signer = MeshMessageSigner::new([33u8; 32]);
+        let request_id = "sync-empty-nonce";
+        let node_id = "node-d";
+        let from_version = 1;
+        let timestamp = synvoid_utils::safe_unix_timestamp();
+        let content = crate::dht::signed::get_sync_request_signable_content(
+            request_id,
+            node_id,
+            from_version,
+            timestamp,
+            "",
+        );
+        let signature = signer.sign(&content);
+        let valid = verify_dht_sync_request_signature(
+            request_id,
+            node_id,
+            from_version,
+            timestamp,
+            "",
+            &signature,
+            Some(&signer.get_public_key()),
+        );
+        assert!(
+            valid,
+            "empty nonce is valid if signature matches (nonce is part of signed content)"
+        );
+    }
+
+    #[test]
+    fn test_verify_anti_entropy_request_signature_rejects_tampered_root_hash() {
+        let signer = MeshMessageSigner::new([34u8; 32]);
+        let request_id = "anti-tamper-hash";
+        let node_id = "node-e";
+        let local_root_hash: Vec<u8> = vec![1, 2, 3, 4];
+        let timestamp = synvoid_utils::safe_unix_timestamp();
+        let nonce = "anti-nonce-tamper-hash";
+        let content = crate::dht::signed::get_anti_entropy_request_signable_content(
+            request_id,
+            node_id,
+            &local_root_hash,
+            timestamp,
+            nonce,
+        );
+        let signature = signer.sign(&content);
+        let mut tampered_hash = local_root_hash.clone();
+        tampered_hash[0] ^= 0xFF;
+        let valid = verify_dht_anti_entropy_request_signature(
+            request_id,
+            node_id,
+            &tampered_hash,
+            timestamp,
+            nonce,
+            &signature,
+            Some(&signer.get_public_key()),
+        );
+        assert!(
+            !valid,
+            "anti-entropy signature must reject when root_hash is tampered"
+        );
+    }
+
+    #[test]
+    fn test_verify_anti_entropy_request_signature_rejects_empty_public_key() {
+        let signer = MeshMessageSigner::new([35u8; 32]);
+        let request_id = "anti-empty-key";
+        let node_id = "node-f";
+        let local_root_hash: Vec<u8> = vec![1, 2, 3, 4];
+        let timestamp = synvoid_utils::safe_unix_timestamp();
+        let nonce = "anti-nonce-empty-key";
+        let content = crate::dht::signed::get_anti_entropy_request_signable_content(
+            request_id,
+            node_id,
+            &local_root_hash,
+            timestamp,
+            nonce,
+        );
+        let signature = signer.sign(&content);
+        let valid = verify_dht_anti_entropy_request_signature(
+            request_id,
+            node_id,
+            &local_root_hash,
+            timestamp,
+            nonce,
+            &signature,
+            Some(""),
+        );
+        assert!(!valid, "empty public key string must reject");
+    }
+
+    #[test]
+    fn test_record_push_envelope_signature_rejects_wrong_node_id() {
+        let signer = MeshMessageSigner::new([36u8; 32]);
+        let request_id = "push-wrong-node";
+        let node_id = "node-g";
+        let records = vec![build_dht_record("org:test", b"v")];
+        let hop_count = 1;
+        let nonce = "push-nonce-wrong-node";
+        let timestamp = synvoid_utils::safe_unix_timestamp();
+        let content = crate::dht::signed::get_dht_record_push_envelope_signable_content(
+            request_id, node_id, &records, hop_count, nonce, timestamp,
+        );
+        let signature = signer.sign(&content);
+        let valid = verify_dht_record_push_envelope_signature_bytes(
+            request_id,
+            "different-node",
+            &records,
+            hop_count,
+            nonce,
+            timestamp,
+            &signature,
+            Some(&signer.get_public_key()),
+        );
+        assert!(
+            !valid,
+            "record push signature must reject when node_id doesn't match signed content"
+        );
+    }
+
+    #[test]
+    fn test_record_push_envelope_signature_rejects_wrong_hop_count() {
+        let signer = MeshMessageSigner::new([37u8; 32]);
+        let request_id = "push-wrong-hop";
+        let node_id = "node-h";
+        let records = vec![build_dht_record("org:test", b"v")];
+        let hop_count = 1;
+        let nonce = "push-nonce-wrong-hop";
+        let timestamp = synvoid_utils::safe_unix_timestamp();
+        let content = crate::dht::signed::get_dht_record_push_envelope_signable_content(
+            request_id, node_id, &records, hop_count, nonce, timestamp,
+        );
+        let signature = signer.sign(&content);
+        let valid = verify_dht_record_push_envelope_signature_bytes(
+            request_id,
+            node_id,
+            &records,
+            5,
+            nonce,
+            timestamp,
+            &signature,
+            Some(&signer.get_public_key()),
+        );
+        assert!(
+            !valid,
+            "record push signature must reject when hop_count doesn't match signed content"
+        );
+    }
+
+    #[test]
+    fn test_sync_request_signable_content_differs_with_different_request_id() {
+        let content_a =
+            crate::dht::signed::get_sync_request_signable_content("req-1", "node", 0, 100, "nonce");
+        let content_b =
+            crate::dht::signed::get_sync_request_signable_content("req-2", "node", 0, 100, "nonce");
+        assert_ne!(
+            content_a, content_b,
+            "different request_ids must produce different signable content"
+        );
+    }
+
+    #[test]
+    fn test_sync_request_signable_content_differs_with_different_from_version() {
+        let content_a =
+            crate::dht::signed::get_sync_request_signable_content("req", "node", 0, 100, "nonce");
+        let content_b =
+            crate::dht::signed::get_sync_request_signable_content("req", "node", 10, 100, "nonce");
+        assert_ne!(
+            content_a, content_b,
+            "different from_version must produce different signable content"
+        );
+    }
+
+    #[test]
+    fn test_anti_entropy_signable_content_differs_with_different_root_hash() {
+        let content_a = crate::dht::signed::get_anti_entropy_request_signable_content(
+            "req",
+            "node",
+            &[1, 2, 3],
+            100,
+            "nonce",
+        );
+        let content_b = crate::dht::signed::get_anti_entropy_request_signable_content(
+            "req",
+            "node",
+            &[4, 5, 6],
+            100,
+            "nonce",
+        );
+        assert_ne!(
+            content_a, content_b,
+            "different root hashes must produce different signable content"
+        );
+    }
+
+    #[test]
+    fn test_classify_sync_auth_missing_signature_rejected() {
+        let mode = classify_dht_sync_auth_mode(&[], Some("key"), true, None, 100);
+        assert_eq!(mode, DhtSyncAuthMode::UnsignedRejected);
+    }
+
+    #[test]
+    fn test_classify_sync_auth_empty_signature_treated_as_unsigned() {
+        let mode = classify_dht_sync_auth_mode(&[], Some("key"), false, None, 100);
+        assert_eq!(mode, DhtSyncAuthMode::UnsignedAllowed);
     }
 }

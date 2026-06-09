@@ -203,10 +203,12 @@ pub async fn init_mesh_control_plane(
         .expect("Failed to get transport")
         .get_inner();
     let _raft_client = Arc::new(crate::mesh::raft::client::RaftAwareClient::new(
-        backend_pool.clone(),
         transport,
         mesh_config_arc.clone(),
-        record_store.clone(),
+        record_store.clone().map(|r| {
+            let r: std::sync::Arc<dyn crate::mesh::raft::consensus::RecordReader> = r;
+            r
+        }),
     ));
 
     // threat_intel.set_raft_client(raft_client); // Removed: set_raft_client doesn't exist on ThreatIntelligenceManager

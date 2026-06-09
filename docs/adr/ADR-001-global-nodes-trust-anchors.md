@@ -51,3 +51,12 @@ A consensus-based election was considered where nodes vote on global status. Rej
 - `src/mesh/peer_auth.rs` - `validate_peer_role()` validates global node status
 - `src/mesh/dht/keys.rs` - GlobalNode* DHT key types
 - `src/mesh/config_identity.rs` - Genesis key configuration
+
+## Update (2026-06): Raft Consensus Hardening
+
+While global nodes remain explicitly configured (not elected), Raft consensus is used for **operational coordination** (log replication, quorum agreement on DHT state). Recent hardening adds:
+
+- **SignedRaftAttestation** (`crates/synvoid-mesh/src/mesh/peer_auth.rs`): Raft membership attestations now carry Ed25519 signatures verified against authorized global node keys. Previously, attestations were structural-only.
+- **ConsensusTransport trait** (`crates/synvoid-mesh/src/mesh/raft/consensus.rs`): Decouples Raft consensus from mesh transport, enabling independent testing and cleaner boundaries.
+
+This does NOT change the trust model: global nodes are still explicitly configured. Raft provides consensus on operational state (DHT records, quorum decisions), not on who is a global node.

@@ -67,3 +67,19 @@ Keep Raft inside `synvoid-mesh` for now. The internal `ConsensusTransport` trait
 1. The trait has been proven with at least one alternative transport implementation
 2. The log entry and snapshot types are fully decoupled from mesh-specific formats
 3. Peer discovery is separated from consensus routing
+
+## 6. Raft vs DHT Ownership Boundary
+
+The hardened boundary between Raft and DHT is as follows:
+
+- **Raft commits canonical global authority records.** `OrgPublicKey`, `ThreatIntel`, `GlobalNodeRevocationList`, and `AuthorizedGlobalNodes` are committed via Raft consensus. Raft is the single source of truth for trust, ownership, revocation, and global policy.
+
+- **DHT distributes signed or Raft-attested records.** DHT provides eventual-consistency record distribution for routing policies, provider info, DNS records, capability attestations, and YARA rules. DHT does not decide trust, ownership, revocation, or global policy.
+
+- **DHT records are soft-state.** All DHT records are advisory and TTL-bound. They never override Raft-committed state.
+
+- **Authority-adjacent DHT records require signed proof.** Records in sensitive namespaces (org keys, verified upstreams) require a signed Raft attestation or quorum proof for acceptance.
+
+- **Edge nodes cache and gossip Raft-derived artifacts but independently verify them.** `EdgeReplicaManager` caches Raft state machine snapshots locally; receiving nodes verify signatures against the Raft state machine before accepting cached records.
+
+- **Remote DHT writes require explicit ingress validation.** `DhtAntiEntropyRequest` and `DhtRecordPush` are fully signed/bound at the transport layer.

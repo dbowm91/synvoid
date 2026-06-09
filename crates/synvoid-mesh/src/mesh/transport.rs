@@ -1455,12 +1455,14 @@ impl MeshTransport {
             .org_key_manager
             .set_transport(transport_arc.clone());
 
-        if let Some(ref bp) = transport_arc.backend_pool {
+        if transport_arc.backend_pool.is_some() {
             let raft_client = Arc::new(crate::raft::client::RaftAwareClient::new(
-                bp.clone(),
                 transport_arc.clone(),
                 transport_arc.config.clone(),
-                transport_arc.record_store.clone(),
+                transport_arc.record_store.clone().map(|r| {
+                    let r: std::sync::Arc<dyn crate::raft::consensus::RecordReader> = r;
+                    r
+                }),
             ));
 
             if let Some(ref manager) = *transport_arc.edge_replica_manager.read() {

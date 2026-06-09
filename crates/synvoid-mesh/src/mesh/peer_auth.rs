@@ -1,6 +1,7 @@
 use base64::Engine;
 use dashmap::DashMap;
 use ed25519_dalek::{Signer, Verifier};
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -138,6 +139,74 @@ impl RaftAttestation {
     }
 }
 
+pub const RAFT_ATTESTATION_PROTOCOL_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SignedRaftAttestation {
+    pub attestation: RaftAttestation,
+    pub signer_node_id: String,
+    pub signer_public_key: String,
+    pub signature: Vec<u8>,
+    pub protocol_version: u32,
+}
+
+impl SignedRaftAttestation {
+    pub fn signable_content(&self) -> Vec<u8> {
+        let mut hasher = Sha256::new();
+        hasher.update(format!("{:?}", self.attestation.namespace).as_bytes());
+        hasher.update(b"\0");
+        hasher.update(self.attestation.key_id.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(self.attestation.leader_id.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(self.attestation.commit_index.to_le_bytes());
+        hasher.update(b"\0");
+        hasher.update(self.attestation.timestamp.to_le_bytes());
+        hasher.update(b"\0");
+        hasher.update(self.protocol_version.to_le_bytes());
+        hasher.finalize().to_vec()
+    }
+
+    pub fn verify_signature(&self) -> bool {
+        let Ok(pk_bytes) =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(&self.signer_public_key)
+        else {
+            return false;
+        };
+        let Ok(pk_array) = <[u8; 32]>::try_from(pk_bytes.as_slice()) else {
+            return false;
+        };
+        let Ok(verifying_key) = ed25519_dalek::VerifyingKey::from_bytes(&pk_array) else {
+            return false;
+        };
+        let Ok(sig_bytes) = <[u8; 64]>::try_from(self.signature.as_slice()) else {
+            return false;
+        };
+        let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
+        verifying_key
+            .verify(&self.signable_content(), &signature)
+            .is_ok()
+    }
+
+    pub fn from_attestation(
+        attestation: RaftAttestation,
+        signer_node_id: String,
+        signer_keypair: &ed25519_dalek::SigningKey,
+    ) -> Self {
+        let mut sa = Self {
+            attestation,
+            signer_node_id,
+            signer_public_key: base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(signer_keypair.verifying_key().as_bytes()),
+            signature: Vec::new(),
+            protocol_version: RAFT_ATTESTATION_PROTOCOL_VERSION,
+        };
+        let sig = signer_keypair.sign(&sa.signable_content());
+        sa.signature = sig.to_bytes().to_vec();
+        sa
+    }
+}
+
 pub fn validate_member_certificate(
     cert: &MemberCertificate,
     org_pub_key: &OrgPublicKey,
@@ -193,7 +262,7 @@ pub fn validate_member_certificate_with_raft_attestation(
     org_pub_key: &OrgPublicKey,
     authorized_global_pubkeys: &[String],
     peer_node_id: &str,
-    raft_attestation: Option<&RaftAttestation>,
+    raft_attestation: Option<&SignedRaftAttestation>,
 ) -> Result<(), String> {
     // 1. Verify cert belongs to this node
     if cert.mesh_id != peer_node_id {
@@ -215,9 +284,7 @@ pub fn validate_member_certificate_with_raft_attestation(
         return Err("Invalid certificate signature".to_string());
     }
 
-    // 5. Verify trust via EITHER quorum signatures OR Raft attestation
-    // Raft commit IS the proof of consensus - the Leader's commit index
-    // proves majority agreement without needing 2/3 individual signatures
+    // 5. Verify trust via EITHER quorum signatures OR cryptographically signed Raft attestation
     let has_quorum = !org_pub_key.quorum_signatures.is_empty() && {
         let mut global_keys_map: HashMap<String, String> = HashMap::new();
         for pubkey in authorized_global_pubkeys {
@@ -229,16 +296,31 @@ pub fn validate_member_certificate_with_raft_attestation(
 
     let has_raft_attestation = raft_attestation
         .map(|att| {
-            att.namespace == crate::raft::Namespace::Org
-                && att.key_id == org_pub_key.key_id
-                && att.timestamp > 0
-                && att.commit_index > 0
+            // Verify signature against signer's public key
+            if !att.verify_signature() {
+                return false;
+            }
+
+            // Verify signer is an authorized Global Node
+            let signer_authorized = authorized_global_pubkeys
+                .iter()
+                .any(|k| k == &att.signer_public_key);
+            if !signer_authorized {
+                return false;
+            }
+
+            // Verify attestation fields match org_pub_key
+            att.attestation.namespace == crate::raft::Namespace::Org
+                && att.attestation.key_id == org_pub_key.key_id
+                && att.attestation.timestamp > 0
+                && att.attestation.commit_index > 0
         })
         .unwrap_or(false);
 
     if !has_quorum && !has_raft_attestation {
         return Err(
-            "Organization key lacks both quorum signatures and valid Raft attestation".to_string(),
+            "Organization key lacks both quorum signatures and valid signed Raft attestation"
+                .to_string(),
         );
     }
 
@@ -1760,6 +1842,587 @@ mod tests {
             result_with_both.is_ok(),
             "Should pass with both: {:?}",
             result_with_both
+        );
+    }
+
+    #[test]
+    fn test_signed_raft_attestation_rejects_unsigned() {
+        let (org_secret, org_public_b64) = generate_test_keypair();
+        let org_secret_bytes = URL_SAFE_NO_PAD.decode(&org_public_b64).unwrap();
+        let org_key = crate::organization::OrgKey {
+            key_id: "org-key-1".to_string(),
+            private_key: org_secret.to_vec(),
+            public_key: org_secret_bytes.clone(),
+            created_at: synvoid_utils::current_timestamp(),
+            issued_by: None,
+        };
+        let org_pub_key = crate::organization::OrgPublicKey::new("test-org".to_string(), &org_key);
+
+        let cert = crate::organization::MemberCertificate::new(
+            "peer-1".to_string(),
+            "test-org".to_string(),
+            &org_key,
+            30,
+        );
+
+        let authorized_global_pubkeys = vec![org_public_b64.clone()];
+
+        // No attestation at all - should fail (no quorum sigs either)
+        let result = validate_member_certificate_with_raft_attestation(
+            &cert,
+            &org_pub_key,
+            &authorized_global_pubkeys,
+            "peer-1",
+            None,
+        );
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("lacks both quorum signatures and valid signed Raft attestation"));
+    }
+
+    #[test]
+    fn test_signed_raft_attestation_from_authorized_global_accepted() {
+        let (global_secret, global_public_b64) = generate_test_keypair();
+
+        let (org_secret, _org_public_b64) = generate_different_keypair(0x10);
+        let org_key = crate::organization::OrgKey {
+            key_id: "org-key-1".to_string(),
+            private_key: org_secret.to_vec(),
+            public_key: ed25519_dalek::SigningKey::from_bytes(&org_secret)
+                .verifying_key()
+                .as_bytes()
+                .to_vec(),
+            created_at: synvoid_utils::current_timestamp(),
+            issued_by: None,
+        };
+        let org_pub_key = crate::organization::OrgPublicKey::new("test-org".to_string(), &org_key);
+
+        let cert = crate::organization::MemberCertificate::new(
+            "peer-1".to_string(),
+            "test-org".to_string(),
+            &org_key,
+            30,
+        );
+
+        let global_signing_key = ed25519_dalek::SigningKey::from_bytes(&global_secret);
+        let attestation = RaftAttestation {
+            leader_id: "leader-1".to_string(),
+            commit_index: 42,
+            namespace: crate::raft::Namespace::Org,
+            key_id: "org-key-1".to_string(),
+            timestamp: synvoid_utils::current_timestamp(),
+        };
+
+        let signed_att = SignedRaftAttestation::from_attestation(
+            attestation,
+            "global-node-1".to_string(),
+            &global_signing_key,
+        );
+
+        let authorized_global_pubkeys = vec![global_public_b64];
+
+        let result = validate_member_certificate_with_raft_attestation(
+            &cert,
+            &org_pub_key,
+            &authorized_global_pubkeys,
+            "peer-1",
+            Some(&signed_att),
+        );
+        assert!(
+            result.is_ok(),
+            "Valid signed attestation should be accepted: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_signed_raft_attestation_from_unauthorized_key_rejected() {
+        let (unauth_secret, _unauth_public_b64) = generate_different_keypair(0x20);
+        let (_global_secret, global_public_b64) = generate_different_keypair(0x21);
+
+        let (org_secret, _org_public_b64) = generate_different_keypair(0x10);
+        let org_key = crate::organization::OrgKey {
+            key_id: "org-key-1".to_string(),
+            private_key: org_secret.to_vec(),
+            public_key: ed25519_dalek::SigningKey::from_bytes(&org_secret)
+                .verifying_key()
+                .as_bytes()
+                .to_vec(),
+            created_at: synvoid_utils::current_timestamp(),
+            issued_by: None,
+        };
+        let org_pub_key = crate::organization::OrgPublicKey::new("test-org".to_string(), &org_key);
+
+        let cert = crate::organization::MemberCertificate::new(
+            "peer-1".to_string(),
+            "test-org".to_string(),
+            &org_key,
+            30,
+        );
+
+        // Sign with an unauthorized key
+        let unauth_signing_key = ed25519_dalek::SigningKey::from_bytes(&unauth_secret);
+        let attestation = RaftAttestation {
+            leader_id: "leader-1".to_string(),
+            commit_index: 42,
+            namespace: crate::raft::Namespace::Org,
+            key_id: "org-key-1".to_string(),
+            timestamp: synvoid_utils::current_timestamp(),
+        };
+
+        let signed_att = SignedRaftAttestation::from_attestation(
+            attestation,
+            "unauthorized-node".to_string(),
+            &unauth_signing_key,
+        );
+
+        // Only the global key is authorized, not the signing key
+        let authorized_global_pubkeys = vec![global_public_b64];
+
+        let result = validate_member_certificate_with_raft_attestation(
+            &cert,
+            &org_pub_key,
+            &authorized_global_pubkeys,
+            "peer-1",
+            Some(&signed_att),
+        );
+        assert!(result.is_err(), "Unauthorized signer should be rejected");
+    }
+
+    #[test]
+    fn test_signed_raft_attestation_wrong_namespace_rejected() {
+        let (global_secret, global_public_b64) = generate_test_keypair();
+
+        let (org_secret, _org_public_b64) = generate_different_keypair(0x10);
+        let org_key = crate::organization::OrgKey {
+            key_id: "org-key-1".to_string(),
+            private_key: org_secret.to_vec(),
+            public_key: ed25519_dalek::SigningKey::from_bytes(&org_secret)
+                .verifying_key()
+                .as_bytes()
+                .to_vec(),
+            created_at: synvoid_utils::current_timestamp(),
+            issued_by: None,
+        };
+        let org_pub_key = crate::organization::OrgPublicKey::new("test-org".to_string(), &org_key);
+
+        let cert = crate::organization::MemberCertificate::new(
+            "peer-1".to_string(),
+            "test-org".to_string(),
+            &org_key,
+            30,
+        );
+
+        let global_signing_key = ed25519_dalek::SigningKey::from_bytes(&global_secret);
+
+        // Wrong namespace: Intel instead of Org
+        let attestation = RaftAttestation {
+            leader_id: "leader-1".to_string(),
+            commit_index: 42,
+            namespace: crate::raft::Namespace::Intel,
+            key_id: "org-key-1".to_string(),
+            timestamp: synvoid_utils::current_timestamp(),
+        };
+
+        let signed_att = SignedRaftAttestation::from_attestation(
+            attestation,
+            "global-node-1".to_string(),
+            &global_signing_key,
+        );
+
+        let authorized_global_pubkeys = vec![global_public_b64];
+
+        let result = validate_member_certificate_with_raft_attestation(
+            &cert,
+            &org_pub_key,
+            &authorized_global_pubkeys,
+            "peer-1",
+            Some(&signed_att),
+        );
+        assert!(result.is_err(), "Wrong namespace should be rejected");
+    }
+
+    #[test]
+    fn test_signed_raft_attestation_wrong_key_id_rejected() {
+        let (global_secret, global_public_b64) = generate_test_keypair();
+
+        let (org_secret, _org_public_b64) = generate_different_keypair(0x10);
+        let org_key = crate::organization::OrgKey {
+            key_id: "org-key-1".to_string(),
+            private_key: org_secret.to_vec(),
+            public_key: ed25519_dalek::SigningKey::from_bytes(&org_secret)
+                .verifying_key()
+                .as_bytes()
+                .to_vec(),
+            created_at: synvoid_utils::current_timestamp(),
+            issued_by: None,
+        };
+        let org_pub_key = crate::organization::OrgPublicKey::new("test-org".to_string(), &org_key);
+
+        let cert = crate::organization::MemberCertificate::new(
+            "peer-1".to_string(),
+            "test-org".to_string(),
+            &org_key,
+            30,
+        );
+
+        let global_signing_key = ed25519_dalek::SigningKey::from_bytes(&global_secret);
+
+        // Wrong key_id
+        let attestation = RaftAttestation {
+            leader_id: "leader-1".to_string(),
+            commit_index: 42,
+            namespace: crate::raft::Namespace::Org,
+            key_id: "wrong-key-id".to_string(),
+            timestamp: synvoid_utils::current_timestamp(),
+        };
+
+        let signed_att = SignedRaftAttestation::from_attestation(
+            attestation,
+            "global-node-1".to_string(),
+            &global_signing_key,
+        );
+
+        let authorized_global_pubkeys = vec![global_public_b64];
+
+        let result = validate_member_certificate_with_raft_attestation(
+            &cert,
+            &org_pub_key,
+            &authorized_global_pubkeys,
+            "peer-1",
+            Some(&signed_att),
+        );
+        assert!(result.is_err(), "Wrong key_id should be rejected");
+    }
+
+    #[test]
+    fn test_signed_raft_attestation_tampered_signature_rejected() {
+        let (global_secret, global_public_b64) = generate_test_keypair();
+
+        let (org_secret, _org_public_b64) = generate_different_keypair(0x10);
+        let org_key = crate::organization::OrgKey {
+            key_id: "org-key-1".to_string(),
+            private_key: org_secret.to_vec(),
+            public_key: ed25519_dalek::SigningKey::from_bytes(&org_secret)
+                .verifying_key()
+                .as_bytes()
+                .to_vec(),
+            created_at: synvoid_utils::current_timestamp(),
+            issued_by: None,
+        };
+        let org_pub_key = crate::organization::OrgPublicKey::new("test-org".to_string(), &org_key);
+
+        let cert = crate::organization::MemberCertificate::new(
+            "peer-1".to_string(),
+            "test-org".to_string(),
+            &org_key,
+            30,
+        );
+
+        let global_signing_key = ed25519_dalek::SigningKey::from_bytes(&global_secret);
+        let attestation = RaftAttestation {
+            leader_id: "leader-1".to_string(),
+            commit_index: 42,
+            namespace: crate::raft::Namespace::Org,
+            key_id: "org-key-1".to_string(),
+            timestamp: synvoid_utils::current_timestamp(),
+        };
+
+        let mut signed_att = SignedRaftAttestation::from_attestation(
+            attestation,
+            "global-node-1".to_string(),
+            &global_signing_key,
+        );
+
+        // Tamper with the signature
+        if let Some(first_byte) = signed_att.signature.first_mut() {
+            *first_byte ^= 0xff;
+        }
+
+        let authorized_global_pubkeys = vec![global_public_b64];
+
+        let result = validate_member_certificate_with_raft_attestation(
+            &cert,
+            &org_pub_key,
+            &authorized_global_pubkeys,
+            "peer-1",
+            Some(&signed_att),
+        );
+        assert!(result.is_err(), "Tampered signature should be rejected");
+    }
+
+    #[test]
+    fn test_signed_raft_attestation_zero_timestamp_rejected() {
+        let (global_secret, global_public_b64) = generate_test_keypair();
+
+        let (org_secret, _org_public_b64) = generate_different_keypair(0x10);
+        let org_key = crate::organization::OrgKey {
+            key_id: "org-key-1".to_string(),
+            private_key: org_secret.to_vec(),
+            public_key: ed25519_dalek::SigningKey::from_bytes(&org_secret)
+                .verifying_key()
+                .as_bytes()
+                .to_vec(),
+            created_at: synvoid_utils::current_timestamp(),
+            issued_by: None,
+        };
+        let org_pub_key = crate::organization::OrgPublicKey::new("test-org".to_string(), &org_key);
+
+        let cert = crate::organization::MemberCertificate::new(
+            "peer-1".to_string(),
+            "test-org".to_string(),
+            &org_key,
+            30,
+        );
+
+        let global_signing_key = ed25519_dalek::SigningKey::from_bytes(&global_secret);
+
+        // Zero timestamp - should be rejected
+        let attestation = RaftAttestation {
+            leader_id: "leader-1".to_string(),
+            commit_index: 42,
+            namespace: crate::raft::Namespace::Org,
+            key_id: "org-key-1".to_string(),
+            timestamp: 0,
+        };
+
+        let signed_att = SignedRaftAttestation::from_attestation(
+            attestation,
+            "global-node-1".to_string(),
+            &global_signing_key,
+        );
+
+        let authorized_global_pubkeys = vec![global_public_b64];
+
+        let result = validate_member_certificate_with_raft_attestation(
+            &cert,
+            &org_pub_key,
+            &authorized_global_pubkeys,
+            "peer-1",
+            Some(&signed_att),
+        );
+        assert!(result.is_err(), "Zero timestamp should be rejected");
+    }
+
+    #[test]
+    fn test_signed_raft_attestation_zero_commit_index_rejected() {
+        let (global_secret, global_public_b64) = generate_test_keypair();
+
+        let (org_secret, _org_public_b64) = generate_different_keypair(0x10);
+        let org_key = crate::organization::OrgKey {
+            key_id: "org-key-1".to_string(),
+            private_key: org_secret.to_vec(),
+            public_key: ed25519_dalek::SigningKey::from_bytes(&org_secret)
+                .verifying_key()
+                .as_bytes()
+                .to_vec(),
+            created_at: synvoid_utils::current_timestamp(),
+            issued_by: None,
+        };
+        let org_pub_key = crate::organization::OrgPublicKey::new("test-org".to_string(), &org_key);
+
+        let cert = crate::organization::MemberCertificate::new(
+            "peer-1".to_string(),
+            "test-org".to_string(),
+            &org_key,
+            30,
+        );
+
+        let global_signing_key = ed25519_dalek::SigningKey::from_bytes(&global_secret);
+
+        // Zero commit_index - should be rejected
+        let attestation = RaftAttestation {
+            leader_id: "leader-1".to_string(),
+            commit_index: 0,
+            namespace: crate::raft::Namespace::Org,
+            key_id: "org-key-1".to_string(),
+            timestamp: synvoid_utils::current_timestamp(),
+        };
+
+        let signed_att = SignedRaftAttestation::from_attestation(
+            attestation,
+            "global-node-1".to_string(),
+            &global_signing_key,
+        );
+
+        let authorized_global_pubkeys = vec![global_public_b64];
+
+        let result = validate_member_certificate_with_raft_attestation(
+            &cert,
+            &org_pub_key,
+            &authorized_global_pubkeys,
+            "peer-1",
+            Some(&signed_att),
+        );
+        assert!(result.is_err(), "Zero commit_index should be rejected");
+    }
+
+    #[test]
+    fn test_signed_raft_attestation_from_revoked_node_accepted_at_attestation_level() {
+        let (global_secret, global_public_b64) = generate_test_keypair();
+
+        let (org_secret, _org_public_b64) = generate_different_keypair(0x10);
+        let org_key = crate::organization::OrgKey {
+            key_id: "org-key-1".to_string(),
+            private_key: org_secret.to_vec(),
+            public_key: ed25519_dalek::SigningKey::from_bytes(&org_secret)
+                .verifying_key()
+                .as_bytes()
+                .to_vec(),
+            created_at: synvoid_utils::current_timestamp(),
+            issued_by: None,
+        };
+        let org_pub_key = crate::organization::OrgPublicKey::new("test-org".to_string(), &org_key);
+
+        let cert = crate::organization::MemberCertificate::new(
+            "peer-1".to_string(),
+            "test-org".to_string(),
+            &org_key,
+            30,
+        );
+
+        let global_signing_key = ed25519_dalek::SigningKey::from_bytes(&global_secret);
+        let attestation = RaftAttestation {
+            leader_id: "leader-1".to_string(),
+            commit_index: 42,
+            namespace: crate::raft::Namespace::Org,
+            key_id: "org-key-1".to_string(),
+            timestamp: synvoid_utils::current_timestamp(),
+        };
+
+        let signed_att = SignedRaftAttestation::from_attestation(
+            attestation,
+            "global-node-1".to_string(),
+            &global_signing_key,
+        );
+
+        let authorized_global_pubkeys = vec![global_public_b64];
+
+        let result = validate_member_certificate_with_raft_attestation(
+            &cert,
+            &org_pub_key,
+            &authorized_global_pubkeys,
+            "peer-1",
+            Some(&signed_att),
+        );
+        assert!(
+            result.is_ok(),
+            "Attestation from revoked global node is accepted at attestation validation level \
+             (revocation is checked separately in validate_peer_role, not in attestation validation)"
+        );
+    }
+
+    #[test]
+    fn test_signed_raft_attestation_wrong_key_id_for_org_rejected() {
+        let (global_secret, global_public_b64) = generate_test_keypair();
+
+        let (org_secret, _org_public_b64) = generate_different_keypair(0x10);
+        let org_key = crate::organization::OrgKey {
+            key_id: "org-key-1".to_string(),
+            private_key: org_secret.to_vec(),
+            public_key: ed25519_dalek::SigningKey::from_bytes(&org_secret)
+                .verifying_key()
+                .as_bytes()
+                .to_vec(),
+            created_at: synvoid_utils::current_timestamp(),
+            issued_by: None,
+        };
+        let org_pub_key = crate::organization::OrgPublicKey::new("test-org".to_string(), &org_key);
+
+        let cert = crate::organization::MemberCertificate::new(
+            "peer-1".to_string(),
+            "test-org".to_string(),
+            &org_key,
+            30,
+        );
+
+        let global_signing_key = ed25519_dalek::SigningKey::from_bytes(&global_secret);
+
+        // Attestation for a different org key (value hash mismatch scenario)
+        let attestation = RaftAttestation {
+            leader_id: "leader-1".to_string(),
+            commit_index: 42,
+            namespace: crate::raft::Namespace::Org,
+            key_id: "wrong-org-key-id".to_string(),
+            timestamp: synvoid_utils::current_timestamp(),
+        };
+
+        let signed_att = SignedRaftAttestation::from_attestation(
+            attestation,
+            "global-node-1".to_string(),
+            &global_signing_key,
+        );
+
+        let authorized_global_pubkeys = vec![global_public_b64];
+
+        let result = validate_member_certificate_with_raft_attestation(
+            &cert,
+            &org_pub_key,
+            &authorized_global_pubkeys,
+            "peer-1",
+            Some(&signed_att),
+        );
+        assert!(
+            result.is_err(),
+            "Attestation for wrong key_id should be rejected (value hash mismatch)"
+        );
+    }
+
+    #[test]
+    fn test_signed_raft_attestation_empty_signer_public_key_rejected() {
+        let (global_secret, _global_public_b64) = generate_test_keypair();
+
+        let (org_secret, _org_public_b64) = generate_different_keypair(0x10);
+        let org_key = crate::organization::OrgKey {
+            key_id: "org-key-1".to_string(),
+            private_key: org_secret.to_vec(),
+            public_key: ed25519_dalek::SigningKey::from_bytes(&org_secret)
+                .verifying_key()
+                .as_bytes()
+                .to_vec(),
+            created_at: synvoid_utils::current_timestamp(),
+            issued_by: None,
+        };
+        let org_pub_key = crate::organization::OrgPublicKey::new("test-org".to_string(), &org_key);
+
+        let cert = crate::organization::MemberCertificate::new(
+            "peer-1".to_string(),
+            "test-org".to_string(),
+            &org_key,
+            30,
+        );
+
+        let global_signing_key = ed25519_dalek::SigningKey::from_bytes(&global_secret);
+        let attestation = RaftAttestation {
+            leader_id: "leader-1".to_string(),
+            commit_index: 42,
+            namespace: crate::raft::Namespace::Org,
+            key_id: "org-key-1".to_string(),
+            timestamp: synvoid_utils::current_timestamp(),
+        };
+
+        let mut signed_att = SignedRaftAttestation::from_attestation(
+            attestation,
+            "global-node-1".to_string(),
+            &global_signing_key,
+        );
+
+        // Replace the signer public key with empty
+        signed_att.signer_public_key = String::new();
+
+        let authorized_global_pubkeys = vec!["some-authorized-key".to_string()];
+
+        let result = validate_member_certificate_with_raft_attestation(
+            &cert,
+            &org_pub_key,
+            &authorized_global_pubkeys,
+            "peer-1",
+            Some(&signed_att),
+        );
+        assert!(
+            result.is_err(),
+            "Attestation with empty signer_public_key should be rejected"
         );
     }
 }

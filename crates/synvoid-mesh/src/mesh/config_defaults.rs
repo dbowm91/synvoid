@@ -68,6 +68,7 @@ impl Default for MeshConfig {
             request_timeout_secs: default_request_timeout_secs(),
             stake: None,
             seed_tofu: None,
+            authority_freshness: AuthorityFreshnessConfig::default(),
             cached_pow: Arc::new(RwLock::new(None)),
             mlkem: Some(MeshMlKemConfig::default()),
         }

@@ -86,6 +86,10 @@ cargo check --no-default-features --features mesh,dns
 | `architecture/admin.md` | Does not exist — use `admin_deep_dive.md` |
 | `src/worker/mod.rs` (CPU offload) | `src/worker/cpu_task/` (split 2026-06) — see `mod.rs`, `state.rs`, `metrics.rs`, `payload.rs`, `dispatch.rs`, `connection.rs`, `yara.rs` |
 | `src/worker/unified_server.rs` (monolithic) | `src/worker/unified_server/` (split 2026-06) — see `state.rs`, `init_apps.rs`, `init_waf.rs`, `init_mesh.rs`, `init_runtime.rs`, `init_config.rs`, `lifecycle.rs` |
+| `DhtKeyPolicy` | `crates/synvoid-mesh/src/mesh/dht/key_policy.rs` (new module) |
+| `SignedRaftAttestation` | `crates/synvoid-mesh/src/mesh/peer_auth.rs` (new struct) |
+| `ConsensusTransport` trait | `crates/synvoid-mesh/src/mesh/raft/consensus.rs` (new module) |
+| `AuthorityFreshnessConfig` | `crates/synvoid-mesh/src/mesh/config.rs` (new struct) |
 
 ## Modular Agent Guidance
 
@@ -178,7 +182,7 @@ These items require significant architectural work and are correctly deferred:
 |----|-------|--------|
 | MESH-14 | Source Node ID Binding Validation | Partial validation exists (node_id bound to TLS), but no TLS cert chain validation for global nodes - requires PKI hierarchy, trust model changes |
 | HTTP2-POOL | ErasedHttpClient HTTP/2 pooling | `Http2PooledConnection` is empty stub - hyper-util API requires background task management per connection |
-| MR-4 | DHT ingress auth hardening | `DhtAntiEntropyRequest` still ignores `signer_public_key`, and `DhtRecordPush` still lacks full message-auth coverage; breaking protocol changes are needed to normalize all ingress paths |
+| MR-4 | DHT ingress auth hardening | ✅ Resolved: `DhtAntiEntropyRequest` signer_public_key is now verified against authorized global node keys; `DhtRecordPush` signature is enforced. Breaking protocol changes completed. |
 
 Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.override.md`](skills/AGENTS.override.md) for the full index.
 
@@ -198,8 +202,12 @@ The consolidated implementation plan is at [`plans/plan.md`](plans/plan.md).
 - **SAFE_HEADERS**: `src/proxy/cache.rs:97-126` has 28 headers
 - **ConfigManager**: `crates/synvoid-config/src/lib.rs:113`
 - **DhtSyncRequest**: `src/mesh/transport_dht.rs:308-380` - signed by default with a config-controlled unsigned compatibility fallback; node binding is enforced in transport.
-- **DhtAntiEntropyRequest**: `src/mesh/transport_peer.rs:738-751` - node binding is enforced, but `signer_public_key` is still not used in verification.
-- **DhtRecordPush**: `src/mesh/dht/signed.rs:44-47` - timestamp/signature coverage is still partial; see MR-4.
+- **DhtAntiEntropyRequest**: `src/mesh/transport_peer.rs:738-751` - node binding enforced, `signer_public_key` now verified against authorized global node keys (✅ MR-4 fixed).
+- **DhtRecordPush**: `src/mesh/dht/signed.rs:44-47` - signature field exists and is enforced (✅ MR-4 fixed).
+- **DhtKeyPolicyTable**: `crates/synvoid-mesh/src/mesh/dht/key_policy.rs` - centralizes key family authority policies for DHT ingress validation.
+- **SignedRaftAttestation**: `crates/synvoid-mesh/src/mesh/peer_auth.rs` - requires cryptographic proof, not just structural attestation.
+- **ConsensusTransport**: `crates/synvoid-mesh/src/mesh/raft/consensus.rs` - decouples Raft consensus from mesh transport layer.
+- **AuthorityFreshnessConfig**: `crates/synvoid-mesh/src/mesh/config.rs` - defines stale-state behavior for authority records.
 - **DNS Cookie Server**: `src/dns/cookie.rs` - fully wired via `validate_cookie()` in query.rs:645-662
 - **TunnelRouter**: `src/tunnel/router.rs:200` - active routing uses `resolve_tunnel_backend()` (TunnelBackend struct removed)
 - **HickoryRecursor DNSSEC**: `src/dns/resolver.rs:693-702` - uses `ValidateWithStaticKey` when `enable_dnssec=true` (✅ FIXED)

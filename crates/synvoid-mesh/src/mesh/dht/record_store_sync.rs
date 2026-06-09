@@ -163,15 +163,23 @@ impl RecordStoreManager {
         records: Vec<DhtRecord>,
         version: u64,
         is_verified: bool,
+        from_node: &str,
     ) -> usize {
         if !self.config.enabled || self.is_global_node() {
             return 0;
         }
 
+        let ingress_ctx = crate::dht::signed::DhtRecordIngressContext::new_remote(
+            from_node.to_string(),
+            from_node.to_string(),
+            crate::dht::signed::SourceClassification::Unknown,
+            crate::dht::signed::IngressPath::SnapshotSync,
+        );
+
         let reputation = if is_verified { 100 } else { 0 };
         let mut applied = 0;
         for record in records {
-            if self.store_record(record, reputation, false) {
+            if self.store_record_from_ingress(record, &ingress_ctx, reputation) {
                 applied += 1;
             }
         }
@@ -194,6 +202,7 @@ impl RecordStoreManager {
         records: Vec<DhtRecord>,
         version: u64,
         signer: Option<&Arc<crate::protocol::MeshMessageSigner>>,
+        from_node: &str,
     ) -> usize {
         if !self.config.enabled || self.is_global_node() {
             return 0;
@@ -207,6 +216,13 @@ impl RecordStoreManager {
 
         let signer_public_key = signer.map(|s| s.get_public_key());
         let mut applied = 0;
+
+        let ingress_ctx = crate::dht::signed::DhtRecordIngressContext::new_remote(
+            from_node.to_string(),
+            from_node.to_string(),
+            crate::dht::signed::SourceClassification::Unknown,
+            crate::dht::signed::IngressPath::SnapshotSync,
+        );
 
         for record in records {
             let dht_key = crate::dht::keys::DhtKey::from_str(&record.key);
@@ -255,7 +271,7 @@ impl RecordStoreManager {
             };
 
             if verified {
-                if self.store_record(record, 100, false) {
+                if self.store_record_from_ingress(record, &ingress_ctx, 100) {
                     applied += 1;
                 }
             } else {
@@ -468,12 +484,38 @@ impl RecordStoreManager {
         self.create_sync_response(request_id, from_version)
     }
 
-    pub fn handle_sync_response(&self, records: Vec<DhtRecord>, _from_node: &str) {
+    pub fn handle_sync_response(&self, records: Vec<DhtRecord>, from_node: &str) {
         if !self.config.enabled || !self.is_global_node() {
             return;
         }
 
-        self.apply_sync(records);
+        tracing::warn!(
+            "handle_sync_response (unsigned path) is deprecated for node {}; \
+             callers should use handle_sync_response_verified instead",
+            from_node
+        );
+
+        let ingress_ctx = crate::dht::signed::DhtRecordIngressContext::new_remote(
+            from_node.to_string(),
+            from_node.to_string(),
+            crate::dht::signed::SourceClassification::Unknown,
+            crate::dht::signed::IngressPath::SyncResponse,
+        );
+
+        let mut applied = 0;
+        for record in records {
+            if self.store_record_from_ingress(record, &ingress_ctx, 0) {
+                applied += 1;
+            }
+        }
+
+        if applied > 0 {
+            tracing::info!(
+                "Applied {} records from unsigned sync response from {}",
+                applied,
+                from_node
+            );
+        }
     }
 
     pub fn handle_sync_response_verified(

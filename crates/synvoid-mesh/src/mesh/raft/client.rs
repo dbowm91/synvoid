@@ -3,9 +3,8 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::{Mutex, RwLock};
 
-use crate::backend::MeshBackendPool;
+use super::consensus::RecordReader;
 use crate::config::MeshConfig;
-use crate::dht::RecordStoreManager;
 use crate::protocol::{ArcStr, MeshMessage};
 use crate::raft::edge_replica::EdgeReplicaManager;
 use crate::raft::instance::RaftInstance;
@@ -75,10 +74,9 @@ pub enum RaftAwareClientError {
 }
 
 pub struct RaftAwareClient {
-    _backend_pool: Arc<MeshBackendPool>,
     transport: Arc<MeshTransport>,
     config: Arc<MeshConfig>,
-    record_store: Option<Arc<RecordStoreManager>>,
+    record_reader: Option<Arc<dyn RecordReader>>,
     raft_instance: Arc<RwLock<Option<Arc<RaftInstance>>>>,
     edge_replica_manager: Arc<RwLock<Option<Arc<EdgeReplicaManager>>>>,
     leader_cache: Arc<Mutex<LeaderCache>>,
@@ -86,16 +84,14 @@ pub struct RaftAwareClient {
 
 impl RaftAwareClient {
     pub fn new(
-        backend_pool: Arc<MeshBackendPool>,
         transport: Arc<MeshTransport>,
         config: Arc<MeshConfig>,
-        record_store: Option<Arc<RecordStoreManager>>,
+        record_reader: Option<Arc<dyn RecordReader>>,
     ) -> Self {
         Self {
-            _backend_pool: backend_pool,
             transport,
             config,
-            record_store,
+            record_reader,
             raft_instance: Arc::new(RwLock::new(None)),
             edge_replica_manager: Arc::new(RwLock::new(None)),
             leader_cache: Arc::new(Mutex::new(LeaderCache::new(Duration::from_secs(5)))),
@@ -559,18 +555,18 @@ impl RaftAwareClient {
         namespace: Namespace,
         key: &str,
     ) -> Result<ConsistentReadResult, RaftAwareClientError> {
-        let record_store = self
-            .record_store
+        let reader = self
+            .record_reader
             .as_ref()
             .ok_or(RaftAwareClientError::DhtFailed)?;
 
         let dht_key = self.build_dht_key(namespace, key);
-        let record = record_store
-            .get_record(&dht_key)
+        let value = reader
+            .get_record_value(&dht_key)
             .ok_or(RaftAwareClientError::DhtFailed)?;
 
         Ok(ConsistentReadResult {
-            value: Some(record.value),
+            value: Some(value),
             source: ConsistentReadSource::DhtStale,
             leader_node_id: None,
         })

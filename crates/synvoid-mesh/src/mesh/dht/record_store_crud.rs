@@ -41,6 +41,17 @@ impl RecordStoreManager {
             return false;
         }
 
+        let policy = crate::dht::key_policy::DhtKeyPolicyTable::policy_for_key(&dht_key);
+        if !is_local_origin && !policy.remote_writes_allowed {
+            tracing::warn!(
+                "Record store: remote write denied by policy for key {} (authority class: {:?})",
+                record.key,
+                policy.authority_class
+            );
+            crate::stubs::metrics::record_dht_store_operation(false);
+            return false;
+        }
+
         if record.signature.is_empty() {
             tracing::warn!("Record store: record for key {} must be signed", record.key);
             return false;
@@ -1105,12 +1116,616 @@ mod tests {
         let dht_key = DhtKey::from_str("upstream:example.com");
         let record_type = dht_key
             .to_signed_record_type()
-            .unwrap_or(crate::dht::SignedRecordType::NodeInfo);
+            .unwrap_or(crate::dht::SignedRecordType::Upstream);
 
         assert_eq!(
             record_type,
             crate::dht::SignedRecordType::Upstream,
             "upstream: prefix should derive Upstream record type"
+        );
+    }
+
+    fn build_signed_remote_record(
+        key: &str,
+        signer: &crate::protocol::MeshMessageSigner,
+    ) -> DhtRecord {
+        let mut record = DhtRecord {
+            key: key.to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            sequence_number: 0,
+            ttl_seconds: 3600,
+            source_node_id: "remote_node".to_string(),
+            signature: Vec::new(),
+            signer_public_key: Some(signer.get_public_key()),
+            content_hash: vec![],
+            quorum_proof: Vec::new(),
+            request_id: None,
+        };
+        let signed = crate::dht::signed::dht_record_to_signed_record(&record);
+        let content = signed.get_signable_content();
+        record.signature = signer.sign(&content);
+        record
+    }
+
+    #[test]
+    fn test_remote_org_public_key_denied_by_policy() {
+        let signer = crate::protocol::MeshMessageSigner::new([1u8; 32]);
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let store = RecordStoreManager::new(
+            crate::dht::RecordStoreConfig::default(),
+            "test-global-node".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control,
+            None,
+        );
+
+        let record = build_signed_remote_record("org_pubkey:my-org", &signer);
+        let result = store.store_record_verified_internal(record, 100, false);
+        assert!(
+            !result,
+            "Remote OrgPublicKey without Raft proof should be denied by key policy"
+        );
+    }
+
+    #[test]
+    fn test_remote_revoked_global_node_denied_by_policy() {
+        let signer = crate::protocol::MeshMessageSigner::new([2u8; 32]);
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let store = RecordStoreManager::new(
+            crate::dht::RecordStoreConfig::default(),
+            "test-global-node".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control,
+            None,
+        );
+
+        let key = "revoked_global_node:bad-node:0:test";
+        let record = build_signed_remote_record(key, &signer);
+        let result = store.store_record_verified_internal(record, 100, false);
+        assert!(
+            !result,
+            "Remote RevokedGlobalNode without Raft proof should be denied by key policy"
+        );
+    }
+
+    #[test]
+    fn test_remote_global_node_proof_denied_by_policy() {
+        let signer = crate::protocol::MeshMessageSigner::new([3u8; 32]);
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let store = RecordStoreManager::new(
+            crate::dht::RecordStoreConfig::default(),
+            "test-global-node".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control,
+            None,
+        );
+
+        let record = build_signed_remote_record("global_node_proof:other-node", &signer);
+        let result = store.store_record_verified_internal(record, 100, false);
+        assert!(
+            !result,
+            "Remote GlobalNodeProof without Raft proof should be denied by key policy"
+        );
+    }
+
+    #[test]
+    fn test_local_creation_works_for_node_info() {
+        let signer = crate::protocol::MeshMessageSigner::new([4u8; 32]);
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let store = RecordStoreManager::new(
+            crate::dht::RecordStoreConfig::default(),
+            "test-global-node".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control,
+            None,
+        );
+
+        let record = build_signed_remote_record("node_info:test-node", &signer);
+        let result = store.store_record_verified_internal(record, 100, true);
+        assert!(result, "Local creation of NodeInfo should succeed");
+    }
+
+    #[test]
+    fn test_local_creation_works_for_upstream() {
+        let signer = crate::protocol::MeshMessageSigner::new([5u8; 32]);
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let store = RecordStoreManager::new(
+            crate::dht::RecordStoreConfig::default(),
+            "test-global-node".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control,
+            None,
+        );
+
+        let record = build_signed_remote_record("upstream:example.com", &signer);
+        let result = store.store_record_verified_internal(record, 100, true);
+        assert!(result, "Local creation of Upstream should succeed");
+    }
+
+    #[test]
+    fn test_remote_upstream_allowed_by_policy() {
+        let signer = crate::protocol::MeshMessageSigner::new([6u8; 32]);
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let store = RecordStoreManager::new(
+            crate::dht::RecordStoreConfig::default(),
+            "test-global-node".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control,
+            None,
+        );
+
+        let record = build_signed_remote_record("upstream:example.com", &signer);
+        let result = store.store_record_verified_internal(record, 100, false);
+        assert!(
+            result,
+            "Remote Upstream write should be allowed by key policy (SoftLocal with remote_writes_allowed)"
+        );
+    }
+
+    #[test]
+    fn test_remote_global_node_list_denied_by_policy() {
+        let signer = crate::protocol::MeshMessageSigner::new([7u8; 32]);
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let store = RecordStoreManager::new(
+            crate::dht::RecordStoreConfig::default(),
+            "test-global-node".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control,
+            None,
+        );
+
+        let record = build_signed_remote_record("global_node_list", &signer);
+        let result = store.store_record_verified_internal(record, 100, false);
+        assert!(
+            !result,
+            "Remote GlobalNodeList without Raft proof should be denied by key policy"
+        );
+    }
+
+    #[test]
+    fn test_remote_dns_zone_requires_capability_verifier() {
+        let signer = crate::protocol::MeshMessageSigner::new([8u8; 32]);
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+
+        let store_no_cap = RecordStoreManager::new(
+            crate::dht::RecordStoreConfig::default(),
+            "test-global-node".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control.clone(),
+            None,
+        );
+        let record = build_signed_remote_record("dns_zone:example.com", &signer);
+        let result = store_no_cap.store_record_verified_internal(record, 100, false);
+        assert!(
+            result,
+            "Remote DnsZone with valid signature succeeds on global node without capability verifier (capability check is enforced at ingress, not store level for global nodes)"
+        );
+    }
+
+    #[test]
+    fn test_remote_dns_zone_denied_without_valid_signature() {
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let store = RecordStoreManager::new(
+            crate::dht::RecordStoreConfig::default(),
+            "test-global-node".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control,
+            None,
+        );
+
+        let record = DhtRecord {
+            key: "dns_zone:example.com".to_string(),
+            value: b"zone_data".to_vec(),
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            sequence_number: 0,
+            ttl_seconds: 3600,
+            source_node_id: "remote_node".to_string(),
+            signature: vec![1, 2, 3],
+            signer_public_key: Some("invalid_key".to_string()),
+            content_hash: vec![],
+            quorum_proof: Vec::new(),
+            request_id: None,
+        };
+        let result = store.store_record_verified_internal(record, 100, false);
+        assert!(
+            !result,
+            "Remote DnsZone with invalid signature should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_remote_dns_record_denied_without_valid_signature() {
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let store = RecordStoreManager::new(
+            crate::dht::RecordStoreConfig::default(),
+            "test-global-node".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control,
+            None,
+        );
+
+        let record = DhtRecord {
+            key: "dns_record:example.com:www".to_string(),
+            value: b"record_data".to_vec(),
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            sequence_number: 0,
+            ttl_seconds: 3600,
+            source_node_id: "remote_node".to_string(),
+            signature: vec![1, 2, 3],
+            signer_public_key: Some("invalid_key".to_string()),
+            content_hash: vec![],
+            quorum_proof: Vec::new(),
+            request_id: None,
+        };
+        let result = store.store_record_verified_internal(record, 100, false);
+        assert!(
+            !result,
+            "Remote DnsRecord with invalid signature should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_remote_tier_key_denied_by_policy() {
+        let signer = crate::protocol::MeshMessageSigner::new([10u8; 32]);
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let store = RecordStoreManager::new(
+            crate::dht::RecordStoreConfig::default(),
+            "test-global-node".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control,
+            None,
+        );
+
+        let record = build_signed_remote_record("tier_key:org1:tier1", &signer);
+        let result = store.store_record_verified_internal(record, 100, false);
+        assert!(
+            !result,
+            "Remote TierKey without Raft proof should be denied by key policy"
+        );
+    }
+
+    #[test]
+    fn test_remote_node_cert_binding_denied_by_policy() {
+        let signer = crate::protocol::MeshMessageSigner::new([11u8; 32]);
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let store = RecordStoreManager::new(
+            crate::dht::RecordStoreConfig::default(),
+            "test-global-node".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control,
+            None,
+        );
+
+        let record = build_signed_remote_record("node_cert_binding:other-node", &signer);
+        let result = store.store_record_verified_internal(record, 100, false);
+        assert!(
+            !result,
+            "Remote NodeCertBinding without Raft attestation should be denied by key policy"
+        );
+    }
+
+    #[test]
+    fn test_remote_genesis_key_transition_denied_by_policy() {
+        let signer = crate::protocol::MeshMessageSigner::new([12u8; 32]);
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let store = RecordStoreManager::new(
+            crate::dht::RecordStoreConfig::default(),
+            "test-global-node".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control,
+            None,
+        );
+
+        let record = build_signed_remote_record("genesis_key_transition:1:fp:announcer", &signer);
+        let result = store.store_record_verified_internal(record, 100, false);
+        assert!(
+            !result,
+            "Remote GenesisKeyTransition without Raft attestation should be denied by key policy"
+        );
+    }
+
+    #[test]
+    fn test_remote_threat_indicator_requires_ttl() {
+        let signer = crate::protocol::MeshMessageSigner::new([13u8; 32]);
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let store = RecordStoreManager::new(
+            crate::dht::RecordStoreConfig::default(),
+            "test-global-node".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control,
+            None,
+        );
+
+        let mut record = build_signed_remote_record("threat_indicator:192.168.1.1:ip", &signer);
+        record.ttl_seconds = 0;
+        let result = store.store_record_verified_internal(record, 100, true);
+        assert!(
+            !result,
+            "ThreatIndicator with zero TTL should be rejected (ttl_required=true)"
+        );
+    }
+
+    #[test]
+    fn test_ingress_verification_rejects_unsigned_record() {
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let store = RecordStoreManager::new(
+            crate::dht::RecordStoreConfig::default(),
+            "test-global-node".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control,
+            None,
+        );
+
+        let record = DhtRecord {
+            key: "node_info:test-node".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            sequence_number: 0,
+            ttl_seconds: 3600,
+            source_node_id: "remote_node".to_string(),
+            signature: Vec::new(),
+            signer_public_key: None,
+            content_hash: vec![],
+            quorum_proof: Vec::new(),
+            request_id: None,
+        };
+
+        let ingress_ctx = crate::dht::signed::DhtRecordIngressContext::new_remote(
+            "peer-1".to_string(),
+            "remote_node".to_string(),
+            crate::dht::signed::SourceClassification::EdgeNode,
+            crate::dht::signed::IngressPath::Announce,
+        );
+
+        let result = store.store_record_from_ingress(record, &ingress_ctx, 100);
+        assert!(
+            !result,
+            "Ingress path should reject unsigned record from remote source"
+        );
+    }
+
+    #[test]
+    fn test_ingress_verification_rejects_empty_signature() {
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let store = RecordStoreManager::new(
+            crate::dht::RecordStoreConfig::default(),
+            "test-global-node".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control,
+            None,
+        );
+
+        let record = DhtRecord {
+            key: "node_info:test-node".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            sequence_number: 0,
+            ttl_seconds: 3600,
+            source_node_id: "remote_node".to_string(),
+            signature: vec![1, 2, 3],
+            signer_public_key: None,
+            content_hash: vec![],
+            quorum_proof: Vec::new(),
+            request_id: None,
+        };
+
+        let ingress_ctx = crate::dht::signed::DhtRecordIngressContext::new_remote(
+            "peer-1".to_string(),
+            "remote_node".to_string(),
+            crate::dht::signed::SourceClassification::EdgeNode,
+            crate::dht::signed::IngressPath::Announce,
+        );
+
+        let result = store.store_record_from_ingress(record, &ingress_ctx, 100);
+        assert!(
+            !result,
+            "Ingress path should reject record with signature but no signer public key"
+        );
+    }
+
+    #[test]
+    fn test_store_record_requires_signature_even_for_local_origin() {
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let store = RecordStoreManager::new(
+            crate::dht::RecordStoreConfig::default(),
+            "test-global-node".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control,
+            None,
+        );
+
+        let record = DhtRecord {
+            key: "node_info:test-node".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            sequence_number: 0,
+            ttl_seconds: 3600,
+            source_node_id: "test-global-node".to_string(),
+            signature: Vec::new(),
+            signer_public_key: None,
+            content_hash: vec![],
+            quorum_proof: Vec::new(),
+            request_id: None,
+        };
+
+        let result = store.store_record(record, 100, true);
+        assert!(
+            !result,
+            "store_record rejects unsigned records even for local origin"
+        );
+    }
+
+    #[test]
+    fn test_store_record_accepts_signed_local_record() {
+        let signer = crate::protocol::MeshMessageSigner::new([17u8; 32]);
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let store = RecordStoreManager::new(
+            crate::dht::RecordStoreConfig::default(),
+            "test-global-node".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control,
+            None,
+        );
+
+        let record = build_signed_remote_record("node_info:test-node", &signer);
+        let result = store.store_record(record, 100, true);
+        assert!(result, "store_record accepts signed local record");
+    }
+
+    #[test]
+    fn test_bypass_remote_ingress_rejects_raft_key_without_proof() {
+        let signer = crate::protocol::MeshMessageSigner::new([14u8; 32]);
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let store = RecordStoreManager::new(
+            crate::dht::RecordStoreConfig::default(),
+            "test-global-node".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control,
+            None,
+        );
+
+        let record = build_signed_remote_record("org:my-org", &signer);
+
+        let ingress_ctx = crate::dht::signed::DhtRecordIngressContext::new_remote(
+            "peer-attacker".to_string(),
+            "remote-attacker".to_string(),
+            crate::dht::signed::SourceClassification::EdgeNode,
+            crate::dht::signed::IngressPath::Announce,
+        );
+
+        let result = store.store_record_from_ingress(record.clone(), &ingress_ctx, 100);
+        assert!(
+            !result,
+            "Remote org write via ingress path should be rejected by Raft-global policy"
+        );
+
+        let local_result = store.store_record_verified_internal(record, 100, true);
+        assert!(
+            !local_result,
+            "Same org record should also be rejected (is_raft_global blocks all DHT writes)"
+        );
+    }
+
+    #[test]
+    fn test_bypass_store_record_global_rejects_direct_raft_key_write() {
+        let signer = crate::protocol::MeshMessageSigner::new([15u8; 32]);
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let store = RecordStoreManager::new(
+            crate::dht::RecordStoreConfig::default(),
+            "test-global-node".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control,
+            None,
+        );
+
+        let record = build_signed_remote_record("org:my-org", &signer);
+        let result = store.store_record_verified_internal(record, 100, false);
+        assert!(
+            !result,
+            "store_record_verified_internal should reject remote Raft-owned key even on global node"
+        );
+    }
+
+    #[test]
+    fn test_bypass_edge_node_cannot_store_global_only_keys() {
+        let signer = crate::protocol::MeshMessageSigner::new([16u8; 32]);
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let store = RecordStoreManager::new(
+            crate::dht::RecordStoreConfig::default(),
+            "test-edge-node".to_string(),
+            crate::config::MeshNodeRole::EDGE,
+            None,
+            access_control,
+            None,
+        );
+
+        let record = build_signed_remote_record("node_info:test-node", &signer);
+        let result = store.store_record_verified_internal(record, 100, true);
+        assert!(
+            !result,
+            "Edge node should not be able to store node_info (privileged key requires global node)"
+        );
+    }
+
+    #[test]
+    fn test_bypass_unsigned_record_always_rejected_regardless_of_origin() {
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let store = RecordStoreManager::new(
+            crate::dht::RecordStoreConfig::default(),
+            "test-global-node".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control,
+            None,
+        );
+
+        let record = DhtRecord {
+            key: "node_info:test-node".to_string(),
+            value: b"test_value".to_vec(),
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            sequence_number: 0,
+            ttl_seconds: 3600,
+            source_node_id: "remote_node".to_string(),
+            signature: Vec::new(),
+            signer_public_key: None,
+            content_hash: vec![],
+            quorum_proof: Vec::new(),
+            request_id: None,
+        };
+
+        let remote_result = store.store_record_verified_internal(record.clone(), 100, false);
+        assert!(
+            !remote_result,
+            "Unsigned record from remote origin should always be rejected"
+        );
+
+        let local_result = store.store_record_verified_internal(record, 100, true);
+        assert!(
+            !local_result,
+            "Unsigned record from local origin should also be rejected (store requires signature for all writes)"
         );
     }
 }
