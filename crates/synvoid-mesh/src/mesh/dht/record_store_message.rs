@@ -1,8 +1,79 @@
 use super::*;
+use crate::dht::signed;
 
 const MAX_RECORDS_PER_ANNOUNCE: usize = 100;
 
+struct RecordStoreKeyResolver {
+    cert_manager: Option<Arc<parking_lot::RwLock<crate::cert::MeshCertManager>>>,
+}
+
+impl signed::NodePublicKeyResolver for RecordStoreKeyResolver {
+    fn get_authorized_key(&self, node_id: &str) -> Option<String> {
+        let cm = self.cert_manager.as_ref()?;
+        let cm = cm.read();
+        cm.get_global_node_key(node_id)
+            .map(|pk| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&pk))
+    }
+}
+
 impl RecordStoreManager {
+    fn verify_dht_envelope_binding_for_peer(
+        &self,
+        claimed_node_id: &str,
+        signer_public_key: Option<&str>,
+        source_classification: signed::SourceClassification,
+    ) -> bool {
+        let Some(pk) = signer_public_key else {
+            if matches!(
+                source_classification,
+                signed::SourceClassification::GlobalNode
+            ) {
+                tracing::warn!(
+                    "DHT envelope binding failed for {}: missing signer public key (global node)",
+                    claimed_node_id
+                );
+            }
+            return false;
+        };
+        if pk.is_empty() {
+            if matches!(
+                source_classification,
+                signed::SourceClassification::GlobalNode
+            ) {
+                tracing::warn!(
+                    "DHT envelope binding failed for {}: empty signer public key (global node)",
+                    claimed_node_id
+                );
+            }
+            return false;
+        }
+
+        let cert_manager = {
+            let routing = self.routing_state.read();
+            routing.transport.as_ref().map(|t| t.cert_manager.clone())
+        };
+
+        let Some(cm) = cert_manager else {
+            tracing::warn!(
+                "DHT envelope binding failed for {}: no cert manager available",
+                claimed_node_id
+            );
+            return false;
+        };
+
+        let resolver = RecordStoreKeyResolver {
+            cert_manager: Some(cm),
+        };
+
+        match signed::verify_envelope_signer_binding(claimed_node_id, pk, &resolver) {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::warn!("DHT envelope binding failed for {}: {}", claimed_node_id, e);
+                false
+            }
+        }
+    }
+
     async fn get_sender_reputation(
         &self,
         from_node: &str,
@@ -119,6 +190,18 @@ impl RecordStoreManager {
                             );
                             return None;
                         }
+
+                        if !self.verify_dht_envelope_binding_for_peer(
+                            source_node_id,
+                            signer_public_key.as_deref(),
+                            signed::SourceClassification::Unknown,
+                        ) {
+                            tracing::warn!(
+                                "DhtRecordAnnounce rejected from {}: signer-to-node binding failed",
+                                from_node
+                            );
+                            return None;
+                        }
                     }
                 }
 
@@ -154,34 +237,162 @@ impl RecordStoreManager {
             }
             MeshMessage::DhtSyncRequest {
                 request_id,
-                node_id: _,
+                node_id,
                 from_version,
-                timestamp: _,
-                nonce: _,
-                signature: _,
-                signer_public_key: _,
+                timestamp,
+                nonce,
+                signature,
+                signer_public_key,
             } => {
                 tracing::debug!(
                     "Received DhtSyncRequest from {} (version: {})",
                     from_node,
                     from_version
                 );
+
+                let require_signed = self.config.require_signed_sync_requests;
+                let compat_until = self.config.unsigned_sync_compat_until_unix;
+                let now_unix = synvoid_utils::safe_unix_timestamp();
+                let has_auth = !signature.is_empty()
+                    && signer_public_key.as_ref().is_some_and(|s| !s.is_empty())
+                    && !nonce.is_empty();
+                if !has_auth {
+                    let compat_active = compat_until.is_some_and(|deadline| now_unix < deadline);
+                    if require_signed && !compat_active {
+                        tracing::warn!(
+                            "DhtSyncRequest from {} rejected: missing envelope signature/nonce (require_signed_sync_requests={}, compat_until={:?}, now={})",
+                            from_node,
+                            require_signed,
+                            compat_until,
+                            now_unix
+                        );
+                        return None;
+                    }
+                    tracing::warn!(
+                        "DhtSyncRequest from {} accepted without signature (legacy compat window active or signing disabled)",
+                        from_node
+                    );
+                } else {
+                    if !crate::dht::signed::verify_dht_sync_request_envelope_signature(
+                        &request_id,
+                        &node_id,
+                        *from_version,
+                        *timestamp,
+                        &nonce,
+                        &signature,
+                        signer_public_key.as_deref(),
+                    ) {
+                        tracing::warn!(
+                            "DhtSyncRequest from {} rejected: invalid envelope signature",
+                            from_node
+                        );
+                        return None;
+                    }
+
+                    if !self.verify_dht_envelope_binding_for_peer(
+                        &node_id,
+                        signer_public_key.as_deref(),
+                        signed::SourceClassification::GlobalNode,
+                    ) {
+                        tracing::warn!(
+                            "DhtSyncRequest from {} rejected: signer-to-node binding failed",
+                            from_node
+                        );
+                        return None;
+                    }
+                }
+
                 self.handle_sync_request(request_id, from_node, *from_version)
             }
             MeshMessage::DhtSyncResponse {
-                request_id: _,
+                request_id,
                 records,
-                version: _,
-                timestamp: _,
-                signature: _,
-                signer_public_key: _,
+                version,
+                timestamp,
+                signature,
+                signer_public_key,
             } => {
                 tracing::debug!(
                     "Received DhtSyncResponse from {} with {} records",
                     from_node,
                     records.len()
                 );
-                self.handle_sync_response(records.clone(), from_node);
+
+                let require_signed = self.config.require_signed_sync_requests;
+                let compat_until = self.config.unsigned_sync_compat_until_unix;
+                let now_unix = synvoid_utils::safe_unix_timestamp();
+                let has_auth = !signature.is_empty()
+                    && signer_public_key.as_ref().is_some_and(|s| !s.is_empty());
+                if !has_auth {
+                    let compat_active = compat_until.is_some_and(|deadline| now_unix < deadline);
+                    if require_signed && !compat_active {
+                        tracing::warn!(
+                            "DhtSyncResponse from {} rejected: missing envelope signature (require_signed_sync_requests={}, compat_until={:?}, now={})",
+                            from_node,
+                            require_signed,
+                            compat_until,
+                            now_unix
+                        );
+                        return None;
+                    }
+                    tracing::warn!(
+                        "DhtSyncResponse from {} accepted without signature (legacy compat window active or signing disabled)",
+                        from_node
+                    );
+                    self.handle_sync_response(records.clone(), from_node);
+                } else {
+                    if !crate::dht::signed::verify_dht_sync_response_envelope_signature(
+                        request_id,
+                        from_node,
+                        from_node,
+                        *version,
+                        records,
+                        *timestamp,
+                        signature,
+                        signer_public_key.as_deref(),
+                    ) {
+                        tracing::warn!(
+                            "DhtSyncResponse from {} rejected: invalid envelope signature",
+                            from_node
+                        );
+                        return None;
+                    }
+
+                    if !self.verify_dht_envelope_binding_for_peer(
+                        from_node,
+                        signer_public_key.as_deref(),
+                        signed::SourceClassification::GlobalNode,
+                    ) {
+                        tracing::warn!(
+                            "DhtSyncResponse from {} rejected: signer-to-node binding failed",
+                            from_node
+                        );
+                        return None;
+                    }
+
+                    let mut stored_count = 0;
+                    let reputation = self.get_sender_reputation(from_node, signer).await;
+
+                    let ingress_ctx = crate::dht::signed::DhtRecordIngressContext::new_remote(
+                        from_node.to_string(),
+                        from_node.to_string(),
+                        crate::dht::signed::SourceClassification::Unknown,
+                        crate::dht::signed::IngressPath::SyncResponse,
+                    )
+                    .with_envelope_signature(true);
+
+                    for record in records.iter() {
+                        if self.store_record_from_ingress(record.clone(), &ingress_ctx, reputation)
+                        {
+                            stored_count += 1;
+                        }
+                    }
+                    tracing::info!(
+                        "DhtSyncResponse from {}: stored {} records (verified path)",
+                        from_node,
+                        stored_count
+                    );
+                }
                 None
             }
             MeshMessage::DhtAntiEntropyRequest {
@@ -234,6 +445,18 @@ impl RecordStoreManager {
                     ) {
                         tracing::warn!(
                             "DhtAntiEntropyRequest from {} rejected: invalid envelope signature",
+                            from_node
+                        );
+                        return None;
+                    }
+
+                    if !self.verify_dht_envelope_binding_for_peer(
+                        node_id,
+                        signer_public_key.as_deref(),
+                        signed::SourceClassification::GlobalNode,
+                    ) {
+                        tracing::warn!(
+                            "DhtAntiEntropyRequest from {} rejected: signer-to-node binding failed",
                             from_node
                         );
                         return None;
@@ -301,6 +524,19 @@ impl RecordStoreManager {
                         );
                         return None;
                     }
+
+                    if !self.verify_dht_envelope_binding_for_peer(
+                        from_node,
+                        signer_public_key.as_deref(),
+                        signed::SourceClassification::GlobalNode,
+                    ) {
+                        tracing::warn!(
+                            "DhtAntiEntropyResponse from {} rejected: signer-to-node binding failed",
+                            from_node
+                        );
+                        return None;
+                    }
+
                     envelope_verified = true;
                 }
 
@@ -368,6 +604,18 @@ impl RecordStoreManager {
                         );
                         return None;
                     }
+
+                    if !self.verify_dht_envelope_binding_for_peer(
+                        from_node,
+                        signer_public_key.as_deref(),
+                        signed::SourceClassification::GlobalNode,
+                    ) {
+                        tracing::warn!(
+                            "DhtRecordPush from {} rejected: signer-to-node binding failed",
+                            from_node
+                        );
+                        return None;
+                    }
                 }
 
                 let reputation = self.get_sender_reputation(from_node, signer).await;
@@ -377,7 +625,8 @@ impl RecordStoreManager {
                     from_node.to_string(),
                     crate::dht::signed::SourceClassification::Unknown,
                     crate::dht::signed::IngressPath::Push,
-                );
+                )
+                .with_envelope_signature(has_auth);
 
                 for record in records.iter() {
                     self.store_record_from_ingress(record.clone(), &ingress_ctx, reputation);

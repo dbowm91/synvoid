@@ -181,9 +181,9 @@ These items require significant architectural work and are correctly deferred:
 
 | ID | Issue | Reason |
 |----|-------|--------|
-| MESH-14 | Source Node ID Binding Validation | Partial validation exists (node_id bound to TLS), but no TLS cert chain validation for global nodes - requires PKI hierarchy, trust model changes |
+| MESH-14 | Source Node ID Binding Validation | Signer-to-node binding now enforced via `verify_envelope_signer_binding()` for all DHT message types on global/strict paths. TLS cert chain validation for global nodes deferred — requires PKI hierarchy, trust model changes. |
 | HTTP2-POOL | ErasedHttpClient HTTP/2 pooling | `Http2PooledConnection` is empty stub - hyper-util API requires background task management per connection |
-| MR-4 | DHT ingress auth hardening | ✅ Resolved: `DhtAntiEntropyRequest` and response now verify envelope signatures; `DhtRecordPush` envelope signature enforced; `SignedRaftAttestation` v2 binds to value digest; `DnsZone` requires Raft/quorum (no direct DHT writes); `store_record` is `pub(crate)` with `store_local_record` for local writes. Breaking protocol changes completed. |
+| MR-4 | DHT ingress auth hardening | ✅ Resolved: All DHT message types (`DhtAntiEntropyRequest`/response, `DhtRecordPush`, `DhtSyncRequest`/`DhtSyncResponse`) now verify envelope signatures and enforce signer-to-node binding via `verify_envelope_signer_binding()`; `SignedRaftAttestation` v2 binds to value digest; `DnsZone` requires Raft/quorum (no direct DHT writes); `store_record` is `pub(crate)` with `store_local_record` for local writes. Breaking protocol changes completed. |
 
 Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.override.md`](skills/AGENTS.override.md) for the full index.
 
@@ -202,7 +202,7 @@ The consolidated implementation plan is at [`plans/plan.md`](plans/plan.md).
 - **BackendType**: `src/router.rs:65-77` has 11 variants
 - **SAFE_HEADERS**: `src/proxy/cache.rs:97-126` has 28 headers
 - **ConfigManager**: `crates/synvoid-config/src/lib.rs:113`
-- **DhtSyncRequest**: `src/mesh/transport_dht.rs:308-380` - signed by default with a config-controlled unsigned compatibility fallback; node binding is enforced in transport.
+- **DhtSyncRequest**: `src/mesh/transport_dht.rs:308-380` - signed by default with a config-controlled unsigned compatibility fallback; node binding enforced in transport; envelope signature verifies `(request_id, node_id, local_root_hash, timestamp, nonce)`.
 - **DhtAntiEntropyRequest**: `src/mesh/transport_peer.rs:738-751` - node binding enforced, `signer_public_key` now verified against authorized global node keys; **envelope signature also verified** (✅ MR-4 fixed). Both request and response verify envelope signatures via `verify_dht_anti_entropy_request_envelope_signature()` / `verify_dht_anti_entropy_response_envelope_signature()` in `dht/signed.rs`.
 - **DhtRecordPush**: `src/mesh/dht/signed.rs:44-47` - signature field exists and is enforced; **envelope signature also verified** (✅ MR-4 fixed).
 - **DhtKeyPolicyTable**: `crates/synvoid-mesh/src/mesh/dht/key_policy.rs` - centralizes key family authority policies for DHT ingress validation. **DnsZone** uses `RaftOrQuorumGlobal` authority with `remote_writes_allowed=false` — DNS zone records can only be written via Raft consensus or quorum attestation, not via direct DHT capability.
@@ -212,7 +212,7 @@ The consolidated implementation plan is at [`plans/plan.md`](plans/plan.md).
 - **SignedRaftAttestation**: `crates/synvoid-mesh/src/mesh/peer_auth.rs` - requires cryptographic proof, not just structural attestation. **v2 protocol** binds attestation to value digest (`value_hash` field in `RaftAttestation`, `protocol_version=2`). V1 attestations without `value_hash` are **rejected by default** unless `allow_v1_raft_attestations=true` is set in config.
 - **ConsensusTransport**: `crates/synvoid-mesh/src/mesh/raft/consensus.rs` - decouples Raft consensus from mesh transport layer.
 - **AuthorityFreshnessConfig**: `crates/synvoid-mesh/src/mesh/config.rs` - defines stale-state behavior for authority records.
-- **DHT/Raft Boundary Integration**: ✅ **Complete** — All phases implemented. DHT ingress auth hardening (MR-4) resolved: envelope signatures verified on `DhtAntiEntropyRequest`/response and `DhtRecordPush`; `SignedRaftAttestation` v2 binds to value digest; `DnsZone` requires Raft/quorum (no direct DHT writes); `validate_peer_role()` accepts Raft attestation for Edge nodes; `store_record` is `pub(crate)` with `store_local_record` for local writes.
+- **DHT/Raft Boundary Integration**: ✅ **Complete** — All phases implemented. DHT ingress auth hardening (MR-4) resolved: envelope signatures verified on all DHT message types including `DhtSyncRequest`/`DhtSyncResponse`, `DhtAntiEntropyRequest`/response, and `DhtRecordPush`; signer-to-node binding enforced via `verify_envelope_signer_binding()`; `SignedRaftAttestation` v2 binds to value digest; `DnsZone` requires Raft/quorum (no direct DHT writes); `validate_peer_role()` accepts Raft attestation for Edge nodes; `store_record` is `pub(crate)` with `store_local_record` for local writes.
 - **DNS Cookie Server**: `src/dns/cookie.rs` - fully wired via `validate_cookie()` in query.rs:645-662
 - **TunnelRouter**: `src/tunnel/router.rs:200` - active routing uses `resolve_tunnel_backend()` (TunnelBackend struct removed)
 - **HickoryRecursor DNSSEC**: `src/dns/resolver.rs:693-702` - uses `ValidateWithStaticKey` when `enable_dnssec=true` (✅ FIXED)

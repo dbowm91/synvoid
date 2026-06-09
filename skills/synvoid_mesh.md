@@ -1057,8 +1057,10 @@ pub struct AuthorityFreshnessConfig {
 
 ### DhtAntiEntropyRequest and DhtRecordPush Verification (MR-4 Resolved)
 
-The MR-4 gaps have been closed:
+The MR-4 gaps have been closed for all DHT message types:
 
+- **`DhtSyncRequest`**: Envelope signature verified — signs `(request_id, node_id, local_root_hash, timestamp, nonce)` and verifies against the sender's public key. Signer-to-node binding enforced via `verify_envelope_signer_binding()`. Unsigned requests accepted only during config-controlled compatibility window (off by default).
+- **`DhtSyncResponse`**: Envelope signature verified — signs `(request_id, node_id, records, timestamp, nonce)` and verifies against the responder's public key. Record-set digest recomputed and tampered sets rejected. Signer-to-node binding enforced before any records are stored.
 - **`DhtAntiEntropyRequest`**: Envelope signature verified via `verify_dht_anti_entropy_request_envelope_signature()` — signs `(request_id, node_id, local_root_hash, timestamp, nonce)` and verifies against the sender's public key. `signer_public_key` is also checked against the authorized global node key list. The request is rejected if the envelope signature is invalid or the signer is not an authorized global node.
 - **`DhtAntiEntropyResponse`**: Envelope signature verified via `verify_dht_anti_entropy_response_envelope_signature()` — signs `(request_id, responder_node_id, root_hash, record_count, timestamp, record_set_digest)`. All responses (empty and non-empty) are verified when `require_signed_anti_entropy_requests=true` (outside the compat window).
 - **`DhtRecordPush`**: Envelope signature verified via `verify_dht_record_push_envelope_signature_bytes()` — signs `(request_id, node_id, records, hop_count, nonce, timestamp)`. Records without valid envelope signatures are rejected during ingress.
@@ -1066,3 +1068,16 @@ The MR-4 gaps have been closed:
 **Note**: All three message types have a configurable unsigned compatibility window (`unsigned_anti_entropy_compat_until_unix`) for rolling upgrades. When `require_signed_anti_entropy_requests=false` or the compat window is active, unsigned messages are accepted with a warning log.
 
 These changes are breaking protocol changes — older nodes that send unsigned or incorrectly signed messages will be rejected by updated nodes.
+
+### Verification Layer Distinction
+
+DHT security operates on four distinct verification layers, each addressing a different threat:
+
+| Layer | What It Proves | Threat Mitigated |
+|-------|---------------|------------------|
+| **Envelope Signature** | Sender possesses the private key | Spoofed messages from impersonators |
+| **Signer-to-Node Binding** (`verify_envelope_signer_binding()`) | The signing key belongs to the claimed node ID | Stolen keys used from wrong nodes; key compromise isolation |
+| **Per-Record Signature** | The record was authored by the signer | Tampered record content; unauthorized record creation |
+| **Ingress Validation** (key-policy table) | The signer's key family is authorized for this DHT namespace | Cross-namespace privilege escalation; unauthorized writes to sensitive records |
+
+All four layers are enforced for remote DHT writes on global nodes. Local writes (`store_local_record()`) skip envelope/signer verification since they originate from the node's own key.

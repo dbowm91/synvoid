@@ -480,6 +480,121 @@ pub fn verify_dht_anti_entropy_request_envelope_signature(
     }
 }
 
+pub fn verify_dht_sync_request_envelope_signature(
+    request_id: &str,
+    node_id: &str,
+    from_version: u64,
+    timestamp: u64,
+    nonce: &str,
+    signature: &[u8],
+    signer_public_key: Option<&str>,
+) -> bool {
+    use ed25519_dalek::Verifier;
+    let Some(signer_public_key) = signer_public_key else {
+        return false;
+    };
+    if signature.is_empty() || nonce.is_empty() {
+        return false;
+    }
+    let content =
+        get_sync_request_signable_content(request_id, node_id, from_version, timestamp, nonce);
+    if content.is_empty() {
+        return false;
+    }
+    let pk_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(signer_public_key)
+    {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+    if pk_bytes.len() != 32 || signature.len() != 64 {
+        return false;
+    }
+    let mut pk_array = [0u8; 32];
+    pk_array.copy_from_slice(&pk_bytes);
+    let mut sig_array = [0u8; 64];
+    sig_array.copy_from_slice(signature);
+    match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
+        Ok(pk) => pk
+            .verify(&content, &ed25519_dalek::Signature::from_bytes(&sig_array))
+            .is_ok(),
+        Err(_) => false,
+    }
+}
+
+pub fn verify_dht_sync_response_envelope_signature(
+    request_id: &str,
+    from_peer: &str,
+    responder_node_id: &str,
+    version: u64,
+    records: &[crate::protocol::DhtRecord],
+    timestamp: u64,
+    signature: &[u8],
+    signer_public_key: Option<&str>,
+) -> bool {
+    let record_set_digest = compute_record_set_digest(records);
+    verify_dht_sync_response_envelope_signature_bytes(
+        request_id,
+        from_peer,
+        responder_node_id,
+        version,
+        records.len(),
+        timestamp,
+        &record_set_digest,
+        signature,
+        signer_public_key,
+    )
+}
+
+pub fn verify_dht_sync_response_envelope_signature_bytes(
+    request_id: &str,
+    from_peer: &str,
+    responder_node_id: &str,
+    version: u64,
+    record_count: usize,
+    timestamp: u64,
+    record_set_digest: &[u8],
+    signature: &[u8],
+    signer_public_key: Option<&str>,
+) -> bool {
+    use ed25519_dalek::Verifier;
+    let Some(signer_public_key) = signer_public_key else {
+        return false;
+    };
+    if signature.is_empty() {
+        return false;
+    }
+    let content = get_sync_signable_content(
+        request_id,
+        from_peer,
+        responder_node_id,
+        version,
+        record_count,
+        timestamp,
+        record_set_digest,
+    );
+    if content.is_empty() {
+        return false;
+    }
+    let pk_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(signer_public_key)
+    {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+    if pk_bytes.len() != 32 || signature.len() != 64 {
+        return false;
+    }
+    let mut pk_array = [0u8; 32];
+    pk_array.copy_from_slice(&pk_bytes);
+    let mut sig_array = [0u8; 64];
+    sig_array.copy_from_slice(signature);
+    match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
+        Ok(pk) => pk
+            .verify(&content, &ed25519_dalek::Signature::from_bytes(&sig_array))
+            .is_ok(),
+        Err(_) => false,
+    }
+}
+
 pub fn verify_dht_record_push_envelope_signature_bytes(
     request_id: &str,
     node_id: &str,
@@ -3629,6 +3744,330 @@ mod tests {
         assert!(matches!(
             result.unwrap_err(),
             SignerBindingError::EmptySignerPublicKey
+        ));
+    }
+
+    // --- Sync request envelope signature tests ---
+
+    #[test]
+    fn test_sync_request_valid_signature_accepted() {
+        let (signer, public_key) = make_test_keypair(0x01);
+        let request_id = "req-sync-001";
+        let node_id = "node-alpha";
+        let from_version = 42;
+        let timestamp = synvoid_utils::safe_unix_timestamp();
+        let nonce = "nonce-sync-abc";
+
+        let content =
+            get_sync_request_signable_content(request_id, node_id, from_version, timestamp, nonce);
+        let signature = signer.sign(&content).to_bytes().to_vec();
+
+        assert!(verify_dht_sync_request_envelope_signature(
+            request_id,
+            node_id,
+            from_version,
+            timestamp,
+            nonce,
+            &signature,
+            Some(&public_key),
+        ));
+    }
+
+    #[test]
+    fn test_sync_request_empty_signature_rejected() {
+        let (_signer, public_key) = make_test_keypair(0x01);
+        let timestamp = synvoid_utils::safe_unix_timestamp();
+
+        assert!(!verify_dht_sync_request_envelope_signature(
+            "req-sync-001",
+            "node-alpha",
+            42,
+            timestamp,
+            "nonce",
+            &[],
+            Some(&public_key),
+        ));
+    }
+
+    #[test]
+    fn test_sync_request_empty_nonce_rejected() {
+        let (signer, public_key) = make_test_keypair(0x01);
+        let timestamp = synvoid_utils::safe_unix_timestamp();
+
+        let content =
+            get_sync_request_signable_content("req-sync-001", "node-alpha", 42, timestamp, "");
+        let signature = signer.sign(&content).to_bytes().to_vec();
+
+        assert!(!verify_dht_sync_request_envelope_signature(
+            "req-sync-001",
+            "node-alpha",
+            42,
+            timestamp,
+            "",
+            &signature,
+            Some(&public_key),
+        ));
+    }
+
+    #[test]
+    fn test_sync_request_wrong_signer_rejected() {
+        let (signer, _public_key) = make_test_keypair(0x01);
+        let (_wrong_signer, wrong_public_key) = make_test_keypair(0x02);
+        let timestamp = synvoid_utils::safe_unix_timestamp();
+
+        let content =
+            get_sync_request_signable_content("req-sync-001", "node-alpha", 42, timestamp, "nonce");
+        let signature = signer.sign(&content).to_bytes().to_vec();
+
+        assert!(!verify_dht_sync_request_envelope_signature(
+            "req-sync-001",
+            "node-alpha",
+            42,
+            timestamp,
+            "nonce",
+            &signature,
+            Some(&wrong_public_key),
+        ));
+    }
+
+    #[test]
+    fn test_sync_request_missing_public_key_rejected() {
+        let (signer, _public_key) = make_test_keypair(0x01);
+        let timestamp = synvoid_utils::safe_unix_timestamp();
+
+        let content =
+            get_sync_request_signable_content("req-sync-001", "node-alpha", 42, timestamp, "nonce");
+        let signature = signer.sign(&content).to_bytes().to_vec();
+
+        assert!(!verify_dht_sync_request_envelope_signature(
+            "req-sync-001",
+            "node-alpha",
+            42,
+            timestamp,
+            "nonce",
+            &signature,
+            None,
+        ));
+    }
+
+    #[test]
+    fn test_sync_request_tampered_node_id_rejected() {
+        let (signer, public_key) = make_test_keypair(0x01);
+        let timestamp = synvoid_utils::safe_unix_timestamp();
+
+        let content =
+            get_sync_request_signable_content("req-sync-001", "node-alpha", 42, timestamp, "nonce");
+        let signature = signer.sign(&content).to_bytes().to_vec();
+
+        assert!(!verify_dht_sync_request_envelope_signature(
+            "req-sync-001",
+            "node-beta",
+            42,
+            timestamp,
+            "nonce",
+            &signature,
+            Some(&public_key),
+        ));
+    }
+
+    // --- Sync response envelope signature tests ---
+
+    #[test]
+    fn test_sync_response_valid_signature_accepted() {
+        let (signer, public_key) = make_test_keypair(0x01);
+        let request_id = "req-sync-resp-001";
+        let from_peer = "peer-gamma";
+        let responder_node_id = "node-delta";
+        let version = 100;
+        let timestamp = synvoid_utils::safe_unix_timestamp();
+
+        let records = vec![crate::protocol::DhtRecord {
+            key: "upstream:example.com".to_string(),
+            value: b"sync_value".to_vec(),
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "node-delta".to_string(),
+            signature: Vec::new(),
+            signer_public_key: None,
+            content_hash: Vec::new(),
+            quorum_proof: Vec::new(),
+            request_id: None,
+        }];
+
+        let record_set_digest = compute_record_set_digest(&records);
+        let content = get_sync_signable_content(
+            request_id,
+            from_peer,
+            responder_node_id,
+            version,
+            records.len(),
+            timestamp,
+            &record_set_digest,
+        );
+        let signature = signer.sign(&content).to_bytes().to_vec();
+
+        assert!(verify_dht_sync_response_envelope_signature(
+            request_id,
+            from_peer,
+            responder_node_id,
+            version,
+            &records,
+            timestamp,
+            &signature,
+            Some(&public_key),
+        ));
+    }
+
+    #[test]
+    fn test_sync_response_empty_signature_rejected() {
+        let (_signer, public_key) = make_test_keypair(0x01);
+
+        let records = vec![];
+        assert!(!verify_dht_sync_response_envelope_signature(
+            "req-sync-resp-001",
+            "peer-gamma",
+            "node-delta",
+            100,
+            &records,
+            synvoid_utils::safe_unix_timestamp(),
+            &[],
+            Some(&public_key),
+        ));
+    }
+
+    #[test]
+    fn test_sync_response_wrong_signer_rejected() {
+        let (signer, _public_key) = make_test_keypair(0x01);
+        let (_wrong_signer, wrong_public_key) = make_test_keypair(0x02);
+        let timestamp = synvoid_utils::safe_unix_timestamp();
+
+        let records = vec![];
+        let record_set_digest = compute_record_set_digest(&records);
+        let content = get_sync_signable_content(
+            "req-sync-resp-001",
+            "peer-gamma",
+            "node-delta",
+            100,
+            records.len(),
+            timestamp,
+            &record_set_digest,
+        );
+        let signature = signer.sign(&content).to_bytes().to_vec();
+
+        assert!(!verify_dht_sync_response_envelope_signature(
+            "req-sync-resp-001",
+            "peer-gamma",
+            "node-delta",
+            100,
+            &records,
+            timestamp,
+            &signature,
+            Some(&wrong_public_key),
+        ));
+    }
+
+    #[test]
+    fn test_sync_response_missing_public_key_rejected() {
+        let (signer, _public_key) = make_test_keypair(0x01);
+        let timestamp = synvoid_utils::safe_unix_timestamp();
+
+        let records = vec![];
+        let record_set_digest = compute_record_set_digest(&records);
+        let content = get_sync_signable_content(
+            "req-sync-resp-001",
+            "peer-gamma",
+            "node-delta",
+            100,
+            records.len(),
+            timestamp,
+            &record_set_digest,
+        );
+        let signature = signer.sign(&content).to_bytes().to_vec();
+
+        assert!(!verify_dht_sync_response_envelope_signature(
+            "req-sync-resp-001",
+            "peer-gamma",
+            "node-delta",
+            100,
+            &records,
+            timestamp,
+            &signature,
+            None,
+        ));
+    }
+
+    #[test]
+    fn test_sync_response_tampered_records_rejected() {
+        let (signer, public_key) = make_test_keypair(0x01);
+        let request_id = "req-sync-resp-002";
+        let from_peer = "peer-gamma";
+        let responder_node_id = "node-delta";
+        let version = 200;
+        let timestamp = synvoid_utils::safe_unix_timestamp();
+
+        let records = vec![crate::protocol::DhtRecord {
+            key: "upstream:example.com".to_string(),
+            value: b"sync_value".to_vec(),
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "node-delta".to_string(),
+            signature: Vec::new(),
+            signer_public_key: None,
+            content_hash: Vec::new(),
+            quorum_proof: Vec::new(),
+            request_id: None,
+        }];
+
+        let record_set_digest = compute_record_set_digest(&records);
+        let content = get_sync_signable_content(
+            request_id,
+            from_peer,
+            responder_node_id,
+            version,
+            records.len(),
+            timestamp,
+            &record_set_digest,
+        );
+        let signature = signer.sign(&content).to_bytes().to_vec();
+
+        let mut tampered_records = records;
+        tampered_records[0].value = b"tampered_value".to_vec();
+
+        assert!(!verify_dht_sync_response_envelope_signature(
+            request_id,
+            from_peer,
+            responder_node_id,
+            version,
+            &tampered_records,
+            timestamp,
+            &signature,
+            Some(&public_key),
+        ));
+    }
+
+    #[test]
+    fn test_sync_request_fields_are_not_ignored() {
+        let (signer, public_key) = make_test_keypair(0x01);
+        let request_id = "req-regression-001";
+        let node_id = "node-regression";
+        let from_version = 42;
+        let timestamp = synvoid_utils::safe_unix_timestamp();
+        let nonce = "nonce-regression";
+
+        let content =
+            get_sync_request_signable_content(request_id, node_id, from_version, timestamp, nonce);
+        let signature = signer.sign(&content).to_bytes().to_vec();
+
+        assert!(verify_dht_sync_request_envelope_signature(
+            request_id,
+            node_id,
+            from_version,
+            timestamp,
+            nonce,
+            &signature,
+            Some(&public_key),
         ));
     }
 }
