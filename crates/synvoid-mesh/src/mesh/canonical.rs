@@ -76,6 +76,14 @@ pub enum CanonicalTrustReason {
 ///   in the trait methods).
 /// - `Unknown` for any decision type not yet supported by the underlying
 ///   canonical surface.
+///
+/// # Revocation vs. Authorization
+///
+/// `node_revocation_status` (and legacy `is_node_revoked`) returning `Trusted`
+/// means only that the node has **no revocation record** in canonical (Raft)
+/// state. It is **not** equivalent to "the node is fully trusted or authorized".
+/// Callers must combine with `is_global_node_authorized`, org key checks,
+/// and higher-level policy to determine overall trust.
 pub trait CanonicalTrustReader: Send + Sync {
     fn freshness(&self) -> CanonicalFreshness;
 
@@ -87,7 +95,20 @@ pub trait CanonicalTrustReader: Send + Sync {
         key_id_or_fingerprint: &str,
     ) -> CanonicalTrustDecision;
 
+    /// Legacy name; prefer `node_revocation_status` for clarity.
+    /// 'Trusted' result means 'not present in revocation set'.
     fn is_node_revoked(&self, node_id: &str) -> CanonicalTrustDecision;
+
+    /// Returns the revocation status of the node according to canonical (Raft) state.
+    ///
+    /// `Trusted` means the node has no revocation record in canonical state
+    /// (i.e. it is not known to be revoked by consensus).
+    /// This is **not** equivalent to "the node is fully trusted or authorized".
+    /// Callers must combine with `is_global_node_authorized`, org key checks,
+    /// and higher-level policy to determine overall trust.
+    ///
+    /// Freshness is always reported.
+    fn node_revocation_status(&self, node_id: &str) -> CanonicalTrustDecision;
 
     fn is_threat_intel_canonical(&self, intel_id: &str) -> CanonicalTrustDecision;
 }
@@ -147,6 +168,12 @@ impl CanonicalTrustReader for StaticCanonicalTrustReader {
     }
 
     fn is_node_revoked(&self, node_id: &str) -> CanonicalTrustDecision {
+        // Legacy name; prefer `node_revocation_status` for clarity.
+        // 'Trusted' result means 'not present in revocation set'.
+        self.node_revocation_status(node_id)
+    }
+
+    fn node_revocation_status(&self, node_id: &str) -> CanonicalTrustDecision {
         let f = self.freshness();
         if self.revoked_nodes.contains(node_id) {
             CanonicalTrustDecision::NotTrusted {
@@ -173,8 +200,11 @@ impl CanonicalTrustReader for StaticCanonicalTrustReader {
 
 /// Snapshot-backed implementation wrapping an EdgeReplicaManager.
 /// Reads directly from the replica's canonical tables (no duplication).
-/// Freshness is reported as Snapshot (age tracking via replica metadata can be
-/// refined later without API change).
+///
+/// Freshness is derived from the replica's last_replica_refresh_unix metadata
+/// (recorded on construction and on every successful data-bearing update:
+/// org keys, intel, revocations, authorized global nodes). This replaces the
+/// prior placeholder age_ms:0.
 #[derive(Clone)]
 pub struct SnapshotCanonicalTrustReader {
     replica: Arc<EdgeReplicaManager>,
@@ -188,10 +218,15 @@ impl SnapshotCanonicalTrustReader {
 
 impl CanonicalTrustReader for SnapshotCanonicalTrustReader {
     fn freshness(&self) -> CanonicalFreshness {
-        // No direct age_ms on replica snapshot exposed in narrow surface yet.
-        // Use Snapshot{0} as placeholder; real age can be derived from
-        // last_sync or config in future without changing trait.
-        CanonicalFreshness::Snapshot { age_ms: 0 }
+        // Age derived from last_replica_refresh_unix recorded on updates and construction.
+        if let Some(ts) = self.replica.get_last_replica_refresh_unix() {
+            let now = synvoid_utils::safe_unix_timestamp();
+            let age_ms = now.saturating_sub(ts) * 1000;
+            CanonicalFreshness::Snapshot { age_ms }
+        } else {
+            // Rare: metadata absent even after construction sets it.
+            CanonicalFreshness::Unavailable
+        }
     }
 
     fn is_global_node_authorized(&self, node_id: &str) -> CanonicalTrustDecision {
@@ -230,6 +265,12 @@ impl CanonicalTrustReader for SnapshotCanonicalTrustReader {
     }
 
     fn is_node_revoked(&self, node_id: &str) -> CanonicalTrustDecision {
+        // Legacy name; prefer `node_revocation_status` for clarity.
+        // 'Trusted' result means 'not present in revocation set' (not full authorization).
+        self.node_revocation_status(node_id)
+    }
+
+    fn node_revocation_status(&self, node_id: &str) -> CanonicalTrustDecision {
         let f = self.freshness();
         if self.replica.get_revoked_node(node_id) {
             CanonicalTrustDecision::NotTrusted {
@@ -404,10 +445,27 @@ mod tests {
     }
 
     #[test]
-    fn test_static_not_revoked_is_trusted() {
+    fn test_static_node_revocation_status_not_revoked_is_trusted() {
         let r = StaticCanonicalTrustReader::new(CanonicalFreshness::Live);
+        // Legacy alias
         let d = r.is_node_revoked("clean");
         assert!(matches!(d, CanonicalTrustDecision::Trusted { .. }));
+        // New explicit method: not revoked == Trusted (but NOT full authorization)
+        let d2 = r.node_revocation_status("clean");
+        assert!(matches!(d2, CanonicalTrustDecision::Trusted { .. }));
+        // Revoked node yields NotTrusted{Revoked}
+        let mut r2 = StaticCanonicalTrustReader::new(CanonicalFreshness::Live);
+        r2.revoked_nodes.insert("bad".into());
+        let d3 = r2.node_revocation_status("bad");
+        match d3 {
+            CanonicalTrustDecision::NotTrusted { ref reason, .. } => {
+                assert_eq!(reason, &CanonicalTrustReason::Revoked);
+            }
+            _ => panic!("expected NotTrusted Revoked"),
+        }
+        // Alias and new method produce identical results
+        let d_alias = r2.is_node_revoked("bad");
+        assert_eq!(d3, d_alias);
     }
 
     #[test]
@@ -419,10 +477,11 @@ mod tests {
             .unwrap();
         let r = SnapshotCanonicalTrustReader::new(replica.clone());
         let d = r.is_global_node_authorized("pk:global1");
+        // Freshness is now a real Snapshot variant (age small but non-zero in practice).
         assert!(matches!(
             d,
             CanonicalTrustDecision::Trusted {
-                freshness: CanonicalFreshness::Snapshot { age_ms: 0 }
+                freshness: CanonicalFreshness::Snapshot { .. }
             }
         ));
         let d2 = r.is_global_node_authorized("missing");
@@ -455,6 +514,7 @@ mod tests {
             val,
         );
         let r = SnapshotCanonicalTrustReader::new(replica);
+        // Legacy alias
         let d = r.is_node_revoked("evil1");
         match d {
             CanonicalTrustDecision::NotTrusted { reason, .. } => {
@@ -464,6 +524,25 @@ mod tests {
         }
         let d2 = r.is_node_revoked("good1");
         assert!(matches!(d2, CanonicalTrustDecision::Trusted { .. }));
+
+        // New explicit method: same outcomes + freshness present.
+        let d3 = r.node_revocation_status("evil1");
+        match d3 {
+            CanonicalTrustDecision::NotTrusted {
+                ref reason,
+                freshness,
+            } => {
+                assert_eq!(reason, &CanonicalTrustReason::Revoked);
+                assert!(matches!(freshness, CanonicalFreshness::Snapshot { .. }));
+            }
+            _ => panic!("expected NotTrusted Revoked"),
+        }
+        let d4 = r.node_revocation_status("good1");
+        assert!(matches!(d4, CanonicalTrustDecision::Trusted { .. }));
+
+        // Alias and new method produce identical results
+        let d_alias = r.is_node_revoked("evil1");
+        assert_eq!(d3, d_alias);
     }
 
     #[test]
@@ -495,6 +574,33 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_snapshot_freshness_derives_real_age() {
+        let (replica, _dir) = make_temp_replica();
+        let val = make_authorized_value("pk:global1");
+        replica
+            .update_authorized_global_node("pk:global1", &val)
+            .unwrap();
+        let r = SnapshotCanonicalTrustReader::new(replica.clone());
+        // Freshness must be Snapshot variant (real age derived, not hardcoded 0).
+        let f = r.freshness();
+        match f {
+            CanonicalFreshness::Snapshot { age_ms } => {
+                // Age >=0; in practice small since test is fast. Upper bound generous.
+                assert!(age_ms < 5000, "age_ms too large for fresh test: {}", age_ms);
+            }
+            other => panic!("expected Snapshot freshness, got {:?}", other),
+        }
+        // Also verify a decision carries the same real freshness.
+        let d = r.is_global_node_authorized("pk:global1");
+        assert!(matches!(
+            d,
+            CanonicalTrustDecision::Trusted {
+                freshness: CanonicalFreshness::Snapshot { .. }
+            }
+        ));
+    }
+
     // Phase 7 low-risk consumer compile check (plan requirement).
     // Demonstrates that code can depend on `dyn CanonicalTrustReader`
     // without importing any Raft, EdgeReplicaManager, or state machine types.
@@ -503,6 +609,7 @@ mod tests {
         let _ = r.is_global_node_authorized("demo");
         let _ = r.is_org_key_trusted("org", "key");
         let _ = r.is_node_revoked("node");
+        let _ = r.node_revocation_status("node");
         let _ = r.is_threat_intel_canonical("intel");
     }
 

@@ -1,3 +1,6 @@
+use crate::mesh::canonical::{
+    CanonicalFreshness, CanonicalTrustDecision, CanonicalTrustReader, CanonicalTrustReason,
+};
 use base64::Engine;
 use dashmap::DashMap;
 use ed25519_dalek::{Signer, Verifier};
@@ -520,6 +523,49 @@ pub fn validate_peer_role(
     }
 
     Err(format!("Unknown node role: {}", role.bits()))
+}
+
+pub fn validate_peer_canonical_status(
+    reader: &dyn CanonicalTrustReader,
+    peer_node_id: &str,
+    role: &crate::config::MeshNodeRole,
+) -> Result<(), String> {
+    let freshness: CanonicalFreshness = reader.freshness();
+    // Freshness is observed via reader.freshness() and included in error messages,
+    // but does not affect acceptance decisions in this pass. Existing policy is
+    // lenient; AuthorityFreshnessConfig governs per-record tolerance. Future
+    // policy can tighten using the freshness value.
+    let rev_status = reader.node_revocation_status(peer_node_id);
+    if let CanonicalTrustDecision::NotTrusted {
+        reason: CanonicalTrustReason::Revoked,
+        ..
+    } = rev_status
+    {
+        let role_prefix = if role.is_global() {
+            "Global"
+        } else if role.is_edge() {
+            "Edge"
+        } else if role.is_origin() {
+            "Origin"
+        } else {
+            "Peer"
+        };
+        return Err(format!(
+            "{} node {} is revoked in canonical state (freshness: {:?})",
+            role_prefix, peer_node_id, freshness
+        ));
+    }
+    // Unknown/Unavailable for revocation treated as allow (preserve old "no list" skip)
+    if role.is_global() && !role.is_origin() {
+        let auth_status = reader.is_global_node_authorized(peer_node_id);
+        if !matches!(auth_status, CanonicalTrustDecision::Trusted { .. }) {
+            return Err(format!(
+                "Global node {} is not authorized in canonical state (freshness: {:?})",
+                peer_node_id, freshness
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_edge_node(
@@ -3160,5 +3206,112 @@ mod tests {
             "EDGE with V1 attestation should pass when allow_v1=true: {:?}",
             result
         );
+    }
+
+    #[test]
+    fn test_validate_peer_canonical_status_authorized_global_not_revoked_ok() {
+        let mut r = crate::StaticCanonicalTrustReader::new(crate::CanonicalFreshness::Live);
+        r.authorized_global_nodes.insert("global1".to_string());
+        let result = crate::peer_auth::validate_peer_canonical_status(
+            &r,
+            "global1",
+            &crate::config::MeshNodeRole::GLOBAL,
+        );
+        assert!(result.is_ok(), "expected ok, got {:?}", result);
+    }
+
+    #[test]
+    fn test_validate_peer_canonical_status_unauthorized_global_rejected() {
+        let r = crate::StaticCanonicalTrustReader::new(crate::CanonicalFreshness::Live);
+        let result = crate::peer_auth::validate_peer_canonical_status(
+            &r,
+            "global-bad",
+            &crate::config::MeshNodeRole::GLOBAL,
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("not authorized"));
+        assert!(err.contains("Global node"));
+    }
+
+    #[test]
+    fn test_validate_peer_canonical_status_revoked_rejected_any_role() {
+        let mut r = crate::StaticCanonicalTrustReader::new(crate::CanonicalFreshness::Live);
+        r.revoked_nodes.insert("evil1".to_string());
+        for role in [
+            crate::config::MeshNodeRole::EDGE,
+            crate::config::MeshNodeRole::GLOBAL,
+            crate::config::MeshNodeRole::ORIGIN,
+        ] {
+            let result = crate::peer_auth::validate_peer_canonical_status(&r, "evil1", &role);
+            assert!(result.is_err());
+            let err = result.unwrap_err();
+            assert!(err.contains("revoked"));
+            assert!(err.contains("canonical state"));
+        }
+    }
+
+    #[test]
+    fn test_validate_peer_canonical_status_unavailable_allows_revocation_part() {
+        let r = crate::StaticCanonicalTrustReader::new(crate::CanonicalFreshness::Unavailable);
+        let result_edge = crate::peer_auth::validate_peer_canonical_status(
+            &r,
+            "some-edge",
+            &crate::config::MeshNodeRole::EDGE,
+        );
+        assert!(result_edge.is_ok());
+        let result_global = crate::peer_auth::validate_peer_canonical_status(
+            &r,
+            "some-global",
+            &crate::config::MeshNodeRole::GLOBAL,
+        );
+        assert!(result_global.is_err());
+        assert!(result_global.unwrap_err().contains("not authorized"));
+    }
+
+    #[test]
+    fn test_validate_peer_canonical_status_stale_explicit() {
+        let mut r_stale_trusted =
+            crate::StaticCanonicalTrustReader::new(crate::CanonicalFreshness::Stale {
+                age_ms: 999,
+            });
+        r_stale_trusted
+            .authorized_global_nodes
+            .insert("g1".to_string());
+        let res_trusted_stale = crate::peer_auth::validate_peer_canonical_status(
+            &r_stale_trusted,
+            "g1",
+            &crate::config::MeshNodeRole::GLOBAL,
+        );
+        assert!(res_trusted_stale.is_ok());
+        let mut r_stale_not =
+            crate::StaticCanonicalTrustReader::new(crate::CanonicalFreshness::Stale {
+                age_ms: 1234,
+            });
+        let res_not_stale = crate::peer_auth::validate_peer_canonical_status(
+            &r_stale_not,
+            "g2",
+            &crate::config::MeshNodeRole::GLOBAL,
+        );
+        assert!(res_not_stale.is_err());
+        let err = res_not_stale.unwrap_err();
+        assert!(err.contains("not authorized"));
+        assert!(err.contains("Stale"));
+    }
+
+    fn _validate_peer_canonical_accepts_dyn(r: &dyn crate::CanonicalTrustReader) {
+        let _ = crate::peer_auth::validate_peer_canonical_status(
+            r,
+            "n",
+            &crate::config::MeshNodeRole::EDGE,
+        );
+    }
+
+    #[test]
+    fn test_low_risk_consumer_peer_auth_uses_dyn_trait() {
+        let r = crate::StaticCanonicalTrustReader::new(crate::CanonicalFreshness::Live);
+        _validate_peer_canonical_accepts_dyn(&r);
+        let b: Box<dyn crate::CanonicalTrustReader> = Box::new(r);
+        _validate_peer_canonical_accepts_dyn(&*b);
     }
 }

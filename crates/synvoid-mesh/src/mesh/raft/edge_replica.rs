@@ -61,6 +61,26 @@ impl EdgeReplicaManager {
 
         Self::init_schema(&db)?;
 
+        // Ensure last_replica_refresh_unix is set on construction if absent.
+        // This provides the real timestamp for SnapshotCanonicalTrustReader freshness.
+        // Modeled after sync_metadata usage for last_sync_index.
+        {
+            let has_refresh: bool = db
+                .query_row(
+                    "SELECT 1 FROM sync_metadata WHERE key = 'last_replica_refresh_unix' LIMIT 1",
+                    [],
+                    |_| Ok(true),
+                )
+                .unwrap_or(false);
+            if !has_refresh {
+                let now = synvoid_utils::safe_unix_timestamp();
+                let _ = db.execute(
+                    "INSERT OR REPLACE INTO sync_metadata (key, value) VALUES ('last_replica_refresh_unix', ?1)",
+                    params![now.to_string()],
+                );
+            }
+        }
+
         let cache = Cache::builder()
             .max_capacity(EDGE_REPLICA_CACHE_MAX_ITEMS)
             .time_to_live(Duration::from_secs(EDGE_REPLICA_CACHE_TTL_SECS))
@@ -257,6 +277,9 @@ impl EdgeReplicaManager {
             },
         );
 
+        // Record replica-level refresh time for SnapshotCanonicalTrustReader freshness.
+        let _ = self.set_last_replica_refresh_unix(timestamp);
+
         Ok(())
     }
 
@@ -382,6 +405,9 @@ impl EdgeReplicaManager {
             },
         );
 
+        // Record replica-level refresh time for SnapshotCanonicalTrustReader freshness.
+        let _ = self.set_last_replica_refresh_unix(timestamp);
+
         Ok(())
     }
 
@@ -411,6 +437,9 @@ impl EdgeReplicaManager {
             },
         );
 
+        // Record replica-level refresh time for SnapshotCanonicalTrustReader freshness.
+        let _ = self.set_last_replica_refresh_unix(timestamp);
+
         Ok(())
     }
 
@@ -439,6 +468,11 @@ impl EdgeReplicaManager {
             "INSERT OR REPLACE INTO revocation_list (revoked_node_id, revoked_at, reason, revoked_by_node_id, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![node_id, revocation.revoked_at, revocation.reason, record.revoked_by_node_id, timestamp],
         )?;
+
+        drop(db);
+
+        // Record replica-level refresh time for SnapshotCanonicalTrustReader freshness.
+        let _ = self.set_last_replica_refresh_unix(timestamp);
 
         Ok(())
     }
@@ -483,6 +517,7 @@ impl EdgeReplicaManager {
             }
         }
 
+        // All update_* paths called below already record last_replica_refresh_unix on success.
         match namespace {
             Namespace::Org => self.update_org_key(key_id, value),
             Namespace::Intel => self.update_threat_intel(key_id, value),
@@ -576,6 +611,32 @@ impl EdgeReplicaManager {
             params![index.to_string()],
         )?;
         Ok(())
+    }
+
+    fn set_last_replica_refresh_unix(&self, ts: u64) -> Result<(), rusqlite::Error> {
+        let db = self.db.lock();
+        db.execute(
+            "INSERT OR REPLACE INTO sync_metadata (key, value) VALUES ('last_replica_refresh_unix', ?1)",
+            params![ts.to_string()],
+        )?;
+        Ok(())
+    }
+
+    /// Narrow surface for CanonicalTrustReader freshness.
+    /// Returns the unix timestamp (seconds) of the last successful data-bearing
+    /// update (org, intel, revocation, authorized_global) or initial construction.
+    /// Returns None only if metadata row is absent (rare after construction).
+    pub fn get_last_replica_refresh_unix(&self) -> Option<u64> {
+        let db = self.db.lock();
+        db.query_row(
+            "SELECT value FROM sync_metadata WHERE key = 'last_replica_refresh_unix'",
+            [],
+            |row| {
+                let val: String = row.get(0)?;
+                Ok(val.parse::<u64>().unwrap_or(0))
+            },
+        )
+        .ok()
     }
 
     pub fn get_cache_stats(&self) -> (u64, u64) {

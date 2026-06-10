@@ -367,9 +367,13 @@ This iteration is complete when:
 
 `CanonicalTrustReader` is the first concrete canonical boundary. It is read-only and snapshot-oriented. Services and future policy code should depend on this seam instead of importing Raft internals when they need canonical trust answers.
 
+### Iteration 9 Consumer Migration
+
+`peer_auth.rs` now has a reader-backed canonical status helper (`validate_peer_canonical_status`). It still owns identity verification, but canonical authorization/revocation answers can flow through `CanonicalTrustReader`. This is the first consumer-oriented use of the canonical seam. This pass added the helper + focused tests only; no production call sites to `validate_peer_role` (or leaf validators) were rewired, and old revocation-list / authorized-key paths remain in place for this iteration.
+
 ## Follow-Up Recommendation
 
-The next pass should implement the chosen first seam only (`CanonicalTrustReader` + explicit advisory record types + snapshot freshness). Defer any module reorganization or broader movement.
+The next pass should implement the chosen first seam only (`CanonicalTrustReader` + explicit advisory record types + snapshot freshness). Defer any module reorganization or broader movement. After this pass, migrate the next narrow policy-facing seam (likely `dht/key_policy.rs`).
 
 ---
 
@@ -381,7 +385,7 @@ The next pass should implement the chosen first seam only (`CanonicalTrustReader
 - `crates/synvoid-mesh/src/mesh/mod.rs` (compat globals)
 - `crates/synvoid-mesh/src/mesh/dht/key_policy.rs` (authority classes)
 - `crates/synvoid-mesh/src/mesh/raft/state_machine.rs` (Namespaces: Org, Intel, Revocation, AuthorizedGlobalNodes)
-- `crates/synvoid-mesh/src/mesh/peer_auth.rs` (validate_peer_role + SignedRaftAttestation v2)
+- `crates/synvoid-mesh/src/mesh/peer_auth.rs` (validate_peer_role + validate_peer_canonical_status + SignedRaftAttestation v2)
 - `crates/synvoid-mesh/src/mesh/raft/consensus.rs` (ConsensusTransport, RecordReader)
 
 (End of document)
