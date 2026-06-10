@@ -198,6 +198,55 @@ impl RecordStoreManager {
             return false;
         }
 
+        // Iteration 13: optional canonical-reader ingress authority gate.
+        // Applied only for direct signed-record client ingress paths (Push, Announce)
+        // to keep the seam low-risk and avoid altering sync/replay semantics.
+        // Sync/replay (SnapshotSync, SyncResponse, AntiEntropy, etc), local,
+        // and quorum paths skip the gate even if a policy context is attached.
+        // If the per-ingress ctx carries a DhtIngressPolicyContext with a reader,
+        // delegate to check_dht_ingress_authority. NotConfigured preserves legacy.
+        // Rejected or Deferred for the targeted remote ingress causes rejection here.
+        if !ingress_ctx.is_local_origin() {
+            let path = ingress_ctx.path();
+            if matches!(
+                path,
+                crate::dht::signed::IngressPath::Push | crate::dht::signed::IngressPath::Announce
+            ) {
+                if let Some(pctx) = ingress_ctx.policy_context() {
+                    let dht_key = DhtKey::from_str(&record.key);
+                    match crate::dht::check_dht_ingress_authority(
+                        pctx,
+                        &dht_key,
+                        Some(ingress_ctx.source_node_id()),
+                        None,
+                    ) {
+                        crate::dht::DhtIngressGateOutcome::Accepted
+                        | crate::dht::DhtIngressGateOutcome::NotConfigured => {}
+                        crate::dht::DhtIngressGateOutcome::Rejected(r) => {
+                            tracing::warn!(
+                                "Record store: remote ingress rejected by canonical policy for key {} from {}: {:?}",
+                                record.key,
+                                ingress_ctx.source_node_id(),
+                                r
+                            );
+                            crate::stubs::metrics::record_dht_store_operation(false);
+                            return false;
+                        }
+                        crate::dht::DhtIngressGateOutcome::Deferred(d) => {
+                            tracing::warn!(
+                                "Record store: remote ingress deferred by canonical policy for key {} from {} (treating as reject per plan): {:?}",
+                                record.key,
+                                ingress_ctx.source_node_id(),
+                                d
+                            );
+                            crate::stubs::metrics::record_dht_store_operation(false);
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+
         self.store_record_verified_internal(
             record,
             source_reputation,

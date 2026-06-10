@@ -8,6 +8,8 @@ use sha2::{Digest, Sha256};
 
 use crate::protocol::MeshMessageSigner;
 
+use super::ingress_policy::DhtIngressPolicyContext;
+
 #[derive(Clone)]
 pub struct QuorumVerifierContext<'a> {
     pub total_known_global_nodes: usize,
@@ -80,6 +82,12 @@ pub struct DhtRecordIngressContext {
     timestamp: u64,
     request_id: Option<String>,
     is_local_origin: bool,
+    /// Optional policy context carrying a CanonicalTrustReader for canonical
+    /// key authority decisions at remote ingress time (Iteration 13 seam).
+    /// When None, the ingress gate reports NotConfigured and legacy behavior
+    /// is preserved. Attached at DhtRecordIngressContext creation for remote
+    /// signed-record paths (the chosen ingress ownership boundary).
+    policy_context: Option<DhtIngressPolicyContext>,
 }
 
 impl DhtRecordIngressContext {
@@ -96,6 +104,7 @@ impl DhtRecordIngressContext {
             timestamp: synvoid_utils::safe_unix_timestamp(),
             request_id: None,
             is_local_origin: true,
+            policy_context: None,
         }
     }
 
@@ -117,6 +126,7 @@ impl DhtRecordIngressContext {
             timestamp: synvoid_utils::safe_unix_timestamp(),
             request_id: None,
             is_local_origin: false,
+            policy_context: None,
         }
     }
 
@@ -148,6 +158,18 @@ impl DhtRecordIngressContext {
     pub fn with_envelope_signature(mut self, valid: bool) -> Self {
         self.envelope_signature_valid = valid;
         self
+    }
+
+    /// Attaches an optional ingress policy context carrying a CanonicalTrustReader.
+    /// This is the Iteration 13 seam for remote signed-record ingress canonical
+    /// authority decisions. When None, the gate reports NotConfigured (legacy path).
+    pub fn with_policy_context(mut self, ctx: Option<DhtIngressPolicyContext>) -> Self {
+        self.policy_context = ctx;
+        self
+    }
+
+    pub fn policy_context(&self) -> Option<&DhtIngressPolicyContext> {
+        self.policy_context.as_ref()
     }
 
     pub fn peer_id(&self) -> &str {

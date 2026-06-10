@@ -1,6 +1,7 @@
 pub mod capability_access;
 pub mod capability_attestation;
 pub mod edge_attestation;
+pub mod ingress_policy;
 pub mod key_policy;
 pub mod keys;
 pub mod merkle;
@@ -42,6 +43,10 @@ pub use signed::{
 };
 pub use stake::{NodeStake, SlashEvent, SlashReason, StakeConfig, StakeLevel, StakeManager};
 pub use store::*;
+
+pub use ingress_policy::{
+    check_dht_ingress_authority, DhtIngressGateOutcome, DhtIngressPolicyContext,
+};
 
 pub use routing::{
     DhtQuery, GeoInfo, KBucket, LookupQuery, NodeId, PeerContact, PersistedBucket,
