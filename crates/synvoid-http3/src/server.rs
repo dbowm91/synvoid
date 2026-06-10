@@ -10,16 +10,12 @@ use synvoid_config::MainConfig;
 use synvoid_http_client::{create_http_client_with_config, HttpClient};
 use synvoid_metrics::bandwidth::get_global_bandwidth_tracker_or_log;
 use synvoid_metrics::WorkerMetrics;
+use synvoid_platform::socket_bind::bind_udp_reuse;
 use synvoid_proxy::Router;
 use synvoid_proxy::UpstreamClientRegistry;
-use synvoid_waf::access::WafAccess;
 use synvoid_waf::{FloodDecision, FloodProtector};
 
-/// Composite trait combining the WAF capabilities needed by HTTP/3:
-/// request-level WAF checks (`Http3RequestWaf`) plus infrastructure access
-/// (`WafAccess`: connection limiter, bandwidth, streaming scanner).
-pub trait Http3WafBackend: synvoid_http::Http3RequestWaf + WafAccess {}
-impl<T> Http3WafBackend for T where T: synvoid_http::Http3RequestWaf + WafAccess {}
+use crate::Http3WafBackend;
 
 pub struct Http3Server {
     addr: SocketAddr,
@@ -82,7 +78,6 @@ impl Http3Server {
             return Ok(());
         }
 
-        // Fix for quinn 0.11: use QuicServerConfig::try_from
         let quic_server_config = quinn::crypto::rustls::QuicServerConfig::try_from(tls_config)
             .map_err(|e| format!("Failed to create QUIC server config: {}", e))?;
 
@@ -97,7 +92,7 @@ impl Http3Server {
             .expect("Failed to create idle timeout");
         transport_config.max_idle_timeout(Some(idle_timeout));
 
-        let std_socket = crate::platform::socket::bind_udp_reuse(self.addr)?;
+        let std_socket = bind_udp_reuse(self.addr)?;
         let endpoint = quinn::Endpoint::new(
             quinn::EndpointConfig::default(),
             Some(server_config),

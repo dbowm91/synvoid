@@ -9,6 +9,9 @@ synvoid-config = { path = "../synvoid-config" }
 synvoid-http = { path = "../synvoid-http" }
 synvoid-http-client = { path = "../synvoid-http-client" }
 synvoid-proxy = { path = "../synvoid-proxy" }
+synvoid-waf = { path = "../synvoid-waf" }
+synvoid-metrics = { path = "../synvoid-metrics" }
+synvoid-platform = { path = "../synvoid-platform" }
 quinn = { version = "0.11", features = ["runtime-tokio"] }
 h3 = "0.0.8"
 h3-quinn = "0.0.10"
@@ -22,3 +25,6 @@ tokio = { version = "1", features = ["rt", "time", "sync", "macros", "io-util"] 
 tracing = "0.1"
 metrics = "0.22"
 serde_json = "1"
+
+[dev-dependencies]
+async-trait = "0.1"

@@ -86,7 +86,7 @@ cargo check --no-default-features --features mesh,dns
 | `architecture/tunnel.md` | Does not exist — tunnels documented in `networking_deep_dive.md` |
 | `architecture/admin.md` | Does not exist — use `admin_deep_dive.md` |
 | `src/worker/mod.rs` (CPU offload) | `src/worker/cpu_task/` (split 2026-06) — see `mod.rs`, `state.rs`, `metrics.rs`, `payload.rs`, `dispatch.rs`, `connection.rs`, `yara.rs` |
-| `src/worker/unified_server.rs` (monolithic) | `src/worker/unified_server/` (split 2026-06) — see `state.rs`, `init_apps.rs`, `init_waf.rs`, `init_mesh.rs`, `init_runtime.rs`, `init_config.rs`, `lifecycle.rs` |
+| `src/worker/unified_server.rs` (monolithic) | `src/worker/unified_server/` (split 2026-06) — see `state.rs`, `services.rs`, `init_apps.rs`, `init_waf.rs`, `init_mesh.rs`, `init_runtime.rs`, `init_config.rs`, `lifecycle.rs` |
 | `src/app_server/granian.rs` | `crates/synvoid-app-server/src/granian.rs` |
 | `DhtKeyPolicy` | `crates/synvoid-mesh/src/mesh/dht/key_policy.rs` (new module) |
 | `SignedRaftAttestation` | `crates/synvoid-mesh/src/mesh/peer_auth.rs` (v2: binds to value digest via `value_hash`) |
@@ -94,6 +94,8 @@ cargo check --no-default-features --features mesh,dns
 | `AuthorityFreshnessConfig` | `crates/synvoid-mesh/src/mesh/config.rs` (new struct) |
 | `store_record(record, reputation, is_local_origin)` | Removed — use `store_local_record()` or `store_record_from_ingress()` |
 | `handle_sync_response()` (unsigned sync path) | Removed — unsigned compat path now inline in `record_store_message.rs` using `store_record_from_ingress()` with `envelope_signature_valid=false` |
+| `src/http3/server.rs` | `crates/synvoid-http3/src/server.rs` (moved to dedicated crate 2026-06) |
+| `src/http3/server.rs` (Http3WafBackend trait) | `crates/synvoid-http3/src/lib.rs` (trait owns the WAF abstraction boundary) |
 
 ## Modular Agent Guidance
 
@@ -151,7 +153,7 @@ The `--worker` flag spawns `BaseWorkerProcess` which receives a dedicated port. 
 ### Reference Documents
 
 - [`docs/adr/ADR-003-unified-worker-process.md`](docs/adr/ADR-003-unified-worker-process.md) — ADR for unified worker architecture
-- [`src/worker/unified_server.rs`] — Main unified server implementation
+- [`src/worker/unified_server/mod.rs`] — Main unified server implementation
 
 ## Key Codebase Facts
 
@@ -220,7 +222,7 @@ The consolidated implementation plan is at [`plans/plan.md`](plans/plan.md).
 - **DNS Cookie Server**: `src/dns/cookie.rs` - fully wired via `validate_cookie()` in query.rs:645-662
 - **TunnelRouter**: `src/tunnel/router.rs:200` - active routing uses `resolve_tunnel_backend()` (TunnelBackend struct removed)
 - **HickoryRecursor DNSSEC**: `src/dns/resolver.rs:693-702` - uses `ValidateWithStaticKey` when `enable_dnssec=true` (✅ FIXED)
-- **HTTP/3 Body Collection**: `src/http3/server.rs` - ad-hoc implementation, not using shared_handler
+- **HTTP/3 Body Collection**: `crates/synvoid-http3/src/server.rs` - ad-hoc implementation, not using shared_handler
 - **BufferPool**: 4 tiers (small/medium/large/jumbo)
 
 ### Process Architecture

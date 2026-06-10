@@ -17,6 +17,7 @@ pub mod init_mesh;
 pub mod init_runtime;
 pub mod init_waf;
 pub mod lifecycle;
+pub mod services;
 pub mod state;
 
 use std::collections::HashMap;
@@ -26,7 +27,6 @@ use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::RwLock;
 
-use super::context::RequestServices;
 use super::drain_state::WorkerDrainState;
 use super::metrics::WorkerMetrics;
 use crate::plugin::get_global_plugin_manager;
@@ -183,24 +183,12 @@ pub async fn run_unified_server_worker(
             .await;
 
     // ---- Phase 9: cross-wire serverless + port-honeypot to mesh ----
-    #[cfg(feature = "mesh")]
-    {
-        init_mesh::wire_serverless_to_mesh(&unified_server, mesh_init.transport_manager.as_ref());
-        init_mesh::wire_port_honeypot_to_mesh(
-            &port_honeypot_runner,
-            &mesh_init.threat_intel,
-            mesh_init.transport_manager.is_some(),
-        );
-    }
-    #[cfg(not(feature = "mesh"))]
-    {
-        let _ = (mesh_init, port_honeypot_runner);
-    }
+    // Now handled by DataPlaneServicesBuilder below.
 
     // ---- Phase 10: request blocklist from supervisor ----
     lifecycle::request_initial_blocklist(&ipc, worker_id, &unified_server).await;
 
-    // ---- Phase 11: build state + Ready ----
+    // ---- Phase 11: build DataPlaneServices + Ready ----
     let metrics = WorkerMetrics::shared();
     let running = RunningFlag::new();
     let draining = DrainFlag::new();
@@ -209,26 +197,39 @@ pub async fn run_unified_server_worker(
     let stop_accepting_sender = unified_server.get_stop_accepting_sender();
     let stop_accepting_tx = Arc::new(TokioMutex::new(Some(stop_accepting_sender)));
 
-    let request_services = {
-        #[cfg(feature = "mesh")]
-        {
-            let threat_intel = mesh_init.threat_intel.clone();
-            let yara_rules = if let Some(yr) = crate::waf::get_yara_rules() {
-                Some(yr)
-            } else {
-                None
-            };
-            RequestServices::new(threat_intel, None, yara_rules, None, None)
-        }
-        #[cfg(not(feature = "mesh"))]
-        {
-            RequestServices::new(None, None, None)
-        }
-    };
-    let request_services = Arc::new(request_services);
+    let mut builder = services::DataPlaneServicesBuilder::new()
+        .with_serverless_manager(unified_server.get_serverless_manager().unwrap_or_else(|| {
+            let runtime = get_global_plugin_manager().get_wasm_manager();
+            Arc::new(crate::serverless::manager::ServerlessManager::new().with_runtime(runtime))
+        }))
+        .with_port_honeypot(port_honeypot_runner);
+
+    #[cfg(feature = "mesh")]
+    {
+        let yara_rules = crate::waf::get_yara_rules();
+        let record_store = mesh_init
+            .transport_manager
+            .as_ref()
+            .and_then(|tm| tm.get_record_store());
+        builder = builder
+            .with_mesh_transport(mesh_init.transport_manager)
+            .with_threat_intel(mesh_init.threat_intel)
+            .with_yara_rules(yara_rules)
+            .with_record_store(record_store);
+    }
+    #[cfg(not(feature = "mesh"))]
+    {
+        let _ = mesh_init;
+    }
+
+    let data_plane = builder.build();
+
+    #[cfg(feature = "mesh")]
+    services::cross_wire_mesh_services(&unified_server, &data_plane);
+
     unified_server
         .get_waf()
-        .set_request_services(request_services.clone());
+        .set_request_services(data_plane.request_services.clone());
 
     let state = UnifiedServerWorkerState {
         worker_id,
@@ -245,7 +246,7 @@ pub async fn run_unified_server_worker(
         stop_accepting_tx: stop_accepting_tx.clone(),
         unified_server: unified_server.clone(),
         task_handles: Arc::new(TokioMutex::new(Vec::new())),
-        request_services: request_services.clone(),
+        request_services: data_plane.request_services.clone(),
     };
 
     {

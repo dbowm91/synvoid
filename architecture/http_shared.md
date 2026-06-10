@@ -364,7 +364,7 @@ This provides a tunneled HTTP proxy over QUIC with TLS passthrough support.
 
 ## HTTP/3 Server Integration
 
-The HTTP/3 server (`src/http3/server.rs`) uses `HttpClient` for upstream requests:
+The HTTP/3 server (`crates/synvoid-http3/src/server.rs`) uses `HttpClient` for upstream requests:
 
 ```rust
 use crate::http_client::{
@@ -416,7 +416,7 @@ Per `AGENTS.md` — Pure Rust crypto, battle-tested, no C bindings. Provides TLS
 | `src/http_client/mod.rs` | Core HTTP client types, TLS config, convenience functions |
 | `src/http_client/erased_pool.rs` | Type-erased connection pool for streaming |
 | `src/http_client/typed_pool.rs` | Alternative typed connection pool |
-| `src/http3/server.rs` | HTTP/3 server that uses `HttpClient` for upstream |
+| `crates/synvoid-http3/src/server.rs` | HTTP/3 server that uses `HttpClient` for upstream |
 | `src/proxy/mod.rs` | Uses `http_client` for proxying |
 | `src/tunnel/quic/*.rs` | QUIC tunnel infrastructure |
 | `crates/synvoid-config/src/site/tls.rs` | `UpstreamTlsConfig` deserialization |

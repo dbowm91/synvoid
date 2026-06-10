@@ -52,6 +52,10 @@ UnifiedServer worker (`run_unified_server_worker`).
 - `state.rs`       - `UnifiedServerWorkerArgs`, `UnifiedServerWorkerState`,
                       panic handler, IPC/config/CPU-affinity/port helpers,
                       `wait_for_drain`
+- `services.rs`    - `DataPlaneServices` and `DataPlaneServicesBuilder`:
+                      bundled data-plane service handles (request_services,
+                      serverless_manager, port_honeypot_runner, mesh_transport,
+                      threat_intel, record_store); `cross_wire_mesh_services()`
 - `init_runtime.rs`- re-exports from `state` (CPU affinity, shared-conn heartbeat)
 - `init_config.rs` - re-exports from `state` (config, bandwidth, port check)
 - `init_apps.rs`   - Granian supervisors, serverless manager, ACME wiring

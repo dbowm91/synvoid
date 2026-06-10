@@ -1210,7 +1210,7 @@ Quorum table:
 
 ### TLS Passthrough WAF Enforcement
 
-**Location**: `src/worker/unified_server.rs:214-226`, `src/config/site/proxy.rs`
+**Location**: `src/worker/unified_server/:214-226`, `src/config/site/proxy.rs`
 
 **Issue**: When `tls_passthrough = true`, L7 WAF inspection was completely bypassed.
 

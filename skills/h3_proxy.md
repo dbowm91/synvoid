@@ -8,7 +8,7 @@ SynVoid provides full HTTP/3 support via the `quinn` and `h3` crates. The implem
 
 ## Key Components
 
-### HTTP/3 Server (`src/http3/server.rs`)
+### HTTP/3 Server (`crates/synvoid-http3/src/server.rs`)
 
 The `Http3Server` manages the QUIC endpoint and H3 connection lifecycle.
 

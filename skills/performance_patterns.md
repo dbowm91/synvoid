@@ -652,7 +652,7 @@ pub fn get_http_request_latencies() -> Vec<u64> {
 
 ### WAF Stall/Tarpit Concurrency Safety (Wave P1)
 
-**Location**: `src/http/server.rs:1522-1544`, `src/tls/server.rs:859-878`, `src/http3/server.rs:377-387`
+**Location**: `src/http/server.rs:1522-1544`, `src/tls/server.rs:859-878`, `crates/synvoid-http3/src/server.rs:377-387`
 
 **Issue**: At high traffic, unbounded stalled requests could consume worker tasks/connections and become a resource-exhaustion amplifier.
 

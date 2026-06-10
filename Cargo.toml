@@ -168,9 +168,8 @@ subtle = "2"
 cryptoki = { version = "0.12", optional = true }
 
 # HTTP/3 + QUIC
+# h3, h3-quinn: moved to synvoid-http3 (see plans/architecture_boundary_cleanup_iteration_1.md)
 quinn = { version = "0.11", features = ["runtime-tokio"] }
-h3 = "0.0.8"
-h3-quinn = "0.0.10"
 webpki-roots = "0.26"
 
 # GeoIP support
@@ -194,6 +193,7 @@ synvoid-proxy-cache = { path = "crates/synvoid-proxy-cache" }
 synvoid-admin = { path = "crates/synvoid-admin" }
 synvoid-proxy = { path = "crates/synvoid-proxy" }
 synvoid-http = { path = "crates/synvoid-http" }
+synvoid-http3 = { path = "crates/synvoid-http3" }
 synvoid-serverless = { path = "crates/synvoid-serverless" }
 synvoid-geoip = { path = "crates/synvoid-geoip" }
 synvoid-integrity = { path = "crates/synvoid-integrity" }

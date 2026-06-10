@@ -13,7 +13,7 @@ Use this skill when:
 ## Key Files
 - `src/waf/attack_detection/streaming.rs` - `StreamingWafCore` implementation
 - `src/waf/attack_detection/mod.rs` - Added `check_body_only_via_normalized()` method
-- `src/http3/server.rs` - HTTP/3 body handling (lines 264-281)
+- `crates/synvoid-http3/src/server.rs` - HTTP/3 body handling (lines 264-281)
 
 ## Implementation Pattern
 
