@@ -59,3 +59,32 @@ fn default_preload_on_startup() -> Option<bool> {
 fn default_minified_base_dir() -> Option<String> {
     Some("/var/cache/synvoid/minified".to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strict_tls_passthrough_policy_default_is_false() {
+        assert!(!MainSecurityConfig::default().strict_tls_passthrough_policy);
+    }
+
+    #[test]
+    fn strict_tls_passthrough_policy_backward_compat_missing_field() {
+        let toml_str = r#"
+more_clear_headers = ["X-Request-Id"]
+sanitize_forwarded_headers = true
+"#;
+        let config: MainSecurityConfig = toml::from_str(toml_str).unwrap();
+        assert!(!config.strict_tls_passthrough_policy);
+    }
+
+    #[test]
+    fn strict_tls_passthrough_policy_explicit_true() {
+        let toml_str = r#"
+strict_tls_passthrough_policy = true
+"#;
+        let config: MainSecurityConfig = toml::from_str(toml_str).unwrap();
+        assert!(config.strict_tls_passthrough_policy);
+    }
+}

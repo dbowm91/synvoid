@@ -335,17 +335,52 @@ tls_passthrough_enforce_waf = true
 
 ### Strict TLS Passthrough Policy
 
-When enabled, `validate_tls_passthrough_waf_policy()` returns errors instead of just warnings for misconfigured TLS passthrough sites:
+Controls whether misconfigured TLS passthrough sites fail worker validation at startup.
 
 ```toml
 [security]
 strict_tls_passthrough_policy = false  # Default: false (warn-only)
 ```
 
-**Why this default:**
-- `false` (warn-only) is safe for existing deployments — logs warnings and emits metrics without breaking startup
-- `true` enforces that all TLS passthrough sites either have `tls_passthrough_enforce_waf` or rate limiting configured, preventing silently unprotected sites
-- Enable in production after auditing your passthrough site configurations
+| Value | Behavior |
+|-------|----------|
+| `false` (default) | Logs warnings and emits metrics for unprotected passthrough sites, but does not fail startup. Safe for existing deployments. |
+| `true` | Returns an error and **fails worker validation** when any site has TLS passthrough enabled without WAF enforcement (`tls_passthrough_enforce_waf = true`) **and** without meaningful rate limiting. |
+
+**What counts as "meaningful rate limiting":** A site passes the rate-limit check if any of the following are configured: `ratelimit.mode`, IP-level limits (`ip.per_second`, `ip.per_minute`, etc.), global limits (`global.per_second`, `global.max_connections`), or endpoint-level limits.
+
+**Allowed configurations under strict mode:**
+
+- Passthrough with `tls_passthrough_enforce_waf = true` — WAF inspects L7 traffic despite passthrough.
+- Passthrough bypass with configured rate limiting — L7 inspection is bypassed, but the site is still protected by layer 3/4 rate limiting. A warning is still logged that L7 WAF inspection is bypassed.
+
+**Site-level remediation (option A — enable WAF enforcement):**
+
+```toml
+[[site.proxy]]
+host = "example.com"
+port = 443
+tls_passthrough = true
+tls_passthrough_enforce_waf = true
+```
+
+**Site-level remediation (option B — configure rate limiting):**
+
+```toml
+[[site.proxy]]
+host = "example.com"
+port = 443
+tls_passthrough = true
+
+[site.ratelimit]
+mode = "token_bucket"
+
+[site.ratelimit.ip]
+per_second = 10
+per_minute = 100
+```
+
+Enable this option in hardened production environments after auditing all passthrough site configurations.
 
 ### ACME (Let's Encrypt)
 

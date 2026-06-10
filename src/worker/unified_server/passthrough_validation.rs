@@ -544,4 +544,83 @@ mod tests {
         let eval = evaluate_passthrough_policy(&sites, true);
         assert!(!eval.violations.is_empty());
     }
+
+    #[test]
+    fn strict_mode_bypass_without_rate_limit_has_both_violations() {
+        let sites = site_map(vec![("bypass", make_site(Some(true), Some(false)))]);
+        let eval = evaluate_passthrough_policy(&sites, true);
+        assert_eq!(eval.violations.len(), 2);
+        assert!(eval.violations.iter().any(|v| matches!(
+            v,
+            PassthroughPolicyViolation::WafBypassed { site_id } if site_id == "bypass"
+        )));
+        assert!(eval.violations.iter().any(|v| matches!(
+            v,
+            PassthroughPolicyViolation::BypassWithoutRateLimit { site_id } if site_id == "bypass"
+        )));
+    }
+
+    #[test]
+    fn strict_mode_bypass_with_rate_limit_only_waf_violation() {
+        let sites = site_map(vec![(
+            "bypass",
+            make_site_with_ratelimit(
+                Some(true),
+                Some(false),
+                SiteRateLimitConfig {
+                    mode: Some("token_bucket".to_string()),
+                    ..Default::default()
+                },
+            ),
+        )]);
+        let eval = evaluate_passthrough_policy(&sites, true);
+        assert_eq!(eval.violations.len(), 1);
+        assert!(eval.violations.iter().any(|v| matches!(
+            v,
+            PassthroughPolicyViolation::WafBypassed { site_id } if site_id == "bypass"
+        )));
+    }
+
+    #[test]
+    fn strict_mode_passthrough_with_waf_no_violations() {
+        let sites = site_map(vec![("waf-on", make_site(Some(true), Some(true)))]);
+        let eval = evaluate_passthrough_policy(&sites, true);
+        assert!(eval.violations.is_empty());
+    }
+
+    #[test]
+    fn strict_mode_mixed_sites_only_problematic_violations() {
+        let sites = site_map(vec![
+            ("waf-on", make_site(Some(true), Some(true))),
+            (
+                "bypass-rl",
+                make_site_with_ratelimit(
+                    Some(true),
+                    Some(false),
+                    SiteRateLimitConfig {
+                        mode: Some("token_bucket".to_string()),
+                        ..Default::default()
+                    },
+                ),
+            ),
+            ("bypass-no-rl", make_site(Some(true), Some(false))),
+        ]);
+        let eval = evaluate_passthrough_policy(&sites, true);
+        // waf-on: no violations
+        // bypass-rl: WafBypassed only
+        // bypass-no-rl: WafBypassed + BypassWithoutRateLimit
+        assert_eq!(eval.violations.len(), 3);
+        let waf_bypassed: Vec<_> = eval
+            .violations
+            .iter()
+            .filter(|v| matches!(v, PassthroughPolicyViolation::WafBypassed { .. }))
+            .collect();
+        assert_eq!(waf_bypassed.len(), 2);
+        let no_rl: Vec<_> = eval
+            .violations
+            .iter()
+            .filter(|v| matches!(v, PassthroughPolicyViolation::BypassWithoutRateLimit { .. }))
+            .collect();
+        assert_eq!(no_rl.len(), 1);
+    }
 }

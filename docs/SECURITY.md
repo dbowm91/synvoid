@@ -113,6 +113,43 @@ preload = true
 min_version = "1.2"  # Disable SSLv3, TLS 1.0, 1.1
 ```
 
+### Enforce TLS Passthrough Policy
+
+When `tls_passthrough = true` is set on a site, encrypted traffic is forwarded directly to the origin without L7 WAF inspection. This means SQLi, XSS, RCE, and other application-layer attacks embedded in encrypted traffic are not detected.
+
+For hardened deployments, enable the strict passthrough policy to prevent unprotected sites from starting:
+
+```toml
+[security]
+strict_tls_passthrough_policy = true  # Default: false
+```
+
+When enabled, worker validation **fails** at startup if any site has TLS passthrough without WAF enforcement (`tls_passthrough_enforce_waf = true`) and without rate limiting. This is a safety gate — ensure all passthrough sites are configured before enabling.
+
+**Remediation per site:**
+
+```toml
+# Option A: WAF inspects L7 traffic despite passthrough
+[[site.proxy]]
+host = "example.com"
+port = 443
+tls_passthrough = true
+tls_passthrough_enforce_waf = true
+
+# Option B: Rate limiting compensates for lack of L7 inspection
+[[site.proxy]]
+host = "api.example.com"
+port = 443
+tls_passthrough = true
+
+[site.ratelimit]
+mode = "token_bucket"
+
+[site.ratelimit.ip]
+per_second = 10
+per_minute = 100
+```
+
 ## Attack Protection
 
 ### Enable Comprehensive Detection
