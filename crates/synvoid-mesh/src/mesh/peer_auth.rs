@@ -3341,7 +3341,7 @@ mod tests {
         assert!(res_trusted_stale.is_ok());
         // NOTE: freshness is observed and reported but acceptance is still permissive here.
         // Future policy may tighten stale global auth checks using AuthorityFreshnessConfig.
-        let mut r_stale_not =
+        let r_stale_not =
             crate::StaticCanonicalTrustReader::new(crate::CanonicalFreshness::Stale {
                 age_ms: 1234,
             });
