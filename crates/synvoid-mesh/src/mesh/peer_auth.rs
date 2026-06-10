@@ -525,6 +525,44 @@ pub fn validate_peer_role(
     Err(format!("Unknown node role: {}", role.bits()))
 }
 
+/// Staged helper for canonical revocation and global-node authorization checks.
+///
+/// This is a narrow, reader-backed seam (using `&dyn CanonicalTrustReader`) for the
+/// subset of peer role validation that depends on canonical (Raft) state:
+/// - Revocation status for *all* roles (fails closed on explicit `Revoked`).
+/// - Global-node authorization only for roles where `role.is_global() && !role.is_origin()`
+///   (i.e. pure `GLOBAL` and `GLOBAL_EDGE`; composites carrying the `ORIGIN` bit such as
+///   `GLOBAL_ORIGIN` are exempt from the authorization list check in *this* helper because
+///   their origin claim is attested separately by a real authorized global node).
+///
+/// It does **not**:
+/// - Verify signatures, certificates, PoW, timestamps, origin attestations, or Raft value-hash binding.
+/// - Replace `validate_peer_role(...)` (the full identity + policy entry point that owns
+///   signature/PoW/attestation validation).
+/// - Perform any I/O, network, or DHT lookups (implementations are snapshot-oriented and synchronous).
+///
+/// Freshness (`CanonicalFreshness`) is always observed from the reader and included in
+/// error messages, but does not yet drive acceptance/rejection decisions here. Existing
+/// policy is lenient (`AuthorityFreshnessConfig` governs per-record grace/hard limits);
+/// future policy may tighten using the freshness value. `Unavailable` revocation preserves
+/// legacy permissive "no list present" skip behavior. `Unavailable` (or `Unknown`) global
+/// authorization fails closed for global non-origin roles.
+///
+/// `Trusted` from `node_revocation_status` only means "no revocation record in canonical
+/// (Raft) state" — it is **not** equivalent to "the node is fully trusted or authorized".
+/// Callers must combine with global auth, org keys, and higher policy.
+///
+/// This helper is intentionally low-churn/staged (Iteration 10 test hardening) before
+/// broader consumer migration (e.g. `dht/key_policy.rs`). Production call sites to
+/// `validate_peer_role` and the legacy revocation-list / authorized-key paths remain
+/// untouched.
+///
+/// Prefer depending on `&dyn CanonicalTrustReader` (or `Box<dyn ...>`) when a policy
+/// or peer-auth consumer needs canonical answers, rather than importing Raft internals.
+///
+/// See `CanonicalTrustReader` (and `StaticCanonicalTrustReader` / `SnapshotCanonicalTrustReader`)
+/// for the seam contract, decision/freshness/reason types, and revocation-vs-authorization
+/// semantics.
 pub fn validate_peer_canonical_status(
     reader: &dyn CanonicalTrustReader,
     peer_node_id: &str,
@@ -3221,6 +3259,19 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_peer_canonical_status_authorized_global_edge_passes() {
+        // GLOBAL_EDGE is_global() && !is_origin() so it requires canonical global auth in this helper.
+        let mut r = crate::StaticCanonicalTrustReader::new(crate::CanonicalFreshness::Live);
+        r.authorized_global_nodes.insert("ge1".to_string());
+        let result = crate::peer_auth::validate_peer_canonical_status(
+            &r,
+            "ge1",
+            &crate::config::MeshNodeRole::GLOBAL_EDGE,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
     fn test_validate_peer_canonical_status_unauthorized_global_rejected() {
         let r = crate::StaticCanonicalTrustReader::new(crate::CanonicalFreshness::Live);
         let result = crate::peer_auth::validate_peer_canonical_status(
@@ -3238,10 +3289,14 @@ mod tests {
     fn test_validate_peer_canonical_status_revoked_rejected_any_role() {
         let mut r = crate::StaticCanonicalTrustReader::new(crate::CanonicalFreshness::Live);
         r.revoked_nodes.insert("evil1".to_string());
+        // Cover pure + composites to make GLOBAL/GLOBAL_EDGE/GLOBAL_ORIGIN revocation behavior explicit.
         for role in [
             crate::config::MeshNodeRole::EDGE,
             crate::config::MeshNodeRole::GLOBAL,
             crate::config::MeshNodeRole::ORIGIN,
+            crate::config::MeshNodeRole::GLOBAL_EDGE,
+            crate::config::MeshNodeRole::GLOBAL_ORIGIN,
+            crate::config::MeshNodeRole::EDGE_ORIGIN,
         ] {
             let result = crate::peer_auth::validate_peer_canonical_status(&r, "evil1", &role);
             assert!(result.is_err());
@@ -3284,6 +3339,8 @@ mod tests {
             &crate::config::MeshNodeRole::GLOBAL,
         );
         assert!(res_trusted_stale.is_ok());
+        // NOTE: freshness is observed and reported but acceptance is still permissive here.
+        // Future policy may tighten stale global auth checks using AuthorityFreshnessConfig.
         let mut r_stale_not =
             crate::StaticCanonicalTrustReader::new(crate::CanonicalFreshness::Stale {
                 age_ms: 1234,
@@ -3297,6 +3354,84 @@ mod tests {
         let err = res_not_stale.unwrap_err();
         assert!(err.contains("not authorized"));
         assert!(err.contains("Stale"));
+    }
+
+    #[test]
+    fn test_validate_peer_canonical_status_revoked_global_fails_even_if_authorized() {
+        // Proves revocation is checked first and fails before global auth success can matter.
+        let mut r = crate::StaticCanonicalTrustReader::new(crate::CanonicalFreshness::Live);
+        r.authorized_global_nodes.insert("evil-global".to_string());
+        r.revoked_nodes.insert("evil-global".to_string());
+        let result = crate::peer_auth::validate_peer_canonical_status(
+            &r,
+            "evil-global",
+            &crate::config::MeshNodeRole::GLOBAL,
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("revoked in canonical state"));
+        assert!(!err.contains("not authorized")); // revoked path short-circuits
+    }
+
+    #[test]
+    fn test_validate_peer_canonical_status_non_revoked_edge_passes_without_global_auth() {
+        // Edge (non-global) requires no entry in authorized_global_nodes for this helper.
+        let r = crate::StaticCanonicalTrustReader::new(crate::CanonicalFreshness::Live);
+        let result = crate::peer_auth::validate_peer_canonical_status(
+            &r,
+            "plain-edge",
+            &crate::config::MeshNodeRole::EDGE,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_peer_canonical_status_global_origin_exempt_from_global_auth_list_in_this_helper(
+    ) {
+        // GLOBAL_ORIGIN carries is_global() but also is_origin(), so the guard
+        // `role.is_global() && !role.is_origin()` intentionally skips the canonical
+        // global authorization list check in *this* helper.
+        //
+        // Rationale (consistent with legacy validate_peer_role + role bitmask design):
+        // - A GLOBAL_ORIGIN is a global (consensus participant) that also hosts origins.
+        // - Its *global* authority is expressed via Raft membership (AuthorizedGlobalNodes)
+        //   and origin claims are attested by a *separate* real authorized global node.
+        // - Origins (incl. composites) cannot self-attest global membership.
+        // - Therefore this helper does not require the ID in authorized_global_nodes
+        //   for GLOBAL_ORIGIN (or EDGE_ORIGIN etc.); the origin side is validated
+        //   via attestation path elsewhere.
+        //
+        // This test makes the exemption explicit and matches plan intent.
+        // If policy ever changes to require global auth for *any* is_global() role,
+        // update the guard + this test name/behavior + rustdoc together.
+        let r = crate::StaticCanonicalTrustReader::new(crate::CanonicalFreshness::Live);
+        // deliberately no authorized_global entry for this ID
+        let result = crate::peer_auth::validate_peer_canonical_status(
+            &r,
+            "global-that-is-also-origin",
+            &crate::config::MeshNodeRole::GLOBAL_ORIGIN,
+        );
+        assert!(
+            result.is_ok(),
+            "GLOBAL_ORIGIN should be exempt from canonical global-auth list in this helper: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_validate_peer_canonical_status_unavailable_global_auth_fails_closed() {
+        // Unavailable global auth must fail closed for global non-origin roles.
+        // Error must include both "not authorized" text and the freshness.
+        let r = crate::StaticCanonicalTrustReader::new(crate::CanonicalFreshness::Unavailable);
+        let result = crate::peer_auth::validate_peer_canonical_status(
+            &r,
+            "missing-global",
+            &crate::config::MeshNodeRole::GLOBAL,
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("not authorized in canonical state"));
+        assert!(err.contains("Unavailable"));
     }
 
     fn _validate_peer_canonical_accepts_dyn(r: &dyn crate::CanonicalTrustReader) {

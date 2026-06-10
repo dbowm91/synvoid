@@ -371,9 +371,17 @@ This iteration is complete when:
 
 `peer_auth.rs` now has a reader-backed canonical status helper (`validate_peer_canonical_status`). It still owns identity verification, but canonical authorization/revocation answers can flow through `CanonicalTrustReader`. This is the first consumer-oriented use of the canonical seam. This pass added the helper + focused tests only; no production call sites to `validate_peer_role` (or leaf validators) were rewired, and old revocation-list / authorized-key paths remain in place for this iteration.
 
+### Iteration 10 Canonical Helper Semantics
+
+`peer_auth::validate_peer_canonical_status` is now test-covered as a staged consumer of `CanonicalTrustReader`. It checks canonical revocation for all roles and canonical global-node authorization for the configured global-role cases (`is_global() && !is_origin()`, i.e. `GLOBAL` and `GLOBAL_EDGE`; `GLOBAL_ORIGIN` and other origin-carrying composites are exempt in this helper because their origin claim requires separate attestation from a real authorized global node). It does not perform signature, certificate, PoW, timestamp, or full policy validation. Freshness is surfaced but not yet policy-enforcing; unavailable revocation preserves legacy permissive behavior, while unavailable global authorization fails closed for global-node authorization checks.
+
+The current guard and `GLOBAL_ORIGIN` exemption behavior is intentional and matches the legacy `validate_peer_role` path + role bitmask design ("origins are not global nodes; origin nodes cannot self-attest as global nodes"). Tests explicitly cover authorized/unauthorized/revoked (all roles + composites), unavailable, stale, edge non-global, and `GLOBAL_ORIGIN` exemption cases using `StaticCanonicalTrustReader`. The helper has precise rustdoc explaining its narrow scope, what it does and does not validate, freshness semantics, and its staged nature before broader consumer migration (e.g. `dht/key_policy.rs`).
+
+No production call sites were rewired; no module reorganization; no legacy `validate_peer_role` behavior removed.
+
 ## Follow-Up Recommendation
 
-The next pass should implement the chosen first seam only (`CanonicalTrustReader` + explicit advisory record types + snapshot freshness). Defer any module reorganization or broader movement. After this pass, migrate the next narrow policy-facing seam (likely `dht/key_policy.rs`).
+The next pass should implement the chosen first seam only (`CanonicalTrustReader` + explicit advisory record types + snapshot freshness). Defer any module reorganization or broader movement. After the Iteration 10 test hardening, the next real consumer migration can target `dht/key_policy.rs`. That pass should use `CanonicalTrustReader` to separate DHT key authority classification from advisory DHT/quorum mechanics without changing record propagation behavior.
 
 ---
 
