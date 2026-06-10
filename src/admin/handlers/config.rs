@@ -199,42 +199,65 @@ pub async fn reload_config(
     #[cfg(feature = "mesh")]
     {
         let mut config = state.process.config.write().await;
-    let results = config.reload_all();
+        let results = config.reload_all();
 
-    let loaded = results.iter().filter(|r| r.1.is_ok()).count();
-    let failed = results.iter().filter(|r| r.1.is_err()).count();
+        let loaded = results.iter().filter(|r| r.1.is_ok()).count();
+        let failed = results.iter().filter(|r| r.1.is_err()).count();
 
-    let mimes_config = &config.main.mimes;
-    let mut mimes_reloaded = false;
-    let mut mimes_error = None;
+        let mimes_config = &config.main.mimes;
+        let mut mimes_reloaded = false;
+        let mut mimes_error = None;
 
-    if mimes_config.enabled {
-        if let Some(ref mimes_file) = mimes_config.file {
-            match crate::mime::reload_mimes_from_file(mimes_file) {
-                Ok(()) => {
-                    mimes_reloaded = true;
-                }
-                Err(e) => {
-                    mimes_error = Some(e.to_string());
+        if mimes_config.enabled {
+            if let Some(ref mimes_file) = mimes_config.file {
+                match crate::mime::reload_mimes_from_file(mimes_file) {
+                    Ok(()) => {
+                        mimes_reloaded = true;
+                    }
+                    Err(e) => {
+                        mimes_error = Some(e.to_string());
+                    }
                 }
             }
         }
-    }
 
-    let broadcast_success = failed == 0;
+        let broadcast_success = failed == 0;
 
-    drop(config);
-    if broadcast_success {
-        if let Some(ref pm) = state.process.process_manager {
-            let config_dir = state.process.config.read().await.config_dir.clone();
-            pm.broadcast_config_reload(config_dir).await;
-        }
-    }
-
-    let message = if mimes_reloaded {
+        drop(config);
         if broadcast_success {
-            format!(
+            if let Some(ref pm) = state.process.process_manager {
+                let config_dir = state.process.config.read().await.config_dir.clone();
+                pm.broadcast_config_reload(config_dir).await;
+            }
+        }
+
+        let message = if mimes_reloaded {
+            if broadcast_success {
+                format!(
                 "Hot reload applied: {} configs reloaded, {} failed, mimes reloaded, workers notified",
+                loaded, failed
+            )
+            } else {
+                format!(
+                    "Partial reload: {} configs reloaded, {} failed (workers not notified)",
+                    loaded, failed
+                )
+            }
+        } else if let Some(err) = mimes_error {
+            if broadcast_success {
+                format!(
+                "Hot reload applied: {} configs reloaded, {} failed, mimes reload failed: {}, workers notified",
+                loaded, failed, err
+            )
+            } else {
+                format!(
+                "Partial reload: {} configs reloaded, {} failed, mimes reload failed: {} (workers not notified)",
+                loaded, failed, err
+            )
+            }
+        } else if broadcast_success {
+            format!(
+                "Hot reload applied: {} configs reloaded, {} failed, workers notified",
                 loaded, failed
             )
         } else {
@@ -242,36 +265,13 @@ pub async fn reload_config(
                 "Partial reload: {} configs reloaded, {} failed (workers not notified)",
                 loaded, failed
             )
-        }
-    } else if let Some(err) = mimes_error {
-        if broadcast_success {
-            format!(
-                "Hot reload applied: {} configs reloaded, {} failed, mimes reload failed: {}, workers notified",
-                loaded, failed, err
-            )
-        } else {
-            format!(
-                "Partial reload: {} configs reloaded, {} failed, mimes reload failed: {} (workers not notified)",
-                loaded, failed, err
-            )
-        }
-    } else if broadcast_success {
-        format!(
-            "Hot reload applied: {} configs reloaded, {} failed, workers notified",
-            loaded, failed
-        )
-    } else {
-        format!(
-            "Partial reload: {} configs reloaded, {} failed (workers not notified)",
-            loaded, failed
-        )
-    };
+        };
 
-    if failed == 0 {
-        Ok(Json(StatusResponse::hot_reload_applied(message)))
-    } else {
-        Ok(Json(StatusResponse::partial_reload(message)))
-    }
+        if failed == 0 {
+            Ok(Json(StatusResponse::hot_reload_applied(message)))
+        } else {
+            Ok(Json(StatusResponse::partial_reload(message)))
+        }
     }
 }
 

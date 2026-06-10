@@ -339,7 +339,29 @@ impl RecordStoreManager {
                         "DhtSyncResponse from {} accepted without signature (legacy compat window active or signing disabled)",
                         from_node
                     );
-                    self.handle_sync_response(records.clone(), from_node);
+
+                    let mut compat_stored = 0;
+                    let reputation = self.get_sender_reputation(from_node, signer).await;
+
+                    let ingress_ctx = crate::dht::signed::DhtRecordIngressContext::new_remote(
+                        from_node.to_string(),
+                        from_node.to_string(),
+                        crate::dht::signed::SourceClassification::Unknown,
+                        crate::dht::signed::IngressPath::SyncResponse,
+                    )
+                    .with_envelope_signature(false);
+
+                    for record in records.iter() {
+                        if self.store_record_from_ingress(record.clone(), &ingress_ctx, reputation)
+                        {
+                            compat_stored += 1;
+                        }
+                    }
+                    tracing::info!(
+                        "DhtSyncResponse from {}: stored {} records (unsigned compat path)",
+                        from_node,
+                        compat_stored
+                    );
                 } else {
                     if !crate::dht::signed::verify_dht_sync_response_envelope_signature(
                         request_id,
@@ -540,7 +562,8 @@ impl RecordStoreManager {
                     envelope_verified = true;
                 }
 
-                self.handle_anti_entropy_response(message, from_node, envelope_verified).await;
+                self.handle_anti_entropy_response(message, from_node, envelope_verified)
+                    .await;
                 None
             }
             MeshMessage::DhtRecordPush {
@@ -1245,5 +1268,265 @@ mod tests {
             Some(&pk_b64),
         );
         assert!(result);
+    }
+
+    fn build_store_with_config(
+        require_signed: bool,
+        compat_until: Option<u64>,
+    ) -> RecordStoreManager {
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let config = crate::dht::RecordStoreConfig {
+            require_signed_sync_requests: require_signed,
+            unsigned_sync_compat_until_unix: compat_until,
+            ..Default::default()
+        };
+        RecordStoreManager::new(
+            config,
+            "test-global-node".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control,
+            None,
+        )
+    }
+
+    #[tokio::test]
+    async fn test_sync_request_unsigned_rejected_by_default() {
+        let store = build_store_with_config(true, None);
+        let msg = MeshMessage::DhtSyncRequest {
+            request_id: "req-1".into(),
+            node_id: "peer-node".into(),
+            from_version: 0,
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            nonce: "nonce-1".into(),
+            signature: vec![],
+            signer_public_key: None,
+        };
+        let result = store.handle_mesh_message(&msg, "peer-node", None).await;
+        assert!(
+            result.is_none(),
+            "unsigned sync request should be rejected by default"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sync_request_unsigned_accepted_with_compat_window() {
+        let future_deadline = synvoid_utils::safe_unix_timestamp() + 3600;
+        let store = build_store_with_config(true, Some(future_deadline));
+        let msg = MeshMessage::DhtSyncRequest {
+            request_id: "req-2".into(),
+            node_id: "peer-node".into(),
+            from_version: 0,
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            nonce: "nonce-2".into(),
+            signature: vec![],
+            signer_public_key: None,
+        };
+        let result = store.handle_mesh_message(&msg, "peer-node", None).await;
+        assert!(
+            result.is_some(),
+            "unsigned sync request should be accepted with active compat window"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sync_request_rejected_after_compat_window_expires() {
+        let expired_deadline = synvoid_utils::safe_unix_timestamp().saturating_sub(1);
+        let store = build_store_with_config(true, Some(expired_deadline));
+        let msg = MeshMessage::DhtSyncRequest {
+            request_id: "req-3".into(),
+            node_id: "peer-node".into(),
+            from_version: 0,
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            nonce: "nonce-3".into(),
+            signature: vec![],
+            signer_public_key: None,
+        };
+        let result = store.handle_mesh_message(&msg, "peer-node", None).await;
+        assert!(
+            result.is_none(),
+            "unsigned sync request should be rejected when compat window expired"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sync_response_unsigned_rejected_by_default() {
+        let store = build_store_with_config(true, None);
+        let msg = MeshMessage::DhtSyncResponse {
+            request_id: "req-4".into(),
+            records: vec![],
+            version: 1,
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            signature: vec![],
+            signer_public_key: None,
+        };
+        let result = store.handle_mesh_message(&msg, "peer-node", None).await;
+        assert!(
+            result.is_none(),
+            "unsigned sync response should be rejected by default"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sync_response_unsigned_accepted_with_compat_window() {
+        let future_deadline = synvoid_utils::safe_unix_timestamp() + 3600;
+        let store = build_store_with_config(true, Some(future_deadline));
+        let msg = MeshMessage::DhtSyncResponse {
+            request_id: "req-5".into(),
+            records: vec![],
+            version: 1,
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            signature: vec![],
+            signer_public_key: None,
+        };
+        let result = store.handle_mesh_message(&msg, "peer-node", None).await;
+        assert!(
+            result.is_none(),
+            "unsigned compat response returns None (no reply)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sync_response_unsigned_stored_through_ingress() {
+        use crate::dht::signed::DhtRecordIngressContext;
+
+        let future_deadline = synvoid_utils::safe_unix_timestamp() + 3600;
+        let store = build_store_with_config(true, Some(future_deadline));
+
+        let signer = crate::protocol::MeshMessageSigner::new([0x42u8; 32]);
+        let mut test_record = DhtRecord {
+            key: "node_info:test-peer".to_string(),
+            value: b"test-value".to_vec(),
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            sequence_number: 1,
+            ttl_seconds: 300,
+            source_node_id: "test-peer".to_string(),
+            signature: vec![],
+            signer_public_key: Some(signer.get_public_key()),
+            content_hash: vec![],
+            quorum_proof: vec![],
+            request_id: None,
+        };
+        let signed = crate::dht::signed::dht_record_to_signed_record(&test_record);
+        test_record.signature = signer.sign(&signed.get_signable_content());
+
+        let ingress_ctx = DhtRecordIngressContext::new_remote(
+            "test-peer".to_string(),
+            "test-peer".to_string(),
+            crate::dht::signed::SourceClassification::Unknown,
+            crate::dht::signed::IngressPath::SyncResponse,
+        )
+        .with_envelope_signature(false);
+
+        let stored = store.store_record_from_ingress(test_record.clone(), &ingress_ctx, 0);
+        assert!(
+            stored,
+            "signed record should pass through ingress validation even without envelope signature"
+        );
+
+        let retrieved = store.get_record(&test_record.key);
+        assert!(
+            retrieved.is_some(),
+            "record stored via unsigned compat ingress should be retrievable"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sync_request_missing_nonce_rejected_by_default() {
+        let store = build_store_with_config(true, None);
+        let msg = MeshMessage::DhtSyncRequest {
+            request_id: "req-6".into(),
+            node_id: "peer-node".into(),
+            from_version: 0,
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            nonce: "".into(),
+            signature: vec![1, 2, 3],
+            signer_public_key: Some("some-key".to_string()),
+        };
+        let result = store.handle_mesh_message(&msg, "peer-node", None).await;
+        assert!(
+            result.is_none(),
+            "sync request with empty nonce should be rejected"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sync_request_invalid_signature_rejected() {
+        let store = build_store_with_config(true, None);
+        let msg = MeshMessage::DhtSyncRequest {
+            request_id: "req-7".into(),
+            node_id: "peer-node".into(),
+            from_version: 0,
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            nonce: "nonce-7".into(),
+            signature: vec![0xff; 64],
+            signer_public_key: Some("some-base64-key".to_string()),
+        };
+        let result = store.handle_mesh_message(&msg, "peer-node", None).await;
+        assert!(
+            result.is_none(),
+            "sync request with invalid signature should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_sync_request_match_arm_does_not_ignore_signature_fields() {
+        let source = include_str!("record_store_message.rs");
+        let source = source.split("#[cfg(test)]").next().unwrap_or(source);
+        let lines: Vec<&str> = source.lines().collect();
+        let mut in_sync_request_arm = false;
+        let mut brace_depth = 0;
+
+        for (i, line) in lines.iter().enumerate() {
+            if line.contains("MeshMessage::DhtSyncRequest {") {
+                in_sync_request_arm = true;
+                brace_depth = 0;
+            }
+            if in_sync_request_arm {
+                brace_depth += line.matches('{').count();
+                brace_depth -= line.matches('}').count();
+                if line.contains("signature: _,") || line.contains("signer_public_key: _,") {
+                    panic!(
+                        "DhtSyncRequest match arm ignores signature/signer_public_key at line {}: {}",
+                        i + 1,
+                        line.trim()
+                    );
+                }
+                if brace_depth == 0 && i > 0 {
+                    in_sync_request_arm = false;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_sync_response_match_arm_does_not_ignore_signature_fields() {
+        let source = include_str!("record_store_message.rs");
+        let source = source.split("#[cfg(test)]").next().unwrap_or(source);
+        let lines: Vec<&str> = source.lines().collect();
+        let mut in_sync_response_arm = false;
+        let mut brace_depth = 0;
+
+        for (i, line) in lines.iter().enumerate() {
+            if line.contains("MeshMessage::DhtSyncResponse {") {
+                in_sync_response_arm = true;
+                brace_depth = 0;
+            }
+            if in_sync_response_arm {
+                brace_depth += line.matches('{').count();
+                brace_depth -= line.matches('}').count();
+                if line.contains("signature: _,") || line.contains("signer_public_key: _,") {
+                    panic!(
+                        "DhtSyncResponse match arm ignores signature/signer_public_key at line {}: {}",
+                        i + 1,
+                        line.trim()
+                    );
+                }
+                if brace_depth == 0 && i > 0 {
+                    in_sync_response_arm = false;
+                }
+            }
+        }
     }
 }

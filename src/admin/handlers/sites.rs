@@ -324,7 +324,12 @@ pub async fn update_site(
     #[cfg(not(feature = "mesh"))]
     let proxy_cache_preferences: Option<()> = None;
     let version = crate::utils::safe_unix_timestamp();
-    let _ = (&toml_content_for_broadcast, &site_id_for_broadcast, &proxy_cache_preferences, &version);
+    let _ = (
+        &toml_content_for_broadcast,
+        &site_id_for_broadcast,
+        &proxy_cache_preferences,
+        &version,
+    );
     drop(state_config);
     drop(_guard);
 

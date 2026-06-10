@@ -84,18 +84,25 @@ MeshProxy is the critical routing component that coordinates mesh traffic betwee
 
 ### Current DHT Verification Split
 
-All DHT message types are now fully verified. The transport layer enforces node-ID binding, envelope signature verification, signer-to-node binding, and signer identity validation for every message path on global nodes.
+All DHT message types are now fully verified. The transport layer enforces node-ID binding, envelope signature verification, signer-to-node binding, and signer identity validation for every message path on global nodes. Unsigned messages are rejected by default; optional compatibility windows are config-controlled and off by default.
 
-| Message Type | Envelope Sig | Signer Binding | Details |
-|--------------|-------------|----------------|---------|
-| `DhtRecordAnnounce` | ✅ | ✅ | Peer binding and message signature enforced before record ingestion |
-| `DhtSnapshotRequest` | ✅ | ✅ | Signature required; rate-limited and stake-checked |
-| `DhtSnapshotResponse` | ✅ | ✅ | Signature and timestamp checked before snapshot apply |
-| `DhtSyncRequest` | ✅ | ✅ | Signed requests verified; unsigned compatibility fallback is config-controlled and off by default |
-| `DhtSyncResponse` | ✅ | ✅ | Signature and timestamp checked before apply |
-| `DhtAntiEntropyRequest` | ✅ | ✅ | Envelope signature verified; `signer_public_key` validated against authorized global node keys; signer-to-node binding enforced via `verify_envelope_signer_binding()` |
-| `DhtAntiEntropyResponse` | ✅ | ✅ | Envelope signature verified for all responses (empty and non-empty); record set digest recomputed and tampered sets rejected |
-| `DhtRecordPush` | ✅ | ✅ | Envelope signature required; signer-to-node binding enforced; records without valid signatures rejected (compatibility window optional) |
+| Message Type | Envelope Sig | Signer Binding | Per-Record Ingress | Details |
+|--------------|-------------|----------------|--------------------|---------|
+| `DhtRecordAnnounce` | ✅ | ✅ | ✅ | Peer binding and message signature enforced before record ingestion |
+| `DhtSnapshotRequest` | ✅ | ✅ | — | Signature required; rate-limited and stake-checked |
+| `DhtSnapshotResponse` | ✅ | ✅ | ✅ | Signature and timestamp checked before snapshot apply |
+| `DhtSyncRequest` | ✅ | ✅ | — | Signed requests verified; unsigned compatibility fallback is config-controlled and off by default |
+| `DhtSyncResponse` | ✅ | ✅ | ✅ | Signed: signature + signer-to-node binding + record-set digest verified. Unsigned compat: still stores via `store_record_from_ingress()` with `envelope_signature_valid=false` |
+| `DhtAntiEntropyRequest` | ✅ | ✅ | — | Envelope signature verified; `signer_public_key` validated against authorized global node keys; signer-to-node binding enforced |
+| `DhtAntiEntropyResponse` | ✅ | ✅ | ✅ | Envelope signature verified; record set digest recomputed and tampered sets rejected |
+| `DhtRecordPush` | ✅ | ✅ | ✅ | Envelope signature required; signer-to-node binding enforced; records without valid signatures rejected |
+
+**Four-layer verification** (applied to all remote DHT writes on global nodes):
+
+1. **Timestamp window** — messages outside acceptable time range are rejected
+2. **Envelope signature** — proves sender possesses the private key
+3. **Signer-to-node binding** (`verify_envelope_signer_binding()`) — the signing key belongs to the claimed node ID
+4. **Per-record ingress validation** (`store_record_from_ingress()`) — key-family policy, per-record signature, quorum proof, and freshness checks
 
 **Design notes:**
 - All DHT communication requires TLS 1.3 encryption (transport layer)
@@ -138,6 +145,6 @@ The following table clarifies which subsystem owns each category of mesh state. 
 
 4. **Edge nodes verify independently.** Edge nodes cache Raft-derived artifacts (via `EdgeReplicaManager`) and gossip them to peers, but independently verify signatures against the Raft state machine before accepting them.
 
-5. **Remote DHT writes require ingress validation.** All remote DHT writes (sync, anti-entropy, record push) require explicit ingress validation: node-ID binding, message signature verification, and TLS 1.3 transport encryption. Unsigned messages are rejected by default; optional compatibility windows are config-controlled and off by default.
+5. **Remote DHT writes require ingress validation.** All remote DHT writes (sync, anti-entropy, record push) undergo four-layer verification: timestamp window, envelope signature, signer-to-node binding, and per-record ingress validation via `store_record_from_ingress()`. Unsigned messages are rejected by default; optional compatibility windows are config-controlled, off by default, and still enforce per-record ingress validation.
 
 6. **Low-level store access is restricted.** Raw `store_record()` is `pub(crate)`; remote paths must use `store_record_from_ingress()` which enforces key-policy and proof requirements. Local creation uses `store_local_record()` which always sets `is_local_origin = true`.

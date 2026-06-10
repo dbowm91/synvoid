@@ -719,6 +719,10 @@ This enforces the DHT/Raft boundary: local writes bypass ingress checks, while r
 
 | Check | Before | After |
 |-------|--------|-------|
+| DhtSyncRequest envelope signature | Optional (unsigned accepted) | Verified (signs request_id, node_id, from_version, timestamp, nonce); unsigned rejected by default |
+| DhtSyncRequest signer binding | Not verified | Signer-to-node binding enforced via `verify_envelope_signer_binding()` |
+| DhtSyncResponse envelope signature | Optional (unsigned accepted) | Verified (signs request_id, from_peer, responder_node_id, version, record_count, timestamp, record_set_digest); unsigned rejected by default |
+| DhtSyncResponse signer binding | Not verified | Signer-to-node binding enforced; unsigned compat path stores via `store_record_from_ingress()` with `envelope_signature_valid=false` |
 | DhtAntiEntropyRequest envelope signature | Not verified | Verified (signs request_id, node_id, root_hash, timestamp, nonce) |
 | DhtAntiEntropyResponse envelope signature | Not verified | Verified for all responses (empty and non-empty); signs request_id, responder_node_id, root_hash, record_count, timestamp, record_set_digest |
 | DhtAntiEntropyRequest signer | Not verified | Verified against authorized global keys |

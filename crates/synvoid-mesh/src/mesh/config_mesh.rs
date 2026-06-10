@@ -54,10 +54,17 @@ impl MeshConfig {
         }
 
         if let Some(dht) = &self.dht {
+            let now = synvoid_utils::safe_unix_timestamp();
+
             if !dht.require_signed_sync_requests {
-                let now = synvoid_utils::safe_unix_timestamp();
                 match dht.unsigned_sync_compat_until_unix {
-                    Some(deadline) if deadline > now => {}
+                    Some(deadline) if deadline > now => {
+                        tracing::warn!(
+                            "SECURITY: Unsigned DHT sync request compatibility window active until {} (now={}); \
+                             this is a temporary migration aid and should be disabled in production",
+                            deadline, now
+                        );
+                    }
                     Some(deadline) => {
                         return Err(format!(
                             "mesh.dht.require_signed_sync_requests=false compatibility window expired at {} (now={}); set require_signed_sync_requests=true or extend unsigned_sync_compat_until_unix",
@@ -74,9 +81,14 @@ impl MeshConfig {
             }
 
             if !dht.require_signed_anti_entropy_requests {
-                let now = synvoid_utils::safe_unix_timestamp();
                 match dht.unsigned_anti_entropy_compat_until_unix {
-                    Some(deadline) if deadline > now => {}
+                    Some(deadline) if deadline > now => {
+                        tracing::warn!(
+                            "SECURITY: Unsigned DHT anti-entropy request compatibility window active until {} (now={}); \
+                             this is a temporary migration aid and should be disabled in production",
+                            deadline, now
+                        );
+                    }
                     Some(deadline) => {
                         return Err(format!(
                             "mesh.dht.require_signed_anti_entropy_requests=false compatibility window expired at {} (now={}); set require_signed_anti_entropy_requests=true or extend unsigned_anti_entropy_compat_until_unix",
@@ -93,9 +105,14 @@ impl MeshConfig {
             }
 
             if !dht.require_signed_record_push {
-                let now = synvoid_utils::safe_unix_timestamp();
                 match dht.unsigned_record_push_compat_until_unix {
-                    Some(deadline) if deadline > now => {}
+                    Some(deadline) if deadline > now => {
+                        tracing::warn!(
+                            "SECURITY: Unsigned DHT record push compatibility window active until {} (now={}); \
+                             this is a temporary migration aid and should be disabled in production",
+                            deadline, now
+                        );
+                    }
                     Some(deadline) => {
                         return Err(format!(
                             "mesh.dht.require_signed_record_push=false compatibility window expired at {} (now={}); set require_signed_record_push=true or extend unsigned_record_push_compat_until_unix",

@@ -91,6 +91,7 @@ cargo check --no-default-features --features mesh,dns
 | `ConsensusTransport` trait | `crates/synvoid-mesh/src/mesh/raft/consensus.rs` (new module) |
 | `AuthorityFreshnessConfig` | `crates/synvoid-mesh/src/mesh/config.rs` (new struct) |
 | `store_record(record, reputation, is_local_origin)` | Removed — use `store_local_record()` or `store_record_from_ingress()` |
+| `handle_sync_response()` (unsigned sync path) | Removed — unsigned compat path now inline in `record_store_message.rs` using `store_record_from_ingress()` with `envelope_signature_valid=false` |
 
 ## Modular Agent Guidance
 
@@ -203,6 +204,7 @@ The consolidated implementation plan is at [`plans/plan.md`](plans/plan.md).
 - **SAFE_HEADERS**: `src/proxy/cache.rs:97-126` has 28 headers
 - **ConfigManager**: `crates/synvoid-config/src/lib.rs:113`
 - **DhtSyncRequest**: `src/mesh/transport_dht.rs:308-380` - signed by default with a config-controlled unsigned compatibility fallback; node binding enforced in transport; envelope signature verifies `(request_id, node_id, local_root_hash, timestamp, nonce)`.
+- **DhtSyncResponse**: `src/mesh/dht/record_store_message.rs:307-420` - signed: envelope signature verified, signer-to-node binding enforced, record-set digest checked, stores via `store_record_from_ingress()`. Unsigned compat: stores via `store_record_from_ingress()` with `envelope_signature_valid=false` and explicit warning log. Deprecated `handle_sync_response()` removed.
 - **DhtAntiEntropyRequest**: `src/mesh/transport_peer.rs:738-751` - node binding enforced, `signer_public_key` now verified against authorized global node keys; **envelope signature also verified** (✅ MR-4 fixed). Both request and response verify envelope signatures via `verify_dht_anti_entropy_request_envelope_signature()` / `verify_dht_anti_entropy_response_envelope_signature()` in `dht/signed.rs`.
 - **DhtRecordPush**: `src/mesh/dht/signed.rs:44-47` - signature field exists and is enforced; **envelope signature also verified** (✅ MR-4 fixed).
 - **DhtKeyPolicyTable**: `crates/synvoid-mesh/src/mesh/dht/key_policy.rs` - centralizes key family authority policies for DHT ingress validation. **DnsZone** uses `RaftOrQuorumGlobal` authority with `remote_writes_allowed=false` — DNS zone records can only be written via Raft consensus or quorum attestation, not via direct DHT capability.
@@ -212,7 +214,7 @@ The consolidated implementation plan is at [`plans/plan.md`](plans/plan.md).
 - **SignedRaftAttestation**: `crates/synvoid-mesh/src/mesh/peer_auth.rs` - requires cryptographic proof, not just structural attestation. **v2 protocol** binds attestation to value digest (`value_hash` field in `RaftAttestation`, `protocol_version=2`). V1 attestations without `value_hash` are **rejected by default** unless `allow_v1_raft_attestations=true` is set in config.
 - **ConsensusTransport**: `crates/synvoid-mesh/src/mesh/raft/consensus.rs` - decouples Raft consensus from mesh transport layer.
 - **AuthorityFreshnessConfig**: `crates/synvoid-mesh/src/mesh/config.rs` - defines stale-state behavior for authority records.
-- **DHT/Raft Boundary Integration**: ✅ **Complete** — All phases implemented. DHT ingress auth hardening (MR-4) resolved: envelope signatures verified on all DHT message types including `DhtSyncRequest`/`DhtSyncResponse`, `DhtAntiEntropyRequest`/response, and `DhtRecordPush`; signer-to-node binding enforced via `verify_envelope_signer_binding()`; `SignedRaftAttestation` v2 binds to value digest; `DnsZone` requires Raft/quorum (no direct DHT writes); `validate_peer_role()` accepts Raft attestation for Edge nodes; `store_record` is `pub(crate)` with `store_local_record` for local writes.
+- **DHT/Raft Boundary Integration**: ✅ **Complete** — All phases implemented. DHT ingress auth hardening (MR-4) resolved: envelope signatures verified on all DHT message types including `DhtSyncRequest`/`DhtSyncResponse`, `DhtAntiEntropyRequest`/response, and `DhtRecordPush`; signer-to-node binding enforced via `verify_envelope_signer_binding()`; `SignedRaftAttestation` v2 binds to value digest; `DnsZone` requires Raft/quorum (no direct DHT writes); `validate_peer_role()` accepts Raft attestation for Edge nodes; `store_record` is `pub(crate)` with `store_local_record` for local writes; deprecated `handle_sync_response()` removed — unsigned compat path inline uses `store_record_from_ingress()` with `envelope_signature_valid=false`.
 - **DNS Cookie Server**: `src/dns/cookie.rs` - fully wired via `validate_cookie()` in query.rs:645-662
 - **TunnelRouter**: `src/tunnel/router.rs:200` - active routing uses `resolve_tunnel_backend()` (TunnelBackend struct removed)
 - **HickoryRecursor DNSSEC**: `src/dns/resolver.rs:693-702` - uses `ValidateWithStaticKey` when `enable_dnssec=true` (✅ FIXED)

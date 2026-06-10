@@ -562,10 +562,12 @@ require_signed_sync_requests = true  # default-deny for unsigned DhtSyncRequest
 
 - `mesh.dht.require_signed_sync_requests = true` (default):
   - unsigned `DhtSyncRequest` is rejected.
-  - signed request validation enforces timestamp window, nonce replay protection, and signature verification.
+  - signed request validation enforces timestamp window, nonce replay protection, signature verification, and signer-to-node binding.
+  - `DhtSyncResponse` envelope signature verified, record-set digest checked, signer-to-node binding enforced. Unsigned compat path (when `unsigned_sync_compat_until_unix` is active) stores via `store_record_from_ingress()` with `envelope_signature_valid=false`; per-record ingress validation is always enforced.
 - `mesh.dht.require_signed_sync_requests = false`:
   - temporary compatibility mode for legacy peers that do not sign sync requests.
   - not recommended for production except during controlled migration windows.
+  - requires a bounded `unsigned_sync_compat_until_unix` deadline; rejected at startup if unset or expired.
 
 ### Recommended Production Baseline
 

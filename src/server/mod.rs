@@ -12,14 +12,12 @@ use crate::udp::listener::{UdpListenerPool, UdpListenerPoolConfig};
 
 #[cfg(feature = "dns")]
 use crate::dns::DnsServer;
-#[cfg(feature = "dns")]
-use std::sync::Mutex as StdMutex;
-#[cfg(feature = "dns")]
-use crate::tls::acme::AcmeManager;
 use crate::metrics::adapter::WorkerMetricsSink;
 use crate::metrics::WorkerMetrics;
 use crate::process::ipc::WorkerId;
 use crate::router_adapter::RouterRouteResolver;
+#[cfg(feature = "dns")]
+use crate::tls::acme::AcmeManager;
 use crate::tls::cert_resolver::CertResolver;
 use crate::tls::config::InternalTlsConfig;
 use crate::tunnel::{TunnelManager, TunnelRouter};
@@ -28,6 +26,8 @@ use crate::waf::adapter::RootWafProcessor;
 use crate::waf::{AttackDetectionConfig, FloodProtector, RateLimitConfigStore, WafCore};
 use crate::worker::drain_adapter::WorkerDrainStateAdapter;
 use crate::worker::drain_state::WorkerDrainState;
+#[cfg(feature = "dns")]
+use std::sync::Mutex as StdMutex;
 use synvoid_http::runtime::HttpRuntimeContext;
 
 pub mod waf_handler;
