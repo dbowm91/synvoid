@@ -17,9 +17,17 @@ The HTTP Client module (`src/http_client/`) provides **upstream proxy connection
 
 ```
 src/http_client/
-├── mod.rs          # Core client types, TLS config, request helpers
-├── erased_pool.rs  # Type-erased connection pool (default, see Feature Gates)
-└── typed_pool.rs   # Typed connection pool (alternative to erased_pool)
+├── mod.rs                  # Root re-export shim for synvoid-http-client crate
+├── quic_tunnel_dispatch.rs # QUIC tunnel URL routing
+└── streaming_waf_body.rs   # Re-export shim for StreamingWafBody
+```
+
+The canonical implementation lives in `crates/synvoid-http-client/`:
+```
+crates/synvoid-http-client/src/
+├── lib.rs              # Core client types, TLS config, request helpers
+├── erased_pool.rs      # Type-erased connection pool (primary production path)
+└── streaming_waf_body.rs # Streaming WAF body scanning
 ```
 
 ### 1. Core Module (`mod.rs`)
@@ -76,17 +84,6 @@ pub struct ErasedConnectionPool {
 - `InvalidInput` — Malformed authority string or unparseable host:port
 - `TimedOut` — TCP connection or handshake exceeded `connect_timeout`
 - `Other` — TCP connection failed (includes OS error details)
-
-### `typed_pool.rs` — Typed Connection Pool (Alternative)
-
-**Purpose:** Option 3 approach — create typed clients per (authority, body_type) combination.
-
-**Public Types:**
-- `TypedPoolKey` — `{ authority, is_http2, body_type_id: TypeId, allow_plaintext }`
-- `TypedConnectionPool` — Moka cache of `TypedClientEntry { client }`
-- `TypedHttpClient` — High-level client using `TypedConnectionPool`
-
-Uses `TypeId::of::<Full<Bytes>>()` as the body type marker. This is an alternative implementation not used by default.
 
 ---
 
@@ -257,8 +254,7 @@ Client negotiates with server — both protocols supported.
 ### HTTP/2 Configuration Points
 
 1. **`http2_only(false)`** on `Client::builder()` — Allows fallback to HTTP/1.1
-2. **`TypedPoolKey.is_http2`** — When true, creates HTTP/2-only client
-3. **`ErasedHttpClient::send_request(..., is_http2)`** — Boolean flag (currently **not wired** for HTTP/2 pooling)
+2. **`ErasedHttpClient::send_request(..., is_http2)`** — Boolean flag (currently **not wired** for HTTP/2 pooling)
 
 ### Known Limitation: HTTP/2 Pooling
 
@@ -413,9 +409,9 @@ Per `AGENTS.md` — Pure Rust crypto, battle-tested, no C bindings. Provides TLS
 
 | File | Purpose |
 |------|---------|
-| `src/http_client/mod.rs` | Core HTTP client types, TLS config, convenience functions |
-| `src/http_client/erased_pool.rs` | Type-erased connection pool for streaming |
-| `src/http_client/typed_pool.rs` | Alternative typed connection pool |
+| `src/http_client/mod.rs` | Root re-export shim for `synvoid-http-client` crate |
+| `crates/synvoid-http-client/src/lib.rs` | Core HTTP client types, TLS config, convenience functions |
+| `crates/synvoid-http-client/src/erased_pool.rs` | Type-erased connection pool for streaming |
 | `crates/synvoid-http3/src/server.rs` | HTTP/3 server that uses `HttpClient` for upstream |
 | `src/proxy/mod.rs` | Uses `http_client` for proxying |
 | `src/tunnel/quic/*.rs` | QUIC tunnel infrastructure |

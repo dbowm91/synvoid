@@ -157,24 +157,22 @@ TLS-configurable HTTP client creation, connection pooling, request sending utili
 |------|----------------|
 | `mod.rs` | Main client creation, TLS config, request utilities, `StreamingWafBody` |
 | `erased_pool.rs` | Type-erased connection pool for 1M RPS scale |
-| `typed_pool.rs` | Typed connection pool per (authority, body_type) |
 
 ### Connection Pooling Strategy
 
-**Three layers**:
-1. **Global client cache** (mod.rs:70-88) - Caches `HttpClient` by TLS config (100 entry, 5min TTL)
-2. **Erased connection pool** (erased_pool.rs:218-303) - Per-host HTTP/1.1 connection reuse with checkout/checkin
-3. **Typed connection pool** (typed_pool.rs:59-94) - Per-(authority, body_type) client caching
+**Two layers**:
+1. **Global client cache** (lib.rs) - Caches `HttpClient` by TLS config (100 entry, 5min TTL)
+2. **Erased connection pool** (erased_pool.rs) - Per-host HTTP/1.1 connection reuse with checkout/checkin
 
 The erased pool is used for true streaming at 1M RPS scale to avoid per-request boxing overhead.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                    Three-Layer Connection Pooling                    │
+│                     Two-Layer Connection Pooling                     │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                     │
 │  ┌─────────────────────────────────────────────────────────────┐   │
-│  │  Layer 1: Global Client Cache (mod.rs:70-88)                │   │
+│  │  Layer 1: Global Client Cache (lib.rs)                      │   │
 │  │  ┌─────────────────────────────────────────────────────────┐ │   │
 │  │  │  HttpClient (TLS config → 100 entry, 5min TTL cache)   │ │   │
 │  │  └─────────────────────────────────────────────────────────┘ │   │
@@ -182,21 +180,12 @@ The erased pool is used for true streaming at 1M RPS scale to avoid per-request 
 │                              │                                      │
 │                              ▼                                      │
 │  ┌─────────────────────────────────────────────────────────────┐   │
-│  │  Layer 2: Erased Connection Pool (erased_pool.rs:218-303)   │   │
+│  │  Layer 2: Erased Connection Pool (erased_pool.rs)           │   │
 │  │  ┌─────────────────────────────────────────────────────────┐ │   │
 │  │  │  PoolKey: (authority, is_http2)                        │ │   │
 │  │  │  ErasedConnectionPool → HashMap<PoolKey, VecDeque>     │ │   │
 │  │  │  • checkout() → reuse or connect new                   │ │   │
 │  │  │  • checkin() → return to pool if under max_idle        │ │   │
-│  │  └─────────────────────────────────────────────────────────┘ │   │
-│  └─────────────────────────────────────────────────────────────┘   │
-│                              │                                      │
-│                              ▼                                      │
-│  ┌─────────────────────────────────────────────────────────────┐   │
-│  │  Layer 3: Typed Connection Pool (typed_pool.rs:59-94)       │   │
-│  │  ┌─────────────────────────────────────────────────────────┐ │   │
-│  │  │  Per (authority, body_type) client caching             │ │   │
-│  │  │  Http1PooledConnection / Http2PooledConnection         │ │   │
 │  │  └─────────────────────────────────────────────────────────┘ │   │
 │  └─────────────────────────────────────────────────────────────┘   │
 │                                                                     │

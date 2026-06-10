@@ -39,7 +39,6 @@ To fully switch the streaming path to erased pooling:
 |------|-------|---------|
 | `src/http_client/mod.rs` | 34-41 | Moka cache for HTTP clients |
 | `src/http_client/erased_pool.rs` | 245-283 | `checkout()` with error handling (NEW-63 added doc comments) |
-| `src/http_client/typed_pool.rs` | - | Typed connection pool |
 | `src/http/server.rs` | body-forwarding branch | Uses `StreamingHttpClient` for active streaming send path |
 | `src/http_client/erased_pool.rs` | - | Erased-body + pool primitives |
 

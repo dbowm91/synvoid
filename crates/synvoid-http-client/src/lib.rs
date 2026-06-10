@@ -24,13 +24,11 @@ use serde::{de::DeserializeOwned, Serialize};
 
 mod erased_pool;
 mod streaming_waf_body;
-mod typed_pool;
 
 pub use erased_pool::{
     ErasedBody, ErasedBodyImpl, ErasedConnectionPool, ErasedHttpClient, PoolKey,
 };
 pub use streaming_waf_body::{StreamingWafBody, StreamingWafDecision, StreamingWafScanner};
-pub use typed_pool::{TypedConnectionPool, TypedHttpClient, TypedPoolKey};
 
 pub type HttpClient = Client<HttpsConnector<HttpConnector>, Full<Bytes>>;
 pub type StreamingHttpClient = Client<HttpsConnector<HttpConnector>, BoxErasedBody>;

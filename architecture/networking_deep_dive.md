@@ -7,7 +7,7 @@ SynVoid's networking layer is built for extreme performance and flexibility, sup
 ### 1. HTTP/1.1 & HTTP/2
 SynVoid uses **Hyper** as its foundational HTTP library.
 - **HTTP/1.1:** Robust implementation with connection pooling and keep-alive support.
-- **HTTP/2:** Infrastructure exists (see `src/http_client/mod.rs:878` with `is_http2 = true`) but HTTP/2 pooled connections are not fully available in current implementation. **Milestone:** HTTP/2 upstream connection pooling is a planned enhancement. The infrastructure (Http2PooledConnection, typed pool branches) is in place but not wired for production use. This is a known limitation.
+- **HTTP/2:** Infrastructure exists (see `ErasedHttpClient::send_request(..., is_http2)`) but HTTP/2 pooled connections are not fully available in current implementation. **Milestone:** HTTP/2 upstream connection pooling is a planned enhancement. The `Http2PooledConnection` stub exists but is not wired for production use. This is a known limitation (HTTP2-POOL deferred item).
 - **Protocol Detection:** At TLS handshake, protocol negotiation occurs via ALPN (`tls/server.rs:410-411`). The server extracts the ALPN protocol and determines if the connection should use HTTP/2 (`h2`) or HTTP/1.1. This detection happens during the TLS handshake callback before request processing begins.
 
 ### 2. HTTP/3 (QUIC)

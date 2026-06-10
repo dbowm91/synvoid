@@ -8056,7 +8056,6 @@ dependencies = [
  "uuid",
  "walkdir",
  "wasmtime 42.0.2",
- "webpki-roots 0.26.11",
  "windows-sys 0.59.0",
  "x25519-dalek",
  "zeroize",
