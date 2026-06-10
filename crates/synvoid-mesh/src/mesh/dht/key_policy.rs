@@ -452,6 +452,53 @@ fn classify_threat_intel_authority(
     }
 }
 
+/// Error type for ingress policy decisions produced by the adapter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DhtIngressPolicyError {
+    /// Record rejected by canonical key-policy authority.
+    Rejected(DhtKeyAuthorityRejectReason),
+    /// Record deferred — canonical state unavailable or unknown.
+    Deferred(DhtKeyAuthorityDeferReason),
+}
+
+impl std::fmt::Display for DhtIngressPolicyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Rejected(r) => write!(f, "rejected: {:?}", r),
+            Self::Deferred(d) => write!(f, "deferred: {:?}", d),
+        }
+    }
+}
+
+impl std::error::Error for DhtIngressPolicyError {}
+
+/// Adapter mapping `classify_key_authority_with_canonical_reader` decisions
+/// to a simple accept/reject/defer result for ingress callers.
+///
+/// `Ok(())` means the record may proceed (advisory or canonical-accepted).
+/// `Err(Rejected)` means the record must be rejected.
+/// `Err(Deferred)` means the caller should apply fallback policy (typically
+/// treat as rejection) because canonical state is unavailable or unknown.
+pub fn validate_dht_key_authority_for_ingress(
+    reader: &dyn CanonicalTrustReader,
+    key: &DhtKey,
+    signer_node_id: Option<&str>,
+    authority_hint: Option<DhtRecordAuthorityClass>,
+) -> Result<(), DhtIngressPolicyError> {
+    match classify_key_authority_with_canonical_reader(
+        &DhtKeyPolicyTable,
+        reader,
+        key,
+        signer_node_id,
+        authority_hint,
+    ) {
+        DhtKeyAuthorityDecision::AcceptAdvisory => Ok(()),
+        DhtKeyAuthorityDecision::AcceptCanonical { .. } => Ok(()),
+        DhtKeyAuthorityDecision::Reject { reason } => Err(DhtIngressPolicyError::Rejected(reason)),
+        DhtKeyAuthorityDecision::Defer { reason } => Err(DhtIngressPolicyError::Deferred(reason)),
+    }
+}
+
 /// Extract a node ID from key variants that embed one, for canonical
 /// authorization checks when no explicit signer is available.
 fn extract_node_id_from_key(key: &DhtKey) -> Option<&str> {
@@ -950,38 +997,6 @@ mod tests {
     #[test]
     fn test_unknown_canonical_decision_not_treated_as_trusted() {
         // When canonical reader returns Unknown for revocation, defer.
-        // Use a custom reader that returns Unknown for revocation.
-        struct UnknownRevocationReader {
-            inner: StaticCanonicalTrustReader,
-        }
-        impl crate::mesh::canonical::CanonicalTrustReader for UnknownRevocationReader {
-            fn freshness(&self) -> CanonicalFreshness {
-                self.inner.freshness()
-            }
-            fn is_global_node_authorized(&self, node_id: &str) -> CanonicalTrustDecision {
-                self.inner.is_global_node_authorized(node_id)
-            }
-            fn is_org_key_trusted(
-                &self,
-                org_id: &str,
-                key_id_or_fingerprint: &str,
-            ) -> CanonicalTrustDecision {
-                self.inner.is_org_key_trusted(org_id, key_id_or_fingerprint)
-            }
-            fn is_node_revoked(&self, node_id: &str) -> CanonicalTrustDecision {
-                self.inner.is_node_revoked(node_id)
-            }
-            fn node_revocation_status(&self, _node_id: &str) -> CanonicalTrustDecision {
-                CanonicalTrustDecision::Unknown {
-                    freshness: CanonicalFreshness::Live,
-                    reason: CanonicalTrustReason::UnsupportedDecisionType,
-                }
-            }
-            fn is_threat_intel_canonical(&self, intel_id: &str) -> CanonicalTrustDecision {
-                self.inner.is_threat_intel_canonical(intel_id)
-            }
-        }
-
         let reader = UnknownRevocationReader {
             inner: make_reader(CanonicalFreshness::Live),
         };
@@ -1053,6 +1068,184 @@ mod tests {
         assert_eq!(d, DhtKeyAuthorityDecision::AcceptAdvisory);
     }
 
+    // --- CanonicalUnavailable defer branch tests (Iteration 12) ---
+
+    /// Custom mock reader that returns CanonicalUnavailable from node_revocation_status().
+    struct UnavailableRevocationReader {
+        inner: StaticCanonicalTrustReader,
+    }
+    impl crate::mesh::canonical::CanonicalTrustReader for UnavailableRevocationReader {
+        fn freshness(&self) -> CanonicalFreshness {
+            self.inner.freshness()
+        }
+        fn is_global_node_authorized(&self, node_id: &str) -> CanonicalTrustDecision {
+            self.inner.is_global_node_authorized(node_id)
+        }
+        fn is_org_key_trusted(
+            &self,
+            org_id: &str,
+            key_id_or_fingerprint: &str,
+        ) -> CanonicalTrustDecision {
+            self.inner.is_org_key_trusted(org_id, key_id_or_fingerprint)
+        }
+        fn is_node_revoked(&self, node_id: &str) -> CanonicalTrustDecision {
+            self.inner.is_node_revoked(node_id)
+        }
+        fn node_revocation_status(&self, _node_id: &str) -> CanonicalTrustDecision {
+            CanonicalTrustDecision::NotTrusted {
+                freshness: CanonicalFreshness::Unavailable,
+                reason: CanonicalTrustReason::CanonicalUnavailable,
+            }
+        }
+        fn is_threat_intel_canonical(&self, intel_id: &str) -> CanonicalTrustDecision {
+            self.inner.is_threat_intel_canonical(intel_id)
+        }
+    }
+
+    #[test]
+    fn test_canonical_unavailable_revocation_defers_global_key() {
+        // When node_revocation_status returns CanonicalUnavailable, the global
+        // required authority path must Defer (not silently accept or reject).
+        let reader = UnavailableRevocationReader {
+            inner: make_reader(CanonicalFreshness::Unavailable),
+        };
+        let d = classify_key_authority_with_canonical_reader(
+            &DhtKeyPolicyTable,
+            &reader,
+            &GlobalNodeProof {
+                node_id: "n1".into(),
+            },
+            Some("pk:global1"),
+            None,
+        );
+        assert_eq!(
+            d,
+            DhtKeyAuthorityDecision::Defer {
+                reason: DhtKeyAuthorityDeferReason::CanonicalUnavailable,
+            }
+        );
+    }
+
+    /// Custom mock reader that returns CanonicalUnavailable from is_global_node_authorized().
+    struct UnavailableGlobalAuthReader {
+        inner: StaticCanonicalTrustReader,
+    }
+    impl crate::mesh::canonical::CanonicalTrustReader for UnavailableGlobalAuthReader {
+        fn freshness(&self) -> CanonicalFreshness {
+            self.inner.freshness()
+        }
+        fn is_global_node_authorized(&self, _node_id: &str) -> CanonicalTrustDecision {
+            CanonicalTrustDecision::NotTrusted {
+                freshness: CanonicalFreshness::Unavailable,
+                reason: CanonicalTrustReason::CanonicalUnavailable,
+            }
+        }
+        fn is_org_key_trusted(
+            &self,
+            org_id: &str,
+            key_id_or_fingerprint: &str,
+        ) -> CanonicalTrustDecision {
+            self.inner.is_org_key_trusted(org_id, key_id_or_fingerprint)
+        }
+        fn is_node_revoked(&self, node_id: &str) -> CanonicalTrustDecision {
+            self.inner.is_node_revoked(node_id)
+        }
+        fn node_revocation_status(&self, node_id: &str) -> CanonicalTrustDecision {
+            self.inner.node_revocation_status(node_id)
+        }
+        fn is_threat_intel_canonical(&self, intel_id: &str) -> CanonicalTrustDecision {
+            self.inner.is_threat_intel_canonical(intel_id)
+        }
+    }
+
+    /// Custom mock reader that returns Unknown from node_revocation_status().
+    struct UnknownRevocationReader {
+        inner: StaticCanonicalTrustReader,
+    }
+    impl crate::mesh::canonical::CanonicalTrustReader for UnknownRevocationReader {
+        fn freshness(&self) -> CanonicalFreshness {
+            self.inner.freshness()
+        }
+        fn is_global_node_authorized(&self, node_id: &str) -> CanonicalTrustDecision {
+            self.inner.is_global_node_authorized(node_id)
+        }
+        fn is_org_key_trusted(
+            &self,
+            org_id: &str,
+            key_id_or_fingerprint: &str,
+        ) -> CanonicalTrustDecision {
+            self.inner.is_org_key_trusted(org_id, key_id_or_fingerprint)
+        }
+        fn is_node_revoked(&self, node_id: &str) -> CanonicalTrustDecision {
+            self.inner.is_node_revoked(node_id)
+        }
+        fn node_revocation_status(&self, _node_id: &str) -> CanonicalTrustDecision {
+            CanonicalTrustDecision::Unknown {
+                freshness: CanonicalFreshness::Live,
+                reason: CanonicalTrustReason::UnsupportedDecisionType,
+            }
+        }
+        fn is_threat_intel_canonical(&self, intel_id: &str) -> CanonicalTrustDecision {
+            self.inner.is_threat_intel_canonical(intel_id)
+        }
+    }
+
+    /// Custom mock reader that returns CanonicalUnavailable from is_threat_intel_canonical().
+    struct UnavailableThreatIntelReader {
+        inner: StaticCanonicalTrustReader,
+    }
+    impl crate::mesh::canonical::CanonicalTrustReader for UnavailableThreatIntelReader {
+        fn freshness(&self) -> CanonicalFreshness {
+            self.inner.freshness()
+        }
+        fn is_global_node_authorized(&self, node_id: &str) -> CanonicalTrustDecision {
+            self.inner.is_global_node_authorized(node_id)
+        }
+        fn is_org_key_trusted(
+            &self,
+            org_id: &str,
+            key_id_or_fingerprint: &str,
+        ) -> CanonicalTrustDecision {
+            self.inner.is_org_key_trusted(org_id, key_id_or_fingerprint)
+        }
+        fn is_node_revoked(&self, node_id: &str) -> CanonicalTrustDecision {
+            self.inner.is_node_revoked(node_id)
+        }
+        fn node_revocation_status(&self, node_id: &str) -> CanonicalTrustDecision {
+            self.inner.node_revocation_status(node_id)
+        }
+        fn is_threat_intel_canonical(&self, _intel_id: &str) -> CanonicalTrustDecision {
+            CanonicalTrustDecision::NotTrusted {
+                freshness: CanonicalFreshness::Unavailable,
+                reason: CanonicalTrustReason::CanonicalUnavailable,
+            }
+        }
+    }
+
+    #[test]
+    fn test_canonical_unavailable_global_auth_defers_global_key() {
+        // When is_global_node_authorized returns CanonicalUnavailable, the global
+        // required authority path must Defer (not silently accept or reject).
+        let reader = UnavailableGlobalAuthReader {
+            inner: make_reader(CanonicalFreshness::Unavailable),
+        };
+        let d = classify_key_authority_with_canonical_reader(
+            &DhtKeyPolicyTable,
+            &reader,
+            &GlobalNodeProof {
+                node_id: "n1".into(),
+            },
+            Some("pk:global1"),
+            None,
+        );
+        assert_eq!(
+            d,
+            DhtKeyAuthorityDecision::Defer {
+                reason: DhtKeyAuthorityDeferReason::CanonicalUnavailable,
+            }
+        );
+    }
+
     #[test]
     fn test_extract_node_id_from_key() {
         assert!(extract_node_id_from_key(&GlobalNodeProof {
@@ -1070,5 +1263,161 @@ mod tests {
         })
         .is_some());
         assert!(extract_node_id_from_key(&Upstream("u1".into())).is_none());
+    }
+
+    // --- validate_dht_key_authority_for_ingress adapter tests (Iteration 12) ---
+
+    #[test]
+    fn test_adapter_advisory_key_accepted() {
+        let reader = make_reader(CanonicalFreshness::Live);
+        assert_eq!(
+            validate_dht_key_authority_for_ingress(&reader, &Upstream("u1".into()), None, None,),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn test_adapter_canonical_required_accepted_with_authorized_signer() {
+        let mut reader = make_reader(CanonicalFreshness::Live);
+        reader.authorized_global_nodes.insert("pk:global1".into());
+        assert_eq!(
+            validate_dht_key_authority_for_ingress(
+                &reader,
+                &GlobalNodeProof {
+                    node_id: "n1".into()
+                },
+                Some("pk:global1"),
+                None,
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn test_adapter_canonical_required_rejected_with_unauthorized_signer() {
+        let reader = make_reader(CanonicalFreshness::Live);
+        let err = validate_dht_key_authority_for_ingress(
+            &reader,
+            &GlobalNodeProof {
+                node_id: "n1".into(),
+            },
+            Some("pk:unknown"),
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            DhtIngressPolicyError::Rejected(
+                DhtKeyAuthorityRejectReason::SignerNotGloballyAuthorized
+            )
+        ));
+    }
+
+    #[test]
+    fn test_adapter_canonical_required_rejected_with_revoked_signer() {
+        let mut reader = make_reader(CanonicalFreshness::Live);
+        reader.authorized_global_nodes.insert("pk:bad".into());
+        reader.revoked_nodes.insert("pk:bad".into());
+        let err = validate_dht_key_authority_for_ingress(
+            &reader,
+            &GlobalNodeProof {
+                node_id: "n1".into(),
+            },
+            Some("pk:bad"),
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            DhtIngressPolicyError::Rejected(DhtKeyAuthorityRejectReason::SignerRevoked)
+        ));
+    }
+
+    #[test]
+    fn test_adapter_canonical_required_deferred_on_canonical_unavailable() {
+        let reader = UnavailableRevocationReader {
+            inner: make_reader(CanonicalFreshness::Unavailable),
+        };
+        let err = validate_dht_key_authority_for_ingress(
+            &reader,
+            &GlobalNodeProof {
+                node_id: "n1".into(),
+            },
+            Some("pk:global1"),
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            DhtIngressPolicyError::Deferred(DhtKeyAuthorityDeferReason::CanonicalUnavailable)
+        ));
+    }
+
+    #[test]
+    fn test_adapter_canonical_required_deferred_on_canonical_unknown() {
+        let reader = UnknownRevocationReader {
+            inner: make_reader(CanonicalFreshness::Live),
+        };
+        let err = validate_dht_key_authority_for_ingress(
+            &reader,
+            &GlobalNodeProof {
+                node_id: "n1".into(),
+            },
+            Some("pk:global1"),
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            DhtIngressPolicyError::Deferred(DhtKeyAuthorityDeferReason::CanonicalUnknown)
+        ));
+    }
+
+    #[test]
+    fn test_adapter_threat_intel_canonical_accepted() {
+        let mut reader = make_reader(CanonicalFreshness::Live);
+        reader.threat_intel_ids.insert("intel-1".into());
+        assert_eq!(
+            validate_dht_key_authority_for_ingress(
+                &reader,
+                &ThreatIndicator("intel-1".into(), "ip".into()),
+                Some("signer1"),
+                None,
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn test_adapter_threat_intel_not_canonical_deferred_or_rejected() {
+        // Not present in canonical → Reject (ThreatIntelNotCanonical).
+        let reader = make_reader(CanonicalFreshness::Live);
+        let err = validate_dht_key_authority_for_ingress(
+            &reader,
+            &ThreatIndicator("unknown-intel".into(), "ip".into()),
+            Some("signer1"),
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            DhtIngressPolicyError::Rejected(DhtKeyAuthorityRejectReason::ThreatIntelNotCanonical)
+        ));
+
+        // Unavailable canonical → Deferred.
+        let unavail_reader = UnavailableThreatIntelReader {
+            inner: make_reader(CanonicalFreshness::Unavailable),
+        };
+        let err = validate_dht_key_authority_for_ingress(
+            &unavail_reader,
+            &ThreatIndicator("intel-1".into(), "ip".into()),
+            Some("signer1"),
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            DhtIngressPolicyError::Deferred(DhtKeyAuthorityDeferReason::CanonicalUnavailable)
+        ));
     }
 }

@@ -383,6 +383,10 @@ No production call sites were rewired; no module reorganization; no legacy `vali
 
 `dht/key_policy.rs` now has a reader-backed policy helper (`classify_key_authority_with_canonical_reader`) that uses `CanonicalTrustReader` for canonical authority questions while preserving advisory DHT mechanics. Advisory records remain advisory; signed records are not automatically authorized; unknown/unavailable canonical answers are explicit and are not silently treated as trust. Revocation is checked before global authorization (revoked wins). Threat-intel keys use `is_threat_intel_canonical()` for canonical trust; all other `CapabilityAttested` keys remain advisory. This pass added helper-level tests (advisory-only, global-authorized, unauthorized, revoked, unavailable, stale, unknown canonical) and did not broadly rewire record propagation/storage paths.
 
+### Iteration 12 Key Policy Ingress Preparation
+
+The key-policy canonical helper now explicitly tests `CanonicalUnavailable` defer branches and has an ingress adapter preserving accept/reject/defer distinctions. Production record ingress wiring remains deferred until a clean `CanonicalTrustReader` injection point exists; no DHT propagation/storage behavior changed.
+
 ## Follow-Up Recommendation
 
 After the Iteration 11 key-policy helper, the next steps are:

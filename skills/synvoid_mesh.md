@@ -998,6 +998,8 @@ pub struct KeyFamilyPolicy {
 
 **Iteration 11 — Canonical Reader Migration**: The `classify_key_authority_with_canonical_reader` helper uses `CanonicalTrustReader` for canonical authority questions while preserving advisory DHT mechanics. Advisory records remain advisory; signed records are not automatically authorized; unknown/unavailable canonical answers are explicit and are not silently treated as trust. Tests cover advisory-only, global-authorized, unauthorized, revoked, unavailable, stale, and unknown canonical cases.
 
+**Iteration 12 — Ingress Preparation**: The key-policy canonical helper now explicitly tests `CanonicalUnavailable` defer branches. An ingress adapter (`validate_dht_key_authority_for_ingress`) maps canonical helper decisions to `Result<(), DhtIngressPolicyError>` while preserving accept/reject/defer distinctions. Production record ingress wiring remains deferred until a clean `CanonicalTrustReader` injection point exists in `RecordStoreManager`.
+
 ### SignedRaftAttestation
 
 **Location**: `crates/synvoid-mesh/src/mesh/peer_auth.rs`
