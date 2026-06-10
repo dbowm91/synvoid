@@ -379,9 +379,16 @@ The current guard and `GLOBAL_ORIGIN` exemption behavior is intentional and matc
 
 No production call sites were rewired; no module reorganization; no legacy `validate_peer_role` behavior removed.
 
+### Iteration 11 DHT Key Policy Canonical Reader
+
+`dht/key_policy.rs` now has a reader-backed policy helper (`classify_key_authority_with_canonical_reader`) that uses `CanonicalTrustReader` for canonical authority questions while preserving advisory DHT mechanics. Advisory records remain advisory; signed records are not automatically authorized; unknown/unavailable canonical answers are explicit and are not silently treated as trust. Revocation is checked before global authorization (revoked wins). Threat-intel keys use `is_threat_intel_canonical()` for canonical trust; all other `CapabilityAttested` keys remain advisory. This pass added helper-level tests (advisory-only, global-authorized, unauthorized, revoked, unavailable, stale, unknown canonical) and did not broadly rewire record propagation/storage paths.
+
 ## Follow-Up Recommendation
 
-The next pass should implement the chosen first seam only (`CanonicalTrustReader` + explicit advisory record types + snapshot freshness). Defer any module reorganization or broader movement. After the Iteration 10 test hardening, the next real consumer migration can target `dht/key_policy.rs`. That pass should use `CanonicalTrustReader` to separate DHT key authority classification from advisory DHT/quorum mechanics without changing record propagation behavior.
+After the Iteration 11 key-policy helper, the next steps are:
+1. Optional production wiring of the key-policy helper into DHT record ingress (`record_store_message.rs` / signed-record handling);
+2. An advisory-source seam (`AdvisoryRecordSource`) to separate advisory DHT mechanics from trust decisions;
+3. Service consumers (`threat_intel.rs`, `proxy.rs`, YARA/WASM) only after policy and advisory-source boundaries are stable.
 
 ---
 

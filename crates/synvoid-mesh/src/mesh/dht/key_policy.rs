@@ -1,4 +1,59 @@
+//! DHT key authority policy — the boundary between advisory DHT records and
+//! canonical trust decisions.
+//!
+//! **This module is a policy boundary, not canonical storage.** Advisory DHT
+//! records do not become trusted because they are signed. `CanonicalTrustReader`
+//! is used only for canonical trust answers (what Raft/consensus says is
+//! trusted), not for advisory mechanics (what has been advertised).
+//!
+//! The `classify_key_authority_with_canonical_reader` function is the
+//! reader-backed entry point. It preserves existing advisory classification
+//! while making canonical trust questions explicit. `Unknown` canonical
+//! answers are never silently treated as trust.
+
 use super::keys::{DhtKey, DhtKey::*};
+use crate::mesh::canonical::{
+    CanonicalFreshness, CanonicalTrustDecision, CanonicalTrustReader, CanonicalTrustReason,
+};
+
+/// Decision produced by `classify_key_authority_with_canonical_reader`.
+///
+/// DHT key policy is a **policy boundary**, not canonical storage. Advisory
+/// DHT records do not become trusted because they are signed.
+/// `CanonicalTrustReader` is used only for canonical trust answers.
+/// `Unknown` canonical answers must not be silently treated as canonical trust.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DhtKeyAuthorityDecision {
+    /// Pure advisory key — no canonical trust question needed.
+    AcceptAdvisory,
+    /// Canonical trust verified via `CanonicalTrustReader`.
+    AcceptCanonical { freshness: CanonicalFreshness },
+    /// Explicitly rejected (e.g. revoked signer, unauthorized global node).
+    Reject { reason: DhtKeyAuthorityRejectReason },
+    /// Canonical state unavailable or ambiguous — caller should defer or
+    /// apply fallback policy. Never treat as trust.
+    Defer { reason: DhtKeyAuthorityDeferReason },
+}
+
+/// Why a key authority decision rejected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DhtKeyAuthorityRejectReason {
+    /// Signer node is revoked in canonical state.
+    SignerRevoked,
+    /// Signer node is not authorized as a global node in canonical state.
+    SignerNotGloballyAuthorized,
+    /// Threat indicator not present in canonical threat-intel state.
+    ThreatIntelNotCanonical,
+}
+
+/// Why a key authority decision deferred.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DhtKeyAuthorityDeferReason {
+    /// Canonical trust reader state is unavailable.
+    CanonicalUnavailable,
+    /// Canonical trust decision was `Unknown` (unsupported or ambiguous).
+    CanonicalUnknown,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DhtRecordAuthorityClass {
@@ -232,6 +287,181 @@ fn is_known_key_prefix(key_str: &str) -> bool {
 
 pub fn is_remote_write_denied(key: &DhtKey) -> bool {
     !DhtKeyPolicyTable::policy_for_key(key).remote_writes_allowed
+}
+
+/// Classify the authority requirement for a DHT key using a canonical trust
+/// reader for trust questions.
+///
+/// This is the **reader-backed policy entry point**. It preserves the existing
+/// advisory classification from `DhtKeyPolicyTable` while making canonical
+/// trust questions explicit and testable.
+///
+/// # Domain Distinction
+///
+/// - **DHT key policy** answers "what authority class does this key belong to?"
+///   (advisory mechanics: TTL, namespace, local write policy, routing hints).
+/// - **`CanonicalTrustReader`** answers "what does Raft/consensus say is trusted?"
+///   (canonical authority: global node authorization, revocation, org key trust,
+///   threat intel).
+/// - **This function** composes both into an actionable decision.
+///
+/// # Invariants
+///
+/// - Advisory DHT records do not become trusted because they are signed.
+/// - `Unknown` canonical answers are never silently treated as trust.
+/// - Revocation is checked before global authorization (revoked wins).
+/// - Pure advisory keys never touch the canonical reader.
+///
+/// # Arguments
+///
+/// * `policy` - Static key policy table (advisory mechanics).
+/// * `reader` - Canonical trust reader for Raft/consensus trust answers.
+/// * `key` - The DHT key being classified.
+/// * `signer_node_id` - The node that signed the record (if available).
+/// * `authority_hint` - Optional pre-resolved authority class override.
+pub fn classify_key_authority_with_canonical_reader(
+    _policy: &DhtKeyPolicyTable,
+    reader: &dyn CanonicalTrustReader,
+    key: &DhtKey,
+    signer_node_id: Option<&str>,
+    authority_hint: Option<DhtRecordAuthorityClass>,
+) -> DhtKeyAuthorityDecision {
+    let key_policy = DhtKeyPolicyTable::policy_for_key(key);
+    let authority_class = authority_hint.unwrap_or(key_policy.authority_class);
+
+    match authority_class {
+        // Pure advisory — no canonical trust question needed.
+        DhtRecordAuthorityClass::SoftLocal | DhtRecordAuthorityClass::SignedByRecordOwner => {
+            DhtKeyAuthorityDecision::AcceptAdvisory
+        }
+
+        // Capability-attested keys: only ThreatIndicator has a canonical trust
+        // dimension. DNS/WAF capability attestation remains advisory.
+        DhtRecordAuthorityClass::CapabilityAttested => match key {
+            ThreatIndicator(intel_id, _) => classify_threat_intel_authority(reader, intel_id),
+            _ => DhtKeyAuthorityDecision::AcceptAdvisory,
+        },
+
+        // Raft-attested global keys: canonical trust required.
+        DhtRecordAuthorityClass::RaftAttestedGlobal => {
+            classify_global_required_authority(reader, signer_node_id, key)
+        }
+
+        // Raft-or-quorum global keys: canonical trust required.
+        DhtRecordAuthorityClass::RaftOrQuorumGlobal => {
+            classify_global_required_authority(reader, signer_node_id, key)
+        }
+
+        // Unused authority classes — fall through as advisory.
+        DhtRecordAuthorityClass::QuorumSignedGlobal | DhtRecordAuthorityClass::LocalOnly => {
+            DhtKeyAuthorityDecision::AcceptAdvisory
+        }
+    }
+}
+
+/// Authority check for keys requiring global canonical trust.
+///
+/// Revocation is checked **before** global authorization: a revoked signer
+/// is rejected regardless of global-node status. Unavailable/unknown
+/// canonical state produces `Defer`, never silent accept.
+fn classify_global_required_authority(
+    reader: &dyn CanonicalTrustReader,
+    signer_node_id: Option<&str>,
+    key: &DhtKey,
+) -> DhtKeyAuthorityDecision {
+    // Check revocation first — revoked wins over authorization.
+    if let Some(node_id) = signer_node_id {
+        match reader.node_revocation_status(node_id) {
+            CanonicalTrustDecision::NotTrusted {
+                reason: CanonicalTrustReason::Revoked,
+                ..
+            } => {
+                return DhtKeyAuthorityDecision::Reject {
+                    reason: DhtKeyAuthorityRejectReason::SignerRevoked,
+                };
+            }
+            CanonicalTrustDecision::NotTrusted {
+                reason: CanonicalTrustReason::CanonicalUnavailable,
+                ..
+            } => {
+                return DhtKeyAuthorityDecision::Defer {
+                    reason: DhtKeyAuthorityDeferReason::CanonicalUnavailable,
+                };
+            }
+            CanonicalTrustDecision::Unknown { .. } => {
+                return DhtKeyAuthorityDecision::Defer {
+                    reason: DhtKeyAuthorityDeferReason::CanonicalUnknown,
+                };
+            }
+            // Trusted (not revoked) or NotTrusted with other reasons —
+            // continue to global authorization check.
+            _ => {}
+        }
+    }
+
+    // Determine the node to check for global authorization.
+    let check_node = signer_node_id.or_else(|| extract_node_id_from_key(key));
+
+    if let Some(node_id) = check_node {
+        match reader.is_global_node_authorized(node_id) {
+            CanonicalTrustDecision::Trusted { freshness } => {
+                DhtKeyAuthorityDecision::AcceptCanonical { freshness }
+            }
+            CanonicalTrustDecision::NotTrusted {
+                reason: CanonicalTrustReason::CanonicalUnavailable,
+                ..
+            } => DhtKeyAuthorityDecision::Defer {
+                reason: DhtKeyAuthorityDeferReason::CanonicalUnavailable,
+            },
+            CanonicalTrustDecision::Unknown { .. } => DhtKeyAuthorityDecision::Defer {
+                reason: DhtKeyAuthorityDeferReason::CanonicalUnknown,
+            },
+            CanonicalTrustDecision::NotTrusted { .. } => DhtKeyAuthorityDecision::Reject {
+                reason: DhtKeyAuthorityRejectReason::SignerNotGloballyAuthorized,
+            },
+        }
+    } else {
+        // No signer or extractable node id — defer, do not silently accept.
+        DhtKeyAuthorityDecision::Defer {
+            reason: DhtKeyAuthorityDeferReason::CanonicalUnknown,
+        }
+    }
+}
+
+/// Authority check for threat-intel keys with canonical trust dimension.
+fn classify_threat_intel_authority(
+    reader: &dyn CanonicalTrustReader,
+    intel_id: &str,
+) -> DhtKeyAuthorityDecision {
+    match reader.is_threat_intel_canonical(intel_id) {
+        CanonicalTrustDecision::Trusted { freshness } => {
+            DhtKeyAuthorityDecision::AcceptCanonical { freshness }
+        }
+        CanonicalTrustDecision::NotTrusted {
+            reason: CanonicalTrustReason::CanonicalUnavailable,
+            ..
+        } => DhtKeyAuthorityDecision::Defer {
+            reason: DhtKeyAuthorityDeferReason::CanonicalUnavailable,
+        },
+        CanonicalTrustDecision::Unknown { .. } => DhtKeyAuthorityDecision::Defer {
+            reason: DhtKeyAuthorityDeferReason::CanonicalUnknown,
+        },
+        CanonicalTrustDecision::NotTrusted { .. } => DhtKeyAuthorityDecision::Reject {
+            reason: DhtKeyAuthorityRejectReason::ThreatIntelNotCanonical,
+        },
+    }
+}
+
+/// Extract a node ID from key variants that embed one, for canonical
+/// authorization checks when no explicit signer is available.
+fn extract_node_id_from_key(key: &DhtKey) -> Option<&str> {
+    match key {
+        GlobalNodeProof { node_id }
+        | NodeCertBinding { node_id }
+        | RevokedGlobalNode { node_id, .. } => Some(node_id),
+        GenesisKeyTransition { announced_by, .. } => Some(announced_by),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -552,5 +782,293 @@ mod tests {
         );
         assert!(policy.ttl_required);
         assert!(policy.remote_writes_allowed);
+    }
+
+    // --- classify_key_authority_with_canonical_reader tests (Iteration 11) ---
+
+    use crate::mesh::canonical::{CanonicalFreshness, StaticCanonicalTrustReader};
+
+    fn make_reader(freshness: CanonicalFreshness) -> StaticCanonicalTrustReader {
+        StaticCanonicalTrustReader::new(freshness)
+    }
+
+    #[test]
+    fn test_advisory_key_does_not_require_canonical_reader() {
+        // SoftLocal and SignedByRecordOwner keys return AcceptAdvisory
+        // regardless of canonical reader state.
+        let reader = make_reader(CanonicalFreshness::Unavailable);
+        let d = classify_key_authority_with_canonical_reader(
+            &DhtKeyPolicyTable,
+            &reader,
+            &Upstream("u1".into()),
+            None,
+            None,
+        );
+        assert_eq!(d, DhtKeyAuthorityDecision::AcceptAdvisory);
+
+        let d = classify_key_authority_with_canonical_reader(
+            &DhtKeyPolicyTable,
+            &reader,
+            &NodeInfo("n1".into()),
+            Some("signer1"),
+            None,
+        );
+        assert_eq!(d, DhtKeyAuthorityDecision::AcceptAdvisory);
+    }
+
+    #[test]
+    fn test_global_authorized_signer_accepted() {
+        // GlobalNodeProof with authorized signer returns AcceptCanonical.
+        let mut reader = make_reader(CanonicalFreshness::Live);
+        reader.authorized_global_nodes.insert("pk:global1".into());
+        let d = classify_key_authority_with_canonical_reader(
+            &DhtKeyPolicyTable,
+            &reader,
+            &GlobalNodeProof {
+                node_id: "n1".into(),
+            },
+            Some("pk:global1"),
+            None,
+        );
+        assert!(matches!(
+            d,
+            DhtKeyAuthorityDecision::AcceptCanonical {
+                freshness: CanonicalFreshness::Live
+            }
+        ));
+    }
+
+    #[test]
+    fn test_unauthorized_signer_rejected_for_global_key() {
+        // GlobalNodeProof with unauthorized signer returns Reject.
+        let reader = make_reader(CanonicalFreshness::Live);
+        let d = classify_key_authority_with_canonical_reader(
+            &DhtKeyPolicyTable,
+            &reader,
+            &GlobalNodeProof {
+                node_id: "n1".into(),
+            },
+            Some("pk:unknown"),
+            None,
+        );
+        assert_eq!(
+            d,
+            DhtKeyAuthorityDecision::Reject {
+                reason: DhtKeyAuthorityRejectReason::SignerNotGloballyAuthorized
+            }
+        );
+    }
+
+    #[test]
+    fn test_revoked_signer_rejected_before_authorization() {
+        // Revoked signer is rejected even if also in authorized_global_nodes.
+        let mut reader = make_reader(CanonicalFreshness::Live);
+        reader.authorized_global_nodes.insert("pk:bad".into());
+        reader.revoked_nodes.insert("pk:bad".into());
+        let d = classify_key_authority_with_canonical_reader(
+            &DhtKeyPolicyTable,
+            &reader,
+            &GlobalNodeProof {
+                node_id: "n1".into(),
+            },
+            Some("pk:bad"),
+            None,
+        );
+        assert_eq!(
+            d,
+            DhtKeyAuthorityDecision::Reject {
+                reason: DhtKeyAuthorityRejectReason::SignerRevoked
+            }
+        );
+    }
+
+    #[test]
+    fn test_unavailable_canonical_state_rejects_global_key() {
+        // Unavailable canonical state must NOT silently accept.
+        // StaticCanonicalTrustReader returns NotPresentInCanonicalState for
+        // missing nodes, which correctly maps to Reject (not AcceptAdvisory).
+        // The Defer path for CanonicalUnavailable is exercised by real
+        // SnapshotCanonicalTrustReader implementations, not the static test helper.
+        let reader = make_reader(CanonicalFreshness::Unavailable);
+        let d = classify_key_authority_with_canonical_reader(
+            &DhtKeyPolicyTable,
+            &reader,
+            &GlobalNodeProof {
+                node_id: "n1".into(),
+            },
+            Some("pk:global1"),
+            None,
+        );
+        // Not authorized => Reject (fail-closed), never AcceptAdvisory.
+        assert!(matches!(
+            d,
+            DhtKeyAuthorityDecision::Reject {
+                reason: DhtKeyAuthorityRejectReason::SignerNotGloballyAuthorized
+            }
+        ));
+        // Explicitly verify it is NOT an accept.
+        assert_ne!(d, DhtKeyAuthorityDecision::AcceptAdvisory);
+    }
+
+    #[test]
+    fn test_unavailable_canonical_state_still_advisory_for_non_global() {
+        // Unavailable canonical state does not affect advisory keys.
+        let reader = make_reader(CanonicalFreshness::Unavailable);
+        let d = classify_key_authority_with_canonical_reader(
+            &DhtKeyPolicyTable,
+            &reader,
+            &DnsRecord("example.com".into(), "www".into()),
+            Some("signer1"),
+            None,
+        );
+        assert_eq!(d, DhtKeyAuthorityDecision::AcceptAdvisory);
+    }
+
+    #[test]
+    fn test_stale_canonical_state_accepted_if_present() {
+        // Stale canonical state with authorized node returns AcceptCanonical.
+        // Future policy may tighten this to Defer/Reject.
+        let mut reader = make_reader(CanonicalFreshness::Stale { age_ms: 99999 });
+        reader.authorized_global_nodes.insert("pk:global1".into());
+        let d = classify_key_authority_with_canonical_reader(
+            &DhtKeyPolicyTable,
+            &reader,
+            &GlobalNodeProof {
+                node_id: "n1".into(),
+            },
+            Some("pk:global1"),
+            None,
+        );
+        assert!(matches!(
+            d,
+            DhtKeyAuthorityDecision::AcceptCanonical {
+                freshness: CanonicalFreshness::Stale { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn test_unknown_canonical_decision_not_treated_as_trusted() {
+        // When canonical reader returns Unknown for revocation, defer.
+        // Use a custom reader that returns Unknown for revocation.
+        struct UnknownRevocationReader {
+            inner: StaticCanonicalTrustReader,
+        }
+        impl crate::mesh::canonical::CanonicalTrustReader for UnknownRevocationReader {
+            fn freshness(&self) -> CanonicalFreshness {
+                self.inner.freshness()
+            }
+            fn is_global_node_authorized(&self, node_id: &str) -> CanonicalTrustDecision {
+                self.inner.is_global_node_authorized(node_id)
+            }
+            fn is_org_key_trusted(
+                &self,
+                org_id: &str,
+                key_id_or_fingerprint: &str,
+            ) -> CanonicalTrustDecision {
+                self.inner.is_org_key_trusted(org_id, key_id_or_fingerprint)
+            }
+            fn is_node_revoked(&self, node_id: &str) -> CanonicalTrustDecision {
+                self.inner.is_node_revoked(node_id)
+            }
+            fn node_revocation_status(&self, _node_id: &str) -> CanonicalTrustDecision {
+                CanonicalTrustDecision::Unknown {
+                    freshness: CanonicalFreshness::Live,
+                    reason: CanonicalTrustReason::UnsupportedDecisionType,
+                }
+            }
+            fn is_threat_intel_canonical(&self, intel_id: &str) -> CanonicalTrustDecision {
+                self.inner.is_threat_intel_canonical(intel_id)
+            }
+        }
+
+        let reader = UnknownRevocationReader {
+            inner: make_reader(CanonicalFreshness::Live),
+        };
+        let d = classify_key_authority_with_canonical_reader(
+            &DhtKeyPolicyTable,
+            &reader,
+            &GlobalNodeProof {
+                node_id: "n1".into(),
+            },
+            Some("pk:global1"),
+            None,
+        );
+        assert_eq!(
+            d,
+            DhtKeyAuthorityDecision::Defer {
+                reason: DhtKeyAuthorityDeferReason::CanonicalUnknown
+            }
+        );
+    }
+
+    #[test]
+    fn test_threat_intel_canonical_trusted() {
+        let mut reader = make_reader(CanonicalFreshness::Live);
+        reader.threat_intel_ids.insert("intel-1".into());
+        let d = classify_key_authority_with_canonical_reader(
+            &DhtKeyPolicyTable,
+            &reader,
+            &ThreatIndicator("intel-1".into(), "ip".into()),
+            Some("signer1"),
+            None,
+        );
+        assert!(matches!(
+            d,
+            DhtKeyAuthorityDecision::AcceptCanonical {
+                freshness: CanonicalFreshness::Live
+            }
+        ));
+    }
+
+    #[test]
+    fn test_threat_intel_not_canonical_rejected() {
+        let reader = make_reader(CanonicalFreshness::Live);
+        let d = classify_key_authority_with_canonical_reader(
+            &DhtKeyPolicyTable,
+            &reader,
+            &ThreatIndicator("unknown-intel".into(), "ip".into()),
+            Some("signer1"),
+            None,
+        );
+        assert_eq!(
+            d,
+            DhtKeyAuthorityDecision::Reject {
+                reason: DhtKeyAuthorityRejectReason::ThreatIntelNotCanonical
+            }
+        );
+    }
+
+    #[test]
+    fn test_dns_capability_remains_advisory() {
+        // CapabilityAttested keys that are not ThreatIndicator remain advisory.
+        let reader = make_reader(CanonicalFreshness::Unavailable);
+        let d = classify_key_authority_with_canonical_reader(
+            &DhtKeyPolicyTable,
+            &reader,
+            &DnsRecord("example.com".into(), "www".into()),
+            Some("signer1"),
+            None,
+        );
+        assert_eq!(d, DhtKeyAuthorityDecision::AcceptAdvisory);
+    }
+
+    #[test]
+    fn test_extract_node_id_from_key() {
+        assert!(extract_node_id_from_key(&GlobalNodeProof {
+            node_id: "n1".into()
+        })
+        .is_some());
+        assert!(extract_node_id_from_key(&NodeCertBinding {
+            node_id: "n1".into()
+        })
+        .is_some());
+        assert!(extract_node_id_from_key(&GenesisKeyTransition {
+            sequence: 1,
+            new_key_fingerprint: "fp".into(),
+            announced_by: "n1".into(),
+        })
+        .is_some());
+        assert!(extract_node_id_from_key(&Upstream("u1".into())).is_none());
     }
 }
