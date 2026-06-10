@@ -24,6 +24,8 @@ pub struct MainSecurityConfig {
     pub ipc_session_key_env: Option<String>,
     #[serde(default)]
     pub allow_insecure_ipc_key: bool,
+    #[serde(default)]
+    pub strict_tls_passthrough_policy: bool,
 }
 
 fn default_sanitize_forwarded() -> bool {

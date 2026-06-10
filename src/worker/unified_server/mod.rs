@@ -70,7 +70,9 @@ pub async fn run_unified_server_worker(
     state::validate_ports_or_skip_for_shared_port(&args, &shared_config).await?;
 
     // ---- Phase 3: TLS passthrough validation ----
-    passthrough_validation::validate_tls_passthrough_waf_policy(&shared_config).await;
+    passthrough_validation::validate_tls_passthrough_waf_policy(&shared_config)
+        .await
+        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })?;
 
     // ---- Phase 4: bandwidth config ----
     let (

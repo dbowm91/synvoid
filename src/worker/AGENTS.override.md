@@ -67,9 +67,14 @@ UnifiedServer worker (`run_unified_server_worker`).
 - `passthrough_validation.rs` - TLS passthrough classification and validation:
                        `classify_passthrough_sites()` is a pure function (no I/O,
                        no side effects) that classifies sites into passthrough,
-                       passthrough-with-WAF, bypass, and rate-limited-bypass
-                       categories. `validate_tls_passthrough_waf_policy()` logs
-                       warnings/errors and emits metrics for misconfigured sites.
+                       passthrough-with-WAF, bypass, and bypass-without-rate-limit
+                       categories. `site_has_rate_limit()` is a pure helper that
+                       checks whether a site has rate limit configuration.
+                       `evaluate_passthrough_policy()` is a pure function returning
+                       `PassthroughPolicyEvaluation` with per-site `PassthroughPolicyViolation`
+                       enum variants. `validate_tls_passthrough_waf_policy()` returns
+                       `Result<(), String>`, logs warnings/errors and emits metrics for
+                       misconfigured sites. Gated by `security.strict_tls_passthrough_policy`.
 - `init_mesh.rs`   - Mesh + Threat Intel + YARA rules initialization
 - `lifecycle.rs`   - heartbeat task, bandwidth-persist task, IPC message
                       handling loop, server run task, initial blocklist request
@@ -127,10 +132,16 @@ let serverless_manager = init_apps::init_serverless_manager(&shared_config)
 
 - `classify_passthrough_sites(sites)` — pure function, no I/O, no side effects.
   Classifies sites into: `passthrough_sites`, `passthrough_with_waf`,
-  `bypass_sites`, `rate_limited_bypass_sites`.
-- `validate_tls_passthrough_waf_policy(config)` — reads config, calls
-  `classify_passthrough_sites`, emits `tracing::error!` for bypass sites
-  and missing rate limits.
+  `bypass_sites`, `bypass_sites_without_rate_limit`.
+- `site_has_rate_limit(site)` — pure helper that checks whether a site has
+  rate limit configuration.
+- `evaluate_passthrough_policy(config)` — pure function returning
+  `PassthroughPolicyEvaluation` with per-site `PassthroughPolicyViolation`
+  enum variants (no I/O).
+- `validate_tls_passthrough_waf_policy(config)` — returns `Result<(), String>`;
+  reads config, calls `classify_passthrough_sites` and `evaluate_passthrough_policy`,
+  emits `tracing::error!` for bypass sites and missing rate limits. Returns `Err`
+  when `security.strict_tls_passthrough_policy` is enabled and violations are found.
 
 ### `RECORD_STORE_GLOBAL` is legacy/fallback only
 

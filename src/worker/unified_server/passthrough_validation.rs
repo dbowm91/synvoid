@@ -11,7 +11,64 @@ pub struct PassthroughClassification {
     pub passthrough_sites: Vec<String>,
     pub passthrough_with_waf: Vec<String>,
     pub bypass_sites: Vec<String>,
-    pub rate_limited_bypass_sites: Vec<String>,
+    pub bypass_sites_without_rate_limit: Vec<String>,
+}
+
+/// Structured policy violations from TLS passthrough evaluation.
+#[derive(Debug, PartialEq, Eq)]
+pub enum PassthroughPolicyViolation {
+    WafBypassed { site_id: String },
+    BypassWithoutRateLimit { site_id: String },
+}
+
+/// Structured policy evaluation combining classification with violation detection.
+#[derive(Debug)]
+pub struct PassthroughPolicyEvaluation {
+    pub classification: PassthroughClassification,
+    pub violations: Vec<PassthroughPolicyViolation>,
+}
+
+/// Determine whether a site has meaningful rate limiting configured.
+///
+/// A site is considered rate-limited when:
+/// - `mode` is set to a recognized value, **or**
+/// - `ip` overrides are present with at least one non-zero limit, **or**
+/// - `global` overrides are present with at least one non-zero limit, **or**
+/// - `endpoints` has at least one entry with a configured limit.
+pub fn site_has_rate_limit(site: &SiteConfig) -> bool {
+    let rl = &site.ratelimit;
+
+    if rl.mode.is_some() {
+        return true;
+    }
+
+    if let Some(ref ip) = rl.ip {
+        if ip.per_second.is_some()
+            || ip.per_minute.is_some()
+            || ip.per_5min.is_some()
+            || ip.per_hour.is_some()
+            || ip.per_day.is_some()
+            || ip.burst.is_some()
+        {
+            return true;
+        }
+    }
+
+    if let Some(ref global) = rl.global {
+        if global.per_second.is_some()
+            || global.per_minute.is_some()
+            || global.per_5min.is_some()
+            || global.max_connections.is_some()
+        {
+            return true;
+        }
+    }
+
+    if !rl.endpoints.is_empty() {
+        return true;
+    }
+
+    false
 }
 
 /// Pure classification of passthrough sites from a site map.
@@ -21,7 +78,7 @@ pub struct PassthroughClassification {
 /// - `passthrough_sites`: all sites with `tls_passthrough == Some(true)`
 /// - `passthrough_with_waf`: subset that also have `tls_passthrough_enforce_waf == Some(true)`
 /// - `bypass_sites`: passthrough sites **without** WAF enforcement (subset of `passthrough_sites` \ `passthrough_with_waf`)
-/// - `rate_limited_bypass_sites`: bypass sites that have no rate limiting configured
+/// - `bypass_sites_without_rate_limit`: bypass sites where `site_has_rate_limit()` returns `false`
 pub fn classify_passthrough_sites(
     sites: &HashMap<String, SiteConfig>,
 ) -> PassthroughClassification {
@@ -46,12 +103,12 @@ pub fn classify_passthrough_sites(
         .cloned()
         .collect();
 
-    let rate_limited_bypass_sites: Vec<String> = bypass_sites
+    let bypass_sites_without_rate_limit: Vec<String> = bypass_sites
         .iter()
         .filter(|s| {
-            let site_config = sites.get(*s);
-            let rl = site_config.map(|s| &s.ratelimit);
-            rl.is_none()
+            sites
+                .get(*s)
+                .map_or(false, |site| !site_has_rate_limit(site))
         })
         .cloned()
         .collect();
@@ -60,43 +117,104 @@ pub fn classify_passthrough_sites(
         passthrough_sites,
         passthrough_with_waf,
         bypass_sites,
-        rate_limited_bypass_sites,
+        bypass_sites_without_rate_limit,
+    }
+}
+
+/// Pure policy evaluation: classify sites and detect violations.
+///
+/// This function performs no I/O and produces no side effects.
+pub fn evaluate_passthrough_policy(
+    sites: &HashMap<String, SiteConfig>,
+    strict_mode: bool,
+) -> PassthroughPolicyEvaluation {
+    let classification = classify_passthrough_sites(sites);
+    let mut violations = Vec::new();
+
+    for site_id in &classification.bypass_sites {
+        violations.push(PassthroughPolicyViolation::WafBypassed {
+            site_id: site_id.clone(),
+        });
+    }
+
+    for site_id in &classification.bypass_sites_without_rate_limit {
+        violations.push(PassthroughPolicyViolation::BypassWithoutRateLimit {
+            site_id: site_id.clone(),
+        });
+    }
+
+    if strict_mode && !violations.is_empty() {
+        return PassthroughPolicyEvaluation {
+            classification,
+            violations,
+        };
+    }
+
+    PassthroughPolicyEvaluation {
+        classification,
+        violations,
     }
 }
 
 /// Perform TLS passthrough validation: classify sites, emit logs and metrics.
+///
+/// When strict mode is enabled (via `security.strict_tls_passthrough_policy`),
+/// validation returns an error for any passthrough bypass site that lacks both
+/// WAF enforcement and rate limiting.
 pub async fn validate_tls_passthrough_waf_policy(
     config: &Arc<RwLock<synvoid_config::ConfigManager>>,
-) {
+) -> Result<(), String> {
     let guard = config.read().await;
-    let classification = classify_passthrough_sites(&guard.sites);
+    let sites = &guard.sites;
+    let strict_mode = guard.main.security.strict_tls_passthrough_policy;
+    let evaluation = evaluate_passthrough_policy(sites, strict_mode);
     drop(guard);
 
-    if classification.passthrough_sites.is_empty() {
-        return;
+    if evaluation.classification.passthrough_sites.is_empty() {
+        return Ok(());
     }
 
-    if !classification.passthrough_with_waf.is_empty() {
+    if !evaluation.classification.passthrough_with_waf.is_empty() {
         tracing::info!(
             "TLS passthrough with WAF enforcement enabled for sites: {:?}. WAF will inspect L7 traffic.",
-            classification.passthrough_with_waf
+            evaluation.classification.passthrough_with_waf
         );
     }
 
-    if !classification.bypass_sites.is_empty() {
+    if !evaluation.classification.bypass_sites.is_empty() {
         tracing::error!(
             "TLS passthrough is enabled for sites: {:?}. WAF inspection is BYPASSED for these sites - L7 attacks will not be blocked. Set tls_passthrough_enforce_waf = true to enable WAF inspection for passthrough traffic.",
-            classification.bypass_sites
+            evaluation.classification.bypass_sites
         );
         crate::metrics::record_tls_passthrough_waf_bypassed();
     }
 
-    if !classification.rate_limited_bypass_sites.is_empty() {
+    if !evaluation
+        .classification
+        .bypass_sites_without_rate_limit
+        .is_empty()
+    {
         tracing::error!(
             "TLS passthrough sites {:?} do not have rate limiting configured. Rate limiting is required for passthrough sites to prevent abuse.",
-            classification.rate_limited_bypass_sites
+            evaluation.classification.bypass_sites_without_rate_limit
         );
     }
+
+    if strict_mode {
+        let mut error_sites: Vec<String> = evaluation
+            .classification
+            .bypass_sites_without_rate_limit
+            .clone();
+        error_sites.sort();
+        if !error_sites.is_empty() {
+            return Err(format!(
+                "Strict TLS passthrough policy: sites {:?} have TLS passthrough enabled without WAF enforcement and without rate limiting. Either set tls_passthrough_enforce_waf = true or configure rate limiting (security.strict_tls_passthrough_policy = true).",
+                error_sites
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -104,6 +222,9 @@ mod tests {
     use super::*;
     use synvoid_config::site::proxy::SiteProxyConfig;
     use synvoid_config::site::SiteRateLimitConfig;
+    use synvoid_config::site::{
+        EndpointRateLimitConfig, GlobalRateLimitOverride, IpRateLimitOverride,
+    };
 
     fn make_site(
         tls_passthrough: Option<bool>,
@@ -122,16 +243,8 @@ mod tests {
     fn make_site_with_ratelimit(
         tls_passthrough: Option<bool>,
         tls_passthrough_enforce_waf: Option<bool>,
-        has_ratelimit: bool,
+        ratelimit: SiteRateLimitConfig,
     ) -> SiteConfig {
-        let ratelimit = if has_ratelimit {
-            SiteRateLimitConfig {
-                mode: Some("token_bucket".to_string()),
-                ..Default::default()
-            }
-        } else {
-            SiteRateLimitConfig::default()
-        };
         SiteConfig {
             proxy: SiteProxyConfig {
                 tls_passthrough,
@@ -150,6 +263,118 @@ mod tests {
             .collect()
     }
 
+    // --- site_has_rate_limit tests ---
+
+    #[test]
+    fn site_has_rate_limit_default() {
+        let site = make_site(Some(true), Some(false));
+        assert!(!site_has_rate_limit(&site));
+    }
+
+    #[test]
+    fn site_has_rate_limit_mode() {
+        let site = make_site_with_ratelimit(
+            Some(true),
+            Some(false),
+            SiteRateLimitConfig {
+                mode: Some("token_bucket".to_string()),
+                ..Default::default()
+            },
+        );
+        assert!(site_has_rate_limit(&site));
+    }
+
+    #[test]
+    fn site_has_rate_limit_ip() {
+        let site = make_site_with_ratelimit(
+            Some(true),
+            Some(false),
+            SiteRateLimitConfig {
+                ip: Some(IpRateLimitOverride {
+                    per_second: None,
+                    per_minute: Some(100),
+                    per_5min: None,
+                    per_hour: None,
+                    per_day: None,
+                    burst: None,
+                }),
+                ..Default::default()
+            },
+        );
+        assert!(site_has_rate_limit(&site));
+    }
+
+    #[test]
+    fn site_has_rate_limit_global() {
+        let site = make_site_with_ratelimit(
+            Some(true),
+            Some(false),
+            SiteRateLimitConfig {
+                global: Some(GlobalRateLimitOverride {
+                    per_second: None,
+                    per_minute: None,
+                    per_5min: None,
+                    max_connections: Some(1000),
+                }),
+                ..Default::default()
+            },
+        );
+        assert!(site_has_rate_limit(&site));
+    }
+
+    #[test]
+    fn site_has_rate_limit_endpoints() {
+        let site = make_site_with_ratelimit(
+            Some(true),
+            Some(false),
+            SiteRateLimitConfig {
+                endpoints: vec![EndpointRateLimitConfig {
+                    path_pattern: "/api/*".to_string(),
+                    per_minute: Some(60),
+                    per_hour: None,
+                    burst: None,
+                }],
+                ..Default::default()
+            },
+        );
+        assert!(site_has_rate_limit(&site));
+    }
+
+    #[test]
+    fn site_has_rate_limit_empty_ip_override() {
+        let site = make_site_with_ratelimit(
+            Some(true),
+            Some(false),
+            SiteRateLimitConfig {
+                ip: Some(IpRateLimitOverride {
+                    per_second: None,
+                    per_minute: None,
+                    per_5min: None,
+                    per_hour: None,
+                    per_day: None,
+                    burst: None,
+                }),
+                ..Default::default()
+            },
+        );
+        assert!(!site_has_rate_limit(&site));
+    }
+
+    #[test]
+    fn site_has_rate_limit_empty_endpoints() {
+        let site = make_site_with_ratelimit(
+            Some(true),
+            Some(false),
+            SiteRateLimitConfig {
+                endpoints: vec![],
+                ..Default::default()
+            },
+        );
+        assert!(!site_has_rate_limit(&site));
+    }
+
+    // --- classify_passthrough_sites tests ---
+
     #[test]
     fn empty_site_map() {
         let sites = HashMap::new();
@@ -164,31 +389,50 @@ mod tests {
         assert_eq!(result.passthrough_sites, vec!["site-a"]);
         assert_eq!(result.passthrough_with_waf, vec!["site-a"]);
         assert!(result.bypass_sites.is_empty());
-        assert!(result.rate_limited_bypass_sites.is_empty());
+        assert!(result.bypass_sites_without_rate_limit.is_empty());
     }
 
     #[test]
-    fn passthrough_without_waf_enforcement() {
+    fn passthrough_without_waf_enforcement_no_rate_limit() {
         let sites = site_map(vec![("site-b", make_site(Some(true), Some(false)))]);
         let result = classify_passthrough_sites(&sites);
         assert_eq!(result.passthrough_sites, vec!["site-b"]);
         assert!(result.passthrough_with_waf.is_empty());
         assert_eq!(result.bypass_sites, vec!["site-b"]);
-        // rl.is_none() is false because site exists in map (SiteRateLimitConfig always has a value)
-        assert!(result.rate_limited_bypass_sites.is_empty());
+        assert_eq!(result.bypass_sites_without_rate_limit, vec!["site-b"]);
+    }
+
+    #[test]
+    fn passthrough_without_waf_with_rate_limit() {
+        let sites = site_map(vec![(
+            "site-d",
+            make_site_with_ratelimit(
+                Some(true),
+                Some(false),
+                SiteRateLimitConfig {
+                    mode: Some("token_bucket".to_string()),
+                    ..Default::default()
+                },
+            ),
+        )]);
+        let result = classify_passthrough_sites(&sites);
+        assert_eq!(result.passthrough_sites, vec!["site-d"]);
+        assert!(result.passthrough_with_waf.is_empty());
+        assert_eq!(result.bypass_sites, vec!["site-d"]);
+        assert!(result.bypass_sites_without_rate_limit.is_empty());
     }
 
     #[test]
     fn passthrough_with_waf_and_no_rate_limit() {
         let sites = site_map(vec![(
             "site-c",
-            make_site_with_ratelimit(Some(true), Some(true), false),
+            make_site_with_ratelimit(Some(true), Some(true), SiteRateLimitConfig::default()),
         )]);
         let result = classify_passthrough_sites(&sites);
         assert_eq!(result.passthrough_sites, vec!["site-c"]);
         assert_eq!(result.passthrough_with_waf, vec!["site-c"]);
         assert!(result.bypass_sites.is_empty());
-        assert!(result.rate_limited_bypass_sites.is_empty());
+        assert!(result.bypass_sites_without_rate_limit.is_empty());
     }
 
     #[test]
@@ -207,23 +451,27 @@ mod tests {
     }
 
     #[test]
-    fn rate_limited_bypass_excluded() {
-        // rate_limited_bypass_sites is populated when config.sites.get() returns None
-        // (i.e., site removed from map between classification phases). Since both
-        // sites exist in the map, rl.is_none() is always false.
+    fn bypass_without_rate_limit_detected() {
         let sites = site_map(vec![
             (
                 "no-rl",
-                make_site_with_ratelimit(Some(true), Some(false), false),
+                make_site_with_ratelimit(Some(true), Some(false), SiteRateLimitConfig::default()),
             ),
             (
                 "has-rl",
-                make_site_with_ratelimit(Some(true), Some(false), true),
+                make_site_with_ratelimit(
+                    Some(true),
+                    Some(false),
+                    SiteRateLimitConfig {
+                        mode: Some("token_bucket".to_string()),
+                        ..Default::default()
+                    },
+                ),
             ),
         ]);
         let result = classify_passthrough_sites(&sites);
         assert_eq!(result.bypass_sites.len(), 2);
-        assert!(result.rate_limited_bypass_sites.is_empty());
+        assert_eq!(result.bypass_sites_without_rate_limit, vec!["no-rl"]);
     }
 
     #[test]
@@ -238,5 +486,62 @@ mod tests {
         let sites = site_map(vec![("default", make_site(None, None))]);
         let result = classify_passthrough_sites(&sites);
         assert_eq!(result, PassthroughClassification::default());
+    }
+
+    // --- evaluate_passthrough_policy tests ---
+
+    #[test]
+    fn policy_no_violations_when_no_passthrough() {
+        let sites = site_map(vec![("normal", make_site(Some(false), Some(false)))]);
+        let eval = evaluate_passthrough_policy(&sites, false);
+        assert!(eval.violations.is_empty());
+    }
+
+    #[test]
+    fn policy_violations_for_bypass_sites() {
+        let sites = site_map(vec![("bypass", make_site(Some(true), Some(false)))]);
+        let eval = evaluate_passthrough_policy(&sites, false);
+        // Bypass site with no WAF enforcement and no rate limiting generates two violations
+        assert_eq!(eval.violations.len(), 2);
+        assert!(eval.violations.iter().any(|v| matches!(
+            v,
+            PassthroughPolicyViolation::WafBypassed { site_id } if site_id == "bypass"
+        )));
+        assert!(eval.violations.iter().any(|v| matches!(
+            v,
+            PassthroughPolicyViolation::BypassWithoutRateLimit { site_id } if site_id == "bypass"
+        )));
+    }
+
+    #[test]
+    fn policy_no_rate_limit_violation() {
+        let sites = site_map(vec![(
+            "bypass",
+            make_site_with_ratelimit(Some(true), Some(false), SiteRateLimitConfig::default()),
+        )]);
+        let eval = evaluate_passthrough_policy(&sites, false);
+        assert_eq!(eval.violations.len(), 2);
+        assert!(eval
+            .violations
+            .iter()
+            .any(|v| matches!(v, PassthroughPolicyViolation::WafBypassed { site_id } if site_id == "bypass")));
+        assert!(eval
+            .violations
+            .iter()
+            .any(|v| matches!(v, PassthroughPolicyViolation::BypassWithoutRateLimit { site_id } if site_id == "bypass")));
+    }
+
+    #[test]
+    fn policy_no_violations_for_waf_enforced() {
+        let sites = site_map(vec![("waf-on", make_site(Some(true), Some(true)))]);
+        let eval = evaluate_passthrough_policy(&sites, false);
+        assert!(eval.violations.is_empty());
+    }
+
+    #[test]
+    fn strict_mode_preserves_violations() {
+        let sites = site_map(vec![("bypass", make_site(Some(true), Some(false)))]);
+        let eval = evaluate_passthrough_policy(&sites, true);
+        assert!(!eval.violations.is_empty());
     }
 }

@@ -333,6 +333,20 @@ tls_passthrough_enforce_waf = true
 
 **Warning:** When `tls_passthrough = true` without `tls_passthrough_enforce_waf`, L7 attacks (SQLi, XSS, etc.) in encrypted traffic will not be detected. Only layer 3/4 protections (IP rate limiting, connection limits) apply.
 
+### Strict TLS Passthrough Policy
+
+When enabled, `validate_tls_passthrough_waf_policy()` returns errors instead of just warnings for misconfigured TLS passthrough sites:
+
+```toml
+[security]
+strict_tls_passthrough_policy = false  # Default: false (warn-only)
+```
+
+**Why this default:**
+- `false` (warn-only) is safe for existing deployments — logs warnings and emits metrics without breaking startup
+- `true` enforces that all TLS passthrough sites either have `tls_passthrough_enforce_waf` or rate limiting configured, preventing silently unprotected sites
+- Enable in production after auditing your passthrough site configurations
+
 ### ACME (Let's Encrypt)
 
 Automatic certificate management via ACME protocol:

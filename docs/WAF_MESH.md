@@ -316,6 +316,15 @@ When enabled, the WAF will still apply layer 7 attack detection rules to passthr
 
 **Warning**: TLS passthrough without `tls_passthrough_enforce_waf` means attacks embedded in encrypted traffic will not be detected by the WAF. Only layer 3/4 protections (IP rate limiting, connection limits) apply.
 
+To enforce that all TLS passthrough sites have either WAF enforcement or rate limiting configured, enable the strict policy:
+
+```toml
+[security]
+strict_tls_passthrough_policy = true  # Default: false
+```
+
+When enabled, `validate_tls_passthrough_waf_policy()` returns an error for any TLS passthrough site that lacks both `tls_passthrough_enforce_waf` and rate limit configuration, preventing silently unprotected sites in production.
+
 ### Authentication
 
 SynVoid has transitioned from a shared-secret model to **Decentralized Admission (Consensus-Gated PKI)**. Nodes no longer derive their identity from a shared genesis key; instead, they generate unique local keys and request admission to the mesh.

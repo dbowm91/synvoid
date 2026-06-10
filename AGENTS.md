@@ -230,6 +230,10 @@ The consolidated implementation plan is at [`plans/plan.md`](plans/plan.md).
 - **build_default_serverless_manager()**: `src/worker/unified_server/init_apps.rs` - helper function consolidating global plugin manager fallback logic
 - **RECORD_STORE_GLOBAL**: `crates/synvoid-mesh/src/mesh/mod.rs:161` - **legacy/fallback only** — all production paths use explicit injection via `DataPlaneServices.record_store`
 - **classify_passthrough_sites()**: `src/worker/unified_server/passthrough_validation.rs` - pure classification function for TLS passthrough sites (no I/O, no side effects)
+- **bypass_sites_without_rate_limit**: renamed from `rate_limited_bypass_sites`; sites in this set bypass WAF without rate limiting
+- **site_has_rate_limit()**: `src/worker/unified_server/passthrough_validation.rs` - pure helper that checks whether a site has rate limit configuration
+- **evaluate_passthrough_policy()**: `src/worker/unified_server/passthrough_validation.rs` - pure function returning `PassthroughPolicyEvaluation`; computes per-site violations (`PassthroughPolicyViolation` enum) without I/O
+- **validate_tls_passthrough_waf_policy()**: `src/worker/unified_server/passthrough_validation.rs` - returns `Result<(), String>`; logs warnings/errors and emits metrics for misconfigured sites. Gated by `security.strict_tls_passthrough_policy` (default false)
 
 ### Root Dependency Ownership
 - Reference `plans/root_dependency_ownership.md` for the ownership inventory of all root-level direct dependencies.
