@@ -39,6 +39,8 @@ Global nodes use Raft consensus (`crates/synvoid-mesh/src/mesh/raft/*.rs`) for *
 - **Canonical Authority:** Raft commits are the single source of truth for OrgPublicKey, ThreatIntel, and GlobalNodeRevocationList. DHT records for these namespaces are derived from Raft commits, not created independently.
 - **Note:** Quorum deadlock risk during network partition (see MESH-15).
 
+See `architecture/mesh_trust_domains.md` for the advisory vs. canonical distinction and trust-domain invariants.
+
 ---
 
 ## Collective Defense Features

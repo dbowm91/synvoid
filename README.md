@@ -22,7 +22,7 @@ Linux offers the best support for CPU affinity and kernel networking primitives.
 
 - **Advanced Attack Detection**: Native support for SQLi, XSS, SSRF, and command injection detection using `libinjection` and high-speed regex engines.
 - **Bot Mitigation**: Challenges automated traffic with CSS honeypots, JavaScript execution tests, and behavioral analysis.
-- **Distributed WAF Mesh**: Coordinate threat intelligence across geographic regions and build a private, collaborative DDoS defense network. DHT ingress validation uses a centralized key policy table, signed Raft attestations, and mandatory signature enforcement for remote writes.
+- **Distributed WAF Mesh**: Coordinate threat intelligence across geographic regions and build a private, collaborative DDoS defense network. DHT ingress validation uses a centralized key policy table, signed Raft attestations, and mandatory signature enforcement for remote writes. See `architecture/mesh_trust_domains.md` for trust domain boundaries (advisory DHT vs. canonical Raft).
 - **Modern Protocol Stack**: First-class support for **HTTP/3 (QUIC)**, HTTP/2, and TLS 1.3.
 - **Capacity Scaling**: Tune `worker_threads`, `tcp.worker_pool_size`, and CPU offload capacity to match the workload mix.
 - **Silent Security**: Features like "Silent Stalling" and "Tarpitting" waste attacker resources without revealing server information.

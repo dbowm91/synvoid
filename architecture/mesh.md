@@ -17,6 +17,8 @@ The Mesh module is responsible for:
 - **Behavioral intelligence**: Fingerprinting and reputation tracking of peers and upstreams.
 - **Security event handling**: Attack detection, challenge-response security, and threat intelligence distribution.
 
+A trust-domain classification and invariants document exists at `architecture/mesh_trust_domains.md` (advisory DHT vs. canonical Raft, policy as decision layer) for future reviews.
+
 ---
 
 ## 2. Module Structure

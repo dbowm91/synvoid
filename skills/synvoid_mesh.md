@@ -4,6 +4,8 @@
 
 SynVoid uses a mesh network architecture with DHT-based service discovery for multi-origin routing. This skill provides context for working with the mesh transport, DHT keys, and upstream routing.
 
+**Trust domains (advisory vs. canonical)**: DHT provides advisory, TTL-bound records (discovery, announcements). Raft provides canonical authority state (OrgPublicKey, ThreatIntel, revocation). Policy layer (key_policy, peer_auth decisions) resolves advisory+canonical into actionable trust; services consume policy outputs, not raw advisory records. See `architecture/mesh_trust_domains.md` for classification, invariants, and review checklist (relevant for any mesh code touching record ingress, peer role validation, or service distribution).
+
 ## Node Roles
 
 | Role | Purpose | Key Identifier | Authentication |

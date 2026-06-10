@@ -231,6 +231,7 @@ The consolidated implementation plan is at [`plans/plan.md`](plans/plan.md).
 - **DataPlaneServicesBuilder**: `src/worker/unified_server/services.rs` - now requires `serverless_manager` in constructor; no global fallback in builder
 - **build_default_serverless_manager()**: `src/worker/unified_server/init_apps.rs` - helper function consolidating global plugin manager fallback logic
 - **RECORD_STORE_GLOBAL**: `crates/synvoid-mesh/src/mesh/mod.rs:161` - **legacy/fallback only** — all production paths use explicit injection via `DataPlaneServices.record_store`
+- **Mesh trust domains**: `architecture/mesh_trust_domains.md` — design note (iteration 7) classifying modules by trust domain (transport, advisory_dht, canonical, identity, policy, services, compat); advisory DHT vs. canonical Raft distinction; policy as decision layer; `RECORD_STORE_GLOBAL` explicitly called out as compat/legacy; includes invariants, target module shape, import rules, review checklist, and `CanonicalTrustReader` as preferred first seam.
 - **classify_passthrough_sites()**: `src/worker/unified_server/passthrough_validation.rs` - pure classification function for TLS passthrough sites (no I/O, no side effects)
 - **bypass_sites_without_rate_limit**: renamed from `rate_limited_bypass_sites`; sites in this set bypass WAF without rate limiting
 - **site_has_rate_limit()**: `src/worker/unified_server/passthrough_validation.rs` - pure helper that checks whether a site has rate limit configuration
