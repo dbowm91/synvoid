@@ -385,15 +385,30 @@ No production call sites were rewired; no module reorganization; no legacy `vali
 
 ### Iteration 12 Key Policy Ingress Preparation
 
-The key-policy canonical helper now explicitly tests `CanonicalUnavailable` defer branches and has an ingress adapter preserving accept/reject/defer distinctions. Production record ingress wiring remains deferred until a clean `CanonicalTrustReader` injection point exists; no DHT propagation/storage behavior changed.
+The key-policy canonical helper now explicitly tests `CanonicalUnavailable` defer branches and has an ingress adapter preserving accept/reject/defer distinctions. No DHT propagation/storage behavior changed.
+
+### Iteration 13 DHT Ingress Policy Context Seam
+
+`dht/ingress_policy.rs` introduced `DhtIngressPolicyContext`, a small injectable context carrying an optional `Arc<dyn CanonicalTrustReader>`. The `check_dht_ingress_authority` entry point delegates to the key-policy adapter and produces `DhtIngressGateOutcome` (Accepted, Rejected, Deferred, NotConfigured). The context is cloned into `DhtRecordIngressContext.policy_context` at creation time. No production wiring was active in this iteration.
 
 ### Iteration 14 DHT Ingress Context Wiring Cleanup
 
-`RecordStoreManager` now carries an optional `DhtIngressPolicyContext` and attaches it to direct client Push/Announce ingress contexts. The existing `store_record_from_ingress` gate is therefore active for configured Push/Announce paths and remains inactive by default. Disabled context preserves legacy behavior. Sync/replay/local/quorum/Raft apply paths remain outside this gate.
+`RecordStoreManager` now carries an optional `DhtIngressPolicyContext` and attaches it to direct client Push/Announce ingress contexts in both `record_store_message.rs` and `transport_peer.rs`. The existing `store_record_from_ingress` gate is therefore active for all configured Push/Announce paths and remains inactive by default. Disabled context preserves legacy behavior. Sync/replay/local/quorum/Raft apply paths remain outside this gate.
+
+### Iteration 15 Final Status
+
+The canonical trust-domain seam is now staged through peer auth, DHT key policy, and direct DHT Push/Announce ingress. Canonical trust answers flow through `CanonicalTrustReader`; DHT policy and ingress consume the trait, not concrete Raft internals. Disabled ingress policy context preserves legacy behavior. Configured Push/Announce ingress rejects canonical-required records on unauthorized, revoked, unavailable, or unknown canonical state. Advisory-only records remain advisory. Sync/replay/local/quorum/Raft apply paths were intentionally not broadened into this gate.
+
+This track stops here. The next architectural step should be `AdvisoryRecordSource` before migrating service consumers.
 
 ## Follow-Up Recommendation
 
-After this cleanup, add an `AdvisoryRecordSource` seam before migrating service consumers. Only consider expanding the ingress gate to additional remote paths after the Push/Announce path is stable and the context carrier is clearly owned by a higher-level mesh service or data-plane composition object.
+The next planned architecture track should be:
+1. Introduce `AdvisoryRecordSource` as a read-only advisory DHT access seam.
+2. Route policy composition through canonical + advisory seams.
+3. Only then migrate service consumers such as `threat_intel.rs`, `proxy.rs`, and YARA/WASM to consume policy outputs rather than raw DHT or Raft internals.
+
+Do not expand the ingress gate to additional remote paths until the Push/Announce path is stable and the context carrier is clearly owned by a higher-level mesh service or data-plane composition object.
 
 ---
 

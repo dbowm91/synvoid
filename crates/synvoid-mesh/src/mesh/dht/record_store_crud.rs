@@ -198,7 +198,7 @@ impl RecordStoreManager {
             return false;
         }
 
-        // Iteration 13: optional canonical-reader ingress authority gate.
+        // Optional canonical-reader ingress authority gate.
         // Applied only for direct signed-record client ingress paths (Push, Announce)
         // to keep the seam low-risk and avoid altering sync/replay semantics.
         // Sync/replay (SnapshotSync, SyncResponse, AntiEntropy, etc), local,

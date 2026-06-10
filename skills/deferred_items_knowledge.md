@@ -17,7 +17,6 @@ Implementation plan remaining items are documented in `plans/plan.md`.
 | ID | Issue | Reason |
 |----|-------|--------|
 | HTTP2-POOL | ErasedHttpClient HTTP/2 pooling | Erased-client primitives exist, but active streaming proxy path still uses `StreamingHttpClient`; full HTTP/2 pooled streaming lifecycle remains non-default and requires dedicated connection-task management |
-| KEY-POL-1 | CanonicalTrustReader injection into RecordStoreManager | Carrier added to `RecordStoreManager` / `RoutingState` (iter13/14); direct client Push/Announce paths now attach for configured contexts. Broader service consumer migration still deferred (per non-goals of iter14). Adapter `validate_dht_key_authority_for_ingress()` is wired for the targeted Push/Announce ingress paths. |
 
 ### Recently Resolved Former Deferred Items
 
@@ -29,6 +28,10 @@ Implementation plan remaining items are documented in `plans/plan.md`.
   - `DhtSyncRequest` includes timestamp/nonce/signature/signer key.
   - default behavior rejects unsigned sync requests (`mesh.dht.require_signed_sync_requests=true`).
   - temporary legacy compatibility requires explicit opt-out (`false`) plus a bounded migration deadline (`mesh.dht.unsigned_sync_compat_until_unix`) in the future.
+- `KEY-POL-1` (CanonicalTrustReader injection into RecordStoreManager):
+  - Carrier wired in `RecordStoreManager`/`RoutingState`; direct client Push/Announce paths attach for configured contexts.
+  - Adapter `validate_dht_key_authority_for_ingress()` active; ingress gate enforces accept/reject/defer for canonical-required keys on configured Push/Announce paths; disabled context preserves legacy.
+  - Track complete (Iteration 15). Next step: `AdvisoryRecordSource` before service consumer migration.
 
 ---
 

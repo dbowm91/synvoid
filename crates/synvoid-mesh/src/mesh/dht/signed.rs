@@ -83,10 +83,10 @@ pub struct DhtRecordIngressContext {
     request_id: Option<String>,
     is_local_origin: bool,
     /// Optional policy context carrying a CanonicalTrustReader for canonical
-    /// key authority decisions at remote ingress time (Iteration 13 seam).
+    /// key authority decisions at remote ingress time.
     /// When None, the ingress gate reports NotConfigured and legacy behavior
     /// is preserved. Attached at DhtRecordIngressContext creation for remote
-    /// signed-record paths (the chosen ingress ownership boundary).
+    /// signed-record Push/Announce paths.
     policy_context: Option<DhtIngressPolicyContext>,
 }
 
@@ -161,8 +161,7 @@ impl DhtRecordIngressContext {
     }
 
     /// Attaches an optional ingress policy context carrying a CanonicalTrustReader.
-    /// This is the Iteration 13 seam for remote signed-record ingress canonical
-    /// authority decisions. When None, the gate reports NotConfigured (legacy path).
+    /// When None, the gate reports NotConfigured (legacy path).
     pub fn with_policy_context(mut self, ctx: Option<DhtIngressPolicyContext>) -> Self {
         self.policy_context = ctx;
         self

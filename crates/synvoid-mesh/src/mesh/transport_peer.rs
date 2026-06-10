@@ -1354,7 +1354,8 @@ impl MeshTransport {
                         peer_id.to_string(),
                         crate::dht::signed::SourceClassification::Unknown,
                         crate::dht::signed::IngressPath::Push,
-                    );
+                    )
+                    .with_policy_context(record_store.ingress_policy_context());
 
                     for record in records.iter() {
                         record_store.store_record_from_ingress(

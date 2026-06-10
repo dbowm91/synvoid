@@ -1,4 +1,4 @@
-//! DHT ingress policy context (Iteration 13).
+//! DHT ingress policy context.
 //!
 //! Provides a small injectable handle that carries an optional `CanonicalTrustReader`
 //! into remote DHT record ingress paths. When disabled (no reader), legacy behavior
@@ -9,8 +9,9 @@
 //! This is the dependency-injection seam for DHT ingress without globals or
 //! deep construction of canonical state. The context is attached to
 //! `DhtRecordIngressContext` at creation time for remote signed-record paths
-//! (push, sync response, anti-entropy, announce, etc.). The central
-//! `store_record_from_ingress` entry honors it for remote (!local-origin) writes.
+//! (Push, Announce). The central `store_record_from_ingress` entry honors
+//! it for remote (!local-origin) Push/Announce writes only. Sync/replay/local/
+//! quorum/Raft apply paths remain outside this gate.
 //!
 //! Non-goals: service consumer migration, full AdvisoryRecordSource seam,
 //! broad record propagation changes, requiring live Raft in tests.
