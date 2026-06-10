@@ -25,12 +25,20 @@ src/http_client/
 The canonical implementation lives in `crates/synvoid-http-client/`:
 ```
 crates/synvoid-http-client/src/
-├── lib.rs              # Core client types, TLS config, request helpers
+├── lib.rs              # Thin public facade + re-exports only
+├── client.rs           # Public type aliases (HttpClient etc.), high-level create_* entry points, EmptyBody, is_quictunnel_url compat
+├── tls.rs              # TLS config, UpstreamTlsConfig, upstream_tls_from_site_config, build_tls_config, webpki/native fallback, custom CA, HostnameSkippingVerifier
+├── pool.rs             # UpstreamClientKey, moka client caches, build_upstream_client, create_upstream_* logic
+├── unix.rs             # is_unix_socket_url, Unix client and request helpers
+├── request.rs          # All send_request_* / streaming / get / post_json / auth helpers
+├── response.rs         # HttpResponse + from_hyper conversion
 ├── erased_pool.rs      # Type-erased connection pool (primary production path)
 └── streaming_waf_body.rs # Streaming WAF body scanning
 ```
 
 ### 1. Core Module (`mod.rs`)
+
+(Note: describes the public API surface provided via crate lib.rs re-exports; root `src/http_client/mod.rs` is the thin compatibility shim.)
 
 **Public Types:**
 - `HttpClient = Client<HttpsConnector<HttpConnector>, Full<Bytes>>` — Standard buffered HTTP client
@@ -410,9 +418,15 @@ Per `AGENTS.md` — Pure Rust crypto, battle-tested, no C bindings. Provides TLS
 | File | Purpose |
 |------|---------|
 | `src/http_client/mod.rs` | Root re-export shim for `synvoid-http-client` crate |
-| `crates/synvoid-http-client/src/lib.rs` | Core HTTP client types, TLS config, convenience functions |
+| `crates/synvoid-http-client/src/lib.rs` | Thin public facade + re-exports; implementation in focused modules |
+| `crates/synvoid-http-client/src/client.rs` | Public type aliases (HttpClient etc.), high-level create_* entry points, EmptyBody, is_quictunnel_url compat |
+| `crates/synvoid-http-client/src/tls.rs` | TLS config, UpstreamTlsConfig, upstream_tls_from_site_config, build_tls_config, webpki/native fallback, custom CA, HostnameSkippingVerifier |
+| `crates/synvoid-http-client/src/pool.rs` | UpstreamClientKey, moka client caches, build_upstream_client, create_upstream_* logic |
+| `crates/synvoid-http-client/src/unix.rs` | is_unix_socket_url, Unix client and request helpers |
+| `crates/synvoid-http-client/src/request.rs` | All send_request_* / streaming / get / post_json / auth helpers |
+| `crates/synvoid-http-client/src/response.rs` | HttpResponse + from_hyper conversion |
 | `crates/synvoid-http-client/src/erased_pool.rs` | Type-erased connection pool for streaming |
 | `crates/synvoid-http3/src/server.rs` | HTTP/3 server that uses `HttpClient` for upstream |
 | `src/proxy/mod.rs` | Uses `http_client` for proxying |
 | `src/tunnel/quic/*.rs` | QUIC tunnel infrastructure |
-| `crates/synvoid-config/src/site/tls.rs` | `UpstreamTlsConfig` deserialization |
+| `crates/synvoid-config/src/site/proxy.rs` + `security.rs` | Site proxy/security config for upstream_tls_from_site_config (no dedicated site/tls.rs) |

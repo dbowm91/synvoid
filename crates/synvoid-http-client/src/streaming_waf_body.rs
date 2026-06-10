@@ -83,7 +83,7 @@ where
                 std::task::Poll::Ready(Some(Ok(frame)))
             }
             std::task::Poll::Ready(Some(Err(e))) => std::task::Poll::Ready(Some(Err(
-                std::io::Error::new(std::io::ErrorKind::Other, format!("body error: {:?}", e)),
+                std::io::Error::other(format!("body error: {:?}", e)),
             ))),
             std::task::Poll::Ready(None) => std::task::Poll::Ready(None),
             std::task::Poll::Pending => std::task::Poll::Pending,

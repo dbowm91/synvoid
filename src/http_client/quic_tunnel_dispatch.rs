@@ -1,3 +1,6 @@
+// Root-owned because it depends on root tunnel runtime (QUIC_TUNNEL_REGISTRY, crate::tunnel::quic).
+// is_quictunnel_url is duplicated in crate for direct synvoid_http_client importers; this version is for src/ paths.
+
 use std::time::Duration;
 
 use anyhow::Result;

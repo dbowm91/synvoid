@@ -6,9 +6,9 @@ The HTTP client module (`src/http_client/`) provides upstream proxy connections 
 
 ## Key Files
 
-- `src/http_client/mod.rs` - Root compatibility shim that reexports `synvoid_http_client`; canonical code lives in `crates/synvoid-http-client`
-- `src/http_client/quic_tunnel_dispatch.rs` - QUIC tunnel URL routing (root-owned, depends on `crate::tunnel`)
-- `src/http_client/streaming_waf_body.rs` - Re-export shim for `StreamingWafBody` from crate
+- `crates/synvoid-http-client/src/lib.rs` — thin facade reexports only
+- `crates/synvoid-http-client/src/client.rs`, `tls.rs` (TLS config, UpstreamTlsConfig, upstream_tls_from_site_config, build_tls_config, webpki/native/custom CA, HostnameSkippingVerifier), `pool.rs` (caching, UpstreamClientKey, create_upstream_*), `unix.rs`, `request.rs`, `response.rs`, `erased_pool.rs`, `streaming_waf_body.rs`
+- Root: `mod.rs` (shim), `quic_tunnel_dispatch.rs` (root-only, tunnel dep), `streaming_waf_body.rs` (shim)
 
 ## Important Patterns
 
@@ -113,6 +113,10 @@ The underlying `ErasedHttpClient::send_request()` already supported `is_http2: b
 cargo test --lib erased_pool  # Test type-erased body
 cargo check --lib             # Verify compilation
 ```
+
+## Iteration 6 Hygiene Split
+
+lib.rs reduced to facade; TLS moved to tls.rs; pooling to pool.rs. Public API unchanged via reexports. Core Module references now point to the crate public API surface (provided via crate lib.rs re-exports); root mod.rs is the shim. Ownership details live in src/http_client/AGENTS.override.md and architecture/http_shared.md.
 
 ## Dependencies
 

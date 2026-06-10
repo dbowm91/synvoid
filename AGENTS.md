@@ -97,6 +97,7 @@ cargo check --no-default-features --features mesh,dns
 | `src/http3/server.rs` | `crates/synvoid-http3/src/server.rs` (moved to dedicated crate 2026-06) |
 | `src/http3/server.rs` (Http3WafBackend trait) | `crates/synvoid-http3/src/lib.rs` (trait owns the WAF abstraction boundary) |
 | `src/worker/unified_server/passthrough_validation.rs` | New module — TLS passthrough classification and validation (extracted from mod.rs) |
+| `crates/synvoid-http-client/src/lib.rs` (monolithic pre-iter6) | Split into focused modules (client.rs, tls.rs, pool.rs, unix.rs, request.rs, response.rs) + erased_pool/streaming_waf_body; lib.rs is now thin public facade with re-exports only |
 
 ## Modular Agent Guidance
 
@@ -205,6 +206,7 @@ The consolidated implementation plan is at [`plans/plan.md`](plans/plan.md).
 - **Session ID comparison**: Not constant-time, but acceptable (high-entropy random 32-byte values)
 
 ### Module Key Facts
+- **HTTP Client**: ownership details live in `src/http_client/AGENTS.override.md` and `architecture/http_shared.md`
 - **MeshProxy**: `crates/synvoid-mesh/src/mesh/proxy.rs` - key routing component not in overview
 - **BackendType**: `src/router.rs:65-77` has 11 variants
 - **SAFE_HEADERS**: `src/proxy/cache.rs:97-126` has 28 headers
