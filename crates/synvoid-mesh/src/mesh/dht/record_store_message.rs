@@ -540,7 +540,7 @@ impl RecordStoreManager {
                     envelope_verified = true;
                 }
 
-                self.handle_anti_entropy_response(message, from_node, envelope_verified);
+                self.handle_anti_entropy_response(message, from_node, envelope_verified).await;
                 None
             }
             MeshMessage::DhtRecordPush {

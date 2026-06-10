@@ -95,11 +95,7 @@ impl MeshTransport {
 
         let results = future::join_all(futures).await;
 
-        for result in results.into_iter().flatten() {
-            return Some(result);
-        }
-
-        None
+        results.into_iter().flatten().next()
     }
 
     pub(crate) async fn handle_incoming_datagram(

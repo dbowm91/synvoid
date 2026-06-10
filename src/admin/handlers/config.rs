@@ -189,12 +189,16 @@ pub async fn reload_config(
 
     #[cfg(not(feature = "mesh"))]
     {
+        let _ = &state;
+        #[allow(unreachable_code)]
         return Ok(Json(StatusResponse::success(
             "Configuration reloaded successfully",
         )));
     }
 
-    let mut config = state.process.config.write().await;
+    #[cfg(feature = "mesh")]
+    {
+        let mut config = state.process.config.write().await;
     let results = config.reload_all();
 
     let loaded = results.iter().filter(|r| r.1.is_ok()).count();
@@ -267,6 +271,7 @@ pub async fn reload_config(
         Ok(Json(StatusResponse::hot_reload_applied(message)))
     } else {
         Ok(Json(StatusResponse::partial_reload(message)))
+    }
     }
 }
 

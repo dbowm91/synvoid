@@ -117,6 +117,7 @@ pub async fn init_mesh_and_threat_intel(
                 topology.clone(),
                 None,
             ));
+            let _ = &proxy;
 
             // Use global_node_key if available, otherwise HKDF-derive from node_id.
             let signer_key = if let Some(ref key) = mesh_config.global_node_key {

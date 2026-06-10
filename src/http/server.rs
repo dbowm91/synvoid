@@ -57,6 +57,7 @@ use connection_types::*;
 /// three independent `Option<Arc<...>>` fields. Each field is
 /// independently `None`/replaceable.
 #[derive(Clone, Default)]
+#[allow(dead_code)]
 pub(crate) struct HttpAppBackends {
     pub serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
     pub app_servers:
@@ -79,6 +80,7 @@ pub(crate) struct HttpAppBackends {
 /// `WafCore`, `WorkerDrainState`, `FloodProtector`, and `PluginManager`
 /// (via `dyn Any`) all live in root.
 #[derive(Clone)]
+#[allow(dead_code)]
 pub(crate) struct HttpServerRuntime {
     pub router: Arc<Router>,
     pub waf: Arc<WafCore>,
@@ -103,6 +105,7 @@ pub(crate) struct HttpServerRuntime {
     pub mesh_backend_pool: Option<Arc<MeshBackendPool>>,
 }
 
+#[allow(dead_code)]
 pub struct HttpServer {
     addr: SocketAddr,
     shutdown_rx: broadcast::Receiver<()>,
@@ -228,7 +231,7 @@ impl HttpServer {
         accept_loop::run_accept_loop(self.addr, self.shutdown_rx, self.runtime).await
     }
 
-    #[allow(unused_assignments)]
+    #[allow(unused_assignments, unused_variables)]
     async fn handle_request(
         req: hyper::Request<hyper::body::Incoming>,
         client_addr: SocketAddr,

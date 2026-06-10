@@ -18,6 +18,7 @@ pub use openapi::synvoidOpenApi;
 mod rate_limit;
 pub mod schema;
 mod state;
+#[allow(dead_code)]
 mod ws;
 
 pub use audit::{AuditLog, AuditState, ConfigVersion, ConfigVersionManager};

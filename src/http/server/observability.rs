@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Observability concern: request metrics collection and request log rate limiting.
 
 use std::net::IpAddr;

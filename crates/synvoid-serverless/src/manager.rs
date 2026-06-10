@@ -846,6 +846,7 @@ impl ServerlessManager {
             .await
     }
 
+    #[cfg(feature = "mesh")]
     async fn invoke_with_runtime(
         &self,
         runtime: Arc<WasmRuntime>,

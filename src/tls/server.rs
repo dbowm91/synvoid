@@ -309,7 +309,9 @@ impl HttpsServer {
         let mesh_config = self.mesh_config.clone();
         #[cfg(feature = "mesh")]
         let mesh_transport = self.mesh_transport.clone();
+        #[cfg(feature = "mesh")]
         let ipc = self.ipc.clone();
+        #[cfg(feature = "mesh")]
         let worker_id = self.worker_id;
         let serverless_manager = self.serverless_manager.clone();
         let app_servers = self.app_servers.clone();
@@ -361,9 +363,13 @@ impl HttpsServer {
                             let metrics_h1 = metrics.clone();
                             let drain_state_h2 = drain_state.clone();
                             let drain_state_h1 = drain_state.clone();
+                            #[cfg(feature = "mesh")]
                             let ipc_h2 = ipc.clone();
+                            #[cfg(feature = "mesh")]
                             let ipc_h1 = ipc.clone();
+                            #[cfg(feature = "mesh")]
                             let worker_id_h2 = worker_id;
+                            #[cfg(feature = "mesh")]
                             let worker_id_h1 = worker_id;
                             #[cfg(feature = "mesh")]
                             let mesh_config_h2 = mesh_config.clone();
@@ -436,6 +442,7 @@ impl HttpsServer {
                                                     let mesh_config = mesh_config_h2.clone();
                                                     #[cfg(feature = "mesh")]
                                                     let mesh_transport = mesh_transport_h2.clone();
+                                                    #[cfg(feature = "mesh")]
                                                     let ipc = ipc_h2.clone();
                                                     let serverless_manager = serverless_manager_h2.clone();
                                                     let app_servers = app_servers_h2.clone();
@@ -510,6 +517,7 @@ impl HttpsServer {
                                                     let mesh_config = mesh_config_h1.clone();
                                                     #[cfg(feature = "mesh")]
                                                     let mesh_transport = mesh_transport_h1.clone();
+                                                    #[cfg(feature = "mesh")]
                                                     let ipc = ipc_h1.clone();
                                                     let serverless_manager = serverless_manager_h1.clone();
                                                     let app_servers = app_servers_h1.clone();
@@ -639,6 +647,7 @@ impl HttpsServer {
         upstream_client_registry: Arc<UpstreamClientRegistry>,
         _erased_http_client: ErasedHttpClient,
     ) -> Result<Response<BoxBody<Bytes, Infallible>>, hyper::Error> {
+        let _ = &serverless_manager;
         let client_ip = client_addr.ip();
         let path = req
             .uri()

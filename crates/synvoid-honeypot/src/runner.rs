@@ -8,6 +8,7 @@ use tokio::time;
 use crate::config::PortHoneypotConfig;
 use crate::listener::PortHoneypotListener;
 use crate::storage::HoneypotStorage;
+#[cfg(feature = "mesh")]
 use crate::threat_intel::HoneypotIntelExtractor;
 #[cfg(feature = "mesh")]
 use synvoid_mesh::protocol::ThreatType;

@@ -1,4 +1,6 @@
 use std::path::PathBuf;
+
+#[cfg(feature = "mesh")]
 use std::sync::Arc;
 
 #[cfg(feature = "mesh")]

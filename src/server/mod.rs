@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::Mutex as StdMutex;
 use tokio::sync::{broadcast, Mutex, RwLock};
 
 use crate::config::ConfigManager;
@@ -13,11 +12,14 @@ use crate::udp::listener::{UdpListenerPool, UdpListenerPoolConfig};
 
 #[cfg(feature = "dns")]
 use crate::dns::DnsServer;
+#[cfg(feature = "dns")]
+use std::sync::Mutex as StdMutex;
+#[cfg(feature = "dns")]
+use crate::tls::acme::AcmeManager;
 use crate::metrics::adapter::WorkerMetricsSink;
 use crate::metrics::WorkerMetrics;
 use crate::process::ipc::WorkerId;
 use crate::router_adapter::RouterRouteResolver;
-use crate::tls::acme::AcmeManager;
 use crate::tls::cert_resolver::CertResolver;
 use crate::tls::config::InternalTlsConfig;
 use crate::tunnel::{TunnelManager, TunnelRouter};
@@ -388,7 +390,7 @@ impl UnifiedServer {
         };
 
         #[cfg(not(feature = "dns"))]
-        let dns_config: Option<std::convert::Infallible> = None;
+        let _dns_config: Option<std::convert::Infallible> = None;
         #[cfg(not(feature = "dns"))]
         let _dns_server: Option<std::convert::Infallible> = None;
         #[cfg(not(feature = "dns"))]
@@ -1156,6 +1158,7 @@ impl UnifiedServer {
             };
             (http_config, alt_svc, main_config, mesh_config)
         };
+        let _ = &mesh_config;
 
         let mut server = HttpServer::new(
             http_addr,

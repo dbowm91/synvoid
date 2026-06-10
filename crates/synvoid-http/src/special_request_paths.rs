@@ -9,7 +9,9 @@ use http::StatusCode;
 #[cfg(feature = "mesh")]
 use http_body_util::combinators::BoxBody;
 #[cfg(feature = "mesh")]
-use http_body_util::{BodyExt, Full};
+use http_body_util::BodyExt;
+#[cfg(all(feature = "mesh", feature = "dns"))]
+use http_body_util::Full;
 #[cfg(feature = "mesh")]
 use std::convert::Infallible;
 #[cfg(feature = "mesh")]
