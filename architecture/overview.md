@@ -122,7 +122,7 @@ Client ──► TLS Termination ──► HTTP Server ──► WAF Pipeline �
 | Feature | Purpose | Default |
 |---------|---------|---------|
 | `dns` | DNS server with DNSSEC, DoT/DoH/DoQ | ✅ |
-| `mesh` | Mesh networking, DHT, Raft consensus | ✅ | See `architecture/mesh_trust_domains.md` for trust-domain classification of mesh modules.
+| `mesh` | Mesh networking, DHT, Raft consensus | ✅ | See `architecture/mesh_trust_domains.md` for trust-domain classification of mesh modules. See `CanonicalTrustReader` in `crates/synvoid-mesh/src/mesh/canonical.rs` (Iteration 8) and `architecture/mesh_trust_domains.md`.
 | `socket-handoff` | Socket transfer between processes | ✅ |
 | `erased_pool` | Type-erased HTTP client pool | ✅ |
 | `swagger-ui` | OpenAPI documentation UI | ✅ |

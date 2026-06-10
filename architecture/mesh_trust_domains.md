@@ -363,6 +363,10 @@ This iteration is complete when:
 - the review checklist exists; ✅
 - no broad code movement has occurred. ✅
 
+### Iteration 8 Implementation Seam
+
+`CanonicalTrustReader` is the first concrete canonical boundary. It is read-only and snapshot-oriented. Services and future policy code should depend on this seam instead of importing Raft internals when they need canonical trust answers.
+
 ## Follow-Up Recommendation
 
 The next pass should implement the chosen first seam only (`CanonicalTrustReader` + explicit advisory record types + snapshot freshness). Defer any module reorganization or broader movement.

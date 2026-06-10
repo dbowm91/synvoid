@@ -29,6 +29,8 @@ pub mod peer_auth;
 pub mod protocol;
 pub mod proxy;
 pub mod raft;
+// Domain: canonical. Read-only trust seam over Raft/global-node canonical state.
+pub mod canonical;
 pub mod reputation;
 pub mod security;
 pub mod security_challenge;
@@ -75,6 +77,10 @@ pub use backend::{
 };
 pub use behavioral::{BehavioralFeatures, BehavioralFingerprint};
 pub use behavioral_intel::{BehavioralConfig, BehavioralIntelligenceManager, RequestFeatures};
+pub use canonical::{
+    CanonicalFreshness, CanonicalTrustDecision, CanonicalTrustReader, CanonicalTrustReason,
+    SnapshotCanonicalTrustReader, StaticCanonicalTrustReader,
+};
 pub use cert::MeshCertManager;
 pub use cli::{MeshArgs, MeshCommand};
 pub use client_audit::{

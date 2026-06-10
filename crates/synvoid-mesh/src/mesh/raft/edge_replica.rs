@@ -343,6 +343,23 @@ impl EdgeReplicaManager {
         }
     }
 
+    /// Narrow read-only query used by CanonicalTrustReader.
+    /// Returns true iff the node_id exists in the revocation_list table.
+    /// Pure read path; does not affect metrics or freshness.
+    pub fn get_revoked_node(&self, node_id: &str) -> bool {
+        if self.cache.get(&format!("revocation:{}", node_id)).is_some() {
+            return true;
+        }
+
+        let db = self.db.lock();
+        db.query_row(
+            "SELECT 1 FROM revocation_list WHERE revoked_node_id = ?1 LIMIT 1",
+            params![node_id],
+            |_| Ok(true),
+        )
+        .unwrap_or(false)
+    }
+
     pub fn update_org_key(&self, key_id: &str, value: &[u8]) -> Result<(), rusqlite::Error> {
         let org_key: OrgPublicKey = postcard::from_bytes(value)
             .map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?;
