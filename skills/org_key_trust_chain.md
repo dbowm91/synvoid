@@ -9,20 +9,20 @@ This skill provides context for working with organization keys, quorum signature
 
 ## Key Components
 
-### 1. OrgKeyManager (`src/mesh/org_key_manager.rs`)
+### 1. OrgKeyManager (`crates/synvoid-mesh/src/mesh/org_key_manager.rs`)
 The central coordinator for the trust chain.
 - Manages local `Organization` and `OrgKey` records.
 - Publishes `OrgPublicKey` to the DHT.
 - Coordinates quorum signing with other global nodes.
 - Handles automated renewal of keys nearing expiration.
 
-### 2. OrgPublicKey (`src/mesh/organization.rs`)
+### 2. OrgPublicKey (`crates/synvoid-mesh/src/mesh/organization.rs`)
 The public representation of an organization's identity.
 - Contains the Ed25519 public key.
 - Carries `quorum_signatures` from multiple Global Nodes.
 - Validated via `verify_quorum()` using authorized global keys.
 
-### 3. MemberCertificate (`src/mesh/organization.rs`)
+### 3. MemberCertificate (`crates/synvoid-mesh/src/mesh/organization.rs`)
 Short-lived certificates issued by organizations to individual nodes.
 - Signed by an `OrgKey`.
 - Bound to a specific `mesh_id`.

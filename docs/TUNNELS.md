@@ -33,8 +33,8 @@ dedicated_worker = true
 max_concurrent_streams = 100
 
 # TLS certificates
-cert_path = "/etc/synvoidwaf/certs/tunnel.crt"
-key_path = "/etc/synvoidwaf/certs/tunnel.key"
+cert_path = "/etc/synvoid/certs/tunnel.crt"
+key_path = "/etc/synvoid/certs/tunnel.key"
 auto_generate_certs = true
 cert_domain = "tunnel.synvoid.local"
 

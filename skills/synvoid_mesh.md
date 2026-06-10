@@ -19,7 +19,7 @@ SynVoid uses a mesh network architecture with DHT-based service discovery for mu
 All node types now require Ed25519 signature verification:
 
 ```rust
-// src/mesh/peer_auth.rs
+// crates/synvoid-mesh/src/mesh/peer_auth.rs
 pub fn validate_peer_role(
     role: &MeshNodeRole,
     authorized_global_pubkeys: &[String],
@@ -95,21 +95,21 @@ Client → Edge: GET http://example.com/api
 
 ### 2. Extract Upstream ID
 ```rust
-// src/mesh/proxy.rs:extract_upstream_id()
+// crates/synvoid-mesh/src/mesh/proxy.rs:extract_upstream_id()
 upstream_id = format!("http://{}:{}", host, port)
 // Result: "http://example.com:80"
 ```
 
 ### 3. Query for Providers
 ```rust
-// src/mesh/proxy.rs:get_providers_for_upstream()
+// crates/synvoid-mesh/src/mesh/proxy.rs:get_providers_for_upstream()
 transport.send_route_query(upstream_id)
 // Returns: Vec<ProviderInfo> from DHT
 ```
 
 ### 4. DHT Lookup
 ```rust
-// src/mesh/topology.rs:find_verified_upstreams_for_site()
+// crates/synvoid-mesh/src/mesh/topology.rs:find_verified_upstreams_for_site()
 record_store.get_all_records()
     .filter(|r| r.key.starts_with("verified_upstream:"))
     .filter(|r| r.value.upstream_id == site)
@@ -118,7 +118,7 @@ record_store.get_all_records()
 
 ### 5. Weighted Random Selection
 ```rust
-// src/mesh/proxy.rs:weighted_shuffle_providers()
+// crates/synvoid-mesh/src/mesh/proxy.rs:weighted_shuffle_providers()
 // Providers shuffled by score for load balancing
 // Higher score = more likely to be selected first
 ```
@@ -131,7 +131,7 @@ transport.proxy_http_request(peer_node_id, &target_url, req)
 ## VerifiedUpstream Structure
 
 ```rust
-// src/mesh/dht/mod.rs
+// crates/synvoid-mesh/src/mesh/dht/mod.rs
 pub struct VerifiedUpstream {
     pub upstream_id: String,        // "http://example.com:80"
     pub origin_node_id: String,     // Which origin has this
@@ -238,7 +238,7 @@ Node claims capability → Global verifies → Global signs attestation → Stor
 ### Verification Functions
 
 ```rust
-// src/mesh/transport.rs
+// crates/synvoid-mesh/src/mesh/transport.rs
 
 // Global node attests a node's capability
 attest_capability(node_id, capability)
@@ -257,10 +257,10 @@ verify_capability_attestation(attestation)
 
 | File | Purpose |
 |------|---------|
-| `src/mesh/dht/capability_attestation.rs` | Attestation struct and verification |
-| `src/mesh/dht/capability_access.rs` | `CapabilityAccessVerifier` for DHT write authorization |
-| `src/mesh/dht/keys.rs` | `CapabilityAttestation` DHT key type |
-| `src/mesh/transport.rs` | `attest_capability()`, `verify_node_capability()` |
+| `crates/synvoid-mesh/src/mesh/dht/capability_attestation.rs` | Attestation struct and verification |
+| `crates/synvoid-mesh/src/mesh/dht/capability_access.rs` | `CapabilityAccessVerifier` for DHT write authorization |
+| `crates/synvoid-mesh/src/mesh/dht/keys.rs` | `CapabilityAttestation` DHT key type |
+| `crates/synvoid-mesh/src/mesh/transport.rs` | `attest_capability()`, `verify_node_capability()` |
 
 **DHT Write Authorization**: `CapabilityAccessVerifier` is called in `store_record()` before allowing a node to store a capability-gated record (YARA rules, ThreatIntel indicators). Use `RecordStoreManager::set_capability_verifier()` to enable.
 
@@ -282,12 +282,12 @@ Edge nodes can optionally be attested by global nodes for enhanced trust:
 
 1. Global node creates `EdgeAttestation` record in DHT at `edge_attestation:{node_id}`
 2. Attestation signed by global node's Ed25519 key over `edge:{node_id}:{global_node_id}:{attested_at}`
-3. Other nodes verify via `validate_edge_node_with_attestation()` in `src/mesh/peer_auth.rs`
+3. Other nodes verify via `validate_edge_node_with_attestation()` in `crates/synvoid-mesh/src/mesh/peer_auth.rs`
 
 ### PoW Validation
 
 ```rust
-// src/mesh/peer_auth.rs
+// crates/synvoid-mesh/src/mesh/peer_auth.rs
 
 validate_edge_node_pow(pow_public_key, pow_nonce) {
     // 1. Derive node_id from pow_public_key using NodeId::from_public_key()
@@ -305,9 +305,9 @@ validate_edge_node_pow(pow_public_key, pow_nonce) {
 
 | File | Purpose |
 |------|---------|
-| `src/mesh/peer_auth.rs` | `validate_edge_node_pow()`, `validate_peer_role()` with PoW + certificate + Raft attestation params |
-| `src/mesh/transport.rs` | Pass `pow_nonce`, `pow_public_key`, `member_certificate`, `org_public_key`, `raft_attestation` to validation |
-| `src/mesh/discovery.rs` | Pass PoW credentials and attestation from peer hello |
+| `crates/synvoid-mesh/src/mesh/peer_auth.rs` | `validate_edge_node_pow()`, `validate_peer_role()` with PoW + certificate + Raft attestation params |
+| `crates/synvoid-mesh/src/mesh/transport.rs` | Pass `pow_nonce`, `pow_public_key`, `member_certificate`, `org_public_key`, `raft_attestation` to validation |
+| `crates/synvoid-mesh/src/mesh/discovery.rs` | Pass PoW credentials and attestation from peer hello |
 
 ## Multi-Genesis Key Support (W2.2)
 
@@ -316,7 +316,7 @@ The system supports multiple authorized genesis keys for key rotation and disast
 ### Config Structure
 
 ```rust
-// src/mesh/config.rs
+// crates/synvoid-mesh/src/mesh/config.rs
 pub struct GenesisKeyConfig {
     pub authorized_genesis_keys: Vec<String>,  // Multiple authorized public keys
     pub previous_genesis_key_base64: Option<String>,  // For rotation
@@ -328,7 +328,7 @@ pub struct GenesisKeyConfig {
 ### Authorization Methods
 
 ```rust
-// src/mesh/config_identity.rs
+// crates/synvoid-mesh/src/mesh/config_identity.rs
 
 // Check if genesis key is authorized
 is_genesis_key_authorized(public_key: &str) -> bool
@@ -370,20 +370,20 @@ RUST_LOG=debug cargo run -- --mesh-id node-1
 
 | File | Purpose |
 |------|---------|
-| `src/mesh/proxy.rs` | Route requests, extract upstream_id |
-| `src/mesh/transport.rs` | Announce upstreams, proxy HTTP |
-| `src/mesh/topology.rs` | Local upstream storage, DHT queries |
-| `src/mesh/dht/keys.rs` | DHT key type definitions |
-| `src/mesh/dht/mod.rs` | DHT value structures |
-| `src/mesh/transport_org.rs` | Handle registration requests |
-| `src/mesh/transport_peer.rs` | Peer message handling |
-| `src/mesh/verification.rs` | Reachability tracking |
+| `crates/synvoid-mesh/src/mesh/proxy.rs` | Route requests, extract upstream_id |
+| `crates/synvoid-mesh/src/mesh/transport.rs` | Announce upstreams, proxy HTTP |
+| `crates/synvoid-mesh/src/mesh/topology.rs` | Local upstream storage, DHT queries |
+| `crates/synvoid-mesh/src/mesh/dht/keys.rs` | DHT key type definitions |
+| `crates/synvoid-mesh/src/mesh/dht/mod.rs` | DHT value structures |
+| `crates/synvoid-mesh/src/mesh/transport_org.rs` | Handle registration requests |
+| `crates/synvoid-mesh/src/mesh/transport_peer.rs` | Peer message handling |
+| `crates/synvoid-mesh/src/mesh/verification.rs` | Reachability tracking |
 
 
 ## TierKey Encryption
 
 
-- `src/mesh/tier_key_encryption.rs` - `TierKeyEncryption` struct with AES-256-GCM
+- `crates/synvoid-mesh/src/mesh/tier_key_encryption.rs` - `TierKeyEncryption` struct with AES-256-GCM
 - Master key derived from `node_identity.private_key` via HKDF("synvoid-tier-key-master")
 - `handle_tier_key_announce` encrypts before DHT storage on global nodes
 - Non-global nodes skip encryption (they don't store tier keys in DHT)
@@ -441,9 +441,9 @@ $ synvoid
 - `GlobalNodeAnnounce(UpdateKeyExchange)` - verified with node's own public key (self-signed)
 
 **Files**:
-- `src/mesh/config_identity.rs` - `derive_signing_key_from_genesis()`
-- `src/mesh/config.rs` - `genesis_key_base64` field
-- `src/mesh/config_mesh.rs` - `load_node_identity()` derives from genesis
+- `crates/synvoid-mesh/src/mesh/config_identity.rs` - `derive_signing_key_from_genesis()`
+- `crates/synvoid-mesh/src/mesh/config.rs` - `genesis_key_base64` field
+- `crates/synvoid-mesh/src/mesh/config_mesh.rs` - `load_node_identity()` derives from genesis
 - `src/config/main.rs` - calls `load_node_identity()` during config load
 - `src/main.rs` - `--genesis` and `--show-node-info` flags
 
@@ -453,7 +453,7 @@ $ synvoid
 
 **Key Components**:
 
-1. **VerificationTaskManager** (`src/mesh/verification.rs`):
+1. **VerificationTaskManager** (`crates/synvoid-mesh/src/mesh/verification.rs`):
    - `report_reachability()` - Called when edge detects failure
    - `initiate_verification_if_needed()` - Creates verification task
    - `process_pending_tasks()` - Background task processing
@@ -461,11 +461,11 @@ $ synvoid
    - `mark_task_in_progress()` - Updates task with selected node IDs
    - `record_verification_result()` - Records verification response
 
-2. **Handlers** (`src/mesh/transport_peer.rs`):
+2. **Handlers** (`crates/synvoid-mesh/src/mesh/transport_peer.rs`):
    - `handle_upstream_verification_query()` - Receives query, verifies TCP reachability, responds
    - `handle_upstream_verification_response()` - Receives response, calls record_verification_result()
 
-3. **Query Dispatching** (`src/mesh/transports/manager.rs`):
+3. **Query Dispatching** (`crates/synvoid-mesh/src/mesh/transports/manager.rs`):
    - `start_verification_processing()` - Background task on global nodes
    - Runs every 30 seconds
    - Selects 3 random peers (config.verification_nodes_count)
@@ -509,22 +509,22 @@ Edge reports failure → report_reachability()
 
 **Solution Implemented**:
 
-1. **QUIC server accept loop** (`src/mesh/transport.rs`):
+1. **QUIC server accept loop** (`crates/synvoid-mesh/src/mesh/transport.rs`):
    - `MeshTransport::start()` calls `runtime.start_server()` to accept incoming connections
    - `mesh_accept_loop()` handles incoming connections
    - `handle_incoming_peer_connection()` performs Hello/HelloAck handshake
 
-2. **HTTP stream detection** (`src/mesh/transport_peer.rs`):
+2. **HTTP stream detection** (`crates/synvoid-mesh/src/mesh/transport_peer.rs`):
    - `handle_peer_message` detects HTTP vs mesh protocol by first byte
    - HTTP method indicators: 'G', 'P', 'H', 'D', 'O', 'T', 'C'
    - Routes HTTP to `handle_http_proxy_stream`
 
-3. **HTTP forwarding to local backends** (`src/mesh/transport_peer.rs`):
+3. **HTTP forwarding to local backends** (`crates/synvoid-mesh/src/mesh/transport_peer.rs`):
    - Parses Host header, looks up `local_upstreams`
    - Connects to backend via TCP, forwards raw HTTP bytes
    - Streams response back on QUIC send_stream
 
-4. **On-demand connection** (`src/mesh/transport.rs`):
+4. **On-demand connection** (`crates/synvoid-mesh/src/mesh/transport.rs`):
    - `proxy_http_request` attempts connection if peer not in `peer_connections`
    - Looks up peer address from topology
 
@@ -591,8 +591,8 @@ GLOBAL NODE updates rules
 **Files**:
 | File | Purpose |
 |------|---------|
-| `src/mesh/yara_rules.rs` | `publish_rules_to_dht()`, `sync_from_dht()` |
-| `src/mesh/dht/keys.rs` | `YaraRuleContent`, `YaraRulesManifest` key types |
+| `crates/synvoid-mesh/src/mesh/yara_rules.rs` | `publish_rules_to_dht()`, `sync_from_dht()` |
+| `crates/synvoid-mesh/src/mesh/dht/keys.rs` | `YaraRuleContent`, `YaraRulesManifest` key types |
 
 **Sync Mechanism**:
 - `sync_from_dht()` replaces `send_sync_request_to_global()`
@@ -644,7 +644,7 @@ ThreatIntel indicators are signed using Ed25519. The signature content format is
 
 ### DHT Churn Handling (M2.1)
 
-**Location**: `src/mesh/dht/routing/manager.rs:483-557`, `src/mesh/transport.rs`
+**Location**: `crates/synvoid-mesh/src/mesh/dht/routing/manager.rs:483-557`, `crates/synvoid-mesh/src/mesh/transport.rs`
 
 **Problem**: `pending_pings` HashMap was populated but no background task sent PINGs to peers.
 
@@ -672,7 +672,7 @@ async fn ping_peers_loop(&self, transport: Arc<dyn PingTransport>) {
 
 ### Bucket Refresh (M2.2)
 
-**Location**: `src/mesh/dht/routing/manager.rs:455-492`, `src/mesh/dht/routing/node_id.rs`
+**Location**: `crates/synvoid-mesh/src/mesh/dht/routing/manager.rs:455-492`, `crates/synvoid-mesh/src/mesh/dht/routing/node_id.rs`
 
 **Problem**: `BUCKET_REFRESH_INTERVAL = 60` was defined but never triggered.
 
@@ -695,7 +695,7 @@ fn get_sparse_bucket_indices(&self, k: usize) -> Vec<usize> {
 
 ### find_closest() Fix (M2.3)
 
-**Location**: `src/mesh/dht/routing/table.rs:274`
+**Location**: `crates/synvoid-mesh/src/mesh/dht/routing/table.rs:274`
 
 **Problem**: Algorithm broke early when K candidates found, potentially missing closer peers in unscanned buckets.
 
@@ -705,7 +705,7 @@ fn get_sparse_bucket_indices(&self, k: usize) -> Vec<usize> {
 
 ### Edge Resync Multi-Homed (M2.4)
 
-**Location**: `src/mesh/transport_dht.rs:386-397`
+**Location**: `crates/synvoid-mesh/src/mesh/transport_dht.rs:386-397`
 
 **Problem**: Resync only tried `global_nodes[0]` with no fallback.
 
@@ -727,7 +727,7 @@ if all_failed {
 
 ### Access Control Enforcement (M3.1)
 
-**Location**: `src/mesh/dht/record_store_crud.rs:79-90`
+**Location**: `crates/synvoid-mesh/src/mesh/dht/record_store_crud.rs:79-90`
 
 **Problem**: `DhtAccessControl::require_global_node()` was never invoked.
 
@@ -751,7 +751,7 @@ if dht_key.is_privileged() {
 
 **Problem**: Three different key formats were used inconsistently: `IpBlock:1.2.3.4`, `1.2.3.4:IpBlock`, `threat_indicator:1.2.3.4:IpBlock`.
 
-**Solution**: Added `make_indicator_key()` helper at `src/mesh/threat_intel.rs:25-27`:
+**Solution**: Added `make_indicator_key()` helper at `crates/synvoid-mesh/src/mesh/threat_intel.rs:25-27`:
 ```rust
 fn make_indicator_key(ip: &str, threat_type: ThreatType) -> String {
     format!("threat_indicator:{}:{:?}", ip, threat_type)
@@ -769,13 +769,13 @@ All local storage now uses the composite key format `threat_indicator:{ip}:{thre
 
 **Problem**: `apply_periodic_decay()` existed in `ReputationManager` but was never called.
 
-**Solution**: Added call to `reputation.apply_periodic_decay()` in `start_background_tasks()` loop at `src/mesh/threat_intel.rs:1590`.
+**Solution**: Added call to `reputation.apply_periodic_decay()` in `start_background_tasks()` loop at `crates/synvoid-mesh/src/mesh/threat_intel.rs:1590`.
 
 ### TOFU Expiry Reduced (M16.13)
 
 **Problem**: TOFU certificate fingerprints expired after 90 days.
 
-**Solution**: Reduced `MAX_TOOF_FINGERPRINT_AGE_DAYS` from 90 to 30 days at `src/mesh/cert.rs:81-82`.
+**Solution**: Reduced `MAX_TOOF_FINGERPRINT_AGE_DAYS` from 90 to 30 days at `crates/synvoid-mesh/src/mesh/cert.rs:81-82`.
 
 ---
 
@@ -804,7 +804,7 @@ The mesh supports ACME HTTP-01 challenges across edge/origin topologies. When an
 **Path A — Direct HTTP server** (`src/http/server.rs:551-579`):
 The edge node's own HTTP server handles ACME requests. This path serves requests that arrive via the normal HTTP/TCP flow (ACME server → edge node directly).
 
-**Path B — Mesh QUIC stream** (`src/mesh/transport_peer.rs:2345-2366`):
+**Path B — Mesh QUIC stream** (`crates/synvoid-mesh/src/mesh/transport_peer.rs:2345-2366`):
 The edge node's mesh accept loop receives QUIC streams from global nodes. When the stream contains an HTTP request with `Host: origin-host`, `handle_http_proxy_stream()` now checks for ACME paths first before attempting backend proxy.
 
 ### Why Both Paths?
@@ -828,11 +828,11 @@ The challenge store on the edge must be populated BEFORE the ACME server probes.
 
 | File | Line | Purpose |
 |------|------|---------|
-| `src/mesh/transport.rs` | 478-491 | `store_http01_challenge()` stores to LRU cache |
-| `src/mesh/transport.rs` | 493-497 | `get_http01_challenge()` retrieves (dns-gated) |
-| `src/mesh/transport_peer.rs` | 2345-2366 | ACME path check in proxy stream handler |
+| `crates/synvoid-mesh/src/mesh/transport.rs` | 478-491 | `store_http01_challenge()` stores to LRU cache |
+| `crates/synvoid-mesh/src/mesh/transport.rs` | 493-497 | `get_http01_challenge()` retrieves (dns-gated) |
+| `crates/synvoid-mesh/src/mesh/transport_peer.rs` | 2345-2366 | ACME path check in proxy stream handler |
 | `src/http/server.rs` | 551-579 | Direct HTTP server challenge serving |
-| `src/mesh/transport_peer.rs` | 1870-1884 | Receiving `UpstreamOwnershipChallenge` from mesh |
+| `crates/synvoid-mesh/src/mesh/transport_peer.rs` | 1870-1884 | Receiving `UpstreamOwnershipChallenge` from mesh |
 
 ---
 
@@ -840,7 +840,7 @@ The challenge store on the edge must be populated BEFORE the ACME server probes.
 
 ### Overview
 
-Origin nodes can now serve serverless functions over mesh QUIC connections. The `handle_serverless_proxy_stream()` function (`src/mesh/transport_peer.rs:2884-2992`) handles serverless invocations.
+Origin nodes can now serve serverless functions over mesh QUIC connections. The `handle_serverless_proxy_stream()` function (`crates/synvoid-mesh/src/mesh/transport_peer.rs:2884-2992`) handles serverless invocations.
 
 ### Routing Flow
 
@@ -872,7 +872,7 @@ Returns WASM response as HTTP response
 
 ### Overview
 
-DHT quorum supports two modes via `QuorumMode` in `src/mesh/dht/quorum.rs`:
+DHT quorum supports two modes via `QuorumMode` in `crates/synvoid-mesh/src/mesh/dht/quorum.rs`:
 
 | Mode | Quorum Calculation | Use Case |
 |------|--------------------|----------|
@@ -900,9 +900,9 @@ let config = RecordStoreConfig {
 
 | File | Purpose |
 |------|---------|
-| `src/mesh/dht/quorum.rs` | `QuorumMode`, `select_regional_nodes()`, `GlobalNodeInfo` |
-| `src/mesh/dht/record_store.rs` | `RecordStoreConfig` regional quorum fields |
-| `src/mesh/dht/record_store_message.rs` | `start_quorum_request()` regional node selection |
+| `crates/synvoid-mesh/src/mesh/dht/quorum.rs` | `QuorumMode`, `select_regional_nodes()`, `GlobalNodeInfo` |
+| `crates/synvoid-mesh/src/mesh/dht/record_store.rs` | `RecordStoreConfig` regional quorum fields |
+| `crates/synvoid-mesh/src/mesh/dht/record_store_message.rs` | `start_quorum_request()` regional node selection |
 
 ### Testing Verification
 
@@ -940,7 +940,7 @@ Configured in `DhtAccessControl::global_signature_required_keys`.
 ### Key APIs
 
 ```rust
-// Verify quorum proof (in src/mesh/dht/signed.rs)
+// Verify quorum proof (in crates/synvoid-mesh/src/mesh/dht/signed.rs)
 use crate::mesh::dht::signed::{verify_quorum_proof, MIN_QUORUM_PROOF_SIGNATURES};
 
 // Check if namespace requires proof (in DhtAccessControl)
@@ -965,10 +965,10 @@ let record = DhtRecord {
 
 | File | Purpose |
 |------|---------|
-| `src/mesh/protocol.rs` | `DhtRecord.quorum_proof` field, `QuorumSignatureProto` |
-| `src/mesh/dht/signed.rs` | `verify_quorum_proof()`, `MIN_QUORUM_PROOF_SIGNATURES` |
-| `src/mesh/dht/record_store_crud.rs` | Quorum-proof enforcement in `store_record_global()`, `apply_sync()` |
-| `src/mesh/dht/record_store_message.rs` | `commit_record_after_quorum()` attaches proof, `handle_record_commit()` verifies |
+| `crates/synvoid-mesh/src/mesh/protocol.rs` | `DhtRecord.quorum_proof` field, `QuorumSignatureProto` |
+| `crates/synvoid-mesh/src/mesh/dht/signed.rs` | `verify_quorum_proof()`, `MIN_QUORUM_PROOF_SIGNATURES` |
+| `crates/synvoid-mesh/src/mesh/dht/record_store_crud.rs` | Quorum-proof enforcement in `store_record_global()`, `apply_sync()` |
+| `crates/synvoid-mesh/src/mesh/dht/record_store_message.rs` | `commit_record_after_quorum()` attaches proof, `handle_record_commit()` verifies |
 
 ---
 

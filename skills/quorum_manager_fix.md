@@ -90,8 +90,8 @@ pub struct QuorumRequest {
 
 ## Files Modified
 
-- `src/mesh/dht/quorum.rs` — Changed oneshot to send `Result`, added `raft_write_completed`/`raft_write_success` fields to `QuorumRequest`, updated `is_request_complete()`
-- `src/mesh/dht/record_store_message.rs:1319-1345` — `check_quorum_completion()` now checks for Raft write failure
+- `crates/synvoid-mesh/src/mesh/dht/quorum.rs` — Changed oneshot to send `Result`, added `raft_write_completed`/`raft_write_success` fields to `QuorumRequest`, updated `is_request_complete()`
+- `crates/synvoid-mesh/src/mesh/dht/record_store_message.rs:1319-1345` — `check_quorum_completion()` now checks for Raft write failure
 
 ## Testing
 
@@ -100,4 +100,4 @@ pub struct QuorumRequest {
 
 ## Related
 
-See `src/mesh/AGENTS.override.md` for more on Raft integration and quorum patterns.
+See `crates/synvoid-mesh/src/mesh/AGENTS.override.md` for more on Raft integration and quorum patterns.

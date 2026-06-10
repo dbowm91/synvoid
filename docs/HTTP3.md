@@ -34,8 +34,8 @@ trusted_proxies = ["127.0.0.1", "::1"]
 
 [tls]
 enabled = true
-cert_path = "/etc/synvoidwaf/certs/server.crt"
-key_path = "/etc/synvoidwaf/certs/server.key"
+cert_path = "/etc/synvoid/certs/server.crt"
+key_path = "/etc/synvoid/certs/server.key"
 port = 443
 prefer_post_quantum = true  # Enable post-quantum key exchange
 

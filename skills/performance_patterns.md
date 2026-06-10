@@ -88,7 +88,7 @@ if pending_announces.len() >= MAX {
 pending_announces.push_back(record);
 ```
 
-**Location**: `src/mesh/dht/record_store.rs:208`
+**Location**: `crates/synvoid-mesh/src/mesh/dht/record_store.rs:208`
 
 ---
 
@@ -112,7 +112,7 @@ let bytes = crate::serialization::serialize(&MyRecord { id: 1, data: "foo".into(
 - **Faster serialization/deserialization** (postcard vs string-based JSON)
 - **Zero-copy support** via `rkyv` for read-only access in high-performance paths
 
-**Location**: `src/mesh/dht/record_store_dns.rs`, `src/mesh/dht/record_store_crud.rs`
+**Location**: `crates/synvoid-mesh/src/mesh/dht/record_store_dns.rs`, `crates/synvoid-mesh/src/mesh/dht/record_store_crud.rs`
 
 ---
 
@@ -141,7 +141,7 @@ let idle_secs = now.saturating_sub(state.last_seen);
 - **Consistent**: Comparisons are reliable across different processes via safe_unix_timestamp()
 - **Memory**: `u64` is smaller and faster to compare than `Instant` wrapper
 
-**Location**: `src/mesh/topology/types.rs`, `src/mesh/dht/mod.rs`
+**Location**: `crates/synvoid-mesh/src/mesh/topology/types.rs`, `crates/synvoid-mesh/src/mesh/dht/mod.rs`
 
 ---
 
@@ -381,7 +381,7 @@ impl ProxyCache {
 
 ### Concurrent HTTP Proxy with First-Success-Wins
 
-**Location**: `src/mesh/proxy.rs:785-853`
+**Location**: `crates/synvoid-mesh/src/mesh/proxy.rs:785-853`
 
 **Issue**: Serial provider requests - waited for each to fail before trying next.
 
@@ -443,7 +443,7 @@ async fn broadcast_to_mesh(&self, message: MeshMessage) {
 
 ### Background Cleanup for Unbounded Trackers
 
-**Location**: `src/mesh/topology.rs:1528-1543`
+**Location**: `crates/synvoid-mesh/src/mesh/topology.rs:1528-1543`
 
 **Issue**: `cleanup_stale_metrics()` defined but never called.
 
@@ -498,7 +498,7 @@ impl SiteMetricsCollector {
 
 ### Threat Intel Indicators Bounded with VecDeque
 
-**Location**: `src/mesh/threat_intel.rs:153-154`
+**Location**: `crates/synvoid-mesh/src/mesh/threat_intel.rs:153-154`
 
 **Issue**: `pending_announces` Vec grew unbounded.
 
@@ -525,7 +525,7 @@ impl ThreatIntelState {
 
 ### YARA Submissions TTL Cleanup
 
-**Location**: `src/mesh/yara_rules.rs:235-236`
+**Location**: `crates/synvoid-mesh/src/mesh/yara_rules.rs:235-236`
 
 **Issue**: `submissions` HashMaps never cleaned up.
 
@@ -598,7 +598,7 @@ impl NonceCache {
 
 ### Atomic Connection Tracker Updates
 
-**Location**: `src/overseer/connection_tracker.rs:79-98`
+**Location**: `src/supervisor/connection_tracker.rs:79-98`
 
 **Issue**: Non-atomic update of worker counts and totals.
 
@@ -685,7 +685,7 @@ crate::metrics::record_stall_end(); // On timeout
 
 ### Global Node Liveness Monitoring
 
-**Location**: `src/metrics/mod.rs:87-89,535-549`, `src/mesh/topology.rs:1559-1617`
+**Location**: `src/metrics/mod.rs:87-89,535-549`, `crates/synvoid-mesh/src/mesh/topology.rs:1559-1617`
 
 **Issue**: Global node heartbeats exist but no alerting when quorum goes offline.
 
@@ -1078,7 +1078,7 @@ Bytes::from(accumulated.freeze())  // O(1) conversion
 
 ## DHT RoutingTable LRU Cache
 
-**Location**: `src/mesh/dht/routing/table.rs`
+**Location**: `crates/synvoid-mesh/src/mesh/dht/routing/table.rs`
 
 **Issue**: `find_closest` was O(k * bucket_count) with repeated bucket iteration.
 
@@ -1345,6 +1345,6 @@ impl Drop for PooledBuf {
 
 ### Location
 
-`src/buffer/pool.rs:75-165` (TreiberStack)
-`src/buffer/pool.rs:187-264` (ThreadLocalCache)
-`src/buffer/pool.rs:385-435` (acquire_inner with TLS fast path)
+`crates/synvoid-utils/src/buffer/pool.rs:75-165` (TreiberStack)
+`crates/synvoid-utils/src/buffer/pool.rs:187-264` (ThreadLocalCache)
+`crates/synvoid-utils/src/buffer/pool.rs:385-435` (acquire_inner with TLS fast path)

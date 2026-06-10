@@ -21,13 +21,13 @@ Generate a secure random token using the built-in CLI command:
 
 ```bash
 # Generate a new token and save it to config/main.toml
-./target/release/synvoidwafwaf --generatenewtoken
+./target/release/synvoid --generatenewtoken
 
 # Generate and print a token (does not save to config)
-./target/release/synvoidwafwaf --generatetoken
+./target/release/synvoid --generatetoken
 
 # Generate with custom config path
-./target/release/synvoidwafwaf --generatenewtoken --config-path /etc/synvoidwafwaf
+./target/release/synvoid --generatenewtoken --config-path /etc/synvoid
 ```
 
 Alternatively, generate manually:
@@ -60,16 +60,16 @@ iptables -A INPUT -p tcp --dport 9090 -j DROP
 ### 3. File Permissions
 
 ```bash
-# Create synvoidwaf user
-useradd -r -s /bin/false synvoidwafwaf
+# Create synvoid user
+useradd -r -s /bin/false synvoid
 
 # Set permissions
-chown -R synvoidwaf:synvoidwaf /opt/synvoidwaf
-chown -R synvoidwaf:synvoidwaf /var/log/synvoidwafwaf
-chown -R synvoidwaf:synvoidwaf /etc/synvoidwafwaf
+chown -R synvoid:synvoid /opt/synvoid
+chown -R synvoid:synvoid /var/log/synvoid
+chown -R synvoid:synvoid /etc/synvoid
 
 # Restrict config access
-chmod 600 /etc/synvoidwafwaf/main.toml
+chmod 600 /etc/synvoid/main.toml
 ```
 
 ### 4. Secrets Management
@@ -82,7 +82,7 @@ export SYNVOID_ADMIN_TOKEN=$(cat /run/secrets/admin_token)
 
 # In systemd service
 [Service]
-EnvironmentFile=/etc/synvoidwafwaf/secrets.env
+EnvironmentFile=/etc/synvoid/secrets.env
 ```
 
 ## Performance Tuning
@@ -91,15 +91,15 @@ EnvironmentFile=/etc/synvoidwafwaf/secrets.env
 
 ```bash
 # /etc/security/limits.conf
-synvoidwaf soft nofile 65536
-synvoidwaf hard nofile 65536
-synvoidwaf soft nproc 65535
-synvoidwaf hard nproc 65535
+synvoid soft nofile 65536
+synvoid hard nofile 65536
+synvoid soft nproc 65535
+synvoid hard nproc 65535
 ```
 
 ### Kernel Parameters
 
-Create `/etc/sysctl.d/99-synvoidwaf.conf`:
+Create `/etc/sysctl.d/99-synvoid.conf`:
 
 ```ini
 # Network buffer sizes
@@ -134,7 +134,7 @@ vm.swappiness = 1
 
 Apply changes:
 ```bash
-sysctl -p /etc/sysctl.d/99-synvoidwaf.conf
+sysctl -p /etc/sysctl.d/99-synvoid.conf
 ```
 
 ### Memory Configuration
@@ -163,7 +163,7 @@ Use a load balancer (HAProxy, nginx, cloud LB) with health checks:
 
 ```yaml
 # HAProxy example
-backend synvoidwaf
+backend synvoid
     option httpchk GET /health
     http-check expect status 200
     server waf1 10.0.1.10:8080 check
@@ -175,7 +175,7 @@ backend synvoidwaf
 If using challenges, configure sticky sessions:
 
 ```haproxy
-backend synvoidwaf
+backend synvoid
     balance source
     stick-table type ip size 1m expire 1h
     stick on src
@@ -187,10 +187,10 @@ backend synvoidwaf
 
 ```yaml
 groups:
-  - name: synvoidwaf
+  - name: synvoid
     rules:
       - alert: synvoidHighAttackRate
-        expr: rate(synvoidwaf_attack_detected_total[5m]) > 100
+        expr: rate(synvoid_attack_detected_total[5m]) > 100
         for: 2m
         labels:
           severity: warning
@@ -198,7 +198,7 @@ groups:
           summary: "High attack detection rate"
 
       - alert: synvoidBlackholeActive
-        expr: synvoidwaf_blackhole_active == 1
+        expr: synvoid_blackhole_active == 1
         for: 1m
         labels:
           severity: critical
@@ -206,7 +206,7 @@ groups:
           summary: "WAF in blackhole mode - possible DDoS"
 
       - alert: synvoidHighErrorRate
-        expr: rate(synvoidwaf_requests_upstream_error_total[5m]) / rate(synvoidwaf_requests_proxied_total[5m]) > 0.1
+        expr: rate(synvoid_requests_upstream_error_total[5m]) / rate(synvoid_requests_proxied_total[5m]) > 0.1
         for: 5m
         labels:
           severity: warning
@@ -214,7 +214,7 @@ groups:
           summary: "High upstream error rate"
 
       - alert: synvoidHalfOpenConnections
-        expr: synvoidwaf_syn_flood_half_open_count > 500
+        expr: synvoid_syn_flood_half_open_count > 500
         for: 2m
         labels:
           severity: warning
@@ -236,10 +236,10 @@ Key panels to include:
 
 ### Log Rotation
 
-Configure log rotation in `/etc/logrotate.d/synvoidwaf`:
+Configure log rotation in `/etc/logrotate.d/synvoid`:
 
 ```
-/var/log/synvoidwaf/*.log {
+/var/log/synvoid/*.log {
     daily
     rotate 7
     compress
@@ -262,7 +262,7 @@ Ship logs to centralized logging:
 filebeat.inputs:
   - type: log
     paths:
-      - /var/log/synvoidwaf/access.log
+      - /var/log/synvoid/access.log
     json.keys_under_root: true
 
 output.elasticsearch:

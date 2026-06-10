@@ -8,10 +8,10 @@ Hybrid signatures combine classical Ed25519 with post-quantum ML-DSA-44 to provi
 
 ## Key Files
 
-- `src/mesh/hybrid_signature.rs` - Core `HybridSignature` type and serialization
-- `src/mesh/ml_dsa.rs` - `MeshMlDsaSigner` wrapper around pqc crate
-- `src/mesh/protocol.rs` - Extended `MeshMessageSigner` with hybrid methods
-- `src/mesh/config.rs` - ML-DSA key configuration in `GlobalNodeConfig`
+- `crates/synvoid-mesh/src/mesh/hybrid_signature.rs` - Core `HybridSignature` type and serialization
+- `crates/synvoid-mesh/src/mesh/ml_dsa.rs` - `MeshMlDsaSigner` wrapper around pqc crate
+- `crates/synvoid-mesh/src/mesh/protocol.rs` - Extended `MeshMessageSigner` with hybrid methods
+- `crates/synvoid-mesh/src/mesh/config.rs` - ML-DSA key configuration in `GlobalNodeConfig`
 
 ## Usage
 

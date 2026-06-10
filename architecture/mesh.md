@@ -1,6 +1,6 @@
 # Mesh Module Architecture
 
-The Mesh module (`src/mesh/`) is SynVoid's peer-to-peer networking subsystem that provides encrypted inter-node communication, DHT-based service discovery, organizational multi-tenancy, post-quantum cryptography, and distributed DNS with DNSSEC support. It is the core infrastructure enabling SynVoid's global control plane and multi-tenant routing mesh.
+The Mesh module (`crates/synvoid-mesh/src/mesh/`, re-exported via `src/mesh/mod.rs`) is SynVoid's peer-to-peer networking subsystem that provides encrypted inter-node communication, DHT-based service discovery, organizational multi-tenancy, post-quantum cryptography, and distributed DNS with DNSSEC support. It is the core infrastructure enabling SynVoid's global control plane and multi-tenant routing mesh.
 
 ---
 
@@ -21,12 +21,12 @@ The Mesh module is responsible for:
 
 ## 2. Module Structure
 
-The module root is `src/mesh/mod.rs`, which declares all public submodules and re-exports key types. The module is organized into the following major areas:
+The module root is `crates/synvoid-mesh/src/mesh/mod.rs` (re-exported via `src/mesh/mod.rs`), which declares all public submodules and re-exports key types. The module is organized into the following major areas:
 
-### Core Exports (from `src/mesh/mod.rs`)
+### Core Exports (from `crates/synvoid-mesh/src/mesh/mod.rs`)
 
 ```
-src/mesh/
+crates/synvoid-mesh/src/mesh/
 ├── mod.rs               # Submodule declarations + public re-exports
 ├── transport.rs         # Main QUIC transport (MeshTransport, MeshPeerConnection)
 ├── transports/          # Transport abstraction layer (MeshTransportManager, QuicMeshTransport)
@@ -70,10 +70,10 @@ src/mesh/
 ├── config*.rs           # Configuration helpers, defaults, identity, conversion
 ```
 
-### DHT Submodule Tree (under `src/mesh/dht/`)
+### DHT Submodule Tree (under `crates/synvoid-mesh/src/mesh/dht/`)
 
 ```
-src/mesh/dht/
+crates/synvoid-mesh/src/mesh/dht/
 ├── mod.rs               # DhtError, DhtConfig, DhtRateLimiter, DhtConsistencyLevel
 ├── keys.rs              # DhtKey, DhtRecordEntry
 ├── merkle.rs            # MerkleNode, MerkleProof, MerkleTree
@@ -104,10 +104,10 @@ src/mesh/dht/
 └── store.rs             # Additional store types
 ```
 
-### Raft Submodule Tree (under `src/mesh/raft/`)
+### Raft Submodule Tree (under `crates/synvoid-mesh/src/mesh/raft/`)
 
 ```
-src/mesh/raft/
+crates/synvoid-mesh/src/mesh/raft/
 ├── mod.rs               # MeshRaftNetwork, RaftCommitNotification
 ├── instance.rs         # RaftInstance (Raft lifecycle management)
 ├── network.rs          # MeshRaftNetwork + MeshRaftNetworkFactory (raft network impl)
@@ -117,10 +117,10 @@ src/mesh/raft/
 └── regression_tests.rs # Raft regression tests
 ```
 
-### KEM Submodule Tree (under `src/mesh/kem/`)
+### KEM Submodule Tree (under `crates/synvoid-mesh/src/mesh/kem/`)
 
 ```
-src/mesh/kem/
+crates/synvoid-mesh/src/mesh/kem/
 ├── mod.rs              # MlKem768, MlKem768PublicKey, MlKem768SecretKey, MlKem768SharedSecret
 ├── ml_kem.rs          # ML-KEM-768 implementation
 └── kem_trait.rs      # KemSession, KemError (trait + stub for algorithm abstraction)
@@ -134,116 +134,116 @@ src/mesh/kem/
 
 | Type | Location | Purpose |
 |------|----------|---------|
-| `MeshTransport` | `src/mesh/transport.rs:93` | Core QUIC-based transport. Owns peer connections, message dispatch, DHT query dedup, pending snapshots, org managers, and optionally Raft instance. |
-| `MeshPeerConnection` | `src/mesh/transport_types.rs` | Per-peer connection state, message handlers, handshake state. |
-| `MeshTransportManager` | `src/mesh/transports/manager.rs` | Selection/caching layer wrapping `MeshTransport`. Provides peer selection strategies, connection pooling, health-check routing. |
-| `QuicMeshTransport` | `src/mesh/transports/quic.rs` | QUIC-specific transport implementation. |
-| `MeshTransportError` | `src/mesh/transport_core/error.rs` | Transport-level errors. |
-| `MeshGlobalRateLimiter` | `src/mesh/transport_types.rs` | Global rate limiter for mesh messages. |
+| `MeshTransport` | `crates/synvoid-mesh/src/mesh/transport.rs:93` | Core QUIC-based transport. Owns peer connections, message dispatch, DHT query dedup, pending snapshots, org managers, and optionally Raft instance. |
+| `MeshPeerConnection` | `crates/synvoid-mesh/src/mesh/transport_types.rs` | Per-peer connection state, message handlers, handshake state. |
+| `MeshTransportManager` | `crates/synvoid-mesh/src/mesh/transports/manager.rs` | Selection/caching layer wrapping `MeshTransport`. Provides peer selection strategies, connection pooling, health-check routing. |
+| `QuicMeshTransport` | `crates/synvoid-mesh/src/mesh/transports/quic.rs` | QUIC-specific transport implementation. |
+| `MeshTransportError` | `crates/synvoid-mesh/src/mesh/transport_core/error.rs` | Transport-level errors. |
+| `MeshGlobalRateLimiter` | `crates/synvoid-mesh/src/mesh/transport_types.rs` | Global rate limiter for mesh messages. |
 
 ### Proxy
 
 | Type | Location | Purpose |
 |------|----------|---------|
-| `MeshProxy` | `src/mesh/proxy.rs:63` | Request forwarding between mesh peers. Maintains policy cache, provider stats, failed provider cooldown, tiered transform cache. |
+| `MeshProxy` | `crates/synvoid-mesh/src/mesh/proxy.rs:63` | Request forwarding between mesh peers. Maintains policy cache, provider stats, failed provider cooldown, tiered transform cache. |
 
 ### DHT
 
 | Type | Location | Purpose |
 |------|----------|---------|
-| `RecordStoreManager` | `src/mesh/dht/record_store.rs` | In-memory DHT record storage with rate limiting and access control. |
-| `DiskRecordStore` | `src/mesh/dht/record_store_disk.rs` | Persistent DHT storage on disk. |
-| `RoutingTable` | `src/mesh/dht/routing/table.rs` | K-bucket routing table for peer contact management. |
-| `DhtRoutingManager` | `src/mesh/dht/routing/manager.rs` | Orchestrates DHT queries, bootstrapping, and routing. |
-| `DhtConfig` | `src/mesh/dht/mod.rs:161` | DHT configuration (quorum sizes, timeouts, ports, rate limits). |
-| `DhtError` | `src/mesh/dht/mod.rs:108` | DHT-level errors (NotFound, StoreError, NetworkError, etc.). |
-| `TierKeyStore` | `src/mesh/dht/mod.rs:850` | Tier key storage derived from DHT records. |
-| `MerkleTree` | `src/mesh/dht/merkle.rs` | Merkle tree for DHT record proofs. |
-| `SignedDhtRecord` | `src/mesh/dht/signed.rs` | Signed DHT record wrapper. |
-| `NodeInfo` | `src/mesh/dht/mod.rs:342` | Node information for DHT records. |
-| `StakeManager` | `src/mesh/dht/stake.rs` | Node staking and slashing logic. |
-| `GlobalNodeBlocklist` | `src/mesh/dht/network_policy.rs` | Global blocklist for misbehaving nodes. |
-| `DhtAccessControl` | `src/mesh/dht/mod.rs:689` | Access control checks on DHT operations. |
+| `RecordStoreManager` | `crates/synvoid-mesh/src/mesh/dht/record_store.rs` | In-memory DHT record storage with rate limiting and access control. |
+| `DiskRecordStore` | `crates/synvoid-mesh/src/mesh/dht/record_store_disk.rs` | Persistent DHT storage on disk. |
+| `RoutingTable` | `crates/synvoid-mesh/src/mesh/dht/routing/table.rs` | K-bucket routing table for peer contact management. |
+| `DhtRoutingManager` | `crates/synvoid-mesh/src/mesh/dht/routing/manager.rs` | Orchestrates DHT queries, bootstrapping, and routing. |
+| `DhtConfig` | `crates/synvoid-mesh/src/mesh/dht/mod.rs:161` | DHT configuration (quorum sizes, timeouts, ports, rate limits). |
+| `DhtError` | `crates/synvoid-mesh/src/mesh/dht/mod.rs:108` | DHT-level errors (NotFound, StoreError, NetworkError, etc.). |
+| `TierKeyStore` | `crates/synvoid-mesh/src/mesh/dht/mod.rs:850` | Tier key storage derived from DHT records. |
+| `MerkleTree` | `crates/synvoid-mesh/src/mesh/dht/merkle.rs` | Merkle tree for DHT record proofs. |
+| `SignedDhtRecord` | `crates/synvoid-mesh/src/mesh/dht/signed.rs` | Signed DHT record wrapper. |
+| `NodeInfo` | `crates/synvoid-mesh/src/mesh/dht/mod.rs:342` | Node information for DHT records. |
+| `StakeManager` | `crates/synvoid-mesh/src/mesh/dht/stake.rs` | Node staking and slashing logic. |
+| `GlobalNodeBlocklist` | `crates/synvoid-mesh/src/mesh/dht/network_policy.rs` | Global blocklist for misbehaving nodes. |
+| `DhtAccessControl` | `crates/synvoid-mesh/src/mesh/dht/mod.rs:689` | Access control checks on DHT operations. |
 
 ### Raft
 
 | Type | Location | Purpose |
 |------|----------|---------|
-| `RaftInstance` | `src/mesh/raft/instance.rs:32` | Lifecycle manager for a Raft node. Owns the `openraft::Raft` instance, state machine, network factory, and shutdown sender. |
-| `MeshRaftNetwork` | `src/mesh/raft/network.rs` | Network implementation for Raft (wraps MeshBackendPool). |
-| `MeshRaftNetworkFactory` | `src/mesh/raft/network.rs` | Factory for creating per-peer Raft network handlers. |
-| `GlobalRegistryStateMachine` | `src/mesh/raft/state_machine.rs` | State machine for global registry (OrgPublicKey, ThreatIntel, Revocation). |
-| `GlobalNodeRevocationList` | `src/mesh/raft/state_machine.rs` | Revocation list stored in Raft state machine. |
-| `Namespace` | `src/mesh/raft/state_machine.rs` | Namespace enum (Org, Intel, Revocation, AuthorizedGlobalNodes) for state machine keys. |
-| `RaftAwareClient` | `src/mesh/raft/client.rs` | Client for performing ConsistentRead RPCs against Raft cluster. |
-| `EdgeReplicaManager` | `src/mesh/raft/edge_replica.rs` | Manages edge node replicas of Raft state. |
-| `RaftCommitNotification` | `src/mesh/raft/mod.rs:42` | Notification emitted when Raft commits a value. |
+| `RaftInstance` | `crates/synvoid-mesh/src/mesh/raft/instance.rs:32` | Lifecycle manager for a Raft node. Owns the `openraft::Raft` instance, state machine, network factory, and shutdown sender. |
+| `MeshRaftNetwork` | `crates/synvoid-mesh/src/mesh/raft/network.rs` | Network implementation for Raft (wraps MeshBackendPool). |
+| `MeshRaftNetworkFactory` | `crates/synvoid-mesh/src/mesh/raft/network.rs` | Factory for creating per-peer Raft network handlers. |
+| `GlobalRegistryStateMachine` | `crates/synvoid-mesh/src/mesh/raft/state_machine.rs` | State machine for global registry (OrgPublicKey, ThreatIntel, Revocation). |
+| `GlobalNodeRevocationList` | `crates/synvoid-mesh/src/mesh/raft/state_machine.rs` | Revocation list stored in Raft state machine. |
+| `Namespace` | `crates/synvoid-mesh/src/mesh/raft/state_machine.rs` | Namespace enum (Org, Intel, Revocation, AuthorizedGlobalNodes) for state machine keys. |
+| `RaftAwareClient` | `crates/synvoid-mesh/src/mesh/raft/client.rs` | Client for performing ConsistentRead RPCs against Raft cluster. |
+| `EdgeReplicaManager` | `crates/synvoid-mesh/src/mesh/raft/edge_replica.rs` | Manages edge node replicas of Raft state. |
+| `RaftCommitNotification` | `crates/synvoid-mesh/src/mesh/raft/mod.rs:42` | Notification emitted when Raft commits a value. |
 
 ### PKI and Organization
 
 | Type | Location | Purpose |
 |------|----------|---------|
-| `MeshCertManager` | `src/mesh/cert.rs` | TLS certificate management (loading, caching, pinned fingerprints, post-quantum TLS verification). |
-| `OrganizationManager` | `src/mesh/organization.rs` | Organization lifecycle (creation, member management, tier claims). |
-| `Organization` | `src/mesh/organization.rs` | Organization entity with tier structure. |
-| `TierKey` | `src/mesh/organization.rs` | Tiered key for multi-tenant isolation. |
-| `TierClaim` | `src/mesh/organization.rs` | Claim of tier membership. |
-| `OrgPublicKey` | `src/mesh/organization.rs` | Organization public key record signed by quorum. |
-| `MemberCertificate` | `src/mesh/organization.rs` | Member identity certificate within an organization. |
-| `OrgKeyManager` | `src/mesh/org_key_manager.rs` | Organization key lifecycle management. |
+| `MeshCertManager` | `crates/synvoid-mesh/src/mesh/cert.rs` | TLS certificate management (loading, caching, pinned fingerprints, post-quantum TLS verification). |
+| `OrganizationManager` | `crates/synvoid-mesh/src/mesh/organization.rs` | Organization lifecycle (creation, member management, tier claims). |
+| `Organization` | `crates/synvoid-mesh/src/mesh/organization.rs` | Organization entity with tier structure. |
+| `TierKey` | `crates/synvoid-mesh/src/mesh/organization.rs` | Tiered key for multi-tenant isolation. |
+| `TierClaim` | `crates/synvoid-mesh/src/mesh/organization.rs` | Claim of tier membership. |
+| `OrgPublicKey` | `crates/synvoid-mesh/src/mesh/organization.rs` | Organization public key record signed by quorum. |
+| `MemberCertificate` | `crates/synvoid-mesh/src/mesh/organization.rs` | Member identity certificate within an organization. |
+| `OrgKeyManager` | `crates/synvoid-mesh/src/mesh/org_key_manager.rs` | Organization key lifecycle management. |
 
 ### Post-Quantum Cryptography
 
 | Type | Location | Purpose |
 |------|----------|---------|
-| `HybridSignature` | `src/mesh/hybrid_signature.rs:17` | Combined Ed25519 + ML-DSA-44 signature. Contains both signature components and public keys. |
-| `HybridSigner` | `src/mesh/hybrid_signature.rs` (reexport from `crate::integrity`) | Signs data with both Ed25519 and ML-DSA. |
-| `MeshMlDsaSigner` | `src/mesh/ml_dsa.rs:18` | ML-DSA-44 signing wrapper with key generation, signing, verification. |
-| `MeshMlDsaVerifier` | `src/mesh/ml_dsa.rs:97` | ML-DSA-44 verification wrapper. |
-| `MlKem768` | `src/mesh/kem/ml_kem.rs` | ML-KEM-768 key encapsulation. |
-| `MlKem768PublicKey` / `MlKem768SecretKey` | `src/mesh/kem/ml_kem.rs` | Key types for ML-KEM-768. |
-| `MlKem768SharedSecret` | `src/mesh/kem/ml_kem.rs` | Shared secret from ML-KEM-768 encapsulation. |
-| `KemSession` | `src/mesh/kem/kem_trait.rs` | Session abstraction for key encapsulation with rotation support. |
-| `MlKemKeyExchangeService` | `src/mesh/ml_kem_key_exchange.rs:35` | gRPC service for ML-KEM key exchange with proof-of-possession. |
-| `KeyExchangeService` | `src/mesh/passover_key_exchange.rs` | PASEO key exchange (alternate KEM). |
-| `MeshMessageSigner` | `src/mesh/protocol.rs:33` | Signs mesh messages with Ed25519, optionally producing hybrid signatures via ML-DSA signer. |
-| `MeshHybridSigner` | `src/mesh/ml_dsa.rs` | Trait/object for hybrid signing operations. |
+| `HybridSignature` | `crates/synvoid-mesh/src/mesh/hybrid_signature.rs:17` | Combined Ed25519 + ML-DSA-44 signature. Contains both signature components and public keys. |
+| `HybridSigner` | `crates/synvoid-mesh/src/mesh/hybrid_signature.rs` (reexport from `crate::integrity`) | Signs data with both Ed25519 and ML-DSA. |
+| `MeshMlDsaSigner` | `crates/synvoid-mesh/src/mesh/ml_dsa.rs:18` | ML-DSA-44 signing wrapper with key generation, signing, verification. |
+| `MeshMlDsaVerifier` | `crates/synvoid-mesh/src/mesh/ml_dsa.rs:97` | ML-DSA-44 verification wrapper. |
+| `MlKem768` | `crates/synvoid-mesh/src/mesh/kem/ml_kem.rs` | ML-KEM-768 key encapsulation. |
+| `MlKem768PublicKey` / `MlKem768SecretKey` | `crates/synvoid-mesh/src/mesh/kem/ml_kem.rs` | Key types for ML-KEM-768. |
+| `MlKem768SharedSecret` | `crates/synvoid-mesh/src/mesh/kem/ml_kem.rs` | Shared secret from ML-KEM-768 encapsulation. |
+| `KemSession` | `crates/synvoid-mesh/src/mesh/kem/kem_trait.rs` | Session abstraction for key encapsulation with rotation support. |
+| `MlKemKeyExchangeService` | `crates/synvoid-mesh/src/mesh/ml_kem_key_exchange.rs:35` | gRPC service for ML-KEM key exchange with proof-of-possession. |
+| `KeyExchangeService` | `crates/synvoid-mesh/src/mesh/passover_key_exchange.rs` | PASEO key exchange (alternate KEM). |
+| `MeshMessageSigner` | `crates/synvoid-mesh/src/mesh/protocol.rs:33` | Signs mesh messages with Ed25519, optionally producing hybrid signatures via ML-DSA signer. |
+| `MeshHybridSigner` | `crates/synvoid-mesh/src/mesh/ml_dsa.rs` | Trait/object for hybrid signing operations. |
 
 ### Security and Intelligence
 
 | Type | Location | Purpose |
 |------|----------|---------|
-| `SecureConfigManager` | `src/mesh/security.rs` | AES-256-GCM encrypted config value storage. |
-| `MeshSecurityChallengeManager` | `src/mesh/security_challenge.rs` | Challenge-response attack detection. |
-| `MeshAttackDetector` | `src/mesh/security_challenge.rs` | Pattern-based attack detection. |
-| `ThreatIntelligenceManager` | `src/mesh/threat_intel.rs` | Threat indicator distribution and caching. |
-| `ReputationManager` | `src/mesh/reputation.rs` | Peer reputation scoring and event tracking. |
-| `BehavioralFingerprint` | `src/mesh/behavioral.rs` | Per-peer behavioral fingerprint. |
-| `BehavioralIntelligenceManager` | `src/mesh/behavioral_intel.rs` | Behavioral intelligence coordination. |
-| `CryptoVerificationPool` | `src/mesh/crypto_verification.rs` | Thread pool for concurrent signature verification. |
-| `VerificationTaskManager` | `src/mesh/verification.rs` | Verification task scheduling. |
-| `GlobalNodeRevocationList` | `src/mesh/peer_auth.rs` | Node revocation list for peer authentication. |
+| `SecureConfigManager` | `crates/synvoid-mesh/src/mesh/security.rs` | AES-256-GCM encrypted config value storage. |
+| `MeshSecurityChallengeManager` | `crates/synvoid-mesh/src/mesh/security_challenge.rs` | Challenge-response attack detection. |
+| `MeshAttackDetector` | `crates/synvoid-mesh/src/mesh/security_challenge.rs` | Pattern-based attack detection. |
+| `ThreatIntelligenceManager` | `crates/synvoid-mesh/src/mesh/threat_intel.rs` | Threat indicator distribution and caching. |
+| `ReputationManager` | `crates/synvoid-mesh/src/mesh/reputation.rs` | Peer reputation scoring and event tracking. |
+| `BehavioralFingerprint` | `crates/synvoid-mesh/src/mesh/behavioral.rs` | Per-peer behavioral fingerprint. |
+| `BehavioralIntelligenceManager` | `crates/synvoid-mesh/src/mesh/behavioral_intel.rs` | Behavioral intelligence coordination. |
+| `CryptoVerificationPool` | `crates/synvoid-mesh/src/mesh/crypto_verification.rs` | Thread pool for concurrent signature verification. |
+| `VerificationTaskManager` | `crates/synvoid-mesh/src/mesh/verification.rs` | Verification task scheduling. |
+| `GlobalNodeRevocationList` | `crates/synvoid-mesh/src/mesh/peer_auth.rs` | Node revocation list for peer authentication. |
 
 ### Topology
 
 | Type | Location | Purpose |
 |------|----------|---------|
-| `MeshTopology` | `src/mesh/topology.rs:28` | Network topology state: peer store, routing cache, verified upstream cache, blocked upstreams, degraded mode tracking. |
-| `MeshBloomFilter` | `src/mesh/hierarchical_routing.rs` | Bloom filter for efficient route advertisement. |
-| `HierarchicalRoutingManager` | `src/mesh/hierarchical_routing.rs` | Geo-distributed routing with regional hub info. |
+| `MeshTopology` | `crates/synvoid-mesh/src/mesh/topology.rs:28` | Network topology state: peer store, routing cache, verified upstream cache, blocked upstreams, degraded mode tracking. |
+| `MeshBloomFilter` | `crates/synvoid-mesh/src/mesh/hierarchical_routing.rs` | Bloom filter for efficient route advertisement. |
+| `HierarchicalRoutingManager` | `crates/synvoid-mesh/src/mesh/hierarchical_routing.rs` | Geo-distributed routing with regional hub info. |
 
 ### Other Key Types
 
 | Type | Location | Purpose |
 |------|----------|---------|
-| `MeshConfig` | `src/mesh/config.rs` | Root mesh configuration (node role, DHT, transport, global node keys). |
-| `MeshNodeRole` | `src/mesh/config.rs` | Bitmask struct (u8): GLOBAL (0b010), EDGE (0b001), ORIGIN (0b100), GLOBAL_EDGE (0b011), GLOBAL_ORIGIN (0b110), EDGE_ORIGIN (0b101), ALL (0b111), SERVERLESS_ORIGIN (0b1000). |
-| `MeshArgs` / `MeshCommand` | `src/mesh/cli.rs` | CLI argument parsing. |
-| `AuditLogger` | `src/mesh/audit.rs` | Audit event logging. |
-| `AuditSession` | `src/mesh/audit_session.rs` | Session-scoped audit context. |
-| `SessionManager<T>` | `src/mesh/session/manager.rs` | Generic session manager for KEM key rotation. |
-| `WasmDistManager` | `src/mesh/wasm_dist.rs` | WASM module distribution. |
-| `YaraRulesManager` | `src/mesh/yara_rules.rs` | YARA rule distribution. |
+| `MeshConfig` | `crates/synvoid-mesh/src/mesh/config.rs` | Root mesh configuration (node role, DHT, transport, global node keys). |
+| `MeshNodeRole` | `crates/synvoid-mesh/src/mesh/config.rs` | Bitmask struct (u8): GLOBAL (0b010), EDGE (0b001), ORIGIN (0b100), GLOBAL_EDGE (0b011), GLOBAL_ORIGIN (0b110), EDGE_ORIGIN (0b101), ALL (0b111), SERVERLESS_ORIGIN (0b1000). |
+| `MeshArgs` / `MeshCommand` | `crates/synvoid-mesh/src/mesh/cli.rs` | CLI argument parsing. |
+| `AuditLogger` | `crates/synvoid-mesh/src/mesh/audit.rs` | Audit event logging. |
+| `AuditSession` | `crates/synvoid-mesh/src/mesh/audit_session.rs` | Session-scoped audit context. |
+| `SessionManager<T>` | `crates/synvoid-mesh/src/mesh/session/manager.rs` | Generic session manager for KEM key rotation. |
+| `WasmDistManager` | `crates/synvoid-mesh/src/mesh/wasm_dist.rs` | WASM module distribution. |
+| `YaraRulesManager` | `crates/synvoid-mesh/src/mesh/yara_rules.rs` | YARA rule distribution. |
 
 ---
 
@@ -261,23 +261,23 @@ DHT and Raft serve distinct roles but share infrastructure:
 
 | Integration Point | File | Details |
 |------------------|------|---------|
-| `MeshTransport.raft_instance` field | `src/mesh/transport.rs:159` | `MeshTransport` holds `Arc<RwLock<Option<Arc<RaftInstance>>>>`. The transport coordinates with Raft for committed-value hooks. |
-| `RaftAwareClient` | `src/mesh/raft/client.rs` | Edge/Origin nodes use this client to perform ConsistentRead RPCs against the Raft cluster instead of DHT for strongly-consistent reads. |
-| `EdgeReplicaManager` | `src/mesh/raft/edge_replica.rs` | Edge nodes cache Raft state machine snapshots locally to serve consistent reads without querying the Raft cluster. |
-| Raft commit hooks | `src/mesh/raft/instance.rs` | `RaftInstance` integrates with `MeshProxy` to publish committed values to the DHT and propagate to peers. |
-| `ConsistentReadResult` | `src/mesh/raft/client.rs` | Result type carrying data plus `RaftCommitNotification` metadata. |
+| `MeshTransport.raft_instance` field | `crates/synvoid-mesh/src/mesh/transport.rs:159` | `MeshTransport` holds `Arc<RwLock<Option<Arc<RaftInstance>>>>`. The transport coordinates with Raft for committed-value hooks. |
+| `RaftAwareClient` | `crates/synvoid-mesh/src/mesh/raft/client.rs` | Edge/Origin nodes use this client to perform ConsistentRead RPCs against the Raft cluster instead of DHT for strongly-consistent reads. |
+| `EdgeReplicaManager` | `crates/synvoid-mesh/src/mesh/raft/edge_replica.rs` | Edge nodes cache Raft state machine snapshots locally to serve consistent reads without querying the Raft cluster. |
+| Raft commit hooks | `crates/synvoid-mesh/src/mesh/raft/instance.rs` | `RaftInstance` integrates with `MeshProxy` to publish committed values to the DHT and propagate to peers. |
+| `ConsistentReadResult` | `crates/synvoid-mesh/src/mesh/raft/client.rs` | Result type carrying data plus `RaftCommitNotification` metadata. |
 | `GlobalNodeRevocationList` | both | Stored in Raft state machine AND distributed via DHT for fast revocation checks. |
 
 ### Quorum in DHT vs Raft
 
-- **DHT quorum** (`DhtConfig.write_quorum` / `read_quorum`) is the number of DHT peers that must acknowledge a read/write before it is considered complete. The `QuorumVerifierContext` in `src/mesh/dht/signed.rs:12` provides context for threshold signature verification of DHT records.
+- **DHT quorum** (`DhtConfig.write_quorum` / `read_quorum`) is the number of DHT peers that must acknowledge a read/write before it is considered complete. The `QuorumVerifierContext` in `crates/synvoid-mesh/src/mesh/dht/signed.rs:12` provides context for threshold signature verification of DHT records.
 
 - **Raft quorum** is handled by the `openraft` library internally (majority of cluster nodes). Raft commits are persisted to the state machine, which then publishes to DHT.
 
 ### Record Signing Pipeline
 
 Records in DHT follow this signing flow:
-1. `RecordSigner` (from `src/mesh/dht/signed.rs`) signs records with the node's Ed25519 key.
+1. `RecordSigner` (from `crates/synvoid-mesh/src/mesh/dht/signed.rs`) signs records with the node's Ed25519 key.
 2. Global nodes additionally sign with ML-DSA (`MeshMlDsaSigner`) for post-quantum hybrid signatures.
 3. `TtlManager` handles TTL enforcement on signed records.
 4. Quorum verification (for org-level records) routes to either DHT quorum verification or Raft consistent read depending on record namespace.
@@ -286,7 +286,7 @@ Records in DHT follow this signing flow:
 
 ## 5. Post-Quantum Cryptography Components
 
-### HybridSignature (`src/mesh/hybrid_signature.rs`)
+### HybridSignature (`crates/synvoid-mesh/src/mesh/hybrid_signature.rs`)
 
 Provides dual signatures combining classical Ed25519 with post-quantum ML-DSA-44:
 
@@ -304,7 +304,7 @@ pub struct HybridSignature {
 - `has_ml_dsa()` indicates whether the post-quantum component is present.
 - `ED25519_SIGNATURE_SIZE = 64`, `ML_DSA_SIGNATURE_SIZE = 2420`.
 
-### MeshMessageSigner (`src/mesh/protocol.rs:33`)
+### MeshMessageSigner (`crates/synvoid-mesh/src/mesh/protocol.rs:33`)
 
 Signs mesh messages. Optionally wraps an `MlDsaSigner`:
 
@@ -320,7 +320,7 @@ pub struct MeshMessageSigner {
 - `sign()` produces a pure Ed25519 signature if no ML-DSA signer is configured; otherwise calls `sign_hybrid()` which produces a `HybridSignature`.
 - `sign_hybrid()` creates a `HybridSignature` with both components.
 
-### MeshMlDsaSigner (`src/mesh/ml_dsa.rs:18`)
+### MeshMlDsaSigner (`crates/synvoid-mesh/src/mesh/ml_dsa.rs:18`)
 
 Wrapper around `pqc::MlDsa44` with key generation, signing, and verification:
 
@@ -330,24 +330,24 @@ Wrapper around `pqc::MlDsa44` with key generation, signing, and verification:
 - `verifying_key_base64()` / `signing_key_base64()` for serialization.
 - Exposes `MlDsaSigningKeyType = SigningKey` and `MlDsaVerifyingKeyType = VerifyingKey`.
 
-### MeshMlDsaVerifier (`src/mesh/ml_dsa.rs:97`)
+### MeshMlDsaVerifier (`crates/synvoid-mesh/src/mesh/ml_dsa.rs:97`)
 
 Verification-side counterpart using `pqc::MlDsa44`.
 
-### ML-KEM-768 (`src/mesh/kem/`)
+### ML-KEM-768 (`crates/synvoid-mesh/src/mesh/kem/`)
 
 Abstraction over post-quantum key encapsulation:
 
 | Type | File | Purpose |
 |------|------|---------|
-| `MlKem768` | `src/mesh/kem/ml_kem.rs` | Key generation, encapsulation, decapsulation. |
-| `MlKem768PublicKey` | `src/mesh/kem/ml_kem.rs` | Public key type. |
-| `MlKem768SecretKey` | `src/mesh/kem/ml_kem.rs` | Secret key type (zeroize-on-drop). |
-| `MlKem768SharedSecret` | `src/mesh/kem/ml_kem.rs` | Shared secret output. |
-| `KemSession` | `src/mesh/kem/kem_trait.rs` | Session abstraction with rotation and expiry. |
-| `KemError` | `src/mesh/kem/kem_trait.rs` | KEM-level errors. |
+| `MlKem768` | `crates/synvoid-mesh/src/mesh/kem/ml_kem.rs` | Key generation, encapsulation, decapsulation. |
+| `MlKem768PublicKey` | `crates/synvoid-mesh/src/mesh/kem/ml_kem.rs` | Public key type. |
+| `MlKem768SecretKey` | `crates/synvoid-mesh/src/mesh/kem/ml_kem.rs` | Secret key type (zeroize-on-drop). |
+| `MlKem768SharedSecret` | `crates/synvoid-mesh/src/mesh/kem/ml_kem.rs` | Shared secret output. |
+| `KemSession` | `crates/synvoid-mesh/src/mesh/kem/kem_trait.rs` | Session abstraction with rotation and expiry. |
+| `KemError` | `crates/synvoid-mesh/src/mesh/kem/kem_trait.rs` | KEM-level errors. |
 
-### MlKemKeyExchangeService (`src/mesh/ml_kem_key_exchange.rs:35`)
+### MlKemKeyExchangeService (`crates/synvoid-mesh/src/mesh/ml_kem_key_exchange.rs:35`)
 
 gRPC service implementing ML-KEM key exchange with proof-of-possession:
 
@@ -357,7 +357,7 @@ gRPC service implementing ML-KEM key exchange with proof-of-possession:
 - Implements `MlKemKeyExchangeService` gRPC service with `KeyOffer`, `KeyRequest`, `KeyConfirm`, and `KeyConfirmResponse` messages.
 - BUG-L3 fix (key exchange proof-of-possession) ensures the client can decapsulate the returned ciphertext.
 
-### Session Manager (`src/mesh/session/`)
+### Session Manager (`crates/synvoid-mesh/src/mesh/session/`)
 
 ```rust
 pub struct SessionManager<T: Kem> {
@@ -530,10 +530,10 @@ Key external dependencies in the mesh module:
 
 ## 10. File Listing
 
-For reference, here is the complete file tree of `src/mesh/` (excluding test files):
+For reference, here is the complete file tree of `crates/synvoid-mesh/src/mesh/` (excluding test files):
 
 ```
-src/mesh/
+crates/synvoid-mesh/src/mesh/
 ├── mod.rs
 ├── transport.rs                        (3834 lines - core transport)
 ├── transports/

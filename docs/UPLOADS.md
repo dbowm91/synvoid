@@ -38,7 +38,7 @@ types = [
 [defaults.upload.scan_with_yara]
 enabled = true
 rules_dir = "rules/"
-quarantine_dir = "/var/lib/synvoidwaf/quarantine"
+quarantine_dir = "/var/lib/synvoid/quarantine"
 
 # Scanning options
 [defaults.upload.scan_with_yara.options]

@@ -34,7 +34,7 @@ WebAssembly plugins run in a sandboxed environment for safe execution of custom 
 ```toml
 [plugins]
 enabled = true
-plugins_dir = "/etc/synvoidwaf/plugins"
+plugins_dir = "/etc/synvoid/plugins"
 watch_for_changes = true
 
 # Resource limits
@@ -152,7 +152,7 @@ wasm-bindgen = "0.2"
 ```bash
 cd plugin
 cargo build --release --target wasm32-wasi
-cp target/wasm32-wasi/release/my_waf_plugin.wasm /etc/synvoidwaf/plugins/
+cp target/wasm32-wasi/release/my_waf_plugin.wasm /etc/synvoid/plugins/
 ```
 
 ## Plugin API
@@ -206,7 +206,7 @@ pub fn transform_response(
 Place `.wasm` files in plugins directory:
 
 ```
-/etc/synvoidwaf/plugins/
+/etc/synvoid/plugins/
 ├── my_plugin.wasm
 ├── auth_plugin.wasm
 └── rate_limit.wasm
@@ -253,7 +253,7 @@ Verify plugin integrity:
 ```toml
 [plugins]
 require_signed = true
-signing_key_path = "/etc/synvoidwaf/keys/plugin.key"
+signing_key_path = "/etc/synvoid/keys/plugin.key"
 ```
 
 ## Troubleshooting
@@ -262,10 +262,10 @@ signing_key_path = "/etc/synvoidwaf/keys/plugin.key"
 
 ```bash
 # Check plugin file
-ls -la /etc/synvoidwaf/plugins/
+ls -la /etc/synvoid/plugins/
 
 # Validate WASM
-wasm-validate /etc/synvoidwaf/plugins/my_plugin.wasm
+wasm-validate /etc/synvoid/plugins/my_plugin.wasm
 ```
 
 ### Execution Timeout

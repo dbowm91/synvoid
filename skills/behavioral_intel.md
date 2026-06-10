@@ -11,10 +11,10 @@ Use this skill when:
 - Integrating with AttackDetector for paranoia level elevation
 
 ## Key Files
-- `src/mesh/behavioral.rs` - `BehavioralFingerprint` and `BehavioralFeatures` types
-- `src/mesh/behavioral_intel.rs` - `BehavioralIntelligenceManager`
-- `src/mesh/dht/keys.rs` - Added `behavior_fingerprint:` DHT key prefix
-- `src/mesh/protocol.rs` - Added `BehavioralFingerprintAnnounce` message variants
+- `crates/synvoid-mesh/src/mesh/behavioral.rs` - `BehavioralFingerprint` and `BehavioralFeatures` types
+- `crates/synvoid-mesh/src/mesh/behavioral_intel.rs` - `BehavioralIntelligenceManager`
+- `crates/synvoid-mesh/src/mesh/dht/keys.rs` - Added `behavior_fingerprint:` DHT key prefix
+- `crates/synvoid-mesh/src/mesh/protocol.rs` - Added `BehavioralFingerprintAnnounce` message variants
 
 ## Implementation Pattern
 

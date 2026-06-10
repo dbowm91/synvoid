@@ -68,6 +68,6 @@ When `unified_server_workers > 1` is explicitly configured:
 - Cache invalidation/reload behavior is coordinated by supervisor commands, with per-worker cache refresh and eventual convergence.
 
 ## References
-- `src/worker/unified_server.rs` - Main unified server implementation
+- `src/worker/unified_server/mod.rs` - Main unified server implementation
 - `src/worker/mod.rs` - Worker process management
 - `src/app_server/granian.rs` - AppServer/Granian integration

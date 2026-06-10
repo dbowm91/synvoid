@@ -10,14 +10,14 @@ Wave 6-7 implemented Raft consensus for the SynVoid Global Control Plane, replac
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| `MeshRaftNetwork` | `src/mesh/raft/network.rs` | Implements `RaftNetworkV2` trait, wraps `MeshBackendPool` |
-| `MeshRaftNetworkFactory` | `src/mesh/raft/network.rs` | Creates `MeshRaftNetwork` instances per target |
-| `GlobalRegistryStateMachine` | `src/mesh/raft/state_machine.rs` | RaftStateMachine impl using rusqlite |
-| `GlobalRegistryLogStorage` | `src/mesh/raft/state_machine.rs` | RaftLogStorage impl for log persistence |
-| `GlobalRegistryTypeConfig` | `src/mesh/raft/state_machine.rs` | RaftTypeConfig impl for GlobalRegistry |
-| `RaftInstance` | `src/mesh/raft/instance.rs` | Wraps openraft::Raft with lifecycle management |
-| `RaftAwareClient` | `src/mesh/raft/client.rs` | ConsistentRead RPC for Edge/Origin nodes |
-| `RaftSnapshotManager` | `src/mesh/raft/instance.rs` | Point-in-time snapshots using rusqlite backup API |
+| `MeshRaftNetwork` | `crates/synvoid-mesh/src/mesh/raft/network.rs` | Implements `RaftNetworkV2` trait, wraps `MeshBackendPool` |
+| `MeshRaftNetworkFactory` | `crates/synvoid-mesh/src/mesh/raft/network.rs` | Creates `MeshRaftNetwork` instances per target |
+| `GlobalRegistryStateMachine` | `crates/synvoid-mesh/src/mesh/raft/state_machine.rs` | RaftStateMachine impl using rusqlite |
+| `GlobalRegistryLogStorage` | `crates/synvoid-mesh/src/mesh/raft/state_machine.rs` | RaftLogStorage impl for log persistence |
+| `GlobalRegistryTypeConfig` | `crates/synvoid-mesh/src/mesh/raft/state_machine.rs` | RaftTypeConfig impl for GlobalRegistry |
+| `RaftInstance` | `crates/synvoid-mesh/src/mesh/raft/instance.rs` | Wraps openraft::Raft with lifecycle management |
+| `RaftAwareClient` | `crates/synvoid-mesh/src/mesh/raft/client.rs` | ConsistentRead RPC for Edge/Origin nodes |
+| `RaftSnapshotManager` | `crates/synvoid-mesh/src/mesh/raft/instance.rs` | Point-in-time snapshots using rusqlite backup API |
 
 ### Namespaces
 
@@ -437,16 +437,16 @@ cargo test --test integration_test
 
 | File | Purpose |
 |------|---------|
-| `src/mesh/raft/mod.rs` | Module exports and types |
-| `src/mesh/raft/network.rs` | MeshRaftNetwork and Factory with full_snapshot() (W9.6) |
-| `src/mesh/raft/state_machine.rs` | GlobalRegistryStateMachine, GlobalRegistryLogStorage, GlobalRegistryTypeConfig, LeaderCache (W9.4, W9.5) |
-| `src/mesh/raft/client.rs` | RaftAwareClient with LeaderCache, linearizable reads (W9.3, W9.4) |
-| `src/mesh/raft/instance.rs` | RaftInstance with raft_append_entries(), raft_vote(), install_snapshot() (W9.1, W9.6) |
-| `src/mesh/raft/regression_tests.rs` | 33 regression tests for distributed control plane (W9.9) |
-| `src/mesh/dht/signed.rs` | DhtRecordSignable canonical struct with SHA256 value hashing (W9.8) |
-| `src/mesh/transport_dht.rs` | DHT auth default-deny, signature verification (W9.7) |
-| `src/mesh/org_key_manager.rs` | Raft commit path in OrgKeyManager |
-| `src/mesh/peer_auth.rs` | Dual verification (quorum OR Raft) |
+| `crates/synvoid-mesh/src/mesh/raft/mod.rs` | Module exports and types |
+| `crates/synvoid-mesh/src/mesh/raft/network.rs` | MeshRaftNetwork and Factory with full_snapshot() (W9.6) |
+| `crates/synvoid-mesh/src/mesh/raft/state_machine.rs` | GlobalRegistryStateMachine, GlobalRegistryLogStorage, GlobalRegistryTypeConfig, LeaderCache (W9.4, W9.5) |
+| `crates/synvoid-mesh/src/mesh/raft/client.rs` | RaftAwareClient with LeaderCache, linearizable reads (W9.3, W9.4) |
+| `crates/synvoid-mesh/src/mesh/raft/instance.rs` | RaftInstance with raft_append_entries(), raft_vote(), install_snapshot() (W9.1, W9.6) |
+| `crates/synvoid-mesh/src/mesh/raft/regression_tests.rs` | 33 regression tests for distributed control plane (W9.9) |
+| `crates/synvoid-mesh/src/mesh/dht/signed.rs` | DhtRecordSignable canonical struct with SHA256 value hashing (W9.8) |
+| `crates/synvoid-mesh/src/mesh/transport_dht.rs` | DHT auth default-deny, signature verification (W9.7) |
+| `crates/synvoid-mesh/src/mesh/org_key_manager.rs` | Raft commit path in OrgKeyManager |
+| `crates/synvoid-mesh/src/mesh/peer_auth.rs` | Dual verification (quorum OR Raft) |
 
 ## Wave 9 Changes Summary
 
@@ -478,11 +478,11 @@ cargo test --test integration_test
 
 | File | Purpose |
 |------|---------|
-| `src/mesh/transport.rs` | `InProgressSnapshot` struct, `pending_snapshot_transfers` field, `send_message_to_peer_with_response()` with 30s timeout |
-| `src/mesh/transport_peer.rs` | `handle_raft_message()` with `InstallSnapshot` handling, `InProgressSnapshot` chunk assembly and validation |
-| `src/mesh/dht/signed.rs` | `DhtSnapshotResponseSignable`, `DhtSyncResponseSignable`, `get_snapshot_signable_content()`, `get_sync_signable_content()` |
-| `src/mesh/dht/record_store_sync.rs` | Updated to use postcard-based signable content helpers |
-| `src/mesh/transport_dht.rs` | Updated DHT signature verification to use postcard-based signable content |
+| `crates/synvoid-mesh/src/mesh/transport.rs` | `InProgressSnapshot` struct, `pending_snapshot_transfers` field, `send_message_to_peer_with_response()` with 30s timeout |
+| `crates/synvoid-mesh/src/mesh/transport_peer.rs` | `handle_raft_message()` with `InstallSnapshot` handling, `InProgressSnapshot` chunk assembly and validation |
+| `crates/synvoid-mesh/src/mesh/dht/signed.rs` | `DhtSnapshotResponseSignable`, `DhtSyncResponseSignable`, `get_snapshot_signable_content()`, `get_sync_signable_content()` |
+| `crates/synvoid-mesh/src/mesh/dht/record_store_sync.rs` | Updated to use postcard-based signable content helpers |
+| `crates/synvoid-mesh/src/mesh/transport_dht.rs` | Updated DHT signature verification to use postcard-based signable content |
 
 ## Wave 11 Changes Summary
 

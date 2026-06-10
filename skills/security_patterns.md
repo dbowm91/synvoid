@@ -8,7 +8,7 @@ This skill documents the security patterns implemented for the SynVoid codebase.
 
 ### Trusted Signer Default Deny (P0.3)
 
-**Location**: `src/mesh/threat_intel.rs:1628-1656`
+**Location**: `crates/synvoid-mesh/src/mesh/threat_intel.rs:1628-1656`
 
 **Issue**: When `trusted_signers` is empty, condition `!self.node_role.is_global() && !self.config.trusted_signers.is_empty()` short-circuits and ALL non-global nodes bypass the check. Any non-global node can send forged threats.
 
@@ -29,7 +29,7 @@ if !self.node_role.is_global() {
 
 ### Time-Based Challenge Verification (P0.5)
 
-**Location**: `src/mesh/security_challenge.rs:159-218`
+**Location**: `crates/synvoid-mesh/src/mesh/security_challenge.rs:159-218`
 
 **Issue**: Previously, `verify_time_based_challenge()` took `_solution: &str` (unused) and only checked challenge existence and expiry. Any string was accepted.
 
@@ -54,7 +54,7 @@ if solution != expected_solution {
 
 ### Pass-Over Fallback Signing (P0.6)
 
-**Location**: `src/mesh/passover_key_exchange.rs:505-515`
+**Location**: `crates/synvoid-mesh/src/mesh/passover_key_exchange.rs:505-515`
 
 **Issue**: When origin is unreachable, fallback path used `origin_signing_key` to sign. A global node with `origin_signing_key` would produce messages appearing signed by an origin node.
 
@@ -74,7 +74,7 @@ let pending_signature = if self.config.role.is_global() {
 
 ### RecordStoreManager Clone (P0.7)
 
-**Location**: `src/mesh/dht/record_store.rs:468-519`
+**Location**: `crates/synvoid-mesh/src/mesh/dht/record_store.rs:468-519`
 
 **Issue**: Clone impl used `records: ShardedRecordStore::new()` instead of cloning from `self.records`. Cloned managers had zero records.
 
@@ -90,7 +90,7 @@ for (key, value) in rs.records.iter() {
 
 ### YARA Trusted Signer Bypass (P0.12)
 
-**Location**: `src/mesh/yara_rules.rs:942-954,1818-1824`
+**Location**: `crates/synvoid-mesh/src/mesh/yara_rules.rs:942-954,1818-1824`
 
 **Issue**: Two problems:
 1. DHT sync path: `if !self.config.trusted_signers.is_empty()` with no `is_global()` check
@@ -283,7 +283,7 @@ if !matches!(bits, 2048 | 4096) {
 
 ### ML-KEM/ML-DSA Key Pair Derivation from Loaded Secrets
 
-**Location**: `src/mesh/config_identity.rs:49-84`, `pqc/src/keys.rs`, `pqc/src/dsa.rs`
+**Location**: `crates/synvoid-mesh/src/mesh/config_identity.rs:49-84`, `pqc/src/keys.rs`, `pqc/src/dsa.rs`
 
 **Issue**: When loading ML-KEM-768 or ML-DSA private keys from base64 configuration, the code was discarding the loaded key and generating a new random keypair instead.
 
@@ -311,7 +311,7 @@ self.ml_dsa_public_key_base64 = Some(vk.to_base64());
 
 ### Threat Intel DHT Sync Signature Requirement
 
-**Location**: `src/mesh/threat_intel.rs:1233-1242`
+**Location**: `crates/synvoid-mesh/src/mesh/threat_intel.rs:1233-1242`
 
 **Issue**: `sync_from_dht()` accepted records without signatures, allowing unsigned threats to be accepted.
 
@@ -333,7 +333,7 @@ if !signature.is_empty() && !signer_pk.is_empty() {
 
 ### Threat Intel Publish Signature Requirement
 
-**Location**: `src/mesh/threat_intel.rs:650-654`
+**Location**: `crates/synvoid-mesh/src/mesh/threat_intel.rs:650-654`
 
 **Issue**: When a node had no signer configured, `publish_indicator_to_dht()` would publish with empty signature.
 
@@ -350,7 +350,7 @@ if self.signer.is_none() {
 
 ### Edge Node PoW Revocation Check Order
 
-**Location**: `src/mesh/peer_auth.rs:120-150`
+**Location**: `crates/synvoid-mesh/src/mesh/peer_auth.rs:120-150`
 
 **Issue**: Edge nodes could bypass PoW requirement by not providing credentials.
 
@@ -392,7 +392,7 @@ fn validate_edge_node(...) -> Result<(), String> {
 
 ### DnsRecord Privilege Classification
 
-**Location**: `src/mesh/dht/keys.rs:496`
+**Location**: `crates/synvoid-mesh/src/mesh/dht/keys.rs:496`
 
 **Issue**: `DnsZone` was privileged but `DnsRecord` was not, allowing edge nodes to store individual DNS records without proper authorization.
 
@@ -503,7 +503,7 @@ fn rand_f32() -> f32 {
 
 ### Node Role Validation
 
-**Location**: `src/mesh/peer_auth.rs`
+**Location**: `crates/synvoid-mesh/src/mesh/peer_auth.rs`
 
 **Issue**: Non-global nodes bypassed authentication entirely - malicious edge nodes could claim any role.
 
@@ -542,7 +542,7 @@ pub fn generate_global_node_auth(
 
 ### Overseer-Worker Communication
 
-**Location**: `src/process/ipc.rs`, `src/overseer/ipc_client.rs`, `src/process/ipc_signed.rs`
+**Location**: `src/process/ipc.rs`, `src/supervisor/ipc_client.rs`, `src/process/ipc_signed.rs`
 
 **Issue**: IPC messages between overseer and workers were unsigned.
 
@@ -575,7 +575,7 @@ stream.send_signed(&msg, &signer).await?;
 
 ### Unix Permission Pattern
 
-**Location**: `src/mesh/config_identity.rs`, `src/tls/acme.rs`
+**Location**: `crates/synvoid-mesh/src/mesh/config_identity.rs`, `src/tls/acme.rs`
 
 **Issue**: Private key files created with default permissions (readable by others).
 
@@ -627,7 +627,7 @@ fn evict_oldest() {
 
 ### Composite Key Pattern
 
-**Location**: `src/mesh/threat_intel.rs`
+**Location**: `crates/synvoid-mesh/src/mesh/threat_intel.rs`
 
 **Issue**: Multiple threat types for same IP overwrote each other (key was just IP).
 
@@ -664,7 +664,7 @@ if self.bcrypt_cost < 12 || self.bcrypt_cost > 15 {
 
 ### Multi-Genesis Key Support (W2.2)
 
-**Location**: `src/mesh/config.rs:GenesisKeyConfig`, `src/mesh/config_identity.rs`
+**Location**: `crates/synvoid-mesh/src/mesh/config.rs:GenesisKeyConfig`, `crates/synvoid-mesh/src/mesh/config_identity.rs`
 
 **Pattern**: Authorized key list with backward compatibility:
 ```rust
@@ -688,7 +688,7 @@ impl GenesisKeyConfig {
 
 ### Distributed Revocation (W2.3)
 
-**Location**: `src/mesh/transport_global.rs`
+**Location**: `crates/synvoid-mesh/src/mesh/transport_global.rs`
 
 **Pattern**: DHT + gossip for revocation propagation:
 ```
@@ -703,7 +703,7 @@ impl GenesisKeyConfig {
 
 ### Edge Node PoW Authentication (W2.6)
 
-**Location**: `src/mesh/peer_auth.rs`, `src/mesh/transport.rs`
+**Location**: `crates/synvoid-mesh/src/mesh/peer_auth.rs`, `crates/synvoid-mesh/src/mesh/transport.rs`
 
 **Pattern**: Dual authentication (Ed25519 OR PoW):
 ```rust
@@ -733,7 +733,7 @@ pub fn validate_peer_role(
 
 ### Capability Attestation (W2.8)
 
-**Location**: `src/mesh/dht/capability_attestation.rs`, `src/mesh/transport.rs`
+**Location**: `crates/synvoid-mesh/src/mesh/dht/capability_attestation.rs`, `crates/synvoid-mesh/src/mesh/transport.rs`
 
 **Pattern**: Global node verifies and attestates capabilities:
 ```rust
@@ -877,7 +877,7 @@ return Cow::Owned(result.nfkc().collect());
 
 ### Revocation Check for Edge/Origin (M1.3)
 
-**Location**: `src/mesh/peer_auth.rs:116-132, 223-240`
+**Location**: `crates/synvoid-mesh/src/mesh/peer_auth.rs:116-132, 223-240`
 
 **Pattern**: Revocation checks in all node validation paths:
 ```rust
@@ -895,7 +895,7 @@ fn validate_edge_node(..., revoked_nodes: Option<&GlobalNodeRevocationList>) -> 
 
 ### DHT Churn Handling (M2.1)
 
-**Location**: `src/mesh/dht/routing/manager.rs:483-557`
+**Location**: `crates/synvoid-mesh/src/mesh/dht/routing/manager.rs:483-557`
 
 **Pattern**: Background ping loop for peer health:
 ```rust
@@ -914,7 +914,7 @@ async fn ping_peers_loop(&self, transport: Arc<dyn PingTransport>) {
 
 ### Bucket Refresh (M2.2)
 
-**Location**: `src/mesh/dht/routing/manager.rs:455-492`
+**Location**: `crates/synvoid-mesh/src/mesh/dht/routing/manager.rs:455-492`
 
 **Pattern**: Periodic refresh of sparse buckets:
 ```rust
@@ -929,18 +929,18 @@ fn refresh_sparse_buckets(&self) {
 
 ---
 
-### Revocation Bypass Edge/Origin | `src/mesh/peer_auth.rs:116-132,223-240` | Revocation checks added to edge/origin validation |
+### Revocation Bypass Edge/Origin | `crates/synvoid-mesh/src/mesh/peer_auth.rs:116-132,223-240` | Revocation checks added to edge/origin validation |
 | `src/auth/mod.rs` | Constant-time CSRF comparison |
 | `src/admin/state.rs` | Constant-time session ID comparison |
 | `src/dns/crypto_rng.rs` | Result-based RNG with error propagation |
-| `src/mesh/peer_auth.rs` | Role-based Ed25519 + PoW authentication |
+| `crates/synvoid-mesh/src/mesh/peer_auth.rs` | Role-based Ed25519 + PoW authentication |
 | `src/process/ipc.rs` | IPC signing with HMAC |
 | `src/process/ipc_signed.rs` | Signed message deserialization |
-| `src/overseer/ipc_client.rs` | Signed overseer IPC |
-| `src/mesh/config_identity.rs` | 0o600 key permissions, multi-genesis keys |
-| `src/mesh/threat_intel.rs` | Composite DHT keys |
-| `src/mesh/transport_global.rs` | Distributed revocation |
-| `src/mesh/dht/capability_attestation.rs` | Capability attestation |
+| `src/supervisor/ipc_client.rs` | Signed overseer IPC |
+| `crates/synvoid-mesh/src/mesh/config_identity.rs` | 0o600 key permissions, multi-genesis keys |
+| `crates/synvoid-mesh/src/mesh/threat_intel.rs` | Composite DHT keys |
+| `crates/synvoid-mesh/src/mesh/transport_global.rs` | Distributed revocation |
+| `crates/synvoid-mesh/src/mesh/dht/capability_attestation.rs` | Capability attestation |
 | `src/challenge/mod.rs` | Reduced PoW timeout (12s) |
 | `src/config/admin.rs` | bcrypt cost minimum 12 |
 
@@ -950,7 +950,7 @@ fn refresh_sparse_buckets(&self) {
 
 ### SAFETY_REASON Comments for Intentional Dead Code
 
-**Location**: Throughout codebase, primarily `src/mesh/`, `src/overseer/`, `src/waf/`
+**Location**: Throughout codebase, primarily `crates/synvoid-mesh/src/mesh/`, `src/supervisor/`, `src/waf/`
 
 **Pattern**: Use `// SAFETY_REASON: ...` comments to document intentional `#[allow(dead_code)]` suppressions:
 
@@ -995,19 +995,19 @@ rg "fn random_" src/dns/crypto_rng.rs
 rg "Result.*CryptoRngError" src/dns/
 
 # Check peer auth validation
-rg "validate_peer_role" src/mesh/
+rg "validate_peer_role" crates/synvoid-mesh/src/mesh/
 
 # Check file permissions
-rg "set_permissions.*0o600" src/mesh/config_identity.rs src/tls/acme.rs
+rg "set_permissions.*0o600" crates/synvoid-mesh/src/mesh/config_identity.rs src/tls/acme.rs
 
 # Check bcrypt cost validation
 rg "bcrypt_cost < 12" src/config/
 
 # Check PoW authentication
-rg "validate_edge_node_pow" src/mesh/
+rg "validate_edge_node_pow" crates/synvoid-mesh/src/mesh/
 
 # Check capability attestation
-rg "CapabilityAttestation" src/mesh/
+rg "CapabilityAttestation" crates/synvoid-mesh/src/mesh/
 
 # Audit dead_code suppressions
 rg "#\[allow\(dead_code)\]" src/ --glob '*.rs' -c
@@ -1113,7 +1113,7 @@ expected_server.ct_eq(server_cookie).into()
 
 ### Origin Attestation with Empty Authorized List
 
-**Location**: `src/mesh/peer_auth.rs:281-300`
+**Location**: `crates/synvoid-mesh/src/mesh/peer_auth.rs:281-300`
 
 **Issue**: When `authorized_global_pubkeys` is empty, origin attestation was bypassed entirely.
 
@@ -1135,7 +1135,7 @@ if !authorized_global_pubkeys.iter().any(|k| k == attestation_key) {
 
 ### DHT Snapshot Request Rate Limiting
 
-**Location**: `src/mesh/transport_dht.rs:6-77`
+**Location**: `crates/synvoid-mesh/src/mesh/transport_dht.rs:6-77`
 
 **Issue**: `DhtSnapshotRequest` had no rate limiting or authentication - DoS vector.
 
@@ -1171,7 +1171,7 @@ if !signature.is_empty() && !signer_public_key.is_empty() {
 
 ### Slashing Quorum Scalability
 
-**Location**: `src/mesh/dht/stake.rs:425-447`
+**Location**: `crates/synvoid-mesh/src/mesh/dht/stake.rs:425-447`
 
 **Issue**: Slashing required exactly 3 global node votes - impossible with 1-2 global nodes.
 
@@ -1252,7 +1252,7 @@ const CONNECTION_TRACKER_SLOTS: usize = 262144;
 
 ### Revocation List Passed in Discovery
 
-**Location**: `src/mesh/discovery.rs:439`
+**Location**: `crates/synvoid-mesh/src/mesh/discovery.rs:439`
 
 **Issue**: Global node, Edge, and Origin revocation was bypassed - revocation list always `None`.
 
@@ -1314,7 +1314,7 @@ fn matches_localhost_lookalike(input: &str) -> bool {
 
 ### Genesis Key Default Deny
 
-**Location**: `src/mesh/config_identity.rs:238-245`
+**Location**: `crates/synvoid-mesh/src/mesh/config_identity.rs:238-245`
 
 **Current behavior**: Empty `authorized_genesis_keys` denies all remote immutable records (secure default). Implemented 2026-05-26.
 
@@ -1358,7 +1358,7 @@ if current >= limit {
 
 ### Revocation List Propagation in Discovery
 
-**Location**: `src/mesh/discovery.rs:439`
+**Location**: `crates/synvoid-mesh/src/mesh/discovery.rs:439`
 
 **Issue**: `handle_hello` passed `None` for revocation list.
 
@@ -1370,7 +1370,7 @@ if current >= limit {
 
 ### VerifiedUpstream Signature Verification
 
-**Location**: `src/mesh/topology.rs:732-805`
+**Location**: `crates/synvoid-mesh/src/mesh/topology.rs:732-805`
 
 **Issue**: `find_verified_upstreams_for_site()` accepted records without verifying `global_node_signature`.
 
@@ -1430,7 +1430,7 @@ TrustAnchorState::Missing => {
 
 ### CSPRNG for Signing Key Generation
 
-**Location**: `src/mesh/config_identity.rs:343-345`
+**Location**: `crates/synvoid-mesh/src/mesh/config_identity.rs:343-345`
 
 **Issue**: Used `rand::rng().fill_bytes()` (SmallRng) instead of OS CSPRNG.
 
@@ -1465,7 +1465,7 @@ if !prereq.rdata.is_empty() {
 
 ### RouteResponse Signature Verification
 
-**Location**: `src/mesh/discovery.rs:585-608`
+**Location**: `crates/synvoid-mesh/src/mesh/discovery.rs:585-608`
 
 **Issue**: RouteResponse signature was logged but never verified.
 
@@ -1488,7 +1488,7 @@ if let Some(pubkey) = cert_manager.get_global_node_key(&provider_node_id) {
 
 ### DHT Record Content Hash Chain
 
-**Location**: `src/mesh/protocol.rs:1319-1340`
+**Location**: `crates/synvoid-mesh/src/mesh/protocol.rs:1319-1340`
 
 **Issue**: DHT records used timestamp-based conflict resolution without cryptographic integrity.
 

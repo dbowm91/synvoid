@@ -77,15 +77,17 @@ cargo check --no-default-features --features mesh,dns
 |------------|--------------|
 | `src/http/client.rs` | `src/http_client/mod.rs` |
 | `src/http/shared_handler.rs` | `src/http/server.rs:4662` (contains `collect_body_with_chunk_waf` and `stream_body_with_waf`) |
-| `src/mesh/proxy.rs:1485` | `src/mesh/transport.rs:986` + `src/config/site/misc.rs:37` |
-| `src/mesh/raft/state_machine.rs:166-172` (quorum verify) | `src/mesh/dht/signed.rs:874-1092` |
+| `src/mesh/proxy.rs` | `crates/synvoid-mesh/src/mesh/proxy.rs` (mesh code extracted to crate; re-exported via `src/mesh/mod.rs`) |
+| `src/mesh/transport.rs` | `crates/synvoid-mesh/src/mesh/` (now in transport_core/ and transports/ subdirectories) |
+| `src/mesh/raft/state_machine.rs` | `crates/synvoid-mesh/src/mesh/raft/state_machine.rs` |
 | ConfigManager location | `crates/synvoid-config/src/lib.rs:113` (not `main_config.rs`) |
 | `src/overseer/`, `src/master/`, `src/startup/master.rs` | `src/supervisor/` (consolidated 2026) |
-| `TunnelBackend` at `src/tunnel/upstream.rs` | `TunnelBackend` at `src/tunnel/router.rs:200` (removed from upstream.rs) |
+| `TunnelBackend` at `src/tunnel/upstream.rs` | `src/tunnel/router.rs:200` (removed from upstream.rs) |
 | `architecture/tunnel.md` | Does not exist — tunnels documented in `networking_deep_dive.md` |
 | `architecture/admin.md` | Does not exist — use `admin_deep_dive.md` |
 | `src/worker/mod.rs` (CPU offload) | `src/worker/cpu_task/` (split 2026-06) — see `mod.rs`, `state.rs`, `metrics.rs`, `payload.rs`, `dispatch.rs`, `connection.rs`, `yara.rs` |
 | `src/worker/unified_server.rs` (monolithic) | `src/worker/unified_server/` (split 2026-06) — see `state.rs`, `init_apps.rs`, `init_waf.rs`, `init_mesh.rs`, `init_runtime.rs`, `init_config.rs`, `lifecycle.rs` |
+| `src/app_server/granian.rs` | `crates/synvoid-app-server/src/granian.rs` |
 | `DhtKeyPolicy` | `crates/synvoid-mesh/src/mesh/dht/key_policy.rs` (new module) |
 | `SignedRaftAttestation` | `crates/synvoid-mesh/src/mesh/peer_auth.rs` (v2: binds to value digest via `value_hash`) |
 | `ConsensusTransport` trait | `crates/synvoid-mesh/src/mesh/raft/consensus.rs` (new module) |
@@ -99,7 +101,6 @@ Agent guidance is **modularized** to reduce context pollution. Each module has i
 
 | Module | Override File | Purpose |
 |--------|--------------|---------|
-| Mesh (DHT, Raft, Network) | [`src/mesh/AGENTS.override.md`](src/mesh/AGENTS.override.md) | DHT, Raft, mesh networking patterns |
 | DNS (DNSSEC, TSIG) | [`src/dns/AGENTS.override.md`](src/dns/AGENTS.override.md) | DNS server, DNSSEC, TSIG patterns |
 | WAF (Rule Matching) | [`src/waf/AGENTS.override.md`](src/waf/AGENTS.override.md) | WAF engine, attack detection |
 | HTTP Server | [`src/http/AGENTS.override.md`](src/http/AGENTS.override.md) | HTTP request handling |
@@ -111,6 +112,7 @@ Agent guidance is **modularized** to reduce context pollution. Each module has i
 | Admin API | [`src/admin/AGENTS.override.md`](src/admin/AGENTS.override.md) | Admin API patterns |
 | Auth | [`src/auth/AGENTS.override.md`](src/auth/AGENTS.override.md) | Authentication patterns |
 | Platform/Systems | [`src/platform/AGENTS.override.md`](src/platform/AGENTS.override.md) | Platform abstraction, IPC, sandboxing |
+| Worker | [`src/worker/AGENTS.override.md`](src/worker/AGENTS.override.md) | UnifiedServerWorker, CpuWorker, CPU offload |
 | Deferred Items | [`skills/deferred_items_knowledge.md`](skills/deferred_items_knowledge.md) | Context on incremental deferred item implementation |
 | Skills | [`skills/AGENTS.override.md`](skills/AGENTS.override.md) | Skill file documentation |
 
@@ -199,17 +201,17 @@ The consolidated implementation plan is at [`plans/plan.md`](plans/plan.md).
 - **Session ID comparison**: Not constant-time, but acceptable (high-entropy random 32-byte values)
 
 ### Module Key Facts
-- **MeshProxy**: `src/mesh/proxy.rs:63` (1994 lines) - key routing component not in overview
+- **MeshProxy**: `crates/synvoid-mesh/src/mesh/proxy.rs` - key routing component not in overview
 - **BackendType**: `src/router.rs:65-77` has 11 variants
 - **SAFE_HEADERS**: `src/proxy/cache.rs:97-126` has 28 headers
 - **ConfigManager**: `crates/synvoid-config/src/lib.rs:113`
-- **DhtSyncRequest**: `src/mesh/transport_dht.rs:308-380` - signed by default with a config-controlled unsigned compatibility fallback; node binding enforced in transport; envelope signature verifies `(request_id, node_id, local_root_hash, timestamp, nonce)`.
-- **DhtSyncResponse**: `src/mesh/dht/record_store_message.rs:307-420` - signed: envelope signature verified, signer-to-node binding enforced, record-set digest checked, stores via `store_record_from_ingress()`. Unsigned compat: stores via `store_record_from_ingress()` with `envelope_signature_valid=false` and explicit warning log. Deprecated `handle_sync_response()` removed.
-- **DhtAntiEntropyRequest**: `src/mesh/transport_peer.rs:738-751` - node binding enforced, `signer_public_key` now verified against authorized global node keys; **envelope signature also verified** (✅ MR-4 fixed). Both request and response verify envelope signatures via `verify_dht_anti_entropy_request_envelope_signature()` / `verify_dht_anti_entropy_response_envelope_signature()` in `dht/signed.rs`.
-- **DhtRecordPush**: `src/mesh/dht/signed.rs:44-47` - signature field exists and is enforced; **envelope signature also verified** (✅ MR-4 fixed).
+- **DhtSyncRequest**: `crates/synvoid-mesh/src/mesh/transport_dht.rs` - signed by default with a config-controlled unsigned compatibility fallback; node binding enforced in transport; envelope signature verifies `(request_id, node_id, local_root_hash, timestamp, nonce)`.
+- **DhtSyncResponse**: `crates/synvoid-mesh/src/mesh/dht/record_store_message.rs` - signed: envelope signature verified, signer-to-node binding enforced, record-set digest checked, stores via `store_record_from_ingress()`. Unsigned compat: stores via `store_record_from_ingress()` with `envelope_signature_valid=false` and explicit warning log. Deprecated `handle_sync_response()` removed.
+- **DhtAntiEntropyRequest**: `crates/synvoid-mesh/src/mesh/transport_peer.rs` - node binding enforced, `signer_public_key` now verified against authorized global node keys; **envelope signature also verified** (✅ MR-4 fixed). Both request and response verify envelope signatures via `verify_dht_anti_entropy_request_envelope_signature()` / `verify_dht_anti_entropy_response_envelope_signature()` in `dht/signed.rs`.
+- **DhtRecordPush**: `crates/synvoid-mesh/src/mesh/dht/signed.rs` - signature field exists and is enforced; **envelope signature also verified** (✅ MR-4 fixed).
 - **DhtKeyPolicyTable**: `crates/synvoid-mesh/src/mesh/dht/key_policy.rs` - centralizes key family authority policies for DHT ingress validation. **DnsZone** uses `RaftOrQuorumGlobal` authority with `remote_writes_allowed=false` — DNS zone records can only be written via Raft consensus or quorum attestation, not via direct DHT capability.
 - **DhtRecordIngressContext**: Fields are now private. Access via accessor methods: `peer_id()`, `source_node_id()`, `source_classification()`, `path()`, `requires_quorum_proof()`, `requires_trust_anchor()`, `is_immutable_key()`, `envelope_signature_valid()`, `timestamp()`, `request_id()`, `is_local_origin()`. Construction controlled via `new_local()`, `new_remote()`, and builder methods.
-- **verify_envelope_signer_binding()**: `src/mesh/dht/signed.rs` — enforces signer-to-node binding for all signed DHT messages on global nodes. `NodePublicKeyResolver` trait provides pluggable key resolution.
+- **verify_envelope_signer_binding()**: `crates/synvoid-mesh/src/mesh/dht/signed.rs` — enforces signer-to-node binding for all signed DHT messages on global nodes. `NodePublicKeyResolver` trait provides pluggable key resolution.
 - **validate_peer_role()**: `crates/synvoid-mesh/src/mesh/peer_auth.rs:372` — validates node role claims. Now accepts `raft_attestation: Option<&SignedRaftAttestation>` and `allow_v1_raft_attestations: bool` parameters. Edge nodes can validate via value-bound Raft attestation in addition to the traditional quorum-signed org key path. When a `raft_attestation` is provided for an Edge node, it is used exclusively (no fallback to other paths).
 - **SignedRaftAttestation**: `crates/synvoid-mesh/src/mesh/peer_auth.rs` - requires cryptographic proof, not just structural attestation. **v2 protocol** binds attestation to value digest (`value_hash` field in `RaftAttestation`, `protocol_version=2`). V1 attestations without `value_hash` are **rejected by default** unless `allow_v1_raft_attestations=true` is set in config.
 - **ConsensusTransport**: `crates/synvoid-mesh/src/mesh/raft/consensus.rs` - decouples Raft consensus from mesh transport layer.
@@ -218,7 +220,7 @@ The consolidated implementation plan is at [`plans/plan.md`](plans/plan.md).
 - **DNS Cookie Server**: `src/dns/cookie.rs` - fully wired via `validate_cookie()` in query.rs:645-662
 - **TunnelRouter**: `src/tunnel/router.rs:200` - active routing uses `resolve_tunnel_backend()` (TunnelBackend struct removed)
 - **HickoryRecursor DNSSEC**: `src/dns/resolver.rs:693-702` - uses `ValidateWithStaticKey` when `enable_dnssec=true` (✅ FIXED)
-- **HTTP/3 Body Collection**: `src/http3/server.rs:340-398` - ad-hoc implementation, not using shared_handler
+- **HTTP/3 Body Collection**: `src/http3/server.rs` - ad-hoc implementation, not using shared_handler
 - **BufferPool**: 4 tiers (small/medium/large/jumbo)
 
 ### Process Architecture
@@ -229,7 +231,7 @@ The consolidated implementation plan is at [`plans/plan.md`](plans/plan.md).
 - **Mesh control plane** runs in Supervisor process, not worker (workers get intelligence via IPC)
 
 ### Granian Integration
-- **Granian IS integrated** - `src/app_server/granian.rs` (1047 lines) with full process management, auto-install, admin API
+- **Granian IS integrated** - `crates/synvoid-app-server/src/granian.rs` with full process management, auto-install, admin API
 - NOT a separate process type - runs within the Supervisor architecture
 
 ### Implementation Notes

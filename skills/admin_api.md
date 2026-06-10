@@ -138,8 +138,8 @@ let api_routes = Router::new()
 The Overseer writes status to a file periodically:
 
 ```rust
-// In src/overseer/process.rs
-const OVERSEER_STATUS_FILE: &str = "overseer_status.json";
+// In src/supervisor/process.rs
+const SUPERVISOR_STATUS_FILE: &str = "overseer_status.json";
 
 struct OverseerStatusFile {
     running: bool,

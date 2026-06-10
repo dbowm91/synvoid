@@ -15,7 +15,7 @@ The mesh follows a hierarchical structure inspired by decentralized networks but
 ### 1. QUIC Transport
 All mesh communication happens over QUIC. This provides:
 - **Native Multiplexing:** Multiple streams (threat intel, proxying, heartbeats) can coexist on a single connection without Head-of-Line blocking.
-- **Low Latency:** 0-RTT handshakes for rapid reconnection (disabled by default due to replay attack concerns — see `src/mesh/config.rs:1391-1392` for configuration).
+- **Low Latency:** 0-RTT handshakes for rapid reconnection (disabled by default due to replay attack concerns — see `crates/synvoid-mesh/src/mesh/config.rs:1391-1392` for configuration).
 - **Encryption:** Mandatory TLS 1.3 encryption for all traffic.
 
 ### 2. Post-Quantum Cryptography (PQC)
@@ -29,10 +29,10 @@ Peer and service discovery are handled via a Kademlia-based **Distributed Hash T
 - **Signed/Raft-Attested Records**: DHT distributes signed or Raft-attested records. DHT does not decide trust, ownership, revocation, or global policy — it is a transport layer for record distribution.
 - **Capability Attestations:** Nodes sign and publish their capabilities (e.g., "I can proxy example.com") to the DHT. These records are soft-state: advisory and TTL-bound.
 - **Authority-Adjacent Records**: Records in sensitive namespaces (org keys, verified upstreams) require a signed Raft attestation or quorum proof for acceptance.
-- **Hierarchical Routing:** [RESERVED/PLANNED] Future multi-region topology feature using Bloom filters and regional hubs for memory-efficient route announcement checking. Not yet active. See [`hierarchical_routing.rs`](src/mesh/hierarchical_routing.rs) for implementation details.
+- **Hierarchical Routing:** [RESERVED/PLANNED] Future multi-region topology feature using Bloom filters and regional hubs for memory-efficient route announcement checking. Not yet active. See [`hierarchical_routing.rs`](crates/synvoid-mesh/src/mesh/hierarchical_routing.rs) for implementation details.
 
 ### 4. Raft Consensus
-Global nodes use Raft consensus (`src/mesh/raft/*.rs`) for **canonical global authority**:
+Global nodes use Raft consensus (`crates/synvoid-mesh/src/mesh/raft/*.rs`) for **canonical global authority**:
 - **Leader Election:** Global nodes elect a leader to coordinate state changes.
 - **Log Replication:** Authority records are replicated across Global nodes via Raft log.
 - **Quorum Requirements:** Write operations require quorum (2/3) of Global nodes.
@@ -62,7 +62,7 @@ The mesh allows nodes to share behavioral fingerprints of suspected bots.
 
 ## MeshProxy Component
 
-The `MeshProxy` (`src/mesh/proxy.rs`) is the central routing component for mesh proxying:
+The `MeshProxy` (`crates/synvoid-mesh/src/mesh/proxy.rs`) is the central routing component for mesh proxying:
 
 - **Proxy Cache:** Caches proxy decisions to reduce latency for repeated requests to the same destination
 - **Connection Management:** Tracks active connections via `active_connections: DashMap<String, MeshConnection>`
@@ -79,8 +79,8 @@ MeshProxy is the critical routing component that coordinates mesh traffic betwee
 ## Security & Integrity
 
 - **Peer Authentication:** Mesh TLS supports `strict`, `tofu`, and `permissive` modes. Strict mode requires CA-backed validation, TOFU can pin first-seen fingerprints, and permissive mode accepts peers without CA validation. Transport also enforces node-ID binding for DHT sync and anti-entropy traffic.
-- **Audit Logs:** The mesh includes a distributed auditing system (`src/mesh/audit.rs`) to track network events and detect malicious or misconfigured peers.
-- **Access Control:** Fine-grained policies control which nodes can proxy which services (see [`CapabilityAccessVerifier`](src/mesh/dht/capability_access.rs:7) in `src/mesh/dht/capability_access.rs`).
+- **Audit Logs:** The mesh includes a distributed auditing system (`crates/synvoid-mesh/src/mesh/audit.rs`) to track network events and detect malicious or misconfigured peers.
+- **Access Control:** Fine-grained policies control which nodes can proxy which services (see [`CapabilityAccessVerifier`](crates/synvoid-mesh/src/mesh/dht/capability_access.rs:7) in `crates/synvoid-mesh/src/mesh/dht/capability_access.rs`).
 
 ### Current DHT Verification Split
 

@@ -11,9 +11,9 @@ Use this skill when:
 - Implementing background pruning tasks for expired records
 
 ## Key Files
-- `src/mesh/dht/record_store_persist.rs` - Persistence implementation
-- `src/mesh/dht/record_store.rs` - Added `persist_neighborhood()`, `load_neighborhood()`
-- `src/mesh/config.rs` - Added `neighborhood_persistence_enabled`, `neighborhood_cache_size`, `persist_max_age_secs`
+- `crates/synvoid-mesh/src/mesh/dht/record_store_persist.rs` - Persistence implementation
+- `crates/synvoid-mesh/src/mesh/dht/record_store.rs` - Added `persist_neighborhood()`, `load_neighborhood()`
+- `crates/synvoid-mesh/src/mesh/config.rs` - Added `neighborhood_persistence_enabled`, `neighborhood_cache_size`, `persist_max_age_secs`
 
 ## Implementation Pattern
 
@@ -77,7 +77,7 @@ pub fn start_pruning_task(&self, interval_secs: u64) {
 ```
 
 ### 6. Module Declaration
-In `src/mesh/dht/record_store.rs`:
+In `crates/synvoid-mesh/src/mesh/dht/record_store.rs`:
 ```rust
 #[path = "record_store_persist.rs"]
 mod record_store_persist;
@@ -167,7 +167,7 @@ pub fn get_signable_content(&self) -> Vec<u8> {
 
 **Important**: Only `source_node_id` is part of the signable content, NOT `publisher_id`. Tampering with `publisher_id` will NOT be detected by signature verification.
 
-Verification functions in `src/mesh/dht/signed.rs`:
+Verification functions in `crates/synvoid-mesh/src/mesh/dht/signed.rs`:
 - `verify_dht_record_signature()` — verifies signature on a DhtRecord
 - `verify_dht_record_signature_for_key()` — verifies with expected record type
 
@@ -182,7 +182,7 @@ Records requiring quorum use a two-phase commit to prevent gossip of unconfirmed
 2. **Phase 2 (Commit)**: On quorum approval, `commit_record_after_quorum()` transitions to `Live`, queues for announce, and notifies peers.
 
 Key types:
-- `DhtRecordStatus` enum (`PendingQuorum`, `Live`) in `src/mesh/protocol.rs` with `Default::default()` = `Live`
+- `DhtRecordStatus` enum (`PendingQuorum`, `Live`) in `crates/synvoid-mesh/src/mesh/protocol.rs` with `Default::default()` = `Live`
 - `QuorumSignatureProto` — serializes quorum signatures attached to records
 
 Key methods:
@@ -207,8 +207,8 @@ pub struct DhtRecordEntry {
 For full-disk persistence of DHT records (not just neighborhood subset), use `DiskRecordStore`:
 
 ### Key Files
-- `src/mesh/dht/record_store_disk.rs` - SQLite-backed disk storage
-- `src/mesh/dht/record_store.rs` - `load_from_disk()`, `persist_to_disk()` methods
+- `crates/synvoid-mesh/src/mesh/dht/record_store_disk.rs` - SQLite-backed disk storage
+- `crates/synvoid-mesh/src/mesh/dht/record_store.rs` - `load_from_disk()`, `persist_to_disk()` methods
 
 ### Configuration
 In `RecordStoreConfig`, set `disk_storage_path`:
@@ -274,9 +274,9 @@ CREATE INDEX idx_source ON dht_records(source_node_id);
 The `DiskRecordStore` can act as an L2 cache transparent to the `ShardedRecordStore` L1 (in-memory):
 
 ### Key Files
-- `src/mesh/dht/record_store_crud.rs` - Modified `get_record()`, `store_record_global()`
-- `src/mesh/dht/record_store.rs` - Added `warmup_from_disk()` method
-- `src/mesh/dht/record_store_message.rs` - Modified `commit_record_after_quorum()`, `abort_pending_record()`
+- `crates/synvoid-mesh/src/mesh/dht/record_store_crud.rs` - Modified `get_record()`, `store_record_global()`
+- `crates/synvoid-mesh/src/mesh/dht/record_store.rs` - Added `warmup_from_disk()` method
+- `crates/synvoid-mesh/src/mesh/dht/record_store_message.rs` - Modified `commit_record_after_quorum()`, `abort_pending_record()`
 
 ### L1 Read-Through Cache
 When `get_record()` finds a record not in memory (L1), it checks disk (L2):

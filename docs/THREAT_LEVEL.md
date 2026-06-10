@@ -66,7 +66,7 @@ history_flush_interval_secs = 60
 use_sqlite_history = true
 
 [threat_level.persistence]
-baseline_persist_path = "/var/lib/synvoidwaf/baseline.json"
+baseline_persist_path = "/var/lib/synvoid/baseline.json"
 ```
 
 ### Configuration Options
