@@ -364,6 +364,7 @@ impl RecordStoreManager {
             crate::dht::signed::SourceClassification::Unknown,
             crate::dht::signed::IngressPath::Announce,
         );
+        let ingress_ctx = ingress_ctx.with_policy_context(self.ingress_policy_context());
 
         for record in records {
             if !self.verify_origin_permission(&record, from_node) {

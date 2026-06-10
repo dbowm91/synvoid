@@ -650,6 +650,7 @@ impl RecordStoreManager {
                     crate::dht::signed::IngressPath::Push,
                 )
                 .with_envelope_signature(has_auth);
+                let ingress_ctx = ingress_ctx.with_policy_context(self.ingress_policy_context());
 
                 for record in records.iter() {
                     self.store_record_from_ingress(record.clone(), &ingress_ctx, reputation);

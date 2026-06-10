@@ -387,17 +387,13 @@ No production call sites were rewired; no module reorganization; no legacy `vali
 
 The key-policy canonical helper now explicitly tests `CanonicalUnavailable` defer branches and has an ingress adapter preserving accept/reject/defer distinctions. Production record ingress wiring remains deferred until a clean `CanonicalTrustReader` injection point exists; no DHT propagation/storage behavior changed.
 
-### Iteration 13 DHT Ingress Canonical Reader Context
+### Iteration 14 DHT Ingress Context Wiring Cleanup
 
-One remote signed-record ingress validator (direct client `DhtRecordPush` and `DhtRecordAnnounce` paths at `store_record_from_ingress`) now receives an injected canonical-reader context via the extended `DhtRecordIngressContext.policy_context` (carrying `Option<DhtIngressPolicyContext>` with `Arc<dyn CanonicalTrustReader>`). The single low-risk ingress entry delegates to the existing key-policy ingress adapter (`validate_dht_key_authority_for_ingress` / `check_dht_ingress_authority`) for canonical-required keys. Disabled context (`DhtIngressPolicyContext::disabled()`) returns `NotConfigured` and preserves legacy behavior with zero change. Configured context preserves accept/reject/defer distinctions and causes rejection for remote ingress of canonical-required keys on unauthorized, revoked, unavailable, or unknown canonical state (deferred treated as reject at this layer; no separate defer/retry queue). Only the targeted direct client ingress paths (Push/Announce) consult the gate; local writes (`store_local_record`), sync replay (SnapshotSync/SyncResponse/AntiEntropy), quorum paths, and Raft/edge-replica apply paths were not broadly changed and do not require the context. No globals or deep reader construction were introduced. The `DhtIngressPolicyContext` + `check_dht_ingress_authority` live in `crates/synvoid-mesh/src/mesh/dht/ingress_policy.rs` and are re-exported via `dht/mod.rs`.
+`RecordStoreManager` now carries an optional `DhtIngressPolicyContext` and attaches it to direct client Push/Announce ingress contexts. The existing `store_record_from_ingress` gate is therefore active for configured Push/Announce paths and remains inactive by default. Disabled context preserves legacy behavior. Sync/replay/local/quorum/Raft apply paths remain outside this gate.
 
 ## Follow-Up Recommendation
 
-After the Iteration 13 DHT ingress canonical reader context (context + adapter + one low-risk direct client ingress validator wired), the next steps are:
-1. Wire additional remote signed-record ingress validators (e.g. more announce/sync paths) once constructors cleanly flow the context, or add higher-level carriers (DataPlaneServices / MeshTransportManager) for broader reader injection.
-2. Add an `AdvisoryRecordSource` seam rather than moving service consumers directly.
-3. Service consumers (`threat_intel.rs`, `proxy.rs`, YARA/WASM) only after policy and advisory-source boundaries are stable.
-4. Consider lifting the reader to `RecordStoreManager` or `DataPlaneServices` for future Raft-apply or query-time canonical checks if needed (outside current ingress-only scope).
+After this cleanup, add an `AdvisoryRecordSource` seam before migrating service consumers. Only consider expanding the ingress gate to additional remote paths after the Push/Announce path is stable and the context carrier is clearly owned by a higher-level mesh service or data-plane composition object.
 
 ---
 

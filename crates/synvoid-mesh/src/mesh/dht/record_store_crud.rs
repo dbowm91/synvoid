@@ -206,45 +206,8 @@ impl RecordStoreManager {
         // If the per-ingress ctx carries a DhtIngressPolicyContext with a reader,
         // delegate to check_dht_ingress_authority. NotConfigured preserves legacy.
         // Rejected or Deferred for the targeted remote ingress causes rejection here.
-        if !ingress_ctx.is_local_origin() {
-            let path = ingress_ctx.path();
-            if matches!(
-                path,
-                crate::dht::signed::IngressPath::Push | crate::dht::signed::IngressPath::Announce
-            ) {
-                if let Some(pctx) = ingress_ctx.policy_context() {
-                    let dht_key = DhtKey::from_str(&record.key);
-                    match crate::dht::check_dht_ingress_authority(
-                        pctx,
-                        &dht_key,
-                        Some(ingress_ctx.source_node_id()),
-                        None,
-                    ) {
-                        crate::dht::DhtIngressGateOutcome::Accepted
-                        | crate::dht::DhtIngressGateOutcome::NotConfigured => {}
-                        crate::dht::DhtIngressGateOutcome::Rejected(r) => {
-                            tracing::warn!(
-                                "Record store: remote ingress rejected by canonical policy for key {} from {}: {:?}",
-                                record.key,
-                                ingress_ctx.source_node_id(),
-                                r
-                            );
-                            crate::stubs::metrics::record_dht_store_operation(false);
-                            return false;
-                        }
-                        crate::dht::DhtIngressGateOutcome::Deferred(d) => {
-                            tracing::warn!(
-                                "Record store: remote ingress deferred by canonical policy for key {} from {} (treating as reject per plan): {:?}",
-                                record.key,
-                                ingress_ctx.source_node_id(),
-                                d
-                            );
-                            crate::stubs::metrics::record_dht_store_operation(false);
-                            return false;
-                        }
-                    }
-                }
-            }
+        if !self.check_record_ingress_canonical_gate(&record, ingress_ctx) {
+            return false;
         }
 
         self.store_record_verified_internal(
@@ -252,6 +215,56 @@ impl RecordStoreManager {
             source_reputation,
             ingress_ctx.is_local_origin(),
         )
+    }
+
+    fn check_record_ingress_canonical_gate(
+        &self,
+        record: &DhtRecord,
+        ingress_ctx: &crate::dht::signed::DhtRecordIngressContext,
+    ) -> bool {
+        if ingress_ctx.is_local_origin() {
+            return true;
+        }
+        let path = ingress_ctx.path();
+        if !matches!(
+            path,
+            crate::dht::signed::IngressPath::Push | crate::dht::signed::IngressPath::Announce
+        ) {
+            return true;
+        }
+        if let Some(pctx) = ingress_ctx.policy_context() {
+            let dht_key = DhtKey::from_str(&record.key);
+            match crate::dht::check_dht_ingress_authority(
+                pctx,
+                &dht_key,
+                Some(ingress_ctx.source_node_id()),
+                None,
+            ) {
+                crate::dht::DhtIngressGateOutcome::Accepted
+                | crate::dht::DhtIngressGateOutcome::NotConfigured => {}
+                crate::dht::DhtIngressGateOutcome::Rejected(r) => {
+                    tracing::warn!(
+                        "Record store: remote ingress rejected by canonical policy for key {} from {}: {:?}",
+                        record.key,
+                        ingress_ctx.source_node_id(),
+                        r
+                    );
+                    crate::stubs::metrics::record_dht_store_operation(false);
+                    return false;
+                }
+                crate::dht::DhtIngressGateOutcome::Deferred(d) => {
+                    tracing::warn!(
+                        "Record store: remote ingress deferred by canonical policy for key {} from {} (treating as reject per plan): {:?}",
+                        record.key,
+                        ingress_ctx.source_node_id(),
+                        d
+                    );
+                    crate::stubs::metrics::record_dht_store_operation(false);
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     pub(crate) fn store_record_global(&self, mut record: DhtRecord, is_local_origin: bool) -> bool {
@@ -1777,5 +1790,173 @@ mod tests {
             !local_result,
             "Unsigned record from local origin should also be rejected (store requires signature for all writes)"
         );
+    }
+
+    #[test]
+    fn test_ingress_gate_default_none_does_not_reject_on_no_reader() {
+        let signer = crate::protocol::MeshMessageSigner::new([20u8; 32]);
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let store = RecordStoreManager::new(
+            crate::dht::RecordStoreConfig::default(),
+            "test-global-node".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control,
+            None,
+        );
+        let record = build_signed_remote_record("global_node_proof:remote_node", &signer);
+        let ingress_ctx = crate::dht::signed::DhtRecordIngressContext::new_remote(
+            "peer-1".to_string(),
+            "remote_node".to_string(),
+            crate::dht::signed::SourceClassification::EdgeNode,
+            crate::dht::signed::IngressPath::Push,
+        );
+        let result = store.store_record_from_ingress(record, &ingress_ctx, 100);
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_ingress_gate_configured_push_rejects_unauthorized_canonical() {
+        let signer = crate::protocol::MeshMessageSigner::new([21u8; 32]);
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let store = RecordStoreManager::new(
+            crate::dht::RecordStoreConfig::default(),
+            "test-global-node".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control,
+            None,
+        );
+        let reader = crate::mesh::canonical::StaticCanonicalTrustReader::new(
+            crate::mesh::canonical::CanonicalFreshness::Live,
+        );
+        let pctx =
+            crate::dht::DhtIngressPolicyContext::with_canonical_reader(std::sync::Arc::new(reader));
+        let record = build_signed_remote_record("global_node_proof:remote_node", &signer);
+        let ingress_ctx = crate::dht::signed::DhtRecordIngressContext::new_remote(
+            "peer-1".to_string(),
+            "remote_node".to_string(),
+            crate::dht::signed::SourceClassification::EdgeNode,
+            crate::dht::signed::IngressPath::Push,
+        )
+        .with_policy_context(Some(pctx));
+        let gate_ok = store.check_record_ingress_canonical_gate(&record, &ingress_ctx);
+        assert!(!gate_ok);
+        let result = store.store_record_from_ingress(record, &ingress_ctx, 100);
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_ingress_gate_configured_announce_rejects_unauthorized_canonical() {
+        let signer = crate::protocol::MeshMessageSigner::new([22u8; 32]);
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let store = RecordStoreManager::new(
+            crate::dht::RecordStoreConfig::default(),
+            "test-global-node".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control,
+            None,
+        );
+        let reader = crate::mesh::canonical::StaticCanonicalTrustReader::new(
+            crate::mesh::canonical::CanonicalFreshness::Live,
+        );
+        let pctx =
+            crate::dht::DhtIngressPolicyContext::with_canonical_reader(std::sync::Arc::new(reader));
+        let record = build_signed_remote_record("global_node_proof:remote_node", &signer);
+        let ingress_ctx = crate::dht::signed::DhtRecordIngressContext::new_remote(
+            "peer-1".to_string(),
+            "remote_node".to_string(),
+            crate::dht::signed::SourceClassification::EdgeNode,
+            crate::dht::signed::IngressPath::Announce,
+        )
+        .with_policy_context(Some(pctx));
+        let result = store.store_record_from_ingress(record, &ingress_ctx, 100);
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_ingress_gate_configured_advisory_proceeds_with_rejecting_reader() {
+        let signer = crate::protocol::MeshMessageSigner::new([23u8; 32]);
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let store = RecordStoreManager::new(
+            crate::dht::RecordStoreConfig::default(),
+            "test-global-node".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control,
+            None,
+        );
+        let reader = crate::mesh::canonical::StaticCanonicalTrustReader::new(
+            crate::mesh::canonical::CanonicalFreshness::Live,
+        );
+        let pctx =
+            crate::dht::DhtIngressPolicyContext::with_canonical_reader(std::sync::Arc::new(reader));
+        let record = build_signed_remote_record("upstream:example.com", &signer);
+        let ingress_ctx = crate::dht::signed::DhtRecordIngressContext::new_remote(
+            "peer-1".to_string(),
+            "remote_node".to_string(),
+            crate::dht::signed::SourceClassification::EdgeNode,
+            crate::dht::signed::IngressPath::Push,
+        )
+        .with_policy_context(Some(pctx));
+        let result = store.store_record_from_ingress(record, &ingress_ctx, 100);
+        assert!(result);
+    }
+
+    #[test]
+    fn test_ingress_gate_sync_bypass_does_not_consult_gate() {
+        let signer = crate::protocol::MeshMessageSigner::new([24u8; 32]);
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let store = RecordStoreManager::new(
+            crate::dht::RecordStoreConfig::default(),
+            "test-global-node".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control,
+            None,
+        );
+        let reader = crate::mesh::canonical::StaticCanonicalTrustReader::new(
+            crate::mesh::canonical::CanonicalFreshness::Live,
+        );
+        let pctx =
+            crate::dht::DhtIngressPolicyContext::with_canonical_reader(std::sync::Arc::new(reader));
+        let record = build_signed_remote_record("global_node_proof:remote_node", &signer);
+        let ingress_ctx = crate::dht::signed::DhtRecordIngressContext::new_remote(
+            "peer-1".to_string(),
+            "remote_node".to_string(),
+            crate::dht::signed::SourceClassification::EdgeNode,
+            crate::dht::signed::IngressPath::SyncResponse,
+        )
+        .with_policy_context(Some(pctx));
+        let result = store.store_record_from_ingress(record, &ingress_ctx, 100);
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_record_store_manager_ingress_policy_context_set_get() {
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let store = RecordStoreManager::new(
+            crate::dht::RecordStoreConfig::default(),
+            "test-global-node".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control,
+            None,
+        );
+        assert!(store.ingress_policy_context().is_none());
+        let reader = crate::mesh::canonical::StaticCanonicalTrustReader::new(
+            crate::mesh::canonical::CanonicalFreshness::Live,
+        );
+        let pctx =
+            crate::dht::DhtIngressPolicyContext::with_canonical_reader(std::sync::Arc::new(reader));
+        store.set_ingress_policy_context(Some(pctx));
+        assert!(store.ingress_policy_context().is_some());
     }
 }

@@ -17,7 +17,7 @@ Implementation plan remaining items are documented in `plans/plan.md`.
 | ID | Issue | Reason |
 |----|-------|--------|
 | HTTP2-POOL | ErasedHttpClient HTTP/2 pooling | Erased-client primitives exist, but active streaming proxy path still uses `StreamingHttpClient`; full HTTP/2 pooled streaming lifecycle remains non-default and requires dedicated connection-task management |
-| KEY-POL-1 | CanonicalTrustReader injection into RecordStoreManager | `RecordStoreManager` has no `CanonicalTrustReader` field; `create_record_store()` in `backend.rs` would need constructor change. All remote ingress funnels through `store_record_verified_internal` which already has static key-policy check. Adapter `validate_dht_key_authority_for_ingress()` ready for wiring once injection seam exists. |
+| KEY-POL-1 | CanonicalTrustReader injection into RecordStoreManager | Carrier added to `RecordStoreManager` / `RoutingState` (iter13/14); direct client Push/Announce paths now attach for configured contexts. Broader service consumer migration still deferred (per non-goals of iter14). Adapter `validate_dht_key_authority_for_ingress()` is wired for the targeted Push/Announce ingress paths. |
 
 ### Recently Resolved Former Deferred Items
 

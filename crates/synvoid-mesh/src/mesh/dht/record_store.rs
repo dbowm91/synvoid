@@ -272,6 +272,7 @@ pub struct RoutingState {
     pub rate_limiter: Option<crate::dht::DhtRateLimiter>,
     pub network_policy: Option<crate::dht::NetworkPolicy>,
     pub blocklist: Option<crate::dht::GlobalNodeBlocklist>,
+    pub ingress_policy_context: Option<crate::dht::DhtIngressPolicyContext>,
 }
 
 pub struct MetricsState {
@@ -360,6 +361,7 @@ impl RecordStoreManager {
                 rate_limiter: None,
                 network_policy: None,
                 blocklist: None,
+                ingress_policy_context: None,
             }),
             metrics_state: RwLock::new(MetricsState {
                 last_sync: Instant::now(),
@@ -473,6 +475,14 @@ impl RecordStoreManager {
         self.routing_state.write().blocklist = Some(blocklist);
     }
 
+    pub fn set_ingress_policy_context(&self, ctx: Option<crate::dht::DhtIngressPolicyContext>) {
+        self.routing_state.write().ingress_policy_context = ctx;
+    }
+
+    pub(crate) fn ingress_policy_context(&self) -> Option<crate::dht::DhtIngressPolicyContext> {
+        self.routing_state.read().ingress_policy_context.clone()
+    }
+
     pub fn is_node_blocked(&self, node_id: &str, ip: Option<&str>) -> bool {
         let routing = self.routing_state.read();
         if let Some(ref bl) = routing.blocklist {
@@ -559,6 +569,7 @@ impl Clone for RecordStoreManager {
             rate_limiter: routing.rate_limiter.clone(),
             network_policy: routing.network_policy.clone(),
             blocklist: routing.blocklist.clone(),
+            ingress_policy_context: routing.ingress_policy_context.clone(),
         };
         drop(routing);
 

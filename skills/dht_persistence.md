@@ -704,7 +704,7 @@ Records older than `max_authority_staleness_secs` are rejected for critical auth
 
 The old `store_record(record, source_reputation, is_local_origin)` method has been removed (was dead code). All remote writes go through `store_record_from_ingress()` with a typed `DhtRecordIngressContext`. All local writes go through `store_local_record()`.
 
-`DhtRecordIngressContext` fields are now private. Use accessor methods: `peer_id()`, `source_node_id()`, `source_classification()`, `path()`, `requires_quorum_proof()`, `requires_trust_anchor()`, `is_immutable_key()`, `envelope_signature_valid()`, `timestamp()`, `request_id()`, `is_local_origin()`. Construction is controlled: `new_local()` for local writes, `new_remote()` for remote writes.
+`DhtRecordIngressContext` fields are now private. Use accessor methods: `peer_id()`, `source_node_id()`, `source_classification()`, `path()`, `requires_quorum_proof()`, `requires_trust_anchor()`, `is_immutable_key()`, `envelope_signature_valid()`, `timestamp()`, `request_id()`, `is_local_origin()`, `policy_context()`. Construction is controlled: `new_local()` for local writes, `new_remote()` for remote writes. (Optional carrier for direct Push/Announce added in Iteration 14; see `architecture/mesh_trust_domains.md`.)
 
 This enforces the DHT/Raft boundary: local writes bypass ingress checks, while remote writes go through the full policy table and signature verification pipeline.
 
