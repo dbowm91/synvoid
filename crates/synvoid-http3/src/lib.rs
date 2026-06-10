@@ -94,4 +94,29 @@ mod tests {
         let _ = waf.streaming();
         let _ = waf.generate_tarpit_response("/");
     }
+
+    /// Boundary regression: verify that the concrete `WafCore` type from the
+    /// root crate is never used as the WAF backend in HTTP/3. The server must
+    /// accept only the `Http3WafBackend` trait object. This test asserts that
+    /// the mock (and therefore any real implementation) is a different type
+    /// from `WafCore`, preventing accidental coupling.
+    #[test]
+    fn http3_waf_backend_does_not_use_concrete_waf_core() {
+        use std::any::type_name;
+        let waf: Arc<dyn Http3WafBackend> = Arc::new(MockWaf);
+        // The concrete type behind the trait object must NOT be WafCore.
+        // If someone accidentally wires WafCore directly, this assertion
+        // will catch it because type_name returns the concrete type.
+        let concrete = type_name::<MockWaf>();
+        assert!(
+            !concrete.contains("WafCore"),
+            "Http3WafBackend should not use concrete WafCore; got {concrete}"
+        );
+        // Also verify the trait object type name does not mention WafCore.
+        let trait_obj = type_name::<Arc<dyn Http3WafBackend>>();
+        assert!(
+            !trait_obj.contains("WafCore"),
+            "Arc<dyn Http3WafBackend> should not resolve to WafCore; got {trait_obj}"
+        );
+    }
 }

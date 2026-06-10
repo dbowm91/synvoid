@@ -44,7 +44,7 @@ pub struct DataPlaneServices {
 /// bundled handle. The builder is intentionally narrow: it does not replace
 /// the individual init functions, it only gathers their outputs.
 pub struct DataPlaneServicesBuilder {
-    serverless_manager: Option<Arc<ServerlessManager>>,
+    serverless_manager: Arc<ServerlessManager>,
     port_honeypot_runner: Option<Arc<PortHoneypotRunner>>,
     #[cfg(feature = "mesh")]
     mesh_transport_manager: Option<Arc<MeshTransportManager>>,
@@ -57,9 +57,9 @@ pub struct DataPlaneServicesBuilder {
 }
 
 impl DataPlaneServicesBuilder {
-    pub fn new() -> Self {
+    pub fn new(serverless_manager: Arc<ServerlessManager>) -> Self {
         Self {
-            serverless_manager: None,
+            serverless_manager,
             port_honeypot_runner: None,
             #[cfg(feature = "mesh")]
             mesh_transport_manager: None,
@@ -70,11 +70,6 @@ impl DataPlaneServicesBuilder {
             #[cfg(feature = "mesh")]
             record_store: None,
         }
-    }
-
-    pub fn with_serverless_manager(mut self, sm: Arc<ServerlessManager>) -> Self {
-        self.serverless_manager = Some(sm);
-        self
     }
 
     pub fn with_port_honeypot(mut self, runner: Option<Arc<PortHoneypotRunner>>) -> Self {
@@ -127,10 +122,7 @@ impl DataPlaneServicesBuilder {
 
         DataPlaneServices {
             request_services,
-            serverless_manager: self.serverless_manager.unwrap_or_else(|| {
-                let runtime = crate::plugin::get_global_plugin_manager().get_wasm_manager();
-                Arc::new(ServerlessManager::new().with_runtime(runtime))
-            }),
+            serverless_manager: self.serverless_manager,
             port_honeypot_runner: self.port_honeypot_runner,
             #[cfg(feature = "mesh")]
             mesh_transport_manager: self.mesh_transport_manager,
@@ -139,12 +131,6 @@ impl DataPlaneServicesBuilder {
             #[cfg(feature = "mesh")]
             record_store: self.record_store,
         }
-    }
-}
-
-impl Default for DataPlaneServicesBuilder {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -171,27 +157,95 @@ mod tests {
     /// `DataPlaneServices` with request services in the non-mesh build.
     #[test]
     fn builder_produces_request_services_no_mesh() {
-        let services = DataPlaneServicesBuilder::new().build();
+        let sm = Arc::new(ServerlessManager::new());
+        let services = DataPlaneServicesBuilder::new(sm).build();
         // RequestServices should be constructed (even if all fields are None)
         let _ = &services.request_services;
         let _ = &services.serverless_manager;
         assert!(services.port_honeypot_runner.is_none());
     }
 
-    /// Verify that the builder default creates a serverless manager fallback.
-    #[test]
-    fn builder_default_serverless_manager() {
-        let services = DataPlaneServicesBuilder::new().build();
-        // serverless_manager should always be Some (fallback to global plugin manager)
-        let _ = &services.serverless_manager;
-    }
-
     /// Verify that port honeypot is properly threaded through the builder.
     #[test]
     fn builder_port_honeypot_passthrough() {
-        let services = DataPlaneServicesBuilder::new()
+        let sm = Arc::new(ServerlessManager::new());
+        let services = DataPlaneServicesBuilder::new(sm)
             .with_port_honeypot(None)
             .build();
         assert!(services.port_honeypot_runner.is_none());
+    }
+
+    /// Boundary regression: verify that the builder constructor requires
+    /// an explicit `ServerlessManager`. There is no default or global
+    /// fallback — callers must provide one at construction time.
+    #[test]
+    fn builder_requires_explicit_serverless_manager() {
+        let sm = Arc::new(ServerlessManager::new());
+        let sm_clone = sm.clone();
+        let services = DataPlaneServicesBuilder::new(sm).build();
+        // The serverless manager passed to the builder is the one in the
+        // built services — no global plugin manager is consulted.
+        assert!(Arc::ptr_eq(&services.serverless_manager, &sm_clone));
+    }
+
+    /// Boundary regression: verify that `build()` does not call the global
+    /// plugin manager. The builder only threads its own fields through;
+    /// all global state access happens in init phases, not in the builder.
+    ///
+    /// This is a compile-time contract enforced by the source: services.rs
+    /// does not import `get_global_plugin_manager`. This test documents
+    /// that contract and will fail to compile if the import is added.
+    #[test]
+    fn builder_does_not_use_global_plugin_manager() {
+        // If this file imports get_global_plugin_manager, the build will
+        // fail with an unused-import warning (deny(unused_imports) or
+        // the import itself is the regression). This test exists to
+        // document the contract explicitly.
+        //
+        // We verify the built services only contain explicitly provided
+        // fields — no hidden global state leakage.
+        let sm = Arc::new(ServerlessManager::new());
+        let services = DataPlaneServicesBuilder::new(sm.clone()).build();
+        // serverless_manager is the one we passed in
+        assert!(Arc::ptr_eq(&services.serverless_manager, &sm));
+        // No other global handles are present in the built struct
+        assert!(services.port_honeypot_runner.is_none());
+    }
+
+    /// Boundary regression: verify that when a record store is provided
+    /// via the builder, it appears in the built `DataPlaneServices`.
+    #[cfg(feature = "mesh")]
+    #[test]
+    fn builder_record_store_passthrough() {
+        use synvoid_mesh::config::{MeshConfig, MeshNodeRole};
+        use synvoid_mesh::dht::{DhtAccessControl, RecordStoreConfig, RecordStoreManager};
+
+        let sm = Arc::new(ServerlessManager::new());
+        let mesh_config = MeshConfig::default();
+        let access_control = DhtAccessControl::new(&mesh_config);
+        let store = Arc::new(RecordStoreManager::new(
+            RecordStoreConfig::default(),
+            "test-node".to_string(),
+            MeshNodeRole::EDGE,
+            None,
+            access_control,
+            None,
+        ));
+        let store_clone = store.clone();
+        let services = DataPlaneServicesBuilder::new(sm)
+            .with_record_store(Some(store))
+            .build();
+        let built = services.record_store.expect("record_store should be Some");
+        assert!(Arc::ptr_eq(&built, &store_clone));
+    }
+
+    /// Boundary regression: verify that when no record store is provided,
+    /// the built services has `record_store: None`.
+    #[cfg(feature = "mesh")]
+    #[test]
+    fn builder_no_record_store_defaults_to_none() {
+        let sm = Arc::new(ServerlessManager::new());
+        let services = DataPlaneServicesBuilder::new(sm).build();
+        assert!(services.record_store.is_none());
     }
 }

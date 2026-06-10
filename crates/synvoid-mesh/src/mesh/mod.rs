@@ -155,6 +155,9 @@ pub use wasm_dist::{
     WasmStoreError,
 };
 
+// Legacy compatibility global — do NOT use in new production paths.
+// All production code should receive RecordStoreManager via explicit injection
+// (DataPlaneServices, MeshTransportManager::get_record_store(), or constructor).
 static RECORD_STORE_GLOBAL: std::sync::LazyLock<
     parking_lot::RwLock<Option<Arc<crate::mesh::dht::RecordStoreManager>>>,
 > = std::sync::LazyLock::new(|| parking_lot::RwLock::new(None));

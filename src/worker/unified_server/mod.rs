@@ -17,6 +17,7 @@ pub mod init_mesh;
 pub mod init_runtime;
 pub mod init_waf;
 pub mod lifecycle;
+pub mod passthrough_validation;
 pub mod services;
 pub mod state;
 
@@ -29,7 +30,6 @@ use tokio::sync::RwLock;
 
 use super::drain_state::WorkerDrainState;
 use super::metrics::WorkerMetrics;
-use crate::plugin::get_global_plugin_manager;
 use crate::server::UnifiedServer;
 use crate::{DrainFlag, RunningFlag};
 use synvoid_ipc::WorkerId;
@@ -69,60 +69,8 @@ pub async fn run_unified_server_worker(
     // ---- Phase 2: pre-bind port check ----
     state::validate_ports_or_skip_for_shared_port(&args, &shared_config).await?;
 
-    // ---- Phase 3: TLS passthrough validation (preserve inline) ----
-    {
-        let config = shared_config.read().await;
-        let passthrough_sites: Vec<_> = config
-            .sites
-            .iter()
-            .filter(|(_, site)| site.proxy.tls_passthrough == Some(true))
-            .map(|(id, _)| id.clone())
-            .collect();
-        let passthrough_with_waf: Vec<_> = config
-            .sites
-            .iter()
-            .filter(|(_, site)| {
-                site.proxy.tls_passthrough == Some(true)
-                    && site.proxy.tls_passthrough_enforce_waf == Some(true)
-            })
-            .map(|(id, _)| id.clone())
-            .collect();
-        if !passthrough_sites.is_empty() {
-            if !passthrough_with_waf.is_empty() {
-                tracing::info!(
-                    "TLS passthrough with WAF enforcement enabled for sites: {:?}. WAF will inspect L7 traffic.",
-                    passthrough_with_waf
-                );
-            }
-            let bypass_sites: Vec<_> = passthrough_sites
-                .iter()
-                .filter(|s| !passthrough_with_waf.contains(s))
-                .cloned()
-                .collect();
-            if !bypass_sites.is_empty() {
-                tracing::error!(
-                    "TLS passthrough is enabled for sites: {:?}. WAF inspection is BYPASSED for these sites - L7 attacks will not be blocked. Set tls_passthrough_enforce_waf = true to enable WAF inspection for passthrough traffic.",
-                    bypass_sites
-                );
-                crate::metrics::record_tls_passthrough_waf_bypassed();
-            }
-            let rate_limited_sites: Vec<_> = bypass_sites
-                .iter()
-                .filter(|s| {
-                    let site_config = config.sites.get(*s);
-                    let rl = site_config.map(|s| &s.ratelimit);
-                    rl.is_none()
-                })
-                .cloned()
-                .collect();
-            if !rate_limited_sites.is_empty() {
-                tracing::error!(
-                    "TLS passthrough sites {:?} do not have rate limiting configured. Rate limiting is required for passthrough sites to prevent abuse.",
-                    rate_limited_sites
-                );
-            }
-        }
-    }
+    // ---- Phase 3: TLS passthrough validation ----
+    passthrough_validation::validate_tls_passthrough_waf_policy(&shared_config).await;
 
     // ---- Phase 4: bandwidth config ----
     let (
@@ -148,7 +96,9 @@ pub async fn run_unified_server_worker(
     let worker_id_for_server = worker_id;
 
     let app_servers = Arc::new(RwLock::new(HashMap::new()));
-    let serverless_manager = init_apps::init_serverless_manager(&shared_config).await;
+    let serverless_manager = init_apps::init_serverless_manager(&shared_config)
+        .await
+        .unwrap_or_else(init_apps::build_default_serverless_manager);
 
     let unified_server = UnifiedServer::new(
         shared_config.clone(),
@@ -160,10 +110,7 @@ pub async fn run_unified_server_worker(
     .with_drain_state(drain_state.clone())
     .with_metrics(metrics.clone())
     .with_ipc(ipc_for_server, worker_id_for_server)
-    .with_serverless_manager(serverless_manager.unwrap_or_else(|| {
-        let runtime = get_global_plugin_manager().get_wasm_manager();
-        Arc::new(crate::serverless::manager::ServerlessManager::new().with_runtime(runtime))
-    }));
+    .with_serverless_manager(serverless_manager.clone());
     let unified_server: Arc<UnifiedServer> = Arc::new(unified_server);
 
     // ---- Phase 6: ACME + Granian ----
@@ -197,11 +144,7 @@ pub async fn run_unified_server_worker(
     let stop_accepting_sender = unified_server.get_stop_accepting_sender();
     let stop_accepting_tx = Arc::new(TokioMutex::new(Some(stop_accepting_sender)));
 
-    let mut builder = services::DataPlaneServicesBuilder::new()
-        .with_serverless_manager(unified_server.get_serverless_manager().unwrap_or_else(|| {
-            let runtime = get_global_plugin_manager().get_wasm_manager();
-            Arc::new(crate::serverless::manager::ServerlessManager::new().with_runtime(runtime))
-        }))
+    let mut builder = services::DataPlaneServicesBuilder::new(serverless_manager)
         .with_port_honeypot(port_honeypot_runner);
 
     #[cfg(feature = "mesh")]

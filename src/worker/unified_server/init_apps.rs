@@ -39,6 +39,15 @@ pub async fn init_serverless_manager(
     }
 }
 
+/// Create a default serverless manager using the global plugin manager's WASM
+/// runtime. This is the fallback used when the serverless subsystem is disabled
+/// or fails to initialize — the manager is still needed because upstream code
+/// expects it to exist, but it won't have any loaded functions.
+pub fn build_default_serverless_manager() -> Arc<crate::serverless::manager::ServerlessManager> {
+    let runtime = get_global_plugin_manager().get_wasm_manager();
+    Arc::new(crate::serverless::manager::ServerlessManager::new().with_runtime(runtime))
+}
+
 /// Spawn the background task that starts Granian supervisors for every site
 /// that has an app-server config. Returns immediately; the spawning task
 /// itself is the async work.

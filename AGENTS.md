@@ -96,6 +96,7 @@ cargo check --no-default-features --features mesh,dns
 | `handle_sync_response()` (unsigned sync path) | Removed — unsigned compat path now inline in `record_store_message.rs` using `store_record_from_ingress()` with `envelope_signature_valid=false` |
 | `src/http3/server.rs` | `crates/synvoid-http3/src/server.rs` (moved to dedicated crate 2026-06) |
 | `src/http3/server.rs` (Http3WafBackend trait) | `crates/synvoid-http3/src/lib.rs` (trait owns the WAF abstraction boundary) |
+| `src/worker/unified_server/passthrough_validation.rs` | New module — TLS passthrough classification and validation (extracted from mod.rs) |
 
 ## Modular Agent Guidance
 
@@ -189,6 +190,7 @@ These items require significant architectural work and are correctly deferred:
 | MESH-14 | Source Node ID Binding Validation | Signer-to-node binding now enforced via `verify_envelope_signer_binding()` for all DHT message types on global/strict paths. TLS cert chain validation for global nodes deferred — requires PKI hierarchy, trust model changes. |
 | HTTP2-POOL | ErasedHttpClient HTTP/2 pooling | `Http2PooledConnection` is empty stub - hyper-util API requires background task management per connection |
 | MR-4 | DHT ingress auth hardening | ✅ Resolved: All DHT message types (`DhtAntiEntropyRequest`/response, `DhtRecordPush`, `DhtSyncRequest`/`DhtSyncResponse`) now verify envelope signatures and enforce signer-to-node binding via `verify_envelope_signer_binding()`; `SignedRaftAttestation` v2 binds to value digest; `DnsZone` requires Raft/quorum (no direct DHT writes); `store_record` is `pub(crate)` with `store_local_record` for local writes. Breaking protocol changes completed. |
+| LEGACY-STORE | `RECORD_STORE_GLOBAL` removal | `RECORD_STORE_GLOBAL` is now legacy/fallback only — all production paths use explicit injection via `DataPlaneServices`. Removal requires threading injection through remaining callers. |
 
 Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.override.md`](skills/AGENTS.override.md) for the full index.
 
@@ -224,6 +226,13 @@ The consolidated implementation plan is at [`plans/plan.md`](plans/plan.md).
 - **HickoryRecursor DNSSEC**: `src/dns/resolver.rs:693-702` - uses `ValidateWithStaticKey` when `enable_dnssec=true` (✅ FIXED)
 - **HTTP/3 Body Collection**: `crates/synvoid-http3/src/server.rs` - ad-hoc implementation, not using shared_handler
 - **BufferPool**: 4 tiers (small/medium/large/jumbo)
+- **DataPlaneServicesBuilder**: `src/worker/unified_server/services.rs` - now requires `serverless_manager` in constructor; no global fallback in builder
+- **build_default_serverless_manager()**: `src/worker/unified_server/init_apps.rs` - helper function consolidating global plugin manager fallback logic
+- **RECORD_STORE_GLOBAL**: `crates/synvoid-mesh/src/mesh/mod.rs:161` - **legacy/fallback only** — all production paths use explicit injection via `DataPlaneServices.record_store`
+- **classify_passthrough_sites()**: `src/worker/unified_server/passthrough_validation.rs` - pure classification function for TLS passthrough sites (no I/O, no side effects)
+
+### Root Dependency Ownership
+- Reference `plans/root_dependency_ownership.md` for the ownership inventory of all root-level direct dependencies.
 
 ### Process Architecture
 - **Supervisor** manages lifecycle, consolidates Supervisor

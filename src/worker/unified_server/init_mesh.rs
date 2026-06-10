@@ -384,34 +384,30 @@ pub async fn init_mesh_and_threat_intel(
                 crate::waf::set_threat_intel(threat_intel.clone());
 
                 // Register mesh DHT provider for WASM plugin runtime
-                {
-                    struct MeshDhtAdapter;
+                if let Some(record_store) = transport_manager.get_record_store() {
+                    struct MeshDhtAdapter(Arc<crate::mesh::dht::RecordStoreManager>);
 
                     impl synvoid_plugin_runtime::mesh_callbacks::MeshDhtProvider for MeshDhtAdapter {
                         fn get_record(&self, key: &str) -> Option<Vec<u8>> {
-                            crate::mesh::get_global_record_store()
-                                .and_then(|rs| rs.get_record(key))
-                                .map(|r| r.value)
+                            self.0.get_record(key).map(|r| r.value)
                         }
                         fn check_threat(&self, ip: &str) -> bool {
-                            crate::mesh::get_global_record_store().map_or(false, |rs| {
-                                let key = format!("threat_indicator:{}:IpBlock", ip);
-                                rs.get_record(&key).is_some()
-                            })
+                            let key = format!("threat_indicator:{}:IpBlock", ip);
+                            self.0.get_record(&key).is_some()
                         }
                         fn store_event(&self, topic: &str, data: &[u8]) {
-                            if let Some(rs) = crate::mesh::get_global_record_store() {
-                                let key = format!("event:{}", topic);
-                                let value = data.to_vec();
-                                rs.store_and_announce(key, value, 300);
-                            }
+                            let key = format!("event:{}", topic);
+                            let value = data.to_vec();
+                            self.0.store_and_announce(key, value, 300);
                         }
                     }
 
                     synvoid_plugin_runtime::mesh_callbacks::set_mesh_provider(std::sync::Arc::new(
-                        MeshDhtAdapter,
+                        MeshDhtAdapter(record_store),
                     ));
                     tracing::debug!("Mesh DHT provider registered for WASM plugin runtime");
+                } else {
+                    tracing::warn!("Mesh DHT provider not registered — no record store available");
                 }
             }
 
