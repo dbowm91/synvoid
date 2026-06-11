@@ -165,9 +165,11 @@ let record_store = get_global_record_store();
 `DataPlaneServices` under `#[cfg(feature = "mesh")]` now carries an optional
 `ThreatIntelPolicyContext`, and the worker root exposes
 `apply_threat_intel_policy_context()` to forward the stored context into
-`ThreatIntelligenceManager`. The default remains `None`; this pass does not
-migrate proxy, YARA/WASM, routing, WAF enforcement, DHT sync, ingestion, or
-Raft behavior.
+`ThreatIntelligenceManager`. A separate root-side helper can build the
+context from explicit canonical/advisory handles, but the production worker
+bootstrap still passes `None` because that root does not own a canonical
+reader yet. The default remains `None`; this pass does not migrate proxy,
+YARA/WASM, routing, WAF enforcement, DHT sync, ingestion, or Raft behavior.
 
 ### `UnifiedServer::with_serverless_manager()` — server-level wiring
 

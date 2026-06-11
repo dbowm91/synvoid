@@ -114,6 +114,24 @@ impl DataPlaneServicesBuilder {
         self
     }
 
+    /// Build a threat-intel policy context only when both root-owned handles exist.
+    ///
+    /// This helper is intentionally side-effect free. Production worker bootstrap
+    /// currently passes `None` for canonical trust, so it returns `None` there
+    /// until a real root-owned canonical reader is available in this path.
+    #[cfg(feature = "mesh")]
+    pub(crate) fn build_threat_intel_policy_context(
+        canonical: Option<Arc<dyn synvoid_mesh::canonical::CanonicalTrustReader>>,
+        advisory: Option<Arc<dyn synvoid_mesh::dht::advisory_source::AdvisoryRecordSource>>,
+    ) -> Option<ThreatIntelPolicyContext> {
+        match (canonical, advisory) {
+            (Some(canonical), Some(advisory)) => {
+                Some(ThreatIntelPolicyContext::new(canonical, advisory))
+            }
+            _ => None,
+        }
+    }
+
     /// Build the [`DataPlaneServices`] and the embedded [`RequestServices`].
     pub fn build(self) -> DataPlaneServices {
         let request_services = {
@@ -179,9 +197,11 @@ mod tests {
     use super::*;
 
     #[cfg(feature = "mesh")]
-    use synvoid_mesh::canonical::{CanonicalFreshness, StaticCanonicalTrustReader};
+    use synvoid_mesh::canonical::{
+        CanonicalFreshness, CanonicalTrustReader, StaticCanonicalTrustReader,
+    };
     #[cfg(feature = "mesh")]
-    use synvoid_mesh::dht::advisory_source::StaticAdvisoryRecordSource;
+    use synvoid_mesh::dht::advisory_source::{AdvisoryRecordSource, StaticAdvisoryRecordSource};
     #[cfg(feature = "mesh")]
     use synvoid_mesh::mesh::protocol::ThreatType;
     #[cfg(feature = "mesh")]
@@ -193,16 +213,26 @@ mod tests {
     const TEST_IP: &str = "203.0.113.10";
 
     #[cfg(feature = "mesh")]
-    fn build_test_policy_context() -> ThreatIntelPolicyContext {
+    fn build_test_policy_sources() -> (Arc<dyn CanonicalTrustReader>, Arc<dyn AdvisoryRecordSource>)
+    {
         let key = format!("threat_indicator:{}:IpBlock", TEST_IP);
 
         let mut canonical = StaticCanonicalTrustReader::new(CanonicalFreshness::Live);
         canonical.threat_intel_ids.insert(TEST_IP.to_string());
+        let canonical: Arc<dyn CanonicalTrustReader> = Arc::new(canonical);
 
         let mut advisory = StaticAdvisoryRecordSource::new();
         advisory.insert(StaticAdvisoryRecordSource::test_record(&key));
+        let advisory: Arc<dyn AdvisoryRecordSource> = Arc::new(advisory);
 
-        ThreatIntelPolicyContext::new(Arc::new(canonical), Arc::new(advisory))
+        (canonical, advisory)
+    }
+
+    #[cfg(feature = "mesh")]
+    fn build_test_policy_context() -> ThreatIntelPolicyContext {
+        let (canonical, advisory) = build_test_policy_sources();
+        DataPlaneServicesBuilder::build_threat_intel_policy_context(Some(canonical), Some(advisory))
+            .expect("test policy context should be constructible")
     }
 
     #[cfg(feature = "mesh")]
@@ -336,6 +366,37 @@ mod tests {
             .with_threat_intel_policy(Some(build_test_policy_context()))
             .build();
         assert!(services.threat_intel_policy.is_some());
+    }
+
+    /// Missing canonical trust input returns `None`.
+    #[cfg(feature = "mesh")]
+    #[test]
+    fn build_threat_intel_policy_context_missing_canonical_returns_none() {
+        let (_, advisory) = build_test_policy_sources();
+        let ctx = DataPlaneServicesBuilder::build_threat_intel_policy_context(None, Some(advisory));
+        assert!(ctx.is_none());
+    }
+
+    /// Missing advisory input returns `None`.
+    #[cfg(feature = "mesh")]
+    #[test]
+    fn build_threat_intel_policy_context_missing_advisory_returns_none() {
+        let (canonical, _) = build_test_policy_sources();
+        let ctx =
+            DataPlaneServicesBuilder::build_threat_intel_policy_context(Some(canonical), None);
+        assert!(ctx.is_none());
+    }
+
+    /// Both handles present produce a policy context.
+    #[cfg(feature = "mesh")]
+    #[test]
+    fn build_threat_intel_policy_context_with_both_present_returns_some() {
+        let (canonical, advisory) = build_test_policy_sources();
+        let ctx = DataPlaneServicesBuilder::build_threat_intel_policy_context(
+            Some(canonical),
+            Some(advisory),
+        );
+        assert!(ctx.is_some());
     }
 
     /// Applying the policy context with no threat-intel manager is a no-op.

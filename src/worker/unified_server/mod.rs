@@ -151,16 +151,26 @@ pub async fn run_unified_server_worker(
 
     #[cfg(feature = "mesh")]
     {
+        use synvoid_mesh::dht::advisory_source::{AdvisoryRecordSource, RecordStoreAdvisorySource};
         let yara_rules = crate::waf::get_yara_rules();
         let record_store = mesh_init
             .transport_manager
             .as_ref()
             .and_then(|tm| tm.get_record_store());
+        let advisory_source = record_store.as_ref().map(|store| {
+            Arc::new(RecordStoreAdvisorySource::new(store.clone())) as Arc<dyn AdvisoryRecordSource>
+        });
         builder = builder
             .with_mesh_transport(mesh_init.transport_manager)
             .with_threat_intel(mesh_init.threat_intel)
             .with_yara_rules(yara_rules)
-            .with_record_store(record_store);
+            .with_record_store(record_store)
+            .with_threat_intel_policy(
+                services::DataPlaneServicesBuilder::build_threat_intel_policy_context(
+                    None,
+                    advisory_source,
+                ),
+            );
     }
     #[cfg(not(feature = "mesh"))]
     {

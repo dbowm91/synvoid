@@ -461,7 +461,11 @@ The shared `is_policy_actionable` helper remains in place and both policy-compos
 
 ### Iteration 25 Data-Plane Policy Context Cleanup
 
-`DataPlaneServices` now carries an optional `ThreatIntelPolicyContext` and exposes a low-risk `apply_threat_intel_policy_context()` helper for `ThreatIntelligenceManager`. The default remains `None`, preserving legacy behavior. This pass establishes ownership and wiring for policy context only; it does not migrate proxy, YARA/WASM, routing, WAF enforcement, DHT sync, ingestion, or Raft behavior. Future passes may construct concrete canonical/advisory sources at the root, then pass a populated context through the same field.
+`DataPlaneServices` now carries an optional `ThreatIntelPolicyContext` and exposes a low-risk `apply_threat_intel_policy_context()` helper for `ThreatIntelligenceManager`. The default remains `None`, preserving legacy behavior. This pass establishes ownership and wiring for policy context only; it does not migrate proxy, YARA/WASM, routing, WAF enforcement, DHT sync, ingestion, or Raft behavior. A root-side helper now constructs the context from explicit canonical/advisory handles, but the production worker bootstrap still passes `None` because a real root-owned canonical reader is not available there yet.
+
+### Iteration 26 Root-Side Context Construction
+
+`ThreatIntelPolicyContext` construction is now explicit at the root. The helper only accepts direct `CanonicalTrustReader` and `AdvisoryRecordSource` handles, so advisory-source construction stays tied to explicit handles instead of any global fallback. Production worker bootstrap still leaves the field unset (`None`) until root canonical ownership exists, so deployed workers keep the same legacy/raw behavior when the context is absent.
 
 ## Follow-Up Recommendation
 
