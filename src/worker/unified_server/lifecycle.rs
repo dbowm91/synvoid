@@ -286,29 +286,109 @@ pub fn spawn_ipc_loop(
                             let revoked = canonical_snapshot.revoked_node_ids.len();
                             let intel = canonical_snapshot.threat_intel_ids.len();
 
-                            // Store the snapshot for use by the composition root.
+                            // Store the raw snapshot for reference.
                             *state.canonical_snapshot.write().await =
                                 Some(canonical_snapshot.clone());
 
-                            // Live-refresh the threat-intel policy context so that
-                            // subsequent request evaluations use the updated canonical
-                            // trust state without requiring a worker restart.
-                            let canonical_reader: Arc<dyn CanonicalTrustReader> =
-                                Arc::new(canonical_snapshot);
-                            let advisory: Option<Arc<dyn AdvisoryRecordSource>> =
-                                state.data_plane.record_store.as_ref().map(|store| {
-                                    Arc::new(RecordStoreAdvisorySource::new(store.clone()))
-                                        as Arc<dyn AdvisoryRecordSource>
-                                });
-                            state.data_plane.update_threat_intel_policy_context(
-                                Some(canonical_reader),
-                                advisory,
-                            );
+                            // Classify snapshot freshness before creating the reader.
+                            // TODO: Replace with config-sourced policy when mesh config
+                            // is accessible from this context (Phase 6 follow-up).
+                            let freshness_policy =
+                                synvoid_mesh::canonical::CanonicalSnapshotFreshnessPolicy::default(
+                                );
+                            let now = synvoid_utils::safe_unix_timestamp();
+                            let freshness_state =
+                                synvoid_mesh::canonical::classify_canonical_snapshot(
+                                    Some(&canonical_snapshot),
+                                    &freshness_policy,
+                                    now,
+                                );
 
-                            tracing::info!(
-                                "Canonical trust snapshot applied and policy context refreshed: {} global nodes, {} org keys, {} revoked, {} intel",
-                                global_nodes, org_keys, revoked, intel,
-                            );
+                            match freshness_state {
+                                synvoid_mesh::canonical::CanonicalSnapshotFreshnessState::Fresh { age_ms } => {
+                                    tracing::info!(
+                                        "Canonical trust snapshot accepted fresh (age_ms={})",
+                                        age_ms
+                                    );
+                                    // Wrap in freshness-bound reader and apply.
+                                    let reader = synvoid_mesh::canonical::FreshnessBoundCanonicalReader::new(
+                                        canonical_snapshot,
+                                        freshness_policy,
+                                        now,
+                                    );
+                                    let canonical_reader: Arc<dyn CanonicalTrustReader> = Arc::new(reader);
+                                    let advisory: Option<Arc<dyn AdvisoryRecordSource>> =
+                                        state.data_plane.record_store.as_ref().map(|store| {
+                                            Arc::new(RecordStoreAdvisorySource::new(store.clone()))
+                                                as Arc<dyn AdvisoryRecordSource>
+                                        });
+                                    state.data_plane.update_threat_intel_policy_context(
+                                        Some(canonical_reader),
+                                        advisory,
+                                    );
+                                    tracing::info!(
+                                        "Canonical trust snapshot applied and policy context refreshed: {} global nodes, {} org keys, {} revoked, {} intel",
+                                        global_nodes, org_keys, revoked, intel,
+                                    );
+                                }
+                                synvoid_mesh::canonical::CanonicalSnapshotFreshnessState::StaleWithinGrace { age_ms } => {
+                                    match freshness_policy.stale_mode {
+                                        synvoid_mesh::canonical::CanonicalSnapshotStaleMode::AllowStaleWithWarning => {
+                                            tracing::warn!(
+                                                "Canonical trust snapshot accepted stale under grace (age_ms={}, mode=allow_stale_with_warning)",
+                                                age_ms
+                                            );
+                                            let reader = synvoid_mesh::canonical::FreshnessBoundCanonicalReader::new(
+                                                canonical_snapshot,
+                                                freshness_policy,
+                                                now,
+                                            );
+                                            let canonical_reader: Arc<dyn CanonicalTrustReader> = Arc::new(reader);
+                                            let advisory: Option<Arc<dyn AdvisoryRecordSource>> =
+                                                state.data_plane.record_store.as_ref().map(|store| {
+                                                    Arc::new(RecordStoreAdvisorySource::new(store.clone()))
+                                                        as Arc<dyn AdvisoryRecordSource>
+                                                });
+                                            state.data_plane.update_threat_intel_policy_context(
+                                                Some(canonical_reader),
+                                                advisory,
+                                            );
+                                            tracing::info!(
+                                                "Canonical trust snapshot applied (stale) and policy context refreshed: {} global nodes, {} org keys, {} revoked, {} intel",
+                                                global_nodes, org_keys, revoked, intel,
+                                            );
+                                        }
+                                        synvoid_mesh::canonical::CanonicalSnapshotStaleMode::FailOpenDefer => {
+                                            tracing::warn!(
+                                                "Canonical trust snapshot stale, deferring (age_ms={}, mode=fail_open_defer)",
+                                                age_ms
+                                            );
+                                            state.data_plane.update_threat_intel_policy_context(None, None);
+                                        }
+                                        synvoid_mesh::canonical::CanonicalSnapshotStaleMode::FailClosedNotActionable => {
+                                            tracing::warn!(
+                                                "Canonical trust snapshot stale, rejecting (age_ms={}, mode=fail_closed_not_actionable)",
+                                                age_ms
+                                            );
+                                            state.data_plane.update_threat_intel_policy_context(None, None);
+                                        }
+                                    }
+                                }
+                                synvoid_mesh::canonical::CanonicalSnapshotFreshnessState::Expired { age_ms } => {
+                                    tracing::warn!(
+                                        "Canonical trust snapshot expired, not applying (age_ms={})",
+                                        age_ms
+                                    );
+                                    state.data_plane.update_threat_intel_policy_context(None, None);
+                                }
+                                synvoid_mesh::canonical::CanonicalSnapshotFreshnessState::Missing
+                                | synvoid_mesh::canonical::CanonicalSnapshotFreshnessState::Invalid => {
+                                    tracing::error!(
+                                        "Canonical trust snapshot invalid/malformed, not applying"
+                                    );
+                                    state.data_plane.update_threat_intel_policy_context(None, None);
+                                }
+                            }
                         }
                         Err(e) => {
                             tracing::error!(

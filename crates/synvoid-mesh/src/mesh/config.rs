@@ -46,6 +46,19 @@ pub struct AuthorityFreshnessConfig {
     /// from routing decisions naturally. Default: 300 (5 minutes)
     #[serde(default = "default_dht_soft_state_ttl_secs")]
     pub dht_soft_state_ttl_secs: u64,
+    /// Maximum age in milliseconds for a canonical snapshot to be considered fresh.
+    /// Default: 60_000 (60 seconds).
+    #[serde(default = "default_canonical_snapshot_fresh_max_age_ms")]
+    pub canonical_snapshot_fresh_max_age_ms: u64,
+    /// Maximum age in milliseconds for a canonical snapshot to be considered
+    /// stale-but-grace. Beyond this, the snapshot is expired/unavailable.
+    /// Default: 300_000 (5 minutes).
+    #[serde(default = "default_canonical_snapshot_stale_grace_max_age_ms")]
+    pub canonical_snapshot_stale_grace_max_age_ms: u64,
+    /// How stale canonical snapshots are handled.
+    /// Default: "fail_open_defer" (defer canonical decisions).
+    #[serde(default)]
+    pub canonical_snapshot_stale_mode: crate::canonical::CanonicalSnapshotStaleMode,
 }
 
 fn default_global_policy_grace_secs() -> u64 {
@@ -66,6 +79,12 @@ fn default_peer_discovery_degraded() -> bool {
 fn default_dht_soft_state_ttl_secs() -> u64 {
     300
 }
+fn default_canonical_snapshot_fresh_max_age_ms() -> u64 {
+    60_000
+}
+fn default_canonical_snapshot_stale_grace_max_age_ms() -> u64 {
+    300_000
+}
 
 impl Default for AuthorityFreshnessConfig {
     fn default() -> Self {
@@ -76,6 +95,9 @@ impl Default for AuthorityFreshnessConfig {
             threat_intel_stale_local: true,
             peer_discovery_degraded: true,
             dht_soft_state_ttl_secs: 300,
+            canonical_snapshot_fresh_max_age_ms: 60_000,
+            canonical_snapshot_stale_grace_max_age_ms: 300_000,
+            canonical_snapshot_stale_mode: crate::canonical::CanonicalSnapshotStaleMode::default(),
         }
     }
 }

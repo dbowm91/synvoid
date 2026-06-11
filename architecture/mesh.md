@@ -17,7 +17,7 @@ The Mesh module is responsible for:
 - **Behavioral intelligence**: Fingerprinting and reputation tracking of peers and upstreams.
 - **Security event handling**: Attack detection, challenge-response security, and threat intelligence distribution.
 
-A trust-domain classification and invariants document exists at `architecture/mesh_trust_domains.md` (advisory DHT vs. canonical Raft, policy as decision layer) for future reviews. See `CanonicalTrustReader` in `crates/synvoid-mesh/src/mesh/canonical.rs` (Iteration 8) and `architecture/mesh_trust_domains.md`.
+A trust-domain classification and invariants document exists at `architecture/mesh_trust_domains.md` (advisory DHT vs. canonical Raft, policy as decision layer) for future reviews. See `CanonicalTrustReader` in `crates/synvoid-mesh/src/mesh/canonical.rs` (Iteration 8) and `architecture/mesh_trust_domains.md`. Canonical snapshot freshness policy (`classify_canonical_snapshot()`, `FreshnessBoundCanonicalReader`) enforces age bounds on trust decisions — see Iteration 31 in `architecture/mesh_trust_domains.md`.
 
 ---
 

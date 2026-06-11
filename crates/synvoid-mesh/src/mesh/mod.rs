@@ -78,9 +78,12 @@ pub use backend::{
 };
 pub use behavioral::{BehavioralFeatures, BehavioralFingerprint};
 pub use behavioral_intel::{BehavioralConfig, BehavioralIntelligenceManager, RequestFeatures};
+pub use canonical::FreshnessBoundCanonicalReader;
 pub use canonical::{
-    CanonicalFreshness, CanonicalTrustDecision, CanonicalTrustReader, CanonicalTrustReason,
-    CanonicalTrustSnapshot, SnapshotCanonicalTrustReader, StaticCanonicalTrustReader,
+    classify_canonical_snapshot, CanonicalFreshness, CanonicalSnapshotFreshnessPolicy,
+    CanonicalSnapshotFreshnessState, CanonicalSnapshotStaleMode, CanonicalTrustDecision,
+    CanonicalTrustReader, CanonicalTrustReason, CanonicalTrustSnapshot,
+    SnapshotCanonicalTrustReader, StaticCanonicalTrustReader,
 };
 pub use cert::MeshCertManager;
 pub use cli::{MeshArgs, MeshCommand};

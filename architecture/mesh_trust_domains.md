@@ -1,6 +1,6 @@
 # Mesh Trust Domains — Design Note (Iteration 30)
 
-**Status**: Iteration 30 — Supervisor canonical snapshot export verified and documented.  
+**Status**: Iteration 31 — Canonical snapshot freshness policy implemented and documented.  
 **Date**: 2026-06-11  
 **Scope**: `crates/synvoid-mesh` (re-exported via `src/mesh`).  
 **Goal**: Define trust-domain boundaries and invariants before any internal module split.  
@@ -501,6 +501,34 @@ Supervisor/control-plane code now exports a bounded `CanonicalTrustSnapshot` for
 - No proxy/YARA/WASM/routing/WAF consumers were migrated
 
 **Next step:** Freshness and fail-open/fail-closed policy for using populated canonical snapshots in data-plane decisions.
+
+### Iteration 31 Canonical Snapshot Freshness Policy
+
+Canonical snapshots are authoritative only within a configured freshness window. `CanonicalSnapshotFreshnessPolicy` defines thresholds for classifying snapshot age, and `classify_canonical_snapshot()` produces a `CanonicalSnapshotFreshness` state (Fresh, StaleWithinGrace, Expired, Invalid, Missing). `FreshnessBoundCanonicalReader` wraps `CanonicalTrustReader` and enforces the freshness policy: trust decisions are deferred or denied when the snapshot is expired, invalid, or stale beyond grace.
+
+**Types:**
+- `CanonicalSnapshotFreshnessPolicy`: configurable thresholds (fresh_max_age_ms, stale_grace_max_age_ms) + stale mode (`CanonicalSnapshotStaleMode`)
+- `CanonicalSnapshotStaleMode`: `FailOpenDefer` (default) | `FailClosedNotActionable` | `AllowStaleWithWarning`
+- `classify_canonical_snapshot()`: pure classifier, no I/O
+- `FreshnessBoundCanonicalReader`: wrapper implementing `CanonicalTrustReader`, delegating only when freshness is acceptable
+
+**Config fields** in `AuthorityFreshnessConfig`:
+- `canonical_snapshot_fresh_max_age_ms` (default: 60_000)
+- `canonical_snapshot_stale_grace_max_age_ms` (default: 300_000)
+- `canonical_snapshot_stale_mode` (default: FailOpenDefer)
+
+**Worker flow:**
+1. IPC `CanonicalTrustSnapshotUpdate` received
+2. Deserialize snapshot
+3. Classify freshness via `classify_canonical_snapshot()`
+4. If fresh or stale+AllowStaleWithWarning: wrap in `FreshnessBoundCanonicalReader`, build policy context
+5. If expired/invalid/stale+defer: set policy context to None, log warning
+6. No proxy/YARA/WASM/routing/WAF consumers were migrated in this pass.
+
+**Files:**
+- `crates/synvoid-mesh/src/mesh/canonical.rs` — types, classifier, wrapper
+- `src/worker/unified_server/lifecycle.rs` — worker integration (classify before apply)
+- `crates/synvoid-mesh/src/mesh/config.rs` — config fields
 
 ## Follow-Up Recommendation
 
