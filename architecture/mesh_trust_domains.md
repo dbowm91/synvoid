@@ -405,6 +405,10 @@ This track stops here. The next architectural step should be `AdvisoryRecordSour
 
 `AdvisoryRecordSource` introduces a read-only seam for advisory DHT observations. It exposes present/missing/expired/unavailable advisory records and prefix reads without exposing mutation, replication, quorum, or canonical trust decisions. The record-store adapter preserves existing read behavior and does not validate authority. This seam complements `CanonicalTrustReader`; future policy code should compose both rather than letting service consumers read raw DHT records as authority.
 
+### Iteration 17 Advisory Source Hardening
+
+`RecordStoreAdvisorySource` now has focused tests against a real `RecordStoreManager`, covering present, missing, expired, prefix-limit, and expired-prefix filtering behavior. The seam remains read-only and advisory-only; no service consumers were migrated and no canonical trust behavior was added. Freshness/status semantics (single-key lookup can return `Expired` explicitly; prefix lookup filters expired entries before mapping) are consistent with the adapter's implementation and documented via test names + existing rustdoc. Follow-up still points to policy composition before service-consumer migration.
+
 ## Follow-Up Recommendation
 
 The next planned architecture track should be:

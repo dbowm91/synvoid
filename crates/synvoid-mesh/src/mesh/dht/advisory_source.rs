@@ -532,4 +532,150 @@ mod tests {
             AdvisoryRecordLookup::Missing
         ));
     }
+
+    fn make_test_signed_record(
+        key: &str,
+        ttl: u64,
+        ts_offset_secs: i64,
+    ) -> crate::protocol::DhtRecord {
+        let signer = crate::protocol::MeshMessageSigner::new([42u8; 32]);
+        let now = synvoid_utils::safe_unix_timestamp();
+        let ts = if ts_offset_secs >= 0 {
+            now.saturating_add(ts_offset_secs as u64)
+        } else {
+            now.saturating_sub((-ts_offset_secs) as u64)
+        };
+        let mut record = crate::protocol::DhtRecord {
+            key: key.to_string(),
+            value: b"testval".to_vec(),
+            timestamp: ts,
+            sequence_number: 0,
+            ttl_seconds: ttl,
+            source_node_id: "test-node".to_string(),
+            signature: vec![],
+            signer_public_key: Some(signer.get_public_key()),
+            content_hash: vec![],
+            quorum_proof: vec![],
+            request_id: None,
+        };
+        let signed = crate::dht::signed::dht_record_to_signed_record(&record);
+        let content = signed.get_signable_content();
+        record.signature = signer.sign(&content);
+        record
+    }
+
+    fn make_minimal_global_record_store() -> std::sync::Arc<crate::dht::RecordStoreManager> {
+        let config = crate::dht::RecordStoreConfig::default();
+        let mesh_config = crate::config::MeshConfig::default();
+        let access_control = crate::dht::DhtAccessControl::new(&mesh_config);
+        let store = crate::dht::RecordStoreManager::new(
+            config,
+            "test-global".to_string(),
+            crate::config::MeshNodeRole::GLOBAL,
+            None,
+            access_control,
+            None,
+        );
+        std::sync::Arc::new(store)
+    }
+
+    #[test]
+    fn record_store_advisory_source_present_record_maps_correctly() {
+        let store = make_minimal_global_record_store();
+        let rec = make_test_signed_record("present:key", 3600, 0);
+        let _ = store.store_local_record(rec.clone(), 100);
+        let advisory = RecordStoreAdvisorySource::new(store);
+        match advisory.get_advisory_record("present:key") {
+            AdvisoryRecordLookup::Present(r) => {
+                assert_eq!(r.key, "present:key");
+                assert_eq!(r.value, b"testval".to_vec());
+                assert_eq!(r.source_node_id, "test-node");
+                assert!(r.timestamp > 0);
+                assert_eq!(r.ttl_seconds, 3600);
+                assert_eq!(r.status, AdvisoryRecordStatus::Present);
+                assert!(matches!(
+                    r.freshness,
+                    AdvisoryFreshness::Live | AdvisoryFreshness::Cached { .. }
+                ));
+                assert!(r.record_signature_valid);
+            }
+            other => panic!("expected Present, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn record_store_advisory_source_missing_key_returns_missing() {
+        let store = make_minimal_global_record_store();
+        let advisory = RecordStoreAdvisorySource::new(store);
+        assert!(matches!(
+            advisory.get_advisory_record("no:such:key"),
+            AdvisoryRecordLookup::Missing
+        ));
+    }
+
+    #[test]
+    fn record_store_advisory_source_expired_single_lookup_returns_missing_due_to_get_record_pruning(
+    ) {
+        let store = make_minimal_global_record_store();
+        let rec = make_test_signed_record("exp:key", 1, -10000);
+        {
+            let state = store.record_state.write();
+            let entry = crate::dht::DhtRecordEntry {
+                record: rec.clone(),
+                local_origin: true,
+                version: 1,
+                status: crate::protocol::DhtRecordStatus::Live,
+            };
+            state.records.insert("exp:key".to_string(), entry);
+        }
+        let advisory = RecordStoreAdvisorySource::new(store);
+        assert!(matches!(
+            advisory.get_advisory_record("exp:key"),
+            AdvisoryRecordLookup::Missing
+        ));
+    }
+
+    #[test]
+    fn record_store_advisory_source_prefix_returns_only_live_non_expired() {
+        let store = make_minimal_global_record_store();
+        let live = make_test_signed_record("p:live", 3600, 0);
+        let _ = store.store_local_record(live, 100);
+        let exp_rec = make_test_signed_record("p:exp", 1, -10000);
+        {
+            let state = store.record_state.write();
+            let entry = crate::dht::DhtRecordEntry {
+                record: exp_rec,
+                local_origin: false,
+                version: 1,
+                status: crate::protocol::DhtRecordStatus::Live,
+            };
+            state.records.insert("p:exp".to_string(), entry);
+        }
+        let advisory = RecordStoreAdvisorySource::new(store);
+        let results = advisory.get_advisory_records_by_prefix("p:", 10);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].key, "p:live");
+    }
+
+    #[test]
+    fn record_store_advisory_source_prefix_honors_limit() {
+        let store = make_minimal_global_record_store();
+        for i in 0..5 {
+            let rec = make_test_signed_record(&format!("lim:{}", i), 3600, 0);
+            let _ = store.store_local_record(rec, 100);
+        }
+        let advisory = RecordStoreAdvisorySource::new(store);
+        let results = advisory.get_advisory_records_by_prefix("lim:", 2);
+        assert_eq!(results.len(), 2);
+        for r in &results {
+            assert!(r.key.starts_with("lim:"));
+        }
+    }
+
+    #[test]
+    fn record_store_advisory_source_no_canonical_types() {
+        let store = make_minimal_global_record_store();
+        let source = RecordStoreAdvisorySource::new(store);
+        let _name = source.source_name();
+    }
 }

@@ -31,7 +31,7 @@ Implementation plan remaining items are documented in `plans/plan.md`.
 - `KEY-POL-1` (CanonicalTrustReader injection into RecordStoreManager):
   - Carrier wired in `RecordStoreManager`/`RoutingState`; direct client Push/Announce paths attach for configured contexts.
   - Adapter `validate_dht_key_authority_for_ingress()` active; ingress gate enforces accept/reject/defer for canonical-required keys on configured Push/Announce paths; disabled context preserves legacy.
-  - Track complete (Iteration 15). Iteration 16 introduced `AdvisoryRecordSource` seam (read-only advisory DHT observations with record-store adapter). Next step: policy composition helper before service consumer migration.
+  - Track complete (Iteration 15). Iteration 16 introduced `AdvisoryRecordSource` seam (read-only advisory DHT observations with record-store adapter). Iteration 17: `RecordStoreAdvisorySource` hardened with focused real-store tests (present/missing/expired/prefix); no service-consumer migration; docs updated. Next step: policy composition helper before service consumer migration.
 
 ---
 
