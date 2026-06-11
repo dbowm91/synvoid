@@ -218,7 +218,7 @@ crates/synvoid-mesh/src/mesh/kem/
 | `SecureConfigManager` | `crates/synvoid-mesh/src/mesh/security.rs` | AES-256-GCM encrypted config value storage. |
 | `MeshSecurityChallengeManager` | `crates/synvoid-mesh/src/mesh/security_challenge.rs` | Challenge-response attack detection. |
 | `MeshAttackDetector` | `crates/synvoid-mesh/src/mesh/security_challenge.rs` | Pattern-based attack detection. |
-| `ThreatIntelligenceManager` | `crates/synvoid-mesh/src/mesh/threat_intel.rs` | Threat indicator distribution and caching. |
+| `ThreatIntelligenceManager` | `crates/synvoid-mesh/src/mesh/threat_intel.rs` | Threat indicator distribution, caching, and policy-composed read staging. |
 | `ReputationManager` | `crates/synvoid-mesh/src/mesh/reputation.rs` | Peer reputation scoring and event tracking. |
 | `BehavioralFingerprint` | `crates/synvoid-mesh/src/mesh/behavioral.rs` | Per-peer behavioral fingerprint. |
 | `BehavioralIntelligenceManager` | `crates/synvoid-mesh/src/mesh/behavioral_intel.rs` | Behavioral intelligence coordination. |

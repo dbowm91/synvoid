@@ -451,16 +451,17 @@ Tests cover: no context falls back to legacy, Actionable returns indicator, advi
 
 The two policy-composed threat-intel lookup paths now share a single decision-to-actionability helper (`is_policy_actionable`), keeping `Actionable` as the only policy result that returns an indicator. Raw local/DHT lookup APIs remain compatibility/diagnostic paths; policy-composed methods are the preferred API for new actionability-sensitive reads. No proxy, YARA/WASM, routing, DHT sync, ingestion, or enforcement hot paths were migrated.
 
+### Iteration 23 Threat Intel Policy Reassessment
+
+The threat-intel policy-composed lookup track is staged and stable. Two read-only composed lookup APIs exist for DHT and local indicators, both gated by shared `is_policy_actionable` semantics. A call-graph review found no low-risk caller that should migrate before broader proxy/YARA/WASM/routing design work. The track is paused; raw lookup APIs remain compatibility/diagnostic paths.
+
 ## Follow-Up Recommendation
 
 After this pass, two threat-intel read paths are stable through the composed policy seam:
 1. `lookup_threat_indicator_policy_composed` (DHT lookup, Iteration 20)
 2. `lookup_local_indicator_policy_composed` (local lookup, Iteration 21)
 
-The next planned architecture track should be:
-1. Stop and reassess before moving into proxy, YARA/WASM, routing, or enforcement hot paths.
-2. Consider migrating one additional consumer (e.g., proxy, YARA/WASM) based on concrete call-graph pressure, not automatic expansion.
-3. Do not expand the ingress gate to additional remote paths until the Push/Announce path is stable and the context carrier is clearly owned by a higher-level mesh service or data-plane composition object.
+The track is paused until a concrete low-risk consumer emerges. Move to a different architecture track next; do not expand proxy, YARA/WASM, routing, or enforcement consumers without a separate design pass. Raw lookup APIs remain compatibility/diagnostic paths.
 
 ---
 

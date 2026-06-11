@@ -175,7 +175,20 @@ pub mod waf_stub {
 
             impl ThreatFeedPayload {
                 pub fn get_signable_content(&self) -> Vec<u8> {
-                    serde_json::to_vec(self).unwrap_or_default()
+                    let indicator_hashes: Vec<String> = self
+                        .indicators
+                        .iter()
+                        .map(|i| format!("{}:{}:{}", i.threat_type, i.indicator_value, i.severity))
+                        .collect();
+
+                    format!(
+                        "{}:{}:{}:{}",
+                        self.version,
+                        self.timestamp,
+                        self.indicators.len(),
+                        indicator_hashes.join(",")
+                    )
+                    .into_bytes()
                 }
             }
 
