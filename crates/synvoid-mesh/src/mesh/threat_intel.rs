@@ -407,16 +407,6 @@ impl ThreatIntelligenceManager {
         self.policy_context.read().clone()
     }
 
-    /// Returns `true` when the policy decision is `Actionable`.
-    fn is_policy_actionable(
-        decision: &crate::threat_intel_policy::ThreatIntelPolicyDecision,
-    ) -> bool {
-        matches!(
-            decision,
-            crate::threat_intel_policy::ThreatIntelPolicyDecision::Actionable(_)
-        )
-    }
-
     pub fn from_external_config(
         config: ThreatIntelligenceConfig,
         block_store: Arc<dyn BlockStoreApi + Send + Sync>,
@@ -1495,6 +1485,16 @@ impl ThreatIntelligenceManager {
         ip: &str,
     ) -> Option<ThreatIndicator> {
         self.lookup_local_indicator_policy_composed(ip, ThreatType::IpBlock)
+    }
+
+    /// Returns `true` when the policy decision is `Actionable`.
+    fn is_policy_actionable(
+        decision: &crate::threat_intel_policy::ThreatIntelPolicyDecision,
+    ) -> bool {
+        matches!(
+            decision,
+            crate::threat_intel_policy::ThreatIntelPolicyDecision::Actionable(_)
+        )
     }
 
     pub fn is_mesh_available(&self) -> bool {
