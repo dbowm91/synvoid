@@ -290,12 +290,33 @@ pub fn spawn_ipc_loop(
                             *state.canonical_snapshot.write().await =
                                 Some(canonical_snapshot.clone());
 
-                            // Classify snapshot freshness before creating the reader.
-                            // TODO: Replace with config-sourced policy when mesh config
-                            // is accessible from this context (Phase 6 follow-up).
-                            let freshness_policy =
-                                synvoid_mesh::canonical::CanonicalSnapshotFreshnessPolicy::default(
-                                );
+                            // Classify snapshot freshness using config-sourced policy.
+                            let freshness_policy = {
+                                let config_guard = shared_config.read().await;
+                                config_guard
+                                    .main
+                                    .tunnel
+                                    .mesh
+                                    .as_ref()
+                                    .and_then(|mesh| {
+                                        // The config crate's AuthorityFreshnessConfig uses a String
+                                        // for stale_mode. Round-trip through JSON to convert to the
+                                        // mesh crate's typed version with the enum.
+                                        let mesh_cfg = serde_json::to_value(&mesh.authority_freshness).ok()?;
+                                        let auth_freshness: synvoid_mesh::config::AuthorityFreshnessConfig =
+                                            serde_json::from_value(mesh_cfg).ok()?;
+                                        Some(synvoid_mesh::canonical::CanonicalSnapshotFreshnessPolicy::from(
+                                            &auth_freshness,
+                                        ))
+                                    })
+                                    .unwrap_or_default()
+                            };
+                            tracing::debug!(
+                                "Canonical snapshot freshness policy: fresh_ms={}, stale_grace_ms={}, stale_mode={:?}",
+                                freshness_policy.fresh_max_age_ms,
+                                freshness_policy.stale_grace_max_age_ms,
+                                freshness_policy.stale_mode,
+                            );
                             let now = synvoid_utils::safe_unix_timestamp();
                             let freshness_state =
                                 synvoid_mesh::canonical::classify_canonical_snapshot(
@@ -367,10 +388,24 @@ pub fn spawn_ipc_loop(
                                         }
                                         synvoid_mesh::canonical::CanonicalSnapshotStaleMode::FailClosedNotActionable => {
                                             tracing::warn!(
-                                                "Canonical trust snapshot stale, rejecting (age_ms={}, mode=fail_closed_not_actionable)",
+                                                "Canonical trust snapshot stale, fail-closed (age_ms={}, mode=fail_closed_not_actionable)",
                                                 age_ms
                                             );
-                                            state.data_plane.update_threat_intel_policy_context(None, None);
+                                            let reader = synvoid_mesh::canonical::FreshnessBoundCanonicalReader::new(
+                                                canonical_snapshot,
+                                                freshness_policy,
+                                                now,
+                                            );
+                                            let canonical_reader: Arc<dyn CanonicalTrustReader> = Arc::new(reader);
+                                            let advisory: Option<Arc<dyn AdvisoryRecordSource>> =
+                                                state.data_plane.record_store.as_ref().map(|store| {
+                                                    Arc::new(RecordStoreAdvisorySource::new(store.clone()))
+                                                        as Arc<dyn AdvisoryRecordSource>
+                                                });
+                                            state.data_plane.update_threat_intel_policy_context(
+                                                Some(canonical_reader),
+                                                advisory,
+                                            );
                                         }
                                     }
                                 }

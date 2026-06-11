@@ -1,6 +1,6 @@
 # Mesh Trust Domains — Design Note (Iteration 30)
 
-**Status**: Iteration 31 — Canonical snapshot freshness policy implemented and documented.  
+**Status**: Iteration 32 — Canonical snapshot freshness config wired to worker lifecycle.  
 **Date**: 2026-06-11  
 **Scope**: `crates/synvoid-mesh` (re-exported via `src/mesh`).  
 **Goal**: Define trust-domain boundaries and invariants before any internal module split.  
@@ -500,8 +500,6 @@ Supervisor/control-plane code now exports a bounded `CanonicalTrustSnapshot` for
 - `ThreatIntelPolicyContext` remains optional
 - No proxy/YARA/WASM/routing/WAF consumers were migrated
 
-**Next step:** Freshness and fail-open/fail-closed policy for using populated canonical snapshots in data-plane decisions.
-
 ### Iteration 31 Canonical Snapshot Freshness Policy
 
 Canonical snapshots are authoritative only within a configured freshness window. `CanonicalSnapshotFreshnessPolicy` defines thresholds for classifying snapshot age, and `classify_canonical_snapshot()` produces a `CanonicalSnapshotFreshness` state (Fresh, StaleWithinGrace, Expired, Invalid, Missing). `FreshnessBoundCanonicalReader` wraps `CanonicalTrustReader` and enforces the freshness policy: trust decisions are deferred or denied when the snapshot is expired, invalid, or stale beyond grace.
@@ -515,20 +513,37 @@ Canonical snapshots are authoritative only within a configured freshness window.
 **Config fields** in `AuthorityFreshnessConfig`:
 - `canonical_snapshot_fresh_max_age_ms` (default: 60_000)
 - `canonical_snapshot_stale_grace_max_age_ms` (default: 300_000)
-- `canonical_snapshot_stale_mode` (default: FailOpenDefer)
+- `canonical_snapshot_stale_mode` (default: fail_open_defer)
+
+### Iteration 32 Config Wiring
+
+The worker IPC handler now reads runtime configuration instead of using hardcoded defaults. A `From<&AuthorityFreshnessConfig> for CanonicalSnapshotFreshnessPolicy` conversion in `canonical.rs` bridges the config surface to the freshness policy. Invalid configurations (stale_grace < fresh_max_age) are normalized at conversion time.
+
+**Stale-mode live behavior (canonical):**
+- `Fresh`: install `FreshnessBoundCanonicalReader`, apply policy context
+- `StaleWithinGrace + AllowStaleWithWarning`: install `FreshnessBoundCanonicalReader`, apply policy context
+- `StaleWithinGrace + FailOpenDefer`: clear policy context (`None`), defer to raw lookups
+- `StaleWithinGrace + FailClosedNotActionable`: install `FreshnessBoundCanonicalReader`, which returns `NotTrusted { ExpiredSnapshot }` for all trust queries
+- `Expired` / `Invalid` / `Missing`: clear policy context, log warning
+
+**Malformed/invalid/expired snapshot semantics:**
+- Malformed postcard payload: reject update, preserve previous valid snapshot/context
+- Invalid timestamp: store raw snapshot for diagnostics, clear policy context
+- Expired timestamp: store raw snapshot for diagnostics, clear policy context
 
 **Worker flow:**
 1. IPC `CanonicalTrustSnapshotUpdate` received
-2. Deserialize snapshot
-3. Classify freshness via `classify_canonical_snapshot()`
-4. If fresh or stale+AllowStaleWithWarning: wrap in `FreshnessBoundCanonicalReader`, build policy context
-5. If expired/invalid/stale+defer: set policy context to None, log warning
-6. No proxy/YARA/WASM/routing/WAF consumers were migrated in this pass.
+2. Deserialize snapshot (malformed → reject, preserve previous)
+3. Store raw snapshot for diagnostics
+4. Read freshness policy from `config.main.tunnel.mesh.authority_freshness` (fallback to defaults)
+5. Classify freshness via `classify_canonical_snapshot()`
+6. Based on classification + stale mode: install reader or clear context (see stale-mode table above)
+7. No proxy/YARA/WASM/routing/WAF consumers were migrated in this pass.
 
 **Files:**
-- `crates/synvoid-mesh/src/mesh/canonical.rs` — types, classifier, wrapper
-- `src/worker/unified_server/lifecycle.rs` — worker integration (classify before apply)
-- `crates/synvoid-mesh/src/mesh/config.rs` — config fields
+- `crates/synvoid-mesh/src/mesh/canonical.rs` — types, classifier, wrapper, `From` conversion, normalization
+- `src/worker/unified_server/lifecycle.rs` — worker integration (config read, classify, apply)
+- `crates/synvoid-mesh/src/mesh/config.rs` — config fields in `AuthorityFreshnessConfig`
 
 ## Follow-Up Recommendation
 
@@ -536,7 +551,7 @@ After this pass, two threat-intel read paths are stable through the composed pol
 1. `lookup_threat_indicator_policy_composed` (DHT lookup, Iteration 20)
 2. `lookup_local_indicator_policy_composed` (local lookup, Iteration 21)
 
-The track is paused until a concrete low-risk consumer emerges. Move to a different architecture track next; do not expand proxy, YARA/WASM, routing, or enforcement consumers without a separate design pass. Raw lookup APIs remain compatibility/diagnostic paths.
+The trust-domain/freshness track is a reasonable stopping point. The next architecture track should be independent unless a concrete low-risk consumer for policy-composed threat intel is selected. Move to a different architecture track next; do not expand proxy, YARA/WASM, routing, or enforcement consumers without a separate design pass. Raw lookup APIs remain compatibility/diagnostic paths.
 
 ---
 

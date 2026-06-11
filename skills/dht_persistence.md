@@ -688,13 +688,19 @@ Stale authority records are rejected during DHT sync and anti-entropy:
 
 ```rust
 pub struct AuthorityFreshnessConfig {
-    pub max_authority_staleness_secs: u64,      // Default: 3600
-    pub require_freshness_for_critical_keys: bool, // Default: true
-    pub freshness_check_enabled: bool,           // Default: true
+    pub global_policy_grace_secs: u64,                    // Default: 3600
+    pub revocation_hard_limit_secs: u64,                   // Default: 300
+    pub ca_epoch_hard_limit_secs: u64,                     // Default: 86400
+    pub threat_intel_stale_local: bool,                    // Default: true
+    pub peer_discovery_degraded: bool,                     // Default: true
+    pub dht_soft_state_ttl_secs: u64,                      // Default: 300
+    pub canonical_snapshot_fresh_max_age_ms: u64,          // Default: 60_000
+    pub canonical_snapshot_stale_grace_max_age_ms: u64,    // Default: 300_000
+    pub canonical_snapshot_stale_mode: CanonicalSnapshotStaleMode, // Default: FailOpenDefer
 }
 ```
 
-Records older than `max_authority_staleness_secs` are rejected for critical authority key families (genesis key transitions, revoked nodes). This prevents replay of stale revocations or key rotations.
+Records older than the configured staleness thresholds are rejected for critical authority key families (genesis key transitions, revoked nodes). This prevents replay of stale revocations or key rotations. The `canonical_snapshot_*` fields configure the worker-side freshness policy for IPC-exported snapshots.
 
 ### store_record Visibility Change
 

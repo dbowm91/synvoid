@@ -4,7 +4,7 @@
 
 SynVoid uses a mesh network architecture with DHT-based service discovery for multi-origin routing. This skill provides context for working with the mesh transport, DHT keys, and upstream routing.
 
-**Trust domains (advisory vs. canonical)**: DHT provides advisory, TTL-bound records (discovery, announcements). Raft provides canonical authority state (OrgPublicKey, ThreatIntel, revocation). Policy layer (key_policy, peer_auth decisions) resolves advisory+canonical into actionable trust; services consume policy outputs, not raw advisory records. See `architecture/mesh_trust_domains.md` for classification, invariants, and review checklist. **Canonical seam** (Iterations 7-15, complete): `CanonicalTrustReader` in `crates/synvoid-mesh/src/mesh/canonical.rs`; `validate_peer_canonical_status` in `peer_auth.rs`; `classify_key_authority_with_canonical_reader` in `dht/key_policy.rs`; `validate_dht_key_authority_for_ingress` adapter; `DhtIngressPolicyContext` wired for Push/Announce via `RecordStoreManager`. Ingress gate active for configured Push/Announce paths; disabled context preserves legacy. **Iteration 16: AdvisoryRecordSource seam** — `AdvisoryRecordSource` trait + `RecordStoreAdvisorySource` adapter + `StaticAdvisoryRecordSource` in `crates/synvoid-mesh/src/mesh/dht/advisory_source.rs`. **Iteration 17: Advisory source hardening** — `RecordStoreAdvisorySource` has focused real-store tests (present/missing/expired/prefix); architecture/docs updated; no service migration. **Iteration 18: Policy composition helper** — `evaluate_threat_intel_policy()` in `crates/synvoid-mesh/src/mesh/threat_intel_policy.rs` composes `AdvisoryRecordSource` + `CanonicalTrustReader` into explicit threat-intel policy decisions (Actionable/AdvisoryOnly/NotActionable/Deferred). Tests cover all advisory + canonical state combinations. **Iteration 19: First consumer migration** — `ThreatIntelligenceManager::evaluate_indicator_actionability` wraps the policy helper, taking trait objects as parameters. Tests cover all policy-composed and legacy paths. **Iteration 20: Injection seam** — `ThreatIntelPolicyContext` carrier with `set_policy_context()`, `evaluate_indicator_actionability_configured()`, and `lookup_threat_indicator_policy_composed()`. **Iteration 21: Second consumer migration** — `lookup_local_indicator_policy_composed` and `lookup_local_indicator_by_ip_policy_composed` added. Two threat-intel read paths now use the composed policy seam. Raw methods remain for compatibility. No proxy, YARA/WASM, or routing consumers migrated. **Iteration 22: Policy cleanup** — shared `is_policy_actionable` helper consolidates duplicate DHT/local gating; policy-composed methods documented as preferred; raw methods documented as compatibility/diagnostic. **Iteration 23: Policy reassessment** — the track is staged and stable after call-graph review. No low-risk caller was migrated, no proxy/YARA/WASM/routing/enforcement hot path was touched, and raw lookup APIs remain compatibility/diagnostic paths. **Iteration 24: Verification** — the shared helper remains in place and focused mesh checks passed; raw lookup APIs remain compatibility/diagnostic paths. **Iterations 25-26: Root wiring** — `DataPlaneServices` carries optional `ThreatIntelPolicyContext`; a root-side helper builds it from explicit canonical/advisory handles. **Iteration 27** assessed canonical reader ownership; workers are data-planes without direct access to Raft/EdgeReplicaManager. **Iteration 28: Supervisor exports `CanonicalTrustSnapshot` via IPC to workers** — `EdgeReplicaManager::canonical_trust_snapshot()` produces the snapshot, Supervisor sends `CanonicalTrustSnapshotUpdate` IPC, workers store it and apply the snapshot via `DataPlaneServices::update_threat_intel_policy_context()` in the IPC message loop. `CanonicalTrustSnapshot` implements `CanonicalTrustReader`. `DataPlaneServices::update_threat_intel_policy_context()` enables live policy context updates when snapshots arrive via IPC. **Iteration 31: Canonical snapshot freshness policy** — `CanonicalSnapshotFreshnessPolicy` and `classify_canonical_snapshot()` in `crates/synvoid-mesh/src/mesh/canonical.rs` classify snapshots as fresh (≤60s), stale-within-grace (≤5min), expired, invalid, or missing. `FreshnessBoundCanonicalReader` wrapper enforces freshness on `CanonicalTrustReader` trust decisions. Workers classify snapshot freshness before applying; expired/invalid snapshots are not applied. No proxy/YARA/WASM/routing/WAF consumers were migrated.
+**Trust domains (advisory vs. canonical)**: DHT provides advisory, TTL-bound records (discovery, announcements). Raft provides canonical authority state (OrgPublicKey, ThreatIntel, revocation). Policy layer (key_policy, peer_auth decisions) resolves advisory+canonical into actionable trust; services consume policy outputs, not raw advisory records. See `architecture/mesh_trust_domains.md` for classification, invariants, and review checklist. **Canonical seam** (Iterations 7-15, complete): `CanonicalTrustReader` in `crates/synvoid-mesh/src/mesh/canonical.rs`; `validate_peer_canonical_status` in `peer_auth.rs`; `classify_key_authority_with_canonical_reader` in `dht/key_policy.rs`; `validate_dht_key_authority_for_ingress` adapter; `DhtIngressPolicyContext` wired for Push/Announce via `RecordStoreManager`. Ingress gate active for configured Push/Announce paths; disabled context preserves legacy. **Iteration 16: AdvisoryRecordSource seam** — `AdvisoryRecordSource` trait + `RecordStoreAdvisorySource` adapter + `StaticAdvisoryRecordSource` in `crates/synvoid-mesh/src/mesh/dht/advisory_source.rs`. **Iteration 17: Advisory source hardening** — `RecordStoreAdvisorySource` has focused real-store tests (present/missing/expired/prefix); architecture/docs updated; no service migration. **Iteration 18: Policy composition helper** — `evaluate_threat_intel_policy()` in `crates/synvoid-mesh/src/mesh/threat_intel_policy.rs` composes `AdvisoryRecordSource` + `CanonicalTrustReader` into explicit threat-intel policy decisions (Actionable/AdvisoryOnly/NotActionable/Deferred). Tests cover all advisory + canonical state combinations. **Iteration 19: First consumer migration** — `ThreatIntelligenceManager::evaluate_indicator_actionability` wraps the policy helper, taking trait objects as parameters. Tests cover all policy-composed and legacy paths. **Iteration 20: Injection seam** — `ThreatIntelPolicyContext` carrier with `set_policy_context()`, `evaluate_indicator_actionability_configured()`, and `lookup_threat_indicator_policy_composed()`. **Iteration 21: Second consumer migration** — `lookup_local_indicator_policy_composed` and `lookup_local_indicator_by_ip_policy_composed` added. Two threat-intel read paths now use the composed policy seam. Raw methods remain for compatibility. No proxy, YARA/WASM, or routing consumers migrated. **Iteration 22: Policy cleanup** — shared `is_policy_actionable` helper consolidates duplicate DHT/local gating; policy-composed methods documented as preferred; raw methods documented as compatibility/diagnostic. **Iteration 23: Policy reassessment** — the track is staged and stable after call-graph review. No low-risk caller was migrated, no proxy/YARA/WASM/routing/enforcement hot path was touched, and raw lookup APIs remain compatibility/diagnostic paths. **Iteration 24: Verification** — the shared helper remains in place and focused mesh checks passed; raw lookup APIs remain compatibility/diagnostic paths. **Iterations 25-26: Root wiring** — `DataPlaneServices` carries optional `ThreatIntelPolicyContext`; a root-side helper builds it from explicit canonical/advisory handles. **Iteration 27** assessed canonical reader ownership; workers are data-planes without direct access to Raft/EdgeReplicaManager. **Iteration 28: Supervisor exports `CanonicalTrustSnapshot` via IPC to workers** — `EdgeReplicaManager::canonical_trust_snapshot()` produces the snapshot, Supervisor sends `CanonicalTrustSnapshotUpdate` IPC, workers store it and apply the snapshot via `DataPlaneServices::update_threat_intel_policy_context()` in the IPC message loop. `CanonicalTrustSnapshot` implements `CanonicalTrustReader`. `DataPlaneServices::update_threat_intel_policy_context()` enables live policy context updates when snapshots arrive via IPC. **Iteration 31: Canonical snapshot freshness policy** — `CanonicalSnapshotFreshnessPolicy` and `classify_canonical_snapshot()` in `crates/synvoid-mesh/src/mesh/canonical.rs` classify snapshots as fresh (≤60s), stale-within-grace (≤5min), expired, invalid, or missing. `FreshnessBoundCanonicalReader` wrapper enforces freshness on `CanonicalTrustReader` trust decisions. Workers classify snapshot freshness before applying; expired/invalid snapshots are not applied. **Iteration 32: Config wiring** — `From<&AuthorityFreshnessConfig>` conversion with normalization; worker reads config at runtime; `FailClosedNotActionable` installs reader. No proxy/YARA/WASM/routing/WAF consumers were migrated.
 
 ## Node Roles
 
@@ -1089,47 +1089,67 @@ DHT security operates on four distinct verification layers, each addressing a di
 
 All four layers are enforced for remote DHT writes on global nodes. Local writes (`store_local_record()`) skip envelope/signer verification since they originate from the node's own key.
 
-## Canonical Snapshot Freshness Policy (Iteration 31)
+## Canonical Snapshot Freshness Policy (Iteration 31, Config Wired Iteration 32)
 
-Canonical snapshots are authoritative only within a configured freshness policy. Workers classify snapshots as fresh, stale-within-grace, expired, invalid, or missing.
+Canonical snapshots are authoritative only within a configured freshness policy. Workers classify snapshots as fresh, stale-within-grace, expired, invalid, or missing. The freshness policy is now sourced from runtime config (`AuthorityFreshnessConfig`) instead of hardcoded defaults.
 
 ### Freshness States
 
-| State | Condition | Default Behavior |
-|-------|-----------|-----------------|
-| Fresh | age ≤ 60s | Normal policy-composed decisions |
-| StaleWithinGrace | 60s < age ≤ 5min | Deferred (FailOpenDefer) |
-| Expired | age > 5min | Canonical unavailable |
-| Invalid | zero/future timestamp | Reject, preserve no context |
-| Missing | no snapshot | Canonical unavailable |
+| State | Condition | Behavior |
+|-------|-----------|----------|
+| Fresh | age ≤ fresh_max_age_ms (default 60s) | Install `FreshnessBoundCanonicalReader`, apply policy context |
+| StaleWithinGrace | fresh < age ≤ stale_grace (default 5min) | Per stale mode (see below) |
+| Expired | age > stale_grace | Clear policy context, log warning |
+| Invalid | zero/future timestamp | Clear policy context, log error |
+| Missing | no snapshot | Clear policy context, log error |
+
+### Stale Mode Behavior
+
+| Stale Mode | Worker Action | Reader Behavior |
+|------------|--------------|-----------------|
+| `FailOpenDefer` (default) | Clear policy context | `Unknown { CanonicalUnavailable }` |
+| `FailClosedNotActionable` | Install `FreshnessBoundCanonicalReader` | `NotTrusted { ExpiredSnapshot }` |
+| `AllowStaleWithWarning` | Install `FreshnessBoundCanonicalReader` | `Stale { age_ms }` freshness |
 
 ### Types
 
 - `CanonicalSnapshotFreshnessPolicy`: configurable thresholds + stale mode
-- `CanonicalSnapshotStaleMode`: FailOpenDefer | FailClosedNotActionable | AllowStaleWithWarning
+- `CanonicalSnapshotStaleMode`: `fail_open_defer` | `fail_closed_not_actionable` | `allow_stale_with_warning` (serde: snake_case)
 - `classify_canonical_snapshot()`: pure classifier
 - `FreshnessBoundCanonicalReader`: wrapper enforcing policy on `CanonicalTrustReader`
+- `From<&AuthorityFreshnessConfig>`: config-to-policy conversion with normalization
 
 ### Config
 
 Fields in `AuthorityFreshnessConfig`:
 - `canonical_snapshot_fresh_max_age_ms` (default: 60_000)
 - `canonical_snapshot_stale_grace_max_age_ms` (default: 300_000)
-- `canonical_snapshot_stale_mode` (default: FailOpenDefer)
+- `canonical_snapshot_stale_mode` (default: fail_open_defer)
+
+Invalid configs (stale_grace < fresh_max_age) are normalized at conversion time.
 
 ### Worker Flow
 
 1. IPC `CanonicalTrustSnapshotUpdate` received
-2. Deserialize snapshot
-3. Classify freshness via `classify_canonical_snapshot()`
-4. If fresh or stale+AllowStaleWithWarning: wrap in `FreshnessBoundCanonicalReader`, build policy context
-5. If expired/invalid/stale+defer: set policy context to None, log warning
-6. No proxy/YARA/WASM/routing/WAF consumers were migrated in this pass.
+2. Deserialize snapshot (malformed → reject, preserve previous valid snapshot/context)
+3. Store raw snapshot for diagnostics
+4. Read freshness policy from `config.main.tunnel.mesh.authority_freshness` (fallback to defaults)
+5. Classify freshness via `classify_canonical_snapshot()`
+6. Based on classification + stale mode: install reader or clear context (see stale mode table)
+7. No proxy/YARA/WASM/routing/WAF consumers were migrated in this pass.
+
+### Malformed/Invalid/Expired Snapshot Semantics
+
+| Scenario | Behavior |
+|----------|----------|
+| Malformed postcard payload | Reject update, preserve previous valid snapshot/context |
+| Invalid timestamp | Store raw snapshot for diagnostics, clear policy context |
+| Expired timestamp | Store raw snapshot for diagnostics, clear policy context |
 
 ### Files
 
 | File | Purpose |
 |------|---------|
-| `crates/synvoid-mesh/src/mesh/canonical.rs` | Types, classifier, wrapper |
-| `src/worker/unified_server/lifecycle.rs` | Worker integration (classify before apply) |
-| `crates/synvoid-mesh/src/mesh/config.rs` | Config fields |
+| `crates/synvoid-mesh/src/mesh/canonical.rs` | Types, classifier, wrapper, `From` conversion, normalization |
+| `src/worker/unified_server/lifecycle.rs` | Worker integration (config read, classify, apply) |
+| `crates/synvoid-mesh/src/mesh/config.rs` | Config fields in `AuthorityFreshnessConfig` |

@@ -118,6 +118,35 @@ impl Default for CanonicalSnapshotFreshnessPolicy {
     }
 }
 
+impl From<&crate::config::AuthorityFreshnessConfig> for CanonicalSnapshotFreshnessPolicy {
+    fn from(cfg: &crate::config::AuthorityFreshnessConfig) -> Self {
+        let mut policy = Self {
+            fresh_max_age_ms: cfg.canonical_snapshot_fresh_max_age_ms,
+            stale_grace_max_age_ms: cfg.canonical_snapshot_stale_grace_max_age_ms,
+            stale_mode: cfg.canonical_snapshot_stale_mode,
+        };
+        policy.normalize();
+        policy
+    }
+}
+
+impl CanonicalSnapshotFreshnessPolicy {
+    /// Normalize invalid configurations.
+    ///
+    /// Ensures `stale_grace_max_age_ms >= fresh_max_age_ms`. If the stale grace
+    /// is less than the fresh threshold, it is clamped to `fresh_max_age_ms`.
+    fn normalize(&mut self) {
+        if self.stale_grace_max_age_ms < self.fresh_max_age_ms {
+            tracing::warn!(
+                "Canonical snapshot stale_grace_max_age_ms ({}) < fresh_max_age_ms ({}), clamping stale_grace to fresh_max_age",
+                self.stale_grace_max_age_ms,
+                self.fresh_max_age_ms,
+            );
+            self.stale_grace_max_age_ms = self.fresh_max_age_ms;
+        }
+    }
+}
+
 /// Classified freshness state of a canonical snapshot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CanonicalSnapshotFreshnessState {
@@ -189,6 +218,13 @@ pub fn classify_canonical_snapshot(
 /// - **StaleWithinGrace + FailOpenDefer**: returns `Unknown { CanonicalUnavailable }`.
 /// - **StaleWithinGrace + FailClosedNotActionable**: returns `NotTrusted { ExpiredSnapshot }`.
 /// - **Expired/Missing/Invalid**: returns `Unknown` or `NotTrusted` per policy.
+///
+/// # Live Application in Worker Lifecycle
+///
+/// The worker IPC handler installs this reader for `Fresh`, `AllowStaleWithWarning`,
+/// and `FailClosedNotActionable` stale modes. For `FailOpenDefer`, the worker clears
+/// the policy context (passing `None`) so threat-intel evaluation defers to raw lookups.
+/// For `Expired`/`Invalid`/`Missing` snapshots, the worker clears the policy context.
 pub struct FreshnessBoundCanonicalReader {
     snapshot: CanonicalTrustSnapshot,
     policy: CanonicalSnapshotFreshnessPolicy,
@@ -1467,5 +1503,197 @@ mod tests {
             }
             other => panic!("expected NotTrusted Revoked, got {:?}", other),
         }
+    }
+
+    // =========================================================================
+    // Iteration 32: Config conversion and normalization tests
+    // =========================================================================
+
+    // Config defaults produce conservative CanonicalSnapshotFreshnessPolicy
+    #[test]
+    fn authority_freshness_config_defaults_produce_conservative_policy() {
+        let cfg = crate::config::AuthorityFreshnessConfig::default();
+        let policy = crate::canonical::CanonicalSnapshotFreshnessPolicy::from(&cfg);
+        assert_eq!(policy.fresh_max_age_ms, 60_000);
+        assert_eq!(policy.stale_grace_max_age_ms, 300_000);
+        assert_eq!(policy.stale_mode, CanonicalSnapshotStaleMode::FailOpenDefer);
+    }
+
+    // Explicit config values convert correctly
+    #[test]
+    fn authority_freshness_config_explicit_values_convert() {
+        let mut cfg = crate::config::AuthorityFreshnessConfig::default();
+        cfg.canonical_snapshot_fresh_max_age_ms = 120_000;
+        cfg.canonical_snapshot_stale_grace_max_age_ms = 600_000;
+        cfg.canonical_snapshot_stale_mode = CanonicalSnapshotStaleMode::FailClosedNotActionable;
+        let policy = crate::canonical::CanonicalSnapshotFreshnessPolicy::from(&cfg);
+        assert_eq!(policy.fresh_max_age_ms, 120_000);
+        assert_eq!(policy.stale_grace_max_age_ms, 600_000);
+        assert_eq!(
+            policy.stale_mode,
+            CanonicalSnapshotStaleMode::FailClosedNotActionable
+        );
+    }
+
+    // Invalid config where stale grace < fresh threshold is normalized
+    #[test]
+    fn authority_freshness_config_stale_less_than_fresh_is_normalized() {
+        let mut cfg = crate::config::AuthorityFreshnessConfig::default();
+        cfg.canonical_snapshot_fresh_max_age_ms = 120_000;
+        cfg.canonical_snapshot_stale_grace_max_age_ms = 60_000; // stale < fresh
+        let policy = crate::canonical::CanonicalSnapshotFreshnessPolicy::from(&cfg);
+        // stale_grace should be clamped to fresh_max_age
+        assert_eq!(policy.fresh_max_age_ms, 120_000);
+        assert_eq!(policy.stale_grace_max_age_ms, 120_000);
+    }
+
+    // Config normalization is idempotent
+    #[test]
+    fn canonical_snapshot_freshness_policy_normalize_idempotent() {
+        let mut policy = CanonicalSnapshotFreshnessPolicy {
+            fresh_max_age_ms: 120_000,
+            stale_grace_max_age_ms: 60_000, // invalid
+            stale_mode: CanonicalSnapshotStaleMode::FailOpenDefer,
+        };
+        policy.normalize();
+        assert_eq!(policy.stale_grace_max_age_ms, 120_000);
+        // Normalize again - should be a no-op
+        policy.normalize();
+        assert_eq!(policy.stale_grace_max_age_ms, 120_000);
+    }
+
+    // FailClosedNotActionable installs reader that returns NotTrusted for stale queries
+    #[test]
+    fn fail_closed_not_actionable_stale_reader_returns_not_trusted() {
+        let now = 1000;
+        let snapshot = make_snapshot(now - 120); // stale
+        let policy = policy_with(
+            60_000,
+            300_000,
+            CanonicalSnapshotStaleMode::FailClosedNotActionable,
+        );
+        let reader = FreshnessBoundCanonicalReader::new(snapshot, policy, now);
+
+        // All trust queries should return NotTrusted with ExpiredSnapshot
+        assert!(matches!(
+            reader.is_global_node_authorized("pk:global1"),
+            CanonicalTrustDecision::NotTrusted {
+                reason: CanonicalTrustReason::ExpiredSnapshot,
+                ..
+            }
+        ));
+        assert!(matches!(
+            reader.is_org_key_trusted("org1", "key1"),
+            CanonicalTrustDecision::NotTrusted {
+                reason: CanonicalTrustReason::ExpiredSnapshot,
+                ..
+            }
+        ));
+        assert!(matches!(
+            reader.is_threat_intel_canonical("intel-abc"),
+            CanonicalTrustDecision::NotTrusted {
+                reason: CanonicalTrustReason::ExpiredSnapshot,
+                ..
+            }
+        ));
+        // Revocation status also returns NotTrusted (snapshot delegation, then freshness overlay)
+        assert!(matches!(
+            reader.node_revocation_status("unknown"),
+            CanonicalTrustDecision::NotTrusted {
+                reason: CanonicalTrustReason::ExpiredSnapshot,
+                ..
+            }
+        ));
+    }
+
+    // Expired snapshot does not silently remain active as fresh authority
+    #[test]
+    fn expired_snapshot_does_not_return_trusted_decisions() {
+        let now = 1000;
+        let snapshot = make_snapshot(now - 400); // expired
+        let policy = default_policy();
+        let reader = FreshnessBoundCanonicalReader::new(snapshot, policy, now);
+
+        // Even though the snapshot has valid data, expired classification prevents trust
+        assert!(matches!(
+            reader.is_global_node_authorized("pk:global1"),
+            CanonicalTrustDecision::NotTrusted {
+                reason: CanonicalTrustReason::ExpiredSnapshot,
+                ..
+            }
+        ));
+        assert!(matches!(
+            reader.freshness(),
+            CanonicalFreshness::Unavailable
+        ));
+    }
+
+    // Serde round-trip for CanonicalSnapshotStaleMode matches snake_case names
+    #[test]
+    fn stale_mode_serde_names_match_snake_case() {
+        let modes = [
+            (
+                CanonicalSnapshotStaleMode::FailOpenDefer,
+                "\"fail_open_defer\"",
+            ),
+            (
+                CanonicalSnapshotStaleMode::FailClosedNotActionable,
+                "\"fail_closed_not_actionable\"",
+            ),
+            (
+                CanonicalSnapshotStaleMode::AllowStaleWithWarning,
+                "\"allow_stale_with_warning\"",
+            ),
+        ];
+        for (mode, expected_json) in modes {
+            let json = serde_json::to_string(&mode).unwrap();
+            assert_eq!(json, expected_json, "serde name mismatch for {:?}", mode);
+            let deserialized: CanonicalSnapshotStaleMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(deserialized, mode);
+        }
+    }
+
+    // Missing snapshot reader returns Unknown/CanonicalUnavailable
+    #[test]
+    fn missing_snapshot_reader_returns_unknown() {
+        let now = 1000;
+        let policy = default_policy();
+        // We can't create a FreshnessBoundCanonicalReader with None snapshot,
+        // but classify_canonical_snapshot handles it correctly.
+        let state = classify_canonical_snapshot(None, &policy, now);
+        assert_eq!(state, CanonicalSnapshotFreshnessState::Missing);
+    }
+
+    // Verify the full lifecycle path: config → policy → classification → reader
+    #[test]
+    fn config_to_reader_lifecycle_path() {
+        let mut cfg = crate::config::AuthorityFreshnessConfig::default();
+        cfg.canonical_snapshot_fresh_max_age_ms = 5_000;
+        cfg.canonical_snapshot_stale_grace_max_age_ms = 15_000;
+        cfg.canonical_snapshot_stale_mode = CanonicalSnapshotStaleMode::FailClosedNotActionable;
+
+        let policy = crate::canonical::CanonicalSnapshotFreshnessPolicy::from(&cfg);
+        assert_eq!(policy.fresh_max_age_ms, 5_000);
+        assert_eq!(policy.stale_grace_max_age_ms, 15_000);
+
+        let now = 1000;
+        let snapshot = make_snapshot(now - 10); // 10s = 10_000ms old
+
+        // With fresh=5_000ms, stale_grace=15_000ms, 10_000ms is stale
+        let state = classify_canonical_snapshot(Some(&snapshot), &policy, now);
+        assert!(matches!(
+            state,
+            CanonicalSnapshotFreshnessState::StaleWithinGrace { age_ms: 10_000 }
+        ));
+
+        // FailClosedNotActionable reader returns NotTrusted for stale
+        let reader = FreshnessBoundCanonicalReader::new(snapshot, policy, now);
+        assert!(matches!(
+            reader.is_global_node_authorized("pk:global1"),
+            CanonicalTrustDecision::NotTrusted {
+                reason: CanonicalTrustReason::ExpiredSnapshot,
+                ..
+            }
+        ));
     }
 }

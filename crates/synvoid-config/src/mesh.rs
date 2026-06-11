@@ -578,6 +578,8 @@ pub struct MeshConfig {
     pub yara_rules: super::protection::YaraRulesMeshConfig,
     #[serde(default)]
     pub origin_signing_key: Option<String>,
+    #[serde(default)]
+    pub authority_freshness: AuthorityFreshnessConfig,
     #[serde(skip)]
     pub cached_pow: Arc<RwLock<Option<(u64, std::time::Instant)>>>,
 }
@@ -616,6 +618,7 @@ impl Default for MeshConfig {
             threat_intel: super::protection::ThreatIntelligenceConfig::default(),
             yara_rules: super::protection::YaraRulesMeshConfig::default(),
             origin_signing_key: None,
+            authority_freshness: AuthorityFreshnessConfig::default(),
             cached_pow: Arc::new(RwLock::new(None)),
         }
     }
@@ -717,4 +720,78 @@ pub struct MeshMinificationConfig {
     pub enable_html: Option<bool>,
     pub enable_css: Option<bool>,
     pub enable_js: Option<bool>,
+}
+
+/// Configuration for stale authority artifact handling.
+///
+/// Defines fail-open/fail-closed behavior when Raft-derived authority
+/// artifacts become stale relative to expected freshness windows.
+/// The `canonical_snapshot_*` fields configure the worker-side freshness
+/// policy for IPC-exported snapshots. Invalid configurations (e.g.
+/// stale_grace < fresh_max_age) are normalized at conversion time.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+pub struct AuthorityFreshnessConfig {
+    /// Grace period for normal global policy updates before fail-closed.
+    /// Default: 3600 (1 hour)
+    #[serde(default = "default_global_policy_grace_secs")]
+    pub global_policy_grace_secs: u64,
+    /// Hard limit for revocation freshness. Default: 300 (5 minutes)
+    #[serde(default = "default_revocation_hard_limit_secs")]
+    pub revocation_hard_limit_secs: u64,
+    /// Hard limit for CA/trust-root epoch staleness. Default: 86400 (24 hours)
+    #[serde(default = "default_ca_epoch_hard_limit_secs")]
+    pub ca_epoch_hard_limit_secs: u64,
+    /// When true, stale threat intel falls back to local rules.
+    /// Default: true (fail open local)
+    #[serde(default = "default_threat_intel_stale_local")]
+    pub threat_intel_stale_local: bool,
+    /// When true, peer discovery uses cached peers/bootstrap seeds
+    /// when authoritative source is stale. Default: true
+    #[serde(default = "default_peer_discovery_degraded")]
+    pub peer_discovery_degraded: bool,
+    /// TTL for DHT soft-state entries. Default: 300 (5 minutes)
+    #[serde(default = "default_dht_soft_state_ttl_secs")]
+    pub dht_soft_state_ttl_secs: u64,
+    /// Maximum age in milliseconds for a canonical snapshot to be considered fresh.
+    /// Default: 60_000 (60 seconds).
+    #[serde(default = "default_canonical_snapshot_fresh_max_age_ms")]
+    pub canonical_snapshot_fresh_max_age_ms: u64,
+    /// Maximum age in milliseconds for a canonical snapshot to be considered
+    /// stale-but-grace. Beyond this, the snapshot is expired/unavailable.
+    /// Default: 300_000 (5 minutes).
+    #[serde(default = "default_canonical_snapshot_stale_grace_max_age_ms")]
+    pub canonical_snapshot_stale_grace_max_age_ms: u64,
+    /// How stale canonical snapshots are handled.
+    /// Valid values: "fail_open_defer", "fail_closed_not_actionable", "allow_stale_with_warning".
+    /// Default: "fail_open_defer".
+    #[serde(default = "default_canonical_snapshot_stale_mode")]
+    pub canonical_snapshot_stale_mode: String,
+}
+
+fn default_global_policy_grace_secs() -> u64 {
+    3600
+}
+fn default_revocation_hard_limit_secs() -> u64 {
+    300
+}
+fn default_ca_epoch_hard_limit_secs() -> u64 {
+    86400
+}
+fn default_threat_intel_stale_local() -> bool {
+    true
+}
+fn default_peer_discovery_degraded() -> bool {
+    true
+}
+fn default_dht_soft_state_ttl_secs() -> u64 {
+    300
+}
+fn default_canonical_snapshot_fresh_max_age_ms() -> u64 {
+    60_000
+}
+fn default_canonical_snapshot_stale_grace_max_age_ms() -> u64 {
+    300_000
+}
+fn default_canonical_snapshot_stale_mode() -> String {
+    "fail_open_defer".to_string()
 }

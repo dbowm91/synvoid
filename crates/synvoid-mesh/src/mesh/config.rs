@@ -21,6 +21,12 @@ pub use crate::threat_intel::ThreatIntelligenceConfig;
 /// Defines fail-open/fail-closed behavior when Raft-derived authority
 /// artifacts (org keys, threat intel, revocations, global node auth)
 /// become stale relative to expected freshness windows.
+///
+/// The `canonical_snapshot_*` fields configure how the worker IPC handler
+/// classifies canonical snapshots received from the Supervisor. They convert
+/// into `CanonicalSnapshotFreshnessPolicy` via the `From` impl in `canonical.rs`.
+/// Invalid configurations (e.g. stale_grace < fresh_max_age) are normalized
+/// at conversion time.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AuthorityFreshnessConfig {
     /// Grace period for normal global policy updates before fail-closed.
