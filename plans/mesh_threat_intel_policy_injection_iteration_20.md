@@ -50,7 +50,7 @@ Confirm the Iteration 19 state.
 Run:
 
 ```bash
-rg "evaluate_indicator_actionability|evaluate_threat_intel_policy|lookup_threat_indicator_in_dht|lookup_local_indicator|lookup_local_indicator_by_ip|ThreatIntelligenceManager|CanonicalTrustReader|AdvisoryRecordSource|RecordStoreAdvisorySource|StaticAdvisoryRecordSource" crates/synvoid-mesh/src/mesh/threat_intel.rs crates/synvoid-mesh/src/mesh/threat_intel_policy.rs crates/synvoid-mesh/src/mesh/dht/advisory_source.rs architecture docs
+rg "evaluate_indicator_actionability|evaluate_threat_intel_policy|is_policy_actionable|lookup_threat_indicator_in_dht|lookup_local_indicator|lookup_local_indicator_by_ip|ThreatIntelligenceManager|CanonicalTrustReader|AdvisoryRecordSource|RecordStoreAdvisorySource|StaticAdvisoryRecordSource" crates/synvoid-mesh/src/mesh/threat_intel.rs crates/synvoid-mesh/src/mesh/threat_intel_policy.rs crates/synvoid-mesh/src/mesh/dht/advisory_source.rs architecture docs
 ```
 
 Confirm:

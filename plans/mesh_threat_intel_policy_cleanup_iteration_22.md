@@ -33,7 +33,7 @@ Do not add live DHT/Raft/network tests.
 Run:
 
 ```bash
-rg "ThreatIntelPolicyContext|set_policy_context|policy_context\(|evaluate_indicator_actionability|evaluate_indicator_actionability_configured|lookup_threat_indicator_policy_composed|lookup_local_indicator_policy_composed|lookup_local_indicator_by_ip_policy_composed|lookup_threat_indicator_in_dht|lookup_local_indicator|lookup_local_indicator_by_ip" crates/synvoid-mesh/src/mesh/threat_intel.rs crates/synvoid-mesh/src/mesh/threat_intel_policy.rs architecture docs AGENTS.md skills
+rg "ThreatIntelPolicyContext|set_policy_context|policy_context\(|is_policy_actionable|evaluate_indicator_actionability|evaluate_indicator_actionability_configured|lookup_threat_indicator_policy_composed|lookup_local_indicator_policy_composed|lookup_local_indicator_by_ip_policy_composed|lookup_threat_indicator_in_dht|lookup_local_indicator|lookup_local_indicator_by_ip" crates/synvoid-mesh/src/mesh/threat_intel.rs crates/synvoid-mesh/src/mesh/threat_intel_policy.rs architecture docs AGENTS.md skills
 ```
 
 Confirm:

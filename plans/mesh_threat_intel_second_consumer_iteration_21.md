@@ -53,7 +53,7 @@ Inventory all threat-intel read paths and choose exactly one.
 Run:
 
 ```bash
-rg "lookup_local_indicator|lookup_local_indicator_by_ip|lookup_threat_indicator_in_dht|lookup_threat_indicator_policy_composed|evaluate_indicator_actionability_configured|check_threat|threat_indicator|ThreatIndicator" crates/synvoid-mesh/src/mesh/threat_intel.rs crates/synvoid-mesh/src src crates/synvoid-* architecture docs
+rg "lookup_local_indicator|lookup_local_indicator_by_ip|lookup_threat_indicator_in_dht|lookup_threat_indicator_policy_composed|evaluate_indicator_actionability_configured|is_policy_actionable|check_threat|threat_indicator|ThreatIndicator" crates/synvoid-mesh/src/mesh/threat_intel.rs crates/synvoid-mesh/src src crates/synvoid-* architecture docs
 ```
 
 Preferred target:
