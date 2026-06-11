@@ -455,6 +455,10 @@ The two policy-composed threat-intel lookup paths now share a single decision-to
 
 The threat-intel policy-composed lookup track is staged and stable. Two read-only composed lookup APIs exist for DHT and local indicators, both gated by shared `is_policy_actionable` semantics. A call-graph review found no low-risk caller that should migrate before broader proxy/YARA/WASM/routing design work. The track is paused; raw lookup APIs remain compatibility/diagnostic paths.
 
+### Iteration 24 Threat Intel Policy Verification
+
+The shared `is_policy_actionable` helper remains in place and both policy-composed lookup paths continue to use it. Focused verification (`cargo check -p synvoid-mesh --features mesh`, `cargo test -p synvoid-mesh threat_intel --features mesh`, `cargo test -p synvoid-mesh threat_intel_policy --features mesh`) passed. No additional consumer migration or hot-path change was added; raw lookup APIs remain compatibility/diagnostic paths.
+
 ## Follow-Up Recommendation
 
 After this pass, two threat-intel read paths are stable through the composed policy seam:
