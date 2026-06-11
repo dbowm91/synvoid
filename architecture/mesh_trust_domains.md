@@ -436,14 +436,28 @@ No proxy, YARA/WASM, routing, or broader service consumers were migrated. Exactl
 
 Tests cover: default has no context, set context enables configured evaluation, actionable only when both advisory present and canonical trusted, advisory-only/advisory missing/canonical not trusted/canonical unavailable all not actionable or deferred, policy-composed lookup returns None for non-actionable, legacy path unchanged, no DHT/Raft/networking required.
 
+### Iteration 21 Second Threat Intel Consumer Migration
+
+A second read-only threat-intel path now has a policy-composed sibling using the injected `ThreatIntelPolicyContext`. New methods:
+
+- `lookup_local_indicator_policy_composed(indicator_value, threat_type)` — policy-composed sibling to `lookup_local_indicator`. Falls back to legacy raw local lookup when no context is configured. When configured, gates the result on the policy decision: `Actionable` returns the indicator, all other decisions return `None`.
+- `lookup_local_indicator_by_ip_policy_composed(ip)` — convenience wrapper delegating to the generic method with `ThreatType::IpBlock`.
+
+Raw local/DHT lookup methods remain available and unchanged. No enforcement hot paths, proxy, YARA/WASM, routing, DHT sync, or ingestion paths were migrated.
+
+Tests cover: no context falls back to legacy, Actionable returns indicator, advisory present + canonical unknown returns None, advisory missing returns None, canonical not trusted returns None, canonical unavailable returns None, raw lookup still works, IP wrapper delegates correctly, no DHT/Raft/networking required.
+
 ## Follow-Up Recommendation
 
-After this pass, review the selected consumer under real code paths. If the injection seam is clean and tests are stable, migrate one additional threat-intel read path. Do not move proxy, YARA/WASM, or routing policy until at least one threat-intel consumer has run through the composed policy path cleanly.
+After this pass, two threat-intel read paths are stable through the composed policy seam:
+1. `lookup_threat_indicator_policy_composed` (DHT lookup, Iteration 20)
+2. `lookup_local_indicator_policy_composed` (local lookup, Iteration 21)
 
 The next planned architecture track should be:
-1. Use the injected context to migrate one additional threat-intel read path (e.g., `check_threat` in the WASM plugin callback, or another consumer that currently takes raw DHT lookups).
-2. Only after two threat-intel paths are stable should broader service consumers (`proxy.rs`, YARA/WASM) migrate to consume policy outputs.
-3. Do not expand the ingress gate to additional remote paths until the Push/Announce path is stable and the context carrier is clearly owned by a higher-level mesh service or data-plane composition object.
+1. Stop and reassess before moving into proxy, YARA/WASM, routing, or enforcement hot paths.
+2. Consider a final threat-intel policy cleanup pass: consolidate duplicated mapping logic, verify all docs, and decide whether the policy-composed methods should become the preferred public API while raw paths remain compatibility APIs.
+3. Only after cleanup should broader service consumers (`proxy.rs`, YARA/WASM) migrate to consume policy outputs.
+4. Do not expand the ingress gate to additional remote paths until the Push/Announce path is stable and the context carrier is clearly owned by a higher-level mesh service or data-plane composition object.
 
 ---
 

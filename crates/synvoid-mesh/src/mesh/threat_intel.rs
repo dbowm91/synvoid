@@ -1420,6 +1420,54 @@ impl ThreatIntelligenceManager {
         }
     }
 
+    /// Policy-composed local threat indicator lookup (Iteration 21).
+    ///
+    /// If no policy context is configured, falls back to the legacy raw local
+    /// lookup. When configured, the policy decision gates the result:
+    ///
+    /// - `Actionable` → returns the indicator from the legacy raw local lookup.
+    /// - `AdvisoryOnly` / `NotActionable` / `Deferred` → returns `None`.
+    pub fn lookup_local_indicator_policy_composed(
+        &self,
+        indicator_value: &str,
+        threat_type: ThreatType,
+    ) -> Option<ThreatIndicator> {
+        let ctx = match self.policy_context() {
+            Some(ctx) => ctx,
+            None => return self.lookup_local_indicator(indicator_value, threat_type),
+        };
+
+        let decision = self.evaluate_indicator_actionability(
+            ctx.canonical(),
+            ctx.advisory(),
+            indicator_value,
+            threat_type,
+        );
+
+        match decision {
+            crate::threat_intel_policy::ThreatIntelPolicyDecision::Actionable(_) => {
+                self.lookup_local_indicator(indicator_value, threat_type)
+            }
+            other => {
+                tracing::debug!(
+                    indicator = indicator_value,
+                    threat_type = ?threat_type,
+                    decision = ?other,
+                    "policy-composed local lookup: not actionable, returning None"
+                );
+                None
+            }
+        }
+    }
+
+    /// Convenience wrapper: policy-composed local lookup by IP address (Iteration 21).
+    pub fn lookup_local_indicator_by_ip_policy_composed(
+        &self,
+        ip: &str,
+    ) -> Option<ThreatIndicator> {
+        self.lookup_local_indicator_policy_composed(ip, ThreatType::IpBlock)
+    }
+
     pub fn is_mesh_available(&self) -> bool {
         self.transport.read().is_some()
     }
@@ -3150,5 +3198,375 @@ mod tests {
             .evaluate_indicator_actionability_configured(TEST_IP, ThreatType::IpBlock)
             .unwrap();
         assert!(matches!(decision, ThreatIntelPolicyDecision::Actionable(_)));
+    }
+
+    // ---------------------------------------------------------------------------
+    // Iteration 21: lookup_local_indicator_policy_composed tests
+    // ---------------------------------------------------------------------------
+
+    // Test 18: No policy context → falls back to legacy local lookup.
+    #[test]
+    fn iteration21_no_context_falls_back_to_legacy_local_lookup() {
+        let manager = create_test_manager();
+        let indicator = ThreatIndicator {
+            threat_type: ThreatType::IpBlock,
+            indicator_value: TEST_IP.to_string(),
+            severity: ThreatSeverity::High,
+            reason: "test".to_string(),
+            ttl_seconds: 3600,
+            source_node_id: "test-node".to_string(),
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            site_scope: "".to_string(),
+            rate_limit_requests: None,
+            rate_limit_window_secs: None,
+            suspicious_pattern: None,
+            signature: Vec::new(),
+            signer_public_key: None,
+        };
+        manager.register_peer("test-node".to_string(), MeshNodeRole::GLOBAL);
+        manager.handle_incoming_threat(indicator, "test-node", MeshNodeRole::GLOBAL, None);
+
+        // No policy context → falls back to raw local lookup.
+        let result = manager.lookup_local_indicator_policy_composed(TEST_IP, ThreatType::IpBlock);
+        assert!(
+            result.is_some(),
+            "no context must fall back to legacy local lookup"
+        );
+        assert_eq!(result.unwrap().indicator_value, TEST_IP);
+    }
+
+    // Test 19: Context with Actionable → returns the local indicator.
+    #[test]
+    fn iteration21_context_actionable_returns_local_indicator() {
+        let manager = create_test_manager();
+        let indicator = ThreatIndicator {
+            threat_type: ThreatType::IpBlock,
+            indicator_value: TEST_IP.to_string(),
+            severity: ThreatSeverity::High,
+            reason: "test".to_string(),
+            ttl_seconds: 3600,
+            source_node_id: "test-node".to_string(),
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            site_scope: "".to_string(),
+            rate_limit_requests: None,
+            rate_limit_window_secs: None,
+            suspicious_pattern: None,
+            signature: Vec::new(),
+            signer_public_key: None,
+        };
+        manager.register_peer("test-node".to_string(), MeshNodeRole::GLOBAL);
+        manager.handle_incoming_threat(indicator, "test-node", MeshNodeRole::GLOBAL, None);
+
+        let advisory =
+            TestAdvisorySource::new().with_record(TEST_KEY, test_advisory_record(TEST_KEY));
+        let canonical = TestCanonicalReader::new(CanonicalFreshness::Live).with_trust(
+            TEST_IP,
+            CanonicalTrustDecision::Trusted {
+                freshness: CanonicalFreshness::Live,
+            },
+        );
+        manager.set_policy_context(Some(ThreatIntelPolicyContext::new(
+            Arc::new(canonical),
+            Arc::new(advisory),
+        )));
+
+        let result = manager.lookup_local_indicator_policy_composed(TEST_IP, ThreatType::IpBlock);
+        assert!(result.is_some(), "Actionable must return local indicator");
+        assert_eq!(result.unwrap().indicator_value, TEST_IP);
+    }
+
+    // Test 20: Advisory present but canonical unknown → None.
+    #[test]
+    fn iteration21_advisory_present_canonical_unknown_returns_none() {
+        let manager = create_test_manager();
+        let indicator = ThreatIndicator {
+            threat_type: ThreatType::IpBlock,
+            indicator_value: TEST_IP.to_string(),
+            severity: ThreatSeverity::High,
+            reason: "test".to_string(),
+            ttl_seconds: 3600,
+            source_node_id: "test-node".to_string(),
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            site_scope: "".to_string(),
+            rate_limit_requests: None,
+            rate_limit_window_secs: None,
+            suspicious_pattern: None,
+            signature: Vec::new(),
+            signer_public_key: None,
+        };
+        manager.register_peer("test-node".to_string(), MeshNodeRole::GLOBAL);
+        manager.handle_incoming_threat(indicator, "test-node", MeshNodeRole::GLOBAL, None);
+
+        let advisory =
+            TestAdvisorySource::new().with_record(TEST_KEY, test_advisory_record(TEST_KEY));
+        let canonical = TestCanonicalReader::new(CanonicalFreshness::Live);
+        manager.set_policy_context(Some(ThreatIntelPolicyContext::new(
+            Arc::new(canonical),
+            Arc::new(advisory),
+        )));
+
+        let result = manager.lookup_local_indicator_policy_composed(TEST_IP, ThreatType::IpBlock);
+        assert!(
+            result.is_none(),
+            "advisory present + canonical unknown → None"
+        );
+    }
+
+    // Test 21: Advisory missing → None.
+    #[test]
+    fn iteration21_advisory_missing_returns_none() {
+        let manager = create_test_manager();
+        let indicator = ThreatIndicator {
+            threat_type: ThreatType::IpBlock,
+            indicator_value: TEST_IP.to_string(),
+            severity: ThreatSeverity::High,
+            reason: "test".to_string(),
+            ttl_seconds: 3600,
+            source_node_id: "test-node".to_string(),
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            site_scope: "".to_string(),
+            rate_limit_requests: None,
+            rate_limit_window_secs: None,
+            suspicious_pattern: None,
+            signature: Vec::new(),
+            signer_public_key: None,
+        };
+        manager.register_peer("test-node".to_string(), MeshNodeRole::GLOBAL);
+        manager.handle_incoming_threat(indicator, "test-node", MeshNodeRole::GLOBAL, None);
+
+        let advisory = TestAdvisorySource::new();
+        let canonical = TestCanonicalReader::new(CanonicalFreshness::Live).with_trust(
+            TEST_IP,
+            CanonicalTrustDecision::Trusted {
+                freshness: CanonicalFreshness::Live,
+            },
+        );
+        manager.set_policy_context(Some(ThreatIntelPolicyContext::new(
+            Arc::new(canonical),
+            Arc::new(advisory),
+        )));
+
+        let result = manager.lookup_local_indicator_policy_composed(TEST_IP, ThreatType::IpBlock);
+        assert!(result.is_none(), "advisory missing → None");
+    }
+
+    // Test 22: Canonical not trusted → None.
+    #[test]
+    fn iteration21_canonical_not_trusted_returns_none() {
+        let manager = create_test_manager();
+        let indicator = ThreatIndicator {
+            threat_type: ThreatType::IpBlock,
+            indicator_value: TEST_IP.to_string(),
+            severity: ThreatSeverity::High,
+            reason: "test".to_string(),
+            ttl_seconds: 3600,
+            source_node_id: "test-node".to_string(),
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            site_scope: "".to_string(),
+            rate_limit_requests: None,
+            rate_limit_window_secs: None,
+            suspicious_pattern: None,
+            signature: Vec::new(),
+            signer_public_key: None,
+        };
+        manager.register_peer("test-node".to_string(), MeshNodeRole::GLOBAL);
+        manager.handle_incoming_threat(indicator, "test-node", MeshNodeRole::GLOBAL, None);
+
+        let advisory =
+            TestAdvisorySource::new().with_record(TEST_KEY, test_advisory_record(TEST_KEY));
+        let canonical = TestCanonicalReader::new(CanonicalFreshness::Live).with_trust(
+            TEST_IP,
+            CanonicalTrustDecision::NotTrusted {
+                freshness: CanonicalFreshness::Live,
+                reason: CanonicalTrustReason::Revoked,
+            },
+        );
+        manager.set_policy_context(Some(ThreatIntelPolicyContext::new(
+            Arc::new(canonical),
+            Arc::new(advisory),
+        )));
+
+        let result = manager.lookup_local_indicator_policy_composed(TEST_IP, ThreatType::IpBlock);
+        assert!(result.is_none(), "canonical not trusted → None");
+    }
+
+    // Test 23: Canonical unavailable → None.
+    #[test]
+    fn iteration21_canonical_unavailable_returns_none() {
+        let manager = create_test_manager();
+        let indicator = ThreatIndicator {
+            threat_type: ThreatType::IpBlock,
+            indicator_value: TEST_IP.to_string(),
+            severity: ThreatSeverity::High,
+            reason: "test".to_string(),
+            ttl_seconds: 3600,
+            source_node_id: "test-node".to_string(),
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            site_scope: "".to_string(),
+            rate_limit_requests: None,
+            rate_limit_window_secs: None,
+            suspicious_pattern: None,
+            signature: Vec::new(),
+            signer_public_key: None,
+        };
+        manager.register_peer("test-node".to_string(), MeshNodeRole::GLOBAL);
+        manager.handle_incoming_threat(indicator, "test-node", MeshNodeRole::GLOBAL, None);
+
+        let advisory =
+            TestAdvisorySource::new().with_record(TEST_KEY, test_advisory_record(TEST_KEY));
+        let canonical = TestCanonicalReader::new(CanonicalFreshness::Unavailable);
+        manager.set_policy_context(Some(ThreatIntelPolicyContext::new(
+            Arc::new(canonical),
+            Arc::new(advisory),
+        )));
+
+        let result = manager.lookup_local_indicator_policy_composed(TEST_IP, ThreatType::IpBlock);
+        assert!(result.is_none(), "canonical unavailable → None");
+    }
+
+    // Test 24: Raw lookup_local_indicator remains available.
+    #[test]
+    fn iteration21_raw_lookup_local_indicator_still_works() {
+        let manager = create_test_manager();
+        let indicator = ThreatIndicator {
+            threat_type: ThreatType::IpBlock,
+            indicator_value: TEST_IP.to_string(),
+            severity: ThreatSeverity::High,
+            reason: "test".to_string(),
+            ttl_seconds: 3600,
+            source_node_id: "test-node".to_string(),
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            site_scope: "".to_string(),
+            rate_limit_requests: None,
+            rate_limit_window_secs: None,
+            suspicious_pattern: None,
+            signature: Vec::new(),
+            signer_public_key: None,
+        };
+        manager.register_peer("test-node".to_string(), MeshNodeRole::GLOBAL);
+        manager.handle_incoming_threat(indicator, "test-node", MeshNodeRole::GLOBAL, None);
+
+        // Raw lookup always works regardless of policy context.
+        let advisory =
+            TestAdvisorySource::new().with_record(TEST_KEY, test_advisory_record(TEST_KEY));
+        let canonical = TestCanonicalReader::new(CanonicalFreshness::Live).with_trust(
+            TEST_IP,
+            CanonicalTrustDecision::NotTrusted {
+                freshness: CanonicalFreshness::Live,
+                reason: CanonicalTrustReason::Revoked,
+            },
+        );
+        manager.set_policy_context(Some(ThreatIntelPolicyContext::new(
+            Arc::new(canonical),
+            Arc::new(advisory),
+        )));
+
+        let result = manager.lookup_local_indicator(TEST_IP, ThreatType::IpBlock);
+        assert!(result.is_some(), "raw lookup must still work");
+        assert_eq!(result.unwrap().indicator_value, TEST_IP);
+    }
+
+    // Test 25: IP convenience wrapper delegates to generic method.
+    #[test]
+    fn iteration21_ip_convenience_wrapper_delegates() {
+        let manager = create_test_manager();
+        let indicator = ThreatIndicator {
+            threat_type: ThreatType::IpBlock,
+            indicator_value: TEST_IP.to_string(),
+            severity: ThreatSeverity::High,
+            reason: "test".to_string(),
+            ttl_seconds: 3600,
+            source_node_id: "test-node".to_string(),
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            site_scope: "".to_string(),
+            rate_limit_requests: None,
+            rate_limit_window_secs: None,
+            suspicious_pattern: None,
+            signature: Vec::new(),
+            signer_public_key: None,
+        };
+        manager.register_peer("test-node".to_string(), MeshNodeRole::GLOBAL);
+        manager.handle_incoming_threat(indicator, "test-node", MeshNodeRole::GLOBAL, None);
+
+        // With Actionable context, IP wrapper returns the indicator.
+        let advisory =
+            TestAdvisorySource::new().with_record(TEST_KEY, test_advisory_record(TEST_KEY));
+        let canonical = TestCanonicalReader::new(CanonicalFreshness::Live).with_trust(
+            TEST_IP,
+            CanonicalTrustDecision::Trusted {
+                freshness: CanonicalFreshness::Live,
+            },
+        );
+        manager.set_policy_context(Some(ThreatIntelPolicyContext::new(
+            Arc::new(canonical),
+            Arc::new(advisory),
+        )));
+
+        let result = manager.lookup_local_indicator_by_ip_policy_composed(TEST_IP);
+        assert!(
+            result.is_some(),
+            "IP wrapper with Actionable must return indicator"
+        );
+        assert_eq!(result.unwrap().indicator_value, TEST_IP);
+
+        // With non-actionable context, IP wrapper returns None.
+        let advisory2 =
+            TestAdvisorySource::new().with_record(TEST_KEY, test_advisory_record(TEST_KEY));
+        let canonical_not_trusted = TestCanonicalReader::new(CanonicalFreshness::Live).with_trust(
+            TEST_IP,
+            CanonicalTrustDecision::NotTrusted {
+                freshness: CanonicalFreshness::Live,
+                reason: CanonicalTrustReason::Revoked,
+            },
+        );
+        manager.set_policy_context(Some(ThreatIntelPolicyContext::new(
+            Arc::new(canonical_not_trusted),
+            Arc::new(advisory2),
+        )));
+
+        let result = manager.lookup_local_indicator_by_ip_policy_composed(TEST_IP);
+        assert!(
+            result.is_none(),
+            "IP wrapper with non-actionable must return None"
+        );
+    }
+
+    // Test 26: No DHT/Raft/networking required.
+    #[test]
+    fn iteration21_local_policy_composed_requires_no_dht_raft_or_networking() {
+        let manager = create_test_manager();
+        let indicator = ThreatIndicator {
+            threat_type: ThreatType::IpBlock,
+            indicator_value: TEST_IP.to_string(),
+            severity: ThreatSeverity::High,
+            reason: "test".to_string(),
+            ttl_seconds: 3600,
+            source_node_id: "test-node".to_string(),
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            site_scope: "".to_string(),
+            rate_limit_requests: None,
+            rate_limit_window_secs: None,
+            suspicious_pattern: None,
+            signature: Vec::new(),
+            signer_public_key: None,
+        };
+        manager.register_peer("test-node".to_string(), MeshNodeRole::GLOBAL);
+        manager.handle_incoming_threat(indicator, "test-node", MeshNodeRole::GLOBAL, None);
+
+        let advisory =
+            TestAdvisorySource::new().with_record(TEST_KEY, test_advisory_record(TEST_KEY));
+        let canonical = TestCanonicalReader::new(CanonicalFreshness::Live).with_trust(
+            TEST_IP,
+            CanonicalTrustDecision::Trusted {
+                freshness: CanonicalFreshness::Live,
+            },
+        );
+        manager.set_policy_context(Some(ThreatIntelPolicyContext::new(
+            Arc::new(canonical),
+            Arc::new(advisory),
+        )));
+
+        let result = manager.lookup_local_indicator_policy_composed(TEST_IP, ThreatType::IpBlock);
+        assert!(result.is_some());
     }
 }
