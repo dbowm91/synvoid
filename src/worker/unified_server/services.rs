@@ -117,8 +117,10 @@ impl DataPlaneServicesBuilder {
     /// Build a threat-intel policy context only when both root-owned handles exist.
     ///
     /// This helper is intentionally side-effect free. Production worker bootstrap
-    /// currently passes `None` for canonical trust, so it returns `None` there
-    /// until a real root-owned canonical reader is available in this path.
+    /// currently passes `None` for canonical trust (Iteration 27), so it returns
+    /// `None` there until a real root-owned canonical reader is available in this
+    /// path. Canonical trust state is owned by the Supervisor (Raft consensus,
+    /// EdgeReplicaManager); workers are data-planes without access to it.
     #[cfg(feature = "mesh")]
     pub(crate) fn build_threat_intel_policy_context(
         canonical: Option<Arc<dyn synvoid_mesh::canonical::CanonicalTrustReader>>,
@@ -451,5 +453,24 @@ mod tests {
             .expect("policy context should be applied");
 
         assert!(matches!(decision, ThreatIntelPolicyDecision::Actionable(_)));
+    }
+
+    /// Iteration 27: Worker bootstrap deliberately passes `None` for
+    /// canonical trust. This test documents that when only an advisory
+    /// source is present (as in worker bootstrap), the policy context
+    /// remains `None` — no synthetic canonical trust is introduced.
+    ///
+    /// Canonical trust state (Raft consensus, EdgeReplicaManager) is
+    /// owned by the Supervisor. Workers are data-planes without access
+    /// to a root-owned SnapshotCanonicalTrustReader.
+    #[cfg(feature = "mesh")]
+    #[test]
+    fn worker_bootstrap_no_canonical_returns_none() {
+        let (_, advisory) = build_test_policy_sources();
+        let ctx = DataPlaneServicesBuilder::build_threat_intel_policy_context(None, Some(advisory));
+        assert!(
+            ctx.is_none(),
+            "worker bootstrap must return None when canonical reader is absent"
+        );
     }
 }

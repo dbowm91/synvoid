@@ -160,16 +160,22 @@ let record_store = data_plane.record_store.as_ref();
 let record_store = get_global_record_store();
 ```
 
-### `DataPlaneServices` carries optional `ThreatIntelPolicyContext` (Iteration 25)
+### `DataPlaneServices` carries optional `ThreatIntelPolicyContext` (Iteration 25, updated 27)
 
 `DataPlaneServices` under `#[cfg(feature = "mesh")]` now carries an optional
 `ThreatIntelPolicyContext`, and the worker root exposes
 `apply_threat_intel_policy_context()` to forward the stored context into
 `ThreatIntelligenceManager`. A separate root-side helper can build the
 context from explicit canonical/advisory handles, but the production worker
-bootstrap still passes `None` because that root does not own a canonical
-reader yet. The default remains `None`; this pass does not migrate proxy,
-YARA/WASM, routing, WAF enforcement, DHT sync, ingestion, or Raft behavior.
+bootstrap still passes `None` because canonical trust state (Raft consensus,
+`EdgeReplicaManager`) is owned by the Supervisor and workers are data-planes
+without access to a root-owned `SnapshotCanonicalTrustReader`. The default
+remains `None`; this pass does not migrate proxy, YARA/WASM, routing, WAF
+enforcement, DHT sync, ingestion, or Raft behavior.
+
+**Next step**: Expose canonical snapshots from the Supervisor to workers
+(e.g. via IPC or startup snapshot) without introducing globals or test-only
+static readers.
 
 ### `UnifiedServer::with_serverless_manager()` — server-level wiring
 

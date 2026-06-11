@@ -160,6 +160,18 @@ pub async fn run_unified_server_worker(
         let advisory_source = record_store.as_ref().map(|store| {
             Arc::new(RecordStoreAdvisorySource::new(store.clone())) as Arc<dyn AdvisoryRecordSource>
         });
+
+        // Iteration 27: Canonical reader is intentionally None here.
+        //
+        // Canonical trust state (Raft consensus, EdgeReplicaManager) is
+        // owned by the Supervisor process. Workers are data-planes that
+        // receive intelligence via IPC; they have no access to a root-
+        // owned SnapshotCanonicalTrustReader. The advisory source is
+        // derived from the explicit record-store handle.
+        //
+        // The next step is to expose a canonical reader from the
+        // Supervisor (via IPC or a canonical snapshot passed at startup)
+        // and thread it through here. See plans/canonical_reader_export_iteration_27.md.
         builder = builder
             .with_mesh_transport(mesh_init.transport_manager)
             .with_threat_intel(mesh_init.threat_intel)

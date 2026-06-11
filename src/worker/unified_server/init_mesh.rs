@@ -2,8 +2,17 @@
 //
 // This is a behavior-preserving extraction of the original
 // `run_unified_server_worker` mesh block. The function returns a
-// 3-tuple of optional resources so the orchestrator can wire them
+// `MeshInit` of optional resources so the orchestrator can wire them
 // into the rest of the worker.
+//
+// ## Canonical Reader Ownership (Iteration 27)
+//
+// Workers are explicitly disconnected from the mesh control plane
+// (Supervisor owns Raft consensus and EdgeReplicaManager). There is
+// no root-owned `CanonicalTrustReader` available in worker bootstrap.
+// `MeshInit` does not carry a canonical reader field; the missing
+// ownership boundary is documented in `mod.rs` where the policy
+// context is constructed.
 
 use std::sync::Arc;
 
@@ -18,6 +27,15 @@ use crate::server::UnifiedServer;
 use synvoid_config::ConfigManager;
 
 /// Bundled resources produced by the mesh initialization phase.
+///
+/// # Canonical Reader Ownership (Iteration 27)
+///
+/// This struct does not carry a `CanonicalTrustReader`. Workers are
+/// data-planes; canonical state lives in the Supervisor process (Raft
+/// consensus, `EdgeReplicaManager`). A `SnapshotCanonicalTrustReader`
+/// wrapping that state is the intended production implementation, but
+/// it is not yet constructed or exported to worker bootstrap. The
+/// missing boundary is documented in `mod.rs`.
 pub struct MeshInit {
     #[cfg(feature = "mesh")]
     pub transport_manager: Option<Arc<MeshTransportManager>>,
@@ -54,6 +72,12 @@ pub async fn init_mesh_and_threat_intel(
         if let Some(ref mesh_config) = mesh_config {
             // Phase 3: Mesh Control Plane is relegated to the Supervisor process.
             // Workers act as dumb data-planes and receive intelligence via IPC.
+            //
+            // Iteration 27: Canonical trust state (Raft consensus,
+            // EdgeReplicaManager) is owned by the Supervisor. Workers have
+            // no access to a SnapshotCanonicalTrustReader. The policy
+            // context remains None until a canonical reader handle is
+            // exported to worker bootstrap (see mod.rs Phase 11).
             if true {
                 tracing::info!("Mesh control plane is disabled in worker process");
                 let dummy_threat = build_dummy_threat_intel(config_path).await;

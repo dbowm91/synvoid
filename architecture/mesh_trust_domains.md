@@ -1,7 +1,7 @@
-# Mesh Trust Domains — Design Note (Iteration 7)
+# Mesh Trust Domains — Design Note (Iteration 27)
 
 **Status**: Design-only pass. No broad code movement.  
-**Date**: 2026-06-10  
+**Date**: 2026-06-11  
 **Scope**: `crates/synvoid-mesh` (re-exported via `src/mesh`).  
 **Goal**: Define trust-domain boundaries and invariants before any internal module split.  
 **Key Invariant** (from plan):
@@ -466,6 +466,16 @@ The shared `is_policy_actionable` helper remains in place and both policy-compos
 ### Iteration 26 Root-Side Context Construction
 
 `ThreatIntelPolicyContext` construction is now explicit at the root. The helper only accepts direct `CanonicalTrustReader` and `AdvisoryRecordSource` handles, so advisory-source construction stays tied to explicit handles instead of any global fallback. Production worker bootstrap still leaves the field unset (`None`) until root canonical ownership exists, so deployed workers keep the same legacy/raw behavior when the context is absent.
+
+### Iteration 27 Canonical Reader Ownership Assessment
+
+The data-plane composition root is ready to carry a populated `ThreatIntelPolicyContext`, and advisory construction is available from the explicit record-store handle. A real root-owned canonical reader is not yet exported to worker bootstrap, so production context remains `None`.
+
+Canonical trust state (Raft consensus, `EdgeReplicaManager`) is owned by the Supervisor process. Workers are data-planes explicitly disconnected from the mesh control plane (`init_mesh.rs` returns `None` for `transport_manager` in worker mode). `SnapshotCanonicalTrustReader` is the intended production implementation wrapping `EdgeReplicaManager`, but it is never instantiated outside `#[cfg(test)]` modules.
+
+The missing ownership boundary is documented in `init_mesh.rs`, `mod.rs`, and `services.rs`. The next step is to expose canonical snapshots from the Supervisor to workers without introducing globals or test-only static readers.
+
+No production code synthesizes canonical trust. No proxy, YARA/WASM, routing, WAF, DHT sync, ingestion, or Raft consumers were migrated.
 
 ## Follow-Up Recommendation
 
