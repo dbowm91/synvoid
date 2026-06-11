@@ -401,12 +401,15 @@ The canonical trust-domain seam is now staged through peer auth, DHT key policy,
 
 This track stops here. The next architectural step should be `AdvisoryRecordSource` before migrating service consumers.
 
+### Iteration 16 AdvisoryRecordSource Seam
+
+`AdvisoryRecordSource` introduces a read-only seam for advisory DHT observations. It exposes present/missing/expired/unavailable advisory records and prefix reads without exposing mutation, replication, quorum, or canonical trust decisions. The record-store adapter preserves existing read behavior and does not validate authority. This seam complements `CanonicalTrustReader`; future policy code should compose both rather than letting service consumers read raw DHT records as authority.
+
 ## Follow-Up Recommendation
 
 The next planned architecture track should be:
-1. Introduce `AdvisoryRecordSource` as a read-only advisory DHT access seam.
-2. Route policy composition through canonical + advisory seams.
-3. Only then migrate service consumers such as `threat_intel.rs`, `proxy.rs`, and YARA/WASM to consume policy outputs rather than raw DHT or Raft internals.
+1. Build a small policy composition helper that consumes `CanonicalTrustReader` + `AdvisoryRecordSource` for one narrow domain (likely threat-intel or route/proxy metadata).
+2. Only after that helper is tested should service consumers (`threat_intel.rs`, `proxy.rs`, YARA/WASM) migrate to consume policy outputs rather than raw DHT or Raft internals.
 
 Do not expand the ingress gate to additional remote paths until the Push/Announce path is stable and the context carrier is clearly owned by a higher-level mesh service or data-plane composition object.
 

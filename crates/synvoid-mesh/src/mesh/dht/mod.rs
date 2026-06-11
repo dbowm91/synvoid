@@ -1,3 +1,4 @@
+pub mod advisory_source;
 pub mod capability_access;
 pub mod capability_attestation;
 pub mod edge_attestation;
@@ -24,6 +25,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub use advisory_source::{
+    AdvisoryFreshness, AdvisoryRecord, AdvisoryRecordLookup, AdvisoryRecordSource,
+    AdvisoryRecordStatus, RecordStoreAdvisorySource, StaticAdvisoryRecordSource,
+};
 pub use capability_attestation::CapabilityAttestation;
 pub use edge_attestation::EdgeAttestation;
 pub use keys::*;
