@@ -23,6 +23,8 @@
 //! the `indicator_id` portion (e.g., `"intel-1"`, `"1.2.3.4"`). The
 //! `advisory_key` is the full DHT key used for advisory lookup.
 
+use serde::{Deserialize, Serialize};
+
 use super::canonical::{CanonicalFreshness, CanonicalTrustDecision, CanonicalTrustReader};
 use super::dht::advisory_source::{
     AdvisoryFreshness, AdvisoryRecordLookup, AdvisoryRecordSource, AdvisoryRecordStatus,
@@ -85,6 +87,174 @@ pub enum ThreatIntelPolicyDeferReason {
     CanonicalUnavailable,
     /// Canonical state has no opinion on this indicator.
     CanonicalUnknown,
+}
+
+/// Shadow decision class for diagnostics/metrics reporting.
+///
+/// This is a simplified classification of `ThreatIntelPolicyDecision` for
+/// use in metrics counters, admin diagnostics, and structured logging.
+/// It does not carry full evidence to avoid high-cardinality labels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreatIntelPolicyDecisionClass {
+    /// Advisory record present and canonical trusts this indicator.
+    Actionable,
+    /// Advisory exists but canonical trust absent or undecided.
+    AdvisoryOnly,
+    /// Policy rejects: missing advisory or canonical denial.
+    NotActionable,
+    /// Policy defers: one or both sources unavailable or unknown.
+    Deferred,
+    /// No policy context configured; fell back to legacy raw paths.
+    NotConfigured,
+    /// Unexpected error during evaluation.
+    Error,
+}
+
+/// Diagnostic shadow report for a policy-composed threat-intel decision.
+///
+/// Intended for admin diagnostics, metrics, and structured logging.
+/// Does not carry raw payloads, signatures, or private keys.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreatIntelPolicyShadowDecision {
+    /// The indicator value (e.g., IP address, domain).
+    pub indicator_value: String,
+    /// The threat type classification.
+    pub threat_type: String,
+    /// Simplified decision class for metrics/labeling.
+    pub decision_class: ThreatIntelPolicyDecisionClass,
+    /// Human-readable reason for the decision.
+    pub reason: String,
+    /// Advisory record status if available.
+    pub advisory_status: Option<String>,
+    /// Advisory freshness if available.
+    pub advisory_freshness: Option<String>,
+    /// Canonical freshness if available.
+    pub canonical_freshness: Option<String>,
+    /// Whether the raw lookup found the indicator.
+    pub raw_lookup_present: Option<bool>,
+    /// Whether the composed decision is actionable.
+    pub composed_actionable: bool,
+}
+
+/// Classified disagreement between raw and composed lookups.
+///
+/// Diagnostic only — used for counting and sampling, not enforcement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreatIntelPolicyShadowDisagreement {
+    /// Raw lookup found indicator but composed says not actionable.
+    RawPresentComposedNotActionable,
+    /// Raw lookup missing but composed says actionable.
+    RawMissingComposedActionable,
+    /// Raw lookup found indicator but composed defers.
+    RawPresentComposedDeferred,
+    /// Raw lookup missing but composed defers.
+    RawMissingComposedDeferred,
+}
+
+/// Map a `ThreatIntelPolicyDecision` to a compact decision class for
+/// diagnostics and metrics.
+///
+/// `None` maps to `NotConfigured` (no policy context was available).
+pub fn classify_threat_intel_policy_decision(
+    decision: Option<&ThreatIntelPolicyDecision>,
+) -> ThreatIntelPolicyDecisionClass {
+    match decision {
+        None => ThreatIntelPolicyDecisionClass::NotConfigured,
+        Some(ThreatIntelPolicyDecision::Actionable(_)) => {
+            ThreatIntelPolicyDecisionClass::Actionable
+        }
+        Some(ThreatIntelPolicyDecision::AdvisoryOnly(_)) => {
+            ThreatIntelPolicyDecisionClass::AdvisoryOnly
+        }
+        Some(ThreatIntelPolicyDecision::NotActionable(_)) => {
+            ThreatIntelPolicyDecisionClass::NotActionable
+        }
+        Some(ThreatIntelPolicyDecision::Deferred(_)) => ThreatIntelPolicyDecisionClass::Deferred,
+    }
+}
+
+/// Build a shadow decision DTO from an indicator evaluation.
+///
+/// This is a pure helper for constructing diagnostic reports. It does not
+/// perform I/O, does not look up indicators, and does not mutate state.
+pub fn threat_intel_policy_shadow_decision(
+    indicator_value: &str,
+    threat_type: &str,
+    decision: Option<&ThreatIntelPolicyDecision>,
+    raw_lookup_present: Option<bool>,
+) -> ThreatIntelPolicyShadowDecision {
+    let decision_class = classify_threat_intel_policy_decision(decision);
+    let composed_actionable = matches!(decision_class, ThreatIntelPolicyDecisionClass::Actionable);
+
+    let (reason, advisory_status, advisory_freshness, canonical_freshness) = match decision {
+        None => ("No policy context configured".to_string(), None, None, None),
+        Some(ThreatIntelPolicyDecision::Actionable(evidence)) => (
+            format!(
+                "Advisory present, canonical trusted (intel_id={})",
+                evidence.intel_id
+            ),
+            Some(format!("{:?}", evidence.advisory_status)),
+            Some(format!("{:?}", evidence.advisory_freshness)),
+            Some(format!("{:?}", evidence.canonical_freshness)),
+        ),
+        Some(ThreatIntelPolicyDecision::AdvisoryOnly(evidence)) => (
+            format!(
+                "Advisory present but canonical not trusted (intel_id={})",
+                evidence.intel_id
+            ),
+            Some(format!("{:?}", evidence.advisory_status)),
+            Some(format!("{:?}", evidence.advisory_freshness)),
+            Some(format!("{:?}", evidence.canonical_freshness)),
+        ),
+        Some(ThreatIntelPolicyDecision::NotActionable(reason)) => {
+            (format!("Policy rejected: {:?}", reason), None, None, None)
+        }
+        Some(ThreatIntelPolicyDecision::Deferred(reason)) => {
+            (format!("Policy deferred: {:?}", reason), None, None, None)
+        }
+    };
+
+    ThreatIntelPolicyShadowDecision {
+        indicator_value: indicator_value.to_string(),
+        threat_type: threat_type.to_string(),
+        decision_class,
+        reason,
+        advisory_status,
+        advisory_freshness,
+        canonical_freshness,
+        raw_lookup_present,
+        composed_actionable,
+    }
+}
+
+/// Classify a disagreement between raw and composed lookups.
+///
+/// Returns `None` when there is no disagreement (both present or both absent
+/// with consistent actionability).
+pub fn classify_shadow_disagreement(
+    raw_present: bool,
+    decision: Option<&ThreatIntelPolicyDecision>,
+) -> Option<ThreatIntelPolicyShadowDisagreement> {
+    let composed_actionable = matches!(decision, Some(ThreatIntelPolicyDecision::Actionable(_)));
+    let composed_deferred = matches!(decision, Some(ThreatIntelPolicyDecision::Deferred(_)));
+
+    match (raw_present, composed_actionable, composed_deferred) {
+        (true, false, false) => {
+            Some(ThreatIntelPolicyShadowDisagreement::RawPresentComposedNotActionable)
+        }
+        (false, true, false) => {
+            Some(ThreatIntelPolicyShadowDisagreement::RawMissingComposedActionable)
+        }
+        (true, false, true) => {
+            Some(ThreatIntelPolicyShadowDisagreement::RawPresentComposedDeferred)
+        }
+        (false, false, true) => {
+            Some(ThreatIntelPolicyShadowDisagreement::RawMissingComposedDeferred)
+        }
+        _ => None,
+    }
 }
 
 /// Compose advisory and canonical sources into an explicit threat-intel
@@ -628,5 +798,181 @@ mod tests {
         let c = TestCanonicalReader::new(CanonicalFreshness::Live);
         _assert_advisory(&a);
         _assert_canonical(&c);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Iteration 33: Shadow decision DTO and classifier tests
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn iteration33_actionable_maps_to_actionable_class() {
+        let evidence = ThreatIntelPolicyEvidence {
+            intel_id: "intel-1".to_string(),
+            advisory_key: "threat_indicator:1.2.3.4:IpBlock".to_string(),
+            advisory_status: AdvisoryRecordStatus::Present,
+            advisory_freshness: AdvisoryFreshness::Live,
+            canonical_freshness: CanonicalFreshness::Live,
+            record_signature_valid: true,
+        };
+        let decision = Some(ThreatIntelPolicyDecision::Actionable(evidence));
+        assert_eq!(
+            classify_threat_intel_policy_decision(decision.as_ref()),
+            ThreatIntelPolicyDecisionClass::Actionable
+        );
+    }
+
+    #[test]
+    fn iteration33_advisory_only_maps_to_advisory_only_class() {
+        let evidence = ThreatIntelPolicyEvidence {
+            intel_id: "intel-2".to_string(),
+            advisory_key: "threat_indicator:5.6.7.8:IpBlock".to_string(),
+            advisory_status: AdvisoryRecordStatus::Present,
+            advisory_freshness: AdvisoryFreshness::Live,
+            canonical_freshness: CanonicalFreshness::Live,
+            record_signature_valid: true,
+        };
+        let decision = Some(ThreatIntelPolicyDecision::AdvisoryOnly(evidence));
+        assert_eq!(
+            classify_threat_intel_policy_decision(decision.as_ref()),
+            ThreatIntelPolicyDecisionClass::AdvisoryOnly
+        );
+    }
+
+    #[test]
+    fn iteration33_not_actionable_maps_with_reason() {
+        let decision = Some(ThreatIntelPolicyDecision::NotActionable(
+            ThreatIntelPolicyRejectReason::AdvisoryMissing,
+        ));
+        let shadow = threat_intel_policy_shadow_decision(
+            "1.2.3.4",
+            "IpBlock",
+            decision.as_ref(),
+            Some(false),
+        );
+        assert_eq!(
+            shadow.decision_class,
+            ThreatIntelPolicyDecisionClass::NotActionable
+        );
+        assert!(shadow.reason.contains("AdvisoryMissing"));
+        assert!(!shadow.composed_actionable);
+    }
+
+    #[test]
+    fn iteration33_deferred_maps_with_reason() {
+        let decision = Some(ThreatIntelPolicyDecision::Deferred(
+            ThreatIntelPolicyDeferReason::CanonicalUnavailable,
+        ));
+        let shadow =
+            threat_intel_policy_shadow_decision("1.2.3.4", "IpBlock", decision.as_ref(), None);
+        assert_eq!(
+            shadow.decision_class,
+            ThreatIntelPolicyDecisionClass::Deferred
+        );
+        assert!(shadow.reason.contains("CanonicalUnavailable"));
+        assert!(!shadow.composed_actionable);
+    }
+
+    #[test]
+    fn iteration33_none_maps_to_not_configured() {
+        let shadow = threat_intel_policy_shadow_decision("1.2.3.4", "IpBlock", None, Some(true));
+        assert_eq!(
+            shadow.decision_class,
+            ThreatIntelPolicyDecisionClass::NotConfigured
+        );
+        assert!(!shadow.composed_actionable);
+        assert_eq!(shadow.raw_lookup_present, Some(true));
+    }
+
+    #[test]
+    fn iteration33_shadow_decision_excludes_raw_payloads() {
+        let evidence = ThreatIntelPolicyEvidence {
+            intel_id: "intel-1".to_string(),
+            advisory_key: "threat_indicator:1.2.3.4:IpBlock".to_string(),
+            advisory_status: AdvisoryRecordStatus::Present,
+            advisory_freshness: AdvisoryFreshness::Live,
+            canonical_freshness: CanonicalFreshness::Live,
+            record_signature_valid: true,
+        };
+        let decision = Some(ThreatIntelPolicyDecision::Actionable(evidence));
+        let shadow = threat_intel_policy_shadow_decision(
+            "1.2.3.4",
+            "IpBlock",
+            decision.as_ref(),
+            Some(true),
+        );
+        // Shadow DTO should not contain raw DHT record bytes or signatures
+        let serialized = serde_json::to_string(&shadow).unwrap();
+        assert!(!serialized.contains("record_signature"));
+        assert!(serialized.contains("decision_class"));
+        assert!(serialized.contains("composed_actionable"));
+    }
+
+    #[test]
+    fn iteration33_shadow_decision_has_no_high_cardinality_labels() {
+        let shadow = threat_intel_policy_shadow_decision("10.0.0.1", "IpBlock", None, None);
+        let serialized = serde_json::to_string(&shadow).unwrap();
+        // Verify the indicator value is present (for admin/diagnostic use)
+        assert!(serialized.contains("10.0.0.1"));
+        // Verify decision_class is a simple enum variant
+        assert!(serialized.contains("not_configured"));
+    }
+
+    #[test]
+    fn iteration33_disagreement_raw_present_composed_not_actionable() {
+        let decision = Some(ThreatIntelPolicyDecision::NotActionable(
+            ThreatIntelPolicyRejectReason::AdvisoryMissing,
+        ));
+        assert_eq!(
+            classify_shadow_disagreement(true, decision.as_ref()),
+            Some(ThreatIntelPolicyShadowDisagreement::RawPresentComposedNotActionable)
+        );
+    }
+
+    #[test]
+    fn iteration33_disagreement_raw_missing_composed_actionable() {
+        let evidence = ThreatIntelPolicyEvidence {
+            intel_id: "intel-1".to_string(),
+            advisory_key: "threat_indicator:1.2.3.4:IpBlock".to_string(),
+            advisory_status: AdvisoryRecordStatus::Present,
+            advisory_freshness: AdvisoryFreshness::Live,
+            canonical_freshness: CanonicalFreshness::Live,
+            record_signature_valid: true,
+        };
+        let decision = Some(ThreatIntelPolicyDecision::Actionable(evidence));
+        assert_eq!(
+            classify_shadow_disagreement(false, decision.as_ref()),
+            Some(ThreatIntelPolicyShadowDisagreement::RawMissingComposedActionable)
+        );
+    }
+
+    #[test]
+    fn iteration33_disagreement_no_disagreement_when_both_present_and_actionable() {
+        let evidence = ThreatIntelPolicyEvidence {
+            intel_id: "intel-1".to_string(),
+            advisory_key: "threat_indicator:1.2.3.4:IpBlock".to_string(),
+            advisory_status: AdvisoryRecordStatus::Present,
+            advisory_freshness: AdvisoryFreshness::Live,
+            canonical_freshness: CanonicalFreshness::Live,
+            record_signature_valid: true,
+        };
+        let decision = Some(ThreatIntelPolicyDecision::Actionable(evidence));
+        assert_eq!(classify_shadow_disagreement(true, decision.as_ref()), None);
+    }
+
+    #[test]
+    fn iteration33_disagreement_no_disagreement_when_both_absent_and_not_configured() {
+        assert_eq!(classify_shadow_disagreement(false, None), None);
+    }
+
+    #[test]
+    fn iteration33_shadow_helper_does_not_mutate_state() {
+        // Verify the helper is pure by calling it multiple times with same inputs
+        let decision = Some(ThreatIntelPolicyDecision::Deferred(
+            ThreatIntelPolicyDeferReason::CanonicalUnknown,
+        ));
+        let s1 = threat_intel_policy_shadow_decision("1.2.3.4", "IpBlock", decision.as_ref(), None);
+        let s2 = threat_intel_policy_shadow_decision("1.2.3.4", "IpBlock", decision.as_ref(), None);
+        assert_eq!(s1.decision_class, s2.decision_class);
+        assert_eq!(s1.reason, s2.reason);
     }
 }

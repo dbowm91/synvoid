@@ -65,6 +65,23 @@ pub(crate) static THREAT_INTEL_DHT_SYNC_ADDED: LazyLock<AtomicU64> =
 pub(crate) static THREAT_INTEL_DHT_SYNC_REMOVED: LazyLock<AtomicU64> =
     LazyLock::new(|| AtomicU64::new(0));
 
+pub(crate) static THREAT_INTEL_POLICY_SHADOW_ACTIONABLE: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static THREAT_INTEL_POLICY_SHADOW_ADVISORY_ONLY: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static THREAT_INTEL_POLICY_SHADOW_NOT_ACTIONABLE: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static THREAT_INTEL_POLICY_SHADOW_DEFERRED: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static THREAT_INTEL_POLICY_SHADOW_NOT_CONFIGURED: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static THREAT_INTEL_POLICY_SHADOW_RAW_DISAGREEMENT: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static THREAT_INTEL_POLICY_SHADOW_CANONICAL_UNAVAILABLE: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static THREAT_INTEL_POLICY_SHADOW_ADVISORY_MISSING: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+
 pub(crate) static BEHAVIORAL_FINGERPRINT_DHT_PUBLISH: LazyLock<AtomicU64> =
     LazyLock::new(|| AtomicU64::new(0));
 pub(crate) static BEHAVIORAL_FINGERPRINT_RECEIVED: LazyLock<AtomicU64> =
@@ -341,6 +358,70 @@ pub fn get_threat_intel_dht_sync_added() -> u64 {
 
 pub fn get_threat_intel_dht_sync_removed() -> u64 {
     THREAT_INTEL_DHT_SYNC_REMOVED.load(Ordering::Relaxed)
+}
+
+pub fn record_threat_intel_policy_shadow_actionable() {
+    THREAT_INTEL_POLICY_SHADOW_ACTIONABLE.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_threat_intel_policy_shadow_advisory_only() {
+    THREAT_INTEL_POLICY_SHADOW_ADVISORY_ONLY.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_threat_intel_policy_shadow_not_actionable() {
+    THREAT_INTEL_POLICY_SHADOW_NOT_ACTIONABLE.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_threat_intel_policy_shadow_deferred() {
+    THREAT_INTEL_POLICY_SHADOW_DEFERRED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_threat_intel_policy_shadow_not_configured() {
+    THREAT_INTEL_POLICY_SHADOW_NOT_CONFIGURED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_threat_intel_policy_shadow_raw_disagreement() {
+    THREAT_INTEL_POLICY_SHADOW_RAW_DISAGREEMENT.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_threat_intel_policy_shadow_canonical_unavailable() {
+    THREAT_INTEL_POLICY_SHADOW_CANONICAL_UNAVAILABLE.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_threat_intel_policy_shadow_advisory_missing() {
+    THREAT_INTEL_POLICY_SHADOW_ADVISORY_MISSING.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_threat_intel_policy_shadow_actionable() -> u64 {
+    THREAT_INTEL_POLICY_SHADOW_ACTIONABLE.load(Ordering::Relaxed)
+}
+
+pub fn get_threat_intel_policy_shadow_advisory_only() -> u64 {
+    THREAT_INTEL_POLICY_SHADOW_ADVISORY_ONLY.load(Ordering::Relaxed)
+}
+
+pub fn get_threat_intel_policy_shadow_not_actionable() -> u64 {
+    THREAT_INTEL_POLICY_SHADOW_NOT_ACTIONABLE.load(Ordering::Relaxed)
+}
+
+pub fn get_threat_intel_policy_shadow_deferred() -> u64 {
+    THREAT_INTEL_POLICY_SHADOW_DEFERRED.load(Ordering::Relaxed)
+}
+
+pub fn get_threat_intel_policy_shadow_not_configured() -> u64 {
+    THREAT_INTEL_POLICY_SHADOW_NOT_CONFIGURED.load(Ordering::Relaxed)
+}
+
+pub fn get_threat_intel_policy_shadow_raw_disagreement() -> u64 {
+    THREAT_INTEL_POLICY_SHADOW_RAW_DISAGREEMENT.load(Ordering::Relaxed)
+}
+
+pub fn get_threat_intel_policy_shadow_canonical_unavailable() -> u64 {
+    THREAT_INTEL_POLICY_SHADOW_CANONICAL_UNAVAILABLE.load(Ordering::Relaxed)
+}
+
+pub fn get_threat_intel_policy_shadow_advisory_missing() -> u64 {
+    THREAT_INTEL_POLICY_SHADOW_ADVISORY_MISSING.load(Ordering::Relaxed)
 }
 
 pub fn record_behavioral_fingerprint_dht_publish() {

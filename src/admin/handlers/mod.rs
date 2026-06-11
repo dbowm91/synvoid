@@ -35,6 +35,8 @@ pub mod spin;
 pub mod tcp_udp;
 #[allow(dead_code)]
 pub mod theme;
+#[cfg(feature = "mesh")]
+pub mod threat_intel_policy;
 pub mod threat_level;
 pub mod upstreams;
 #[cfg(feature = "mesh")]

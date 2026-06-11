@@ -685,6 +685,17 @@ fn build_router_from_state(
     #[cfg(feature = "mesh")]
     let api_routes = api_routes
         .route(
+            "/mesh/threat-intel/policy-shadow",
+            get(handlers::threat_intel_policy::get_policy_shadow),
+        )
+        .route(
+            "/mesh/threat-intel/policy-shadow/stats",
+            get(handlers::threat_intel_policy::get_policy_shadow_stats),
+        );
+
+    #[cfg(feature = "mesh")]
+    let api_routes = api_routes
+        .route(
             "/mesh/topology",
             get(handlers::mesh_topology::get_mesh_topology),
         )

@@ -35,6 +35,14 @@ pub mod metrics {
     pub fn record_threat_intel_dht_sync_failed() {}
     pub fn record_threat_intel_dht_sync_added(_count: u64) {}
     pub fn record_threat_intel_dht_sync_removed(_count: u64) {}
+    pub fn record_threat_intel_policy_shadow_actionable() {}
+    pub fn record_threat_intel_policy_shadow_advisory_only() {}
+    pub fn record_threat_intel_policy_shadow_not_actionable() {}
+    pub fn record_threat_intel_policy_shadow_deferred() {}
+    pub fn record_threat_intel_policy_shadow_not_configured() {}
+    pub fn record_threat_intel_policy_shadow_raw_disagreement() {}
+    pub fn record_threat_intel_policy_shadow_canonical_unavailable() {}
+    pub fn record_threat_intel_policy_shadow_advisory_missing() {}
 
     pub mod bandwidth {
         use parking_lot::RwLock;

@@ -145,6 +145,10 @@ pub use threat_intel::{
     ThreatIndicatorEntry, ThreatIntelPolicyContext, ThreatIntelligenceConfig,
     ThreatIntelligenceManager, ThreatIntelligenceStats,
 };
+pub use threat_intel_policy::{
+    ThreatIntelPolicyDecision, ThreatIntelPolicyDecisionClass, ThreatIntelPolicyShadowDecision,
+    ThreatIntelPolicyShadowDisagreement,
+};
 pub use tier_key_encryption::{
     deserialize_encrypted_privileged, deserialize_encrypted_tier_key,
     serialize_encrypted_privileged, serialize_encrypted_tier_key, EncryptedPrivilegedData,

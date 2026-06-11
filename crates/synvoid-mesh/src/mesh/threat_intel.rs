@@ -1497,6 +1497,97 @@ impl ThreatIntelligenceManager {
         )
     }
 
+    /// Shadow evaluation of a threat indicator for diagnostics and metrics.
+    ///
+    /// This method evaluates policy composition without changing enforcement
+    /// behavior. It returns a `ThreatIntelPolicyShadowDecision` suitable for
+    /// admin diagnostics, structured logging, and metrics counters.
+    ///
+    /// **This is a shadow/observability consumer only.** It does not block
+    /// traffic, mutate enforcement state, or affect request handling.
+    pub fn evaluate_indicator_policy_shadow(
+        &self,
+        indicator_value: &str,
+        threat_type: ThreatType,
+    ) -> crate::threat_intel_policy::ThreatIntelPolicyShadowDecision {
+        let threat_type_str = format!("{:?}", threat_type);
+        let decision =
+            self.evaluate_indicator_actionability_configured(indicator_value, threat_type);
+
+        // Check raw lookup for disagreement classification
+        let raw_present = self
+            .lookup_local_indicator(indicator_value, threat_type)
+            .is_some();
+
+        // Build shadow DTO
+        let shadow = crate::threat_intel_policy::threat_intel_policy_shadow_decision(
+            indicator_value,
+            &threat_type_str,
+            decision.as_ref(),
+            Some(raw_present),
+        );
+
+        // Increment metrics by decision class
+        use crate::threat_intel_policy::ThreatIntelPolicyDecisionClass;
+        match shadow.decision_class {
+            ThreatIntelPolicyDecisionClass::Actionable => {
+                crate::stubs::metrics::record_threat_intel_policy_shadow_actionable();
+            }
+            ThreatIntelPolicyDecisionClass::AdvisoryOnly => {
+                crate::stubs::metrics::record_threat_intel_policy_shadow_advisory_only();
+            }
+            ThreatIntelPolicyDecisionClass::NotActionable => {
+                crate::stubs::metrics::record_threat_intel_policy_shadow_not_actionable();
+            }
+            ThreatIntelPolicyDecisionClass::Deferred => {
+                crate::stubs::metrics::record_threat_intel_policy_shadow_deferred();
+            }
+            ThreatIntelPolicyDecisionClass::NotConfigured => {
+                crate::stubs::metrics::record_threat_intel_policy_shadow_not_configured();
+            }
+            ThreatIntelPolicyDecisionClass::Error => {}
+        }
+
+        // Track canonical unavailability specifically
+        if matches!(
+            decision,
+            Some(
+                crate::threat_intel_policy::ThreatIntelPolicyDecision::Deferred(
+                    crate::threat_intel_policy::ThreatIntelPolicyDeferReason::CanonicalUnavailable
+                )
+            )
+        ) {
+            crate::stubs::metrics::record_threat_intel_policy_shadow_canonical_unavailable();
+        }
+
+        // Track advisory missing specifically
+        if matches!(
+            decision,
+            Some(
+                crate::threat_intel_policy::ThreatIntelPolicyDecision::NotActionable(
+                    crate::threat_intel_policy::ThreatIntelPolicyRejectReason::AdvisoryMissing
+                )
+            )
+        ) {
+            crate::stubs::metrics::record_threat_intel_policy_shadow_advisory_missing();
+        }
+
+        // Track raw vs composed disagreement
+        if let Some(disagreement) =
+            crate::threat_intel_policy::classify_shadow_disagreement(raw_present, decision.as_ref())
+        {
+            crate::stubs::metrics::record_threat_intel_policy_shadow_raw_disagreement();
+            tracing::debug!(
+                indicator = indicator_value,
+                threat_type = ?threat_type,
+                disagreement = ?disagreement,
+                "shadow evaluation: raw/composed disagreement detected"
+            );
+        }
+
+        shadow
+    }
+
     pub fn is_mesh_available(&self) -> bool {
         self.transport.read().is_some()
     }
@@ -3640,5 +3731,75 @@ mod tests {
                 ThreatIntelPolicyDeferReason::CanonicalUnavailable
             )
         ));
+    }
+
+    // ---------------------------------------------------------------------------
+    // Iteration 33: Shadow evaluation helper tests
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn iteration33_shadow_helper_returns_not_configured_without_context() {
+        let manager = create_test_manager();
+
+        let shadow = manager.evaluate_indicator_policy_shadow("1.2.3.4", ThreatType::IpBlock);
+        assert_eq!(
+            shadow.decision_class,
+            crate::threat_intel_policy::ThreatIntelPolicyDecisionClass::NotConfigured
+        );
+        assert!(!shadow.composed_actionable);
+    }
+
+    #[test]
+    fn iteration33_shadow_helper_reports_actionable_with_context() {
+        use crate::canonical::{
+            CanonicalFreshness, CanonicalTrustDecision, CanonicalTrustReader,
+            StaticCanonicalTrustReader,
+        };
+        use crate::dht::advisory_source::{
+            AdvisoryFreshness, AdvisoryRecord, AdvisoryRecordLookup, AdvisoryRecordSource,
+            AdvisoryRecordStatus, StaticAdvisoryRecordSource,
+        };
+
+        let mut canonical = StaticCanonicalTrustReader::new(CanonicalFreshness::Live);
+        canonical.threat_intel_ids.insert("1.2.3.4".to_string());
+
+        let advisory_key = "threat_indicator:1.2.3.4:IpBlock";
+        let advisory = StaticAdvisoryRecordSource::from_records(vec![AdvisoryRecord {
+            key: advisory_key.to_string(),
+            value: vec![],
+            source_node_id: "test".to_string(),
+            timestamp: crate::safe_unix_timestamp(),
+            ttl_seconds: 300,
+            freshness: AdvisoryFreshness::Live,
+            status: AdvisoryRecordStatus::Present,
+            record_signature_valid: true,
+        }]);
+
+        let ctx = crate::threat_intel::ThreatIntelPolicyContext::new(
+            Arc::new(canonical),
+            Arc::new(advisory),
+        );
+
+        let manager = create_test_manager();
+        manager.set_policy_context(Some(ctx));
+
+        let shadow = manager.evaluate_indicator_policy_shadow("1.2.3.4", ThreatType::IpBlock);
+        assert_eq!(
+            shadow.decision_class,
+            crate::threat_intel_policy::ThreatIntelPolicyDecisionClass::Actionable
+        );
+        assert!(shadow.composed_actionable);
+        assert_eq!(shadow.indicator_value, "1.2.3.4");
+        assert_eq!(shadow.threat_type, "IpBlock");
+    }
+
+    #[test]
+    fn iteration33_shadow_helper_does_not_mutate_enforcement() {
+        let manager = create_test_manager();
+
+        // Shadow evaluation should not affect block store
+        let _shadow = manager.evaluate_indicator_policy_shadow("1.2.3.4", ThreatType::IpBlock);
+        let block_store = manager.get_block_store();
+        assert!(!block_store.is_blocked(&"1.2.3.4".parse().unwrap(), "default"));
     }
 }

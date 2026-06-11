@@ -1,6 +1,6 @@
-# Mesh Trust Domains — Design Note (Iteration 30)
+# Mesh Trust Domains — Design Note (Iteration 33)
 
-**Status**: Iteration 32 — Canonical snapshot freshness config wired to worker lifecycle.  
+**Status**: Iteration 33 — Shadow/observability consumers for policy-composed threat-intel decisions.  
 **Date**: 2026-06-11  
 **Scope**: `crates/synvoid-mesh` (re-exported via `src/mesh`).  
 **Goal**: Define trust-domain boundaries and invariants before any internal module split.  
@@ -454,6 +454,55 @@ The two policy-composed threat-intel lookup paths now share a single decision-to
 ### Iteration 23 Threat Intel Policy Reassessment
 
 The threat-intel policy-composed lookup track is staged and stable. Two read-only composed lookup APIs exist for DHT and local indicators, both gated by shared `is_policy_actionable` semantics. A call-graph review found no low-risk caller that should migrate before broader proxy/YARA/WASM/routing design work. The track is paused; raw lookup APIs remain compatibility/diagnostic paths.
+
+### Iteration 33 — Shadow/Observability Consumers
+
+Selected and implemented the first low-risk consumers of policy-composed
+threat-intel decisions. These are shadow/observability consumers that answer
+"what would policy composition decide?" without changing enforcement behavior.
+
+**New types** (`crates/synvoid-mesh/src/mesh/threat_intel_policy.rs`):
+
+- `ThreatIntelPolicyDecisionClass` — compact 6-variant enum for metrics/labeling
+- `ThreatIntelPolicyShadowDecision` — diagnostic DTO for admin/logging
+- `ThreatIntelPolicyShadowDisagreement` — raw vs composed disagreement classifier
+
+**New helpers**:
+
+- `classify_threat_intel_policy_decision()` — maps policy decision to decision class
+- `threat_intel_policy_shadow_decision()` — builds shadow DTO
+- `classify_shadow_disagreement()` — classifies raw/composed disagreement
+
+**New method on `ThreatIntelligenceManager`**:
+
+- `evaluate_indicator_policy_shadow()` — evaluates policy composition, increments
+  metrics, tracks disagreement, returns shadow DTO
+
+**New admin endpoints**:
+
+- `GET /mesh/threat-intel/policy-shadow?indicator=...&type=...` — per-indicator shadow evaluation
+- `GET /mesh/threat-intel/policy-shadow/stats` — aggregated metrics counters
+
+**Metrics counters** (via `synvoid-metrics`):
+
+- `threat_intel_policy_shadow_actionable_total`
+- `threat_intel_policy_shadow_advisory_only_total`
+- `threat_intel_policy_shadow_not_actionable_total`
+- `threat_intel_policy_shadow_deferred_total`
+- `threat_intel_policy_shadow_not_configured_total`
+- `threat_intel_policy_shadow_raw_disagreement_total`
+- `threat_intel_policy_shadow_canonical_unavailable_total`
+- `threat_intel_policy_shadow_advisory_missing_total`
+
+**Classification**:
+
+- Class A (safe, implemented): admin diagnostics, metrics counters, structured logging
+- Class B (design only, not implemented): request blocking, YARA/WASM, routing, bot/challenge
+- Class C (out of scope): Raft consensus, DHT ingress, peer auth, canonical export
+
+**Non-goals honored**: No enforcement behavior changed. Raw lookup APIs remain
+compatibility/diagnostic. No proxy/WAF/YARA/WASM/routing consumers migrated.
+No global canonical readers introduced. No `StaticCanonicalTrustReader` in production.
 
 ### Iteration 24 Threat Intel Policy Verification
 
