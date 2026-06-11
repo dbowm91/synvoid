@@ -174,7 +174,7 @@ impl UploadValidator {
                         let new_version = yara_rules.get_current_version();
 
                         if current_version != new_version {
-                            let _guard = self.reload_lock.write();
+                            let _guard = self._reload_lock.write();
                             let current_version = yara_scanner.get_version();
                             let new_version = yara_rules.get_current_version();
 

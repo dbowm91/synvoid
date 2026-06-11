@@ -9,9 +9,8 @@ path = "src/lib.rs"
 
 [features]
 default = []
-mesh = ["dep:openraft", "synvoid-serverless/mesh"]
-dns = []
-audit = []
+  mesh = ["dep:openraft", "synvoid-serverless/mesh"]
+  audit = []
 verify-pq = []
 
 [dependencies]
