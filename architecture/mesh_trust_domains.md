@@ -409,6 +409,12 @@ This track stops here. The next architectural step should be `AdvisoryRecordSour
 
 `RecordStoreAdvisorySource` now has focused tests against a real `RecordStoreManager`, covering present, missing, expired, prefix-limit, and expired-prefix filtering behavior. The seam remains read-only and advisory-only; no service consumers were migrated and no canonical trust behavior was added. Freshness/status semantics (single-key lookup can return `Expired` explicitly; prefix lookup filters expired entries before mapping) are consistent with the adapter's implementation and documented via test names + existing rustdoc. Follow-up still points to policy composition before service-consumer migration.
 
+### Iteration 18 Threat Intel Policy Composition
+
+A small threat-intel policy helper now composes `CanonicalTrustReader` with `AdvisoryRecordSource`. Advisory records provide observations; canonical state provides trust; the helper returns explicit actionability, rejection, or defer decisions. Tests cover present/missing/expired/unavailable advisory records and trusted/not-trusted/unknown/unavailable canonical state. No service consumers were migrated in this pass.
+
+Next: migrate a single low-risk threat-intel consumer to consume the policy output, keeping the old path available for comparison/tests.
+
 ## Follow-Up Recommendation
 
 The next planned architecture track should be:

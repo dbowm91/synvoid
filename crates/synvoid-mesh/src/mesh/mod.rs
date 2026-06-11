@@ -36,6 +36,7 @@ pub mod security;
 pub mod security_challenge;
 pub mod session;
 pub mod threat_intel;
+pub mod threat_intel_policy;
 pub mod tier_key_encryption;
 pub mod topology;
 pub mod transport;

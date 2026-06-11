@@ -98,6 +98,7 @@ cargo check --no-default-features --features mesh,dns
 | `src/http3/server.rs` (Http3WafBackend trait) | `crates/synvoid-http3/src/lib.rs` (trait owns the WAF abstraction boundary) |
 | `src/worker/unified_server/passthrough_validation.rs` | New module — TLS passthrough classification and validation (extracted from mod.rs) |
 | `crates/synvoid-http-client/src/lib.rs` (monolithic pre-iter6) | Split into focused modules (client.rs, tls.rs, pool.rs, unix.rs, request.rs, response.rs) + erased_pool/streaming_waf_body; lib.rs is now thin public facade with re-exports only |
+| `crates/synvoid-mesh/src/mesh/threat_intel_policy.rs` | New in Iteration 18 — threat-intel policy composition helper |
 
 ## Modular Agent Guidance
 
@@ -117,6 +118,7 @@ Agent guidance is **modularized** to reduce context pollution. Each module has i
 | Auth | [`src/auth/AGENTS.override.md`](src/auth/AGENTS.override.md) | Authentication patterns |
 | Platform/Systems | [`src/platform/AGENTS.override.md`](src/platform/AGENTS.override.md) | Platform abstraction, IPC, sandboxing |
 | Worker | [`src/worker/AGENTS.override.md`](src/worker/AGENTS.override.md) | UnifiedServerWorker, CpuWorker, CPU offload |
+| Threat Intel Policy | [`src/mesh/threat_intel_policy.rs`](crates/synvoid-mesh/src/mesh/threat_intel_policy.rs) | Policy composition for threat intel |
 | Deferred Items | [`skills/deferred_items_knowledge.md`](skills/deferred_items_knowledge.md) | Context on incremental deferred item implementation |
 | Skills | [`skills/AGENTS.override.md`](skills/AGENTS.override.md) | Skill file documentation |
 
@@ -234,6 +236,7 @@ The consolidated implementation plan is at [`plans/plan.md`](plans/plan.md).
 - **RECORD_STORE_GLOBAL**: `crates/synvoid-mesh/src/mesh/mod.rs:161` - **legacy/fallback only** — all production paths use explicit injection via `DataPlaneServices.record_store`
 - **Mesh trust domains**: `architecture/mesh_trust_domains.md` — trust-domain classification (transport, advisory_dht, canonical, identity, policy, services, compat), invariants, import rules, review checklist. **Canonical seam** (`CanonicalTrustReader` in `crates/synvoid-mesh/src/mesh/canonical.rs`): Iteration 8 seam implemented; Iteration 9 consumer migration (`validate_peer_canonical_status` in `peer_auth.rs`); Iteration 10 test hardening + rustdoc. **DHT ingress gate**: Iteration 11 reader-backed key policy (`classify_key_authority_with_canonical_reader`); Iteration 12 ingress adapter (`validate_dht_key_authority_for_ingress`); Iteration 13 `DhtIngressPolicyContext` seam; Iteration 14 carrier wired for Push/Announce via `RecordStoreManager`; **Iteration 15: track complete** — ingress gate active for configured Push/Announce paths, disabled context preserves legacy, sync/replay/local/quorum/Raft paths intentionally untouched. **Iteration 16: AdvisoryRecordSource seam** — `AdvisoryRecordSource` trait + `RecordStoreAdvisorySource` adapter + `StaticAdvisoryRecordSource` test source in `crates/synvoid-mesh/src/mesh/dht/advisory_source.rs`. **Iteration 17: Advisory source hardening** — `RecordStoreAdvisorySource` has focused real-store tests (present/missing/expired/prefix); no service consumer migration; architecture note updated. Next step: policy composition helper before service consumer migration.
 - **classify_passthrough_sites()**: `src/worker/unified_server/passthrough_validation.rs` - pure classification function for TLS passthrough sites (no I/O, no side effects)
+- **evaluate_threat_intel_policy()**: `crates/synvoid-mesh/src/mesh/threat_intel_policy.rs` — pure composition helper combining `AdvisoryRecordSource` + `CanonicalTrustReader` into explicit threat-intel policy decisions (Actionable/AdvisoryOnly/NotActionable/Deferred). Tests cover all advisory + canonical state combinations. No service consumers migrated yet.
 - **bypass_sites_without_rate_limit**: renamed from `rate_limited_bypass_sites`; sites in this set bypass WAF without rate limiting
 - **site_has_rate_limit()**: `src/worker/unified_server/passthrough_validation.rs` - pure helper that checks whether a site has rate limit configuration
 - **evaluate_passthrough_policy()**: `src/worker/unified_server/passthrough_validation.rs` - pure function returning `PassthroughPolicyEvaluation`; computes per-site violations (`PassthroughPolicyViolation` enum) without I/O
