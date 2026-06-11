@@ -188,6 +188,46 @@ impl Default for ThreatIntelligenceConfig {
 const DEFAULT_RE_ANNOUNCE_INTERVAL_SECS: u64 = 300;
 const MAX_PENDING_INDICATORS: usize = 10000;
 
+/// Optional policy context injected into `ThreatIntelligenceManager` so callers
+/// do not need to manually pass both trait objects at every call site.
+///
+/// Default `None` preserves legacy behavior. When set, configured policy
+/// evaluation and policy-composed lookup methods use the injected seams.
+#[derive(Clone)]
+pub struct ThreatIntelPolicyContext {
+    canonical: Arc<dyn crate::canonical::CanonicalTrustReader>,
+    advisory: Arc<dyn crate::dht::advisory_source::AdvisoryRecordSource>,
+}
+
+impl std::fmt::Debug for ThreatIntelPolicyContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ThreatIntelPolicyContext")
+            .field("canonical", &"<dyn CanonicalTrustReader>")
+            .field("advisory", &"<dyn AdvisoryRecordSource>")
+            .finish()
+    }
+}
+
+impl ThreatIntelPolicyContext {
+    pub fn new(
+        canonical: Arc<dyn crate::canonical::CanonicalTrustReader>,
+        advisory: Arc<dyn crate::dht::advisory_source::AdvisoryRecordSource>,
+    ) -> Self {
+        Self {
+            canonical,
+            advisory,
+        }
+    }
+
+    pub fn canonical(&self) -> &dyn crate::canonical::CanonicalTrustReader {
+        self.canonical.as_ref()
+    }
+
+    pub fn advisory(&self) -> &dyn crate::dht::advisory_source::AdvisoryRecordSource {
+        self.advisory.as_ref()
+    }
+}
+
 pub struct ThreatIntelligenceManager {
     config: Arc<ThreatIntelligenceConfigInternal>,
     block_store: Arc<dyn BlockStoreApi + Send + Sync>,
@@ -205,6 +245,7 @@ pub struct ThreatIntelligenceManager {
     persistence_path: Option<std::path::PathBuf>,
     seen_announces: moka::sync::Cache<String, bool>,
     hot_threats: RwLock<bloomfilter::Bloom<IpAddr>>,
+    policy_context: RwLock<Option<ThreatIntelPolicyContext>>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -279,6 +320,7 @@ impl ThreatIntelligenceManager {
                 .time_to_idle(Duration::from_secs(3600))
                 .build(),
             hot_threats: RwLock::new(bloomfilter::Bloom::new_for_fp_rate(100_000, 0.01)),
+            policy_context: RwLock::new(None),
         };
 
         if let Some(ref path) = manager.persistence_path {
@@ -350,6 +392,19 @@ impl ThreatIntelligenceManager {
     pub fn set_transport(&self, transport: Arc<crate::transport::MeshTransport>) {
         let mut t = self.transport.write();
         *t = Some(transport);
+    }
+
+    /// Set the optional policy context for configured policy evaluation.
+    ///
+    /// When `None` (the default), configured evaluation and policy-composed
+    /// lookups fall back to legacy raw paths or return `None`.
+    pub fn set_policy_context(&self, ctx: Option<ThreatIntelPolicyContext>) {
+        *self.policy_context.write() = ctx;
+    }
+
+    /// Returns a clone of the current policy context, if set.
+    fn policy_context(&self) -> Option<ThreatIntelPolicyContext> {
+        self.policy_context.read().clone()
     }
 
     pub fn from_external_config(
@@ -1306,6 +1361,65 @@ impl ThreatIntelligenceManager {
         )
     }
 
+    /// Evaluate a threat indicator using the injected policy context.
+    ///
+    /// Returns `None` if no policy context is configured (callers should fall
+    /// back to legacy raw paths). Otherwise delegates to the manual evaluation
+    /// method using the stored canonical and advisory readers.
+    pub fn evaluate_indicator_actionability_configured(
+        &self,
+        indicator_value: &str,
+        threat_type: ThreatType,
+    ) -> Option<crate::threat_intel_policy::ThreatIntelPolicyDecision> {
+        let ctx = self.policy_context()?;
+        Some(self.evaluate_indicator_actionability(
+            ctx.canonical(),
+            ctx.advisory(),
+            indicator_value,
+            threat_type,
+        ))
+    }
+
+    /// Policy-composed threat indicator lookup.
+    ///
+    /// If no policy context is configured, falls back to the legacy raw DHT
+    /// lookup. When configured, the policy decision gates the result:
+    ///
+    /// - `Actionable` → returns the indicator from the legacy raw DHT lookup.
+    /// - `AdvisoryOnly` / `NotActionable` / `Deferred` → returns `None`.
+    pub fn lookup_threat_indicator_policy_composed(
+        &self,
+        indicator_value: &str,
+        threat_type: ThreatType,
+    ) -> Option<ThreatIndicator> {
+        let ctx = match self.policy_context() {
+            Some(ctx) => ctx,
+            None => return self.lookup_threat_indicator_in_dht(indicator_value, threat_type),
+        };
+
+        let decision = self.evaluate_indicator_actionability(
+            ctx.canonical(),
+            ctx.advisory(),
+            indicator_value,
+            threat_type,
+        );
+
+        match decision {
+            crate::threat_intel_policy::ThreatIntelPolicyDecision::Actionable(_) => {
+                self.lookup_threat_indicator_in_dht(indicator_value, threat_type)
+            }
+            other => {
+                tracing::debug!(
+                    indicator = indicator_value,
+                    threat_type = ?threat_type,
+                    decision = ?other,
+                    "policy-composed lookup: not actionable, returning None"
+                );
+                None
+            }
+        }
+    }
+
     pub fn is_mesh_available(&self) -> bool {
         self.transport.read().is_some()
     }
@@ -2225,6 +2339,7 @@ impl ThreatIntelligenceManager {
             persistence_path: self.persistence_path.clone(),
             seen_announces: self.seen_announces.clone(),
             hot_threats: RwLock::new(bloomfilter::Bloom::new_for_fp_rate(100_000, 0.01)),
+            policy_context: RwLock::new(self.policy_context.read().clone()),
         }
     }
 }
@@ -2741,5 +2856,299 @@ mod tests {
             feed_client_content,
             "Signable content must match ThreatFeedClient format"
         );
+    }
+
+    // ---------------------------------------------------------------------------
+    // Iteration 20: ThreatIntelPolicyContext injection tests
+    // ---------------------------------------------------------------------------
+
+    // Test 9: Default manager has no policy context; legacy lookup still works.
+    #[test]
+    fn iteration20_default_manager_has_no_policy_context() {
+        let manager = create_test_manager();
+        assert!(
+            manager.policy_context().is_none(),
+            "default manager must have no policy context"
+        );
+
+        // Configured evaluation returns None when no context is set.
+        let result =
+            manager.evaluate_indicator_actionability_configured(TEST_IP, ThreatType::IpBlock);
+        assert!(result.is_none());
+    }
+
+    // Test 10: set_policy_context enables configured evaluation.
+    #[test]
+    fn iteration20_set_policy_context_enables_configured_evaluation() {
+        let manager = create_test_manager();
+        let advisory =
+            TestAdvisorySource::new().with_record(TEST_KEY, test_advisory_record(TEST_KEY));
+        let canonical = TestCanonicalReader::new(CanonicalFreshness::Live).with_trust(
+            TEST_IP,
+            CanonicalTrustDecision::Trusted {
+                freshness: CanonicalFreshness::Live,
+            },
+        );
+
+        let ctx = ThreatIntelPolicyContext::new(Arc::new(canonical), Arc::new(advisory));
+        manager.set_policy_context(Some(ctx));
+
+        assert!(manager.policy_context().is_some());
+        let decision = manager
+            .evaluate_indicator_actionability_configured(TEST_IP, ThreatType::IpBlock)
+            .expect("should have policy context");
+        assert!(matches!(decision, ThreatIntelPolicyDecision::Actionable(_)));
+    }
+
+    // Test 11: Configured actionability returns Actionable only when advisory
+    // present and canonical trusted.
+    #[test]
+    fn iteration20_configured_actionable_only_when_both_present_and_trusted() {
+        let manager = create_test_manager();
+        let advisory =
+            TestAdvisorySource::new().with_record(TEST_KEY, test_advisory_record(TEST_KEY));
+        let canonical = TestCanonicalReader::new(CanonicalFreshness::Live).with_trust(
+            TEST_IP,
+            CanonicalTrustDecision::Trusted {
+                freshness: CanonicalFreshness::Live,
+            },
+        );
+
+        manager.set_policy_context(Some(ThreatIntelPolicyContext::new(
+            Arc::new(canonical),
+            Arc::new(advisory),
+        )));
+
+        let decision = manager
+            .evaluate_indicator_actionability_configured(TEST_IP, ThreatType::IpBlock)
+            .unwrap();
+        assert!(matches!(decision, ThreatIntelPolicyDecision::Actionable(_)));
+    }
+
+    // Test 12: Configured actionability returns non-actionable/deferred for
+    // advisory-only, advisory missing, canonical not trusted, canonical unavailable.
+    #[test]
+    fn iteration20_configured_not_actionable_for_advisory_only() {
+        let manager = create_test_manager();
+        let advisory =
+            TestAdvisorySource::new().with_record(TEST_KEY, test_advisory_record(TEST_KEY));
+        let canonical_no_trust = TestCanonicalReader::new(CanonicalFreshness::Live);
+
+        manager.set_policy_context(Some(ThreatIntelPolicyContext::new(
+            Arc::new(canonical_no_trust),
+            Arc::new(advisory),
+        )));
+
+        let decision = manager
+            .evaluate_indicator_actionability_configured(TEST_IP, ThreatType::IpBlock)
+            .unwrap();
+        // Advisory-only → Deferred(CanonicalUnknown)
+        assert!(!matches!(
+            decision,
+            ThreatIntelPolicyDecision::Actionable(_)
+        ));
+    }
+
+    #[test]
+    fn iteration20_configured_not_actionable_for_advisory_missing() {
+        let manager = create_test_manager();
+        let advisory = TestAdvisorySource::new(); // empty, no records
+        let canonical = TestCanonicalReader::new(CanonicalFreshness::Live).with_trust(
+            TEST_IP,
+            CanonicalTrustDecision::Trusted {
+                freshness: CanonicalFreshness::Live,
+            },
+        );
+
+        manager.set_policy_context(Some(ThreatIntelPolicyContext::new(
+            Arc::new(canonical),
+            Arc::new(advisory),
+        )));
+
+        let decision = manager
+            .evaluate_indicator_actionability_configured(TEST_IP, ThreatType::IpBlock)
+            .unwrap();
+        assert_eq!(
+            decision,
+            ThreatIntelPolicyDecision::NotActionable(
+                ThreatIntelPolicyRejectReason::AdvisoryMissing
+            )
+        );
+    }
+
+    #[test]
+    fn iteration20_configured_not_actionable_for_canonical_not_trusted() {
+        let manager = create_test_manager();
+        let advisory =
+            TestAdvisorySource::new().with_record(TEST_KEY, test_advisory_record(TEST_KEY));
+        let canonical = TestCanonicalReader::new(CanonicalFreshness::Live).with_trust(
+            TEST_IP,
+            CanonicalTrustDecision::NotTrusted {
+                freshness: CanonicalFreshness::Live,
+                reason: CanonicalTrustReason::Revoked,
+            },
+        );
+
+        manager.set_policy_context(Some(ThreatIntelPolicyContext::new(
+            Arc::new(canonical),
+            Arc::new(advisory),
+        )));
+
+        let decision = manager
+            .evaluate_indicator_actionability_configured(TEST_IP, ThreatType::IpBlock)
+            .unwrap();
+        assert_eq!(
+            decision,
+            ThreatIntelPolicyDecision::NotActionable(
+                ThreatIntelPolicyRejectReason::CanonicalNotTrusted
+            )
+        );
+    }
+
+    #[test]
+    fn iteration20_configured_deferred_for_canonical_unavailable() {
+        let manager = create_test_manager();
+        let advisory =
+            TestAdvisorySource::new().with_record(TEST_KEY, test_advisory_record(TEST_KEY));
+        let canonical = TestCanonicalReader::new(CanonicalFreshness::Unavailable);
+
+        manager.set_policy_context(Some(ThreatIntelPolicyContext::new(
+            Arc::new(canonical),
+            Arc::new(advisory),
+        )));
+
+        let decision = manager
+            .evaluate_indicator_actionability_configured(TEST_IP, ThreatType::IpBlock)
+            .unwrap();
+        assert!(matches!(
+            decision,
+            ThreatIntelPolicyDecision::Deferred(ThreatIntelPolicyDeferReason::CanonicalUnavailable)
+        ));
+    }
+
+    // Test 13: Policy-composed read path returns result only for Actionable.
+    #[test]
+    fn iteration20_policy_composed_lookup_returns_indicator_for_actionable() {
+        let manager = create_test_manager();
+        let advisory =
+            TestAdvisorySource::new().with_record(TEST_KEY, test_advisory_record(TEST_KEY));
+        let canonical = TestCanonicalReader::new(CanonicalFreshness::Live).with_trust(
+            TEST_IP,
+            CanonicalTrustDecision::Trusted {
+                freshness: CanonicalFreshness::Live,
+            },
+        );
+
+        manager.set_policy_context(Some(ThreatIntelPolicyContext::new(
+            Arc::new(canonical),
+            Arc::new(advisory),
+        )));
+
+        // No transport/record store → DHT lookup returns None → policy-composed
+        // returns None even for Actionable because raw DHT has no record.
+        let result = manager.lookup_threat_indicator_policy_composed(TEST_IP, ThreatType::IpBlock);
+        assert!(
+            result.is_none(),
+            "no DHT record → policy-composed returns None even for Actionable"
+        );
+    }
+
+    // Test 14: Policy-composed read path returns None for advisory-only.
+    #[test]
+    fn iteration20_policy_composed_lookup_returns_none_for_advisory_only() {
+        let manager = create_test_manager();
+        let advisory =
+            TestAdvisorySource::new().with_record(TEST_KEY, test_advisory_record(TEST_KEY));
+        let canonical_no_trust = TestCanonicalReader::new(CanonicalFreshness::Live);
+
+        manager.set_policy_context(Some(ThreatIntelPolicyContext::new(
+            Arc::new(canonical_no_trust),
+            Arc::new(advisory),
+        )));
+
+        let result = manager.lookup_threat_indicator_policy_composed(TEST_IP, ThreatType::IpBlock);
+        assert!(
+            result.is_none(),
+            "advisory-only → policy-composed must return None"
+        );
+    }
+
+    // Test 15: Policy-composed read path falls back to legacy when no context.
+    #[test]
+    fn iteration20_policy_composed_lookup_falls_back_to_legacy_without_context() {
+        let manager = create_test_manager();
+        // No policy context set.
+        let result = manager.lookup_threat_indicator_policy_composed(TEST_IP, ThreatType::IpBlock);
+        // No transport either → both paths return None.
+        assert!(result.is_none());
+    }
+
+    // Test 16: Legacy raw path remains available and unchanged.
+    #[test]
+    fn iteration20_legacy_raw_path_remains_unchanged() {
+        let manager = create_test_manager();
+        let indicator = ThreatIndicator {
+            threat_type: ThreatType::IpBlock,
+            indicator_value: TEST_IP.to_string(),
+            severity: ThreatSeverity::High,
+            reason: "test".to_string(),
+            ttl_seconds: 3600,
+            source_node_id: "test-node".to_string(),
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            site_scope: "".to_string(),
+            rate_limit_requests: None,
+            rate_limit_window_secs: None,
+            suspicious_pattern: None,
+            signature: Vec::new(),
+            signer_public_key: None,
+        };
+
+        manager.register_peer("test-node".to_string(), MeshNodeRole::GLOBAL);
+        manager.handle_incoming_threat(indicator, "test-node", MeshNodeRole::GLOBAL, None);
+
+        let found = manager.lookup_local_indicator(TEST_IP, ThreatType::IpBlock);
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().indicator_value, TEST_IP);
+
+        // Also verify the manual method still works.
+        let advisory =
+            TestAdvisorySource::new().with_record(TEST_KEY, test_advisory_record(TEST_KEY));
+        let canonical = TestCanonicalReader::new(CanonicalFreshness::Live).with_trust(
+            TEST_IP,
+            CanonicalTrustDecision::Trusted {
+                freshness: CanonicalFreshness::Live,
+            },
+        );
+        let decision = manager.evaluate_indicator_actionability(
+            &canonical,
+            &advisory,
+            TEST_IP,
+            ThreatType::IpBlock,
+        );
+        assert!(matches!(decision, ThreatIntelPolicyDecision::Actionable(_)));
+    }
+
+    // Test 17: No DHT/Raft/networking required — pure static sources for configured path.
+    #[test]
+    fn iteration20_configured_evaluation_requires_no_dht_raft_or_networking() {
+        let manager = create_test_manager();
+        let advisory =
+            TestAdvisorySource::new().with_record(TEST_KEY, test_advisory_record(TEST_KEY));
+        let canonical = TestCanonicalReader::new(CanonicalFreshness::Live).with_trust(
+            TEST_IP,
+            CanonicalTrustDecision::Trusted {
+                freshness: CanonicalFreshness::Live,
+            },
+        );
+
+        manager.set_policy_context(Some(ThreatIntelPolicyContext::new(
+            Arc::new(canonical),
+            Arc::new(advisory),
+        )));
+
+        let decision = manager
+            .evaluate_indicator_actionability_configured(TEST_IP, ThreatType::IpBlock)
+            .unwrap();
+        assert!(matches!(decision, ThreatIntelPolicyDecision::Actionable(_)));
     }
 }

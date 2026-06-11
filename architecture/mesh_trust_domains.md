@@ -399,7 +399,7 @@ The key-policy canonical helper now explicitly tests `CanonicalUnavailable` defe
 
 The canonical trust-domain seam is now staged through peer auth, DHT key policy, and direct DHT Push/Announce ingress. Canonical trust answers flow through `CanonicalTrustReader`; DHT policy and ingress consume the trait, not concrete Raft internals. Disabled ingress policy context preserves legacy behavior. Configured Push/Announce ingress rejects canonical-required records on unauthorized, revoked, unavailable, or unknown canonical state. Advisory-only records remain advisory. Sync/replay/local/quorum/Raft apply paths were intentionally not broadened into this gate.
 
-This track stops here. The next architectural step should be `AdvisoryRecordSource` before migrating service consumers.
+This track stops here. The advisory source seam is complete; Iteration 20 completed the injection seam for the threat-intel consumer.
 
 ### Iteration 16 AdvisoryRecordSource Seam
 
@@ -421,16 +421,29 @@ Policy-composed behavior requires both advisory observation and canonical trust 
 
 Tests cover: actionable when both present and trusted, advisory-only not actionable, advisory missing not actionable, canonical not trusted not actionable, canonical unavailable deferred, legacy path still works, comparison verifying advisory-only never actionable, and no DHT/Raft/networking required.
 
+### Iteration 20 Threat Intel Policy Injection
+
+`ThreatIntelligenceManager` now carries an optional `ThreatIntelPolicyContext` containing `Arc<dyn CanonicalTrustReader>` and `Arc<dyn AdvisoryRecordSource>`. Default `None` preserves legacy behavior. A configured policy-composed lookup/evaluation path can now use the injected seams without deep construction or globals.
+
+New methods:
+- `set_policy_context(Option<ThreatIntelPolicyContext>)` — injects or clears the context.
+- `evaluate_indicator_actionability_configured(indicator_value, threat_type)` — uses the injected context; returns `None` if no context is set.
+- `lookup_threat_indicator_policy_composed(indicator_value, threat_type)` — policy-composed sibling to `lookup_threat_indicator_in_dht`. Falls back to legacy raw DHT lookup when no context is configured. When configured, gates the DHT result on the policy decision: `Actionable` returns the indicator, all other decisions return `None`.
+
+The old raw lookup paths (`lookup_local_indicator`, `lookup_local_indicator_by_ip`, `lookup_threat_indicator_in_dht`) remain available for comparison and fallback. The manual `evaluate_indicator_actionability(canonical, advisory, ...)` method also remains available.
+
+No proxy, YARA/WASM, routing, or broader service consumers were migrated. Exactly one policy-composed read path was added as a sibling method.
+
+Tests cover: default has no context, set context enables configured evaluation, actionable only when both advisory present and canonical trusted, advisory-only/advisory missing/canonical not trusted/canonical unavailable all not actionable or deferred, policy-composed lookup returns None for non-actionable, legacy path unchanged, no DHT/Raft/networking required.
+
 ## Follow-Up Recommendation
 
 After this pass, review the selected consumer under real code paths. If the injection seam is clean and tests are stable, migrate one additional threat-intel read path. Do not move proxy, YARA/WASM, or routing policy until at least one threat-intel consumer has run through the composed policy path cleanly.
 
 The next planned architecture track should be:
-1. Complete the injection seam for the selected consumer (thread `CanonicalTrustReader` + `AdvisoryRecordSource` into `ThreatIntelligenceManager` via constructor or config).
-2. Migrate one additional threat-intel read path (e.g., `check_threat` in the WASM plugin callback, or `lookup_threat_indicator_in_dht`).
-3. Only after two consumers are stable should broader service consumers (`proxy.rs`, YARA/WASM) migrate to consume policy outputs.
-
-Do not expand the ingress gate to additional remote paths until the Push/Announce path is stable and the context carrier is clearly owned by a higher-level mesh service or data-plane composition object.
+1. Use the injected context to migrate one additional threat-intel read path (e.g., `check_threat` in the WASM plugin callback, or another consumer that currently takes raw DHT lookups).
+2. Only after two threat-intel paths are stable should broader service consumers (`proxy.rs`, YARA/WASM) migrate to consume policy outputs.
+3. Do not expand the ingress gate to additional remote paths until the Push/Announce path is stable and the context carrier is clearly owned by a higher-level mesh service or data-plane composition object.
 
 ---
 

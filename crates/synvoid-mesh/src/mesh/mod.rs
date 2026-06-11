@@ -139,8 +139,8 @@ pub use security_challenge::{
 };
 pub use session::{Session, SessionConfig, SessionError, SessionManager};
 pub use threat_intel::{
-    ThreatIndicatorEntry, ThreatIntelligenceConfig, ThreatIntelligenceManager,
-    ThreatIntelligenceStats,
+    ThreatIndicatorEntry, ThreatIntelPolicyContext, ThreatIntelligenceConfig,
+    ThreatIntelligenceManager, ThreatIntelligenceStats,
 };
 pub use tier_key_encryption::{
     deserialize_encrypted_privileged, deserialize_encrypted_tier_key,
