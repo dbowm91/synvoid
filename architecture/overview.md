@@ -20,23 +20,22 @@ SynVoid is a high-performance, multi-process Web Application Firewall (WAF) and 
 
 ```
 synvoid/
-├── src/                    # Main application source (~70 modules)
-├── crates/
+├── src/                    # Main application source
+├── crates/                 # Workspace crates (37+ crates)
 │   ├── synvoid-config/     # Configuration types and defaults
-│   └── synvoid-utils/      # Shared utilities (buffer pool, serialization)
-├── admin-ui/               # Admin dashboard frontend
-├── pqc/                    # Post-quantum cryptography crate
+│   ├── synvoid-utils/      # Shared utilities (buffer pool, serialization)
+│   ├── synvoid-mesh/       # Mesh networking (DHT, Raft, PQ crypto)
+│   ├── synvoid-http-client/# HTTP upstream client
+│   ├── synvoid-http3/      # HTTP/3 QUIC server
+│   ├── synvoid-dns/        # DNS server and resolver
+│   ├── synvoid-tunnel/     # Tunnel routing (QUIC, WireGuard)
+│   └── ...                 # Additional crates: icmp-filter, honeypot, plugin-runtime, etc.
 ├── skills/                 # Detailed subsystem documentation
-├── architecture/           # This documentation set
-├── docs/                   # Architecture decision records (ADRs)
+├── architecture/           # Architecture documentation
+├── docs/                   # User guides, ADRs, and reference documentation
 ├── plans/                  # Implementation tracking
 ├── proto/                  # Protobuf definitions
 ├── config/                 # Default configuration files
-├── rules/                  # WAF rule definitions
-├── scripts/                # Build and deployment scripts
-├── tests/                  # Integration tests
-├── benches/                # Benchmarks
-├── fuzz/                   # Fuzzing harnesses
 └── Cargo.toml              # Workspace manifest
 ```
 

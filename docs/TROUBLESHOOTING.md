@@ -19,8 +19,7 @@ Common issues and solutions for SynVoid.
   - [Site Not Loading](#site-not-loading)
 - [Logging Issues](#logging-issues)
   - [Logs Not Appearing](#logs-not-appearing)
-- [Mesh Network Issues](#mesh-network-issues)
-- [Worker/Supervisor Issues](#workermaster-issues)
+- [Mesh Network Issues](#meshwaf-clustering-issues)
 
 ## Connection Issues
 

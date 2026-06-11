@@ -82,7 +82,7 @@ cargo check --no-default-features --features mesh,dns
 | `src/mesh/raft/state_machine.rs` | `crates/synvoid-mesh/src/mesh/raft/state_machine.rs` |
 | ConfigManager location | `crates/synvoid-config/src/lib.rs:113` (not `main_config.rs`) |
 | `src/overseer/`, `src/master/`, `src/startup/master.rs` | `src/supervisor/` (consolidated 2026) |
-| `TunnelBackend` at `src/tunnel/upstream.rs` | `src/tunnel/router.rs:200` (removed from upstream.rs) |
+| `TunnelBackend` at `src/tunnel/upstream.rs` | `crates/synvoid-tunnel/src/router.rs:199` (moved to dedicated crate; re-exported via `src/tunnel/mod.rs`) |
 | `architecture/tunnel.md` | Does not exist — tunnels documented in `networking_deep_dive.md` |
 | `architecture/admin.md` | Does not exist — use `admin_deep_dive.md` |
 | `src/worker/mod.rs` (CPU offload) | `src/worker/cpu_task/` (split 2026-06) — see `mod.rs`, `state.rs`, `metrics.rs`, `payload.rs`, `dispatch.rs`, `connection.rs`, `yara.rs` |
@@ -118,8 +118,6 @@ Agent guidance is **modularized** to reduce context pollution. Each module has i
 | Auth | [`src/auth/AGENTS.override.md`](src/auth/AGENTS.override.md) | Authentication patterns |
 | Platform/Systems | [`src/platform/AGENTS.override.md`](src/platform/AGENTS.override.md) | Platform abstraction, IPC, sandboxing |
 | Worker | [`src/worker/AGENTS.override.md`](src/worker/AGENTS.override.md) | UnifiedServerWorker, CpuWorker, CPU offload |
-| Threat Intel Policy | [`src/mesh/threat_intel_policy.rs`](crates/synvoid-mesh/src/mesh/threat_intel_policy.rs) | Policy composition for threat intel |
-| Deferred Items | [`skills/deferred_items_knowledge.md`](skills/deferred_items_knowledge.md) | Context on incremental deferred item implementation |
 | Skills | [`skills/AGENTS.override.md`](skills/AGENTS.override.md) | Skill file documentation |
 
 ## Multi-Process Architecture
@@ -190,14 +188,10 @@ These items require significant architectural work and are correctly deferred:
 
 | ID | Issue | Reason |
 |----|-------|--------|
-| MESH-14 | Source Node ID Binding Validation | Signer-to-node binding now enforced via `verify_envelope_signer_binding()` for all DHT message types on global/strict paths. TLS cert chain validation for global nodes deferred — requires PKI hierarchy, trust model changes. |
 | HTTP2-POOL | ErasedHttpClient HTTP/2 pooling | `Http2PooledConnection` is empty stub - hyper-util API requires background task management per connection |
-| MR-4 | DHT ingress auth hardening | ✅ Resolved: All DHT message types (`DhtAntiEntropyRequest`/response, `DhtRecordPush`, `DhtSyncRequest`/`DhtSyncResponse`) now verify envelope signatures and enforce signer-to-node binding via `verify_envelope_signer_binding()`; `SignedRaftAttestation` v2 binds to value digest; `DnsZone` requires Raft/quorum (no direct DHT writes); `store_record` is `pub(crate)` with `store_local_record` for local writes. Breaking protocol changes completed. Canonical ingress gate (Iterations 11-15) also complete. |
 | LEGACY-STORE | `RECORD_STORE_GLOBAL` removal | `RECORD_STORE_GLOBAL` is now legacy/fallback only — all production paths use explicit injection via `DataPlaneServices`. Removal requires threading injection through remaining callers. |
 
 Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.override.md`](skills/AGENTS.override.md) for the full index.
-
-The consolidated implementation plan is at [`plans/plan.md`](plans/plan.md).
 
 ## Codebase Quick Reference
 
@@ -227,7 +221,7 @@ The consolidated implementation plan is at [`plans/plan.md`](plans/plan.md).
 - **AuthorityFreshnessConfig**: `crates/synvoid-mesh/src/mesh/config.rs` - defines stale-state behavior for authority records.
 - **DHT/Raft Boundary Integration**: ✅ **Complete** — All phases implemented. DHT ingress auth hardening (MR-4) resolved: envelope signatures verified on all DHT message types including `DhtSyncRequest`/`DhtSyncResponse`, `DhtAntiEntropyRequest`/response, and `DhtRecordPush`; signer-to-node binding enforced via `verify_envelope_signer_binding()`; `SignedRaftAttestation` v2 binds to value digest; `DnsZone` requires Raft/quorum (no direct DHT writes); `validate_peer_role()` accepts Raft attestation for Edge nodes; `store_record` is `pub(crate)` with `store_local_record` for local writes; deprecated `handle_sync_response()` removed — unsigned compat path inline uses `store_record_from_ingress()` with `envelope_signature_valid=false`. Canonical trust-domain seam (Iterations 7-15) complete: `CanonicalTrustReader` wired through peer auth, DHT key policy, and direct Push/Announce ingress; ingress gate active for configured paths. Advisory seam (`AdvisoryRecordSource` in `crates/synvoid-mesh/src/mesh/dht/advisory_source.rs`) introduced in Iteration 16 — read-only advisory DHT observations with record-store adapter; Iteration 17 hardened `RecordStoreAdvisorySource` with real-store tests (no service migration). Iteration 18: `evaluate_threat_intel_policy()` composes `AdvisoryRecordSource` + `CanonicalTrustReader` into explicit threat-intel policy decisions. Iteration 19: first consumer migration via `ThreatIntelligenceManager::evaluate_indicator_actionability` — method takes trait objects as parameters, tests cover all policy-composed and legacy paths. Injection seam completed (Iteration 20). Iteration 21: second consumer migration complete — `lookup_local_indicator_policy_composed` and `lookup_local_indicator_by_ip_policy_composed` added with full test coverage. Two threat-intel read paths now use the composed policy seam. Next step: reassess before moving into proxy, YARA/WASM, routing, or enforcement hot paths.
 - **DNS Cookie Server**: `src/dns/cookie.rs` - fully wired via `validate_cookie()` in query.rs:645-662
-- **TunnelRouter**: `src/tunnel/router.rs:200` - active routing uses `resolve_tunnel_backend()` (TunnelBackend struct removed)
+- **TunnelRouter**: `crates/synvoid-tunnel/src/router.rs:149` - active routing uses `resolve_tunnel_backend()` (TunnelBackend enum at line 199)
 - **HickoryRecursor DNSSEC**: `src/dns/resolver.rs:693-702` - uses `ValidateWithStaticKey` when `enable_dnssec=true` (✅ FIXED)
 - **HTTP/3 Body Collection**: `crates/synvoid-http3/src/server.rs` - ad-hoc implementation, not using shared_handler
 - **BufferPool**: 4 tiers (small/medium/large/jumbo)
@@ -266,6 +260,25 @@ The consolidated implementation plan is at [`plans/plan.md`](plans/plan.md).
 - **Email alerting is a stub**: `send_email_internal()` at `src/admin/alerting/mod.rs:349-373` logs message then returns `Ok(())` without sending
 - **Audit log redundant permissions**: `src/admin/audit.rs:131-139` re-applies permissions on every write — already set in `with_audit_dir()`
 
+## Architecture Documents
+
+The `architecture/` directory contains detailed design documents. Key canonical references:
+
+| Topic | Primary Doc | Deep Dive |
+|-------|-------------|-----------|
+| Mesh networking | `mesh.md` | `mesh_trust_domains.md` |
+| DNS server/resolver | `dns.md` | `dns_deep_dive.md` |
+| HTTP server | `http_server.md` | — |
+| HTTP client/pool | `http_shared.md` | — |
+| WAF engine | `waf.md` | `waf_deep_dive.md` |
+| Proxy/routing | `proxy.md` | `proxy_deep_dive.md` |
+| Config management | `config.md` | `config_deep_dive.md` |
+| Plugin/WASM runtime | `plugin_wasm.md` | — |
+| Serverless | `serverless.md` | — |
+| Spin runtime | `spin.md` | — |
+| Admin/auth | `admin_deep_dive.md` | — |
+| Platform/sandboxing | `platform.md` | `platform_deep_dive.md` |
+
 ## Skills Directory
 
 The `skills/` directory contains detailed documentation for various subsystems:
@@ -277,24 +290,18 @@ The `skills/` directory contains detailed documentation for various subsystems:
 | `behavioral_intel.md` | Behavioral intelligence |
 | `buffer_pool.md` | Sharded mutex buffer pool (replaces TreiberStack with ABA-safe implementation) |
 | `crypto_dependencies.md` | Cryptographic dependency analysis |
-| `deferred_items_knowledge.md` | Context on incremental deferred item implementation |
 | `dht_persistence.md` | DHT neighborhood persistence |
 | `dht_scoping.md` | DHT site isolation and scoping patterns |
 | `dns_dnssec.md` | DNS and DNSSEC patterns |
 | `ebpf_blocking.md` | eBPF-based traffic blocking |
 | `erased_http_client.md` | ErasedHttpClient streaming pool patterns |
-| `extension_runtime.md` | ExtensionRuntime trait and registry for worker lifecycle management |
-| `fastcgi_streaming.md` | FastCGI streaming client patterns |
 | `h3_proxy.md` | HTTP/3 QUIC proxy patterns |
 | `hickory_migration.md` | Hickory DNS resolver migration |
-| `honeypot.md` | Honeypot detection and response |
 | `httpserver.md` | HTTP server architecture |
 | `hybrid_post_quantum.md` | Post-quantum signature implementation |
 | `implementation_patterns.md` | Common implementation patterns (semaphore, debounce, atomic writes) |
 | `ipc_hardening.md` | IPC signing, replay protection, and authentication patterns |
 | `org_key_trust_chain.md` | Organization key trust chain |
-| `performance_patterns.md` | Performance optimization patterns |
-| `quorum_manager_fix.md` | Quorum Manager race condition fix (historical) |
 | `raft_consensus.md` | Raft consensus integration for global control plane |
 | `rule_feed_persistence.md` | Rule feed persistence patterns |
 | `sandboxing.md` | OS sandboxing (Windows/macOS/Linux/BSD) |
@@ -308,5 +315,4 @@ The `skills/` directory contains detailed documentation for various subsystems:
 | `threat_feed_production.md` | Production and signing of threat intel feeds |
 | `topology_visualizer.md` | Topology visualizer API |
 | `waf_bot_detection.md` | WAF bot detection patterns |
-| `wasm_components.md` | WASM component model patterns |
 | `windows_service.md` | Windows service integration |
