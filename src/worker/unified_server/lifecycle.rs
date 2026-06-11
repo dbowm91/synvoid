@@ -13,6 +13,11 @@ use crate::worker::common::collect_current_process_usage;
 use synvoid_ipc::{current_timestamp, Message};
 use synvoid_static_files::client::get_global_async_cpu_offload_stats;
 
+#[cfg(feature = "mesh")]
+use synvoid_mesh::canonical::CanonicalTrustReader;
+#[cfg(feature = "mesh")]
+use synvoid_mesh::dht::advisory_source::{AdvisoryRecordSource, RecordStoreAdvisorySource};
+
 pub fn spawn_heartbeat_task(state: UnifiedServerWorkerState) -> JoinHandle<()> {
     tokio::spawn(async move {
         let heartbeat_interval = Duration::from_secs(5);
@@ -276,18 +281,33 @@ pub fn spawn_ipc_loop(
                         &snapshot,
                     ) {
                         Ok(canonical_snapshot) => {
+                            let global_nodes = canonical_snapshot.authorized_global_nodes.len();
+                            let org_keys = canonical_snapshot.org_key_entries.len();
+                            let revoked = canonical_snapshot.revoked_node_ids.len();
+                            let intel = canonical_snapshot.threat_intel_ids.len();
+
                             // Store the snapshot for use by the composition root.
-                            // The threat-intel policy context is rebuilt on next worker
-                            // restart. Updating it live requires rebuilding the advisory
-                            // source, which is deferred until a dedicated IPC path is
-                            // added for post-bootstrap policy context refreshes.
-                            *state.canonical_snapshot.write().await = Some(canonical_snapshot);
+                            *state.canonical_snapshot.write().await =
+                                Some(canonical_snapshot.clone());
+
+                            // Live-refresh the threat-intel policy context so that
+                            // subsequent request evaluations use the updated canonical
+                            // trust state without requiring a worker restart.
+                            let canonical_reader: Arc<dyn CanonicalTrustReader> =
+                                Arc::new(canonical_snapshot);
+                            let advisory: Option<Arc<dyn AdvisoryRecordSource>> =
+                                state.data_plane.record_store.as_ref().map(|store| {
+                                    Arc::new(RecordStoreAdvisorySource::new(store.clone()))
+                                        as Arc<dyn AdvisoryRecordSource>
+                                });
+                            state.data_plane.update_threat_intel_policy_context(
+                                Some(canonical_reader),
+                                advisory,
+                            );
+
                             tracing::info!(
-                                "Canonical trust snapshot applied: {} global nodes, {} org keys, {} revoked, {} intel",
-                                state.canonical_snapshot.read().await.as_ref().map(|s| s.authorized_global_nodes.len()).unwrap_or(0),
-                                state.canonical_snapshot.read().await.as_ref().map(|s| s.org_key_entries.len()).unwrap_or(0),
-                                state.canonical_snapshot.read().await.as_ref().map(|s| s.revoked_node_ids.len()).unwrap_or(0),
-                                state.canonical_snapshot.read().await.as_ref().map(|s| s.threat_intel_ids.len()).unwrap_or(0),
+                                "Canonical trust snapshot applied and policy context refreshed: {} global nodes, {} org keys, {} revoked, {} intel",
+                                global_nodes, org_keys, revoked, intel,
                             );
                         }
                         Err(e) => {

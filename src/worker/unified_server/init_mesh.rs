@@ -31,7 +31,7 @@ use synvoid_config::ConfigManager;
 ///
 /// Workers receive a `CanonicalTrustSnapshot` from the Supervisor via IPC.
 /// The snapshot itself implements `CanonicalTrustReader` and can be used
-/// directly to build the threat-intel policy context. The missing ownership
+/// directly to build the threat-intel policy context. The ownership
 /// boundary is documented in `mod.rs`.
 pub struct MeshInit {
     #[cfg(feature = "mesh")]
@@ -74,10 +74,10 @@ pub async fn init_mesh_and_threat_intel(
             // Workers act as dumb data-planes and receive intelligence via IPC.
             //
             // Iteration 28: Canonical trust state (Raft consensus,
-            // EdgeReplicaManager) is owned by the Supervisor. Workers have
-            // no access to a SnapshotCanonicalTrustReader at this point.
-            // The snapshot is passed in via MeshInit::canonical_snapshot
-            // (see mod.rs Phase 11).
+            // EdgeReplicaManager) is owned by the Supervisor. During init,
+            // workers have no access to a SnapshotCanonicalTrustReader —
+            // the snapshot arrives later via IPC and is passed in via
+            // MeshInit::canonical_snapshot (see mod.rs Phase 11).
             if true {
                 tracing::info!("Mesh control plane is disabled in worker process");
                 let dummy_threat = build_dummy_threat_intel(config_path).await;

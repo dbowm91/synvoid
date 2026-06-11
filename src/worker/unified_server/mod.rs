@@ -208,6 +208,8 @@ pub async fn run_unified_server_worker(
         .get_waf()
         .set_request_services(data_plane.request_services.clone());
 
+    let data_plane = std::sync::Arc::new(data_plane);
+
     let state = UnifiedServerWorkerState {
         worker_id,
         metrics: metrics.clone(),
@@ -224,6 +226,7 @@ pub async fn run_unified_server_worker(
         unified_server: unified_server.clone(),
         task_handles: Arc::new(TokioMutex::new(Vec::new())),
         request_services: data_plane.request_services.clone(),
+        data_plane,
         #[cfg(feature = "mesh")]
         canonical_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
     };

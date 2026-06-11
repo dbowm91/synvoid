@@ -445,7 +445,7 @@ pub struct ServerlessHandleResponse {
 ///   CpuTaskCancel, CpuTaskResponse, CpuTaskError
 /// - **Threat Intel**: ThreatIndicatorAnnounce, ThreatIndicatorFromMesh,
 ///   ThreatSyncRequest, ThreatSyncResponse, BlocklistRequest, BlocklistResponse
-/// - **Blocklist & Rules**: BlocklistUpdate, CanonicalTrustSnapshotUpdate,
+/// - **Blocklist & Rules**: BlocklistUpdate,
 ///   RulePatternsUpdate, BlocklistWriteComplete
 /// - **Legacy Static Content**: MinifyRequest, MinifyResponse, MinifyError,
 ///   PoisonImageRequest, PoisonImageResponse, PoisonImageError,
@@ -478,6 +478,8 @@ pub struct ServerlessHandleResponse {
 /// - **Worker Restart**: RestartWorkerRequest, RestartWorkerResponse
 /// - **Plugin**: PluginStateSync, PluginExecuteRequest, PluginExecuteResponse,
 ///   ServerlessHandleRequest, ServerlessHandleResponse
+/// - **Mesh Control**: MeshControlRequest, MeshControlResponse,
+///   MeshUpdateNotification, CanonicalTrustSnapshotUpdate
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "rkyv",
@@ -1918,8 +1920,9 @@ impl Message {
 
             Message::BlocklistUpdate { .. }
             | Message::RulePatternsUpdate { .. }
-            | Message::BlocklistWriteComplete { .. }
-            | Message::CanonicalTrustSnapshotUpdate { .. } => MessageCategory::BlocklistRules,
+            | Message::BlocklistWriteComplete { .. } => MessageCategory::BlocklistRules,
+
+            Message::CanonicalTrustSnapshotUpdate { .. } => MessageCategory::MeshControl,
 
             Message::MinifyRequest { .. }
             | Message::MinifyResponse { .. }
