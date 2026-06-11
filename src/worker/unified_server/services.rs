@@ -477,8 +477,8 @@ mod tests {
     /// remains `None` — no synthetic canonical trust is introduced.
     ///
     /// Canonical trust state (Raft consensus, EdgeReplicaManager) is
-    /// owned by the Supervisor. Workers are data-planes without access
-    /// to a root-owned SnapshotCanonicalTrustReader.
+    /// owned by the Supervisor. Workers receive a bounded
+    /// CanonicalTrustSnapshot via IPC after bootstrap.
     #[cfg(feature = "mesh")]
     #[test]
     fn worker_bootstrap_no_canonical_returns_none() {

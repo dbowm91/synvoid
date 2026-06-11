@@ -73,11 +73,11 @@ pub async fn init_mesh_and_threat_intel(
             // Phase 3: Mesh Control Plane is relegated to the Supervisor process.
             // Workers act as dumb data-planes and receive intelligence via IPC.
             //
-            // Iteration 28: Canonical trust state (Raft consensus,
+            // Iteration 28-30: Canonical trust state (Raft consensus,
             // EdgeReplicaManager) is owned by the Supervisor. During init,
-            // workers have no access to a SnapshotCanonicalTrustReader —
-            // the snapshot arrives later via IPC and is passed in via
-            // MeshInit::canonical_snapshot (see mod.rs Phase 11).
+            // workers have no access to a SnapshotCanonicalTrustReader or
+            // EdgeReplicaManager — the snapshot arrives later via IPC
+            // (CanonicalTrustSnapshotUpdate) and is handled in lifecycle.rs.
             if true {
                 tracing::info!("Mesh control plane is disabled in worker process");
                 let dummy_threat = build_dummy_threat_intel(config_path).await;
