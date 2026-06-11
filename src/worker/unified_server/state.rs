@@ -304,6 +304,21 @@ pub struct UnifiedServerWorkerState {
     pub unified_server: Arc<UnifiedServer>,
     pub task_handles: Arc<TokioMutex<Vec<JoinHandle<()>>>>,
     pub request_services: Arc<RequestServices>,
+    /// Latest canonical trust snapshot received from Supervisor.
+    #[cfg(feature = "mesh")]
+    pub canonical_snapshot: std::sync::Arc<
+        tokio::sync::RwLock<Option<synvoid_mesh::canonical::CanonicalTrustSnapshot>>,
+    >,
+}
+
+impl UnifiedServerWorkerState {
+    /// Get the latest canonical trust snapshot, if available.
+    #[cfg(feature = "mesh")]
+    pub async fn get_canonical_snapshot(
+        &self,
+    ) -> Option<synvoid_mesh::canonical::CanonicalTrustSnapshot> {
+        self.canonical_snapshot.read().await.clone()
+    }
 }
 
 pub async fn wait_for_drain(

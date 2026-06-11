@@ -1,6 +1,6 @@
-# Mesh Trust Domains — Design Note (Iteration 27)
+# Mesh Trust Domains — Design Note (Iteration 28)
 
-**Status**: Design-only pass. No broad code movement.  
+**Status**: Iteration 28 — Supervisor canonical snapshot export.  
 **Date**: 2026-06-11  
 **Scope**: `crates/synvoid-mesh` (re-exported via `src/mesh`).  
 **Goal**: Define trust-domain boundaries and invariants before any internal module split.  
@@ -461,7 +461,7 @@ The shared `is_policy_actionable` helper remains in place and both policy-compos
 
 ### Iteration 25 Data-Plane Policy Context Cleanup
 
-`DataPlaneServices` now carries an optional `ThreatIntelPolicyContext` and exposes a low-risk `apply_threat_intel_policy_context()` helper for `ThreatIntelligenceManager`. The default remains `None`, preserving legacy behavior. This pass establishes ownership and wiring for policy context only; it does not migrate proxy, YARA/WASM, routing, WAF enforcement, DHT sync, ingestion, or Raft behavior. A root-side helper now constructs the context from explicit canonical/advisory handles, but the production worker bootstrap still passes `None` because a real root-owned canonical reader is not available there yet.
+`DataPlaneServices` now carries an optional `ThreatIntelPolicyContext` and exposes a low-risk `apply_threat_intel_policy_context()` helper for `ThreatIntelligenceManager`. The default remains `None`, preserving legacy behavior. This pass establishes ownership and wiring for policy context only; it does not migrate proxy, YARA/WASM, routing, WAF enforcement, DHT sync, ingestion, or Raft behavior. A root-side helper now constructs the context from explicit canonical/advisory handles. The Supervisor now exports a bounded `CanonicalTrustSnapshot` (via `EdgeReplicaManager::canonical_trust_snapshot()`) that implements `CanonicalTrustReader`, and sends it to workers via `CanonicalTrustSnapshotUpdate` IPC. Workers receive and store the snapshot; production bootstrap threads the snapshot reader into `build_threat_intel_policy_context` when available.
 
 ### Iteration 26 Root-Side Context Construction
 
@@ -469,13 +469,37 @@ The shared `is_policy_actionable` helper remains in place and both policy-compos
 
 ### Iteration 27 Canonical Reader Ownership Assessment
 
-The data-plane composition root is ready to carry a populated `ThreatIntelPolicyContext`, and advisory construction is available from the explicit record-store handle. A real root-owned canonical reader is not yet exported to worker bootstrap, so production context remains `None`.
+The data-plane composition root is ready to carry a populated `ThreatIntelPolicyContext`, and advisory construction is available from the explicit record-store handle. The Supervisor now exports a bounded `CanonicalTrustSnapshot` via IPC, completing the canonical reader export path (Iteration 28).
 
-Canonical trust state (Raft consensus, `EdgeReplicaManager`) is owned by the Supervisor process. Workers are data-planes explicitly disconnected from the mesh control plane (`init_mesh.rs` returns `None` for `transport_manager` in worker mode). `SnapshotCanonicalTrustReader` is the intended production implementation wrapping `EdgeReplicaManager`, but it is never instantiated outside `#[cfg(test)]` modules.
+Canonical trust state (Raft consensus, `EdgeReplicaManager`) is owned by the Supervisor process. Workers are data-planes explicitly disconnected from the mesh control plane (`init_mesh.rs` returns `None` for `transport_manager` in worker mode). `SnapshotCanonicalTrustReader` is the intended production implementation wrapping `EdgeReplicaManager`, and is now instantiated for worker use via the Supervisor's `CanonicalTrustSnapshot` IPC export (Iteration 28).
 
-The missing ownership boundary is documented in `init_mesh.rs`, `mod.rs`, and `services.rs`. The next step is to expose canonical snapshots from the Supervisor to workers without introducing globals or test-only static readers.
+The ownership boundary was documented in `init_mesh.rs`, `mod.rs`, and `services.rs`. Iteration 28 resolved this by exposing canonical snapshots from the Supervisor to workers via IPC (`CanonicalTrustSnapshotUpdate`), without introducing globals or test-only static readers.
 
 No production code synthesizes canonical trust. No proxy, YARA/WASM, routing, WAF, DHT sync, ingestion, or Raft consumers were migrated.
+
+### Iteration 28 Supervisor Canonical Snapshot Export
+
+Supervisor/control-plane code now exports a bounded `CanonicalTrustSnapshot` for worker data-plane use.
+
+**Export path:**
+- `EdgeReplicaManager::canonical_trust_snapshot()` reads from the SQLite replica and produces a `CanonicalTrustSnapshot`
+- The Supervisor sends `CanonicalTrustSnapshotUpdate` IPC message to workers when they become ready
+- Workers receive and store the snapshot; `CanonicalTrustSnapshot` itself implements `CanonicalTrustReader`
+
+**Worker consumption:**
+- Worker stores the snapshot in `UnifiedServerWorkerState.canonical_snapshot`
+- When a snapshot is available at bootstrap, it's wrapped in `Arc` and used as the canonical reader for `DataPlaneServicesBuilder::build_threat_intel_policy_context()`
+- `DataPlaneServices::update_threat_intel_policy_context()` enables live policy context updates when snapshots arrive via IPC
+
+**Invariants preserved:**
+- Workers do not own Raft or EdgeReplicaManager
+- Workers cannot mutate canonical state
+- Snapshot is read-only and bounded
+- No private key material or signer secrets in the snapshot
+- `ThreatIntelPolicyContext` remains optional
+- No proxy/YARA/WASM/routing/WAF consumers were migrated
+
+**Next step:** Freshness and fail-open/fail-closed policy for using populated canonical snapshots in data-plane decisions.
 
 ## Follow-Up Recommendation
 

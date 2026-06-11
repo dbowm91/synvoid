@@ -284,7 +284,8 @@ impl SupervisorProcess {
         // a slow worker and a CLI command.
         match ipc.recv_with_timeout::<Message>(1000).await {
             Ok(Some(msg)) => {
-                crate::supervisor::commands::handle_worker_connection_single(ipc, pm, msg).await;
+                crate::supervisor::commands::handle_worker_connection_single(ipc, pm, state, msg)
+                    .await;
             }
             _ => {
                 // If not a worker message, try as a supervisor command.

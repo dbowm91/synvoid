@@ -5,14 +5,13 @@
 // `MeshInit` of optional resources so the orchestrator can wire them
 // into the rest of the worker.
 //
-// ## Canonical Reader Ownership (Iteration 27)
+// ## Canonical Reader Ownership (Iteration 28)
 //
-// Workers are explicitly disconnected from the mesh control plane
-// (Supervisor owns Raft consensus and EdgeReplicaManager). There is
-// no root-owned `CanonicalTrustReader` available in worker bootstrap.
-// `MeshInit` does not carry a canonical reader field; the missing
-// ownership boundary is documented in `mod.rs` where the policy
-// context is constructed.
+// Canonical trust state (Raft consensus, EdgeReplicaManager) is
+// owned by the Supervisor process. Workers receive a bounded
+// `CanonicalTrustSnapshot` via IPC. The snapshot itself implements
+// `CanonicalTrustReader` and is carried in `MeshInit` so the
+// composition root can use it to build the policy context.
 
 use std::sync::Arc;
 
@@ -28,14 +27,12 @@ use synvoid_config::ConfigManager;
 
 /// Bundled resources produced by the mesh initialization phase.
 ///
-/// # Canonical Reader Ownership (Iteration 27)
+/// # Canonical Reader Ownership (Iteration 28)
 ///
-/// This struct does not carry a `CanonicalTrustReader`. Workers are
-/// data-planes; canonical state lives in the Supervisor process (Raft
-/// consensus, `EdgeReplicaManager`). A `SnapshotCanonicalTrustReader`
-/// wrapping that state is the intended production implementation, but
-/// it is not yet constructed or exported to worker bootstrap. The
-/// missing boundary is documented in `mod.rs`.
+/// Workers receive a `CanonicalTrustSnapshot` from the Supervisor via IPC.
+/// The snapshot itself implements `CanonicalTrustReader` and can be used
+/// directly to build the threat-intel policy context. The missing ownership
+/// boundary is documented in `mod.rs`.
 pub struct MeshInit {
     #[cfg(feature = "mesh")]
     pub transport_manager: Option<Arc<MeshTransportManager>>,
@@ -43,6 +40,9 @@ pub struct MeshInit {
     pub threat_intel: Option<Arc<ThreatIntelligenceManager>>,
     #[cfg(feature = "mesh")]
     pub mesh_signer: Option<Arc<crate::mesh::protocol::MeshMessageSigner>>,
+    /// Canonical trust snapshot from Supervisor, if available.
+    #[cfg(feature = "mesh")]
+    pub canonical_snapshot: Option<synvoid_mesh::canonical::CanonicalTrustSnapshot>,
 }
 
 /// Initialize the mesh + threat-intel subsystem. Returns
@@ -73,11 +73,11 @@ pub async fn init_mesh_and_threat_intel(
             // Phase 3: Mesh Control Plane is relegated to the Supervisor process.
             // Workers act as dumb data-planes and receive intelligence via IPC.
             //
-            // Iteration 27: Canonical trust state (Raft consensus,
+            // Iteration 28: Canonical trust state (Raft consensus,
             // EdgeReplicaManager) is owned by the Supervisor. Workers have
-            // no access to a SnapshotCanonicalTrustReader. The policy
-            // context remains None until a canonical reader handle is
-            // exported to worker bootstrap (see mod.rs Phase 11).
+            // no access to a SnapshotCanonicalTrustReader at this point.
+            // The snapshot is passed in via MeshInit::canonical_snapshot
+            // (see mod.rs Phase 11).
             if true {
                 tracing::info!("Mesh control plane is disabled in worker process");
                 let dummy_threat = build_dummy_threat_intel(config_path).await;
@@ -87,6 +87,7 @@ pub async fn init_mesh_and_threat_intel(
                     transport_manager: None,
                     threat_intel: Some(dummy_threat),
                     mesh_signer: None,
+                    canonical_snapshot: None,
                 };
             }
 
@@ -167,6 +168,7 @@ pub async fn init_mesh_and_threat_intel(
                     transport_manager: None,
                     threat_intel: None,
                     mesh_signer: None,
+                    canonical_snapshot: None,
                 };
             };
 
@@ -457,6 +459,7 @@ pub async fn init_mesh_and_threat_intel(
                 mesh_signer: Some(Arc::new(crate::mesh::protocol::MeshMessageSigner::new(
                     signer_key_clone,
                 ))),
+                canonical_snapshot: None,
             };
         }
 
@@ -469,6 +472,7 @@ pub async fn init_mesh_and_threat_intel(
             transport_manager: None,
             threat_intel: Some(dummy_threat),
             mesh_signer: None,
+            canonical_snapshot: None,
         }
     }
 

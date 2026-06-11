@@ -116,11 +116,10 @@ impl DataPlaneServicesBuilder {
 
     /// Build a threat-intel policy context only when both root-owned handles exist.
     ///
-    /// This helper is intentionally side-effect free. Production worker bootstrap
-    /// currently passes `None` for canonical trust (Iteration 27), so it returns
-    /// `None` there until a real root-owned canonical reader is available in this
-    /// path. Canonical trust state is owned by the Supervisor (Raft consensus,
-    /// EdgeReplicaManager); workers are data-planes without access to it.
+    /// This helper is intentionally side-effect free. When the Supervisor exports
+    /// a `CanonicalTrustSnapshot` via IPC, the composition root in `mod.rs` uses
+    /// this to build the context from the snapshot (which implements
+    /// `CanonicalTrustReader`) and the record-store-derived advisory source.
     #[cfg(feature = "mesh")]
     pub(crate) fn build_threat_intel_policy_context(
         canonical: Option<Arc<dyn synvoid_mesh::canonical::CanonicalTrustReader>>,
@@ -176,6 +175,23 @@ impl DataPlaneServices {
         if let Some(threat_intel) = &self.threat_intel {
             threat_intel.set_policy_context(self.threat_intel_policy.clone());
         }
+    }
+
+    /// Update the threat-intel policy context with a new canonical reader.
+    ///
+    /// This is called when a canonical trust snapshot arrives via IPC after
+    /// worker bootstrap. The snapshot itself implements `CanonicalTrustReader`,
+    /// so it can be used directly as the canonical component of the policy context.
+    pub fn update_threat_intel_policy_context(
+        &self,
+        canonical: Option<Arc<dyn synvoid_mesh::canonical::CanonicalTrustReader>>,
+        advisory: Option<Arc<dyn synvoid_mesh::dht::advisory_source::AdvisoryRecordSource>>,
+    ) -> Option<ThreatIntelPolicyContext> {
+        let ctx = DataPlaneServicesBuilder::build_threat_intel_policy_context(canonical, advisory);
+        if let Some(threat_intel) = &self.threat_intel {
+            threat_intel.set_policy_context(ctx.clone());
+        }
+        ctx
     }
 }
 

@@ -80,7 +80,7 @@ pub use behavioral::{BehavioralFeatures, BehavioralFingerprint};
 pub use behavioral_intel::{BehavioralConfig, BehavioralIntelligenceManager, RequestFeatures};
 pub use canonical::{
     CanonicalFreshness, CanonicalTrustDecision, CanonicalTrustReader, CanonicalTrustReason,
-    SnapshotCanonicalTrustReader, StaticCanonicalTrustReader,
+    CanonicalTrustSnapshot, SnapshotCanonicalTrustReader, StaticCanonicalTrustReader,
 };
 pub use cert::MeshCertManager;
 pub use cli::{MeshArgs, MeshCommand};

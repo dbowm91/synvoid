@@ -262,6 +262,42 @@ pub fn spawn_ipc_loop(
                         }
                     }
                 }
+                #[cfg(feature = "mesh")]
+                Some(Message::CanonicalTrustSnapshotUpdate {
+                    snapshot,
+                    generated_at_unix,
+                }) => {
+                    tracing::info!(
+                        "Received canonical trust snapshot from Supervisor (generated_at={}, {} bytes)",
+                        generated_at_unix,
+                        snapshot.len()
+                    );
+                    match postcard::from_bytes::<synvoid_mesh::canonical::CanonicalTrustSnapshot>(
+                        &snapshot,
+                    ) {
+                        Ok(canonical_snapshot) => {
+                            // Store the snapshot for use by the composition root.
+                            // The threat-intel policy context is rebuilt on next worker
+                            // restart. Updating it live requires rebuilding the advisory
+                            // source, which is deferred until a dedicated IPC path is
+                            // added for post-bootstrap policy context refreshes.
+                            *state.canonical_snapshot.write().await = Some(canonical_snapshot);
+                            tracing::info!(
+                                "Canonical trust snapshot applied: {} global nodes, {} org keys, {} revoked, {} intel",
+                                state.canonical_snapshot.read().await.as_ref().map(|s| s.authorized_global_nodes.len()).unwrap_or(0),
+                                state.canonical_snapshot.read().await.as_ref().map(|s| s.org_key_entries.len()).unwrap_or(0),
+                                state.canonical_snapshot.read().await.as_ref().map(|s| s.revoked_node_ids.len()).unwrap_or(0),
+                                state.canonical_snapshot.read().await.as_ref().map(|s| s.threat_intel_ids.len()).unwrap_or(0),
+                            );
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to deserialize canonical trust snapshot: {}",
+                                e
+                            );
+                        }
+                    }
+                }
                 Some(Message::RulePatternsUpdate { version, patterns }) => {
                     tracing::info!(
                         "Received rule patterns update v{} from Supervisor ({} categories)",

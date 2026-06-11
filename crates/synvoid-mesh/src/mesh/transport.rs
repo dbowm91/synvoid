@@ -745,6 +745,12 @@ impl MeshTransport {
         *self.edge_replica_manager.write() = Some(manager);
     }
 
+    pub fn get_edge_replica_manager(
+        &self,
+    ) -> Option<Arc<crate::raft::edge_replica::EdgeReplicaManager>> {
+        self.edge_replica_manager.read().clone()
+    }
+
     pub fn set_site_config_sync_callback(
         &self,
         tx: mpsc::Sender<(

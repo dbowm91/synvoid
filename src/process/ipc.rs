@@ -1009,6 +1009,10 @@ pub enum Message {
         id: WorkerId,
         response: String,
     },
+    CanonicalTrustSnapshotUpdate {
+        snapshot: Vec<u8>,
+        generated_at_unix: u64,
+    },
 }
 
 const MAX_STRING_LENGTH: usize = 64 * 1024;
@@ -1178,7 +1182,8 @@ impl Message {
             | Message::MasterDrainStatus { .. }
             | Message::RestartWorkerRequest { .. }
             | Message::RestartWorkerResponse { .. }
-            | Message::CommandResponse { .. } => Ok(()),
+            | Message::CommandResponse { .. }
+            | Message::CanonicalTrustSnapshotUpdate { .. } => Ok(()),
 
             // Variants with string fields that need validation
             Message::WorkerError { error, .. } => {
@@ -2011,6 +2016,8 @@ impl Message {
             Message::MeshControlRequest { .. }
             | Message::MeshControlResponse { .. }
             | Message::MeshUpdateNotification { .. } => MessageCategory::MeshControl,
+
+            Message::CanonicalTrustSnapshotUpdate { .. } => MessageCategory::MeshControl,
         }
     }
 

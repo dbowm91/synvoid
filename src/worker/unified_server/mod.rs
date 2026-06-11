@@ -161,17 +161,24 @@ pub async fn run_unified_server_worker(
             Arc::new(RecordStoreAdvisorySource::new(store.clone())) as Arc<dyn AdvisoryRecordSource>
         });
 
-        // Iteration 27: Canonical reader is intentionally None here.
+        // Iteration 28: Canonical reader from Supervisor-exported snapshot.
         //
         // Canonical trust state (Raft consensus, EdgeReplicaManager) is
-        // owned by the Supervisor process. Workers are data-planes that
-        // receive intelligence via IPC; they have no access to a root-
-        // owned SnapshotCanonicalTrustReader. The advisory source is
-        // derived from the explicit record-store handle.
-        //
-        // The next step is to expose a canonical reader from the
-        // Supervisor (via IPC or a canonical snapshot passed at startup)
-        // and thread it through here. See plans/canonical_reader_export_iteration_27.md.
+        // owned by the Supervisor process. Workers receive a bounded
+        // CanonicalTrustSnapshot via IPC. The snapshot itself implements
+        // CanonicalTrustReader and can be used directly.
+        let canonical_reader: Option<Arc<dyn synvoid_mesh::canonical::CanonicalTrustReader>> =
+            mesh_init.canonical_snapshot.map(|snapshot| {
+                tracing::info!(
+                    "Constructing canonical trust reader from Supervisor snapshot (generated_at={}, {} global nodes, {} org keys, {} revoked, {} intel)",
+                    snapshot.generated_at_unix,
+                    snapshot.authorized_global_nodes.len(),
+                    snapshot.org_key_entries.len(),
+                    snapshot.revoked_node_ids.len(),
+                    snapshot.threat_intel_ids.len(),
+                );
+                Arc::new(snapshot) as Arc<dyn synvoid_mesh::canonical::CanonicalTrustReader>
+            });
         builder = builder
             .with_mesh_transport(mesh_init.transport_manager)
             .with_threat_intel(mesh_init.threat_intel)
@@ -179,7 +186,7 @@ pub async fn run_unified_server_worker(
             .with_record_store(record_store)
             .with_threat_intel_policy(
                 services::DataPlaneServicesBuilder::build_threat_intel_policy_context(
-                    None,
+                    canonical_reader,
                     advisory_source,
                 ),
             );
@@ -217,6 +224,8 @@ pub async fn run_unified_server_worker(
         unified_server: unified_server.clone(),
         task_handles: Arc::new(TokioMutex::new(Vec::new())),
         request_services: data_plane.request_services.clone(),
+        #[cfg(feature = "mesh")]
+        canonical_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
     };
 
     {

@@ -295,6 +295,98 @@ impl CanonicalTrustReader for SnapshotCanonicalTrustReader {
     }
 }
 
+/// Bounded, serializable snapshot of canonical trust state for IPC transport.
+///
+/// This struct captures the subset of `EdgeReplicaManager` state needed to
+/// construct a `CanonicalTrustReader` on the worker side without requiring
+/// access to the Supervisor's Raft/SQLite infrastructure.
+///
+/// # Serialization
+///
+/// The struct derives `Serialize`/`Deserialize` for postcard IPC transport.
+/// No private key material or signer secrets are included.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct CanonicalTrustSnapshot {
+    /// Unix timestamp (seconds) when this snapshot was generated.
+    pub generated_at_unix: u64,
+    /// Public keys of authorized global nodes.
+    pub authorized_global_nodes: Vec<String>,
+    /// Org key entries as "org_id:key_id_or_fingerprint" strings.
+    pub org_key_entries: Vec<String>,
+    /// Revoked node IDs.
+    pub revoked_node_ids: Vec<String>,
+    /// Threat intel indicator IDs that are canonical.
+    pub threat_intel_ids: Vec<String>,
+}
+
+impl CanonicalTrustReader for CanonicalTrustSnapshot {
+    fn freshness(&self) -> CanonicalFreshness {
+        if self.generated_at_unix == 0 {
+            return CanonicalFreshness::Unavailable;
+        }
+        let now = synvoid_utils::safe_unix_timestamp();
+        let age_ms = now.saturating_sub(self.generated_at_unix) * 1000;
+        CanonicalFreshness::Snapshot { age_ms }
+    }
+
+    fn is_global_node_authorized(&self, node_id: &str) -> CanonicalTrustDecision {
+        let f = self.freshness();
+        if self.authorized_global_nodes.iter().any(|pk| pk == node_id) {
+            CanonicalTrustDecision::Trusted { freshness: f }
+        } else {
+            CanonicalTrustDecision::NotTrusted {
+                freshness: f,
+                reason: CanonicalTrustReason::NotPresentInCanonicalState,
+            }
+        }
+    }
+
+    fn is_org_key_trusted(
+        &self,
+        org_id: &str,
+        key_id_or_fingerprint: &str,
+    ) -> CanonicalTrustDecision {
+        let f = self.freshness();
+        let key = format!("{}:{}", org_id, key_id_or_fingerprint);
+        if self.org_key_entries.iter().any(|k| k == &key) {
+            CanonicalTrustDecision::Trusted { freshness: f }
+        } else {
+            CanonicalTrustDecision::NotTrusted {
+                freshness: f,
+                reason: CanonicalTrustReason::NotPresentInCanonicalState,
+            }
+        }
+    }
+
+    fn is_node_revoked(&self, node_id: &str) -> CanonicalTrustDecision {
+        self.node_revocation_status(node_id)
+    }
+
+    fn node_revocation_status(&self, node_id: &str) -> CanonicalTrustDecision {
+        let f = self.freshness();
+        if self.revoked_node_ids.iter().any(|id| id == node_id) {
+            CanonicalTrustDecision::NotTrusted {
+                freshness: f,
+                reason: CanonicalTrustReason::Revoked,
+            }
+        } else {
+            CanonicalTrustDecision::Trusted { freshness: f }
+        }
+    }
+
+    fn is_threat_intel_canonical(&self, intel_id: &str) -> CanonicalTrustDecision {
+        let f = self.freshness();
+        if self.threat_intel_ids.iter().any(|id| id == intel_id) {
+            CanonicalTrustDecision::Trusted { freshness: f }
+        } else {
+            CanonicalTrustDecision::NotTrusted {
+                freshness: f,
+                reason: CanonicalTrustReason::NotPresentInCanonicalState,
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -619,5 +711,88 @@ mod tests {
         _consumer_accepts_trait(&r);
         let b: Box<dyn CanonicalTrustReader> = Box::new(r);
         _consumer_accepts_trait(&*b);
+    }
+
+    #[test]
+    fn test_snapshot_from_canonical_trust_snapshot() {
+        let snapshot = CanonicalTrustSnapshot {
+            generated_at_unix: synvoid_utils::safe_unix_timestamp(),
+            authorized_global_nodes: vec!["pk:global1".to_string()],
+            org_key_entries: vec!["org1:key1".to_string()],
+            revoked_node_ids: vec!["badnode".to_string()],
+            threat_intel_ids: vec!["intel-abc".to_string()],
+        };
+        let d = snapshot.is_global_node_authorized("pk:global1");
+        assert!(matches!(d, CanonicalTrustDecision::Trusted { .. }));
+        let d2 = snapshot.is_global_node_authorized("missing");
+        assert!(matches!(d2, CanonicalTrustDecision::NotTrusted { .. }));
+    }
+
+    #[test]
+    fn test_snapshot_from_canonical_trust_snapshot_org_key() {
+        let snapshot = CanonicalTrustSnapshot {
+            generated_at_unix: synvoid_utils::safe_unix_timestamp(),
+            org_key_entries: vec!["org1:key1".to_string()],
+            ..Default::default()
+        };
+        let d = snapshot.is_org_key_trusted("org1", "key1");
+        assert!(matches!(d, CanonicalTrustDecision::Trusted { .. }));
+        let d2 = snapshot.is_org_key_trusted("org1", "missing");
+        assert!(matches!(d2, CanonicalTrustDecision::NotTrusted { .. }));
+    }
+
+    #[test]
+    fn test_snapshot_from_canonical_trust_snapshot_revoked() {
+        let snapshot = CanonicalTrustSnapshot {
+            generated_at_unix: synvoid_utils::safe_unix_timestamp(),
+            revoked_node_ids: vec!["badnode".to_string()],
+            ..Default::default()
+        };
+        let d = snapshot.node_revocation_status("badnode");
+        match d {
+            CanonicalTrustDecision::NotTrusted { reason, .. } => {
+                assert_eq!(reason, CanonicalTrustReason::Revoked);
+            }
+            _ => panic!("expected NotTrusted Revoked"),
+        }
+        let d2 = snapshot.node_revocation_status("clean");
+        assert!(matches!(d2, CanonicalTrustDecision::Trusted { .. }));
+    }
+
+    #[test]
+    fn test_snapshot_from_canonical_trust_snapshot_freshness() {
+        let snapshot = CanonicalTrustSnapshot {
+            generated_at_unix: synvoid_utils::safe_unix_timestamp(),
+            ..Default::default()
+        };
+        let f = snapshot.freshness();
+        match f {
+            CanonicalFreshness::Snapshot { age_ms } => {
+                assert!(age_ms < 5000);
+            }
+            other => panic!("expected Snapshot freshness, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_snapshot_from_canonical_trust_snapshot_unavailable_when_zero_ts() {
+        let snapshot = CanonicalTrustSnapshot::default();
+        assert!(matches!(
+            snapshot.freshness(),
+            CanonicalFreshness::Unavailable
+        ));
+    }
+
+    #[test]
+    fn test_snapshot_from_canonical_trust_snapshot_threat_intel() {
+        let snapshot = CanonicalTrustSnapshot {
+            generated_at_unix: synvoid_utils::safe_unix_timestamp(),
+            threat_intel_ids: vec!["intel-xyz".to_string()],
+            ..Default::default()
+        };
+        let d = snapshot.is_threat_intel_canonical("intel-xyz");
+        assert!(matches!(d, CanonicalTrustDecision::Trusted { .. }));
+        let d2 = snapshot.is_threat_intel_canonical("missing");
+        assert!(matches!(d2, CanonicalTrustDecision::NotTrusted { .. }));
     }
 }

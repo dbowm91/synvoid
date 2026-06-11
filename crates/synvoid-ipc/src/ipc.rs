@@ -445,8 +445,8 @@ pub struct ServerlessHandleResponse {
 ///   CpuTaskCancel, CpuTaskResponse, CpuTaskError
 /// - **Threat Intel**: ThreatIndicatorAnnounce, ThreatIndicatorFromMesh,
 ///   ThreatSyncRequest, ThreatSyncResponse, BlocklistRequest, BlocklistResponse
-/// - **Blocklist & Rules**: BlocklistUpdate, RulePatternsUpdate,
-///   BlocklistWriteComplete
+/// - **Blocklist & Rules**: BlocklistUpdate, CanonicalTrustSnapshotUpdate,
+///   RulePatternsUpdate, BlocklistWriteComplete
 /// - **Legacy Static Content**: MinifyRequest, MinifyResponse, MinifyError,
 ///   PoisonImageRequest, PoisonImageResponse, PoisonImageError,
 ///   GetCompressedRequest, GetCompressedResponse
@@ -653,6 +653,10 @@ pub enum Message {
     BlocklistUpdate {
         blocks: Vec<BlockEntryData>,
         version: u64,
+    },
+    CanonicalTrustSnapshotUpdate {
+        snapshot: Vec<u8>,
+        generated_at_unix: u64,
     },
     RulePatternsUpdate {
         version: String,
@@ -1136,6 +1140,7 @@ impl Message {
             | Message::BlocklistRequest { .. }
             | Message::BlocklistResponse { .. }
             | Message::BlocklistUpdate { .. }
+            | Message::CanonicalTrustSnapshotUpdate { .. }
             | Message::BlocklistWriteComplete { .. }
             | Message::PoisonImageResponse { .. }
             | Message::GetCompressedResponse { .. }
@@ -1913,7 +1918,8 @@ impl Message {
 
             Message::BlocklistUpdate { .. }
             | Message::RulePatternsUpdate { .. }
-            | Message::BlocklistWriteComplete { .. } => MessageCategory::BlocklistRules,
+            | Message::BlocklistWriteComplete { .. }
+            | Message::CanonicalTrustSnapshotUpdate { .. } => MessageCategory::BlocklistRules,
 
             Message::MinifyRequest { .. }
             | Message::MinifyResponse { .. }

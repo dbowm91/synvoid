@@ -684,6 +684,64 @@ impl EdgeReplicaManager {
             },
         );
     }
+
+    /// Produce a bounded, serializable snapshot of canonical trust state
+    /// for IPC transport to worker/data-plane processes.
+    ///
+    /// The snapshot is read-only and does not mutate Raft/DHT state.
+    /// It captures the subset of state needed by `CanonicalTrustReader`
+    /// consumers without exposing the full `EdgeReplicaManager` or its
+    /// SQLite database to workers.
+    pub fn canonical_trust_snapshot(&self) -> crate::canonical::CanonicalTrustSnapshot {
+        let db = self.db.lock();
+
+        let query_vec = |sql: &str| -> Vec<String> {
+            let Ok(mut stmt) = db.prepare(sql) else {
+                return Vec::new();
+            };
+            stmt.query_map([], |row| row.get::<_, String>(0))
+                .into_iter()
+                .flatten()
+                .filter_map(|r| r.ok())
+                .collect()
+        };
+
+        // Authorized global nodes
+        let authorized_global_nodes = query_vec("SELECT public_key FROM authorized_global_nodes");
+
+        // Org keys: store as "org_id:key_id_or_fingerprint" for CanonicalTrustReader
+        let org_key_entries = match db.prepare("SELECT key_id, org_id FROM org_keys") {
+            Ok(mut stmt) => stmt
+                .query_map([], |row| {
+                    let key_id: String = row.get(0)?;
+                    let org_id: String = row.get(1)?;
+                    Ok(format!("{}:{}", org_id, key_id))
+                })
+                .into_iter()
+                .flatten()
+                .filter_map(|r| r.ok())
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+
+        // Revoked node IDs
+        let revoked_node_ids = query_vec("SELECT revoked_node_id FROM revocation_list");
+
+        // Threat intel indicator IDs
+        let threat_intel_ids = query_vec("SELECT indicator_id FROM threat_intel");
+
+        let generated_at_unix = self
+            .get_last_replica_refresh_unix()
+            .unwrap_or_else(|| synvoid_utils::safe_unix_timestamp());
+
+        crate::canonical::CanonicalTrustSnapshot {
+            generated_at_unix,
+            authorized_global_nodes,
+            org_key_entries,
+            revoked_node_ids,
+            threat_intel_ids,
+        }
+    }
 }
 
 pub fn create_edge_replica_manager(data_dir: Option<PathBuf>) -> Option<EdgeReplicaManager> {

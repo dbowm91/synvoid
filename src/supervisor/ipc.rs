@@ -4,6 +4,8 @@ use std::sync::{Arc, RwLock};
 use synvoid_ipc::ipc_transport::IpcStream as AsyncIpcStream;
 use synvoid_ipc::{ErrorCode, ErrorSeverity, Message, ProcessManager, WorkerId};
 
+use crate::supervisor::state::SupervisorState;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -318,21 +320,27 @@ mod tests {
     }
 }
 
-pub async fn handle_worker_connection(ipc: AsyncIpcStream, process_manager: Arc<ProcessManager>) {
-    handle_worker_connection_internal(ipc, process_manager, None).await;
+pub async fn handle_worker_connection(
+    ipc: AsyncIpcStream,
+    process_manager: Arc<ProcessManager>,
+    state: SupervisorState,
+) {
+    handle_worker_connection_internal(ipc, process_manager, state, None).await;
 }
 
 pub async fn handle_worker_connection_single(
     ipc: AsyncIpcStream,
     process_manager: Arc<ProcessManager>,
+    state: SupervisorState,
     initial_message: Message,
 ) {
-    handle_worker_connection_internal(ipc, process_manager, Some(initial_message)).await;
+    handle_worker_connection_internal(ipc, process_manager, state, Some(initial_message)).await;
 }
 
 async fn handle_worker_connection_internal(
     mut ipc: AsyncIpcStream,
     process_manager: Arc<ProcessManager>,
+    state: SupervisorState,
     initial_message: Option<Message>,
 ) {
     let enforce_signing = process_manager.get_ipc_enforce_signing();
@@ -469,6 +477,8 @@ async fn handle_worker_connection_internal(
                 }
 
                 let _needs_response = matches!(message, Message::BlocklistRequest { .. });
+                #[cfg(feature = "mesh")]
+                let original_message = message.clone();
                 let blocklist_response = if let Message::BlocklistRequest {
                     worker_id,
                     from_version: _,
@@ -649,6 +659,9 @@ async fn handle_worker_connection_internal(
                             );
                             // TODO: Route back to requesting worker
                         }
+                        Message::UnifiedServerWorkerReady { id } => {
+                            process_manager.handle_unified_server_worker_ready(id);
+                        }
                         _ => {}
                     }
                     Ok(())
@@ -657,6 +670,58 @@ async fn handle_worker_connection_internal(
                 if let Some(response) = blocklist_response {
                     if ipc.send(&response).await.is_err() {
                         tracing::warn!("Failed to send blocklist response to worker");
+                    }
+                }
+
+                // Send canonical trust snapshot when a unified server worker becomes ready.
+                #[cfg(feature = "mesh")]
+                {
+                    if let Message::UnifiedServerWorkerReady { id } = original_message {
+                        if let Some(ref transport_manager) = state.mesh_transport_manager {
+                            if let Some(quic) = transport_manager.get_quic_transport() {
+                                let transport = quic.get_inner();
+                                if let Some(edge_replica) = transport.get_edge_replica_manager() {
+                                    let snapshot = edge_replica.canonical_trust_snapshot();
+                                    match postcard::to_stdvec(&snapshot) {
+                                        Ok(snapshot_bytes) => {
+                                            let generated_at = snapshot.generated_at_unix;
+                                            tracing::info!(
+                                                "Sending canonical trust snapshot to worker {} (generated_at={}, {} bytes, {} global nodes, {} org keys, {} revoked, {} intel)",
+                                                id.as_usize(),
+                                                generated_at,
+                                                snapshot_bytes.len(),
+                                                snapshot.authorized_global_nodes.len(),
+                                                snapshot.org_key_entries.len(),
+                                                snapshot.revoked_node_ids.len(),
+                                                snapshot.threat_intel_ids.len(),
+                                            );
+                                            let msg = Message::CanonicalTrustSnapshotUpdate {
+                                                snapshot: snapshot_bytes,
+                                                generated_at_unix: generated_at,
+                                            };
+                                            if let Err(e) = ipc.send(&msg).await {
+                                                tracing::warn!(
+                                                    "Failed to send canonical trust snapshot to worker {}: {}",
+                                                    id.as_usize(),
+                                                    e
+                                                );
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::error!(
+                                                "Failed to serialize canonical trust snapshot: {}",
+                                                e
+                                            );
+                                        }
+                                    }
+                                } else {
+                                    tracing::debug!(
+                                        "No edge replica manager available for canonical trust snapshot (worker {})",
+                                        id.as_usize()
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
 
