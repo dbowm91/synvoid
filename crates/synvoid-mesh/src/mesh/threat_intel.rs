@@ -1266,6 +1266,46 @@ impl ThreatIntelligenceManager {
         self.lookup_local_indicator(ip, ThreatType::IpBlock)
     }
 
+    /// Evaluate a threat indicator's actionability using the policy composition
+    /// helper (Iteration 19).
+    ///
+    /// This is the first consumer migration pass for the threat-intel policy
+    /// layer. It composes advisory DHT observations with canonical Raft trust
+    /// to produce an explicit actionability decision.
+    ///
+    /// # Arguments
+    ///
+    /// * `canonical` — Canonical trust reader (Raft-derived snapshot).
+    /// * `advisory` — Advisory DHT record source.
+    /// * `indicator_value` — The indicator value (e.g., an IP address).
+    /// * `threat_type` — The threat type classification.
+    ///
+    /// # Policy Mapping
+    ///
+    /// - `Actionable` → indicator is advisory-present + canonical-trusted.
+    /// - `AdvisoryOnly` → advisory present but canonical trust absent (never actionable).
+    /// - `NotActionable` → advisory missing/expired or canonical explicitly not trusted.
+    /// - `Deferred` → one or both sources unavailable or unknown.
+    ///
+    /// The old raw lookup paths (`lookup_local_indicator`,
+    /// `lookup_local_indicator_by_ip`, `lookup_threat_indicator_in_dht`) remain
+    /// available for comparison and fallback.
+    pub fn evaluate_indicator_actionability(
+        &self,
+        canonical: &dyn crate::canonical::CanonicalTrustReader,
+        advisory: &dyn crate::dht::advisory_source::AdvisoryRecordSource,
+        indicator_value: &str,
+        threat_type: ThreatType,
+    ) -> crate::threat_intel_policy::ThreatIntelPolicyDecision {
+        let advisory_key = make_indicator_key(indicator_value, threat_type);
+        crate::threat_intel_policy::evaluate_threat_intel_policy(
+            canonical,
+            advisory,
+            indicator_value,
+            &advisory_key,
+        )
+    }
+
     pub fn is_mesh_available(&self) -> bool {
         self.transport.read().is_some()
     }
@@ -2288,6 +2328,366 @@ mod tests {
         ];
         let content = manager.get_feed_signable_content(&indicators, 1, 1713523200);
         assert_eq!(content, "1:1713523200:2:1:192.168.1.1:3,3:10.0.0.1:2");
+    }
+
+    // ---------------------------------------------------------------------------
+    // Iteration 19: evaluate_indicator_actionability tests
+    // ---------------------------------------------------------------------------
+
+    use crate::canonical::{
+        CanonicalFreshness, CanonicalTrustDecision, CanonicalTrustReader, CanonicalTrustReason,
+    };
+    use crate::dht::advisory_source::{
+        AdvisoryFreshness, AdvisoryRecord, AdvisoryRecordLookup, AdvisoryRecordSource,
+        AdvisoryRecordStatus,
+    };
+    use crate::threat_intel_policy::{
+        ThreatIntelPolicyDecision, ThreatIntelPolicyDeferReason, ThreatIntelPolicyRejectReason,
+    };
+    use std::collections::HashMap;
+
+    #[derive(Debug, Default, Clone)]
+    struct TestAdvisorySource {
+        records: HashMap<String, AdvisoryRecord>,
+        unavailable: bool,
+    }
+
+    impl TestAdvisorySource {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        fn unavailable() -> Self {
+            Self {
+                unavailable: true,
+                ..Default::default()
+            }
+        }
+
+        fn with_record(mut self, key: &str, record: AdvisoryRecord) -> Self {
+            self.records.insert(key.to_string(), record);
+            self
+        }
+    }
+
+    impl AdvisoryRecordSource for TestAdvisorySource {
+        fn get_advisory_record(&self, key: &str) -> AdvisoryRecordLookup {
+            if self.unavailable {
+                return AdvisoryRecordLookup::Unavailable;
+            }
+            match self.records.get(key) {
+                Some(r) => {
+                    let now = synvoid_utils::safe_unix_timestamp();
+                    if r.ttl_seconds > 0 && now > r.timestamp + r.ttl_seconds {
+                        AdvisoryRecordLookup::Expired
+                    } else {
+                        AdvisoryRecordLookup::Present(r.clone())
+                    }
+                }
+                None => AdvisoryRecordLookup::Missing,
+            }
+        }
+
+        fn get_advisory_records_by_prefix(
+            &self,
+            _prefix: &str,
+            _limit: usize,
+        ) -> Vec<AdvisoryRecord> {
+            vec![]
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct TestCanonicalReader {
+        trust: HashMap<String, CanonicalTrustDecision>,
+        default_freshness: CanonicalFreshness,
+    }
+
+    impl TestCanonicalReader {
+        fn new(freshness: CanonicalFreshness) -> Self {
+            Self {
+                trust: HashMap::new(),
+                default_freshness: freshness,
+            }
+        }
+
+        fn with_trust(mut self, intel_id: &str, decision: CanonicalTrustDecision) -> Self {
+            self.trust.insert(intel_id.to_string(), decision);
+            self
+        }
+    }
+
+    impl CanonicalTrustReader for TestCanonicalReader {
+        fn freshness(&self) -> CanonicalFreshness {
+            self.default_freshness
+        }
+
+        fn is_global_node_authorized(&self, _: &str) -> CanonicalTrustDecision {
+            CanonicalTrustDecision::Unknown {
+                freshness: self.default_freshness,
+                reason: CanonicalTrustReason::UnsupportedDecisionType,
+            }
+        }
+
+        fn is_org_key_trusted(&self, _: &str, _: &str) -> CanonicalTrustDecision {
+            CanonicalTrustDecision::Unknown {
+                freshness: self.default_freshness,
+                reason: CanonicalTrustReason::UnsupportedDecisionType,
+            }
+        }
+
+        fn is_node_revoked(&self, _: &str) -> CanonicalTrustDecision {
+            CanonicalTrustDecision::Unknown {
+                freshness: self.default_freshness,
+                reason: CanonicalTrustReason::UnsupportedDecisionType,
+            }
+        }
+
+        fn node_revocation_status(&self, _: &str) -> CanonicalTrustDecision {
+            CanonicalTrustDecision::Unknown {
+                freshness: self.default_freshness,
+                reason: CanonicalTrustReason::UnsupportedDecisionType,
+            }
+        }
+
+        fn is_threat_intel_canonical(&self, intel_id: &str) -> CanonicalTrustDecision {
+            self.trust
+                .get(intel_id)
+                .cloned()
+                .unwrap_or(CanonicalTrustDecision::NotTrusted {
+                    freshness: self.default_freshness,
+                    reason: CanonicalTrustReason::NotPresentInCanonicalState,
+                })
+        }
+    }
+
+    fn test_advisory_record(key: &str) -> AdvisoryRecord {
+        let now = synvoid_utils::safe_unix_timestamp();
+        AdvisoryRecord {
+            key: key.to_string(),
+            value: b"test".to_vec(),
+            source_node_id: "test-node".to_string(),
+            timestamp: now,
+            ttl_seconds: 3600,
+            freshness: AdvisoryFreshness::Live,
+            status: AdvisoryRecordStatus::Present,
+            record_signature_valid: true,
+        }
+    }
+
+    const TEST_IP: &str = "192.168.1.1";
+    const TEST_KEY: &str = "threat_indicator:192.168.1.1:IpBlock";
+
+    // Test 1: Actionable only when advisory present + canonical trusted.
+    #[test]
+    fn policy_actionable_only_when_both_present_and_trusted() {
+        let manager = create_test_manager();
+        let advisory =
+            TestAdvisorySource::new().with_record(TEST_KEY, test_advisory_record(TEST_KEY));
+        let canonical = TestCanonicalReader::new(CanonicalFreshness::Live).with_trust(
+            TEST_IP,
+            CanonicalTrustDecision::Trusted {
+                freshness: CanonicalFreshness::Live,
+            },
+        );
+
+        let decision = manager.evaluate_indicator_actionability(
+            &canonical,
+            &advisory,
+            TEST_IP,
+            ThreatType::IpBlock,
+        );
+        assert!(matches!(decision, ThreatIntelPolicyDecision::Actionable(_)));
+    }
+
+    // Test 2: Advisory present but canonical unknown → not actionable (deferred).
+    #[test]
+    fn policy_advisory_present_canonical_unknown_not_actionable() {
+        let manager = create_test_manager();
+        let advisory =
+            TestAdvisorySource::new().with_record(TEST_KEY, test_advisory_record(TEST_KEY));
+        let canonical = TestCanonicalReader::new(CanonicalFreshness::Live);
+
+        let decision = manager.evaluate_indicator_actionability(
+            &canonical,
+            &advisory,
+            TEST_IP,
+            ThreatType::IpBlock,
+        );
+        assert!(matches!(
+            decision,
+            ThreatIntelPolicyDecision::Deferred(ThreatIntelPolicyDeferReason::CanonicalUnknown)
+        ));
+    }
+
+    // Test 3: Advisory missing → not actionable.
+    #[test]
+    fn policy_advisory_missing_not_actionable() {
+        let manager = create_test_manager();
+        let advisory = TestAdvisorySource::new();
+        let canonical = TestCanonicalReader::new(CanonicalFreshness::Live).with_trust(
+            TEST_IP,
+            CanonicalTrustDecision::Trusted {
+                freshness: CanonicalFreshness::Live,
+            },
+        );
+
+        let decision = manager.evaluate_indicator_actionability(
+            &canonical,
+            &advisory,
+            TEST_IP,
+            ThreatType::IpBlock,
+        );
+        assert_eq!(
+            decision,
+            ThreatIntelPolicyDecision::NotActionable(
+                ThreatIntelPolicyRejectReason::AdvisoryMissing
+            )
+        );
+    }
+
+    // Test 4: Canonical explicitly not trusted → not actionable.
+    #[test]
+    fn policy_canonical_not_trusted_not_actionable() {
+        let manager = create_test_manager();
+        let advisory =
+            TestAdvisorySource::new().with_record(TEST_KEY, test_advisory_record(TEST_KEY));
+        let canonical = TestCanonicalReader::new(CanonicalFreshness::Live).with_trust(
+            TEST_IP,
+            CanonicalTrustDecision::NotTrusted {
+                freshness: CanonicalFreshness::Live,
+                reason: CanonicalTrustReason::Revoked,
+            },
+        );
+
+        let decision = manager.evaluate_indicator_actionability(
+            &canonical,
+            &advisory,
+            TEST_IP,
+            ThreatType::IpBlock,
+        );
+        assert_eq!(
+            decision,
+            ThreatIntelPolicyDecision::NotActionable(
+                ThreatIntelPolicyRejectReason::CanonicalNotTrusted
+            )
+        );
+    }
+
+    // Test 5: Canonical unavailable → deferred (conservative).
+    #[test]
+    fn policy_canonical_unavailable_deferred() {
+        let manager = create_test_manager();
+        let advisory =
+            TestAdvisorySource::new().with_record(TEST_KEY, test_advisory_record(TEST_KEY));
+        let canonical = TestCanonicalReader::new(CanonicalFreshness::Unavailable);
+
+        let decision = manager.evaluate_indicator_actionability(
+            &canonical,
+            &advisory,
+            TEST_IP,
+            ThreatType::IpBlock,
+        );
+        assert!(matches!(
+            decision,
+            ThreatIntelPolicyDecision::Deferred(ThreatIntelPolicyDeferReason::CanonicalUnavailable)
+        ));
+    }
+
+    // Test 6: Legacy raw lookup path remains available and behaves as before.
+    #[test]
+    fn legacy_lookup_path_still_works() {
+        let manager = create_test_manager();
+
+        // Use a fresh indicator with current timestamp to avoid expiry.
+        let indicator = ThreatIndicator {
+            threat_type: ThreatType::IpBlock,
+            indicator_value: TEST_IP.to_string(),
+            severity: ThreatSeverity::High,
+            reason: "test".to_string(),
+            ttl_seconds: 3600,
+            source_node_id: "test-node".to_string(),
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            site_scope: "".to_string(),
+            rate_limit_requests: None,
+            rate_limit_window_secs: None,
+            suspicious_pattern: None,
+            signature: Vec::new(),
+            signer_public_key: None,
+        };
+
+        // Register peer so reputation check passes.
+        manager.register_peer("test-node".to_string(), MeshNodeRole::GLOBAL);
+
+        // Insert via the normal path.
+        manager.handle_incoming_threat(indicator, "test-node", MeshNodeRole::GLOBAL, None);
+
+        // Legacy lookup still returns the indicator.
+        let found = manager.lookup_local_indicator(TEST_IP, ThreatType::IpBlock);
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().indicator_value, TEST_IP);
+
+        // Policy path works independently with the same indicator value.
+        let advisory =
+            TestAdvisorySource::new().with_record(TEST_KEY, test_advisory_record(TEST_KEY));
+        let canonical = TestCanonicalReader::new(CanonicalFreshness::Live).with_trust(
+            TEST_IP,
+            CanonicalTrustDecision::Trusted {
+                freshness: CanonicalFreshness::Live,
+            },
+        );
+        let decision = manager.evaluate_indicator_actionability(
+            &canonical,
+            &advisory,
+            TEST_IP,
+            ThreatType::IpBlock,
+        );
+        assert!(matches!(decision, ThreatIntelPolicyDecision::Actionable(_)));
+    }
+
+    // Test 7: Comparison — advisory-only records never become actionable.
+    #[test]
+    fn comparison_advisory_only_never_actionable() {
+        let manager = create_test_manager();
+        let advisory =
+            TestAdvisorySource::new().with_record(TEST_KEY, test_advisory_record(TEST_KEY));
+        let canonical_no_trust = TestCanonicalReader::new(CanonicalFreshness::Live);
+
+        let decision = manager.evaluate_indicator_actionability(
+            &canonical_no_trust,
+            &advisory,
+            TEST_IP,
+            ThreatType::IpBlock,
+        );
+
+        // Must NOT be Actionable — advisory-only is never actionable.
+        assert!(
+            !matches!(decision, ThreatIntelPolicyDecision::Actionable(_)),
+            "advisory-only records must never be actionable, got: {:?}",
+            decision
+        );
+    }
+
+    // Test 8: No DHT, Raft, or networking required — pure static sources.
+    #[test]
+    fn policy_evaluation_requires_no_dht_raft_or_networking() {
+        let manager = create_test_manager();
+        let advisory =
+            TestAdvisorySource::new().with_record(TEST_KEY, test_advisory_record(TEST_KEY));
+        let canonical = TestCanonicalReader::new(CanonicalFreshness::Live).with_trust(
+            TEST_IP,
+            CanonicalTrustDecision::Trusted {
+                freshness: CanonicalFreshness::Live,
+            },
+        );
+
+        let decision = manager.evaluate_indicator_actionability(
+            &canonical,
+            &advisory,
+            TEST_IP,
+            ThreatType::IpBlock,
+        );
+        assert!(matches!(decision, ThreatIntelPolicyDecision::Actionable(_)));
     }
 
     #[test]

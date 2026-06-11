@@ -413,13 +413,22 @@ This track stops here. The next architectural step should be `AdvisoryRecordSour
 
 A small threat-intel policy helper now composes `CanonicalTrustReader` with `AdvisoryRecordSource`. Advisory records provide observations; canonical state provides trust; the helper returns explicit actionability, rejection, or defer decisions. Tests cover present/missing/expired/unavailable advisory records and trusted/not-trusted/unknown/unavailable canonical state. No service consumers were migrated in this pass.
 
-Next: migrate a single low-risk threat-intel consumer to consume the policy output, keeping the old path available for comparison/tests.
+### Iteration 19 Threat Intel Consumer Migration
+
+`ThreatIntelligenceManager` now has an `evaluate_indicator_actionability` method that uses the threat-intel policy composition helper. This is the first production consumer migration: the method composes advisory DHT observations with canonical Raft trust to produce an explicit `ThreatIntelPolicyDecision`. The old raw lookup paths (`lookup_local_indicator`, `lookup_local_indicator_by_ip`, `lookup_threat_indicator_in_dht`) remain available for comparison and fallback.
+
+Policy-composed behavior requires both advisory observation and canonical trust before treating an indicator as actionable. Advisory-only records are never actionable. No proxy, YARA/WASM, routing, or broader service consumers were migrated. The method takes `&dyn CanonicalTrustReader` and `&dyn AdvisoryRecordSource` as parameters; production injection of both seams remains deferred pending higher-level composition.
+
+Tests cover: actionable when both present and trusted, advisory-only not actionable, advisory missing not actionable, canonical not trusted not actionable, canonical unavailable deferred, legacy path still works, comparison verifying advisory-only never actionable, and no DHT/Raft/networking required.
 
 ## Follow-Up Recommendation
 
+After this pass, review the selected consumer under real code paths. If the injection seam is clean and tests are stable, migrate one additional threat-intel read path. Do not move proxy, YARA/WASM, or routing policy until at least one threat-intel consumer has run through the composed policy path cleanly.
+
 The next planned architecture track should be:
-1. Build a small policy composition helper that consumes `CanonicalTrustReader` + `AdvisoryRecordSource` for one narrow domain (likely threat-intel or route/proxy metadata).
-2. Only after that helper is tested should service consumers (`threat_intel.rs`, `proxy.rs`, YARA/WASM) migrate to consume policy outputs rather than raw DHT or Raft internals.
+1. Complete the injection seam for the selected consumer (thread `CanonicalTrustReader` + `AdvisoryRecordSource` into `ThreatIntelligenceManager` via constructor or config).
+2. Migrate one additional threat-intel read path (e.g., `check_threat` in the WASM plugin callback, or `lookup_threat_indicator_in_dht`).
+3. Only after two consumers are stable should broader service consumers (`proxy.rs`, YARA/WASM) migrate to consume policy outputs.
 
 Do not expand the ingress gate to additional remote paths until the Push/Announce path is stable and the context carrier is clearly owned by a higher-level mesh service or data-plane composition object.
 
