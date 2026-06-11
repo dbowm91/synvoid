@@ -459,6 +459,10 @@ The threat-intel policy-composed lookup track is staged and stable. Two read-onl
 
 The shared `is_policy_actionable` helper remains in place and both policy-composed lookup paths continue to use it. Focused verification (`cargo check -p synvoid-mesh --features mesh`, `cargo test -p synvoid-mesh threat_intel --features mesh`, `cargo test -p synvoid-mesh threat_intel_policy --features mesh`) passed. No additional consumer migration or hot-path change was added; raw lookup APIs remain compatibility/diagnostic paths.
 
+### Iteration 25 Data-Plane Policy Context Cleanup
+
+`DataPlaneServices` now carries an optional `ThreatIntelPolicyContext` and exposes a low-risk `apply_threat_intel_policy_context()` helper for `ThreatIntelligenceManager`. The default remains `None`, preserving legacy behavior. This pass establishes ownership and wiring for policy context only; it does not migrate proxy, YARA/WASM, routing, WAF enforcement, DHT sync, ingestion, or Raft behavior. Future passes may construct concrete canonical/advisory sources at the root, then pass a populated context through the same field.
+
 ## Follow-Up Recommendation
 
 After this pass, two threat-intel read paths are stable through the composed policy seam:

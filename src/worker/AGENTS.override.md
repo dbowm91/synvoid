@@ -55,7 +55,8 @@ UnifiedServer worker (`run_unified_server_worker`).
 - `services.rs`    - `DataPlaneServices` and `DataPlaneServicesBuilder`:
                        bundled data-plane service handles (request_services,
                        serverless_manager, port_honeypot_runner, mesh_transport,
-                       threat_intel, record_store); `cross_wire_mesh_services()`
+                       threat_intel, record_store, optional
+                       ThreatIntelPolicyContext under mesh); `cross_wire_mesh_services()`
                        **Boundary rule**: `DataPlaneServicesBuilder::new()` requires
                        an explicit `Arc<ServerlessManager>` — no default or global
                        fallback. Callers must provide one at construction time.
@@ -158,6 +159,15 @@ let record_store = data_plane.record_store.as_ref();
 // Legacy fallback (avoid in new code)
 let record_store = get_global_record_store();
 ```
+
+### `DataPlaneServices` carries optional `ThreatIntelPolicyContext` (Iteration 25)
+
+`DataPlaneServices` under `#[cfg(feature = "mesh")]` now carries an optional
+`ThreatIntelPolicyContext`, and the worker root exposes
+`apply_threat_intel_policy_context()` to forward the stored context into
+`ThreatIntelligenceManager`. The default remains `None`; this pass does not
+migrate proxy, YARA/WASM, routing, WAF enforcement, DHT sync, ingestion, or
+Raft behavior.
 
 ### `UnifiedServer::with_serverless_manager()` — server-level wiring
 

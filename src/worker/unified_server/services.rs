@@ -12,7 +12,7 @@ use synvoid_serverless::manager::ServerlessManager;
 #[cfg(feature = "mesh")]
 use synvoid_mesh::dht::RecordStoreManager;
 #[cfg(feature = "mesh")]
-use synvoid_mesh::threat_intel::ThreatIntelligenceManager;
+use synvoid_mesh::threat_intel::{ThreatIntelPolicyContext, ThreatIntelligenceManager};
 #[cfg(feature = "mesh")]
 use synvoid_mesh::transports::MeshTransportManager;
 #[cfg(feature = "mesh")]
@@ -22,7 +22,7 @@ use synvoid_mesh::yara_rules::YaraRulesManager;
 ///
 /// This struct replaces the scattered cross-wiring that previously lived
 /// inline in `run_unified_server_worker`. Each field is an already-existing
-/// service handle; no new abstractions are introduced.
+/// service or policy handle; no new abstractions are introduced.
 pub struct DataPlaneServices {
     pub request_services: Arc<RequestServices>,
     pub serverless_manager: Arc<ServerlessManager>,
@@ -31,6 +31,9 @@ pub struct DataPlaneServices {
     pub mesh_transport_manager: Option<Arc<MeshTransportManager>>,
     #[cfg(feature = "mesh")]
     pub threat_intel: Option<Arc<ThreatIntelligenceManager>>,
+    /// Optional policy context owned by the worker composition root.
+    #[cfg(feature = "mesh")]
+    pub threat_intel_policy: Option<ThreatIntelPolicyContext>,
     /// Explicit handle to the DHT record store, preferred over the global
     /// `get_global_record_store()`. The global remains as a compatibility
     /// fallback for code that cannot easily receive an explicit handle.
@@ -51,6 +54,8 @@ pub struct DataPlaneServicesBuilder {
     #[cfg(feature = "mesh")]
     threat_intel: Option<Arc<ThreatIntelligenceManager>>,
     #[cfg(feature = "mesh")]
+    threat_intel_policy: Option<ThreatIntelPolicyContext>,
+    #[cfg(feature = "mesh")]
     yara_rules: Option<Arc<YaraRulesManager>>,
     #[cfg(feature = "mesh")]
     record_store: Option<Arc<RecordStoreManager>>,
@@ -65,6 +70,8 @@ impl DataPlaneServicesBuilder {
             mesh_transport_manager: None,
             #[cfg(feature = "mesh")]
             threat_intel: None,
+            #[cfg(feature = "mesh")]
+            threat_intel_policy: None,
             #[cfg(feature = "mesh")]
             yara_rules: None,
             #[cfg(feature = "mesh")]
@@ -86,6 +93,12 @@ impl DataPlaneServicesBuilder {
     #[cfg(feature = "mesh")]
     pub fn with_threat_intel(mut self, ti: Option<Arc<ThreatIntelligenceManager>>) -> Self {
         self.threat_intel = ti;
+        self
+    }
+
+    #[cfg(feature = "mesh")]
+    pub fn with_threat_intel_policy(mut self, ctx: Option<ThreatIntelPolicyContext>) -> Self {
+        self.threat_intel_policy = ctx;
         self
     }
 
@@ -129,7 +142,19 @@ impl DataPlaneServicesBuilder {
             #[cfg(feature = "mesh")]
             threat_intel: self.threat_intel,
             #[cfg(feature = "mesh")]
+            threat_intel_policy: self.threat_intel_policy,
+            #[cfg(feature = "mesh")]
             record_store: self.record_store,
+        }
+    }
+}
+
+#[cfg(feature = "mesh")]
+impl DataPlaneServices {
+    /// Apply the root-owned threat-intel policy context to the manager, if present.
+    pub fn apply_threat_intel_policy_context(&self) {
+        if let Some(threat_intel) = &self.threat_intel {
+            threat_intel.set_policy_context(self.threat_intel_policy.clone());
         }
     }
 }
@@ -152,6 +177,50 @@ pub fn cross_wire_mesh_services(unified_server: &Arc<UnifiedServer>, services: &
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "mesh")]
+    use synvoid_mesh::canonical::{CanonicalFreshness, StaticCanonicalTrustReader};
+    #[cfg(feature = "mesh")]
+    use synvoid_mesh::dht::advisory_source::StaticAdvisoryRecordSource;
+    #[cfg(feature = "mesh")]
+    use synvoid_mesh::mesh::protocol::ThreatType;
+    #[cfg(feature = "mesh")]
+    use synvoid_mesh::threat_intel::ThreatIntelligenceConfig;
+    #[cfg(feature = "mesh")]
+    use synvoid_mesh::threat_intel_policy::ThreatIntelPolicyDecision;
+
+    #[cfg(feature = "mesh")]
+    const TEST_IP: &str = "203.0.113.10";
+
+    #[cfg(feature = "mesh")]
+    fn build_test_policy_context() -> ThreatIntelPolicyContext {
+        let key = format!("threat_indicator:{}:IpBlock", TEST_IP);
+
+        let mut canonical = StaticCanonicalTrustReader::new(CanonicalFreshness::Live);
+        canonical.threat_intel_ids.insert(TEST_IP.to_string());
+
+        let mut advisory = StaticAdvisoryRecordSource::new();
+        advisory.insert(StaticAdvisoryRecordSource::test_record(&key));
+
+        ThreatIntelPolicyContext::new(Arc::new(canonical), Arc::new(advisory))
+    }
+
+    #[cfg(feature = "mesh")]
+    fn build_test_threat_intel_manager() -> Arc<ThreatIntelligenceManager> {
+        use crate::config::DenyListLimitsConfig;
+
+        Arc::new(ThreatIntelligenceManager::new(
+            ThreatIntelligenceConfig::default().to_internal(),
+            Arc::new(crate::block_store::BlockStore::new(
+                true,
+                None,
+                DenyListLimitsConfig::default(),
+            )),
+            "test-node".to_string(),
+            synvoid_mesh::config::MeshNodeRole::EDGE,
+            None,
+        ))
+    }
 
     /// Verify that `DataPlaneServicesBuilder` produces a valid
     /// `DataPlaneServices` with request services in the non-mesh build.
@@ -247,5 +316,79 @@ mod tests {
         let sm = Arc::new(ServerlessManager::new());
         let services = DataPlaneServicesBuilder::new(sm).build();
         assert!(services.record_store.is_none());
+    }
+
+    /// Boundary regression: the policy context defaults to `None`.
+    #[cfg(feature = "mesh")]
+    #[test]
+    fn builder_threat_intel_policy_defaults_to_none() {
+        let sm = Arc::new(ServerlessManager::new());
+        let services = DataPlaneServicesBuilder::new(sm).build();
+        assert!(services.threat_intel_policy.is_none());
+    }
+
+    /// Boundary regression: the builder preserves a provided policy context.
+    #[cfg(feature = "mesh")]
+    #[test]
+    fn builder_threat_intel_policy_passthrough() {
+        let sm = Arc::new(ServerlessManager::new());
+        let services = DataPlaneServicesBuilder::new(sm)
+            .with_threat_intel_policy(Some(build_test_policy_context()))
+            .build();
+        assert!(services.threat_intel_policy.is_some());
+    }
+
+    /// Applying the policy context with no threat-intel manager is a no-op.
+    #[cfg(feature = "mesh")]
+    #[test]
+    fn apply_threat_intel_policy_context_without_manager_is_noop() {
+        let sm = Arc::new(ServerlessManager::new());
+        let services = DataPlaneServicesBuilder::new(sm)
+            .with_threat_intel_policy(Some(build_test_policy_context()))
+            .build();
+
+        assert!(services.threat_intel.is_none());
+        services.apply_threat_intel_policy_context();
+    }
+
+    /// Applying a `None` context clears any previously configured actionability.
+    #[cfg(feature = "mesh")]
+    #[test]
+    fn apply_threat_intel_policy_context_none_clears_manager_state() {
+        let sm = Arc::new(ServerlessManager::new());
+        let manager = build_test_threat_intel_manager();
+        manager.set_policy_context(Some(build_test_policy_context()));
+
+        let services = DataPlaneServicesBuilder::new(sm)
+            .with_threat_intel(Some(manager.clone()))
+            .with_threat_intel_policy(None)
+            .build();
+
+        services.apply_threat_intel_policy_context();
+
+        assert!(manager
+            .evaluate_indicator_actionability_configured(TEST_IP, ThreatType::IpBlock)
+            .is_none());
+    }
+
+    /// Applying a populated context enables configured actionability.
+    #[cfg(feature = "mesh")]
+    #[test]
+    fn apply_threat_intel_policy_context_enables_configured_evaluation() {
+        let sm = Arc::new(ServerlessManager::new());
+        let manager = build_test_threat_intel_manager();
+
+        let services = DataPlaneServicesBuilder::new(sm)
+            .with_threat_intel(Some(manager.clone()))
+            .with_threat_intel_policy(Some(build_test_policy_context()))
+            .build();
+
+        services.apply_threat_intel_policy_context();
+
+        let decision = manager
+            .evaluate_indicator_actionability_configured(TEST_IP, ThreatType::IpBlock)
+            .expect("policy context should be applied");
+
+        assert!(matches!(decision, ThreatIntelPolicyDecision::Actionable(_)));
     }
 }
