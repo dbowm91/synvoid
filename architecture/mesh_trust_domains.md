@@ -1,6 +1,6 @@
-# Mesh Trust Domains — Design Note (Iteration 34)
+# Mesh Trust Domains — Design Note (Iteration 35)
 
-**Status**: Iteration 34 — Consumer enforcement gate for policy-composed threat-intel decisions.  
+**Status**: Iteration 35 — Enforcement semantic cleanup: suppression metric classifier, deferred mode dispatch, AsnBlock observational relabel, mutation helper preconditions.  
 **Date**: 2026-06-11  
 **Scope**: `crates/synvoid-mesh` (re-exported via `src/mesh`).  
 **Goal**: Define trust-domain boundaries and invariants before any internal module split.  
@@ -579,6 +579,8 @@ canonical readers introduced. No `StaticCanonicalTrustReader` in production.
 The consumer classification matrix is extensible but only enforcement consumers
 are gated in this pass.
 
+- Iteration 35: Enforcement semantic cleanup (AsnBlock observational relabel, IncomingThreatPolicyGate, suppression metric classifier, ThreatIntelDeferredMode dispatch, mutation helper preconditions, raw consumer audit)
+
 ### Iteration 24 Threat Intel Policy Verification
 
 The shared `is_policy_actionable` helper remains in place and both policy-composed lookup paths continue to use it. Focused verification (`cargo check -p synvoid-mesh --features mesh`, `cargo test -p synvoid-mesh threat_intel --features mesh`, `cargo test -p synvoid-mesh threat_intel_policy --features mesh`) passed. No additional consumer migration or hot-path change was added; raw lookup APIs remain compatibility/diagnostic paths.
@@ -671,12 +673,21 @@ The worker IPC handler now reads runtime configuration instead of using hardcode
 
 ## Follow-Up Recommendation
 
-After this pass, three threat-intel read paths are stable through the composed policy seam:
-1. `lookup_threat_indicator_policy_composed` (DHT lookup, Iteration 20)
-2. `lookup_local_indicator_policy_composed` (local lookup, Iteration 21)
-3. `lookup_threat_indicator_policy_strict` / `lookup_local_indicator_policy_strict` / `lookup_local_indicator_by_ip_policy_strict` (enforcement-gated wrappers, Iteration 34)
+After Iteration 35, the enforcement semantic cleanup is complete. Key invariants:
+- `handle_incoming_threat` evaluates policy via `IncomingThreatPolicyGate` (carrying action + decision)
+- Suppression metrics classify by actual policy outcome (advisory-only, not-actionable, deferred, not-configured)
+- `ThreatIntelDeferredMode` dispatches to the correct action (FailOpenNoAction/FailClosedNoAction → SuppressAction, ShadowOnly → ShadowOnly)
+- `AsnBlock` is observational only — no enforcement gate, no block-store mutation
+- Private mutation helpers (`apply_rate_limit_mesh_action`, `apply_suspicious_mesh_action`) have documented preconditions requiring PermitAction
 
-The consumer enforcement gate is now active for `handle_incoming_threat` and inherited by `apply_sync` and `handle_hot_threat_gossip`. The trust-domain/freshness/enforcement track is a reasonable stopping point. The next architecture track should be independent unless a concrete low-risk consumer for policy-composed threat intel is selected. Move to a different architecture track next; do not expand proxy, YARA/WASM, routing, or WAF consumers without a separate design pass. Raw lookup APIs remain compatibility/diagnostic paths and are not suitable for enforcement.
+Raw consumer audit conclusions:
+- All mesh-sourced enforcement paths are gated via `handle_incoming_threat`
+- One raw `lookup_local_indicator` in `feed_client.rs` is bookkeeping/dedup, not enforcement
+- One raw `lookup_local_indicator` in `evaluate_indicator_policy_shadow` is shadow/observability only
+- No external callers of composed/strict lookup wrappers in production code
+- `announce_honeypot_threat` block_ip is local-origin, correctly ungated
+
+The trust-domain/freshness/enforcement track is a reasonable stopping point. Move to a different architecture track next; do not expand proxy, YARA/WASM, routing, or WAF consumers without a separate design pass.
 
 ---
 

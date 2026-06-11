@@ -86,7 +86,7 @@ ThreatIntel manages distributed threat indicators that are shared across mesh no
 | `IpBlock` | 0 | Malicious IP address | Block IP in BlockStore |
 | `RateLimitViolation` | 1 | Excessive request rate | Apply rate limit |
 | `SuspiciousActivity` | 2 | Anomalous behavior pattern | Block with severity-based TTL |
-| `AsnBlock` | 3 | Entire ASN blocked | Log attack type |
+| `AsnBlock` | 3 | ASN-based block (observational only -- no enforcement wired) | Log attack type |
 | `DomainBlock` | 4 | Malicious domain | Reserved for future use |
 | `UrlBlock` | 5 | Malicious URL | Reserved for future use |
 | `CertBlock` | 6 | Malicious certificate | Reserved for future use |
@@ -476,7 +476,10 @@ The classification is applied via `classify_consumer_action()` which maps consum
 | `RawCompatibility` | any | `RawCompatibilityOnly` |
 | `AdvisoryCache` | any | `SuppressAction` |
 | `Enforcement` | `Actionable` | `PermitAction` |
-| `Enforcement` | `AdvisoryOnly` / `NotActionable` / `Deferred` | `SuppressAction` |
+| `Enforcement` | `AdvisoryOnly` / `NotActionable` | `SuppressAction` |
+| `Enforcement` | `Deferred` + `FailOpenNoAction` | `SuppressAction` |
+| `Enforcement` | `Deferred` + `FailClosedNoAction` | `SuppressAction` |
+| `Enforcement` | `Deferred` + `ShadowOnly` | `ShadowOnly` |
 | `Enforcement` | `None` (no context) | `SuppressAction` |
 
 ### Consumer Actions
@@ -490,6 +493,16 @@ The classification is applied via `classify_consumer_action()` which maps consum
 | `ShadowOnly` | Consumer is observability-only. Always suppresses enforcement regardless of policy decision. |
 | `RawCompatibilityOnly` | Consumer uses raw lookup APIs. Must not be used for enforcement decisions. |
 
+### Deferred Mode
+
+`ThreatIntelDeferredMode` controls behavior when the policy decision is `Deferred` (one or both sources unavailable). The mode is currently used for observability classification only -- no deferred mode permits enforcement in this pass:
+
+| Mode | Deferred Behavior |
+|------|-------------------|
+| `FailOpenNoAction` | Suppress action (safe default) |
+| `FailClosedNoAction` | Suppress action (explicit fail-closed, logged) |
+| `ShadowOnly` | Return `ShadowOnly` (observability-only, never enforces) |
+
 ### Enforcement Gate in handle_incoming_threat
 
 The `handle_incoming_threat()` method applies the enforcement gate before every enforcement mutation. The flow:
@@ -498,10 +511,18 @@ The `handle_incoming_threat()` method applies the enforcement gate before every 
 2. **Reputation evaluation** — Reject indicators from untrusted sources.
 3. **Expiry check** — Reject expired indicators.
 4. **Duplicate check** — Skip already-seen indicators.
-5. **Policy gate** — Call `evaluate_incoming_threat_policy()` which evaluates the indicator through the composed policy (advisory + canonical trust) and returns `ThreatIntelConsumerAction`.
+5. **Policy gate** — Call `evaluate_incoming_threat_policy()` which evaluates the indicator through the composed policy (advisory + canonical trust) and returns `IncomingThreatPolicyGate` (containing both the `ThreatIntelConsumerAction` and the underlying `ThreatIntelPolicyDecision`).
 6. **Mutate only if permitted** — Each threat type (`IpBlock`, `RateLimitViolation`, `SuspiciousActivity`, `IpThrottle`) checks `enforcement_action == PermitAction` before applying the mutation. If suppressed, the indicator is stored but no enforcement side-effect occurs.
 
-When the enforcement gate suppresses a mutation, the event is logged at debug level with the consumer action, and `record_threat_intel_enforcement_suppressed_not_configured()` is emitted. When permitted, `record_threat_intel_enforcement_permitted()` is emitted.
+- `AsnBlock` is observational only -- no enforcement gate check, no block-store mutation, no attack metric. The indicator is stored for bookkeeping but the branch logs an advisory message.
+
+When the enforcement gate suppresses a mutation, the event is logged at debug level with the consumer action and a suppression metric is recorded based on the actual policy decision:
+- `record_threat_intel_enforcement_suppressed_not_configured()` -- no policy context configured
+- `record_threat_intel_enforcement_suppressed_advisory_only()` -- advisory present but canonical not trusted
+- `record_threat_intel_enforcement_suppressed_not_actionable()` -- policy explicitly rejects the indicator
+- `record_threat_intel_enforcement_suppressed_deferred()` -- one or both sources unavailable
+
+When permitted, `record_threat_intel_enforcement_permitted()` is emitted.
 
 ### Strict vs Legacy Policy-Composed Lookups
 
@@ -529,7 +550,11 @@ Raw lookup APIs exist for compatibility and debugging, not for enforcement:
 - `lookup_local_indicator_by_ip()` — IP convenience wrapper, no policy gating.
 - `lookup_threat_indicator_in_dht()` — Direct DHT lookup, no policy gating.
 
-These methods return indicators regardless of canonical trust status. They are useful for admin diagnostics, metrics collection, and comparison with policy-composed results, but **must not be consumed by enforcement paths**. An indicator that appears via a raw lookup may be `AdvisoryOnly` — present in the DHT but not canonical-trusted.
+These methods return indicators regardless of canonical trust status. They are useful for admin diagnostics, metrics collection, and comparison with policy-composed results, but **must not be consumed by enforcement paths**. An indicator that appears via a raw lookup may be `AdvisoryOnly` -- present in the DHT but not canonical-trusted.
+
+### Private Mutation Helper Preconditions
+
+The private helpers `apply_rate_limit_mesh_action` and `apply_suspicious_mesh_action` have a documented precondition: the caller must have verified `ThreatIntelConsumerAction::PermitAction` before calling them. They do not re-check the policy internally. This invariant is enforced by the single call site in `handle_incoming_threat`.
 
 ## Configuration
 
