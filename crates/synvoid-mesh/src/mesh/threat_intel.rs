@@ -394,7 +394,7 @@ impl ThreatIntelligenceManager {
         *t = Some(transport);
     }
 
-    /// Set the optional policy context for configured policy evaluation.
+    /// Injection point for the optional policy context.
     ///
     /// When `None` (the default), configured evaluation and policy-composed
     /// lookups fall back to legacy raw paths or return `None`.
@@ -405,6 +405,16 @@ impl ThreatIntelligenceManager {
     /// Returns a clone of the current policy context, if set.
     fn policy_context(&self) -> Option<ThreatIntelPolicyContext> {
         self.policy_context.read().clone()
+    }
+
+    /// Returns `true` when the policy decision is `Actionable`.
+    fn is_policy_actionable(
+        decision: &crate::threat_intel_policy::ThreatIntelPolicyDecision,
+    ) -> bool {
+        matches!(
+            decision,
+            crate::threat_intel_policy::ThreatIntelPolicyDecision::Actionable(_)
+        )
     }
 
     pub fn from_external_config(
@@ -1273,6 +1283,11 @@ impl ThreatIntelligenceManager {
         true
     }
 
+    /// Compatibility / low-level DHT lookup API.
+    ///
+    /// Returns the indicator directly from the DHT record store without any
+    /// policy evaluation. Prefer the policy-composed wrappers for new
+    /// actionability-sensitive reads.
     pub fn lookup_threat_indicator_in_dht(
         &self,
         indicator_value: &str,
@@ -1307,6 +1322,11 @@ impl ThreatIntelligenceManager {
         Some(indicator)
     }
 
+    /// Compatibility / low-level local lookup API.
+    ///
+    /// Returns the indicator directly from the in-memory store without any
+    /// policy evaluation. Prefer the policy-composed wrappers for new
+    /// actionability-sensitive reads.
     pub fn lookup_local_indicator(
         &self,
         indicator_value: &str,
@@ -1317,6 +1337,12 @@ impl ThreatIntelligenceManager {
         indicators.get(&key).map(|entry| entry.indicator.clone())
     }
 
+    /// Compatibility / low-level IP convenience wrapper.
+    ///
+    /// Delegates to [`lookup_local_indicator`](Self::lookup_local_indicator)
+    /// with `ThreatType::IpBlock`. Prefer
+    /// [`lookup_local_indicator_by_ip_policy_composed`](Self::lookup_local_indicator_by_ip_policy_composed)
+    /// for new actionability-sensitive reads.
     pub fn lookup_local_indicator_by_ip(&self, ip: &str) -> Option<ThreatIndicator> {
         self.lookup_local_indicator(ip, ThreatType::IpBlock)
     }
@@ -1380,10 +1406,12 @@ impl ThreatIntelligenceManager {
         ))
     }
 
-    /// Policy-composed threat indicator lookup.
+    /// Preferred policy-composed threat indicator lookup for new
+    /// actionability-sensitive reads.
     ///
-    /// If no policy context is configured, falls back to the legacy raw DHT
-    /// lookup. When configured, the policy decision gates the result:
+    /// Requires a configured policy context; without one, falls back to the
+    /// legacy raw DHT lookup. When configured, the policy decision gates the
+    /// result:
     ///
     /// - `Actionable` → returns the indicator from the legacy raw DHT lookup.
     /// - `AdvisoryOnly` / `NotActionable` / `Deferred` → returns `None`.
@@ -1404,26 +1432,25 @@ impl ThreatIntelligenceManager {
             threat_type,
         );
 
-        match decision {
-            crate::threat_intel_policy::ThreatIntelPolicyDecision::Actionable(_) => {
-                self.lookup_threat_indicator_in_dht(indicator_value, threat_type)
-            }
-            other => {
-                tracing::debug!(
-                    indicator = indicator_value,
-                    threat_type = ?threat_type,
-                    decision = ?other,
-                    "policy-composed lookup: not actionable, returning None"
-                );
-                None
-            }
+        if Self::is_policy_actionable(&decision) {
+            self.lookup_threat_indicator_in_dht(indicator_value, threat_type)
+        } else {
+            tracing::debug!(
+                indicator = indicator_value,
+                threat_type = ?threat_type,
+                decision = ?decision,
+                "policy-composed lookup: not actionable, returning None"
+            );
+            None
         }
     }
 
-    /// Policy-composed local threat indicator lookup (Iteration 21).
+    /// Preferred policy-composed local threat indicator lookup for new
+    /// actionability-sensitive reads (Iteration 21).
     ///
-    /// If no policy context is configured, falls back to the legacy raw local
-    /// lookup. When configured, the policy decision gates the result:
+    /// Requires a configured policy context; without one, falls back to the
+    /// legacy raw local lookup. When configured, the policy decision gates the
+    /// result:
     ///
     /// - `Actionable` → returns the indicator from the legacy raw local lookup.
     /// - `AdvisoryOnly` / `NotActionable` / `Deferred` → returns `None`.
@@ -1444,23 +1471,25 @@ impl ThreatIntelligenceManager {
             threat_type,
         );
 
-        match decision {
-            crate::threat_intel_policy::ThreatIntelPolicyDecision::Actionable(_) => {
-                self.lookup_local_indicator(indicator_value, threat_type)
-            }
-            other => {
-                tracing::debug!(
-                    indicator = indicator_value,
-                    threat_type = ?threat_type,
-                    decision = ?other,
-                    "policy-composed local lookup: not actionable, returning None"
-                );
-                None
-            }
+        if Self::is_policy_actionable(&decision) {
+            self.lookup_local_indicator(indicator_value, threat_type)
+        } else {
+            tracing::debug!(
+                indicator = indicator_value,
+                threat_type = ?threat_type,
+                decision = ?decision,
+                "policy-composed local lookup: not actionable, returning None"
+            );
+            None
         }
     }
 
-    /// Convenience wrapper: policy-composed local lookup by IP address (Iteration 21).
+    /// Preferred policy-composed IP convenience wrapper for new
+    /// actionability-sensitive reads (Iteration 21).
+    ///
+    /// Delegates to
+    /// [`lookup_local_indicator_policy_composed`](Self::lookup_local_indicator_policy_composed)
+    /// with `ThreatType::IpBlock`.
     pub fn lookup_local_indicator_by_ip_policy_composed(
         &self,
         ip: &str,
@@ -2505,7 +2534,8 @@ mod tests {
         AdvisoryRecordStatus,
     };
     use crate::threat_intel_policy::{
-        ThreatIntelPolicyDecision, ThreatIntelPolicyDeferReason, ThreatIntelPolicyRejectReason,
+        ThreatIntelPolicyDecision, ThreatIntelPolicyDeferReason, ThreatIntelPolicyEvidence,
+        ThreatIntelPolicyRejectReason,
     };
     use std::collections::HashMap;
 
@@ -3568,5 +3598,47 @@ mod tests {
 
         let result = manager.lookup_local_indicator_policy_composed(TEST_IP, ThreatType::IpBlock);
         assert!(result.is_some());
+    }
+
+    // ---------------------------------------------------------------------------
+    // Iteration 22: shared helper tests
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn iteration22_shared_helper_is_policy_actionable() {
+        // Actionable → true
+        assert!(ThreatIntelligenceManager::is_policy_actionable(
+            &ThreatIntelPolicyDecision::Actionable(ThreatIntelPolicyEvidence {
+                intel_id: "test".into(),
+                advisory_key: "test".into(),
+                advisory_status: AdvisoryRecordStatus::Present,
+                advisory_freshness: AdvisoryFreshness::Live,
+                canonical_freshness: CanonicalFreshness::Live,
+                record_signature_valid: true,
+            })
+        ));
+        // AdvisoryOnly → false
+        assert!(!ThreatIntelligenceManager::is_policy_actionable(
+            &ThreatIntelPolicyDecision::AdvisoryOnly(ThreatIntelPolicyEvidence {
+                intel_id: "test".into(),
+                advisory_key: "test".into(),
+                advisory_status: AdvisoryRecordStatus::Present,
+                advisory_freshness: AdvisoryFreshness::Live,
+                canonical_freshness: CanonicalFreshness::Live,
+                record_signature_valid: true,
+            })
+        ));
+        // NotActionable → false
+        assert!(!ThreatIntelligenceManager::is_policy_actionable(
+            &ThreatIntelPolicyDecision::NotActionable(
+                ThreatIntelPolicyRejectReason::AdvisoryMissing
+            )
+        ));
+        // Deferred → false
+        assert!(!ThreatIntelligenceManager::is_policy_actionable(
+            &ThreatIntelPolicyDecision::Deferred(
+                ThreatIntelPolicyDeferReason::CanonicalUnavailable
+            )
+        ));
     }
 }

@@ -447,6 +447,10 @@ Raw local/DHT lookup methods remain available and unchanged. No enforcement hot 
 
 Tests cover: no context falls back to legacy, Actionable returns indicator, advisory present + canonical unknown returns None, advisory missing returns None, canonical not trusted returns None, canonical unavailable returns None, raw lookup still works, IP wrapper delegates correctly, no DHT/Raft/networking required.
 
+### Iteration 22 Threat Intel Policy Cleanup
+
+The two policy-composed threat-intel lookup paths now share a single decision-to-actionability helper (`is_policy_actionable`), keeping `Actionable` as the only policy result that returns an indicator. Raw local/DHT lookup APIs remain compatibility/diagnostic paths; policy-composed methods are the preferred API for new actionability-sensitive reads. No proxy, YARA/WASM, routing, DHT sync, ingestion, or enforcement hot paths were migrated.
+
 ## Follow-Up Recommendation
 
 After this pass, two threat-intel read paths are stable through the composed policy seam:
@@ -455,9 +459,8 @@ After this pass, two threat-intel read paths are stable through the composed pol
 
 The next planned architecture track should be:
 1. Stop and reassess before moving into proxy, YARA/WASM, routing, or enforcement hot paths.
-2. Consider a final threat-intel policy cleanup pass: consolidate duplicated mapping logic, verify all docs, and decide whether the policy-composed methods should become the preferred public API while raw paths remain compatibility APIs.
-3. Only after cleanup should broader service consumers (`proxy.rs`, YARA/WASM) migrate to consume policy outputs.
-4. Do not expand the ingress gate to additional remote paths until the Push/Announce path is stable and the context carrier is clearly owned by a higher-level mesh service or data-plane composition object.
+2. Consider migrating one additional consumer (e.g., proxy, YARA/WASM) based on concrete call-graph pressure, not automatic expansion.
+3. Do not expand the ingress gate to additional remote paths until the Push/Announce path is stable and the context carrier is clearly owned by a higher-level mesh service or data-plane composition object.
 
 ---
 
