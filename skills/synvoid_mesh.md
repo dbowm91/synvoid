@@ -1205,3 +1205,65 @@ All counters use `synvoid-metrics` atomic counters (no high-cardinality labels):
 | NotActionable | Missing advisory or canonical denial | None |
 | Deferred | Sources unavailable or unknown | None |
 | NotConfigured | No policy context injected | None |
+
+## Threat-Intel Enforcement Gate (Iterations 34-36)
+
+Enforcement consumers mutate block-store, rate-limit, or WAF deny state. All enforcement mutations are gated by the policy plane.
+
+### Consumer Classification
+
+`classify_consumer_action(consumer_kind, policy_decision)` maps consumer intent to an action:
+
+| Consumer Kind | Policy Decision | Result |
+|---------------|-----------------|--------|
+| `Enforcement` | `Actionable` | `PermitAction` |
+| `Enforcement` | `AdvisoryOnly` / `NotActionable` | `SuppressAction` |
+| `Enforcement` | `Deferred` + `FailOpenNoAction` / `FailClosedNoAction` | `SuppressAction` |
+| `Enforcement` | `Deferred` + `ShadowOnly` | `ShadowOnly` |
+| `Enforcement` | `None` (no context) | `SuppressAction` |
+| `ShadowOnly` | any | `ShadowOnly` |
+| `RawCompatibility` | any | `RawCompatibilityOnly` |
+| `AdvisoryCache` | any | `SuppressAction` |
+
+### Strict Lookup Wrappers
+
+For enforcement/actionability-sensitive consumers, use strict wrappers. They return `None` when no policy context is configured, preventing silent fallback to ungated data:
+
+- `lookup_threat_indicator_policy_strict()` — DHT lookup
+- `lookup_local_indicator_policy_strict()` — Local store lookup
+- `lookup_local_indicator_by_ip_policy_strict()` — IP convenience wrapper
+
+Legacy composed wrappers (`lookup_*_policy_composed`) fall back to raw lookups when no context exists. They are acceptable for diagnostics but not for enforcement.
+
+### WAF/BlockStore Boundary
+
+The WAF request path reads `BlockStore` state, not `ThreatIntelligenceManager` directly. Mesh enforcement (`handle_incoming_threat`) populates `BlockStore` through the enforcement plane. WAF code (`check_block_store`, `check_early`, `maybe_escalate_and_block`) reads BlockStore as local enforcement state. This boundary is correct and must be preserved.
+
+### AsnBlock Status
+
+`AsnBlock` is observational/advisory only. No enforcement gate, no block-store mutation, no attack metric. The indicator is stored for bookkeeping; the handler logs an advisory message.
+
+### Indicator Integration Status
+
+| Indicator | Enforcement Wired |
+|-----------|-------------------|
+| `IpBlock` | Yes — gated via `handle_incoming_threat` |
+| `RateLimitViolation` | Yes — gated via `handle_incoming_threat` |
+| `SuspiciousActivity` | Yes — gated via `handle_incoming_threat` |
+| `IpThrottle` | Yes — gated via `handle_incoming_threat` |
+| `AsnBlock` | No — observational/advisory only |
+| `DomainBlock` | No — reserved for future DNS-layer integration |
+| `UrlBlock` | No — reserved for future URL-filter integration |
+| `CertBlock` | No — reserved for future TLS-layer integration |
+
+## Iteration 36 — Doc Drift, Three-Plane Model, Request/WAF Audit
+
+Documentation drift cleanup for the stable threat-intel enforcement model:
+
+- Fixed `AsnBlock` local action in `THREAT_INTEL.md` (observational/advisory, not attack logging)
+- Updated architecture diagram to reflect policy-gated threat sync
+- Tightened strict vs legacy API guidance
+- Added three-plane threat-intel model (advisory, canonical, enforcement) to mesh trust domains
+- Request/WAF audit confirmed: WAF reads BlockStore, not ThreatIntelligenceManager directly
+- Strict/composed wrappers defined but have zero external production callers (staged for future use)
+- New audit note: `architecture/threat_intel_request_waf_audit.md`

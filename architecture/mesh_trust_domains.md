@@ -1,6 +1,6 @@
-# Mesh Trust Domains — Design Note (Iteration 35)
+# Mesh Trust Domains — Design Note (Iteration 36)
 
-**Status**: Iteration 35 — Enforcement semantic cleanup: suppression metric classifier, deferred mode dispatch, AsnBlock observational relabel, mutation helper preconditions.  
+**Status**: Iteration 36 — Doc drift cleanup, three-plane model, request/WAF audit boundary.  
 **Date**: 2026-06-11  
 **Scope**: `crates/synvoid-mesh` (re-exported via `src/mesh`).  
 **Goal**: Define trust-domain boundaries and invariants before any internal module split.  
@@ -581,6 +581,23 @@ are gated in this pass.
 
 - Iteration 35: Enforcement semantic cleanup (AsnBlock observational relabel, IncomingThreatPolicyGate, suppression metric classifier, ThreatIntelDeferredMode dispatch, mutation helper preconditions, raw consumer audit)
 
+### Iteration 36 — Doc Drift, Three-Plane Model, Request/WAF Audit
+
+Documentation drift cleanup for the now-stable threat-intel enforcement model. Changes:
+
+- Fixed `AsnBlock` local action in `THREAT_INTEL.md` table (observational/advisory, not attack logging)
+- Updated architecture diagram to reflect policy-gated threat sync (not blind "apply threats")
+- Tightened strict vs legacy API guidance: strict is required for enforcement, legacy is for diagnostics
+- Added "Current Integration Status" table for all indicator types
+- Added three-plane threat-intel model (advisory, canonical, enforcement) to mesh trust domains
+- Documented request/WAF boundary: WAF reads BlockStore, not ThreatIntelligenceManager directly
+
+**Request/WAF audit findings:**
+- WAF request path (`check_block_store`, `check_early`, `maybe_escalate_and_block`) reads BlockStore state, not threat-intel directly
+- Strict/composed lookup wrappers have zero external production callers — defined but not yet consumed
+- All mesh enforcement gating is centralized in `handle_incoming_threat`
+- No migration needed; the existing WAF/BlockStore boundary is correct
+
 ### Iteration 24 Threat Intel Policy Verification
 
 The shared `is_policy_actionable` helper remains in place and both policy-composed lookup paths continue to use it. Focused verification (`cargo check -p synvoid-mesh --features mesh`, `cargo test -p synvoid-mesh threat_intel --features mesh`, `cargo test -p synvoid-mesh threat_intel_policy --features mesh`) passed. No additional consumer migration or hot-path change was added; raw lookup APIs remain compatibility/diagnostic paths.
@@ -670,6 +687,57 @@ The worker IPC handler now reads runtime configuration instead of using hardcode
 - `crates/synvoid-mesh/src/mesh/canonical.rs` — types, classifier, wrapper, `From` conversion, normalization
 - `src/worker/unified_server/lifecycle.rs` — worker integration (config read, classify, apply)
 - `crates/synvoid-mesh/src/mesh/config.rs` — config fields in `AuthorityFreshnessConfig`
+
+## Three-Plane Threat-Intel Model
+
+Threat-intel data flows through three logical planes. Each plane has clear ownership and invariant constraints.
+
+### Advisory Plane
+
+The advisory plane stores and distributes threat-intel observations. Data in this plane is untrusted for enforcement purposes.
+
+- **DHT records** — `threat_indicator:*` keys, TTL-bound, eventually consistent
+- **Gossip** — `handle_hot_threat_gossip`, `ThreatSync`/`ThreatSyncResponse` mesh messages
+- **Sync** — `sync_from_dht`, `re_announce_local_indicators`
+- **Local bookkeeping** — `lookup_local_indicator`, `lookup_threat_indicator_in_dht` (raw APIs)
+
+**Invariant**: Advisory data may be stored, observed, logged, and compared, but must not directly cause enforcement mutations (block, rate-limit, WAF deny).
+
+### Canonical Plane
+
+The canonical plane holds Raft-derived trust state that determines whether advisory observations may become enforcement.
+
+- **Raft consensus** — `EdgeReplicaManager`, `RaftAwareClient`, `GlobalRegistryStateMachine`
+- **Canonical snapshots** — `CanonicalTrustSnapshot` exported via IPC to workers
+- **Freshness policy** — `CanonicalSnapshotFreshnessPolicy`, `FreshnessBoundCanonicalReader`
+- **Key policy** — `DhtKeyPolicyTable`, `classify_key_authority_with_canonical_reader`
+
+**Invariant**: Canonical state answers "what is trusted?" It never directly mutates enforcement state; it is consumed by the policy plane to gate enforcement decisions.
+
+### Enforcement Plane
+
+The enforcement plane applies policy-gated mutations to local enforcement state (block-store, rate-limit, WAF deny lists).
+
+- **`handle_incoming_threat`** — single entry point for mesh-sourced enforcement, gated by `evaluate_incoming_threat_policy`
+- **`classify_consumer_action`** — maps consumer kind + policy decision to `PermitAction`/`SuppressAction`/`ShadowOnly`/`RawCompatibilityOnly`
+- **Block-store mutations** — `block_ip` gated by `PermitAction` in mesh threat-intel path
+- **Rate-limit mutations** — gated by `PermitAction` in mesh threat-intel path
+
+**Invariant**: Enforcement mutations require `ThreatIntelConsumerAction::PermitAction` from the policy plane. When no policy context is configured, enforcement is suppressed by default.
+
+### Request/WAF Boundary
+
+The WAF request path does not query `ThreatIntelligenceManager` directly. Instead:
+
+1. **Mesh enforcement** (`handle_incoming_threat`) populates `BlockStore` state through the enforcement plane.
+2. **WAF request code** (`check_block_store`, `check_early`, `maybe_escalate_and_block`) reads `BlockStore` as local enforcement state.
+3. **Raw DHT/local advisory lookups** are not on the request/WAF hot path.
+
+This boundary is correct and must be preserved. New threat-intel integrations that want to affect WAF behavior should either:
+- Route through `handle_incoming_threat` (enforcement plane), or
+- Use strict/composed lookup wrappers for read-only policy-gated decisions.
+
+Do not add raw advisory lookups to request/WAF hot paths.
 
 ## Follow-Up Recommendation
 

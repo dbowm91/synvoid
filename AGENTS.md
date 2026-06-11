@@ -30,6 +30,16 @@ Confirmed pure Rust: `libinjectionrs`, `bcrypt`
 - **Edge Node PoW**: Both `pow_nonce` AND `pow_public_key` required together
 - **File Permissions**: Set `0o600` on private key files
 
+### Threat-Intel Enforcement Rules
+
+When editing request/WAF paths or adding new threat-intel consumers:
+
+1. **Never enforce from raw lookups** — `lookup_local_indicator()`, `lookup_local_indicator_by_ip()`, and `lookup_threat_indicator_in_dht()` are compatibility/debug APIs. They must not be consumed by enforcement paths.
+2. **Use strict wrappers for enforcement** — `lookup_*_policy_strict` is mandatory for any code that makes enforcement decisions (block, rate-limit, WAF deny).
+3. **Local-origin detection is first-party** — `announce_local_block`, `announce_local_rate_limit`, and similar local-origin calls are exempt from the enforcement gate because they represent first-party evidence, not remote advisory consumption.
+4. **New threat types requiring enforcement** must use `ThreatIntelConsumerKind::Enforcement` and require `ThreatIntelConsumerAction::PermitAction` before mutating block-store, rate-limit, or WAF state.
+5. **WAF request code consumes BlockStore**, not `ThreatIntelligenceManager` directly. This boundary is correct — mesh enforcement populates BlockStore, WAF reads it. Do not add raw advisory lookups to the request hot path.
+
 ### When NOT to use Constant-Time Comparison
 
 The `security_challenge.rs:196` uses simple `!=` comparison. This is CORRECT for puzzle verification because:
@@ -278,6 +288,7 @@ The `architecture/` directory contains detailed design documents. Key canonical 
 | Spin runtime | `spin.md` | — |
 | Admin/auth | `admin_deep_dive.md` | — |
 | Platform/sandboxing | `platform.md` | `platform_deep_dive.md` |
+| Threat-intel audit | `threat_intel_request_waf_audit.md` | — |
 
 ## Skills Directory
 

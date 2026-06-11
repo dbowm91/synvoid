@@ -27,6 +27,7 @@ SynVoid implements a distributed threat intelligence system that shares indicato
    - [Enforcement Gate in handle_incoming_threat](#enforcement-gate-in-handle_incoming_threat)
    - [Strict vs Legacy Policy-Composed Lookups](#strict-vs-legacy-policy-composed-lookups)
    - [Raw Lookup APIs](#raw-lookup-apis)
+   - [Current Integration Status](#current-integration-status)
 8. [Configuration](#configuration)
 9. [Troubleshooting](#troubleshooting)
 10. [Related Documentation](#related-documentation)
@@ -71,7 +72,8 @@ Both components use Ed25519 signatures for authenticity verification and the DHT
     │   Edge Node     │ │   Edge Node     │ │   Origin Node   │
     │                 │ │                 │ │                 │
     │ - sync from DHT │ │ - sync from DHT │ │ - sync from DHT │
-    │ - apply threats │ │ - apply threats │ │ - apply threats │
+    │ - policy-gated  │ │ - policy-gated  │ │ - policy-gated  │
+    │   threat sync   │ │   threat sync   │ │   threat sync   │
     └─────────────────┘ └─────────────────┘ └─────────────────┘
 ```
 
@@ -86,7 +88,7 @@ ThreatIntel manages distributed threat indicators that are shared across mesh no
 | `IpBlock` | 0 | Malicious IP address | Block IP in BlockStore |
 | `RateLimitViolation` | 1 | Excessive request rate | Apply rate limit |
 | `SuspiciousActivity` | 2 | Anomalous behavior pattern | Block with severity-based TTL |
-| `AsnBlock` | 3 | ASN-based block (observational only -- no enforcement wired) | Log attack type |
+| `AsnBlock` | 3 | ASN-based block (observational only -- no enforcement wired) | Log advisory |
 | `DomainBlock` | 4 | Malicious domain | Reserved for future use |
 | `UrlBlock` | 5 | Malicious URL | Reserved for future use |
 | `CertBlock` | 6 | Malicious certificate | Reserved for future use |
@@ -528,19 +530,19 @@ When permitted, `record_threat_intel_enforcement_permitted()` is emitted.
 
 Two families of policy-composed lookup wrappers exist:
 
-**Legacy composed** (`lookup_*_policy_composed`) — Preferred for new reads where graceful degradation is acceptable. Falls back to the raw legacy lookup when no policy context is configured:
-
-- `lookup_threat_indicator_policy_composed()` — DHT lookup, falls back to `lookup_threat_indicator_in_dht()`.
-- `lookup_local_indicator_policy_composed()` — Local store lookup, falls back to `lookup_local_indicator()`.
-- `lookup_local_indicator_by_ip_policy_composed()` — IP convenience wrapper.
-
-**Strict composed** (`lookup_*_policy_strict`) — For enforcement consumers that must not fall back to raw lookups. Returns `None` when no policy context is configured:
+**Strict composed** (`lookup_*_policy_strict`) — **Required for enforcement/actionability-sensitive consumers.** Returns `None` when no policy context is configured, preventing silent fallback to ungated data:
 
 - `lookup_threat_indicator_policy_strict()` — DHT lookup, returns `None` without context.
 - `lookup_local_indicator_policy_strict()` — Local store lookup, returns `None` without context.
 - `lookup_local_indicator_by_ip_policy_strict()` — IP convenience wrapper.
 
-Both families gate on `Actionable` when a context is present. The difference is behavior when the context is absent: legacy degrades to raw (safe for diagnostics), strict refuses to return data (safe for enforcement).
+**Legacy composed** (`lookup_*_policy_composed`) — Acceptable for diagnostics, admin views, or graceful degradation where enforcement is not required. Falls back to the raw legacy lookup when no policy context is configured:
+
+- `lookup_threat_indicator_policy_composed()` — DHT lookup, falls back to `lookup_threat_indicator_in_dht()`.
+- `lookup_local_indicator_policy_composed()` — Local store lookup, falls back to `lookup_local_indicator()`.
+- `lookup_local_indicator_by_ip_policy_composed()` — IP convenience wrapper.
+
+Both families gate on `Actionable` when a context is present. The difference is behavior when the context is absent: strict refuses to return data (safe for enforcement), legacy degrades to raw (safe for diagnostics).
 
 ### Raw Lookup APIs
 
@@ -551,6 +553,19 @@ Raw lookup APIs exist for compatibility and debugging, not for enforcement:
 - `lookup_threat_indicator_in_dht()` — Direct DHT lookup, no policy gating.
 
 These methods return indicators regardless of canonical trust status. They are useful for admin diagnostics, metrics collection, and comparison with policy-composed results, but **must not be consumed by enforcement paths**. An indicator that appears via a raw lookup may be `AdvisoryOnly` -- present in the DHT but not canonical-trusted.
+
+### Current Integration Status
+
+| Indicator | Enforcement Wired | Notes |
+|-----------|-------------------|-------|
+| `IpBlock` | Yes | Gated via `handle_incoming_threat` → `block_ip` |
+| `RateLimitViolation` | Yes | Gated via `handle_incoming_threat` → rate-limit mutation |
+| `SuspiciousActivity` | Yes | Gated via `handle_incoming_threat` → suspicious mutation |
+| `IpThrottle` | Yes | Gated via `handle_incoming_threat` → throttle mutation |
+| `AsnBlock` | No | Observational/advisory only; no enforcement mutation in mesh threat-intel path |
+| `DomainBlock` | No | Reserved for future DNS-layer integration |
+| `UrlBlock` | No | Reserved for future URL-filter integration |
+| `CertBlock` | No | Reserved for future TLS-layer integration |
 
 ### Private Mutation Helper Preconditions
 
