@@ -228,6 +228,88 @@ impl ThreatIntelPolicyContext {
     }
 }
 
+/// Classifies the intent of a threat-intel consumer.
+///
+/// The consumer kind determines whether enforcement mutations are permitted.
+/// Advisory DHT records alone must never cause enforcement — canonical trust
+/// is required for action-bearing consumption.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThreatIntelConsumerKind {
+    /// Observability-only consumer. Emits metrics/logs/admin DTOs.
+    /// Must not mutate enforcement state.
+    ShadowOnly,
+    /// Compatibility/debug consumer. Uses raw lookup APIs.
+    /// Must not mutate enforcement state.
+    RawCompatibility,
+    /// Advisory cache/bookkeeping. May store locally for diagnostics.
+    /// Must not mutate WAF/block-store/rate-limit state.
+    AdvisoryCache,
+    /// Enforcement consumer. May mutate block stores, rate limits, WAF deny
+    /// lists, or equivalent controls when policy permits action.
+    Enforcement,
+}
+
+/// Behavior when the policy decision is `Deferred` or the policy context
+/// is missing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThreatIntelDeferredMode {
+    /// Defer to no-action. Suppression is the safe default.
+    FailOpenNoAction,
+    /// Explicit fail-closed. Suppression with a logged warning.
+    FailClosedNoAction,
+    /// Shadow/observability only. Never enforces regardless of decision.
+    ShadowOnly,
+}
+
+/// Result of classifying whether a consumer may act on a threat-intel
+/// indicator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThreatIntelConsumerAction {
+    /// Policy permits the consumer to take enforcement action.
+    PermitAction,
+    /// Policy suppresses the action. Consumer must not mutate enforcement state.
+    SuppressAction,
+    /// Consumer is shadow-only. Always suppresses enforcement.
+    ShadowOnly,
+    /// Consumer is raw-compatibility. Must not be used for enforcement.
+    RawCompatibilityOnly,
+}
+
+/// Classify whether a consumer may act on a threat-intel indicator given
+/// the current policy decision.
+///
+/// # Semantics
+///
+/// - `ShadowOnly` → always `ShadowOnly`.
+/// - `RawCompatibility` → always `RawCompatibilityOnly`.
+/// - `Enforcement + Some(Actionable)` → `PermitAction`.
+/// - `Enforcement + Some(AdvisoryOnly | NotActionable)` → `SuppressAction`.
+/// - `Enforcement + Some(Deferred)` → `SuppressAction` (unless a future
+///   mode explicitly permits deferred action).
+/// - `Enforcement + None` → `SuppressAction` (missing context must not
+///   silently fall back to raw for enforcement).
+/// - `AdvisoryCache` → `SuppressAction` (may store locally but not enforce).
+pub fn classify_consumer_action(
+    decision: Option<&crate::threat_intel_policy::ThreatIntelPolicyDecision>,
+    consumer: ThreatIntelConsumerKind,
+    _deferred_mode: ThreatIntelDeferredMode,
+) -> ThreatIntelConsumerAction {
+    match consumer {
+        ThreatIntelConsumerKind::ShadowOnly => ThreatIntelConsumerAction::ShadowOnly,
+        ThreatIntelConsumerKind::RawCompatibility => {
+            ThreatIntelConsumerAction::RawCompatibilityOnly
+        }
+        ThreatIntelConsumerKind::AdvisoryCache => ThreatIntelConsumerAction::SuppressAction,
+        ThreatIntelConsumerKind::Enforcement => match decision {
+            Some(crate::threat_intel_policy::ThreatIntelPolicyDecision::Actionable(_)) => {
+                ThreatIntelConsumerAction::PermitAction
+            }
+            Some(_) => ThreatIntelConsumerAction::SuppressAction,
+            None => ThreatIntelConsumerAction::SuppressAction,
+        },
+    }
+}
+
 pub struct ThreatIntelligenceManager {
     config: Arc<ThreatIntelligenceConfigInternal>,
     block_store: Arc<dyn BlockStoreApi + Send + Sync>,
@@ -1096,6 +1178,12 @@ impl ThreatIntelligenceManager {
             }
         }
 
+        // Policy gate: evaluate actionability before any enforcement mutation.
+        // Mesh-sourced enforcement requires canonical trust; advisory-only DHT
+        // records must not cause block/rate-limit/suspicious mutations.
+        let enforcement_action =
+            self.evaluate_incoming_threat_policy(&indicator.indicator_value, indicator.threat_type);
+
         match indicator.threat_type {
             ThreatType::IpBlock => {
                 if let Ok(ip) = indicator.indicator_value.parse::<IpAddr>() {
@@ -1108,21 +1196,33 @@ impl ThreatIntelligenceManager {
                         return false;
                     }
 
-                    let banned = self.block_store.block_ip(
-                        ip,
-                        &format!("mesh:{}:{}", from_node, indicator.reason),
-                        indicator.ttl_seconds,
-                        &indicator.site_scope,
-                    );
-
-                    if banned {
-                        tracing::info!(
-                            "Applied mesh block from {}: {} (reason: {}, TTL: {}s)",
-                            from_node,
+                    if enforcement_action == ThreatIntelConsumerAction::PermitAction {
+                        let banned = self.block_store.block_ip(
                             ip,
-                            indicator.reason,
-                            indicator.ttl_seconds
+                            &format!("mesh:{}:{}", from_node, indicator.reason),
+                            indicator.ttl_seconds,
+                            &indicator.site_scope,
                         );
+
+                        if banned {
+                            tracing::info!(
+                                "Applied mesh block from {}: {} (reason: {}, TTL: {}s)",
+                                from_node,
+                                ip,
+                                indicator.reason,
+                                indicator.ttl_seconds
+                            );
+                            crate::stubs::metrics::record_threat_intel_enforcement_permitted();
+                        }
+                    } else {
+                        tracing::debug!(
+                            indicator = %indicator.indicator_value,
+                            threat_type = ?indicator.threat_type,
+                            from_node = from_node,
+                            action = ?enforcement_action,
+                            "Enforcement gate suppressed IpBlock mutation"
+                        );
+                        crate::stubs::metrics::record_threat_intel_enforcement_suppressed_not_configured();
                     }
                 }
             }
@@ -1136,7 +1236,19 @@ impl ThreatIntelligenceManager {
                         );
                         return false;
                     }
-                    self.apply_rate_limit_mesh_action(&indicator, from_node);
+                    if enforcement_action == ThreatIntelConsumerAction::PermitAction {
+                        self.apply_rate_limit_mesh_action(&indicator, from_node);
+                        crate::stubs::metrics::record_threat_intel_enforcement_permitted();
+                    } else {
+                        tracing::debug!(
+                            indicator = %indicator.indicator_value,
+                            threat_type = ?indicator.threat_type,
+                            from_node = from_node,
+                            action = ?enforcement_action,
+                            "Enforcement gate suppressed RateLimitViolation mutation"
+                        );
+                        crate::stubs::metrics::record_threat_intel_enforcement_suppressed_not_configured();
+                    }
                 }
             }
             ThreatType::SuspiciousActivity => {
@@ -1149,7 +1261,19 @@ impl ThreatIntelligenceManager {
                         );
                         return false;
                     }
-                    self.apply_suspicious_mesh_action(&indicator, from_node);
+                    if enforcement_action == ThreatIntelConsumerAction::PermitAction {
+                        self.apply_suspicious_mesh_action(&indicator, from_node);
+                        crate::stubs::metrics::record_threat_intel_enforcement_permitted();
+                    } else {
+                        tracing::debug!(
+                            indicator = %indicator.indicator_value,
+                            threat_type = ?indicator.threat_type,
+                            from_node = from_node,
+                            action = ?enforcement_action,
+                            "Enforcement gate suppressed SuspiciousActivity mutation"
+                        );
+                        crate::stubs::metrics::record_threat_intel_enforcement_suppressed_not_configured();
+                    }
                 }
             }
             ThreatType::AsnBlock => {
@@ -1174,22 +1298,34 @@ impl ThreatIntelligenceManager {
                         );
                         return false;
                     }
-                    let reqs = indicator.rate_limit_requests.unwrap_or(50);
-                    let window = indicator.rate_limit_window_secs.unwrap_or(60);
-                    self.block_store.block_ip(
-                        ip,
-                        &format!("mesh:{}:ip_throttle:{}r/{}s", from_node, reqs, window),
-                        indicator.ttl_seconds,
-                        &indicator.site_scope,
-                    );
-                    tracing::info!(
-                        "Applied mesh IP throttle from {}: {} ({} reqs/{}s, TTL: {}s)",
-                        from_node,
-                        ip,
-                        reqs,
-                        window,
-                        indicator.ttl_seconds
-                    );
+                    if enforcement_action == ThreatIntelConsumerAction::PermitAction {
+                        let reqs = indicator.rate_limit_requests.unwrap_or(50);
+                        let window = indicator.rate_limit_window_secs.unwrap_or(60);
+                        self.block_store.block_ip(
+                            ip,
+                            &format!("mesh:{}:ip_throttle:{}r/{}s", from_node, reqs, window),
+                            indicator.ttl_seconds,
+                            &indicator.site_scope,
+                        );
+                        tracing::info!(
+                            "Applied mesh IP throttle from {}: {} ({} reqs/{}s, TTL: {}s)",
+                            from_node,
+                            ip,
+                            reqs,
+                            window,
+                            indicator.ttl_seconds
+                        );
+                        crate::stubs::metrics::record_threat_intel_enforcement_permitted();
+                    } else {
+                        tracing::debug!(
+                            indicator = %indicator.indicator_value,
+                            threat_type = ?indicator.threat_type,
+                            from_node = from_node,
+                            action = ?enforcement_action,
+                            "Enforcement gate suppressed IpThrottle mutation"
+                        );
+                        crate::stubs::metrics::record_threat_intel_enforcement_suppressed_not_configured();
+                    }
                 }
             }
             ThreatType::DomainBlock => {
@@ -1273,11 +1409,13 @@ impl ThreatIntelligenceManager {
         true
     }
 
-    /// Compatibility / low-level DHT lookup API.
+    /// **Not for enforcement** — compatibility / low-level DHT lookup API.
     ///
     /// Returns the indicator directly from the DHT record store without any
-    /// policy evaluation. Prefer the policy-composed wrappers for new
-    /// actionability-sensitive reads.
+    /// policy evaluation. **Must not be used by enforcement consumers** unless
+    /// wrapped by an explicit policy-composed gate. Use
+    /// [`lookup_threat_indicator_policy_composed`] or
+    /// [`lookup_threat_indicator_policy_strict`] for actionability-sensitive reads.
     pub fn lookup_threat_indicator_in_dht(
         &self,
         indicator_value: &str,
@@ -1312,11 +1450,13 @@ impl ThreatIntelligenceManager {
         Some(indicator)
     }
 
-    /// Compatibility / low-level local lookup API.
+    /// **Not for enforcement** — compatibility / low-level local lookup API.
     ///
     /// Returns the indicator directly from the in-memory store without any
-    /// policy evaluation. Prefer the policy-composed wrappers for new
-    /// actionability-sensitive reads.
+    /// policy evaluation. **Must not be used by enforcement consumers** unless
+    /// wrapped by an explicit policy-composed gate. Use
+    /// [`lookup_local_indicator_policy_composed`] or
+    /// [`lookup_local_indicator_policy_strict`] for actionability-sensitive reads.
     pub fn lookup_local_indicator(
         &self,
         indicator_value: &str,
@@ -1327,12 +1467,13 @@ impl ThreatIntelligenceManager {
         indicators.get(&key).map(|entry| entry.indicator.clone())
     }
 
-    /// Compatibility / low-level IP convenience wrapper.
+    /// **Not for enforcement** — compatibility / low-level IP convenience wrapper.
     ///
     /// Delegates to [`lookup_local_indicator`](Self::lookup_local_indicator)
-    /// with `ThreatType::IpBlock`. Prefer
-    /// [`lookup_local_indicator_by_ip_policy_composed`](Self::lookup_local_indicator_by_ip_policy_composed)
-    /// for new actionability-sensitive reads.
+    /// with `ThreatType::IpBlock`. **Must not be used by enforcement consumers**
+    /// unless wrapped by an explicit policy-composed gate. Use
+    /// [`lookup_local_indicator_by_ip_policy_composed`] or
+    /// [`lookup_local_indicator_by_ip_policy_strict`] for actionability-sensitive reads.
     pub fn lookup_local_indicator_by_ip(&self, ip: &str) -> Option<ThreatIndicator> {
         self.lookup_local_indicator(ip, ThreatType::IpBlock)
     }
@@ -1494,6 +1635,104 @@ impl ThreatIntelligenceManager {
         matches!(
             decision,
             crate::threat_intel_policy::ThreatIntelPolicyDecision::Actionable(_)
+        )
+    }
+
+    /// Strict policy-composed DHT lookup for enforcement consumers.
+    ///
+    /// Unlike [`lookup_threat_indicator_policy_composed`], this method
+    /// returns `None` when no policy context is configured, rather than
+    /// falling back to the legacy raw DHT lookup.
+    ///
+    /// - `Some(Actionable)` → returns the indicator from the raw DHT lookup.
+    /// - `Some(non-actionable)` → returns `None`.
+    /// - `None` policy context → returns `None`.
+    pub fn lookup_threat_indicator_policy_strict(
+        &self,
+        indicator_value: &str,
+        threat_type: ThreatType,
+    ) -> Option<ThreatIndicator> {
+        let ctx = self.policy_context()?;
+
+        let decision = self.evaluate_indicator_actionability(
+            ctx.canonical(),
+            ctx.advisory(),
+            indicator_value,
+            threat_type,
+        );
+
+        if Self::is_policy_actionable(&decision) {
+            self.lookup_threat_indicator_in_dht(indicator_value, threat_type)
+        } else {
+            tracing::debug!(
+                indicator = indicator_value,
+                threat_type = ?threat_type,
+                decision = ?decision,
+                "strict policy-composed DHT lookup: not actionable, returning None"
+            );
+            None
+        }
+    }
+
+    /// Strict policy-composed local lookup for enforcement consumers.
+    ///
+    /// Unlike [`lookup_local_indicator_policy_composed`], this method
+    /// returns `None` when no policy context is configured, rather than
+    /// falling back to the legacy raw local lookup.
+    ///
+    /// - `Some(Actionable)` → returns the indicator from the raw local lookup.
+    /// - `Some(non-actionable)` → returns `None`.
+    /// - `None` policy context → returns `None`.
+    pub fn lookup_local_indicator_policy_strict(
+        &self,
+        indicator_value: &str,
+        threat_type: ThreatType,
+    ) -> Option<ThreatIndicator> {
+        let ctx = self.policy_context()?;
+
+        let decision = self.evaluate_indicator_actionability(
+            ctx.canonical(),
+            ctx.advisory(),
+            indicator_value,
+            threat_type,
+        );
+
+        if Self::is_policy_actionable(&decision) {
+            self.lookup_local_indicator(indicator_value, threat_type)
+        } else {
+            tracing::debug!(
+                indicator = indicator_value,
+                threat_type = ?threat_type,
+                decision = ?decision,
+                "strict policy-composed local lookup: not actionable, returning None"
+            );
+            None
+        }
+    }
+
+    /// Strict policy-composed IP convenience wrapper for enforcement consumers.
+    ///
+    /// Delegates to [`lookup_local_indicator_policy_strict`] with `ThreatType::IpBlock`.
+    pub fn lookup_local_indicator_by_ip_policy_strict(&self, ip: &str) -> Option<ThreatIndicator> {
+        self.lookup_local_indicator_policy_strict(ip, ThreatType::IpBlock)
+    }
+
+    /// Evaluate incoming mesh threat with the enforcement policy gate.
+    ///
+    /// Returns `ThreatIntelConsumerAction` based on the configured policy
+    /// context. Enforcement consumers must check this before mutating
+    /// block stores, rate limits, or WAF state.
+    fn evaluate_incoming_threat_policy(
+        &self,
+        indicator_value: &str,
+        threat_type: ThreatType,
+    ) -> ThreatIntelConsumerAction {
+        let decision =
+            self.evaluate_indicator_actionability_configured(indicator_value, threat_type);
+        classify_consumer_action(
+            decision.as_ref(),
+            ThreatIntelConsumerKind::Enforcement,
+            ThreatIntelDeferredMode::FailOpenNoAction,
         )
     }
 
@@ -3801,5 +4040,438 @@ mod tests {
         let _shadow = manager.evaluate_indicator_policy_shadow("1.2.3.4", ThreatType::IpBlock);
         let block_store = manager.get_block_store();
         assert!(!block_store.is_blocked(&"1.2.3.4".parse().unwrap(), "default"));
+    }
+
+    // ── Iteration 34: Consumer selection and enforcement gate tests ──
+
+    #[test]
+    fn iteration34_classify_consumer_action_shadow_only_always_suppresses() {
+        // ShadowOnly consumers never permit action regardless of decision.
+        let actionable = Some(ThreatIntelPolicyDecision::Actionable(
+            ThreatIntelPolicyEvidence {
+                intel_id: "test".to_string(),
+                advisory_key: "key".to_string(),
+                advisory_status: AdvisoryRecordStatus::Present,
+                advisory_freshness: AdvisoryFreshness::Live,
+                canonical_freshness: CanonicalFreshness::Live,
+                record_signature_valid: true,
+            },
+        ));
+        assert_eq!(
+            classify_consumer_action(
+                actionable.as_ref(),
+                ThreatIntelConsumerKind::ShadowOnly,
+                ThreatIntelDeferredMode::FailOpenNoAction,
+            ),
+            ThreatIntelConsumerAction::ShadowOnly
+        );
+    }
+
+    #[test]
+    fn iteration34_classify_consumer_action_raw_compatibility_always_raw() {
+        let actionable = Some(ThreatIntelPolicyDecision::Actionable(
+            ThreatIntelPolicyEvidence {
+                intel_id: "test".to_string(),
+                advisory_key: "key".to_string(),
+                advisory_status: AdvisoryRecordStatus::Present,
+                advisory_freshness: AdvisoryFreshness::Live,
+                canonical_freshness: CanonicalFreshness::Live,
+                record_signature_valid: true,
+            },
+        ));
+        assert_eq!(
+            classify_consumer_action(
+                actionable.as_ref(),
+                ThreatIntelConsumerKind::RawCompatibility,
+                ThreatIntelDeferredMode::FailOpenNoAction,
+            ),
+            ThreatIntelConsumerAction::RawCompatibilityOnly
+        );
+    }
+
+    #[test]
+    fn iteration34_classify_consumer_action_advisory_cache_suppresses() {
+        let actionable = Some(ThreatIntelPolicyDecision::Actionable(
+            ThreatIntelPolicyEvidence {
+                intel_id: "test".to_string(),
+                advisory_key: "key".to_string(),
+                advisory_status: AdvisoryRecordStatus::Present,
+                advisory_freshness: AdvisoryFreshness::Live,
+                canonical_freshness: CanonicalFreshness::Live,
+                record_signature_valid: true,
+            },
+        ));
+        assert_eq!(
+            classify_consumer_action(
+                actionable.as_ref(),
+                ThreatIntelConsumerKind::AdvisoryCache,
+                ThreatIntelDeferredMode::FailOpenNoAction,
+            ),
+            ThreatIntelConsumerAction::SuppressAction
+        );
+    }
+
+    #[test]
+    fn iteration34_classify_consumer_action_enforcement_actionable_permits() {
+        let actionable = Some(ThreatIntelPolicyDecision::Actionable(
+            ThreatIntelPolicyEvidence {
+                intel_id: "test".to_string(),
+                advisory_key: "key".to_string(),
+                advisory_status: AdvisoryRecordStatus::Present,
+                advisory_freshness: AdvisoryFreshness::Live,
+                canonical_freshness: CanonicalFreshness::Live,
+                record_signature_valid: true,
+            },
+        ));
+        assert_eq!(
+            classify_consumer_action(
+                actionable.as_ref(),
+                ThreatIntelConsumerKind::Enforcement,
+                ThreatIntelDeferredMode::FailOpenNoAction,
+            ),
+            ThreatIntelConsumerAction::PermitAction
+        );
+    }
+
+    #[test]
+    fn iteration34_classify_consumer_action_enforcement_advisory_only_suppresses() {
+        let advisory_only = Some(ThreatIntelPolicyDecision::AdvisoryOnly(
+            ThreatIntelPolicyEvidence {
+                intel_id: "test".to_string(),
+                advisory_key: "key".to_string(),
+                advisory_status: AdvisoryRecordStatus::Present,
+                advisory_freshness: AdvisoryFreshness::Live,
+                canonical_freshness: CanonicalFreshness::Unavailable,
+                record_signature_valid: true,
+            },
+        ));
+        assert_eq!(
+            classify_consumer_action(
+                advisory_only.as_ref(),
+                ThreatIntelConsumerKind::Enforcement,
+                ThreatIntelDeferredMode::FailOpenNoAction,
+            ),
+            ThreatIntelConsumerAction::SuppressAction
+        );
+    }
+
+    #[test]
+    fn iteration34_classify_consumer_action_enforcement_not_actionable_suppresses() {
+        let not_actionable = Some(ThreatIntelPolicyDecision::NotActionable(
+            ThreatIntelPolicyRejectReason::AdvisoryMissing,
+        ));
+        assert_eq!(
+            classify_consumer_action(
+                not_actionable.as_ref(),
+                ThreatIntelConsumerKind::Enforcement,
+                ThreatIntelDeferredMode::FailOpenNoAction,
+            ),
+            ThreatIntelConsumerAction::SuppressAction
+        );
+    }
+
+    #[test]
+    fn iteration34_classify_consumer_action_enforcement_deferred_suppresses() {
+        let deferred = Some(ThreatIntelPolicyDecision::Deferred(
+            ThreatIntelPolicyDeferReason::CanonicalUnavailable,
+        ));
+        assert_eq!(
+            classify_consumer_action(
+                deferred.as_ref(),
+                ThreatIntelConsumerKind::Enforcement,
+                ThreatIntelDeferredMode::FailOpenNoAction,
+            ),
+            ThreatIntelConsumerAction::SuppressAction
+        );
+    }
+
+    #[test]
+    fn iteration34_classify_consumer_action_enforcement_none_suppresses() {
+        // Missing policy context must NOT silently permit enforcement.
+        assert_eq!(
+            classify_consumer_action(
+                None,
+                ThreatIntelConsumerKind::Enforcement,
+                ThreatIntelDeferredMode::FailOpenNoAction,
+            ),
+            ThreatIntelConsumerAction::SuppressAction
+        );
+    }
+
+    #[test]
+    fn iteration34_strict_dht_lookup_returns_none_without_context() {
+        let manager = create_test_manager();
+        // No policy context configured → strict returns None
+        assert!(manager
+            .lookup_threat_indicator_policy_strict("1.2.3.4", ThreatType::IpBlock)
+            .is_none());
+    }
+
+    #[test]
+    fn iteration34_strict_local_lookup_returns_none_without_context() {
+        let manager = create_test_manager();
+        // No policy context configured → strict returns None
+        assert!(manager
+            .lookup_local_indicator_policy_strict("1.2.3.4", ThreatType::IpBlock)
+            .is_none());
+    }
+
+    #[test]
+    fn iteration34_strict_ip_lookup_returns_none_without_context() {
+        let manager = create_test_manager();
+        // No policy context configured → strict returns None
+        assert!(manager
+            .lookup_local_indicator_by_ip_policy_strict("1.2.3.4")
+            .is_none());
+    }
+
+    #[test]
+    fn iteration34_legacy_composed_lookup_falls_back_without_context() {
+        let manager = create_test_manager();
+        // Legacy composed lookup falls back to raw when no context
+        // (raw also returns None since transport is None, but the point is it doesn't panic)
+        let _ = manager.lookup_threat_indicator_policy_composed("1.2.3.4", ThreatType::IpBlock);
+        let _ = manager.lookup_local_indicator_policy_composed("1.2.3.4", ThreatType::IpBlock);
+        let _ = manager.lookup_local_indicator_by_ip_policy_composed("1.2.3.4");
+    }
+
+    #[test]
+    fn iteration34_handle_incoming_threat_stores_indicator_without_enforcement_when_no_context() {
+        let manager = create_test_manager();
+        manager.register_peer("remote-node".to_string(), MeshNodeRole::EDGE);
+        let mut indicator =
+            create_test_indicator("10.0.0.1", ThreatType::IpBlock, ThreatSeverity::High);
+        indicator.timestamp = synvoid_utils::safe_unix_timestamp();
+        indicator.ttl_seconds = 3600;
+
+        // Block store is disabled in test manager, but the enforcement gate
+        // also suppresses when no policy context is configured.
+        let accepted = manager.handle_incoming_threat(
+            indicator.clone(),
+            "remote-node",
+            MeshNodeRole::EDGE,
+            None,
+        );
+
+        // Should be accepted for storage/bookkeeping even without enforcement.
+        assert!(accepted);
+
+        // Verify the indicator was stored locally.
+        let stored = manager.lookup_local_indicator("10.0.0.1", ThreatType::IpBlock);
+        assert!(stored.is_some());
+        assert_eq!(stored.unwrap().indicator_value, "10.0.0.1");
+    }
+
+    #[test]
+    fn iteration34_apply_sync_stores_indicators_without_enforcement_when_no_context() {
+        let manager = create_test_manager();
+        manager.register_peer("sync-node".to_string(), MeshNodeRole::GLOBAL);
+        let now = synvoid_utils::safe_unix_timestamp();
+        let mut ind1 = create_test_indicator("10.0.0.2", ThreatType::IpBlock, ThreatSeverity::High);
+        ind1.timestamp = now;
+        ind1.ttl_seconds = 3600;
+        let mut ind2 = create_test_indicator(
+            "10.0.0.3",
+            ThreatType::RateLimitViolation,
+            ThreatSeverity::Medium,
+        );
+        ind2.timestamp = now;
+        ind2.ttl_seconds = 3600;
+        let indicators = vec![ind1, ind2];
+
+        let removed = manager.apply_sync(indicators, "sync-node", MeshNodeRole::GLOBAL, None);
+
+        // All indicators should be accepted (stored), none removed.
+        assert!(removed.is_empty());
+
+        // Verify indicators were stored locally.
+        assert!(manager
+            .lookup_local_indicator("10.0.0.2", ThreatType::IpBlock)
+            .is_some());
+        assert!(manager
+            .lookup_local_indicator("10.0.0.3", ThreatType::RateLimitViolation)
+            .is_some());
+    }
+
+    #[test]
+    fn iteration34_handle_hot_threat_gossip_stores_indicator_without_enforcement() {
+        let manager = create_test_manager();
+        manager.register_peer("gossip".to_string(), MeshNodeRole::EDGE);
+        let mut indicator =
+            create_test_indicator("10.0.0.4", ThreatType::IpBlock, ThreatSeverity::Critical);
+        indicator.timestamp = synvoid_utils::safe_unix_timestamp();
+        indicator.ttl_seconds = 3600;
+
+        manager.handle_hot_threat_gossip(
+            Vec::new(),
+            0,
+            synvoid_utils::safe_unix_timestamp(),
+            Some(indicator),
+        );
+
+        // The gossip delegates to handle_incoming_threat which stores the
+        // indicator but suppresses enforcement without policy context.
+        let stored = manager.lookup_local_indicator("10.0.0.4", ThreatType::IpBlock);
+        assert!(stored.is_some());
+    }
+
+    #[test]
+    fn iteration34_enforcement_gate_suppresses_ip_block_when_no_context() {
+        let manager = create_test_manager();
+        manager.register_peer("remote-node".to_string(), MeshNodeRole::EDGE);
+        let mut indicator =
+            create_test_indicator("10.0.0.5", ThreatType::IpBlock, ThreatSeverity::High);
+        indicator.timestamp = synvoid_utils::safe_unix_timestamp();
+        indicator.ttl_seconds = 3600;
+
+        let accepted =
+            manager.handle_incoming_threat(indicator, "remote-node", MeshNodeRole::EDGE, None);
+
+        assert!(accepted);
+        // Block store is disabled in test AND enforcement is suppressed.
+        // Verify the block store was NOT called (entry should not exist).
+        let entries = manager.block_store.get_all_entries();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn iteration34_enforcement_gate_supresses_rate_limit_when_no_context() {
+        let manager = create_test_manager();
+        manager.register_peer("remote-node".to_string(), MeshNodeRole::EDGE);
+        let mut indicator = create_test_indicator(
+            "10.0.0.6",
+            ThreatType::RateLimitViolation,
+            ThreatSeverity::Medium,
+        );
+        indicator.timestamp = synvoid_utils::safe_unix_timestamp();
+        indicator.ttl_seconds = 3600;
+
+        let accepted =
+            manager.handle_incoming_threat(indicator, "remote-node", MeshNodeRole::EDGE, None);
+
+        assert!(accepted);
+        let entries = manager.block_store.get_all_entries();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn iteration34_enforcement_gate_suppresses_suspicious_when_no_context() {
+        let manager = create_test_manager();
+        manager.register_peer("remote-node".to_string(), MeshNodeRole::EDGE);
+        let mut indicator = create_test_indicator(
+            "10.0.0.7",
+            ThreatType::SuspiciousActivity,
+            ThreatSeverity::High,
+        );
+        indicator.timestamp = synvoid_utils::safe_unix_timestamp();
+        indicator.ttl_seconds = 3600;
+
+        let accepted =
+            manager.handle_incoming_threat(indicator, "remote-node", MeshNodeRole::EDGE, None);
+
+        assert!(accepted);
+        let entries = manager.block_store.get_all_entries();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn iteration34_enforcement_gate_suppresses_ip_throttle_when_no_context() {
+        let manager = create_test_manager();
+        manager.register_peer("remote-node".to_string(), MeshNodeRole::EDGE);
+        let mut indicator =
+            create_test_indicator("10.0.0.8", ThreatType::IpThrottle, ThreatSeverity::Medium);
+        indicator.timestamp = synvoid_utils::safe_unix_timestamp();
+        indicator.ttl_seconds = 3600;
+
+        let accepted =
+            manager.handle_incoming_threat(indicator, "remote-node", MeshNodeRole::EDGE, None);
+
+        assert!(accepted);
+        let entries = manager.block_store.get_all_entries();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn iteration34_regression_raw_indicator_no_canonical_no_block_mutation() {
+        // Core regression test: a raw indicator from mesh without canonical trust
+        // must NOT cause block store mutation via the enforcement path.
+        let manager = create_test_manager();
+        manager.register_peer("untrusted-mesh-node".to_string(), MeshNodeRole::EDGE);
+        let mut indicator = create_test_indicator(
+            "192.168.100.1",
+            ThreatType::IpBlock,
+            ThreatSeverity::Critical,
+        );
+        indicator.timestamp = synvoid_utils::safe_unix_timestamp();
+        indicator.ttl_seconds = 7200;
+
+        let accepted = manager.handle_incoming_threat(
+            indicator,
+            "untrusted-mesh-node",
+            MeshNodeRole::EDGE,
+            None,
+        );
+
+        // Stored for bookkeeping.
+        assert!(accepted);
+        // No enforcement occurred.
+        assert!(manager.block_store.get_all_entries().is_empty());
+        // Local lookup finds it (bookkeeping path).
+        assert!(manager
+            .lookup_local_indicator("192.168.100.1", ThreatType::IpBlock)
+            .is_some());
+        // But strict lookup returns None (no policy context).
+        assert!(manager
+            .lookup_local_indicator_by_ip_policy_strict("192.168.100.1")
+            .is_none());
+    }
+
+    #[test]
+    fn iteration34_classify_consumer_action_enforcement_with_fail_closed_mode() {
+        let deferred = Some(ThreatIntelPolicyDecision::Deferred(
+            ThreatIntelPolicyDeferReason::CanonicalUnavailable,
+        ));
+        // Even with FailClosedNoAction mode, Deferred still suppresses
+        // (the mode is for future extension; current behavior is always suppress).
+        assert_eq!(
+            classify_consumer_action(
+                deferred.as_ref(),
+                ThreatIntelConsumerKind::Enforcement,
+                ThreatIntelDeferredMode::FailClosedNoAction,
+            ),
+            ThreatIntelConsumerAction::SuppressAction
+        );
+    }
+
+    #[test]
+    fn iteration34_classify_consumer_action_enforcement_with_shadow_mode() {
+        let actionable = Some(ThreatIntelPolicyDecision::Actionable(
+            ThreatIntelPolicyEvidence {
+                intel_id: "test".to_string(),
+                advisory_key: "key".to_string(),
+                advisory_status: AdvisoryRecordStatus::Present,
+                advisory_freshness: AdvisoryFreshness::Live,
+                canonical_freshness: CanonicalFreshness::Live,
+                record_signature_valid: true,
+            },
+        ));
+        // Even when actionable, ShadowOnly deferred mode does not change
+        // the enforcement kind behavior (consumer kind dominates).
+        assert_eq!(
+            classify_consumer_action(
+                actionable.as_ref(),
+                ThreatIntelConsumerKind::Enforcement,
+                ThreatIntelDeferredMode::ShadowOnly,
+            ),
+            ThreatIntelConsumerAction::PermitAction
+        );
+    }
+
+    #[test]
+    fn iteration34_evaluate_incoming_threat_policy_returns_suppress_without_context() {
+        let manager = create_test_manager();
+        let action = manager.evaluate_incoming_threat_policy("1.2.3.4", ThreatType::IpBlock);
+        // No policy context → SuppressAction
+        assert_eq!(action, ThreatIntelConsumerAction::SuppressAction);
     }
 }

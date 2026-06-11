@@ -21,9 +21,15 @@ SynVoid implements a distributed threat intelligence system that shares indicato
    - [Re-Announcement](#re-announcement)
 5. [Global Node vs Edge Behavior](#global-node-vs-edge-behavior)
 6. [Signature Verification](#signature-verification)
-7. [Configuration](#configuration)
-8. [Troubleshooting](#troubleshooting)
-9. [Related Documentation](#related-documentation)
+7. [Consumer Classification and Enforcement Gate](#consumer-classification-and-enforcement-gate)
+   - [Consumer Kinds](#consumer-kinds)
+   - [Consumer Actions](#consumer-actions)
+   - [Enforcement Gate in handle_incoming_threat](#enforcement-gate-in-handle_incoming_threat)
+   - [Strict vs Legacy Policy-Composed Lookups](#strict-vs-legacy-policy-composed-lookups)
+   - [Raw Lookup APIs](#raw-lookup-apis)
+8. [Configuration](#configuration)
+9. [Troubleshooting](#troubleshooting)
+10. [Related Documentation](#related-documentation)
 
 ## Overview
 
@@ -444,6 +450,86 @@ YARA rules sync enforces timestamp bounds to prevent replay attacks:
 | ThreatIntel (DHT sync) | Skip indicator, continue with next |
 | YARA manifest | Skip this manifest, try next |
 | YARA rule content | Skip, do not apply rules |
+
+## Consumer Classification and Enforcement Gate
+
+Iteration 34 introduces a formal enforcement gate that separates advisory DHT observations from enforcement mutations. The core invariant: **DHT threat-intel records are advisory. Canonical Raft-derived trust decides whether advisory records may become enforcement.**
+
+Advisory DHT records alone must never cause block-store, rate-limit, or WAF mutations. Only when canonical trust (via Raft consensus or quorum attestation) confirms an indicator is actionable may enforcement consumers act on it.
+
+### Consumer Kinds
+
+Every threat-intel consumer is classified by its intent via `ThreatIntelConsumerKind`:
+
+| Kind | Description | Enforcement Allowed |
+|------|-------------|---------------------|
+| `ShadowOnly` | Observability-only. Emits metrics, logs, and admin DTOs. | No |
+| `RawCompatibility` | Debug/compatibility surface. Uses raw lookup APIs. | No |
+| `AdvisoryCache` | May store locally for diagnostics. Does not touch enforcement state. | No |
+| `Enforcement` | May mutate block stores, rate limits, WAF deny lists when policy permits. | Yes, only when policy decision is `Actionable` |
+
+The classification is applied via `classify_consumer_action()` which maps consumer kind + policy decision to a concrete action:
+
+| Consumer Kind | Policy Decision | Result |
+|---------------|-----------------|--------|
+| `ShadowOnly` | any | `ShadowOnly` |
+| `RawCompatibility` | any | `RawCompatibilityOnly` |
+| `AdvisoryCache` | any | `SuppressAction` |
+| `Enforcement` | `Actionable` | `PermitAction` |
+| `Enforcement` | `AdvisoryOnly` / `NotActionable` / `Deferred` | `SuppressAction` |
+| `Enforcement` | `None` (no context) | `SuppressAction` |
+
+### Consumer Actions
+
+`ThreatIntelConsumerAction` is the result of classification:
+
+| Action | Meaning |
+|--------|---------|
+| `PermitAction` | Consumer may apply enforcement (block IP, rate limit, etc.). |
+| `SuppressAction` | Consumer must not mutate enforcement state. Indicator may be stored but not acted on. |
+| `ShadowOnly` | Consumer is observability-only. Always suppresses enforcement regardless of policy decision. |
+| `RawCompatibilityOnly` | Consumer uses raw lookup APIs. Must not be used for enforcement decisions. |
+
+### Enforcement Gate in handle_incoming_threat
+
+The `handle_incoming_threat()` method applies the enforcement gate before every enforcement mutation. The flow:
+
+1. **Signature verification** — Reject indicators with invalid signatures.
+2. **Reputation evaluation** — Reject indicators from untrusted sources.
+3. **Expiry check** — Reject expired indicators.
+4. **Duplicate check** — Skip already-seen indicators.
+5. **Policy gate** — Call `evaluate_incoming_threat_policy()` which evaluates the indicator through the composed policy (advisory + canonical trust) and returns `ThreatIntelConsumerAction`.
+6. **Mutate only if permitted** — Each threat type (`IpBlock`, `RateLimitViolation`, `SuspiciousActivity`, `IpThrottle`) checks `enforcement_action == PermitAction` before applying the mutation. If suppressed, the indicator is stored but no enforcement side-effect occurs.
+
+When the enforcement gate suppresses a mutation, the event is logged at debug level with the consumer action, and `record_threat_intel_enforcement_suppressed_not_configured()` is emitted. When permitted, `record_threat_intel_enforcement_permitted()` is emitted.
+
+### Strict vs Legacy Policy-Composed Lookups
+
+Two families of policy-composed lookup wrappers exist:
+
+**Legacy composed** (`lookup_*_policy_composed`) — Preferred for new reads where graceful degradation is acceptable. Falls back to the raw legacy lookup when no policy context is configured:
+
+- `lookup_threat_indicator_policy_composed()` — DHT lookup, falls back to `lookup_threat_indicator_in_dht()`.
+- `lookup_local_indicator_policy_composed()` — Local store lookup, falls back to `lookup_local_indicator()`.
+- `lookup_local_indicator_by_ip_policy_composed()` — IP convenience wrapper.
+
+**Strict composed** (`lookup_*_policy_strict`) — For enforcement consumers that must not fall back to raw lookups. Returns `None` when no policy context is configured:
+
+- `lookup_threat_indicator_policy_strict()` — DHT lookup, returns `None` without context.
+- `lookup_local_indicator_policy_strict()` — Local store lookup, returns `None` without context.
+- `lookup_local_indicator_by_ip_policy_strict()` — IP convenience wrapper.
+
+Both families gate on `Actionable` when a context is present. The difference is behavior when the context is absent: legacy degrades to raw (safe for diagnostics), strict refuses to return data (safe for enforcement).
+
+### Raw Lookup APIs
+
+Raw lookup APIs exist for compatibility and debugging, not for enforcement:
+
+- `lookup_local_indicator()` — Direct local store lookup, no policy gating.
+- `lookup_local_indicator_by_ip()` — IP convenience wrapper, no policy gating.
+- `lookup_threat_indicator_in_dht()` — Direct DHT lookup, no policy gating.
+
+These methods return indicators regardless of canonical trust status. They are useful for admin diagnostics, metrics collection, and comparison with policy-composed results, but **must not be consumed by enforcement paths**. An indicator that appears via a raw lookup may be `AdvisoryOnly` — present in the DHT but not canonical-trusted.
 
 ## Configuration
 

@@ -142,7 +142,8 @@ pub use security_challenge::{
 };
 pub use session::{Session, SessionConfig, SessionError, SessionManager};
 pub use threat_intel::{
-    ThreatIndicatorEntry, ThreatIntelPolicyContext, ThreatIntelligenceConfig,
+    ThreatIndicatorEntry, ThreatIntelConsumerAction, ThreatIntelConsumerKind,
+    ThreatIntelDeferredMode, ThreatIntelPolicyContext, ThreatIntelligenceConfig,
     ThreatIntelligenceManager, ThreatIntelligenceStats,
 };
 pub use threat_intel_policy::{

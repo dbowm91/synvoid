@@ -1,6 +1,6 @@
-# Mesh Trust Domains — Design Note (Iteration 33)
+# Mesh Trust Domains — Design Note (Iteration 34)
 
-**Status**: Iteration 33 — Shadow/observability consumers for policy-composed threat-intel decisions.  
+**Status**: Iteration 34 — Consumer enforcement gate for policy-composed threat-intel decisions.  
 **Date**: 2026-06-11  
 **Scope**: `crates/synvoid-mesh` (re-exported via `src/mesh`).  
 **Goal**: Define trust-domain boundaries and invariants before any internal module split.  
@@ -504,6 +504,81 @@ threat-intel decisions. These are shadow/observability consumers that answer
 compatibility/diagnostic. No proxy/WAF/YARA/WASM/routing consumers migrated.
 No global canonical readers introduced. No `StaticCanonicalTrustReader` in production.
 
+### Iteration 34 — Consumer Enforcement Gate
+
+The threat-intel consumer enforcement migration advances from shadow/observability
+to enforcement. Advisory DHT records alone can no longer cause enforcement
+mutations; all enforcement paths now require policy-composed approval.
+
+**Consumer classification** (`crates/synvoid-mesh/src/mesh/threat_intel_policy.rs`):
+
+- `ThreatIntelConsumerKind` — classifies consumers by enforcement impact
+  (`Observation`, `Advisory`, `Enforcement`)
+- `ThreatIntelConsumerAction` — maps consumer kind + policy decision to allow/deny/defer
+- `ThreatIntelDeferredMode` — controls deferred-result behavior per consumer
+- `classify_consumer_action()` — pure classifier, no I/O; returns
+  `ThreatIntelConsumerAction` from consumer kind + policy decision
+
+**Enforcement gate in `handle_incoming_threat()`** (`crates/synvoid-mesh/src/mesh/threat_intel.rs`):
+
+- Enforcement mutations (blocking, reputation decay, YARA rule activation) are
+  now gated by the consumer classification and policy decision.
+- Advisory DHT records without canonical trust produce `AdvisoryOnly` decisions,
+  which the enforcement gate maps to deny for enforcement consumers.
+- Advisory-only records alone cannot cause enforcement; both advisory observation
+  and canonical trust are required before enforcement mutations proceed.
+- Non-enforcement consumers (observation, advisory) continue to receive their
+  results without the enforcement gate.
+
+**Strict policy-composed lookup wrappers**:
+
+- `lookup_threat_indicator_policy_strict(indicator_value, threat_type)` — wraps
+  `lookup_threat_indicator_policy_composed` with the consumer enforcement gate;
+  returns `None` for non-actionable policy decisions.
+- `lookup_local_indicator_policy_strict(indicator_value, threat_type)` — wraps
+  `lookup_local_indicator_policy_composed` with the enforcement gate.
+- `lookup_local_indicator_by_ip_policy_strict(ip)` — IP convenience wrapper
+  delegating to the generic strict method.
+
+**Inheritance**:
+
+- `apply_sync` and `handle_hot_threat_gossip` inherit the enforcement gate via
+  delegation to `handle_incoming_threat`. No additional gating logic is needed in
+  those paths; they pass through the same consumer classification and policy
+  decision as direct callers.
+
+**Metrics stubs** (via `synvoid-metrics`):
+
+- `threat_intel_enforcement_gate_allowed_total`
+- `threat_intel_enforcement_gate_denied_total`
+- `threat_intel_enforcement_gate_deferred_total`
+- `threat_intel_enforcement_gate_not_configured_total`
+
+**Tests** (23 new):
+
+- Consumer classification matrix: all `ThreatIntelConsumerKind` ×
+  `ThreatIntelPolicyDecision` combinations, deferred-mode variants,
+  strict lookup wrappers returning `None` for non-actionable decisions,
+  strict lookup wrappers returning indicator for `Actionable`,
+  enforcement gate blocking advisory-only enforcement,
+  enforcement gate allowing actionable enforcement,
+  enforcement gate deferring when canonical unavailable,
+  inheritance via `apply_sync` and `handle_hot_threat_gossip`,
+  raw lookup methods returning results without enforcement gating,
+  metrics counter increments for all gate outcomes.
+
+**Raw lookup methods**: Now documented as "not for enforcement." The raw
+`lookup_local_indicator`, `lookup_local_indicator_by_ip`, and
+`lookup_threat_indicator_in_dht` methods remain for compatibility and diagnostics
+but bypass the enforcement gate. Callers requiring enforcement guarantees must
+use the strict wrappers.
+
+**Non-goals honored**: No proxy, YARA/WASM, routing, or WAF consumers were
+migrated beyond the enforcement gate in `handle_incoming_threat`. No global
+canonical readers introduced. No `StaticCanonicalTrustReader` in production.
+The consumer classification matrix is extensible but only enforcement consumers
+are gated in this pass.
+
 ### Iteration 24 Threat Intel Policy Verification
 
 The shared `is_policy_actionable` helper remains in place and both policy-composed lookup paths continue to use it. Focused verification (`cargo check -p synvoid-mesh --features mesh`, `cargo test -p synvoid-mesh threat_intel --features mesh`, `cargo test -p synvoid-mesh threat_intel_policy --features mesh`) passed. No additional consumer migration or hot-path change was added; raw lookup APIs remain compatibility/diagnostic paths.
@@ -596,11 +671,12 @@ The worker IPC handler now reads runtime configuration instead of using hardcode
 
 ## Follow-Up Recommendation
 
-After this pass, two threat-intel read paths are stable through the composed policy seam:
+After this pass, three threat-intel read paths are stable through the composed policy seam:
 1. `lookup_threat_indicator_policy_composed` (DHT lookup, Iteration 20)
 2. `lookup_local_indicator_policy_composed` (local lookup, Iteration 21)
+3. `lookup_threat_indicator_policy_strict` / `lookup_local_indicator_policy_strict` / `lookup_local_indicator_by_ip_policy_strict` (enforcement-gated wrappers, Iteration 34)
 
-The trust-domain/freshness track is a reasonable stopping point. The next architecture track should be independent unless a concrete low-risk consumer for policy-composed threat intel is selected. Move to a different architecture track next; do not expand proxy, YARA/WASM, routing, or enforcement consumers without a separate design pass. Raw lookup APIs remain compatibility/diagnostic paths.
+The consumer enforcement gate is now active for `handle_incoming_threat` and inherited by `apply_sync` and `handle_hot_threat_gossip`. The trust-domain/freshness/enforcement track is a reasonable stopping point. The next architecture track should be independent unless a concrete low-risk consumer for policy-composed threat intel is selected. Move to a different architecture track next; do not expand proxy, YARA/WASM, routing, or WAF consumers without a separate design pass. Raw lookup APIs remain compatibility/diagnostic paths and are not suitable for enforcement.
 
 ---
 

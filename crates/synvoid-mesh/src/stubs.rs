@@ -43,6 +43,11 @@ pub mod metrics {
     pub fn record_threat_intel_policy_shadow_raw_disagreement() {}
     pub fn record_threat_intel_policy_shadow_canonical_unavailable() {}
     pub fn record_threat_intel_policy_shadow_advisory_missing() {}
+    pub fn record_threat_intel_enforcement_permitted() {}
+    pub fn record_threat_intel_enforcement_suppressed_advisory_only() {}
+    pub fn record_threat_intel_enforcement_suppressed_not_actionable() {}
+    pub fn record_threat_intel_enforcement_suppressed_deferred() {}
+    pub fn record_threat_intel_enforcement_suppressed_not_configured() {}
 
     pub mod bandwidth {
         use parking_lot::RwLock;
