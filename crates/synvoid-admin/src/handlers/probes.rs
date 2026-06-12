@@ -343,6 +343,8 @@ pub async fn block_probes<S: AdminStateProvider>(
                     blocked_at: current_timestamp(),
                     ban_expire_seconds: ban_duration_secs,
                     site_scope: String::new(),
+                    provenance_kind: Some("SupervisorManual".to_string()),
+                    provenance_source: Some("probe_admin_api".to_string()),
                 }],
                 vec![],
             );

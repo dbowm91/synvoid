@@ -291,6 +291,8 @@ mod tests {
             blocked_at: 0,
             ban_expire_seconds: 3600,
             site_scope: "*".to_string(),
+            provenance_kind: Some("AdminManual".to_string()),
+            provenance_source: Some("test".to_string()),
         }];
         let response = Message::BlocklistResponse {
             worker_id: 1,

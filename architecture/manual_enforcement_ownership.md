@@ -66,8 +66,8 @@ This document defines the ownership model for manual and supervisor-driven IP en
 
 ### Worker Blocklist Sync (IPC)
 - **File:** `src/worker/unified_server/lifecycle.rs`
-- **Provenance:** `SupervisorSync`, source `blocklist_update` or `blocklist_response`
-- **Note:** `BlockEntryData` IPC wire format does not carry provenance; workers re-assign `SupervisorSync` on receipt
+- **Provenance:** Carried via `BlockEntryData`/`MeshBlockEntryData` optional `provenance_kind`/`provenance_source` fields (Iteration 50). Legacy messages without these fields default to `SupervisorSync` via `ipc_data_to_provenance()`.
+- **Note:** `BlocklistEventUpdate` IPC (preferred path) carries full `BlocklistEvent` JSON including `BlockProvenance`.
 
 ## Response Exposure
 
@@ -81,7 +81,7 @@ This document defines the ownership model for manual and supervisor-driven IP en
 
 ## Known Gaps
 
-1. **IPC blocklist sync loses provenance**: `BlockEntryData` does not carry provenance; workers re-assign `SupervisorSync` regardless of original provenance.
+1. **~~IPC blocklist sync loses provenance~~**: **Resolved (Iteration 50).** `BlockEntryData`/`MeshBlockEntryData` now carry optional `provenance_kind`/`provenance_source` fields. `BlocklistEventUpdate` carries full `BlocklistEvent` JSON with `BlockProvenance`. Legacy messages without provenance fields default to `SupervisorSync` via `ipc_data_to_provenance()`. See `architecture/blocklist_provenance_preservation.md`.
 2. **Unban propagation is best-effort**: Admin unban now gossips `BlocklistEventGossip` to mesh peers and pushes `BlocklistEventUpdate` IPC to workers, but delivery is not acknowledged. Mesh peers that are offline may miss the event. Periodic blocklist sync (future) can mitigate this.
 3. **Mesh-ID blocks not enforced at WAF request path**: `RequestContext` does not carry mesh ID, so mesh-ID blocks are scoped to admin/control-plane operations only. **Follow-up needed:** If mesh-ID blocking should affect request routing, `mesh_id` must be added to `RequestContext` and wired through the WAF pipeline.
 4. **Per-target stale suppression is in-memory only**: `TargetStateCache` is not persisted across process restarts. After restart, stale replay protection relies on event-ID dedup only until targets are re-observed. Persisted tombstones (future) can mitigate.

@@ -126,7 +126,8 @@ Clock skew between nodes is a known caveat — nodes with significantly skewed c
 
 ### Supervisor/Worker Sync
 
-- New `BlocklistEventUpdate` IPC message carries serialized `BlocklistEvent` JSON
+- `BlocklistEventUpdate` IPC message carries serialized `BlocklistEvent` JSON, including `BlockProvenance` (preferred path for provenance-preserving propagation)
+- `BlockEntryData`/`MeshBlockEntryData` carry optional `provenance_kind`/`provenance_source` fields (Iteration 50); `ipc_data_to_provenance()` maps `None` to `SupervisorSync` for backward compat
 - Workers deserialize and apply via `apply_blocklist_event()`
 - Backward compatible: old `BlocklistUpdate`/`BlocklistResponse` still work
 

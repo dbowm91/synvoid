@@ -226,9 +226,9 @@ impl MeshMessage {
                 "block:{}:{}:{}",
                 mesh_identifier, service_id, origin_node_id
             ))),
-            Self::BlocklistCatchupRequest { requesting_node, .. } => {
-                Some(requesting_node.as_str().into())
-            }
+            Self::BlocklistCatchupRequest {
+                requesting_node, ..
+            } => Some(requesting_node.as_str().into()),
             _ => None,
         }
     }

@@ -236,7 +236,9 @@ impl MeshTransport {
                         ..
                     } = msg
                     {
-                        use crate::blocklist_event::{provenance_kind_from_u32, operation_from_u32, target_kind_from_u32};
+                        use crate::blocklist_event::{
+                            operation_from_u32, provenance_kind_from_u32, target_kind_from_u32,
+                        };
                         let event = synvoid_core::block_store::BlocklistEvent {
                             operation: operation_from_u32(operation),
                             target_kind: target_kind_from_u32(target_kind),
@@ -256,7 +258,11 @@ impl MeshTransport {
                         let result = bs.apply_blocklist_event(&event);
                         tracing::info!(
                             "Applied blocklist event gossip from {}: {:?} {:?} on {:?} -> {:?}",
-                            peer_id, operation, target_kind, identifier, result
+                            peer_id,
+                            operation,
+                            target_kind,
+                            identifier,
+                            result
                         );
                     }
                 }

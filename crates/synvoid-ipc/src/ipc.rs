@@ -105,6 +105,12 @@ pub struct BlockEntryData {
     pub blocked_at: u64,
     pub ban_expire_seconds: u64,
     pub site_scope: String,
+    /// Iteration 50: Preserves original block provenance across IPC.
+    /// When absent (legacy messages), defaults to `SupervisorSync`.
+    #[serde(default)]
+    pub provenance_kind: Option<String>,
+    #[serde(default)]
+    pub provenance_source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,6 +120,12 @@ pub struct MeshBlockEntryData {
     pub blocked_at: u64,
     pub ban_expire_seconds: u64,
     pub site_scope: String,
+    /// Iteration 50: Preserves original block provenance across IPC.
+    /// When absent (legacy messages), defaults to `SupervisorSync`.
+    #[serde(default)]
+    pub provenance_kind: Option<String>,
+    #[serde(default)]
+    pub provenance_source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

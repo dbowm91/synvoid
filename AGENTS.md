@@ -262,6 +262,7 @@ Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.overrid
 - **`block_mesh_id_with_provenance` deadlock fix**: Now drops the shard lock before calling `trigger_persist()` (previously held the lock across the persist call).
 - **BlocklistEvent / BlocklistOperation**: Types in `synvoid-core::block_store` for mesh-wide block/unblock propagation. Admin ban/unban handlers emit structured `BlocklistEvent` debug logs. Admin unban also calls `announce_local_unblock()` to gossip `BlocklistEventGossip` to mesh peers. Supervisor pushes `BlocklistEventUpdate` IPC to workers. Supports distributed fields: `event_id`, `source_node`, `ttl_secs`, `version`. Apply pipeline uses FIFO dedup (`SeenEventCache`) and per-target stale suppression (`TargetStateCache`). See `architecture/blocklist_remove_consistency.md`.
 - **BlocklistEventLog** (Iteration 48, cursor fix Iteration 49): Bounded in-memory event log (10,000 events default) in `BlockStore` for offline-peer catchup. Reconnecting peers request events via `BlocklistCatchupRequest`/`BlocklistCatchupResponse` mesh messages. History gaps detected via `snapshot_required`. Supervisor retains separate IPC event log (1,000 events) for worker replay on reconnect. `BlocklistEventCursor.since_sequence: Option<u64>` — `None` replays from oldest retained event (including sequence 0); `Some(n)` returns events with sequence `> n` (exclusive). See `architecture/blocklist_reconciliation.md`.
+- **BlocklistEventUpdate IPC** (Iteration 50): Carries full `BlocklistEvent` JSON including `BlockProvenance`. After Iteration 50, admin `ban_ip`/`ban_mesh_id` also broadcast events to workers. `BlockEntryData`/`MeshBlockEntryData` now include optional `provenance_kind`/`provenance_source` fields. `ipc_data_to_provenance()` helper converts IPC strings back to typed `BlockProvenance`. See `architecture/blocklist_provenance_preservation.md`.
 
 ### Root Dependency Ownership
 - Reference `plans/root_dependency_ownership.md` for the ownership inventory of all root-level direct dependencies.
@@ -307,6 +308,7 @@ The `architecture/` directory contains detailed design documents. Key canonical 
 | Threat-intel audit | `threat_intel_request_waf_audit.md` | — |
 | HTTP/3 WAF boundary | `http3_request_waf_boundary.md` | — |
 | Blocklist reconciliation | `blocklist_reconciliation.md` | `blocklist_remove_consistency.md` |
+| Blocklist provenance | `blocklist_reconciliation.md` | `blocklist_provenance_preservation.md` |
 
 ## Skills Directory
 

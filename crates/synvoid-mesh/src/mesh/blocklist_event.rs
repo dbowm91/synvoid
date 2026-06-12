@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
-use synvoid_core::block_store::{
-    BlocklistOperation, BlockProvenanceKind, BlockTargetKind,
-};
+use synvoid_core::block_store::{BlockProvenanceKind, BlockTargetKind, BlocklistOperation};
 
 /// Wire-format event data for blocklist catchup responses.
 /// Mirrors the proto `BlocklistEventData` message.

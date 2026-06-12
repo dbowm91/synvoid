@@ -72,6 +72,8 @@ pub struct MeshBlockEntryData {
     pub blocked_at: u64,
     pub ban_expire_seconds: u64,
     pub site_scope: String,
+    pub provenance_kind: Option<String>,    // Iteration 50
+    pub provenance_source: Option<String>,  // Iteration 50
 }
 ```
 
@@ -125,6 +127,7 @@ Admin unban now propagates to mesh peers and workers:
 - **Dedupe**: FIFO `SeenEventCache` (HashSet + VecDeque), capped at 10,000. Evicts oldest one-by-one, not full-clear.
 - **Stale suppression**: Per-target `TargetStateCache` tracks last-applied event timestamp/version. Older events return `IgnoredStale`.
 - **Apply pipeline**: validate → dedup → stale check → mutate → record state
+- **IPC provenance** (Iteration 50): `BlocklistEventUpdate` carries full `BlocklistEvent` JSON with `BlockProvenance`. Admin `ban_ip`/`ban_mesh_id` now also broadcast to workers. `BlockEntryData`/`MeshBlockEntryData` include optional `provenance_kind`/`provenance_source` fields; `ipc_data_to_provenance()` maps `None` to `SupervisorSync`. See `architecture/blocklist_provenance_preservation.md`.
 - See `architecture/blocklist_remove_consistency.md` for full consistency model
 
 ## Enforcement Rules (unchanged)

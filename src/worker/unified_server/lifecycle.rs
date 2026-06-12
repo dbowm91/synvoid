@@ -19,6 +19,42 @@ use synvoid_mesh::canonical::CanonicalTrustReader;
 #[cfg(feature = "mesh")]
 use synvoid_mesh::dht::advisory_source::{AdvisoryRecordSource, RecordStoreAdvisorySource};
 
+/// Iteration 50: Convert optional IPC provenance strings back to a typed `BlockProvenance`.
+/// When both fields are `None` (legacy messages), defaults to `SupervisorSync`.
+fn ipc_data_to_provenance(kind_str: Option<&str>, source: Option<&str>) -> BlockProvenance {
+    let kind = match kind_str {
+        Some("LocalWaf") => BlockProvenanceKind::LocalWaf,
+        Some("LocalHoneypot") => BlockProvenanceKind::LocalHoneypot,
+        Some("LocalAsnTracker") => BlockProvenanceKind::LocalAsnTracker,
+        Some("MeshThreatIntelPolicyGated") => BlockProvenanceKind::MeshThreatIntelPolicyGated,
+        Some("SupervisorSync") => BlockProvenanceKind::SupervisorSync,
+        Some("AdminManual") => BlockProvenanceKind::AdminManual,
+        Some("SupervisorManual") => BlockProvenanceKind::SupervisorManual,
+        Some("ProxyHealthProbe") => BlockProvenanceKind::ProxyHealthProbe,
+        Some("Test") => BlockProvenanceKind::Test,
+        Some("LegacyUnknown") | None => {
+            // Iteration 50: Legacy messages without provenance default to SupervisorSync
+            // since the supervisor is the relay context for these IPC messages.
+            return BlockProvenance {
+                // Iteration 50: relay default, not origin overwrite
+                kind: BlockProvenanceKind::SupervisorSync,
+                source: source.map(|s| s.to_string()),
+            };
+        }
+        _ => {
+            return BlockProvenance {
+                // Iteration 50: relay default, not origin overwrite
+                kind: BlockProvenanceKind::SupervisorSync,
+                source: source.map(|s| s.to_string()),
+            };
+        }
+    };
+    BlockProvenance {
+        kind,
+        source: source.map(|s| s.to_string()),
+    }
+}
+
 pub fn spawn_heartbeat_task(state: UnifiedServerWorkerState) -> JoinHandle<()> {
     tokio::spawn(async move {
         let heartbeat_interval = Duration::from_secs(5);
@@ -262,29 +298,31 @@ pub fn spawn_ipc_loop(
                     );
                     if let Some(block_store) = state.unified_server.get_block_store() {
                         for block in blocks {
+                            let provenance = ipc_data_to_provenance(
+                                block.provenance_kind.as_deref(),
+                                block.provenance_source.as_deref(),
+                            );
                             if let Ok(ip) = block.ip.parse() {
                                 let _ = block_store.block_ip_with_provenance(
                                     ip,
                                     &block.reason,
                                     block.ban_expire_seconds,
                                     &block.site_scope,
-                                    BlockProvenance {
-                                        kind: BlockProvenanceKind::SupervisorSync,
-                                        source: Some("blocklist_update".to_string()),
-                                    },
+                                    provenance,
                                 );
                             }
                         }
                         for block in mesh_blocks {
+                            let provenance = ipc_data_to_provenance(
+                                block.provenance_kind.as_deref(),
+                                block.provenance_source.as_deref(),
+                            );
                             let _ = block_store.block_mesh_id_with_provenance(
                                 &block.mesh_id,
                                 &block.reason,
                                 block.ban_expire_seconds,
                                 &block.site_scope,
-                                BlockProvenance {
-                                    kind: BlockProvenanceKind::SupervisorSync,
-                                    source: Some("blocklist_update".to_string()),
-                                },
+                                provenance,
                             );
                         }
                     }
@@ -753,29 +791,31 @@ pub async fn request_initial_blocklist(
                     mesh_blocks.len()
                 );
                 for block in blocks {
+                    let provenance = ipc_data_to_provenance(
+                        block.provenance_kind.as_deref(),
+                        block.provenance_source.as_deref(),
+                    );
                     if let Ok(ip) = block.ip.parse() {
                         let _ = block_store.block_ip_with_provenance(
                             ip,
                             &block.reason,
                             block.ban_expire_seconds,
                             &block.site_scope,
-                            BlockProvenance {
-                                kind: BlockProvenanceKind::SupervisorSync,
-                                source: Some("blocklist_response".to_string()),
-                            },
+                            provenance,
                         );
                     }
                 }
                 for block in mesh_blocks {
+                    let provenance = ipc_data_to_provenance(
+                        block.provenance_kind.as_deref(),
+                        block.provenance_source.as_deref(),
+                    );
                     let _ = block_store.block_mesh_id_with_provenance(
                         &block.mesh_id,
                         &block.reason,
                         block.ban_expire_seconds,
                         &block.site_scope,
-                        BlockProvenance {
-                            kind: BlockProvenanceKind::SupervisorSync,
-                            source: Some("blocklist_response".to_string()),
-                        },
+                        provenance,
                     );
                 }
                 break;

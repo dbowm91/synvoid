@@ -167,7 +167,8 @@ fn find_legacy_unknown_usages(content: &str) -> Vec<usize> {
             continue;
         }
 
-        if line.contains("LegacyUnknown") {
+        // Only flag the enum variant, not string patterns like "LegacyUnknown"
+        if line.contains("BlockProvenanceKind::LegacyUnknown") {
             violations.push(idx + 1);
         }
     }
@@ -404,5 +405,151 @@ fn strip_test_modules_removes_cfg_test_content() {
     assert!(
         !lines.is_empty(),
         "Production .block_ip( before #[cfg(test)] must still be detected"
+    );
+}
+
+// ── Phase 4: Iteration 50 — SupervisorSync Provenance Guard ───────────────────
+
+/// Scan worker/supervisor blocklist ingestion paths for unconditional
+/// `BlockProvenanceKind::SupervisorSync` assignment. After Iteration 50,
+/// these paths should use `ipc_data_to_provenance()` to preserve original
+/// provenance, not hardcode `SupervisorSync`.
+fn find_unconditional_supervisor_sync(content: &str) -> Vec<usize> {
+    let mut violations = Vec::new();
+    // Track whether we're inside the ipc_data_to_provenance helper function
+    let mut in_helper = false;
+    let mut depth: i32 = 0;
+    for (idx, line) in content.lines().enumerate() {
+        let trimmed = line.trim();
+
+        // Track function boundaries for the helper
+        if trimmed.contains("fn ipc_data_to_provenance(") {
+            in_helper = true;
+            depth = 0;
+        }
+        if in_helper {
+            for ch in trimmed.chars() {
+                if ch == '{' {
+                    depth += 1;
+                } else if ch == '}' {
+                    depth -= 1;
+                    if depth == 0 {
+                        in_helper = false;
+                    }
+                }
+            }
+            continue; // Skip all lines inside the helper
+        }
+
+        // Skip doc comments
+        if trimmed.starts_with("///") || trimmed.starts_with("//!") {
+            continue;
+        }
+
+        // Skip comments
+        if trimmed.starts_with("//") {
+            continue;
+        }
+
+        // Flag direct SupervisorSync construction in blocklist ingestion paths
+        if line.contains("BlockProvenanceKind::SupervisorSync")
+            && !line.contains("Some(\"SupervisorSync\")")
+        {
+            violations.push(idx + 1);
+        }
+    }
+    violations
+}
+
+const BLOCKLIST_INGESTION_DIRS: &[&str] =
+    &["src/worker/unified_server", "src/supervisor", "src/process"];
+
+/// Scan blocklist ingestion paths for unconditional `SupervisorSync` assignment.
+/// After Iteration 50, these paths should use `ipc_data_to_provenance()` instead.
+#[test]
+fn no_unconditional_supervisor_sync_in_blocklist_ingestion() {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut violations: Vec<String> = Vec::new();
+
+    for dir in BLOCKLIST_INGESTION_DIRS {
+        let path = workspace_root.join(dir);
+        if !path.exists() {
+            continue;
+        }
+
+        let files = collect_rs_files(&path);
+        for file in &files {
+            let relative = file
+                .strip_prefix(&workspace_root)
+                .unwrap_or(file)
+                .to_string_lossy()
+                .into_owned();
+
+            let content = match fs::read_to_string(file) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+
+            let production = strip_test_modules(&content);
+            let production = strip_comments(&production);
+
+            let lines = find_unconditional_supervisor_sync(&production);
+            if !lines.is_empty() {
+                let line_list: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+                violations.push(format!(
+                    "  {relative}: SupervisorSync used at lines: {}",
+                    line_list.join(", ")
+                ));
+            }
+        }
+    }
+
+    if !violations.is_empty() {
+        let mut msg = String::from(
+            "Unconditional `BlockProvenanceKind::SupervisorSync` found in blocklist ingestion paths. \
+             After Iteration 50, these paths must use `ipc_data_to_provenance()` to preserve \
+             original provenance. `SupervisorSync` should only be used when the supervisor \
+             itself originated the block, not as a blanket relay default.\n\n\
+             Violations:\n",
+        );
+        for v in &violations {
+            msg.push_str(v);
+            msg.push('\n');
+        }
+        panic!("{msg}");
+    }
+}
+
+/// Confirm that a simulated unconditional SupervisorSync assignment is detected.
+#[test]
+fn simulated_unconditional_supervisor_sync_is_detected() {
+    let fake_content = r#"fn apply_blocklist_update() {
+    let provenance = BlockProvenance {
+        kind: BlockProvenanceKind::SupervisorSync,
+        source: Some("blocklist_update".to_string()),
+    };
+}"#;
+
+    let lines = find_unconditional_supervisor_sync(fake_content);
+    assert!(
+        !lines.is_empty(),
+        "Simulated unconditional SupervisorSync must be detected"
+    );
+}
+
+/// Confirm that SupervisorSync in the ipc_data_to_provenance helper is NOT flagged.
+#[test]
+fn supervisor_sync_in_helper_is_not_flagged() {
+    let fake_content = r#"fn ipc_data_to_provenance(kind_str: Option<&str>, source: Option<&str>) -> BlockProvenance {
+    let kind = match kind_str {
+        Some("SupervisorSync") => BlockProvenanceKind::SupervisorSync,
+        _ => BlockProvenanceKind::LegacyUnknown,
+    };
+}"#;
+
+    let lines = find_unconditional_supervisor_sync(fake_content);
+    assert!(
+        lines.is_empty(),
+        "SupervisorSync in ipc_data_to_provenance helper should not be flagged"
     );
 }

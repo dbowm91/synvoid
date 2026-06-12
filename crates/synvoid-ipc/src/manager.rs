@@ -94,7 +94,11 @@ impl IpcBlocklistEventLog {
         Some(seq)
     }
 
-    fn query_since(&self, since_sequence: Option<u64>, max_events: usize) -> IpcBlocklistCatchupResult {
+    fn query_since(
+        &self,
+        since_sequence: Option<u64>,
+        max_events: usize,
+    ) -> IpcBlocklistCatchupResult {
         let total = self.events.len();
         if total == 0 {
             return IpcBlocklistCatchupResult {
@@ -106,11 +110,7 @@ impl IpcBlocklistEventLog {
         match since_sequence {
             None => {
                 // From start: return all retained events.
-                let events: Vec<_> = self.events
-                    .range(0..)
-                    .take(max_events)
-                    .cloned()
-                    .collect();
+                let events: Vec<_> = self.events.range(0..).take(max_events).cloned().collect();
                 IpcBlocklistCatchupResult {
                     events,
                     history_complete: true,
@@ -124,7 +124,8 @@ impl IpcBlocklistEventLog {
                     let offset = (since + 1 - oldest_seq) as usize;
                     offset.min(total)
                 };
-                let events: Vec<_> = self.events
+                let events: Vec<_> = self
+                    .events
                     .range(first_idx..)
                     .take(max_events)
                     .cloned()

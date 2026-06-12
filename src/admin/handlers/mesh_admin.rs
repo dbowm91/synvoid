@@ -452,7 +452,7 @@ pub async fn ban_ip(
                     reason
                 );
 
-                let event = BlocklistEvent::block_ip(
+                let mut event = BlocklistEvent::block_ip(
                     &ip.to_string(),
                     &reason,
                     &site_scope,
@@ -462,9 +462,25 @@ pub async fn ban_ip(
                     },
                     synvoid_utils::safe_unix_timestamp(),
                 );
+                let event_id = event.generate_event_id();
+                event = event.with_event_id(event_id.clone());
                 tracing::debug!(target: "blocklist_event", ?event, "Block event emitted");
 
                 threat_intel.announce_local_block(ip, reason.clone(), duration, site_scope.clone());
+
+                // Iteration 50: Broadcast block event to workers so they preserve original provenance
+                if let Some(ref pm) = state.process.process_manager {
+                    let event_json = serde_json::to_string(&event).unwrap_or_default();
+                    let pm = pm.clone();
+                    tokio::spawn(async move {
+                        pm.broadcast_blocklist_event(
+                            event_json,
+                            "admin_ban_ip".to_string(),
+                            event_id,
+                        )
+                        .await;
+                    });
+                }
 
                 return Ok(Json(serde_json::json!({
                     "success": true,
@@ -535,7 +551,7 @@ pub async fn ban_mesh_id(
                     reason
                 );
 
-                let event = BlocklistEvent::block_mesh_id(
+                let mut event = BlocklistEvent::block_mesh_id(
                     &mesh_id,
                     &reason,
                     "global",
@@ -545,7 +561,23 @@ pub async fn ban_mesh_id(
                     },
                     synvoid_utils::safe_unix_timestamp(),
                 );
+                let event_id = event.generate_event_id();
+                event = event.with_event_id(event_id.clone());
                 tracing::debug!(target: "blocklist_event", ?event, "Block event emitted");
+
+                // Iteration 50: Broadcast block event to workers so they preserve original provenance
+                if let Some(ref pm) = state.process.process_manager {
+                    let event_json = serde_json::to_string(&event).unwrap_or_default();
+                    let pm = pm.clone();
+                    tokio::spawn(async move {
+                        pm.broadcast_blocklist_event(
+                            event_json,
+                            "admin_ban_mesh_id".to_string(),
+                            event_id,
+                        )
+                        .await;
+                    });
+                }
 
                 return Ok(Json(serde_json::json!({
                     "success": true,
@@ -629,7 +661,8 @@ pub async fn unban(
                                         event_json,
                                         "admin_unban_ip".to_string(),
                                         event_id,
-                                    ).await;
+                                    )
+                                    .await;
                                 });
                             }
                             return Ok(Json(serde_json::json!({
@@ -676,7 +709,8 @@ pub async fn unban(
                                     event_json,
                                     "admin_unban_mesh_id".to_string(),
                                     event_id,
-                                ).await;
+                                )
+                                .await;
                             });
                         }
                         return Ok(Json(serde_json::json!({

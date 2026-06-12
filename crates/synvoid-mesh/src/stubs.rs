@@ -366,10 +366,7 @@ pub mod block_store {
             &self,
             event: &synvoid_core::block_store::BlocklistEvent,
         ) -> BlocklistApplyResult;
-        fn query_blocklist_catchup(
-            &self,
-            cursor: &BlocklistEventCursor,
-        ) -> BlocklistCatchupResult;
+        fn query_blocklist_catchup(&self, cursor: &BlocklistEventCursor) -> BlocklistCatchupResult;
         fn record_blocklist_event_for_catchup(
             &self,
             event: &synvoid_core::block_store::BlocklistEvent,
@@ -561,10 +558,7 @@ pub mod block_store {
             self.apply_blocklist_event(event)
         }
 
-        fn query_blocklist_catchup(
-            &self,
-            cursor: &BlocklistEventCursor,
-        ) -> BlocklistCatchupResult {
+        fn query_blocklist_catchup(&self, cursor: &BlocklistEventCursor) -> BlocklistCatchupResult {
             self.query_blocklist_catchup(cursor)
         }
 

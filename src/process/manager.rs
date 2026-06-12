@@ -90,6 +90,42 @@ impl Default for ProcessManagerConfig {
     }
 }
 
+/// Iteration 50: Convert optional IPC provenance strings back to a typed `BlockProvenance`.
+/// When both fields are `None` (legacy messages), defaults to `SupervisorSync` since
+/// the supervisor is the relay context for these messages.
+fn ipc_data_to_provenance(
+    kind_str: Option<&str>,
+    source: Option<&str>,
+) -> BlockProvenance {
+    let kind = match kind_str {
+        Some("LocalWaf") => BlockProvenanceKind::LocalWaf,
+        Some("LocalHoneypot") => BlockProvenanceKind::LocalHoneypot,
+        Some("LocalAsnTracker") => BlockProvenanceKind::LocalAsnTracker,
+        Some("MeshThreatIntelPolicyGated") => BlockProvenanceKind::MeshThreatIntelPolicyGated,
+        Some("SupervisorSync") => BlockProvenanceKind::SupervisorSync,
+        Some("AdminManual") => BlockProvenanceKind::AdminManual,
+        Some("SupervisorManual") => BlockProvenanceKind::SupervisorManual,
+        Some("ProxyHealthProbe") => BlockProvenanceKind::ProxyHealthProbe,
+        Some("Test") => BlockProvenanceKind::Test,
+        Some("LegacyUnknown") | None => {
+            return BlockProvenance {
+                kind: BlockProvenanceKind::SupervisorSync,
+                source: source.map(|s| s.to_string()),
+            };
+        }
+        _ => {
+            return BlockProvenance {
+                kind: BlockProvenanceKind::SupervisorSync,
+                source: source.map(|s| s.to_string()),
+            };
+        }
+    };
+    BlockProvenance {
+        kind,
+        source: source.map(|s| s.to_string()),
+    }
+}
+
 pub struct ProcessManager {
     config: ProcessManagerConfig,
     dynamic_config: Arc<PLRwLock<crate::config::ProcessManagerConfig>>,
@@ -1182,6 +1218,8 @@ impl ProcessManager {
                     blocked_at: e.blocked_at,
                     ban_expire_seconds: e.ban_expire_seconds,
                     site_scope: e.site_scope,
+                    provenance_kind: Some(format!("{:?}", e.provenance.kind)),
+                    provenance_source: e.provenance.source,
                 })
                 .collect();
             let mesh_entries = store.get_all_mesh_entries();
@@ -1193,6 +1231,8 @@ impl ProcessManager {
                     blocked_at: e.blocked_at,
                     ban_expire_seconds: e.ban_expire_seconds,
                     site_scope: e.site_scope,
+                    provenance_kind: Some(format!("{:?}", e.provenance.kind)),
+                    provenance_source: e.provenance.source,
                 })
                 .collect();
             Some((ip_data, mesh_data))
@@ -1210,23 +1250,31 @@ impl ProcessManager {
         let mesh_count = mesh_blocks.len();
         if let Some(ref store) = self.block_store {
             for block in blocks {
-                store.add_block(
-                    &block.ip,
-                    &block.reason,
-                    block.ban_expire_seconds,
-                    &block.site_scope,
+                let provenance = ipc_data_to_provenance(
+                    block.provenance_kind.as_deref(),
+                    block.provenance_source.as_deref(),
                 );
+                if let Ok(ip) = block.ip.parse() {
+                    store.block_ip_with_provenance(
+                        &ip,
+                        &block.reason,
+                        block.ban_expire_seconds,
+                        &block.site_scope,
+                        provenance,
+                    );
+                }
             }
             for block in mesh_blocks {
+                let provenance = ipc_data_to_provenance(
+                    block.provenance_kind.as_deref(),
+                    block.provenance_source.as_deref(),
+                );
                 store.block_mesh_id_with_provenance(
                     &block.mesh_id,
                     &block.reason,
                     block.ban_expire_seconds,
                     &block.site_scope,
-                    BlockProvenance {
-                        kind: BlockProvenanceKind::SupervisorSync,
-                        source: Some("blocklist_update".to_string()),
-                    },
+                    provenance,
                 );
             }
         }

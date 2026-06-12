@@ -723,12 +723,12 @@ impl ThreatIntelligenceManager {
             provenance.clone(),
             now,
         );
-        if matches!(target_kind, synvoid_core::block_store::BlockTargetKind::MeshId) {
+        if matches!(
+            target_kind,
+            synvoid_core::block_store::BlockTargetKind::MeshId
+        ) {
             event = synvoid_core::block_store::BlocklistEvent::unblock_mesh_id(
-                identifier,
-                site_scope,
-                provenance,
-                now,
+                identifier, site_scope, provenance, now,
             );
         }
         let event_id = event.generate_event_id();

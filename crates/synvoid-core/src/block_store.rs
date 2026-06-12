@@ -421,12 +421,8 @@ mod tests {
 
     #[test]
     fn test_blocklist_event_generate_event_id_local_source() {
-        let event = BlocklistEvent::unblock_mesh_id(
-            "mesh-abc",
-            "global",
-            BlockProvenance::default(),
-            999,
-        );
+        let event =
+            BlocklistEvent::unblock_mesh_id("mesh-abc", "global", BlockProvenance::default(), 999);
 
         let event_id = event.generate_event_id();
         assert!(event_id.starts_with("local:999:unblock:mesh_id:global:"));

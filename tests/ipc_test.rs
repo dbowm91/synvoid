@@ -956,6 +956,8 @@ mod ipc_tests {
                 blocked_at: 1000,
                 ban_expire_seconds: 3600,
                 site_scope: "global".to_string(),
+                provenance_kind: Some("AdminManual".to_string()),
+                provenance_source: Some("test".to_string()),
             }],
             mesh_blocks: vec![],
             version: 6,
@@ -971,6 +973,8 @@ mod ipc_tests {
                 blocked_at: 2000,
                 ban_expire_seconds: 7200,
                 site_scope: "test".to_string(),
+                provenance_kind: Some("MeshThreatIntelPolicyGated".to_string()),
+                provenance_source: Some("threat_sync".to_string()),
             }],
             mesh_blocks: vec![],
             version: 7,
@@ -1610,5 +1614,124 @@ mod ipc_tests {
             config_path: "x".repeat(10000),
         };
         assert!(very_long_path.validate().is_err());
+    }
+
+    // ── Iteration 50: IPC provenance preservation tests ──────────────
+
+    #[test]
+    fn test_block_entry_data_preserves_provenance_roundtrip() {
+        let entry = BlockEntryData {
+            ip: "10.0.0.1".to_string(),
+            reason: "admin ban".to_string(),
+            blocked_at: 1000,
+            ban_expire_seconds: 3600,
+            site_scope: "global".to_string(),
+            provenance_kind: Some("AdminManual".to_string()),
+            provenance_source: Some("admin_ban_ip".to_string()),
+        };
+
+        let msg = Message::BlocklistResponse {
+            worker_id: 1,
+            blocks: vec![entry],
+            mesh_blocks: vec![],
+            version: 1,
+        };
+
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: Message = serde_json::from_str(&json).unwrap();
+
+        match deserialized {
+            Message::BlocklistResponse { blocks, .. } => {
+                assert_eq!(blocks.len(), 1);
+                assert_eq!(blocks[0].provenance_kind, Some("AdminManual".to_string()));
+                assert_eq!(
+                    blocks[0].provenance_source,
+                    Some("admin_ban_ip".to_string())
+                );
+            }
+            _ => panic!("Expected BlocklistResponse"),
+        }
+    }
+
+    #[test]
+    fn test_block_entry_data_legacy_missing_provenance_defaults() {
+        // Legacy messages without provenance fields should deserialize with None
+        let json = r#"{"BlocklistResponse":{"worker_id":1,"blocks":[{"ip":"1.2.3.4","reason":"test","blocked_at":0,"ban_expire_seconds":3600,"site_scope":"global"}],"mesh_blocks":[],"version":1}}"#;
+        let msg: Message = serde_json::from_str(json).unwrap();
+
+        match msg {
+            Message::BlocklistResponse { blocks, .. } => {
+                assert_eq!(blocks.len(), 1);
+                assert_eq!(blocks[0].provenance_kind, None);
+                assert_eq!(blocks[0].provenance_source, None);
+            }
+            _ => panic!("Expected BlocklistResponse"),
+        }
+    }
+
+    #[test]
+    fn test_mesh_block_entry_data_preserves_provenance_roundtrip() {
+        let entry = synvoid::process::ipc::MeshBlockEntryData {
+            mesh_id: "node-abc".to_string(),
+            reason: "threat intel".to_string(),
+            blocked_at: 2000,
+            ban_expire_seconds: 7200,
+            site_scope: "global".to_string(),
+            provenance_kind: Some("MeshThreatIntelPolicyGated".to_string()),
+            provenance_source: Some("threat_sync".to_string()),
+        };
+
+        let msg = Message::BlocklistResponse {
+            worker_id: 1,
+            blocks: vec![],
+            mesh_blocks: vec![entry],
+            version: 1,
+        };
+
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: Message = serde_json::from_str(&json).unwrap();
+
+        match deserialized {
+            Message::BlocklistResponse { mesh_blocks, .. } => {
+                assert_eq!(mesh_blocks.len(), 1);
+                assert_eq!(
+                    mesh_blocks[0].provenance_kind,
+                    Some("MeshThreatIntelPolicyGated".to_string())
+                );
+                assert_eq!(
+                    mesh_blocks[0].provenance_source,
+                    Some("threat_sync".to_string())
+                );
+            }
+            _ => panic!("Expected BlocklistResponse"),
+        }
+    }
+
+    #[test]
+    fn test_blocklist_update_preserves_provenance_roundtrip() {
+        let msg = Message::BlocklistUpdate {
+            blocks: vec![BlockEntryData {
+                ip: "10.0.0.2".to_string(),
+                reason: "threat".to_string(),
+                blocked_at: 3000,
+                ban_expire_seconds: 1800,
+                site_scope: "global".to_string(),
+                provenance_kind: Some("LocalWaf".to_string()),
+                provenance_source: Some("waf_block".to_string()),
+            }],
+            mesh_blocks: vec![],
+            version: 2,
+        };
+
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: Message = serde_json::from_str(&json).unwrap();
+
+        match deserialized {
+            Message::BlocklistUpdate { blocks, .. } => {
+                assert_eq!(blocks[0].provenance_kind, Some("LocalWaf".to_string()));
+                assert_eq!(blocks[0].provenance_source, Some("waf_block".to_string()));
+            }
+            _ => panic!("Expected BlocklistUpdate"),
+        }
     }
 }

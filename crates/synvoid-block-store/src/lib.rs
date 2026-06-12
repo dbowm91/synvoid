@@ -233,10 +233,7 @@ impl BlocklistEventLog {
     ///
     /// If the event has an event ID that is already in the log, the insert
     /// is a no-op and returns `None`.
-    pub fn append(
-        &mut self,
-        event: synvoid_core::block_store::BlocklistEvent,
-    ) -> Option<u64> {
+    pub fn append(&mut self, event: synvoid_core::block_store::BlocklistEvent) -> Option<u64> {
         if let Some(ref eid) = event.event_id {
             if self.seen_ids.contains(eid) {
                 return None;
@@ -1514,7 +1511,8 @@ impl BlockStore {
         }
 
         // Step 6: Record event in the event log for offline-peer catchup.
-        if result == BlocklistApplyResult::Applied || result == BlocklistApplyResult::NoopDuplicate {
+        if result == BlocklistApplyResult::Applied || result == BlocklistApplyResult::NoopDuplicate
+        {
             let mut log = self.event_log.write();
             log.append(event.clone());
         }
@@ -1523,10 +1521,7 @@ impl BlockStore {
     }
 
     /// Query the blocklist event log for catchup replay.
-    pub fn query_blocklist_catchup(
-        &self,
-        cursor: &BlocklistEventCursor,
-    ) -> BlocklistCatchupResult {
+    pub fn query_blocklist_catchup(&self, cursor: &BlocklistEventCursor) -> BlocklistCatchupResult {
         let log = self.event_log.read();
         log.query_since(cursor)
     }
@@ -3555,7 +3550,11 @@ mod tests {
     fn test_blocklist_event_log_append_and_query() {
         let mut log = BlocklistEventLog::new(100);
         let mut event = BlocklistEvent::block_ip(
-            "10.0.0.1", "test", "global", BlockProvenance::default(), 100,
+            "10.0.0.1",
+            "test",
+            "global",
+            BlockProvenance::default(),
+            100,
         );
         event = event.with_event_id("evt-1".to_string());
         let seq = log.append(event);
@@ -3583,7 +3582,11 @@ mod tests {
     fn test_blocklist_event_log_dedup() {
         let mut log = BlocklistEventLog::new(100);
         let event = BlocklistEvent::block_ip(
-            "10.0.0.1", "test", "global", BlockProvenance::default(), 100,
+            "10.0.0.1",
+            "test",
+            "global",
+            BlockProvenance::default(),
+            100,
         )
         .with_event_id("evt-1".to_string());
         assert_eq!(log.append(event.clone()), Some(0));
@@ -3704,10 +3707,20 @@ mod tests {
         assert!(log.oldest_timestamp().is_none());
         assert!(log.newest_timestamp().is_none());
 
-        let e1 =
-            BlocklistEvent::block_ip("10.0.0.1", "test", "global", BlockProvenance::default(), 100);
-        let e2 =
-            BlocklistEvent::block_ip("10.0.0.2", "test", "global", BlockProvenance::default(), 200);
+        let e1 = BlocklistEvent::block_ip(
+            "10.0.0.1",
+            "test",
+            "global",
+            BlockProvenance::default(),
+            100,
+        );
+        let e2 = BlocklistEvent::block_ip(
+            "10.0.0.2",
+            "test",
+            "global",
+            BlockProvenance::default(),
+            200,
+        );
         log.append(e1);
         log.append(e2);
         assert_eq!(log.oldest_timestamp(), Some(100));
@@ -3718,10 +3731,20 @@ mod tests {
     fn test_blocklist_event_log_no_event_id() {
         let mut log = BlocklistEventLog::new(10);
         // Events without event_id are not deduped by ID.
-        let e1 =
-            BlocklistEvent::block_ip("10.0.0.1", "test", "global", BlockProvenance::default(), 100);
-        let e2 =
-            BlocklistEvent::block_ip("10.0.0.1", "test", "global", BlockProvenance::default(), 100);
+        let e1 = BlocklistEvent::block_ip(
+            "10.0.0.1",
+            "test",
+            "global",
+            BlockProvenance::default(),
+            100,
+        );
+        let e2 = BlocklistEvent::block_ip(
+            "10.0.0.1",
+            "test",
+            "global",
+            BlockProvenance::default(),
+            100,
+        );
         log.append(e1);
         log.append(e2);
         assert_eq!(log.len(), 2);
@@ -3849,13 +3872,9 @@ mod tests {
         assert!(store.is_mesh_id_blocked("mesh-1", "global").is_some());
 
         // Unblock it.
-        let unblock = BlocklistEvent::unblock_mesh_id(
-            "mesh-1",
-            "global",
-            BlockProvenance::default(),
-            200,
-        )
-        .with_event_id("unblock-mesh-1".to_string());
+        let unblock =
+            BlocklistEvent::unblock_mesh_id("mesh-1", "global", BlockProvenance::default(), 200)
+                .with_event_id("unblock-mesh-1".to_string());
         let r = store.apply_blocklist_event(&unblock);
         assert_eq!(r, BlocklistApplyResult::Applied);
         assert!(store.is_mesh_id_blocked("mesh-1", "global").is_none());
@@ -4071,13 +4090,9 @@ mod tests {
         );
         assert_eq!(store.get_mesh_stats(), 2);
 
-        let unblock = BlocklistEvent::unblock_mesh_id(
-            "mesh-1",
-            "global",
-            BlockProvenance::default(),
-            100,
-        )
-        .with_event_id("unblock-mesh-1".to_string());
+        let unblock =
+            BlocklistEvent::unblock_mesh_id("mesh-1", "global", BlockProvenance::default(), 100)
+                .with_event_id("unblock-mesh-1".to_string());
         let r = store.apply_blocklist_event(&unblock);
         assert_eq!(r, BlocklistApplyResult::Applied);
 
@@ -4150,10 +4165,7 @@ mod tests {
             decoded.provenance.kind,
             BlockProvenanceKind::MeshThreatIntelPolicyGated
         );
-        assert_eq!(
-            decoded.provenance.source,
-            Some("mesh:node-1".to_string())
-        );
+        assert_eq!(decoded.provenance.source, Some("mesh:node-1".to_string()));
         assert_eq!(decoded.timestamp, 5000);
         assert_eq!(decoded.ttl_secs, Some(7200));
         assert_eq!(decoded.version, Some(10));
@@ -4167,7 +4179,11 @@ mod tests {
     fn from_start_includes_sequence_zero() {
         let mut log = BlocklistEventLog::new(100);
         let event = BlocklistEvent::block_ip(
-            "10.0.0.1", "test", "global", BlockProvenance::default(), 100,
+            "10.0.0.1",
+            "test",
+            "global",
+            BlockProvenance::default(),
+            100,
         )
         .with_event_id("evt-0".to_string());
         log.append(event);
@@ -4186,11 +4202,19 @@ mod tests {
     fn after_sequence_zero_skips_sequence_zero() {
         let mut log = BlocklistEventLog::new(100);
         let e1 = BlocklistEvent::block_ip(
-            "10.0.0.1", "test", "global", BlockProvenance::default(), 100,
+            "10.0.0.1",
+            "test",
+            "global",
+            BlockProvenance::default(),
+            100,
         )
         .with_event_id("evt-0".to_string());
         let e2 = BlocklistEvent::block_ip(
-            "10.0.0.2", "test", "global", BlockProvenance::default(), 200,
+            "10.0.0.2",
+            "test",
+            "global",
+            BlockProvenance::default(),
+            200,
         )
         .with_event_id("evt-1".to_string());
         log.append(e1);
@@ -4291,5 +4315,193 @@ mod tests {
             max_events: 100,
         });
         assert_eq!(result.latest_sequence, 4);
+    }
+
+    // ── Iteration 50: IPC provenance preservation tests ──────────────
+
+    #[tokio::test]
+    async fn test_block_records_preserve_provenance_after_block_with_admin_manual() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip: IpAddr = "10.0.0.50".parse().unwrap();
+        store.block_ip_with_provenance(
+            ip,
+            "admin ban",
+            3600,
+            "global",
+            BlockProvenance {
+                kind: BlockProvenanceKind::AdminManual,
+                source: Some("admin_ban_ip".to_string()),
+            },
+        );
+
+        let records = store.get_all_block_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].provenance.kind, BlockProvenanceKind::AdminManual);
+        assert_eq!(
+            records[0].provenance.source.as_deref(),
+            Some("admin_ban_ip")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_block_records_preserve_provenance_after_mesh_block_with_admin_manual() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        store.block_mesh_id_with_provenance(
+            "node-xyz",
+            "admin ban",
+            3600,
+            "global",
+            BlockProvenance {
+                kind: BlockProvenanceKind::AdminManual,
+                source: Some("admin_ban_mesh_id".to_string()),
+            },
+        );
+
+        let records = store.get_all_block_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].provenance.kind, BlockProvenanceKind::AdminManual);
+        assert_eq!(
+            records[0].provenance.source.as_deref(),
+            Some("admin_ban_mesh_id")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_apply_blocklist_event_preserves_admin_manual_provenance() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let event = BlocklistEvent::block_ip(
+            "10.0.0.60",
+            "admin ban via event",
+            "global",
+            BlockProvenance {
+                kind: BlockProvenanceKind::AdminManual,
+                source: Some("admin_ban_ip".to_string()),
+            },
+            1000,
+        )
+        .with_event_id("test-event-1".to_string());
+
+        let result = store.apply_blocklist_event(&event);
+        assert!(matches!(result, BlocklistApplyResult::Applied));
+
+        let records = store.get_all_block_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].provenance.kind, BlockProvenanceKind::AdminManual);
+        assert_eq!(
+            records[0].provenance.source.as_deref(),
+            Some("admin_ban_ip")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_apply_blocklist_event_preserves_threat_intel_provenance() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let event = BlocklistEvent::block_ip(
+            "10.0.0.70",
+            "threat intel block",
+            "global",
+            BlockProvenance {
+                kind: BlockProvenanceKind::MeshThreatIntelPolicyGated,
+                source: Some("threat_sync".to_string()),
+            },
+            1000,
+        )
+        .with_event_id("test-event-2".to_string());
+
+        let result = store.apply_blocklist_event(&event);
+        assert!(matches!(result, BlocklistApplyResult::Applied));
+
+        let records = store.get_all_block_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0].provenance.kind,
+            BlockProvenanceKind::MeshThreatIntelPolicyGated
+        );
+        assert_eq!(records[0].provenance.source.as_deref(), Some("threat_sync"));
+    }
+
+    #[test]
+    fn test_block_entry_serde_roundtrip_preserves_provenance() {
+        let entry = BlockEntry {
+            ip: "10.0.0.80".to_string(),
+            reason: "test".to_string(),
+            blocked_at: 1000,
+            ban_expire_seconds: 3600,
+            site_scope: "global".to_string(),
+            access_count: 0,
+            last_access: 1000,
+            provenance: BlockProvenance {
+                kind: BlockProvenanceKind::AdminManual,
+                source: Some("admin_ban_ip".to_string()),
+            },
+        };
+
+        let json = serde_json::to_string(&entry).unwrap();
+        let deserialized: BlockEntry = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(
+            deserialized.provenance.kind,
+            BlockProvenanceKind::AdminManual
+        );
+        assert_eq!(
+            deserialized.provenance.source.as_deref(),
+            Some("admin_ban_ip")
+        );
+    }
+
+    #[test]
+    fn test_mesh_block_entry_serde_roundtrip_preserves_provenance() {
+        let entry = MeshBlockEntry {
+            mesh_id: "node-abc".to_string(),
+            reason: "test".to_string(),
+            blocked_at: 1000,
+            ban_expire_seconds: 3600,
+            site_scope: "global".to_string(),
+            access_count: 0,
+            last_access: 1000,
+            provenance: BlockProvenance {
+                kind: BlockProvenanceKind::SupervisorManual,
+                source: Some("grpc_block_ip".to_string()),
+            },
+        };
+
+        let json = serde_json::to_string(&entry).unwrap();
+        let deserialized: MeshBlockEntry = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(
+            deserialized.provenance.kind,
+            BlockProvenanceKind::SupervisorManual
+        );
+        assert_eq!(
+            deserialized.provenance.source.as_deref(),
+            Some("grpc_block_ip")
+        );
+    }
+
+    #[test]
+    fn test_block_entry_legacy_json_defaults_to_unknown_provenance() {
+        // Legacy JSON without provenance field should default to LegacyUnknown
+        let json = r#"{"ip":"10.0.0.90","reason":"old","blocked_at":0,"ban_expire_seconds":3600,"site_scope":"global","access_count":0,"last_access":0}"#;
+        let entry: BlockEntry = serde_json::from_str(json).unwrap();
+
+        assert_eq!(entry.provenance.kind, BlockProvenanceKind::LegacyUnknown);
+        assert_eq!(entry.provenance.source, None);
+    }
+
+    #[test]
+    fn test_mesh_block_entry_legacy_json_defaults_to_unknown_provenance() {
+        let json = r#"{"mesh_id":"node-old","reason":"old","blocked_at":0,"ban_expire_seconds":3600,"site_scope":"global","access_count":0,"last_access":0}"#;
+        let entry: MeshBlockEntry = serde_json::from_str(json).unwrap();
+
+        assert_eq!(entry.provenance.kind, BlockProvenanceKind::LegacyUnknown);
+        assert_eq!(entry.provenance.source, None);
     }
 }

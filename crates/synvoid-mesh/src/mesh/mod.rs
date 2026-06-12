@@ -4,12 +4,12 @@
 //! encrypted transport (QUIC, WireGuard), multi-tenant organization
 //! management, and distributed DNS with DNSSEC support.
 
-pub mod blocklist_event;
 pub mod audit;
 pub mod audit_session;
 pub mod backend;
 pub mod behavioral;
 pub mod behavioral_intel;
+pub mod blocklist_event;
 pub mod cert;
 pub mod cert_dist;
 pub mod cli;
