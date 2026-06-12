@@ -43,6 +43,7 @@ When editing request/WAF paths or adding new threat-intel consumers:
    - `ErasedBlockStore` now exposes `block_ip_with_provenance` for type-erased WAF paths.
    - `LegacyUnknown` is acceptable only for: serde/default backward compat, legacy `BlockEntry::new`/`BlockStore::block_ip` compatibility paths, tests, and mock/default trait implementations.
    - **Manual enforcement provenance**: Admin manual block writes use `AdminManual`, supervisor manual blocks use `SupervisorManual`, supervisor blocklist sync uses `SupervisorSync`. Manual/supervisor paths bypass threat-intel policy gates (authority from operator/control-plane). Do not use `LegacyUnknown` for new manual/supervisor writes. Admin/debug responses should expose provenance.
+7. **Manual unban responses must reflect actual state mutation** — No admin unban path may report `success: true` without actually removing a block entry or explicitly documenting the no-op behavior. Use `unblock_ip()` return value to determine success. For mesh-ID unban, check `is_blocked()` before calling `unblock_ip()` on the sentinel IP. Unban is local-only today; do not imply mesh propagation in responses.
 
 ### When NOT to use Constant-Time Comparison
 

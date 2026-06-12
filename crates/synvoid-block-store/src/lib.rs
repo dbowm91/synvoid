@@ -581,17 +581,6 @@ impl BlockStore {
         None
     }
 
-    fn remove_entry(&self, key: &str) {
-        let idx = Self::shard_index(key);
-        let removed = self.shards[idx].write().remove(key).is_some();
-        if removed {
-            let _ = self
-                .total_entries
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
-            self.trigger_persist();
-        }
-    }
-
     /// Unblock an IP address.
     ///
     /// Removes an IP from both site-specific and global blocklists.
@@ -607,13 +596,32 @@ impl BlockStore {
             return false;
         }
 
+        let mut removed_count = 0u32;
+
         let key = BlockEntry::key(site_scope, ip);
-        self.remove_entry(&key);
+        let idx = Self::shard_index(&key);
+        if self.shards[idx].write().remove(&key).is_some() {
+            removed_count += 1;
+        }
 
-        let global_key = BlockEntry::key("global", ip);
-        self.remove_entry(&global_key);
+        if site_scope != "global" {
+            let global_key = BlockEntry::key("global", ip);
+            let idx = Self::shard_index(&global_key);
+            if self.shards[idx].write().remove(&global_key).is_some() {
+                removed_count += 1;
+            }
+        }
 
-        true
+        for _ in 0..removed_count {
+            let _ = self
+                .total_entries
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
+        }
+        if removed_count > 0 {
+            self.trigger_persist();
+        }
+
+        removed_count > 0
     }
 
     /// Get block store statistics.
@@ -1191,5 +1199,120 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].provenance.kind, BlockProvenanceKind::AdminManual);
         assert_eq!(entries[0].provenance.source.as_deref(), Some("test_source"));
+    }
+
+    #[tokio::test]
+    async fn test_unblock_ip_returns_true_when_entry_exists() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        store.block_ip(ip, "test", 3600, "global");
+        assert!(store.is_blocked(&ip, "global").is_some());
+        assert!(store.unblock_ip(&ip, "global"));
+        assert!(store.is_blocked(&ip, "global").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_unblock_ip_returns_false_when_no_entry() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip: IpAddr = "10.0.0.99".parse().unwrap();
+        assert!(!store.unblock_ip(&ip, "global"));
+    }
+
+    #[tokio::test]
+    async fn test_unblock_ip_removes_from_both_scopes() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip: IpAddr = "10.0.0.2".parse().unwrap();
+        store.block_ip(ip, "test", 3600, "global");
+        assert!(store.is_blocked(&ip, "global").is_some());
+        assert!(store.is_blocked(&ip, "site_a").is_some());
+
+        assert!(store.unblock_ip(&ip, "site_a"));
+        assert!(store.is_blocked(&ip, "global").is_none());
+        assert!(store.is_blocked(&ip, "site_a").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_sentinel_ip_mesh_id_ban_and_unban() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let sentinel: IpAddr = "0.0.0.0".parse().unwrap();
+        let reason = "mesh_id_ban:test-mesh-1:manual_admin_ban";
+
+        store.block_ip_with_provenance(
+            sentinel,
+            reason,
+            3600,
+            "global",
+            BlockProvenance {
+                kind: BlockProvenanceKind::AdminManual,
+                source: Some("admin_ban_mesh_id".to_string()),
+            },
+        );
+
+        let entry = store.is_blocked(&sentinel, "global");
+        assert!(entry.is_some());
+        let entry = entry.unwrap();
+        assert_eq!(entry.reason, reason);
+        assert_eq!(
+            entry.provenance.kind,
+            BlockProvenanceKind::AdminManual
+        );
+
+        assert!(store.unblock_ip(&sentinel, "global"));
+        assert!(store.is_blocked(&sentinel, "global").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_sentinel_ip_mesh_id_unban_returns_false_when_missing() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let sentinel: IpAddr = "0.0.0.0".parse().unwrap();
+        assert!(!store.unblock_ip(&sentinel, "global"));
+    }
+
+    #[tokio::test]
+    async fn test_multiple_mesh_id_bans_overwrite_sentinel() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let sentinel: IpAddr = "0.0.0.0".parse().unwrap();
+
+        store.block_ip_with_provenance(
+            sentinel,
+            "mesh_id_ban:mesh-1:reason1",
+            3600,
+            "global",
+            BlockProvenance {
+                kind: BlockProvenanceKind::AdminManual,
+                source: Some("admin_ban_mesh_id".to_string()),
+            },
+        );
+
+        store.block_ip_with_provenance(
+            sentinel,
+            "mesh_id_ban:mesh-2:reason2",
+            3600,
+            "global",
+            BlockProvenance {
+                kind: BlockProvenanceKind::AdminManual,
+                source: Some("admin_ban_mesh_id".to_string()),
+            },
+        );
+
+        let entries = store.get_all_entries();
+        let sentinel_entries: Vec<_> = entries
+            .iter()
+            .filter(|e| e.ip == "0.0.0.0")
+            .collect();
+        assert_eq!(sentinel_entries.len(), 1);
+        assert_eq!(sentinel_entries[0].reason, "mesh_id_ban:mesh-2:reason2");
     }
 }

@@ -38,17 +38,21 @@ This document defines the ownership model for manual and supervisor-driven IP en
 - **File:** `src/admin/handlers/mesh_admin.rs:ban_mesh_id()`
 - **Route:** `POST /mesh/ban/mesh-id`
 - **Provenance:** `AdminManual`, source `admin_ban_mesh_id`
-- **Behavior:** Blocks sentinel IP `0.0.0.0` with mesh ID encoded in reason string
+- **Behavior:** Blocks sentinel IP `0.0.0.0` with mesh ID encoded in reason string (`mesh_id_ban:{mesh_id}:{reason}`)
+- **Limitation:** Block store key is `(site_scope, ip)` — only one mesh-ID ban can exist under the sentinel IP at a time. Banning a second mesh ID overwrites the first.
 
 ### Admin Unban
 - **File:** `src/admin/handlers/mesh_admin.rs:unban()`
 - **Route:** `DELETE /mesh/ban`
-- **Behavior:** Removes block entry via `unblock_ip()`
+- **Behavior:** Removes block entry via `unblock_ip()`. For `ban_type=ip`, removes the IP block. For `ban_type=mesh_id`, checks if the sentinel `0.0.0.0` entry exists and removes it.
+- **Accuracy:** Returns `success: true` only when an entry was actually removed. Returns 404 when no matching entry exists.
+- **Propagation:** Unban is local-only. There is no mesh unblock propagation API; removal is not gossiped to mesh peers. Mesh peers retain stale blocks until TTL expiry. (See Known Gaps.)
 
 ### Admin List Bans
 - **File:** `src/admin/handlers/mesh_admin.rs:list_bans()`
 - **Route:** `GET /mesh/bans`
 - **Response:** `BanRecord` with `provenance` (kind string) and `provenance_source` (optional detail)
+- **Mesh-ID bans:** Sentinel `0.0.0.0` entries are parsed and listed as `ban_type: "mesh_id"` with the extracted mesh ID as the identifier.
 
 ### Supervisor gRPC Block IP
 - **File:** `src/supervisor/api.rs:block_ip()`
@@ -64,17 +68,17 @@ This document defines the ownership model for manual and supervisor-driven IP en
 
 ## Response Exposure
 
-| Endpoint | Provenance Exposed | Source Exposed |
-|----------|-------------------|----------------|
-| `GET /mesh/bans` | Yes (`BanRecord.provenance`) | Yes (`BanRecord.provenance_source`) |
-| `POST /mesh/ban/ip` | Yes (response JSON) | Yes (response JSON) |
-| `POST /mesh/ban/mesh-id` | Yes (response JSON) | Yes (response JSON) |
-| `DELETE /mesh/ban` | No (unban action) | No |
-| gRPC `BlockResponse` | No | No |
+| Endpoint | Provenance Exposed | Source Exposed | Other Fields |
+|----------|-------------------|----------------|--------------|
+| `GET /mesh/bans` | Yes (`BanRecord.provenance`) | Yes (`BanRecord.provenance_source`) | Mesh-ID bans included |
+| `POST /mesh/ban/ip` | Yes (response JSON) | Yes (response JSON) | — |
+| `POST /mesh/ban/mesh-id` | Yes (response JSON) | Yes (response JSON) | — |
+| `DELETE /mesh/ban` | No | No | `identifier`, `ban_type`, `removed` |
+| gRPC `BlockResponse` | No | No | — |
 
 ## Known Gaps
 
-1. **Mesh ID unban is a no-op**: The `unban` handler with `ban_type="mesh_id"` logs success but does not remove any block entry. The sentinel `0.0.0.0` block is not removed.
+1. **Single mesh-ID ban per sentinel IP**: The block store key is `(site_scope, ip)`. Since all mesh-ID bans use sentinel `0.0.0.0`, only one mesh-ID ban can exist at a time. Banning a second mesh ID overwrites the first. Resolved in iteration 43 with documented limitation.
 2. **IPC blocklist sync loses provenance**: `BlockEntryData` does not carry provenance; workers re-assign `SupervisorSync` regardless of original provenance.
-3. **Unban does not propagate to mesh**: When an IP is unbanned via admin API, the removal is not gossiped to mesh peers.
+3. **Unban does not propagate to mesh**: When an IP or mesh ID is unbanned via admin API, the removal is not gossiped to mesh peers. There is no `announce_local_unblock` or equivalent mesh removal message. Mesh peers retain stale blocks until TTL expiry. **Follow-up needed:** Add an unblock propagation mechanism (e.g., `HotThreatGossip` removal or dedicated unblock message) if global consistency is required.
 4. **Mesh stub `block_ip_with_provenance` drops provenance**: The stub's `block_ip_with_provenance` silently delegates to `block_ip`, discarding the provenance parameter. Acceptable if stubs are compilation-only.

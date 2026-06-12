@@ -11,10 +11,33 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use sha2::Sha256;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 pub use synvoid_block_store::{BlockProvenance, BlockProvenanceKind};
 use utoipa::ToSchema;
+
+fn mesh_id_ban_sentinel_ip() -> IpAddr {
+    IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))
+}
+
+fn mesh_id_ban_reason(mesh_id: &str, reason: &str) -> String {
+    format!("mesh_id_ban:{mesh_id}:{reason}")
+}
+
+#[allow(dead_code)]
+fn is_mesh_id_ban_reason(reason: &str, mesh_id: &str) -> bool {
+    reason.starts_with(&format!("mesh_id_ban:{mesh_id}:"))
+}
+
+fn extract_mesh_id_from_ban_reason(reason: &str) -> Option<String> {
+    let prefix = "mesh_id_ban:";
+    if let Some(rest) = reason.strip_prefix(prefix) {
+        if let Some(colon_pos) = rest.find(':') {
+            return Some(rest[..colon_pos].to_string());
+        }
+    }
+    None
+}
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct AuditReportRequest {
@@ -477,8 +500,8 @@ pub async fn ban_mesh_id(
             let block_store = threat_intel.get_block_store();
 
             let blocked = block_store.block_ip_with_provenance(
-                IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)),
-                &format!("mesh_id_ban:{}:{}", mesh_id, reason),
+                mesh_id_ban_sentinel_ip(),
+                &mesh_id_ban_reason(&mesh_id, &reason),
                 duration,
                 "global",
                 BlockProvenance {
@@ -549,17 +572,30 @@ pub async fn unban(
                             tracing::info!("Admin unbanned IP {}", ip);
                             return Ok(Json(serde_json::json!({
                                 "success": true,
-                                "message": format!("IP {} unbanned successfully", ip)
+                                "message": format!("IP {} unbanned successfully", ip),
+                                "identifier": ip.to_string(),
+                                "ban_type": "ip",
+                                "removed": true
                             })));
                         }
                     }
+                    return Err(StatusCode::NOT_FOUND);
                 }
                 "mesh_id" => {
-                    tracing::info!("Admin unbanned mesh_id {}", identifier);
-                    return Ok(Json(serde_json::json!({
-                        "success": true,
-                        "message": format!("Mesh ID {} unbanned successfully", identifier)
-                    })));
+                    let sentinel = mesh_id_ban_sentinel_ip();
+                    if block_store.is_blocked(&sentinel, "global") {
+                        if block_store.unblock_ip(&sentinel, "global") {
+                            tracing::info!("Admin unbanned mesh_id {}", identifier);
+                            return Ok(Json(serde_json::json!({
+                                "success": true,
+                                "message": format!("Mesh ID {} unbanned successfully", identifier),
+                                "identifier": identifier,
+                                "ban_type": "mesh_id",
+                                "removed": true
+                            })));
+                        }
+                    }
+                    return Err(StatusCode::NOT_FOUND);
                 }
                 _ => {
                     return Err(StatusCode::BAD_REQUEST);
@@ -593,10 +629,32 @@ pub async fn list_bans(
         if let Some(threat_intel) = transport.get_threat_intel() {
             let block_store = threat_intel.get_block_store();
             let entries = block_store.get_all_entries();
-            let zero_ip_str = "0.0.0.0";
+            let sentinel = mesh_id_ban_sentinel_ip();
+            let sentinel_str = sentinel.to_string();
 
             for entry in entries {
-                if entry.ip == zero_ip_str {
+                if entry.ip == sentinel_str {
+                    if let Some(mesh_id) = extract_mesh_id_from_ban_reason(&entry.reason) {
+                        let is_permanent = entry.is_permanent();
+                        let expires_at = if is_permanent {
+                            None
+                        } else {
+                            Some(entry.blocked_at + entry.ban_expire_seconds)
+                        };
+
+                        bans.push(BanRecord {
+                            id: format!("mesh_id:{}", mesh_id),
+                            ban_type: "mesh_id".to_string(),
+                            identifier: mesh_id,
+                            reason: entry.reason,
+                            blocked_at: entry.blocked_at,
+                            expires_at,
+                            is_permanent,
+                            site_scope: entry.site_scope,
+                            provenance: entry.provenance_kind,
+                            provenance_source: entry.provenance_source,
+                        });
+                    }
                     continue;
                 }
 
@@ -1202,4 +1260,90 @@ pub async fn get_dht_stats(
     }
 
     Err(StatusCode::SERVICE_UNAVAILABLE)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mesh_id_ban_sentinel_ip_is_zero() {
+        let ip = mesh_id_ban_sentinel_ip();
+        assert_eq!(ip, IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)));
+    }
+
+    #[test]
+    fn test_mesh_id_ban_reason_format() {
+        let reason = mesh_id_ban_reason("my-mesh-id", "spam");
+        assert_eq!(reason, "mesh_id_ban:my-mesh-id:spam");
+    }
+
+    #[test]
+    fn test_mesh_id_ban_reason_with_empty_user_reason() {
+        let reason = mesh_id_ban_reason("node-42", "");
+        assert_eq!(reason, "mesh_id_ban:node-42:");
+    }
+
+    #[test]
+    fn test_is_mesh_id_ban_reason_matches() {
+        let reason = "mesh_id_ban:test-mesh:spam";
+        assert!(is_mesh_id_ban_reason(reason, "test-mesh"));
+    }
+
+    #[test]
+    fn test_is_mesh_id_ban_reason_no_match_different_id() {
+        let reason = "mesh_id_ban:other-mesh:spam";
+        assert!(!is_mesh_id_ban_reason(reason, "test-mesh"));
+    }
+
+    #[test]
+    fn test_is_mesh_id_ban_reason_no_match_prefix_only() {
+        let reason = "mesh_id_ban:";
+        assert!(!is_mesh_id_ban_reason(reason, "test-mesh"));
+    }
+
+    #[test]
+    fn test_is_mesh_id_ban_reason_no_match_not_ban() {
+        let reason = "some other reason";
+        assert!(!is_mesh_id_ban_reason(reason, "test-mesh"));
+    }
+
+    #[test]
+    fn test_extract_mesh_id_from_ban_reason() {
+        let reason = "mesh_id_ban:my-mesh-id:spam";
+        assert_eq!(
+            extract_mesh_id_from_ban_reason(reason),
+            Some("my-mesh-id".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_mesh_id_from_ban_reason_no_prefix() {
+        let reason = "some other reason";
+        assert_eq!(extract_mesh_id_from_ban_reason(reason), None);
+    }
+
+    #[test]
+    fn test_extract_mesh_id_from_ban_reason_empty_mesh_id() {
+        let reason = "mesh_id_ban::spam";
+        assert_eq!(
+            extract_mesh_id_from_ban_reason(reason),
+            Some("".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_mesh_id_from_ban_reason_no_colon_after_id() {
+        let reason = "mesh_id_ban:just-id";
+        assert_eq!(extract_mesh_id_from_ban_reason(reason), None);
+    }
+
+    #[test]
+    fn test_extract_mesh_id_roundtrip() {
+        let mesh_id = "sensor-node-7";
+        let reason = "policy_violation";
+        let encoded = mesh_id_ban_reason(mesh_id, reason);
+        let decoded = extract_mesh_id_from_ban_reason(&encoded);
+        assert_eq!(decoded, Some(mesh_id.to_string()));
+    }
 }
