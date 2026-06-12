@@ -24,6 +24,120 @@ use super::ipc::{
 use super::ipc_rate_limit::IpcRateLimiter;
 use super::ipc_signed::IpcSigner;
 
+/// Retained blocklist events for worker catchup on reconnect.
+///
+/// Stores serialized event JSON with sequence numbers. Bounded capacity;
+/// oldest events evicted FIFO when full.
+struct IpcBlocklistEventLog {
+    events: VecDeque<IpcBlocklistEventEntry>,
+    seen_ids: std::collections::HashSet<String>,
+    max_events: usize,
+    next_sequence: u64,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct IpcBlocklistEventEntry {
+    sequence: u64,
+    event_json: String,
+    source_node: String,
+    event_id: String,
+    timestamp: u64,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct IpcBlocklistCatchupResult {
+    events: Vec<IpcBlocklistEventEntry>,
+    history_complete: bool,
+}
+
+impl IpcBlocklistEventLog {
+    fn new(max_events: usize) -> Self {
+        Self {
+            events: VecDeque::new(),
+            seen_ids: std::collections::HashSet::new(),
+            max_events,
+            next_sequence: 0,
+        }
+    }
+
+    fn append(
+        &mut self,
+        event_json: String,
+        source_node: String,
+        event_id: String,
+        timestamp: u64,
+    ) -> Option<u64> {
+        if !event_id.is_empty() && self.seen_ids.contains(&event_id) {
+            return None;
+        }
+        if !event_id.is_empty() {
+            self.seen_ids.insert(event_id.clone());
+        }
+        let seq = self.next_sequence;
+        self.next_sequence += 1;
+        self.events.push_back(IpcBlocklistEventEntry {
+            sequence: seq,
+            event_json,
+            source_node,
+            event_id,
+            timestamp,
+        });
+        while self.events.len() > self.max_events {
+            if let Some(oldest) = self.events.pop_front() {
+                if !oldest.event_id.is_empty() {
+                    self.seen_ids.remove(&oldest.event_id);
+                }
+            }
+        }
+        Some(seq)
+    }
+
+    fn query_since(&self, since_sequence: u64, max_events: usize) -> IpcBlocklistCatchupResult {
+        let total = self.events.len();
+        if total == 0 {
+            return IpcBlocklistCatchupResult {
+                events: Vec::new(),
+                history_complete: true,
+            };
+        }
+        let oldest_seq = self.next_sequence.saturating_sub(total as u64);
+        let evicted_gap = since_sequence + 1 < oldest_seq && oldest_seq > 0;
+        let first_idx = if since_sequence < oldest_seq {
+            0
+        } else {
+            let offset = (since_sequence + 1 - oldest_seq) as usize;
+            offset.min(total)
+        };
+        let events: Vec<_> = self.events
+            .range(first_idx..)
+            .take(max_events)
+            .cloned()
+            .collect();
+        IpcBlocklistCatchupResult {
+            events,
+            history_complete: !evicted_gap,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.events.len()
+    }
+
+    fn oldest_timestamp(&self) -> Option<u64> {
+        self.events.front().map(|e| e.timestamp)
+    }
+
+    fn newest_timestamp(&self) -> Option<u64> {
+        self.events.back().map(|e| e.timestamp)
+    }
+
+    fn next_sequence(&self) -> u64 {
+        self.next_sequence
+    }
+}
+
 pub type SharedIpc = Arc<tokio::sync::Mutex<IpcStream>>;
 
 #[derive(Debug, Clone)]
@@ -112,6 +226,7 @@ pub struct ProcessManager {
     started_at: Instant,
     health_monitor_handle: Arc<TokioMutex<Option<JoinHandle<()>>>>,
     cpu_count: usize,
+    blocklist_event_log: Arc<PLRwLock<IpcBlocklistEventLog>>,
 }
 
 #[derive(Debug, Clone)]
@@ -209,6 +324,7 @@ impl ProcessManager {
                 started_at: Instant::now(),
                 health_monitor_handle: Arc::new(TokioMutex::new(None)),
                 cpu_count,
+                blocklist_event_log: Arc::new(PLRwLock::new(IpcBlocklistEventLog::new(1000))),
             },
             event_rx,
         )
@@ -1307,6 +1423,21 @@ impl ProcessManager {
         source_node: String,
         event_id: String,
     ) {
+        // Record event for worker catchup on reconnect.
+        let timestamp = serde_json::from_str::<serde_json::Value>(&event_json)
+            .ok()
+            .and_then(|v| v.get("timestamp").and_then(|t| t.as_u64()))
+            .unwrap_or(0);
+        {
+            let mut log = self.blocklist_event_log.write();
+            log.append(
+                event_json.clone(),
+                source_node.clone(),
+                event_id.clone(),
+                timestamp,
+            );
+        }
+
         let msg = Message::BlocklistEventUpdate {
             event_json,
             source_node: source_node.clone(),
@@ -1328,6 +1459,48 @@ impl ProcessManager {
                 );
             }
         }
+    }
+
+    /// Replay recent blocklist events to a newly connected worker.
+    pub async fn replay_blocklist_events_to_worker(
+        &self,
+        ipc: &mut crate::ipc_transport::IpcStream,
+        since_sequence: u64,
+    ) {
+        let entries = {
+            let log = self.blocklist_event_log.read();
+            let result = log.query_since(since_sequence, 500);
+            result.events
+        };
+
+        if entries.is_empty() {
+            return;
+        }
+
+        for entry in &entries {
+            let msg = Message::BlocklistEventUpdate {
+                event_json: entry.event_json.clone(),
+                source_node: entry.source_node.clone(),
+                event_id: entry.event_id.clone(),
+            };
+            if let Err(e) = ipc.send(&msg).await {
+                tracing::warn!("Failed to replay blocklist event to worker: {}", e);
+                break;
+            }
+        }
+        tracing::info!("Replayed {} blocklist events to worker", entries.len());
+    }
+
+    /// Return blocklist event log stats for diagnostics.
+    /// Returns (count, oldest_timestamp, newest_timestamp, next_sequence).
+    pub fn blocklist_event_log_stats(&self) -> (usize, Option<u64>, Option<u64>, u64) {
+        let log = self.blocklist_event_log.read();
+        (
+            log.len(),
+            log.oldest_timestamp(),
+            log.newest_timestamp(),
+            log.next_sequence(),
+        )
     }
 
     pub async fn check_workers_health(&self) {

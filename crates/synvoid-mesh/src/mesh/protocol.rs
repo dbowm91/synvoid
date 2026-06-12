@@ -590,6 +590,21 @@ pub enum MeshMessage {
         signature: Vec<u8>,
         signer_public_key: Option<ArcStr>,
     },
+    /// Iteration 48: Blocklist offline-peer catchup request
+    BlocklistCatchupRequest {
+        requesting_node: ArcStr,
+        since_sequence: Option<u64>,
+        since_timestamp: Option<u64>,
+        max_events: u32,
+    },
+    /// Iteration 48: Blocklist offline-peer catchup response
+    BlocklistCatchupResponse {
+        events: Vec<crate::blocklist_event::BlocklistEventData>,
+        history_complete: bool,
+        latest_sequence: Option<u64>,
+        latest_timestamp: Option<u64>,
+        snapshot_required: bool,
+    },
     KeepAlive,
     KeepAliveAck,
     LookupRequest {

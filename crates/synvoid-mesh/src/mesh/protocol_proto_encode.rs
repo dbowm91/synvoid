@@ -2873,6 +2873,56 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     },
                 )),
             },
+            MeshMessage::BlocklistCatchupRequest {
+                requesting_node,
+                since_sequence,
+                since_timestamp,
+                max_events,
+            } => proto::MeshMessage {
+                message_type: 179,
+                payload: Some(proto::mesh_message::Payload::BlocklistCatchupRequest(
+                    proto::BlocklistCatchupRequest {
+                        requesting_node: requesting_node.to_string(),
+                        since_sequence: *since_sequence,
+                        since_timestamp: *since_timestamp,
+                        max_events: *max_events,
+                    },
+                )),
+            },
+            MeshMessage::BlocklistCatchupResponse {
+                events,
+                history_complete,
+                latest_sequence,
+                latest_timestamp,
+                snapshot_required,
+            } => proto::MeshMessage {
+                message_type: 180,
+                payload: Some(proto::mesh_message::Payload::BlocklistCatchupResponse(
+                    proto::BlocklistCatchupResponse {
+                        events: events
+                            .iter()
+                            .map(|e| proto::BlocklistEventData {
+                                event_id: e.event_id.clone(),
+                                source_node: e.source_node.clone(),
+                                timestamp: e.timestamp,
+                                operation: e.operation,
+                                target_kind: e.target_kind,
+                                identifier: e.identifier.clone(),
+                                site_scope: e.site_scope.clone(),
+                                reason: e.reason.clone(),
+                                provenance_kind: e.provenance_kind,
+                                provenance_source: e.provenance_source.clone(),
+                                ttl_secs: e.ttl_secs,
+                                version: e.version,
+                            })
+                            .collect(),
+                        history_complete: *history_complete,
+                        latest_sequence: *latest_sequence,
+                        latest_timestamp: *latest_timestamp,
+                        snapshot_required: *snapshot_required,
+                    },
+                )),
+            },
         }
     }
 }

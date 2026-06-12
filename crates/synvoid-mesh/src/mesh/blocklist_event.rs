@@ -1,4 +1,71 @@
-use synvoid_core::block_store::{BlocklistOperation, BlockProvenanceKind, BlockTargetKind};
+use serde::{Deserialize, Serialize};
+use synvoid_core::block_store::{
+    BlocklistOperation, BlockProvenanceKind, BlockTargetKind,
+};
+
+/// Wire-format event data for blocklist catchup responses.
+/// Mirrors the proto `BlocklistEventData` message.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BlocklistEventData {
+    pub event_id: String,
+    pub source_node: String,
+    pub timestamp: u64,
+    pub operation: u32,
+    pub target_kind: u32,
+    pub identifier: String,
+    pub site_scope: String,
+    pub reason: Option<String>,
+    pub provenance_kind: u32,
+    pub provenance_source: Option<String>,
+    pub ttl_secs: Option<u64>,
+    pub version: Option<u64>,
+}
+
+impl BlocklistEventData {
+    pub fn from_event(event: &synvoid_core::block_store::BlocklistEvent) -> Self {
+        Self {
+            event_id: event.event_id.clone().unwrap_or_default(),
+            source_node: event.source_node.clone().unwrap_or_default(),
+            timestamp: event.timestamp,
+            operation: operation_to_u32(event.operation),
+            target_kind: target_kind_to_u32(event.target_kind),
+            identifier: event.identifier.clone(),
+            site_scope: event.site_scope.clone(),
+            reason: event.reason.clone(),
+            provenance_kind: provenance_kind_to_u32(event.provenance.kind),
+            provenance_source: event.provenance.source.clone(),
+            ttl_secs: event.ttl_secs,
+            version: event.version,
+        }
+    }
+
+    pub fn to_event(&self) -> synvoid_core::block_store::BlocklistEvent {
+        synvoid_core::block_store::BlocklistEvent {
+            operation: operation_from_u32(self.operation),
+            target_kind: target_kind_from_u32(self.target_kind),
+            identifier: self.identifier.clone(),
+            site_scope: self.site_scope.clone(),
+            reason: self.reason.clone(),
+            provenance: synvoid_core::block_store::BlockProvenance {
+                kind: provenance_kind_from_u32(self.provenance_kind),
+                source: self.provenance_source.clone(),
+            },
+            timestamp: self.timestamp,
+            source_node: if self.source_node.is_empty() {
+                None
+            } else {
+                Some(self.source_node.clone())
+            },
+            event_id: if self.event_id.is_empty() {
+                None
+            } else {
+                Some(self.event_id.clone())
+            },
+            ttl_secs: self.ttl_secs,
+            version: self.version,
+        }
+    }
+}
 
 pub fn provenance_kind_to_u32(kind: BlockProvenanceKind) -> u32 {
     match kind {

@@ -153,6 +153,182 @@ impl TargetStateCache {
     }
 }
 
+/// Default maximum number of events retained in the event log.
+const DEFAULT_EVENT_LOG_MAX: usize = 10_000;
+
+/// A bounded in-memory event log for blocklist events.
+///
+/// Records locally-originated and received blocklist events after they are
+/// accepted for propagation/application. Enables offline-peer catchup by
+/// allowing reconnecting peers to request recent events since a cursor.
+///
+/// # Invariants
+///
+/// - Events are deduplicated by event ID before insertion.
+/// - Capacity is bounded; oldest events are evicted FIFO when at capacity.
+/// - The log is in-memory only; restart loses retained events.
+/// - The log does not block the request path.
+#[derive(Debug)]
+pub struct BlocklistEventLog {
+    events: VecDeque<synvoid_core::block_store::BlocklistEvent>,
+    seen_ids: HashSet<String>,
+    max_events: usize,
+    next_sequence: u64,
+}
+
+/// Cursor for replaying events from the log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlocklistEventCursor {
+    /// The sequence number to replay from (exclusive). Events with
+    /// sequence > `since_sequence` are returned.
+    pub since_sequence: u64,
+    /// Optional maximum number of events to return.
+    pub max_events: u32,
+}
+
+/// Result of a catchup query against the event log.
+#[derive(Debug, Clone)]
+pub struct BlocklistCatchupResult {
+    /// Events matching the query, ordered oldest-first.
+    pub events: Vec<synvoid_core::block_store::BlocklistEvent>,
+    /// Whether the log contains all events since the cursor.
+    /// `false` means the requested history has been evicted.
+    pub history_complete: bool,
+    /// The sequence number of the most recent event in the log,
+    /// or `since_sequence` if the log is empty.
+    pub latest_sequence: u64,
+    /// The timestamp of the most recent event in the log,
+    /// or 0 if the log is empty.
+    pub latest_timestamp: u64,
+    /// Whether the requesting peer should request a full snapshot
+    /// (i.e., history is incomplete and catchup alone is insufficient).
+    pub snapshot_required: bool,
+}
+
+impl BlocklistEventLog {
+    /// Create a new event log with the given maximum capacity.
+    pub fn new(max_events: usize) -> Self {
+        Self {
+            events: VecDeque::new(),
+            seen_ids: HashSet::new(),
+            max_events,
+            next_sequence: 0,
+        }
+    }
+
+    /// Create a new event log with default capacity (10,000 events).
+    pub fn with_defaults() -> Self {
+        Self::new(DEFAULT_EVENT_LOG_MAX)
+    }
+
+    /// Append an event to the log. Returns the assigned sequence number.
+    ///
+    /// If the event has an event ID that is already in the log, the insert
+    /// is a no-op and returns `None`.
+    pub fn append(
+        &mut self,
+        event: synvoid_core::block_store::BlocklistEvent,
+    ) -> Option<u64> {
+        if let Some(ref eid) = event.event_id {
+            if self.seen_ids.contains(eid) {
+                return None;
+            }
+            self.seen_ids.insert(eid.clone());
+        }
+        let seq = self.next_sequence;
+        self.next_sequence += 1;
+        self.events.push_back(event);
+        // Evict oldest events when over capacity.
+        while self.events.len() > self.max_events {
+            if let Some(oldest) = self.events.pop_front() {
+                if let Some(ref eid) = oldest.event_id {
+                    self.seen_ids.remove(eid);
+                }
+            }
+        }
+        Some(seq)
+    }
+
+    /// Query events since a given cursor.
+    ///
+    /// Returns events with local sequence > `cursor.since_sequence`, up to
+    /// `cursor.max_events`.
+    pub fn query_since(&self, cursor: &BlocklistEventCursor) -> BlocklistCatchupResult {
+        let max = cursor.max_events as usize;
+        let total = self.events.len();
+
+        if total == 0 {
+            return BlocklistCatchupResult {
+                events: Vec::new(),
+                history_complete: true,
+                latest_sequence: cursor.since_sequence,
+                latest_timestamp: 0,
+                snapshot_required: false,
+            };
+        }
+
+        // The first event in the deque has sequence `oldest_seq`.
+        let oldest_seq = self.next_sequence.saturating_sub(total as u64);
+        let since = cursor.since_sequence;
+
+        // Check for gap: if requested cursor is before our oldest retained event
+        // and we're not starting from 0, history is incomplete.
+        let evicted_gap = since + 1 < oldest_seq && oldest_seq > 0;
+
+        // Compute the index of the first event with sequence > since.
+        let first_idx = if since < oldest_seq {
+            0
+        } else {
+            let offset = (since - oldest_seq + 1) as usize;
+            offset.min(total)
+        };
+
+        let mut events = Vec::new();
+        for i in first_idx..total {
+            if events.len() >= max {
+                break;
+            }
+            events.push(self.events[i].clone());
+        }
+
+        let latest_sequence = self.next_sequence.saturating_sub(1);
+        let latest_timestamp = self.events.back().map(|e| e.timestamp).unwrap_or(0);
+
+        BlocklistCatchupResult {
+            events,
+            history_complete: !evicted_gap,
+            latest_sequence,
+            latest_timestamp,
+            snapshot_required: evicted_gap,
+        }
+    }
+
+    /// Return the number of events currently retained.
+    pub fn len(&self) -> usize {
+        self.events.len()
+    }
+
+    /// Return `true` if the log contains no events.
+    pub fn is_empty(&self) -> bool {
+        self.events.is_empty()
+    }
+
+    /// Return the oldest timestamp in the log, or `None` if empty.
+    pub fn oldest_timestamp(&self) -> Option<u64> {
+        self.events.front().map(|e| e.timestamp)
+    }
+
+    /// Return the newest timestamp in the log, or `None` if empty.
+    pub fn newest_timestamp(&self) -> Option<u64> {
+        self.events.back().map(|e| e.timestamp)
+    }
+
+    /// Return the current sequence counter value (the next sequence to be assigned).
+    pub fn next_sequence(&self) -> u64 {
+        self.next_sequence
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockEntry {
     pub ip: String,
@@ -237,6 +413,7 @@ pub struct BlockStore {
     mitigation_provider: arc_swap::ArcSwapOption<SizedMitigationProvider>,
     seen_events: RwLock<SeenEventCache>,
     target_state: RwLock<TargetStateCache>,
+    event_log: RwLock<BlocklistEventLog>,
 }
 
 impl BlockStore {
@@ -434,6 +611,7 @@ impl BlockStore {
             mitigation_provider: arc_swap::ArcSwapOption::const_empty(),
             seen_events: RwLock::new(SeenEventCache::new()),
             target_state: RwLock::new(TargetStateCache::new()),
+            event_log: RwLock::new(BlocklistEventLog::with_defaults()),
         };
 
         let migrated = store.migrate_legacy_sentinel_entries();
@@ -1302,7 +1480,45 @@ impl BlockStore {
             targets.insert(target_key, this_event);
         }
 
+        // Step 6: Record event in the event log for offline-peer catchup.
+        if result == BlocklistApplyResult::Applied || result == BlocklistApplyResult::NoopDuplicate {
+            let mut log = self.event_log.write();
+            log.append(event.clone());
+        }
+
         result
+    }
+
+    /// Query the blocklist event log for catchup replay.
+    pub fn query_blocklist_catchup(
+        &self,
+        cursor: &BlocklistEventCursor,
+    ) -> BlocklistCatchupResult {
+        let log = self.event_log.read();
+        log.query_since(cursor)
+    }
+
+    /// Append an event directly to the event log (for externally-originated
+    /// events that should be available for catchup replay).
+    pub fn record_blocklist_event_for_catchup(
+        &self,
+        event: &synvoid_core::block_store::BlocklistEvent,
+    ) -> Option<u64> {
+        let mut log = self.event_log.write();
+        log.append(event.clone())
+    }
+
+    /// Return event log statistics for diagnostics.
+    ///
+    /// Returns `(event_count, oldest_timestamp, newest_timestamp, next_sequence)`.
+    pub fn event_log_stats(&self) -> (usize, Option<u64>, Option<u64>, u64) {
+        let log = self.event_log.read();
+        (
+            log.len(),
+            log.oldest_timestamp(),
+            log.newest_timestamp(),
+            log.next_sequence(),
+        )
     }
 
     pub fn migrate_legacy_sentinel_entries(&self) -> usize {
@@ -1477,6 +1693,35 @@ impl synvoid_mesh::stubs::block_store::BlockStoreApi for BlockStore {
                 synvoid_mesh::stubs::block_store::BlocklistApplyResult::StoreDisabled
             }
         }
+    }
+
+    fn query_blocklist_catchup(
+        &self,
+        cursor: &synvoid_mesh::stubs::block_store::BlocklistEventCursor,
+    ) -> synvoid_mesh::stubs::block_store::BlocklistCatchupResult {
+        let real_cursor = BlocklistEventCursor {
+            since_sequence: cursor.since_sequence,
+            max_events: cursor.max_events,
+        };
+        let result = self.query_blocklist_catchup(&real_cursor);
+        synvoid_mesh::stubs::block_store::BlocklistCatchupResult {
+            events: result.events,
+            history_complete: result.history_complete,
+            latest_sequence: result.latest_sequence,
+            latest_timestamp: result.latest_timestamp,
+            snapshot_required: result.snapshot_required,
+        }
+    }
+
+    fn record_blocklist_event_for_catchup(
+        &self,
+        event: &synvoid_core::block_store::BlocklistEvent,
+    ) -> Option<u64> {
+        self.record_blocklist_event_for_catchup(event)
+    }
+
+    fn event_log_stats(&self) -> (usize, Option<u64>, Option<u64>, u64) {
+        self.event_log_stats()
     }
 }
 
@@ -3271,5 +3516,579 @@ mod tests {
         // The cache should be at capacity.
         let targets = store.target_state.read();
         assert_eq!(targets.len(), TARGET_STATE_MAX);
+    }
+
+    #[test]
+    fn test_blocklist_event_log_append_and_query() {
+        let mut log = BlocklistEventLog::new(100);
+        let mut event = BlocklistEvent::block_ip(
+            "10.0.0.1", "test", "global", BlockProvenance::default(), 100,
+        );
+        event = event.with_event_id("evt-1".to_string());
+        let seq = log.append(event);
+        assert_eq!(seq, Some(0));
+        assert_eq!(log.len(), 1);
+
+        let result = log.query_since(&BlocklistEventCursor {
+            since_sequence: 0,
+            max_events: 10,
+        });
+        assert_eq!(result.events.len(), 0); // seq 0 is not > 0
+        assert!(result.history_complete);
+    }
+
+    #[test]
+    fn test_blocklist_event_log_dedup() {
+        let mut log = BlocklistEventLog::new(100);
+        let event = BlocklistEvent::block_ip(
+            "10.0.0.1", "test", "global", BlockProvenance::default(), 100,
+        )
+        .with_event_id("evt-1".to_string());
+        assert_eq!(log.append(event.clone()), Some(0));
+        // Duplicate event ID should be rejected.
+        assert_eq!(log.append(event), None);
+        assert_eq!(log.len(), 1);
+    }
+
+    #[test]
+    fn test_blocklist_event_log_capacity_eviction() {
+        let mut log = BlocklistEventLog::new(3);
+        for i in 0..5u64 {
+            let event = BlocklistEvent::block_ip(
+                &format!("10.0.0.{}", i),
+                "test",
+                "global",
+                BlockProvenance::default(),
+                i * 100,
+            )
+            .with_event_id(format!("evt-{}", i));
+            log.append(event);
+        }
+        assert_eq!(log.len(), 3);
+        // The oldest two (evt-0, evt-1) should have been evicted.
+        let result = log.query_since(&BlocklistEventCursor {
+            since_sequence: 0,
+            max_events: 100,
+        });
+        assert_eq!(result.events.len(), 3);
+        // First returned event should be evt-2 (seq 2)
+        assert_eq!(result.events[0].event_id.as_deref(), Some("evt-2"));
+    }
+
+    #[test]
+    fn test_blocklist_event_log_query_since_with_gap() {
+        let mut log = BlocklistEventLog::new(3);
+        // Add 5 events, but log only retains 3 (the last 3).
+        for i in 0..5u64 {
+            let event = BlocklistEvent::block_ip(
+                &format!("10.0.0.{}", i),
+                "test",
+                "global",
+                BlockProvenance::default(),
+                i * 100,
+            )
+            .with_event_id(format!("evt-{}", i));
+            log.append(event);
+        }
+        // Log has sequences 2,3,4. Request since=0 should detect gap.
+        let result = log.query_since(&BlocklistEventCursor {
+            since_sequence: 0,
+            max_events: 100,
+        });
+        assert!(!result.history_complete);
+        assert!(result.snapshot_required);
+        assert_eq!(result.events.len(), 3);
+    }
+
+    #[test]
+    fn test_blocklist_event_log_query_within_retained() {
+        let mut log = BlocklistEventLog::new(10);
+        for i in 0..5u64 {
+            let event = BlocklistEvent::block_ip(
+                &format!("10.0.0.{}", i),
+                "test",
+                "global",
+                BlockProvenance::default(),
+                i * 100,
+            )
+            .with_event_id(format!("evt-{}", i));
+            log.append(event);
+        }
+        // All 5 events retained. Request since=2 should return events 3,4.
+        let result = log.query_since(&BlocklistEventCursor {
+            since_sequence: 2,
+            max_events: 100,
+        });
+        assert!(result.history_complete);
+        assert_eq!(result.events.len(), 2);
+        assert_eq!(result.events[0].event_id.as_deref(), Some("evt-3"));
+        assert_eq!(result.events[1].event_id.as_deref(), Some("evt-4"));
+    }
+
+    #[test]
+    fn test_blocklist_event_log_query_max_events() {
+        let mut log = BlocklistEventLog::new(10);
+        for i in 0..10u64 {
+            let event = BlocklistEvent::block_ip(
+                &format!("10.0.0.{}", i),
+                "test",
+                "global",
+                BlockProvenance::default(),
+                i * 100,
+            )
+            .with_event_id(format!("evt-{}", i));
+            log.append(event);
+        }
+        let result = log.query_since(&BlocklistEventCursor {
+            since_sequence: 0,
+            max_events: 3,
+        });
+        assert_eq!(result.events.len(), 3);
+    }
+
+    #[test]
+    fn test_blocklist_event_log_timestamps() {
+        let mut log = BlocklistEventLog::new(10);
+        assert!(log.oldest_timestamp().is_none());
+        assert!(log.newest_timestamp().is_none());
+
+        let e1 =
+            BlocklistEvent::block_ip("10.0.0.1", "test", "global", BlockProvenance::default(), 100);
+        let e2 =
+            BlocklistEvent::block_ip("10.0.0.2", "test", "global", BlockProvenance::default(), 200);
+        log.append(e1);
+        log.append(e2);
+        assert_eq!(log.oldest_timestamp(), Some(100));
+        assert_eq!(log.newest_timestamp(), Some(200));
+    }
+
+    #[test]
+    fn test_blocklist_event_log_no_event_id() {
+        let mut log = BlocklistEventLog::new(10);
+        // Events without event_id are not deduped by ID.
+        let e1 =
+            BlocklistEvent::block_ip("10.0.0.1", "test", "global", BlockProvenance::default(), 100);
+        let e2 =
+            BlocklistEvent::block_ip("10.0.0.1", "test", "global", BlockProvenance::default(), 100);
+        log.append(e1);
+        log.append(e2);
+        assert_eq!(log.len(), 2);
+    }
+
+    // === Event log tests ===
+
+    #[test]
+    fn test_blocklist_event_log_replay_block_then_unblock() {
+        let mut log = BlocklistEventLog::new(100);
+        let block_event = BlocklistEvent::block_ip(
+            "10.0.0.1",
+            "test",
+            "global",
+            BlockProvenance::default(),
+            100,
+        )
+        .with_event_id("block-1".to_string());
+        let unblock_event =
+            BlocklistEvent::unblock_ip("10.0.0.1", "global", BlockProvenance::default(), 200)
+                .with_event_id("unblock-1".to_string());
+
+        log.append(block_event);
+        log.append(unblock_event);
+
+        assert_eq!(log.len(), 2);
+        assert_eq!(log.next_sequence(), 2);
+
+        // Query since seq 0 returns events with seq > 0 (just the unblock at seq 1).
+        let result = log.query_since(&BlocklistEventCursor {
+            since_sequence: 0,
+            max_events: 10,
+        });
+        assert_eq!(result.events.len(), 1);
+        assert_eq!(result.events[0].operation, BlocklistOperation::Unblock);
+        assert!(result.history_complete);
+
+        // Query since seq 1 returns nothing (no events with seq > 1).
+        let result = log.query_since(&BlocklistEventCursor {
+            since_sequence: 1,
+            max_events: 10,
+        });
+        assert_eq!(result.events.len(), 0);
+        assert!(result.history_complete);
+    }
+
+    #[test]
+    fn test_blocklist_event_log_replay_duplicate_events() {
+        let mut log = BlocklistEventLog::new(100);
+        let event = BlocklistEvent::block_ip(
+            "10.0.0.1",
+            "test",
+            "global",
+            BlockProvenance::default(),
+            100,
+        )
+        .with_event_id("dup-1".to_string());
+
+        assert_eq!(log.append(event.clone()), Some(0));
+        assert_eq!(log.append(event), None);
+        assert_eq!(log.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_blocklist_event_log_replay_stale_event() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        // Apply newer event first (via apply_blocklist_event which records to log).
+        let newer = BlocklistEvent::block_ip(
+            "10.0.0.1",
+            "newer",
+            "global",
+            BlockProvenance::default(),
+            200,
+        )
+        .with_event_id("newer-1".to_string());
+        let r = store.apply_blocklist_event(&newer);
+        assert_eq!(r, BlocklistApplyResult::Applied);
+
+        // Apply older event — should be ignored by stale suppression.
+        let older = BlocklistEvent::block_ip(
+            "10.0.0.1",
+            "older",
+            "global",
+            BlockProvenance::default(),
+            100,
+        )
+        .with_event_id("older-1".to_string());
+        let r = store.apply_blocklist_event(&older);
+        assert_eq!(r, BlocklistApplyResult::IgnoredStale);
+
+        // Only the newer (applied) event appears in the log; stale events are not recorded.
+        let log = store.event_log.read();
+        assert_eq!(log.len(), 1);
+        assert_eq!(log.events[0].event_id.as_deref(), Some("newer-1"));
+    }
+
+    #[tokio::test]
+    async fn test_blocklist_event_log_replay_mesh_id_unblock() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        // Block a mesh ID.
+        let block = BlocklistEvent::block_mesh_id(
+            "mesh-1",
+            "attack",
+            "global",
+            BlockProvenance::default(),
+            100,
+        )
+        .with_event_id("block-mesh-1".to_string());
+        let r = store.apply_blocklist_event(&block);
+        assert_eq!(r, BlocklistApplyResult::Applied);
+        assert!(store.is_mesh_id_blocked("mesh-1", "global").is_some());
+
+        // Unblock it.
+        let unblock = BlocklistEvent::unblock_mesh_id(
+            "mesh-1",
+            "global",
+            BlockProvenance::default(),
+            200,
+        )
+        .with_event_id("unblock-mesh-1".to_string());
+        let r = store.apply_blocklist_event(&unblock);
+        assert_eq!(r, BlocklistApplyResult::Applied);
+        assert!(store.is_mesh_id_blocked("mesh-1", "global").is_none());
+    }
+
+    #[test]
+    fn test_blocklist_event_log_full_lifecycle() {
+        let mut log = BlocklistEventLog::new(5);
+        for i in 0..3u64 {
+            let event = BlocklistEvent::block_ip(
+                &format!("10.0.0.{}", i),
+                "test",
+                "global",
+                BlockProvenance::default(),
+                100 + i,
+            )
+            .with_event_id(format!("evt-{}", i));
+            log.append(event);
+        }
+
+        // Query within retained range — since seq 1 returns events at seq 2 (evt-2).
+        let result = log.query_since(&BlocklistEventCursor {
+            since_sequence: 1,
+            max_events: 10,
+        });
+        assert!(result.history_complete);
+        assert!(!result.snapshot_required);
+        assert_eq!(result.events.len(), 1);
+
+        // Append more events to cause eviction.
+        for i in 3..7u64 {
+            let event = BlocklistEvent::block_ip(
+                &format!("10.0.0.{}", i),
+                "test",
+                "global",
+                BlockProvenance::default(),
+                100 + i,
+            )
+            .with_event_id(format!("evt-{}", i));
+            log.append(event);
+        }
+
+        // Now query from early sequence — should detect gap.
+        let result = log.query_since(&BlocklistEventCursor {
+            since_sequence: 0,
+            max_events: 10,
+        });
+        assert!(!result.history_complete);
+        assert!(result.snapshot_required);
+    }
+
+    #[test]
+    fn test_blocklist_event_log_empty_query() {
+        let log = BlocklistEventLog::new(100);
+        let result = log.query_since(&BlocklistEventCursor {
+            since_sequence: 0,
+            max_events: 10,
+        });
+        assert!(result.history_complete);
+        assert!(!result.snapshot_required);
+        assert_eq!(result.events.len(), 0);
+        assert_eq!(result.latest_timestamp, 0);
+    }
+
+    #[test]
+    fn test_blocklist_event_log_boundary_conditions() {
+        let mut log = BlocklistEventLog::new(3);
+
+        // Fill to exact capacity.
+        for i in 0..3u64 {
+            let event = BlocklistEvent::block_ip(
+                &format!("10.0.0.{}", i),
+                "test",
+                "global",
+                BlockProvenance::default(),
+                100 + i,
+            )
+            .with_event_id(format!("evt-{}", i));
+            log.append(event);
+        }
+
+        // Query at exact sequence boundaries — since seq 1 returns events at seq 2.
+        let result = log.query_since(&BlocklistEventCursor {
+            since_sequence: 1,
+            max_events: 3,
+        });
+        assert_eq!(result.events.len(), 1);
+        assert!(result.history_complete);
+
+        // Query at the last sequence — should return nothing.
+        let result = log.query_since(&BlocklistEventCursor {
+            since_sequence: 2,
+            max_events: 10,
+        });
+        assert_eq!(result.events.len(), 0);
+        assert!(result.history_complete);
+
+        // Query at sequence before oldest — should detect gap only if oldest_seq > 0.
+        // With 3 events at seq 0,1,2 and since=0, oldest_seq=0, no gap.
+        let result = log.query_since(&BlocklistEventCursor {
+            since_sequence: 0,
+            max_events: 10,
+        });
+        assert!(result.history_complete);
+        assert_eq!(result.events.len(), 2); // seq 1 and 2
+    }
+
+    // === Apply replay tests ===
+
+    #[tokio::test]
+    async fn test_apply_replay_block_then_unblock_converges() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let block_event = BlocklistEvent::block_ip(
+            "10.0.0.1",
+            "test",
+            "global",
+            BlockProvenance::default(),
+            100,
+        )
+        .with_event_id("block-1".to_string());
+        let r = store.apply_blocklist_event(&block_event);
+        assert_eq!(r, BlocklistApplyResult::Applied);
+
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        assert!(store.is_blocked(&ip, "global").is_some());
+
+        let unblock_event =
+            BlocklistEvent::unblock_ip("10.0.0.1", "global", BlockProvenance::default(), 200)
+                .with_event_id("unblock-1".to_string());
+        let r = store.apply_blocklist_event(&unblock_event);
+        assert_eq!(r, BlocklistApplyResult::Applied);
+        assert!(store.is_blocked(&ip, "global").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_apply_replay_duplicate_does_not_mutate_twice() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let event = BlocklistEvent::block_ip(
+            "10.0.0.1",
+            "test",
+            "global",
+            BlockProvenance::default(),
+            100,
+        )
+        .with_event_id("dup-1".to_string());
+
+        let r1 = store.apply_blocklist_event(&event);
+        assert_eq!(r1, BlocklistApplyResult::Applied);
+
+        let r2 = store.apply_blocklist_event(&event);
+        assert_eq!(r2, BlocklistApplyResult::NoopDuplicate);
+    }
+
+    #[tokio::test]
+    async fn test_apply_replay_stale_event_returns_ignored() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        // Apply newer event first.
+        let newer = BlocklistEvent::block_ip(
+            "10.0.0.1",
+            "newer",
+            "global",
+            BlockProvenance::default(),
+            200,
+        )
+        .with_event_id("newer-1".to_string());
+        let r = store.apply_blocklist_event(&newer);
+        assert_eq!(r, BlocklistApplyResult::Applied);
+
+        // Apply older event — should be rejected.
+        let older = BlocklistEvent::block_ip(
+            "10.0.0.1",
+            "older",
+            "global",
+            BlockProvenance::default(),
+            100,
+        )
+        .with_event_id("older-1".to_string());
+        let r = store.apply_blocklist_event(&older);
+        assert_eq!(r, BlocklistApplyResult::IgnoredStale);
+    }
+
+    #[tokio::test]
+    async fn test_apply_replay_mesh_id_unblock_removes_only_that_id() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        store.block_mesh_id_with_provenance(
+            "mesh-1",
+            "reason1",
+            3600,
+            "global",
+            BlockProvenance::default(),
+        );
+        store.block_mesh_id_with_provenance(
+            "mesh-2",
+            "reason2",
+            3600,
+            "global",
+            BlockProvenance::default(),
+        );
+        assert_eq!(store.get_mesh_stats(), 2);
+
+        let unblock = BlocklistEvent::unblock_mesh_id(
+            "mesh-1",
+            "global",
+            BlockProvenance::default(),
+            100,
+        )
+        .with_event_id("unblock-mesh-1".to_string());
+        let r = store.apply_blocklist_event(&unblock);
+        assert_eq!(r, BlocklistApplyResult::Applied);
+
+        assert!(store.is_mesh_id_blocked("mesh-1", "global").is_none());
+        assert!(store.is_mesh_id_blocked("mesh-2", "global").is_some());
+        assert_eq!(store.get_mesh_stats(), 1);
+    }
+
+    // === Catchup message roundtrip tests ===
+
+    #[test]
+    fn test_blocklist_event_data_from_event_roundtrip() {
+        let event = BlocklistEvent::block_ip(
+            "10.0.0.1",
+            "roundtrip_test",
+            "global",
+            BlockProvenance {
+                kind: BlockProvenanceKind::AdminManual,
+                source: Some("test_source".to_string()),
+            },
+            1000,
+        )
+        .with_event_id("rt-1".to_string())
+        .with_source_node("node-1".to_string());
+
+        let json = serde_json::to_string(&event).expect("serialize");
+        let decoded: BlocklistEvent = serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(decoded.operation, event.operation);
+        assert_eq!(decoded.target_kind, event.target_kind);
+        assert_eq!(decoded.identifier, event.identifier);
+        assert_eq!(decoded.site_scope, event.site_scope);
+        assert_eq!(decoded.reason, event.reason);
+        assert_eq!(decoded.provenance.kind, event.provenance.kind);
+        assert_eq!(decoded.provenance.source, event.provenance.source);
+        assert_eq!(decoded.timestamp, event.timestamp);
+        assert_eq!(decoded.event_id, event.event_id);
+        assert_eq!(decoded.source_node, event.source_node);
+        assert_eq!(decoded.ttl_secs, event.ttl_secs);
+        assert_eq!(decoded.version, event.version);
+    }
+
+    #[test]
+    fn test_blocklist_event_data_with_all_fields() {
+        let mut event = BlocklistEvent::block_ip(
+            "10.0.0.1",
+            "all_fields_test",
+            "site-a",
+            BlockProvenance {
+                kind: BlockProvenanceKind::MeshThreatIntelPolicyGated,
+                source: Some("mesh:node-1".to_string()),
+            },
+            5000,
+        );
+        event.ttl_secs = Some(7200);
+        event.version = Some(10);
+        event = event
+            .with_event_id("all-fields-1".to_string())
+            .with_source_node("node-1".to_string());
+
+        let json = serde_json::to_string(&event).expect("serialize");
+        let decoded: BlocklistEvent = serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(decoded.operation, BlocklistOperation::Block);
+        assert_eq!(decoded.target_kind, BlockTargetKind::Ip);
+        assert_eq!(decoded.identifier, "10.0.0.1");
+        assert_eq!(decoded.site_scope, "site-a");
+        assert_eq!(decoded.reason, Some("all_fields_test".to_string()));
+        assert_eq!(
+            decoded.provenance.kind,
+            BlockProvenanceKind::MeshThreatIntelPolicyGated
+        );
+        assert_eq!(
+            decoded.provenance.source,
+            Some("mesh:node-1".to_string())
+        );
+        assert_eq!(decoded.timestamp, 5000);
+        assert_eq!(decoded.ttl_secs, Some(7200));
+        assert_eq!(decoded.version, Some(10));
+        assert_eq!(decoded.event_id, Some("all-fields-1".to_string()));
+        assert_eq!(decoded.source_node, Some("node-1".to_string()));
     }
 }

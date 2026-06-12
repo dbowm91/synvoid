@@ -987,6 +987,73 @@ pub async fn submit_audit_report(
     }
 }
 
+#[derive(Debug, Serialize, ToSchema)]
+pub struct BlocklistCatchupStatsResponse {
+    pub event_log_count: usize,
+    pub oldest_timestamp: Option<u64>,
+    pub newest_timestamp: Option<u64>,
+    pub next_sequence: u64,
+    pub ipc_event_log_count: usize,
+    pub ipc_oldest_timestamp: Option<u64>,
+    pub ipc_newest_timestamp: Option<u64>,
+    pub ipc_next_sequence: u64,
+}
+
+#[utoipa::path(
+    get,
+    path = "/mesh/blocklist/catchup-stats",
+    responses(
+        (status = 200, description = "Blocklist catchup statistics", body = BlocklistCatchupStatsResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "mesh"
+)]
+pub async fn get_blocklist_catchup_stats(
+    State(state): State<Arc<AdminState>>,
+    _auth: OptionalAuth,
+) -> Result<Json<BlocklistCatchupStatsResponse>, StatusCode> {
+    let mut event_log_count = 0usize;
+    let mut oldest_timestamp = None;
+    let mut newest_timestamp = None;
+    let mut next_sequence = 0u64;
+
+    if let Some(transport) = &state.mesh.mesh_transport {
+        if let Some(threat_intel) = transport.get_threat_intel() {
+            let block_store = threat_intel.get_block_store();
+            let (count, oldest, newest, seq) = block_store.event_log_stats();
+            event_log_count = count;
+            oldest_timestamp = oldest;
+            newest_timestamp = newest;
+            next_sequence = seq;
+        }
+    }
+
+    let mut ipc_event_log_count = 0usize;
+    let mut ipc_oldest_timestamp = None;
+    let mut ipc_newest_timestamp = None;
+    let mut ipc_next_sequence = 0u64;
+
+    if let Some(ref pm) = state.process.process_manager {
+        let ipc_stats = pm.blocklist_event_log_stats();
+        ipc_event_log_count = ipc_stats.0;
+        ipc_oldest_timestamp = ipc_stats.1;
+        ipc_newest_timestamp = ipc_stats.2;
+        ipc_next_sequence = ipc_stats.3;
+    }
+
+    Ok(Json(BlocklistCatchupStatsResponse {
+        event_log_count,
+        oldest_timestamp,
+        newest_timestamp,
+        next_sequence,
+        ipc_event_log_count,
+        ipc_oldest_timestamp,
+        ipc_newest_timestamp,
+        ipc_next_sequence,
+    }))
+}
+
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct SignatureFailureReport {
     pub timestamp: i64,

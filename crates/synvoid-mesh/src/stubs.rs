@@ -228,6 +228,23 @@ pub mod block_store {
     use synvoid_config::DenyListLimitsConfig;
     pub use synvoid_core::block_store::{BlockProvenance, BlockProvenanceKind};
 
+    /// Cursor for replaying events from the log (stub for mesh crate independence).
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct BlocklistEventCursor {
+        pub since_sequence: u64,
+        pub max_events: u32,
+    }
+
+    /// Result of a catchup query against the event log (stub).
+    #[derive(Debug, Clone)]
+    pub struct BlocklistCatchupResult {
+        pub events: Vec<synvoid_core::block_store::BlocklistEvent>,
+        pub history_complete: bool,
+        pub latest_sequence: u64,
+        pub latest_timestamp: u64,
+        pub snapshot_required: bool,
+    }
+
     /// Result of applying a blocklist event.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum BlocklistApplyResult {
@@ -345,6 +362,15 @@ pub mod block_store {
             &self,
             event: &synvoid_core::block_store::BlocklistEvent,
         ) -> BlocklistApplyResult;
+        fn query_blocklist_catchup(
+            &self,
+            cursor: &BlocklistEventCursor,
+        ) -> BlocklistCatchupResult;
+        fn record_blocklist_event_for_catchup(
+            &self,
+            event: &synvoid_core::block_store::BlocklistEvent,
+        ) -> Option<u64>;
+        fn event_log_stats(&self) -> (usize, Option<u64>, Option<u64>, u64);
     }
 
     impl BlockStore {
@@ -443,6 +469,30 @@ pub mod block_store {
         ) -> BlocklistApplyResult {
             BlocklistApplyResult::Applied
         }
+
+        pub fn query_blocklist_catchup(
+            &self,
+            _cursor: &BlocklistEventCursor,
+        ) -> BlocklistCatchupResult {
+            BlocklistCatchupResult {
+                events: Vec::new(),
+                history_complete: true,
+                latest_sequence: 0,
+                latest_timestamp: 0,
+                snapshot_required: false,
+            }
+        }
+
+        pub fn record_blocklist_event_for_catchup(
+            &self,
+            _event: &synvoid_core::block_store::BlocklistEvent,
+        ) -> Option<u64> {
+            None
+        }
+
+        pub fn event_log_stats(&self) -> (usize, Option<u64>, Option<u64>, u64) {
+            (0, None, None, 0)
+        }
     }
 
     impl BlockStoreApi for BlockStore {
@@ -505,6 +555,24 @@ pub mod block_store {
             event: &synvoid_core::block_store::BlocklistEvent,
         ) -> BlocklistApplyResult {
             self.apply_blocklist_event(event)
+        }
+
+        fn query_blocklist_catchup(
+            &self,
+            cursor: &BlocklistEventCursor,
+        ) -> BlocklistCatchupResult {
+            self.query_blocklist_catchup(cursor)
+        }
+
+        fn record_blocklist_event_for_catchup(
+            &self,
+            event: &synvoid_core::block_store::BlocklistEvent,
+        ) -> Option<u64> {
+            self.record_blocklist_event_for_catchup(event)
+        }
+
+        fn event_log_stats(&self) -> (usize, Option<u64>, Option<u64>, u64) {
+            self.event_log_stats()
         }
     }
 }

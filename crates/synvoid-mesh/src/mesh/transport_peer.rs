@@ -261,6 +261,103 @@ impl MeshTransport {
                     }
                 }
             }
+            MeshMessage::BlocklistCatchupRequest {
+                requesting_node: _,
+                since_sequence,
+                since_timestamp: _,
+                max_events,
+            } => {
+                tracing::debug!(
+                    "Received blocklist catchup request from {} (since_seq={:?}, max={})",
+                    peer_id,
+                    since_sequence,
+                    max_events
+                );
+                if let Some(ref ti) = self.threat_intel {
+                    let bs = ti.get_block_store();
+                    let cursor = crate::stubs::block_store::BlocklistEventCursor {
+                        since_sequence: since_sequence.unwrap_or(0),
+                        max_events,
+                    };
+                    let result = bs.query_blocklist_catchup(&cursor);
+                    let events: Vec<crate::blocklist_event::BlocklistEventData> = result
+                        .events
+                        .iter()
+                        .map(crate::blocklist_event::BlocklistEventData::from_event)
+                        .collect();
+                    let response = MeshMessage::BlocklistCatchupResponse {
+                        events,
+                        history_complete: result.history_complete,
+                        latest_sequence: Some(result.latest_sequence),
+                        latest_timestamp: Some(result.latest_timestamp),
+                        snapshot_required: result.snapshot_required,
+                    };
+                    let _ = self.send_datagram_to_peer(peer_id, &response).await;
+                    tracing::debug!(
+                        "Sent blocklist catchup response to {}: {} events, history_complete={}",
+                        peer_id,
+                        result.events.len(),
+                        result.history_complete
+                    );
+                } else {
+                    tracing::trace!(
+                        "Blocklist catchup request received but threat intel not enabled"
+                    );
+                }
+            }
+            MeshMessage::BlocklistCatchupResponse {
+                ref events,
+                history_complete,
+                latest_sequence,
+                latest_timestamp,
+                snapshot_required,
+            } => {
+                tracing::debug!(
+                    "Received blocklist catchup response from {}: {} events, history_complete={}",
+                    peer_id,
+                    events.len(),
+                    history_complete
+                );
+                if snapshot_required {
+                    tracing::warn!(
+                        "Peer {} indicates blocklist snapshot required (history incomplete)",
+                        peer_id
+                    );
+                }
+                if let Some(ref ti) = self.threat_intel {
+                    let bs = ti.get_block_store();
+                    let mut applied = 0u32;
+                    let mut noop = 0u32;
+                    let mut stale = 0u32;
+                    for event_data in events {
+                        let event = event_data.to_event();
+                        match bs.apply_blocklist_event(&event) {
+                            crate::stubs::block_store::BlocklistApplyResult::Applied => {
+                                applied += 1;
+                            }
+                            crate::stubs::block_store::BlocklistApplyResult::NoopDuplicate => {
+                                noop += 1;
+                            }
+                            crate::stubs::block_store::BlocklistApplyResult::IgnoredStale => {
+                                stale += 1;
+                            }
+                            _ => {}
+                        }
+                    }
+                    tracing::info!(
+                        "Blocklist catchup from {}: applied={}, noop={}, stale={}, latest_seq={:?}",
+                        peer_id,
+                        applied,
+                        noop,
+                        stale,
+                        latest_sequence
+                    );
+                } else {
+                    tracing::trace!(
+                        "Blocklist catchup response received but threat intel not enabled"
+                    );
+                }
+            }
 
             MeshMessage::LookupBatchRequest { request_id, keys } => {
                 self.handle_lookup_batch_request(peer_id, &request_id, &keys)

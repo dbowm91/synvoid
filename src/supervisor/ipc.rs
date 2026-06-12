@@ -503,6 +503,8 @@ async fn handle_worker_connection_internal(
                     None
                 };
 
+                let is_worker_ready = matches!(message, Message::UnifiedServerWorkerReady { .. });
+
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     match message {
                         Message::WorkerStarted {
@@ -738,6 +740,13 @@ async fn handle_worker_connection_internal(
                             }
                         }
                     }
+                }
+
+                // Replay recent blocklist events to the newly connected worker.
+                if is_worker_ready {
+                    process_manager
+                        .replay_blocklist_events_to_worker(&mut ipc, 0)
+                        .await;
                 }
 
                 match result {

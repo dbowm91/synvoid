@@ -152,7 +152,10 @@ impl MeshMessage {
             | Self::MeshLoadUpdate { .. }
             | Self::JoinRequest { .. }
             | Self::JoinResponse { .. } => MessageCategory::System,
-            Self::HotThreatGossip { .. } | Self::BlocklistEventGossip { .. } => MessageCategory::ThreatIntel,
+            Self::HotThreatGossip { .. }
+            | Self::BlocklistEventGossip { .. }
+            | Self::BlocklistCatchupRequest { .. }
+            | Self::BlocklistCatchupResponse { .. } => MessageCategory::ThreatIntel,
         }
     }
 
@@ -223,6 +226,9 @@ impl MeshMessage {
                 "block:{}:{}:{}",
                 mesh_identifier, service_id, origin_node_id
             ))),
+            Self::BlocklistCatchupRequest { requesting_node, .. } => {
+                Some(requesting_node.as_str().into())
+            }
             _ => None,
         }
     }

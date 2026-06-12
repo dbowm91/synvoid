@@ -281,6 +281,30 @@ impl MeshTransport {
                 );
             }
         }
+
+        {
+            let catchup_request = MeshMessage::BlocklistCatchupRequest {
+                requesting_node: self.config.node_id().into(),
+                since_sequence: Some(0),
+                since_timestamp: None,
+                max_events: 500,
+            };
+            if let Err(e) = self
+                .send_datagram_to_peer(peer_node_id, &catchup_request)
+                .await
+            {
+                tracing::debug!(
+                    "Failed to send blocklist catchup request to {}: {}",
+                    peer_node_id,
+                    e
+                );
+            } else {
+                tracing::debug!(
+                    "Sent blocklist catchup request to newly connected peer {}",
+                    peer_node_id
+                );
+            }
+        }
     }
 
     pub(crate) async fn request_seed_list(

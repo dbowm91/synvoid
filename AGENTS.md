@@ -118,6 +118,7 @@ cargo check --no-default-features --features mesh,dns
 | `crates/synvoid-http-client/src/lib.rs` (monolithic pre-iter6) | Split into focused modules (client.rs, tls.rs, pool.rs, unix.rs, request.rs, response.rs) + erased_pool/streaming_waf_body; lib.rs is now thin public facade with re-exports only |
 | `crates/synvoid-mesh/src/mesh/threat_intel_policy.rs` | Iteration 18 — threat-intel policy composition helper; Iteration 19 — first consumer migration via `ThreatIntelligenceManager::evaluate_indicator_actionability`; Iterations 20-21 injection + second read path; Iteration 22 — shared `is_policy_actionable` helper, policy-composed documented as preferred for new actionability-sensitive reads, raw as compatibility/diagnostic; Iteration 23 — call-graph reassessment selected Outcome A, pausing the track with raw lookups still compatibility/diagnostic; Iteration 24 — verification pass confirmed the helper and focused mesh checks; Iterations 25-26 — worker-root ownership plus an explicit root-side helper for constructing `ThreatIntelPolicyContext`; Iteration 28 — Supervisor exports `CanonicalTrustSnapshot` via IPC to workers, completing the export path; Iteration 33 — shadow/observability consumers (`ThreatIntelPolicyShadowDecision`, `ThreatIntelPolicyDecisionClass`, `ThreatIntelPolicyShadowDisagreement`), `evaluate_indicator_policy_shadow()`, admin endpoints for diagnostics and metrics; Iteration 34 — consumer enforcement migration (`classify_consumer_action`, strict lookup wrappers, enforcement gate in `handle_incoming_threat`), new re-exported types (`ThreatIntelConsumerKind`, `ThreatIntelConsumerAction`, `ThreatIntelDeferredMode`); Iteration 35 — `classify_consumer_action` now dispatches on `ThreatIntelDeferredMode` (FailOpenNoAction/FailClosedNoAction → SuppressAction, ShadowOnly → ShadowOnly for Deferred decisions) |
 | `BlocklistEvent` type | `crates/synvoid-core/src/block_store.rs` (not a separate module) |
+| `architecture/blocklist_reconciliation.md` | New — Iteration 48 offline-peer catchup architecture |
 
 ## Modular Agent Guidance
 
@@ -260,6 +261,7 @@ Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.overrid
 - **BlockStore::new** auto-calls `migrate_legacy_sentinel_entries()` during initialization.
 - **`block_mesh_id_with_provenance` deadlock fix**: Now drops the shard lock before calling `trigger_persist()` (previously held the lock across the persist call).
 - **BlocklistEvent / BlocklistOperation**: Types in `synvoid-core::block_store` for mesh-wide block/unblock propagation. Admin ban/unban handlers emit structured `BlocklistEvent` debug logs. Admin unban also calls `announce_local_unblock()` to gossip `BlocklistEventGossip` to mesh peers. Supervisor pushes `BlocklistEventUpdate` IPC to workers. Supports distributed fields: `event_id`, `source_node`, `ttl_secs`, `version`. Apply pipeline uses FIFO dedup (`SeenEventCache`) and per-target stale suppression (`TargetStateCache`). See `architecture/blocklist_remove_consistency.md`.
+- **BlocklistEventLog** (Iteration 48): Bounded in-memory event log (10,000 events default) in `BlockStore` for offline-peer catchup. Reconnecting peers request events via `BlocklistCatchupRequest`/`BlocklistCatchupResponse` mesh messages. History gaps detected via `snapshot_required`. Supervisor retains separate IPC event log (1,000 events) for worker replay on reconnect. See `architecture/blocklist_reconciliation.md`.
 
 ### Root Dependency Ownership
 - Reference `plans/root_dependency_ownership.md` for the ownership inventory of all root-level direct dependencies.
@@ -304,6 +306,7 @@ The `architecture/` directory contains detailed design documents. Key canonical 
 | Platform/sandboxing | `platform.md` | `platform_deep_dive.md` |
 | Threat-intel audit | `threat_intel_request_waf_audit.md` | — |
 | HTTP/3 WAF boundary | `http3_request_waf_boundary.md` | — |
+| Blocklist reconciliation | `blocklist_reconciliation.md` | `blocklist_remove_consistency.md` |
 
 ## Skills Directory
 

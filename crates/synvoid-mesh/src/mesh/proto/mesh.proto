@@ -292,6 +292,8 @@ message MeshMessage {
         MeshLoadUpdate mesh_load_update = 176;
         HotThreatGossip hot_threat_gossip = 177;
         BlocklistEventGossip blocklist_event_gossip = 178;
+        BlocklistCatchupRequest blocklist_catchup_request = 179;
+        BlocklistCatchupResponse blocklist_catchup_response = 180;
     }
 }
 
@@ -788,6 +790,22 @@ message BlocklistEventGossip {
     BlocklistEventData event = 1;
     bytes signature = 2;
     optional string signer_public_key = 3;
+}
+
+// Iteration 48: Blocklist offline-peer catchup
+message BlocklistCatchupRequest {
+    string requesting_node = 1;
+    optional uint64 since_sequence = 2;
+    optional uint64 since_timestamp = 3;
+    uint32 max_events = 4;
+}
+
+message BlocklistCatchupResponse {
+    repeated BlocklistEventData events = 1;
+    bool history_complete = 2;
+    optional uint64 latest_sequence = 3;
+    optional uint64 latest_timestamp = 4;
+    bool snapshot_required = 5;
 }
 
 message YaraRuleAnnounce {

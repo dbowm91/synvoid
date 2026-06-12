@@ -1916,6 +1916,40 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     signer_public_key: g.signer_public_key.map(|k| k.into()),
                 })
             }
+            proto::mesh_message::Payload::BlocklistCatchupRequest(r) => {
+                Ok(MeshMessage::BlocklistCatchupRequest {
+                    requesting_node: r.requesting_node.into(),
+                    since_sequence: r.since_sequence,
+                    since_timestamp: r.since_timestamp,
+                    max_events: r.max_events,
+                })
+            }
+            proto::mesh_message::Payload::BlocklistCatchupResponse(r) => {
+                Ok(MeshMessage::BlocklistCatchupResponse {
+                    events: r
+                        .events
+                        .into_iter()
+                        .map(|e| crate::blocklist_event::BlocklistEventData {
+                            event_id: e.event_id,
+                            source_node: e.source_node,
+                            timestamp: e.timestamp,
+                            operation: e.operation,
+                            target_kind: e.target_kind,
+                            identifier: e.identifier,
+                            site_scope: e.site_scope,
+                            reason: e.reason,
+                            provenance_kind: e.provenance_kind,
+                            provenance_source: e.provenance_source,
+                            ttl_secs: e.ttl_secs,
+                            version: e.version,
+                        })
+                        .collect(),
+                    history_complete: r.history_complete,
+                    latest_sequence: r.latest_sequence,
+                    latest_timestamp: r.latest_timestamp,
+                    snapshot_required: r.snapshot_required,
+                })
+            }
         }
     }
 }

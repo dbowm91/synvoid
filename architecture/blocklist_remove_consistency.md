@@ -95,10 +95,11 @@ Clock skew between nodes is a known caveat — nodes with significantly skewed c
 | Limitation | Impact | Mitigation |
 |------------|--------|------------|
 | No Raft integration for blocklist | Operational removes are not linearizable | Acceptable for operational blocklist; threat-intel uses canonical trust |
-| Best-effort propagation | Events may be lost if peer is offline | Periodic blocklist sync (future) |
-| No acknowledged delivery | Sender does not know if peer received event | Gossip protocol semantics; eventual consistency |
+| Best-effort propagation | Events may be lost if peer is offline | Catchup repairs missed events within retention window (Iteration 48) |
+| No acknowledged delivery | Sender does not know if peer received event | Catchup provides eventual reconciliation for reconnecting peers |
 | Clock skew ordering | Events may apply out of order on skewed nodes | Bounded by reasonable clock drift; admin retry |
 | In-memory per-target state | Stale replay protection lost on restart | Acceptable for operational blocklist; periodic sync (future) can mitigate |
+| In-memory event log | Event log lost on restart; catchup only covers retained window | Configurable capacity; snapshot/admin fallback for gaps |
 
 ## Implementation Details
 
@@ -129,8 +130,14 @@ Clock skew between nodes is a known caveat — nodes with significantly skewed c
 - Workers deserialize and apply via `apply_blocklist_event()`
 - Backward compatible: old `BlocklistUpdate`/`BlocklistResponse` still work
 
+## Offline-Peer Catchup (Iteration 48)
+
+Reconnecting peers can now request recent blocklist events via `BlocklistCatchupRequest`/`BlocklistCatchupResponse` mesh messages. The event log is bounded (10,000 events default) and in-memory only. History gaps are detected and surfaced as `snapshot_required: true` in the response. See `architecture/blocklist_reconciliation.md` for full details.
+
 ## Future Work
 
-- Periodic blocklist sync for offline-peer catchup
+- Periodic blocklist sync for offline-peer catchup (partially addressed by Iteration 48 catchup)
+- Per-source cursor persistence for cross-restart convergence
+- Full snapshot fallback for history gaps beyond retention window
 - Acknowledged delivery for critical removes
 - Persisted per-target tombstones for stale replay protection across restarts

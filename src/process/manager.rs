@@ -1272,6 +1272,17 @@ impl ProcessManager {
         }
     }
 
+    /// Return event log statistics from the supervisor's block store for diagnostics.
+    ///
+    /// Returns `(event_count, oldest_timestamp, newest_timestamp, next_sequence)`.
+    pub fn blocklist_event_log_stats(&self) -> (usize, Option<u64>, Option<u64>, u64) {
+        if let Some(ref bs) = self.block_store {
+            bs.event_log_stats()
+        } else {
+            (0, None, None, 0)
+        }
+    }
+
     pub async fn broadcast_rule_patterns_update(
         &self,
         version: String,

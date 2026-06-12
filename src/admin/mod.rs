@@ -680,7 +680,11 @@ fn build_router_from_state(
         .route("/mesh/ban/ip", post(handlers::mesh_admin::ban_ip))
         .route("/mesh/ban/mesh-id", post(handlers::mesh_admin::ban_mesh_id))
         .route("/mesh/ban", delete(handlers::mesh_admin::unban))
-        .route("/mesh/bans", get(handlers::mesh_admin::list_bans));
+        .route("/mesh/bans", get(handlers::mesh_admin::list_bans))
+        .route(
+            "/mesh/blocklist/catchup-stats",
+            get(handlers::mesh_admin::get_blocklist_catchup_stats),
+        );
 
     #[cfg(feature = "mesh")]
     let api_routes = api_routes
