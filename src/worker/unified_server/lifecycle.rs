@@ -289,6 +289,39 @@ pub fn spawn_ipc_loop(
                         }
                     }
                 }
+                Some(Message::BlocklistEventUpdate {
+                    event_json,
+                    source_node,
+                    event_id,
+                }) => {
+                    tracing::debug!(
+                        "Received blocklist event from Supervisor: event_id={}, source={}",
+                        event_id,
+                        source_node
+                    );
+                    if let Some(block_store) = state.unified_server.get_block_store() {
+                        match serde_json::from_str::<synvoid_core::block_store::BlocklistEvent>(
+                            &event_json,
+                        ) {
+                            Ok(event) => {
+                                let result = block_store.apply_blocklist_event(&event);
+                                tracing::info!(
+                                    "Applied supervisor blocklist event: {:?} {:?} on {:?} -> {:?}",
+                                    event.operation,
+                                    event.target_kind,
+                                    event.identifier,
+                                    result
+                                );
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Failed to deserialize blocklist event from Supervisor: {}",
+                                    e
+                                );
+                            }
+                        }
+                    }
+                }
                 #[cfg(feature = "mesh")]
                 Some(Message::CanonicalTrustSnapshotUpdate {
                     snapshot,

@@ -2835,6 +2835,44 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     },
                 )),
             },
+            MeshMessage::BlocklistEventGossip {
+                event_id,
+                source_node,
+                timestamp,
+                operation,
+                target_kind,
+                identifier,
+                site_scope,
+                reason,
+                provenance_kind,
+                provenance_source,
+                ttl_secs,
+                version,
+                signature,
+                signer_public_key,
+            } => proto::MeshMessage {
+                message_type: 178,
+                payload: Some(proto::mesh_message::Payload::BlocklistEventGossip(
+                    proto::BlocklistEventGossip {
+                        event: Some(proto::BlocklistEventData {
+                            event_id: event_id.to_string(),
+                            source_node: source_node.to_string(),
+                            timestamp: *timestamp,
+                            operation: *operation,
+                            target_kind: *target_kind,
+                            identifier: identifier.to_string(),
+                            site_scope: site_scope.to_string(),
+                            reason: reason.as_ref().map(|r| r.to_string()),
+                            provenance_kind: *provenance_kind,
+                            provenance_source: provenance_source.as_ref().map(|s| s.to_string()),
+                            ttl_secs: *ttl_secs,
+                            version: *version,
+                        }),
+                        signature: signature.clone(),
+                        signer_public_key: signer_public_key.as_ref().map(|k| k.to_string()),
+                    },
+                )),
+            },
         }
     }
 }

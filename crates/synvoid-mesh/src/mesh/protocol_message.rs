@@ -152,7 +152,7 @@ impl MeshMessage {
             | Self::MeshLoadUpdate { .. }
             | Self::JoinRequest { .. }
             | Self::JoinResponse { .. } => MessageCategory::System,
-            Self::HotThreatGossip { .. } => MessageCategory::ThreatIntel,
+            Self::HotThreatGossip { .. } | Self::BlocklistEventGossip { .. } => MessageCategory::ThreatIntel,
         }
     }
 

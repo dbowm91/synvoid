@@ -291,6 +291,7 @@ message MeshMessage {
         ReplicaSyncResponse replica_sync_response = 175;
         MeshLoadUpdate mesh_load_update = 176;
         HotThreatGossip hot_threat_gossip = 177;
+        BlocklistEventGossip blocklist_event_gossip = 178;
     }
 }
 
@@ -692,6 +693,20 @@ enum ThreatSeverity {
     THREAT_SEVERITY_CRITICAL = 4;
 }
 
+// Iteration 46: Blocklist operation types
+enum BlocklistOperationProto {
+    BLOCKLIST_OPERATION_PROTO_UNSPECIFIED = 0;
+    BLOCKLIST_OPERATION_PROTO_BLOCK = 1;
+    BLOCKLIST_OPERATION_PROTO_UNBLOCK = 2;
+}
+
+// Iteration 46: Block target kind
+enum BlockTargetKindProto {
+    BLOCK_TARGET_KIND_PROTO_UNSPECIFIED = 0;
+    BLOCK_TARGET_KIND_PROTO_IP = 1;
+    BLOCK_TARGET_KIND_PROTO_MESH_ID = 2;
+}
+
 message ThreatIndicator {
     ThreatType threat_type = 1;
     string indicator_value = 2;
@@ -750,6 +765,29 @@ message HotThreatGossip {
     uint32 hashes = 2;
     uint64 timestamp = 3;
     optional ThreatIndicator immediate_indicator = 4;
+}
+
+// Iteration 46: Blocklist event for mesh-wide remove consistency
+message BlocklistEventData {
+    string event_id = 1;
+    string source_node = 2;
+    uint64 timestamp = 3;
+    uint32 operation = 4;     // BlocklistOperationProto: 0=UNSPECIFIED, 1=BLOCK, 2=UNBLOCK
+    uint32 target_kind = 5;   // BlockTargetKindProto: 0=UNSPECIFIED, 1=IP, 2=MESH_ID
+    string identifier = 6;
+    string site_scope = 7;
+    optional string reason = 8;
+    uint32 provenance_kind = 9;
+    optional string provenance_source = 10;
+    optional uint64 ttl_secs = 11;
+    optional uint64 version = 12;
+}
+
+// Iteration 46: Blocklist event gossip for mesh-wide remove consistency
+message BlocklistEventGossip {
+    BlocklistEventData event = 1;
+    bytes signature = 2;
+    optional string signer_public_key = 3;
 }
 
 message YaraRuleAnnounce {

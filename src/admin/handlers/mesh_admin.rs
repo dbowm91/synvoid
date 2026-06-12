@@ -600,7 +600,7 @@ pub async fn unban(
                     if let Ok(ip) = identifier.parse::<IpAddr>() {
                         if block_store.unblock_ip(&ip, "global") {
                             tracing::info!("Admin unbanned IP {}", ip);
-                            let event = BlocklistEvent::unblock_ip(
+                            let mut event = BlocklistEvent::unblock_ip(
                                 &ip.to_string(),
                                 "global",
                                 BlockProvenance {
@@ -609,13 +609,36 @@ pub async fn unban(
                                 },
                                 synvoid_utils::safe_unix_timestamp(),
                             );
+                            let event_id = event.generate_event_id();
+                            event = event.with_event_id(event_id.clone());
                             tracing::debug!(target: "blocklist_event", ?event, "Unblock event emitted");
+                            threat_intel.announce_local_unblock(
+                                synvoid_core::block_store::BlockTargetKind::Ip,
+                                &ip.to_string(),
+                                "global",
+                                BlockProvenance {
+                                    kind: BlockProvenanceKind::AdminManual,
+                                    source: Some("admin_unban_ip".to_string()),
+                                },
+                            );
+                            if let Some(ref pm) = state.process.process_manager {
+                                let event_json = serde_json::to_string(&event).unwrap_or_default();
+                                let pm = pm.clone();
+                                tokio::spawn(async move {
+                                    pm.broadcast_blocklist_event(
+                                        event_json,
+                                        "admin_unban_ip".to_string(),
+                                        event_id,
+                                    ).await;
+                                });
+                            }
                             return Ok(Json(serde_json::json!({
                                 "success": true,
                                 "message": format!("IP {} unbanned successfully", ip),
                                 "identifier": ip.to_string(),
                                 "ban_type": "ip",
-                                "removed": true
+                                "removed": true,
+                                "propagation": "queued"
                             })));
                         }
                     }
@@ -624,7 +647,7 @@ pub async fn unban(
                 "mesh_id" => {
                     if block_store.unblock_mesh_id(&identifier, "global") {
                         tracing::info!("Admin unbanned mesh_id {}", identifier);
-                        let event = BlocklistEvent::unblock_mesh_id(
+                        let mut event = BlocklistEvent::unblock_mesh_id(
                             &identifier,
                             "global",
                             BlockProvenance {
@@ -633,13 +656,36 @@ pub async fn unban(
                             },
                             synvoid_utils::safe_unix_timestamp(),
                         );
+                        let event_id = event.generate_event_id();
+                        event = event.with_event_id(event_id.clone());
                         tracing::debug!(target: "blocklist_event", ?event, "Unblock event emitted");
+                        threat_intel.announce_local_unblock(
+                            synvoid_core::block_store::BlockTargetKind::MeshId,
+                            &identifier,
+                            "global",
+                            BlockProvenance {
+                                kind: BlockProvenanceKind::AdminManual,
+                                source: Some("admin_unban_mesh_id".to_string()),
+                            },
+                        );
+                        if let Some(ref pm) = state.process.process_manager {
+                            let event_json = serde_json::to_string(&event).unwrap_or_default();
+                            let pm = pm.clone();
+                            tokio::spawn(async move {
+                                pm.broadcast_blocklist_event(
+                                    event_json,
+                                    "admin_unban_mesh_id".to_string(),
+                                    event_id,
+                                ).await;
+                            });
+                        }
                         return Ok(Json(serde_json::json!({
                             "success": true,
                             "message": format!("Mesh ID {} unbanned successfully", identifier),
                             "identifier": identifier,
                             "ban_type": "mesh_id",
-                            "removed": true
+                            "removed": true,
+                            "propagation": "queued"
                         })));
                     }
                     return Err(StatusCode::NOT_FOUND);

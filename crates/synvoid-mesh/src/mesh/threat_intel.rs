@@ -709,6 +709,64 @@ impl ThreatIntelligenceManager {
         }
     }
 
+    pub fn announce_local_unblock(
+        &self,
+        target_kind: synvoid_core::block_store::BlockTargetKind,
+        identifier: &str,
+        site_scope: &str,
+        provenance: synvoid_core::block_store::BlockProvenance,
+    ) {
+        let now = synvoid_utils::safe_unix_timestamp();
+        let mut event = synvoid_core::block_store::BlocklistEvent::unblock_ip(
+            identifier,
+            site_scope,
+            provenance.clone(),
+            now,
+        );
+        if matches!(target_kind, synvoid_core::block_store::BlockTargetKind::MeshId) {
+            event = synvoid_core::block_store::BlocklistEvent::unblock_mesh_id(
+                identifier,
+                site_scope,
+                provenance,
+                now,
+            );
+        }
+        let event_id = event.generate_event_id();
+        event = event
+            .with_source_node(self.node_id.clone())
+            .with_event_id(event_id);
+
+        let op_u32 = crate::blocklist_event::operation_to_u32(event.operation);
+        let tk_u32 = crate::blocklist_event::target_kind_to_u32(event.target_kind);
+
+        let gossip_msg = MeshMessage::BlocklistEventGossip {
+            event_id: event.event_id.as_deref().unwrap_or("").into(),
+            source_node: self.node_id.clone().into(),
+            timestamp: now,
+            operation: op_u32,
+            target_kind: tk_u32,
+            identifier: identifier.into(),
+            site_scope: site_scope.into(),
+            reason: None,
+            provenance_kind: crate::blocklist_event::provenance_kind_to_u32(event.provenance.kind),
+            provenance_source: event.provenance.source.clone().map(|s| s.into()),
+            ttl_secs: None,
+            version: None,
+            signature: Vec::new(),
+            signer_public_key: None,
+        };
+
+        let sender = self.mesh_sender.read().clone();
+        if let Some(tx) = sender {
+            let _ = tx.try_send(gossip_msg);
+            tracing::debug!(
+                "Announced local unblock for {:?} {} to mesh",
+                target_kind,
+                identifier
+            );
+        }
+    }
+
     pub fn add_feed_indicator(&self, indicator: ThreatIndicator) {
         let key = format!(
             "threat_indicator:{}:{:?}",

@@ -1884,6 +1884,38 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     signer_public_key: i.signer_public_key,
                 }),
             }),
+            proto::mesh_message::Payload::BlocklistEventGossip(g) => {
+                let event = g.event.unwrap_or_else(|| proto::BlocklistEventData {
+                    event_id: String::new(),
+                    source_node: String::new(),
+                    timestamp: 0,
+                    operation: 0,
+                    target_kind: 0,
+                    identifier: String::new(),
+                    site_scope: String::new(),
+                    reason: None,
+                    provenance_kind: 0,
+                    provenance_source: None,
+                    ttl_secs: None,
+                    version: None,
+                });
+                Ok(MeshMessage::BlocklistEventGossip {
+                    event_id: event.event_id.into(),
+                    source_node: event.source_node.into(),
+                    timestamp: event.timestamp,
+                    operation: event.operation,
+                    target_kind: event.target_kind,
+                    identifier: event.identifier.into(),
+                    site_scope: event.site_scope.into(),
+                    reason: event.reason.map(|r| r.into()),
+                    provenance_kind: event.provenance_kind,
+                    provenance_source: event.provenance_source.map(|s| s.into()),
+                    ttl_secs: event.ttl_secs,
+                    version: event.version,
+                    signature: g.signature,
+                    signer_public_key: g.signer_public_key.map(|k| k.into()),
+                })
+            }
         }
     }
 }

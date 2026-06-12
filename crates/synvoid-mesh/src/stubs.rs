@@ -228,6 +228,16 @@ pub mod block_store {
     use synvoid_config::DenyListLimitsConfig;
     pub use synvoid_core::block_store::{BlockProvenance, BlockProvenanceKind};
 
+    /// Result of applying a blocklist event.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum BlocklistApplyResult {
+        Applied,
+        NoopDuplicate,
+        IgnoredStale,
+        InvalidTarget,
+        StoreDisabled,
+    }
+
     #[derive(Debug, Clone)]
     pub struct BlockEntry {
         pub ip: String,
@@ -331,6 +341,10 @@ pub mod block_store {
         fn is_mesh_id_blocked(&self, mesh_id: &str, site_scope: &str) -> bool;
         fn get_all_mesh_entries(&self) -> Vec<MeshBlockEntry>;
         fn get_all_block_records(&self) -> Vec<synvoid_core::block_store::BlockRecord>;
+        fn apply_blocklist_event(
+            &self,
+            event: &synvoid_core::block_store::BlocklistEvent,
+        ) -> BlocklistApplyResult;
     }
 
     impl BlockStore {
@@ -422,6 +436,13 @@ pub mod block_store {
         pub fn get_all_block_records(&self) -> Vec<synvoid_core::block_store::BlockRecord> {
             Vec::new()
         }
+
+        pub fn apply_blocklist_event(
+            &self,
+            _event: &synvoid_core::block_store::BlocklistEvent,
+        ) -> BlocklistApplyResult {
+            BlocklistApplyResult::Applied
+        }
     }
 
     impl BlockStoreApi for BlockStore {
@@ -477,6 +498,13 @@ pub mod block_store {
 
         fn get_all_block_records(&self) -> Vec<synvoid_core::block_store::BlockRecord> {
             self.get_all_block_records()
+        }
+
+        fn apply_blocklist_event(
+            &self,
+            event: &synvoid_core::block_store::BlocklistEvent,
+        ) -> BlocklistApplyResult {
+            self.apply_blocklist_event(event)
         }
     }
 }

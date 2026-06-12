@@ -669,6 +669,15 @@ pub enum Message {
         mesh_blocks: Vec<MeshBlockEntryData>,
         version: u64,
     },
+    /// Iteration 46: Blocklist event propagation (unblock support)
+    BlocklistEventUpdate {
+        /// Serialized BlocklistEvent (JSON)
+        event_json: String,
+        /// Source node that originated the event
+        source_node: String,
+        /// Event ID for dedup
+        event_id: String,
+    },
     CanonicalTrustSnapshotUpdate {
         snapshot: Vec<u8>,
         generated_at_unix: u64,
@@ -1155,6 +1164,7 @@ impl Message {
             | Message::BlocklistRequest { .. }
             | Message::BlocklistResponse { .. }
             | Message::BlocklistUpdate { .. }
+            | Message::BlocklistEventUpdate { .. }
             | Message::CanonicalTrustSnapshotUpdate { .. }
             | Message::BlocklistWriteComplete { .. }
             | Message::PoisonImageResponse { .. }
@@ -1932,6 +1942,7 @@ impl Message {
             | Message::BlocklistResponse { .. } => MessageCategory::ThreatIntel,
 
             Message::BlocklistUpdate { .. }
+            | Message::BlocklistEventUpdate { .. }
             | Message::RulePatternsUpdate { .. }
             | Message::BlocklistWriteComplete { .. } => MessageCategory::BlocklistRules,
 

@@ -12,6 +12,7 @@
 use ahash::AHashMap;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -30,6 +31,17 @@ pub type GlobalBlockHook = Arc<dyn Fn(IpAddr) + Send + Sync>;
 
 const DEFAULT_MAX_ENTRIES: usize = 500_000;
 const NUM_SHARDS: usize = 64;
+const SEEN_EVENTS_MAX: usize = 10_000;
+
+/// Result of applying a blocklist event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlocklistApplyResult {
+    Applied,
+    NoopDuplicate,
+    IgnoredStale,
+    InvalidTarget,
+    StoreDisabled,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockEntry {
@@ -113,6 +125,7 @@ pub struct BlockStore {
     persist_tx: Option<mpsc::Sender<PersistRequest>>,
     shutdown_tx: Option<mpsc::Sender<()>>,
     mitigation_provider: arc_swap::ArcSwapOption<SizedMitigationProvider>,
+    seen_events: RwLock<HashSet<String>>,
 }
 
 impl BlockStore {
@@ -308,6 +321,7 @@ impl BlockStore {
             persist_tx,
             shutdown_tx,
             mitigation_provider: arc_swap::ArcSwapOption::const_empty(),
+            seen_events: RwLock::new(HashSet::new()),
         };
 
         let migrated = store.migrate_legacy_sentinel_entries();
@@ -1033,6 +1047,92 @@ impl BlockStore {
         self.total_mesh_entries.load(Ordering::Relaxed)
     }
 
+    /// Apply a blocklist event idempotently.
+    ///
+    /// Dispatches based on `(operation, target_kind)`:
+    /// - `(Block, Ip)` → `block_ip_with_provenance`
+    /// - `(Unblock, Ip)` → `unblock_ip`
+    /// - `(Block, MeshId)` → `block_mesh_id_with_provenance`
+    /// - `(Unblock, MeshId)` → `unblock_mesh_id`
+    pub fn apply_blocklist_event(
+        &self,
+        event: &synvoid_core::block_store::BlocklistEvent,
+    ) -> BlocklistApplyResult {
+        if !self.enabled {
+            return BlocklistApplyResult::StoreDisabled;
+        }
+
+        if let Some(ref eid) = event.event_id {
+            let mut seen = self.seen_events.write();
+            if seen.contains(eid) {
+                return BlocklistApplyResult::NoopDuplicate;
+            }
+            if seen.len() >= SEEN_EVENTS_MAX {
+                seen.clear();
+            }
+            seen.insert(eid.clone());
+        }
+
+        let result = match (&event.operation, &event.target_kind) {
+            (BlocklistOperation::Block, BlockTargetKind::Ip) => {
+                let ip = match event.identifier.parse::<IpAddr>() {
+                    Ok(ip) => ip,
+                    Err(_) => return BlocklistApplyResult::InvalidTarget,
+                };
+                let ban_secs = event.ttl_secs.unwrap_or(3600);
+                let applied = self.block_ip_with_provenance(
+                    ip,
+                    event.reason.as_deref().unwrap_or("mesh_event"),
+                    ban_secs,
+                    &event.site_scope,
+                    event.provenance.clone(),
+                );
+                if applied {
+                    BlocklistApplyResult::Applied
+                } else {
+                    BlocklistApplyResult::StoreDisabled
+                }
+            }
+            (BlocklistOperation::Unblock, BlockTargetKind::Ip) => {
+                let ip = match event.identifier.parse::<IpAddr>() {
+                    Ok(ip) => ip,
+                    Err(_) => return BlocklistApplyResult::InvalidTarget,
+                };
+                let removed = self.unblock_ip(&ip, &event.site_scope);
+                if removed {
+                    BlocklistApplyResult::Applied
+                } else {
+                    BlocklistApplyResult::NoopDuplicate
+                }
+            }
+            (BlocklistOperation::Block, BlockTargetKind::MeshId) => {
+                let ban_secs = event.ttl_secs.unwrap_or(3600);
+                let applied = self.block_mesh_id_with_provenance(
+                    &event.identifier,
+                    event.reason.as_deref().unwrap_or("mesh_event"),
+                    ban_secs,
+                    &event.site_scope,
+                    event.provenance.clone(),
+                );
+                if applied {
+                    BlocklistApplyResult::Applied
+                } else {
+                    BlocklistApplyResult::StoreDisabled
+                }
+            }
+            (BlocklistOperation::Unblock, BlockTargetKind::MeshId) => {
+                let removed = self.unblock_mesh_id(&event.identifier, &event.site_scope);
+                if removed {
+                    BlocklistApplyResult::Applied
+                } else {
+                    BlocklistApplyResult::NoopDuplicate
+                }
+            }
+        };
+
+        result
+    }
+
     pub fn migrate_legacy_sentinel_entries(&self) -> usize {
         let sentinel_ip = IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0));
         let sentinel_str = sentinel_ip.to_string();
@@ -1182,6 +1282,29 @@ impl synvoid_mesh::stubs::block_store::BlockStoreApi for BlockStore {
 
     fn get_all_block_records(&self) -> Vec<synvoid_core::block_store::BlockRecord> {
         self.get_all_block_records()
+    }
+
+    fn apply_blocklist_event(
+        &self,
+        event: &synvoid_core::block_store::BlocklistEvent,
+    ) -> synvoid_mesh::stubs::block_store::BlocklistApplyResult {
+        match self.apply_blocklist_event(event) {
+            BlocklistApplyResult::Applied => {
+                synvoid_mesh::stubs::block_store::BlocklistApplyResult::Applied
+            }
+            BlocklistApplyResult::NoopDuplicate => {
+                synvoid_mesh::stubs::block_store::BlocklistApplyResult::NoopDuplicate
+            }
+            BlocklistApplyResult::IgnoredStale => {
+                synvoid_mesh::stubs::block_store::BlocklistApplyResult::IgnoredStale
+            }
+            BlocklistApplyResult::InvalidTarget => {
+                synvoid_mesh::stubs::block_store::BlocklistApplyResult::InvalidTarget
+            }
+            BlocklistApplyResult::StoreDisabled => {
+                synvoid_mesh::stubs::block_store::BlocklistApplyResult::StoreDisabled
+            }
+        }
     }
 }
 
@@ -2343,5 +2466,349 @@ mod tests {
         store.unblock_mesh_id("mesh-1", "global");
         assert_eq!(store.get_stats().total_entries, 0);
         assert_eq!(store.get_mesh_stats(), 0);
+    }
+
+    // Phase 5+6: apply_blocklist_event and dedup tests
+
+    #[tokio::test]
+    async fn test_apply_blocklist_event_block_ip() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let event = BlocklistEvent::block_ip(
+            "10.0.0.1",
+            "apply_test",
+            "global",
+            BlockProvenance {
+                kind: BlockProvenanceKind::AdminManual,
+                source: Some("test".to_string()),
+            },
+            1000,
+        );
+
+        let result = store.apply_blocklist_event(&event);
+        assert_eq!(result, BlocklistApplyResult::Applied);
+
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        let entry = store.is_blocked(&ip, "global");
+        assert!(entry.is_some());
+        assert_eq!(entry.unwrap().reason, "apply_test");
+    }
+
+    #[tokio::test]
+    async fn test_apply_blocklist_event_unblock_ip() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip: IpAddr = "10.0.0.2".parse().unwrap();
+        store.block_ip(ip, "test", 3600, "global");
+        assert!(store.is_blocked(&ip, "global").is_some());
+
+        let event = BlocklistEvent::unblock_ip("10.0.0.2", "global", BlockProvenance::default(), 1001);
+        let result = store.apply_blocklist_event(&event);
+        assert_eq!(result, BlocklistApplyResult::Applied);
+        assert!(store.is_blocked(&ip, "global").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_apply_blocklist_event_block_mesh_id() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let event = BlocklistEvent::block_mesh_id(
+            "mesh-apply",
+            "apply_mesh_test",
+            "global",
+            BlockProvenance::default(),
+            1002,
+        );
+
+        let result = store.apply_blocklist_event(&event);
+        assert_eq!(result, BlocklistApplyResult::Applied);
+        assert!(store.is_mesh_id_blocked("mesh-apply", "global").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_apply_blocklist_event_unblock_mesh_id() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        store.block_mesh_id_with_provenance(
+            "mesh-unapply",
+            "test",
+            3600,
+            "global",
+            BlockProvenance::default(),
+        );
+        assert!(store.is_mesh_id_blocked("mesh-unapply", "global").is_some());
+
+        let event = BlocklistEvent::unblock_mesh_id(
+            "mesh-unapply",
+            "global",
+            BlockProvenance::default(),
+            1003,
+        );
+        let result = store.apply_blocklist_event(&event);
+        assert_eq!(result, BlocklistApplyResult::Applied);
+        assert!(store.is_mesh_id_blocked("mesh-unapply", "global").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_apply_blocklist_event_invalid_ip() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let mut event = BlocklistEvent::block_ip(
+            "not_an_ip",
+            "test",
+            "global",
+            BlockProvenance::default(),
+            1004,
+        );
+        event.event_id = Some("test-event-1".to_string());
+
+        let result = store.apply_blocklist_event(&event);
+        assert_eq!(result, BlocklistApplyResult::InvalidTarget);
+    }
+
+    #[tokio::test]
+    async fn test_apply_blocklist_event_dedup() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let mut event = BlocklistEvent::block_ip(
+            "10.0.0.50",
+            "dedup_test",
+            "global",
+            BlockProvenance::default(),
+            1005,
+        );
+        event.event_id = Some("dedup-event-1".to_string());
+
+        let result1 = store.apply_blocklist_event(&event);
+        assert_eq!(result1, BlocklistApplyResult::Applied);
+
+        let result2 = store.apply_blocklist_event(&event);
+        assert_eq!(result2, BlocklistApplyResult::NoopDuplicate);
+    }
+
+    #[tokio::test]
+    async fn test_apply_blocklist_event_dedup_unblock() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip: IpAddr = "10.0.0.51".parse().unwrap();
+        store.block_ip(ip, "test", 3600, "global");
+
+        let mut event = BlocklistEvent::unblock_ip(
+            "10.0.0.51",
+            "global",
+            BlockProvenance::default(),
+            1006,
+        );
+        event.event_id = Some("dedup-unblock-1".to_string());
+
+        let result1 = store.apply_blocklist_event(&event);
+        assert_eq!(result1, BlocklistApplyResult::Applied);
+
+        let result2 = store.apply_blocklist_event(&event);
+        assert_eq!(result2, BlocklistApplyResult::NoopDuplicate);
+    }
+
+    #[tokio::test]
+    async fn test_apply_blocklist_event_no_event_id_no_dedup() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let event = BlocklistEvent::block_ip(
+            "10.0.0.52",
+            "no_dedup_test",
+            "global",
+            BlockProvenance::default(),
+            1007,
+        );
+        assert!(event.event_id.is_none());
+
+        let result1 = store.apply_blocklist_event(&event);
+        assert_eq!(result1, BlocklistApplyResult::Applied);
+
+        let result2 = store.apply_blocklist_event(&event);
+        assert_eq!(result2, BlocklistApplyResult::Applied);
+    }
+
+    #[tokio::test]
+    async fn test_apply_blocklist_event_disabled_store() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(false, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let event = BlocklistEvent::block_ip(
+            "10.0.0.53",
+            "disabled_test",
+            "global",
+            BlockProvenance::default(),
+            1008,
+        );
+
+        let result = store.apply_blocklist_event(&event);
+        assert_eq!(result, BlocklistApplyResult::StoreDisabled);
+    }
+
+    #[tokio::test]
+    async fn test_apply_blocklist_event_dedup_eviction() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        for i in 0..10001u64 {
+            let mut event = BlocklistEvent::block_ip(
+                "10.0.0.1",
+                "eviction_test",
+                "global",
+                BlockProvenance::default(),
+                2000 + i,
+            );
+            event.event_id = Some(format!("evict-{}", i));
+            store.apply_blocklist_event(&event);
+        }
+
+        let seen = store.seen_events.read();
+        assert!(seen.len() <= 10000);
+    }
+
+    #[tokio::test]
+    async fn test_apply_blocklist_event_ttl_passthrough() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let mut event = BlocklistEvent::block_ip(
+            "10.0.0.60",
+            "ttl_test",
+            "global",
+            BlockProvenance::default(),
+            1010,
+        );
+        event.ttl_secs = Some(7200);
+
+        let result = store.apply_blocklist_event(&event);
+        assert_eq!(result, BlocklistApplyResult::Applied);
+
+        let ip: IpAddr = "10.0.0.60".parse().unwrap();
+        let entry = store.is_blocked(&ip, "global").unwrap();
+        assert_eq!(entry.ban_expire_seconds, 7200);
+    }
+
+    #[test]
+    fn test_blocklist_event_postcard_roundtrip() {
+        let event = BlocklistEvent {
+            operation: BlocklistOperation::Unblock,
+            target_kind: BlockTargetKind::MeshId,
+            identifier: "test-mesh-42".to_string(),
+            site_scope: "us-east-1".to_string(),
+            reason: None,
+            provenance: BlockProvenance {
+                kind: BlockProvenanceKind::AdminManual,
+                source: Some("admin_unban_mesh_id".to_string()),
+            },
+            timestamp: 1700000000,
+            source_node: Some("node-1".to_string()),
+            event_id: Some("node-1:1700000000:unblock:mesh_id:us-east-1:test-mesh-42:abc123".to_string()),
+            ttl_secs: None,
+            version: Some(5),
+        };
+
+        let json = serde_json::to_string(&event).expect("serialize");
+        let decoded: BlocklistEvent = serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(decoded.operation, BlocklistOperation::Unblock);
+        assert_eq!(decoded.target_kind, BlockTargetKind::MeshId);
+        assert_eq!(decoded.identifier, "test-mesh-42");
+        assert_eq!(decoded.site_scope, "us-east-1");
+        assert!(decoded.reason.is_none());
+        assert_eq!(decoded.provenance.kind, BlockProvenanceKind::AdminManual);
+        assert_eq!(
+            decoded.provenance.source,
+            Some("admin_unban_mesh_id".to_string())
+        );
+        assert_eq!(decoded.timestamp, 1700000000);
+        assert_eq!(
+            decoded.source_node,
+            Some("node-1".to_string())
+        );
+        assert!(decoded.event_id.is_some());
+        assert_eq!(decoded.version, Some(5));
+    }
+
+    #[test]
+    fn test_blocklist_event_postcard_backward_compat() {
+        // Simulate an old event without the new fields (ttl_secs, version)
+        // by serializing only the old fields
+        let event = BlocklistEvent::block_ip(
+            "192.168.1.100",
+            "test",
+            "global",
+            BlockProvenance::default(),
+            9999,
+        );
+        // The constructors set ttl_secs=None and version=None by default
+        assert!(event.ttl_secs.is_none());
+        assert!(event.version.is_none());
+
+        let json = serde_json::to_string(&event).unwrap();
+        let decoded: BlocklistEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.operation, BlocklistOperation::Block);
+        assert_eq!(decoded.identifier, "192.168.1.100");
+        assert!(decoded.ttl_secs.is_none());
+        assert!(decoded.version.is_none());
+    }
+
+    #[test]
+    fn test_blocklist_event_generate_event_id_deterministic() {
+        let e1 = BlocklistEvent::unblock_ip(
+            "10.0.0.1",
+            "global",
+            BlockProvenance {
+                kind: BlockProvenanceKind::AdminManual,
+                source: Some("test".to_string()),
+            },
+            1000,
+        )
+        .with_source_node("node-1".to_string());
+
+        let e2 = BlocklistEvent::unblock_ip(
+            "10.0.0.1",
+            "global",
+            BlockProvenance {
+                kind: BlockProvenanceKind::AdminManual,
+                source: Some("test".to_string()),
+            },
+            1000,
+        )
+        .with_source_node("node-1".to_string());
+
+        let id1 = e1.generate_event_id();
+        let id2 = e2.generate_event_id();
+        assert_eq!(id1, id2, "Same inputs should produce same event ID");
+    }
+
+    #[test]
+    fn test_blocklist_event_generate_event_id_unique_per_target() {
+        let e1 = BlocklistEvent::unblock_ip(
+            "10.0.0.1",
+            "global",
+            BlockProvenance::default(),
+            1000,
+        )
+        .with_source_node("node-1".to_string());
+
+        let e2 = BlocklistEvent::unblock_ip(
+            "10.0.0.2",
+            "global",
+            BlockProvenance::default(),
+            1000,
+        )
+        .with_source_node("node-1".to_string());
+
+        let id1 = e1.generate_event_id();
+        let id2 = e2.generate_event_id();
+        assert_ne!(id1, id2, "Different targets should produce different event IDs");
     }
 }

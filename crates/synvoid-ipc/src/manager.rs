@@ -1301,6 +1301,35 @@ impl ProcessManager {
         }
     }
 
+    pub async fn broadcast_blocklist_event(
+        &self,
+        event_json: String,
+        source_node: String,
+        event_id: String,
+    ) {
+        let msg = Message::BlocklistEventUpdate {
+            event_json,
+            source_node: source_node.clone(),
+            event_id: event_id.clone(),
+        };
+
+        for ipc in self.get_all_unified_server_worker_ipc() {
+            let mut ipc = ipc.lock().await;
+            if let Err(e) = ipc.send(&msg) {
+                tracing::error!(
+                    "Failed to send blocklist event to unified server worker: {}",
+                    e
+                );
+            } else {
+                tracing::debug!(
+                    "Broadcast blocklist event to unified server worker: event_id={}, source={}",
+                    event_id,
+                    source_node
+                );
+            }
+        }
+    }
+
     pub async fn check_workers_health(&self) {
         let workers = self.workers.read();
         let now = Instant::now();

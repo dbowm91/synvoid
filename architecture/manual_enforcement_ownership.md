@@ -48,7 +48,7 @@ This document defines the ownership model for manual and supervisor-driven IP en
 - **Route:** `DELETE /mesh/ban`
 - **Behavior:** Removes block entry. For `ban_type=ip`, calls `unblock_ip()`. For `ban_type=mesh_id`, calls `unblock_mesh_id()` for the specific mesh ID.
 - **Accuracy:** Returns `success: true` only when an entry was actually removed. Returns 404 when no matching entry exists.
-- **Propagation:** Unban is local-only. There is no mesh unblock propagation API; removal is not gossiped to mesh peers. Mesh peers retain stale blocks until TTL expiry. (See Known Gaps.)
+- **Propagation:** After local removal, calls `announce_local_unblock()` to gossip `BlocklistEventGossip` to mesh peers. Supervisor pushes `BlocklistEventUpdate` IPC to workers. Response includes `"propagation": "queued"`.
 - **Observability:** Emits `BlocklistEvent` debug log (target `blocklist_event`) with operation `Unblock`
 
 ### Admin List Bans
@@ -82,5 +82,5 @@ This document defines the ownership model for manual and supervisor-driven IP en
 ## Known Gaps
 
 1. **IPC blocklist sync loses provenance**: `BlockEntryData` does not carry provenance; workers re-assign `SupervisorSync` regardless of original provenance.
-2. **Unban does not propagate to mesh**: When an IP or mesh ID is unbanned via admin API, the removal is not gossiped to mesh peers. There is no `announce_local_unblock` or equivalent mesh removal message. Mesh peers retain stale blocks until TTL expiry. **Follow-up needed:** Add an unblock propagation mechanism (e.g., `HotThreatGossip` removal or dedicated unblock message) if global consistency is required.
+2. **Unban propagation is best-effort**: Admin unban now gossips `BlocklistEventGossip` to mesh peers and pushes `BlocklistEventUpdate` IPC to workers, but delivery is not acknowledged. Mesh peers that are offline may miss the event. Periodic blocklist sync (future) can mitigate this.
 3. **Mesh-ID blocks not enforced at WAF request path**: `RequestContext` does not carry mesh ID, so mesh-ID blocks are scoped to admin/control-plane operations only. **Follow-up needed:** If mesh-ID blocking should affect request routing, `mesh_id` must be added to `RequestContext` and wired through the WAF pipeline.

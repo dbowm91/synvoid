@@ -106,20 +106,23 @@ Mesh-ID block enforcement is scoped to:
 
 ## Unblock Propagation
 
-Current semantics: **Local-only**
-- Admin unban removes the entry from the local BlockStore
-- No mesh gossip or DHT propagation of unblock events
-- Mesh peers retain stale blocks until TTL expiry
-- Response wording does NOT claim global propagation
+Admin unban now propagates to mesh peers and workers:
 
-## BlocklistEvent (Structured Local Logging)
+1. Local BlockStore mutation (immediate)
+2. `announce_local_unblock()` gossips `BlocklistEventGossip` to mesh peers
+3. Supervisor pushes `BlocklistEventUpdate` IPC to all connected workers
+4. Peers/workers apply via `BlockStore::apply_blocklist_event()` (idempotent)
+5. Response includes `"propagation": "queued"` (not `"propagated: true"` — no ack)
 
-New `BlocklistEvent` and `BlocklistOperation` types in `synvoid-core::block_store` are staged for future distributed unblock propagation. Currently used for structured local logging only.
+## BlocklistEvent (Structured Logging + Mesh Propagation)
+
+`BlocklistEvent` and `BlocklistOperation` types in `synvoid-core::block_store` are used for both structured local logging AND mesh propagation:
 
 - Admin ban/unban handlers emit `BlocklistEvent` logs at **debug level** with target `blocklist_event`
-- `BlocklistOperation` enum includes `Block`, `Unblock`, and future distributed variants
-- Currently purely observational — no mesh propagation triggered by these events
-- Future: Could be extended to drive distributed unblock propagation (e.g., `HotThreatGossip` removal or dedicated unblock message)
+- Admin unban handlers also call `announce_local_unblock()` to gossip the event
+- `BlocklistEvent` supports distributed fields: `event_id`, `source_node`, `ttl_secs`, `version`
+- Event ID format: `{source_node}:{timestamp}:{operation}:{target_kind}:{site_scope}:{identifier_hash}`
+- See `architecture/blocklist_remove_consistency.md` for full consistency model
 
 ## Enforcement Rules (unchanged)
 

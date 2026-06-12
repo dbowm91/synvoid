@@ -216,6 +216,51 @@ impl MeshTransport {
                     );
                 }
             }
+            MeshMessage::BlocklistEventGossip { .. } => {
+                tracing::debug!("Received blocklist event gossip from {}", peer_id);
+                if let Some(ref ti) = self.threat_intel {
+                    let bs = ti.get_block_store();
+                    if let MeshMessage::BlocklistEventGossip {
+                        ref event_id,
+                        ref source_node,
+                        timestamp,
+                        operation,
+                        target_kind,
+                        ref identifier,
+                        ref site_scope,
+                        ref reason,
+                        provenance_kind,
+                        ref provenance_source,
+                        ttl_secs,
+                        version,
+                        ..
+                    } = msg
+                    {
+                        use crate::blocklist_event::{provenance_kind_from_u32, operation_from_u32, target_kind_from_u32};
+                        let event = synvoid_core::block_store::BlocklistEvent {
+                            operation: operation_from_u32(operation),
+                            target_kind: target_kind_from_u32(target_kind),
+                            identifier: identifier.to_string(),
+                            site_scope: site_scope.to_string(),
+                            reason: reason.as_ref().map(|r| r.to_string()),
+                            provenance: synvoid_core::block_store::BlockProvenance {
+                                kind: provenance_kind_from_u32(provenance_kind),
+                                source: provenance_source.as_ref().map(|s| s.to_string()),
+                            },
+                            timestamp,
+                            source_node: Some(source_node.to_string()),
+                            event_id: Some(event_id.to_string()),
+                            ttl_secs,
+                            version,
+                        };
+                        let result = bs.apply_blocklist_event(&event);
+                        tracing::info!(
+                            "Applied blocklist event gossip from {}: {:?} {:?} on {:?} -> {:?}",
+                            peer_id, operation, target_kind, identifier, result
+                        );
+                    }
+                }
+            }
 
             MeshMessage::LookupBatchRequest { request_id, keys } => {
                 self.handle_lookup_batch_request(peer_id, &request_id, &keys)
