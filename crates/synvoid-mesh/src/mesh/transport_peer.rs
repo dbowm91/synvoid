@@ -606,6 +606,11 @@ impl MeshTransport {
                                     e
                                 );
                             }
+                        } else {
+                            tracing::warn!(
+                                "Blocklist snapshot response from {} has has_more=true but next_page_token is None, stopping pagination",
+                                peer_id
+                            );
                         }
                     } else {
                         tracing::info!("Blocklist snapshot convergence complete from {}", peer_id);

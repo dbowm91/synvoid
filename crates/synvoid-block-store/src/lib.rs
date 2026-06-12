@@ -1871,6 +1871,141 @@ impl BlockStore {
         migrated
     }
 
+    /// Apply a snapshot block entry using the record's `blocked_at` timestamp
+    /// for both the block entry and target state, rather than local apply time.
+    ///
+    /// This preserves the original ordering semantics from the source peer so
+    /// that future LWW comparisons are not distorted by network transit delay.
+    fn apply_snapshot_ip_block(&self, record: &BlockRecord) -> bool {
+        if !self.enabled {
+            return false;
+        }
+
+        let ip = match record.identifier.parse::<IpAddr>() {
+            Ok(ip) => ip,
+            Err(_) => return false,
+        };
+
+        // Use record.blocked_at for the entry, not local time.
+        let entry = BlockEntry {
+            ip: record.identifier.clone(),
+            reason: record.reason.clone(),
+            blocked_at: record.blocked_at,
+            ban_expire_seconds: record.ban_expire_seconds,
+            site_scope: record.site_scope.clone(),
+            access_count: 0,
+            last_access: record.blocked_at,
+            provenance: record.provenance.clone(),
+        };
+
+        let key = BlockEntry::key(&record.site_scope, &ip);
+        let idx = Self::shard_index(&key);
+
+        let is_new = !self.shards[idx].read().contains_key(&key);
+
+        if is_new {
+            let max_entries = self.config.max_entries;
+            let current = self.total_entries.load(Ordering::Relaxed);
+            if current >= max_entries {
+                if !self.evict_lru() {
+                    return false;
+                }
+            }
+        }
+
+        self.shards[idx].write().insert(key, entry);
+
+        if is_new {
+            self.total_entries.fetch_add(1, Ordering::Relaxed);
+        }
+
+        if record.site_scope == "global" {
+            if let Some(wrapper) = self.mitigation_provider.load().as_ref() {
+                let duration = if record.ban_expire_seconds == 0 {
+                    Duration::from_secs(365 * 24 * 3600)
+                } else {
+                    Duration::from_secs(record.ban_expire_seconds)
+                };
+                if let Err(e) = wrapper.0.block_ip(ip, &record.reason, duration) {
+                    tracing::error!(%ip, %e, "Failed to block IP via mitigation provider");
+                }
+            }
+        }
+
+        // Record target state using the snapshot's blocked_at timestamp, not local time.
+        // Write directly to the in-memory cache (not via record_target_state_from_direct_op
+        // which is gated on target_state_persist for disk persistence).
+        {
+            let key = BlocklistTargetKey {
+                target_kind: BlockTargetKind::Ip,
+                site_scope: record.site_scope.clone(),
+                identifier: record.identifier.clone(),
+            };
+            let state = LastAppliedBlocklistEvent {
+                timestamp: record.blocked_at,
+                version: None,
+                event_id: None,
+                operation: BlocklistOperation::Block,
+                source_node: None,
+                provenance: record.provenance.clone(),
+            };
+            let mut targets = self.target_state.write();
+            targets.insert(key, state);
+        }
+
+        true
+    }
+
+    /// Apply a snapshot mesh block entry using the record's `blocked_at` timestamp
+    /// for both the block entry and target state, rather than local apply time.
+    fn apply_snapshot_mesh_block(&self, record: &BlockRecord) -> bool {
+        if !self.enabled {
+            return false;
+        }
+
+        // Use record.blocked_at for the entry, not local time.
+        let entry = MeshBlockEntry::new(
+            record.identifier.clone(),
+            record.reason.clone(),
+            record.ban_expire_seconds,
+            record.site_scope.clone(),
+            record.blocked_at,
+            record.provenance.clone(),
+        );
+
+        let key = MeshBlockEntry::key(&record.site_scope, &record.identifier);
+        let idx = Self::shard_index(&key);
+
+        let mut store = self.mesh_shards[idx].write();
+        let is_new = !store.contains_key(&key);
+        store.insert(key, entry);
+        if is_new {
+            self.total_mesh_entries.fetch_add(1, Ordering::Relaxed);
+        }
+        drop(store);
+
+        // Record target state using the snapshot's blocked_at timestamp, not local time.
+        {
+            let ts_key = BlocklistTargetKey {
+                target_kind: BlockTargetKind::MeshId,
+                site_scope: record.site_scope.clone(),
+                identifier: record.identifier.clone(),
+            };
+            let state = LastAppliedBlocklistEvent {
+                timestamp: record.blocked_at,
+                version: None,
+                event_id: None,
+                operation: BlocklistOperation::Block,
+                source_node: None,
+                provenance: record.provenance.clone(),
+            };
+            let mut targets = self.target_state.write();
+            targets.insert(ts_key, state);
+        }
+
+        true
+    }
+
     /// Export a paged snapshot of current blocklist state for peer convergence.
     ///
     /// This is a control-plane-only reconciliation payload. It produces current
@@ -1946,22 +2081,46 @@ impl BlockStore {
             }
         }
 
-        // Sort for stable pagination: by (target_kind discriminant, site_scope, identifier).
+        // Collect target-state records if requested.
+        if options.include_target_state {
+            let ts = self.target_state.read();
+            let entries = ts.export_entries();
+            let now = synvoid_utils::safe_unix_timestamp();
+            let ttl = self.config.target_state_ttl_secs;
+            for (key, state) in entries {
+                if let Some(ref scope) = options.site_scope {
+                    if key.site_scope != *scope {
+                        continue;
+                    }
+                }
+                let expires_at = Some(now.saturating_add(ttl));
+                let record = BlocklistTargetStateRecord {
+                    target_kind: key.target_kind,
+                    site_scope: key.site_scope,
+                    identifier: key.identifier,
+                    last_operation: state.operation,
+                    timestamp: state.timestamp,
+                    version: state.version,
+                    event_id: state.event_id,
+                    source_node: state.source_node,
+                    provenance: state.provenance,
+                    recorded_at: now,
+                    expires_at,
+                };
+                if record.is_expired() {
+                    continue;
+                }
+                all_items.push(SnapshotItem::TargetState(record));
+            }
+        }
+
+        // Sort for stable pagination: by (sort_kind, site_scope, identifier).
+        // Ip=0, Mesh=1, TargetState=2 — block entries precede target-state records.
         all_items.sort_by(|a, b| {
-            let a_rec = a.record();
-            let b_rec = b.record();
-            let a_kind = match a_rec.target_kind {
-                BlockTargetKind::Ip => 0u8,
-                BlockTargetKind::MeshId => 1u8,
-            };
-            let b_kind = match b_rec.target_kind {
-                BlockTargetKind::Ip => 0u8,
-                BlockTargetKind::MeshId => 1u8,
-            };
-            a_kind
-                .cmp(&b_kind)
-                .then_with(|| a_rec.site_scope.cmp(&b_rec.site_scope))
-                .then_with(|| a_rec.identifier.cmp(&b_rec.identifier))
+            a.sort_kind()
+                .cmp(&b.sort_kind())
+                .then_with(|| a.site_scope().cmp(b.site_scope()))
+                .then_with(|| a.identifier().cmp(b.identifier()))
         });
 
         let total = all_items.len();
@@ -1976,56 +2135,17 @@ impl BlockStore {
 
         let mut ip_blocks = Vec::new();
         let mut mesh_blocks = Vec::new();
+        let mut target_state_records = Vec::new();
         for item in &page {
             match item {
                 SnapshotItem::Ip(rec) => ip_blocks.push(rec.clone()),
                 SnapshotItem::Mesh(rec) => mesh_blocks.push(rec.clone()),
+                SnapshotItem::TargetState(rec) => target_state_records.push(rec.clone()),
             }
         }
 
-        // Collect target state records if requested.
-        let target_state_records = if options.include_target_state {
-            let ts = self.target_state.read();
-            let entries = ts.export_entries();
-            let now = synvoid_utils::safe_unix_timestamp();
-            entries
-                .into_iter()
-                .filter_map(|(key, state)| {
-                    // Filter by site scope if requested.
-                    if let Some(ref scope) = options.site_scope {
-                        if key.site_scope != *scope {
-                            return None;
-                        }
-                    }
-                    // Build a BlocklistTargetStateRecord, filtering expired.
-                    let recorded_at = now;
-                    let ttl = self.config.target_state_ttl_secs;
-                    let expires_at = Some(now.saturating_add(ttl));
-                    let record = BlocklistTargetStateRecord {
-                        target_kind: key.target_kind,
-                        site_scope: key.site_scope,
-                        identifier: key.identifier,
-                        last_operation: state.operation,
-                        timestamp: state.timestamp,
-                        version: state.version,
-                        event_id: state.event_id,
-                        source_node: state.source_node,
-                        provenance: state.provenance,
-                        recorded_at,
-                        expires_at,
-                    };
-                    if record.is_expired() {
-                        return None;
-                    }
-                    Some(record)
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-
-        let snapshot_complete =
-            !has_more && target_state_records.is_empty() || !options.include_target_state;
+        // snapshot_complete is true iff this is the final page (no more items to send).
+        let snapshot_complete = !has_more;
 
         BlocklistSnapshotChunk {
             ip_blocks,
@@ -2105,14 +2225,8 @@ impl BlockStore {
             let idx = Self::shard_index(&key);
             let exists = self.shards[idx].read().contains_key(&key);
 
-            // Apply the block.
-            let applied = self.block_ip_with_provenance(
-                ip,
-                &record.reason,
-                record.ban_expire_seconds,
-                &record.site_scope,
-                record.provenance.clone(),
-            );
+            // Apply the block using snapshot-specific method (preserves blocked_at timestamp).
+            let applied = self.apply_snapshot_ip_block(record);
 
             if applied {
                 if exists {
@@ -2171,14 +2285,8 @@ impl BlockStore {
             let idx = Self::shard_index(&key);
             let exists = self.mesh_shards[idx].read().contains_key(&key);
 
-            // Apply the block.
-            let applied = self.block_mesh_id_with_provenance(
-                &record.identifier,
-                &record.reason,
-                record.ban_expire_seconds,
-                &record.site_scope,
-                record.provenance.clone(),
-            );
+            // Apply the block using snapshot-specific method (preserves blocked_at timestamp).
+            let applied = self.apply_snapshot_mesh_block(record);
 
             if applied {
                 if exists {
@@ -2249,12 +2357,31 @@ impl BlockStore {
 enum SnapshotItem {
     Ip(BlockRecord),
     Mesh(BlockRecord),
+    TargetState(BlocklistTargetStateRecord),
 }
 
 impl SnapshotItem {
-    fn record(&self) -> &BlockRecord {
+    /// Returns the sort key discriminant for stable pagination ordering.
+    /// Ip=0, Mesh=1, TargetState=2 — ensures block entries precede target-state records.
+    fn sort_kind(&self) -> u8 {
         match self {
-            SnapshotItem::Ip(r) | SnapshotItem::Mesh(r) => r,
+            SnapshotItem::Ip(_) => 0,
+            SnapshotItem::Mesh(_) => 1,
+            SnapshotItem::TargetState(_) => 2,
+        }
+    }
+
+    fn site_scope(&self) -> &str {
+        match self {
+            SnapshotItem::Ip(r) | SnapshotItem::Mesh(r) => &r.site_scope,
+            SnapshotItem::TargetState(r) => &r.site_scope,
+        }
+    }
+
+    fn identifier(&self) -> &str {
+        match self {
+            SnapshotItem::Ip(r) | SnapshotItem::Mesh(r) => &r.identifier,
+            SnapshotItem::TargetState(r) => &r.identifier,
         }
     }
 }
@@ -6572,5 +6699,424 @@ mod tests {
             "History gap should set snapshot_required"
         );
         assert!(!result.history_complete);
+    }
+
+    // ==================== Blocklist Snapshot Pagination Cleanup Tests (Iteration 57) ====================
+
+    #[test]
+    fn test_snapshot_multi_page_with_target_state_records() {
+        let store = BlockStore::new(true, None, target_state_config());
+
+        // Add 5 IP blocks — each also creates a target-state entry via
+        // record_target_state_from_direct_op (since target_state_persist=true).
+        for i in 0..5 {
+            store.add_block(&format!("10.0.0.{}", i), "test", 3600, "global");
+        }
+
+        // Total items = 5 IP blocks + 5 target-state records = 10.
+        // Request snapshot with page size 3.
+        let options = BlocklistSnapshotOptions {
+            include_ip_blocks: true,
+            include_mesh_id_blocks: false,
+            include_target_state: true,
+            site_scope: None,
+            max_items: 3,
+        };
+        let page1 = store.export_blocklist_snapshot(&options, &BlocklistSnapshotCursor::default());
+        let page1_total = page1.ip_blocks.len() + page1.target_state_records.len();
+        assert!(page1_total <= 3, "Page should have at most 3 items, got {}", page1_total);
+        assert!(page1.has_more);
+        assert!(!page1.snapshot_complete);
+        assert!(page1.next_page_token.is_some());
+
+        // Collect all pages.
+        let mut all_ip: Vec<String> = page1.ip_blocks.iter().map(|r| r.identifier.clone()).collect();
+        let mut all_ts: Vec<(BlockTargetKind, String)> = page1
+            .target_state_records
+            .iter()
+            .map(|r| (r.target_kind, r.identifier.clone()))
+            .collect();
+        let mut cursor = BlocklistSnapshotCursor {
+            page_token: page1.next_page_token,
+        };
+
+        loop {
+            let page = store.export_blocklist_snapshot(&options, &cursor);
+            for r in &page.ip_blocks {
+                all_ip.push(r.identifier.clone());
+            }
+            for r in &page.target_state_records {
+                all_ts.push((r.target_kind, r.identifier.clone()));
+            }
+            if !page.has_more {
+                assert!(page.snapshot_complete, "Final page must have snapshot_complete=true");
+                assert!(page.next_page_token.is_none());
+                break;
+            }
+            cursor = BlocklistSnapshotCursor {
+                page_token: page.next_page_token,
+            };
+        }
+
+        // All 5 IPs collected.
+        assert_eq!(all_ip.len(), 5);
+        // No duplicate target-state records across pages.
+        let mut sorted_ts: Vec<String> = all_ts.iter().map(|(_, id)| id.clone()).collect();
+        sorted_ts.sort();
+        sorted_ts.dedup();
+        assert_eq!(all_ts.len(), sorted_ts.len(), "No duplicate target-state records across pages");
+        assert_eq!(all_ts.len(), 5, "Should have 5 target-state records (one per IP block)");
+    }
+
+    #[test]
+    fn test_snapshot_final_page_snapshot_complete_with_target_state() {
+        let store = BlockStore::new(true, None, target_state_config());
+
+        // Add 1 IP block (also creates a target-state entry via record_target_state_from_direct_op).
+        store.add_block("10.0.0.1", "test", 3600, "global");
+
+        // Single page — all items fit.
+        let options = BlocklistSnapshotOptions {
+            include_ip_blocks: true,
+            include_mesh_id_blocks: false,
+            include_target_state: true,
+            site_scope: None,
+            max_items: 100,
+        };
+        let chunk = store.export_blocklist_snapshot(&options, &BlocklistSnapshotCursor::default());
+        assert!(!chunk.has_more);
+        assert!(chunk.snapshot_complete, "snapshot_complete must be true on final page even with target-state records");
+        assert!(chunk.next_page_token.is_none());
+        assert_eq!(chunk.ip_blocks.len(), 1);
+        assert!(chunk.target_state_records.len() >= 1, "Should have at least 1 target-state record");
+    }
+
+    #[test]
+    fn test_snapshot_no_duplicate_target_state_across_pages() {
+        let store = BlockStore::new(true, None, target_state_config());
+
+        // Add 3 IP blocks — each also creates a target-state entry.
+        for i in 0..3 {
+            store.add_block(&format!("10.0.0.{}", i), "test", 3600, "global");
+        }
+
+        // Total = 6 items (3 IP blocks + 3 target-state records). Page size = 2.
+        let options = BlocklistSnapshotOptions {
+            include_ip_blocks: true,
+            include_mesh_id_blocks: false,
+            include_target_state: true,
+            site_scope: None,
+            max_items: 2,
+        };
+
+        let mut all_ts_ids: Vec<String> = Vec::new();
+        let mut cursor = BlocklistSnapshotCursor::default();
+
+        loop {
+            let page = store.export_blocklist_snapshot(&options, &cursor);
+            for r in &page.target_state_records {
+                all_ts_ids.push(r.identifier.clone());
+            }
+            if !page.has_more {
+                break;
+            }
+            cursor = BlocklistSnapshotCursor {
+                page_token: page.next_page_token,
+            };
+        }
+
+        // Each target-state record should appear exactly once across all pages.
+        let mut sorted: Vec<String> = all_ts_ids.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(
+            all_ts_ids.len(),
+            sorted.len(),
+            "Target-state records must not be duplicated across pages: {:?}",
+            all_ts_ids
+        );
+        // 3 IP blocks create 3 target-state entries (one per block).
+        assert_eq!(all_ts_ids.len(), 3);
+    }
+
+    #[test]
+    fn test_snapshot_block_apply_preserves_blocked_at_timestamp() {
+        let store = BlockStore::new(true, None, target_state_config());
+        let now = synvoid_utils::safe_unix_timestamp();
+        let snapshot_time = now - 300; // 5 minutes ago, well within expiry
+
+        let chunk = BlocklistSnapshotChunk {
+            ip_blocks: vec![BlockRecord {
+                target_kind: BlockTargetKind::Ip,
+                identifier: "10.0.0.99".to_string(),
+                reason: "snapshot_ts_test".to_string(),
+                blocked_at: snapshot_time,
+                ban_expire_seconds: 3600,
+                site_scope: "global".to_string(),
+                access_count: 0,
+                last_access: 0,
+                provenance: BlockProvenance::default(),
+            }],
+            mesh_blocks: Vec::new(),
+            target_state_records: Vec::new(),
+            next_page_token: None,
+            has_more: false,
+            snapshot_complete: true,
+            truncated_reason: None,
+        };
+
+        store.apply_blocklist_snapshot(&chunk);
+
+        // Verify target state timestamp matches snapshot blocked_at, not local apply time.
+        let targets = store.target_state.read();
+        let key = BlocklistTargetKey {
+            target_kind: BlockTargetKind::Ip,
+            site_scope: "global".to_string(),
+            identifier: "10.0.0.99".to_string(),
+        };
+        let state = targets.get(&key).expect("target state should exist");
+        assert_eq!(
+            state.timestamp, snapshot_time,
+            "Target state timestamp should be snapshot's blocked_at, not local apply time"
+        );
+    }
+
+    #[test]
+    fn test_snapshot_mesh_block_apply_preserves_blocked_at_timestamp() {
+        let store = BlockStore::new(true, None, target_state_config());
+        let now = synvoid_utils::safe_unix_timestamp();
+        let snapshot_time = now - 300;
+
+        let chunk = BlocklistSnapshotChunk {
+            ip_blocks: Vec::new(),
+            mesh_blocks: vec![BlockRecord {
+                target_kind: BlockTargetKind::MeshId,
+                identifier: "mesh-ts-test".to_string(),
+                reason: "snapshot_ts_test".to_string(),
+                blocked_at: snapshot_time,
+                ban_expire_seconds: 3600,
+                site_scope: "global".to_string(),
+                access_count: 0,
+                last_access: 0,
+                provenance: BlockProvenance::default(),
+            }],
+            target_state_records: Vec::new(),
+            next_page_token: None,
+            has_more: false,
+            snapshot_complete: true,
+            truncated_reason: None,
+        };
+
+        store.apply_blocklist_snapshot(&chunk);
+
+        let targets = store.target_state.read();
+        let key = BlocklistTargetKey {
+            target_kind: BlockTargetKind::MeshId,
+            site_scope: "global".to_string(),
+            identifier: "mesh-ts-test".to_string(),
+        };
+        let state = targets.get(&key).expect("target state should exist");
+        assert_eq!(
+            state.timestamp, snapshot_time,
+            "Mesh target state timestamp should be snapshot's blocked_at"
+        );
+    }
+
+    #[test]
+    fn test_snapshot_newer_local_unblock_prevents_older_snapshot_block() {
+        let store = BlockStore::new(true, None, default_config());
+        let now = synvoid_utils::safe_unix_timestamp();
+
+        // Local unblock at now (creates a newer target-state entry).
+        let unblock =
+            BlocklistEvent::unblock_ip("10.0.0.1", "global", BlockProvenance::default(), now);
+        store.apply_blocklist_event(&unblock);
+
+        // Snapshot block at now - 100 (older than unblock).
+        let chunk = BlocklistSnapshotChunk {
+            ip_blocks: vec![BlockRecord {
+                target_kind: BlockTargetKind::Ip,
+                identifier: "10.0.0.1".to_string(),
+                reason: "old_block".to_string(),
+                blocked_at: now - 100,
+                ban_expire_seconds: 3600,
+                site_scope: "global".to_string(),
+                access_count: 0,
+                last_access: 0,
+                provenance: BlockProvenance::default(),
+            }],
+            mesh_blocks: Vec::new(),
+            target_state_records: Vec::new(),
+            next_page_token: None,
+            has_more: false,
+            snapshot_complete: true,
+            truncated_reason: None,
+        };
+
+        let result = store.apply_blocklist_snapshot(&chunk);
+        assert_eq!(result.stale_records_ignored, 1);
+        assert!(store
+            .is_blocked(&"10.0.0.1".parse().unwrap(), "global")
+            .is_none());
+    }
+
+    #[test]
+    fn test_snapshot_target_state_record_can_update_after_snapshot_block() {
+        let store = BlockStore::new(true, None, default_config());
+        let now = synvoid_utils::safe_unix_timestamp();
+
+        // First: snapshot block at time T.
+        let block_chunk = BlocklistSnapshotChunk {
+            ip_blocks: vec![BlockRecord {
+                target_kind: BlockTargetKind::Ip,
+                identifier: "10.0.0.1".to_string(),
+                reason: "block_T".to_string(),
+                blocked_at: now - 50,
+                ban_expire_seconds: 3600,
+                site_scope: "global".to_string(),
+                access_count: 0,
+                last_access: 0,
+                provenance: BlockProvenance::default(),
+            }],
+            mesh_blocks: Vec::new(),
+            target_state_records: Vec::new(),
+            next_page_token: None,
+            has_more: false,
+            snapshot_complete: true,
+            truncated_reason: None,
+        };
+        store.apply_blocklist_snapshot(&block_chunk);
+
+        // Verify block was applied.
+        assert!(store
+            .is_blocked(&"10.0.0.1".parse().unwrap(), "global")
+            .is_some());
+
+        // Second: snapshot target-state record at time T+20 (newer).
+        let ts_chunk = BlocklistSnapshotChunk {
+            ip_blocks: Vec::new(),
+            mesh_blocks: Vec::new(),
+            target_state_records: vec![BlocklistTargetStateRecord {
+                target_kind: BlockTargetKind::Ip,
+                site_scope: "global".to_string(),
+                identifier: "10.0.0.1".to_string(),
+                last_operation: BlocklistOperation::Unblock,
+                timestamp: now - 30, // T+20 relative to block at T-50
+                version: None,
+                event_id: None,
+                source_node: None,
+                provenance: BlockProvenance::default(),
+                recorded_at: now,
+                expires_at: None,
+            }],
+            next_page_token: None,
+            has_more: false,
+            snapshot_complete: true,
+            truncated_reason: None,
+        };
+        store.apply_blocklist_snapshot(&ts_chunk);
+
+        // Verify target state was updated.
+        let targets = store.target_state.read();
+        let key = BlocklistTargetKey {
+            target_kind: BlockTargetKind::Ip,
+            site_scope: "global".to_string(),
+            identifier: "10.0.0.1".to_string(),
+        };
+        let state = targets.get(&key).expect("target state should exist");
+        assert_eq!(state.operation, BlocklistOperation::Unblock);
+        assert_eq!(state.timestamp, now - 30);
+    }
+
+    #[test]
+    fn test_snapshot_sorted_order_ip_before_mesh_before_target_state() {
+        let store = BlockStore::new(true, None, target_state_config());
+
+        store.add_block("10.0.0.1", "test", 3600, "global");
+        store.block_mesh_id_with_provenance("mesh-a", "test", 3600, "global", BlockProvenance::default());
+
+        let options = BlocklistSnapshotOptions {
+            include_ip_blocks: true,
+            include_mesh_id_blocks: true,
+            include_target_state: true,
+            site_scope: None,
+            max_items: 100,
+        };
+        let chunk = store.export_blocklist_snapshot(&options, &BlocklistSnapshotCursor::default());
+
+        // IP blocks come first, then mesh blocks, then target-state records.
+        assert_eq!(chunk.ip_blocks.len(), 1);
+        assert_eq!(chunk.mesh_blocks.len(), 1);
+        assert!(chunk.target_state_records.len() >= 1, "Should have at least 1 target-state record");
+        assert_eq!(chunk.ip_blocks[0].identifier, "10.0.0.1");
+        assert_eq!(chunk.mesh_blocks[0].identifier, "mesh-a");
+        // Target state records should come after block entries in sort order.
+        let last_ip_idx = chunk.ip_blocks.len();
+        let last_mesh_idx = last_ip_idx + chunk.mesh_blocks.len();
+        // All target-state records should appear after all block entries.
+        for ts in &chunk.target_state_records {
+            // Verify it's an IP or Mesh target kind.
+            assert!(
+                ts.target_kind == BlockTargetKind::Ip || ts.target_kind == BlockTargetKind::MeshId
+            );
+        }
+        // The sort order is Ip=0, Mesh=1, TargetState=2, so within the unified list:
+        // all IPs, then all Meshes, then all TargetStates.
+        assert!(last_mesh_idx <= chunk.ip_blocks.len() + chunk.mesh_blocks.len());
+    }
+
+    #[test]
+    fn test_snapshot_single_page_with_all_item_types() {
+        let store = BlockStore::new(true, None, target_state_config());
+
+        store.add_block("10.0.0.1", "test", 3600, "global");
+        store.block_mesh_id_with_provenance("mesh-b", "test", 3600, "global", BlockProvenance::default());
+
+        let options = BlocklistSnapshotOptions {
+            include_ip_blocks: true,
+            include_mesh_id_blocks: true,
+            include_target_state: true,
+            site_scope: None,
+            max_items: 100,
+        };
+        let chunk = store.export_blocklist_snapshot(&options, &BlocklistSnapshotCursor::default());
+
+        // Single page: all items fit, snapshot_complete=true.
+        assert!(!chunk.has_more);
+        assert!(chunk.snapshot_complete);
+        assert!(chunk.next_page_token.is_none());
+        // With target_state_config, add_block/block_mesh also create target-state entries.
+        // So we get: 1 IP block + 1 mesh block + 2 target-state records = 4.
+        let total = chunk.ip_blocks.len() + chunk.mesh_blocks.len() + chunk.target_state_records.len();
+        assert!(total >= 3, "Should have at least 3 items (IP + mesh + target-state)");
+        assert_eq!(chunk.ip_blocks.len(), 1);
+        assert_eq!(chunk.mesh_blocks.len(), 1);
+        assert!(chunk.target_state_records.len() >= 1);
+    }
+
+    #[test]
+    fn test_snapshot_max_items_bounds_total_records() {
+        let store = BlockStore::new(true, None, target_state_config());
+
+        // Add 4 IP blocks — each also creates a target-state entry.
+        for i in 0..4 {
+            store.add_block(&format!("10.0.0.{}", i), "test", 3600, "global");
+        }
+
+        // Total 8 items (4 IP blocks + 4 target-state records), max_items=3.
+        let options = BlocklistSnapshotOptions {
+            include_ip_blocks: true,
+            include_mesh_id_blocks: false,
+            include_target_state: true,
+            site_scope: None,
+            max_items: 3,
+        };
+        let chunk = store.export_blocklist_snapshot(&options, &BlocklistSnapshotCursor::default());
+        let total_in_page = chunk.ip_blocks.len() + chunk.target_state_records.len();
+        assert!(
+            total_in_page <= 3,
+            "max_items must bound total records in page: got {}",
+            total_in_page
+        );
     }
 }

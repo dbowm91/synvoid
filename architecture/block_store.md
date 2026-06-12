@@ -192,3 +192,39 @@ pub struct BlocklistTargetStateRecord {
 2. **Shutdown**: `BlockStore::shutdown()` serializes the full `TargetStateCache` to `blocklist_target_state.json` synchronously before signaling the background persistence task. Persisted records carry actual `source_node` and `provenance` metadata (Iteration 53).
 3. **Startup**: `BlockStore::new()` loads `blocklist_target_state.json` if it exists, filters expired records, and hydrates the `TargetStateCache` including `source_node` and `provenance` fields. Legacy records without these fields deserialize with defaults via `#[serde(default)]`. Malformed files are logged and skipped.
 4. **In-memory capacity**: The in-memory `TargetStateCache` remains capped at 10,000 entries with FIFO eviction. Persistence provides a restart-safe warm start, not a full durable store.
+
+## Snapshot Export (Iteration 56, Pagination Cleanup Iteration 57)
+
+### Overview
+
+`BlockStore::export_blocklist_snapshot()` produces paged chunks of current blocklist state for peer convergence. `BlockStore::apply_blocklist_snapshot()` applies received chunks with conservative merge semantics.
+
+### Unified Pagination
+
+All snapshot items (IP blocks, mesh-ID blocks, and target-state records) are paginated together in a single unified stream:
+
+- Items are classified: `Ip=0`, `Mesh=1`, `TargetState=2`
+- Sorted by `(kind, site_scope, identifier)` for stable pagination
+- `max_items` bounds the total record count per page
+- Target-state records are not duplicated across pages
+- Numeric offset-based page tokens
+
+### Pagination Invariants
+
+- `snapshot_complete == !has_more` (independent of target-state presence)
+- `next_page_token` is present if and only if `has_more=true`
+
+### Snapshot Block Apply
+
+- Uses internal `apply_snapshot_ip_block()` and `apply_snapshot_mesh_block()` methods
+- Block entries are created with the original `record.blocked_at` timestamp (not local apply time)
+- Target state is recorded using `record.blocked_at` as the event timestamp
+- This preserves correct LWW ordering across peers
+
+### Internal Types
+
+- `SnapshotItem` enum: `Ip(BlockRecord)`, `Mesh(BlockRecord)`, `TargetState(BlocklistTargetStateRecord)`
+- `BlocklistSnapshotOptions`: request options with `include_ip_blocks`, `include_mesh_id_blocks`, `include_target_state`, `site_scope`, `max_items`
+- `BlocklistSnapshotCursor`: page token for offset-based pagination
+- `BlocklistSnapshotChunk`: response with separate `ip_blocks`, `mesh_blocks`, `target_state_records` lists
+- `BlocklistSnapshotApplyResult`: counts of applied, updated, stale, invalid, and expired records

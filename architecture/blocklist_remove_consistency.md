@@ -133,16 +133,18 @@ Clock skew between nodes is a known caveat — nodes with significantly skewed c
 - Workers deserialize and apply via `apply_blocklist_event()`
 - Backward compatible: old `BlocklistUpdate`/`BlocklistResponse` still work
 
-## Offline-Peer Catchup (Iteration 48, Cursor Fix Iteration 49)
+## Offline-Peer Catchup (Iteration 48, Cursor Fix Iteration 49, Snapshot Pagination Iteration 57)
 
 Reconnecting peers can now request recent blocklist events via `BlocklistCatchupRequest`/`BlocklistCatchupResponse` mesh messages. The event log is bounded (10,000 events default) and in-memory only. History gaps are detected and surfaced as `snapshot_required: true` in the response. See `architecture/blocklist_reconciliation.md` for full details.
 
 Iteration 49 fixed cursor semantics: `since_sequence: None` replays from the oldest retained event (including sequence 0), while `since_sequence: Some(n)` returns events with sequence `> n`. The previous `since_sequence: 0` for "full catchup" silently skipped event at sequence 0.
+
+Iteration 57 cleaned up snapshot pagination: unified pagination across all item types (IP blocks, mesh blocks, target-state records), target-state records not duplicated across pages, `snapshot_complete` defined as `!has_more`, snapshot block apply preserves original `blocked_at` timestamps, and transport guards against invalid pagination states.
 
 ## Future Work
 
 - Periodic blocklist sync for offline-peer catchup (partially addressed by Iteration 48 catchup)
 - Per-source cursor persistence for cross-restart convergence
 - Acknowledged delivery for critical removes
-- ~~Full snapshot fallback for history gaps beyond retention window~~ ✅ Done (Iteration 56)
+- ~~Full snapshot fallback for history gaps beyond retention window~~ ✅ Done (Iteration 56, pagination cleanup Iteration 57)
 - ~~Persisted per-target tombstones for stale replay protection across restarts~~ ✅ Done (Iteration 52)

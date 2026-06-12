@@ -104,7 +104,7 @@ When a peer requests events since a sequence that has been evicted from the log:
 4. The responding peer returns paged `BlocklistSnapshotResponse` chunks
 5. The requesting peer applies each chunk via `BlockStore::apply_blocklist_snapshot()`
 
-## Snapshot Fallback (Iteration 56)
+## Snapshot Fallback (Iteration 56, Pagination Cleanup Iteration 57)
 
 When event replay cannot cover the full history (gap exceeds retention window), a paged snapshot transfer converges the peer's local BlockStore.
 
@@ -114,16 +114,26 @@ When event replay cannot cover the full history (gap exceeds retention window), 
 - **Not globally linearizable**: each peer's snapshot is a point-in-time view
 - **Not Raft-backed**: no consensus involved
 - **Not request-path dependent**: mesh control plane only
-- **Bounded and pageable**: configurable `max_items` (default 500) with cursor-based pagination
+- **Unified pagination**: `max_items` bounds the total record count per response page (IP blocks + mesh-ID blocks + target-state records combined)
+- **Non-duplicative**: each target-state record appears at most once across all pages of a snapshot sequence
+- **Stable pagination**: items sorted by `(kind, site_scope, identifier)` — IP=0, Mesh=1, TargetState=2
 - **Provenance-preserving**: all entries carry `BlockProvenance` metadata
+- **Timestamp-preserving**: snapshot block entries use the original `blocked_at` timestamp for target state, not local apply time, preserving LWW ordering semantics
 - **Carries target-state/tombstones**: includes `BlocklistTargetStateRecord` entries for LWW ordering
 
 ### Wire Messages
 
-Two new mesh message variants (proto fields 181/182):
+Two mesh message variants (proto fields 181/182):
 
 - `BlocklistSnapshotRequest`: requesting_node, request_id, include_ip_blocks, include_mesh_id_blocks, include_target_state, site_scope (optional), page_token, max_items
 - `BlocklistSnapshotResponse`: request_id, source_node, timestamp, ip_blocks, mesh_blocks, target_state_records, next_page_token, has_more, snapshot_complete, truncated_reason, error
+
+### Pagination Invariants
+
+- `has_more`: true if additional page requests are needed
+- `next_page_token`: present if and only if `has_more=true`
+- `snapshot_complete`: true if this response completes the snapshot — **`snapshot_complete == !has_more`** (independent of whether `target_state_records` is empty)
+- Transport guard: if `has_more=true` but `next_page_token=None`, logs warning and stops pagination
 
 ### Snapshot Flow
 
@@ -133,7 +143,7 @@ Two new mesh message variants (proto fields 181/182):
 4. Remote calls `BlockStore::export_blocklist_snapshot()` → returns paged `BlocklistSnapshotResponse`
 5. Requesting peer calls `BlockStore::apply_blocklist_snapshot()` for each page
 6. If `has_more: true`, requesting peer sends next page request with `page_token`
-7. Convergence complete when `has_more: false` or max page limit reached
+7. Convergence complete when `has_more: false`
 
 ### Snapshot Apply Rules
 
@@ -144,17 +154,20 @@ Two new mesh message variants (proto fields 181/182):
 - Uses existing per-target LWW semantics when target-state records exist
 - Snapshot block entries do not override newer local unblock tombstones
 - Snapshot unblock tombstones do not remove newer local blocks
+- Snapshot block entries use `record.blocked_at` as target-state timestamp (not local apply time)
+- Target-state records from the snapshot can update ordering metadata for existing blocks
 - Provenance is preserved from snapshot entries
 - Does not emit mesh gossip (converges local state only)
 
 ### Export Rules
 
-- Collects current IP blocks and mesh blocks from shards
-- Collects target-state records from `TargetStateCache`
-- Filters expired entries
-- Sorts by `(target_kind, site_scope, identifier)` for stable pagination
-- Respects `site_scope` filter if requested
+- Collects IP blocks, mesh-ID blocks, and target-state records into a unified item stream
+- Each item type is classified: Ip=0, Mesh=1, TargetState=2
+- Filters expired entries, respects `site_scope` filter if requested
+- Sorts by `(kind, site_scope, identifier)` for stable pagination
 - Uses numeric page tokens (offset-based pagination)
+- `max_items` bounds the total count of all item types in each page
+- Target-state records are paginated alongside block entries (not duplicated across pages)
 
 ## Diagnostics
 
