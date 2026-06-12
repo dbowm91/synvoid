@@ -155,7 +155,9 @@ impl MeshMessage {
             Self::HotThreatGossip { .. }
             | Self::BlocklistEventGossip { .. }
             | Self::BlocklistCatchupRequest { .. }
-            | Self::BlocklistCatchupResponse { .. } => MessageCategory::ThreatIntel,
+            | Self::BlocklistCatchupResponse { .. }
+            | Self::BlocklistSnapshotRequest { .. }
+            | Self::BlocklistSnapshotResponse { .. } => MessageCategory::ThreatIntel,
         }
     }
 

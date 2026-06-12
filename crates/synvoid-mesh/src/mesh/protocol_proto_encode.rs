@@ -2923,6 +2923,102 @@ impl From<&MeshMessage> for proto::MeshMessage {
                     },
                 )),
             },
+            MeshMessage::BlocklistSnapshotRequest {
+                requesting_node,
+                request_id,
+                include_ip_blocks,
+                include_mesh_id_blocks,
+                include_target_state,
+                site_scope,
+                page_token,
+                max_items,
+            } => proto::MeshMessage {
+                message_type: 181,
+                payload: Some(proto::mesh_message::Payload::BlocklistSnapshotRequest(
+                    proto::BlocklistSnapshotRequest {
+                        requesting_node: requesting_node.to_string(),
+                        request_id: request_id.to_string(),
+                        include_ip_blocks: *include_ip_blocks,
+                        include_mesh_id_blocks: *include_mesh_id_blocks,
+                        include_target_state: *include_target_state,
+                        site_scope: site_scope.as_ref().map(|s| s.to_string()),
+                        page_token: page_token.as_ref().map(|s| s.to_string()),
+                        max_items: *max_items,
+                    },
+                )),
+            },
+            MeshMessage::BlocklistSnapshotResponse {
+                request_id,
+                source_node,
+                timestamp,
+                ip_blocks,
+                mesh_blocks,
+                target_state_records,
+                next_page_token,
+                has_more,
+                snapshot_complete,
+                truncated_reason,
+                error,
+            } => proto::MeshMessage {
+                message_type: 182,
+                payload: Some(proto::mesh_message::Payload::BlocklistSnapshotResponse(
+                    proto::BlocklistSnapshotResponse {
+                        request_id: request_id.to_string(),
+                        source_node: source_node.to_string(),
+                        timestamp: *timestamp,
+                        ip_blocks: ip_blocks
+                            .iter()
+                            .map(|b| proto::BlocklistSnapshotIpBlock {
+                                ip: b.ip.clone(),
+                                reason: b.reason.clone(),
+                                blocked_at: b.blocked_at,
+                                ban_expire_seconds: b.ban_expire_seconds,
+                                site_scope: b.site_scope.clone(),
+                                access_count: b.access_count,
+                                last_access: b.last_access,
+                                provenance_kind: b.provenance_kind,
+                                provenance_source: b.provenance_source.clone(),
+                            })
+                            .collect(),
+                        mesh_blocks: mesh_blocks
+                            .iter()
+                            .map(|b| proto::BlocklistSnapshotMeshBlock {
+                                mesh_id: b.mesh_id.clone(),
+                                reason: b.reason.clone(),
+                                blocked_at: b.blocked_at,
+                                ban_expire_seconds: b.ban_expire_seconds,
+                                site_scope: b.site_scope.clone(),
+                                access_count: b.access_count,
+                                last_access: b.last_access,
+                                provenance_kind: b.provenance_kind,
+                                provenance_source: b.provenance_source.clone(),
+                            })
+                            .collect(),
+                        target_state_records: target_state_records
+                            .iter()
+                            .map(|r| proto::BlocklistSnapshotTargetState {
+                                target_kind: r.target_kind,
+                                site_scope: r.site_scope.clone(),
+                                identifier: r.identifier.clone(),
+                                last_operation: r.last_operation,
+                                timestamp: r.timestamp,
+                                version: r.version,
+                                event_id: r.event_id.clone(),
+                                source_node: r.source_node.clone(),
+                                provenance_kind: r.provenance_kind,
+                                provenance_source: r.provenance_source.clone(),
+                                recorded_at: r.recorded_at,
+                                expires_at: r.expires_at,
+                            })
+                            .collect(),
+                        next_page_token: next_page_token.as_ref().map(|s| s.to_string()),
+                        has_more: *has_more,
+                        snapshot_complete: *snapshot_complete,
+                        truncated_reason: truncated_reason.as_ref().map(|s| s.to_string()),
+                        error: error.as_ref().map(|s| s.to_string()),
+                    },
+                )),
+            },
         }
     }
 }

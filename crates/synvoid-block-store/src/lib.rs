@@ -23,7 +23,8 @@ use tokio::sync::mpsc;
 
 pub use synvoid_core::block_store::{
     BlockProvenance, BlockProvenanceKind, BlockRecord, BlockTargetKind, BlocklistEvent,
-    BlocklistOperation, BlocklistTargetStateRecord, MeshBlockEntry,
+    BlocklistOperation, BlocklistSnapshotApplyResult, BlocklistSnapshotChunk,
+    BlocklistSnapshotCursor, BlocklistSnapshotOptions, BlocklistTargetStateRecord, MeshBlockEntry,
 };
 use synvoid_waf::mitigation::{MitigationProvider, SizedMitigationProvider};
 
@@ -152,6 +153,37 @@ impl TargetStateCache {
     #[allow(dead_code)]
     fn len(&self) -> usize {
         self.entries.len()
+    }
+
+    /// Export all non-expired entries as (key, state) pairs for snapshot.
+    fn export_entries(&self) -> Vec<(BlocklistTargetKey, LastAppliedBlocklistEvent)> {
+        self.entries
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    }
+
+    /// Check if a target state entry exists and whether the given event is newer.
+    fn is_event_newer(
+        &self,
+        key: &BlocklistTargetKey,
+        timestamp: u64,
+        version: Option<u64>,
+    ) -> bool {
+        if let Some(last) = self.get(key) {
+            let candidate = LastAppliedBlocklistEvent {
+                timestamp,
+                version,
+                event_id: None,
+                operation: BlocklistOperation::Block, // doesn't matter for comparison
+                source_node: None,
+                provenance: BlockProvenance::default(),
+            };
+            candidate.is_newer_than(last)
+        } else {
+            // No previous state — event is newer by default.
+            true
+        }
     }
 }
 
@@ -1838,6 +1870,393 @@ impl BlockStore {
 
         migrated
     }
+
+    /// Export a paged snapshot of current blocklist state for peer convergence.
+    ///
+    /// This is a control-plane-only reconciliation payload. It produces current
+    /// known local state from this peer, is not globally linearizable, and
+    /// preserves provenance metadata.
+    pub fn export_blocklist_snapshot(
+        &self,
+        options: &BlocklistSnapshotOptions,
+        cursor: &BlocklistSnapshotCursor,
+    ) -> BlocklistSnapshotChunk {
+        let max_items = if options.max_items == 0 {
+            500
+        } else {
+            options.max_items as usize
+        };
+
+        // Decode page token as offset index.
+        let offset: usize = cursor
+            .page_token
+            .as_ref()
+            .and_then(|t| t.parse::<usize>().ok())
+            .unwrap_or(0);
+
+        let mut all_items: Vec<SnapshotItem> = Vec::new();
+
+        // Collect IP blocks if requested.
+        if options.include_ip_blocks {
+            for entry in self.get_all_entries() {
+                if entry.is_expired() {
+                    continue;
+                }
+                if let Some(ref scope) = options.site_scope {
+                    if entry.site_scope != *scope {
+                        continue;
+                    }
+                }
+                all_items.push(SnapshotItem::Ip(BlockRecord {
+                    target_kind: BlockTargetKind::Ip,
+                    identifier: entry.ip,
+                    reason: entry.reason,
+                    blocked_at: entry.blocked_at,
+                    ban_expire_seconds: entry.ban_expire_seconds,
+                    site_scope: entry.site_scope,
+                    access_count: entry.access_count,
+                    last_access: entry.last_access,
+                    provenance: entry.provenance,
+                }));
+            }
+        }
+
+        // Collect mesh blocks if requested.
+        if options.include_mesh_id_blocks {
+            for entry in self.get_all_mesh_entries() {
+                if entry.is_expired() {
+                    continue;
+                }
+                if let Some(ref scope) = options.site_scope {
+                    if entry.site_scope != *scope {
+                        continue;
+                    }
+                }
+                all_items.push(SnapshotItem::Mesh(BlockRecord {
+                    target_kind: BlockTargetKind::MeshId,
+                    identifier: entry.mesh_id,
+                    reason: entry.reason,
+                    blocked_at: entry.blocked_at,
+                    ban_expire_seconds: entry.ban_expire_seconds,
+                    site_scope: entry.site_scope,
+                    access_count: entry.access_count,
+                    last_access: entry.last_access,
+                    provenance: entry.provenance,
+                }));
+            }
+        }
+
+        // Sort for stable pagination: by (target_kind discriminant, site_scope, identifier).
+        all_items.sort_by(|a, b| {
+            let a_rec = a.record();
+            let b_rec = b.record();
+            let a_kind = match a_rec.target_kind {
+                BlockTargetKind::Ip => 0u8,
+                BlockTargetKind::MeshId => 1u8,
+            };
+            let b_kind = match b_rec.target_kind {
+                BlockTargetKind::Ip => 0u8,
+                BlockTargetKind::MeshId => 1u8,
+            };
+            a_kind
+                .cmp(&b_kind)
+                .then_with(|| a_rec.site_scope.cmp(&b_rec.site_scope))
+                .then_with(|| a_rec.identifier.cmp(&b_rec.identifier))
+        });
+
+        let total = all_items.len();
+        let page: Vec<SnapshotItem> = all_items.into_iter().skip(offset).take(max_items).collect();
+
+        let has_more = offset + page.len() < total;
+        let next_page_token = if has_more {
+            Some((offset + page.len()).to_string())
+        } else {
+            None
+        };
+
+        let mut ip_blocks = Vec::new();
+        let mut mesh_blocks = Vec::new();
+        for item in &page {
+            match item {
+                SnapshotItem::Ip(rec) => ip_blocks.push(rec.clone()),
+                SnapshotItem::Mesh(rec) => mesh_blocks.push(rec.clone()),
+            }
+        }
+
+        // Collect target state records if requested.
+        let target_state_records = if options.include_target_state {
+            let ts = self.target_state.read();
+            let entries = ts.export_entries();
+            let now = synvoid_utils::safe_unix_timestamp();
+            entries
+                .into_iter()
+                .filter_map(|(key, state)| {
+                    // Filter by site scope if requested.
+                    if let Some(ref scope) = options.site_scope {
+                        if key.site_scope != *scope {
+                            return None;
+                        }
+                    }
+                    // Build a BlocklistTargetStateRecord, filtering expired.
+                    let recorded_at = now;
+                    let ttl = self.config.target_state_ttl_secs;
+                    let expires_at = Some(now.saturating_add(ttl));
+                    let record = BlocklistTargetStateRecord {
+                        target_kind: key.target_kind,
+                        site_scope: key.site_scope,
+                        identifier: key.identifier,
+                        last_operation: state.operation,
+                        timestamp: state.timestamp,
+                        version: state.version,
+                        event_id: state.event_id,
+                        source_node: state.source_node,
+                        provenance: state.provenance,
+                        recorded_at,
+                        expires_at,
+                    };
+                    if record.is_expired() {
+                        return None;
+                    }
+                    Some(record)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let snapshot_complete =
+            !has_more && target_state_records.is_empty() || !options.include_target_state;
+
+        BlocklistSnapshotChunk {
+            ip_blocks,
+            mesh_blocks,
+            target_state_records,
+            next_page_token,
+            has_more,
+            snapshot_complete,
+            truncated_reason: None,
+        }
+    }
+
+    /// Apply a snapshot chunk to converge local blocklist state.
+    ///
+    /// Snapshot apply is conservative merge semantics: it adds/updates current
+    /// entries without deleting entries absent from the snapshot. It preserves
+    /// provenance and respects per-target LWW ordering.
+    pub fn apply_blocklist_snapshot(
+        &self,
+        snapshot: &BlocklistSnapshotChunk,
+    ) -> BlocklistSnapshotApplyResult {
+        if !self.enabled {
+            return BlocklistSnapshotApplyResult::default();
+        }
+
+        let mut result = BlocklistSnapshotApplyResult::default();
+
+        // Apply IP blocks from snapshot.
+        for record in &snapshot.ip_blocks {
+            // Validate IP.
+            let ip = match record.identifier.parse::<IpAddr>() {
+                Ok(ip) => ip,
+                Err(_) => {
+                    result.invalid_records_ignored += 1;
+                    continue;
+                }
+            };
+
+            // Check expiry.
+            if record.ban_expire_seconds > 0 {
+                let now = synvoid_utils::safe_unix_timestamp();
+                if now > record.blocked_at + record.ban_expire_seconds {
+                    result.expired_records_ignored += 1;
+                    continue;
+                }
+            }
+
+            // Check target state for LWW: snapshot block must not override newer unblock tombstone.
+            let target_key = BlocklistTargetKey {
+                target_kind: BlockTargetKind::Ip,
+                site_scope: record.site_scope.clone(),
+                identifier: record.identifier.clone(),
+            };
+            {
+                let targets = self.target_state.read();
+                if let Some(last) = targets.get(&target_key) {
+                    // If last operation was Unblock and it's newer, skip this block.
+                    if last.operation == BlocklistOperation::Unblock {
+                        let candidate = LastAppliedBlocklistEvent {
+                            timestamp: record.blocked_at,
+                            version: None,
+                            event_id: None,
+                            operation: BlocklistOperation::Block,
+                            source_node: None,
+                            provenance: record.provenance.clone(),
+                        };
+                        if !candidate.is_newer_than(last) {
+                            result.stale_records_ignored += 1;
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            // Check if entry already exists.
+            let key = BlockEntry::key(&record.site_scope, &ip);
+            let idx = Self::shard_index(&key);
+            let exists = self.shards[idx].read().contains_key(&key);
+
+            // Apply the block.
+            let applied = self.block_ip_with_provenance(
+                ip,
+                &record.reason,
+                record.ban_expire_seconds,
+                &record.site_scope,
+                record.provenance.clone(),
+            );
+
+            if applied {
+                if exists {
+                    result.ip_blocks_updated += 1;
+                } else {
+                    result.ip_blocks_applied += 1;
+                }
+            }
+        }
+
+        // Apply mesh blocks from snapshot.
+        for record in &snapshot.mesh_blocks {
+            // Validate mesh ID is non-empty.
+            if record.identifier.is_empty() {
+                result.invalid_records_ignored += 1;
+                continue;
+            }
+
+            // Check expiry.
+            if record.ban_expire_seconds > 0 {
+                let now = synvoid_utils::safe_unix_timestamp();
+                if now > record.blocked_at + record.ban_expire_seconds {
+                    result.expired_records_ignored += 1;
+                    continue;
+                }
+            }
+
+            // Check target state for LWW.
+            let target_key = BlocklistTargetKey {
+                target_kind: BlockTargetKind::MeshId,
+                site_scope: record.site_scope.clone(),
+                identifier: record.identifier.clone(),
+            };
+            {
+                let targets = self.target_state.read();
+                if let Some(last) = targets.get(&target_key) {
+                    if last.operation == BlocklistOperation::Unblock {
+                        let candidate = LastAppliedBlocklistEvent {
+                            timestamp: record.blocked_at,
+                            version: None,
+                            event_id: None,
+                            operation: BlocklistOperation::Block,
+                            source_node: None,
+                            provenance: record.provenance.clone(),
+                        };
+                        if !candidate.is_newer_than(last) {
+                            result.stale_records_ignored += 1;
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            // Check if entry already exists.
+            let key = MeshBlockEntry::key(&record.site_scope, &record.identifier);
+            let idx = Self::shard_index(&key);
+            let exists = self.mesh_shards[idx].read().contains_key(&key);
+
+            // Apply the block.
+            let applied = self.block_mesh_id_with_provenance(
+                &record.identifier,
+                &record.reason,
+                record.ban_expire_seconds,
+                &record.site_scope,
+                record.provenance.clone(),
+            );
+
+            if applied {
+                if exists {
+                    result.mesh_blocks_updated += 1;
+                } else {
+                    result.mesh_blocks_applied += 1;
+                }
+            }
+        }
+
+        // Apply target state records from snapshot.
+        for ts_record in &snapshot.target_state_records {
+            // Check expiry.
+            if ts_record.is_expired() {
+                result.expired_records_ignored += 1;
+                continue;
+            }
+
+            let target_key = BlocklistTargetKey {
+                target_kind: ts_record.target_kind,
+                site_scope: ts_record.site_scope.clone(),
+                identifier: ts_record.identifier.clone(),
+            };
+
+            let this_event = LastAppliedBlocklistEvent {
+                timestamp: ts_record.timestamp,
+                version: ts_record.version,
+                event_id: ts_record.event_id.clone(),
+                operation: ts_record.last_operation,
+                source_node: ts_record.source_node.clone(),
+                provenance: ts_record.provenance.clone(),
+            };
+
+            // LWW: only apply if this record is newer than local state.
+            {
+                let targets = self.target_state.read();
+                if let Some(last) = targets.get(&target_key) {
+                    if !this_event.is_newer_than(last) {
+                        result.stale_records_ignored += 1;
+                        continue;
+                    }
+                }
+            }
+
+            // Insert into target state cache.
+            let mut targets = self.target_state.write();
+            targets.insert(target_key, this_event);
+            result.target_state_records_applied += 1;
+        }
+
+        tracing::info!(
+            "Blocklist snapshot applied: ip_applied={}, ip_updated={}, mesh_applied={}, mesh_updated={}, target_state={}, stale_ignored={}, invalid_ignored={}, expired_ignored={}",
+            result.ip_blocks_applied,
+            result.ip_blocks_updated,
+            result.mesh_blocks_applied,
+            result.mesh_blocks_updated,
+            result.target_state_records_applied,
+            result.stale_records_ignored,
+            result.invalid_records_ignored,
+            result.expired_records_ignored,
+        );
+
+        result
+    }
+}
+
+/// Internal enum for snapshot export iteration.
+enum SnapshotItem {
+    Ip(BlockRecord),
+    Mesh(BlockRecord),
+}
+
+impl SnapshotItem {
+    fn record(&self) -> &BlockRecord {
+        match self {
+            SnapshotItem::Ip(r) | SnapshotItem::Mesh(r) => r,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1987,6 +2406,59 @@ impl synvoid_mesh::stubs::block_store::BlockStoreApi for BlockStore {
 
     fn event_log_stats(&self) -> (usize, Option<u64>, Option<u64>, u64) {
         self.event_log_stats()
+    }
+
+    fn export_blocklist_snapshot(
+        &self,
+        options: &synvoid_mesh::stubs::block_store::BlocklistSnapshotOptions,
+        cursor: &synvoid_mesh::stubs::block_store::BlocklistSnapshotCursor,
+    ) -> synvoid_mesh::stubs::block_store::BlocklistSnapshotChunk {
+        let real_options = BlocklistSnapshotOptions {
+            include_ip_blocks: options.include_ip_blocks,
+            include_mesh_id_blocks: options.include_mesh_id_blocks,
+            include_target_state: options.include_target_state,
+            site_scope: options.site_scope.clone(),
+            max_items: options.max_items,
+        };
+        let real_cursor = BlocklistSnapshotCursor {
+            page_token: cursor.page_token.clone(),
+        };
+        let result = self.export_blocklist_snapshot(&real_options, &real_cursor);
+        synvoid_mesh::stubs::block_store::BlocklistSnapshotChunk {
+            ip_blocks: result.ip_blocks,
+            mesh_blocks: result.mesh_blocks,
+            target_state_records: result.target_state_records,
+            next_page_token: result.next_page_token,
+            has_more: result.has_more,
+            snapshot_complete: result.snapshot_complete,
+            truncated_reason: result.truncated_reason,
+        }
+    }
+
+    fn apply_blocklist_snapshot(
+        &self,
+        snapshot: &synvoid_mesh::stubs::block_store::BlocklistSnapshotChunk,
+    ) -> synvoid_mesh::stubs::block_store::BlocklistSnapshotApplyResult {
+        let real_snapshot = BlocklistSnapshotChunk {
+            ip_blocks: snapshot.ip_blocks.clone(),
+            mesh_blocks: snapshot.mesh_blocks.clone(),
+            target_state_records: snapshot.target_state_records.clone(),
+            next_page_token: snapshot.next_page_token.clone(),
+            has_more: snapshot.has_more,
+            snapshot_complete: snapshot.snapshot_complete,
+            truncated_reason: snapshot.truncated_reason.clone(),
+        };
+        let result = self.apply_blocklist_snapshot(&real_snapshot);
+        synvoid_mesh::stubs::block_store::BlocklistSnapshotApplyResult {
+            ip_blocks_applied: result.ip_blocks_applied,
+            ip_blocks_updated: result.ip_blocks_updated,
+            mesh_blocks_applied: result.mesh_blocks_applied,
+            mesh_blocks_updated: result.mesh_blocks_updated,
+            target_state_records_applied: result.target_state_records_applied,
+            stale_records_ignored: result.stale_records_ignored,
+            invalid_records_ignored: result.invalid_records_ignored,
+            expired_records_ignored: result.expired_records_ignored,
+        }
     }
 }
 
@@ -5694,5 +6166,411 @@ mod tests {
             BlocklistApplyResult::IgnoredStale,
             "Stale block from catchup should be rejected after restart"
         );
+    }
+
+    // ==================== Blocklist Snapshot Tests (Iteration 56) ====================
+
+    #[test]
+    fn test_export_snapshot_includes_ip_blocks_with_provenance() {
+        let store = BlockStore::new(true, None, default_config());
+        let prov = BlockProvenance {
+            kind: BlockProvenanceKind::AdminManual,
+            source: Some("admin".to_string()),
+        };
+        store.block_ip_with_provenance(
+            "10.0.0.1".parse().unwrap(),
+            "test_block",
+            3600,
+            "global",
+            prov.clone(),
+        );
+
+        let options = BlocklistSnapshotOptions {
+            include_ip_blocks: true,
+            include_mesh_id_blocks: true,
+            include_target_state: false,
+            site_scope: None,
+            max_items: 100,
+        };
+        let chunk = store.export_blocklist_snapshot(&options, &BlocklistSnapshotCursor::default());
+        assert_eq!(chunk.ip_blocks.len(), 1);
+        assert_eq!(chunk.ip_blocks[0].identifier, "10.0.0.1");
+        assert_eq!(
+            chunk.ip_blocks[0].provenance.kind,
+            BlockProvenanceKind::AdminManual
+        );
+    }
+
+    #[test]
+    fn test_export_snapshot_includes_mesh_blocks_with_provenance() {
+        let store = BlockStore::new(true, None, default_config());
+        let prov = BlockProvenance {
+            kind: BlockProvenanceKind::MeshThreatIntelPolicyGated,
+            source: Some("mesh".to_string()),
+        };
+        store.block_mesh_id_with_provenance("mesh-1", "attack", 3600, "global", prov);
+
+        let options = BlocklistSnapshotOptions {
+            include_ip_blocks: true,
+            include_mesh_id_blocks: true,
+            include_target_state: false,
+            site_scope: None,
+            max_items: 100,
+        };
+        let chunk = store.export_blocklist_snapshot(&options, &BlocklistSnapshotCursor::default());
+        assert_eq!(chunk.mesh_blocks.len(), 1);
+        assert_eq!(chunk.mesh_blocks[0].identifier, "mesh-1");
+        assert_eq!(
+            chunk.mesh_blocks[0].provenance.kind,
+            BlockProvenanceKind::MeshThreatIntelPolicyGated
+        );
+    }
+
+    #[test]
+    fn test_export_snapshot_respects_page_size() {
+        let store = BlockStore::new(true, None, default_config());
+        for i in 0..10 {
+            store.add_block(&format!("10.0.0.{}", i), "test", 3600, "global");
+        }
+
+        let options = BlocklistSnapshotOptions {
+            include_ip_blocks: true,
+            include_mesh_id_blocks: false,
+            include_target_state: false,
+            site_scope: None,
+            max_items: 3,
+        };
+        let chunk = store.export_blocklist_snapshot(&options, &BlocklistSnapshotCursor::default());
+        assert_eq!(chunk.ip_blocks.len(), 3);
+        assert!(chunk.has_more);
+        assert!(chunk.next_page_token.is_some());
+    }
+
+    #[test]
+    fn test_export_snapshot_produces_stable_next_page_token() {
+        let store = BlockStore::new(true, None, default_config());
+        for i in 0..5 {
+            store.add_block(&format!("10.0.0.{}", i), "test", 3600, "global");
+        }
+
+        let options = BlocklistSnapshotOptions {
+            include_ip_blocks: true,
+            include_mesh_id_blocks: false,
+            include_target_state: false,
+            site_scope: None,
+            max_items: 2,
+        };
+        let page1 = store.export_blocklist_snapshot(&options, &BlocklistSnapshotCursor::default());
+        assert!(page1.has_more);
+        let token = page1.next_page_token.clone().unwrap();
+
+        let cursor = BlocklistSnapshotCursor {
+            page_token: Some(token),
+        };
+        let page2 = store.export_blocklist_snapshot(&options, &cursor);
+        assert_eq!(page2.ip_blocks.len(), 2);
+
+        let cursor2 = BlocklistSnapshotCursor {
+            page_token: page2.next_page_token.clone(),
+        };
+        let page3 = store.export_blocklist_snapshot(&options, &cursor2);
+        assert_eq!(page3.ip_blocks.len(), 1);
+        assert!(!page3.has_more);
+    }
+
+    #[test]
+    fn test_export_snapshot_filters_by_site_scope() {
+        let store = BlockStore::new(true, None, default_config());
+        store.add_block("10.0.0.1", "test", 3600, "site-a");
+        store.add_block("10.0.0.2", "test", 3600, "site-b");
+
+        let options = BlocklistSnapshotOptions {
+            include_ip_blocks: true,
+            include_mesh_id_blocks: false,
+            include_target_state: false,
+            site_scope: Some("site-a".to_string()),
+            max_items: 100,
+        };
+        let chunk = store.export_blocklist_snapshot(&options, &BlocklistSnapshotCursor::default());
+        assert_eq!(chunk.ip_blocks.len(), 1);
+        assert_eq!(chunk.ip_blocks[0].site_scope, "site-a");
+    }
+
+    #[test]
+    fn test_apply_snapshot_adds_ip_block_entry() {
+        let store = BlockStore::new(true, None, default_config());
+        let chunk = BlocklistSnapshotChunk {
+            ip_blocks: vec![BlockRecord {
+                target_kind: BlockTargetKind::Ip,
+                identifier: "10.0.0.99".to_string(),
+                reason: "snapshot_test".to_string(),
+                blocked_at: synvoid_utils::safe_unix_timestamp(),
+                ban_expire_seconds: 3600,
+                site_scope: "global".to_string(),
+                access_count: 0,
+                last_access: 0,
+                provenance: BlockProvenance::default(),
+            }],
+            mesh_blocks: Vec::new(),
+            target_state_records: Vec::new(),
+            next_page_token: None,
+            has_more: false,
+            snapshot_complete: true,
+            truncated_reason: None,
+        };
+
+        let result = store.apply_blocklist_snapshot(&chunk);
+        assert_eq!(result.ip_blocks_applied, 1);
+        assert!(store
+            .is_blocked(&"10.0.0.99".parse().unwrap(), "global")
+            .is_some());
+    }
+
+    #[test]
+    fn test_apply_snapshot_adds_mesh_block_entry() {
+        let store = BlockStore::new(true, None, default_config());
+        let chunk = BlocklistSnapshotChunk {
+            ip_blocks: Vec::new(),
+            mesh_blocks: vec![BlockRecord {
+                target_kind: BlockTargetKind::MeshId,
+                identifier: "mesh-snap-1".to_string(),
+                reason: "snapshot_test".to_string(),
+                blocked_at: synvoid_utils::safe_unix_timestamp(),
+                ban_expire_seconds: 3600,
+                site_scope: "global".to_string(),
+                access_count: 0,
+                last_access: 0,
+                provenance: BlockProvenance::default(),
+            }],
+            target_state_records: Vec::new(),
+            next_page_token: None,
+            has_more: false,
+            snapshot_complete: true,
+            truncated_reason: None,
+        };
+
+        let result = store.apply_blocklist_snapshot(&chunk);
+        assert_eq!(result.mesh_blocks_applied, 1);
+        assert!(store.is_mesh_id_blocked("mesh-snap-1", "global").is_some());
+    }
+
+    #[test]
+    fn test_apply_snapshot_preserves_provenance() {
+        let store = BlockStore::new(true, None, default_config());
+        let prov = BlockProvenance {
+            kind: BlockProvenanceKind::SupervisorSync,
+            source: Some("supervisor".to_string()),
+        };
+        let chunk = BlocklistSnapshotChunk {
+            ip_blocks: vec![BlockRecord {
+                target_kind: BlockTargetKind::Ip,
+                identifier: "10.0.0.50".to_string(),
+                reason: "provenance_test".to_string(),
+                blocked_at: synvoid_utils::safe_unix_timestamp(),
+                ban_expire_seconds: 3600,
+                site_scope: "global".to_string(),
+                access_count: 0,
+                last_access: 0,
+                provenance: prov.clone(),
+            }],
+            mesh_blocks: Vec::new(),
+            target_state_records: Vec::new(),
+            next_page_token: None,
+            has_more: false,
+            snapshot_complete: true,
+            truncated_reason: None,
+        };
+
+        store.apply_blocklist_snapshot(&chunk);
+        let records = store.get_all_block_records();
+        let record = records
+            .iter()
+            .find(|r| r.identifier == "10.0.0.50")
+            .unwrap();
+        assert_eq!(record.provenance.kind, BlockProvenanceKind::SupervisorSync);
+        assert_eq!(record.provenance.source, Some("supervisor".to_string()));
+    }
+
+    #[test]
+    fn test_apply_snapshot_ignores_invalid_ip_records() {
+        let store = BlockStore::new(true, None, default_config());
+        let chunk = BlocklistSnapshotChunk {
+            ip_blocks: vec![BlockRecord {
+                target_kind: BlockTargetKind::Ip,
+                identifier: "not-an-ip".to_string(),
+                reason: "test".to_string(),
+                blocked_at: synvoid_utils::safe_unix_timestamp(),
+                ban_expire_seconds: 3600,
+                site_scope: "global".to_string(),
+                access_count: 0,
+                last_access: 0,
+                provenance: BlockProvenance::default(),
+            }],
+            mesh_blocks: Vec::new(),
+            target_state_records: Vec::new(),
+            next_page_token: None,
+            has_more: false,
+            snapshot_complete: true,
+            truncated_reason: None,
+        };
+
+        let result = store.apply_blocklist_snapshot(&chunk);
+        assert_eq!(result.invalid_records_ignored, 1);
+        assert_eq!(result.ip_blocks_applied, 0);
+    }
+
+    #[test]
+    fn test_apply_snapshot_ignores_expired_records() {
+        let store = BlockStore::new(true, None, default_config());
+        let chunk = BlocklistSnapshotChunk {
+            ip_blocks: vec![BlockRecord {
+                target_kind: BlockTargetKind::Ip,
+                identifier: "10.0.0.1".to_string(),
+                reason: "test".to_string(),
+                blocked_at: 100,          // very old timestamp
+                ban_expire_seconds: 3600, // expired long ago
+                site_scope: "global".to_string(),
+                access_count: 0,
+                last_access: 0,
+                provenance: BlockProvenance::default(),
+            }],
+            mesh_blocks: Vec::new(),
+            target_state_records: Vec::new(),
+            next_page_token: None,
+            has_more: false,
+            snapshot_complete: true,
+            truncated_reason: None,
+        };
+
+        let result = store.apply_blocklist_snapshot(&chunk);
+        assert_eq!(result.expired_records_ignored, 1);
+        assert_eq!(result.ip_blocks_applied, 0);
+    }
+
+    #[test]
+    fn test_apply_snapshot_does_not_overwrite_newer_unblock_with_older_block() {
+        let store = BlockStore::new(true, None, default_config());
+        let now = synvoid_utils::safe_unix_timestamp();
+
+        // First: unblock via event (creates a newer target state entry).
+        let unblock =
+            BlocklistEvent::unblock_ip("10.0.0.1", "global", BlockProvenance::default(), now);
+        store.apply_blocklist_event(&unblock);
+
+        // Now: try to apply a snapshot with an older block (but not expired).
+        let chunk = BlocklistSnapshotChunk {
+            ip_blocks: vec![BlockRecord {
+                target_kind: BlockTargetKind::Ip,
+                identifier: "10.0.0.1".to_string(),
+                reason: "old_block".to_string(),
+                blocked_at: now - 100, // older than unblock but still valid
+                ban_expire_seconds: 3600,
+                site_scope: "global".to_string(),
+                access_count: 0,
+                last_access: 0,
+                provenance: BlockProvenance::default(),
+            }],
+            mesh_blocks: Vec::new(),
+            target_state_records: Vec::new(),
+            next_page_token: None,
+            has_more: false,
+            snapshot_complete: true,
+            truncated_reason: None,
+        };
+
+        let result = store.apply_blocklist_snapshot(&chunk);
+        assert_eq!(result.stale_records_ignored, 1);
+        assert!(store
+            .is_blocked(&"10.0.0.1".parse().unwrap(), "global")
+            .is_none());
+    }
+
+    #[test]
+    fn test_apply_snapshot_respects_site_scope() {
+        let store = BlockStore::new(true, None, default_config());
+        let chunk = BlocklistSnapshotChunk {
+            ip_blocks: vec![BlockRecord {
+                target_kind: BlockTargetKind::Ip,
+                identifier: "10.0.0.1".to_string(),
+                reason: "test".to_string(),
+                blocked_at: synvoid_utils::safe_unix_timestamp(),
+                ban_expire_seconds: 3600,
+                site_scope: "site-a".to_string(),
+                access_count: 0,
+                last_access: 0,
+                provenance: BlockProvenance::default(),
+            }],
+            mesh_blocks: Vec::new(),
+            target_state_records: Vec::new(),
+            next_page_token: None,
+            has_more: false,
+            snapshot_complete: true,
+            truncated_reason: None,
+        };
+
+        store.apply_blocklist_snapshot(&chunk);
+        assert!(store
+            .is_blocked(&"10.0.0.1".parse().unwrap(), "site-a")
+            .is_some());
+        assert!(store
+            .is_blocked(&"10.0.0.1".parse().unwrap(), "site-b")
+            .is_none());
+    }
+
+    #[test]
+    fn test_apply_snapshot_empty_mesh_id_ignored() {
+        let store = BlockStore::new(true, None, default_config());
+        let chunk = BlocklistSnapshotChunk {
+            ip_blocks: Vec::new(),
+            mesh_blocks: vec![BlockRecord {
+                target_kind: BlockTargetKind::MeshId,
+                identifier: "".to_string(), // empty mesh ID
+                reason: "test".to_string(),
+                blocked_at: synvoid_utils::safe_unix_timestamp(),
+                ban_expire_seconds: 3600,
+                site_scope: "global".to_string(),
+                access_count: 0,
+                last_access: 0,
+                provenance: BlockProvenance::default(),
+            }],
+            target_state_records: Vec::new(),
+            next_page_token: None,
+            has_more: false,
+            snapshot_complete: true,
+            truncated_reason: None,
+        };
+
+        let result = store.apply_blocklist_snapshot(&chunk);
+        assert_eq!(result.invalid_records_ignored, 1);
+        assert_eq!(result.mesh_blocks_applied, 0);
+    }
+
+    #[test]
+    fn test_catchup_history_gap_sets_snapshot_required() {
+        let store = BlockStore::new(true, None, default_config());
+
+        // Append enough events to exceed the log capacity.
+        for i in 0..15000 {
+            let event = BlocklistEvent::block_ip(
+                &format!("10.0.{}.{}", (i / 256) % 256, i % 256),
+                "gap_test",
+                "global",
+                BlockProvenance::default(),
+                i as u64,
+            );
+            store.record_blocklist_event_for_catchup(&event);
+        }
+
+        // Query with a cursor that refers to an evicted sequence.
+        let cursor = BlocklistEventCursor {
+            since_sequence: Some(100), // well before the oldest retained
+            max_events: 500,
+        };
+        let result = store.query_blocklist_catchup(&cursor);
+        assert!(
+            result.snapshot_required,
+            "History gap should set snapshot_required"
+        );
+        assert!(!result.history_complete);
     }
 }

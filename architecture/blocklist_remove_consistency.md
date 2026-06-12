@@ -143,6 +143,6 @@ Iteration 49 fixed cursor semantics: `since_sequence: None` replays from the old
 
 - Periodic blocklist sync for offline-peer catchup (partially addressed by Iteration 48 catchup)
 - Per-source cursor persistence for cross-restart convergence
-- Full snapshot fallback for history gaps beyond retention window
 - Acknowledged delivery for critical removes
+- ~~Full snapshot fallback for history gaps beyond retention window~~ ✅ Done (Iteration 56)
 - ~~Persisted per-target tombstones for stale replay protection across restarts~~ ✅ Done (Iteration 52)

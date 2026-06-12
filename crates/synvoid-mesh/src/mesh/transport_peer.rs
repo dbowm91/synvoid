@@ -325,10 +325,29 @@ impl MeshTransport {
                     history_complete
                 );
                 if snapshot_required {
-                    tracing::warn!(
-                        "Peer {} indicates blocklist snapshot required (history incomplete)",
+                    tracing::info!(
+                        "Peer {} indicates blocklist snapshot required (history incomplete), requesting snapshot",
                         peer_id
                     );
+                    let request_id =
+                        format!("snap-{}-{}", peer_id, synvoid_utils::safe_unix_timestamp());
+                    let snapshot_request = MeshMessage::BlocklistSnapshotRequest {
+                        requesting_node: self.config.node_id().into(),
+                        request_id: request_id.into(),
+                        include_ip_blocks: true,
+                        include_mesh_id_blocks: true,
+                        include_target_state: true,
+                        site_scope: None,
+                        page_token: None,
+                        max_items: 500,
+                    };
+                    if let Err(e) = self.send_datagram_to_peer(peer_id, &snapshot_request).await {
+                        tracing::warn!(
+                            "Failed to send blocklist snapshot request to {}: {}",
+                            peer_id,
+                            e
+                        );
+                    }
                 }
                 if let Some(ref ti) = self.threat_intel {
                     let bs = ti.get_block_store();
@@ -361,6 +380,239 @@ impl MeshTransport {
                 } else {
                     tracing::trace!(
                         "Blocklist catchup response received but threat intel not enabled"
+                    );
+                }
+            }
+
+            MeshMessage::BlocklistSnapshotRequest {
+                requesting_node: _,
+                request_id,
+                include_ip_blocks,
+                include_mesh_id_blocks,
+                include_target_state,
+                site_scope,
+                page_token,
+                max_items,
+            } => {
+                tracing::debug!(
+                    "Received blocklist snapshot request from {} (request_id={})",
+                    peer_id,
+                    request_id
+                );
+                if let Some(ref ti) = self.threat_intel {
+                    let bs = ti.get_block_store();
+                    let options = crate::stubs::block_store::BlocklistSnapshotOptions {
+                        include_ip_blocks,
+                        include_mesh_id_blocks,
+                        include_target_state,
+                        site_scope: site_scope.as_ref().map(|s| s.to_string()),
+                        max_items,
+                    };
+                    let cursor = crate::stubs::block_store::BlocklistSnapshotCursor {
+                        page_token: page_token.as_ref().map(|s| s.to_string()),
+                    };
+                    let chunk = bs.export_blocklist_snapshot(&options, &cursor);
+
+                    // Convert to wire format.
+                    let ip_blocks: Vec<crate::blocklist_event::SnapshotIpBlockData> = chunk
+                        .ip_blocks
+                        .iter()
+                        .map(crate::blocklist_event::SnapshotIpBlockData::from_record)
+                        .collect();
+                    let mesh_blocks: Vec<crate::blocklist_event::SnapshotMeshBlockData> = chunk
+                        .mesh_blocks
+                        .iter()
+                        .map(crate::blocklist_event::SnapshotMeshBlockData::from_record)
+                        .collect();
+                    let target_state_records: Vec<crate::blocklist_event::SnapshotTargetStateData> =
+                        chunk
+                            .target_state_records
+                            .iter()
+                            .map(crate::blocklist_event::SnapshotTargetStateData::from_record)
+                            .collect();
+
+                    let response = MeshMessage::BlocklistSnapshotResponse {
+                        request_id,
+                        source_node: self.config.node_id().into(),
+                        timestamp: synvoid_utils::safe_unix_timestamp(),
+                        ip_blocks,
+                        mesh_blocks,
+                        target_state_records,
+                        next_page_token: chunk.next_page_token.map(|t| t.into()),
+                        has_more: chunk.has_more,
+                        snapshot_complete: chunk.snapshot_complete,
+                        truncated_reason: chunk.truncated_reason.map(|t| t.into()),
+                        error: None,
+                    };
+                    let _ = self.send_datagram_to_peer(peer_id, &response).await;
+                    tracing::debug!(
+                        "Sent blocklist snapshot response to {}: ip_blocks={}, mesh_blocks={}, target_state={}, has_more={}",
+                        peer_id,
+                        chunk.ip_blocks.len(),
+                        chunk.mesh_blocks.len(),
+                        chunk.target_state_records.len(),
+                        chunk.has_more
+                    );
+                } else {
+                    tracing::trace!(
+                        "Blocklist snapshot request received but threat intel not enabled"
+                    );
+                }
+            }
+
+            MeshMessage::BlocklistSnapshotResponse {
+                ref request_id,
+                source_node: _,
+                timestamp: _,
+                ref ip_blocks,
+                ref mesh_blocks,
+                ref target_state_records,
+                ref next_page_token,
+                has_more,
+                snapshot_complete,
+                truncated_reason: _,
+                error,
+            } => {
+                if let Some(ref err) = error {
+                    tracing::warn!(
+                        "Blocklist snapshot response from {} contains error: {} (request_id={})",
+                        peer_id,
+                        err,
+                        request_id
+                    );
+                    return Ok(());
+                }
+                tracing::debug!(
+                    "Received blocklist snapshot response from {}: ip_blocks={}, mesh_blocks={}, target_state={}, has_more={}, request_id={}",
+                    peer_id,
+                    ip_blocks.len(),
+                    mesh_blocks.len(),
+                    target_state_records.len(),
+                    has_more,
+                    request_id
+                );
+                if let Some(ref ti) = self.threat_intel {
+                    let bs = ti.get_block_store();
+
+                    // Convert wire format to core types.
+                    let core_ip_blocks: Vec<synvoid_core::block_store::BlockRecord> = ip_blocks
+                        .iter()
+                        .map(|b| synvoid_core::block_store::BlockRecord {
+                            target_kind: synvoid_core::block_store::BlockTargetKind::Ip,
+                            identifier: b.ip.clone(),
+                            reason: b.reason.clone(),
+                            blocked_at: b.blocked_at,
+                            ban_expire_seconds: b.ban_expire_seconds,
+                            site_scope: b.site_scope.clone(),
+                            access_count: b.access_count,
+                            last_access: b.last_access,
+                            provenance: synvoid_core::block_store::BlockProvenance {
+                                kind: crate::blocklist_event::provenance_kind_from_u32(
+                                    b.provenance_kind,
+                                ),
+                                source: b.provenance_source.clone(),
+                            },
+                        })
+                        .collect();
+                    let core_mesh_blocks: Vec<synvoid_core::block_store::BlockRecord> = mesh_blocks
+                        .iter()
+                        .map(|b| synvoid_core::block_store::BlockRecord {
+                            target_kind: synvoid_core::block_store::BlockTargetKind::MeshId,
+                            identifier: b.mesh_id.clone(),
+                            reason: b.reason.clone(),
+                            blocked_at: b.blocked_at,
+                            ban_expire_seconds: b.ban_expire_seconds,
+                            site_scope: b.site_scope.clone(),
+                            access_count: b.access_count,
+                            last_access: b.last_access,
+                            provenance: synvoid_core::block_store::BlockProvenance {
+                                kind: crate::blocklist_event::provenance_kind_from_u32(
+                                    b.provenance_kind,
+                                ),
+                                source: b.provenance_source.clone(),
+                            },
+                        })
+                        .collect();
+                    let core_target_state: Vec<
+                        synvoid_core::block_store::BlocklistTargetStateRecord,
+                    > = target_state_records
+                        .iter()
+                        .map(|r| synvoid_core::block_store::BlocklistTargetStateRecord {
+                            target_kind: crate::blocklist_event::target_kind_from_u32(
+                                r.target_kind,
+                            ),
+                            site_scope: r.site_scope.clone(),
+                            identifier: r.identifier.clone(),
+                            last_operation: crate::blocklist_event::operation_from_u32(
+                                r.last_operation,
+                            ),
+                            timestamp: r.timestamp,
+                            version: r.version,
+                            event_id: r.event_id.clone(),
+                            source_node: r.source_node.clone(),
+                            provenance: synvoid_core::block_store::BlockProvenance {
+                                kind: crate::blocklist_event::provenance_kind_from_u32(
+                                    r.provenance_kind,
+                                ),
+                                source: r.provenance_source.clone(),
+                            },
+                            recorded_at: r.recorded_at,
+                            expires_at: r.expires_at,
+                        })
+                        .collect();
+
+                    let chunk = crate::stubs::block_store::BlocklistSnapshotChunk {
+                        ip_blocks: core_ip_blocks,
+                        mesh_blocks: core_mesh_blocks,
+                        target_state_records: core_target_state,
+                        next_page_token: next_page_token.as_ref().map(|t| t.to_string()),
+                        has_more,
+                        snapshot_complete,
+                        truncated_reason: None,
+                    };
+
+                    let result = bs.apply_blocklist_snapshot(&chunk);
+                    tracing::info!(
+                        "Blocklist snapshot applied from {}: ip_applied={}, ip_updated={}, mesh_applied={}, mesh_updated={}, target_state={}, stale_ignored={}, invalid_ignored={}, expired_ignored={}",
+                        peer_id,
+                        result.ip_blocks_applied,
+                        result.ip_blocks_updated,
+                        result.mesh_blocks_applied,
+                        result.mesh_blocks_updated,
+                        result.target_state_records_applied,
+                        result.stale_records_ignored,
+                        result.invalid_records_ignored,
+                        result.expired_records_ignored,
+                    );
+
+                    // Request next page if needed.
+                    if has_more {
+                        if let Some(ref token) = next_page_token {
+                            let next_request = MeshMessage::BlocklistSnapshotRequest {
+                                requesting_node: self.config.node_id().into(),
+                                request_id: request_id.clone(),
+                                include_ip_blocks: true,
+                                include_mesh_id_blocks: true,
+                                include_target_state: true,
+                                site_scope: None,
+                                page_token: Some(token.clone()),
+                                max_items: 500,
+                            };
+                            if let Err(e) = self.send_datagram_to_peer(peer_id, &next_request).await
+                            {
+                                tracing::warn!(
+                                    "Failed to send next blocklist snapshot request to {}: {}",
+                                    peer_id,
+                                    e
+                                );
+                            }
+                        }
+                    } else {
+                        tracing::info!("Blocklist snapshot convergence complete from {}", peer_id);
+                    }
+                } else {
+                    tracing::trace!(
+                        "Blocklist snapshot response received but threat intel not enabled"
                     );
                 }
             }

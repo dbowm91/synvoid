@@ -605,6 +605,31 @@ pub enum MeshMessage {
         latest_timestamp: Option<u64>,
         snapshot_required: bool,
     },
+    /// Iteration 56: Blocklist snapshot fallback request
+    BlocklistSnapshotRequest {
+        requesting_node: ArcStr,
+        request_id: ArcStr,
+        include_ip_blocks: bool,
+        include_mesh_id_blocks: bool,
+        include_target_state: bool,
+        site_scope: Option<ArcStr>,
+        page_token: Option<ArcStr>,
+        max_items: u32,
+    },
+    /// Iteration 56: Blocklist snapshot fallback response
+    BlocklistSnapshotResponse {
+        request_id: ArcStr,
+        source_node: ArcStr,
+        timestamp: u64,
+        ip_blocks: Vec<crate::blocklist_event::SnapshotIpBlockData>,
+        mesh_blocks: Vec<crate::blocklist_event::SnapshotMeshBlockData>,
+        target_state_records: Vec<crate::blocklist_event::SnapshotTargetStateData>,
+        next_page_token: Option<ArcStr>,
+        has_more: bool,
+        snapshot_complete: bool,
+        truncated_reason: Option<ArcStr>,
+        error: Option<ArcStr>,
+    },
     KeepAlive,
     KeepAliveAck,
     LookupRequest {

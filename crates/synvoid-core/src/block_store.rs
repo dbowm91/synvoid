@@ -170,6 +170,47 @@ impl BlocklistTargetStateRecord {
     }
 }
 
+/// Options for requesting a blocklist snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlocklistSnapshotOptions {
+    pub include_ip_blocks: bool,
+    pub include_mesh_id_blocks: bool,
+    pub include_target_state: bool,
+    pub site_scope: Option<String>,
+    pub max_items: u32,
+}
+
+/// Cursor for paginated snapshot export.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BlocklistSnapshotCursor {
+    pub page_token: Option<String>,
+}
+
+/// A single snapshot chunk containing current blocklist state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlocklistSnapshotChunk {
+    pub ip_blocks: Vec<BlockRecord>,
+    pub mesh_blocks: Vec<BlockRecord>,
+    pub target_state_records: Vec<BlocklistTargetStateRecord>,
+    pub next_page_token: Option<String>,
+    pub has_more: bool,
+    pub snapshot_complete: bool,
+    pub truncated_reason: Option<String>,
+}
+
+/// Result of applying a blocklist snapshot.
+#[derive(Debug, Clone, Default)]
+pub struct BlocklistSnapshotApplyResult {
+    pub ip_blocks_applied: u32,
+    pub ip_blocks_updated: u32,
+    pub mesh_blocks_applied: u32,
+    pub mesh_blocks_updated: u32,
+    pub target_state_records_applied: u32,
+    pub stale_records_ignored: u32,
+    pub invalid_records_ignored: u32,
+    pub expired_records_ignored: u32,
+}
+
 /// A local, target-aware blocklist event staged for future distributed propagation.
 ///
 /// This type captures the semantic intent of a block or unblock operation,

@@ -1950,6 +1950,78 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     snapshot_required: r.snapshot_required,
                 })
             }
+            proto::mesh_message::Payload::BlocklistSnapshotRequest(r) => {
+                Ok(MeshMessage::BlocklistSnapshotRequest {
+                    requesting_node: r.requesting_node.into(),
+                    request_id: r.request_id.into(),
+                    include_ip_blocks: r.include_ip_blocks,
+                    include_mesh_id_blocks: r.include_mesh_id_blocks,
+                    include_target_state: r.include_target_state,
+                    site_scope: r.site_scope.map(|s| s.into()),
+                    page_token: r.page_token.map(|s| s.into()),
+                    max_items: r.max_items,
+                })
+            }
+            proto::mesh_message::Payload::BlocklistSnapshotResponse(r) => {
+                Ok(MeshMessage::BlocklistSnapshotResponse {
+                    request_id: r.request_id.into(),
+                    source_node: r.source_node.into(),
+                    timestamp: r.timestamp,
+                    ip_blocks: r
+                        .ip_blocks
+                        .into_iter()
+                        .map(|b| crate::blocklist_event::SnapshotIpBlockData {
+                            ip: b.ip,
+                            reason: b.reason,
+                            blocked_at: b.blocked_at,
+                            ban_expire_seconds: b.ban_expire_seconds,
+                            site_scope: b.site_scope,
+                            access_count: b.access_count,
+                            last_access: b.last_access,
+                            provenance_kind: b.provenance_kind,
+                            provenance_source: b.provenance_source,
+                        })
+                        .collect(),
+                    mesh_blocks: r
+                        .mesh_blocks
+                        .into_iter()
+                        .map(|b| crate::blocklist_event::SnapshotMeshBlockData {
+                            mesh_id: b.mesh_id,
+                            reason: b.reason,
+                            blocked_at: b.blocked_at,
+                            ban_expire_seconds: b.ban_expire_seconds,
+                            site_scope: b.site_scope,
+                            access_count: b.access_count,
+                            last_access: b.last_access,
+                            provenance_kind: b.provenance_kind,
+                            provenance_source: b.provenance_source,
+                        })
+                        .collect(),
+                    target_state_records: r
+                        .target_state_records
+                        .into_iter()
+                        .map(|ts| crate::blocklist_event::SnapshotTargetStateData {
+                            target_kind: ts.target_kind,
+                            site_scope: ts.site_scope,
+                            identifier: ts.identifier,
+                            last_operation: ts.last_operation,
+                            timestamp: ts.timestamp,
+                            version: ts.version,
+                            event_id: ts.event_id,
+                            source_node: ts.source_node,
+                            provenance_kind: ts.provenance_kind,
+                            provenance_source: ts.provenance_source,
+                            recorded_at: ts.recorded_at,
+                            expires_at: ts.expires_at,
+                        })
+                        .collect(),
+                    next_page_token: r.next_page_token.map(|s| s.into()),
+                    has_more: r.has_more,
+                    snapshot_complete: r.snapshot_complete,
+                    truncated_reason: r.truncated_reason.map(|s| s.into()),
+                    error: r.error.map(|s| s.into()),
+                })
+            }
         }
     }
 }

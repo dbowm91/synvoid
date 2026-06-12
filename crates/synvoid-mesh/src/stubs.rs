@@ -285,6 +285,47 @@ pub mod block_store {
         pub provenance_source: Option<String>,
     }
 
+    /// Snapshot options for peer convergence (stub).
+    #[derive(Debug, Clone)]
+    pub struct BlocklistSnapshotOptions {
+        pub include_ip_blocks: bool,
+        pub include_mesh_id_blocks: bool,
+        pub include_target_state: bool,
+        pub site_scope: Option<String>,
+        pub max_items: u32,
+    }
+
+    /// Snapshot cursor for pagination (stub).
+    #[derive(Debug, Clone, Default)]
+    pub struct BlocklistSnapshotCursor {
+        pub page_token: Option<String>,
+    }
+
+    /// A snapshot chunk (stub).
+    #[derive(Debug, Clone)]
+    pub struct BlocklistSnapshotChunk {
+        pub ip_blocks: Vec<synvoid_core::block_store::BlockRecord>,
+        pub mesh_blocks: Vec<synvoid_core::block_store::BlockRecord>,
+        pub target_state_records: Vec<synvoid_core::block_store::BlocklistTargetStateRecord>,
+        pub next_page_token: Option<String>,
+        pub has_more: bool,
+        pub snapshot_complete: bool,
+        pub truncated_reason: Option<String>,
+    }
+
+    /// Result of applying a snapshot (stub).
+    #[derive(Debug, Clone, Default)]
+    pub struct BlocklistSnapshotApplyResult {
+        pub ip_blocks_applied: u32,
+        pub ip_blocks_updated: u32,
+        pub mesh_blocks_applied: u32,
+        pub mesh_blocks_updated: u32,
+        pub target_state_records_applied: u32,
+        pub stale_records_ignored: u32,
+        pub invalid_records_ignored: u32,
+        pub expired_records_ignored: u32,
+    }
+
     impl BlockEntry {
         pub fn new(
             ip: IpAddr,
@@ -372,6 +413,15 @@ pub mod block_store {
             event: &synvoid_core::block_store::BlocklistEvent,
         ) -> Option<u64>;
         fn event_log_stats(&self) -> (usize, Option<u64>, Option<u64>, u64);
+        fn export_blocklist_snapshot(
+            &self,
+            options: &BlocklistSnapshotOptions,
+            cursor: &BlocklistSnapshotCursor,
+        ) -> BlocklistSnapshotChunk;
+        fn apply_blocklist_snapshot(
+            &self,
+            snapshot: &BlocklistSnapshotChunk,
+        ) -> BlocklistSnapshotApplyResult;
     }
 
     impl BlockStore {
@@ -494,6 +544,29 @@ pub mod block_store {
         pub fn event_log_stats(&self) -> (usize, Option<u64>, Option<u64>, u64) {
             (0, None, None, 0)
         }
+
+        pub fn export_blocklist_snapshot(
+            &self,
+            _options: &BlocklistSnapshotOptions,
+            _cursor: &BlocklistSnapshotCursor,
+        ) -> BlocklistSnapshotChunk {
+            BlocklistSnapshotChunk {
+                ip_blocks: Vec::new(),
+                mesh_blocks: Vec::new(),
+                target_state_records: Vec::new(),
+                next_page_token: None,
+                has_more: false,
+                snapshot_complete: true,
+                truncated_reason: None,
+            }
+        }
+
+        pub fn apply_blocklist_snapshot(
+            &self,
+            _snapshot: &BlocklistSnapshotChunk,
+        ) -> BlocklistSnapshotApplyResult {
+            BlocklistSnapshotApplyResult::default()
+        }
     }
 
     impl BlockStoreApi for BlockStore {
@@ -571,6 +644,21 @@ pub mod block_store {
 
         fn event_log_stats(&self) -> (usize, Option<u64>, Option<u64>, u64) {
             self.event_log_stats()
+        }
+
+        fn export_blocklist_snapshot(
+            &self,
+            options: &BlocklistSnapshotOptions,
+            cursor: &BlocklistSnapshotCursor,
+        ) -> BlocklistSnapshotChunk {
+            self.export_blocklist_snapshot(options, cursor)
+        }
+
+        fn apply_blocklist_snapshot(
+            &self,
+            snapshot: &BlocklistSnapshotChunk,
+        ) -> BlocklistSnapshotApplyResult {
+            self.apply_blocklist_snapshot(snapshot)
         }
     }
 }

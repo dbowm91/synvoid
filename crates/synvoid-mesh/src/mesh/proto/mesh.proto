@@ -294,6 +294,8 @@ message MeshMessage {
         BlocklistEventGossip blocklist_event_gossip = 178;
         BlocklistCatchupRequest blocklist_catchup_request = 179;
         BlocklistCatchupResponse blocklist_catchup_response = 180;
+        BlocklistSnapshotRequest blocklist_snapshot_request = 181;
+        BlocklistSnapshotResponse blocklist_snapshot_response = 182;
     }
 }
 
@@ -806,6 +808,75 @@ message BlocklistCatchupResponse {
     optional uint64 latest_sequence = 3;
     optional uint64 latest_timestamp = 4;
     bool snapshot_required = 5;
+}
+
+// Iteration 56: Blocklist snapshot fallback request
+message BlocklistSnapshotRequest {
+    string requesting_node = 1;
+    string request_id = 2;
+    bool include_ip_blocks = 3;
+    bool include_mesh_id_blocks = 4;
+    bool include_target_state = 5;
+    optional string site_scope = 6;
+    optional string page_token = 7;
+    uint32 max_items = 8;
+}
+
+// Iteration 56: Blocklist snapshot fallback response
+message BlocklistSnapshotResponse {
+    string request_id = 1;
+    string source_node = 2;
+    uint64 timestamp = 3;
+    repeated BlocklistSnapshotIpBlock ip_blocks = 4;
+    repeated BlocklistSnapshotMeshBlock mesh_blocks = 5;
+    repeated BlocklistSnapshotTargetState target_state_records = 6;
+    optional string next_page_token = 7;
+    bool has_more = 8;
+    bool snapshot_complete = 9;
+    optional string truncated_reason = 10;
+    optional string error = 11;
+}
+
+// Iteration 56: Snapshot IP block entry
+message BlocklistSnapshotIpBlock {
+    string ip = 1;
+    string reason = 2;
+    uint64 blocked_at = 3;
+    uint64 ban_expire_seconds = 4;
+    string site_scope = 5;
+    uint64 access_count = 6;
+    uint64 last_access = 7;
+    uint32 provenance_kind = 8;
+    optional string provenance_source = 9;
+}
+
+// Iteration 56: Snapshot mesh block entry
+message BlocklistSnapshotMeshBlock {
+    string mesh_id = 1;
+    string reason = 2;
+    uint64 blocked_at = 3;
+    uint64 ban_expire_seconds = 4;
+    string site_scope = 5;
+    uint64 access_count = 6;
+    uint64 last_access = 7;
+    uint32 provenance_kind = 8;
+    optional string provenance_source = 9;
+}
+
+// Iteration 56: Snapshot target state record
+message BlocklistSnapshotTargetState {
+    uint32 target_kind = 1;
+    string site_scope = 2;
+    string identifier = 3;
+    uint32 last_operation = 4;
+    uint64 timestamp = 5;
+    optional uint64 version = 6;
+    optional string event_id = 7;
+    optional string source_node = 8;
+    uint32 provenance_kind = 9;
+    optional string provenance_source = 10;
+    uint64 recorded_at = 11;
+    optional uint64 expires_at = 12;
 }
 
 message YaraRuleAnnounce {
