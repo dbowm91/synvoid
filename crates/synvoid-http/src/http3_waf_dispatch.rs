@@ -6,7 +6,7 @@ use http::{header, Response, StatusCode};
 use metrics::counter;
 
 use synvoid_metrics::bandwidth::{BandwidthProtocol, BandwidthTracker, EgressDirection};
-use synvoid_metrics::{get_active_stalled_requests, record_stall_rejected};
+use synvoid_metrics::StallPermit;
 use synvoid_waf::WafDecision;
 
 use crate::headers::generate_stealth_timestamp;
@@ -45,47 +45,42 @@ fn record_bandwidth_egress(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn maybe_handle_http3_waf_decision<W, TarpitFn, StallStartFn, StallEndFn>(
+pub async fn maybe_handle_http3_waf_decision<W, TarpitFn>(
     decision: WafDecision,
     host: &str,
     request_stream: &mut W,
     bandwidth: Option<&Arc<BandwidthTracker>>,
     stall_timeout: Duration,
     max_stalled_requests: u32,
-    mut on_stall_start: StallStartFn,
-    mut on_stall_end: StallEndFn,
     generate_tarpit_html: TarpitFn,
 ) -> Result<Http3WafDecisionOutcome, W::Error>
 where
     W: Http3RequestStream,
     TarpitFn: FnOnce(&str) -> String,
-    StallStartFn: FnMut(),
-    StallEndFn: FnMut(),
 {
     match decision {
         WafDecision::Pass => Ok(Http3WafDecisionOutcome::Continue),
         WafDecision::Stall => {
             counter!("synvoid.http3.requests.stalled").increment(1);
-            let current_stalled = get_active_stalled_requests();
-            if current_stalled >= max_stalled_requests as u64 {
-                record_stall_rejected();
-                counter!("synvoid.http3.requests.stall_capped").increment(1);
-                tracing::warn!(
-                    current_stalled = current_stalled,
-                    max_stalled = max_stalled_requests,
-                    "HTTP/3 stall rejected due to concurrency cap"
-                );
-                let body = r#"{"error":"Too many requests"}"#;
-                let body_len = body.len() as u64;
-                record_bandwidth_egress(bandwidth, host, body_len, EgressDirection::Blocked);
-                let response = build_json_error_response(StatusCode::TOO_MANY_REQUESTS);
-                send_response_with_body(request_stream, response, Bytes::from(body)).await?;
-                request_stream.finish().await?;
-                return Ok(Http3WafDecisionOutcome::EarlyReturn);
-            }
-            on_stall_start();
+            let permit = match StallPermit::try_new(max_stalled_requests) {
+                Some(p) => p,
+                None => {
+                    counter!("synvoid.http3.requests.stall_capped").increment(1);
+                    tracing::warn!(
+                        max_stalled = max_stalled_requests,
+                        "HTTP/3 stall rejected due to concurrency cap"
+                    );
+                    let body = r#"{"error":"Too many requests"}"#;
+                    let body_len = body.len() as u64;
+                    record_bandwidth_egress(bandwidth, host, body_len, EgressDirection::Blocked);
+                    let response = build_json_error_response(StatusCode::TOO_MANY_REQUESTS);
+                    send_response_with_body(request_stream, response, Bytes::from(body)).await?;
+                    request_stream.finish().await?;
+                    return Ok(Http3WafDecisionOutcome::EarlyReturn);
+                }
+            };
             tokio::time::sleep(stall_timeout).await;
-            on_stall_end();
+            drop(permit);
             tracing::debug!("Stall timeout reached");
             Ok(Http3WafDecisionOutcome::Continue)
         }
@@ -151,7 +146,7 @@ mod tests {
     use super::*;
     use std::convert::Infallible;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use synvoid_metrics::{get_active_stalled_requests, record_stall_end, record_stall_start};
+    use synvoid_metrics::StallPermit;
 
     struct MockRequestStream {
         response_sent: AtomicBool,
@@ -190,25 +185,10 @@ mod tests {
         }
     }
 
-    /// Drain the global stall counter back to zero for test isolation.
-    /// Only safe to call from single-threaded test contexts or when the
-    /// counter is known to be zero.
-    #[allow(dead_code)]
-    fn drain_stall_counter() {
-        loop {
-            let current = get_active_stalled_requests();
-            if current == 0 {
-                break;
-            }
-            record_stall_end();
-        }
-    }
-
     #[tokio::test]
     async fn http3_stall_allows_when_below_limit() {
         let mut stream = MockRequestStream::new();
 
-        // Use u32::MAX so the cap is never reached regardless of global counter state
         let result = maybe_handle_http3_waf_decision(
             WafDecision::Stall,
             "test.example.com",
@@ -216,8 +196,6 @@ mod tests {
             None,
             Duration::from_millis(10),
             u32::MAX,
-            || record_stall_start(),
-            || record_stall_end(),
             |_path| "tarpit".to_string(),
         )
         .await;
@@ -228,12 +206,10 @@ mod tests {
 
     #[tokio::test]
     async fn http3_stall_returns_429_when_limit_reached() {
-        // Record how many stalls are active before we add our own
-        let baseline = get_active_stalled_requests();
-        // Add enough stalls to reach the limit (baseline + our 100 = at least 100)
-        let needed = (100_u64).saturating_sub(baseline) as u32;
-        for _ in 0..needed {
-            record_stall_start();
+        // Acquire permits up to the limit
+        let mut permits = Vec::new();
+        for _ in 0..100 {
+            permits.push(StallPermit::try_new(u32::MAX).unwrap());
         }
         let mut stream = MockRequestStream::new();
 
@@ -244,8 +220,6 @@ mod tests {
             None,
             Duration::from_millis(10),
             100,
-            || record_stall_start(),
-            || record_stall_end(),
             |_path| "tarpit".to_string(),
         )
         .await;
@@ -255,17 +229,13 @@ mod tests {
         assert!(stream.response_sent.load(Ordering::Relaxed));
         assert!(stream.data_sent.load(Ordering::Relaxed));
         assert!(stream.finished.load(Ordering::Relaxed));
-        // Clean up the stalls we added
-        for _ in 0..needed {
-            record_stall_end();
-        }
+        drop(permits);
     }
 
     #[tokio::test]
     async fn http3_stall_releases_permit_after_completion() {
         let mut stream = MockRequestStream::new();
 
-        // Use u32::MAX so stall always proceeds; verify it completes without hanging
         let result = maybe_handle_http3_waf_decision(
             WafDecision::Stall,
             "test.example.com",
@@ -273,8 +243,6 @@ mod tests {
             None,
             Duration::from_millis(10),
             u32::MAX,
-            || record_stall_start(),
-            || record_stall_end(),
             |_path| "tarpit".to_string(),
         )
         .await;
@@ -285,11 +253,10 @@ mod tests {
 
     #[tokio::test]
     async fn http3_stall_uses_configured_stall_limit() {
-        // Record baseline, then add stalls up to the limit
-        let baseline = get_active_stalled_requests();
-        let needed = (2_u64).saturating_sub(baseline) as u32;
-        for _ in 0..needed {
-            record_stall_start();
+        // Acquire permits up to the limit
+        let mut permits = Vec::new();
+        for _ in 0..2 {
+            permits.push(StallPermit::try_new(u32::MAX).unwrap());
         }
         let mut stream = MockRequestStream::new();
 
@@ -300,8 +267,6 @@ mod tests {
             None,
             Duration::from_millis(10),
             2,
-            || record_stall_start(),
-            || record_stall_end(),
             |_path| "tarpit".to_string(),
         )
         .await;
@@ -309,10 +274,7 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Http3WafDecisionOutcome::EarlyReturn);
         assert!(stream.response_sent.load(Ordering::Relaxed));
-        // Clean up
-        for _ in 0..needed {
-            record_stall_end();
-        }
+        drop(permits);
     }
 
     #[tokio::test]
@@ -326,15 +288,40 @@ mod tests {
             None,
             Duration::from_millis(10),
             100,
-            || record_stall_start(),
-            || record_stall_end(),
             |_path| "tarpit".to_string(),
         )
         .await;
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Http3WafDecisionOutcome::Continue);
-        // Pass should not send any response
         assert!(!stream.response_sent.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn stall_permit_try_new_succeeds_below_limit() {
+        let _permit = StallPermit::try_new(100);
+        assert!(_permit.is_some());
+    }
+
+    #[test]
+    fn stall_permit_try_new_fails_at_limit() {
+        // Acquire permits to fill the limit
+        let mut permits = Vec::new();
+        for _ in 0..100 {
+            permits.push(StallPermit::try_new(100).unwrap());
+        }
+        // The next one should fail
+        assert!(StallPermit::try_new(100).is_none());
+        drop(permits);
+    }
+
+    #[test]
+    fn stall_permit_drops_release_counter() {
+        let before = synvoid_metrics::get_active_stalled_requests();
+        {
+            let _permit = StallPermit::try_new(u32::MAX).unwrap();
+            assert_eq!(synvoid_metrics::get_active_stalled_requests(), before + 1);
+        }
+        assert_eq!(synvoid_metrics::get_active_stalled_requests(), before);
     }
 }

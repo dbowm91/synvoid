@@ -9,7 +9,7 @@ use metrics::counter;
 use synvoid_config::{site::SiteBotConfig, MainConfig};
 use synvoid_http_client::HttpClient;
 use synvoid_metrics::bandwidth::{BandwidthProtocol, BandwidthTracker};
-use synvoid_metrics::{record_stall_end, record_stall_start, WorkerMetrics};
+use synvoid_metrics::WorkerMetrics;
 use synvoid_proxy::client_registry::UpstreamClientRegistry;
 use synvoid_proxy::{RouteResult, RouteTarget};
 use synvoid_waf::{ConnectionLimiter, WafDecision};
@@ -183,8 +183,6 @@ where
         bandwidth,
         Duration::from_secs(http_config.waf_stall_timeout_secs),
         http_config.max_stalled_requests,
-        || record_stall_start(),
-        || record_stall_end(),
         |tar_path| waf.generate_tarpit_response(tar_path),
     )
     .await?;

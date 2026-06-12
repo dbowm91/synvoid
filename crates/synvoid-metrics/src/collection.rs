@@ -184,6 +184,40 @@ pub fn get_stall_timeouts() -> u64 {
     STALL_TIMEOUTS.load(Ordering::Relaxed)
 }
 
+/// RAII guard for a stall concurrency slot.
+///
+/// Increments `ACTIVE_STALLED_REQUESTS` on creation and decrements on drop,
+/// guaranteeing the counter is released even if the owning task is cancelled
+/// mid-sleep. This prevents zombie stalls from permanently inflating the
+/// concurrency cap.
+pub struct StallPermit {
+    active: bool,
+}
+
+impl StallPermit {
+    /// Try to acquire a stall permit. Returns `Some(StallPermit)` if below
+    /// `max_stalled`, or `None` (after recording the rejection metric) if
+    /// the cap has been reached.
+    pub fn try_new(max_stalled: u32) -> Option<Self> {
+        let current = get_active_stalled_requests();
+        if current >= max_stalled as u64 {
+            record_stall_rejected();
+            None
+        } else {
+            record_stall_start();
+            Some(StallPermit { active: true })
+        }
+    }
+}
+
+impl Drop for StallPermit {
+    fn drop(&mut self) {
+        if self.active {
+            record_stall_end();
+        }
+    }
+}
+
 pub fn record_dropped_tls_reload_event() {
     DROPPED_TLS_RELOAD_EVENTS.fetch_add(1, Ordering::Relaxed);
 }

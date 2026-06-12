@@ -7,9 +7,6 @@ use http::Response;
 use http_body_util::combinators::BoxBody;
 
 use synvoid_config::{serverless::ServerlessWafMode, HttpConfig, MainConfig};
-use synvoid_metrics::{
-    get_active_stalled_requests, record_stall_end, record_stall_rejected, record_stall_start,
-};
 use synvoid_proxy::{BackendType, RouteTarget};
 use synvoid_waf::WafDecision;
 
@@ -105,10 +102,6 @@ where
         on_blocked_egress,
         on_challenged,
         elapsed_ms,
-        get_active_stalled_requests,
-        record_stall_rejected,
-        record_stall_start,
-        record_stall_end,
         render_block_body,
         generate_tarpit_html,
     )

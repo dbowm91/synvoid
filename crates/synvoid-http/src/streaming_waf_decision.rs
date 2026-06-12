@@ -11,6 +11,7 @@ use http_body_util::{BodyExt, Full, StreamBody};
 use metrics::counter;
 
 use synvoid_config::{HttpConfig, MainConfig};
+use synvoid_metrics::StallPermit;
 use synvoid_waf::WafDecision;
 
 use crate::response_builder::{build_response_with_alt_svc, build_response_with_cookie};
@@ -49,8 +50,10 @@ where
         }
         WafDecision::Stall => {
             counter!("synvoid.http.stalled").increment(1);
+            let permit = StallPermit::try_new(http_config.max_stalled_requests);
             let stall_timeout = Duration::from_secs(http_config.waf_stall_timeout_secs);
             tokio::time::sleep(stall_timeout).await;
+            drop(permit);
             Some(build_response_with_alt_svc(
                 408,
                 "Request timeout".to_string(),

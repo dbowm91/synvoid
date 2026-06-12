@@ -11,6 +11,7 @@ use http_body_util::BodyExt;
 use metrics::counter;
 
 use synvoid_config::{HttpConfig, MainConfig};
+use synvoid_metrics::StallPermit;
 use synvoid_waf::WafDecision;
 
 use crate::response_builder::{build_response_with_alt_svc, build_response_with_cookie};
@@ -61,10 +62,6 @@ pub async fn resolve_full_request_waf_decision<
     BlockedEgressFn,
     ChallengedFn,
     ElapsedFn,
-    StallCountFn,
-    StallRejectFn,
-    StallStartFn,
-    StallEndFn,
     BlockRenderFn,
     TarpitRenderFn,
 >(
@@ -79,10 +76,6 @@ pub async fn resolve_full_request_waf_decision<
     mut on_blocked_egress: BlockedEgressFn,
     mut on_challenged: ChallengedFn,
     mut elapsed_ms: ElapsedFn,
-    mut get_active_stalled_requests: StallCountFn,
-    mut record_stall_rejected: StallRejectFn,
-    mut record_stall_start: StallStartFn,
-    mut record_stall_end: StallEndFn,
     mut render_block_body: BlockRenderFn,
     mut generate_tarpit_html: TarpitRenderFn,
 ) -> FullWafDecisionOutcome
@@ -93,10 +86,6 @@ where
     BlockedEgressFn: FnMut(u64),
     ChallengedFn: FnMut(u64),
     ElapsedFn: FnMut() -> u64,
-    StallCountFn: FnMut() -> u64,
-    StallRejectFn: FnMut(),
-    StallStartFn: FnMut(),
-    StallEndFn: FnMut(),
     BlockRenderFn: FnMut(u16, &str) -> String,
     TarpitRenderFn: FnMut(&str) -> String,
 {
@@ -113,28 +102,27 @@ where
         }
         WafDecision::Stall => {
             counter!("synvoid.http.stalled").increment(1);
-            let current_stalled = get_active_stalled_requests();
-            if current_stalled >= http_config.max_stalled_requests as u64 {
-                record_stall_rejected();
-                tracing::warn!(
-                    client_ip = %client_ip,
-                    current_stalled = current_stalled,
-                    max_stalled = http_config.max_stalled_requests,
-                    "Stall rejected due to concurrency cap"
-                );
-                return FullWafDecisionOutcome::Respond(build_response_with_alt_svc(
-                    429,
-                    "Too many requests".to_string(),
-                    "text/plain",
-                    &alt_svc,
-                    &main_config,
-                ));
-            }
-            record_stall_start();
+            let permit = match StallPermit::try_new(http_config.max_stalled_requests) {
+                Some(p) => p,
+                None => {
+                    tracing::warn!(
+                        client_ip = %client_ip,
+                        max_stalled = http_config.max_stalled_requests,
+                        "Stall rejected due to concurrency cap"
+                    );
+                    return FullWafDecisionOutcome::Respond(build_response_with_alt_svc(
+                        429,
+                        "Too many requests".to_string(),
+                        "text/plain",
+                        &alt_svc,
+                        &main_config,
+                    ));
+                }
+            };
             let stall_timeout = Duration::from_secs(http_config.waf_stall_timeout_secs);
             tokio::select! {
                 _ = tokio::time::sleep(stall_timeout) => {
-                    record_stall_end();
+                    drop(permit);
                     let latency_ms = stall_timeout.as_millis() as u64;
                     on_log(408, latency_ms);
                     FullWafDecisionOutcome::Respond(build_response_with_alt_svc(
