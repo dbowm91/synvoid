@@ -175,12 +175,14 @@ where
         )
         .await;
 
+    let http_config = &main_config.http;
     let waf_dispatch_outcome = maybe_handle_http3_waf_decision(
         waf_decision,
         host,
         request_stream,
         bandwidth,
-        Duration::from_secs(10),
+        Duration::from_secs(http_config.waf_stall_timeout_secs),
+        http_config.max_stalled_requests,
         || record_stall_start(),
         || record_stall_end(),
         |tar_path| waf.generate_tarpit_response(tar_path),

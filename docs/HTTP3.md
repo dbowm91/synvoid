@@ -115,6 +115,7 @@ synvoid_http3_request_errors
 # Response types
 synvoid_http3_responses
 synvoid_http3_requests_stalled
+synvoid_http3_requests_stall_capped
 synvoid_http3_requests_blocked
 synvoid_http3_requests_challenged
 synvoid_http3_requests_tarpitted

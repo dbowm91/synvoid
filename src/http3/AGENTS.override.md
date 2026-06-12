@@ -63,7 +63,7 @@ cargo test --test http3_waf_boundary_guard
 | `Challenge` | 200 HTML + Alt-Svc | 200 HTML | ⚠️ Alt-Svc missing |
 | `ChallengeWithCookie` | Set-Cookie (SameSite=Strict) | Set-Cookie (SameSite=Strict; HttpOnly) | ⚠️ HttpOnly differs |
 | `Tarpit` | 200 tarpit HTML | 200 tarpit HTML | ✅ |
-| `Stall` | Concurrency-capped (429 on cap) | Uncapped sleep | ⚠️ Concurrency differs |
+| `Stall` | Concurrency-capped (429 on cap) | Concurrency-capped (429 on cap) | ✅ |
 
 ### Streaming Body WAF
 

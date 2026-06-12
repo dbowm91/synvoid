@@ -178,14 +178,13 @@ waf.check_request_full_owned(
 | `Challenge(_, html)` | 200 HTML body, Alt-Svc header | 200 HTML body | ⚠️ Alt-Svc missing in HTTP/3 |
 | `ChallengeWithCookie` | 200 HTML + Set-Cookie (SameSite=Strict) | 200 HTML + Set-Cookie (SameSite=Strict; HttpOnly) | ⚠️ HttpOnly differs |
 | `Tarpit(path)` | 200 tarpit HTML body | 200 tarpit HTML body | ✅ |
-| `Stall` | Concurrency-capped (429 on cap) | Uncapped sleep (no 429 on cap) | ⚠️ Concurrency differs |
+| `Stall` | Concurrency-capped (429 on cap) | Concurrency-capped (429 on cap) | ✅ |
 
 ### Known Parity Gaps (Accepted)
 
 1. **Block response format**: HTTP/1/2 returns themed HTML; HTTP/3 returns JSON. HTTP/3 clients typically don't render HTML error pages.
-2. **Stall concurrency**: HTTP/1/2 caps concurrent stalls via `max_stalled_requests`; HTTP/3 has no cap. Documented as follow-up.
-3. **Challenge cookie**: HTTP/3 adds `HttpOnly` flag; HTTP/1/2 does not. Intentional — HTTP/3 API clients don't need JS access to the cookie.
-4. **Alt-Svc header**: Only meaningful in HTTP/1/2 responses to advertise HTTP/3. Not applicable to HTTP/3 responses.
+2. **Challenge cookie**: HTTP/3 adds `HttpOnly` flag; HTTP/1/2 does not. Intentional — HTTP/3 API clients don't need JS access to the cookie.
+3. **Alt-Svc header**: Only meaningful in HTTP/1/2 responses to advertise HTTP/3. Not applicable to HTTP/3 responses.
 
 ---
 
@@ -238,7 +237,6 @@ The existing `tests/threat_intel_boundary_guard.rs` also covers `crates/synvoid-
 - Do not perform a large protocol rewrite.
 
 ### Future Work
-- **Stall concurrency cap for HTTP/3**: Add a bounded stall mechanism similar to HTTP/1/2's `max_stalled_requests`.
 - **Early WAF check for HTTP/3**: Consider a lightweight pre-routing check if HTTP/3 adoption grows for browser clients.
 - **Challenge path routes for HTTP/3**: If CSS challenge pages become relevant for HTTP/3 clients.
 - **Block response format parity**: Consider serving themed HTML blocks to HTTP/3 if browser clients become common.
