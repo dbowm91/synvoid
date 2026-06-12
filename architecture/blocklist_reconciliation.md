@@ -26,23 +26,23 @@ Each event log entry is assigned a monotonically increasing local sequence numbe
 
 ```rust
 struct BlocklistEventCursor {
-    since_sequence: u64,  // Events with sequence > since_sequence are returned
-    max_events: u32,      // Maximum events per response
+    since_sequence: Option<u64>,  // None = from oldest retained; Some(n) = events > n
+    max_events: u32,              // Maximum events per response
 }
 ```
 
-The cursor is source-local, not globally comparable. Each node's sequence starts at 0 and increments with each appended event.
+The cursor is source-local, not globally comparable. Each node's sequence starts at 0 and increments with each appended event. `since_sequence: None` replays from the oldest retained event (not necessarily from genesis). `since_sequence: Some(n)` returns events with sequence `> n` (exclusive cursor).
 
 ### Catchup Messages
 
 Two new mesh message variants (proto fields 179/180):
 
-- `BlocklistCatchupRequest`: requesting node, since_sequence, since_timestamp, max_events
+- `BlocklistCatchupRequest`: requesting node, `since_sequence` (optional — `None` means from start), since_timestamp, max_events
 - `BlocklistCatchupResponse`: events, history_complete, latest_sequence, latest_timestamp, snapshot_required
 
 ### Catchup Flow
 
-1. Peer connects/reconnects → `dht_on_peer_connected()` sends `BlocklistCatchupRequest` with `since_sequence: 0` (full catchup on connect)
+1. Peer connects/reconnects → `dht_on_peer_connected()` sends `BlocklistCatchupRequest` with `since_sequence: None` (from start — replay all retained events)
 2. Remote node queries its `BlocklistEventLog` via `BlockStore::query_blocklist_catchup()`
 3. Remote responds with `BlocklistCatchupResponse` containing matching events
 4. Receiver applies each event via `BlockStore::apply_blocklist_event()`
@@ -65,6 +65,8 @@ The supervisor retains a separate bounded event log (1,000 events) for IPC repla
 | Events apply through `apply_blocklist_event()` | ✅ Iteration 48 |
 | History gaps detected and surfaced | ✅ Iteration 48 |
 | Snapshot fallback documented | ✅ Iteration 48 |
+| From-start catchup replays first retained event | ✅ Iteration 49 |
+| Exclusive since_sequence cursor remains available | ✅ Iteration 49 |
 | Request/WAF paths remain local-only | ✅ Invariant |
 | Raft remains out of operational blocklist | ✅ Invariant |
 
@@ -105,7 +107,7 @@ Returns:
 ### Types
 
 - `BlocklistEventLog`: bounded VecDeque + HashSet in `synvoid-block-store`
-- `BlocklistEventCursor`: query cursor with since_sequence + max_events
+- `BlocklistEventCursor`: query cursor with `since_sequence: Option<u64>` + max_events. `None` = from oldest retained; `Some(n)` = exclusive after n.
 - `BlocklistCatchupResult`: query result with events, history_complete, snapshot_required
 - `BlocklistEventData`: wire-format event data in `synvoid-mesh`
 

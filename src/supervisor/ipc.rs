@@ -745,7 +745,7 @@ async fn handle_worker_connection_internal(
                 // Replay recent blocklist events to the newly connected worker.
                 if is_worker_ready {
                     process_manager
-                        .replay_blocklist_events_to_worker(&mut ipc, 0)
+                        .replay_blocklist_events_to_worker(&mut ipc, None)
                         .await;
                 }
 

@@ -177,11 +177,19 @@ pub struct BlocklistEventLog {
 }
 
 /// Cursor for replaying events from the log.
+///
+/// `since_sequence` controls the starting point:
+/// - `None`: replay from the oldest retained event (from start).
+/// - `Some(n)`: replay events with sequence `> n` (exclusive cursor).
+///
+/// "From start" means from the oldest retained event, not necessarily from
+/// genesis. If the caller needs genesis-complete history, it must use a
+/// separate snapshot/digest path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlocklistEventCursor {
-    /// The sequence number to replay from (exclusive). Events with
-    /// sequence > `since_sequence` are returned.
-    pub since_sequence: u64,
+    /// The sequence number to replay from (exclusive), or `None` to replay
+    /// from the oldest retained event.
+    pub since_sequence: Option<u64>,
     /// Optional maximum number of events to return.
     pub max_events: u32,
 }
@@ -251,8 +259,11 @@ impl BlocklistEventLog {
 
     /// Query events since a given cursor.
     ///
-    /// Returns events with local sequence > `cursor.since_sequence`, up to
-    /// `cursor.max_events`.
+    /// - `since_sequence: None` returns events from the oldest retained event.
+    /// - `since_sequence: Some(n)` returns events with sequence `> n`.
+    ///
+    /// Up to `cursor.max_events` events are returned. "From start" means from
+    /// the oldest retained event, not necessarily from genesis.
     pub fn query_since(&self, cursor: &BlocklistEventCursor) -> BlocklistCatchupResult {
         let max = cursor.max_events as usize;
         let total = self.events.len();
@@ -261,7 +272,7 @@ impl BlocklistEventLog {
             return BlocklistCatchupResult {
                 events: Vec::new(),
                 history_complete: true,
-                latest_sequence: cursor.since_sequence,
+                latest_sequence: cursor.since_sequence.unwrap_or(0),
                 latest_timestamp: 0,
                 snapshot_required: false,
             };
@@ -269,37 +280,59 @@ impl BlocklistEventLog {
 
         // The first event in the deque has sequence `oldest_seq`.
         let oldest_seq = self.next_sequence.saturating_sub(total as u64);
-        let since = cursor.since_sequence;
 
-        // Check for gap: if requested cursor is before our oldest retained event
-        // and we're not starting from 0, history is incomplete.
-        let evicted_gap = since + 1 < oldest_seq && oldest_seq > 0;
-
-        // Compute the index of the first event with sequence > since.
-        let first_idx = if since < oldest_seq {
-            0
-        } else {
-            let offset = (since - oldest_seq + 1) as usize;
-            offset.min(total)
-        };
-
-        let mut events = Vec::new();
-        for i in first_idx..total {
-            if events.len() >= max {
-                break;
+        match cursor.since_sequence {
+            None => {
+                // From start: return all retained events starting at index 0.
+                let mut events = Vec::new();
+                for i in 0..total {
+                    if events.len() >= max {
+                        break;
+                    }
+                    events.push(self.events[i].clone());
+                }
+                let latest_sequence = self.next_sequence.saturating_sub(1);
+                let latest_timestamp = self.events.back().map(|e| e.timestamp).unwrap_or(0);
+                BlocklistCatchupResult {
+                    events,
+                    history_complete: true,
+                    latest_sequence,
+                    latest_timestamp,
+                    snapshot_required: false,
+                }
             }
-            events.push(self.events[i].clone());
-        }
+            Some(since) => {
+                // Check for gap: requested cursor is before our oldest retained
+                // event, meaning some history has been evicted.
+                let evicted_gap = since + 1 < oldest_seq && oldest_seq > 0;
 
-        let latest_sequence = self.next_sequence.saturating_sub(1);
-        let latest_timestamp = self.events.back().map(|e| e.timestamp).unwrap_or(0);
+                // Compute the index of the first event with sequence > since.
+                let first_idx = if since < oldest_seq {
+                    0
+                } else {
+                    let offset = (since - oldest_seq + 1) as usize;
+                    offset.min(total)
+                };
 
-        BlocklistCatchupResult {
-            events,
-            history_complete: !evicted_gap,
-            latest_sequence,
-            latest_timestamp,
-            snapshot_required: evicted_gap,
+                let mut events = Vec::new();
+                for i in first_idx..total {
+                    if events.len() >= max {
+                        break;
+                    }
+                    events.push(self.events[i].clone());
+                }
+
+                let latest_sequence = self.next_sequence.saturating_sub(1);
+                let latest_timestamp = self.events.back().map(|e| e.timestamp).unwrap_or(0);
+
+                BlocklistCatchupResult {
+                    events,
+                    history_complete: !evicted_gap,
+                    latest_sequence,
+                    latest_timestamp,
+                    snapshot_required: evicted_gap,
+                }
+            }
         }
     }
 
@@ -3529,11 +3562,20 @@ mod tests {
         assert_eq!(seq, Some(0));
         assert_eq!(log.len(), 1);
 
+        // From start: returns the event at sequence 0.
         let result = log.query_since(&BlocklistEventCursor {
-            since_sequence: 0,
+            since_sequence: None,
             max_events: 10,
         });
-        assert_eq!(result.events.len(), 0); // seq 0 is not > 0
+        assert_eq!(result.events.len(), 1);
+        assert!(result.history_complete);
+
+        // After sequence 0: skips event at sequence 0.
+        let result = log.query_since(&BlocklistEventCursor {
+            since_sequence: Some(0),
+            max_events: 10,
+        });
+        assert_eq!(result.events.len(), 0);
         assert!(result.history_complete);
     }
 
@@ -3566,8 +3608,9 @@ mod tests {
         }
         assert_eq!(log.len(), 3);
         // The oldest two (evt-0, evt-1) should have been evicted.
+        // From start returns all 3 retained events.
         let result = log.query_since(&BlocklistEventCursor {
-            since_sequence: 0,
+            since_sequence: None,
             max_events: 100,
         });
         assert_eq!(result.events.len(), 3);
@@ -3590,9 +3633,18 @@ mod tests {
             .with_event_id(format!("evt-{}", i));
             log.append(event);
         }
-        // Log has sequences 2,3,4. Request since=0 should detect gap.
+        // Log has sequences 2,3,4. From start returns all 3 retained (no gap from start).
         let result = log.query_since(&BlocklistEventCursor {
-            since_sequence: 0,
+            since_sequence: None,
+            max_events: 100,
+        });
+        assert!(result.history_complete);
+        assert!(!result.snapshot_required);
+        assert_eq!(result.events.len(), 3);
+
+        // After sequence 0 detects the gap (seq 0,1 evicted).
+        let result = log.query_since(&BlocklistEventCursor {
+            since_sequence: Some(0),
             max_events: 100,
         });
         assert!(!result.history_complete);
@@ -3614,9 +3666,9 @@ mod tests {
             .with_event_id(format!("evt-{}", i));
             log.append(event);
         }
-        // All 5 events retained. Request since=2 should return events 3,4.
+        // All 5 events retained. After seq 2 returns events 3,4.
         let result = log.query_since(&BlocklistEventCursor {
-            since_sequence: 2,
+            since_sequence: Some(2),
             max_events: 100,
         });
         assert!(result.history_complete);
@@ -3640,7 +3692,7 @@ mod tests {
             log.append(event);
         }
         let result = log.query_since(&BlocklistEventCursor {
-            since_sequence: 0,
+            since_sequence: None,
             max_events: 3,
         });
         assert_eq!(result.events.len(), 3);
@@ -3698,18 +3750,28 @@ mod tests {
         assert_eq!(log.len(), 2);
         assert_eq!(log.next_sequence(), 2);
 
-        // Query since seq 0 returns events with seq > 0 (just the unblock at seq 1).
+        // From start returns both events.
         let result = log.query_since(&BlocklistEventCursor {
-            since_sequence: 0,
+            since_sequence: None,
+            max_events: 10,
+        });
+        assert_eq!(result.events.len(), 2);
+        assert_eq!(result.events[0].operation, BlocklistOperation::Block);
+        assert_eq!(result.events[1].operation, BlocklistOperation::Unblock);
+        assert!(result.history_complete);
+
+        // After seq 0 returns just the unblock at seq 1.
+        let result = log.query_since(&BlocklistEventCursor {
+            since_sequence: Some(0),
             max_events: 10,
         });
         assert_eq!(result.events.len(), 1);
         assert_eq!(result.events[0].operation, BlocklistOperation::Unblock);
         assert!(result.history_complete);
 
-        // Query since seq 1 returns nothing (no events with seq > 1).
+        // After seq 1 returns nothing (no events with seq > 1).
         let result = log.query_since(&BlocklistEventCursor {
-            since_sequence: 1,
+            since_sequence: Some(1),
             max_events: 10,
         });
         assert_eq!(result.events.len(), 0);
@@ -3814,9 +3876,9 @@ mod tests {
             log.append(event);
         }
 
-        // Query within retained range — since seq 1 returns events at seq 2 (evt-2).
+        // Query within retained range — after seq 1 returns event at seq 2 (evt-2).
         let result = log.query_since(&BlocklistEventCursor {
-            since_sequence: 1,
+            since_sequence: Some(1),
             max_events: 10,
         });
         assert!(result.history_complete);
@@ -3836,9 +3898,17 @@ mod tests {
             log.append(event);
         }
 
-        // Now query from early sequence — should detect gap.
+        // From start: no gap detected (returns all retained from oldest).
         let result = log.query_since(&BlocklistEventCursor {
-            since_sequence: 0,
+            since_sequence: None,
+            max_events: 10,
+        });
+        assert!(result.history_complete);
+        assert!(!result.snapshot_required);
+
+        // After seq 0: gap detected (seq 0,1 evicted).
+        let result = log.query_since(&BlocklistEventCursor {
+            since_sequence: Some(0),
             max_events: 10,
         });
         assert!(!result.history_complete);
@@ -3849,7 +3919,7 @@ mod tests {
     fn test_blocklist_event_log_empty_query() {
         let log = BlocklistEventLog::new(100);
         let result = log.query_since(&BlocklistEventCursor {
-            since_sequence: 0,
+            since_sequence: None,
             max_events: 10,
         });
         assert!(result.history_complete);
@@ -3875,30 +3945,29 @@ mod tests {
             log.append(event);
         }
 
-        // Query at exact sequence boundaries — since seq 1 returns events at seq 2.
+        // After seq 1 returns events at seq 2.
         let result = log.query_since(&BlocklistEventCursor {
-            since_sequence: 1,
+            since_sequence: Some(1),
             max_events: 3,
         });
         assert_eq!(result.events.len(), 1);
         assert!(result.history_complete);
 
-        // Query at the last sequence — should return nothing.
+        // At the last sequence — should return nothing.
         let result = log.query_since(&BlocklistEventCursor {
-            since_sequence: 2,
+            since_sequence: Some(2),
             max_events: 10,
         });
         assert_eq!(result.events.len(), 0);
         assert!(result.history_complete);
 
-        // Query at sequence before oldest — should detect gap only if oldest_seq > 0.
-        // With 3 events at seq 0,1,2 and since=0, oldest_seq=0, no gap.
+        // From start returns all 3 retained events (no gap since oldest_seq=0).
         let result = log.query_since(&BlocklistEventCursor {
-            since_sequence: 0,
+            since_sequence: None,
             max_events: 10,
         });
         assert!(result.history_complete);
-        assert_eq!(result.events.len(), 2); // seq 1 and 2
+        assert_eq!(result.events.len(), 3);
     }
 
     // === Apply replay tests ===
@@ -4090,5 +4159,137 @@ mod tests {
         assert_eq!(decoded.version, Some(10));
         assert_eq!(decoded.event_id, Some("all-fields-1".to_string()));
         assert_eq!(decoded.source_node, Some("node-1".to_string()));
+    }
+
+    // === Iteration 49: Cursor semantics tests ===
+
+    #[test]
+    fn from_start_includes_sequence_zero() {
+        let mut log = BlocklistEventLog::new(100);
+        let event = BlocklistEvent::block_ip(
+            "10.0.0.1", "test", "global", BlockProvenance::default(), 100,
+        )
+        .with_event_id("evt-0".to_string());
+        log.append(event);
+
+        let result = log.query_since(&BlocklistEventCursor {
+            since_sequence: None,
+            max_events: 10,
+        });
+        assert_eq!(result.events.len(), 1);
+        assert_eq!(result.events[0].event_id.as_deref(), Some("evt-0"));
+        assert!(result.history_complete);
+        assert!(!result.snapshot_required);
+    }
+
+    #[test]
+    fn after_sequence_zero_skips_sequence_zero() {
+        let mut log = BlocklistEventLog::new(100);
+        let e1 = BlocklistEvent::block_ip(
+            "10.0.0.1", "test", "global", BlockProvenance::default(), 100,
+        )
+        .with_event_id("evt-0".to_string());
+        let e2 = BlocklistEvent::block_ip(
+            "10.0.0.2", "test", "global", BlockProvenance::default(), 200,
+        )
+        .with_event_id("evt-1".to_string());
+        log.append(e1);
+        log.append(e2);
+
+        let result = log.query_since(&BlocklistEventCursor {
+            since_sequence: Some(0),
+            max_events: 10,
+        });
+        assert_eq!(result.events.len(), 1);
+        assert_eq!(result.events[0].event_id.as_deref(), Some("evt-1"));
+    }
+
+    #[test]
+    fn from_start_empty_log_complete() {
+        let log = BlocklistEventLog::new(100);
+        let result = log.query_since(&BlocklistEventCursor {
+            since_sequence: None,
+            max_events: 10,
+        });
+        assert!(result.history_complete);
+        assert!(!result.snapshot_required);
+        assert_eq!(result.events.len(), 0);
+        assert_eq!(result.latest_timestamp, 0);
+    }
+
+    #[test]
+    fn after_evicted_sequence_sets_snapshot_required() {
+        let mut log = BlocklistEventLog::new(3);
+        for i in 0..5u64 {
+            let event = BlocklistEvent::block_ip(
+                &format!("10.0.0.{}", i),
+                "test",
+                "global",
+                BlockProvenance::default(),
+                i * 100,
+            )
+            .with_event_id(format!("evt-{}", i));
+            log.append(event);
+        }
+        // Log retains sequences 2,3,4. Requesting after seq 0 → gap detected.
+        let result = log.query_since(&BlocklistEventCursor {
+            since_sequence: Some(0),
+            max_events: 100,
+        });
+        assert!(result.snapshot_required);
+        assert!(!result.history_complete);
+        assert_eq!(result.events.len(), 3);
+    }
+
+    #[test]
+    fn max_events_limits_from_start() {
+        let mut log = BlocklistEventLog::new(100);
+        for i in 0..10u64 {
+            let event = BlocklistEvent::block_ip(
+                &format!("10.0.0.{}", i),
+                "test",
+                "global",
+                BlockProvenance::default(),
+                i * 100,
+            )
+            .with_event_id(format!("evt-{}", i));
+            log.append(event);
+        }
+        let result = log.query_since(&BlocklistEventCursor {
+            since_sequence: None,
+            max_events: 3,
+        });
+        assert_eq!(result.events.len(), 3);
+        assert_eq!(result.events[0].event_id.as_deref(), Some("evt-0"));
+        assert_eq!(result.events[2].event_id.as_deref(), Some("evt-2"));
+    }
+
+    #[test]
+    fn latest_sequence_reports_newest_sequence() {
+        let mut log = BlocklistEventLog::new(100);
+        for i in 0..5u64 {
+            let event = BlocklistEvent::block_ip(
+                &format!("10.0.0.{}", i),
+                "test",
+                "global",
+                BlockProvenance::default(),
+                i * 100,
+            )
+            .with_event_id(format!("evt-{}", i));
+            log.append(event);
+        }
+        // From start: latest_sequence should be 4 (last assigned).
+        let result = log.query_since(&BlocklistEventCursor {
+            since_sequence: None,
+            max_events: 100,
+        });
+        assert_eq!(result.latest_sequence, 4);
+
+        // After seq 2: latest_sequence should still be 4.
+        let result = log.query_since(&BlocklistEventCursor {
+            since_sequence: Some(2),
+            max_events: 100,
+        });
+        assert_eq!(result.latest_sequence, 4);
     }
 }

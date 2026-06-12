@@ -276,7 +276,7 @@ impl MeshTransport {
                 if let Some(ref ti) = self.threat_intel {
                     let bs = ti.get_block_store();
                     let cursor = crate::stubs::block_store::BlocklistEventCursor {
-                        since_sequence: since_sequence.unwrap_or(0),
+                        since_sequence,
                         max_events,
                     };
                     let result = bs.query_blocklist_catchup(&cursor);

@@ -94,7 +94,7 @@ impl IpcBlocklistEventLog {
         Some(seq)
     }
 
-    fn query_since(&self, since_sequence: u64, max_events: usize) -> IpcBlocklistCatchupResult {
+    fn query_since(&self, since_sequence: Option<u64>, max_events: usize) -> IpcBlocklistCatchupResult {
         let total = self.events.len();
         if total == 0 {
             return IpcBlocklistCatchupResult {
@@ -103,21 +103,37 @@ impl IpcBlocklistEventLog {
             };
         }
         let oldest_seq = self.next_sequence.saturating_sub(total as u64);
-        let evicted_gap = since_sequence + 1 < oldest_seq && oldest_seq > 0;
-        let first_idx = if since_sequence < oldest_seq {
-            0
-        } else {
-            let offset = (since_sequence + 1 - oldest_seq) as usize;
-            offset.min(total)
-        };
-        let events: Vec<_> = self.events
-            .range(first_idx..)
-            .take(max_events)
-            .cloned()
-            .collect();
-        IpcBlocklistCatchupResult {
-            events,
-            history_complete: !evicted_gap,
+        match since_sequence {
+            None => {
+                // From start: return all retained events.
+                let events: Vec<_> = self.events
+                    .range(0..)
+                    .take(max_events)
+                    .cloned()
+                    .collect();
+                IpcBlocklistCatchupResult {
+                    events,
+                    history_complete: true,
+                }
+            }
+            Some(since) => {
+                let evicted_gap = since + 1 < oldest_seq && oldest_seq > 0;
+                let first_idx = if since < oldest_seq {
+                    0
+                } else {
+                    let offset = (since + 1 - oldest_seq) as usize;
+                    offset.min(total)
+                };
+                let events: Vec<_> = self.events
+                    .range(first_idx..)
+                    .take(max_events)
+                    .cloned()
+                    .collect();
+                IpcBlocklistCatchupResult {
+                    events,
+                    history_complete: !evicted_gap,
+                }
+            }
         }
     }
 
@@ -1465,7 +1481,7 @@ impl ProcessManager {
     pub async fn replay_blocklist_events_to_worker(
         &self,
         ipc: &mut crate::ipc_transport::IpcStream,
-        since_sequence: u64,
+        since_sequence: Option<u64>,
     ) {
         let entries = {
             let log = self.blocklist_event_log.read();

@@ -130,9 +130,11 @@ Clock skew between nodes is a known caveat — nodes with significantly skewed c
 - Workers deserialize and apply via `apply_blocklist_event()`
 - Backward compatible: old `BlocklistUpdate`/`BlocklistResponse` still work
 
-## Offline-Peer Catchup (Iteration 48)
+## Offline-Peer Catchup (Iteration 48, Cursor Fix Iteration 49)
 
 Reconnecting peers can now request recent blocklist events via `BlocklistCatchupRequest`/`BlocklistCatchupResponse` mesh messages. The event log is bounded (10,000 events default) and in-memory only. History gaps are detected and surfaced as `snapshot_required: true` in the response. See `architecture/blocklist_reconciliation.md` for full details.
+
+Iteration 49 fixed cursor semantics: `since_sequence: None` replays from the oldest retained event (including sequence 0), while `since_sequence: Some(n)` returns events with sequence `> n`. The previous `since_sequence: 0` for "full catchup" silently skipped event at sequence 0.
 
 ## Future Work
 

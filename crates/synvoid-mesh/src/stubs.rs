@@ -229,9 +229,13 @@ pub mod block_store {
     pub use synvoid_core::block_store::{BlockProvenance, BlockProvenanceKind};
 
     /// Cursor for replaying events from the log (stub for mesh crate independence).
+    ///
+    /// `since_sequence` controls the starting point:
+    /// - `None`: replay from the oldest retained event (from start).
+    /// - `Some(n)`: replay events with sequence `> n` (exclusive cursor).
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct BlocklistEventCursor {
-        pub since_sequence: u64,
+        pub since_sequence: Option<u64>,
         pub max_events: u32,
     }
 

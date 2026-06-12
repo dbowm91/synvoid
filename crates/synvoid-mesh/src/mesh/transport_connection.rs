@@ -285,7 +285,7 @@ impl MeshTransport {
         {
             let catchup_request = MeshMessage::BlocklistCatchupRequest {
                 requesting_node: self.config.node_id().into(),
-                since_sequence: Some(0),
+                since_sequence: None, // From start: replay all retained events
                 since_timestamp: None,
                 max_events: 500,
             };
