@@ -90,6 +90,8 @@ Clock skew between nodes is a known caveat — nodes with significantly skewed c
 
 **Iteration 52**: Per-target state is now persisted to `blocklist_target_state.json` and survives restarts. On `BlockStore::new()`, expired records are filtered out and `TargetStateCache` is hydrated from the persisted file. `shutdown()` persists synchronously before signaling the background task. `BlocklistTargetStateRecord` stores `target_kind`, `site_scope`, `identifier`, `last_operation`, `timestamp`, `version`, `event_id`, `source_node`, `provenance`, `recorded_at`, and `expires_at` (set to `now + ttl_secs` at persist time). The in-memory `TargetStateCache` (10k capacity, FIFO eviction) is still the primary source during runtime; persistence provides restart-safe warm start only.
 
+**Iteration 53**: Persisted target-state records now preserve origin provenance and source node metadata. Event-applied target state carries `source_node` and `provenance` from the originating `BlocklistEvent`. Direct block APIs (`block_ip_with_provenance`, `block_mesh_id_with_provenance`) pass their provenance through to target state. Direct unblock paths without explicit provenance use a documented compatibility default (`LegacyUnknown`). Event-ID dedupe (`SeenEventCache`) remains in-memory only — no persistence. Stale events do not overwrite existing target-state provenance/source.
+
 ## Current Limitations
 
 | Limitation | Impact | Mitigation |

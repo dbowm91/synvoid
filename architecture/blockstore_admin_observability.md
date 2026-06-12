@@ -118,7 +118,7 @@ If request-path mesh-ID enforcement is desired in the future (Outcome B), a trus
 - Loaded by `BlockStore::new()` — expired records filtered out, `TargetStateCache` hydrated
 - Configurable via `BlocklistLimitsConfig`: `target_state_persist` (bool, default true), `target_state_max_records` (usize, default 100,000), `target_state_ttl_secs` (u64, default 604800 = 7 days)
 - File permissions: `0o600`; uses same atomic rename pattern (`.tmp` then rename) as `blocks.json` / `mesh_blocks.json`
-- `BlocklistTargetStateRecord` stores: `target_kind`, `site_scope`, `identifier`, `last_operation`, `timestamp`, `version`, `event_id`, `source_node`, `provenance`, `recorded_at`, `expires_at`
+- `BlocklistTargetStateRecord` stores: `target_kind`, `site_scope`, `identifier`, `last_operation`, `timestamp`, `version`, `event_id`, `source_node`, `provenance`, `recorded_at`, `expires_at` — origin provenance and source node are now preserved through persist/reload (Iteration 53)
 - `expires_at` set to `now + ttl_secs` at persist time; expired records filtered on load
 - In-memory `TargetStateCache` capacity remains 10,000 (FIFO eviction) — persistence provides restart-safe warm start
 
@@ -146,7 +146,7 @@ Admin unban now propagates to mesh peers and workers:
 - `BlocklistEvent` supports distributed fields: `event_id`, `source_node`, `ttl_secs`, `version`
 - Event ID format: `{source_node}:{timestamp}:{operation}:{target_kind}:{site_scope}:{identifier_hash}`
 - **Dedupe**: FIFO `SeenEventCache` (HashSet + VecDeque), capped at 10,000. Evicts oldest one-by-one, not full-clear.
-- **Stale suppression**: Per-target `TargetStateCache` tracks last-applied event timestamp/version. Older events return `IgnoredStale`. **Persisted** to `blocklist_target_state.json` on shutdown; hydrated on startup (Iteration 52).
+- **Stale suppression**: Per-target `TargetStateCache` tracks last-applied event timestamp/version. Older events return `IgnoredStale`. **Persisted** to `blocklist_target_state.json` on shutdown; hydrated on startup (Iteration 52). Persisted records now preserve origin `source_node` and `provenance` metadata (Iteration 53).
 - **Apply pipeline**: validate → dedup → stale check → mutate → record state
 - **IPC provenance** (Iteration 50): `BlocklistEventUpdate` carries full `BlocklistEvent` JSON with `BlockProvenance`. Admin `ban_ip`/`ban_mesh_id` now also broadcast to workers. `BlockEntryData`/`MeshBlockEntryData` include optional `provenance_kind`/`provenance_source` fields; `ipc_data_to_provenance()` maps `None` to `SupervisorSync`. See `architecture/blocklist_provenance_preservation.md`.
 - See `architecture/blocklist_remove_consistency.md` for full consistency model

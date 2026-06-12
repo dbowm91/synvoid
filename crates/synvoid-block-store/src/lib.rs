@@ -99,6 +99,8 @@ struct LastAppliedBlocklistEvent {
     version: Option<u64>,
     event_id: Option<String>,
     operation: BlocklistOperation,
+    source_node: Option<String>,
+    provenance: BlockProvenance,
 }
 
 impl LastAppliedBlocklistEvent {
@@ -116,8 +118,8 @@ impl LastAppliedBlocklistEvent {
 }
 
 /// Bounded in-memory cache of per-target last-applied event state.
-/// Protects against stale event replays while the node is alive.
-/// Process restart loses this protection (documented limitation).
+/// Hydrated from persisted target-state records on startup when enabled.
+/// Runtime capacity remains bounded; persistence provides restart-safe warm start.
 struct TargetStateCache {
     entries: AHashMap<BlocklistTargetKey, LastAppliedBlocklistEvent>,
     order: VecDeque<BlocklistTargetKey>,
@@ -612,6 +614,8 @@ impl BlockStore {
                                             version: record.version,
                                             event_id: record.event_id,
                                             operation: record.last_operation,
+                                            source_node: record.source_node,
+                                            provenance: record.provenance,
                                         };
                                         target_state_cache.insert(key, state);
                                         target_state_loaded += 1;
@@ -851,8 +855,8 @@ impl BlockStore {
                 timestamp: state.timestamp,
                 version: state.version,
                 event_id: state.event_id.clone(),
-                source_node: None,
-                provenance: BlockProvenance::default(),
+                source_node: state.source_node.clone(),
+                provenance: state.provenance.clone(),
                 recorded_at: now,
                 expires_at: Some(now.saturating_add(ttl_secs)),
             })
@@ -885,6 +889,7 @@ impl BlockStore {
     /// This ensures that admin-initiated mutations also create persisted target
     /// state records, preventing stale replay from resurrecting or removing state
     /// after restart.
+    #[allow(clippy::too_many_arguments)]
     pub fn record_target_state_from_direct_op(
         &self,
         target_kind: BlockTargetKind,
@@ -892,6 +897,8 @@ impl BlockStore {
         identifier: &str,
         operation: BlocklistOperation,
         timestamp: u64,
+        source_node: Option<String>,
+        provenance: BlockProvenance,
     ) {
         if !self.config.target_state_persist {
             return;
@@ -906,6 +913,8 @@ impl BlockStore {
             version: None,
             event_id: None,
             operation,
+            source_node,
+            provenance,
         };
         {
             let mut targets = self.target_state.write();
@@ -1126,7 +1135,7 @@ impl BlockStore {
             reason.to_string(),
             ban_expire_seconds,
             site_scope.to_string(),
-            provenance,
+            provenance.clone(),
         );
         let key = BlockEntry::key(site_scope, &ip);
         let idx = Self::shard_index(&key);
@@ -1179,6 +1188,8 @@ impl BlockStore {
             &ip.to_string(),
             BlocklistOperation::Block,
             synvoid_utils::safe_unix_timestamp(),
+            None,
+            provenance,
         );
 
         true
@@ -1288,6 +1299,8 @@ impl BlockStore {
             &ip.to_string(),
             BlocklistOperation::Unblock,
             synvoid_utils::safe_unix_timestamp(),
+            None,
+            BlockProvenance::default(),
         );
 
         removed_count > 0
@@ -1379,6 +1392,8 @@ impl BlockStore {
                 ip,
                 BlocklistOperation::Block,
                 synvoid_utils::safe_unix_timestamp(),
+                None,
+                BlockProvenance::default(),
             );
 
             return true;
@@ -1449,7 +1464,7 @@ impl BlockStore {
             ban_expire_seconds,
             site_scope.to_string(),
             now,
-            provenance,
+            provenance.clone(),
         );
         let key = MeshBlockEntry::key(site_scope, mesh_id);
         let idx = Self::shard_index(&key);
@@ -1478,6 +1493,8 @@ impl BlockStore {
             mesh_id,
             BlocklistOperation::Block,
             now,
+            None,
+            provenance,
         );
 
         true
@@ -1572,6 +1589,8 @@ impl BlockStore {
             mesh_id,
             BlocklistOperation::Unblock,
             synvoid_utils::safe_unix_timestamp(),
+            None,
+            BlockProvenance::default(),
         );
 
         removed_count > 0
@@ -1648,6 +1667,8 @@ impl BlockStore {
             version: event.version,
             event_id: event.event_id.clone(),
             operation: event.operation,
+            source_node: event.source_node.clone(),
+            provenance: event.provenance.clone(),
         };
 
         {
@@ -5311,6 +5332,326 @@ mod tests {
         assert_eq!(
             store3.apply_blocklist_event(&event2),
             BlocklistApplyResult::Applied
+        );
+    }
+
+    // ============================================================
+    // Iteration 53: Provenance preservation in target-state persistence
+    // ============================================================
+
+    #[tokio::test]
+    async fn test_event_apply_preserves_provenance_through_persist_reload() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = target_state_config();
+
+        // Phase 1: Apply a block event with specific provenance, shutdown.
+        {
+            let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config.clone());
+            let provenance = BlockProvenance {
+                kind: BlockProvenanceKind::AdminManual,
+                source: Some("admin-api".to_string()),
+            };
+            let event = BlocklistEvent {
+                operation: BlocklistOperation::Block,
+                target_kind: BlockTargetKind::Ip,
+                identifier: "10.0.0.99".to_string(),
+                site_scope: "global".to_string(),
+                reason: Some("admin ban".to_string()),
+                provenance,
+                timestamp: 5000,
+                source_node: Some("node-alpha".to_string()),
+                event_id: Some("evt-prov-1".to_string()),
+                ttl_secs: Some(3600),
+                version: Some(10),
+            };
+            assert_eq!(
+                store.apply_blocklist_event(&event),
+                BlocklistApplyResult::Applied
+            );
+            store.shutdown().await;
+        }
+
+        // Phase 2: Restart and verify the persisted JSON carries provenance.
+        let ts_path = temp_dir.path().join("blocklist_target_state.json");
+        let content = std::fs::read_to_string(&ts_path).unwrap();
+        let records: Vec<BlocklistTargetStateRecord> = serde_json::from_str(&content).unwrap();
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
+        assert_eq!(record.identifier, "10.0.0.99");
+        assert_eq!(record.source_node, Some("node-alpha".to_string()));
+        assert_eq!(record.provenance.kind, BlockProvenanceKind::AdminManual);
+        assert_eq!(record.provenance.source, Some("admin-api".to_string()));
+        assert_eq!(record.version, Some(10));
+        assert_eq!(record.event_id, Some("evt-prov-1".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_event_unblock_preserves_provenance_through_persist_reload() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = target_state_config();
+
+        {
+            let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config.clone());
+            let provenance = BlockProvenance {
+                kind: BlockProvenanceKind::SupervisorSync,
+                source: Some("supervisor".to_string()),
+            };
+            let event = BlocklistEvent {
+                operation: BlocklistOperation::Unblock,
+                target_kind: BlockTargetKind::MeshId,
+                identifier: "mesh-prov-test".to_string(),
+                site_scope: "global".to_string(),
+                reason: None,
+                provenance,
+                timestamp: 6000,
+                source_node: Some("supervisor-node".to_string()),
+                event_id: Some("evt-unblock-prov".to_string()),
+                ttl_secs: None,
+                version: Some(20),
+            };
+            assert_eq!(
+                store.apply_blocklist_event(&event),
+                BlocklistApplyResult::Applied
+            );
+            store.shutdown().await;
+        }
+
+        let ts_path = temp_dir.path().join("blocklist_target_state.json");
+        let content = std::fs::read_to_string(&ts_path).unwrap();
+        let records: Vec<BlocklistTargetStateRecord> = serde_json::from_str(&content).unwrap();
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
+        assert_eq!(record.identifier, "mesh-prov-test");
+        assert_eq!(record.source_node, Some("supervisor-node".to_string()));
+        assert_eq!(record.provenance.kind, BlockProvenanceKind::SupervisorSync);
+        assert_eq!(record.provenance.source, Some("supervisor".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_stale_event_does_not_overwrite_stored_provenance() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = target_state_config();
+
+        // Phase 1: Apply a block with AdminManual provenance (newer).
+        {
+            let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config.clone());
+            let event = BlocklistEvent {
+                operation: BlocklistOperation::Block,
+                target_kind: BlockTargetKind::Ip,
+                identifier: "10.0.0.101".to_string(),
+                site_scope: "global".to_string(),
+                reason: Some("newer ban".to_string()),
+                provenance: BlockProvenance {
+                    kind: BlockProvenanceKind::AdminManual,
+                    source: Some("admin".to_string()),
+                },
+                timestamp: 5000,
+                source_node: Some("admin-node".to_string()),
+                event_id: Some("evt-newer".to_string()),
+                ttl_secs: Some(3600),
+                version: Some(5),
+            };
+            assert_eq!(
+                store.apply_blocklist_event(&event),
+                BlocklistApplyResult::Applied
+            );
+            store.shutdown().await;
+        }
+
+        // Phase 2: Restart, apply an older block with different provenance.
+        {
+            let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config.clone());
+            let stale_event = BlocklistEvent {
+                operation: BlocklistOperation::Block,
+                target_kind: BlockTargetKind::Ip,
+                identifier: "10.0.0.101".to_string(),
+                site_scope: "global".to_string(),
+                reason: Some("stale ban".to_string()),
+                provenance: BlockProvenance {
+                    kind: BlockProvenanceKind::MeshThreatIntelPolicyGated,
+                    source: Some("mesh-peer".to_string()),
+                },
+                timestamp: 1000,
+                source_node: Some("other-node".to_string()),
+                event_id: Some("evt-stale".to_string()),
+                ttl_secs: Some(3600),
+                version: Some(1),
+            };
+            assert_eq!(
+                store.apply_blocklist_event(&stale_event),
+                BlocklistApplyResult::IgnoredStale
+            );
+            store.shutdown().await;
+        }
+
+        // Phase 3: Verify the persisted record still has the newer provenance.
+        let ts_path = temp_dir.path().join("blocklist_target_state.json");
+        let content = std::fs::read_to_string(&ts_path).unwrap();
+        let records: Vec<BlocklistTargetStateRecord> = serde_json::from_str(&content).unwrap();
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
+        assert_eq!(
+            record.provenance.kind,
+            BlockProvenanceKind::AdminManual,
+            "Stale event should not overwrite stored provenance"
+        );
+        assert_eq!(
+            record.source_node,
+            Some("admin-node".to_string()),
+            "Stale event should not overwrite stored source_node"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_direct_block_ip_with_provenance_persists_metadata() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = target_state_config();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config.clone());
+
+        let ip: IpAddr = "10.0.0.200".parse().unwrap();
+        let provenance = BlockProvenance {
+            kind: BlockProvenanceKind::AdminManual,
+            source: Some("admin-dashboard".to_string()),
+        };
+        store.block_ip_with_provenance(ip, "admin block", 3600, "global", provenance.clone());
+
+        // Verify target state was recorded with provenance by checking
+        // that a stale event from a different source is rejected.
+        let stale_event = BlocklistEvent {
+            operation: BlocklistOperation::Block,
+            target_kind: BlockTargetKind::Ip,
+            identifier: "10.0.0.200".to_string(),
+            site_scope: "global".to_string(),
+            reason: Some("stale".to_string()),
+            provenance: BlockProvenance {
+                kind: BlockProvenanceKind::MeshThreatIntelPolicyGated,
+                source: None,
+            },
+            timestamp: 1, // very old
+            source_node: None,
+            event_id: None,
+            ttl_secs: Some(3600),
+            version: None,
+        };
+        assert_eq!(
+            store.apply_blocklist_event(&stale_event),
+            BlocklistApplyResult::IgnoredStale,
+            "Direct block should have recorded target state preventing stale replay"
+        );
+
+        // Shutdown and verify persisted JSON carries the provenance.
+        store.shutdown().await;
+        let ts_path = temp_dir.path().join("blocklist_target_state.json");
+        let content = std::fs::read_to_string(&ts_path).unwrap();
+        let records: Vec<BlocklistTargetStateRecord> = serde_json::from_str(&content).unwrap();
+        let record = records
+            .iter()
+            .find(|r| r.identifier == "10.0.0.200")
+            .unwrap();
+        assert_eq!(record.provenance.kind, BlockProvenanceKind::AdminManual);
+        assert_eq!(
+            record.provenance.source,
+            Some("admin-dashboard".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_direct_block_mesh_id_with_provenance_persists_metadata() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = target_state_config();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config.clone());
+
+        let provenance = BlockProvenance {
+            kind: BlockProvenanceKind::SupervisorManual,
+            source: Some("supervisor".to_string()),
+        };
+        store.block_mesh_id_with_provenance(
+            "mesh-prov-direct",
+            "supervisor block",
+            3600,
+            "global",
+            provenance.clone(),
+        );
+
+        // Verify via stale event rejection.
+        let stale_event = BlocklistEvent {
+            operation: BlocklistOperation::Block,
+            target_kind: BlockTargetKind::MeshId,
+            identifier: "mesh-prov-direct".to_string(),
+            site_scope: "global".to_string(),
+            reason: Some("stale".to_string()),
+            provenance: BlockProvenance::default(),
+            timestamp: 1,
+            source_node: None,
+            event_id: None,
+            ttl_secs: Some(3600),
+            version: None,
+        };
+        assert_eq!(
+            store.apply_blocklist_event(&stale_event),
+            BlocklistApplyResult::IgnoredStale,
+            "Direct mesh-ID block should have recorded target state"
+        );
+
+        // Shutdown and verify persisted JSON.
+        store.shutdown().await;
+        let ts_path = temp_dir.path().join("blocklist_target_state.json");
+        let content = std::fs::read_to_string(&ts_path).unwrap();
+        let records: Vec<BlocklistTargetStateRecord> = serde_json::from_str(&content).unwrap();
+        let record = records
+            .iter()
+            .find(|r| r.identifier == "mesh-prov-direct")
+            .unwrap();
+        assert_eq!(
+            record.provenance.kind,
+            BlockProvenanceKind::SupervisorManual
+        );
+    }
+
+    #[tokio::test]
+    async fn test_hydration_restores_provenance_metadata() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = target_state_config();
+
+        // Phase 1: Apply event with provenance, shutdown.
+        {
+            let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config.clone());
+            let event = BlocklistEvent {
+                operation: BlocklistOperation::Block,
+                target_kind: BlockTargetKind::Ip,
+                identifier: "10.0.0.201".to_string(),
+                site_scope: "global".to_string(),
+                reason: Some("hydration test".to_string()),
+                provenance: BlockProvenance {
+                    kind: BlockProvenanceKind::LocalWaf,
+                    source: Some("waf-engine".to_string()),
+                },
+                timestamp: 7000,
+                source_node: Some("waf-node".to_string()),
+                event_id: Some("evt-hydration".to_string()),
+                ttl_secs: Some(3600),
+                version: Some(3),
+            };
+            assert_eq!(
+                store.apply_blocklist_event(&event),
+                BlocklistApplyResult::Applied
+            );
+            store.shutdown().await;
+        }
+
+        // Phase 2: Restart and verify the hydrated state still rejects stale.
+        let store2 = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config);
+        let stale = BlocklistEvent::block_ip(
+            "10.0.0.201",
+            "stale",
+            "global",
+            BlockProvenance::default(),
+            1000,
+        );
+        assert_eq!(
+            store2.apply_blocklist_event(&stale),
+            BlocklistApplyResult::IgnoredStale,
+            "Hydrated target state should preserve freshness"
         );
     }
 

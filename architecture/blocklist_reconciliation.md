@@ -81,7 +81,7 @@ The supervisor retains a separate bounded event log (1,000 events) for IPC repla
 - No mesh-ID enforcement on the request path (control-plane only; Iteration 51)
 - No acknowledged delivery for individual events
 
-**Note (Iteration 52):** Per-target stale suppression (`TargetStateCache`) is now persisted to `blocklist_target_state.json` and survives restarts. However, the *event log* (`BlocklistEventLog`) remains in-memory only — catchup gaps can still occur if a peer misses events during an extended offline period.
+**Note (Iteration 52):** Per-target stale suppression (`TargetStateCache`) is now persisted to `blocklist_target_state.json` and survives restarts. Persisted records preserve origin `source_node` and `provenance` metadata (Iteration 53). However, the *event log* (`BlocklistEventLog`) remains in-memory only — catchup gaps can still occur if a peer misses events during an extended offline period.
 
 ## Retention Window
 

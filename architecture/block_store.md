@@ -168,13 +168,14 @@ pub struct BlocklistTargetStateRecord {
     pub version: Option<u64>,
     pub event_id: Option<String>,
     pub source_node: Option<String>,
-    pub provenance: Option<BlockProvenance>,
+    pub provenance: BlockProvenance,
     pub recorded_at: u64,
-    pub expires_at: u64,
+    pub expires_at: Option<u64>,
 }
 ```
 
 - `expires_at` is set to `now + ttl_secs` at persist time
+- `source_node` and `provenance` preserve origin metadata when available (Iteration 53)
 - Expired records are filtered out on load (`is_expired()` checks system time)
 
 ### Config Options
@@ -187,7 +188,7 @@ pub struct BlocklistTargetStateRecord {
 
 ### Lifecycle
 
-1. **Runtime**: Direct block/unblock operations call `record_target_state_from_direct_op()` which updates the in-memory `TargetStateCache` (10k capacity, FIFO eviction).
-2. **Shutdown**: `BlockStore::shutdown()` serializes the full `TargetStateCache` to `blocklist_target_state.json` synchronously before signaling the background persistence task.
-3. **Startup**: `BlockStore::new()` loads `blocklist_target_state.json` if it exists, filters expired records, and hydrates the `TargetStateCache`. Malformed files are logged and skipped.
+1. **Runtime**: Direct block/unblock operations call `record_target_state_from_direct_op()` which updates the in-memory `TargetStateCache` (10k capacity, FIFO eviction). Event-applied target state preserves `source_node` and `provenance` from the originating `BlocklistEvent`. Direct block APIs (`block_ip_with_provenance`, `block_mesh_id_with_provenance`) pass their provenance through. Direct unblock paths without explicit provenance use `BlockProvenance::default()` (Iteration 53).
+2. **Shutdown**: `BlockStore::shutdown()` serializes the full `TargetStateCache` to `blocklist_target_state.json` synchronously before signaling the background persistence task. Persisted records carry actual `source_node` and `provenance` metadata (Iteration 53).
+3. **Startup**: `BlockStore::new()` loads `blocklist_target_state.json` if it exists, filters expired records, and hydrates the `TargetStateCache` including `source_node` and `provenance` fields. Legacy records without these fields deserialize with defaults via `#[serde(default)]`. Malformed files are logged and skipped.
 4. **In-memory capacity**: The in-memory `TargetStateCache` remains capped at 10,000 entries with FIFO eviction. Persistence provides a restart-safe warm start, not a full durable store.

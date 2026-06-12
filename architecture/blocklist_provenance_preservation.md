@@ -50,6 +50,7 @@ When `provenance_kind` and `provenance_source` are both `None` (legacy messages)
 | Supervisor snapshot → worker (`BlocklistResponse`) | ✅ | Provenance carried in `BlockEntryData` fields |
 | Supervisor update → worker (`BlocklistUpdate`) | ✅ | Provenance carried in `BlockEntryData` fields |
 | Worker replay from retained event log | ✅ | Events carry full provenance |
+| Target-state persistence across restarts | ✅ | Iteration 53: `source_node` and `provenance` preserved in `BlocklistTargetStateRecord` |
 
 ## Admin Ban → Worker Propagation
 
