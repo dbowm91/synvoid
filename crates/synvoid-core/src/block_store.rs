@@ -131,6 +131,45 @@ pub enum BlocklistOperation {
     Unblock,
 }
 
+/// A persisted per-target last-applied event state record.
+///
+/// Stored on disk as `blocklist_target_state.json` to survive process restarts.
+/// After restart, these records hydrate the in-memory `TargetStateCache` so
+/// stale blocklist replay protection is not lost.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlocklistTargetStateRecord {
+    pub target_kind: BlockTargetKind,
+    pub site_scope: String,
+    pub identifier: String,
+    pub last_operation: BlocklistOperation,
+    pub timestamp: u64,
+    #[serde(default)]
+    pub version: Option<u64>,
+    #[serde(default)]
+    pub event_id: Option<String>,
+    #[serde(default)]
+    pub source_node: Option<String>,
+    pub provenance: BlockProvenance,
+    pub recorded_at: u64,
+    #[serde(default)]
+    pub expires_at: Option<u64>,
+}
+
+impl BlocklistTargetStateRecord {
+    /// Returns `true` if this record has passed its retention TTL.
+    pub fn is_expired(&self) -> bool {
+        if let Some(expires_at) = self.expires_at {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            now > expires_at
+        } else {
+            false
+        }
+    }
+}
+
 /// A local, target-aware blocklist event staged for future distributed propagation.
 ///
 /// This type captures the semantic intent of a block or unblock operation,

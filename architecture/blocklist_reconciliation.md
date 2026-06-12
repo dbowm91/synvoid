@@ -67,6 +67,7 @@ The supervisor retains a separate bounded event log (1,000 events) for IPC repla
 | Snapshot fallback documented | ✅ Iteration 48 |
 | From-start catchup replays first retained event | ✅ Iteration 49 |
 | Exclusive since_sequence cursor remains available | ✅ Iteration 49 |
+| Per-target stale suppression survives restarts | ✅ Iteration 52 |
 | Request/WAF paths remain local-only | ✅ Invariant |
 | Mesh-ID blocks are control-plane only | ✅ Invariant (Iteration 51) |
 | Raft remains out of operational blocklist | ✅ Invariant |
@@ -79,6 +80,8 @@ The supervisor retains a separate bounded event log (1,000 events) for IPC repla
 - No request-path remote checks
 - No mesh-ID enforcement on the request path (control-plane only; Iteration 51)
 - No acknowledged delivery for individual events
+
+**Note (Iteration 52):** Per-target stale suppression (`TargetStateCache`) is now persisted to `blocklist_target_state.json` and survives restarts. However, the *event log* (`BlocklistEventLog`) remains in-memory only — catchup gaps can still occur if a peer misses events during an extended offline period.
 
 ## Retention Window
 

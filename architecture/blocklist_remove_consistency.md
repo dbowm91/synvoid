@@ -88,7 +88,7 @@ Last-writer-wins per-target ordering (Iteration 47):
 
 Clock skew between nodes is a known caveat — nodes with significantly skewed clocks may produce out-of-order application. This is acceptable for operational blocklist removes where approximate consistency is sufficient.
 
-**Limitation**: Per-target state is in-memory only. Process restart loses stale replay protection. Events received after restart will apply based on dedup only (until the target is re-observed).
+**Iteration 52**: Per-target state is now persisted to `blocklist_target_state.json` and survives restarts. On `BlockStore::new()`, expired records are filtered out and `TargetStateCache` is hydrated from the persisted file. `shutdown()` persists synchronously before signaling the background task. `BlocklistTargetStateRecord` stores `target_kind`, `site_scope`, `identifier`, `last_operation`, `timestamp`, `version`, `event_id`, `source_node`, `provenance`, `recorded_at`, and `expires_at` (set to `now + ttl_secs` at persist time). The in-memory `TargetStateCache` (10k capacity, FIFO eviction) is still the primary source during runtime; persistence provides restart-safe warm start only.
 
 ## Current Limitations
 
@@ -98,7 +98,7 @@ Clock skew between nodes is a known caveat — nodes with significantly skewed c
 | Best-effort propagation | Events may be lost if peer is offline | Catchup repairs missed events within retention window (Iteration 48) |
 | No acknowledged delivery | Sender does not know if peer received event | Catchup provides eventual reconciliation for reconnecting peers |
 | Clock skew ordering | Events may apply out of order on skewed nodes | Bounded by reasonable clock drift; admin retry |
-| In-memory per-target state | Stale replay protection lost on restart | Acceptable for operational blocklist; periodic sync (future) can mitigate |
+| Per-target state persisted (Iteration 52) | Stale replay protection now survives restarts | `blocklist_target_state.json` loaded on startup, filtered for expiry |
 | In-memory event log | Event log lost on restart; catchup only covers retained window | Configurable capacity; snapshot/admin fallback for gaps |
 
 ## Implementation Details
@@ -116,7 +116,7 @@ Clock skew between nodes is a known caveat — nodes with significantly skewed c
 - 5-step apply pipeline: validate target → check dedup → check per-target stale → mutate → record state
 - FIFO dedup via `SeenEventCache` (HashSet + VecDeque), capped at 10,000
 - Per-target stale suppression via `TargetStateCache` (AHashMap + VecDeque), capped at 10,000
-- Per-target state is in-memory only; not persisted across restarts
+- Per-target state is persisted to `blocklist_target_state.json` on shutdown (Iteration 52); hydrated on startup
 
 ### Admin Emit Path
 
@@ -143,4 +143,4 @@ Iteration 49 fixed cursor semantics: `since_sequence: None` replays from the old
 - Per-source cursor persistence for cross-restart convergence
 - Full snapshot fallback for history gaps beyond retention window
 - Acknowledged delivery for critical removes
-- Persisted per-target tombstones for stale replay protection across restarts
+- ~~Persisted per-target tombstones for stale replay protection across restarts~~ ✅ Done (Iteration 52)

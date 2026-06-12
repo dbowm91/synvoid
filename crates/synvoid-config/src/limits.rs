@@ -62,6 +62,12 @@ pub struct BlocklistLimitsConfig {
     pub max_entries: usize,
     #[serde(default = "default_blocklist_persist_interval")]
     pub persist_interval_secs: u64,
+    #[serde(default = "default_true")]
+    pub target_state_persist: bool,
+    #[serde(default = "default_target_state_max_records")]
+    pub target_state_max_records: usize,
+    #[serde(default = "default_target_state_ttl_secs")]
+    pub target_state_ttl_secs: u64,
 }
 
 impl Default for BlocklistLimitsConfig {
@@ -69,6 +75,9 @@ impl Default for BlocklistLimitsConfig {
         Self {
             max_entries: 500_000,
             persist_interval_secs: 60,
+            target_state_persist: true,
+            target_state_max_records: 100_000,
+            target_state_ttl_secs: 604_800, // 7 days
         }
     }
 }
@@ -78,4 +87,13 @@ fn default_max_block_entries() -> usize {
 }
 fn default_blocklist_persist_interval() -> u64 {
     60
+}
+fn default_true() -> bool {
+    true
+}
+fn default_target_state_max_records() -> usize {
+    100_000
+}
+fn default_target_state_ttl_secs() -> u64 {
+    604_800 // 7 days
 }

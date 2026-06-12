@@ -23,7 +23,7 @@ use tokio::sync::mpsc;
 
 pub use synvoid_core::block_store::{
     BlockProvenance, BlockProvenanceKind, BlockRecord, BlockTargetKind, BlocklistEvent,
-    BlocklistOperation, MeshBlockEntry,
+    BlocklistOperation, BlocklistTargetStateRecord, MeshBlockEntry,
 };
 use synvoid_waf::mitigation::{MitigationProvider, SizedMitigationProvider};
 
@@ -435,6 +435,7 @@ pub struct BlockStore {
     mesh_shards: Vec<RwLock<AHashMap<String, MeshBlockEntry>>>,
     enabled: bool,
     persist_path: Option<PathBuf>,
+    target_state_path: Option<PathBuf>,
     config: DenyListLimitsConfig,
     total_entries: AtomicUsize,
     total_mesh_entries: AtomicUsize,
@@ -470,6 +471,11 @@ impl BlockStore {
             p.parent()
                 .unwrap_or(std::path::Path::new("."))
                 .join("mesh_blocks.json")
+        });
+        let target_state_path = persist_path.as_ref().map(|p| {
+            p.parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join("blocklist_target_state.json")
         });
         let max_entries = if config.max_entries > 0 {
             config.max_entries
@@ -579,6 +585,62 @@ impl BlockStore {
             initial_mesh_count = 0;
         };
 
+        // Phase 4: Load persisted target state records and hydrate TargetStateCache.
+        let mut target_state_cache = TargetStateCache::new();
+        let mut target_state_loaded = 0usize;
+        let mut target_state_expired = 0usize;
+        if config.target_state_persist {
+            if let Some(ref ts_path) = target_state_path {
+                if ts_path.exists() {
+                    match std::fs::read_to_string(ts_path) {
+                        Ok(content) => {
+                            match serde_json::from_str::<Vec<BlocklistTargetStateRecord>>(&content)
+                            {
+                                Ok(records) => {
+                                    for record in records {
+                                        if record.is_expired() {
+                                            target_state_expired += 1;
+                                            continue;
+                                        }
+                                        let key = BlocklistTargetKey {
+                                            target_kind: record.target_kind,
+                                            site_scope: record.site_scope,
+                                            identifier: record.identifier,
+                                        };
+                                        let state = LastAppliedBlocklistEvent {
+                                            timestamp: record.timestamp,
+                                            version: record.version,
+                                            event_id: record.event_id,
+                                            operation: record.last_operation,
+                                        };
+                                        target_state_cache.insert(key, state);
+                                        target_state_loaded += 1;
+                                    }
+                                    tracing::info!(
+                                        "Loaded {} persisted target state records ({} expired and dropped)",
+                                        target_state_loaded,
+                                        target_state_expired
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "Failed to parse blocklist_target_state.json: {}, starting fresh",
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to read blocklist_target_state.json: {}, starting fresh",
+                                e
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         let (persist_tx, shutdown_tx) = if config.persist_interval_secs > 0
             && persist_path.is_some()
         {
@@ -633,6 +695,7 @@ impl BlockStore {
             mesh_shards,
             enabled,
             persist_path,
+            target_state_path,
             config,
             total_entries: AtomicUsize::new(initial_count),
             total_mesh_entries: AtomicUsize::new(initial_mesh_count),
@@ -640,7 +703,7 @@ impl BlockStore {
             shutdown_tx,
             mitigation_provider: arc_swap::ArcSwapOption::const_empty(),
             seen_events: RwLock::new(SeenEventCache::new()),
-            target_state: RwLock::new(TargetStateCache::new()),
+            target_state: RwLock::new(target_state_cache),
             event_log: RwLock::new(BlocklistEventLog::with_defaults()),
         };
 
@@ -663,6 +726,21 @@ impl BlockStore {
 
     /// Gracefully shutdown the block store, persisting any pending data.
     pub async fn shutdown(&self) {
+        // Persist target state to disk before signaling shutdown.
+        if self.config.target_state_persist {
+            if let Some(ref path) = self.target_state_path {
+                let entries: Vec<(BlocklistTargetKey, LastAppliedBlocklistEvent)> = {
+                    let ts = self.target_state.read();
+                    ts.entries
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect()
+                };
+                let max_records = self.config.target_state_max_records;
+                let ttl_secs = self.config.target_state_ttl_secs;
+                Self::persist_target_state_to_disk(path, entries, max_records, ttl_secs).await;
+            }
+        }
         if let Some(tx) = &self.shutdown_tx {
             let _ = tx.send(()).await;
         }
@@ -749,6 +827,92 @@ impl BlockStore {
                 tracing::warn!("Failed to serialize mesh block entries: {}", e);
             }
         }
+    }
+
+    /// Persist the current target state cache to disk as `blocklist_target_state.json`.
+    ///
+    /// Uses atomic rename pattern consistent with blocks.json/mesh_blocks.json.
+    /// Expired records are filtered out before writing.
+    pub(crate) async fn persist_target_state_to_disk(
+        path: &PathBuf,
+        entries: Vec<(BlocklistTargetKey, LastAppliedBlocklistEvent)>,
+        max_records: usize,
+        ttl_secs: u64,
+    ) {
+        let now = synvoid_utils::safe_unix_timestamp();
+        let records: Vec<BlocklistTargetStateRecord> = entries
+            .into_iter()
+            .take(max_records)
+            .map(|(key, state)| BlocklistTargetStateRecord {
+                target_kind: key.target_kind,
+                site_scope: key.site_scope,
+                identifier: key.identifier,
+                last_operation: state.operation,
+                timestamp: state.timestamp,
+                version: state.version,
+                event_id: state.event_id.clone(),
+                source_node: None,
+                provenance: BlockProvenance::default(),
+                recorded_at: now,
+                expires_at: Some(now.saturating_add(ttl_secs)),
+            })
+            .collect();
+
+        match serde_json::to_string_pretty(&records) {
+            Ok(json) => {
+                let temp_path = path.with_extension("tmp");
+                match tokio::fs::write(&temp_path, &json).await {
+                    Ok(_) => {
+                        if let Err(e) = tokio::fs::rename(&temp_path, path).await {
+                            tracing::warn!("Failed to rename temp target state file: {}", e);
+                        } else {
+                            Self::set_secure_permissions(path).await;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to write target state to disk: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to serialize target state records: {}", e);
+            }
+        }
+    }
+
+    /// Record target state for a direct block/unblock operation (admin API paths).
+    ///
+    /// This ensures that admin-initiated mutations also create persisted target
+    /// state records, preventing stale replay from resurrecting or removing state
+    /// after restart.
+    pub fn record_target_state_from_direct_op(
+        &self,
+        target_kind: BlockTargetKind,
+        site_scope: &str,
+        identifier: &str,
+        operation: BlocklistOperation,
+        timestamp: u64,
+    ) {
+        if !self.config.target_state_persist {
+            return;
+        }
+        let key = BlocklistTargetKey {
+            target_kind,
+            site_scope: site_scope.to_string(),
+            identifier: identifier.to_string(),
+        };
+        let state = LastAppliedBlocklistEvent {
+            timestamp,
+            version: None,
+            event_id: None,
+            operation,
+        };
+        {
+            let mut targets = self.target_state.write();
+            targets.insert(key, state);
+        }
+        // Persist is triggered by trigger_persist() or shutdown(), not here,
+        // to avoid races between multiple spawned persist tasks.
     }
 
     pub fn trigger_persist(&self) {
@@ -1008,6 +1172,15 @@ impl BlockStore {
 
         self.trigger_persist();
 
+        // Record target state so stale replay protection survives restarts.
+        self.record_target_state_from_direct_op(
+            BlockTargetKind::Ip,
+            site_scope,
+            &ip.to_string(),
+            BlocklistOperation::Block,
+            synvoid_utils::safe_unix_timestamp(),
+        );
+
         true
     }
 
@@ -1106,6 +1279,17 @@ impl BlockStore {
             self.trigger_persist();
         }
 
+        // Always record target state for unblock, even if the target was already
+        // missing. This prevents older block events from resurrecting the target
+        // via stale replay after restart.
+        self.record_target_state_from_direct_op(
+            BlockTargetKind::Ip,
+            site_scope,
+            &ip.to_string(),
+            BlocklistOperation::Unblock,
+            synvoid_utils::safe_unix_timestamp(),
+        );
+
         removed_count > 0
     }
 
@@ -1187,6 +1371,15 @@ impl BlockStore {
             if is_new {
                 self.total_entries.fetch_add(1, Ordering::Relaxed);
             }
+
+            // Record target state so stale replay protection survives restarts.
+            self.record_target_state_from_direct_op(
+                BlockTargetKind::Ip,
+                site_scope,
+                ip,
+                BlocklistOperation::Block,
+                synvoid_utils::safe_unix_timestamp(),
+            );
 
             return true;
         }
@@ -1277,6 +1470,16 @@ impl BlockStore {
         );
 
         self.trigger_persist();
+
+        // Record target state so stale replay protection survives restarts.
+        self.record_target_state_from_direct_op(
+            BlockTargetKind::MeshId,
+            site_scope,
+            mesh_id,
+            BlocklistOperation::Block,
+            now,
+        );
+
         true
     }
 
@@ -1359,6 +1562,17 @@ impl BlockStore {
         if removed_count > 0 {
             self.trigger_persist();
         }
+
+        // Always record target state for unblock, even if the target was already
+        // missing. This prevents older block events from resurrecting the target
+        // via stale replay after restart.
+        self.record_target_state_from_direct_op(
+            BlockTargetKind::MeshId,
+            site_scope,
+            mesh_id,
+            BlocklistOperation::Unblock,
+            synvoid_utils::safe_unix_timestamp(),
+        );
 
         removed_count > 0
     }
@@ -1508,6 +1722,8 @@ impl BlockStore {
         if result == BlocklistApplyResult::Applied {
             let mut targets = self.target_state.write();
             targets.insert(target_key, this_event);
+            // Target state persist is handled by trigger_persist() called from
+            // the block/unblock methods in step 4, and by shutdown().
         }
 
         // Step 6: Record event in the event log for offline-peer catchup.
@@ -1774,6 +1990,9 @@ mod tests {
         DenyListLimitsConfig {
             max_entries: 1000,
             persist_interval_secs: 0,
+            target_state_persist: false,
+            target_state_max_records: 100_000,
+            target_state_ttl_secs: 604_800,
         }
     }
 
@@ -1960,6 +2179,9 @@ mod tests {
             DenyListLimitsConfig {
                 max_entries: 1000,
                 persist_interval_secs: 0,
+                target_state_persist: false,
+                target_state_max_records: 100_000,
+                target_state_ttl_secs: 604_800,
             },
         );
 
@@ -1986,6 +2208,9 @@ mod tests {
             DenyListLimitsConfig {
                 max_entries: 2,
                 persist_interval_secs: 0,
+                target_state_persist: false,
+                target_state_max_records: 100_000,
+                target_state_ttl_secs: 604_800,
             },
         );
 
@@ -2371,6 +2596,9 @@ mod tests {
         let config = DenyListLimitsConfig {
             max_entries: 2,
             persist_interval_secs: 0,
+            target_state_persist: false,
+            target_state_max_records: 100_000,
+            target_state_ttl_secs: 604_800,
         };
         let temp_dir = TempDir::new().unwrap();
         let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config);
@@ -2578,6 +2806,9 @@ mod tests {
         let config = DenyListLimitsConfig {
             max_entries: 1000,
             persist_interval_secs: 1,
+            target_state_persist: false,
+            target_state_max_records: 100_000,
+            target_state_ttl_secs: 604_800,
         };
         let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config);
         store.trigger_persist();
@@ -4503,5 +4734,624 @@ mod tests {
 
         assert_eq!(entry.provenance.kind, BlockProvenanceKind::LegacyUnknown);
         assert_eq!(entry.provenance.source, None);
+    }
+
+    // ============================================================
+    // Iteration 52: Persisted target state / tombstone tests
+    // ============================================================
+
+    fn target_state_config() -> DenyListLimitsConfig {
+        DenyListLimitsConfig {
+            max_entries: 1000,
+            persist_interval_secs: 0,
+            target_state_persist: true,
+            target_state_max_records: 100_000,
+            target_state_ttl_secs: 604_800,
+        }
+    }
+
+    #[test]
+    fn test_target_state_record_serialization_roundtrip() {
+        let record = BlocklistTargetStateRecord {
+            target_kind: BlockTargetKind::Ip,
+            site_scope: "global".to_string(),
+            identifier: "10.0.0.1".to_string(),
+            last_operation: BlocklistOperation::Unblock,
+            timestamp: 1000,
+            version: Some(5),
+            event_id: Some("evt-123".to_string()),
+            source_node: Some("node-a".to_string()),
+            provenance: BlockProvenance {
+                kind: BlockProvenanceKind::AdminManual,
+                source: Some("admin".to_string()),
+            },
+            recorded_at: 1100,
+            expires_at: Some(605800),
+        };
+
+        let json = serde_json::to_string(&record).unwrap();
+        let deserialized: BlocklistTargetStateRecord = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.target_kind, BlockTargetKind::Ip);
+        assert_eq!(deserialized.site_scope, "global");
+        assert_eq!(deserialized.identifier, "10.0.0.1");
+        assert_eq!(deserialized.last_operation, BlocklistOperation::Unblock);
+        assert_eq!(deserialized.timestamp, 1000);
+        assert_eq!(deserialized.version, Some(5));
+        assert_eq!(deserialized.event_id, Some("evt-123".to_string()));
+        assert_eq!(deserialized.source_node, Some("node-a".to_string()));
+        assert_eq!(
+            deserialized.provenance.kind,
+            BlockProvenanceKind::AdminManual
+        );
+    }
+
+    #[test]
+    fn test_target_state_record_backward_compat() {
+        // Legacy JSON without optional fields should deserialize with defaults
+        let json = r#"{
+            "target_kind": "ip",
+            "site_scope": "global",
+            "identifier": "10.0.0.1",
+            "last_operation": "block",
+            "timestamp": 500,
+            "provenance": {"kind": "legacy_unknown"},
+            "recorded_at": 600
+        }"#;
+        let record: BlocklistTargetStateRecord = serde_json::from_str(json).unwrap();
+        assert_eq!(record.version, None);
+        assert_eq!(record.event_id, None);
+        assert_eq!(record.source_node, None);
+        assert_eq!(record.expires_at, None);
+        assert!(!record.is_expired());
+    }
+
+    #[test]
+    fn test_target_state_record_is_expired() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // Not expired: expires_at is in the future
+        let record = BlocklistTargetStateRecord {
+            target_kind: BlockTargetKind::Ip,
+            site_scope: "global".to_string(),
+            identifier: "10.0.0.1".to_string(),
+            last_operation: BlocklistOperation::Block,
+            timestamp: now - 100,
+            version: None,
+            event_id: None,
+            source_node: None,
+            provenance: BlockProvenance::default(),
+            recorded_at: now - 100,
+            expires_at: Some(now + 3600),
+        };
+        assert!(!record.is_expired());
+
+        // Expired: expires_at is in the past
+        let record_expired = BlocklistTargetStateRecord {
+            expires_at: Some(now - 1),
+            ..record.clone()
+        };
+        assert!(record_expired.is_expired());
+
+        // No expires_at: never expires
+        let record_no_expiry = BlocklistTargetStateRecord {
+            expires_at: None,
+            ..record
+        };
+        assert!(!record_no_expiry.is_expired());
+    }
+
+    #[tokio::test]
+    async fn test_target_state_persist_and_load() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = target_state_config();
+
+        // Create store, apply an event, shutdown.
+        {
+            let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config.clone());
+            let event = BlocklistEvent::block_ip(
+                "10.0.0.50",
+                "persist_test",
+                "global",
+                BlockProvenance::default(),
+                1000,
+            );
+            let result = store.apply_blocklist_event(&event);
+            assert_eq!(result, BlocklistApplyResult::Applied);
+            store.shutdown().await;
+        }
+
+        // Verify the target state file was created.
+        let ts_path = temp_dir.path().join("blocklist_target_state.json");
+        assert!(ts_path.exists(), "target state file should exist");
+
+        // Create a new store from the same directory — should hydrate.
+        let store2 = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config);
+
+        // Apply an older event for the same target — should be rejected as stale.
+        let old_event = BlocklistEvent::block_ip(
+            "10.0.0.50",
+            "old_stale_event",
+            "global",
+            BlockProvenance::default(),
+            999, // older timestamp
+        );
+        let result = store2.apply_blocklist_event(&old_event);
+        assert_eq!(result, BlocklistApplyResult::IgnoredStale);
+    }
+
+    #[tokio::test]
+    async fn test_restart_ip_unblock_prevents_stale_block_resurrection() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = target_state_config();
+
+        // Phase 1: Block IP, then unblock it (newer event).
+        {
+            let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config.clone());
+            let block_event = BlocklistEvent::block_ip(
+                "10.0.0.60",
+                "initial_block",
+                "global",
+                BlockProvenance::default(),
+                1000,
+            );
+            assert_eq!(
+                store.apply_blocklist_event(&block_event),
+                BlocklistApplyResult::Applied
+            );
+            let unblock_event = BlocklistEvent::unblock_ip(
+                "10.0.0.60",
+                "global",
+                BlockProvenance::default(),
+                2000, // newer timestamp
+            );
+            assert_eq!(
+                store.apply_blocklist_event(&unblock_event),
+                BlocklistApplyResult::Applied
+            );
+            store.shutdown().await;
+        }
+
+        // Allow any in-flight async persist tasks to complete.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Phase 2: Restart. Replay the older block event.
+        let store2 = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config);
+        let stale_block = BlocklistEvent::block_ip(
+            "10.0.0.60",
+            "stale_block",
+            "global",
+            BlockProvenance::default(),
+            500, // much older than the unblock (2000)
+        );
+        let result = store2.apply_blocklist_event(&stale_block);
+        assert_eq!(
+            result,
+            BlocklistApplyResult::IgnoredStale,
+            "Stale block should be rejected after restart"
+        );
+        // IP should NOT be blocked.
+        let ip: IpAddr = "10.0.0.60".parse().unwrap();
+        assert!(
+            store2.is_blocked(&ip, "global").is_none(),
+            "IP should remain unblocked after stale block rejection"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_restart_mesh_id_unblock_prevents_stale_block_resurrection() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = target_state_config();
+
+        // Phase 1: Block mesh ID, then unblock it.
+        {
+            let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config.clone());
+            let block_event = BlocklistEvent::block_mesh_id(
+                "mesh-abc",
+                "initial_block",
+                "global",
+                BlockProvenance::default(),
+                1000,
+            );
+            assert_eq!(
+                store.apply_blocklist_event(&block_event),
+                BlocklistApplyResult::Applied
+            );
+            let unblock_event = BlocklistEvent::unblock_mesh_id(
+                "mesh-abc",
+                "global",
+                BlockProvenance::default(),
+                2000,
+            );
+            assert_eq!(
+                store.apply_blocklist_event(&unblock_event),
+                BlocklistApplyResult::Applied
+            );
+            store.shutdown().await;
+        }
+
+        // Phase 2: Restart. Replay the older block event.
+        let store2 = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config);
+        let stale_block = BlocklistEvent::block_mesh_id(
+            "mesh-abc",
+            "stale_block",
+            "global",
+            BlockProvenance::default(),
+            500,
+        );
+        let result = store2.apply_blocklist_event(&stale_block);
+        assert_eq!(
+            result,
+            BlocklistApplyResult::IgnoredStale,
+            "Stale mesh-ID block should be rejected after restart"
+        );
+        assert!(
+            store2.is_mesh_id_blocked("mesh-abc", "global").is_none(),
+            "Mesh ID should remain unblocked after stale block rejection"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_restart_ip_block_prevents_stale_unblock() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = target_state_config();
+
+        // Phase 1: Block IP (newer event).
+        {
+            let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config.clone());
+            let block_event = BlocklistEvent::block_ip(
+                "10.0.0.70",
+                "newer_block",
+                "global",
+                BlockProvenance::default(),
+                2000,
+            );
+            assert_eq!(
+                store.apply_blocklist_event(&block_event),
+                BlocklistApplyResult::Applied
+            );
+            store.shutdown().await;
+        }
+
+        // Allow any in-flight async persist tasks to complete.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Phase 2: Restart. Replay an older unblock event.
+        let store2 = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config);
+        let stale_unblock = BlocklistEvent::unblock_ip(
+            "10.0.0.70",
+            "global",
+            BlockProvenance::default(),
+            1000, // older than the block (2000)
+        );
+        let result = store2.apply_blocklist_event(&stale_unblock);
+        assert_eq!(
+            result,
+            BlocklistApplyResult::IgnoredStale,
+            "Stale unblock should be rejected after restart"
+        );
+        // IP should still be blocked.
+        let ip: IpAddr = "10.0.0.70".parse().unwrap();
+        assert!(
+            store2.is_blocked(&ip, "global").is_some(),
+            "IP should remain blocked after stale unblock rejection"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_restart_mesh_id_block_prevents_stale_unblock() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = target_state_config();
+
+        // Phase 1: Block mesh ID (newer event).
+        {
+            let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config.clone());
+            let block_event = BlocklistEvent::block_mesh_id(
+                "mesh-xyz",
+                "newer_block",
+                "global",
+                BlockProvenance::default(),
+                2000,
+            );
+            assert_eq!(
+                store.apply_blocklist_event(&block_event),
+                BlocklistApplyResult::Applied
+            );
+            store.shutdown().await;
+        }
+
+        // Allow any in-flight async persist tasks to complete.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Phase 2: Restart. Replay an older unblock event.
+        let store2 = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config);
+        let stale_unblock =
+            BlocklistEvent::unblock_mesh_id("mesh-xyz", "global", BlockProvenance::default(), 1000);
+        let result = store2.apply_blocklist_event(&stale_unblock);
+        assert_eq!(
+            result,
+            BlocklistApplyResult::IgnoredStale,
+            "Stale mesh-ID unblock should be rejected after restart"
+        );
+        assert!(
+            store2.is_mesh_id_blocked("mesh-xyz", "global").is_some(),
+            "Mesh ID should remain blocked after stale unblock rejection"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_direct_unblock_records_target_state() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = target_state_config();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config.clone());
+
+        let ip: IpAddr = "10.0.0.80".parse().unwrap();
+        // Unblock a missing target — should still record target state.
+        let removed = store.unblock_ip(&ip, "global");
+        assert!(!removed, "IP was never blocked");
+
+        // Verify target state was recorded by applying an older block event.
+        let old_block = BlocklistEvent::block_ip(
+            "10.0.0.80",
+            "old_block",
+            "global",
+            BlockProvenance::default(),
+            0, // very old timestamp
+        );
+        let result = store.apply_blocklist_event(&old_block);
+        assert_eq!(
+            result,
+            BlocklistApplyResult::IgnoredStale,
+            "Old block should be rejected because unblock recorded target state"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_direct_mesh_id_unblock_records_target_state() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = target_state_config();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config.clone());
+
+        // Unblock a missing mesh ID — should still record target state.
+        let removed = store.unblock_mesh_id("mesh-missing", "global");
+        assert!(!removed, "Mesh ID was never blocked");
+
+        // Verify target state was recorded.
+        let old_block = BlocklistEvent::block_mesh_id(
+            "mesh-missing",
+            "old_block",
+            "global",
+            BlockProvenance::default(),
+            0,
+        );
+        let result = store.apply_blocklist_event(&old_block);
+        assert_eq!(
+            result,
+            BlocklistApplyResult::IgnoredStale,
+            "Old mesh-ID block should be rejected because unblock recorded target state"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_target_state_covers_both_ip_and_mesh_id() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = target_state_config();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config.clone());
+
+        // Block an IP and a mesh ID.
+        let ip_event = BlocklistEvent::block_ip(
+            "10.0.0.90",
+            "test_ip",
+            "global",
+            BlockProvenance::default(),
+            1000,
+        );
+        assert_eq!(
+            store.apply_blocklist_event(&ip_event),
+            BlocklistApplyResult::Applied
+        );
+
+        let mesh_event = BlocklistEvent::block_mesh_id(
+            "mesh-90",
+            "test_mesh",
+            "global",
+            BlockProvenance::default(),
+            1000,
+        );
+        assert_eq!(
+            store.apply_blocklist_event(&mesh_event),
+            BlocklistApplyResult::Applied
+        );
+
+        // Both stale replays should be rejected.
+        let stale_ip = BlocklistEvent::block_ip(
+            "10.0.0.90",
+            "stale",
+            "global",
+            BlockProvenance::default(),
+            500,
+        );
+        assert_eq!(
+            store.apply_blocklist_event(&stale_ip),
+            BlocklistApplyResult::IgnoredStale
+        );
+
+        let stale_mesh = BlocklistEvent::block_mesh_id(
+            "mesh-90",
+            "stale",
+            "global",
+            BlockProvenance::default(),
+            500,
+        );
+        assert_eq!(
+            store.apply_blocklist_event(&stale_mesh),
+            BlocklistApplyResult::IgnoredStale
+        );
+    }
+
+    #[tokio::test]
+    async fn test_target_state_site_scope_isolation() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = target_state_config();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config.clone());
+
+        // Block same IP in different scopes.
+        let event_a = BlocklistEvent::block_ip(
+            "10.0.0.95",
+            "scope_a_block",
+            "site_a",
+            BlockProvenance::default(),
+            1000,
+        );
+        assert_eq!(
+            store.apply_blocklist_event(&event_a),
+            BlocklistApplyResult::Applied
+        );
+
+        let event_b = BlocklistEvent::block_ip(
+            "10.0.0.95",
+            "scope_b_block",
+            "site_b",
+            BlockProvenance::default(),
+            1000,
+        );
+        assert_eq!(
+            store.apply_blocklist_event(&event_b),
+            BlocklistApplyResult::Applied
+        );
+
+        // Stale replay for site_a should be rejected.
+        let stale_a = BlocklistEvent::block_ip(
+            "10.0.0.95",
+            "stale",
+            "site_a",
+            BlockProvenance::default(),
+            500,
+        );
+        assert_eq!(
+            store.apply_blocklist_event(&stale_a),
+            BlocklistApplyResult::IgnoredStale
+        );
+    }
+
+    #[tokio::test]
+    async fn test_target_state_persist_disabled() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = DenyListLimitsConfig {
+            max_entries: 1000,
+            persist_interval_secs: 0,
+            target_state_persist: false,
+            target_state_max_records: 100_000,
+            target_state_ttl_secs: 604_800,
+        };
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config);
+
+        let event = BlocklistEvent::block_ip(
+            "10.0.0.99",
+            "no_persist",
+            "global",
+            BlockProvenance::default(),
+            1000,
+        );
+        store.apply_blocklist_event(&event);
+
+        // No target state file should be created.
+        let ts_path = temp_dir.path().join("blocklist_target_state.json");
+        assert!(!ts_path.exists());
+    }
+
+    #[tokio::test]
+    async fn test_target_state_no_file_hydrates_cleanly() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = target_state_config();
+
+        // First store: create and use.
+        let store1 = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config.clone());
+        let event = BlocklistEvent::block_ip(
+            "10.0.0.100",
+            "first_use",
+            "global",
+            BlockProvenance::default(),
+            1000,
+        );
+        assert_eq!(
+            store1.apply_blocklist_event(&event),
+            BlocklistApplyResult::Applied
+        );
+        store1.shutdown().await;
+
+        // Second store: should load from disk.
+        let store2 = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config.clone());
+        // Stale event should be rejected.
+        let stale = BlocklistEvent::block_ip(
+            "10.0.0.100",
+            "stale",
+            "global",
+            BlockProvenance::default(),
+            500,
+        );
+        assert_eq!(
+            store2.apply_blocklist_event(&stale),
+            BlocklistApplyResult::IgnoredStale
+        );
+
+        // Third store: no file exists — should start fresh without errors.
+        let temp_dir2 = TempDir::new().unwrap();
+        let store3 = BlockStore::new(true, Some(temp_dir2.path().to_path_buf()), config);
+        let event2 = BlocklistEvent::block_ip(
+            "10.0.0.101",
+            "fresh",
+            "global",
+            BlockProvenance::default(),
+            1000,
+        );
+        assert_eq!(
+            store3.apply_blocklist_event(&event2),
+            BlocklistApplyResult::Applied
+        );
+    }
+
+    #[tokio::test]
+    async fn test_catchup_after_restart_uses_persisted_target_state() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = target_state_config();
+
+        // Phase 1: Apply an unblock, shutdown.
+        {
+            let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config.clone());
+            let unblock = BlocklistEvent::unblock_ip(
+                "10.0.0.110",
+                "global",
+                BlockProvenance::default(),
+                2000,
+            );
+            assert_eq!(
+                store.apply_blocklist_event(&unblock),
+                BlocklistApplyResult::Applied
+            );
+            store.shutdown().await;
+        }
+
+        // Phase 2: Restart. Replay an older block via catchup (simulated).
+        let store2 = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config);
+        let stale_block = BlocklistEvent::block_ip(
+            "10.0.0.110",
+            "catchup_stale_block",
+            "global",
+            BlockProvenance::default(),
+            1000, // older than unblock (2000)
+        )
+        .with_event_id("catchup-evt-1".to_string());
+
+        // This simulates what transport_peer.rs does for catchup replay.
+        let result = store2.apply_blocklist_event(&stale_block);
+        assert_eq!(
+            result,
+            BlocklistApplyResult::IgnoredStale,
+            "Stale block from catchup should be rejected after restart"
+        );
     }
 }

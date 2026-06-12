@@ -137,4 +137,57 @@ pub struct BlockRecord {
 - **Legacy Migration**: `migrate_legacy_sentinel_entries()` converts sentinel `0.0.0.0` entries to first-class mesh blocks. **Auto-called** by `BlockStore::new` after loading both IP and mesh files from disk.
 - **Counter Correctness**: `block_ip`, `block_ip_with_provenance`, and `add_block` only increment `total_entries` on new key insertion. Overwriting an existing `(site_scope, ip)` entry updates the entry without changing the count.
 - **Mesh-ID Deadlock Fix**: `block_mesh_id_with_provenance` drops the shard write lock before calling `trigger_persist()`, preventing deadlock where the persist path tries to read the same shard.
-- **BlocklistEvent Propagation**: Admin ban/unban handlers emit structured `BlocklistEvent` debug logs (target `blocklist_event`). Admin unban also gossips `BlocklistEventGossip` to mesh peers and pushes `BlocklistEventUpdate` IPC to workers. Apply pipeline uses FIFO dedup (`SeenEventCache`) and per-target stale suppression (`TargetStateCache`). In-memory state; not persisted across restarts. See `architecture/blocklist_remove_consistency.md`.
+- **BlocklistEvent Propagation**: Admin ban/unban handlers emit structured `BlocklistEvent` debug logs (target `blocklist_event`). Admin unban also gossips `BlocklistEventGossip` to mesh peers and pushes `BlocklistEventUpdate` IPC to workers. Apply pipeline uses FIFO dedup (`SeenEventCache`) and per-target stale suppression (`TargetStateCache`). See `architecture/blocklist_remove_consistency.md`.
+
+---
+
+## 6. Target State Persistence (Iteration 52)
+
+Per-target stale suppression (`TargetStateCache`) now survives restarts via a persisted `blocklist_target_state.json` file.
+
+### Persistence File
+
+| Property | Value |
+|----------|-------|
+| File name | `blocklist_target_state.json` |
+| Location | Same data directory as `blocks.json` / `mesh_blocks.json` |
+| Format | JSON array of `BlocklistTargetStateRecord` |
+| Permissions | `0o600` |
+| Atomic writes | `.tmp` + rename pattern (same as `blocks.json`) |
+| Max records | Configurable (`target_state_max_records`, default 100,000) |
+
+### `BlocklistTargetStateRecord`
+
+```rust
+pub struct BlocklistTargetStateRecord {
+    pub target_kind: BlockTargetKind,
+    pub site_scope: String,
+    pub identifier: String,
+    pub last_operation: BlocklistOperation,
+    pub timestamp: u64,
+    pub version: Option<u64>,
+    pub event_id: Option<String>,
+    pub source_node: Option<String>,
+    pub provenance: Option<BlockProvenance>,
+    pub recorded_at: u64,
+    pub expires_at: u64,
+}
+```
+
+- `expires_at` is set to `now + ttl_secs` at persist time
+- Expired records are filtered out on load (`is_expired()` checks system time)
+
+### Config Options
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `target_state_persist` | `bool` | `true` | Enable persistence of target state to disk |
+| `target_state_max_records` | `usize` | `100,000` | Maximum persisted records (oldest-first eviction) |
+| `target_state_ttl_secs` | `u64` | `604800` (7 days) | TTL applied to persisted records |
+
+### Lifecycle
+
+1. **Runtime**: Direct block/unblock operations call `record_target_state_from_direct_op()` which updates the in-memory `TargetStateCache` (10k capacity, FIFO eviction).
+2. **Shutdown**: `BlockStore::shutdown()` serializes the full `TargetStateCache` to `blocklist_target_state.json` synchronously before signaling the background persistence task.
+3. **Startup**: `BlockStore::new()` loads `blocklist_target_state.json` if it exists, filters expired records, and hydrates the `TargetStateCache`. Malformed files are logged and skipped.
+4. **In-memory capacity**: The in-memory `TargetStateCache` remains capped at 10,000 entries with FIFO eviction. Persistence provides a restart-safe warm start, not a full durable store.
