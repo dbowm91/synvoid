@@ -10,6 +10,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use synvoid_waf::traits::{BlockProvenance, BlockProvenanceKind};
+
 use crate::streaming::TeeBody;
 use bytes::Bytes;
 use http_body_util::combinators::BoxBody;
@@ -484,11 +486,15 @@ impl<W: WafProcessor> ProxyServer<W> {
                                         "Auto-banning source of upstream error probing"
                                     );
                                     if let Some(ref store) = self.block_store {
-                                        store.block_ip(
+                                        store.block_ip_with_provenance(
                                             client_ip,
                                             "upstream_error_probe",
                                             ban_duration,
                                             "global",
+                                            BlockProvenance {
+                                                kind: BlockProvenanceKind::ProxyHealthProbe,
+                                                source: Some("upstream_error_tracker".to_string()),
+                                            },
                                         );
                                     }
                                 }

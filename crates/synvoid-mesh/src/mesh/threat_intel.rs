@@ -20,7 +20,7 @@ use crate::protocol::{
     MeshMessage, MeshPeerInfo, ThreatIndicator, ThreatSeverity, ThreatType, MESH_MESSAGE_VERSION,
 };
 use crate::reputation::{ReputationConfig, ReputationManager};
-use crate::stubs::block_store::BlockStoreApi;
+use crate::stubs::block_store::{BlockProvenance, BlockProvenanceKind, BlockStoreApi};
 use crate::stubs::metrics;
 use crate::stubs::waf_stub::threat_intel::feed_client::{ThreatFeedIndicator, ThreatFeedPayload};
 
@@ -824,7 +824,16 @@ impl ThreatIntelligenceManager {
 
         if severity == ThreatSeverity::High || severity == ThreatSeverity::Critical {
             let ttl = ttl_seconds.unwrap_or(self.config.min_ttl_seconds * 6);
-            self.block_store.block_ip(ip, &reason, ttl, site_scope);
+            self.block_store.block_ip_with_provenance(
+                ip,
+                &reason,
+                ttl,
+                site_scope,
+                BlockProvenance {
+                    kind: BlockProvenanceKind::LocalHoneypot,
+                    source: Some(format!("announce_local_block:{}", ip)),
+                },
+            );
             tracing::info!(
                 "Honeypot detected high/critical threat from {}, blocking locally for {} seconds",
                 ip,
@@ -1242,11 +1251,15 @@ impl ThreatIntelligenceManager {
                     }
 
                     if enforcement_action == ThreatIntelConsumerAction::PermitAction {
-                        let banned = self.block_store.block_ip(
+                        let banned = self.block_store.block_ip_with_provenance(
                             ip,
                             &format!("mesh:{}:{}", from_node, indicator.reason),
                             indicator.ttl_seconds,
                             &indicator.site_scope,
+                            BlockProvenance {
+                                kind: BlockProvenanceKind::MeshThreatIntelPolicyGated,
+                                source: Some(from_node.to_string()),
+                            },
                         );
 
                         if banned {
@@ -1282,7 +1295,9 @@ impl ThreatIntelligenceManager {
                         return false;
                     }
                     if enforcement_action == ThreatIntelConsumerAction::PermitAction {
-                        self.apply_rate_limit_mesh_action(&indicator, from_node);
+                        self.apply_rate_limit_mesh_action_after_policy_permit(
+                            &indicator, from_node,
+                        );
                         crate::stubs::metrics::record_threat_intel_enforcement_permitted();
                     } else {
                         tracing::debug!(
@@ -1307,7 +1322,9 @@ impl ThreatIntelligenceManager {
                         return false;
                     }
                     if enforcement_action == ThreatIntelConsumerAction::PermitAction {
-                        self.apply_suspicious_mesh_action(&indicator, from_node);
+                        self.apply_suspicious_mesh_action_after_policy_permit(
+                            &indicator, from_node,
+                        );
                         crate::stubs::metrics::record_threat_intel_enforcement_permitted();
                     } else {
                         tracing::debug!(
@@ -1346,11 +1363,15 @@ impl ThreatIntelligenceManager {
                     if enforcement_action == ThreatIntelConsumerAction::PermitAction {
                         let reqs = indicator.rate_limit_requests.unwrap_or(50);
                         let window = indicator.rate_limit_window_secs.unwrap_or(60);
-                        self.block_store.block_ip(
+                        self.block_store.block_ip_with_provenance(
                             ip,
                             &format!("mesh:{}:ip_throttle:{}r/{}s", from_node, reqs, window),
                             indicator.ttl_seconds,
                             &indicator.site_scope,
+                            BlockProvenance {
+                                kind: BlockProvenanceKind::MeshThreatIntelPolicyGated,
+                                source: Some(from_node.to_string()),
+                            },
                         );
                         tracing::info!(
                             "Applied mesh IP throttle from {}: {} ({} reqs/{}s, TTL: {}s)",
@@ -1888,16 +1909,24 @@ impl ThreatIntelligenceManager {
     /// Caller MUST have verified `ThreatIntelConsumerAction::PermitAction`
     /// via the enforcement policy gate before calling this helper.
     /// This helper does not re-check the policy — it trusts the caller.
-    fn apply_rate_limit_mesh_action(&self, indicator: &ThreatIndicator, from_node: &str) {
+    fn apply_rate_limit_mesh_action_after_policy_permit(
+        &self,
+        indicator: &ThreatIndicator,
+        from_node: &str,
+    ) {
         if let Ok(ip) = indicator.indicator_value.parse::<IpAddr>() {
             let reqs = indicator.rate_limit_requests.unwrap_or(100);
             let window = indicator.rate_limit_window_secs.unwrap_or(60);
 
-            self.block_store.block_ip(
+            self.block_store.block_ip_with_provenance(
                 ip,
                 &format!("mesh:{}:ratelimit:{}r/{}s", from_node, reqs, window),
                 indicator.ttl_seconds,
                 &indicator.site_scope,
+                BlockProvenance {
+                    kind: BlockProvenanceKind::MeshThreatIntelPolicyGated,
+                    source: Some(from_node.to_string()),
+                },
             );
 
             tracing::info!(
@@ -1917,7 +1946,11 @@ impl ThreatIntelligenceManager {
     /// Caller MUST have verified `ThreatIntelConsumerAction::PermitAction`
     /// via the enforcement policy gate before calling this helper.
     /// This helper does not re-check the policy — it trusts the caller.
-    fn apply_suspicious_mesh_action(&self, indicator: &ThreatIndicator, from_node: &str) {
+    fn apply_suspicious_mesh_action_after_policy_permit(
+        &self,
+        indicator: &ThreatIndicator,
+        from_node: &str,
+    ) {
         if let Ok(ip) = indicator.indicator_value.parse::<IpAddr>() {
             let severity_ttl = match indicator.severity {
                 ThreatSeverity::Critical => 7200,
@@ -1927,11 +1960,15 @@ impl ThreatIntelligenceManager {
                 ThreatSeverity::Unspecified => 300,
             };
 
-            self.block_store.block_ip(
+            self.block_store.block_ip_with_provenance(
                 ip,
                 &format!("mesh:{}:suspicious", from_node),
                 severity_ttl,
                 &indicator.site_scope,
+                BlockProvenance {
+                    kind: BlockProvenanceKind::MeshThreatIntelPolicyGated,
+                    source: Some(from_node.to_string()),
+                },
             );
 
             tracing::info!(

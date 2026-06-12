@@ -1,6 +1,7 @@
 use std::net::IpAddr;
 use std::sync::Arc;
 
+use synvoid_core::block_store::BlockProvenance;
 use synvoid_core::request::RequestContext;
 use synvoid_waf::traits::{
     BlockEntry as WafBlockEntry, BlockListStore, ChallengeService, GeoIpLookup, WafPersistence,
@@ -30,6 +31,19 @@ impl BlockListStore for BlockStoreAdapter {
 
     fn block_ip(&self, ip: IpAddr, reason: &str, duration_secs: u64, scope: &str) {
         let _ = self.inner.block_ip(ip, reason, duration_secs, scope);
+    }
+
+    fn block_ip_with_provenance(
+        &self,
+        ip: IpAddr,
+        reason: &str,
+        duration_secs: u64,
+        scope: &str,
+        provenance: BlockProvenance,
+    ) {
+        let _ = self
+            .inner
+            .block_ip_with_provenance(ip, reason, duration_secs, scope, provenance);
     }
 }
 

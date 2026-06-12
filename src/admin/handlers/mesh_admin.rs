@@ -13,6 +13,7 @@ use sha2::Digest;
 use sha2::Sha256;
 use std::net::IpAddr;
 use std::sync::Arc;
+pub use synvoid_block_store::{BlockProvenance, BlockProvenanceKind};
 use utoipa::ToSchema;
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -139,6 +140,7 @@ pub struct BanRecord {
     pub expires_at: Option<u64>,
     pub is_permanent: bool,
     pub site_scope: String,
+    pub provenance: String,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -404,7 +406,16 @@ pub async fn ban_ip(
         if let Some(threat_intel) = transport.get_threat_intel() {
             let block_store = threat_intel.get_block_store();
 
-            if block_store.block_ip(ip, &reason, duration, &site_scope) {
+            if block_store.block_ip_with_provenance(
+                ip,
+                &reason,
+                duration,
+                &site_scope,
+                BlockProvenance {
+                    kind: BlockProvenanceKind::AdminManual,
+                    source: Some("admin_ban_ip".to_string()),
+                },
+            ) {
                 tracing::info!(
                     "Admin banned IP {} for {} seconds (reason: {})",
                     ip,
@@ -462,11 +473,15 @@ pub async fn ban_mesh_id(
         if let Some(threat_intel) = transport.get_threat_intel() {
             let block_store = threat_intel.get_block_store();
 
-            let blocked = block_store.block_ip(
+            let blocked = block_store.block_ip_with_provenance(
                 IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)),
                 &format!("mesh_id_ban:{}:{}", mesh_id, reason),
                 duration,
                 "global",
+                BlockProvenance {
+                    kind: BlockProvenanceKind::AdminManual,
+                    source: Some("admin_ban_mesh_id".to_string()),
+                },
             );
 
             if blocked || duration == 0 {
@@ -596,6 +611,7 @@ pub async fn list_bans(
                     expires_at,
                     is_permanent,
                     site_scope: entry.site_scope,
+                    provenance: entry.provenance_kind,
                 });
             }
         }

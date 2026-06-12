@@ -6,6 +6,7 @@ use std::sync::Arc;
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
 use http::HeaderMap;
+pub use synvoid_block_store::{BlockProvenance, BlockProvenanceKind};
 
 pub mod adapters;
 pub mod asn_tracker;
@@ -679,7 +680,16 @@ impl WafCore {
             if tracker.record_violation(ip, reason, threat_level) > 0 {
                 if let Some(ref store) = self.block_store {
                     let duration = self.honeypot_ban_duration_secs;
-                    store.block_ip(ip, reason, duration, "global");
+                    store.block_ip_with_provenance(
+                        ip,
+                        reason,
+                        duration,
+                        "global",
+                        BlockProvenance {
+                            kind: BlockProvenanceKind::LocalWaf,
+                            source: Some("waf_escalation".to_string()),
+                        },
+                    );
                 }
                 return Some(WafDecision::Block(code, msg.to_string()));
             }
@@ -731,7 +741,16 @@ impl WafCore {
         _scope: &str,
     ) {
         if let Some(ref store) = self.block_store {
-            store.block_ip(ip, reason, duration_secs, "global");
+            store.block_ip_with_provenance(
+                ip,
+                reason,
+                duration_secs,
+                "global",
+                BlockProvenance {
+                    kind: BlockProvenanceKind::LocalHoneypot,
+                    source: Some("honeypot".to_string()),
+                },
+            );
         }
     }
 
@@ -743,7 +762,16 @@ impl WafCore {
         _scope: &str,
     ) {
         if let Some(ref store) = self.block_store {
-            store.block_ip(ip, reason, duration_secs, "global");
+            store.block_ip_with_provenance(
+                ip,
+                reason,
+                duration_secs,
+                "global",
+                BlockProvenance {
+                    kind: BlockProvenanceKind::LocalWaf,
+                    source: Some("local_threat_intel".to_string()),
+                },
+            );
         }
     }
 

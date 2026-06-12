@@ -8143,6 +8143,7 @@ dependencies = [
  "serde",
  "serde_json",
  "synvoid-config",
+ "synvoid-core",
  "synvoid-mesh",
  "synvoid-utils",
  "synvoid-waf",

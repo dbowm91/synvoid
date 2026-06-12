@@ -4,6 +4,7 @@
 //! multiple SynVoid subsystems. It intentionally avoids heavy dependencies
 //! like tokio, hyper, axum, rustls, openraft, wasmtime, yara-x, rusqlite, quinn.
 
+pub mod block_store;
 pub mod drain;
 pub mod error;
 pub mod ids;

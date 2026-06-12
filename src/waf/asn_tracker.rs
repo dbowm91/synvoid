@@ -5,7 +5,7 @@
 //! Uses lock-free `AtomicSlidingWindow` counters per ASN and caches IP→ASN
 //! lookups to minimize GeoIP overhead.
 
-use crate::block_store::BlockStore;
+use crate::block_store::{BlockProvenance, BlockProvenanceKind, BlockStore};
 use crate::config::defaults::AsnScrapingConfig;
 use crate::geoip::types::AsnInfo;
 use crate::geoip::GeoIpManager;
@@ -149,7 +149,16 @@ impl AsnTracker {
             crate::metrics::record_attack_type("AsnScraping");
 
             if let Some(ref store) = self.block_store {
-                store.block_ip(client_ip, "asn_scraping", ban_duration, "global");
+                store.block_ip_with_provenance(
+                    client_ip,
+                    "asn_scraping",
+                    ban_duration,
+                    "global",
+                    BlockProvenance {
+                        kind: BlockProvenanceKind::LocalAsnTracker,
+                        source: Some(format!("asn_{}", asn)),
+                    },
+                );
             }
 
             return Some(WafDecision::Drop);

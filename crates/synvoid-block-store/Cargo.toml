@@ -10,6 +10,7 @@ mesh = ["dep:synvoid-mesh", "synvoid-mesh/mesh"]
 
 [dependencies]
 synvoid-config = { path = "../synvoid-config" }
+synvoid-core = { path = "../synvoid-core" }
 synvoid-utils = { path = "../synvoid-utils" }
 synvoid-waf = { path = "../synvoid-waf" }
 synvoid-mesh = { path = "../synvoid-mesh", optional = true }

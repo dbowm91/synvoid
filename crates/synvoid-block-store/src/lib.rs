@@ -20,6 +20,7 @@ use std::time::Duration;
 use synvoid_config::DenyListLimitsConfig;
 use tokio::sync::mpsc;
 
+pub use synvoid_core::block_store::{BlockProvenance, BlockProvenanceKind};
 use synvoid_waf::mitigation::{MitigationProvider, SizedMitigationProvider};
 
 pub type GlobalBlockHook = Arc<dyn Fn(IpAddr) + Send + Sync>;
@@ -36,6 +37,8 @@ pub struct BlockEntry {
     pub site_scope: String,
     pub access_count: u64,
     pub last_access: u64,
+    #[serde(default)]
+    pub provenance: BlockProvenance,
 }
 
 impl BlockEntry {
@@ -49,6 +52,27 @@ impl BlockEntry {
             site_scope,
             access_count: 0,
             last_access: now,
+            provenance: BlockProvenance::default(),
+        }
+    }
+
+    pub fn new_with_provenance(
+        ip: IpAddr,
+        reason: String,
+        ban_expire_seconds: u64,
+        site_scope: String,
+        provenance: BlockProvenance,
+    ) -> Self {
+        let now = synvoid_utils::safe_unix_timestamp();
+        Self {
+            ip: ip.to_string(),
+            reason,
+            blocked_at: now,
+            ban_expire_seconds,
+            site_scope,
+            access_count: 0,
+            last_access: now,
+            provenance,
         }
     }
 
@@ -439,6 +463,69 @@ impl BlockStore {
         true
     }
 
+    /// Block an IP address with provenance metadata.
+    ///
+    /// Same as [`block_ip`](Self::block_ip) but records provenance for auditability.
+    pub fn block_ip_with_provenance(
+        &self,
+        ip: IpAddr,
+        reason: &str,
+        ban_expire_seconds: u64,
+        site_scope: &str,
+        provenance: BlockProvenance,
+    ) -> bool {
+        if !self.enabled {
+            return false;
+        }
+
+        let max_entries = self.config.max_entries;
+        let current = self.total_entries.load(Ordering::Relaxed);
+
+        if current >= max_entries {
+            tracing::info!(
+                "Block store at capacity ({} >= {}), evicting LRU entry",
+                current,
+                max_entries
+            );
+            if !self.evict_lru() {
+                tracing::warn!("Failed to evict LRU entry, cannot add new block");
+                return false;
+            }
+        }
+
+        let entry = BlockEntry::new_with_provenance(
+            ip,
+            reason.to_string(),
+            ban_expire_seconds,
+            site_scope.to_string(),
+            provenance,
+        );
+        let key = BlockEntry::key(site_scope, &ip);
+        let idx = Self::shard_index(&key);
+
+        self.shards[idx].write().insert(key, entry);
+        self.total_entries.fetch_add(1, Ordering::Relaxed);
+
+        tracing::info!("Blocked IP {} for {} (scope: {})", ip, reason, site_scope);
+
+        if site_scope == "global" {
+            if let Some(wrapper) = self.mitigation_provider.load().as_ref() {
+                let duration = if ban_expire_seconds == 0 {
+                    Duration::from_secs(365 * 24 * 3600)
+                } else {
+                    Duration::from_secs(ban_expire_seconds)
+                };
+                if let Err(e) = wrapper.0.block_ip(ip, reason, duration) {
+                    tracing::error!(%ip, %e, "Failed to block IP via mitigation provider");
+                }
+            }
+        }
+
+        self.trigger_persist();
+
+        true
+    }
+
     /// Check if an IP is blocked.
     ///
     /// Checks both site-specific and global blocklists.
@@ -632,6 +719,17 @@ impl synvoid_mesh::stubs::block_store::BlockStoreApi for BlockStore {
         self.block_ip(ip, reason, ttl_secs, site_scope)
     }
 
+    fn block_ip_with_provenance(
+        &self,
+        ip: std::net::IpAddr,
+        reason: &str,
+        ttl_secs: u64,
+        site_scope: &str,
+        provenance: synvoid_mesh::stubs::block_store::BlockProvenance,
+    ) -> bool {
+        self.block_ip_with_provenance(ip, reason, ttl_secs, site_scope, provenance)
+    }
+
     fn is_blocked(&self, ip: &std::net::IpAddr, site_scope: &str) -> bool {
         self.is_blocked(ip, site_scope).is_some()
     }
@@ -651,6 +749,7 @@ impl synvoid_mesh::stubs::block_store::BlockStoreApi for BlockStore {
                 site_scope: e.site_scope,
                 access_count: e.access_count,
                 last_access: e.last_access,
+                provenance_kind: format!("{:?}", e.provenance.kind),
             })
             .collect()
     }
@@ -917,5 +1016,51 @@ mod tests {
         // (since is_blocked updates last_access and makes the other more recently used)
         // But due to second-level timestamp precision, this is not guaranteed
         // So we just verify exactly 2 entries remain and ip3 is one of them
+    }
+
+    #[test]
+    fn test_block_entry_deserialize_without_provenance() {
+        let json = r#"{
+            "ip": "10.0.0.1",
+            "reason": "old_entry",
+            "blocked_at": 1700000000,
+            "ban_expire_seconds": 3600,
+            "site_scope": "global",
+            "access_count": 5,
+            "last_access": 1700000001
+        }"#;
+        let entry: BlockEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(entry.ip, "10.0.0.1");
+        assert_eq!(entry.reason, "old_entry");
+        assert_eq!(entry.provenance.kind, BlockProvenanceKind::LegacyUnknown);
+        assert!(entry.provenance.source.is_none());
+    }
+
+    #[test]
+    fn test_block_entry_new_defaults_to_legacy_unknown_provenance() {
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        let entry = BlockEntry::new(ip, "test".to_string(), 3600, "global".to_string());
+        assert_eq!(entry.provenance.kind, BlockProvenanceKind::LegacyUnknown);
+        assert!(entry.provenance.source.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_block_ip_with_provenance() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip: IpAddr = "10.0.0.99".parse().unwrap();
+        let provenance = BlockProvenance {
+            kind: BlockProvenanceKind::MeshThreatIntelPolicyGated,
+            source: Some("mesh:node-1".to_string()),
+        };
+        assert!(store.block_ip_with_provenance(ip, "mesh_threat", 3600, "global", provenance,));
+
+        let entry = store.is_blocked(&ip, "global").unwrap();
+        assert_eq!(
+            entry.provenance.kind,
+            BlockProvenanceKind::MeshThreatIntelPolicyGated
+        );
+        assert_eq!(entry.provenance.source.as_deref(), Some("mesh:node-1"));
     }
 }

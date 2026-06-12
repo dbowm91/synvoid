@@ -39,6 +39,7 @@ When editing request/WAF paths or adding new threat-intel consumers:
 3. **Local-origin detection is first-party** — `announce_local_block`, `announce_local_rate_limit`, and similar local-origin calls are exempt from the enforcement gate because they represent first-party evidence, not remote advisory consumption.
 4. **New threat types requiring enforcement** must use `ThreatIntelConsumerKind::Enforcement` and require `ThreatIntelConsumerAction::PermitAction` before mutating block-store, rate-limit, or WAF state.
 5. **WAF request code consumes BlockStore**, not `ThreatIntelligenceManager` directly. This boundary is correct — mesh enforcement populates BlockStore, WAF reads it. Do not add raw advisory lookups to the request hot path.
+6. **New block-store writes must set meaningful provenance** — Use `block_ip_with_provenance` with an appropriate `BlockProvenanceKind`. Do not use `LegacyUnknown` for new production enforcement paths unless compatibility requires it.
 
 ### When NOT to use Constant-Time Comparison
 

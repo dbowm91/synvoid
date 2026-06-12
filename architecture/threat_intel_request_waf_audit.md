@@ -1,4 +1,4 @@
-# Threat-Intel Request/WAF Audit — Iteration 36
+# Threat-Intel Request/WAF Audit — Iteration 37
 
 **Date**: 2026-06-11  
 **Scope**: Repository-wide audit of request/WAF paths for threat-intel usage  
@@ -9,6 +9,12 @@
 The WAF request path does not query `ThreatIntelligenceManager` directly. Instead, mesh enforcement (`handle_incoming_threat`) populates `BlockStore` state, and WAF request code reads `BlockStore` as local enforcement state. This boundary is correct and requires no migration.
 
 Strict and composed lookup wrappers (`lookup_*_policy_strict`, `lookup_*_policy_composed`) are defined but have zero external production callers outside `threat_intel.rs` itself. They are staged for future use when request/WAF consumers need policy-gated threat-intel decisions directly.
+
+**Iteration 37 additions:**
+- A mechanical source-scanning guardrail (`tests/threat_intel_boundary_guard.rs`) now prevents raw threat-intel lookup APIs from being introduced into enforcement-sensitive paths.
+- `BlockEntry` carries `BlockProvenance` metadata (kind + optional source string) indicating whether the block came from local WAF, honeypot, mesh policy-gated threat-intel, admin action, supervisor sync, proxy probing, or another controlled source.
+- All production `block_ip` call sites have been migrated to `block_ip_with_provenance` with appropriate `BlockProvenanceKind`.
+- The admin ban-list API (`GET /mesh/bans`) now returns provenance in `BanRecord`.
 
 ## Audit Table
 

@@ -2,6 +2,7 @@ use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
 use crate::supervisor::state::SupervisorState;
+use synvoid_block_store::{BlockProvenance, BlockProvenanceKind};
 use synvoid_ipc::ProcessManager;
 use synvoid_tls::config::InternalTlsConfig;
 use tonic::transport::{Identity, ServerTlsConfig};
@@ -104,9 +105,16 @@ impl ControlPlane for ControlPlaneService {
             .map_err(|_| Status::invalid_argument("Invalid IP address"))?;
 
         tracing::info!("gRPC: Manually blocking IP {} (reason: {})", ip, req.reason);
-        self.state
-            .block_store
-            .block_ip(ip, &req.reason, req.duration_secs, &req.scope);
+        self.state.block_store.block_ip_with_provenance(
+            ip,
+            &req.reason,
+            req.duration_secs,
+            &req.scope,
+            BlockProvenance {
+                kind: BlockProvenanceKind::SupervisorManual,
+                source: Some("grpc_block_ip".to_string()),
+            },
+        );
 
         Ok(Response::new(BlockResponse { success: true }))
     }

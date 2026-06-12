@@ -554,14 +554,33 @@ Raw lookup APIs exist for compatibility and debugging, not for enforcement:
 
 These methods return indicators regardless of canonical trust status. They are useful for admin diagnostics, metrics collection, and comparison with policy-composed results, but **must not be consumed by enforcement paths**. An indicator that appears via a raw lookup may be `AdvisoryOnly` -- present in the DHT but not canonical-trusted.
 
+### BlockStore Provenance
+
+Every `BlockEntry` carries `BlockProvenance` metadata indicating its source:
+
+| `BlockProvenanceKind` | Source |
+|----------------------|--------|
+| `LocalWaf` | WAF escalation or local threat-intel fed into WAF |
+| `LocalHoneypot` | Honeypot-triggered block |
+| `LocalAsnTracker` | ASN scraping detection |
+| `MeshThreatIntelPolicyGated` | Mesh threat-intel enforcement (gated by `PermitAction`) |
+| `SupervisorSync` | Supervisor-to-worker IPC blocklist sync |
+| `AdminManual` | Admin API ban action |
+| `SupervisorManual` | Supervisor gRPC/manual action |
+| `ProxyHealthProbe` | Proxy upstream probing auto-ban |
+| `Test` | Test fixture |
+| `LegacyUnknown` | Default for entries without provenance (backward compat) |
+
+The `block_ip_with_provenance` method is the preferred way to create block entries. The legacy `block_ip` method defaults to `LegacyUnknown`. Admin ban-list responses include the provenance kind as a string.
+
 ### Current Integration Status
 
 | Indicator | Enforcement Wired | Notes |
 |-----------|-------------------|-------|
-| `IpBlock` | Yes | Gated via `handle_incoming_threat` → `block_ip` |
-| `RateLimitViolation` | Yes | Gated via `handle_incoming_threat` → rate-limit mutation |
-| `SuspiciousActivity` | Yes | Gated via `handle_incoming_threat` → suspicious mutation |
-| `IpThrottle` | Yes | Gated via `handle_incoming_threat` → throttle mutation |
+| `IpBlock` | Yes | Gated via `handle_incoming_threat` → `block_ip_with_provenance` (`MeshThreatIntelPolicyGated`) |
+| `RateLimitViolation` | Yes | Gated via `handle_incoming_threat` → rate-limit mutation (`MeshThreatIntelPolicyGated`) |
+| `SuspiciousActivity` | Yes | Gated via `handle_incoming_threat` → suspicious mutation (`MeshThreatIntelPolicyGated`) |
+| `IpThrottle` | Yes | Gated via `handle_incoming_threat` → throttle mutation (`MeshThreatIntelPolicyGated`) |
 | `AsnBlock` | No | Observational/advisory only; no enforcement mutation in mesh threat-intel path |
 | `DomainBlock` | No | Reserved for future DNS-layer integration |
 | `UrlBlock` | No | Reserved for future URL-filter integration |
@@ -569,7 +588,7 @@ These methods return indicators regardless of canonical trust status. They are u
 
 ### Private Mutation Helper Preconditions
 
-The private helpers `apply_rate_limit_mesh_action` and `apply_suspicious_mesh_action` have a documented precondition: the caller must have verified `ThreatIntelConsumerAction::PermitAction` before calling them. They do not re-check the policy internally. This invariant is enforced by the single call site in `handle_incoming_threat`.
+The private helpers `apply_rate_limit_mesh_action_after_policy_permit` and `apply_suspicious_mesh_action_after_policy_permit` have a documented precondition: the caller must have verified `ThreatIntelConsumerAction::PermitAction` before calling them. They do not re-check the policy internally. This invariant is enforced by the single call site in `handle_incoming_threat`.
 
 ## Configuration
 

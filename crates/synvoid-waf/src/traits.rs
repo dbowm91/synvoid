@@ -5,6 +5,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::HeaderMap;
+pub use synvoid_core::block_store::{BlockProvenance, BlockProvenanceKind};
 use synvoid_core::request::{BodyScanPhase, RequestContext};
 
 use crate::primitives::WafDecision;
@@ -19,6 +20,22 @@ pub trait BlockListStore: Send + Sync + 'static {
 
     /// Block an IP address with a reason and duration.
     fn block_ip(&self, ip: IpAddr, reason: &str, duration_secs: u64, scope: &str);
+
+    /// Block an IP address with provenance metadata.
+    ///
+    /// Default implementation delegates to [`block_ip`](Self::block_ip) with
+    /// [`BlockProvenanceKind::LegacyUnknown`] provenance.
+    fn block_ip_with_provenance(
+        &self,
+        ip: IpAddr,
+        reason: &str,
+        duration_secs: u64,
+        scope: &str,
+        provenance: BlockProvenance,
+    ) {
+        let _ = provenance;
+        self.block_ip(ip, reason, duration_secs, scope);
+    }
 }
 
 /// A block list entry with the reason for blocking.

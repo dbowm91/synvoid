@@ -10,6 +10,7 @@ use tokio::task::JoinHandle;
 
 use super::state::{wait_for_drain, UnifiedServerWorkerState};
 use crate::worker::common::collect_current_process_usage;
+use synvoid_block_store::{BlockProvenance, BlockProvenanceKind};
 use synvoid_ipc::{current_timestamp, Message};
 use synvoid_static_files::client::get_global_async_cpu_offload_stats;
 
@@ -257,11 +258,15 @@ pub fn spawn_ipc_loop(
                     if let Some(block_store) = state.unified_server.get_block_store() {
                         for block in blocks {
                             if let Ok(ip) = block.ip.parse() {
-                                let _ = block_store.block_ip(
+                                let _ = block_store.block_ip_with_provenance(
                                     ip,
                                     &block.reason,
                                     block.ban_expire_seconds,
                                     &block.site_scope,
+                                    BlockProvenance {
+                                        kind: BlockProvenanceKind::SupervisorSync,
+                                        source: Some("blocklist_update".to_string()),
+                                    },
                                 );
                             }
                         }
@@ -694,11 +699,15 @@ pub async fn request_initial_blocklist(
                 );
                 for block in blocks {
                     if let Ok(ip) = block.ip.parse() {
-                        let _ = block_store.block_ip(
+                        let _ = block_store.block_ip_with_provenance(
                             ip,
                             &block.reason,
                             block.ban_expire_seconds,
                             &block.site_scope,
+                            BlockProvenance {
+                                kind: BlockProvenanceKind::SupervisorSync,
+                                source: Some("blocklist_response".to_string()),
+                            },
                         );
                     }
                 }

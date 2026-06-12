@@ -226,6 +226,7 @@ pub mod block_store {
     use std::sync::Arc;
 
     use synvoid_config::DenyListLimitsConfig;
+    pub use synvoid_core::block_store::{BlockProvenance, BlockProvenanceKind};
 
     #[derive(Debug, Clone)]
     pub struct BlockEntry {
@@ -236,6 +237,7 @@ pub mod block_store {
         pub site_scope: String,
         pub access_count: u64,
         pub last_access: u64,
+        pub provenance_kind: String,
     }
 
     impl BlockEntry {
@@ -254,6 +256,7 @@ pub mod block_store {
                 site_scope,
                 access_count: 0,
                 last_access: now,
+                provenance_kind: "LegacyUnknown".to_string(),
             }
         }
 
@@ -290,6 +293,14 @@ pub mod block_store {
 
     pub trait BlockStoreApi: Send + Sync {
         fn block_ip(&self, ip: IpAddr, reason: &str, ttl_secs: u64, site_scope: &str) -> bool;
+        fn block_ip_with_provenance(
+            &self,
+            ip: IpAddr,
+            reason: &str,
+            ttl_secs: u64,
+            site_scope: &str,
+            provenance: BlockProvenance,
+        ) -> bool;
         fn is_blocked(&self, ip: &IpAddr, site_scope: &str) -> bool;
         fn unblock_ip(&self, ip: &IpAddr, site_scope: &str) -> bool;
         fn get_all_entries(&self) -> Vec<BlockEntry>;
@@ -332,6 +343,17 @@ pub mod block_store {
             true
         }
 
+        pub fn block_ip_with_provenance(
+            &self,
+            ip: IpAddr,
+            reason: &str,
+            ttl_secs: u64,
+            site_scope: &str,
+            _provenance: BlockProvenance,
+        ) -> bool {
+            self.block_ip(ip, reason, ttl_secs, site_scope)
+        }
+
         pub fn unblock_ip(&self, ip: &IpAddr, site_scope: &str) -> bool {
             if !self.enabled {
                 return false;
@@ -351,6 +373,17 @@ pub mod block_store {
     impl BlockStoreApi for BlockStore {
         fn block_ip(&self, ip: IpAddr, reason: &str, ttl_secs: u64, site_scope: &str) -> bool {
             self.block_ip(ip, reason, ttl_secs, site_scope)
+        }
+
+        fn block_ip_with_provenance(
+            &self,
+            ip: IpAddr,
+            reason: &str,
+            ttl_secs: u64,
+            site_scope: &str,
+            provenance: BlockProvenance,
+        ) -> bool {
+            self.block_ip_with_provenance(ip, reason, ttl_secs, site_scope, provenance)
         }
 
         fn is_blocked(&self, ip: &IpAddr, site_scope: &str) -> bool {
