@@ -20,7 +20,9 @@ use std::time::Duration;
 use synvoid_config::DenyListLimitsConfig;
 use tokio::sync::mpsc;
 
-pub use synvoid_core::block_store::{BlockProvenance, BlockProvenanceKind};
+pub use synvoid_core::block_store::{
+    BlockProvenance, BlockProvenanceKind, BlockRecord, BlockTargetKind, MeshBlockEntry,
+};
 use synvoid_waf::mitigation::{MitigationProvider, SizedMitigationProvider};
 
 pub type GlobalBlockHook = Arc<dyn Fn(IpAddr) + Send + Sync>;
@@ -101,10 +103,12 @@ impl BlockEntry {
 
 pub struct BlockStore {
     shards: Vec<RwLock<AHashMap<String, BlockEntry>>>,
+    mesh_shards: Vec<RwLock<AHashMap<String, MeshBlockEntry>>>,
     enabled: bool,
     persist_path: Option<PathBuf>,
     config: DenyListLimitsConfig,
     total_entries: AtomicUsize,
+    total_mesh_entries: AtomicUsize,
     persist_tx: Option<mpsc::Sender<PersistRequest>>,
     shutdown_tx: Option<mpsc::Sender<()>>,
     mitigation_provider: arc_swap::ArcSwapOption<SizedMitigationProvider>,
@@ -124,11 +128,17 @@ impl BlockStore {
 #[derive(Debug, Clone)]
 struct PersistRequest {
     entries: Vec<(String, BlockEntry)>,
+    mesh_entries: Vec<(String, MeshBlockEntry)>,
 }
 
 impl BlockStore {
     pub fn new(enabled: bool, data_dir: Option<PathBuf>, config: DenyListLimitsConfig) -> Self {
         let persist_path = data_dir.map(|d| d.join("blocks.json"));
+        let mesh_persist_path = persist_path.as_ref().map(|p| {
+            p.parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join("mesh_blocks.json")
+        });
         let max_entries = if config.max_entries > 0 {
             config.max_entries
         } else {
@@ -138,6 +148,10 @@ impl BlockStore {
         let mut shards = Vec::with_capacity(NUM_SHARDS);
         for _ in 0..NUM_SHARDS {
             shards.push(RwLock::new(AHashMap::new()));
+        }
+        let mut mesh_shards = Vec::with_capacity(NUM_SHARDS);
+        for _ in 0..NUM_SHARDS {
+            mesh_shards.push(RwLock::new(AHashMap::new()));
         }
 
         let initial_count: usize;
@@ -194,53 +208,109 @@ impl BlockStore {
             initial_count = 0;
         };
 
-        let (persist_tx, shutdown_tx) =
-            if config.persist_interval_secs > 0 && persist_path.is_some() {
-                let (tx, mut rx): (mpsc::Sender<PersistRequest>, mpsc::Receiver<PersistRequest>) =
-                    mpsc::channel(100);
-                let (shutdown_tx, mut shutdown_rx): (mpsc::Sender<()>, mpsc::Receiver<()>) =
-                    mpsc::channel(1);
-                let path = persist_path.clone().unwrap();
-                let max_entries_clone = max_entries;
-
-                tokio::spawn(async move {
-                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(
-                        config.persist_interval_secs,
-                    ));
-                    let mut pending: Option<Vec<(String, BlockEntry)>> = None;
-
-                    loop {
-                        tokio::select! {
-                            _ = interval.tick() => {
-                                if let Some(entries) = pending.take() {
-                                    Self::persist_to_disk(&path, entries, max_entries_clone).await;
+        let initial_mesh_count: usize;
+        if let Some(ref mesh_path) = mesh_persist_path {
+            if mesh_path.exists() {
+                match std::fs::read_to_string(mesh_path) {
+                    Ok(content) => match serde_json::from_str::<Vec<MeshBlockEntry>>(&content) {
+                        Ok(entries) => {
+                            let mut migrated = 0;
+                            for e in entries {
+                                if !e.is_expired() {
+                                    let key = MeshBlockEntry::key(&e.site_scope, &e.mesh_id);
+                                    let idx = Self::shard_index(&key);
+                                    mesh_shards[idx].write().insert(key, e);
                                 }
                             }
-                            Some(req) = rx.recv() => {
-                                pending = Some(req.entries);
+                            initial_mesh_count = mesh_shards.iter().map(|s| s.read().len()).sum();
+                            if migrated > 0 {
+                                tracing::info!(
+                                    "Migrated {} sentinel mesh-ID entries to first-class",
+                                    migrated
+                                );
                             }
-                            _ = shutdown_rx.recv() => {
-                                if let Some(entries) = pending.take() {
-                                    Self::persist_to_disk(&path, entries, max_entries_clone).await;
+                            tracing::info!(
+                                "Loaded {} mesh block entries from disk",
+                                initial_mesh_count
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to parse mesh_blocks.json: {}, starting fresh",
+                                e
+                            );
+                            initial_mesh_count = 0;
+                        }
+                    },
+                    Err(e) => {
+                        tracing::warn!("Failed to read mesh_blocks.json: {}, starting fresh", e);
+                        initial_mesh_count = 0;
+                    }
+                }
+            } else {
+                initial_mesh_count = 0;
+            }
+        } else {
+            initial_mesh_count = 0;
+        };
+
+        let (persist_tx, shutdown_tx) = if config.persist_interval_secs > 0
+            && persist_path.is_some()
+        {
+            let (tx, mut rx): (mpsc::Sender<PersistRequest>, mpsc::Receiver<PersistRequest>) =
+                mpsc::channel(100);
+            let (shutdown_tx, mut shutdown_rx): (mpsc::Sender<()>, mpsc::Receiver<()>) =
+                mpsc::channel(1);
+            let path = persist_path.clone().unwrap();
+            let mesh_path = mesh_persist_path.clone();
+            let max_entries_clone = max_entries;
+
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+                    config.persist_interval_secs,
+                ));
+                let mut pending: Option<PersistRequest> = None;
+
+                loop {
+                    tokio::select! {
+                        _ = interval.tick() => {
+                            if let Some(req) = pending.take() {
+                                Self::persist_to_disk(&path, req.entries, max_entries_clone).await;
+                                if let Some(ref mp) = mesh_path {
+                                    Self::persist_mesh_to_disk(mp, req.mesh_entries, max_entries_clone).await;
                                 }
-                                tracing::info!("Block store persistence task shutting down");
-                                break;
                             }
                         }
+                        Some(req) = rx.recv() => {
+                            pending = Some(req);
+                        }
+                        _ = shutdown_rx.recv() => {
+                            if let Some(req) = pending.take() {
+                                Self::persist_to_disk(&path, req.entries, max_entries_clone).await;
+                                if let Some(ref mp) = mesh_path {
+                                    Self::persist_mesh_to_disk(mp, req.mesh_entries, max_entries_clone).await;
+                                }
+                            }
+                            tracing::info!("Block store persistence task shutting down");
+                            break;
+                        }
                     }
-                });
+                }
+            });
 
-                (Some(tx), Some(shutdown_tx))
-            } else {
-                (None, None)
-            };
+            (Some(tx), Some(shutdown_tx))
+        } else {
+            (None, None)
+        };
 
         Self {
             shards,
+            mesh_shards,
             enabled,
             persist_path,
             config,
             total_entries: AtomicUsize::new(initial_count),
+            total_mesh_entries: AtomicUsize::new(initial_mesh_count),
             persist_tx,
             shutdown_tx,
             mitigation_provider: arc_swap::ArcSwapOption::const_empty(),
@@ -309,6 +379,40 @@ impl BlockStore {
     #[cfg(not(unix))]
     async fn set_secure_permissions(_path: &PathBuf) {}
 
+    pub(crate) async fn persist_mesh_to_disk(
+        path: &PathBuf,
+        entries: Vec<(String, MeshBlockEntry)>,
+        max_entries: usize,
+    ) {
+        let entries_to_save: Vec<MeshBlockEntry> = entries
+            .into_iter()
+            .filter(|(_, e)| !e.is_expired())
+            .take(max_entries)
+            .map(|(_, e)| e)
+            .collect();
+
+        match serde_json::to_string_pretty(&entries_to_save) {
+            Ok(json) => {
+                let temp_path = path.with_extension("tmp");
+                match tokio::fs::write(&temp_path, json).await {
+                    Ok(_) => {
+                        if let Err(e) = tokio::fs::rename(&temp_path, path).await {
+                            tracing::warn!("Failed to rename temp mesh block file: {}", e);
+                        } else {
+                            Self::set_secure_permissions(path).await;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to write mesh blocks to disk: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to serialize mesh block entries: {}", e);
+            }
+        }
+    }
+
     pub fn trigger_persist(&self) {
         if let Some(ref tx) = self.persist_tx {
             let entries: Vec<(String, BlockEntry)> = self
@@ -321,7 +425,20 @@ impl BlockStore {
                         .collect::<Vec<_>>()
                 })
                 .collect();
-            match tx.try_send(PersistRequest { entries }) {
+            let mesh_entries: Vec<(String, MeshBlockEntry)> = self
+                .mesh_shards
+                .iter()
+                .flat_map(|s| {
+                    s.read()
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            match tx.try_send(PersistRequest {
+                entries,
+                mesh_entries,
+            }) {
                 Ok(()) => {}
                 Err(mpsc::error::TrySendError::Full(_)) => {
                     tracing::warn!("Block store persist channel full, skipping persist");
@@ -341,10 +458,28 @@ impl BlockStore {
                         .collect::<Vec<_>>()
                 })
                 .collect();
+            let mesh_entries: Vec<(String, MeshBlockEntry)> = self
+                .mesh_shards
+                .iter()
+                .flat_map(|s| {
+                    s.read()
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect::<Vec<_>>()
+                })
+                .collect();
             let path = path.clone();
+            let mesh_path = self.persist_path.as_ref().map(|p| {
+                p.parent()
+                    .unwrap_or(std::path::Path::new("."))
+                    .join("mesh_blocks.json")
+            });
             let max_entries = self.config.max_entries;
             tokio::spawn(async move {
                 Self::persist_to_disk(&path, entries, max_entries).await;
+                if let Some(mp) = mesh_path {
+                    Self::persist_mesh_to_disk(&mp, mesh_entries, max_entries).await;
+                }
             });
         }
     }
@@ -704,6 +839,231 @@ impl BlockStore {
 
         false
     }
+
+    pub fn get_all_mesh_entries(&self) -> Vec<MeshBlockEntry> {
+        let mut entries = Vec::new();
+        for shard in &self.mesh_shards {
+            entries.extend(shard.read().values().cloned());
+        }
+        entries
+    }
+
+    pub fn get_all_block_records(&self) -> Vec<BlockRecord> {
+        let mut records: Vec<BlockRecord> = self
+            .get_all_entries()
+            .into_iter()
+            .map(|e| BlockRecord {
+                target_kind: BlockTargetKind::Ip,
+                identifier: e.ip,
+                reason: e.reason,
+                blocked_at: e.blocked_at,
+                ban_expire_seconds: e.ban_expire_seconds,
+                site_scope: e.site_scope,
+                access_count: e.access_count,
+                last_access: e.last_access,
+                provenance: e.provenance,
+            })
+            .chain(
+                self.get_all_mesh_entries()
+                    .into_iter()
+                    .map(|e| BlockRecord {
+                        target_kind: BlockTargetKind::MeshId,
+                        identifier: e.mesh_id,
+                        reason: e.reason,
+                        blocked_at: e.blocked_at,
+                        ban_expire_seconds: e.ban_expire_seconds,
+                        site_scope: e.site_scope,
+                        access_count: e.access_count,
+                        last_access: e.last_access,
+                        provenance: e.provenance,
+                    }),
+            )
+            .collect();
+        records.sort_by(|a, b| b.blocked_at.cmp(&a.blocked_at));
+        records
+    }
+
+    pub fn block_mesh_id_with_provenance(
+        &self,
+        mesh_id: &str,
+        reason: &str,
+        ban_expire_seconds: u64,
+        site_scope: &str,
+        provenance: BlockProvenance,
+    ) -> bool {
+        if !self.enabled {
+            return false;
+        }
+
+        let now = synvoid_utils::safe_unix_timestamp();
+        let entry = MeshBlockEntry::new(
+            mesh_id.to_string(),
+            reason.to_string(),
+            ban_expire_seconds,
+            site_scope.to_string(),
+            now,
+            provenance,
+        );
+        let key = MeshBlockEntry::key(site_scope, mesh_id);
+        let idx = Self::shard_index(&key);
+
+        let mut store = self.mesh_shards[idx].write();
+        let is_new = !store.contains_key(&key);
+        store.insert(key, entry);
+        if is_new {
+            self.total_mesh_entries.fetch_add(1, Ordering::Relaxed);
+        }
+
+        tracing::info!(
+            "Blocked mesh_id {} for {} (scope: {})",
+            mesh_id,
+            reason,
+            site_scope
+        );
+
+        self.trigger_persist();
+        true
+    }
+
+    pub fn is_mesh_id_blocked(&self, mesh_id: &str, site_scope: &str) -> Option<MeshBlockEntry> {
+        if !self.enabled {
+            return None;
+        }
+
+        let key = MeshBlockEntry::key(site_scope, mesh_id);
+        let idx = Self::shard_index(&key);
+
+        let mut store = self.mesh_shards[idx].write();
+
+        if let Some(entry) = store.get_mut(&key) {
+            if !entry.is_expired() {
+                let now = synvoid_utils::safe_unix_timestamp();
+                entry.access_count += 1;
+                entry.last_access = now;
+                return Some(entry.clone());
+            } else {
+                store.remove(&key);
+                let _ = self.total_mesh_entries.fetch_update(
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                    |v| v.checked_sub(1),
+                );
+            }
+        }
+
+        if site_scope != "global" {
+            let global_key = MeshBlockEntry::key("global", mesh_id);
+            let global_idx = Self::shard_index(&global_key);
+
+            if let Some(entry) = self.mesh_shards[global_idx].write().get_mut(&global_key) {
+                if !entry.is_expired() {
+                    let now = synvoid_utils::safe_unix_timestamp();
+                    entry.access_count += 1;
+                    entry.last_access = now;
+                    return Some(entry.clone());
+                } else {
+                    self.mesh_shards[global_idx].write().remove(&global_key);
+                    let _ = self.total_mesh_entries.fetch_update(
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                        |v| v.checked_sub(1),
+                    );
+                }
+            }
+        }
+
+        None
+    }
+
+    pub fn unblock_mesh_id(&self, mesh_id: &str, site_scope: &str) -> bool {
+        if !self.enabled {
+            return false;
+        }
+
+        let mut removed_count = 0u32;
+
+        let key = MeshBlockEntry::key(site_scope, mesh_id);
+        let idx = Self::shard_index(&key);
+        if self.mesh_shards[idx].write().remove(&key).is_some() {
+            removed_count += 1;
+        }
+
+        if site_scope != "global" {
+            let global_key = MeshBlockEntry::key("global", mesh_id);
+            let idx = Self::shard_index(&global_key);
+            if self.mesh_shards[idx].write().remove(&global_key).is_some() {
+                removed_count += 1;
+            }
+        }
+
+        for _ in 0..removed_count {
+            let _ =
+                self.total_mesh_entries
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
+        }
+        if removed_count > 0 {
+            self.trigger_persist();
+        }
+
+        removed_count > 0
+    }
+
+    pub fn get_mesh_stats(&self) -> usize {
+        self.total_mesh_entries.load(Ordering::Relaxed)
+    }
+
+    pub fn migrate_legacy_sentinel_entries(&self) -> usize {
+        let sentinel_ip = IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0));
+        let sentinel_str = sentinel_ip.to_string();
+        #[allow(unused_mut)]
+        let mut migrated = 0usize;
+
+        for shard in &self.shards {
+            let mut store = shard.write();
+            let keys_to_migrate: Vec<String> = store
+                .iter()
+                .filter(|(_, e)| e.ip == sentinel_str && e.reason.starts_with("mesh_id_ban:"))
+                .map(|(k, _)| k.clone())
+                .collect();
+
+            for key in keys_to_migrate {
+                if let Some(entry) = store.remove(&key) {
+                    if let Some(mesh_id) = extract_mesh_id_from_reason(&entry.reason) {
+                        let mesh_key = MeshBlockEntry::key(&entry.site_scope, &mesh_id);
+                        let idx = Self::shard_index(&mesh_key);
+                        let mesh_entry = MeshBlockEntry {
+                            mesh_id,
+                            reason: entry.reason,
+                            blocked_at: entry.blocked_at,
+                            ban_expire_seconds: entry.ban_expire_seconds,
+                            site_scope: entry.site_scope,
+                            access_count: entry.access_count,
+                            last_access: entry.last_access,
+                            provenance: entry.provenance,
+                        };
+                        self.mesh_shards[idx].write().insert(mesh_key, mesh_entry);
+                        let _ = self.total_entries.fetch_update(
+                            Ordering::Relaxed,
+                            Ordering::Relaxed,
+                            |v| v.checked_sub(1),
+                        );
+                        self.total_mesh_entries.fetch_add(1, Ordering::Relaxed);
+                        migrated += 1;
+                    }
+                }
+            }
+        }
+
+        if migrated > 0 {
+            self.trigger_persist();
+            tracing::info!(
+                "Migrated {} legacy sentinel mesh-ID entries to first-class",
+                migrated
+            );
+        }
+
+        migrated
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -762,6 +1122,56 @@ impl synvoid_mesh::stubs::block_store::BlockStoreApi for BlockStore {
             })
             .collect()
     }
+
+    fn block_mesh_id_with_provenance(
+        &self,
+        mesh_id: &str,
+        reason: &str,
+        ttl_secs: u64,
+        site_scope: &str,
+        provenance: synvoid_mesh::stubs::block_store::BlockProvenance,
+    ) -> bool {
+        self.block_mesh_id_with_provenance(mesh_id, reason, ttl_secs, site_scope, provenance)
+    }
+
+    fn unblock_mesh_id(&self, mesh_id: &str, site_scope: &str) -> bool {
+        self.unblock_mesh_id(mesh_id, site_scope)
+    }
+
+    fn is_mesh_id_blocked(&self, mesh_id: &str, site_scope: &str) -> bool {
+        self.is_mesh_id_blocked(mesh_id, site_scope).is_some()
+    }
+
+    fn get_all_mesh_entries(&self) -> Vec<synvoid_mesh::stubs::block_store::MeshBlockEntry> {
+        self.get_all_mesh_entries()
+            .into_iter()
+            .map(|e| synvoid_mesh::stubs::block_store::MeshBlockEntry {
+                mesh_id: e.mesh_id,
+                reason: e.reason,
+                blocked_at: e.blocked_at,
+                ban_expire_seconds: e.ban_expire_seconds,
+                site_scope: e.site_scope,
+                access_count: e.access_count,
+                last_access: e.last_access,
+                provenance_kind: format!("{:?}", e.provenance.kind),
+                provenance_source: e.provenance.source.clone(),
+            })
+            .collect()
+    }
+
+    fn get_all_block_records(&self) -> Vec<synvoid_core::block_store::BlockRecord> {
+        self.get_all_block_records()
+    }
+}
+
+fn extract_mesh_id_from_reason(reason: &str) -> Option<String> {
+    let prefix = "mesh_id_ban:";
+    if let Some(rest) = reason.strip_prefix(prefix) {
+        if let Some(colon_pos) = rest.find(':') {
+            return Some(rest[..colon_pos].to_string());
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -1260,10 +1670,7 @@ mod tests {
         assert!(entry.is_some());
         let entry = entry.unwrap();
         assert_eq!(entry.reason, reason);
-        assert_eq!(
-            entry.provenance.kind,
-            BlockProvenanceKind::AdminManual
-        );
+        assert_eq!(entry.provenance.kind, BlockProvenanceKind::AdminManual);
 
         assert!(store.unblock_ip(&sentinel, "global"));
         assert!(store.is_blocked(&sentinel, "global").is_none());
@@ -1308,10 +1715,7 @@ mod tests {
         );
 
         let entries = store.get_all_entries();
-        let sentinel_entries: Vec<_> = entries
-            .iter()
-            .filter(|e| e.ip == "0.0.0.0")
-            .collect();
+        let sentinel_entries: Vec<_> = entries.iter().filter(|e| e.ip == "0.0.0.0").collect();
         assert_eq!(sentinel_entries.len(), 1);
         assert_eq!(sentinel_entries[0].reason, "mesh_id_ban:mesh-2:reason2");
     }

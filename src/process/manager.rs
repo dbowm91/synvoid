@@ -23,6 +23,7 @@ use super::ipc::{
 
 use super::ipc_rate_limit::IpcRateLimiter;
 use super::ipc_signed::IpcSigner;
+use synvoid_block_store::{BlockProvenance, BlockProvenanceKind};
 
 pub type SharedIpc = Arc<tokio::sync::Mutex<IpcStream>>;
 
@@ -1167,28 +1168,46 @@ impl ProcessManager {
     pub fn handle_blocklist_request(
         &self,
         _worker_id: usize,
-    ) -> Option<Vec<crate::process::ipc::BlockEntryData>> {
+    ) -> Option<(
+        Vec<crate::process::ipc::BlockEntryData>,
+        Vec<crate::process::ipc::MeshBlockEntryData>,
+    )> {
         if let Some(ref store) = self.block_store {
             let entries = store.get_all_entries();
-            Some(
-                entries
-                    .into_iter()
-                    .map(|e| crate::process::ipc::BlockEntryData {
-                        ip: e.ip,
-                        reason: e.reason,
-                        blocked_at: e.blocked_at,
-                        ban_expire_seconds: e.ban_expire_seconds,
-                        site_scope: e.site_scope,
-                    })
-                    .collect(),
-            )
+            let ip_data: Vec<crate::process::ipc::BlockEntryData> = entries
+                .into_iter()
+                .map(|e| crate::process::ipc::BlockEntryData {
+                    ip: e.ip,
+                    reason: e.reason,
+                    blocked_at: e.blocked_at,
+                    ban_expire_seconds: e.ban_expire_seconds,
+                    site_scope: e.site_scope,
+                })
+                .collect();
+            let mesh_entries = store.get_all_mesh_entries();
+            let mesh_data: Vec<crate::process::ipc::MeshBlockEntryData> = mesh_entries
+                .into_iter()
+                .map(|e| crate::process::ipc::MeshBlockEntryData {
+                    mesh_id: e.mesh_id,
+                    reason: e.reason,
+                    blocked_at: e.blocked_at,
+                    ban_expire_seconds: e.ban_expire_seconds,
+                    site_scope: e.site_scope,
+                })
+                .collect();
+            Some((ip_data, mesh_data))
         } else {
             None
         }
     }
 
-    pub fn handle_blocklist_update(&self, blocks: Vec<crate::process::ipc::BlockEntryData>) {
+    pub fn handle_blocklist_update(
+        &self,
+        blocks: Vec<crate::process::ipc::BlockEntryData>,
+        mesh_blocks: Vec<crate::process::ipc::MeshBlockEntryData>,
+    ) {
         let count = blocks.len();
+        let mesh_count = mesh_blocks.len();
         if let Some(ref store) = self.block_store {
             for block in blocks {
                 store.add_block(
@@ -1198,8 +1217,24 @@ impl ProcessManager {
                     &block.site_scope,
                 );
             }
+            for block in mesh_blocks {
+                store.block_mesh_id_with_provenance(
+                    &block.mesh_id,
+                    &block.reason,
+                    block.ban_expire_seconds,
+                    &block.site_scope,
+                    BlockProvenance {
+                        kind: BlockProvenanceKind::SupervisorSync,
+                        source: Some("blocklist_update".to_string()),
+                    },
+                );
+            }
         }
-        tracing::info!("Received blocklist update with {} entries", count);
+        tracing::info!(
+            "Received blocklist update with {} IP entries and {} mesh entries",
+            count,
+            mesh_count
+        );
     }
 
     pub fn trigger_blocklist_persist(&self) {

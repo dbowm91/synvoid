@@ -108,6 +108,15 @@ pub struct BlockEntryData {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeshBlockEntryData {
+    pub mesh_id: String,
+    pub reason: String,
+    pub blocked_at: u64,
+    pub ban_expire_seconds: u64,
+    pub site_scope: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RulePatternData {
     pub category: String,
     pub patterns: Vec<String>,
@@ -650,10 +659,14 @@ pub enum Message {
     BlocklistResponse {
         worker_id: usize,
         blocks: Vec<BlockEntryData>,
+        #[serde(default)]
+        mesh_blocks: Vec<MeshBlockEntryData>,
         version: u64,
     },
     BlocklistUpdate {
         blocks: Vec<BlockEntryData>,
+        #[serde(default)]
+        mesh_blocks: Vec<MeshBlockEntryData>,
         version: u64,
     },
     CanonicalTrustSnapshotUpdate {

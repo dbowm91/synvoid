@@ -2,15 +2,17 @@
 
 ## 1. Purpose and Responsibility
 
-The Block Store module (`src/block_store.rs`) provides **persistent, thread-safe storage for IP blocklist entries** with automatic expiration, LRU eviction, and optional kernel-level mitigation provider integration.
+The Block Store module (`crates/synvoid-block-store/src/lib.rs`) provides **persistent, thread-safe storage for IP and mesh-ID blocklist entries** with automatic expiration, LRU eviction, and optional kernel-level mitigation provider integration.
 
 **Core Responsibilities:**
 - Thread-safe concurrent IP block/unblock operations
+- Thread-safe concurrent mesh-ID block/unblock operations
 - Persistent storage with background flush to disk
 - Automatic expiration of time-limited blocks
 - LRU eviction when storage limits are reached
 - Integration with kernel-level blocking (iptables, nftables)
 - Site-scoped block isolation
+- Legacy sentinel mesh-ID entry migration
 
 ---
 
@@ -18,11 +20,13 @@ The Block Store module (`src/block_store.rs`) provides **persistent, thread-safe
 
 ```rust
 pub struct BlockStore {
-    shards: Vec<RwLock<AHashMap<String, BlockEntry>>>,  // 64-shard concurrent map
+    shards: Vec<RwLock<AHashMap<String, BlockEntry>>>,      // 64-shard IP blocks
+    mesh_shards: Vec<RwLock<AHashMap<String, MeshBlockEntry>>>, // 64-shard mesh-ID blocks
     enabled: bool,
     persist_path: Option<PathBuf>,
     config: DenyListLimitsConfig,
     total_entries: AtomicUsize,
+    total_mesh_entries: AtomicUsize,
     persist_tx: Option<mpsc::Sender<PersistRequest>>,
     shutdown_tx: Option<mpsc::Sender<()>>,
     mitigation_provider: ArcSwapOption<SizedMitigationProvider>,
@@ -36,6 +40,32 @@ pub struct BlockEntry {
     pub site_scope: String,
     pub access_count: u64,
     pub last_access: u64,
+    pub provenance: BlockProvenance,
+}
+
+pub struct MeshBlockEntry {
+    pub mesh_id: String,
+    pub reason: String,
+    pub blocked_at: u64,
+    pub ban_expire_seconds: u64,
+    pub site_scope: String,
+    pub access_count: u64,
+    pub last_access: u64,
+    pub provenance: BlockProvenance,
+}
+
+pub enum BlockTargetKind { Ip, MeshId }
+
+pub struct BlockRecord {
+    pub target_kind: BlockTargetKind,
+    pub identifier: String,
+    pub reason: String,
+    pub blocked_at: u64,
+    pub ban_expire_seconds: u64,
+    pub site_scope: String,
+    pub access_count: u64,
+    pub last_access: u64,
+    pub provenance: BlockProvenance,
 }
 ```
 
@@ -43,15 +73,35 @@ pub struct BlockEntry {
 
 ## 3. Public API
 
+### IP Block Methods
+
 | Method | Description |
 |--------|-------------|
 | `BlockStore::new(enabled, data_dir, config)` | Load from disk, spawn persistence task |
-| `block_ip(ip, reason, ban_expire_seconds, site_scope)` | Add block entry |
+| `block_ip(ip, reason, ban_expire_seconds, site_scope)` | Add IP block entry |
+| `block_ip_with_provenance(ip, reason, duration, scope, provenance)` | Add IP block with provenance |
 | `is_blocked(ip, site_scope) -> Option<BlockEntry>` | Check site-specific then global |
-| `unblock_ip(ip, site_scope) -> bool` | Remove block entry |
+| `unblock_ip(ip, site_scope) -> bool` | Remove IP block entry |
 | `add_block(ip_str, reason, duration, scope)` | Parse IP string and add block |
-| `get_stats() -> BlockStoreStats` | Utilization metrics |
-| `get_all_entries() -> Vec<BlockEntry>` | List all entries |
+
+### Mesh-ID Block Methods
+
+| Method | Description |
+|--------|-------------|
+| `block_mesh_id_with_provenance(mesh_id, reason, duration, scope, provenance)` | Add mesh-ID block |
+| `is_mesh_id_blocked(mesh_id, site_scope) -> Option<MeshBlockEntry>` | Check mesh-ID block |
+| `unblock_mesh_id(mesh_id, site_scope) -> bool` | Remove mesh-ID block |
+
+### Unified Methods
+
+| Method | Description |
+|--------|-------------|
+| `get_all_entries() -> Vec<BlockEntry>` | List all IP entries |
+| `get_all_mesh_entries() -> Vec<MeshBlockEntry>` | List all mesh-ID entries |
+| `get_all_block_records() -> Vec<BlockRecord>` | Unified listing (IP + mesh) |
+| `get_stats() -> BlockStoreStats` | IP block utilization metrics |
+| `get_mesh_stats() -> usize` | Mesh block count |
+| `migrate_legacy_sentinel_entries() -> usize` | Migrate sentinel entries |
 | `set_mitigation_provider(provider)` | Kernel-level blocking integration |
 | `shutdown().await` | Flush pending data |
 | `trigger_persist()` | Force immediate persistence |
@@ -60,8 +110,9 @@ pub struct BlockEntry {
 
 ## 4. Integration Points
 
-- **WAF**: Rate limiting and attack mitigation trigger IP blocks
-- **Admin API**: Blocklist management endpoints
+- **WAF**: Rate limiting and attack mitigation trigger IP blocks (reads IP blocks only)
+- **Admin API**: Blocklist management endpoints (IP + mesh-ID blocks)
+- **Supervisor/Worker Sync**: IPC carries both IP and mesh-ID blocks
 - **MitigationProvider**: Kernel-level IP blocking (iptables/nftables)
 - **Metrics**: Block/unblock event tracking
 
@@ -69,8 +120,10 @@ pub struct BlockEntry {
 
 ## 5. Key Implementation Details
 
-- **Sharded Storage**: 64-shard concurrent hashmap for minimal lock contention
+- **Sharded Storage**: 64-shard concurrent hashmap for minimal lock contention (separate shards for IP and mesh-ID)
 - **Background Persistence**: Tokio mpsc channel triggers disk flush without blocking request path
 - **Site Scoping**: Blocks can be site-specific or global; site blocks checked first
-- **LRU Eviction**: When storage is full, least-recently-accessed entries are evicted
+- **LRU Eviction**: When IP storage is full, least-recently-accessed entries are evicted
 - **File Permissions**: Data file set to `0o600` for security
+- **Separate Persistence**: IP blocks in `blocks.json`, mesh-ID blocks in `mesh_blocks.json`
+- **Legacy Migration**: `migrate_legacy_sentinel_entries()` converts sentinel `0.0.0.0` entries to first-class mesh blocks

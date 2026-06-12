@@ -16,10 +16,12 @@ use std::sync::Arc;
 pub use synvoid_block_store::{BlockProvenance, BlockProvenanceKind};
 use utoipa::ToSchema;
 
+#[allow(dead_code)]
 fn mesh_id_ban_sentinel_ip() -> IpAddr {
     IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))
 }
 
+#[allow(dead_code)]
 fn mesh_id_ban_reason(mesh_id: &str, reason: &str) -> String {
     format!("mesh_id_ban:{mesh_id}:{reason}")
 }
@@ -29,6 +31,7 @@ fn is_mesh_id_ban_reason(reason: &str, mesh_id: &str) -> bool {
     reason.starts_with(&format!("mesh_id_ban:{mesh_id}:"))
 }
 
+#[allow(dead_code)]
 fn extract_mesh_id_from_ban_reason(reason: &str) -> Option<String> {
     let prefix = "mesh_id_ban:";
     if let Some(rest) = reason.strip_prefix(prefix) {
@@ -165,6 +168,8 @@ pub struct BanRecord {
     pub site_scope: String,
     pub provenance: String,
     pub provenance_source: Option<String>,
+    #[serde(default)]
+    pub is_legacy_sentinel: bool,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -499,9 +504,9 @@ pub async fn ban_mesh_id(
         if let Some(threat_intel) = transport.get_threat_intel() {
             let block_store = threat_intel.get_block_store();
 
-            let blocked = block_store.block_ip_with_provenance(
-                mesh_id_ban_sentinel_ip(),
-                &mesh_id_ban_reason(&mesh_id, &reason),
+            let blocked = block_store.block_mesh_id_with_provenance(
+                &mesh_id,
+                &reason,
                 duration,
                 "global",
                 BlockProvenance {
@@ -525,6 +530,7 @@ pub async fn ban_mesh_id(
                         "mesh_id": mesh_id,
                         "reason": reason,
                         "duration_seconds": duration,
+                        "site_scope": "global",
                         "is_permanent": duration == 0,
                         "provenance": "AdminManual",
                         "provenance_source": "admin_ban_mesh_id",
@@ -582,18 +588,15 @@ pub async fn unban(
                     return Err(StatusCode::NOT_FOUND);
                 }
                 "mesh_id" => {
-                    let sentinel = mesh_id_ban_sentinel_ip();
-                    if block_store.is_blocked(&sentinel, "global") {
-                        if block_store.unblock_ip(&sentinel, "global") {
-                            tracing::info!("Admin unbanned mesh_id {}", identifier);
-                            return Ok(Json(serde_json::json!({
-                                "success": true,
-                                "message": format!("Mesh ID {} unbanned successfully", identifier),
-                                "identifier": identifier,
-                                "ban_type": "mesh_id",
-                                "removed": true
-                            })));
-                        }
+                    if block_store.unblock_mesh_id(&identifier, "global") {
+                        tracing::info!("Admin unbanned mesh_id {}", identifier);
+                        return Ok(Json(serde_json::json!({
+                            "success": true,
+                            "message": format!("Mesh ID {} unbanned successfully", identifier),
+                            "identifier": identifier,
+                            "ban_type": "mesh_id",
+                            "removed": true
+                        })));
                     }
                     return Err(StatusCode::NOT_FOUND);
                 }
@@ -628,54 +631,38 @@ pub async fn list_bans(
     if let Some(transport) = &state.mesh.mesh_transport {
         if let Some(threat_intel) = transport.get_threat_intel() {
             let block_store = threat_intel.get_block_store();
-            let entries = block_store.get_all_entries();
-            let sentinel = mesh_id_ban_sentinel_ip();
-            let sentinel_str = sentinel.to_string();
+            let records = block_store.get_all_block_records();
 
-            for entry in entries {
-                if entry.ip == sentinel_str {
-                    if let Some(mesh_id) = extract_mesh_id_from_ban_reason(&entry.reason) {
-                        let is_permanent = entry.is_permanent();
-                        let expires_at = if is_permanent {
-                            None
-                        } else {
-                            Some(entry.blocked_at + entry.ban_expire_seconds)
-                        };
-
-                        bans.push(BanRecord {
-                            id: format!("mesh_id:{}", mesh_id),
-                            ban_type: "mesh_id".to_string(),
-                            identifier: mesh_id,
-                            reason: entry.reason,
-                            blocked_at: entry.blocked_at,
-                            expires_at,
-                            is_permanent,
-                            site_scope: entry.site_scope,
-                            provenance: entry.provenance_kind,
-                            provenance_source: entry.provenance_source,
-                        });
-                    }
-                    continue;
-                }
-
-                let is_permanent = entry.is_permanent();
+            for record in records {
+                let is_permanent = record.ban_expire_seconds == 0;
                 let expires_at = if is_permanent {
                     None
                 } else {
-                    Some(entry.blocked_at + entry.ban_expire_seconds)
+                    Some(record.blocked_at + record.ban_expire_seconds)
+                };
+
+                let (ban_type, id) = match record.target_kind {
+                    synvoid_block_store::BlockTargetKind::Ip => {
+                        ("ip".to_string(), record.identifier.clone())
+                    }
+                    synvoid_block_store::BlockTargetKind::MeshId => (
+                        "mesh_id".to_string(),
+                        format!("mesh_id:{}", record.identifier),
+                    ),
                 };
 
                 bans.push(BanRecord {
-                    id: entry.ip.to_string(),
-                    ban_type: "ip".to_string(),
-                    identifier: entry.ip.to_string(),
-                    reason: entry.reason,
-                    blocked_at: entry.blocked_at,
+                    id,
+                    ban_type,
+                    identifier: record.identifier,
+                    reason: record.reason,
+                    blocked_at: record.blocked_at,
                     expires_at,
                     is_permanent,
-                    site_scope: entry.site_scope,
-                    provenance: entry.provenance_kind,
-                    provenance_source: entry.provenance_source,
+                    site_scope: record.site_scope,
+                    provenance: format!("{:?}", record.provenance.kind),
+                    provenance_source: record.provenance.source,
+                    is_legacy_sentinel: false,
                 });
             }
         }

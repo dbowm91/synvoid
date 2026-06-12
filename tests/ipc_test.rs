@@ -957,6 +957,7 @@ mod ipc_tests {
                 ban_expire_seconds: 3600,
                 site_scope: "global".to_string(),
             }],
+            mesh_blocks: vec![],
             version: 6,
         }
     );
@@ -971,6 +972,7 @@ mod ipc_tests {
                 ban_expire_seconds: 7200,
                 site_scope: "test".to_string(),
             }],
+            mesh_blocks: vec![],
             version: 7,
         }
     );

@@ -1167,14 +1167,22 @@ impl ProcessManager {
     pub fn handle_blocklist_request(
         &self,
         _worker_id: usize,
-    ) -> Option<Vec<crate::ipc::BlockEntryData>> {
+    ) -> Option<(
+        Vec<crate::ipc::BlockEntryData>,
+        Vec<crate::ipc::MeshBlockEntryData>,
+    )> {
         None
     }
 
-    pub fn handle_blocklist_update(&self, blocks: Vec<crate::ipc::BlockEntryData>) {
+    pub fn handle_blocklist_update(
+        &self,
+        blocks: Vec<crate::ipc::BlockEntryData>,
+        mesh_blocks: Vec<crate::ipc::MeshBlockEntryData>,
+    ) {
         tracing::debug!(
-            "Received blocklist update with {} entries (block_store not available)",
-            blocks.len()
+            "Received blocklist update with {} IP entries and {} mesh entries (block_store not available)",
+            blocks.len(),
+            mesh_blocks.len()
         );
     }
 

@@ -38,21 +38,21 @@ This document defines the ownership model for manual and supervisor-driven IP en
 - **File:** `src/admin/handlers/mesh_admin.rs:ban_mesh_id()`
 - **Route:** `POST /mesh/ban/mesh-id`
 - **Provenance:** `AdminManual`, source `admin_ban_mesh_id`
-- **Behavior:** Blocks sentinel IP `0.0.0.0` with mesh ID encoded in reason string (`mesh_id_ban:{mesh_id}:{reason}`)
-- **Limitation:** Block store key is `(site_scope, ip)` — only one mesh-ID ban can exist under the sentinel IP at a time. Banning a second mesh ID overwrites the first.
+- **Behavior:** Blocks mesh ID using first-class `block_mesh_id_with_provenance()` API with `site_scope: "global"`
+- **Concurrency:** Multiple mesh-ID bans can coexist concurrently. Unblocking one mesh ID does not affect others.
 
 ### Admin Unban
 - **File:** `src/admin/handlers/mesh_admin.rs:unban()`
 - **Route:** `DELETE /mesh/ban`
-- **Behavior:** Removes block entry via `unblock_ip()`. For `ban_type=ip`, removes the IP block. For `ban_type=mesh_id`, checks if the sentinel `0.0.0.0` entry exists and removes it.
+- **Behavior:** Removes block entry. For `ban_type=ip`, calls `unblock_ip()`. For `ban_type=mesh_id`, calls `unblock_mesh_id()` for the specific mesh ID.
 - **Accuracy:** Returns `success: true` only when an entry was actually removed. Returns 404 when no matching entry exists.
 - **Propagation:** Unban is local-only. There is no mesh unblock propagation API; removal is not gossiped to mesh peers. Mesh peers retain stale blocks until TTL expiry. (See Known Gaps.)
 
 ### Admin List Bans
 - **File:** `src/admin/handlers/mesh_admin.rs:list_bans()`
 - **Route:** `GET /mesh/bans`
-- **Response:** `BanRecord` with `provenance` (kind string) and `provenance_source` (optional detail)
-- **Mesh-ID bans:** Sentinel `0.0.0.0` entries are parsed and listed as `ban_type: "mesh_id"` with the extracted mesh ID as the identifier.
+- **Response:** `BanRecord` with `target_kind` ("ip" or "mesh_id"), `provenance` (kind string), `provenance_source` (optional detail), and `is_legacy_sentinel` flag.
+- **Mesh-ID bans:** Listed as first-class entries with `ban_type: "mesh_id"` and `target_kind: "mesh_id"`.
 
 ### Supervisor gRPC Block IP
 - **File:** `src/supervisor/api.rs:block_ip()`
@@ -78,7 +78,6 @@ This document defines the ownership model for manual and supervisor-driven IP en
 
 ## Known Gaps
 
-1. **Single mesh-ID ban per sentinel IP**: The block store key is `(site_scope, ip)`. Since all mesh-ID bans use sentinel `0.0.0.0`, only one mesh-ID ban can exist at a time. Banning a second mesh ID overwrites the first. Resolved in iteration 43 with documented limitation.
-2. **IPC blocklist sync loses provenance**: `BlockEntryData` does not carry provenance; workers re-assign `SupervisorSync` regardless of original provenance.
-3. **Unban does not propagate to mesh**: When an IP or mesh ID is unbanned via admin API, the removal is not gossiped to mesh peers. There is no `announce_local_unblock` or equivalent mesh removal message. Mesh peers retain stale blocks until TTL expiry. **Follow-up needed:** Add an unblock propagation mechanism (e.g., `HotThreatGossip` removal or dedicated unblock message) if global consistency is required.
-4. **Mesh stub `block_ip_with_provenance` drops provenance**: The stub's `block_ip_with_provenance` silently delegates to `block_ip`, discarding the provenance parameter. Acceptable if stubs are compilation-only.
+1. **IPC blocklist sync loses provenance**: `BlockEntryData` does not carry provenance; workers re-assign `SupervisorSync` regardless of original provenance.
+2. **Unban does not propagate to mesh**: When an IP or mesh ID is unbanned via admin API, the removal is not gossiped to mesh peers. There is no `announce_local_unblock` or equivalent mesh removal message. Mesh peers retain stale blocks until TTL expiry. **Follow-up needed:** Add an unblock propagation mechanism (e.g., `HotThreatGossip` removal or dedicated unblock message) if global consistency is required.
+3. **Mesh-ID blocks not enforced at WAF request path**: `RequestContext` does not carry mesh ID, so mesh-ID blocks are scoped to admin/control-plane operations only. **Follow-up needed:** If mesh-ID blocking should affect request routing, `mesh_id` must be added to `RequestContext` and wired through the WAF pipeline.

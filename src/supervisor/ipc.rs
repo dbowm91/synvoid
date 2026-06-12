@@ -183,6 +183,7 @@ mod tests {
         let response = Message::BlocklistResponse {
             worker_id: 1,
             blocks: vec![],
+            mesh_blocks: vec![],
             version: 1,
         };
 
@@ -190,10 +191,12 @@ mod tests {
             Message::BlocklistResponse {
                 worker_id,
                 blocks,
+                mesh_blocks,
                 version,
             } => {
                 assert_eq!(worker_id, 1);
                 assert!(blocks.is_empty());
+                assert!(mesh_blocks.is_empty());
                 assert_eq!(version, 1);
             }
             _ => panic!("Expected BlocklistResponse message"),
@@ -292,6 +295,7 @@ mod tests {
         let response = Message::BlocklistResponse {
             worker_id: 1,
             blocks: blocks.clone(),
+            mesh_blocks: vec![],
             version: 5,
         };
 
@@ -299,12 +303,14 @@ mod tests {
             Message::BlocklistResponse {
                 worker_id,
                 blocks: b,
+                mesh_blocks: m,
                 version,
             } => {
                 assert_eq!(worker_id, 1);
                 assert_eq!(b.len(), 1);
                 assert_eq!(b[0].ip, "1.2.3.4");
                 assert_eq!(b[0].ban_expire_seconds, 3600);
+                assert!(m.is_empty());
                 assert_eq!(version, 5);
             }
             _ => panic!("Expected BlocklistResponse"),
@@ -485,13 +491,14 @@ async fn handle_worker_connection_internal(
                 } = &message
                 {
                     tracing::debug!("Blocklist request from worker {}", worker_id);
-                    process_manager
-                        .handle_blocklist_request(*worker_id)
-                        .map(|blocks| Message::BlocklistResponse {
+                    process_manager.handle_blocklist_request(*worker_id).map(
+                        |(blocks, mesh_blocks)| Message::BlocklistResponse {
                             worker_id: *worker_id,
                             blocks,
+                            mesh_blocks,
                             version: 0,
-                        })
+                        },
+                    )
                 } else {
                     None
                 };
@@ -601,9 +608,17 @@ async fn handle_worker_connection_internal(
                                 content.len()
                             );
                         }
-                        Message::BlocklistUpdate { blocks, version: _ } => {
-                            tracing::debug!("Blocklist update with {} entries", blocks.len());
-                            process_manager.handle_blocklist_update(blocks);
+                        Message::BlocklistUpdate {
+                            blocks,
+                            mesh_blocks,
+                            version: _,
+                        } => {
+                            tracing::debug!(
+                                "Blocklist update with {} IP entries and {} mesh entries",
+                                blocks.len(),
+                                mesh_blocks.len()
+                            );
+                            process_manager.handle_blocklist_update(blocks, mesh_blocks);
                             process_manager.trigger_blocklist_persist();
                         }
                         Message::MeshControlRequest { worker_id, request } => {

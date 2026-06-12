@@ -317,6 +317,7 @@ mod process_lifecycle_tests {
     fn test_blocklist_rules_category() {
         let update = Message::BlocklistUpdate {
             blocks: vec![],
+            mesh_blocks: vec![],
             version: 1,
         };
         assert_eq!(update.category(), MessageCategory::BlocklistRules);

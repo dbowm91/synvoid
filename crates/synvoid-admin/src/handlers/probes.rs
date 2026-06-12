@@ -336,13 +336,16 @@ pub async fn block_probes<S: AdminStateProvider>(
                 ip,
                 ban_duration_secs
             );
-            pm.handle_blocklist_update(vec![synvoid_ipc::ipc::BlockEntryData {
-                ip: ip.clone(),
-                reason: "Blocked via probe admin API".to_string(),
-                blocked_at: current_timestamp(),
-                ban_expire_seconds: ban_duration_secs,
-                site_scope: String::new(),
-            }]);
+            pm.handle_blocklist_update(
+                vec![synvoid_ipc::ipc::BlockEntryData {
+                    ip: ip.clone(),
+                    reason: "Blocked via probe admin API".to_string(),
+                    blocked_at: current_timestamp(),
+                    ban_expire_seconds: ban_duration_secs,
+                    site_scope: String::new(),
+                }],
+                vec![],
+            );
         }
         pm.trigger_blocklist_persist();
     }

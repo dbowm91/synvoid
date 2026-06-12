@@ -241,6 +241,19 @@ pub mod block_store {
         pub provenance_source: Option<String>,
     }
 
+    #[derive(Debug, Clone)]
+    pub struct MeshBlockEntry {
+        pub mesh_id: String,
+        pub reason: String,
+        pub blocked_at: u64,
+        pub ban_expire_seconds: u64,
+        pub site_scope: String,
+        pub access_count: u64,
+        pub last_access: u64,
+        pub provenance_kind: String,
+        pub provenance_source: Option<String>,
+    }
+
     impl BlockEntry {
         pub fn new(
             ip: IpAddr,
@@ -306,6 +319,18 @@ pub mod block_store {
         fn is_blocked(&self, ip: &IpAddr, site_scope: &str) -> bool;
         fn unblock_ip(&self, ip: &IpAddr, site_scope: &str) -> bool;
         fn get_all_entries(&self) -> Vec<BlockEntry>;
+        fn block_mesh_id_with_provenance(
+            &self,
+            mesh_id: &str,
+            reason: &str,
+            ttl_secs: u64,
+            site_scope: &str,
+            provenance: BlockProvenance,
+        ) -> bool;
+        fn unblock_mesh_id(&self, mesh_id: &str, site_scope: &str) -> bool;
+        fn is_mesh_id_blocked(&self, mesh_id: &str, site_scope: &str) -> bool;
+        fn get_all_mesh_entries(&self) -> Vec<MeshBlockEntry>;
+        fn get_all_block_records(&self) -> Vec<synvoid_core::block_store::BlockRecord>;
     }
 
     impl BlockStore {
@@ -370,6 +395,33 @@ pub mod block_store {
             }
             self.entries.read().values().cloned().collect()
         }
+
+        pub fn block_mesh_id_with_provenance(
+            &self,
+            _mesh_id: &str,
+            _reason: &str,
+            _ttl_secs: u64,
+            _site_scope: &str,
+            _provenance: BlockProvenance,
+        ) -> bool {
+            true
+        }
+
+        pub fn unblock_mesh_id(&self, _mesh_id: &str, _site_scope: &str) -> bool {
+            true
+        }
+
+        pub fn is_mesh_id_blocked(&self, _mesh_id: &str, _site_scope: &str) -> bool {
+            false
+        }
+
+        pub fn get_all_mesh_entries(&self) -> Vec<MeshBlockEntry> {
+            Vec::new()
+        }
+
+        pub fn get_all_block_records(&self) -> Vec<synvoid_core::block_store::BlockRecord> {
+            Vec::new()
+        }
     }
 
     impl BlockStoreApi for BlockStore {
@@ -398,6 +450,33 @@ pub mod block_store {
 
         fn get_all_entries(&self) -> Vec<BlockEntry> {
             self.get_all_entries()
+        }
+
+        fn block_mesh_id_with_provenance(
+            &self,
+            mesh_id: &str,
+            reason: &str,
+            ttl_secs: u64,
+            site_scope: &str,
+            provenance: BlockProvenance,
+        ) -> bool {
+            self.block_mesh_id_with_provenance(mesh_id, reason, ttl_secs, site_scope, provenance)
+        }
+
+        fn unblock_mesh_id(&self, mesh_id: &str, site_scope: &str) -> bool {
+            self.unblock_mesh_id(mesh_id, site_scope)
+        }
+
+        fn is_mesh_id_blocked(&self, mesh_id: &str, site_scope: &str) -> bool {
+            self.is_mesh_id_blocked(mesh_id, site_scope)
+        }
+
+        fn get_all_mesh_entries(&self) -> Vec<MeshBlockEntry> {
+            self.get_all_mesh_entries()
+        }
+
+        fn get_all_block_records(&self) -> Vec<synvoid_core::block_store::BlockRecord> {
+            self.get_all_block_records()
         }
     }
 }

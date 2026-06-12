@@ -250,10 +250,15 @@ pub fn spawn_ipc_loop(
                         );
                     }
                 }
-                Some(Message::BlocklistUpdate { blocks, version: _ }) => {
+                Some(Message::BlocklistUpdate {
+                    blocks,
+                    mesh_blocks,
+                    version: _,
+                }) => {
                     tracing::debug!(
-                        "Received blocklist update with {} entries from Supervisor",
-                        blocks.len()
+                        "Received blocklist update with {} IP entries and {} mesh entries from Supervisor",
+                        blocks.len(),
+                        mesh_blocks.len()
                     );
                     if let Some(block_store) = state.unified_server.get_block_store() {
                         for block in blocks {
@@ -269,6 +274,18 @@ pub fn spawn_ipc_loop(
                                     },
                                 );
                             }
+                        }
+                        for block in mesh_blocks {
+                            let _ = block_store.block_mesh_id_with_provenance(
+                                &block.mesh_id,
+                                &block.reason,
+                                block.ban_expire_seconds,
+                                &block.site_scope,
+                                BlockProvenance {
+                                    kind: BlockProvenanceKind::SupervisorSync,
+                                    source: Some("blocklist_update".to_string()),
+                                },
+                            );
                         }
                     }
                 }
@@ -692,10 +709,15 @@ pub async fn request_initial_blocklist(
     let start = Instant::now();
     while start.elapsed() < timeout {
         match ipc_guard.recv_with_timeout::<Message>(100).await {
-            Ok(Some(Message::BlocklistResponse { blocks, .. })) => {
+            Ok(Some(Message::BlocklistResponse {
+                blocks,
+                mesh_blocks,
+                ..
+            })) => {
                 tracing::info!(
-                    "Received blocklist from Supervisor with {} entries",
-                    blocks.len()
+                    "Received blocklist from Supervisor with {} IP entries and {} mesh entries",
+                    blocks.len(),
+                    mesh_blocks.len()
                 );
                 for block in blocks {
                     if let Ok(ip) = block.ip.parse() {
@@ -710,6 +732,18 @@ pub async fn request_initial_blocklist(
                             },
                         );
                     }
+                }
+                for block in mesh_blocks {
+                    let _ = block_store.block_mesh_id_with_provenance(
+                        &block.mesh_id,
+                        &block.reason,
+                        block.ban_expire_seconds,
+                        &block.site_scope,
+                        BlockProvenance {
+                            kind: BlockProvenanceKind::SupervisorSync,
+                            source: Some("blocklist_response".to_string()),
+                        },
+                    );
                 }
                 break;
             }
