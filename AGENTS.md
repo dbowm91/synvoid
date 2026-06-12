@@ -259,7 +259,7 @@ Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.overrid
 - **BlockStore counter correctness**: `block_ip`/`block_ip_with_provenance`/`add_block` only increment `total_entries` on new key insertion, not on overwrite. Overwrites update the entry without changing the count.
 - **BlockStore::new** auto-calls `migrate_legacy_sentinel_entries()` during initialization.
 - **`block_mesh_id_with_provenance` deadlock fix**: Now drops the shard lock before calling `trigger_persist()` (previously held the lock across the persist call).
-- **BlocklistEvent / BlocklistOperation**: Types in `synvoid-core::block_store` for mesh-wide block/unblock propagation. Admin ban/unban handlers emit structured `BlocklistEvent` debug logs. Admin unban also calls `announce_local_unblock()` to gossip `BlocklistEventGossip` to mesh peers. Supervisor pushes `BlocklistEventUpdate` IPC to workers. Supports distributed fields: `event_id`, `source_node`, `ttl_secs`, `version`. See `architecture/blocklist_remove_consistency.md`.
+- **BlocklistEvent / BlocklistOperation**: Types in `synvoid-core::block_store` for mesh-wide block/unblock propagation. Admin ban/unban handlers emit structured `BlocklistEvent` debug logs. Admin unban also calls `announce_local_unblock()` to gossip `BlocklistEventGossip` to mesh peers. Supervisor pushes `BlocklistEventUpdate` IPC to workers. Supports distributed fields: `event_id`, `source_node`, `ttl_secs`, `version`. Apply pipeline uses FIFO dedup (`SeenEventCache`) and per-target stale suppression (`TargetStateCache`). See `architecture/blocklist_remove_consistency.md`.
 
 ### Root Dependency Ownership
 - Reference `plans/root_dependency_ownership.md` for the ownership inventory of all root-level direct dependencies.

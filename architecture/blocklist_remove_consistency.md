@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document describes the authority model, propagation mechanism, and consistency guarantees for blocklist block and unblock operations in SynVoid. Implemented in Iteration 46.
+This document describes the authority model, propagation mechanism, and consistency guarantees for blocklist block and unblock operations in SynVoid. Implemented in Iterations 46-47.
 
 ## Authority Model
 
@@ -42,7 +42,7 @@ Events propagate via the `BlocklistEventGossip` mesh message type (proto field 1
 - **Source**: Node that performed the original unblock
 - **Targets**: All connected mesh peers
 - **Delivery**: Best-effort gossip (no acknowledged delivery)
-- **Ordering**: Timestamp-based last-writer-wins
+- **Ordering**: Last-writer-wins by per-target version/timestamp ordering (Iteration 47)
 - **IPC**: Supervisor also pushes `BlocklistEventUpdate` to workers
 
 ### Local Application
@@ -68,13 +68,27 @@ Where `identifier_hash` is a short hash of the identifier (IP or mesh ID) to kee
 
 ### Deduplication
 
-- In-memory `HashSet<String>` bounded to 10,000 entries
-- Oldest entries evicted when capacity is reached (FIFO approximation)
+- FIFO dedupe cache: `SeenEventCache` wrapping `HashSet<String>` + `VecDeque<String>`
+- Bounded to 10,000 event IDs
+- On capacity: oldest event ID evicted one-by-one (not full-set clear)
 - Event IDs are checked before application; duplicates return `NoopDuplicate`
+- Events without `event_id` are not deduped (applied directly)
 
 ### Ordering
 
-Last-writer-wins based on `timestamp`. Clock skew between nodes is a known caveat — nodes with significantly skewed clocks may produce out-of-order application. This is acceptable for operational blocklist removes where approximate consistency is sufficient.
+Last-writer-wins per-target ordering (Iteration 47):
+
+- Each target `(target_kind, site_scope, identifier)` tracks the last-applied event's timestamp and version.
+- If both events have `version`, higher version wins.
+- If only timestamps are available, higher timestamp wins.
+- Equal timestamp with neither version present: the event is rejected as stale.
+- Older block must not resurrect a target after newer unblock.
+- Older unblock must not remove a newer block.
+- `IgnoredStale` is returned when a per-target event is rejected.
+
+Clock skew between nodes is a known caveat — nodes with significantly skewed clocks may produce out-of-order application. This is acceptable for operational blocklist removes where approximate consistency is sufficient.
+
+**Limitation**: Per-target state is in-memory only. Process restart loses stale replay protection. Events received after restart will apply based on dedup only (until the target is re-observed).
 
 ## Current Limitations
 
@@ -84,6 +98,7 @@ Last-writer-wins based on `timestamp`. Clock skew between nodes is a known cavea
 | Best-effort propagation | Events may be lost if peer is offline | Periodic blocklist sync (future) |
 | No acknowledged delivery | Sender does not know if peer received event | Gossip protocol semantics; eventual consistency |
 | Clock skew ordering | Events may apply out of order on skewed nodes | Bounded by reasonable clock drift; admin retry |
+| In-memory per-target state | Stale replay protection lost on restart | Acceptable for operational blocklist; periodic sync (future) can mitigate |
 
 ## Implementation Details
 
@@ -97,7 +112,10 @@ Last-writer-wins based on `timestamp`. Clock skew between nodes is a known cavea
 
 - `BlockStore::apply_blocklist_event()`: deterministic, local, no I/O
 - `BlocklistApplyResult`: Applied, NoopDuplicate, IgnoredStale, InvalidTarget, StoreDisabled
-- In-memory dedup via `seen_events: HashSet<String>` capped at 10,000
+- 5-step apply pipeline: validate target → check dedup → check per-target stale → mutate → record state
+- FIFO dedup via `SeenEventCache` (HashSet + VecDeque), capped at 10,000
+- Per-target stale suppression via `TargetStateCache` (AHashMap + VecDeque), capped at 10,000
+- Per-target state is in-memory only; not persisted across restarts
 
 ### Admin Emit Path
 
@@ -115,4 +133,4 @@ Last-writer-wins based on `timestamp`. Clock skew between nodes is a known cavea
 
 - Periodic blocklist sync for offline-peer catchup
 - Acknowledged delivery for critical removes
-- Per-target version/sequence numbers for stronger ordering guarantees
+- Persisted per-target tombstones for stale replay protection across restarts

@@ -43,7 +43,7 @@ impl Default for BlockProvenance {
 }
 
 /// Classifies the type of enforcement target in a block record.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BlockTargetKind {
     Ip,
@@ -124,7 +124,7 @@ pub struct BlockRecord {
 }
 
 /// Classifies a blocklist operation for event emission.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BlocklistOperation {
     Block,

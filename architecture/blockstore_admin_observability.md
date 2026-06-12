@@ -122,6 +122,9 @@ Admin unban now propagates to mesh peers and workers:
 - Admin unban handlers also call `announce_local_unblock()` to gossip the event
 - `BlocklistEvent` supports distributed fields: `event_id`, `source_node`, `ttl_secs`, `version`
 - Event ID format: `{source_node}:{timestamp}:{operation}:{target_kind}:{site_scope}:{identifier_hash}`
+- **Dedupe**: FIFO `SeenEventCache` (HashSet + VecDeque), capped at 10,000. Evicts oldest one-by-one, not full-clear.
+- **Stale suppression**: Per-target `TargetStateCache` tracks last-applied event timestamp/version. Older events return `IgnoredStale`.
+- **Apply pipeline**: validate → dedup → stale check → mutate → record state
 - See `architecture/blocklist_remove_consistency.md` for full consistency model
 
 ## Enforcement Rules (unchanged)

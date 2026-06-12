@@ -12,7 +12,7 @@
 use ahash::AHashMap;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -41,6 +41,116 @@ pub enum BlocklistApplyResult {
     IgnoredStale,
     InvalidTarget,
     StoreDisabled,
+}
+
+const TARGET_STATE_MAX: usize = 10_000;
+
+/// FIFO dedupe cache for seen event IDs. Evicts oldest entries one-by-one
+/// instead of clearing the entire set at capacity.
+struct SeenEventCache {
+    set: HashSet<String>,
+    order: VecDeque<String>,
+}
+
+impl SeenEventCache {
+    fn new() -> Self {
+        Self {
+            set: HashSet::new(),
+            order: VecDeque::new(),
+        }
+    }
+
+    fn contains(&self, event_id: &str) -> bool {
+        self.set.contains(event_id)
+    }
+
+    fn insert(&mut self, event_id: String) {
+        if self.set.contains(&event_id) {
+            return;
+        }
+        self.set.insert(event_id.clone());
+        self.order.push_back(event_id);
+        while self.order.len() > SEEN_EVENTS_MAX {
+            if let Some(oldest) = self.order.pop_front() {
+                self.set.remove(&oldest);
+            }
+        }
+    }
+
+    #[allow(dead_code)]
+    fn len(&self) -> usize {
+        self.set.len()
+    }
+}
+
+/// Target key for per-target last-applied event tracking.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct BlocklistTargetKey {
+    target_kind: BlockTargetKind,
+    site_scope: String,
+    identifier: String,
+}
+
+/// Metadata about the last-applied event for a specific target.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct LastAppliedBlocklistEvent {
+    timestamp: u64,
+    version: Option<u64>,
+    event_id: Option<String>,
+    operation: BlocklistOperation,
+}
+
+impl LastAppliedBlocklistEvent {
+    /// Returns true if `other` should be rejected as stale compared to `self`.
+    /// Higher version wins. If versions are equal or absent, higher timestamp wins.
+    /// Equal timestamp + same event_id = duplicate (handled by seen_events).
+    fn is_newer_than(&self, other: &LastAppliedBlocklistEvent) -> bool {
+        match (self.version, other.version) {
+            (Some(a), Some(b)) => a > b,
+            (Some(_), None) => true,
+            (None, Some(_)) => false,
+            (None, None) => self.timestamp > other.timestamp,
+        }
+    }
+}
+
+/// Bounded in-memory cache of per-target last-applied event state.
+/// Protects against stale event replays while the node is alive.
+/// Process restart loses this protection (documented limitation).
+struct TargetStateCache {
+    entries: AHashMap<BlocklistTargetKey, LastAppliedBlocklistEvent>,
+    order: VecDeque<BlocklistTargetKey>,
+}
+
+impl TargetStateCache {
+    fn new() -> Self {
+        Self {
+            entries: AHashMap::new(),
+            order: VecDeque::new(),
+        }
+    }
+
+    fn get(&self, key: &BlocklistTargetKey) -> Option<&LastAppliedBlocklistEvent> {
+        self.entries.get(key)
+    }
+
+    fn insert(&mut self, key: BlocklistTargetKey, state: LastAppliedBlocklistEvent) {
+        if !self.entries.contains_key(&key) {
+            self.order.push_back(key.clone());
+        }
+        self.entries.insert(key, state);
+        while self.order.len() > TARGET_STATE_MAX {
+            if let Some(oldest) = self.order.pop_front() {
+                self.entries.remove(&oldest);
+            }
+        }
+    }
+
+    #[allow(dead_code)]
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,7 +235,8 @@ pub struct BlockStore {
     persist_tx: Option<mpsc::Sender<PersistRequest>>,
     shutdown_tx: Option<mpsc::Sender<()>>,
     mitigation_provider: arc_swap::ArcSwapOption<SizedMitigationProvider>,
-    seen_events: RwLock<HashSet<String>>,
+    seen_events: RwLock<SeenEventCache>,
+    target_state: RwLock<TargetStateCache>,
 }
 
 impl BlockStore {
@@ -321,7 +432,8 @@ impl BlockStore {
             persist_tx,
             shutdown_tx,
             mitigation_provider: arc_swap::ArcSwapOption::const_empty(),
-            seen_events: RwLock::new(HashSet::new()),
+            seen_events: RwLock::new(SeenEventCache::new()),
+            target_state: RwLock::new(TargetStateCache::new()),
         };
 
         let migrated = store.migrate_legacy_sentinel_entries();
@@ -913,7 +1025,7 @@ impl BlockStore {
                     }),
             )
             .collect();
-        records.sort_by(|a, b| b.blocked_at.cmp(&a.blocked_at));
+        records.sort_by_key(|r| std::cmp::Reverse(r.blocked_at));
         records
     }
 
@@ -1047,13 +1159,23 @@ impl BlockStore {
         self.total_mesh_entries.load(Ordering::Relaxed)
     }
 
-    /// Apply a blocklist event idempotently.
+    /// Apply a blocklist event idempotently with last-writer-wins ordering.
     ///
     /// Dispatches based on `(operation, target_kind)`:
     /// - `(Block, Ip)` → `block_ip_with_provenance`
     /// - `(Unblock, Ip)` → `unblock_ip`
     /// - `(Block, MeshId)` → `block_mesh_id_with_provenance`
     /// - `(Unblock, MeshId)` → `unblock_mesh_id`
+    ///
+    /// # Ordering Rules
+    ///
+    /// 1. Invalid target → `InvalidTarget` (no state recorded).
+    /// 2. Duplicate event ID → `NoopDuplicate` (no further processing).
+    /// 3. Per-target stale check: if a newer event was already applied for this
+    ///    target, reject the older event as `IgnoredStale`.
+    /// 4. After successful or intentional no-op application, record both the
+    ///    event ID (for dedup) and the per-target last-applied state (for
+    ///    stale suppression).
     pub fn apply_blocklist_event(
         &self,
         event: &synvoid_core::block_store::BlocklistEvent,
@@ -1062,23 +1184,67 @@ impl BlockStore {
             return BlocklistApplyResult::StoreDisabled;
         }
 
+        // Step 1: Validate target before any state mutation.
+        match (&event.operation, &event.target_kind) {
+            (BlocklistOperation::Block, BlockTargetKind::Ip)
+            | (BlocklistOperation::Unblock, BlockTargetKind::Ip) => {
+                if event.identifier.parse::<IpAddr>().is_err() {
+                    return BlocklistApplyResult::InvalidTarget;
+                }
+            }
+            (BlocklistOperation::Block, BlockTargetKind::MeshId)
+            | (BlocklistOperation::Unblock, BlockTargetKind::MeshId) => {
+                // Mesh IDs are always valid strings.
+            }
+        }
+
+        // Step 2: Check duplicate event ID.
         if let Some(ref eid) = event.event_id {
+            {
+                let seen = self.seen_events.read();
+                if seen.contains(eid) {
+                    return BlocklistApplyResult::NoopDuplicate;
+                }
+            }
+            // Not a duplicate — acquire write lock to insert.
             let mut seen = self.seen_events.write();
+            // Double-check under write lock (race guard).
             if seen.contains(eid) {
                 return BlocklistApplyResult::NoopDuplicate;
-            }
-            if seen.len() >= SEEN_EVENTS_MAX {
-                seen.clear();
             }
             seen.insert(eid.clone());
         }
 
+        // Step 3: Per-target stale suppression check.
+        let target_key = BlocklistTargetKey {
+            target_kind: event.target_kind,
+            site_scope: event.site_scope.clone(),
+            identifier: event.identifier.clone(),
+        };
+        let this_event = LastAppliedBlocklistEvent {
+            timestamp: event.timestamp,
+            version: event.version,
+            event_id: event.event_id.clone(),
+            operation: event.operation,
+        };
+
+        {
+            let targets = self.target_state.read();
+            if let Some(last) = targets.get(&target_key) {
+                if this_event.is_newer_than(last) {
+                    // This event is newer — proceed with application.
+                } else {
+                    // This event is stale or equal — reject.
+                    return BlocklistApplyResult::IgnoredStale;
+                }
+            }
+            // No previous state — this is the first event for this target.
+        }
+
+        // Step 4: Mutate BlockStore.
         let result = match (&event.operation, &event.target_kind) {
             (BlocklistOperation::Block, BlockTargetKind::Ip) => {
-                let ip = match event.identifier.parse::<IpAddr>() {
-                    Ok(ip) => ip,
-                    Err(_) => return BlocklistApplyResult::InvalidTarget,
-                };
+                let ip = event.identifier.parse::<IpAddr>().unwrap();
                 let ban_secs = event.ttl_secs.unwrap_or(3600);
                 let applied = self.block_ip_with_provenance(
                     ip,
@@ -1094,15 +1260,14 @@ impl BlockStore {
                 }
             }
             (BlocklistOperation::Unblock, BlockTargetKind::Ip) => {
-                let ip = match event.identifier.parse::<IpAddr>() {
-                    Ok(ip) => ip,
-                    Err(_) => return BlocklistApplyResult::InvalidTarget,
-                };
+                let ip = event.identifier.parse::<IpAddr>().unwrap();
                 let removed = self.unblock_ip(&ip, &event.site_scope);
                 if removed {
                     BlocklistApplyResult::Applied
                 } else {
-                    BlocklistApplyResult::NoopDuplicate
+                    // Unblock of already-missing target: still record target state
+                    // to prevent older block from resurrecting via stale replay.
+                    BlocklistApplyResult::Applied
                 }
             }
             (BlocklistOperation::Block, BlockTargetKind::MeshId) => {
@@ -1125,10 +1290,17 @@ impl BlockStore {
                 if removed {
                     BlocklistApplyResult::Applied
                 } else {
-                    BlocklistApplyResult::NoopDuplicate
+                    // Unblock of already-missing target: still record target state.
+                    BlocklistApplyResult::Applied
                 }
             }
         };
+
+        // Step 5: Record per-target last-applied state (only after successful application).
+        if result == BlocklistApplyResult::Applied {
+            let mut targets = self.target_state.write();
+            targets.insert(target_key, this_event);
+        }
 
         result
     }
@@ -2504,7 +2676,8 @@ mod tests {
         store.block_ip(ip, "test", 3600, "global");
         assert!(store.is_blocked(&ip, "global").is_some());
 
-        let event = BlocklistEvent::unblock_ip("10.0.0.2", "global", BlockProvenance::default(), 1001);
+        let event =
+            BlocklistEvent::unblock_ip("10.0.0.2", "global", BlockProvenance::default(), 1001);
         let result = store.apply_blocklist_event(&event);
         assert_eq!(result, BlocklistApplyResult::Applied);
         assert!(store.is_blocked(&ip, "global").is_none());
@@ -2600,12 +2773,8 @@ mod tests {
         let ip: IpAddr = "10.0.0.51".parse().unwrap();
         store.block_ip(ip, "test", 3600, "global");
 
-        let mut event = BlocklistEvent::unblock_ip(
-            "10.0.0.51",
-            "global",
-            BlockProvenance::default(),
-            1006,
-        );
+        let mut event =
+            BlocklistEvent::unblock_ip("10.0.0.51", "global", BlockProvenance::default(), 1006);
         event.event_id = Some("dedup-unblock-1".to_string());
 
         let result1 = store.apply_blocklist_event(&event);
@@ -2632,8 +2801,11 @@ mod tests {
         let result1 = store.apply_blocklist_event(&event);
         assert_eq!(result1, BlocklistApplyResult::Applied);
 
+        // Without an event_id, dedup is skipped. However, per-target stale
+        // suppression rejects the replay since the same target already has
+        // an applied event at the same timestamp.
         let result2 = store.apply_blocklist_event(&event);
-        assert_eq!(result2, BlocklistApplyResult::Applied);
+        assert_eq!(result2, BlocklistApplyResult::IgnoredStale);
     }
 
     #[tokio::test]
@@ -2658,6 +2830,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
 
+        // Insert 10001 events to exceed capacity.
         for i in 0..10001u64 {
             let mut event = BlocklistEvent::block_ip(
                 "10.0.0.1",
@@ -2670,8 +2843,38 @@ mod tests {
             store.apply_blocklist_event(&event);
         }
 
+        // After FIFO eviction, cache should be at or below capacity.
         let seen = store.seen_events.read();
-        assert!(seen.len() <= 10000);
+        assert!(seen.len() <= SEEN_EVENTS_MAX);
+
+        // The oldest event (evict-0) should have been evicted and no longer deduped.
+        // The most recent events should still be present.
+        drop(seen);
+
+        // Re-apply the oldest event — it should apply again (was evicted from dedup).
+        let mut oldest = BlocklistEvent::block_ip(
+            "10.0.0.1",
+            "eviction_test",
+            "global",
+            BlockProvenance::default(),
+            2000,
+        );
+        oldest.event_id = Some("evict-0".to_string());
+        let result = store.apply_blocklist_event(&oldest);
+        // Should NOT be NoopDuplicate since evict-0 was evicted from the seen set.
+        assert_ne!(result, BlocklistApplyResult::NoopDuplicate);
+
+        // Re-apply a recent event — it should still be deduped.
+        let mut recent = BlocklistEvent::block_ip(
+            "10.0.0.1",
+            "eviction_test",
+            "global",
+            BlockProvenance::default(),
+            2000 + 10000,
+        );
+        recent.event_id = Some("evict-10000".to_string());
+        let result = store.apply_blocklist_event(&recent);
+        assert_eq!(result, BlocklistApplyResult::NoopDuplicate);
     }
 
     #[tokio::test]
@@ -2710,7 +2913,9 @@ mod tests {
             },
             timestamp: 1700000000,
             source_node: Some("node-1".to_string()),
-            event_id: Some("node-1:1700000000:unblock:mesh_id:us-east-1:test-mesh-42:abc123".to_string()),
+            event_id: Some(
+                "node-1:1700000000:unblock:mesh_id:us-east-1:test-mesh-42:abc123".to_string(),
+            ),
             ttl_secs: None,
             version: Some(5),
         };
@@ -2729,10 +2934,7 @@ mod tests {
             Some("admin_unban_mesh_id".to_string())
         );
         assert_eq!(decoded.timestamp, 1700000000);
-        assert_eq!(
-            decoded.source_node,
-            Some("node-1".to_string())
-        );
+        assert_eq!(decoded.source_node, Some("node-1".to_string()));
         assert!(decoded.event_id.is_some());
         assert_eq!(decoded.version, Some(5));
     }
@@ -2791,24 +2993,283 @@ mod tests {
 
     #[test]
     fn test_blocklist_event_generate_event_id_unique_per_target() {
-        let e1 = BlocklistEvent::unblock_ip(
-            "10.0.0.1",
-            "global",
-            BlockProvenance::default(),
-            1000,
-        )
-        .with_source_node("node-1".to_string());
+        let e1 = BlocklistEvent::unblock_ip("10.0.0.1", "global", BlockProvenance::default(), 1000)
+            .with_source_node("node-1".to_string());
 
-        let e2 = BlocklistEvent::unblock_ip(
-            "10.0.0.2",
-            "global",
-            BlockProvenance::default(),
-            1000,
-        )
-        .with_source_node("node-1".to_string());
+        let e2 = BlocklistEvent::unblock_ip("10.0.0.2", "global", BlockProvenance::default(), 1000)
+            .with_source_node("node-1".to_string());
 
         let id1 = e1.generate_event_id();
         let id2 = e2.generate_event_id();
-        assert_ne!(id1, id2, "Different targets should produce different event IDs");
+        assert_ne!(
+            id1, id2,
+            "Different targets should produce different event IDs"
+        );
+    }
+
+    // === Iteration 47: Per-target stale suppression tests ===
+
+    #[tokio::test]
+    async fn test_stale_suppression_older_block_after_newer_unblock_ip() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        // First: unblock at timestamp 2000 (newer event).
+        let unblock =
+            BlocklistEvent::unblock_ip("10.0.100.1", "global", BlockProvenance::default(), 2000)
+                .with_event_id("unblock-1".to_string());
+        let r = store.apply_blocklist_event(&unblock);
+        assert_eq!(r, BlocklistApplyResult::Applied);
+
+        // Second: block at timestamp 1000 (older event) — should be rejected as stale.
+        let block = BlocklistEvent::block_ip(
+            "10.0.100.1",
+            "test",
+            "global",
+            BlockProvenance::default(),
+            1000,
+        )
+        .with_event_id("block-old-1".to_string());
+        let r = store.apply_blocklist_event(&block);
+        assert_eq!(r, BlocklistApplyResult::IgnoredStale);
+
+        // Target should remain unblocked.
+        let ip: IpAddr = "10.0.100.1".parse().unwrap();
+        assert!(store.is_blocked(&ip, "global").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_stale_suppression_older_block_after_newer_unblock_mesh_id() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let unblock = BlocklistEvent::unblock_mesh_id(
+            "mesh-stale-1",
+            "global",
+            BlockProvenance::default(),
+            2000,
+        )
+        .with_event_id("unblock-mesh-1".to_string());
+        let r = store.apply_blocklist_event(&unblock);
+        assert_eq!(r, BlocklistApplyResult::Applied);
+
+        let block = BlocklistEvent::block_mesh_id(
+            "mesh-stale-1",
+            "test",
+            "global",
+            BlockProvenance::default(),
+            1000,
+        )
+        .with_event_id("block-mesh-old-1".to_string());
+        let r = store.apply_blocklist_event(&block);
+        assert_eq!(r, BlocklistApplyResult::IgnoredStale);
+        assert!(store.is_mesh_id_blocked("mesh-stale-1", "global").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_stale_suppression_older_unblock_after_newer_block_ip() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        // First: block at timestamp 2000 (newer event).
+        let block = BlocklistEvent::block_ip(
+            "10.0.100.2",
+            "test",
+            "global",
+            BlockProvenance::default(),
+            2000,
+        )
+        .with_event_id("block-new-1".to_string());
+        let r = store.apply_blocklist_event(&block);
+        assert_eq!(r, BlocklistApplyResult::Applied);
+
+        // Second: unblock at timestamp 1000 (older event) — should be rejected.
+        let unblock =
+            BlocklistEvent::unblock_ip("10.0.100.2", "global", BlockProvenance::default(), 1000)
+                .with_event_id("unblock-old-1".to_string());
+        let r = store.apply_blocklist_event(&unblock);
+        assert_eq!(r, BlocklistApplyResult::IgnoredStale);
+
+        // Target should remain blocked.
+        let ip: IpAddr = "10.0.100.2".parse().unwrap();
+        assert!(store.is_blocked(&ip, "global").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_stale_suppression_older_unblock_after_newer_block_mesh_id() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let block = BlocklistEvent::block_mesh_id(
+            "mesh-stale-2",
+            "test",
+            "global",
+            BlockProvenance::default(),
+            2000,
+        )
+        .with_event_id("block-mesh-new-2".to_string());
+        let r = store.apply_blocklist_event(&block);
+        assert_eq!(r, BlocklistApplyResult::Applied);
+
+        let unblock = BlocklistEvent::unblock_mesh_id(
+            "mesh-stale-2",
+            "global",
+            BlockProvenance::default(),
+            1000,
+        )
+        .with_event_id("unblock-mesh-old-2".to_string());
+        let r = store.apply_blocklist_event(&unblock);
+        assert_eq!(r, BlocklistApplyResult::IgnoredStale);
+        assert!(store.is_mesh_id_blocked("mesh-stale-2", "global").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_stale_suppression_version_beats_timestamp() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        // First: block with version=5, timestamp=1000.
+        let mut block_with_ver = BlocklistEvent::block_ip(
+            "10.0.100.3",
+            "test",
+            "global",
+            BlockProvenance::default(),
+            1000,
+        );
+        block_with_ver.event_id = Some("block-v5".to_string());
+        block_with_ver.version = Some(5);
+        let r = store.apply_blocklist_event(&block_with_ver);
+        assert_eq!(r, BlocklistApplyResult::Applied);
+
+        // Second: unblock with version=3, timestamp=2000 — older version, should be stale.
+        let mut unblock =
+            BlocklistEvent::unblock_ip("10.0.100.3", "global", BlockProvenance::default(), 2000);
+        unblock.event_id = Some("unblock-v3".to_string());
+        unblock.version = Some(3);
+        let r = store.apply_blocklist_event(&unblock);
+        assert_eq!(r, BlocklistApplyResult::IgnoredStale);
+
+        let ip: IpAddr = "10.0.100.3".parse().unwrap();
+        assert!(store.is_blocked(&ip, "global").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_stale_suppression_equal_timestamp_rejected() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        // First event.
+        let block = BlocklistEvent::block_ip(
+            "10.0.100.4",
+            "test",
+            "global",
+            BlockProvenance::default(),
+            1000,
+        )
+        .with_event_id("event-a".to_string());
+        let r = store.apply_blocklist_event(&block);
+        assert_eq!(r, BlocklistApplyResult::Applied);
+
+        // Second event with same timestamp, different event_id — should be stale
+        // (equal timestamp, neither version present → not newer).
+        let block2 = BlocklistEvent::block_ip(
+            "10.0.100.4",
+            "test2",
+            "global",
+            BlockProvenance::default(),
+            1000,
+        )
+        .with_event_id("event-b".to_string());
+        let r = store.apply_blocklist_event(&block2);
+        assert_eq!(r, BlocklistApplyResult::IgnoredStale);
+    }
+
+    #[tokio::test]
+    async fn test_unblock_missing_target_records_state() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        // Unblock a target that was never blocked — should still record target state.
+        let unblock =
+            BlocklistEvent::unblock_ip("10.0.100.5", "global", BlockProvenance::default(), 1000)
+                .with_event_id("unblock-missing-1".to_string());
+        let r = store.apply_blocklist_event(&unblock);
+        assert_eq!(r, BlocklistApplyResult::Applied);
+
+        // Now an older block should be rejected as stale.
+        let block = BlocklistEvent::block_ip(
+            "10.0.100.5",
+            "test",
+            "global",
+            BlockProvenance::default(),
+            500,
+        )
+        .with_event_id("block-old-missing-1".to_string());
+        let r = store.apply_blocklist_event(&block);
+        assert_eq!(r, BlocklistApplyResult::IgnoredStale);
+    }
+
+    #[tokio::test]
+    async fn test_invalid_target_no_state_recorded() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let mut event = BlocklistEvent::block_ip(
+            "not_an_ip",
+            "test",
+            "global",
+            BlockProvenance::default(),
+            1000,
+        );
+        event.event_id = Some("invalid-target-1".to_string());
+        let r = store.apply_blocklist_event(&event);
+        assert_eq!(r, BlocklistApplyResult::InvalidTarget);
+
+        // The event_id should NOT have been recorded (invalid targets are not deduped).
+        let mut event2 = BlocklistEvent::block_ip(
+            "not_an_ip",
+            "test",
+            "global",
+            BlockProvenance::default(),
+            1000,
+        );
+        event2.event_id = Some("invalid-target-1".to_string());
+        let r = store.apply_blocklist_event(&event2);
+        assert_eq!(r, BlocklistApplyResult::InvalidTarget);
+    }
+
+    #[tokio::test]
+    async fn test_target_state_eviction_fifo() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        // Fill target state cache to capacity.
+        for i in 0..TARGET_STATE_MAX as u64 {
+            let event = BlocklistEvent::block_ip(
+                &format!("10.0.{}.{}", (i / 256) % 256, i % 256),
+                "fill_test",
+                "global",
+                BlockProvenance::default(),
+                1000 + i,
+            )
+            .with_event_id(format!("fill-{}", i));
+            store.apply_blocklist_event(&event);
+        }
+
+        // Add one more to trigger eviction of the oldest.
+        let overflow = BlocklistEvent::block_ip(
+            "10.0.200.1",
+            "overflow_test",
+            "global",
+            BlockProvenance::default(),
+            1000 + TARGET_STATE_MAX as u64,
+        )
+        .with_event_id(format!("overflow-{}", TARGET_STATE_MAX));
+        let r = store.apply_blocklist_event(&overflow);
+        assert_eq!(r, BlocklistApplyResult::Applied);
+
+        // The cache should be at capacity.
+        let targets = store.target_state.read();
+        assert_eq!(targets.len(), TARGET_STATE_MAX);
     }
 }

@@ -30,6 +30,8 @@ pub struct BlockStore {
     persist_tx: Option<mpsc::Sender<PersistRequest>>,
     shutdown_tx: Option<mpsc::Sender<()>>,
     mitigation_provider: ArcSwapOption<SizedMitigationProvider>,
+    seen_events: RwLock<SeenEventCache>,        // FIFO dedup cache (10k max)
+    target_state: RwLock<TargetStateCache>,     // Per-target LWW state (10k max)
 }
 
 pub struct BlockEntry {
@@ -106,6 +108,12 @@ pub struct BlockRecord {
 | `shutdown().await` | Flush pending data |
 | `trigger_persist()` | Force immediate persistence |
 
+### Event Application Methods
+
+| Method | Description |
+|--------|-------------|
+| `apply_blocklist_event(event) -> BlocklistApplyResult` | 5-step pipeline: validate → dedup → stale check → mutate → record state |
+
 ---
 
 ## 4. Integration Points
@@ -129,4 +137,4 @@ pub struct BlockRecord {
 - **Legacy Migration**: `migrate_legacy_sentinel_entries()` converts sentinel `0.0.0.0` entries to first-class mesh blocks. **Auto-called** by `BlockStore::new` after loading both IP and mesh files from disk.
 - **Counter Correctness**: `block_ip`, `block_ip_with_provenance`, and `add_block` only increment `total_entries` on new key insertion. Overwriting an existing `(site_scope, ip)` entry updates the entry without changing the count.
 - **Mesh-ID Deadlock Fix**: `block_mesh_id_with_provenance` drops the shard write lock before calling `trigger_persist()`, preventing deadlock where the persist path tries to read the same shard.
-- **BlocklistEvent Propagation**: Admin ban/unban handlers emit structured `BlocklistEvent` debug logs (target `blocklist_event`). Admin unban also gossips `BlocklistEventGossip` to mesh peers and pushes `BlocklistEventUpdate` IPC to workers. See `architecture/blocklist_remove_consistency.md`.
+- **BlocklistEvent Propagation**: Admin ban/unban handlers emit structured `BlocklistEvent` debug logs (target `blocklist_event`). Admin unban also gossips `BlocklistEventGossip` to mesh peers and pushes `BlocklistEventUpdate` IPC to workers. Apply pipeline uses FIFO dedup (`SeenEventCache`) and per-target stale suppression (`TargetStateCache`). In-memory state; not persisted across restarts. See `architecture/blocklist_remove_consistency.md`.
