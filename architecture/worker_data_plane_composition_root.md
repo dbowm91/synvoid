@@ -1,6 +1,7 @@
 # Worker/Data-Plane Composition Root Ownership
 
 **Established**: Iteration 58
+**Updated**: Iteration 59
 **Guardrail**: `tests/data_plane_composition_boundary_guard.rs`
 
 ## Invariant
@@ -20,6 +21,8 @@ These files construct and wire concrete infrastructure:
 | `src/worker/unified_server/services.rs` | DataPlaneServicesBuilder |
 | `src/worker/unified_server/lifecycle.rs` | IPC message loop, canonical trust snapshot |
 | `src/worker/unified_server/state.rs` | IPC connection, config loading |
+| `src/worker/unified_server/init_runtime.rs` | Re-exports of state.rs runtime helpers |
+| `src/worker/unified_server/init_config.rs` | Re-exports of state.rs config helpers |
 | `src/worker/connection.rs` | Legacy worker WAF init |
 | `src/worker/cpu_task/mod.rs` | CPU offload worker composition |
 | `src/supervisor/process.rs` | Supervisor process composition |
@@ -71,6 +74,8 @@ These modules handle live HTTP/HTTPS requests and must consume narrow traits:
 - Raft client/state-machine types
 - Admin handlers (`verify_admin_token`)
 - Concrete `BlockStore` or `ThreatIntelligenceManager`
+- Concrete `ThreatIntelligenceManager` (removed from WAF in Iteration 59)
+- Raft/DHT module imports (`crate::raft::`, `openraft::`, `crate::dht::`)
 - Supervisor IPC manager internals
 - Snapshot/catchup/gossip APIs
 
@@ -101,6 +106,27 @@ To add a new capability to the request path:
 3. Pass `Arc<dyn YourTrait>` to request-path modules
 4. Never pass the concrete type directly to request-path code
 
+## WAF Blocklist No-Op Shims (Iteration 59)
+
+The following `WafCore` methods are **API-compatibility shims** — they do not mutate block store state:
+
+| Method | Behavior |
+|--------|----------|
+| `check_early()` | Always returns `WafDecision::Pass` |
+| `block_ip_for_honeypot()` | No-op (empty body) |
+| `block_ip_with_threat_intel()` | No-op (empty body) |
+
+These methods are retained only for trait compatibility (`EarlyWafHooks`, `ChallengePathWaf`, `UploadValidationWaf`). Blocklist writes occur via dedicated local/control-plane enforcement paths, not through the WAF request path.
+
+`check_dht_threat_lookup()` and `get_threat_intel()` were removed in Iteration 59 — they were dead code referencing concrete `ThreatIntelligenceManager` on the request path.
+
 ## Guardrail
 
-`tests/data_plane_composition_boundary_guard.rs` scans request-path directories for forbidden concrete infrastructure tokens and panics if violations are found.
+`tests/data_plane_composition_boundary_guard.rs` enforces the composition boundary with role-based file classification and three token groups:
+
+- **`BoundaryRole` enum**: Classifies files as `CompositionRoot`, `RequestPath`, `ControlPlane`, `Admin`, `SharedTypes`, or `TestOnly`. Each file under `src/worker/unified_server/` is classified individually.
+- **`CONSTRUCTION_TOKENS`**: Catches concrete infrastructure construction (`BlockStore::new`, `ThreatIntelligenceManager::new`, etc.)
+- **`TYPE_IMPORT_TOKENS`**: Catches concrete type imports (`crate::block_store::BlockStore`, `crate::raft::`, etc.)
+- **`CONTROL_PLANE_OP_TOKENS`**: Catches control-plane operations (`export_blocklist_snapshot`, `lookup_threat_indicator_in_dht`, etc.)
+
+Pass-through types in HTTP dispatch (`MeshTransportManager`, `MeshBackendPool`) have scoped `BoundaryException` entries with documented reasons. The guardrail also runs focused tests for BlockStore types, ThreatIntelligenceManager types, and Raft/DHT imports specifically.

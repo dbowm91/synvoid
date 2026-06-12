@@ -18,7 +18,7 @@ See `skills/extension_runtime.md` for full documentation.
 Global singletons (`get_threat_intel()`, `get_yara_rules()`, `get_upload_validator()`) are deprecated. Use `RequestServices` instead:
 
 ```rust
-// Old (deprecated)
+// Old (deprecated) — WafCore::get_threat_intel() removed in Iteration 59
 let threat_intel = get_threat_intel().cloned();
 
 // New

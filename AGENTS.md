@@ -129,6 +129,7 @@ cargo check --no-default-features --features mesh,dns
 ## Data-Plane Composition Root Boundary
 
 **Iteration 58**: Request-path modules must consume narrow traits/capabilities, not concrete infrastructure.
+**Iteration 59**: Guardrail tightened with role-based file classification, three token groups, and scoped exceptions. WAF blocklist methods documented as no-op compatibility shims. `check_dht_threat_lookup()` and `get_threat_intel()` removed from `WafCore` (dead code).
 
 ### Allowed Dependency Directions
 
@@ -147,6 +148,12 @@ cargo check --no-default-features --features mesh,dns
 ```bash
 cargo test --test data_plane_composition_boundary_guard
 ```
+
+The guardrail uses `BoundaryRole` enum to classify each file individually. `src/worker/unified_server/` files are classified per-file (most are `CompositionRoot`, `passthrough_validation.rs is `SharedTypes`). Three token groups catch violations: `CONSTRUCTION_TOKENS` (constructors), `TYPE_IMPORT_TOKENS` (concrete type imports), `CONTROL_PLANE_OP_TOKENS` (blocklist/threat-intel operations). Pass-through types (`MeshTransportManager`, `MeshBackendPool`) have scoped `BoundaryException` entries with documented reasons.
+
+### WAF Blocklist No-Op Shims
+
+WAF blocklist methods (`check_early`, `block_ip_for_honeypot`, `block_ip_with_threat_intel`) are **API-compatibility shims** — they do not mutate block store state. Blocklist writes occur via dedicated local/control-plane enforcement paths. `check_dht_threat_lookup()` and `get_threat_intel()` were removed in Iteration 59 (dead code referencing concrete `ThreatIntelligenceManager` on request path).
 
 ### How to Add a New Capability Safely
 

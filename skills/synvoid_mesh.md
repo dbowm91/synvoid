@@ -1239,6 +1239,8 @@ Legacy composed wrappers (`lookup_*_policy_composed`) fall back to raw lookups w
 
 The WAF request path no longer holds a concrete `BlockStore` directly. `WafCore` and `AsnTracker` previously stored `Option<Arc<BlockStore>>` (concrete type); Iteration 58 removed this field, and the WAF block-store methods (`check_block_store`, `check_early`, `maybe_escalate_and_block`, `block_ip_for_honeypot`, `block_ip_with_threat_intel`) are now no-ops. The `BlockStoreAdapter` in `src/waf/adapters.rs` bridges `Arc<BlockStore>` to the `BlockListStore` trait for use in the extracted WAF crate. Concrete `BlockStore` ownership moved to `UnifiedServer` (composition root) via `with_block_store()`. This enforces the composition root invariant: request-path modules consume capabilities, not concrete infrastructure.
 
+**Iteration 59**: Guardrail tightened — `src/worker/unified_server/` is no longer broadly exempt; each file is individually classified via `BoundaryRole`. Three token groups (construction, type-import, control-plane-op) catch concrete infrastructure at import level, not just constructor calls. `check_dht_threat_lookup()` and `get_threat_intel()` removed from `WafCore` (dead code referencing concrete `ThreatIntelligenceManager` on request path). WAF blocklist methods (`check_early`, `block_ip_for_honeypot`, `block_ip_with_threat_intel`) documented as no-op compatibility shims. Scoped `BoundaryException` table replaces file-level exemptions.
+
 ### AsnBlock Status
 
 `AsnBlock` is observational/advisory only. No enforcement gate, no block-store mutation, no attack metric. The indicator is stored for bookkeeping; the handler logs an advisory message.

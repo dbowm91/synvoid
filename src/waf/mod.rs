@@ -294,12 +294,9 @@ impl WafCore {
             .as_ref()
             .map(|config| ConnectionLimiter::new(config.connection_limits.clone()));
 
-        let asn_tracker_instance = asn_scraping_config.as_ref().map(|config| {
-            Arc::new(AsnTracker::new(
-                config.clone(),
-                geoip.clone(),
-            ))
-        });
+        let asn_tracker_instance = asn_scraping_config
+            .as_ref()
+            .map(|config| Arc::new(AsnTracker::new(config.clone(), geoip.clone())));
 
         let endpoint_blocker = EndpointBlockerManager::new(
             endpoint_config.paths.clone(),
@@ -679,6 +676,11 @@ impl WafCore {
         self.check_honeypot(ip, path, method, user_agent)
     }
 
+    /// Compatibility shim — always returns `WafDecision::Pass`.
+    ///
+    /// WAF request path does not own blocklist mutation capability.
+    /// Blocklist writes occur via dedicated local/control-plane enforcement paths.
+    /// This method is retained only for API compatibility (Iteration 59).
     pub fn check_early(
         &self,
         _client_ip: IpAddr,
@@ -696,6 +698,11 @@ impl WafCore {
             .map(|ad| ad.clone().streaming())
     }
 
+    /// Compatibility shim — no-op (does not mutate block store).
+    ///
+    /// WAF request path does not own blocklist mutation capability.
+    /// Blocklist writes occur via dedicated local/control-plane enforcement paths.
+    /// This method is retained only for API compatibility (Iteration 59).
     pub fn block_ip_for_honeypot(
         &self,
         _ip: IpAddr,
@@ -705,6 +712,11 @@ impl WafCore {
     ) {
     }
 
+    /// Compatibility shim — no-op (does not mutate block store).
+    ///
+    /// WAF request path does not own blocklist mutation capability.
+    /// Blocklist writes occur via dedicated local/control-plane enforcement paths.
+    /// This method is retained only for API compatibility (Iteration 59).
     pub fn block_ip_with_threat_intel(
         &self,
         _ip: IpAddr,
@@ -739,26 +751,6 @@ impl WafCore {
         }
     }
 
-    #[cfg(feature = "mesh")]
-    pub fn check_dht_threat_lookup(
-        &self,
-        _ip: IpAddr,
-        _threat_intel: Option<&Arc<crate::mesh::threat_intel::ThreatIntelligenceManager>>,
-    ) -> Option<WafDecision> {
-        // Placeholder for DHT lookup
-        None
-    }
-
-    #[cfg(not(feature = "mesh"))]
-    pub fn check_dht_threat_lookup(
-        &self,
-        _ip: IpAddr,
-        _threat_intel: Option<&Arc<()>>,
-    ) -> Option<WafDecision> {
-        // Placeholder for DHT lookup
-        None
-    }
-
     pub fn record_suspicious_words(
         &self,
         _ip: IpAddr,
@@ -771,20 +763,6 @@ impl WafCore {
 
     pub fn start_background_tasks(&self) {
         // Placeholder
-    }
-
-    #[cfg(feature = "mesh")]
-    pub fn get_threat_intel(
-        &self,
-    ) -> Option<Arc<crate::mesh::threat_intel::ThreatIntelligenceManager>> {
-        // Phase 3: Relegated to Control Plane (Supervisor).
-        None
-    }
-
-    #[cfg(not(feature = "mesh"))]
-    pub fn get_threat_intel(&self) -> Option<Arc<()>> {
-        // Phase 3: Relegated to Control Plane (Supervisor).
-        None
     }
 
     pub fn get_upload_validator(&self) -> Option<Arc<synvoid_upload::UploadValidator>> {
