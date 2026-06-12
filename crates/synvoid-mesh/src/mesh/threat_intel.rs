@@ -1533,11 +1533,16 @@ impl ThreatIntelligenceManager {
         true
     }
 
-    /// **Not for enforcement** — compatibility / low-level DHT lookup API.
+    /// ## Diagnostic-Only API
+    ///
+    /// This function is a diagnostic/compatibility API. It must NOT be used by
+    /// enforcement consumers. Enforcement consumers must use
+    /// [`lookup_threat_indicator_policy_strict`] instead.
+    ///
+    /// The `threat_intel_boundary_guard.rs` test enforces this boundary mechanically.
     ///
     /// Returns the indicator directly from the DHT record store without any
-    /// policy evaluation. **Must not be used by enforcement consumers** unless
-    /// wrapped by an explicit policy-composed gate. Use
+    /// policy evaluation. Use
     /// [`lookup_threat_indicator_policy_composed`] or
     /// [`lookup_threat_indicator_policy_strict`] for actionability-sensitive reads.
     pub fn lookup_threat_indicator_in_dht(
@@ -1574,11 +1579,31 @@ impl ThreatIntelligenceManager {
         Some(indicator)
     }
 
-    /// **Not for enforcement** — compatibility / low-level local lookup API.
+    /// **Diagnostic-only API** — alias for `lookup_threat_indicator_in_dht`.
+    ///
+    /// This function is a diagnostic/compatibility API. It must NOT be used by
+    /// enforcement consumers. Enforcement consumers must use
+    /// `lookup_threat_indicator_policy_strict` instead.
+    ///
+    /// The `threat_intel_boundary_guard.rs` test enforces this boundary mechanically.
+    pub fn diagnostic_lookup_threat_indicator_in_dht(
+        &self,
+        indicator_value: &str,
+        threat_type: ThreatType,
+    ) -> Option<ThreatIndicator> {
+        self.lookup_threat_indicator_in_dht(indicator_value, threat_type)
+    }
+
+    /// ## Diagnostic-Only API
+    ///
+    /// This function is a diagnostic/compatibility API. It must NOT be used by
+    /// enforcement consumers. Enforcement consumers must use
+    /// [`lookup_local_indicator_policy_strict`] instead.
+    ///
+    /// The `threat_intel_boundary_guard.rs` test enforces this boundary mechanically.
     ///
     /// Returns the indicator directly from the in-memory store without any
-    /// policy evaluation. **Must not be used by enforcement consumers** unless
-    /// wrapped by an explicit policy-composed gate. Use
+    /// policy evaluation. Use
     /// [`lookup_local_indicator_policy_composed`] or
     /// [`lookup_local_indicator_policy_strict`] for actionability-sensitive reads.
     pub fn lookup_local_indicator(
@@ -1591,15 +1616,46 @@ impl ThreatIntelligenceManager {
         indicators.get(&key).map(|entry| entry.indicator.clone())
     }
 
-    /// **Not for enforcement** — compatibility / low-level IP convenience wrapper.
+    /// **Diagnostic-only API** — alias for `lookup_local_indicator`.
+    ///
+    /// This function is a diagnostic/compatibility API. It must NOT be used by
+    /// enforcement consumers. Enforcement consumers must use
+    /// `lookup_local_indicator_policy_strict` instead.
+    ///
+    /// The `threat_intel_boundary_guard.rs` test enforces this boundary mechanically.
+    pub fn diagnostic_lookup_local_indicator(
+        &self,
+        indicator_value: &str,
+        threat_type: ThreatType,
+    ) -> Option<ThreatIndicator> {
+        self.lookup_local_indicator(indicator_value, threat_type)
+    }
+
+    /// ## Diagnostic-Only API
+    ///
+    /// This function is a diagnostic/compatibility API. It must NOT be used by
+    /// enforcement consumers. Enforcement consumers must use
+    /// [`lookup_local_indicator_by_ip_policy_strict`] instead.
+    ///
+    /// The `threat_intel_boundary_guard.rs` test enforces this boundary mechanically.
     ///
     /// Delegates to [`lookup_local_indicator`](Self::lookup_local_indicator)
-    /// with `ThreatType::IpBlock`. **Must not be used by enforcement consumers**
-    /// unless wrapped by an explicit policy-composed gate. Use
+    /// with `ThreatType::IpBlock`. Use
     /// [`lookup_local_indicator_by_ip_policy_composed`] or
     /// [`lookup_local_indicator_by_ip_policy_strict`] for actionability-sensitive reads.
     pub fn lookup_local_indicator_by_ip(&self, ip: &str) -> Option<ThreatIndicator> {
         self.lookup_local_indicator(ip, ThreatType::IpBlock)
+    }
+
+    /// **Diagnostic-only API** — alias for `lookup_local_indicator_by_ip`.
+    ///
+    /// This function is a diagnostic/compatibility API. It must NOT be used by
+    /// enforcement consumers. Enforcement consumers must use
+    /// `lookup_local_indicator_by_ip_policy_strict` instead.
+    ///
+    /// The `threat_intel_boundary_guard.rs` test enforces this boundary mechanically.
+    pub fn diagnostic_lookup_local_indicator_by_ip(&self, ip: &str) -> Option<ThreatIndicator> {
+        self.lookup_local_indicator_by_ip(ip)
     }
 
     /// Evaluate a threat indicator's actionability using the policy composition

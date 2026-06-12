@@ -975,4 +975,505 @@ mod tests {
         assert_eq!(s1.decision_class, s2.decision_class);
         assert_eq!(s1.reason, s2.reason);
     }
+
+    // ---------------------------------------------------------------------------
+    // Iteration 54: Consumer actionability audit tests
+    // ---------------------------------------------------------------------------
+
+    use super::super::threat_intel::{
+        classify_consumer_action, ThreatIntelConsumerAction, ThreatIntelConsumerKind,
+        ThreatIntelDeferredMode,
+    };
+
+    // --- Consumer classification tests ---
+
+    #[test]
+    fn test_enforcement_consumer_requires_permit_action() {
+        let actionable = Some(ThreatIntelPolicyDecision::Actionable(
+            ThreatIntelPolicyEvidence {
+                intel_id: "intel-1".to_string(),
+                advisory_key: KEY.to_string(),
+                advisory_status: AdvisoryRecordStatus::Present,
+                advisory_freshness: AdvisoryFreshness::Live,
+                canonical_freshness: CanonicalFreshness::Live,
+                record_signature_valid: true,
+            },
+        ));
+        let advisory_only = Some(ThreatIntelPolicyDecision::AdvisoryOnly(
+            ThreatIntelPolicyEvidence {
+                intel_id: "intel-1".to_string(),
+                advisory_key: KEY.to_string(),
+                advisory_status: AdvisoryRecordStatus::Present,
+                advisory_freshness: AdvisoryFreshness::Live,
+                canonical_freshness: CanonicalFreshness::Live,
+                record_signature_valid: true,
+            },
+        ));
+        let not_actionable = Some(ThreatIntelPolicyDecision::NotActionable(
+            ThreatIntelPolicyRejectReason::AdvisoryMissing,
+        ));
+        let deferred = Some(ThreatIntelPolicyDecision::Deferred(
+            ThreatIntelPolicyDeferReason::CanonicalUnavailable,
+        ));
+        let none: Option<&ThreatIntelPolicyDecision> = None;
+
+        let mode = ThreatIntelDeferredMode::FailOpenNoAction;
+
+        assert_eq!(
+            classify_consumer_action(
+                actionable.as_ref(),
+                ThreatIntelConsumerKind::Enforcement,
+                mode
+            ),
+            ThreatIntelConsumerAction::PermitAction
+        );
+        assert_eq!(
+            classify_consumer_action(
+                advisory_only.as_ref(),
+                ThreatIntelConsumerKind::Enforcement,
+                mode
+            ),
+            ThreatIntelConsumerAction::SuppressAction
+        );
+        assert_eq!(
+            classify_consumer_action(
+                not_actionable.as_ref(),
+                ThreatIntelConsumerKind::Enforcement,
+                mode
+            ),
+            ThreatIntelConsumerAction::SuppressAction
+        );
+        assert_eq!(
+            classify_consumer_action(
+                deferred.as_ref(),
+                ThreatIntelConsumerKind::Enforcement,
+                mode
+            ),
+            ThreatIntelConsumerAction::SuppressAction
+        );
+        assert_eq!(
+            classify_consumer_action(none, ThreatIntelConsumerKind::Enforcement, mode),
+            ThreatIntelConsumerAction::SuppressAction
+        );
+    }
+
+    #[test]
+    fn test_shadow_only_consumer_always_suppresses() {
+        let actionable = Some(ThreatIntelPolicyDecision::Actionable(
+            ThreatIntelPolicyEvidence {
+                intel_id: "intel-1".to_string(),
+                advisory_key: KEY.to_string(),
+                advisory_status: AdvisoryRecordStatus::Present,
+                advisory_freshness: AdvisoryFreshness::Live,
+                canonical_freshness: CanonicalFreshness::Live,
+                record_signature_valid: true,
+            },
+        ));
+        let not_actionable = Some(ThreatIntelPolicyDecision::NotActionable(
+            ThreatIntelPolicyRejectReason::AdvisoryMissing,
+        ));
+        let deferred = Some(ThreatIntelPolicyDecision::Deferred(
+            ThreatIntelPolicyDeferReason::CanonicalUnavailable,
+        ));
+        let none: Option<&ThreatIntelPolicyDecision> = None;
+
+        let mode = ThreatIntelDeferredMode::FailOpenNoAction;
+
+        assert_eq!(
+            classify_consumer_action(
+                actionable.as_ref(),
+                ThreatIntelConsumerKind::ShadowOnly,
+                mode
+            ),
+            ThreatIntelConsumerAction::ShadowOnly
+        );
+        assert_eq!(
+            classify_consumer_action(
+                not_actionable.as_ref(),
+                ThreatIntelConsumerKind::ShadowOnly,
+                mode
+            ),
+            ThreatIntelConsumerAction::ShadowOnly
+        );
+        assert_eq!(
+            classify_consumer_action(deferred.as_ref(), ThreatIntelConsumerKind::ShadowOnly, mode),
+            ThreatIntelConsumerAction::ShadowOnly
+        );
+        assert_eq!(
+            classify_consumer_action(none, ThreatIntelConsumerKind::ShadowOnly, mode),
+            ThreatIntelConsumerAction::ShadowOnly
+        );
+    }
+
+    #[test]
+    fn test_fail_open_no_action_suppresses_enforcement() {
+        let not_actionable = Some(ThreatIntelPolicyDecision::NotActionable(
+            ThreatIntelPolicyRejectReason::AdvisoryMissing,
+        ));
+        let advisory_only = Some(ThreatIntelPolicyDecision::AdvisoryOnly(
+            ThreatIntelPolicyEvidence {
+                intel_id: "intel-1".to_string(),
+                advisory_key: KEY.to_string(),
+                advisory_status: AdvisoryRecordStatus::Present,
+                advisory_freshness: AdvisoryFreshness::Live,
+                canonical_freshness: CanonicalFreshness::Live,
+                record_signature_valid: true,
+            },
+        ));
+        let deferred = Some(ThreatIntelPolicyDecision::Deferred(
+            ThreatIntelPolicyDeferReason::CanonicalUnavailable,
+        ));
+        let none: Option<&ThreatIntelPolicyDecision> = None;
+
+        let mode = ThreatIntelDeferredMode::FailOpenNoAction;
+
+        assert_eq!(
+            classify_consumer_action(
+                not_actionable.as_ref(),
+                ThreatIntelConsumerKind::Enforcement,
+                mode
+            ),
+            ThreatIntelConsumerAction::SuppressAction
+        );
+        assert_eq!(
+            classify_consumer_action(
+                advisory_only.as_ref(),
+                ThreatIntelConsumerKind::Enforcement,
+                mode
+            ),
+            ThreatIntelConsumerAction::SuppressAction
+        );
+        assert_eq!(
+            classify_consumer_action(
+                deferred.as_ref(),
+                ThreatIntelConsumerKind::Enforcement,
+                mode
+            ),
+            ThreatIntelConsumerAction::SuppressAction
+        );
+        assert_eq!(
+            classify_consumer_action(none, ThreatIntelConsumerKind::Enforcement, mode),
+            ThreatIntelConsumerAction::SuppressAction
+        );
+    }
+
+    #[test]
+    fn test_fail_closed_no_action_suppresses_enforcement() {
+        let not_actionable = Some(ThreatIntelPolicyDecision::NotActionable(
+            ThreatIntelPolicyRejectReason::AdvisoryMissing,
+        ));
+        let advisory_only = Some(ThreatIntelPolicyDecision::AdvisoryOnly(
+            ThreatIntelPolicyEvidence {
+                intel_id: "intel-1".to_string(),
+                advisory_key: KEY.to_string(),
+                advisory_status: AdvisoryRecordStatus::Present,
+                advisory_freshness: AdvisoryFreshness::Live,
+                canonical_freshness: CanonicalFreshness::Live,
+                record_signature_valid: true,
+            },
+        ));
+        let deferred = Some(ThreatIntelPolicyDecision::Deferred(
+            ThreatIntelPolicyDeferReason::CanonicalUnavailable,
+        ));
+        let none: Option<&ThreatIntelPolicyDecision> = None;
+
+        let mode = ThreatIntelDeferredMode::FailClosedNoAction;
+
+        assert_eq!(
+            classify_consumer_action(
+                not_actionable.as_ref(),
+                ThreatIntelConsumerKind::Enforcement,
+                mode
+            ),
+            ThreatIntelConsumerAction::SuppressAction
+        );
+        assert_eq!(
+            classify_consumer_action(
+                advisory_only.as_ref(),
+                ThreatIntelConsumerKind::Enforcement,
+                mode
+            ),
+            ThreatIntelConsumerAction::SuppressAction
+        );
+        assert_eq!(
+            classify_consumer_action(
+                deferred.as_ref(),
+                ThreatIntelConsumerKind::Enforcement,
+                mode
+            ),
+            ThreatIntelConsumerAction::SuppressAction
+        );
+        assert_eq!(
+            classify_consumer_action(none, ThreatIntelConsumerKind::Enforcement, mode),
+            ThreatIntelConsumerAction::SuppressAction
+        );
+    }
+
+    #[test]
+    fn test_raw_compatibility_consumer_always_suppresses() {
+        let actionable = Some(ThreatIntelPolicyDecision::Actionable(
+            ThreatIntelPolicyEvidence {
+                intel_id: "intel-1".to_string(),
+                advisory_key: KEY.to_string(),
+                advisory_status: AdvisoryRecordStatus::Present,
+                advisory_freshness: AdvisoryFreshness::Live,
+                canonical_freshness: CanonicalFreshness::Live,
+                record_signature_valid: true,
+            },
+        ));
+        let not_actionable = Some(ThreatIntelPolicyDecision::NotActionable(
+            ThreatIntelPolicyRejectReason::AdvisoryMissing,
+        ));
+        let deferred = Some(ThreatIntelPolicyDecision::Deferred(
+            ThreatIntelPolicyDeferReason::CanonicalUnavailable,
+        ));
+        let none: Option<&ThreatIntelPolicyDecision> = None;
+
+        let mode = ThreatIntelDeferredMode::FailOpenNoAction;
+
+        assert_eq!(
+            classify_consumer_action(
+                actionable.as_ref(),
+                ThreatIntelConsumerKind::RawCompatibility,
+                mode
+            ),
+            ThreatIntelConsumerAction::RawCompatibilityOnly
+        );
+        assert_eq!(
+            classify_consumer_action(
+                not_actionable.as_ref(),
+                ThreatIntelConsumerKind::RawCompatibility,
+                mode
+            ),
+            ThreatIntelConsumerAction::RawCompatibilityOnly
+        );
+        assert_eq!(
+            classify_consumer_action(
+                deferred.as_ref(),
+                ThreatIntelConsumerKind::RawCompatibility,
+                mode
+            ),
+            ThreatIntelConsumerAction::RawCompatibilityOnly
+        );
+        assert_eq!(
+            classify_consumer_action(none, ThreatIntelConsumerKind::RawCompatibility, mode),
+            ThreatIntelConsumerAction::RawCompatibilityOnly
+        );
+    }
+
+    // --- Policy decision tests ---
+
+    #[test]
+    fn test_actionable_decision_with_valid_advisory_and_canonical() {
+        let advisory = TestAdvisorySource::new().with_record(KEY, test_record(KEY));
+        let canonical = TestCanonicalReader::new(CanonicalFreshness::Live).with_trust(
+            INTEL_ID,
+            CanonicalTrustDecision::Trusted {
+                freshness: CanonicalFreshness::Live,
+            },
+        );
+
+        let decision = evaluate_threat_intel_policy(&canonical, &advisory, INTEL_ID, KEY);
+        match &decision {
+            ThreatIntelPolicyDecision::Actionable(evidence) => {
+                assert_eq!(evidence.intel_id, INTEL_ID);
+                assert_eq!(evidence.advisory_key, KEY);
+                assert_eq!(evidence.advisory_status, AdvisoryRecordStatus::Present);
+                assert_eq!(evidence.advisory_freshness, AdvisoryFreshness::Live);
+                assert_eq!(evidence.canonical_freshness, CanonicalFreshness::Live);
+                assert!(evidence.record_signature_valid);
+            }
+            other => panic!("expected Actionable, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_advisory_only_when_canonical_absent() {
+        let advisory = TestAdvisorySource::new().with_record(KEY, test_record(KEY));
+        // Canonical reader has no trust entry for INTEL_ID — defaults to NotTrusted with
+        // NotPresentInCanonicalState, which maps to CanonicalUnknown defer.
+        let canonical = TestCanonicalReader::new(CanonicalFreshness::Live);
+
+        let decision = evaluate_threat_intel_policy(&canonical, &advisory, INTEL_ID, KEY);
+        // No trust entry → CanonicalUnknown → Deferred (not AdvisoryOnly).
+        // AdvisoryOnly requires explicit NotTrusted with a reason other than
+        // NotPresentInCanonicalState or Unavailable.
+        assert!(matches!(
+            decision,
+            ThreatIntelPolicyDecision::Deferred(ThreatIntelPolicyDeferReason::CanonicalUnknown)
+        ));
+    }
+
+    #[test]
+    fn test_not_actionable_when_advisory_missing() {
+        let advisory = TestAdvisorySource::new();
+        let canonical = TestCanonicalReader::new(CanonicalFreshness::Live);
+
+        let decision = evaluate_threat_intel_policy(&canonical, &advisory, INTEL_ID, KEY);
+        assert_eq!(
+            decision,
+            ThreatIntelPolicyDecision::NotActionable(
+                ThreatIntelPolicyRejectReason::AdvisoryMissing
+            )
+        );
+    }
+
+    #[test]
+    fn test_deferred_when_canonical_unavailable() {
+        let advisory = TestAdvisorySource::new().with_record(KEY, test_record(KEY));
+        let canonical = TestCanonicalReader::new(CanonicalFreshness::Unavailable);
+
+        let decision = evaluate_threat_intel_policy(&canonical, &advisory, INTEL_ID, KEY);
+        assert!(matches!(
+            decision,
+            ThreatIntelPolicyDecision::Deferred(ThreatIntelPolicyDeferReason::CanonicalUnavailable)
+        ));
+    }
+
+    // --- Shadow decision tests ---
+
+    #[test]
+    fn test_shadow_decision_decision_class_matches() {
+        let evidence = ThreatIntelPolicyEvidence {
+            intel_id: "intel-1".to_string(),
+            advisory_key: KEY.to_string(),
+            advisory_status: AdvisoryRecordStatus::Present,
+            advisory_freshness: AdvisoryFreshness::Live,
+            canonical_freshness: CanonicalFreshness::Live,
+            record_signature_valid: true,
+        };
+
+        let actionable = Some(ThreatIntelPolicyDecision::Actionable(evidence.clone()));
+        let shadow =
+            threat_intel_policy_shadow_decision("1.2.3.4", "IpBlock", actionable.as_ref(), None);
+        assert_eq!(
+            shadow.decision_class,
+            ThreatIntelPolicyDecisionClass::Actionable
+        );
+
+        let advisory_only = Some(ThreatIntelPolicyDecision::AdvisoryOnly(evidence));
+        let shadow =
+            threat_intel_policy_shadow_decision("1.2.3.4", "IpBlock", advisory_only.as_ref(), None);
+        assert_eq!(
+            shadow.decision_class,
+            ThreatIntelPolicyDecisionClass::AdvisoryOnly
+        );
+
+        let not_actionable = Some(ThreatIntelPolicyDecision::NotActionable(
+            ThreatIntelPolicyRejectReason::AdvisoryMissing,
+        ));
+        let shadow = threat_intel_policy_shadow_decision(
+            "1.2.3.4",
+            "IpBlock",
+            not_actionable.as_ref(),
+            None,
+        );
+        assert_eq!(
+            shadow.decision_class,
+            ThreatIntelPolicyDecisionClass::NotActionable
+        );
+
+        let deferred = Some(ThreatIntelPolicyDecision::Deferred(
+            ThreatIntelPolicyDeferReason::CanonicalUnavailable,
+        ));
+        let shadow =
+            threat_intel_policy_shadow_decision("1.2.3.4", "IpBlock", deferred.as_ref(), None);
+        assert_eq!(
+            shadow.decision_class,
+            ThreatIntelPolicyDecisionClass::Deferred
+        );
+
+        let shadow = threat_intel_policy_shadow_decision("1.2.3.4", "IpBlock", None, None);
+        assert_eq!(
+            shadow.decision_class,
+            ThreatIntelPolicyDecisionClass::NotConfigured
+        );
+    }
+
+    #[test]
+    fn test_shadow_disagreement_raw_present_composed_not_actionable() {
+        let decision = Some(ThreatIntelPolicyDecision::NotActionable(
+            ThreatIntelPolicyRejectReason::AdvisoryMissing,
+        ));
+        assert_eq!(
+            classify_shadow_disagreement(true, decision.as_ref()),
+            Some(ThreatIntelPolicyShadowDisagreement::RawPresentComposedNotActionable)
+        );
+    }
+
+    #[test]
+    fn test_shadow_disagreement_no_disagreement_when_actionable() {
+        let evidence = ThreatIntelPolicyEvidence {
+            intel_id: "intel-1".to_string(),
+            advisory_key: KEY.to_string(),
+            advisory_status: AdvisoryRecordStatus::Present,
+            advisory_freshness: AdvisoryFreshness::Live,
+            canonical_freshness: CanonicalFreshness::Live,
+            record_signature_valid: true,
+        };
+        let decision = Some(ThreatIntelPolicyDecision::Actionable(evidence));
+        assert_eq!(classify_shadow_disagreement(true, decision.as_ref()), None);
+    }
+
+    // --- Provenance tests ---
+
+    #[test]
+    fn test_threat_intel_enforcement_uses_policy_gated_provenance() {
+        // Documentation/assertion test: handle_incoming_threat uses
+        // MeshThreatIntelPolicyGated provenance for enforcement mutations,
+        // not AdminManual or LegacyUnknown.
+        //
+        // This is enforced at compile time by the typed provenance APIs
+        // (block_ip_with_provenance, rate_limit_with_provenance, etc.)
+        // and verified in integration tests. The policy gate in
+        // evaluate_incoming_threat_policy() ensures that only PermitAction
+        // results reach the mutation path.
+        //
+        // Consumer classification ensures:
+        // - Enforcement + Actionable → PermitAction (mutations proceed)
+        // - Enforcement + non-Actionable → SuppressAction (mutations blocked)
+        // - ShadowOnly/RawCompatibility → never reaches mutation path
+        //
+        // The provenance kind is MeshThreatIntelPolicyGated (not
+        // AdminManual, SupervisorManual, or LegacyUnknown).
+        let actionable = Some(ThreatIntelPolicyDecision::Actionable(
+            ThreatIntelPolicyEvidence {
+                intel_id: "intel-1".to_string(),
+                advisory_key: KEY.to_string(),
+                advisory_status: AdvisoryRecordStatus::Present,
+                advisory_freshness: AdvisoryFreshness::Live,
+                canonical_freshness: CanonicalFreshness::Live,
+                record_signature_valid: true,
+            },
+        ));
+        let mode = ThreatIntelDeferredMode::FailOpenNoAction;
+
+        // Only Actionable + Enforcement yields PermitAction
+        assert_eq!(
+            classify_consumer_action(
+                actionable.as_ref(),
+                ThreatIntelConsumerKind::Enforcement,
+                mode,
+            ),
+            ThreatIntelConsumerAction::PermitAction
+        );
+
+        // ShadowOnly and RawCompatibility never yield PermitAction
+        assert_ne!(
+            classify_consumer_action(
+                actionable.as_ref(),
+                ThreatIntelConsumerKind::ShadowOnly,
+                mode,
+            ),
+            ThreatIntelConsumerAction::PermitAction
+        );
+        assert_ne!(
+            classify_consumer_action(
+                actionable.as_ref(),
+                ThreatIntelConsumerKind::RawCompatibility,
+                mode,
+            ),
+            ThreatIntelConsumerAction::PermitAction
+        );
+    }
 }

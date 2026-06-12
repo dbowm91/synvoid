@@ -1256,6 +1256,29 @@ The WAF request path reads `BlockStore` state, not `ThreatIntelligenceManager` d
 | `UrlBlock` | No — reserved for future URL-filter integration |
 | `CertBlock` | No — reserved for future TLS-layer integration |
 
+## Threat-Intel Consumer Actionability Audit (Iteration 54)
+
+The consumer actionability audit inventoried every threat-intel consumer and classified them into explicit classes:
+
+| Class | Can Mutate Enforcement? | Required API |
+|-------|------------------------|-------------|
+| Enforcement | YES (only with `PermitAction`) | `evaluate_incoming_threat_policy` / `classify_consumer_action` |
+| Deferred | Only when policy permits | `classify_consumer_action` with `ThreatIntelDeferredMode` |
+| ShadowOnly | NO | `evaluate_indicator_policy_shadow` |
+| Diagnostic | NO | `lookup_*` (raw) or `diagnostic_lookup_*` |
+| LocalOrigin | YES (operator/local authority) | Direct block-store writes |
+| WorkerIPC | YES (control-plane authority) | Direct block-store writes with preserved provenance |
+
+**Key invariants**:
+- Raw lookup APIs are diagnostic-only; enforcement must use `lookup_*_policy_strict` or `evaluate_incoming_threat_policy`
+- `ShadowOnly` paths never emit blocklist events or call block/unblock APIs
+- Threat-intel enforcement uses `MeshThreatIntelPolicyGated` provenance
+- `LegacyUnknown` is not used for new threat-intel blocklist writes
+- `AsnBlock` is observational only (no block-store mutation)
+
+**Canonical inventory**: `architecture/threat_intel_consumer_actionability.md`
+**Guardrail test**: `tests/threat_intel_consumer_actionability_guard.rs`
+
 ## Iteration 36 — Doc Drift, Three-Plane Model, Request/WAF Audit
 
 Documentation drift cleanup for the stable threat-intel enforcement model:

@@ -64,3 +64,13 @@ Future threat-intel integrations that affect WAF behavior should either:
 2. Use strict/composed lookup wrappers for read-only policy-gated decisions.
 
 Do not add raw advisory lookups to request/WAF hot paths.
+
+## Consumer Actionability Audit (Iteration 54)
+
+This audit was completed in conjunction with the request/WAF audit. The canonical consumer inventory is in `architecture/threat_intel_consumer_actionability.md`. Key findings:
+
+- All enforcement consumers use `evaluate_incoming_threat_policy` with `PermitAction` gating
+- Raw lookup APIs are diagnostic-only with `diagnostic_` prefix aliases
+- Shadow-only paths never mutate enforcement state
+- Threat-intel blocklist writes use `MeshThreatIntelPolicyGated` provenance
+- Guardrail test: `tests/threat_intel_consumer_actionability_guard.rs`

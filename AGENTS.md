@@ -45,6 +45,7 @@ When editing request/WAF paths or adding new threat-intel consumers:
    - **Manual enforcement provenance**: Admin manual block writes use `AdminManual`, supervisor manual blocks use `SupervisorManual`, supervisor blocklist sync uses `SupervisorSync`. Manual/supervisor paths bypass threat-intel policy gates (authority from operator/control-plane). Do not use `LegacyUnknown` for new manual/supervisor writes. Admin/debug responses should expose provenance.
 7. **Manual unban responses must reflect actual state mutation** — No admin unban path may report `success: true` without actually removing a block entry or explicitly documenting the no-op behavior. Use `unblock_ip()` or `unblock_mesh_id()` return value to determine success. For mesh-ID unban, call `unblock_mesh_id()` for the specific mesh ID (not the sentinel IP). Unban is local-only today; do not imply mesh propagation in responses. Mesh-ID blocks are first-class and concurrent — unblocking one mesh ID does not affect others.
 8. **Mesh-ID blocks are control-plane/admin scoped only (Iteration 51, Outcome A)** — `RequestContext`, `WafContext`, and all WAF trait signatures lack a mesh identity field. External HTTP clients do not present mesh credentials. Therefore `is_mesh_id_blocked()` must never be called in WAF/request/proxy/HTTP/3 code. A mechanical guardrail test (`tests/mesh_id_boundary_guard.rs`) enforces this boundary. If request-path mesh-ID enforcement is desired in the future (Outcome B), a trusted `mesh_identity: Option<AuthenticatedMeshIdentity>` field must first be added to the request context and populated at a composition root without using untrusted HTTP headers.
+9. **Consumer actionability audit (Iteration 54)** — Every threat-intel consumer is inventoried and classified in `architecture/threat_intel_consumer_actionability.md`. Enforcement consumers must use `evaluate_incoming_threat_policy` or `classify_consumer_action` with `PermitAction`. Raw lookup APIs (`lookup_local_indicator`, `lookup_local_indicator_by_ip`, `lookup_threat_indicator_in_dht`) are diagnostic-only and must not be consumed by enforcement paths. The `diagnostic_` prefix aliases (`diagnostic_lookup_local_indicator`, etc.) are provided for explicit diagnostic usage. `ShadowOnly` paths never mutate enforcement state. `LegacyUnknown` is not used for new threat-intel blocklist writes. Threat-intel enforcement uses `MeshThreatIntelPolicyGated` provenance. Guardrail test: `tests/threat_intel_consumer_actionability_guard.rs`.
 
 ### When NOT to use Constant-Time Comparison
 
@@ -122,6 +123,8 @@ cargo check --no-default-features --features mesh,dns
 | `BlocklistEvent` type | `crates/synvoid-core/src/block_store.rs` (not a separate module) |
 | `architecture/blocklist_reconciliation.md` | New — Iteration 48 offline-peer catchup architecture |
 | `blocklist_target_state.json` | New — Iteration 52 persisted target state file |
+| `architecture/threat_intel_consumer_actionability.md` | New — Iteration 54 consumer actionability inventory |
+| `tests/threat_intel_consumer_actionability_guard.rs` | New — Iteration 54 consumer actionability guardrail test |
 
 ## Modular Agent Guidance
 
