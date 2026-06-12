@@ -1235,9 +1235,9 @@ For enforcement/actionability-sensitive consumers, use strict wrappers. They ret
 
 Legacy composed wrappers (`lookup_*_policy_composed`) fall back to raw lookups when no context exists. They are acceptable for diagnostics but not for enforcement.
 
-### WAF/BlockStore Boundary
+### WAF/BlockStore Boundary (Iteration 58)
 
-The WAF request path reads `BlockStore` state, not `ThreatIntelligenceManager` directly. Mesh enforcement (`handle_incoming_threat`) populates `BlockStore` through the enforcement plane. WAF code (`check_block_store`, `check_early`, `maybe_escalate_and_block`) reads BlockStore as local enforcement state. This boundary is correct and must be preserved.
+The WAF request path no longer holds a concrete `BlockStore` directly. `WafCore` and `AsnTracker` previously stored `Option<Arc<BlockStore>>` (concrete type); Iteration 58 removed this field, and the WAF block-store methods (`check_block_store`, `check_early`, `maybe_escalate_and_block`, `block_ip_for_honeypot`, `block_ip_with_threat_intel`) are now no-ops. The `BlockStoreAdapter` in `src/waf/adapters.rs` bridges `Arc<BlockStore>` to the `BlockListStore` trait for use in the extracted WAF crate. Concrete `BlockStore` ownership moved to `UnifiedServer` (composition root) via `with_block_store()`. This enforces the composition root invariant: request-path modules consume capabilities, not concrete infrastructure.
 
 ### AsnBlock Status
 

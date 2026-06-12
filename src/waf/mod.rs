@@ -39,7 +39,6 @@ pub use traffic_shaper::{ConnectionLimiter, ConnectionToken, GlobalTrafficShaper
 pub use violation_tracker::ViolationTracker;
 
 use crate::auth::AuthManager;
-use crate::block_store::BlockStore;
 use crate::challenge::{ChallengeConfig, ChallengeManager};
 use crate::config::defaults::{AsnScrapingConfig, BlockedDefaults, BotDefaults};
 use crate::config::limits::RateLimitMemoryConfig;
@@ -78,7 +77,6 @@ pub struct WafCoreConfig {
     pub endpoint_config: BlockedDefaults,
     pub waf_config: WafConfig,
     pub whitelist: Vec<String>,
-    pub block_store: Option<Arc<BlockStore>>,
     pub attack_detection_config: Option<AttackDetectionConfig>,
     pub auth_manager: Option<Arc<AuthManager>>,
     pub threat_level_config: Option<crate::config::ThreatLevelConfig>,
@@ -105,7 +103,6 @@ pub struct WafCore {
     pub auth_manager: Arc<AuthManager>,
     pub attack_detector: ArcSwapOption<AttackDetector>,
     pub attack_detection_config: ArcSwapOption<AttackDetectionConfig>,
-    pub block_store: Option<Arc<BlockStore>>,
     pub config: WafConfig,
     pub whitelist: Arc<HashSet<IpAddr>>,
     _tarpit_generator: Arc<crate::tarpit::MarkovChain>,
@@ -195,7 +192,6 @@ impl WafCore {
             endpoint_config,
             waf_config,
             whitelist,
-            block_store,
             attack_detection_config,
             auth_manager,
             threat_level_config,
@@ -302,7 +298,6 @@ impl WafCore {
             Arc::new(AsnTracker::new(
                 config.clone(),
                 geoip.clone(),
-                block_store.clone(),
             ))
         });
 
@@ -382,7 +377,6 @@ impl WafCore {
             auth_manager: auth_manager_instance,
             attack_detector: ArcSwapOption::new(ad_instance),
             attack_detection_config: ArcSwapOption::new(None),
-            block_store,
             config: waf_config,
             whitelist: Arc::new(whitelist_set),
             _tarpit_generator: tarpit_generator,
@@ -536,16 +530,7 @@ impl WafCore {
         }
     }
 
-    fn check_block_store(&self, ip: IpAddr, site_id: Option<&str>) -> Option<WafDecision> {
-        if let Some(ref store) = self.block_store {
-            let scope = site_id.unwrap_or("global");
-            if let Some(entry) = store.is_blocked(&ip, scope) {
-                if self.config.drop_blocked_requests {
-                    return Some(WafDecision::Drop);
-                }
-                return Some(WafDecision::Block(403, entry.reason.clone()));
-            }
-        }
+    fn check_block_store(&self, _ip: IpAddr, _site_id: Option<&str>) -> Option<WafDecision> {
         None
     }
 
@@ -678,19 +663,6 @@ impl WafCore {
     ) -> Option<WafDecision> {
         if let Some(ref tracker) = self.violation_tracker {
             if tracker.record_violation(ip, reason, threat_level) > 0 {
-                if let Some(ref store) = self.block_store {
-                    let duration = self.honeypot_ban_duration_secs;
-                    store.block_ip_with_provenance(
-                        ip,
-                        reason,
-                        duration,
-                        "global",
-                        BlockProvenance {
-                            kind: BlockProvenanceKind::LocalWaf,
-                            source: Some("waf_escalation".to_string()),
-                        },
-                    );
-                }
                 return Some(WafDecision::Block(code, msg.to_string()));
             }
         }
@@ -709,20 +681,11 @@ impl WafCore {
 
     pub fn check_early(
         &self,
-        client_ip: IpAddr,
+        _client_ip: IpAddr,
         _path: &str,
         _cookies: Option<&str>,
         _ua: Option<&str>,
     ) -> WafDecision {
-        if let Some(ref store) = self.block_store {
-            let scope = "global";
-            if let Some(entry) = store.is_blocked(&client_ip, scope) {
-                if self.config.drop_blocked_requests {
-                    return WafDecision::Drop;
-                }
-                return WafDecision::Block(403, entry.reason.clone());
-            }
-        }
         WafDecision::Pass
     }
 
@@ -735,44 +698,20 @@ impl WafCore {
 
     pub fn block_ip_for_honeypot(
         &self,
-        ip: IpAddr,
-        reason: &str,
-        duration_secs: u64,
+        _ip: IpAddr,
+        _reason: &str,
+        _duration_secs: u64,
         _scope: &str,
     ) {
-        if let Some(ref store) = self.block_store {
-            store.block_ip_with_provenance(
-                ip,
-                reason,
-                duration_secs,
-                "global",
-                BlockProvenance {
-                    kind: BlockProvenanceKind::LocalHoneypot,
-                    source: Some("honeypot".to_string()),
-                },
-            );
-        }
     }
 
     pub fn block_ip_with_threat_intel(
         &self,
-        ip: IpAddr,
-        reason: &str,
-        duration_secs: u64,
+        _ip: IpAddr,
+        _reason: &str,
+        _duration_secs: u64,
         _scope: &str,
     ) {
-        if let Some(ref store) = self.block_store {
-            store.block_ip_with_provenance(
-                ip,
-                reason,
-                duration_secs,
-                "global",
-                BlockProvenance {
-                    kind: BlockProvenanceKind::LocalWaf,
-                    source: Some("local_threat_intel".to_string()),
-                },
-            );
-        }
     }
 
     pub fn set_flood_protector(&mut self, protector: Arc<FloodProtector>) {

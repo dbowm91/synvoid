@@ -5,7 +5,6 @@
 //! Uses lock-free `AtomicSlidingWindow` counters per ASN and caches IP→ASN
 //! lookups to minimize GeoIP overhead.
 
-use crate::block_store::{BlockProvenance, BlockProvenanceKind, BlockStore};
 use crate::config::defaults::AsnScrapingConfig;
 use crate::geoip::types::AsnInfo;
 use crate::geoip::GeoIpManager;
@@ -53,14 +52,13 @@ pub enum AsnCheckResult {
 /// ASN-based distributed scraper detector.
 ///
 /// Tracks request volume and unique IP distribution per ASN. When either
-/// threshold is exceeded, blocks the requesting IP via `BlockStore` and
+/// threshold is exceeded, blocks the requesting IP and
 /// optionally announces the block to mesh peers.
 pub struct AsnTracker {
     asn_windows: DashMap<u32, AsnWindowState>,
     asn_cache: RwLock<lru_time_cache::LruCache<IpAddr, u32>>,
     config: AsnScrapingConfig,
     geoip: Option<Arc<GeoIpManager>>,
-    block_store: Option<Arc<BlockStore>>,
     whitelisted_asns: Arc<RwLock<HashSet<u32>>>,
     last_cleanup: parking_lot::Mutex<Instant>,
 }
@@ -69,7 +67,6 @@ impl AsnTracker {
     pub fn new(
         config: AsnScrapingConfig,
         geoip: Option<Arc<GeoIpManager>>,
-        block_store: Option<Arc<BlockStore>>,
     ) -> Self {
         let whitelisted: HashSet<u32> = config.whitelisted_asns.iter().copied().collect();
         Self {
@@ -77,7 +74,6 @@ impl AsnTracker {
             asn_cache: RwLock::new(lru_time_cache::LruCache::with_capacity(config.cache_size)),
             config,
             geoip,
-            block_store,
             whitelisted_asns: Arc::new(RwLock::new(whitelisted)),
             last_cleanup: parking_lot::Mutex::new(Instant::now()),
         }
@@ -147,19 +143,6 @@ impl AsnTracker {
             );
 
             crate::metrics::record_attack_type("AsnScraping");
-
-            if let Some(ref store) = self.block_store {
-                store.block_ip_with_provenance(
-                    client_ip,
-                    "asn_scraping",
-                    ban_duration,
-                    "global",
-                    BlockProvenance {
-                        kind: BlockProvenanceKind::LocalAsnTracker,
-                        source: Some(format!("asn_{}", asn)),
-                    },
-                );
-            }
 
             return Some(WafDecision::Drop);
         }
@@ -267,7 +250,7 @@ mod tests {
     }
 
     fn create_tracker(config: AsnScrapingConfig) -> AsnTracker {
-        AsnTracker::new(config, None, None)
+        AsnTracker::new(config, None)
     }
 
     #[test]

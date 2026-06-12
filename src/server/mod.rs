@@ -89,6 +89,7 @@ pub struct UnifiedServer {
     metrics: Option<Arc<WorkerMetrics>>,
     ipc: Option<Arc<tokio::sync::Mutex<crate::process::ipc_transport::IpcStream>>>,
     worker_id: Option<WorkerId>,
+    block_store: Option<Arc<crate::block_store::BlockStore>>,
     serverless_manager: Option<Arc<crate::serverless::manager::ServerlessManager>>,
     app_servers: Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>,
 
@@ -429,6 +430,7 @@ impl UnifiedServer {
             metrics: None,
             ipc: None,
             worker_id: None,
+            block_store: None,
             serverless_manager: None,
             app_servers: Arc::new(RwLock::new(HashMap::new())),
             #[cfg(feature = "dns")]
@@ -469,6 +471,11 @@ impl UnifiedServer {
         manager: Arc<crate::serverless::manager::ServerlessManager>,
     ) -> Self {
         self.serverless_manager = Some(manager);
+        self
+    }
+
+    pub fn with_block_store(mut self, block_store: Arc<crate::block_store::BlockStore>) -> Self {
+        self.block_store = Some(block_store);
         self
     }
 
@@ -570,7 +577,7 @@ impl UnifiedServer {
     }
 
     pub fn get_block_store(&self) -> Option<Arc<crate::block_store::BlockStore>> {
-        self.waf.block_store.clone()
+        self.block_store.clone()
     }
 
     pub fn get_cert_resolver(&self) -> Option<Arc<CertResolver>> {
@@ -654,7 +661,6 @@ impl UnifiedServer {
                 css_exempt_paths: main_config.defaults.css_challenge.exempt_paths.clone(),
             },
             whitelist: Vec::new(),
-            block_store: None,
             attack_detection_config: Some(AttackDetectionConfig::default()),
             auth_manager: None,
             threat_level_config: Some(main_config.threat_level.clone()),

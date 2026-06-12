@@ -126,6 +126,35 @@ cargo check --no-default-features --features mesh,dns
 | `architecture/threat_intel_consumer_actionability.md` | New — Iteration 54 consumer actionability inventory |
 | `tests/threat_intel_consumer_actionability_guard.rs` | New — Iteration 54 consumer actionability guardrail test |
 
+## Data-Plane Composition Root Boundary
+
+**Iteration 58**: Request-path modules must consume narrow traits/capabilities, not concrete infrastructure.
+
+### Allowed Dependency Directions
+
+| Layer | May Own/Import |
+|-------|---------------|
+| **Composition roots** (`src/worker/unified_server/`, `src/server/mod.rs`, `src/supervisor/`, `src/main.rs`) | Concrete `BlockStore`, `ThreatIntelligenceManager`, mesh/DHT/Raft handles, IPC, metrics, config |
+| **Request path** (`src/waf/`, `src/proxy/`, `src/http/`, `crates/synvoid-waf/`, `crates/synvoid-proxy/`, `crates/synvoid-http3/`, `crates/synvoid-http/`) | Narrow traits (`BlockListStore`, `WafProcessor`, `Http3RequestWaf`), config snapshots, request context |
+| **Control-plane** (`crates/synvoid-mesh/`, `crates/synvoid-block-store/`) | Full infrastructure internals |
+
+### Key Invariant
+
+> Composition roots own concrete infrastructure; request-path modules consume capabilities.
+
+### Guardrail Test
+
+```bash
+cargo test --test data_plane_composition_boundary_guard
+```
+
+### How to Add a New Capability Safely
+
+1. Define a narrow trait in `crates/synvoid-waf/src/traits.rs` or `crates/synvoid-core/`
+2. Implement the trait on a concrete type in a composition root
+3. Pass `Arc<dyn YourTrait>` to request-path modules
+4. Never pass the concrete type directly to request-path code
+
 ## Modular Agent Guidance
 
 Agent guidance is **modularized** to reduce context pollution. Each module has its own `AGENTS.override.md` that contains specialized handling for that subsystem.
@@ -317,6 +346,7 @@ The `architecture/` directory contains detailed design documents. Key canonical 
 | HTTP/3 WAF boundary | `http3_request_waf_boundary.md` | — |
 | Blocklist reconciliation | `blocklist_reconciliation.md` | `blocklist_remove_consistency.md` |
 | Blocklist provenance | `blocklist_reconciliation.md` | `blocklist_provenance_preservation.md` |
+| Data-plane composition root | `worker_data_plane_composition_root.md` | — |
 
 ## Skills Directory
 
