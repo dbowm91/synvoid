@@ -11,7 +11,7 @@ use http_body_util::{BodyExt, Full, StreamBody};
 use metrics::counter;
 
 use synvoid_config::{HttpConfig, MainConfig};
-use synvoid_metrics::StallPermit;
+use synvoid_metrics::{record_stall_timeout, StallPermit};
 use synvoid_waf::WafDecision;
 
 use crate::response_builder::{build_response_with_alt_svc, build_response_with_cookie};
@@ -50,9 +50,21 @@ where
         }
         WafDecision::Stall => {
             counter!("synvoid.http.stalled").increment(1);
-            let permit = StallPermit::try_new(http_config.max_stalled_requests);
+            let permit = match StallPermit::try_new(http_config.max_stalled_requests) {
+                Some(p) => p,
+                None => {
+                    return Some(build_response_with_alt_svc(
+                        429,
+                        "Too many requests".to_string(),
+                        "text/plain",
+                        alt_svc,
+                        main_config,
+                    ));
+                }
+            };
             let stall_timeout = Duration::from_secs(http_config.waf_stall_timeout_secs);
             tokio::time::sleep(stall_timeout).await;
+            record_stall_timeout();
             drop(permit);
             Some(build_response_with_alt_svc(
                 408,
@@ -116,5 +128,94 @@ where
                     .unwrap(),
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use synvoid_config::HttpConfig;
+
+    fn test_http_config(max_stalled: u32) -> HttpConfig {
+        let mut config = HttpConfig::default();
+        config.max_stalled_requests = max_stalled;
+        config.waf_stall_timeout_secs = 0;
+        config
+    }
+
+    fn noop_drop() {}
+    fn noop_render(_: u16, _: &str) -> String {
+        String::new()
+    }
+    fn noop_tarpit(_: &str, _: Option<&str>) -> TarpitStream {
+        Box::pin(futures::stream::empty())
+    }
+
+    #[tokio::test]
+    async fn streaming_stall_below_cap_returns_408() {
+        let config = test_http_config(u32::MAX);
+        let resp = maybe_handle_streaming_waf_decision(
+            WafDecision::Stall,
+            noop_drop,
+            noop_render,
+            noop_tarpit,
+            &config,
+            None,
+            &None,
+            &MainConfig::default(),
+        )
+        .await;
+
+        assert!(resp.is_some());
+        assert_eq!(resp.unwrap().status(), 408);
+    }
+
+    #[tokio::test]
+    async fn streaming_stall_at_cap_returns_429() {
+        let config = test_http_config(2);
+        let _permits: Vec<_> = (0..2)
+            .filter_map(|_| StallPermit::try_new(2))
+            .collect();
+
+        let before = std::time::Instant::now();
+        let resp = maybe_handle_streaming_waf_decision(
+            WafDecision::Stall,
+            noop_drop,
+            noop_render,
+            noop_tarpit,
+            &config,
+            None,
+            &None,
+            &MainConfig::default(),
+        )
+        .await;
+        let elapsed = before.elapsed();
+
+        assert!(resp.is_some());
+        assert_eq!(resp.unwrap().status(), 429);
+        assert!(
+            elapsed < std::time::Duration::from_millis(50),
+            "should not sleep when cap is reached"
+        );
+    }
+
+    #[tokio::test]
+    async fn streaming_stall_permit_releases_after_sleep() {
+        let config = test_http_config(u32::MAX);
+
+        let resp = maybe_handle_streaming_waf_decision(
+            WafDecision::Stall,
+            noop_drop,
+            noop_render,
+            noop_tarpit,
+            &config,
+            None,
+            &None,
+            &MainConfig::default(),
+        )
+        .await;
+
+        assert!(resp.is_some());
+        assert_eq!(resp.unwrap().status(), 408);
     }
 }

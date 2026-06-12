@@ -124,6 +124,16 @@ synvoid_http3_requests_not_found
 synvoid_http3_request_body_too_large
 ```
 
+### Stall Metrics
+
+Three distinct stall metrics exist:
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `ACTIVE_STALLED_REQUESTS` | gauge | Currently active stall permits (released via `StallPermit` drop) |
+| `STALL_REJECTED_CONCURRENCY_CAP` | counter | Permit acquisition rejected because cap was reached |
+| `STALL_TIMEOUTS` | counter | Stall sleep completed (not incremented on cancellation/drop) |
+
 ## Troubleshooting
 
 ### Client Not Using HTTP/3

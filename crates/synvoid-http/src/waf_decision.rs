@@ -11,7 +11,7 @@ use http_body_util::BodyExt;
 use metrics::counter;
 
 use synvoid_config::{HttpConfig, MainConfig};
-use synvoid_metrics::StallPermit;
+use synvoid_metrics::{record_stall_timeout, StallPermit};
 use synvoid_waf::WafDecision;
 
 use crate::response_builder::{build_response_with_alt_svc, build_response_with_cookie};
@@ -123,6 +123,7 @@ where
             tokio::select! {
                 _ = tokio::time::sleep(stall_timeout) => {
                     drop(permit);
+                    record_stall_timeout();
                     let latency_ms = stall_timeout.as_millis() as u64;
                     on_log(408, latency_ms);
                     FullWafDecisionOutcome::Respond(build_response_with_alt_svc(

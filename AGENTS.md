@@ -268,6 +268,7 @@ Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.overrid
 - NOT a separate process type - runs within the Supervisor architecture
 
 ### Implementation Notes
+- **StallPermit**: Use `StallPermit::try_new(max_stalled)` for all WAF stall paths — never manually call `record_stall_start`/`record_stall_end`. Drop releases the active slot; completed sleeps call `record_stall_timeout()` explicitly.
 - **PeakEwma weighting**: Slow-moving (90% to old value) is intentional for connection stability
 - **BUG-ROUTER-1**: Hardcoded port 80 is in `Default` impl only, actual usage uses configured port - NOT a bug
 - **Spin header serialization**: Uses JSON (SpinRuntime::serialize_headers_spin), not binary like raw WASM

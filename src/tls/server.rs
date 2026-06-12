@@ -1140,6 +1140,7 @@ impl HttpsServer {
                 tokio::select! {
                     _ = tokio::time::sleep(stall_timeout) => {
                         drop(permit);
+                        crate::metrics::record_stall_timeout();
                         Ok(Self::build_response(408, "Request timeout".to_string(), "text/plain"))
                     }
                 }

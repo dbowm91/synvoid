@@ -100,12 +100,13 @@ JS Challenge is at `src/challenge/pow.rs` (WASM-based PoW), not `src/challenge/j
 
 ### Stall/Tarpit Concurrency Safety
 
-Stall actions can exhaust worker resources at high traffic. Use bounded stall with metrics:
+Stall actions can exhaust worker resources at high traffic. Use bounded stall with `StallPermit` (RAII guard):
+- `StallPermit::try_new(max_stalled)` acquires atomically via `fetch_update`; returns `None` when cap reached
+- Drop always releases the active slot, preventing zombie stalls from inflating the cap
+- Completed sleeps must call `record_stall_timeout()` explicitly; cancellation/drop does not record a timeout
 - `max_stalled_requests` config limits concurrent stalls (default 100)
-- Metrics: `ACTIVE_STALLED_REQUESTS`, `STALL_REJECTED_CONCURRENCY_CAP`, `STALL_TIMEOUTS`
 - When cap reached, return 429 instead of stalling
-
-See `skills/performance_patterns.md` for implementation details.
+- **Never** manually call `record_stall_start`/`record_stall_end` in production paths — always use `StallPermit`
 
 ## Wave 2 Fixes Verified (2026-05-06)
 

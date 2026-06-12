@@ -159,12 +159,11 @@ pub fn get_proxy_cache_misses() -> u64 {
     PROXY_CACHE_MISSES.load(Ordering::Relaxed)
 }
 
-pub fn record_stall_start() {
-    ACTIVE_STALLED_REQUESTS.fetch_add(1, Ordering::Relaxed);
+pub(crate) fn release_stall_permit() {
+    ACTIVE_STALLED_REQUESTS.fetch_sub(1, Ordering::Release);
 }
 
-pub fn record_stall_end() {
-    ACTIVE_STALLED_REQUESTS.fetch_sub(1, Ordering::Relaxed);
+pub fn record_stall_timeout() {
     STALL_TIMEOUTS.fetch_add(1, Ordering::Relaxed);
 }
 
@@ -191,30 +190,41 @@ pub fn get_stall_timeouts() -> u64 {
 /// mid-sleep. This prevents zombie stalls from permanently inflating the
 /// concurrency cap.
 pub struct StallPermit {
-    active: bool,
+    _active: bool,
 }
 
 impl StallPermit {
     /// Try to acquire a stall permit. Returns `Some(StallPermit)` if below
     /// `max_stalled`, or `None` (after recording the rejection metric) if
     /// the cap has been reached.
+    ///
+    /// When `max_stalled` is 0, acquisition always fails.
     pub fn try_new(max_stalled: u32) -> Option<Self> {
-        let current = get_active_stalled_requests();
-        if current >= max_stalled as u64 {
+        if max_stalled == 0 {
             record_stall_rejected();
-            None
-        } else {
-            record_stall_start();
-            Some(StallPermit { active: true })
+            return None;
         }
+        let max = max_stalled as u64;
+        ACTIVE_STALLED_REQUESTS
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                if current >= max {
+                    None
+                } else {
+                    Some(current + 1)
+                }
+            })
+            .map(|_| StallPermit { _active: true })
+            .ok()
+            .or_else(|| {
+                record_stall_rejected();
+                None
+            })
     }
 }
 
 impl Drop for StallPermit {
     fn drop(&mut self) {
-        if self.active {
-            record_stall_end();
-        }
+        release_stall_permit();
     }
 }
 
@@ -921,4 +931,110 @@ pub fn get_all_serverless_metrics() -> Vec<ServerlessMetrics> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stall_permit_rejects_when_limit_zero() {
+        let before = STALL_REJECTED_CONCURRENCY_CAP.load(Ordering::Relaxed);
+        assert!(StallPermit::try_new(0).is_none());
+        assert_eq!(
+            STALL_REJECTED_CONCURRENCY_CAP.load(Ordering::Relaxed),
+            before + 1
+        );
+    }
+
+    #[test]
+    fn stall_permit_acquires_below_limit() {
+        let before = ACTIVE_STALLED_REQUESTS.load(Ordering::Relaxed);
+        let permit = StallPermit::try_new(10);
+        assert!(permit.is_some());
+        assert_eq!(ACTIVE_STALLED_REQUESTS.load(Ordering::Relaxed), before + 1);
+        drop(permit);
+        assert_eq!(ACTIVE_STALLED_REQUESTS.load(Ordering::Relaxed), before);
+    }
+
+    #[test]
+    fn stall_permit_rejects_at_limit() {
+        let mut permits = Vec::new();
+        for _ in 0..5 {
+            permits.push(StallPermit::try_new(5).unwrap());
+        }
+        assert!(StallPermit::try_new(5).is_none());
+        drop(permits);
+    }
+
+    #[test]
+    fn stall_permit_drop_releases_active_count() {
+        let before = ACTIVE_STALLED_REQUESTS.load(Ordering::Relaxed);
+        {
+            let _permit = StallPermit::try_new(u32::MAX).unwrap();
+            assert_eq!(ACTIVE_STALLED_REQUESTS.load(Ordering::Relaxed), before + 1);
+        }
+        assert_eq!(ACTIVE_STALLED_REQUESTS.load(Ordering::Relaxed), before);
+    }
+
+    #[test]
+    fn stall_permit_strict_atomic_cap_under_concurrency() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let cap: u32 = 10;
+        let before = ACTIVE_STALLED_REQUESTS.load(Ordering::Relaxed);
+        let permits = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let handles: Vec<_> = (0..20)
+            .map(|_| {
+                let permits = permits.clone();
+                thread::spawn(move || {
+                    if let Some(p) = StallPermit::try_new(cap) {
+                        permits.lock().push(p);
+                    }
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let acquired = permits.lock().len();
+        assert!(
+            acquired <= cap as usize,
+            "acquired {} permits but cap is {}",
+            acquired,
+            cap
+        );
+        assert_eq!(
+            ACTIVE_STALLED_REQUESTS.load(Ordering::Relaxed),
+            before + acquired as u64
+        );
+        drop(permits);
+    }
+
+    #[test]
+    fn stall_timeout_metric_increments_separately() {
+        let before = STALL_TIMEOUTS.load(Ordering::Relaxed);
+        record_stall_timeout();
+        assert_eq!(STALL_TIMEOUTS.load(Ordering::Relaxed), before + 1);
+    }
+
+    #[test]
+    fn release_stall_permit_does_not_increment_timeout() {
+        let timeout_before = STALL_TIMEOUTS.load(Ordering::Relaxed);
+        let active_before = ACTIVE_STALLED_REQUESTS.load(Ordering::Relaxed);
+        {
+            let _permit = StallPermit::try_new(u32::MAX).unwrap();
+            assert_eq!(ACTIVE_STALLED_REQUESTS.load(Ordering::Relaxed), active_before + 1);
+        }
+        // Drop only releases, does not record timeout
+        assert_eq!(
+            STALL_TIMEOUTS.load(Ordering::Relaxed),
+            timeout_before,
+            "drop must not increment timeout counter"
+        );
+        assert_eq!(ACTIVE_STALLED_REQUESTS.load(Ordering::Relaxed), active_before);
+    }
 }

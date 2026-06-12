@@ -180,6 +180,8 @@ waf.check_request_full_owned(
 | `Tarpit(path)` | 200 tarpit HTML body | 200 tarpit HTML body | ✅ |
 | `Stall` | Concurrency-capped (429 on cap) | Concurrency-capped (429 on cap) | ✅ |
 
+**Stall concurrency** is guarded by strict RAII permits (`StallPermit` in `synvoid-metrics`). Acquisition uses `fetch_update` for atomic cap enforcement. Drop always releases the active slot. Streaming WAF stall paths also enforce the cap and return 429 when no permit is available.
+
 ### Known Parity Gaps (Accepted)
 
 1. **Block response format**: HTTP/1/2 returns themed HTML; HTTP/3 returns JSON. HTTP/3 clients typically don't render HTML error pages.

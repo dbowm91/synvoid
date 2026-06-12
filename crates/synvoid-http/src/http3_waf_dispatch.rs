@@ -6,7 +6,7 @@ use http::{header, Response, StatusCode};
 use metrics::counter;
 
 use synvoid_metrics::bandwidth::{BandwidthProtocol, BandwidthTracker, EgressDirection};
-use synvoid_metrics::StallPermit;
+use synvoid_metrics::{record_stall_timeout, StallPermit};
 use synvoid_waf::WafDecision;
 
 use crate::headers::generate_stealth_timestamp;
@@ -81,6 +81,7 @@ where
             };
             tokio::time::sleep(stall_timeout).await;
             drop(permit);
+            record_stall_timeout();
             tracing::debug!("Stall timeout reached");
             Ok(Http3WafDecisionOutcome::Continue)
         }
@@ -146,7 +147,6 @@ mod tests {
     use super::*;
     use std::convert::Infallible;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use synvoid_metrics::StallPermit;
 
     struct MockRequestStream {
         response_sent: AtomicBool,

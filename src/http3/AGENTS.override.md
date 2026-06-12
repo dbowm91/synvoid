@@ -65,6 +65,8 @@ cargo test --test http3_waf_boundary_guard
 | `Tarpit` | 200 tarpit HTML | 200 tarpit HTML | ✅ |
 | `Stall` | Concurrency-capped (429 on cap) | Concurrency-capped (429 on cap) | ✅ |
 
+All stall paths (full request, HTTP/3, streaming WAF, TLS) enforce the concurrency cap via `StallPermit::try_new()`. When the cap is reached, a 429 response is returned immediately without sleeping.
+
 ### Streaming Body WAF
 
 HTTP/3 uses the same `StreamingWafScanner` trait as HTTP/1/2. Body collection flows through `collect_http3_request_body()` with QUIC flow control providing backpressure. Body size bounded by `config.max_request_size`.
