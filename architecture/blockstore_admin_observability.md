@@ -79,15 +79,25 @@ pub struct MeshBlockEntryData {
 
 ## WAF / Request-Time Semantics
 
+**Mesh-ID blocks are control-plane/admin scoped only (Iteration 51, Outcome A).**
+
 Mesh-ID blocks are NOT enforced at the WAF request path because:
 1. `RequestContext` does not carry mesh ID information
-2. WAF block checks use `is_blocked(client_ip, site_scope)` which matches against IP keys
-3. The sentinel `0.0.0.0` key is never matched by real client IPs
+2. `WafContext` and all WAF trait signatures (`Http3RequestWaf::check_request_full`, `BufferedRequestWaf::check_request_full`, `WafProcessor::check_request`) lack a mesh identity field
+3. WAF block checks use `is_blocked(client_ip, site_scope)` which matches against IP keys
+4. The sentinel `0.0.0.0` key is never matched by real client IPs
+5. External HTTP clients do not present mesh credentials — mesh identity exists only at the mesh transport layer for mesh-to-mesh communication
+6. No `AuthenticatedMeshIdentity` or `MeshIdentitySource` type exists in the codebase
+
+A mechanical guardrail test (`tests/mesh_id_boundary_guard.rs`) scans WAF/request/proxy/HTTP/3 source files to prevent `is_mesh_id_blocked()` from being called in request-path code.
 
 Mesh-ID block enforcement is scoped to:
-- Admin API ban/unban/list operations
-- Supervisor/worker sync replication
+- Admin API ban/unban/list operations (control-plane)
+- Supervisor/worker sync replication (control-plane)
 - Mesh control-plane operations (peer trust, membership)
+- `BlockStore::is_mesh_id_blocked()` exists but is only called by admin handlers and mesh stubs — never by WAF/request code
+
+If request-path mesh-ID enforcement is desired in the future (Outcome B), a trusted `mesh_identity: Option<AuthenticatedMeshIdentity>` field must first be added to the request context and populated at a composition root without using untrusted HTTP headers.
 
 ## Persistence
 

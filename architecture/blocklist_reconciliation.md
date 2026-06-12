@@ -68,6 +68,7 @@ The supervisor retains a separate bounded event log (1,000 events) for IPC repla
 | From-start catchup replays first retained event | ✅ Iteration 49 |
 | Exclusive since_sequence cursor remains available | ✅ Iteration 49 |
 | Request/WAF paths remain local-only | ✅ Invariant |
+| Mesh-ID blocks are control-plane only | ✅ Invariant (Iteration 51) |
 | Raft remains out of operational blocklist | ✅ Invariant |
 
 ## What Is NOT Guaranteed
@@ -76,6 +77,7 @@ The supervisor retains a separate bounded event log (1,000 events) for IPC repla
 - No permanent event log (in-memory only, restart loses)
 - No exact convergence if offline longer than retention window
 - No request-path remote checks
+- No mesh-ID enforcement on the request path (control-plane only; Iteration 51)
 - No acknowledged delivery for individual events
 
 ## Retention Window

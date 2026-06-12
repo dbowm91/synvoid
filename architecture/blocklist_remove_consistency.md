@@ -47,7 +47,7 @@ Events propagate via the `BlocklistEventGossip` mesh message type (proto field 1
 
 ### Local Application
 
-Request/WAF paths remain local-only. The `BlockStore` is the single source of truth for local enforcement. `apply_blocklist_event` dispatches based on `(operation, target_kind)`:
+Request/WAF paths remain local-only. The `BlockStore` is the single source of truth for local enforcement. Mesh-ID blocks are control-plane/admin scoped only — `is_mesh_id_blocked()` is never called by WAF/request code (Iteration 51, Outcome A; enforced by `tests/mesh_id_boundary_guard.rs`). `apply_blocklist_event` dispatches based on `(operation, target_kind)`:
 
 - `(Block, Ip)` → `block_ip_with_provenance`
 - `(Unblock, Ip)` → `unblock_ip`

@@ -237,6 +237,7 @@ The existing `tests/threat_intel_boundary_guard.rs` also covers `crates/synvoid-
 - Do not add new WAF detection features.
 - Do not change threat-intel policy semantics.
 - Do not perform a large protocol rewrite.
+- Do not enforce mesh-ID blocks at the request path. Mesh-ID blocks are control-plane/admin scoped only (Iteration 51, Outcome A). `RequestContext` and all WAF trait signatures lack a mesh identity field. External HTTP clients do not present mesh credentials. A guardrail test (`tests/mesh_id_boundary_guard.rs`) prevents `is_mesh_id_blocked()` from being called in request-path code.
 
 ### Future Work
 - **Early WAF check for HTTP/3**: Consider a lightweight pre-routing check if HTTP/3 adoption grows for browser clients.

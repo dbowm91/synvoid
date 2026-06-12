@@ -44,6 +44,7 @@ When editing request/WAF paths or adding new threat-intel consumers:
    - `LegacyUnknown` is acceptable only for: serde/default backward compat, legacy `BlockEntry::new`/`BlockStore::block_ip` compatibility paths, tests, and mock/default trait implementations.
    - **Manual enforcement provenance**: Admin manual block writes use `AdminManual`, supervisor manual blocks use `SupervisorManual`, supervisor blocklist sync uses `SupervisorSync`. Manual/supervisor paths bypass threat-intel policy gates (authority from operator/control-plane). Do not use `LegacyUnknown` for new manual/supervisor writes. Admin/debug responses should expose provenance.
 7. **Manual unban responses must reflect actual state mutation** — No admin unban path may report `success: true` without actually removing a block entry or explicitly documenting the no-op behavior. Use `unblock_ip()` or `unblock_mesh_id()` return value to determine success. For mesh-ID unban, call `unblock_mesh_id()` for the specific mesh ID (not the sentinel IP). Unban is local-only today; do not imply mesh propagation in responses. Mesh-ID blocks are first-class and concurrent — unblocking one mesh ID does not affect others.
+8. **Mesh-ID blocks are control-plane/admin scoped only (Iteration 51, Outcome A)** — `RequestContext`, `WafContext`, and all WAF trait signatures lack a mesh identity field. External HTTP clients do not present mesh credentials. Therefore `is_mesh_id_blocked()` must never be called in WAF/request/proxy/HTTP/3 code. A mechanical guardrail test (`tests/mesh_id_boundary_guard.rs`) enforces this boundary. If request-path mesh-ID enforcement is desired in the future (Outcome B), a trusted `mesh_identity: Option<AuthenticatedMeshIdentity>` field must first be added to the request context and populated at a composition root without using untrusted HTTP headers.
 
 ### When NOT to use Constant-Time Comparison
 
@@ -61,6 +62,7 @@ cargo test --test integration_test
 cargo test --test security_regression  # Security regression tests
 cargo test --test http3_waf_boundary_guard  # HTTP/3 WAF boundary guard
 cargo test --test threat_intel_boundary_guard  # Threat-intel boundary guard
+cargo test --test mesh_id_boundary_guard  # Mesh-ID enforcement boundary guard
 cargo fmt && cargo clippy --lib -- -D warnings
 ```
 

@@ -59,6 +59,7 @@ After Iteration 50, admin `ban_ip` and `ban_mesh_id` handlers broadcast `Blockli
 
 - `manual_enforcement_provenance_guard.rs` includes a test (`no_unconditional_supervisor_sync_in_blocklist_ingestion`) that scans worker/supervisor blocklist ingestion paths for unconditional `BlockProvenanceKind::SupervisorSync` assignment.
 - The `ipc_data_to_provenance()` helper is excluded from this guardrail since it is the canonical deserialization path.
+- `mesh_id_boundary_guard.rs` (Iteration 51) scans WAF/request/proxy/HTTP/3 source files to prevent `is_mesh_id_blocked()` from being called in request-path code. Mesh-ID blocks are control-plane/admin scoped only.
 
 ## Backward Compatibility
 
