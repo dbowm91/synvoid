@@ -21,7 +21,8 @@ use synvoid_config::DenyListLimitsConfig;
 use tokio::sync::mpsc;
 
 pub use synvoid_core::block_store::{
-    BlockProvenance, BlockProvenanceKind, BlockRecord, BlockTargetKind, MeshBlockEntry,
+    BlockProvenance, BlockProvenanceKind, BlockRecord, BlockTargetKind, BlocklistEvent,
+    BlocklistOperation, MeshBlockEntry,
 };
 use synvoid_waf::mitigation::{MitigationProvider, SizedMitigationProvider};
 
@@ -214,7 +215,6 @@ impl BlockStore {
                 match std::fs::read_to_string(mesh_path) {
                     Ok(content) => match serde_json::from_str::<Vec<MeshBlockEntry>>(&content) {
                         Ok(entries) => {
-                            let mut migrated = 0;
                             for e in entries {
                                 if !e.is_expired() {
                                     let key = MeshBlockEntry::key(&e.site_scope, &e.mesh_id);
@@ -223,12 +223,6 @@ impl BlockStore {
                                 }
                             }
                             initial_mesh_count = mesh_shards.iter().map(|s| s.read().len()).sum();
-                            if migrated > 0 {
-                                tracing::info!(
-                                    "Migrated {} sentinel mesh-ID entries to first-class",
-                                    migrated
-                                );
-                            }
                             tracing::info!(
                                 "Loaded {} mesh block entries from disk",
                                 initial_mesh_count
@@ -303,7 +297,7 @@ impl BlockStore {
             (None, None)
         };
 
-        Self {
+        let store = Self {
             shards,
             mesh_shards,
             enabled,
@@ -314,7 +308,17 @@ impl BlockStore {
             persist_tx,
             shutdown_tx,
             mitigation_provider: arc_swap::ArcSwapOption::const_empty(),
+        };
+
+        let migrated = store.migrate_legacy_sentinel_entries();
+        if migrated > 0 {
+            tracing::info!(
+                "Auto-migrated {} legacy sentinel mesh-ID entries during init",
+                migrated
+            );
         }
+
+        store
     }
 
     /// Set the mitigation provider for kernel-level blocking.
@@ -551,21 +555,6 @@ impl BlockStore {
             return false;
         }
 
-        let max_entries = self.config.max_entries;
-        let current = self.total_entries.load(Ordering::Relaxed);
-
-        if current >= max_entries {
-            tracing::info!(
-                "Block store at capacity ({} >= {}), evicting LRU entry",
-                current,
-                max_entries
-            );
-            if !self.evict_lru() {
-                tracing::warn!("Failed to evict LRU entry, cannot add new block");
-                return false;
-            }
-        }
-
         let entry = BlockEntry::new(
             ip,
             reason.to_string(),
@@ -575,8 +564,29 @@ impl BlockStore {
         let key = BlockEntry::key(site_scope, &ip);
         let idx = Self::shard_index(&key);
 
+        let is_new = !self.shards[idx].read().contains_key(&key);
+
+        if is_new {
+            let max_entries = self.config.max_entries;
+            let current = self.total_entries.load(Ordering::Relaxed);
+            if current >= max_entries {
+                tracing::info!(
+                    "Block store at capacity ({} >= {}), evicting LRU entry",
+                    current,
+                    max_entries
+                );
+                if !self.evict_lru() {
+                    tracing::warn!("Failed to evict LRU entry, cannot add new block");
+                    return false;
+                }
+            }
+        }
+
         self.shards[idx].write().insert(key, entry);
-        self.total_entries.fetch_add(1, Ordering::Relaxed);
+
+        if is_new {
+            self.total_entries.fetch_add(1, Ordering::Relaxed);
+        }
 
         tracing::info!("Blocked IP {} for {} (scope: {})", ip, reason, site_scope);
 
@@ -613,21 +623,6 @@ impl BlockStore {
             return false;
         }
 
-        let max_entries = self.config.max_entries;
-        let current = self.total_entries.load(Ordering::Relaxed);
-
-        if current >= max_entries {
-            tracing::info!(
-                "Block store at capacity ({} >= {}), evicting LRU entry",
-                current,
-                max_entries
-            );
-            if !self.evict_lru() {
-                tracing::warn!("Failed to evict LRU entry, cannot add new block");
-                return false;
-            }
-        }
-
         let entry = BlockEntry::new_with_provenance(
             ip,
             reason.to_string(),
@@ -638,8 +633,29 @@ impl BlockStore {
         let key = BlockEntry::key(site_scope, &ip);
         let idx = Self::shard_index(&key);
 
+        let is_new = !self.shards[idx].read().contains_key(&key);
+
+        if is_new {
+            let max_entries = self.config.max_entries;
+            let current = self.total_entries.load(Ordering::Relaxed);
+            if current >= max_entries {
+                tracing::info!(
+                    "Block store at capacity ({} >= {}), evicting LRU entry",
+                    current,
+                    max_entries
+                );
+                if !self.evict_lru() {
+                    tracing::warn!("Failed to evict LRU entry, cannot add new block");
+                    return false;
+                }
+            }
+        }
+
         self.shards[idx].write().insert(key, entry);
-        self.total_entries.fetch_add(1, Ordering::Relaxed);
+
+        if is_new {
+            self.total_entries.fetch_add(1, Ordering::Relaxed);
+        }
 
         tracing::info!("Blocked IP {} for {} (scope: {})", ip, reason, site_scope);
 
@@ -815,8 +831,9 @@ impl BlockStore {
             let idx = Self::shard_index(&key);
 
             let mut store = self.shards[idx].write();
+            let is_new = !store.contains_key(&key);
 
-            if store.len() >= self.config.max_entries {
+            if is_new && store.len() >= self.config.max_entries {
                 tracing::warn!(
                     "BlockStore max entries reached, cannot add new block for {}",
                     ip
@@ -832,7 +849,10 @@ impl BlockStore {
             );
 
             store.insert(key, entry);
-            self.total_entries.fetch_add(1, Ordering::Relaxed);
+
+            if is_new {
+                self.total_entries.fetch_add(1, Ordering::Relaxed);
+            }
 
             return true;
         }
@@ -913,6 +933,7 @@ impl BlockStore {
         if is_new {
             self.total_mesh_entries.fetch_add(1, Ordering::Relaxed);
         }
+        drop(store);
 
         tracing::info!(
             "Blocked mesh_id {} for {} (scope: {})",
@@ -1718,5 +1739,609 @@ mod tests {
         let sentinel_entries: Vec<_> = entries.iter().filter(|e| e.ip == "0.0.0.0").collect();
         assert_eq!(sentinel_entries.len(), 1);
         assert_eq!(sentinel_entries[0].reason, "mesh_id_ban:mesh-2:reason2");
+    }
+
+    // Phase 1 regression: IP counter must not drift on overwrite
+
+    #[tokio::test]
+    async fn test_block_ip_counter_no_drift_on_overwrite() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip: IpAddr = "192.168.1.100".parse().unwrap();
+        assert!(store.block_ip(ip, "first", 3600, "global"));
+        assert_eq!(store.get_stats().total_entries, 1);
+
+        assert!(store.block_ip(ip, "second", 3600, "global"));
+        assert_eq!(store.get_stats().total_entries, 1);
+
+        let entries = store.get_all_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].reason, "second");
+    }
+
+    #[tokio::test]
+    async fn test_block_ip_with_provenance_counter_no_drift_on_overwrite() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip: IpAddr = "192.168.1.101".parse().unwrap();
+        let prov = BlockProvenance {
+            kind: BlockProvenanceKind::AdminManual,
+            source: Some("test".to_string()),
+        };
+
+        assert!(store.block_ip_with_provenance(ip, "first", 3600, "global", prov.clone()));
+        assert_eq!(store.get_stats().total_entries, 1);
+
+        assert!(store.block_ip_with_provenance(ip, "second", 3600, "global", prov));
+        assert_eq!(store.get_stats().total_entries, 1);
+
+        let entries = store.get_all_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].reason, "second");
+    }
+
+    #[tokio::test]
+    async fn test_add_block_counter_no_drift_on_overwrite() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        assert!(store.add_block("192.168.1.102", "first", 3600, "global"));
+        assert_eq!(store.get_stats().total_entries, 1);
+
+        assert!(store.add_block("192.168.1.102", "second", 3600, "global"));
+        assert_eq!(store.get_stats().total_entries, 1);
+
+        let entries = store.get_all_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].reason, "second");
+    }
+
+    #[tokio::test]
+    async fn test_block_ip_overwrite_does_not_trigger_eviction() {
+        let config = DenyListLimitsConfig {
+            max_entries: 2,
+            persist_interval_secs: 0,
+        };
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config);
+
+        let ip1: IpAddr = "10.0.0.1".parse().unwrap();
+        let ip2: IpAddr = "10.0.0.2".parse().unwrap();
+
+        store.block_ip(ip1, "reason1", 3600, "global");
+        store.block_ip(ip2, "reason2", 3600, "global");
+        assert_eq!(store.get_stats().total_entries, 2);
+
+        store.block_ip(ip1, "updated", 3600, "global");
+        assert_eq!(store.get_stats().total_entries, 2);
+
+        let entries = store.get_all_entries();
+        assert_eq!(entries.len(), 2);
+        let ip1_entry = entries.iter().find(|e| e.ip == "10.0.0.1").unwrap();
+        assert_eq!(ip1_entry.reason, "updated");
+    }
+
+    // Phase 2: Mesh-ID counter semantics
+
+    #[tokio::test]
+    async fn test_mesh_id_counter_new_entry() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        assert!(store.block_mesh_id_with_provenance(
+            "mesh-1",
+            "reason",
+            3600,
+            "global",
+            BlockProvenance::default(),
+        ));
+        assert_eq!(store.get_mesh_stats(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_mesh_id_counter_overwrite_no_increment() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        assert!(store.block_mesh_id_with_provenance(
+            "mesh-1",
+            "first",
+            3600,
+            "global",
+            BlockProvenance::default(),
+        ));
+        assert_eq!(store.get_mesh_stats(), 1);
+
+        assert!(store.block_mesh_id_with_provenance(
+            "mesh-1",
+            "second",
+            3600,
+            "global",
+            BlockProvenance::default(),
+        ));
+        assert_eq!(store.get_mesh_stats(), 1);
+
+        let entries = store.get_all_mesh_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].reason, "second");
+    }
+
+    #[tokio::test]
+    async fn test_mesh_id_counter_unblock_existing() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        store.block_mesh_id_with_provenance(
+            "mesh-1",
+            "reason",
+            3600,
+            "global",
+            BlockProvenance::default(),
+        );
+        assert_eq!(store.get_mesh_stats(), 1);
+
+        assert!(store.unblock_mesh_id("mesh-1", "global"));
+        assert_eq!(store.get_mesh_stats(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_mesh_id_counter_unblock_missing_no_decrement() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        assert_eq!(store.get_mesh_stats(), 0);
+        assert!(!store.unblock_mesh_id("nonexistent", "global"));
+        assert_eq!(store.get_mesh_stats(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_multiple_concurrent_mesh_ids() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        store.block_mesh_id_with_provenance(
+            "mesh-a",
+            "reason-a",
+            3600,
+            "global",
+            BlockProvenance::default(),
+        );
+        store.block_mesh_id_with_provenance(
+            "mesh-b",
+            "reason-b",
+            3600,
+            "global",
+            BlockProvenance::default(),
+        );
+        store.block_mesh_id_with_provenance(
+            "mesh-c",
+            "reason-c",
+            3600,
+            "global",
+            BlockProvenance::default(),
+        );
+        assert_eq!(store.get_mesh_stats(), 3);
+
+        assert!(store.unblock_mesh_id("mesh-b", "global"));
+        assert_eq!(store.get_mesh_stats(), 2);
+
+        let entries = store.get_all_mesh_entries();
+        let ids: Vec<&str> = entries.iter().map(|e| e.mesh_id.as_str()).collect();
+        assert!(ids.contains(&"mesh-a"));
+        assert!(!ids.contains(&"mesh-b"));
+        assert!(ids.contains(&"mesh-c"));
+    }
+
+    #[tokio::test]
+    async fn test_unblock_mesh_id_removes_from_both_scopes() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        store.block_mesh_id_with_provenance(
+            "mesh-x",
+            "reason",
+            3600,
+            "global",
+            BlockProvenance::default(),
+        );
+        assert!(store.is_mesh_id_blocked("mesh-x", "global").is_some());
+        assert!(store.is_mesh_id_blocked("mesh-x", "site_a").is_some());
+
+        assert!(store.unblock_mesh_id("mesh-x", "site_a"));
+        assert!(store.is_mesh_id_blocked("mesh-x", "global").is_none());
+        assert!(store.is_mesh_id_blocked("mesh-x", "site_a").is_none());
+    }
+
+    // Phase 4: Legacy sentinel migration with real persisted data
+
+    #[tokio::test]
+    async fn test_migration_on_load_from_disk() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let sentinel_entry = serde_json::json!({
+            "ip": "0.0.0.0",
+            "reason": "mesh_id_ban:migrated-mesh:manual",
+            "blocked_at": 1000,
+            "ban_expire_seconds": 0,
+            "site_scope": "global",
+            "access_count": 0,
+            "last_access": 1000,
+        });
+        let blocks_json = serde_json::to_string_pretty(&vec![sentinel_entry]).unwrap();
+        std::fs::write(temp_dir.path().join("blocks.json"), blocks_json).unwrap();
+
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip_entries = store.get_all_entries();
+        let sentinel_entries: Vec<_> = ip_entries.iter().filter(|e| e.ip == "0.0.0.0").collect();
+        assert_eq!(
+            sentinel_entries.len(),
+            0,
+            "sentinel IP entry should be removed"
+        );
+
+        let mesh_entries = store.get_all_mesh_entries();
+        assert_eq!(mesh_entries.len(), 1);
+        assert_eq!(mesh_entries[0].mesh_id, "migrated-mesh");
+        assert_eq!(mesh_entries[0].site_scope, "global");
+
+        assert_eq!(store.get_stats().total_entries, 0);
+        assert_eq!(store.get_mesh_stats(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_migration_persists_to_mesh_blocks_json() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let sentinel_entry = serde_json::json!({
+            "ip": "0.0.0.0",
+            "reason": "mesh_id_ban:persist-mesh:attack",
+            "blocked_at": 1000,
+            "ban_expire_seconds": 0,
+            "site_scope": "global",
+            "access_count": 5,
+            "last_access": 1000,
+        });
+        let blocks_json = serde_json::to_string_pretty(&vec![sentinel_entry]).unwrap();
+        std::fs::write(temp_dir.path().join("blocks.json"), blocks_json).unwrap();
+
+        let config = DenyListLimitsConfig {
+            max_entries: 1000,
+            persist_interval_secs: 1,
+        };
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), config);
+        store.trigger_persist();
+        store.shutdown().await;
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        let mesh_path = temp_dir.path().join("mesh_blocks.json");
+        assert!(mesh_path.exists(), "mesh_blocks.json should be created");
+
+        let mesh_content = std::fs::read_to_string(&mesh_path).unwrap();
+        let mesh_entries: Vec<serde_json::Value> = serde_json::from_str(&mesh_content).unwrap();
+        assert_eq!(mesh_entries.len(), 1);
+        assert_eq!(mesh_entries[0]["mesh_id"], "persist-mesh");
+    }
+
+    #[tokio::test]
+    async fn test_migration_skips_non_mesh_sentinel_entries() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let entries = vec![
+            serde_json::json!({
+                "ip": "0.0.0.0",
+                "reason": "just_a_regular_ban",
+                "blocked_at": 1000,
+                "ban_expire_seconds": 0,
+                "site_scope": "non_mesh_scope",
+                "access_count": 0,
+                "last_access": 1000,
+            }),
+            serde_json::json!({
+                "ip": "0.0.0.0",
+                "reason": "mesh_id_ban:valid-mesh:reason",
+                "blocked_at": 1000,
+                "ban_expire_seconds": 0,
+                "site_scope": "mesh_scope",
+                "access_count": 0,
+                "last_access": 1000,
+            }),
+        ];
+        let blocks_json = serde_json::to_string_pretty(&entries).unwrap();
+        std::fs::write(temp_dir.path().join("blocks.json"), blocks_json).unwrap();
+
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip_entries = store.get_all_entries();
+        let sentinel_entries: Vec<_> = ip_entries.iter().filter(|e| e.ip == "0.0.0.0").collect();
+        assert_eq!(
+            sentinel_entries.len(),
+            1,
+            "non-mesh sentinel entry should remain"
+        );
+        assert_eq!(sentinel_entries[0].reason, "just_a_regular_ban");
+
+        let mesh_entries = store.get_all_mesh_entries();
+        assert_eq!(mesh_entries.len(), 1);
+        assert_eq!(mesh_entries[0].mesh_id, "valid-mesh");
+    }
+
+    #[tokio::test]
+    async fn test_old_blocks_json_without_provenance_defaults_to_legacy_unknown() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let entry = serde_json::json!({
+            "ip": "192.168.5.5",
+            "reason": "test",
+            "blocked_at": 1000,
+            "ban_expire_seconds": 0,
+            "site_scope": "global",
+            "access_count": 0,
+            "last_access": 1000,
+        });
+        let blocks_json = serde_json::to_string_pretty(&vec![entry]).unwrap();
+        std::fs::write(temp_dir.path().join("blocks.json"), blocks_json).unwrap();
+
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+        let entries = store.get_all_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].provenance.kind,
+            BlockProvenanceKind::LegacyUnknown
+        );
+    }
+
+    // Phase 5: Unified BlockRecord invariant tests
+
+    #[tokio::test]
+    async fn test_block_records_ip_target_kind() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip: IpAddr = "10.1.1.1".parse().unwrap();
+        store.block_ip(ip, "test", 3600, "global");
+
+        let records = store.get_all_block_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].target_kind, BlockTargetKind::Ip);
+        assert_eq!(records[0].identifier, "10.1.1.1");
+    }
+
+    #[tokio::test]
+    async fn test_block_records_mesh_target_kind() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        store.block_mesh_id_with_provenance(
+            "test-mesh",
+            "reason",
+            3600,
+            "global",
+            BlockProvenance::default(),
+        );
+
+        let records = store.get_all_block_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].target_kind, BlockTargetKind::MeshId);
+        assert_eq!(records[0].identifier, "test-mesh");
+    }
+
+    #[tokio::test]
+    async fn test_block_records_preserve_provenance() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let prov = BlockProvenance {
+            kind: BlockProvenanceKind::AdminManual,
+            source: Some("admin_ban_ip".to_string()),
+        };
+        let ip: IpAddr = "10.2.2.2".parse().unwrap();
+        store.block_ip_with_provenance(ip, "test", 3600, "global", prov);
+
+        let records = store.get_all_block_records();
+        assert_eq!(records[0].provenance.kind, BlockProvenanceKind::AdminManual);
+        assert_eq!(
+            records[0].provenance.source,
+            Some("admin_ban_ip".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_block_records_sorted_by_blocked_at_descending() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip1: IpAddr = "10.3.3.1".parse().unwrap();
+        let ip2: IpAddr = "10.3.3.2".parse().unwrap();
+        store.block_ip(ip1, "first", 3600, "global");
+        store.block_ip(ip2, "second", 3600, "global");
+
+        let records = store.get_all_block_records();
+        assert_eq!(records.len(), 2);
+        assert!(records[0].blocked_at >= records[1].blocked_at);
+    }
+
+    #[tokio::test]
+    async fn test_block_records_unified_count() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip1: IpAddr = "10.4.4.1".parse().unwrap();
+        let ip2: IpAddr = "10.4.4.2".parse().unwrap();
+        store.block_ip(ip1, "reason1", 3600, "global");
+        store.block_ip(ip2, "reason2", 3600, "global");
+        store.block_mesh_id_with_provenance(
+            "mesh-1",
+            "reason3",
+            3600,
+            "global",
+            BlockProvenance::default(),
+        );
+        store.block_mesh_id_with_provenance(
+            "mesh-2",
+            "reason4",
+            3600,
+            "global",
+            BlockProvenance::default(),
+        );
+
+        let records = store.get_all_block_records();
+        assert_eq!(records.len(), 4);
+
+        let ip_count = records
+            .iter()
+            .filter(|r| r.target_kind == BlockTargetKind::Ip)
+            .count();
+        let mesh_count = records
+            .iter()
+            .filter(|r| r.target_kind == BlockTargetKind::MeshId)
+            .count();
+        assert_eq!(ip_count, 2);
+        assert_eq!(mesh_count, 2);
+    }
+
+    #[tokio::test]
+    async fn test_migration_records_appear_as_mesh_not_ip() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let sentinel_entry = serde_json::json!({
+            "ip": "0.0.0.0",
+            "reason": "mesh_id_ban:legacy-mesh:reason",
+            "blocked_at": 3000,
+            "ban_expire_seconds": 0,
+            "site_scope": "global",
+            "access_count": 0,
+            "last_access": 3000,
+        });
+        let blocks_json = serde_json::to_string_pretty(&vec![sentinel_entry]).unwrap();
+        std::fs::write(temp_dir.path().join("blocks.json"), blocks_json).unwrap();
+
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let records = store.get_all_block_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].target_kind, BlockTargetKind::MeshId);
+        assert_eq!(records[0].identifier, "legacy-mesh");
+    }
+
+    // Phase 6: Admin-level regression tests (block-store-backed)
+
+    #[tokio::test]
+    async fn test_admin_two_mesh_ids_ban_and_list() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        store.block_mesh_id_with_provenance(
+            "admin-mesh-1",
+            "reason1",
+            3600,
+            "global",
+            BlockProvenance {
+                kind: BlockProvenanceKind::AdminManual,
+                source: Some("admin_ban_mesh_id".to_string()),
+            },
+        );
+        store.block_mesh_id_with_provenance(
+            "admin-mesh-2",
+            "reason2",
+            3600,
+            "global",
+            BlockProvenance {
+                kind: BlockProvenanceKind::AdminManual,
+                source: Some("admin_ban_mesh_id".to_string()),
+            },
+        );
+
+        let records = store.get_all_block_records();
+        assert_eq!(records.len(), 2);
+        let ids: Vec<&str> = records.iter().map(|r| r.identifier.as_str()).collect();
+        assert!(ids.contains(&"admin-mesh-1"));
+        assert!(ids.contains(&"admin-mesh-2"));
+    }
+
+    #[tokio::test]
+    async fn test_admin_unban_one_mesh_id_removes_only_that_one() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        store.block_mesh_id_with_provenance(
+            "keep-me",
+            "r1",
+            3600,
+            "global",
+            BlockProvenance::default(),
+        );
+        store.block_mesh_id_with_provenance(
+            "remove-me",
+            "r2",
+            3600,
+            "global",
+            BlockProvenance::default(),
+        );
+
+        assert!(store.unblock_mesh_id("remove-me", "global"));
+        assert_eq!(store.get_mesh_stats(), 1);
+
+        let records = store.get_all_block_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].identifier, "keep-me");
+    }
+
+    #[tokio::test]
+    async fn test_admin_unban_missing_mesh_id_returns_false() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        assert!(!store.unblock_mesh_id("nonexistent", "global"));
+    }
+
+    #[tokio::test]
+    async fn test_admin_ip_ban_unban_unchanged() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip: IpAddr = "172.16.0.1".parse().unwrap();
+        assert!(store.block_ip_with_provenance(
+            ip,
+            "admin_test",
+            3600,
+            "global",
+            BlockProvenance {
+                kind: BlockProvenanceKind::AdminManual,
+                source: Some("admin_ban_ip".to_string()),
+            },
+        ));
+        assert!(store.is_blocked(&ip, "global").is_some());
+        assert!(store.unblock_ip(&ip, "global"));
+        assert!(store.is_blocked(&ip, "global").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_ip_and_mesh_counters_independent() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip: IpAddr = "10.5.5.5".parse().unwrap();
+        store.block_ip(ip, "ip-reason", 3600, "global");
+        store.block_mesh_id_with_provenance(
+            "mesh-1",
+            "mesh-reason",
+            3600,
+            "global",
+            BlockProvenance::default(),
+        );
+
+        assert_eq!(store.get_stats().total_entries, 1);
+        assert_eq!(store.get_mesh_stats(), 1);
+
+        store.unblock_ip(&ip, "global");
+        assert_eq!(store.get_stats().total_entries, 0);
+        assert_eq!(store.get_mesh_stats(), 1);
+
+        store.unblock_mesh_id("mesh-1", "global");
+        assert_eq!(store.get_stats().total_entries, 0);
+        assert_eq!(store.get_mesh_stats(), 0);
     }
 }

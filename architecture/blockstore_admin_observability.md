@@ -8,7 +8,7 @@
 |--------|-----------|-----------|-------------|-------------|-------------|-----------------|
 | IP Block | `block:{site_scope}:{ip}` | WAF check_block_store, WAF check_early, Admin list_bans, Mesh stubs | `block_ip()`, `block_ip_with_provenance()`, `unblock_ip()`, `is_blocked()` | `BanRecord` with `ban_type="ip"` | `blocks.json` (JSON) | No change |
 | Mesh-ID Block (first-class) | `mesh_block:{site_scope}:{mesh_id}` | Admin list_bans, Supervisor sync | `block_mesh_id_with_provenance()`, `unblock_mesh_id()`, `is_mesh_id_blocked()` | `BanRecord` with `ban_type="mesh_id"` | `mesh_blocks.json` (JSON) | New first-class entity |
-| Legacy Sentinel Mesh-ID | `block:{site_scope}:0.0.0.0` | Admin list_bans (compat), migration | Legacy `block_ip_with_provenance()` | Parsed as `ban_type="mesh_id"` | `blocks.json` | Migrate to first-class on load |
+| Legacy Sentinel Mesh-ID | `block:{site_scope}:0.0.0.0` | Admin list_bans (compat), migration | Legacy `block_ip_with_provenance()` | Parsed as `ban_type="mesh_id"` | `blocks.json` | Auto-migrated to first-class `MeshBlockEntry` during `BlockStore::new` |
 | Supervisor Sync (IP) | Same as IP Block | Worker BlockStore | `block_ip_with_provenance()` with `SupervisorSync` | Via `BlockEntryData` IPC | Worker local | Extended with mesh blocks |
 | Supervisor Sync (Mesh) | Same as Mesh-ID Block | Worker BlockStore | `block_mesh_id_with_provenance()` with `SupervisorSync` | Via `MeshBlockEntryData` IPC | Worker local | New |
 
@@ -101,7 +101,7 @@ Mesh-ID block enforcement is scoped to:
 
 ### Migration
 - `migrate_legacy_sentinel_entries()` converts sentinel `0.0.0.0` entries with `mesh_id_ban:` prefix to first-class mesh entries
-- Called during initialization if legacy entries exist
+- **Auto-called**: `BlockStore::new` automatically calls `migrate_legacy_sentinel_entries()` after loading both IP and mesh files from disk
 - One-way migration: once migrated, entries are stored in `mesh_blocks.json`
 
 ## Unblock Propagation
@@ -112,7 +112,14 @@ Current semantics: **Local-only**
 - Mesh peers retain stale blocks until TTL expiry
 - Response wording does NOT claim global propagation
 
-Future: A `BlocklistEvent` type with `Block | Unblock` operations could be added for distributed propagation, but is out of scope for this iteration.
+## BlocklistEvent (Structured Local Logging)
+
+New `BlocklistEvent` and `BlocklistOperation` types in `synvoid-core::block_store` are staged for future distributed unblock propagation. Currently used for structured local logging only.
+
+- Admin ban/unban handlers emit `BlocklistEvent` logs at **debug level** with target `blocklist_event`
+- `BlocklistOperation` enum includes `Block`, `Unblock`, and future distributed variants
+- Currently purely observational — no mesh propagation triggered by these events
+- Future: Could be extended to drive distributed unblock propagation (e.g., `HotThreatGossip` removal or dedicated unblock message)
 
 ## Enforcement Rules (unchanged)
 

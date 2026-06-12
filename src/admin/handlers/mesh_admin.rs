@@ -13,7 +13,7 @@ use sha2::Digest;
 use sha2::Sha256;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
-pub use synvoid_block_store::{BlockProvenance, BlockProvenanceKind};
+pub use synvoid_block_store::{BlockProvenance, BlockProvenanceKind, BlocklistEvent};
 use utoipa::ToSchema;
 
 #[allow(dead_code)]
@@ -452,6 +452,18 @@ pub async fn ban_ip(
                     reason
                 );
 
+                let event = BlocklistEvent::block_ip(
+                    &ip.to_string(),
+                    &reason,
+                    &site_scope,
+                    BlockProvenance {
+                        kind: BlockProvenanceKind::AdminManual,
+                        source: Some("admin_ban_ip".to_string()),
+                    },
+                    synvoid_utils::safe_unix_timestamp(),
+                );
+                tracing::debug!(target: "blocklist_event", ?event, "Block event emitted");
+
                 threat_intel.announce_local_block(ip, reason.clone(), duration, site_scope.clone());
 
                 return Ok(Json(serde_json::json!({
@@ -523,6 +535,18 @@ pub async fn ban_mesh_id(
                     reason
                 );
 
+                let event = BlocklistEvent::block_mesh_id(
+                    &mesh_id,
+                    &reason,
+                    "global",
+                    BlockProvenance {
+                        kind: BlockProvenanceKind::AdminManual,
+                        source: Some("admin_ban_mesh_id".to_string()),
+                    },
+                    synvoid_utils::safe_unix_timestamp(),
+                );
+                tracing::debug!(target: "blocklist_event", ?event, "Block event emitted");
+
                 return Ok(Json(serde_json::json!({
                     "success": true,
                     "message": format!("Mesh ID {} banned successfully", mesh_id),
@@ -576,6 +600,16 @@ pub async fn unban(
                     if let Ok(ip) = identifier.parse::<IpAddr>() {
                         if block_store.unblock_ip(&ip, "global") {
                             tracing::info!("Admin unbanned IP {}", ip);
+                            let event = BlocklistEvent::unblock_ip(
+                                &ip.to_string(),
+                                "global",
+                                BlockProvenance {
+                                    kind: BlockProvenanceKind::AdminManual,
+                                    source: Some("admin_unban_ip".to_string()),
+                                },
+                                synvoid_utils::safe_unix_timestamp(),
+                            );
+                            tracing::debug!(target: "blocklist_event", ?event, "Unblock event emitted");
                             return Ok(Json(serde_json::json!({
                                 "success": true,
                                 "message": format!("IP {} unbanned successfully", ip),
@@ -590,6 +624,16 @@ pub async fn unban(
                 "mesh_id" => {
                     if block_store.unblock_mesh_id(&identifier, "global") {
                         tracing::info!("Admin unbanned mesh_id {}", identifier);
+                        let event = BlocklistEvent::unblock_mesh_id(
+                            &identifier,
+                            "global",
+                            BlockProvenance {
+                                kind: BlockProvenanceKind::AdminManual,
+                                source: Some("admin_unban_mesh_id".to_string()),
+                            },
+                            synvoid_utils::safe_unix_timestamp(),
+                        );
+                        tracing::debug!(target: "blocklist_event", ?event, "Unblock event emitted");
                         return Ok(Json(serde_json::json!({
                             "success": true,
                             "message": format!("Mesh ID {} unbanned successfully", identifier),

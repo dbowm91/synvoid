@@ -77,7 +77,7 @@ pub struct BlockRecord {
 
 | Method | Description |
 |--------|-------------|
-| `BlockStore::new(enabled, data_dir, config)` | Load from disk, spawn persistence task |
+| `BlockStore::new(enabled, data_dir, config)` | Load from disk, auto-migrate legacy sentinels, spawn persistence task |
 | `block_ip(ip, reason, ban_expire_seconds, site_scope)` | Add IP block entry |
 | `block_ip_with_provenance(ip, reason, duration, scope, provenance)` | Add IP block with provenance |
 | `is_blocked(ip, site_scope) -> Option<BlockEntry>` | Check site-specific then global |
@@ -123,7 +123,10 @@ pub struct BlockRecord {
 - **Sharded Storage**: 64-shard concurrent hashmap for minimal lock contention (separate shards for IP and mesh-ID)
 - **Background Persistence**: Tokio mpsc channel triggers disk flush without blocking request path
 - **Site Scoping**: Blocks can be site-specific or global; site blocks checked first
-- **LRU Eviction**: When IP storage is full, least-recently-accessed entries are evicted
+- **LRU Eviction**: When IP storage is full, least-recently-accessed entries are evicted. Overwriting an existing `(site_scope, ip)` entry does NOT trigger LRU eviction.
 - **File Permissions**: Data file set to `0o600` for security
 - **Separate Persistence**: IP blocks in `blocks.json`, mesh-ID blocks in `mesh_blocks.json`
-- **Legacy Migration**: `migrate_legacy_sentinel_entries()` converts sentinel `0.0.0.0` entries to first-class mesh blocks
+- **Legacy Migration**: `migrate_legacy_sentinel_entries()` converts sentinel `0.0.0.0` entries to first-class mesh blocks. **Auto-called** by `BlockStore::new` after loading both IP and mesh files from disk.
+- **Counter Correctness**: `block_ip`, `block_ip_with_provenance`, and `add_block` only increment `total_entries` on new key insertion. Overwriting an existing `(site_scope, ip)` entry updates the entry without changing the count.
+- **Mesh-ID Deadlock Fix**: `block_mesh_id_with_provenance` drops the shard write lock before calling `trigger_persist()`, preventing deadlock where the persist path tries to read the same shard.
+- **BlocklistEvent Logging**: Admin ban/unban handlers emit structured `BlocklistEvent` debug logs (target `blocklist_event`) for future distributed unblock propagation. Currently observational only.

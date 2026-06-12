@@ -33,6 +33,7 @@ This document defines the ownership model for manual and supervisor-driven IP en
 - **Route:** `POST /mesh/ban/ip`
 - **Provenance:** `AdminManual`, source `admin_ban_ip`
 - **Behavior:** Blocks IP, announces to mesh via `announce_local_block()`
+- **Observability:** Emits `BlocklistEvent` debug log (target `blocklist_event`) with operation `Block`
 
 ### Admin Ban Mesh ID
 - **File:** `src/admin/handlers/mesh_admin.rs:ban_mesh_id()`
@@ -40,6 +41,7 @@ This document defines the ownership model for manual and supervisor-driven IP en
 - **Provenance:** `AdminManual`, source `admin_ban_mesh_id`
 - **Behavior:** Blocks mesh ID using first-class `block_mesh_id_with_provenance()` API with `site_scope: "global"`
 - **Concurrency:** Multiple mesh-ID bans can coexist concurrently. Unblocking one mesh ID does not affect others.
+- **Observability:** Emits `BlocklistEvent` debug log (target `blocklist_event`) with operation `Block`
 
 ### Admin Unban
 - **File:** `src/admin/handlers/mesh_admin.rs:unban()`
@@ -47,6 +49,7 @@ This document defines the ownership model for manual and supervisor-driven IP en
 - **Behavior:** Removes block entry. For `ban_type=ip`, calls `unblock_ip()`. For `ban_type=mesh_id`, calls `unblock_mesh_id()` for the specific mesh ID.
 - **Accuracy:** Returns `success: true` only when an entry was actually removed. Returns 404 when no matching entry exists.
 - **Propagation:** Unban is local-only. There is no mesh unblock propagation API; removal is not gossiped to mesh peers. Mesh peers retain stale blocks until TTL expiry. (See Known Gaps.)
+- **Observability:** Emits `BlocklistEvent` debug log (target `blocklist_event`) with operation `Unblock`
 
 ### Admin List Bans
 - **File:** `src/admin/handlers/mesh_admin.rs:list_bans()`
