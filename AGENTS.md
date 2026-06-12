@@ -57,6 +57,8 @@ cargo test --lib --no-run    # Verify tests compile
 cargo test --lib <test_name> # Run targeted test
 cargo test --test integration_test
 cargo test --test security_regression  # Security regression tests
+cargo test --test http3_waf_boundary_guard  # HTTP/3 WAF boundary guard
+cargo test --test threat_intel_boundary_guard  # Threat-intel boundary guard
 cargo fmt && cargo clippy --lib -- -D warnings
 ```
 
@@ -292,6 +294,7 @@ The `architecture/` directory contains detailed design documents. Key canonical 
 | Admin/auth | `admin_deep_dive.md` | — |
 | Platform/sandboxing | `platform.md` | `platform_deep_dive.md` |
 | Threat-intel audit | `threat_intel_request_waf_audit.md` | — |
+| HTTP/3 WAF boundary | `http3_request_waf_boundary.md` | — |
 
 ## Skills Directory
 
