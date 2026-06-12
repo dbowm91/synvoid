@@ -156,13 +156,15 @@ These are pure helper functions that perform classification or composition witho
 
 4. **Worker IPC applies Supervisor events as control-plane authority.** Workers trust the Supervisor-broadcast blocklist events and preserve original provenance via `ipc_data_to_provenance()`.
 
-5. **Raw lookup APIs are compatibility/diagnostic only.** `lookup_local_indicator`, `lookup_local_indicator_by_ip`, and `lookup_threat_indicator_in_dht` must not be consumed by enforcement paths. The `threat_intel_boundary_guard.rs` test enforces this mechanically.
+5. **Raw lookup APIs are compatibility/diagnostic only.** `lookup_local_indicator`, `lookup_local_indicator_by_ip`, and `lookup_threat_indicator_in_dht` must not be consumed by enforcement paths. The `threat_intel_boundary_guard.rs` test enforces this boundary mechanically. Within `threat_intel.rs`, raw lookups are permitted only in explicit non-enforcement function bodies via function-level allowlisting (`threat_intel_consumer_actionability_guard.rs`). `handle_incoming_threat` and `_after_policy_permit` helpers are denylisted from raw lookups.
 
 6. **Shadow-only paths never mutate enforcement state.** `evaluate_indicator_policy_shadow` is metrics/logs only. Admin diagnostics can expose shadow disagreement but cannot convert it into action without a policy gate.
 
 7. **`AsnBlock` is observational only.** The `AsnBlock` branch in `handle_incoming_threat` does not mutate BlockStore.
 
 8. **`LegacyUnknown` provenance is not used for new threat-intel blocklist writes.** New enforcement writes use `MeshThreatIntelPolicyGated`, `AdminManual`, `LocalHoneypot`, or other specific provenance kinds.
+
+9. **Function-level raw-lookup boundary inside `threat_intel.rs`.** The source-scanning guardrail uses function-level allowlisting for `threat_intel.rs` rather than file-level exemption. Raw lookups are allowed only in diagnostic, policy-composed, and shadow evaluation function bodies. Enforcement functions (`handle_incoming_threat`, `_after_policy_permit` helpers) are explicitly denylisted.
 
 ## Provenance Assignment
 
