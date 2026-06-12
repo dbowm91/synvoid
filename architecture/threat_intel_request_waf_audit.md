@@ -1,6 +1,6 @@
-# Threat-Intel Request/WAF Audit — Iteration 37
+# Threat-Intel Request/WAF Audit — Iteration 38
 
-**Date**: 2026-06-11  
+**Date**: 2026-06-12  
 **Scope**: Repository-wide audit of request/WAF paths for threat-intel usage  
 **Goal**: Verify that actionability-sensitive runtime consumers use strict or policy-composed APIs, not raw advisory/local lookups
 
@@ -10,11 +10,11 @@ The WAF request path does not query `ThreatIntelligenceManager` directly. Instea
 
 Strict and composed lookup wrappers (`lookup_*_policy_strict`, `lookup_*_policy_composed`) are defined but have zero external production callers outside `threat_intel.rs` itself. They are staged for future use when request/WAF consumers need policy-gated threat-intel decisions directly.
 
-**Iteration 37 additions:**
-- A mechanical source-scanning guardrail (`tests/threat_intel_boundary_guard.rs`) now prevents raw threat-intel lookup APIs from being introduced into enforcement-sensitive paths.
-- `BlockEntry` carries `BlockProvenance` metadata (kind + optional source string) indicating whether the block came from local WAF, honeypot, mesh policy-gated threat-intel, admin action, supervisor sync, proxy probing, or another controlled source.
-- All production `block_ip` call sites have been migrated to `block_ip_with_provenance` with appropriate `BlockProvenanceKind`.
-- The admin ban-list API (`GET /mesh/bans`) now returns provenance in `BanRecord`.
+**Iteration 38 additions:**
+- `ErasedBlockStore` now exposes `block_ip_with_provenance` for type-erased WAF paths, eliminating the need for WAF code to fall back to the legacy provenance-dropping method.
+- Remaining legacy `block_ip` calls are all compatibility/test/provider paths: trait definitions, compatibility wrappers, mitigation provider external API calls, and test fixtures.
+- `LegacyUnknown` is limited to serde backward compat, legacy compatibility methods, tests, and mock trait implementations.
+- Boundary guard denylist expanded to include `crates/synvoid-waf` and `crates/synvoid-proxy` for regression protection.
 
 ## Audit Table
 

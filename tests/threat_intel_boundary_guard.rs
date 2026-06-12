@@ -2,8 +2,8 @@
 //!
 //! Phase 1 — Mechanical source scan preventing raw threat-intel lookup APIs from
 //! leaking into enforcement-sensitive paths (WAF, HTTP request handling, proxy,
-//! HTTP/3). Raw lookups are compatibility/debug APIs; enforcement paths must use
-//! the `lookup_*_policy_strict` wrappers.
+//! HTTP/3, WAF crate, proxy crate). Raw lookups are compatibility/debug APIs;
+//! enforcement paths must use the `lookup_*_policy_strict` wrappers instead.
 //!
 //! Phase 2 — Positive boundary tests confirming the allowlist and denylist
 //! directory coverage are structurally sound.
@@ -181,6 +181,8 @@ fn denylist_directories_cover_enforcement_surfaces() {
         "src/worker/unified_server",
         "src/proxy",
         "crates/synvoid-http3",
+        "crates/synvoid-waf",
+        "crates/synvoid-proxy",
     ];
 
     for dir in denylist_dirs {

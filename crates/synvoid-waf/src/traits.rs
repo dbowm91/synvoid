@@ -85,6 +85,23 @@ impl ErasedBlockStore {
     pub fn block_ip(&self, ip: IpAddr, reason: &str, duration_secs: u64, scope: &str) {
         self.inner.block_ip(ip, reason, duration_secs, scope)
     }
+
+    /// Block an IP with explicit provenance metadata.
+    ///
+    /// This is the preferred method for new production block-store writes.
+    /// Prefer this over [`block_ip`](Self::block_ip) so that the block entry
+    /// carries a meaningful `BlockProvenanceKind` for auditability.
+    pub fn block_ip_with_provenance(
+        &self,
+        ip: IpAddr,
+        reason: &str,
+        duration_secs: u64,
+        scope: &str,
+        provenance: BlockProvenance,
+    ) {
+        self.inner
+            .block_ip_with_provenance(ip, reason, duration_secs, scope, provenance)
+    }
 }
 
 impl Clone for ErasedBlockStore {
@@ -235,5 +252,20 @@ mod tests {
         store.block_ip(ip, "test", 3600, "global");
         let entry = store.is_blocked(&ip, "global").unwrap();
         assert_eq!(entry.reason, "test");
+    }
+
+    #[test]
+    fn test_erased_block_store_with_provenance() {
+        let store = ErasedBlockStore::new(MockBlockStore::new());
+        let ip: IpAddr = "5.6.7.8".parse().unwrap();
+
+        let provenance = BlockProvenance {
+            kind: BlockProvenanceKind::LocalWaf,
+            source: Some("test".to_string()),
+        };
+
+        store.block_ip_with_provenance(ip, "provenance_test", 3600, "global", provenance);
+        let entry = store.is_blocked(&ip, "global").unwrap();
+        assert_eq!(entry.reason, "provenance_test");
     }
 }

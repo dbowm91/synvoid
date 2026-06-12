@@ -573,6 +573,8 @@ Every `BlockEntry` carries `BlockProvenance` metadata indicating its source:
 
 The `block_ip_with_provenance` method is the preferred way to create block entries. The legacy `block_ip` method defaults to `LegacyUnknown`. Admin ban-list responses include the provenance kind as a string.
 
+`LegacyUnknown` is reserved for backward compatibility: serde deserialization of old persisted entries, the legacy `BlockEntry::new` and `BlockStore::block_ip` compatibility paths, tests that validate old data still loads, and mock/default trait implementations. New production enforcement writers must use `block_ip_with_provenance` with a specific `BlockProvenanceKind`.
+
 ### Current Integration Status
 
 | Indicator | Enforcement Wired | Notes |

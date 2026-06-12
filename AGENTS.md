@@ -40,6 +40,8 @@ When editing request/WAF paths or adding new threat-intel consumers:
 4. **New threat types requiring enforcement** must use `ThreatIntelConsumerKind::Enforcement` and require `ThreatIntelConsumerAction::PermitAction` before mutating block-store, rate-limit, or WAF state.
 5. **WAF request code consumes BlockStore**, not `ThreatIntelligenceManager` directly. This boundary is correct — mesh enforcement populates BlockStore, WAF reads it. Do not add raw advisory lookups to the request hot path.
 6. **New block-store writes must set meaningful provenance** — Use `block_ip_with_provenance` with an appropriate `BlockProvenanceKind`. Do not use `LegacyUnknown` for new production enforcement paths unless compatibility requires it.
+   - `ErasedBlockStore` now exposes `block_ip_with_provenance` for type-erased WAF paths.
+   - `LegacyUnknown` is acceptable only for: serde/default backward compat, legacy `BlockEntry::new`/`BlockStore::block_ip` compatibility paths, tests, and mock/default trait implementations.
 
 ### When NOT to use Constant-Time Comparison
 
