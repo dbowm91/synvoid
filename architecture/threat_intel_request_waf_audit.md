@@ -47,6 +47,10 @@ Strict and composed lookup wrappers (`lookup_*_policy_strict`, `lookup_*_policy_
 
 4. **Admin/debug actions are manual.** Admin ban endpoints and supervisor gRPC `block_ip` are manual actions, not automated enforcement from mesh advisory data.
 
+## Manual Enforcement Ownership
+
+Admin ban endpoints and supervisor gRPC `block_ip` use dedicated `BlockProvenanceKind` values (`AdminManual`, `SupervisorManual`, `SupervisorSync`) instead of `LegacyUnknown`. These manual/supervisor paths bypass threat-intel policy gates — their authority derives from operator or control-plane intent, not remote advisory data. For the full ownership model and provenance catalog, see `architecture/manual_enforcement_ownership.md`.
+
 ## Boundary Invariant
 
 The request/WAF boundary must be preserved:

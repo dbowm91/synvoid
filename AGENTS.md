@@ -42,6 +42,7 @@ When editing request/WAF paths or adding new threat-intel consumers:
 6. **New block-store writes must set meaningful provenance** — Use `block_ip_with_provenance` with an appropriate `BlockProvenanceKind`. Do not use `LegacyUnknown` for new production enforcement paths unless compatibility requires it.
    - `ErasedBlockStore` now exposes `block_ip_with_provenance` for type-erased WAF paths.
    - `LegacyUnknown` is acceptable only for: serde/default backward compat, legacy `BlockEntry::new`/`BlockStore::block_ip` compatibility paths, tests, and mock/default trait implementations.
+   - **Manual enforcement provenance**: Admin manual block writes use `AdminManual`, supervisor manual blocks use `SupervisorManual`, supervisor blocklist sync uses `SupervisorSync`. Manual/supervisor paths bypass threat-intel policy gates (authority from operator/control-plane). Do not use `LegacyUnknown` for new manual/supervisor writes. Admin/debug responses should expose provenance.
 
 ### When NOT to use Constant-Time Comparison
 
@@ -100,6 +101,7 @@ cargo check --no-default-features --features mesh,dns
 | `TunnelBackend` at `src/tunnel/upstream.rs` | `crates/synvoid-tunnel/src/router.rs:199` (moved to dedicated crate; re-exported via `src/tunnel/mod.rs`) |
 | `architecture/tunnel.md` | Does not exist — tunnels documented in `networking_deep_dive.md` |
 | `architecture/admin.md` | Does not exist — use `admin_deep_dive.md` |
+| `architecture/manual_enforcement_ownership.md` | New — Iteration 42 admin/supervisor enforcement ownership audit |
 | `src/worker/mod.rs` (CPU offload) | `src/worker/cpu_task/` (split 2026-06) — see `mod.rs`, `state.rs`, `metrics.rs`, `payload.rs`, `dispatch.rs`, `connection.rs`, `yara.rs` |
 | `src/worker/unified_server.rs` (monolithic) | `src/worker/unified_server/` (split 2026-06) — see `state.rs`, `services.rs`, `init_apps.rs`, `init_waf.rs`, `init_mesh.rs`, `init_runtime.rs`, `init_config.rs`, `lifecycle.rs` |
 | `src/app_server/granian.rs` | `crates/synvoid-app-server/src/granian.rs` |

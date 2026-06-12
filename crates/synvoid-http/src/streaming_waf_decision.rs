@@ -173,9 +173,7 @@ mod tests {
     #[tokio::test]
     async fn streaming_stall_at_cap_returns_429() {
         let config = test_http_config(2);
-        let _permits: Vec<_> = (0..2)
-            .filter_map(|_| StallPermit::try_new(2))
-            .collect();
+        let _permits: Vec<_> = (0..2).filter_map(|_| StallPermit::try_new(2)).collect();
 
         let before = std::time::Instant::now();
         let resp = maybe_handle_streaming_waf_decision(

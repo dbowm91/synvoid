@@ -141,6 +141,7 @@ pub struct BanRecord {
     pub is_permanent: bool,
     pub site_scope: String,
     pub provenance: String,
+    pub provenance_source: Option<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -433,7 +434,9 @@ pub async fn ban_ip(
                         "reason": reason,
                         "duration_seconds": duration,
                         "site_scope": site_scope,
-                        "is_permanent": duration == 0
+                        "is_permanent": duration == 0,
+                        "provenance": "AdminManual",
+                        "provenance_source": "admin_ban_ip",
                     }
                 })));
             } else {
@@ -499,7 +502,9 @@ pub async fn ban_mesh_id(
                         "mesh_id": mesh_id,
                         "reason": reason,
                         "duration_seconds": duration,
-                        "is_permanent": duration == 0
+                        "is_permanent": duration == 0,
+                        "provenance": "AdminManual",
+                        "provenance_source": "admin_ban_mesh_id",
                     }
                 })));
             }
@@ -612,6 +617,7 @@ pub async fn list_bans(
                     is_permanent,
                     site_scope: entry.site_scope,
                     provenance: entry.provenance_kind,
+                    provenance_source: entry.provenance_source,
                 });
             }
         }

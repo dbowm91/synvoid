@@ -1027,7 +1027,10 @@ mod tests {
         let active_before = ACTIVE_STALLED_REQUESTS.load(Ordering::Relaxed);
         {
             let _permit = StallPermit::try_new(u32::MAX).unwrap();
-            assert_eq!(ACTIVE_STALLED_REQUESTS.load(Ordering::Relaxed), active_before + 1);
+            assert_eq!(
+                ACTIVE_STALLED_REQUESTS.load(Ordering::Relaxed),
+                active_before + 1
+            );
         }
         // Drop only releases, does not record timeout
         assert_eq!(
@@ -1035,6 +1038,9 @@ mod tests {
             timeout_before,
             "drop must not increment timeout counter"
         );
-        assert_eq!(ACTIVE_STALLED_REQUESTS.load(Ordering::Relaxed), active_before);
+        assert_eq!(
+            ACTIVE_STALLED_REQUESTS.load(Ordering::Relaxed),
+            active_before
+        );
     }
 }

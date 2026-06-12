@@ -750,6 +750,7 @@ impl synvoid_mesh::stubs::block_store::BlockStoreApi for BlockStore {
                 access_count: e.access_count,
                 last_access: e.last_access,
                 provenance_kind: format!("{:?}", e.provenance.kind),
+                provenance_source: e.provenance.source.clone(),
             })
             .collect()
     }
@@ -1062,5 +1063,133 @@ mod tests {
             BlockProvenanceKind::MeshThreatIntelPolicyGated
         );
         assert_eq!(entry.provenance.source.as_deref(), Some("mesh:node-1"));
+    }
+
+    #[tokio::test]
+    async fn test_admin_manual_provenance() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        let result = store.block_ip_with_provenance(
+            ip,
+            "admin_ban",
+            3600,
+            "global",
+            BlockProvenance {
+                kind: BlockProvenanceKind::AdminManual,
+                source: Some("admin_ban_ip".to_string()),
+            },
+        );
+        assert!(result);
+        let entries = store.get_all_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].provenance.kind, BlockProvenanceKind::AdminManual);
+        assert_eq!(
+            entries[0].provenance.source.as_deref(),
+            Some("admin_ban_ip")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_supervisor_manual_provenance() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip: IpAddr = "10.0.0.2".parse().unwrap();
+        let result = store.block_ip_with_provenance(
+            ip,
+            "grpc_block",
+            3600,
+            "global",
+            BlockProvenance {
+                kind: BlockProvenanceKind::SupervisorManual,
+                source: Some("grpc_block_ip".to_string()),
+            },
+        );
+        assert!(result);
+        let entries = store.get_all_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].provenance.kind,
+            BlockProvenanceKind::SupervisorManual
+        );
+        assert_eq!(
+            entries[0].provenance.source.as_deref(),
+            Some("grpc_block_ip")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_supervisor_sync_provenance() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip: IpAddr = "10.0.0.3".parse().unwrap();
+        let result = store.block_ip_with_provenance(
+            ip,
+            "blocklist_sync",
+            3600,
+            "global",
+            BlockProvenance {
+                kind: BlockProvenanceKind::SupervisorSync,
+                source: Some("blocklist_update".to_string()),
+            },
+        );
+        assert!(result);
+        let entries = store.get_all_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].provenance.kind,
+            BlockProvenanceKind::SupervisorSync
+        );
+        assert_eq!(
+            entries[0].provenance.source.as_deref(),
+            Some("blocklist_update")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_legacy_block_ip_defaults_to_legacy_unknown() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip: IpAddr = "10.0.0.4".parse().unwrap();
+        let result = store.block_ip(ip, "legacy_call", 3600, "global");
+        assert!(result);
+        let entries = store.get_all_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].provenance.kind,
+            BlockProvenanceKind::LegacyUnknown
+        );
+        assert!(entries[0].provenance.source.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_provenance_survives_serialization_roundtrip() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+
+        let ip: IpAddr = "10.0.0.5".parse().unwrap();
+        store.block_ip_with_provenance(
+            ip,
+            "roundtrip_test",
+            3600,
+            "global",
+            BlockProvenance {
+                kind: BlockProvenanceKind::AdminManual,
+                source: Some("test_source".to_string()),
+            },
+        );
+        // Trigger persist and reload
+        store.trigger_persist();
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let store2 = BlockStore::new(true, Some(temp_dir.path().to_path_buf()), default_config());
+        let entries = store2.get_all_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].provenance.kind, BlockProvenanceKind::AdminManual);
+        assert_eq!(entries[0].provenance.source.as_deref(), Some("test_source"));
     }
 }

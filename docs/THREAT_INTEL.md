@@ -575,6 +575,18 @@ The `block_ip_with_provenance` method is the preferred way to create block entri
 
 `LegacyUnknown` is reserved for backward compatibility: serde deserialization of old persisted entries, the legacy `BlockEntry::new` and `BlockStore::block_ip` compatibility paths, tests that validate old data still loads, and mock/default trait implementations. New production enforcement writers must use `block_ip_with_provenance` with a specific `BlockProvenanceKind`.
 
+### Manual and Supervisor Provenance
+
+Manual and supervisor enforcement paths use dedicated provenance kinds:
+
+- `AdminManual` — Admin API ban/unban operations (operator-initiated)
+- `SupervisorManual` — Supervisor gRPC block/unblock commands (control-plane-initiated)  
+- `SupervisorSync` — Worker blocklist sync from Supervisor via IPC (replicated state)
+
+These paths bypass threat-intel policy gates because their authority comes from operator or control-plane intent, not remote advisory data. They must not be confused with automated `MeshThreatIntelPolicyGated` enforcement.
+
+See `architecture/manual_enforcement_ownership.md` for the full ownership model.
+
 ### Current Integration Status
 
 | Indicator | Enforcement Wired | Notes |

@@ -238,6 +238,7 @@ pub mod block_store {
         pub access_count: u64,
         pub last_access: u64,
         pub provenance_kind: String,
+        pub provenance_source: Option<String>,
     }
 
     impl BlockEntry {
@@ -257,6 +258,7 @@ pub mod block_store {
                 access_count: 0,
                 last_access: now,
                 provenance_kind: "LegacyUnknown".to_string(),
+                provenance_source: None,
             }
         }
 
