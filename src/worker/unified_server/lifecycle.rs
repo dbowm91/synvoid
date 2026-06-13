@@ -7,7 +7,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::sync::Mutex as TokioMutex;
-use tokio::task::JoinHandle;
 
 use super::state::{wait_for_drain, UnifiedServerWorkerState};
 use crate::worker::common::collect_current_process_usage;
@@ -282,6 +281,13 @@ pub fn spawn_ipc_loop(
                         graceful,
                         timeout_secs
                     );
+
+                    // Phase 7: Explicit server shutdown — stop accepting new connections first.
+                    let tx_guard = state.stop_accepting_tx.lock().await;
+                    if let Some(tx) = tx_guard.as_ref() {
+                        let _ = tx.send(());
+                    }
+                    drop(tx_guard);
 
                     tracing::info!(
                         "Stopping app servers for unified server worker {}",
