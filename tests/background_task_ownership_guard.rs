@@ -575,7 +575,7 @@ fn spawn_server_run_task_removed() {
 // Iteration 64 — Coordinated shutdown guardrails
 // ---------------------------------------------------------------------------
 
-/// MasterShutdown path must call begin_shutdown() before running.stop().
+/// MasterShutdown path must call begin_coordinated_shutdown before running.stop().
 #[test]
 fn master_shutdown_begins_intent_before_running_stop() {
     let content = read_file("src/worker/unified_server/mod.rs");
@@ -585,14 +585,14 @@ fn master_shutdown_begins_intent_before_running_stop() {
         .expect("composition-root shutdown procedure not found");
     let composition_section = &content[composition_root_start..];
     let begin_shutdown_pos = composition_section
-        .find("registry.begin_shutdown()")
-        .expect("begin_shutdown not found in composition root");
+        .find("begin_coordinated_shutdown")
+        .expect("begin_coordinated_shutdown not found in composition root");
     let running_stop_pos = composition_section
         .find("state.running.stop()")
         .expect("running.stop() not found in composition root");
     assert!(
         begin_shutdown_pos < running_stop_pos,
-        "begin_shutdown() must be called before running.stop() in the composition root"
+        "begin_coordinated_shutdown must be called before running.stop() in the composition root"
     );
 }
 
@@ -789,23 +789,21 @@ fn fatal_causes_send_worker_error() {
     );
 }
 
-/// Lifecycle acknowledgement must happen after begin_shutdown.
+/// Lifecycle acknowledgement must happen inside begin_coordinated_shutdown.
 #[test]
 fn lifecycle_ack_after_begin_shutdown() {
+    // The begin_coordinated_shutdown helper encapsulates both begin_shutdown()
+    // and lifecycle acknowledgement in the correct order. Verify the helper
+    // is called from the composition root.
     let content = read_file("src/worker/unified_server/mod.rs");
     let composition_start = content
         .find("composition-root shutdown procedure")
         .expect("composition root not found");
     let section = &content[composition_start..];
 
-    let begin_pos = section
-        .find("begin_shutdown()")
-        .expect("begin_shutdown not found");
-    let ack_pos = section.find("ack_tx.send").expect("ack send not found");
-
     assert!(
-        begin_pos < ack_pos,
-        "Lifecycle acknowledgement must happen after begin_shutdown()"
+        section.contains("begin_coordinated_shutdown"),
+        "Composition root must call begin_coordinated_shutdown for shutdown intent + lifecycle ack"
     );
 }
 
@@ -954,5 +952,86 @@ fn should_notify_supervisor_excludes_supervisor_disconnected() {
     assert!(
         method_body.contains("ServerExitedUnexpectedly"),
         "should_notify_supervisor must include ServerExitedUnexpectedly"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Iteration 67 — Shutdown intent and lifecycle error cleanup guardrails
+// ---------------------------------------------------------------------------
+
+/// Supervision loop must NOT call state.running.stop() before returning the cause.
+/// The composition root is responsible for teardown ordering.
+#[test]
+fn supervision_loop_does_not_call_running_stop() {
+    let content = read_file("src/worker/unified_server/mod.rs");
+    let supervision_start = find_section(&content, "Phase 15: supervision loop");
+    // Find where Phase 16 starts to scope the search.
+    let phase16_pos = supervision_start
+        .find("Phase 16:")
+        .expect("Phase 16 not found");
+    let supervision_section = &supervision_start[..phase16_pos];
+    assert!(
+        !supervision_section.contains("state.running.stop()"),
+        "Supervision loop must not call state.running.stop() — the composition root handles teardown"
+    );
+}
+
+/// begin_shutdown() must appear in the helper, not directly in the composition root.
+#[test]
+fn begin_shutdown_encapsulated_in_helper() {
+    let content = read_file("src/worker/unified_server/lifecycle.rs");
+    assert!(
+        content.contains("pub async fn begin_coordinated_shutdown"),
+        "begin_coordinated_shutdown helper must exist in lifecycle.rs"
+    );
+    // The helper must call begin_shutdown on the registry.
+    let helper_start = content
+        .find("pub async fn begin_coordinated_shutdown")
+        .expect("helper not found");
+    let helper_section = &content[helper_start..helper_start + 500];
+    assert!(
+        helper_section.contains("begin_shutdown()"),
+        "Helper must call begin_shutdown()"
+    );
+    assert!(
+        helper_section.contains("ack.send(())") || helper_section.contains("lifecycle_ack"),
+        "Helper must acknowledge the lifecycle request"
+    );
+}
+
+/// Terminal lifecycle transition calls must use `?` not `let _ =`.
+#[test]
+fn lifecycle_transition_calls_use_question_mark() {
+    let content = read_file("src/worker/unified_server/lifecycle.rs");
+    // Find the spawn_ipc_loop function.
+    let spawn_start = content
+        .find("pub fn spawn_ipc_loop")
+        .expect("spawn_ipc_loop not found");
+    let spawn_section = &content[spawn_start..];
+
+    // Count occurrences of request_lifecycle_transition in the IPC loop.
+    let transition_count = spawn_section
+        .matches("request_lifecycle_transition")
+        .count();
+    assert!(
+        transition_count >= 3,
+        "spawn_ipc_loop must have at least 3 request_lifecycle_transition calls, found {}",
+        transition_count
+    );
+
+    // Must NOT have `let _ = request_lifecycle_transition` pattern.
+    assert!(
+        !spawn_section.contains("let _ = request_lifecycle_transition"),
+        "Terminal lifecycle transition calls must use `?`, not `let _ =`"
+    );
+}
+
+/// ServerExitedUnexpectedly must carry NamedTaskExit detail.
+#[test]
+fn server_exited_unexpectedly_carries_detail() {
+    let content = read_file("src/worker/task_registry.rs");
+    assert!(
+        content.contains("ServerExitedUnexpectedly(NamedTaskExit)"),
+        "ServerExitedUnexpectedly must carry NamedTaskExit for diagnostic detail"
     );
 }

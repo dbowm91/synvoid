@@ -82,7 +82,7 @@ impl TaskExitReason {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkerShutdownCause {
-    ServerExitedUnexpectedly,
+    ServerExitedUnexpectedly(NamedTaskExit),
     ServerStoppedForShutdown,
     CriticalTaskExit(NamedTaskExit),
     SupervisorShutdown,
@@ -112,7 +112,7 @@ pub enum SupervisionOutcome {
 impl WorkerShutdownCause {
     pub fn nonzero_exit_code(&self) -> bool {
         match self {
-            Self::ServerExitedUnexpectedly => true,
+            Self::ServerExitedUnexpectedly(_) => true,
             Self::ServerStoppedForShutdown => false,
             Self::CriticalTaskExit(_) => true,
             Self::SupervisorShutdown => false,
@@ -136,7 +136,7 @@ impl WorkerShutdownCause {
         matches!(
             self,
             Self::CriticalTaskExit(_)
-                | Self::ServerExitedUnexpectedly
+                | Self::ServerExitedUnexpectedly(_)
                 | Self::RegistryExitChannelClosed
         )
     }
@@ -156,7 +156,13 @@ impl WorkerShutdownCause {
 impl fmt::Display for WorkerShutdownCause {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ServerExitedUnexpectedly => write!(f, "server_exited_unexpectedly"),
+            Self::ServerExitedUnexpectedly(exit) => {
+                write!(
+                    f,
+                    "server_run exited unexpectedly: {} ({})",
+                    exit.name, exit.reason
+                )
+            }
             Self::ServerStoppedForShutdown => write!(f, "server_stopped_for_shutdown"),
             Self::CriticalTaskExit(exit) => {
                 write!(f, "critical_task_exit: {} ({})", exit.name, exit.reason)
@@ -776,7 +782,7 @@ pub fn is_fatal_exit(exit: &NamedTaskExit, shutdown_started: bool) -> bool {
 /// Called when `is_fatal_exit` returns true.
 pub fn map_task_exit_to_shutdown_cause(exit: NamedTaskExit) -> WorkerShutdownCause {
     if exit.name == "server_run" {
-        WorkerShutdownCause::ServerExitedUnexpectedly
+        WorkerShutdownCause::ServerExitedUnexpectedly(exit)
     } else {
         WorkerShutdownCause::CriticalTaskExit(exit)
     }
@@ -1398,7 +1404,15 @@ mod tests {
         let cause = crate::worker::task_registry::WorkerShutdownCause::SupervisorDisconnected;
         assert!(cause.nonzero_exit_code());
 
-        let cause = crate::worker::task_registry::WorkerShutdownCause::ServerExitedUnexpectedly;
+        let cause = crate::worker::task_registry::WorkerShutdownCause::ServerExitedUnexpectedly(
+            NamedTaskExit {
+                id: TaskId(0),
+                name: "server_run",
+                class: TaskClass::CriticalService,
+                reason: TaskExitReason::Error("test".to_string()),
+                expected_during_shutdown: false,
+            },
+        );
         assert!(cause.nonzero_exit_code());
     }
 
@@ -1496,7 +1510,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_server_exited_unexpectedly_exit_code() {
-        let cause = crate::worker::task_registry::WorkerShutdownCause::ServerExitedUnexpectedly;
+        let cause = crate::worker::task_registry::WorkerShutdownCause::ServerExitedUnexpectedly(
+            NamedTaskExit {
+                id: TaskId(0),
+                name: "server_run",
+                class: TaskClass::CriticalService,
+                reason: TaskExitReason::Error("test".to_string()),
+                expected_during_shutdown: false,
+            },
+        );
         assert_eq!(cause.exit_code(), 1);
         assert!(cause.nonzero_exit_code());
         assert!(!cause.is_expected());

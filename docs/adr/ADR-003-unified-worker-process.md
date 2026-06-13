@@ -93,6 +93,20 @@ The supervision loop was corrected to close several edge-case gaps:
 
 The supervision loop now returns `SupervisionOutcome` (Lifecycle or DirectCause) instead of implicit `(WorkerLifecycleEvent, Option<oneshot::Sender>)`. Fatal task exits preserve the original `NamedTaskExit` through `map_task_exit_to_shutdown_cause()`. IPC lifecycle sends use `request_lifecycle_transition()` which returns explicit `IpcLoopError` on failure. `should_notify_supervisor()` is corrected: `SupervisorDisconnected` returns `false` since the channel is unavailable. Registry lag/closure and lifecycle channel closure are mapped to `RegistryExitChannelClosed` instead of `SupervisorDisconnected`.
 
+## Iteration 67 — Shutdown Intent and Lifecycle Error Cleanup
+
+Two narrow correctness issues remain after Iteration 66:
+
+1. IPC lifecycle transition errors were discarded with `let _ = ...`
+2. The supervision loop called `state.running.stop()` before the composition root called `begin_shutdown()`, creating a race window for secondary task misclassification
+
+**Resolution:**
+- All terminal `request_lifecycle_transition()` calls now propagate errors with `?`
+- Supervision loop is side-effect free — it selects causes only, no teardown mutations
+- `begin_coordinated_shutdown()` helper enforces ordering: `begin_shutdown()` → lifecycle ack → stop signals
+- `ServerExitedUnexpectedly(NamedTaskExit)` preserves server exit diagnostic detail
+- Secondary exits after primary cause selection are classified as expected cleanup
+
 ## Coordinated Shutdown Intent (Iteration 64)
 
 The worker shutdown procedure was refactored to ensure shutdown intent is recorded before tasks are asked to return:

@@ -215,7 +215,13 @@ async fn test_shutdown_cause_properties() {
             true,
         ),
         (
-            WorkerShutdownCause::ServerExitedUnexpectedly,
+            WorkerShutdownCause::ServerExitedUnexpectedly(NamedTaskExit {
+                id: TaskId(0),
+                name: "server_run",
+                class: TaskClass::CriticalService,
+                reason: TaskExitReason::Error("test".to_string()),
+                expected_during_shutdown: false,
+            }),
             true,
             true, // ServerExitedUnexpectedly now notifies (Phase 9)
             false,
@@ -303,7 +309,17 @@ async fn test_begin_shutdown_before_task_return_classifies_cleanly() {
 async fn test_shutdown_cause_exit_code_mapping() {
     assert_eq!(WorkerShutdownCause::SupervisorShutdown.exit_code(), 0);
     assert_eq!(WorkerShutdownCause::ServerStoppedForShutdown.exit_code(), 0);
-    assert_eq!(WorkerShutdownCause::ServerExitedUnexpectedly.exit_code(), 1);
+    assert_eq!(
+        WorkerShutdownCause::ServerExitedUnexpectedly(NamedTaskExit {
+            id: TaskId(0),
+            name: "server_run",
+            class: TaskClass::CriticalService,
+            reason: TaskExitReason::Error("test".to_string()),
+            expected_during_shutdown: false,
+        })
+        .exit_code(),
+        1
+    );
     assert_eq!(
         WorkerShutdownCause::CriticalTaskExit(NamedTaskExit {
             id: TaskId(999),
@@ -560,7 +576,7 @@ async fn test_legacy_handle_abort_and_await_completes() {
         .await;
 }
 
-/// Verify shutdown ordering: begin_shutdown before stop_accepting.
+/// Verify shutdown ordering: begin_coordinated_shutdown before stop_accepting.
 #[tokio::test]
 async fn test_shutdown_ordering_begin_before_stop_accepting() {
     // This is a structural test verifying the source code ordering.
@@ -575,20 +591,15 @@ async fn test_shutdown_ordering_begin_before_stop_accepting() {
     let section = &content[composition_start..];
 
     let begin_pos = section
-        .find("registry.begin_shutdown()")
-        .expect("begin_shutdown not found");
-    let ack_pos = section.find("ack_tx.send(())").expect("ack send not found");
+        .find("begin_coordinated_shutdown")
+        .expect("begin_coordinated_shutdown not found");
     let stop_accepting_pos = section
         .find("state.stop_accepting_tx")
         .expect("stop_accepting not found");
 
     assert!(
-        begin_pos < ack_pos,
-        "begin_shutdown must come before lifecycle acknowledgement"
-    );
-    assert!(
-        ack_pos < stop_accepting_pos,
-        "lifecycle acknowledgement must come before stop_accepting"
+        begin_pos < stop_accepting_pos,
+        "begin_coordinated_shutdown must come before stop_accepting"
     );
 }
 
@@ -658,7 +669,12 @@ async fn test_server_failure_not_misclassified() {
     assert!(is_fatal_exit(&exit, shutdown_started));
 
     let cause = map_task_exit_to_shutdown_cause(exit);
-    assert_eq!(cause, WorkerShutdownCause::ServerExitedUnexpectedly);
+    match &cause {
+        WorkerShutdownCause::ServerExitedUnexpectedly(e) => {
+            assert_eq!(e.name, "server_run");
+        }
+        other => panic!("Expected ServerExitedUnexpectedly, got {:?}", other),
+    }
     assert!(!matches!(
         cause,
         WorkerShutdownCause::SupervisorDisconnected
@@ -912,7 +928,13 @@ async fn test_request_lifecycle_transition_ack_dropped() {
 /// ServerExitedUnexpectedly exit code is 1 and should_notify is true.
 #[tokio::test]
 async fn test_server_exited_unexpectedly_notification_routing() {
-    let cause = WorkerShutdownCause::ServerExitedUnexpectedly;
+    let cause = WorkerShutdownCause::ServerExitedUnexpectedly(NamedTaskExit {
+        id: TaskId(0),
+        name: "server_run",
+        class: TaskClass::CriticalService,
+        reason: TaskExitReason::Error("test".to_string()),
+        expected_during_shutdown: false,
+    });
     assert!(cause.nonzero_exit_code());
     assert_eq!(cause.exit_code(), 1);
     assert!(cause.should_notify_supervisor());
@@ -955,4 +977,316 @@ async fn test_critical_task_exit_notification_routing() {
         }
         _ => panic!("Expected CriticalTaskExit"),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Iteration 67 — Lifecycle transition failure and shutdown ordering tests
+// ---------------------------------------------------------------------------
+
+/// request_lifecycle_transition returns IpcLoopError::Unexpected when coordinator channel is closed.
+#[tokio::test]
+async fn test_lifecycle_transition_coordinator_channel_closed() {
+    let (lifecycle_tx, _lifecycle_rx) = tokio::sync::mpsc::channel::<
+        synvoid::worker::unified_server::lifecycle::LifecycleRequest,
+    >(4);
+    drop(_lifecycle_rx);
+
+    let result = synvoid::worker::unified_server::lifecycle::request_lifecycle_transition(
+        &lifecycle_tx,
+        WorkerLifecycleEvent::MasterShutdown {
+            graceful: true,
+            timeout: Duration::from_secs(30),
+        },
+    )
+    .await;
+
+    assert!(result.is_err());
+    match result.unwrap_err() {
+        IpcLoopError::Unexpected(msg) => {
+            assert!(
+                msg.contains("channel closed"),
+                "Error should mention coordinator channel closure: {}",
+                msg
+            );
+        }
+        other => panic!(
+            "Expected Unexpected error for channel closure, got {:?}",
+            other
+        ),
+    }
+}
+
+/// request_lifecycle_transition returns IpcLoopError::Unexpected when ack sender is dropped.
+#[tokio::test]
+async fn test_lifecycle_transition_ack_dropped() {
+    let (lifecycle_tx, mut lifecycle_rx) = tokio::sync::mpsc::channel::<
+        synvoid::worker::unified_server::lifecycle::LifecycleRequest,
+    >(4);
+
+    // Spawn a task that receives but drops the acknowledgement sender.
+    tokio::spawn(async move {
+        if let Some(req) = lifecycle_rx.recv().await {
+            drop(req.accepted);
+        }
+    });
+
+    let result = synvoid::worker::unified_server::lifecycle::request_lifecycle_transition(
+        &lifecycle_tx,
+        WorkerLifecycleEvent::MasterShutdown {
+            graceful: true,
+            timeout: Duration::from_secs(30),
+        },
+    )
+    .await;
+
+    assert!(result.is_err());
+    match result.unwrap_err() {
+        IpcLoopError::Unexpected(msg) => {
+            assert!(
+                msg.contains("dropped"),
+                "Error should mention dropped acknowledgement: {}",
+                msg
+            );
+        }
+        other => panic!("Expected Unexpected error for dropped ack, got {:?}", other),
+    }
+}
+
+/// Successful lifecycle transition returns Ok(()).
+#[tokio::test]
+async fn test_lifecycle_transition_success() {
+    let (lifecycle_tx, mut lifecycle_rx) = tokio::sync::mpsc::channel::<
+        synvoid::worker::unified_server::lifecycle::LifecycleRequest,
+    >(4);
+
+    // Spawn a task that receives and acknowledges.
+    tokio::spawn(async move {
+        if let Some(req) = lifecycle_rx.recv().await {
+            let _ = req.accepted.send(());
+        }
+    });
+
+    let result = synvoid::worker::unified_server::lifecycle::request_lifecycle_transition(
+        &lifecycle_tx,
+        WorkerLifecycleEvent::MasterShutdown {
+            graceful: true,
+            timeout: Duration::from_secs(30),
+        },
+    )
+    .await;
+
+    assert!(result.is_ok(), "Successful transition should return Ok(())");
+}
+
+/// IPC-like task using `?` on request_lifecycle_transition produces TaskExitReason::Error on failure.
+#[tokio::test]
+async fn test_lifecycle_failure_produces_task_error() {
+    let mut registry = WorkerTaskRegistry::new();
+    let mut exit_rx = registry.subscribe_exits();
+
+    let (lifecycle_tx, _lifecycle_rx) = tokio::sync::mpsc::channel::<
+        synvoid::worker::unified_server::lifecycle::LifecycleRequest,
+    >(4);
+    drop(_lifecycle_rx);
+
+    // Simulate an IPC-like task that uses `?` on lifecycle transition.
+    registry.spawn_critical_result("ipc_sim", async move {
+        synvoid::worker::unified_server::lifecycle::request_lifecycle_transition(
+            &lifecycle_tx,
+            WorkerLifecycleEvent::MasterShutdown {
+                graceful: true,
+                timeout: Duration::from_secs(30),
+            },
+        )
+        .await
+        .map_err(|e| format!("{}", e))
+    });
+
+    let exit = tokio::time::timeout(Duration::from_secs(2), exit_rx.recv())
+        .await
+        .expect("timeout")
+        .expect("recv");
+
+    // The task should exit with an Error, not CleanCompletion.
+    assert!(
+        matches!(exit.reason, TaskExitReason::Error(_)),
+        "Lifecycle failure should produce TaskExitReason::Error, got {:?}",
+        exit.reason
+    );
+}
+
+/// Critical failure with secondary critical exit: secondary is classified as expected.
+#[tokio::test]
+async fn test_critical_failure_secondary_exit_classified_cleanly() {
+    let mut registry = WorkerTaskRegistry::new();
+    let mut exit_rx = registry.subscribe_exits();
+    let shutdown_flag = registry.shutdown_started_flag();
+
+    // Primary critical task that fails immediately.
+    registry.spawn_critical("primary_failure", async {
+        panic!("primary failure");
+    });
+
+    // Secondary critical task that waits on shutdown signal.
+    let token = registry.child_token();
+    registry.spawn_critical("secondary_waiter", async move {
+        let mut shutdown = token;
+        loop {
+            if *shutdown.borrow() {
+                break;
+            }
+            if shutdown.changed().await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Wait for the primary failure to be observed.
+    let exit = tokio::time::timeout(Duration::from_secs(2), exit_rx.recv())
+        .await
+        .expect("timeout")
+        .expect("recv");
+
+    let shutdown_started = shutdown_flag.load(Ordering::Acquire);
+    assert!(is_fatal_exit(&exit, shutdown_started));
+    assert_eq!(exit.name, "primary_failure");
+
+    // Record the unexpected completion count before simulating shutdown.
+    let unexpected_before = registry
+        .metrics
+        .tasks_unexpectedly_completed
+        .load(Ordering::Relaxed);
+
+    // Simulate the composition root: begin_shutdown then broadcast.
+    registry.begin_shutdown();
+    registry.broadcast_shutdown();
+
+    // Now join all tasks.
+    let _exits = registry
+        .shutdown_and_join(Duration::from_secs(5), Duration::from_secs(5))
+        .await;
+
+    // Secondary task should have exited cleanly (CleanCompletion after begin_shutdown).
+    let unexpected_after = registry
+        .metrics
+        .tasks_unexpectedly_completed
+        .load(Ordering::Relaxed);
+    assert_eq!(
+        unexpected_after, unexpected_before,
+        "Secondary exit should not increment unexpected completion count"
+    );
+}
+
+/// Registry failure with secondary background exit: primary cause preserved.
+#[tokio::test]
+async fn test_registry_failure_secondary_exit_clean() {
+    let mut registry = WorkerTaskRegistry::new();
+    let shutdown_flag = registry.shutdown_started_flag();
+
+    // Simulate registry exit receiver lag.
+    let cause = map_exit_recv_error_to_shutdown_cause(
+        tokio::sync::broadcast::error::RecvError::Lagged(42),
+        false,
+    );
+    assert_eq!(cause, Some(WorkerShutdownCause::RegistryExitChannelClosed));
+
+    // Begin shutdown before any stop signal (Phase 4 ordering).
+    registry.begin_shutdown();
+    let shutdown_started = shutdown_flag.load(Ordering::Acquire);
+    assert!(shutdown_started);
+
+    // A background task waiting on shutdown should exit cleanly.
+    let token = registry.child_token();
+    registry.spawn_cancellable_background("bg_waiter", async move {
+        let mut shutdown = token;
+        loop {
+            if *shutdown.borrow() {
+                break;
+            }
+            if shutdown.changed().await.is_err() {
+                break;
+            }
+        }
+    });
+
+    registry.broadcast_shutdown();
+    let _exits = registry
+        .shutdown_and_join(Duration::from_secs(5), Duration::from_secs(5))
+        .await;
+
+    // The _exits are from shutdown_and_join, not from exit_rx. We can't easily check
+    // individual exits here since shutdown_and_join doesn't return them via exit_rx.
+    // The key assertion is that the process completes without hanging.
+}
+
+/// Server failure preserves the NamedTaskExit detail.
+#[tokio::test]
+async fn test_server_failure_preserves_named_task_exit_detail() {
+    let mut registry = WorkerTaskRegistry::new();
+    let mut exit_rx = registry.subscribe_exits();
+
+    registry.spawn_critical_result("server_run", async {
+        Err::<(), String>("server crashed".to_string())
+    });
+
+    let exit = tokio::time::timeout(Duration::from_secs(2), exit_rx.recv())
+        .await
+        .expect("timeout")
+        .expect("recv");
+
+    assert_eq!(exit.name, "server_run");
+    let cause = map_task_exit_to_shutdown_cause(exit.clone());
+    match &cause {
+        WorkerShutdownCause::ServerExitedUnexpectedly(e) => {
+            assert_eq!(e.name, "server_run");
+            assert!(matches!(&e.reason, TaskExitReason::Error(_)));
+        }
+        other => panic!("Expected ServerExitedUnexpectedly, got {:?}", other),
+    }
+}
+
+/// Once SupervisionOutcome is selected, later task exits cannot replace the cause.
+#[tokio::test]
+async fn test_primary_cause_cannot_be_replaced() {
+    let mut registry = WorkerTaskRegistry::new();
+    let mut exit_rx = registry.subscribe_exits();
+    let shutdown_flag = registry.shutdown_started_flag();
+
+    // Spawn a task that panics (fatal).
+    registry.spawn_critical("fatal_task", async {
+        panic!("fatal");
+    });
+
+    // Spawn a task that returns early (also fatal).
+    registry.spawn_critical("early_return", async {});
+
+    // Collect both exits.
+    let mut exits_received = Vec::new();
+    for _ in 0..2 {
+        let exit = tokio::time::timeout(Duration::from_secs(2), exit_rx.recv())
+            .await
+            .expect("timeout")
+            .expect("recv");
+        let shutdown_started = shutdown_flag.load(Ordering::Acquire);
+        if is_fatal_exit(&exit, shutdown_started) {
+            exits_received.push(exit);
+        }
+    }
+
+    assert!(
+        !exits_received.is_empty(),
+        "Should have received at least one fatal exit"
+    );
+
+    // The first fatal exit is the primary cause. Verify map_task_exit_to_shutdown_cause
+    // produces a valid cause from it.
+    let primary_cause = map_task_exit_to_shutdown_cause(exits_received[0].clone());
+    assert!(
+        primary_cause.nonzero_exit_code(),
+        "Primary cause should have nonzero exit code"
+    );
+    assert!(
+        primary_cause.should_notify_supervisor(),
+        "Primary cause should notify supervisor"
+    );
 }

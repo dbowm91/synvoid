@@ -306,7 +306,6 @@ pub async fn run_unified_server_worker(
                                 "Lifecycle channel closed while worker active — {}",
                                 cause
                             );
-                            state.running.stop();
                             break crate::worker::task_registry::SupervisionOutcome::DirectCause(cause);
                         }
                         // Shutdown already in progress: channel closure is expected.
@@ -328,7 +327,6 @@ pub async fn run_unified_server_worker(
                                 exit.reason,
                                 exit.class,
                             );
-                            state.running.stop();
                             let cause = crate::worker::task_registry::map_task_exit_to_shutdown_cause(exit);
                             break crate::worker::task_registry::SupervisionOutcome::DirectCause(cause);
                         } else {
@@ -347,7 +345,6 @@ pub async fn run_unified_server_worker(
                             recv_error,
                             shutdown_started,
                         ) {
-                            state.running.stop();
                             break crate::worker::task_registry::SupervisionOutcome::DirectCause(cause);
                         }
                         // RecvError::Closed during shutdown is expected — continue waiting.
@@ -396,7 +393,7 @@ pub async fn run_unified_server_worker(
         crate::worker::task_registry::SupervisionOutcome::DirectCause(cause) => {
             let graceful = !matches!(
                 cause,
-                crate::worker::task_registry::WorkerShutdownCause::ServerExitedUnexpectedly
+                crate::worker::task_registry::WorkerShutdownCause::ServerExitedUnexpectedly(_)
                     | crate::worker::task_registry::WorkerShutdownCause::CriticalTaskExit(_)
                     | crate::worker::task_registry::WorkerShutdownCause::RegistryExitChannelClosed
                     | crate::worker::task_registry::WorkerShutdownCause::SupervisorDisconnected
@@ -410,18 +407,9 @@ pub async fn run_unified_server_worker(
         }
     };
 
-    // Step 1: Record coordinated shutdown intent before any teardown.
-    {
-        let registry = state.task_registry.lock().await;
-        registry.begin_shutdown();
-    }
-
-    // Step 1a: Acknowledge the lifecycle event so the IPC task can return.
-    // This must happen after begin_shutdown() so the IPC task's exit is
-    // classified as CleanCompletion, not UnexpectedCompletion.
-    if let Some(ack_tx) = lifecycle_ack {
-        let _ = ack_tx.send(());
-    }
+    // Step 1: Record coordinated shutdown intent before any teardown,
+    // and acknowledge the lifecycle event so the IPC task can return.
+    lifecycle::begin_coordinated_shutdown(&state.task_registry, lifecycle_ack).await;
 
     // Step 2: Stop accepting new connections.
     let tx_guard = state.stop_accepting_tx.lock().await;
@@ -542,12 +530,15 @@ pub async fn run_unified_server_worker(
                 })
                 .await;
         }
-        crate::worker::task_registry::WorkerShutdownCause::ServerExitedUnexpectedly => {
+        crate::worker::task_registry::WorkerShutdownCause::ServerExitedUnexpectedly(ref exit) => {
             let mut ipc_guard = state.ipc.lock().await;
             let _ = ipc_guard
                 .send(&crate::process::Message::WorkerError {
                     id: worker_id,
-                    error: "Server runtime exited unexpectedly".to_string(),
+                    error: format!(
+                        "Server task '{}' exited unexpectedly: {}",
+                        exit.name, exit.reason
+                    ),
                     severity: crate::process::ErrorSeverity::Critical,
                     error_code: crate::process::ErrorCode::Unknown,
                 })

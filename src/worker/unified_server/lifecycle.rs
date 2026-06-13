@@ -59,6 +59,26 @@ pub async fn request_lifecycle_transition(
     })
 }
 
+/// Record coordinated shutdown intent and acknowledge the lifecycle request.
+///
+/// This helper enforces the critical ordering invariant:
+/// `begin_shutdown()` must happen before any shared stop signal. The lifecycle
+/// acknowledgement is sent after `begin_shutdown()` so the IPC task's exit is
+/// classified as `CleanCompletion`.
+pub async fn begin_coordinated_shutdown(
+    registry: &tokio::sync::Mutex<crate::worker::task_registry::WorkerTaskRegistry>,
+    lifecycle_ack: Option<tokio::sync::oneshot::Sender<()>>,
+) {
+    {
+        let registry = registry.lock().await;
+        registry.begin_shutdown();
+    }
+
+    if let Some(ack) = lifecycle_ack {
+        let _ = ack.send(());
+    }
+}
+
 /// Lifecycle events emitted by the IPC task for composition-root orchestration.
 #[derive(Debug, Clone)]
 pub enum WorkerLifecycleEvent {
@@ -254,10 +274,13 @@ pub fn spawn_ipc_loop(
                         tracing::warn!("Unified server worker lost connection to supervisor");
                         state.master_dead.stop();
                         // Send SupervisorDisconnected via channel and wait for ack.
-                        let _ = request_lifecycle_transition(
+                        // If lifecycle coordination fails, propagate that error because
+                        // it explains why the composition root did not receive the
+                        // authoritative shutdown event.
+                        request_lifecycle_transition(
                             &lifecycle_tx,
                             WorkerLifecycleEvent::SupervisorDisconnected,
-                        ).await;
+                        ).await?;
                         return Err(IpcLoopError::ConnectionLost);
                     }
                 }
@@ -277,7 +300,7 @@ pub fn spawn_ipc_loop(
 
                     let timeout = Duration::from_secs(timeout_secs as u64);
                     let event = WorkerLifecycleEvent::MasterShutdown { graceful, timeout };
-                    let _ = request_lifecycle_transition(&lifecycle_tx, event).await;
+                    request_lifecycle_transition(&lifecycle_tx, event).await?;
                     return Ok(());
                 }
                 Some(Message::MasterConfigReload { config_path }) => {
@@ -774,7 +797,7 @@ pub fn spawn_ipc_loop(
                     );
 
                     let event = WorkerLifecycleEvent::WorkerResize { worker_threads: worker_threads as usize };
-                    let _ = request_lifecycle_transition(&lifecycle_tx, event).await;
+                    request_lifecycle_transition(&lifecycle_tx, event).await?;
                     return Ok(());
                 }
                 Some(_) | None => {}

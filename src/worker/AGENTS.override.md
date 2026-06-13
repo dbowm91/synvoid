@@ -264,6 +264,18 @@ The supervision loop returns `SupervisionOutcome` (Lifecycle | DirectCause) inst
 
 **Tests**: 15 new in `worker_supervision_control_flow.rs`, 8 new guardrail checks in `background_task_ownership_guard.rs`
 
+### Iteration 67 — Shutdown intent and lifecycle error cleanup
+
+**Lifecycle transition error propagation**: All terminal `request_lifecycle_transition()` calls in the IPC loop use `?` instead of `let _ = ...`. Lifecycle coordination failures produce explicit `IpcLoopError::Unexpected` task errors.
+
+**Supervision loop side-effect free**: The supervision loop selects causes only — no `state.running.stop()` before returning. All teardown happens in the composition root.
+
+**`begin_coordinated_shutdown()` helper**: `lifecycle.rs` exports `begin_coordinated_shutdown(registry, lifecycle_ack)` which calls `begin_shutdown()` then acknowledges the lifecycle request. Called before any stop signals in the composition root.
+
+**`ServerExitedUnexpectedly(NamedTaskExit)`**: The variant now carries `NamedTaskExit` for diagnostic detail. Supervisor `WorkerError` messages include the task name and exit reason.
+
+**Secondary exit classification**: Exits after primary cause selection are expected cleanup. They do not increment `tasks_unexpectedly_completed` and cannot replace the primary cause.
+
 ### How to add a new long-lived task
 1. Determine task class (CriticalService, RestartableBackground, BoundedChild, CpuOffload, Detached)
 2. For CriticalService/RestartableBackground: use WorkerTaskRegistry.spawn_critical() or spawn_background()

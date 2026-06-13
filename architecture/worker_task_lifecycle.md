@@ -627,3 +627,51 @@ The supervision loop now returns a typed `SupervisionOutcome` instead of `(Worke
 
 - 15 new tests in `tests/worker_supervision_control_flow.rs`
 - 8 new guardrail checks in `tests/background_task_ownership_guard.rs`
+
+## Iteration 67: Shutdown Intent and Lifecycle Error Cleanup
+
+### Lifecycle Transition Error Propagation
+
+All terminal `request_lifecycle_transition()` calls in the IPC loop now propagate errors with `?` instead of discarding them with `let _ =`. This makes lifecycle coordination failures visible as real task failures:
+
+- **MasterShutdown**: lifecycle transition error produces `IpcLoopError::Unexpected`
+- **WorkerResize**: lifecycle transition error produces `IpcLoopError::Unexpected`
+- **SupervisorDisconnected**: if lifecycle transition fails, returns the coordination error; if it succeeds, returns `IpcLoopError::ConnectionLost`
+
+### Supervision Loop is Side-Effect Free
+
+The supervision loop (Phase 15) no longer calls `state.running.stop()` before returning the cause. It selects causes only — all teardown side effects happen in the composition root (Phase 16). This eliminates the race window where secondary task exits could be misclassified as `UnexpectedCompletion` during the transition between cause selection and `begin_shutdown()`.
+
+### begin_coordinated_shutdown Helper
+
+A `begin_coordinated_shutdown()` helper in `lifecycle.rs` enforces the critical ordering invariant:
+
+1. `registry.begin_shutdown()` — records coordinated shutdown intent
+2. Lifecycle acknowledgement — IPC task can return cleanly
+
+This helper is called before any stop-accepting, running-flag, listener, or cancellation action.
+
+### Server Exit Detail Preservation
+
+`ServerExitedUnexpectedly` now carries `NamedTaskExit` for diagnostic detail:
+
+```rust
+pub enum WorkerShutdownCause {
+    ServerExitedUnexpectedly(NamedTaskExit),
+    // ...
+}
+```
+
+The supervisor `WorkerError` message now includes the task name and exit reason: `"Server task 'server_run' exited unexpectedly: error: ..."`.
+
+### Secondary Exit Classification
+
+After a primary cause is selected, secondary task exits are classified as expected cleanup:
+- They do not increment `tasks_unexpectedly_completed`
+- They cannot replace the primary `WorkerShutdownCause`
+- They are classified as `CleanCompletion` (post-`begin_shutdown`) or expected cancellation
+
+### New Tests
+
+- 8 new tests in `tests/worker_supervision_control_flow.rs` covering lifecycle transition failures, secondary exit classification, server exit detail preservation, and primary cause immutability
+- 4 new guardrail checks in `tests/background_task_ownership_guard.rs` verifying supervision side-effect freedom, helper encapsulation, lifecycle error propagation, and server exit detail preservation
