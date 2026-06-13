@@ -157,6 +157,10 @@ pub fn spawn_bandwidth_persist_task(
             }
             crate::metrics::bandwidth::persist_global_bandwidth_tracker();
         }
+
+        // Final flush on shutdown to avoid losing dirty state.
+        crate::metrics::bandwidth::persist_global_bandwidth_tracker();
+        tracing::debug!("Bandwidth persist task: final flush completed on shutdown");
     })
 }
 
@@ -779,6 +783,28 @@ pub fn spawn_server_run_task(
     })
 }
 
+/// Abort and join all tasks in the registry with a bounded timeout.
+///
+/// Used during partial startup failure to ensure no migrated task
+/// survives a failed worker initialization.
+pub async fn rollback_started_tasks(
+    registry: &mut crate::worker::task_registry::WorkerTaskRegistry,
+) {
+    registry.shutdown();
+    let exits = registry
+        .shutdown_and_join(
+            std::time::Duration::from_secs(2),
+            std::time::Duration::from_secs(1),
+        )
+        .await;
+    if !exits.is_empty() {
+        tracing::warn!(
+            "Startup rollback: {} tasks did not exit cleanly",
+            exits.len()
+        );
+    }
+}
+
 /// Request the blocklist from Supervisor at startup, with a 5s timeout.
 pub async fn request_initial_blocklist(
     ipc: &Arc<TokioMutex<crate::process::ipc_transport::IpcStream>>,
@@ -854,5 +880,183 @@ pub async fn request_initial_blocklist(
             }
             Err(_) => break,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(unused_imports)]
+    use super::*;
+    use crate::worker::task_registry::{TaskExitReason, WorkerTaskRegistry};
+    use std::sync::atomic::{AtomicBool, AtomicU64};
+    use std::sync::Arc;
+
+    /// Verify that the bandwidth persist task shuts down cleanly
+    /// and the registry reports zero active tasks afterward.
+    #[tokio::test]
+    async fn test_bandwidth_persist_shutdown_cleans_up() {
+        let mut registry = WorkerTaskRegistry::new();
+        spawn_bandwidth_persist_task(&mut registry);
+
+        assert_eq!(registry.background_count(), 1);
+
+        let exits = registry
+            .shutdown_and_join(Duration::from_secs(2), Duration::from_secs(2))
+            .await;
+
+        // Bandwidth persist is cooperative; it should exit cleanly.
+        // No non-clean exits expected (it breaks on shutdown signal).
+        let non_clean: Vec<_> = exits
+            .iter()
+            .filter(|e| e.reason != TaskExitReason::CleanCompletion)
+            .collect();
+        assert!(
+            non_clean.is_empty(),
+            "Expected clean shutdown, got: {:?}",
+            non_clean
+        );
+        assert_eq!(registry.active_count(), 0);
+    }
+
+    /// Verify that multiple registry-owned tasks all shut down
+    /// within the configured timeout bound.
+    #[tokio::test]
+    async fn test_registry_shutdown_joins_all_tasks() {
+        let mut registry = WorkerTaskRegistry::new();
+        let counter = Arc::new(AtomicU64::new(0));
+
+        // Spawn 3 background tasks that spin.
+        for _ in 0..3 {
+            let c = counter.clone();
+            registry.spawn_background("spinner", async move {
+                loop {
+                    c.fetch_add(1, Ordering::Relaxed);
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            });
+        }
+
+        assert_eq!(registry.background_count(), 3);
+
+        let start = std::time::Instant::now();
+        let exits = registry
+            .shutdown_and_join(Duration::from_secs(2), Duration::from_secs(2))
+            .await;
+        let elapsed = start.elapsed();
+
+        // All tasks should have been aborted (they spin forever).
+        assert_eq!(exits.len(), 3);
+        for exit in &exits {
+            assert_eq!(exit.reason, TaskExitReason::Aborted);
+        }
+        assert_eq!(registry.active_count(), 0);
+
+        // Shutdown should complete well within the timeout bound.
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "Shutdown took {:?}, expected < 5s",
+            elapsed
+        );
+
+        // Verify tasks actually stopped incrementing.
+        let after = counter.load(Ordering::Relaxed);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let after_wait = counter.load(Ordering::Relaxed);
+        assert!(
+            after_wait <= after + 1,
+            "Tasks continued after abort: after={}, after_wait={}",
+            after,
+            after_wait
+        );
+    }
+
+    /// Verify that rollback_started_tasks cancels all tasks in the registry.
+    #[tokio::test]
+    async fn test_rollback_cancels_all_tasks() {
+        let mut registry = WorkerTaskRegistry::new();
+        let alive = Arc::new(AtomicBool::new(true));
+        let alive_clone = alive.clone();
+
+        registry.spawn_background("long_task", async move {
+            while alive_clone.load(Ordering::Relaxed) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        });
+
+        assert_eq!(registry.active_count(), 1);
+
+        rollback_started_tasks(&mut registry).await;
+
+        assert_eq!(registry.active_count(), 0);
+    }
+
+    /// Verify that the heartbeat task stops on shutdown signal.
+    #[tokio::test]
+    async fn test_heartbeat_stops_on_shutdown() {
+        let mut registry = WorkerTaskRegistry::new();
+        let token = registry.child_token();
+
+        // Spawn a simplified heartbeat-like task (without UnifiedServerWorkerState).
+        registry.spawn_background("heartbeat_test", async move {
+            let mut interval = tokio::time::interval(Duration::from_millis(10));
+            let mut shutdown_rx = token;
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {}
+                    result = shutdown_rx.changed() => {
+                        if result.is_ok() && *shutdown_rx.borrow() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+
+        assert_eq!(registry.background_count(), 1);
+
+        let exits = registry
+            .shutdown_and_join(Duration::from_secs(2), Duration::from_secs(2))
+            .await;
+
+        let non_clean: Vec<_> = exits
+            .iter()
+            .filter(|e| e.reason != TaskExitReason::CleanCompletion)
+            .collect();
+        assert!(
+            non_clean.is_empty(),
+            "Heartbeat should exit cleanly, got: {:?}",
+            non_clean
+        );
+        assert_eq!(registry.active_count(), 0);
+    }
+
+    /// Verify that a critical IPC-like task that panics is detected
+    /// and reported through the exit channel before shutdown.
+    #[tokio::test]
+    async fn test_ipc_panic_detected_before_shutdown() {
+        let mut registry = WorkerTaskRegistry::new();
+        let mut exit_rx = registry.subscribe_exits();
+
+        registry.spawn_critical("ipc_panic_test", async {
+            panic!("IPC connection lost");
+        });
+
+        // The exit notification should arrive immediately.
+        let exit = tokio::time::timeout(Duration::from_secs(2), exit_rx.recv())
+            .await
+            .expect("Should receive exit notification")
+            .expect("Should Ok");
+
+        assert_eq!(exit.name, "ipc_panic_test");
+        match &exit.reason {
+            TaskExitReason::Panic(msg) => assert!(msg.contains("IPC connection lost")),
+            other => panic!("Expected Panic, got {:?}", other),
+        }
+
+        // Shutdown should still complete cleanly.
+        let _exits = registry
+            .shutdown_and_join(Duration::from_secs(2), Duration::from_secs(2))
+            .await;
+        assert_eq!(registry.active_count(), 0);
     }
 }
