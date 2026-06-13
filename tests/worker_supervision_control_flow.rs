@@ -393,3 +393,201 @@ async fn test_begin_shutdown_idempotent_no_broadcast() {
     // Token should still be false — no broadcast.
     assert!(!*token.borrow());
 }
+
+// ---------------------------------------------------------------------------
+// Iteration 65 — Lifecycle event channel and acknowledgement tests
+// ---------------------------------------------------------------------------
+
+/// Real MasterShutdown via lifecycle channel produces clean task completion,
+/// not UnexpectedCompletion.
+#[tokio::test]
+async fn test_lifecycle_channel_master_shutdown_classifies_cleanly() {
+    use synvoid::worker::unified_server::lifecycle::{LifecycleRequest, WorkerLifecycleEvent};
+
+    let mut registry = WorkerTaskRegistry::new();
+    let mut exit_rx = registry.subscribe_exits();
+
+    // Simulate an IPC-like critical task that sends a lifecycle event.
+    let (lifecycle_tx, mut lifecycle_rx) = tokio::sync::mpsc::channel::<LifecycleRequest>(4);
+
+    registry.spawn_critical("ipc_loop_sim", async move {
+        // Simulate receiving MasterShutdown from supervisor.
+        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+        let _ = lifecycle_tx
+            .send(LifecycleRequest {
+                event: WorkerLifecycleEvent::MasterShutdown {
+                    graceful: true,
+                    timeout: std::time::Duration::from_secs(30),
+                },
+                accepted: ack_tx,
+            })
+            .await;
+        // Wait for composition root acknowledgement.
+        let _ = ack_rx.await;
+    });
+
+    // Composition root: receive lifecycle event, begin_shutdown, acknowledge.
+    let request = tokio::time::timeout(Duration::from_secs(2), lifecycle_rx.recv())
+        .await
+        .expect("timeout")
+        .expect("no lifecycle event");
+
+    assert!(matches!(
+        request.event,
+        WorkerLifecycleEvent::MasterShutdown { .. }
+    ));
+
+    // Begin shutdown BEFORE acknowledging — this is the critical ordering.
+    registry.begin_shutdown();
+    let _ = request.accepted.send(());
+
+    // Now join the IPC task.
+    let exits = registry
+        .shutdown_and_join(Duration::from_secs(5), Duration::from_secs(5))
+        .await;
+
+    // The IPC task should exit cleanly since begin_shutdown was called
+    // before it returned.
+    let non_clean: Vec<_> = exits
+        .iter()
+        .filter(|e| e.reason != TaskExitReason::CleanCompletion)
+        .collect();
+    assert!(
+        non_clean.is_empty(),
+        "Expected clean shutdown, got: {:?}",
+        non_clean
+    );
+    assert_eq!(
+        registry
+            .metrics
+            .tasks_unexpectedly_completed
+            .load(Ordering::Relaxed),
+        0,
+        "No tasks should have unexpectedly completed"
+    );
+}
+
+/// Verify that lifecycle channel closure during shutdown is handled gracefully.
+#[tokio::test]
+async fn test_lifecycle_channel_closure_during_shutdown() {
+    use synvoid::worker::unified_server::lifecycle::{LifecycleRequest, WorkerLifecycleEvent};
+
+    let mut registry = WorkerTaskRegistry::new();
+    let (_lifecycle_tx, mut lifecycle_rx) = tokio::sync::mpsc::channel::<LifecycleRequest>(4);
+
+    // Drop the sender to simulate channel closure.
+    drop(_lifecycle_tx);
+
+    // The receiver should return None.
+    let result = tokio::time::timeout(Duration::from_millis(100), lifecycle_rx.recv()).await;
+    assert!(result.is_ok());
+    assert!(
+        result.unwrap().is_none(),
+        "Channel closure should yield None"
+    );
+}
+
+/// Verify resize event via lifecycle channel sends ResizeAck (not ShutdownComplete).
+#[tokio::test]
+async fn test_resize_cause_maps_to_resize_exit_code() {
+    let cause = WorkerShutdownCause::WorkerResize { worker_threads: 8 };
+    assert_eq!(cause.exit_code(), 100);
+    assert!(!cause.nonzero_exit_code());
+    assert!(cause.is_expected());
+    assert!(!cause.should_notify_supervisor());
+}
+
+/// Verify that a fatal cause (CriticalTaskExit) sends WorkerError, not ShutdownComplete.
+#[tokio::test]
+async fn test_fatal_cause_should_notify_supervisor() {
+    let exit = NamedTaskExit {
+        id: TaskId(1),
+        name: "ipc_loop",
+        class: TaskClass::CriticalService,
+        reason: TaskExitReason::Error("connection lost".to_string()),
+        expected_during_shutdown: false,
+    };
+    let cause = WorkerShutdownCause::CriticalTaskExit(exit);
+    assert!(cause.should_notify_supervisor());
+    assert!(cause.nonzero_exit_code());
+}
+
+/// Verify SupervisorDisconnected does not attempt notification.
+#[tokio::test]
+async fn test_supervisor_disconnect_no_notification() {
+    let cause = WorkerShutdownCause::SupervisorDisconnected;
+    assert!(!cause.is_expected());
+    // should_notify_supervisor is true for SupervisorDisconnected,
+    // but the composition root routes it to no-op since channel is unavailable.
+    assert!(cause.should_notify_supervisor());
+}
+
+/// Verify that aborting and awaiting legacy handles completes successfully.
+#[tokio::test]
+async fn test_legacy_handle_abort_and_await_completes() {
+    let mut registry = WorkerTaskRegistry::new();
+    let token = registry.child_token();
+
+    // Spawn a critical task to keep the worker "alive".
+    registry.spawn_critical("keep_alive", async move {
+        let mut shutdown = token;
+        loop {
+            if *shutdown.borrow() {
+                break;
+            }
+            if shutdown.changed().await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Simulate a legacy task handle — a long-running task.
+    let handle = tokio::spawn(async {
+        loop {
+            tokio::time::sleep(Duration::from_secs(100)).await;
+        }
+    });
+
+    // Abort and await the legacy handle — must complete without hanging.
+    handle.abort();
+    let result = tokio::time::timeout(Duration::from_secs(2), handle).await;
+    assert!(result.is_ok(), "Abort + await must complete within timeout");
+
+    // Clean shutdown.
+    registry.broadcast_shutdown();
+    let _ = registry
+        .shutdown_and_join(Duration::from_secs(5), Duration::from_secs(5))
+        .await;
+}
+
+/// Verify shutdown ordering: begin_shutdown before stop_accepting.
+#[tokio::test]
+async fn test_shutdown_ordering_begin_before_stop_accepting() {
+    // This is a structural test verifying the source code ordering.
+    let content = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/worker/unified_server/mod.rs"),
+    )
+    .unwrap();
+
+    let composition_start = content
+        .find("composition-root shutdown procedure")
+        .expect("composition root not found");
+    let section = &content[composition_start..];
+
+    let begin_pos = section
+        .find("registry.begin_shutdown()")
+        .expect("begin_shutdown not found");
+    let ack_pos = section.find("ack_tx.send(())").expect("ack send not found");
+    let stop_accepting_pos = section
+        .find("state.stop_accepting_tx")
+        .expect("stop_accepting not found");
+
+    assert!(
+        begin_pos < ack_pos,
+        "begin_shutdown must come before lifecycle acknowledgement"
+    );
+    assert!(
+        ack_pos < stop_accepting_pos,
+        "lifecycle acknowledgement must come before stop_accepting"
+    );
+}

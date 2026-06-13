@@ -248,15 +248,13 @@ pub async fn run_unified_server_worker(
     };
 
     // ---- Phase 13: spawn lifecycle tasks via registry ----
-    let lifecycle_event: std::sync::Arc<
-        tokio::sync::RwLock<Option<lifecycle::WorkerLifecycleEvent>>,
-    > = {
+    let mut lifecycle_rx = {
         let mut registry = state.task_registry.lock().await;
         lifecycle::spawn_heartbeat_task(state.clone(), &mut registry);
         lifecycle::spawn_bandwidth_persist_task(&mut registry);
-        let (_ipc_id, lifecycle_event) =
+        let (_ipc_id, lifecycle_rx) =
             lifecycle::spawn_ipc_loop(state.clone(), shared_config.clone(), &mut registry);
-        lifecycle_event
+        lifecycle_rx
     };
 
     // ---- Phase 14: register server run task under registry ownership ----
@@ -278,8 +276,44 @@ pub async fn run_unified_server_worker(
     };
 
     // ---- Phase 15: supervision loop ----
-    let shutdown_cause = loop {
+    //
+    // Select over both lifecycle events from the IPC task and task exits
+    // from the registry. Lifecycle events arrive before the IPC critical task
+    // returns, ensuring `begin_shutdown()` is called before task return.
+    let (shutdown_cause, lifecycle_ack) = loop {
         tokio::select! {
+            // Lifecycle events from IPC task (MasterShutdown, WorkerResize, SupervisorDisconnected).
+            request = lifecycle_rx.recv() => {
+                match request {
+                    Some(req) => {
+                        tracing::debug!(
+                            "Received lifecycle event from IPC: {:?}",
+                            req.event
+                        );
+                        break (req.event, Some(req.accepted));
+                    }
+                    None => {
+                        // Lifecycle channel closed — IPC task exited without sending an event.
+                        let shutdown_started = shutdown_flag.load(std::sync::atomic::Ordering::Acquire);
+                        if shutdown_started {
+                            break (
+                                lifecycle::WorkerLifecycleEvent::MasterShutdown {
+                                    graceful: true,
+                                    timeout: std::time::Duration::from_secs(30),
+                                },
+                                None,
+                            );
+                        } else {
+                            state.running.stop();
+                            break (
+                                lifecycle::WorkerLifecycleEvent::SupervisorDisconnected,
+                                None,
+                            );
+                        }
+                    }
+                }
+            }
+            // Task exits from the registry.
             exit = exit_rx.recv() => {
                 match exit {
                     Ok(exit) => {
@@ -293,7 +327,10 @@ pub async fn run_unified_server_worker(
                                 exit.class,
                             );
                             state.running.stop();
-                            break crate::worker::task_registry::WorkerShutdownCause::CriticalTaskExit(exit);
+                            break (
+                                lifecycle::WorkerLifecycleEvent::SupervisorDisconnected,
+                                None,
+                            );
                         } else {
                             tracing::debug!(
                                 "Non-fatal task exit: '{}' ({}) reason={} expected={}",
@@ -309,19 +346,30 @@ pub async fn run_unified_server_worker(
                             "Exit receiver lagged, skipped {} events — supervision integrity compromised",
                             skipped
                         );
-                        // Conservative: treat as lifecycle infrastructure failure.
                         state.running.stop();
-                        break crate::worker::task_registry::WorkerShutdownCause::RegistryExitChannelClosed;
+                        break (
+                            lifecycle::WorkerLifecycleEvent::SupervisorDisconnected,
+                            None,
+                        );
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                         let shutdown_started = shutdown_flag.load(std::sync::atomic::Ordering::Acquire);
                         if shutdown_started {
                             tracing::debug!("Exit channel closed during shutdown — expected");
-                            break crate::worker::task_registry::WorkerShutdownCause::SupervisorShutdown;
+                            break (
+                                lifecycle::WorkerLifecycleEvent::MasterShutdown {
+                                    graceful: true,
+                                    timeout: std::time::Duration::from_secs(30),
+                                },
+                                None,
+                            );
                         } else {
                             tracing::error!("Exit channel closed while registry active — lifecycle failure");
                             state.running.stop();
-                            break crate::worker::task_registry::WorkerShutdownCause::RegistryExitChannelClosed;
+                            break (
+                                lifecycle::WorkerLifecycleEvent::SupervisorDisconnected,
+                                None,
+                            );
                         }
                     }
                 }
@@ -331,55 +379,36 @@ pub async fn run_unified_server_worker(
 
     // ---- Phase 16: composition-root shutdown procedure ----
     //
-    // The supervision loop has exited with a preliminary cause.
-    // Now read the lifecycle event from the IPC task to refine the cause
-    // and execute the ordered shutdown sequence.
+    // The supervision loop has exited with a lifecycle event.
+    // Map the event to the correct WorkerShutdownCause and execute
+    // the ordered shutdown sequence.
 
-    let lifecycle = lifecycle_event.read().await.clone();
-    let (graceful, drain_timeout, _resize_threads) = match &lifecycle {
-        Some(lifecycle::WorkerLifecycleEvent::MasterShutdown { graceful, timeout }) => {
+    let (graceful, drain_timeout, _resize_threads) = match &shutdown_cause {
+        lifecycle::WorkerLifecycleEvent::MasterShutdown { graceful, timeout } => {
             (*graceful, *timeout, None)
         }
-        Some(lifecycle::WorkerLifecycleEvent::WorkerResize { worker_threads }) => (
+        lifecycle::WorkerLifecycleEvent::WorkerResize { worker_threads } => (
             true,
             std::time::Duration::from_secs(30),
             Some(*worker_threads),
         ),
-        Some(lifecycle::WorkerLifecycleEvent::SupervisorDisconnected) => {
+        lifecycle::WorkerLifecycleEvent::SupervisorDisconnected => {
             (false, std::time::Duration::ZERO, None)
         }
-        None => (false, std::time::Duration::ZERO, None),
     };
 
-    // Refine the shutdown cause based on the IPC lifecycle event.
-    let shutdown_cause = match &lifecycle {
-        Some(lifecycle::WorkerLifecycleEvent::MasterShutdown { .. }) => {
+    // Map lifecycle event to the authoritative WorkerShutdownCause.
+    let shutdown_cause = match &shutdown_cause {
+        lifecycle::WorkerLifecycleEvent::MasterShutdown { .. } => {
             crate::worker::task_registry::WorkerShutdownCause::SupervisorShutdown
         }
-        Some(lifecycle::WorkerLifecycleEvent::WorkerResize { worker_threads }) => {
+        lifecycle::WorkerLifecycleEvent::WorkerResize { worker_threads } => {
             crate::worker::task_registry::WorkerShutdownCause::WorkerResize {
                 worker_threads: *worker_threads,
             }
         }
-        Some(lifecycle::WorkerLifecycleEvent::SupervisorDisconnected) => {
+        lifecycle::WorkerLifecycleEvent::SupervisorDisconnected => {
             crate::worker::task_registry::WorkerShutdownCause::SupervisorDisconnected
-        }
-        None => {
-            // No IPC lifecycle event — the supervision loop's preliminary cause stands.
-            // For server task exits, classify based on whether shutdown was in progress.
-            match &shutdown_cause {
-                crate::worker::task_registry::WorkerShutdownCause::CriticalTaskExit(exit)
-                    if exit.name == "server_run" =>
-                {
-                    let shutdown_started = shutdown_flag.load(std::sync::atomic::Ordering::Acquire);
-                    if shutdown_started {
-                        crate::worker::task_registry::WorkerShutdownCause::ServerStoppedForShutdown
-                    } else {
-                        crate::worker::task_registry::WorkerShutdownCause::ServerExitedUnexpectedly
-                    }
-                }
-                other => other.clone(),
-            }
         }
     };
 
@@ -387,6 +416,13 @@ pub async fn run_unified_server_worker(
     {
         let registry = state.task_registry.lock().await;
         registry.begin_shutdown();
+    }
+
+    // Step 1a: Acknowledge the lifecycle event so the IPC task can return.
+    // This must happen after begin_shutdown() so the IPC task's exit is
+    // classified as CleanCompletion, not UnexpectedCompletion.
+    if let Some(ack_tx) = lifecycle_ack {
+        let _ = ack_tx.send(());
     }
 
     // Step 2: Stop accepting new connections.
@@ -458,26 +494,82 @@ pub async fn run_unified_server_worker(
         }
     }
 
-    // Step 9: Abort any remaining non-migrated task handles.
-    let handles = state.task_handles.lock().await;
-    for handle in handles.iter() {
-        handle.abort();
+    // Step 9: Abort and await any remaining non-migrated task handles.
+    // No legacy handle should remain in the vector after shutdown.
+    {
+        let mut handles = state.task_handles.lock().await;
+        let handles_to_await: Vec<_> = std::mem::take(&mut *handles);
+        drop(handles);
+        for handle in handles_to_await {
+            handle.abort();
+            let _ = handle.await;
+        }
     }
-    drop(handles);
 
-    // Step 10: Send shutdown-complete acknowledgement (last IPC operation).
-    if shutdown_cause.should_notify_supervisor() {
-        // For fatal causes, we don't send a normal shutdown-complete.
-        tracing::error!(
-            "Unified Server Worker {} not sending shutdown-complete (fatal cause: {})",
-            worker_id,
-            shutdown_cause
-        );
-    } else {
-        let mut ipc_guard = state.ipc.lock().await;
-        let _ = ipc_guard
-            .send(&crate::process::Message::UnifiedServerWorkerShutdownComplete { id: worker_id })
-            .await;
+    // Step 10: Send supervisor acknowledgement (last IPC operation).
+    // Routing is explicit by cause:
+    //   SupervisorShutdown   -> ShutdownComplete
+    //   WorkerResize         -> ResizeAck
+    //   CriticalTaskExit     -> WorkerError
+    //   ServerExitedUnexpectedly -> WorkerError
+    //   SupervisorDisconnected   -> no-op (channel unavailable)
+    //   RegistryExitChannelClosed -> WorkerError
+    //   other (ExternalStop, etc.) -> no-op
+    match &shutdown_cause {
+        crate::worker::task_registry::WorkerShutdownCause::SupervisorShutdown => {
+            let mut ipc_guard = state.ipc.lock().await;
+            let _ = ipc_guard
+                .send(
+                    &crate::process::Message::UnifiedServerWorkerShutdownComplete { id: worker_id },
+                )
+                .await;
+        }
+        crate::worker::task_registry::WorkerShutdownCause::WorkerResize { worker_threads } => {
+            let mut ipc_guard = state.ipc.lock().await;
+            let _ = ipc_guard
+                .send(&crate::process::Message::UnifiedServerWorkerResizeAck {
+                    id: worker_id,
+                    worker_threads: *worker_threads as u32,
+                })
+                .await;
+        }
+        crate::worker::task_registry::WorkerShutdownCause::CriticalTaskExit(exit) => {
+            let mut ipc_guard = state.ipc.lock().await;
+            let _ = ipc_guard
+                .send(&crate::process::Message::WorkerError {
+                    id: worker_id,
+                    error: format!("Critical task '{}' exited: {}", exit.name, exit.reason),
+                    severity: crate::process::ErrorSeverity::Critical,
+                    error_code: crate::process::ErrorCode::WorkerPanic,
+                })
+                .await;
+        }
+        crate::worker::task_registry::WorkerShutdownCause::ServerExitedUnexpectedly => {
+            let mut ipc_guard = state.ipc.lock().await;
+            let _ = ipc_guard
+                .send(&crate::process::Message::WorkerError {
+                    id: worker_id,
+                    error: "Server runtime exited unexpectedly".to_string(),
+                    severity: crate::process::ErrorSeverity::Critical,
+                    error_code: crate::process::ErrorCode::Unknown,
+                })
+                .await;
+        }
+        crate::worker::task_registry::WorkerShutdownCause::RegistryExitChannelClosed => {
+            let mut ipc_guard = state.ipc.lock().await;
+            let _ = ipc_guard
+                .send(&crate::process::Message::WorkerError {
+                    id: worker_id,
+                    error: "Registry exit channel closed — lifecycle infrastructure failure"
+                        .to_string(),
+                    severity: crate::process::ErrorSeverity::Critical,
+                    error_code: crate::process::ErrorCode::Unknown,
+                })
+                .await;
+        }
+        // SupervisorDisconnected, ExternalStop, RunningFlagCleared, ServerStoppedForShutdown
+        // -> no supervisor notification needed.
+        _ => {}
     }
 
     // Step 11: Derive exit code from the authoritative shutdown cause.

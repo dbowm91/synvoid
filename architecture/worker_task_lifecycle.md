@@ -1,4 +1,4 @@
-# Worker Task Lifecycle — Iteration 64
+# Worker Task Lifecycle — Iteration 65
 
 ## Purpose
 
@@ -412,18 +412,14 @@ The bandwidth persist task performs a final flush after its loop breaks on every
 | `ExternalStop` | External stop signal received | No | No |
 | `RunningFlagCleared` | Worker running flag cleared (resize) | No | No |
 
-#### IPC Loop Typed Completion
+#### IPC Loop Error Handling
 
-The IPC loop returns typed completion via `IpcLoopExit` (expected completions) and `IpcLoopError` (failures):
+The IPC loop returns typed errors via `IpcLoopError`:
 
-- **`IpcLoopExit::MasterShutdown`**: Processed master shutdown command.
-- **`IpcLoopExit::WorkerResize`**: Processed threadpool resize command.
-- **`IpcLoopExit::RegistryShutdown`**: Registry cancellation during coordinated shutdown.
-- **`IpcLoopExit::RunningFlagCleared`**: Worker running flag intentionally cleared.
-- **`IpcLoopError::ConnectionLost`**: Supervisor connection lost (maps to `SupervisorDisconnected`).
+- **`IpcLoopError::ConnectionLost`**: Supervisor connection lost (triggers `SupervisorDisconnected`).
 - **`IpcLoopError::Unexpected(String)`**: Unexpected panic or error.
 
-`IpcLoopExitCause` (shared `Arc<RwLock<Option<IpcLoopExit>>>`) communicates the specific exit path to the caller when the loop returns `Ok(())`.
+Lifecycle events are communicated via the `LifecycleRequest` channel, not via shared state.
 
 ## Iteration 64: Coordinated Shutdown Intent and Lifecycle Events
 
@@ -436,20 +432,6 @@ The `WorkerTaskRegistry` now separates shutdown intent from task cancellation:
 - **`shutdown()`**: Calls both `begin_shutdown()` + `broadcast_shutdown()` (defensive full shutdown).
 
 The composition root must call `begin_shutdown()` before any tasks are asked to return, ensuring their completion is classified as expected.
-
-### WorkerLifecycleEvent Channel
-
-The IPC task now emits typed lifecycle events instead of performing inline shutdown:
-
-```rust
-pub enum WorkerLifecycleEvent {
-    MasterShutdown { graceful: bool, timeout: Duration },
-    WorkerResize { worker_threads: usize },
-    SupervisorDisconnected,
-}
-```
-
-The IPC loop stores the event in a shared `Arc<RwLock<Option<WorkerLifecycleEvent>>>` and returns cleanly. The composition root reads the event after the supervision loop exits to determine the correct shutdown procedure.
 
 ### Authoritative WorkerShutdownCause
 
@@ -474,52 +456,142 @@ The `worker_exit_code` field has been removed. The `master_dead` flag is retaine
 
 `WorkerResize { worker_threads: usize }` carries the requested thread count and uses the special exit code `100`.
 
-### Composition-Root Shutdown Procedure
-
-The ordered shutdown sequence is now owned by the composition root in `src/worker/unified_server/mod.rs`:
-
-1. Record primary shutdown cause from lifecycle event
-2. Call `registry.begin_shutdown()`
-3. Stop accepting new connections
-4. Graceful drain (if requested, bounded by `drain_timeout`)
-5. Stop app servers (Granian supervisors)
-6. Clear running flag
-7. Broadcast registry cancellation
-8. Await registry tasks with bounded timeouts
-9. Abort remaining non-migrated task handles
-10. Send `UnifiedServerWorkerShutdownComplete` (if not a fatal cause)
-11. Derive exit code from `shutdown_cause.exit_code()`
-
-### ShutdownComplete Acknowledgement Ordering
-
-`UnifiedServerWorkerShutdownComplete` is now sent from the composition root **after** all registry-owned tasks have been joined or aborted, not from the IPC task's inline shutdown branch. This ensures the supervisor is told "complete" only when shutdown is actually complete.
-
 ### Bandwidth Persistence Ownership
 
 The bandwidth persist background task owns both periodic and final flushes. The composition root does NOT call `persist_global_bandwidth_tracker()` directly — the background task's final flush after the shutdown signal is the single authoritative persistence point. This eliminates double-flush ambiguity.
 
-### IPC Loop Behavioral Changes
+## Iteration 65: Lifecycle Event Channel and Acknowledgement
 
-The IPC loop no longer performs inline shutdown for `MasterShutdown` or `WorkerResize`. Instead:
+### Lifecycle Event Channel (Phase 1)
 
-- **`MasterShutdown`**: Stores `WorkerLifecycleEvent::MasterShutdown { graceful, timeout }` and returns `Ok(())`
-- **`WorkerResize`**: Stores `WorkerLifecycleEvent::WorkerResize { worker_threads }` and returns `Ok(())`
-- **`ConnectionLost`**: Stores `WorkerLifecycleEvent::SupervisorDisconnected` and returns `Err(IpcLoopError::ConnectionLost)`
+The IPC task now communicates lifecycle events to the composition root via a real `tokio::sync::mpsc` channel instead of a shared `Arc<RwLock<Option<...>>>`:
 
-The `IpcLoopExitCause` side-channel is retained for backward compatibility but is no longer consumed by the composition root.
+```rust
+pub struct LifecycleRequest {
+    pub event: WorkerLifecycleEvent,
+    pub accepted: tokio::sync::oneshot::Sender<()>,
+}
+```
+
+The IPC loop sends a `LifecycleRequest` containing the event and a oneshot acknowledgement sender. The composition root receives the request, calls `begin_shutdown()`, then acknowledges via the oneshot channel.
+
+### Coordinator Acknowledgement Handshake (Phase 2)
+
+For expected lifecycle events (`MasterShutdown`, `WorkerResize`), the IPC task waits for the composition root's acknowledgement before returning:
+
+1. IPC task receives `MasterShutdown` or `WorkerResize` from supervisor
+2. IPC task sends `LifecycleRequest` to composition root via mpsc channel
+3. IPC task awaits `accepted` oneshot receiver
+4. Composition root calls `begin_shutdown()` then sends acknowledgement
+5. IPC task returns — its exit is classified as `CleanCompletion`
+
+For `SupervisorDisconnected`, the IPC task sends the event, awaits acknowledgement, then returns `Err(IpcLoopError::ConnectionLost)`.
+
+### Supervision Loop Integration (Phase 3)
+
+The supervision loop selects over both lifecycle events and task exits:
+
+```rust
+let (shutdown_cause, lifecycle_ack) = loop {
+    tokio::select! {
+        request = lifecycle_rx.recv() => {
+            // Lifecycle event from IPC — break with event and ack sender
+        }
+        exit = exit_rx.recv() => {
+            // Task exit from registry — handle fatality
+        }
+    }
+};
+```
+
+Lifecycle events arrive **before** the IPC critical task returns, ensuring `begin_shutdown()` is called before any task is allowed to exit.
+
+### Removed Types (Phase 4)
+
+`IpcLoopExitCause` and `IpcLoopExit` have been removed. They were a shared-state side channel that is now redundant with the lifecycle event channel. The IPC loop no longer writes to `Arc<RwLock<Option<IpcLoopExit>>>`.
+
+### Dedicated Resize Acknowledgement (Phase 6)
+
+The composition root now sends `UnifiedServerWorkerResizeAck` for `WorkerResize` causes instead of `UnifiedServerWorkerShutdownComplete`:
+
+| Cause | Message Sent |
+|-------|-------------|
+| `SupervisorShutdown` | `UnifiedServerWorkerShutdownComplete` |
+| `WorkerResize` | `UnifiedServerWorkerResizeAck` |
+| `CriticalTaskExit` | `WorkerError` |
+| `ServerExitedUnexpectedly` | `WorkerError` |
+| `RegistryExitChannelClosed` | `WorkerError` |
+| `SupervisorDisconnected` | no-op (channel unavailable) |
+| Other | no-op |
+
+### Legacy Handle Abort-and-Await (Phase 7)
+
+Legacy `state.task_handles` are now aborted **and awaited** before shutdown completion is reported:
+
+```rust
+let mut handles = state.task_handles.lock().await;
+let handles_to_await: Vec<_> = std::mem::take(&mut *handles);
+drop(handles);
+for handle in handles_to_await {
+    handle.abort();
+    let _ = handle.await;
+}
+```
+
+No legacy handle remains in the vector after shutdown. Every aborted handle is awaited.
+
+### Explicit Fatal Supervisor Notification (Phase 8)
+
+When the cause is fatal and IPC remains available, the composition root sends a structured `WorkerError` before closing down:
+
+- `CriticalTaskExit` → WorkerError with task name/reason
+- `ServerExitedUnexpectedly` → WorkerError with runtime failure
+- `RegistryExitChannelClosed` → WorkerError with infrastructure failure
+- `SupervisorDisconnected` → no-op (channel unavailable)
+
+### Acknowledgement Routing (Phase 9)
+
+The `notify_supervisor_of_worker_exit` logic is now a `match` on `WorkerShutdownCause` with explicit routing per cause, replacing the previous `should_notify_supervisor()` boolean guard.
+
+### Composition-Root Shutdown Procedure (Updated)
+
+The ordered shutdown sequence:
+
+1. Receive lifecycle event from IPC task (supervision loop)
+2. Map event to `WorkerShutdownCause`
+3. Call `registry.begin_shutdown()` — records coordinated shutdown intent
+4. Acknowledge lifecycle event — IPC task can return cleanly
+5. Stop accepting new connections
+6. Graceful drain (if requested, bounded by `drain_timeout`)
+7. Stop app servers (Granian supervisors)
+8. Clear running flag
+9. Broadcast registry cancellation
+10. Await registry tasks with bounded timeouts
+11. Abort and await legacy non-migrated task handles
+12. Send supervisor acknowledgement by cause (ShutdownComplete/ResizeAck/WorkerError)
+13. Derive exit code from `shutdown_cause.exit_code()`
 
 ### Guardrail Additions
 
 New guardrail tests in `tests/background_task_ownership_guard.rs`:
 
-- `master_shutdown_begins_intent_before_running_stop` — `begin_shutdown()` precedes `running.stop()`
-- `shutdown_complete_sent_from_composition_root` — `ShutdownComplete` after `shutdown_and_join`
-- `ipc_loop_emits_lifecycle_event_not_inline_shutdown` — IPC emits events, not inline shutdown
-- `worker_shutdown_cause_has_exit_code` — `exit_code()` method exists
-- `server_exit_distinguishes_expected_unexpected` — `ServerExitedUnexpectedly` and `ServerStoppedForShutdown` variants
-- `begin_shutdown_and_broadcast_are_separate` — separate `begin_shutdown()` and `broadcast_shutdown()` methods
-- `exit_code_derived_from_shutdown_cause` — exit code from `shutdown_cause.exit_code()`, not `worker_exit_code`
-- `graceful_fields_consumed_by_drain` — `graceful` and `drain_timeout` consumed by shutdown path
+- `ipc_lifecycle_uses_channel_not_shared_state` — IPC must use channel, not Arc<RwLock>
+- `ipc_loop_exit_cause_removed` — IpcLoopExitCause/IpcLoopExit must be removed
+- `resize_cause_routes_to_resize_ack` — resize sends ResizeAck
+- `legacy_handles_awaited_after_abort` — legacy handles are awaited after abort
+- `fatal_causes_send_worker_error` — fatal causes send WorkerError
+- `lifecycle_ack_after_begin_shutdown` — lifecycle ack happens after begin_shutdown
+- `supervision_selects_lifecycle_events` — supervision loop selects lifecycle_rx
+
+New integration tests in `tests/worker_supervision_control_flow.rs`:
+
+- `test_lifecycle_channel_master_shutdown_classifies_cleanly` — real MasterShutdown via lifecycle channel produces clean completion
+- `test_lifecycle_channel_closure_during_shutdown` — channel closure is handled gracefully
+- `test_resize_cause_maps_to_resize_exit_code` — resize exit code and properties
+- `test_fatal_cause_should_notify_supervisor` — fatal cause notification
+- `test_supervisor_disconnect_no_notification` — disconnect no-op
+- `test_legacy_handle_abort_and_await_completes` — abort+await completes within timeout
+- `test_shutdown_ordering_begin_before_stop_accepting` — ordering verification
 
 ## Guardrail
 

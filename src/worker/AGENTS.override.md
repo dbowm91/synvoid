@@ -78,7 +78,8 @@ UnifiedServer worker (`run_unified_server_worker`).
                        misconfigured sites. Gated by `security.strict_tls_passthrough_policy`.
 - `init_mesh.rs`   - Mesh + Threat Intel + YARA rules initialization
 - `lifecycle.rs`   - heartbeat task, bandwidth-persist task, IPC message
-                      handling loop, server run task, initial blocklist request
+                       handling loop, initial blocklist request;
+                       `LifecycleRequest` handshake for composition-root coordination
 
 ### Helper files outside the subdirectories
 
@@ -230,11 +231,19 @@ The `task_registry` module provides structured concurrency management:
 ### Iteration 64: Coordinated Shutdown Intent
 
 - **`begin_shutdown()` vs `broadcast_shutdown()`**: The registry now separates shutdown intent (atomic flag) from task cancellation (watch channel). `begin_shutdown()` marks coordinated shutdown intent immediately, changing task completion classification. `broadcast_shutdown()` sends the cancel signal to tasks.
-- **`WorkerLifecycleEvent`**: The IPC task emits typed lifecycle events (`MasterShutdown`, `WorkerResize`, `SupervisorDisconnected`) via a shared `Arc<RwLock>` instead of performing inline shutdown. The composition root reads the event to determine the correct shutdown procedure.
-- **Composition-root shutdown ordering**: The ordered shutdown sequence is now owned by `run_unified_server_worker()` in `mod.rs`, not by the IPC task. Steps: begin_shutdown → stop_accepting → drain → stop servers → clear running → broadcast_cancel → join tasks → abort remnants → send ShutdownComplete → exit.
 - **`WorkerShutdownCause` is authoritative**: `exit_code()` method derives the process exit code. `worker_exit_code` field removed. `ServerExited` split into `ServerExitedUnexpectedly` (exit 1) and `ServerStoppedForShutdown` (exit 0). `WorkerResize { worker_threads }` uses exit code 100.
-- **ShutdownComplete ordering**: `UnifiedServerWorkerShutdownComplete` is sent from the composition root after `shutdown_and_join`, not from the IPC task's inline handler.
 - **Bandwidth persistence ownership**: The background task owns periodic and final flush. No double-flush from composition root.
+
+### Iteration 65: Lifecycle Event Channel and Acknowledgement
+
+- **Lifecycle event channel**: The IPC task communicates lifecycle events via `tokio::sync::mpsc::channel<LifecycleRequest>` instead of `Arc<RwLock<Option<WorkerLifecycleEvent>>>`. `LifecycleRequest` carries the event and a `oneshot::Sender<()>` for acknowledgement.
+- **Coordinator acknowledgement handshake**: The IPC task waits for the composition root to acknowledge before returning. The composition root calls `begin_shutdown()` then sends acknowledgement via the oneshot channel. This ensures the IPC task's exit is classified as `CleanCompletion`, not `UnexpectedCompletion`.
+- **Supervision loop selects lifecycle events**: The supervision loop `tokio::select!` over both `lifecycle_rx.recv()` (IPC lifecycle events) and `exit_rx.recv()` (task exits). Lifecycle events arrive before the IPC critical task returns.
+- **Removed `IpcLoopExitCause` and `IpcLoopExit`**: These types were a shared-state side channel, now redundant with the lifecycle event channel.
+- **Dedicated resize acknowledgement**: `WorkerResize` sends `UnifiedServerWorkerResizeAck` instead of `UnifiedServerWorkerShutdownComplete`. `ShutdownComplete` is reserved for actual supervisor shutdown.
+- **Legacy handle abort-and-await**: Legacy `state.task_handles` are aborted **and awaited** before shutdown completion. `std::mem::take` empties the vector; each handle is `abort()`ed then `await`ed.
+- **Fatal supervisor notification**: Fatal causes (`CriticalTaskExit`, `ServerExitedUnexpectedly`, `RegistryExitChannelClosed`) send `WorkerError` when IPC remains available. `SupervisorDisconnected` is a no-op.
+- **Explicit acknowledgement routing**: The composition root uses a `match` on `WorkerShutdownCause` to route to the correct IPC message: `ShutdownComplete`, `ResizeAck`, or `WorkerError`.
 
 ### How to add a new long-lived task
 1. Determine task class (CriticalService, RestartableBackground, BoundedChild, CpuOffload, Detached)

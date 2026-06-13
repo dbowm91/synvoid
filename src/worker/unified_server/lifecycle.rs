@@ -19,19 +19,6 @@ use synvoid_mesh::canonical::CanonicalTrustReader;
 #[cfg(feature = "mesh")]
 use synvoid_mesh::dht::advisory_source::{AdvisoryRecordSource, RecordStoreAdvisorySource};
 
-/// The reason the IPC loop exited.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum IpcLoopExit {
-    /// MasterShutdown processed successfully.
-    MasterShutdown,
-    /// Resize command processed.
-    WorkerResize,
-    /// Registry cancellation during coordinated shutdown.
-    RegistryShutdown,
-    /// Worker running flag intentionally cleared.
-    RunningFlagCleared,
-}
-
 /// The error type for IPC loop failures.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IpcLoopError {
@@ -39,17 +26,6 @@ pub enum IpcLoopError {
     ConnectionLost,
     /// Unexpected panic or error.
     Unexpected(String),
-}
-
-impl fmt::Display for IpcLoopExit {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::MasterShutdown => write!(f, "master_shutdown"),
-            Self::WorkerResize => write!(f, "worker_resize"),
-            Self::RegistryShutdown => write!(f, "registry_shutdown"),
-            Self::RunningFlagCleared => write!(f, "running_flag_cleared"),
-        }
-    }
 }
 
 impl fmt::Display for IpcLoopError {
@@ -61,36 +37,22 @@ impl fmt::Display for IpcLoopError {
     }
 }
 
-/// Shared state for the IPC loop to communicate its exit cause.
-/// Used when the loop returns `Ok(())` but the caller needs to know
-/// which expected path was taken.
-#[derive(Debug, Clone, Default)]
-pub struct IpcLoopExitCause {
-    pub exit: std::sync::Arc<tokio::sync::RwLock<Option<IpcLoopExit>>>,
-}
-
-impl IpcLoopExitCause {
-    pub fn new() -> Self {
-        Self {
-            exit: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
-        }
-    }
-
-    pub async fn set(&self, cause: IpcLoopExit) {
-        *self.exit.write().await = Some(cause);
-    }
-
-    pub async fn get(&self) -> Option<IpcLoopExit> {
-        self.exit.read().await.clone()
-    }
-}
-
 /// Lifecycle events emitted by the IPC task for composition-root orchestration.
 #[derive(Debug, Clone)]
 pub enum WorkerLifecycleEvent {
     MasterShutdown { graceful: bool, timeout: Duration },
     WorkerResize { worker_threads: usize },
     SupervisorDisconnected,
+}
+
+/// Handshake from IPC task to composition root.
+///
+/// Carries the lifecycle event and a oneshot acknowledgement sender.
+/// The IPC task awaits the acknowledgement before returning, ensuring
+/// that `begin_shutdown()` is called before the critical task exits.
+pub struct LifecycleRequest {
+    pub event: WorkerLifecycleEvent,
+    pub accepted: tokio::sync::oneshot::Sender<()>,
 }
 
 /// Iteration 50: Convert optional IPC provenance strings back to a typed `BlockProvenance`.
@@ -242,13 +204,8 @@ pub fn spawn_ipc_loop(
     state: UnifiedServerWorkerState,
     shared_config: Arc<tokio::sync::RwLock<crate::config::ConfigManager>>,
     registry: &mut crate::worker::task_registry::WorkerTaskRegistry,
-) -> (
-    usize,
-    std::sync::Arc<tokio::sync::RwLock<Option<WorkerLifecycleEvent>>>,
-) {
-    let lifecycle_event: std::sync::Arc<tokio::sync::RwLock<Option<WorkerLifecycleEvent>>> =
-        std::sync::Arc::new(tokio::sync::RwLock::new(None));
-    let lifecycle_write = lifecycle_event.clone();
+) -> (usize, tokio::sync::mpsc::Receiver<LifecycleRequest>) {
+    let (lifecycle_tx, lifecycle_rx) = tokio::sync::mpsc::channel::<LifecycleRequest>(4);
     let token = registry.child_token();
     let id = registry.spawn_critical_result("ipc_loop", async move {
         let mut shutdown_rx = token;
@@ -274,7 +231,15 @@ pub fn spawn_ipc_loop(
                     Err(_) => {
                         tracing::warn!("Unified server worker lost connection to supervisor");
                         state.master_dead.stop();
-                        *lifecycle_write.write().await = Some(WorkerLifecycleEvent::SupervisorDisconnected);
+                        // Send SupervisorDisconnected via channel and wait for ack.
+                        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+                        let _ = lifecycle_tx
+                            .send(LifecycleRequest {
+                                event: WorkerLifecycleEvent::SupervisorDisconnected,
+                                accepted: ack_tx,
+                            })
+                            .await;
+                        let _ = ack_rx.await;
                         return Err(IpcLoopError::ConnectionLost);
                     }
                 }
@@ -293,8 +258,16 @@ pub fn spawn_ipc_loop(
                     );
 
                     let timeout = Duration::from_secs(timeout_secs as u64);
-                    let lifecycle_event = WorkerLifecycleEvent::MasterShutdown { graceful, timeout };
-                    *lifecycle_write.write().await = Some(lifecycle_event);
+                    let event = WorkerLifecycleEvent::MasterShutdown { graceful, timeout };
+                    let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+                    let _ = lifecycle_tx
+                        .send(LifecycleRequest {
+                            event,
+                            accepted: ack_tx,
+                        })
+                        .await;
+                    // Wait for composition root to acknowledge before returning.
+                    let _ = ack_rx.await;
                     return Ok(());
                 }
                 Some(Message::MasterConfigReload { config_path }) => {
@@ -790,15 +763,23 @@ pub fn spawn_ipc_loop(
                         worker_threads
                     );
 
-                    let lifecycle_event = WorkerLifecycleEvent::WorkerResize { worker_threads: worker_threads as usize };
-                    *lifecycle_write.write().await = Some(lifecycle_event);
+                    let event = WorkerLifecycleEvent::WorkerResize { worker_threads: worker_threads as usize };
+                    let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+                    let _ = lifecycle_tx
+                        .send(LifecycleRequest {
+                            event,
+                            accepted: ack_tx,
+                        })
+                        .await;
+                    // Wait for composition root to acknowledge before returning.
+                    let _ = ack_rx.await;
                     return Ok(());
                 }
                 Some(_) | None => {}
             }
         }
     });
-    (id, lifecycle_event)
+    (id, lifecycle_rx)
 }
 
 /// Abort and join all tasks in the registry with a bounded timeout.

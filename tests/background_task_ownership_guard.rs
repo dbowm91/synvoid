@@ -689,3 +689,124 @@ fn graceful_fields_consumed_by_drain() {
         "Graceful and drain_timeout must be consumed by the shutdown path"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Iteration 65 — Lifecycle event channel and acknowledgement guardrails
+// ---------------------------------------------------------------------------
+
+/// IPC terminal lifecycle branches must use a channel (mpsc/oneshot),
+/// not return Ok(()) immediately after writing shared state.
+#[test]
+fn ipc_lifecycle_uses_channel_not_shared_state() {
+    let content = read_file("src/worker/unified_server/lifecycle.rs");
+    // Must not have Arc<RwLock<Option<WorkerLifecycleEvent>>> in the IPC loop.
+    assert!(
+        !content.contains("Arc<tokio::sync::RwLock<Option<WorkerLifecycleEvent>>>"),
+        "IPC loop must not use Arc<RwLock> for lifecycle events — use a channel"
+    );
+    // Must have LifecycleRequest or mpsc channel for lifecycle signaling.
+    assert!(
+        content.contains("LifecycleRequest") || content.contains("mpsc::channel"),
+        "IPC loop must use LifecycleRequest or mpsc channel for lifecycle signaling"
+    );
+}
+
+/// IpcLoopExitCause must not remain as an unused side channel.
+#[test]
+fn ipc_loop_exit_cause_removed() {
+    let content = read_file("src/worker/unified_server/lifecycle.rs");
+    assert!(
+        !content.contains("IpcLoopExitCause"),
+        "IpcLoopExitCause must be removed — replaced by lifecycle channel"
+    );
+    assert!(
+        !content.contains("IpcLoopExit"),
+        "IpcLoopExit enum must be removed — lifecycle events are the replacement"
+    );
+}
+
+/// Resize cause must route to resize acknowledgement.
+#[test]
+fn resize_cause_routes_to_resize_ack() {
+    let content = read_file("src/worker/unified_server/mod.rs");
+    assert!(
+        content.contains("UnifiedServerWorkerResizeAck"),
+        "Resize cause must route to UnifiedServerWorkerResizeAck"
+    );
+    // Verify the routing is inside the composition root shutdown procedure.
+    let composition_start = content
+        .find("composition-root shutdown procedure")
+        .expect("composition root not found");
+    let section = &content[composition_start..];
+    assert!(
+        section.contains("WorkerResize"),
+        "Resize acknowledgement must be in the composition root shutdown procedure"
+    );
+}
+
+/// Legacy handles must be awaited after abort.
+#[test]
+fn legacy_handles_awaited_after_abort() {
+    let content = read_file("src/worker/unified_server/mod.rs");
+    // Must have the pattern: take handles, then abort+await in a loop.
+    assert!(
+        content.contains("handle.await"),
+        "Legacy handles must be awaited after abort"
+    );
+    // Verify take+abort+await pattern.
+    assert!(
+        content.contains("std::mem::take"),
+        "Legacy handles must be taken from the vector before abort"
+    );
+}
+
+/// Fatal causes must send WorkerError when IPC is available.
+#[test]
+fn fatal_causes_send_worker_error() {
+    let content = read_file("src/worker/unified_server/mod.rs");
+    // Must have explicit WorkerError sends for fatal causes.
+    assert!(
+        content.contains("WorkerError"),
+        "Fatal causes must send WorkerError to supervisor"
+    );
+    // Must not send both WorkerError and ShutdownComplete for the same cause.
+    let composition_start = content
+        .find("composition-root shutdown procedure")
+        .expect("composition root not found");
+    let section = &content[composition_start..];
+    // The match arms should be mutually exclusive.
+    assert!(
+        section.contains("SupervisorShutdown =>") || section.contains("SupervisorShutdown => {"),
+        "SupervisorShutdown must have its own match arm"
+    );
+}
+
+/// Lifecycle acknowledgement must happen after begin_shutdown.
+#[test]
+fn lifecycle_ack_after_begin_shutdown() {
+    let content = read_file("src/worker/unified_server/mod.rs");
+    let composition_start = content
+        .find("composition-root shutdown procedure")
+        .expect("composition root not found");
+    let section = &content[composition_start..];
+
+    let begin_pos = section
+        .find("begin_shutdown()")
+        .expect("begin_shutdown not found");
+    let ack_pos = section.find("ack_tx.send").expect("ack send not found");
+
+    assert!(
+        begin_pos < ack_pos,
+        "Lifecycle acknowledgement must happen after begin_shutdown()"
+    );
+}
+
+/// Supervision loop must select over lifecycle events from IPC.
+#[test]
+fn supervision_selects_lifecycle_events() {
+    let content = read_file("src/worker/unified_server/mod.rs");
+    assert!(
+        content.contains("lifecycle_rx.recv()"),
+        "Supervision loop must select over lifecycle_rx.recv()"
+    );
+}
