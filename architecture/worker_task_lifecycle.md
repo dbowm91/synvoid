@@ -1,4 +1,4 @@
-# Worker Task Lifecycle — Iteration 62
+# Worker Task Lifecycle — Iteration 64
 
 ## Purpose
 
@@ -424,6 +424,102 @@ The IPC loop returns typed completion via `IpcLoopExit` (expected completions) a
 - **`IpcLoopError::Unexpected(String)`**: Unexpected panic or error.
 
 `IpcLoopExitCause` (shared `Arc<RwLock<Option<IpcLoopExit>>>`) communicates the specific exit path to the caller when the loop returns `Ok(())`.
+
+## Iteration 64: Coordinated Shutdown Intent and Lifecycle Events
+
+### Shutdown Intent vs Cancellation
+
+The `WorkerTaskRegistry` now separates shutdown intent from task cancellation:
+
+- **`begin_shutdown()`**: Records coordinated shutdown intent by setting `shutdown_started` and `shutdown_started_arc` atomic flags. Changes task completion classification from `UnexpectedCompletion` to `CleanCompletion` immediately. Does NOT send the cancellation signal to tasks.
+- **`broadcast_shutdown()`**: Sends `true` on the watch channel, signaling tasks to stop cooperatively.
+- **`shutdown()`**: Calls both `begin_shutdown()` + `broadcast_shutdown()` (defensive full shutdown).
+
+The composition root must call `begin_shutdown()` before any tasks are asked to return, ensuring their completion is classified as expected.
+
+### WorkerLifecycleEvent Channel
+
+The IPC task now emits typed lifecycle events instead of performing inline shutdown:
+
+```rust
+pub enum WorkerLifecycleEvent {
+    MasterShutdown { graceful: bool, timeout: Duration },
+    WorkerResize { worker_threads: usize },
+    SupervisorDisconnected,
+}
+```
+
+The IPC loop stores the event in a shared `Arc<RwLock<Option<WorkerLifecycleEvent>>>` and returns cleanly. The composition root reads the event after the supervision loop exits to determine the correct shutdown procedure.
+
+### Authoritative WorkerShutdownCause
+
+`WorkerShutdownCause` is now the single authoritative source for:
+
+- Process exit code (`exit_code()` method)
+- Supervisor notification policy (`should_notify_supervisor()`)
+- Expected/unexpected classification (`is_expected()`)
+
+The `worker_exit_code` field has been removed. The `master_dead` flag is retained as a health observation but does not independently override the primary shutdown cause.
+
+#### ServerExited Split
+
+`ServerExited` has been split into two variants:
+
+| Variant | Meaning | Exit Code | Expected |
+|---------|---------|-----------|----------|
+| `ServerExitedUnexpectedly` | Server task returned while worker is active | 1 | No |
+| `ServerStoppedForShutdown` | Server task completed after coordinated shutdown | 0 | Yes |
+
+#### WorkerResize Variant
+
+`WorkerResize { worker_threads: usize }` carries the requested thread count and uses the special exit code `100`.
+
+### Composition-Root Shutdown Procedure
+
+The ordered shutdown sequence is now owned by the composition root in `src/worker/unified_server/mod.rs`:
+
+1. Record primary shutdown cause from lifecycle event
+2. Call `registry.begin_shutdown()`
+3. Stop accepting new connections
+4. Graceful drain (if requested, bounded by `drain_timeout`)
+5. Stop app servers (Granian supervisors)
+6. Clear running flag
+7. Broadcast registry cancellation
+8. Await registry tasks with bounded timeouts
+9. Abort remaining non-migrated task handles
+10. Send `UnifiedServerWorkerShutdownComplete` (if not a fatal cause)
+11. Derive exit code from `shutdown_cause.exit_code()`
+
+### ShutdownComplete Acknowledgement Ordering
+
+`UnifiedServerWorkerShutdownComplete` is now sent from the composition root **after** all registry-owned tasks have been joined or aborted, not from the IPC task's inline shutdown branch. This ensures the supervisor is told "complete" only when shutdown is actually complete.
+
+### Bandwidth Persistence Ownership
+
+The bandwidth persist background task owns both periodic and final flushes. The composition root does NOT call `persist_global_bandwidth_tracker()` directly — the background task's final flush after the shutdown signal is the single authoritative persistence point. This eliminates double-flush ambiguity.
+
+### IPC Loop Behavioral Changes
+
+The IPC loop no longer performs inline shutdown for `MasterShutdown` or `WorkerResize`. Instead:
+
+- **`MasterShutdown`**: Stores `WorkerLifecycleEvent::MasterShutdown { graceful, timeout }` and returns `Ok(())`
+- **`WorkerResize`**: Stores `WorkerLifecycleEvent::WorkerResize { worker_threads }` and returns `Ok(())`
+- **`ConnectionLost`**: Stores `WorkerLifecycleEvent::SupervisorDisconnected` and returns `Err(IpcLoopError::ConnectionLost)`
+
+The `IpcLoopExitCause` side-channel is retained for backward compatibility but is no longer consumed by the composition root.
+
+### Guardrail Additions
+
+New guardrail tests in `tests/background_task_ownership_guard.rs`:
+
+- `master_shutdown_begins_intent_before_running_stop` — `begin_shutdown()` precedes `running.stop()`
+- `shutdown_complete_sent_from_composition_root` — `ShutdownComplete` after `shutdown_and_join`
+- `ipc_loop_emits_lifecycle_event_not_inline_shutdown` — IPC emits events, not inline shutdown
+- `worker_shutdown_cause_has_exit_code` — `exit_code()` method exists
+- `server_exit_distinguishes_expected_unexpected` — `ServerExitedUnexpectedly` and `ServerStoppedForShutdown` variants
+- `begin_shutdown_and_broadcast_are_separate` — separate `begin_shutdown()` and `broadcast_shutdown()` methods
+- `exit_code_derived_from_shutdown_cause` — exit code from `shutdown_cause.exit_code()`, not `worker_exit_code`
+- `graceful_fields_consumed_by_drain` — `graceful` and `drain_timeout` consumed by shutdown path
 
 ## Guardrail
 

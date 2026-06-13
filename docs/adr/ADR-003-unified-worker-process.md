@@ -88,3 +88,13 @@ The supervision loop was corrected to close several edge-case gaps:
 - **Typed IPC completion**: `IpcLoopExit`/`IpcLoopError` provide structured exit reasons for the IPC loop, replacing ad-hoc flag checks.
 - **Shutdown cause classification**: `WorkerShutdownCause` enum explicitly classifies the primary cause of worker shutdown for supervisor notification and exit code selection.
 - **Final bandwidth flush**: Bandwidth persist task performs an unconditional final flush after its loop breaks, regardless of shutdown cause.
+
+## Coordinated Shutdown Intent (Iteration 64)
+
+The worker shutdown procedure was refactored to ensure shutdown intent is recorded before tasks are asked to return:
+
+- **Shutdown intent vs cancellation**: `WorkerTaskRegistry::begin_shutdown()` records intent (atomic flags), `broadcast_shutdown()` sends cancellation. The composition root calls `begin_shutdown()` before stopping any services.
+- **IPC lifecycle events**: The IPC task emits `WorkerLifecycleEvent` (MasterShutdown, WorkerResize, SupervisorDisconnected) instead of performing inline shutdown. The composition root orchestrates the full shutdown sequence.
+- **Authoritative shutdown cause**: `WorkerShutdownCause::exit_code()` determines process exit code. `ServerExited` split into `ServerExitedUnexpectedly` (nonzero) and `ServerStoppedForShutdown` (zero). `WorkerResize` uses exit code 100.
+- **ShutdownComplete ordering**: The supervisor acknowledgement is sent after all registry-owned tasks stop, not from the IPC task's inline handler.
+- **Bandwidth persistence**: Single owner is the background task's final flush, eliminating double-flush ambiguity.

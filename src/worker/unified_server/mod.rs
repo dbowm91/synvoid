@@ -22,7 +22,6 @@ pub mod services;
 pub mod state;
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 
 use tokio::sync::Mutex as TokioMutex;
@@ -249,24 +248,20 @@ pub async fn run_unified_server_worker(
     };
 
     // ---- Phase 13: spawn lifecycle tasks via registry ----
-    let worker_exit_code: Arc<AtomicI32> = Arc::new(AtomicI32::new(0));
-
-    {
+    let lifecycle_event: std::sync::Arc<
+        tokio::sync::RwLock<Option<lifecycle::WorkerLifecycleEvent>>,
+    > = {
         let mut registry = state.task_registry.lock().await;
         lifecycle::spawn_heartbeat_task(state.clone(), &mut registry);
         lifecycle::spawn_bandwidth_persist_task(&mut registry);
-        let (_ipc_id, _ipc_exit_cause) = lifecycle::spawn_ipc_loop(
-            state.clone(),
-            shared_config.clone(),
-            worker_exit_code.clone(),
-            &mut registry,
-        );
-    }
+        let (_ipc_id, lifecycle_event) =
+            lifecycle::spawn_ipc_loop(state.clone(), shared_config.clone(), &mut registry);
+        lifecycle_event
+    };
 
     // ---- Phase 14: register server run task under registry ownership ----
     {
         let mut registry = state.task_registry.lock().await;
-        let _server_state = state.clone();
         let server_clone = unified_server.clone();
         registry.spawn_critical_result("server_run", async move {
             server_clone.run().await.map_err(|e| {
@@ -281,8 +276,6 @@ pub async fn run_unified_server_worker(
         let registry = state.task_registry.lock().await;
         registry.shutdown_started_flag()
     };
-
-    let master_dead_flag = state.master_dead.clone();
 
     // ---- Phase 15: supervision loop ----
     let shutdown_cause = loop {
@@ -336,23 +329,116 @@ pub async fn run_unified_server_worker(
         }
     };
 
-    // If the supervision loop exited due to a critical task failure,
-    // running was already stopped. Stop it here for other causes.
-    if !state.running.is_running() {
-        // Already stopped above.
-    } else {
-        state.running.stop();
+    // ---- Phase 16: composition-root shutdown procedure ----
+    //
+    // The supervision loop has exited with a preliminary cause.
+    // Now read the lifecycle event from the IPC task to refine the cause
+    // and execute the ordered shutdown sequence.
+
+    let lifecycle = lifecycle_event.read().await.clone();
+    let (graceful, drain_timeout, _resize_threads) = match &lifecycle {
+        Some(lifecycle::WorkerLifecycleEvent::MasterShutdown { graceful, timeout }) => {
+            (*graceful, *timeout, None)
+        }
+        Some(lifecycle::WorkerLifecycleEvent::WorkerResize { worker_threads }) => (
+            true,
+            std::time::Duration::from_secs(30),
+            Some(*worker_threads),
+        ),
+        Some(lifecycle::WorkerLifecycleEvent::SupervisorDisconnected) => {
+            (false, std::time::Duration::ZERO, None)
+        }
+        None => (false, std::time::Duration::ZERO, None),
+    };
+
+    // Refine the shutdown cause based on the IPC lifecycle event.
+    let shutdown_cause = match &lifecycle {
+        Some(lifecycle::WorkerLifecycleEvent::MasterShutdown { .. }) => {
+            crate::worker::task_registry::WorkerShutdownCause::SupervisorShutdown
+        }
+        Some(lifecycle::WorkerLifecycleEvent::WorkerResize { worker_threads }) => {
+            crate::worker::task_registry::WorkerShutdownCause::WorkerResize {
+                worker_threads: *worker_threads,
+            }
+        }
+        Some(lifecycle::WorkerLifecycleEvent::SupervisorDisconnected) => {
+            crate::worker::task_registry::WorkerShutdownCause::SupervisorDisconnected
+        }
+        None => {
+            // No IPC lifecycle event — the supervision loop's preliminary cause stands.
+            // For server task exits, classify based on whether shutdown was in progress.
+            match &shutdown_cause {
+                crate::worker::task_registry::WorkerShutdownCause::CriticalTaskExit(exit)
+                    if exit.name == "server_run" =>
+                {
+                    let shutdown_started = shutdown_flag.load(std::sync::atomic::Ordering::Acquire);
+                    if shutdown_started {
+                        crate::worker::task_registry::WorkerShutdownCause::ServerStoppedForShutdown
+                    } else {
+                        crate::worker::task_registry::WorkerShutdownCause::ServerExitedUnexpectedly
+                    }
+                }
+                other => other.clone(),
+            }
+        }
+    };
+
+    // Step 1: Record coordinated shutdown intent before any teardown.
+    {
+        let registry = state.task_registry.lock().await;
+        registry.begin_shutdown();
     }
 
-    if !master_dead_flag.is_running() {
-        tracing::error!(
-            "Unified Server Worker {} exiting because supervisor died",
-            worker_id
+    // Step 2: Stop accepting new connections.
+    let tx_guard = state.stop_accepting_tx.lock().await;
+    if let Some(tx) = tx_guard.as_ref() {
+        let _ = tx.send(());
+    }
+    drop(tx_guard);
+    state.stopped_accepting.start_drain();
+
+    // Step 3: Graceful drain (if requested and nonzero timeout).
+    if graceful && !drain_timeout.is_zero() {
+        tracing::info!(
+            "Unified Server Worker {} waiting for connection drain (timeout: {:?})",
+            worker_id,
+            drain_timeout
         );
-        worker_exit_code.store(1, Ordering::Relaxed);
+        let _remaining = crate::worker::unified_server::state::wait_for_drain(
+            &state.drain_state,
+            drain_timeout.as_secs() as u64,
+            &worker_id,
+            "graceful shutdown",
+        )
+        .await;
     }
 
-    // ---- Phase 16: shutdown registry (server_run is now registry-owned) ----
+    // Step 4: Stop app servers (Granian supervisors).
+    tracing::info!(
+        "Stopping app servers for unified server worker {}",
+        worker_id
+    );
+    let app_servers = state.app_servers.read().await;
+    for (site_id, supervisor) in app_servers.iter() {
+        tracing::info!("Stopping granian for site {}", site_id);
+        supervisor.stop().await;
+    }
+    drop(app_servers);
+
+    // Step 5: Clear running flag.
+    state.running.stop();
+
+    // Step 6: Broadcast registry cancellation to all tasks.
+    {
+        let registry = state.task_registry.lock().await;
+        registry.broadcast_shutdown();
+    }
+
+    // Step 7: Bandwidth persist — single owner is the background task.
+    // The bandwidth_persist task does its own final flush after the
+    // shutdown signal. No explicit persist call here to avoid double-flush.
+
+    // Step 8: Await registry tasks with bounded timeouts.
     {
         let mut registry = state.task_registry.lock().await;
         let exits = registry
@@ -372,22 +458,41 @@ pub async fn run_unified_server_worker(
         }
     }
 
-    // Also abort any remaining non-migrated task handles.
+    // Step 9: Abort any remaining non-migrated task handles.
     let handles = state.task_handles.lock().await;
     for handle in handles.iter() {
         handle.abort();
     }
     drop(handles);
 
-    let exit_code = worker_exit_code.load(Ordering::Relaxed);
+    // Step 10: Send shutdown-complete acknowledgement (last IPC operation).
+    if shutdown_cause.should_notify_supervisor() {
+        // For fatal causes, we don't send a normal shutdown-complete.
+        tracing::error!(
+            "Unified Server Worker {} not sending shutdown-complete (fatal cause: {})",
+            worker_id,
+            shutdown_cause
+        );
+    } else {
+        let mut ipc_guard = state.ipc.lock().await;
+        let _ = ipc_guard
+            .send(&crate::process::Message::UnifiedServerWorkerShutdownComplete { id: worker_id })
+            .await;
+    }
+
+    // Step 11: Derive exit code from the authoritative shutdown cause.
+    let exit_code = shutdown_cause.exit_code();
+
+    tracing::info!(
+        "Unified Server Worker {} shutting down (cause: {}, exit_code: {})",
+        worker_id,
+        shutdown_cause,
+        exit_code
+    );
+
     if exit_code != 0 {
         std::process::exit(exit_code);
     }
 
-    tracing::info!(
-        "Unified Server Worker {} shutting down (cause: {})",
-        worker_id,
-        shutdown_cause
-    );
     Ok(())
 }

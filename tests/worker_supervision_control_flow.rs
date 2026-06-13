@@ -208,7 +208,18 @@ async fn test_clean_exit_during_shutdown_not_fatal() {
 #[tokio::test]
 async fn test_shutdown_cause_properties() {
     let cases = vec![
-        (WorkerShutdownCause::ServerExited, false, false, true),
+        (
+            WorkerShutdownCause::ServerStoppedForShutdown,
+            false,
+            false,
+            true,
+        ),
+        (
+            WorkerShutdownCause::ServerExitedUnexpectedly,
+            true,
+            false,
+            false,
+        ),
         (WorkerShutdownCause::SupervisorShutdown, false, false, true),
         (
             WorkerShutdownCause::SupervisorDisconnected,
@@ -224,6 +235,12 @@ async fn test_shutdown_cause_properties() {
         ),
         (WorkerShutdownCause::ExternalStop, false, false, true),
         (WorkerShutdownCause::RunningFlagCleared, false, false, true),
+        (
+            WorkerShutdownCause::WorkerResize { worker_threads: 4 },
+            false,
+            false,
+            true,
+        ),
     ];
 
     for (cause, nonzero, notify, expected) in cases {
@@ -241,4 +258,138 @@ async fn test_shutdown_cause_properties() {
         );
         assert_eq!(cause.is_expected(), expected, "{:?} is_expected", cause);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Iteration 64 — Coordinated shutdown intent and lifecycle tests
+// ---------------------------------------------------------------------------
+
+/// Verify that begin_shutdown marks intent before IPC/server tasks would return.
+#[tokio::test]
+async fn test_begin_shutdown_before_task_return_classifies_cleanly() {
+    let mut registry = WorkerTaskRegistry::new();
+    let token = registry.child_token();
+
+    // Record shutdown intent BEFORE spawning — simulates composition root behavior.
+    registry.begin_shutdown();
+
+    registry.spawn_critical("ipc_like_task", async move {
+        let mut shutdown = token;
+        loop {
+            if *shutdown.borrow() {
+                break;
+            }
+            if shutdown.changed().await.is_err() {
+                break;
+            }
+        }
+    });
+
+    tokio::time::sleep(Duration::from_millis(10)).await;
+
+    let exits = registry
+        .shutdown_and_join(Duration::from_secs(5), Duration::from_secs(5))
+        .await;
+    // Clean completion during shutdown — no non-clean exits.
+    assert!(
+        exits.is_empty(),
+        "Expected clean shutdown, got: {:?}",
+        exits
+    );
+}
+
+/// Verify WorkerShutdownCause::exit_code() mapping.
+#[tokio::test]
+async fn test_shutdown_cause_exit_code_mapping() {
+    assert_eq!(WorkerShutdownCause::SupervisorShutdown.exit_code(), 0);
+    assert_eq!(WorkerShutdownCause::ServerStoppedForShutdown.exit_code(), 0);
+    assert_eq!(WorkerShutdownCause::ServerExitedUnexpectedly.exit_code(), 1);
+    assert_eq!(
+        WorkerShutdownCause::CriticalTaskExit(NamedTaskExit {
+            id: TaskId(999),
+            name: "test_server",
+            class: TaskClass::CriticalService,
+            reason: TaskExitReason::Error("server error".to_string()),
+            expected_during_shutdown: false,
+        })
+        .exit_code(),
+        1
+    );
+    assert_eq!(WorkerShutdownCause::SupervisorDisconnected.exit_code(), 1);
+    assert_eq!(
+        WorkerShutdownCause::RegistryExitChannelClosed.exit_code(),
+        1
+    );
+    assert_eq!(WorkerShutdownCause::ExternalStop.exit_code(), 0);
+    assert_eq!(WorkerShutdownCause::RunningFlagCleared.exit_code(), 0);
+    assert_eq!(
+        WorkerShutdownCause::WorkerResize { worker_threads: 8 }.exit_code(),
+        100
+    );
+}
+
+/// Verify that a server task returning Ok(()) before shutdown is classified as unexpected.
+#[tokio::test]
+async fn test_server_clean_early_return_is_unexpected() {
+    let mut registry = WorkerTaskRegistry::new();
+    let mut exit_rx = registry.subscribe_exits();
+
+    // Server returns Ok(()) immediately — should be UnexpectedCompletion before shutdown.
+    registry.spawn_critical_result("server_run", async { Ok::<(), String>(()) });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let exit = tokio::time::timeout(Duration::from_secs(2), exit_rx.recv())
+        .await
+        .expect("timeout")
+        .expect("recv");
+
+    assert_eq!(exit.name, "server_run");
+    assert_eq!(exit.reason, TaskExitReason::UnexpectedCompletion);
+    assert!(!exit.expected_during_shutdown);
+}
+
+/// Verify that broadcast_shutdown sends the cancellation signal.
+#[tokio::test]
+async fn test_broadcast_shutdown_sends_cancellation() {
+    let mut registry = WorkerTaskRegistry::new();
+    let token = registry.child_token();
+
+    registry.spawn_background("cooperative_task", async move {
+        let mut shutdown = token;
+        loop {
+            if *shutdown.borrow() {
+                break;
+            }
+            if shutdown.changed().await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // begin_shutdown alone does not cancel tasks.
+    registry.begin_shutdown();
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    assert_eq!(registry.background_count(), 1);
+
+    // broadcast_shutdown sends the cancel signal.
+    registry.broadcast_shutdown();
+    let exits = registry
+        .shutdown_and_join(Duration::from_secs(5), Duration::from_secs(5))
+        .await;
+    assert!(exits.is_empty());
+}
+
+/// Verify that begin_shutdown is idempotent and does not send cancellation.
+#[tokio::test]
+async fn test_begin_shutdown_idempotent_no_broadcast() {
+    let registry = WorkerTaskRegistry::new();
+    let token = registry.child_token();
+
+    registry.begin_shutdown();
+    registry.begin_shutdown();
+    registry.begin_shutdown();
+
+    assert!(registry.is_shutdown_started());
+    // Token should still be false — no broadcast.
+    assert!(!*token.borrow());
 }

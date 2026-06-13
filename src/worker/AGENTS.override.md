@@ -227,6 +227,15 @@ The `task_registry` module provides structured concurrency management:
 - **Server run task now registry-owned**: Registered via `spawn_critical_result("server_run", ...)` as CriticalService. Old `spawn_server_run_task` function removed.
 - **Broadcast lag/closure policy**: `Lagged` = conservative shutdown (`RegistryExitChannelClosed`); `Closed` during shutdown = expected (`SupervisorShutdown`); `Closed` while active = lifecycle failure (`RegistryExitChannelClosed`).
 
+### Iteration 64: Coordinated Shutdown Intent
+
+- **`begin_shutdown()` vs `broadcast_shutdown()`**: The registry now separates shutdown intent (atomic flag) from task cancellation (watch channel). `begin_shutdown()` marks coordinated shutdown intent immediately, changing task completion classification. `broadcast_shutdown()` sends the cancel signal to tasks.
+- **`WorkerLifecycleEvent`**: The IPC task emits typed lifecycle events (`MasterShutdown`, `WorkerResize`, `SupervisorDisconnected`) via a shared `Arc<RwLock>` instead of performing inline shutdown. The composition root reads the event to determine the correct shutdown procedure.
+- **Composition-root shutdown ordering**: The ordered shutdown sequence is now owned by `run_unified_server_worker()` in `mod.rs`, not by the IPC task. Steps: begin_shutdown → stop_accepting → drain → stop servers → clear running → broadcast_cancel → join tasks → abort remnants → send ShutdownComplete → exit.
+- **`WorkerShutdownCause` is authoritative**: `exit_code()` method derives the process exit code. `worker_exit_code` field removed. `ServerExited` split into `ServerExitedUnexpectedly` (exit 1) and `ServerStoppedForShutdown` (exit 0). `WorkerResize { worker_threads }` uses exit code 100.
+- **ShutdownComplete ordering**: `UnifiedServerWorkerShutdownComplete` is sent from the composition root after `shutdown_and_join`, not from the IPC task's inline handler.
+- **Bandwidth persistence ownership**: The background task owns periodic and final flush. No double-flush from composition root.
+
 ### How to add a new long-lived task
 1. Determine task class (CriticalService, RestartableBackground, BoundedChild, CpuOffload, Detached)
 2. For CriticalService/RestartableBackground: use WorkerTaskRegistry.spawn_critical() or spawn_background()

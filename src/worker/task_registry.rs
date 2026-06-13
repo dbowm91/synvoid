@@ -80,40 +80,42 @@ impl TaskExitReason {
     }
 }
 
-/// The primary cause of a worker shutdown.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkerShutdownCause {
-    /// The unified-server run task exited (normal or error).
-    ServerExited,
-    /// A critical service task exited abnormally before or during shutdown.
+    ServerExitedUnexpectedly,
+    ServerStoppedForShutdown,
     CriticalTaskExit(NamedTaskExit),
-    /// The supervisor initiated a coordinated shutdown (MasterShutdown).
     SupervisorShutdown,
-    /// The IPC connection to the supervisor was lost.
     SupervisorDisconnected,
-    /// The registry exit broadcast channel closed unexpectedly.
     RegistryExitChannelClosed,
-    /// An external stop signal was received.
     ExternalStop,
-    /// The worker running flag was cleared (e.g. resize command).
     RunningFlagCleared,
+    WorkerResize { worker_threads: usize },
 }
 
 impl WorkerShutdownCause {
-    /// Returns true if this cause should result in a nonzero exit code.
     pub fn nonzero_exit_code(&self) -> bool {
         match self {
-            Self::ServerExited => false,
+            Self::ServerExitedUnexpectedly => true,
+            Self::ServerStoppedForShutdown => false,
             Self::CriticalTaskExit(_) => true,
             Self::SupervisorShutdown => false,
             Self::SupervisorDisconnected => true,
             Self::RegistryExitChannelClosed => true,
             Self::ExternalStop => false,
             Self::RunningFlagCleared => false,
+            Self::WorkerResize { .. } => false,
         }
     }
 
-    /// Returns true if this cause should trigger supervisor notification.
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            Self::WorkerResize { .. } => 100,
+            cause if cause.nonzero_exit_code() => 1,
+            _ => 0,
+        }
+    }
+
     pub fn should_notify_supervisor(&self) -> bool {
         matches!(
             self,
@@ -123,14 +125,14 @@ impl WorkerShutdownCause {
         )
     }
 
-    /// Returns true if this cause represents an expected shutdown.
     pub fn is_expected(&self) -> bool {
         matches!(
             self,
-            Self::ServerExited
+            Self::ServerStoppedForShutdown
                 | Self::SupervisorShutdown
                 | Self::ExternalStop
                 | Self::RunningFlagCleared
+                | Self::WorkerResize { .. }
         )
     }
 }
@@ -138,7 +140,8 @@ impl WorkerShutdownCause {
 impl fmt::Display for WorkerShutdownCause {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ServerExited => write!(f, "server_exited"),
+            Self::ServerExitedUnexpectedly => write!(f, "server_exited_unexpectedly"),
+            Self::ServerStoppedForShutdown => write!(f, "server_stopped_for_shutdown"),
             Self::CriticalTaskExit(exit) => {
                 write!(f, "critical_task_exit: {} ({})", exit.name, exit.reason)
             }
@@ -147,6 +150,9 @@ impl fmt::Display for WorkerShutdownCause {
             Self::RegistryExitChannelClosed => write!(f, "registry_exit_channel_closed"),
             Self::ExternalStop => write!(f, "external_stop"),
             Self::RunningFlagCleared => write!(f, "running_flag_cleared"),
+            Self::WorkerResize { worker_threads } => {
+                write!(f, "worker_resize(threads={})", worker_threads)
+            }
         }
     }
 }
@@ -420,10 +426,18 @@ impl WorkerTaskRegistry {
         id_val as usize
     }
 
-    pub fn shutdown(&self) {
-        self.shutdown_started.store(true, Ordering::Relaxed);
+    pub fn begin_shutdown(&self) {
+        self.shutdown_started.store(true, Ordering::Release);
         self.shutdown_started_arc.store(true, Ordering::Release);
+    }
+
+    pub fn broadcast_shutdown(&self) {
         let _ = self.shutdown_tx.send(true);
+    }
+
+    pub fn shutdown(&self) {
+        self.begin_shutdown();
+        self.broadcast_shutdown();
     }
 
     async fn join_task_until(
@@ -1307,10 +1321,113 @@ mod tests {
 
     #[tokio::test]
     async fn test_worker_shutdown_cause_nonzero_exit() {
-        let cause = crate::worker::task_registry::WorkerShutdownCause::SupervisorShutdown;
+        let cause = crate::worker::task_registry::WorkerShutdownCause::ServerStoppedForShutdown;
         assert!(!cause.nonzero_exit_code());
 
         let cause = crate::worker::task_registry::WorkerShutdownCause::SupervisorDisconnected;
         assert!(cause.nonzero_exit_code());
+
+        let cause = crate::worker::task_registry::WorkerShutdownCause::ServerExitedUnexpectedly;
+        assert!(cause.nonzero_exit_code());
+    }
+
+    #[tokio::test]
+    async fn test_begin_shutdown_marks_expected_without_broadcasting() {
+        let mut registry = WorkerTaskRegistry::new();
+        let mut token = registry.child_token();
+
+        registry.begin_shutdown();
+        assert!(registry.is_shutdown_started());
+        // Token should still be false — broadcast_shutdown not called yet
+        assert!(!*token.borrow());
+    }
+
+    #[tokio::test]
+    async fn test_broadcast_shutdown_sends_signal() {
+        let mut registry = WorkerTaskRegistry::new();
+        let mut token = registry.child_token();
+
+        registry.begin_shutdown();
+        registry.broadcast_shutdown();
+        assert!(*token.borrow());
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_begins_and_broadcasts() {
+        let mut registry = WorkerTaskRegistry::new();
+        let mut token = registry.child_token();
+
+        registry.shutdown();
+        assert!(registry.is_shutdown_started());
+        assert!(*token.borrow());
+    }
+
+    #[tokio::test]
+    async fn test_critical_return_after_begin_shutdown_is_clean() {
+        let mut registry = WorkerTaskRegistry::new();
+        let token = registry.child_token();
+
+        // Mark shutdown intent before spawning
+        registry.begin_shutdown();
+
+        registry.spawn_critical("after_begin", async move {
+            let mut shutdown = token;
+            loop {
+                if *shutdown.borrow() {
+                    break;
+                }
+                if shutdown.changed().await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        let exits = registry
+            .shutdown_and_join(Duration::from_secs(5), Duration::from_secs(5))
+            .await;
+        assert!(exits.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_critical_return_before_begin_shutdown_is_unexpected() {
+        let mut registry = WorkerTaskRegistry::new();
+        let mut exit_rx = registry.subscribe_exits();
+
+        // Spawn task that returns immediately WITHOUT begin_shutdown
+        registry.spawn_critical("before_begin", async {});
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let exit = tokio::time::timeout(Duration::from_secs(2), exit_rx.recv())
+            .await
+            .expect("timeout")
+            .expect("recv");
+
+        assert_eq!(exit.reason, TaskExitReason::UnexpectedCompletion);
+    }
+
+    #[tokio::test]
+    async fn test_begin_shutdown_is_idempotent() {
+        let registry = WorkerTaskRegistry::new();
+        registry.begin_shutdown();
+        registry.begin_shutdown();
+        registry.begin_shutdown();
+        assert!(registry.is_shutdown_started());
+    }
+
+    #[tokio::test]
+    async fn test_worker_resize_exit_code() {
+        let cause =
+            crate::worker::task_registry::WorkerShutdownCause::WorkerResize { worker_threads: 4 };
+        assert_eq!(cause.exit_code(), 100);
+        assert!(!cause.nonzero_exit_code());
+        assert!(cause.is_expected());
+    }
+
+    #[tokio::test]
+    async fn test_server_exited_unexpectedly_exit_code() {
+        let cause = crate::worker::task_registry::WorkerShutdownCause::ServerExitedUnexpectedly;
+        assert_eq!(cause.exit_code(), 1);
+        assert!(cause.nonzero_exit_code());
+        assert!(!cause.is_expected());
     }
 }

@@ -2,7 +2,7 @@
 // the IPC message-handling loop, and the request-blocklist request helper.
 
 use std::fmt;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -83,6 +83,14 @@ impl IpcLoopExitCause {
     pub async fn get(&self) -> Option<IpcLoopExit> {
         self.exit.read().await.clone()
     }
+}
+
+/// Lifecycle events emitted by the IPC task for composition-root orchestration.
+#[derive(Debug, Clone)]
+pub enum WorkerLifecycleEvent {
+    MasterShutdown { graceful: bool, timeout: Duration },
+    WorkerResize { worker_threads: usize },
+    SupervisorDisconnected,
 }
 
 /// Iteration 50: Convert optional IPC provenance strings back to a typed `BlockProvenance`.
@@ -233,23 +241,24 @@ pub fn spawn_bandwidth_persist_task(
 pub fn spawn_ipc_loop(
     state: UnifiedServerWorkerState,
     shared_config: Arc<tokio::sync::RwLock<crate::config::ConfigManager>>,
-    worker_exit_code: Arc<AtomicI32>,
     registry: &mut crate::worker::task_registry::WorkerTaskRegistry,
-) -> (usize, IpcLoopExitCause) {
-    let exit_cause = IpcLoopExitCause::new();
-    let cause_clone = exit_cause.clone();
+) -> (
+    usize,
+    std::sync::Arc<tokio::sync::RwLock<Option<WorkerLifecycleEvent>>>,
+) {
+    let lifecycle_event: std::sync::Arc<tokio::sync::RwLock<Option<WorkerLifecycleEvent>>> =
+        std::sync::Arc::new(tokio::sync::RwLock::new(None));
+    let lifecycle_write = lifecycle_event.clone();
     let token = registry.child_token();
     let id = registry.spawn_critical_result("ipc_loop", async move {
         let mut shutdown_rx = token;
         loop {
             tokio::select! {
                 _ = async {}, if !state.running.is_running() => {
-                    cause_clone.set(IpcLoopExit::RunningFlagCleared).await;
                     return Ok(());
                 }
                 result = shutdown_rx.changed() => {
                     if result.is_ok() && *shutdown_rx.borrow() {
-                        cause_clone.set(IpcLoopExit::RegistryShutdown).await;
                         return Ok(());
                     }
                 }
@@ -265,6 +274,7 @@ pub fn spawn_ipc_loop(
                     Err(_) => {
                         tracing::warn!("Unified server worker lost connection to supervisor");
                         state.master_dead.stop();
+                        *lifecycle_write.write().await = Some(WorkerLifecycleEvent::SupervisorDisconnected);
                         return Err(IpcLoopError::ConnectionLost);
                     }
                 }
@@ -282,36 +292,9 @@ pub fn spawn_ipc_loop(
                         timeout_secs
                     );
 
-                    // Phase 7: Explicit server shutdown — stop accepting new connections first.
-                    let tx_guard = state.stop_accepting_tx.lock().await;
-                    if let Some(tx) = tx_guard.as_ref() {
-                        let _ = tx.send(());
-                    }
-                    drop(tx_guard);
-
-                    tracing::info!(
-                        "Stopping app servers for unified server worker {}",
-                        state.worker_id
-                    );
-                    let app_servers = state.app_servers.read().await;
-                    for (site_id, supervisor) in app_servers.iter() {
-                        tracing::info!("Stopping granian for site {}", site_id);
-                        supervisor.stop().await;
-                    }
-                    drop(app_servers);
-
-                    state.running.stop();
-
-                    tracing::info!("Persisting bandwidth data on shutdown...");
-                    crate::metrics::bandwidth::persist_global_bandwidth_tracker();
-
-                    let mut ipc = state.ipc.lock().await;
-                    let _ = ipc
-                        .send(&Message::UnifiedServerWorkerShutdownComplete {
-                            id: state.worker_id,
-                        })
-                        .await;
-                    cause_clone.set(IpcLoopExit::MasterShutdown).await;
+                    let timeout = Duration::from_secs(timeout_secs as u64);
+                    let lifecycle_event = WorkerLifecycleEvent::MasterShutdown { graceful, timeout };
+                    *lifecycle_write.write().await = Some(lifecycle_event);
                     return Ok(());
                 }
                 Some(Message::MasterConfigReload { config_path }) => {
@@ -807,48 +790,15 @@ pub fn spawn_ipc_loop(
                         worker_threads
                     );
 
-                    state.draining.start_drain();
-
-                    let tx_guard = state.stop_accepting_tx.lock().await;
-                    if let Some(tx) = tx_guard.as_ref() {
-                        let _ = tx.send(());
-                    }
-                    state.stopped_accepting.start_drain();
-
-                    tracing::info!(
-                        "Unified Server Worker {} stopping accepting new connections for resize",
-                        state.worker_id
-                    );
-
-                    let _remaining =
-                        wait_for_drain(&state.drain_state, 30, &state.worker_id, "resize request")
-                            .await;
-
-                    tracing::info!(
-                        "Unified Server Worker {} exiting for threadpool resize to {} threads",
-                        state.worker_id,
-                        worker_threads
-                    );
-
-                    state.running.stop();
-
-                    let mut ipc = state.ipc.lock().await;
-                    let _ = ipc
-                        .send(&Message::UnifiedServerWorkerResizeAck {
-                            id: state.worker_id,
-                            worker_threads,
-                        })
-                        .await;
-
-                    worker_exit_code.store(100, Ordering::Relaxed);
-                    cause_clone.set(IpcLoopExit::WorkerResize).await;
+                    let lifecycle_event = WorkerLifecycleEvent::WorkerResize { worker_threads: worker_threads as usize };
+                    *lifecycle_write.write().await = Some(lifecycle_event);
                     return Ok(());
                 }
                 Some(_) | None => {}
             }
         }
     });
-    (id, exit_cause)
+    (id, lifecycle_event)
 }
 
 /// Abort and join all tasks in the registry with a bounded timeout.

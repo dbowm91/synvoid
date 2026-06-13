@@ -562,3 +562,130 @@ fn spawn_server_run_task_removed() {
         "lifecycle.rs must reference spawn_critical_result as the replacement"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Iteration 64 — Coordinated shutdown guardrails
+// ---------------------------------------------------------------------------
+
+/// MasterShutdown path must call begin_shutdown() before running.stop().
+#[test]
+fn master_shutdown_begins_intent_before_running_stop() {
+    let content = read_file("src/worker/unified_server/mod.rs");
+    // Scope to composition-root shutdown procedure to avoid supervision loop's running.stop().
+    let composition_root_start = content
+        .find("composition-root shutdown procedure")
+        .expect("composition-root shutdown procedure not found");
+    let composition_section = &content[composition_root_start..];
+    let begin_shutdown_pos = composition_section
+        .find("registry.begin_shutdown()")
+        .expect("begin_shutdown not found in composition root");
+    let running_stop_pos = composition_section
+        .find("state.running.stop()")
+        .expect("running.stop() not found in composition root");
+    assert!(
+        begin_shutdown_pos < running_stop_pos,
+        "begin_shutdown() must be called before running.stop() in the composition root"
+    );
+}
+
+/// UnifiedServerWorkerShutdownComplete must be sent from the composition root,
+/// not directly from the IPC receive branch.
+#[test]
+fn shutdown_complete_sent_from_composition_root() {
+    let content = read_file("src/worker/unified_server/mod.rs");
+    // The composition root sends ShutdownComplete after shutdown_and_join.
+    let shutdown_complete_pos = content
+        .find("UnifiedServerWorkerShutdownComplete")
+        .expect("ShutdownComplete not found");
+    let shutdown_and_join_pos = content
+        .find("shutdown_and_join")
+        .expect("shutdown_and_join not found");
+    assert!(
+        shutdown_and_join_pos < shutdown_complete_pos,
+        "UnifiedServerWorkerShutdownComplete must be sent after shutdown_and_join"
+    );
+}
+
+/// IPC loop must not perform inline shutdown — it should emit a lifecycle event.
+#[test]
+fn ipc_loop_emits_lifecycle_event_not_inline_shutdown() {
+    let content = read_file("src/worker/unified_server/lifecycle.rs");
+    // The IPC loop should set a lifecycle event for MasterShutdown, not do shutdown directly.
+    assert!(
+        content.contains("WorkerLifecycleEvent::MasterShutdown"),
+        "IPC loop must emit WorkerLifecycleEvent::MasterShutdown"
+    );
+    // The IPC loop should not call running.stop() for MasterShutdown.
+    // (It may still reference running for the pre-loop check.)
+    let master_shutdown_section = content
+        .split("WorkerLifecycleEvent::MasterShutdown")
+        .nth(1)
+        .expect("MasterShutdown event not found");
+    assert!(
+        !master_shutdown_section.contains("state.running.stop()"),
+        "IPC loop must not call running.stop() in MasterShutdown handler — that's the composition root's job"
+    );
+}
+
+/// WorkerShutdownCause must have an exit_code() method.
+#[test]
+fn worker_shutdown_cause_has_exit_code() {
+    let content = read_file("src/worker/task_registry.rs");
+    assert!(
+        content.contains("fn exit_code(&self) -> i32"),
+        "WorkerShutdownCause must have an exit_code() method"
+    );
+}
+
+/// WorkerShutdownCause must distinguish server expected vs unexpected.
+#[test]
+fn server_exit_distinguishes_expected_unexpected() {
+    let content = read_file("src/worker/task_registry.rs");
+    assert!(
+        content.contains("ServerExitedUnexpectedly"),
+        "WorkerShutdownCause must have ServerExitedUnexpectedly variant"
+    );
+    assert!(
+        content.contains("ServerStoppedForShutdown"),
+        "WorkerShutdownCause must have ServerStoppedForShutdown variant"
+    );
+}
+
+/// begin_shutdown and broadcast_shutdown must be separate methods.
+#[test]
+fn begin_shutdown_and_broadcast_are_separate() {
+    let content = read_file("src/worker/task_registry.rs");
+    assert!(
+        content.contains("pub fn begin_shutdown(&self)"),
+        "WorkerTaskRegistry must have begin_shutdown() method"
+    );
+    assert!(
+        content.contains("pub fn broadcast_shutdown(&self)"),
+        "WorkerTaskRegistry must have broadcast_shutdown() method"
+    );
+}
+
+/// Final exit code must derive from WorkerShutdownCause, not worker_exit_code.
+#[test]
+fn exit_code_derived_from_shutdown_cause() {
+    let content = read_file("src/worker/unified_server/mod.rs");
+    assert!(
+        content.contains("shutdown_cause.exit_code()"),
+        "Final exit code must be derived from WorkerShutdownCause::exit_code()"
+    );
+    // worker_exit_code should not be used for the final exit decision.
+    assert!(
+        !content.contains("worker_exit_code.load"),
+        "worker_exit_code should not be used for final exit code — use WorkerShutdownCause"
+    );
+}
+
+/// Graceful shutdown fields must be consumed by the drain path.
+#[test]
+fn graceful_fields_consumed_by_drain() {
+    let content = read_file("src/worker/unified_server/mod.rs");
+    assert!(
+        content.contains("graceful") && content.contains("drain_timeout"),
+        "Graceful and drain_timeout must be consumed by the shutdown path"
+    );
+}
