@@ -64,10 +64,7 @@ pub struct AsnTracker {
 }
 
 impl AsnTracker {
-    pub fn new(
-        config: AsnScrapingConfig,
-        geoip: Option<Arc<GeoIpManager>>,
-    ) -> Self {
+    pub fn new(config: AsnScrapingConfig, geoip: Option<Arc<GeoIpManager>>) -> Self {
         let whitelisted: HashSet<u32> = config.whitelisted_asns.iter().copied().collect();
         Self {
             asn_windows: DashMap::new(),

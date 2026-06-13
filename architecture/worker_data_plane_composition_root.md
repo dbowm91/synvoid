@@ -1,7 +1,7 @@
 # Worker/Data-Plane Composition Root Ownership
 
 **Established**: Iteration 58
-**Updated**: Iteration 60
+**Updated**: Iteration 61
 **Guardrail**: `tests/data_plane_composition_boundary_guard.rs`
 
 ## Invariant
@@ -24,6 +24,7 @@ These files construct and wire concrete infrastructure:
 | `src/worker/unified_server/init_runtime.rs` | Re-exports of state.rs runtime helpers |
 | `src/worker/unified_server/init_config.rs` | Re-exports of state.rs config helpers |
 | `src/worker/connection.rs` | Legacy worker WAF init |
+| `src/worker/task_registry.rs` | Task lifecycle management (CriticalService, RestartableBackground, etc.) |
 | `src/worker/cpu_task/mod.rs` | CPU offload worker composition |
 | `src/supervisor/process.rs` | Supervisor process composition |
 | `src/supervisor/mesh.rs` | Mesh agent composition |

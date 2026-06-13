@@ -859,8 +859,7 @@ fn boundary_exceptions_are_live_and_audited() {
             token_found,
             "BoundaryException token '{}' not found in any file matching '{}'. \
              Exception is stale — remove it or update the path/token.",
-            exc.token,
-            exc.path_suffix
+            exc.token, exc.path_suffix
         );
     }
 }

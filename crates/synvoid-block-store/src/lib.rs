@@ -6724,13 +6724,21 @@ mod tests {
         };
         let page1 = store.export_blocklist_snapshot(&options, &BlocklistSnapshotCursor::default());
         let page1_total = page1.ip_blocks.len() + page1.target_state_records.len();
-        assert!(page1_total <= 3, "Page should have at most 3 items, got {}", page1_total);
+        assert!(
+            page1_total <= 3,
+            "Page should have at most 3 items, got {}",
+            page1_total
+        );
         assert!(page1.has_more);
         assert!(!page1.snapshot_complete);
         assert!(page1.next_page_token.is_some());
 
         // Collect all pages.
-        let mut all_ip: Vec<String> = page1.ip_blocks.iter().map(|r| r.identifier.clone()).collect();
+        let mut all_ip: Vec<String> = page1
+            .ip_blocks
+            .iter()
+            .map(|r| r.identifier.clone())
+            .collect();
         let mut all_ts: Vec<(BlockTargetKind, String)> = page1
             .target_state_records
             .iter()
@@ -6749,7 +6757,10 @@ mod tests {
                 all_ts.push((r.target_kind, r.identifier.clone()));
             }
             if !page.has_more {
-                assert!(page.snapshot_complete, "Final page must have snapshot_complete=true");
+                assert!(
+                    page.snapshot_complete,
+                    "Final page must have snapshot_complete=true"
+                );
                 assert!(page.next_page_token.is_none());
                 break;
             }
@@ -6764,8 +6775,16 @@ mod tests {
         let mut sorted_ts: Vec<String> = all_ts.iter().map(|(_, id)| id.clone()).collect();
         sorted_ts.sort();
         sorted_ts.dedup();
-        assert_eq!(all_ts.len(), sorted_ts.len(), "No duplicate target-state records across pages");
-        assert_eq!(all_ts.len(), 5, "Should have 5 target-state records (one per IP block)");
+        assert_eq!(
+            all_ts.len(),
+            sorted_ts.len(),
+            "No duplicate target-state records across pages"
+        );
+        assert_eq!(
+            all_ts.len(),
+            5,
+            "Should have 5 target-state records (one per IP block)"
+        );
     }
 
     #[test]
@@ -6785,10 +6804,16 @@ mod tests {
         };
         let chunk = store.export_blocklist_snapshot(&options, &BlocklistSnapshotCursor::default());
         assert!(!chunk.has_more);
-        assert!(chunk.snapshot_complete, "snapshot_complete must be true on final page even with target-state records");
+        assert!(
+            chunk.snapshot_complete,
+            "snapshot_complete must be true on final page even with target-state records"
+        );
         assert!(chunk.next_page_token.is_none());
         assert_eq!(chunk.ip_blocks.len(), 1);
-        assert!(chunk.target_state_records.len() >= 1, "Should have at least 1 target-state record");
+        assert!(
+            chunk.target_state_records.len() >= 1,
+            "Should have at least 1 target-state record"
+        );
     }
 
     #[test]
@@ -7033,7 +7058,13 @@ mod tests {
         let store = BlockStore::new(true, None, target_state_config());
 
         store.add_block("10.0.0.1", "test", 3600, "global");
-        store.block_mesh_id_with_provenance("mesh-a", "test", 3600, "global", BlockProvenance::default());
+        store.block_mesh_id_with_provenance(
+            "mesh-a",
+            "test",
+            3600,
+            "global",
+            BlockProvenance::default(),
+        );
 
         let options = BlocklistSnapshotOptions {
             include_ip_blocks: true,
@@ -7047,7 +7078,10 @@ mod tests {
         // IP blocks come first, then mesh blocks, then target-state records.
         assert_eq!(chunk.ip_blocks.len(), 1);
         assert_eq!(chunk.mesh_blocks.len(), 1);
-        assert!(chunk.target_state_records.len() >= 1, "Should have at least 1 target-state record");
+        assert!(
+            chunk.target_state_records.len() >= 1,
+            "Should have at least 1 target-state record"
+        );
         assert_eq!(chunk.ip_blocks[0].identifier, "10.0.0.1");
         assert_eq!(chunk.mesh_blocks[0].identifier, "mesh-a");
         // Target state records should come after block entries in sort order.
@@ -7070,7 +7104,13 @@ mod tests {
         let store = BlockStore::new(true, None, target_state_config());
 
         store.add_block("10.0.0.1", "test", 3600, "global");
-        store.block_mesh_id_with_provenance("mesh-b", "test", 3600, "global", BlockProvenance::default());
+        store.block_mesh_id_with_provenance(
+            "mesh-b",
+            "test",
+            3600,
+            "global",
+            BlockProvenance::default(),
+        );
 
         let options = BlocklistSnapshotOptions {
             include_ip_blocks: true,
@@ -7087,8 +7127,12 @@ mod tests {
         assert!(chunk.next_page_token.is_none());
         // With target_state_config, add_block/block_mesh also create target-state entries.
         // So we get: 1 IP block + 1 mesh block + 2 target-state records = 4.
-        let total = chunk.ip_blocks.len() + chunk.mesh_blocks.len() + chunk.target_state_records.len();
-        assert!(total >= 3, "Should have at least 3 items (IP + mesh + target-state)");
+        let total =
+            chunk.ip_blocks.len() + chunk.mesh_blocks.len() + chunk.target_state_records.len();
+        assert!(
+            total >= 3,
+            "Should have at least 3 items (IP + mesh + target-state)"
+        );
         assert_eq!(chunk.ip_blocks.len(), 1);
         assert_eq!(chunk.mesh_blocks.len(), 1);
         assert!(chunk.target_state_records.len() >= 1);

@@ -197,3 +197,18 @@ corresponding entry to `classify_unified_server_file()` in the guardrail test.
 Boundary exceptions (pass-through types, trait-object delegation) must be
 live-audited. The `boundary_exceptions_are_live_and_audited` test verifies each
 exception token appears in at least one matching source file.
+
+## Worker Task Lifecycle (Iteration 61)
+
+The `task_registry` module provides structured concurrency management:
+
+- **WorkerTaskRegistry**: register named tasks with classification (CriticalService, RestartableBackground, etc.), cooperative cancellation via `child_token()`, bounded shutdown with `shutdown_and_join()`
+- **ManagedService trait**: `name()`, `shutdown()` (idempotent), `join()` (after shutdown)
+- **cancellation_loop()**: helper for periodic work with cooperative shutdown
+- **ThreatFeedClient** is the first migrated service: uses `select!` with `shutdown_tx` watch channel
+
+### How to add a new long-lived task
+1. Determine task class (CriticalService, RestartableBackground, BoundedChild, CpuOffload, Detached)
+2. For CriticalService/RestartableBackground: use WorkerTaskRegistry.spawn_critical() or spawn_background()
+3. Use child_token() with tokio::select! for cooperative cancellation
+4. For Detached: add explicit allowlist entry in tests/background_task_ownership_guard.rs

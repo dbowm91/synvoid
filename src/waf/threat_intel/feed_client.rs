@@ -89,6 +89,8 @@ pub struct ThreatFeedClient {
     #[allow(clippy::type_complexity)]
     on_update_callback:
         Arc<parking_lot::RwLock<Option<Box<dyn Fn(u64, Vec<ThreatIndicator>) + Send + Sync>>>>,
+    shutdown_tx: tokio::sync::watch::Sender<bool>,
+    task_handle: parking_lot::RwLock<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl ThreatFeedClient {
@@ -97,6 +99,7 @@ impl ThreatFeedClient {
         threat_manager: Option<Arc<ThreatIntelligenceManager>>,
     ) -> Arc<Self> {
         let http_client = crate::http_client::create_simple_http_client(Duration::from_secs(30));
+        let (shutdown_tx, _) = tokio::sync::watch::channel(false);
 
         Arc::new(Self {
             config: Arc::new(config),
@@ -105,6 +108,8 @@ impl ThreatFeedClient {
             last_fetch: Arc::new(RwLock::new(0)),
             last_indicator_count: Arc::new(RwLock::new(0)),
             on_update_callback: Arc::new(parking_lot::RwLock::new(None)),
+            shutdown_tx,
+            task_handle: parking_lot::RwLock::new(None),
         })
     }
 
@@ -115,10 +120,26 @@ impl ThreatFeedClient {
         *self.on_update_callback.write() = Some(Box::new(callback));
     }
 
-    pub fn start_background_fetching(self: &Arc<Self>) {
+    /// Start the background feed fetching loop.
+    ///
+    /// The task uses `tokio::select!` for cooperative cancellation via the
+    /// shutdown watch channel. The handle is retained for graceful shutdown.
+    ///
+    /// Returns `Ok(())` if the task was started, or `Err(())` if it was
+    /// already running (idempotent guard).
+    pub fn start_background_fetching(self: &Arc<Self>) -> Result<(), ()> {
         if !self.config.enabled {
             tracing::info!("Threat feed client is disabled");
-            return;
+            return Ok(());
+        }
+
+        // Reject duplicate starts
+        {
+            let handle = self.task_handle.read();
+            if handle.is_some() {
+                tracing::warn!("Threat feed background fetching already started");
+                return Err(());
+            }
         }
 
         if self.config.trusted_signers.is_empty() {
@@ -129,21 +150,35 @@ impl ThreatFeedClient {
 
         let self_clone = Arc::clone(self);
         let interval = Duration::from_secs(self.config.fetch_interval_secs);
+        let mut shutdown_rx = self_clone.shutdown_tx.subscribe();
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             tracing::info!(
                 "Starting threat feed background fetcher (interval: {}s)",
                 interval.as_secs()
             );
 
+            // Initial fetch
             self_clone.fetch_and_process().await;
 
             let mut interval_timer = time::interval(interval);
             loop {
-                interval_timer.tick().await;
-                self_clone.fetch_and_process().await;
+                tokio::select! {
+                    _ = interval_timer.tick() => {
+                        self_clone.fetch_and_process().await;
+                    }
+                    result = shutdown_rx.changed() => {
+                        if result.is_ok() && *shutdown_rx.borrow() {
+                            tracing::info!("Threat feed background fetcher shutting down");
+                            break;
+                        }
+                    }
+                }
             }
         });
+
+        *self.task_handle.write() = Some(handle);
+        Ok(())
     }
 
     pub async fn fetch_and_process(&self) {
@@ -432,5 +467,35 @@ impl ThreatFeedClient {
 
     pub fn is_enabled(&self) -> bool {
         self.config.enabled
+    }
+
+    /// Initiate graceful shutdown of the background fetch loop.
+    ///
+    /// This is idempotent. After calling this, `join()` will complete
+    /// once the current fetch cycle finishes.
+    pub fn shutdown(&self) {
+        let _ = self.shutdown_tx.send(true);
+    }
+
+    /// Wait for the background task to complete.
+    ///
+    /// Can be called after `shutdown()`. Returns `Ok(())` if the task
+    /// exited cleanly or was cancelled, or `Err` if it panicked.
+    pub async fn join(&self) -> Result<(), String> {
+        let handle = self.task_handle.write().take();
+        match handle {
+            Some(h) => match h.await {
+                Ok(()) => Ok(()),
+                Err(e) if e.is_cancelled() => Ok(()),
+                Err(e) if e.is_panic() => Err(format!("Threat feed task panicked: {}", e)),
+                Err(e) => Err(format!("Threat feed task error: {}", e)),
+            },
+            None => Ok(()),
+        }
+    }
+
+    /// Check if the background task is currently running.
+    pub fn is_running(&self) -> bool {
+        self.task_handle.read().is_some()
     }
 }

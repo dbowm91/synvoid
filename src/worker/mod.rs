@@ -21,6 +21,7 @@ pub mod drain_adapter;
 pub mod drain_state;
 pub mod extension;
 pub mod metrics;
+pub mod task_registry;
 pub mod traits;
 pub mod unified_server;
 

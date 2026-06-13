@@ -71,3 +71,7 @@ When `unified_server_workers > 1` is explicitly configured:
 - `src/worker/unified_server/mod.rs` - Main unified server implementation
 - `src/worker/mod.rs` - Worker process management
 - `src/app_server/granian.rs` - AppServer/Granian integration
+
+## Structured Concurrency (Iteration 61)
+
+Every long-lived task in the unified worker has an owner, a cancellation path, a join path, and an explicit failure policy. The `WorkerTaskRegistry` in `src/worker/task_registry.rs` provides the lifecycle primitive. See `architecture/worker_task_lifecycle.md` for the full task inventory and shutdown ordering.
