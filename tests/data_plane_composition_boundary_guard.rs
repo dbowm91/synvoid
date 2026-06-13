@@ -1,4 +1,4 @@
-//! Iteration 59 — Data-plane composition root boundary guard.
+//! Iteration 60 — Data-plane composition root boundary guard.
 //!
 //! Prevents request-path modules from importing or constructing concrete
 //! mesh/DHT/Raft/admin/block-store infrastructure. Composition roots
@@ -7,6 +7,8 @@
 //! Phase 1: Role-based `classify_path` replaces `is_allowlisted`
 //! Phase 2: Broadened forbidden token coverage (construction + type-import + control-plane ops)
 //! Phase 3: Structured `BoundaryException` table replaces ad-hoc `is_file_exempt`
+//! Phase 4: Mixed-role scan roots include unified_server with file-by-file classification
+//! Phase 5: Fail-closed unknown file classification
 //! Phase 6: Additional assertion tests for focused boundary checks
 
 use std::path::{Path, PathBuf};
@@ -160,7 +162,7 @@ fn strip_comments(content: &str) -> String {
 // Phase 1: Role-based classification
 // ---------------------------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum BoundaryRole {
     CompositionRoot,
     RequestPath,
@@ -168,6 +170,7 @@ enum BoundaryRole {
     Admin,
     SharedTypes,
     TestOnly,
+    Unclassified,
 }
 
 fn classify_path(path: &Path) -> BoundaryRole {
@@ -253,8 +256,8 @@ fn classify_unified_server_file(path: &str) -> BoundaryRole {
         return BoundaryRole::SharedTypes;
     }
 
-    // Default: treat unknown unified_server files as composition root (conservative)
-    BoundaryRole::CompositionRoot
+    // Fail closed: unknown unified_server files are unclassified, not implicitly privileged
+    BoundaryRole::Unclassified
 }
 
 // ---------------------------------------------------------------------------
@@ -391,7 +394,7 @@ fn find_exception(path: &Path, token: &str) -> Option<&'static BoundaryException
         .find(|e| s.contains(e.path_suffix) && token == e.token)
 }
 
-/// Request-path directories that must not use concrete infrastructure.
+/// Pure request-path directories that must not use concrete infrastructure.
 fn request_path_dirs() -> Vec<&'static str> {
     vec![
         "src/waf",
@@ -406,23 +409,41 @@ fn request_path_dirs() -> Vec<&'static str> {
     ]
 }
 
+/// All directories subject to boundary scanning (mixed-role roots included).
+fn boundary_scan_roots() -> Vec<&'static str> {
+    let mut roots: Vec<&'static str> = request_path_dirs();
+    roots.push("src/worker/unified_server");
+    roots
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 // Phase 1: Mechanical source scan — role-based classification
+// Iteration 60: scans boundary_scan_roots() (including unified_server) and
+// fails immediately on Unclassified files.
 #[test]
 fn request_path_no_concrete_infrastructure_imports() {
     let root = workspace_root();
     let mut violations: Vec<(String, String)> = Vec::new();
 
-    for dir_name in request_path_dirs() {
+    for dir_name in boundary_scan_roots() {
         let dir = root.join(dir_name);
         if !dir.exists() {
             continue;
         }
         for file in collect_rs_files(&dir) {
             let role = classify_path(&file);
+            // Fail closed on unclassified files
+            if matches!(role, BoundaryRole::Unclassified) {
+                let rel = file.strip_prefix(&root).unwrap_or(&file);
+                panic!(
+                    "Unclassified file under a mixed-role boundary root: {}\n\
+                     Add an explicit BoundaryRole classification before merging.",
+                    rel.display()
+                );
+            }
             // Skip non-request-path roles (composition roots, control-plane, admin, tests, shared types)
             if matches!(
                 role,
@@ -581,13 +602,21 @@ fn request_path_no_concrete_blockstore_types() {
         "BlockStore::new",
     ];
 
-    for dir_name in request_path_dirs() {
+    for dir_name in boundary_scan_roots() {
         let dir = root.join(dir_name);
         if !dir.exists() {
             continue;
         }
         for file in collect_rs_files(&dir) {
             let role = classify_path(&file);
+            if matches!(role, BoundaryRole::Unclassified) {
+                let rel = file.strip_prefix(&root).unwrap_or(&file);
+                panic!(
+                    "Unclassified file under a mixed-role boundary root: {}\n\
+                     Add an explicit BoundaryRole classification before merging.",
+                    rel.display()
+                );
+            }
             if matches!(
                 role,
                 BoundaryRole::CompositionRoot
@@ -630,13 +659,21 @@ fn request_path_no_threat_intelligence_manager_types() {
         "ThreatIntelligenceManager::from_external_config",
     ];
 
-    for dir_name in request_path_dirs() {
+    for dir_name in boundary_scan_roots() {
         let dir = root.join(dir_name);
         if !dir.exists() {
             continue;
         }
         for file in collect_rs_files(&dir) {
             let role = classify_path(&file);
+            if matches!(role, BoundaryRole::Unclassified) {
+                let rel = file.strip_prefix(&root).unwrap_or(&file);
+                panic!(
+                    "Unclassified file under a mixed-role boundary root: {}\n\
+                     Add an explicit BoundaryRole classification before merging.",
+                    rel.display()
+                );
+            }
             if matches!(
                 role,
                 BoundaryRole::CompositionRoot
@@ -676,13 +713,21 @@ fn request_path_no_raft_or_dht_imports() {
     let mut violations = Vec::new();
     let raft_dht_tokens = ["crate::raft::", "openraft::", "crate::dht::"];
 
-    for dir_name in request_path_dirs() {
+    for dir_name in boundary_scan_roots() {
         let dir = root.join(dir_name);
         if !dir.exists() {
             continue;
         }
         for file in collect_rs_files(&dir) {
             let role = classify_path(&file);
+            if matches!(role, BoundaryRole::Unclassified) {
+                let rel = file.strip_prefix(&root).unwrap_or(&file);
+                panic!(
+                    "Unclassified file under a mixed-role boundary root: {}\n\
+                     Add an explicit BoundaryRole classification before merging.",
+                    rel.display()
+                );
+            }
             if matches!(
                 role,
                 BoundaryRole::CompositionRoot
@@ -713,9 +758,20 @@ fn request_path_no_raft_or_dht_imports() {
     }
 }
 
-// Phase 6d: Unified server request dispatch files are not broadly allowlisted
+// Phase 6d: Unified server is in boundary scan roots
 #[test]
-fn worker_unified_server_request_dispatch_files_are_not_broadly_allowlisted() {
+fn unified_server_is_in_boundary_scan_roots() {
+    let roots = boundary_scan_roots();
+    assert!(
+        roots.iter().any(|r| *r == "src/worker/unified_server"),
+        "boundary_scan_roots() must include src/worker/unified_server, got: {:?}",
+        roots
+    );
+}
+
+// Phase 6e: Every .rs file under unified_server has an explicit non-fallback classification
+#[test]
+fn every_unified_server_file_is_explicitly_classified() {
     let root = workspace_root();
     let us_dir = root.join("src/worker/unified_server");
     assert!(us_dir.exists(), "unified_server dir must exist");
@@ -723,21 +779,47 @@ fn worker_unified_server_request_dispatch_files_are_not_broadly_allowlisted() {
     let files = collect_rs_files(&us_dir);
     assert!(!files.is_empty(), "unified_server must have .rs files");
 
-    // Verify that passthrough_validation.rs is classified as SharedTypes, not CompositionRoot
     for file in &files {
-        let s = file.to_string_lossy();
-        if s.contains("passthrough_validation") {
-            let role = classify_path(file);
-            assert!(
-                matches!(role, BoundaryRole::SharedTypes),
-                "passthrough_validation.rs should be SharedTypes (pure logic), got {:?}",
-                role
-            );
-        }
+        let role = classify_path(file);
+        let rel = file.strip_prefix(&root).unwrap_or(&file);
+        assert_ne!(
+            role,
+            BoundaryRole::Unclassified,
+            "unified_server file {} has no explicit classification. \
+             Add a BoundaryRole before merging.",
+            rel.display()
+        );
     }
 }
 
-// Phase 6e: Boundary exceptions have reasons
+// Phase 6f: Unknown unified_server file fails closed
+#[test]
+fn unknown_unified_server_file_fails_closed() {
+    let fake_path = Path::new("src/worker/unified_server/new_unknown_feature.rs");
+    let role = classify_unified_server_file(&fake_path.to_string_lossy());
+    assert!(
+        matches!(role, BoundaryRole::Unclassified),
+        "Unknown unified_server file should be Unclassified, got {:?}",
+        role
+    );
+}
+
+// Phase 6g: Simulated forbidden token in a request-path-classified unified-server file is caught
+#[test]
+fn simulated_unified_server_request_path_violation_is_detected() {
+    // passthrough_validation.rs is classified SharedTypes, so a token there
+    // would be skipped. Instead, verify that the token scanner catches a
+    // forbidden token in any RequestPath-classified file.
+    let test_content = "use crate::block_store::BlockStore;";
+    let stripped = strip_cfg_test_modules(test_content);
+    let stripped = strip_comments(&stripped);
+    assert!(
+        TYPE_IMPORT_TOKENS.iter().any(|t| stripped.contains(t)),
+        "Forbidden token in request-path code should be detected"
+    );
+}
+
+// Phase 6h: Boundary exceptions have reasons
 #[test]
 fn boundary_exceptions_have_reasons() {
     for exc in BOUNDARY_EXCEPTIONS {
@@ -750,28 +832,88 @@ fn boundary_exceptions_have_reasons() {
     }
 }
 
-// Phase 6f: Simulated type import is detected
+// Phase 7: Every BoundaryException's token appears in at least one matching file
 #[test]
-fn simulated_type_import_is_detected() {
-    let content = "use crate::block_store::BlockStore;";
-    let stripped = strip_cfg_test_modules(content);
-    let stripped = strip_comments(&stripped);
-    assert!(
-        TYPE_IMPORT_TOKENS.iter().any(|t| stripped.contains(t)),
-        "Simulated type import should be detected"
-    );
+fn boundary_exceptions_are_live_and_audited() {
+    let root = workspace_root();
+    // Collect all .rs files once (shared across exceptions for performance)
+    let all_files = collect_rs_files(&root);
+    for exc in BOUNDARY_EXCEPTIONS {
+        // Find files matching the path_suffix
+        let matching_files: Vec<&PathBuf> = all_files
+            .iter()
+            .filter(|p| p.to_string_lossy().contains(exc.path_suffix))
+            .collect();
+        assert!(
+            !matching_files.is_empty(),
+            "BoundaryException path_suffix '{}' matches no files — exception is stale or path is wrong",
+            exc.path_suffix
+        );
+        let token_found = matching_files.iter().any(|f| {
+            let content = std::fs::read_to_string(f).unwrap_or_default();
+            let stripped = strip_cfg_test_modules(&content);
+            let stripped = strip_comments(&stripped);
+            stripped.contains(exc.token)
+        });
+        assert!(
+            token_found,
+            "BoundaryException token '{}' not found in any file matching '{}'. \
+             Exception is stale — remove it or update the path/token.",
+            exc.token,
+            exc.path_suffix
+        );
+    }
 }
 
-// Phase 6g: Simulated pass-through exception is allowed
+// Phase 8: Classification unit tests
+
 #[test]
-fn simulated_pass_through_exception_is_allowed() {
-    let exc = find_exception(
-        &Path::new("crates/synvoid-http/src/dispatch.rs"),
-        "MeshTransportManager",
+fn classification_known_composition_root_file() {
+    let path = Path::new("src/worker/unified_server/mod.rs");
+    let role = classify_unified_server_file(&path.to_string_lossy());
+    assert_eq!(role, BoundaryRole::CompositionRoot);
+}
+
+#[test]
+fn classification_known_shared_file() {
+    let path = Path::new("src/worker/unified_server/passthrough_validation.rs");
+    let role = classify_unified_server_file(&path.to_string_lossy());
+    assert_eq!(role, BoundaryRole::SharedTypes);
+}
+
+#[test]
+fn classification_known_request_path_file() {
+    let path = Path::new("src/waf/mod.rs");
+    let role = classify_path(path);
+    assert_eq!(role, BoundaryRole::RequestPath);
+}
+
+#[test]
+fn classification_unknown_unified_server_file() {
+    let path = Path::new("/src/worker/unified_server/new_future_feature.rs");
+    let role = classify_path(path);
+    assert_eq!(role, BoundaryRole::Unclassified);
+}
+
+#[test]
+fn classification_unrelated_request_path_file() {
+    let path = Path::new("src/proxy/cache.rs");
+    let role = classify_path(path);
+    assert_eq!(role, BoundaryRole::RequestPath);
+}
+
+#[test]
+fn classification_admin_control_plane_files() {
+    assert_eq!(
+        classify_path(Path::new("/src/admin/mod.rs")),
+        BoundaryRole::Admin
     );
-    assert!(
-        exc.is_some(),
-        "MeshTransportManager should have exception in synvoid-http"
+    assert_eq!(
+        classify_path(Path::new("/src/supervisor/mod.rs")),
+        BoundaryRole::Admin
     );
-    assert!(exc.unwrap().reason.contains("Pass-through"));
+    assert_eq!(
+        classify_path(Path::new("/crates/synvoid-mesh/src/mesh/mod.rs")),
+        BoundaryRole::ControlPlane
+    );
 }

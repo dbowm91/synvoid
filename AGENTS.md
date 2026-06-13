@@ -130,6 +130,7 @@ cargo check --no-default-features --features mesh,dns
 
 **Iteration 58**: Request-path modules must consume narrow traits/capabilities, not concrete infrastructure.
 **Iteration 59**: Guardrail tightened with role-based file classification, three token groups, and scoped exceptions. WAF blocklist methods documented as no-op compatibility shims. `check_dht_threat_lookup()` and `get_threat_intel()` removed from `WafCore` (dead code).
+**Iteration 60**: `src/worker/unified_server/` is actively scanned via `boundary_scan_roots()`, not broadly exempt. Unknown files under mixed-role directories fail closed (`Unclassified` role). Every boundary exception must be live-audited. Exception liveness test prevents stale exceptions from authorizing regressions.
 
 ### Allowed Dependency Directions
 
@@ -149,7 +150,7 @@ cargo check --no-default-features --features mesh,dns
 cargo test --test data_plane_composition_boundary_guard
 ```
 
-The guardrail uses `BoundaryRole` enum to classify each file individually. `src/worker/unified_server/` files are classified per-file (most are `CompositionRoot`, `passthrough_validation.rs is `SharedTypes`). Three token groups catch violations: `CONSTRUCTION_TOKENS` (constructors), `TYPE_IMPORT_TOKENS` (concrete type imports), `CONTROL_PLANE_OP_TOKENS` (blocklist/threat-intel operations). Pass-through types (`MeshTransportManager`, `MeshBackendPool`) have scoped `BoundaryException` entries with documented reasons.
+The guardrail uses `BoundaryRole` enum to classify each file individually. `src/worker/unified_server/` files are classified per-file (most are `CompositionRoot`, `passthrough_validation.rs is `SharedTypes`). Unknown files under mixed-role directories fail closed (`Unclassified` role). Three token groups catch violations: `CONSTRUCTION_TOKENS` (constructors), `TYPE_IMPORT_TOKENS` (concrete type imports), `CONTROL_PLANE_OP_TOKENS` (blocklist/threat-intel operations). Pass-through types (`MeshTransportManager`, `MeshBackendPool`) have scoped `BoundaryException` entries with documented reasons. Exception liveness test ensures every exception corresponds to a live source occurrence.
 
 ### WAF Blocklist No-Op Shims
 

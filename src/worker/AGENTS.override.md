@@ -93,7 +93,7 @@ UnifiedServer worker (`run_unified_server_worker`).
   is a different module from `cpu_task::connection`** and must be referenced
   with `crate::worker::connection` to avoid confusion.
 
-## Architecture Boundary Cleanup (Iteration 2)
+## Architecture Boundary Cleanup (Iteration 2, updated Iteration 60)
 
 ### `DataPlaneServicesBuilder::new()` requires explicit `serverless_manager`
 
@@ -185,3 +185,15 @@ static readers.
 that wires the serverless manager into the HTTP server stack. This is separate
 from `DataPlaneServicesBuilder` — the builder bundles service handles for
 cross-wiring, while the server method injects into the request pipeline.
+
+### Composition Boundary Guardrail (Iteration 60)
+
+`src/worker/unified_server/` is actively scanned via `boundary_scan_roots()` in
+the guardrail test. Unknown files under this directory fail closed with
+`BoundaryRole::Unclassified`. Every `.rs` file must receive an explicit
+classification. When adding new files to `src/worker/unified_server/`, add a
+corresponding entry to `classify_unified_server_file()` in the guardrail test.
+
+Boundary exceptions (pass-through types, trait-object delegation) must be
+live-audited. The `boundary_exceptions_are_live_and_audited` test verifies each
+exception token appears in at least one matching source file.

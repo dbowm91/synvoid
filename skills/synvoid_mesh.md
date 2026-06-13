@@ -1241,6 +1241,8 @@ The WAF request path no longer holds a concrete `BlockStore` directly. `WafCore`
 
 **Iteration 59**: Guardrail tightened — `src/worker/unified_server/` is no longer broadly exempt; each file is individually classified via `BoundaryRole`. Three token groups (construction, type-import, control-plane-op) catch concrete infrastructure at import level, not just constructor calls. `check_dht_threat_lookup()` and `get_threat_intel()` removed from `WafCore` (dead code referencing concrete `ThreatIntelligenceManager` on request path). WAF blocklist methods (`check_early`, `block_ip_for_honeypot`, `block_ip_with_threat_intel`) documented as no-op compatibility shims. Scoped `BoundaryException` table replaces file-level exemptions.
 
+**Iteration 60**: `src/worker/unified_server/` is actively scanned via `boundary_scan_roots()`, not broadly exempt. Unknown files under mixed-role directories fail closed (`Unclassified` role). Every boundary exception must be live-audited; a liveness test ensures each exception corresponds to a current source occurrence. Exception liveness test prevents stale exceptions from authorizing regressions.
+
 ### AsnBlock Status
 
 `AsnBlock` is observational/advisory only. No enforcement gate, no block-store mutation, no attack metric. The indicator is stored for bookkeeping; the handler logs an advisory message.

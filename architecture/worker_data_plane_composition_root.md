@@ -1,7 +1,7 @@
 # Worker/Data-Plane Composition Root Ownership
 
 **Established**: Iteration 58
-**Updated**: Iteration 59
+**Updated**: Iteration 60
 **Guardrail**: `tests/data_plane_composition_boundary_guard.rs`
 
 ## Invariant
@@ -120,13 +120,18 @@ These methods are retained only for trait compatibility (`EarlyWafHooks`, `Chall
 
 `check_dht_threat_lookup()` and `get_threat_intel()` were removed in Iteration 59 — they were dead code referencing concrete `ThreatIntelligenceManager` on the request path.
 
-## Guardrail
+## Guardrail (Iteration 60)
 
 `tests/data_plane_composition_boundary_guard.rs` enforces the composition boundary with role-based file classification and three token groups:
 
-- **`BoundaryRole` enum**: Classifies files as `CompositionRoot`, `RequestPath`, `ControlPlane`, `Admin`, `SharedTypes`, or `TestOnly`. Each file under `src/worker/unified_server/` is classified individually.
+- **`BoundaryRole` enum**: Classifies files as `CompositionRoot`, `RequestPath`, `ControlPlane`, `Admin`, `SharedTypes`, `TestOnly`, or `Unclassified`. Each file under `src/worker/unified_server/` is classified individually. Unknown files under mixed-role directories fail closed as `Unclassified`.
+- **`boundary_scan_roots()`**: Mixed-role scan roots that include `src/worker/unified_server/` alongside pure request-path directories. Every `.rs` file in these roots is traversed and classified.
 - **`CONSTRUCTION_TOKENS`**: Catches concrete infrastructure construction (`BlockStore::new`, `ThreatIntelligenceManager::new`, etc.)
 - **`TYPE_IMPORT_TOKENS`**: Catches concrete type imports (`crate::block_store::BlockStore`, `crate::raft::`, etc.)
 - **`CONTROL_PLANE_OP_TOKENS`**: Catches control-plane operations (`export_blocklist_snapshot`, `lookup_threat_indicator_in_dht`, etc.)
 
 Pass-through types in HTTP dispatch (`MeshTransportManager`, `MeshBackendPool`) have scoped `BoundaryException` entries with documented reasons. The guardrail also runs focused tests for BlockStore types, ThreatIntelligenceManager types, and Raft/DHT imports specifically.
+
+**Exception liveness**: Every `BoundaryException` must correspond to a current, audited source occurrence. A liveness test verifies each exception token is present in at least one matching file, preventing stale exceptions from silently authorizing regressions.
+
+**Fail-closed classification**: New files added under mixed-role directories (e.g., `src/worker/unified_server/`) must receive an explicit `BoundaryRole` classification. The default for unknown unified-server files is `Unclassified`, which causes the guardrail test to fail with instructions to classify the file explicitly.
