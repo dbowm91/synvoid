@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use parking_lot::RwLock;
-use tokio::sync::broadcast;
+use tokio::sync::watch;
 
 use crate::config::{MeshConfig, MeshPeerConfig};
 use crate::protocol::MeshMessage;
@@ -71,18 +71,23 @@ impl MeshTransport {
             pending_membership_changes: self.pending_membership_changes.clone(),
             edge_replica_manager: self.edge_replica_manager.clone(),
             raft_proposal_replay_cache: self.raft_proposal_replay_cache.clone(),
+            task_group: self.task_group.clone(),
+            lifecycle_state: self.lifecycle_state.clone(),
+            shutdown_started: self.shutdown_started.clone(),
         }
     }
 
     pub(crate) async fn datagram_listener_loop(
         peer_connections: Arc<DashMap<String, MeshPeerConnection>>,
-        mut shutdown_rx: broadcast::Receiver<()>,
+        mut shutdown_rx: watch::Receiver<bool>,
     ) {
         loop {
             tokio::select! {
-                _ = shutdown_rx.recv() => {
-                    tracing::info!("Datagram listener stopped");
-                    break;
+                _ = shutdown_rx.changed() => {
+                    if *shutdown_rx.borrow() {
+                        tracing::info!("Datagram listener stopped");
+                        break;
+                    }
                 }
                 _ = async {
                     for entry in peer_connections.iter() {
@@ -102,7 +107,7 @@ impl MeshTransport {
         config: Arc<MeshConfig>,
         topology: Arc<MeshTopology>,
         peer_connections: Arc<DashMap<String, MeshPeerConnection>>,
-        mut shutdown_rx: broadcast::Receiver<()>,
+        mut shutdown_rx: watch::Receiver<bool>,
     ) {
         let announce_interval_secs = config.connection.announce_interval_secs;
         let keepalive_interval_secs = config.connection.keepalive_interval_secs;
@@ -115,9 +120,11 @@ impl MeshTransport {
 
         loop {
             tokio::select! {
-                _ = shutdown_rx.recv() => {
-                    tracing::info!("Mesh maintenance loop shutting down");
-                    break;
+                _ = shutdown_rx.changed() => {
+                    if *shutdown_rx.borrow() {
+                        tracing::info!("Mesh maintenance loop shutting down");
+                        break;
+                    }
                 }
                 _ = announce_interval.tick() => {
                     Self::handle_announcements(&topology, &peer_connections).await;

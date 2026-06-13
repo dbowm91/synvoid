@@ -675,3 +675,43 @@ After a primary cause is selected, secondary task exits are classified as expect
 
 - 8 new tests in `tests/worker_supervision_control_flow.rs` covering lifecycle transition failures, secondary exit classification, server exit detail preservation, and primary cause immutability
 - 4 new guardrail checks in `tests/background_task_ownership_guard.rs` verifying supervision side-effect freedom, helper encapsulation, lifecycle error propagation, and server exit detail preservation
+
+## Mesh Transport Lifecycle (Iteration 68)
+
+The mesh transport now uses structured lifecycle management:
+
+### Mesh Task Classes
+- **CriticalService**: mesh maintenance, datagram listener, QUIC accept loop
+- **RestartableBackground**: PoW refresh, ML-KEM rotation, health checks, cache warming, DHT resync, load reporting, heartbeat
+- **BoundedChild**: per-peer connection handlers
+- **OneShotStartup**: self-attestation, seed bootstrap
+
+### Lifecycle State Machine
+- `Stopped -> Starting -> Running -> Stopping -> Stopped`
+- `Starting -> Failed -> Stopped` (rollback on startup failure)
+- `Running -> Failed -> Stopping/Stopped`
+
+### Transactional Startup
+Startup proceeds in phases:
+1. Validate state and configuration
+2. Create fresh MeshTaskGroup
+3. Start critical loops
+4. Bootstrap seeds/peers/DHT
+5. Start background loops
+6. Commit lifecycle state
+
+If any phase fails, rollback clears all started tasks.
+
+### Bounded Shutdown
+`shutdown_with_timeout(timeout)` returns `MeshShutdownReport`:
+1. Transition to Stopping
+2. Signal all tasks via watch channel
+3. Close QUIC connections
+4. Join tasks with timeout, aborting stragglers
+5. Transition to Stopped
+
+### Peer Child Bounding
+- `max_concurrent_handshakes` (default 32) limits concurrent peer handshakes
+- `handshake_timeout_secs` (default 10) bounds individual handshake duration
+- Accept loop rejects connections when at capacity
+- Shutdown drains children with 10s timeout before abort

@@ -45,7 +45,11 @@ use http_body_util::combinators::BoxBody;
 use hyper::{Request, Response};
 use parking_lot::RwLock;
 
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
+use tokio::sync::{broadcast, mpsc, oneshot, watch, Mutex};
+
+use crate::lifecycle::{MeshLifecycleState, MeshShutdownReport, MeshTaskExit};
+use crate::task_group::MeshTaskGroup;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::cert::MeshCertManager;
 use crate::config::{MeshConfig, MeshPeerConfig, MeshTlsMode};
@@ -159,6 +163,9 @@ pub struct MeshTransport {
         Arc<RwLock<Option<Arc<crate::raft::edge_replica::EdgeReplicaManager>>>>,
     pub(crate) raft_proposal_replay_cache:
         Arc<tokio::sync::Mutex<crate::raft::state_machine::ReplayProtectionCache>>,
+    pub(crate) task_group: Arc<tokio::sync::Mutex<MeshTaskGroup>>,
+    pub(crate) lifecycle_state: Arc<tokio::sync::Mutex<MeshLifecycleState>>,
+    pub(crate) shutdown_started: Arc<AtomicBool>,
 }
 
 #[derive(Clone, Debug)]
@@ -402,6 +409,9 @@ impl Clone for MeshTransport {
             pending_membership_changes: self.pending_membership_changes.clone(),
             edge_replica_manager: self.edge_replica_manager.clone(),
             raft_proposal_replay_cache: self.raft_proposal_replay_cache.clone(),
+            task_group: self.task_group.clone(),
+            lifecycle_state: self.lifecycle_state.clone(),
+            shutdown_started: self.shutdown_started.clone(),
         }
     }
 }
@@ -735,6 +745,9 @@ impl MeshTransport {
             raft_proposal_replay_cache: Arc::new(tokio::sync::Mutex::new(
                 crate::raft::state_machine::ReplayProtectionCache::default(),
             )),
+            task_group: Arc::new(tokio::sync::Mutex::new(MeshTaskGroup::new())),
+            lifecycle_state: Arc::new(tokio::sync::Mutex::new(MeshLifecycleState::Stopped)),
+            shutdown_started: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -2004,238 +2017,325 @@ impl MeshTransport {
 
     #[cfg(feature = "dns")]
     pub async fn start(&self) -> Result<(), MeshTransportError> {
+        // Phase 1: Acquire lifecycle lock and validate state
         {
-            let mut running = self.running.write();
-            if *running {
-                return Ok(());
+            let mut state = self.lifecycle_state.lock().await;
+            if !state.can_start() {
+                return Err(MeshTransportError::LifecycleConflict(format!(
+                    "Cannot start: current state is {state}"
+                )));
             }
-            *running = true;
+            state.transition_to_starting().map_err(|e| {
+                MeshTransportError::StartupFailed(format!("State transition failed: {e}"))
+            })?;
         }
 
-        let (shutdown_tx, _) = broadcast::channel(1);
-        {
-            let mut tx = self.shutdown_tx.write();
-            *tx = Some(shutdown_tx.clone());
-        }
+        // Phase 2: Create fresh task group and shutdown state
+        let mut group = MeshTaskGroup::new();
+        let shutdown_rx = group.shutdown_receiver();
+        self.shutdown_started.store(false, Ordering::SeqCst);
 
-        if self.config.role.is_global() {
-            let transport_for_attest = Arc::new(self.clone_for_maintenance());
-            tokio::spawn(async move {
-                let node_id = transport_for_attest.config.node_id().to_string();
-
-                // Allow some time for DHT to initialize before self-attesting
-                tokio::time::sleep(Duration::from_secs(5)).await;
-
-                transport_for_attest
-                    .attest_capability(&node_id, "waf")
-                    .await;
-                transport_for_attest
-                    .attest_capability(&node_id, "threat_intel")
-                    .await;
-
-                // For simplicity, we just self-attest DNS as well since global nodes act as DNS root
-                transport_for_attest
-                    .attest_capability(&node_id, "dns")
-                    .await;
-
-                tracing::info!("Global node '{}' self-attested capabilities", node_id);
-            });
-        }
-
-        // PoW refresh: periodically refresh the cached PoW nonce before TTL expires
-        // Started early since config is moved later in this function
-        if self.config.role.is_edge() {
-            let pow_config = self.config.clone();
-            tokio::spawn(async move {
-                let refresh_interval = Duration::from_secs(2700); // 45 minutes (half of 1hr TTL)
-                let mut interval = tokio::time::interval(refresh_interval);
-                loop {
-                    interval.tick().await;
-                    tracing::debug!("Refreshing PoW nonce cache");
-                    if let Some(ref pk_hex) = pow_config.signing_public_key() {
-                        use base64::Engine;
-                        if let Ok(pk_bytes) =
-                            base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(pk_hex)
-                        {
-                            if let Some(nonce) =
-                                crate::dht::routing::node_id::NodeId::find_pow_nonce(&pk_bytes)
-                            {
-                                pow_config.set_cached_pow_nonce(nonce);
-                                tracing::info!("Refreshed PoW nonce: {}", nonce);
-                            } else {
-                                tracing::warn!("Failed to compute new PoW nonce during refresh");
-                            }
-                        }
-                    }
-                }
-            });
-        }
-
-        // ML-KEM key rotation: periodically rotate stale sessions for forward secrecy
-        if let Some(ref mlkem_manager) = self.mlkem_session_manager {
-            let mlkem_manager = mlkem_manager.clone();
-            let rotation_interval = mlkem_manager.config().rotation_interval;
-            let session_rotation_transport = Arc::new(self.clone_for_maintenance());
-            tokio::spawn(async move {
-                let mut interval = tokio::time::interval(rotation_interval);
-                loop {
-                    interval.tick().await;
-                    tracing::debug!("Running ML-KEM key rotation");
-                    let rotated = mlkem_manager.rotate_stale_sessions();
-                    if !rotated.is_empty() {
-                        tracing::info!("Rotated {} ML-KEM sessions", rotated.len());
-                        for session in &rotated {
-                            if let Some((sid, kv, entropy)) =
-                                mlkem_manager.prepare_session_rotation(&session.id)
-                            {
-                                let msg = MeshMessage::SessionRotate {
-                                    session_id: sid.clone().into(),
-                                    peer_id: session.peer_id.clone().into(),
-                                    key_version: kv,
-                                    peer_entropy: entropy,
-                                    timestamp: synvoid_utils::current_timestamp(),
-                                };
-                                if let Err(e) = session_rotation_transport
-                                    .send_message_to_peer(&session.peer_id, &msg)
-                                    .await
-                                {
-                                    tracing::warn!(
-                                        "Failed to send SessionRotate to {}: {}",
-                                        session.peer_id,
-                                        e
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    let cleaned = mlkem_manager.cleanup_expired();
-                    if cleaned > 0 {
-                        tracing::debug!("Cleaned up {} expired ML-KEM sessions", cleaned);
-                    }
-                }
-            });
-        }
-
+        // Phase 3: Start critical transport loops (minimum for bootstrap)
+        // Maintenance loop
         let config = self.config.clone();
         let topology = self.topology.clone();
         let peer_connections = self.peer_connections.clone();
-        let shutdown_rx = shutdown_tx.subscribe();
-
-        tokio::spawn(async move {
-            Self::mesh_maintenance_loop(config, topology, peer_connections, shutdown_rx).await;
+        let maintenance_shutdown = shutdown_rx.clone();
+        group.spawn_critical("mesh_maintenance", async move {
+            Self::mesh_maintenance_loop(config, topology, peer_connections, maintenance_shutdown)
+                .await;
         });
 
-        let datagram_shutdown = shutdown_tx.subscribe();
-        let peer_connections_for_datagram = self.peer_connections.clone();
-        tokio::spawn(async move {
-            Self::datagram_listener_loop(peer_connections_for_datagram, datagram_shutdown).await;
+        // Datagram listener
+        let peer_connections_dg = self.peer_connections.clone();
+        let datagram_shutdown = shutdown_rx.clone();
+        group.spawn_critical("datagram_listener", async move {
+            Self::datagram_listener_loop(peer_connections_dg, datagram_shutdown).await;
         });
 
+        // Phase 4: Bootstrap from seeds
         if !self.config.seeds.is_empty() {
-            self.bootstrap_from_seeds().await?;
-        }
-
-        if !self.config.peers.is_empty() {
-            self.connect_to_peers().await?;
-        }
-
-        if let Some(ref rm) = self.routing_manager {
-            if rm.is_enabled() {
-                self.dht_bootstrap_from_seeds(rm.clone()).await?;
+            if let Err(e) = self.bootstrap_from_seeds().await {
+                tracing::warn!("Seed bootstrap failed (continuing): {e}");
             }
         }
 
+        // Phase 5: Connect configured peers
+        if !self.config.peers.is_empty() {
+            if let Err(e) = self.connect_to_peers().await {
+                tracing::warn!("Peer connection failed (continuing): {e}");
+            }
+        }
+
+        // Phase 6: DHT bootstrap
+        if let Some(ref rm) = self.routing_manager {
+            if rm.is_enabled() {
+                if let Err(e) = self.dht_bootstrap_from_seeds(rm.clone()).await {
+                    tracing::warn!("DHT bootstrap failed (continuing): {e}");
+                }
+            }
+        }
+
+        // Phase 7: Start periodic background loops
         let connection_config = self.config.connection.clone();
         let transport_for_maintenance = Arc::new(self.clone_for_maintenance());
 
         if connection_config.min_peer_connections > 0 {
+            // Connection maintenance + auto-slash
             let maintenance_transport = transport_for_maintenance.clone();
             let maintenance_interval = Duration::from_secs(30);
-            tokio::spawn(async move {
+            let mut bg_shutdown = shutdown_rx.clone();
+            group.spawn_background("connection_maintenance", async move {
                 let mut interval = tokio::time::interval(maintenance_interval);
                 loop {
-                    interval.tick().await;
-                    maintenance_transport.maintain_connections().await;
-                    maintenance_transport.perform_auto_slash().await;
-                }
-            });
-
-            let health_transport = transport_for_maintenance.clone();
-            let health_interval = Duration::from_secs(connection_config.health_check_interval_secs);
-            tokio::spawn(async move {
-                let mut interval = tokio::time::interval(health_interval);
-                loop {
-                    interval.tick().await;
-                    let peers: Vec<String> = health_transport
-                        .peer_connections
-                        .iter()
-                        .map(|e| e.value().node_id.clone())
-                        .collect();
-                    for peer_id in peers {
-                        health_transport.perform_health_check(&peer_id).await;
+                    tokio::select! {
+                        _ = interval.tick() => {
+                            maintenance_transport.maintain_connections().await;
+                            maintenance_transport.perform_auto_slash().await;
+                        }
+                        _ = bg_shutdown.changed() => {
+                            if *bg_shutdown.borrow() { break; }
+                        }
                     }
                 }
             });
 
-            // Proactive cache warming: periodically query popular routes from peers
+            // Peer health checks
+            let health_transport = transport_for_maintenance.clone();
+            let health_interval = Duration::from_secs(connection_config.health_check_interval_secs);
+            let mut health_shutdown = shutdown_rx.clone();
+            group.spawn_background("peer_health_check", async move {
+                let mut interval = tokio::time::interval(health_interval);
+                loop {
+                    tokio::select! {
+                        _ = interval.tick() => {
+                            let peers: Vec<String> = health_transport
+                                .peer_connections
+                                .iter()
+                                .map(|e| e.value().node_id.clone())
+                                .collect();
+                            for peer_id in peers {
+                                health_transport.perform_health_check(&peer_id).await;
+                            }
+                        }
+                        _ = health_shutdown.changed() => {
+                            if *health_shutdown.borrow() { break; }
+                        }
+                    }
+                }
+            });
+
+            // Proactive cache warming
             let cache_warm_transport = transport_for_maintenance.clone();
             let cache_warm_interval = Duration::from_secs(60);
-            tokio::spawn(async move {
+            let mut cache_shutdown = shutdown_rx.clone();
+            group.spawn_background("cache_warming", async move {
                 let mut interval = tokio::time::interval(cache_warm_interval);
                 loop {
-                    interval.tick().await;
-                    cache_warm_transport.proactive_cache_warm().await;
+                    tokio::select! {
+                        _ = interval.tick() => {
+                            cache_warm_transport.proactive_cache_warm().await;
+                        }
+                        _ = cache_shutdown.changed() => {
+                            if *cache_shutdown.borrow() { break; }
+                        }
+                    }
                 }
             });
 
-            // DHT cache resync: periodically refresh edge node cache from global nodes
-            // Uses adaptive interval from record_store (starts at 30s, backs off to 1 hour)
+            // DHT cache resync
             let dht_resync_transport = transport_for_maintenance.clone();
-            tokio::spawn(async move {
+            let mut dht_shutdown = shutdown_rx.clone();
+            group.spawn_background("dht_cache_resync", async move {
                 let mut interval = tokio::time::interval(Duration::from_secs(30));
                 loop {
-                    interval.tick().await;
-                    dht_resync_transport.dht_cache_resync().await;
+                    tokio::select! {
+                        _ = interval.tick() => {
+                            dht_resync_transport.dht_cache_resync().await;
+                        }
+                        _ = dht_shutdown.changed() => {
+                            if *dht_shutdown.borrow() { break; }
+                        }
+                    }
                 }
             });
 
-            // Load reporter: periodically send local load metrics to mesh peers
+            // Load reporter
             let load_report_transport = transport_for_maintenance.clone();
             let load_report_interval = Duration::from_secs(60);
-            tokio::spawn(async move {
+            let mut load_shutdown = shutdown_rx.clone();
+            group.spawn_background("load_reporter", async move {
                 let mut interval = tokio::time::interval(load_report_interval);
                 loop {
-                    interval.tick().await;
-                    load_report_transport.send_load_report_to_peers().await;
+                    tokio::select! {
+                        _ = interval.tick() => {
+                            load_report_transport.send_load_report_to_peers().await;
+                        }
+                        _ = load_shutdown.changed() => {
+                            if *load_shutdown.borrow() { break; }
+                        }
+                    }
                 }
             });
 
-            // Global node heartbeat: publish heartbeat every 30s for liveness monitoring
-            // Only global nodes publish heartbeats; TTL is 90s (3x interval)
+            // Global node heartbeat
             let heartbeat_transport = transport_for_maintenance.clone();
             let heartbeat_interval = Duration::from_secs(30);
-            tokio::spawn(async move {
+            let mut heartbeat_shutdown = shutdown_rx.clone();
+            group.spawn_background("global_node_heartbeat", async move {
                 let mut interval = tokio::time::interval(heartbeat_interval);
                 loop {
-                    interval.tick().await;
-                    heartbeat_transport.publish_global_node_heartbeat().await;
+                    tokio::select! {
+                        _ = interval.tick() => {
+                            heartbeat_transport.publish_global_node_heartbeat().await;
+                        }
+                        _ = heartbeat_shutdown.changed() => {
+                            if *heartbeat_shutdown.borrow() { break; }
+                        }
+                    }
                 }
             });
         }
 
+        // Phase 8: Start one-shot self-attestation if applicable
+        if self.config.role.is_global() {
+            let transport_for_attest = Arc::new(self.clone_for_maintenance());
+            let mut attest_shutdown = shutdown_rx.clone();
+            group.spawn_background("global_self_attestation", async move {
+                let node_id = transport_for_attest.config.node_id().to_string();
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_secs(5)) => {
+                        transport_for_attest.attest_capability(&node_id, "waf").await;
+                        transport_for_attest.attest_capability(&node_id, "threat_intel").await;
+                        transport_for_attest.attest_capability(&node_id, "dns").await;
+                        tracing::info!("Global node '{}' self-attested capabilities", node_id);
+                    }
+                    _ = attest_shutdown.changed() => {}
+                }
+            });
+        }
+
+        // PoW refresh for edge nodes
+        if self.config.role.is_edge() {
+            let pow_config = self.config.clone();
+            let mut pow_shutdown = shutdown_rx.clone();
+            group.spawn_background("pow_nonce_refresh", async move {
+                let refresh_interval = Duration::from_secs(2700);
+                let mut interval = tokio::time::interval(refresh_interval);
+                loop {
+                    tokio::select! {
+                        _ = interval.tick() => {
+                            tracing::debug!("Refreshing PoW nonce cache");
+                            if let Some(ref pk_hex) = pow_config.signing_public_key() {
+                                use base64::Engine;
+                                if let Ok(pk_bytes) =
+                                    base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(pk_hex)
+                                {
+                                    if let Some(nonce) =
+                                        crate::dht::routing::node_id::NodeId::find_pow_nonce(&pk_bytes)
+                                    {
+                                        pow_config.set_cached_pow_nonce(nonce);
+                                        tracing::info!("Refreshed PoW nonce: {}", nonce);
+                                    } else {
+                                        tracing::warn!("Failed to compute new PoW nonce during refresh");
+                                    }
+                                }
+                            }
+                        }
+                        _ = pow_shutdown.changed() => {
+                            if *pow_shutdown.borrow() { break; }
+                        }
+                    }
+                }
+            });
+        }
+
+        // ML-KEM key rotation
+        if let Some(ref mlkem_manager) = self.mlkem_session_manager {
+            let mlkem_manager = mlkem_manager.clone();
+            let rotation_interval = mlkem_manager.config().rotation_interval;
+            let session_rotation_transport = Arc::new(self.clone_for_maintenance());
+            let mut kem_shutdown = shutdown_rx.clone();
+            group.spawn_background("mlkem_key_rotation", async move {
+                let mut interval = tokio::time::interval(rotation_interval);
+                loop {
+                    tokio::select! {
+                        _ = interval.tick() => {
+                            tracing::debug!("Running ML-KEM key rotation");
+                            let rotated = mlkem_manager.rotate_stale_sessions();
+                            if !rotated.is_empty() {
+                                tracing::info!("Rotated {} ML-KEM sessions", rotated.len());
+                                for session in &rotated {
+                                    if let Some((sid, kv, entropy)) =
+                                        mlkem_manager.prepare_session_rotation(&session.id)
+                                    {
+                                        let msg = MeshMessage::SessionRotate {
+                                            session_id: sid.clone().into(),
+                                            peer_id: session.peer_id.clone().into(),
+                                            key_version: kv,
+                                            peer_entropy: entropy,
+                                            timestamp: synvoid_utils::current_timestamp(),
+                                        };
+                                        if let Err(e) = session_rotation_transport
+                                            .send_message_to_peer(&session.peer_id, &msg)
+                                            .await
+                                        {
+                                            tracing::warn!(
+                                                "Failed to send SessionRotate to {}: {}",
+                                                session.peer_id,
+                                                e
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                            let cleaned = mlkem_manager.cleanup_expired();
+                            if cleaned > 0 {
+                                tracing::debug!("Cleaned up {} expired ML-KEM sessions", cleaned);
+                            }
+                        }
+                        _ = kem_shutdown.changed() => {
+                            if *kem_shutdown.borrow() { break; }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Phase 9: Start QUIC accept loop
         if let Some(ref runtime) = self.runtime {
             let incoming = runtime
                 .start_server()
                 .await
                 .map_err(|e| MeshTransportError::ConnectionFailed(e.to_string()))?;
             let transport = Arc::new(self.clone_for_maintenance());
-            let shutdown_rx = shutdown_tx.subscribe();
-            tokio::spawn(async move {
-                Self::mesh_accept_loop(transport, incoming, shutdown_rx).await;
+            let accept_shutdown = shutdown_rx.clone();
+            group.spawn_critical("mesh_accept_loop", async move {
+                Self::mesh_accept_loop(transport, incoming, accept_shutdown).await;
             });
         }
 
-        tracing::info!("Mesh transport started");
+        // Phase 10: Commit lifecycle state
+        {
+            let mut state = self.lifecycle_state.lock().await;
+            state.transition_to_running().map_err(|e| {
+                MeshTransportError::StartupFailed(format!(
+                    "State transition to running failed: {e}"
+                ))
+            })?;
+        }
+
+        // Store the task group and shutdown state
+        {
+            // Store the shutdown sender for the old shutdown_tx field (backward compat)
+            let (compat_tx, _) = broadcast::channel(1);
+            let _ = compat_tx.send(());
+            *self.shutdown_tx.write() = Some(compat_tx);
+        }
+        *self.task_group.lock().await = group;
+        self.shutdown_started.store(false, Ordering::SeqCst);
+
+        tracing::info!("Mesh transport started (lifecycle: running)");
         Ok(())
     }
 
@@ -2243,21 +2343,60 @@ impl MeshTransport {
     async fn mesh_accept_loop(
         self: Arc<MeshTransport>,
         mut incoming: mpsc::Receiver<synvoid_tunnel::quic::runtime::IncomingConnection>,
-        mut shutdown_rx: broadcast::Receiver<()>,
+        mut shutdown_rx: watch::Receiver<bool>,
     ) {
+        let max_handshakes = self.config.connection.max_concurrent_handshakes;
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(max_handshakes));
+        let mut children: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
+
         loop {
             tokio::select! {
+                biased;
                 Some(incoming_conn) = incoming.recv() => {
+                    let permit = match semaphore.clone().try_acquire_owned() {
+                        Ok(permit) => permit,
+                        Err(_) => {
+                            tracing::warn!(
+                                "Rejecting incoming connection: at capacity ({max_handshakes} active handshakes)"
+                            );
+                            drop(incoming_conn);
+                            continue;
+                        }
+                    };
                     let transport = self.clone();
-                    tokio::spawn(async move {
+                    children.spawn(async move {
+                        let _permit = permit;
                         if let Err(e) = transport.handle_incoming_peer_connection(incoming_conn).await {
                             tracing::warn!("Failed to handle incoming peer connection: {}", e);
                         }
                     });
                 }
-                _ = shutdown_rx.recv() => {
-                    tracing::info!("Mesh accept loop shutting down");
-                    break;
+                _ = shutdown_rx.changed() => {
+                    if *shutdown_rx.borrow() {
+                        tracing::info!("Mesh accept loop shutting down, draining {} child tasks", children.len());
+                        let drain_timeout = Duration::from_secs(10);
+                        let deadline = tokio::time::Instant::now() + drain_timeout;
+                        while !children.is_empty() {
+                            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                            if remaining.is_zero() {
+                                tracing::warn!("Aborting {} remaining peer children", children.len());
+                                children.abort_all();
+                                let _ = children.join_all().await;
+                                break;
+                            }
+                            tokio::select! {
+                                _ = tokio::time::sleep(remaining) => {
+                                    tracing::warn!("Aborting {} remaining peer children after timeout", children.len());
+                                    children.abort_all();
+                                    let _ = children.join_all().await;
+                                    break;
+                                }
+                                Some(_) = children.join_next() => {}
+                            }
+                        }
+                        tracing::info!("Mesh accept loop stopped");
+                        break;
+                    }
                 }
             }
         }
@@ -2273,15 +2412,20 @@ impl MeshTransport {
 
         tracing::debug!("Accepted incoming connection from {}", remote_addr);
 
-        let (mut send_stream, mut recv_stream) = connection
-            .accept_bi()
-            .await
-            .map_err(|e| MeshTransportError::ReceiveFailed(format!("Accept bi failed: {}", e)))?;
+        let handshake_timeout = Duration::from_secs(self.config.connection.handshake_timeout_secs);
+
+        let (mut send_stream, mut recv_stream) =
+            tokio::time::timeout(handshake_timeout, connection.accept_bi())
+                .await
+                .map_err(|_| MeshTransportError::Timeout)?
+                .map_err(|e| {
+                    MeshTransportError::ConnectionFailed(format!("Accept bi failed: {}", e))
+                })?;
 
         let mut len_buf = [0u8; 4];
-        recv_stream
-            .read_exact(&mut len_buf)
+        tokio::time::timeout(handshake_timeout, recv_stream.read_exact(&mut len_buf))
             .await
+            .map_err(|_| MeshTransportError::Timeout)?
             .map_err(|e| MeshTransportError::ReceiveFailed(format!("Read length failed: {}", e)))?;
         let len = u32::from_be_bytes(len_buf) as usize;
         if len > MAX_MESSAGE_SIZE || len == 0 {
@@ -2291,9 +2435,9 @@ impl MeshTransport {
             )));
         }
         let mut hello_buf = vec![0u8; len];
-        recv_stream
-            .read_exact(&mut hello_buf)
+        tokio::time::timeout(handshake_timeout, recv_stream.read_exact(&mut hello_buf))
             .await
+            .map_err(|_| MeshTransportError::Timeout)?
             .map_err(|e| MeshTransportError::ReceiveFailed(format!("Read hello failed: {}", e)))?;
 
         let hello_msg = MeshMessage::decode(&hello_buf).ok_or_else(|| {
@@ -2539,22 +2683,99 @@ impl MeshTransport {
     }
 
     pub async fn stop(&self) {
+        self.shutdown_with_timeout(Duration::from_secs(30)).await;
+    }
+
+    /// Performs a bounded shutdown with the given timeout.
+    ///
+    /// Returns a report describing which tasks were cleanly joined, which
+    /// were aborted, and peer-child drainage statistics.
+    pub async fn shutdown_with_timeout(&self, timeout: Duration) -> MeshShutdownReport {
+        // Transition to Stopping
+        {
+            let mut state = self.lifecycle_state.lock().await;
+            if !state.can_stop() {
+                tracing::warn!(
+                    "Mesh shutdown requested but state is {}; returning empty report",
+                    *state
+                );
+                return MeshShutdownReport::default();
+            }
+            state.transition_to_stopping().ok();
+        }
+
+        // Signal shutdown to all tasks
+        self.shutdown_started.store(true, Ordering::SeqCst);
+        {
+            let group = self.task_group.lock().await;
+            group.begin_shutdown().await;
+        }
+
+        // Also send on the legacy broadcast channel
         if let Some(tx) = self.shutdown_tx.write().take() {
             let _ = tx.send(());
         }
 
+        // Close all QUIC connections
         for entry in self.peer_connections.iter() {
             entry
                 .value()
                 .connection
                 .close(0u32.into(), b"Mesh shutdown");
         }
+        let remaining_peers = self.peer_connections.len();
         self.peer_connections.clear();
 
-        let mut running = self.running.write();
-        *running = false;
+        // Join all tasks with timeout
+        let mut group = self.task_group.lock().await;
+        let exits = group.join_all(timeout).await;
 
-        tracing::info!("Mesh transport stopped");
+        // Build report
+        let mut report = MeshShutdownReport::default();
+        report.remaining_peers = remaining_peers;
+        for exit in &exits {
+            match exit.reason {
+                crate::lifecycle::MeshTaskExitReason::Aborted => {
+                    report.aborted_tasks.push(exit.clone());
+                }
+                crate::lifecycle::MeshTaskExitReason::CleanCompletion
+                | crate::lifecycle::MeshTaskExitReason::Cancelled => {
+                    report.clean_tasks += 1;
+                }
+                _ => {
+                    report.failed_tasks.push(exit.clone());
+                }
+            }
+        }
+
+        // Transition to Stopped
+        {
+            let mut state = self.lifecycle_state.lock().await;
+            state.transition_to_stopped();
+        }
+
+        tracing::info!(
+            "Mesh transport stopped (clean={}, failed={}, aborted={})",
+            report.clean_tasks,
+            report.failed_tasks.len(),
+            report.aborted_tasks.len()
+        );
+
+        report
+    }
+
+    /// Returns a receiver for mesh task exit events.
+    ///
+    /// The worker composition root should subscribe before calling `start()`
+    /// to avoid missing early critical exits.
+    pub async fn subscribe_exits(&self) -> broadcast::Receiver<MeshTaskExit> {
+        let group = self.task_group.lock().await;
+        group.subscribe_exits()
+    }
+
+    /// Returns the current lifecycle state.
+    pub async fn lifecycle_state(&self) -> MeshLifecycleState {
+        *self.lifecycle_state.lock().await
     }
 
     #[allow(dead_code)]

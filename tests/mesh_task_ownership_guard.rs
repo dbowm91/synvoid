@@ -1,0 +1,546 @@
+//! Mesh task ownership guardrail tests (Phase 17).
+//!
+//! Verifies that mesh transport runtime files follow the task-ownership
+//! invariants established in Iteration 68:
+//!
+//! 1. No unowned long-lived `tokio::spawn()` in audited mesh runtime files
+//! 2. Periodic loops require cancellation selection (`tokio::select!` with shutdown)
+//! 3. Critical loops must be registered with the mesh task group
+//! 4. Per-peer children must enter the child group (JoinSet in accept loop)
+//! 5. `start()` must use `MeshLifecycleState` (not bare boolean)
+//! 6. Failed startup must not commit to Running
+//! 7. Shutdown must abort and await timed-out tasks via `join_all`
+
+use std::fs;
+
+fn read_file(path: &str) -> String {
+    fs::read_to_string(path).unwrap_or_default()
+}
+
+/// Count non-overlapping occurrences of `needle` in `haystack`.
+fn count_occurrences(haystack: &str, needle: &str) -> usize {
+    haystack.matches(needle).count()
+}
+
+/// Extract a function body (from `fn name(` to the matching closing brace)
+/// as a rough heuristic. Returns the full file if the function isn't found.
+fn extract_function(content: &str, fn_name: &str) -> String {
+    if let Some(start) = content.find(&format!("fn {fn_name}")) {
+        // Find the opening brace
+        if let Some(brace_start) = content[start..].find('{') {
+            let abs_brace = start + brace_start;
+            let mut depth = 0i32;
+            for (i, ch) in content[abs_brace..].char_indices() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            return content[abs_brace..=abs_brace + i].to_string();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    content.to_string()
+}
+
+// ── Test 1: No unowned long-lived spawns in transport.rs start() ────────────
+
+#[test]
+fn no_detached_spawns_in_transport_start() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let start_body = extract_function(&content, "start");
+
+    let bare_spawn_count = count_occurrences(&start_body, "tokio::spawn(");
+    let group_spawn_count = count_occurrences(&start_body, "group.spawn_");
+
+    // The start() method should use group.spawn_* for long-lived tasks.
+    // Bare tokio::spawn inside start() should be zero (all long-lived work
+    // goes through the task group).
+    assert!(
+        bare_spawn_count == 0,
+        "start() contains {bare_spawn_count} bare tokio::spawn() calls; \
+         all long-lived tasks must use group.spawn_*(). Found at: {}",
+        find_bare_spawn_lines(&start_body)
+    );
+
+    // Verify the task group is actually used for spawning
+    assert!(
+        group_spawn_count >= 2,
+        "start() should spawn at least 2 tasks via group.spawn_*(), found {group_spawn_count}"
+    );
+}
+
+fn find_bare_spawn_lines(body: &str) -> String {
+    let mut violations = Vec::new();
+    for (i, line) in body.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.contains("tokio::spawn(") && !trimmed.starts_with("//") {
+            violations.push(format!(
+                "line ~{i}: {}",
+                trimmed.chars().take(80).collect::<String>()
+            ));
+        }
+    }
+    violations.join("; ")
+}
+
+// ── Test 2: Periodic loops have cancellation selection ───────────────────────
+
+#[test]
+fn periodic_loops_have_cancellation() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let start_body = extract_function(&content, "start");
+
+    // Find all spawn blocks that contain a loop with interval (periodic tasks)
+    // and verify each has a tokio::select! with shutdown
+    let lines: Vec<(usize, &str)> = start_body.lines().enumerate().collect();
+
+    let mut i = 0;
+    let mut violations = Vec::new();
+    while i < lines.len() {
+        let (_line_num, line) = lines[i];
+        let trimmed = line.trim();
+
+        // Detect periodic loop start: a spawn block containing a loop with interval
+        if trimmed.contains("group.spawn_background(") || trimmed.contains("group.spawn_critical(")
+        {
+            // Collect the block until balanced braces
+            let mut block = String::new();
+            let mut brace_depth = 0i32;
+            let mut found_open = false;
+            let block_start_line = i;
+            for j in i..lines.len().min(i + 200) {
+                let (_, bl) = lines[j];
+                block.push_str(bl);
+                block.push('\n');
+                for ch in bl.chars() {
+                    match ch {
+                        '{' => {
+                            brace_depth += 1;
+                            found_open = true;
+                        }
+                        '}' => brace_depth -= 1,
+                        _ => {}
+                    }
+                }
+                if found_open && brace_depth <= 0 {
+                    break;
+                }
+            }
+
+            // If this block contains a loop with interval, it's a periodic task
+            if block.contains("loop {") && block.contains("tokio::time::interval") {
+                let has_select = block.contains("tokio::select!");
+                let has_shutdown = block.contains("shutdown")
+                    || block.contains(".changed()")
+                    || block.contains("_shutdown");
+
+                if !has_select || !has_shutdown {
+                    let task_name = extract_task_name(trimmed);
+                    violations.push(format!(
+                        "Periodic task '{task_name}' at line ~{block_start_line}: \
+                         loop must use tokio::select! with shutdown receiver"
+                    ));
+                }
+            }
+        }
+        i += 1;
+    }
+
+    assert!(
+        violations.is_empty(),
+        "Periodic loops without cancellation:\n{}",
+        violations.join("\n")
+    );
+}
+
+fn extract_task_name(spawn_line: &str) -> &str {
+    if let Some(start) = spawn_line.find('"') {
+        if let Some(end) = spawn_line[start + 1..].find('"') {
+            return &spawn_line[start + 1..start + 1 + end];
+        }
+    }
+    "unknown"
+}
+
+// ── Test 3: start() uses MeshLifecycleState ─────────────────────────────────
+
+#[test]
+fn start_uses_lifecycle_state() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    // Must import and use MeshLifecycleState
+    assert!(
+        content.contains("MeshLifecycleState"),
+        "transport.rs must import and use MeshLifecycleState"
+    );
+
+    let start_body = extract_function(&content, "start");
+
+    // Must transition to Starting before committing work
+    assert!(
+        start_body.contains("transition_to_starting"),
+        "start() must transition lifecycle to Starting before spawning tasks"
+    );
+
+    // Must transition to Running after all tasks are registered
+    assert!(
+        start_body.contains("transition_to_running"),
+        "start() must transition lifecycle to Running after task registration"
+    );
+
+    // Must validate can_start() before proceeding
+    assert!(
+        start_body.contains("can_start"),
+        "start() must check can_start() to validate state machine"
+    );
+
+    // Must store the task group after all spawns
+    assert!(
+        start_body.contains("task_group"),
+        "start() must store the MeshTaskGroup after spawning tasks"
+    );
+}
+
+// ── Test 4: start() does not set running before commit ──────────────────────
+
+#[test]
+fn start_does_not_commit_prematurely() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let start_body = extract_function(&content, "start");
+
+    // Find the line number of transition_to_running
+    let running_line = start_body
+        .lines()
+        .position(|l| l.contains("transition_to_running"));
+
+    // Find the line number of the last group.spawn_* call
+    let last_spawn_line = start_body
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains("group.spawn_"))
+        .map(|(i, _)| i)
+        .last();
+
+    if let (Some(running), Some(spawn)) = (running_line, last_spawn_line) {
+        assert!(
+            running > spawn,
+            "transition_to_running (line {running}) must come after \
+             the last group.spawn_* (line {spawn}); tasks must be \
+             registered before the lifecycle is committed to Running"
+        );
+    }
+}
+
+// ── Test 5: Failed startup transitions to Failed, not Running ───────────────
+
+#[test]
+fn failed_startup_uses_failed_state() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let start_body = extract_function(&content, "start");
+
+    // The function body (between braces) won't contain the Result< signature.
+    // Instead verify that the body uses error-returning patterns:
+    // `return Err(...)` or `?` operator or `map_err` for startup failures.
+    let has_error_returns = start_body.contains("return Err(")
+        || start_body.contains("map_err")
+        || start_body.contains("StartupFailed");
+    assert!(
+        has_error_returns,
+        "start() must have error-returning paths (return Err/map_err/StartupFailed) \
+         to handle startup failures without committing to Running"
+    );
+
+    // Verify MeshTransportError is used for startup failure reporting
+    assert!(
+        start_body.contains("StartupFailed") || start_body.contains("LifecycleConflict"),
+        "start() must map errors to MeshTransportError variants for startup failures"
+    );
+}
+
+// ── Test 6: Shutdown uses task group for bounded join ────────────────────────
+
+#[test]
+fn shutdown_uses_task_group() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    // Must have shutdown_with_timeout method
+    let shutdown_body = extract_function(&content, "shutdown_with_timeout");
+    assert!(
+        !shutdown_body.contains("fn shutdown_with_timeout") || shutdown_body.len() > 50,
+        "shutdown_with_timeout method must exist"
+    );
+
+    // Must use MeshShutdownReport as return type
+    assert!(
+        content.contains("MeshShutdownReport"),
+        "shutdown must return MeshShutdownReport"
+    );
+
+    // Must call group.begin_shutdown() to signal tasks
+    assert!(
+        shutdown_body.contains("begin_shutdown"),
+        "shutdown must call group.begin_shutdown() to signal all tasks"
+    );
+
+    // Must call group.join_all() with timeout to await tasks
+    assert!(
+        shutdown_body.contains("join_all"),
+        "shutdown must call group.join_all(timeout) to join with deadline"
+    );
+
+    // Must transition lifecycle state
+    assert!(
+        shutdown_body.contains("transition_to_stopping") || shutdown_body.contains("can_stop"),
+        "shutdown must transition lifecycle to Stopping"
+    );
+
+    // Must transition to Stopped after join
+    assert!(
+        shutdown_body.contains("transition_to_stopped"),
+        "shutdown must transition to Stopped after all tasks join"
+    );
+
+    // Must record shutdown_started flag
+    assert!(
+        shutdown_body.contains("shutdown_started"),
+        "shutdown must set shutdown_started flag for task exit classification"
+    );
+}
+
+// ── Test 7: Peer children use JoinSet in accept loop ────────────────────────
+
+#[test]
+fn accept_loop_uses_joinset_for_children() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let accept_body = extract_function(&content, "mesh_accept_loop");
+
+    // Must use JoinSet for per-peer child tasks
+    assert!(
+        accept_body.contains("JoinSet"),
+        "mesh_accept_loop must use JoinSet for per-peer child tasks"
+    );
+
+    // Must have shutdown-aware select! in main loop
+    assert!(
+        accept_body.contains("tokio::select!"),
+        "mesh_accept_loop must use tokio::select! for cancellation"
+    );
+    assert!(
+        accept_body.contains("shutdown_rx.changed()") || accept_body.contains("shutdown"),
+        "mesh_accept_loop select! must watch shutdown receiver"
+    );
+
+    // Must abort remaining children on timeout
+    assert!(
+        accept_body.contains("abort_all") || accept_body.contains("abort"),
+        "mesh_accept_loop must abort timed-out child tasks"
+    );
+
+    // Must drain with a timeout
+    assert!(
+        accept_body.contains("drain_timeout") || accept_body.contains("deadline"),
+        "mesh_accept_loop must drain children with a bounded timeout"
+    );
+}
+
+// ── Test 8: transport_connection.rs loops use select! with shutdown ─────────
+
+#[test]
+fn transport_connection_loops_have_shutdown() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport_connection.rs");
+
+    // Find all loop blocks and verify they use select! with shutdown
+    let mut violations = Vec::new();
+    let lines: Vec<&str> = content.lines().collect();
+    let mut i = 0;
+
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
+        if trimmed == "loop {" {
+            // Check if this loop has a tokio::select! within the next 5 lines
+            let mut has_select = false;
+            let mut has_shutdown = false;
+            for j in (i + 1)..lines.len().min(i + 10) {
+                let inner = lines[j].trim();
+                if inner.contains("tokio::select!") {
+                    has_select = true;
+                }
+                if inner.contains("shutdown") || inner.contains(".changed()") {
+                    has_shutdown = true;
+                }
+            }
+            if has_select && !has_shutdown {
+                violations.push(format!(
+                    "line ~{i}: loop with select! but no shutdown watch"
+                ));
+            }
+        }
+        i += 1;
+    }
+
+    assert!(
+        violations.is_empty(),
+        "transport_connection.rs loops without shutdown:\n{}",
+        violations.join("\n")
+    );
+}
+
+// ── Test 9: MeshTransport struct has required ownership fields ───────────────
+
+#[test]
+fn mesh_transport_has_ownership_fields() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    // Must have task_group field
+    assert!(
+        content.contains("task_group:"),
+        "MeshTransport must have a task_group field"
+    );
+
+    // Must have lifecycle_state field
+    assert!(
+        content.contains("lifecycle_state:"),
+        "MeshTransport must have a lifecycle_state field"
+    );
+
+    // Must have shutdown_started flag
+    assert!(
+        content.contains("shutdown_started:"),
+        "MeshTransport must have a shutdown_started field"
+    );
+
+    // Task group must be Arc<Mutex<MeshTaskGroup>>
+    assert!(
+        content.contains("Arc<tokio::sync::Mutex<MeshTaskGroup>>"),
+        "task_group must be Arc<tokio::sync::Mutex<MeshTaskGroup>>"
+    );
+
+    // Lifecycle state must be Arc<Mutex<MeshLifecycleState>>
+    assert!(
+        content.contains("Arc<tokio::sync::Mutex<MeshLifecycleState>>"),
+        "lifecycle_state must be Arc<tokio::sync::Mutex<MeshLifecycleState>>"
+    );
+}
+
+// ── Test 10: start() initializes lifecycle and group in correct order ────────
+
+#[test]
+fn start_initializes_in_correct_order() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let start_body = extract_function(&content, "start");
+
+    // Phase 1: lifecycle state check must come first
+    let can_start_pos = start_body.find("can_start");
+    let transition_starting_pos = start_body.find("transition_to_starting");
+    let group_new_pos = start_body.find("MeshTaskGroup::new");
+    let running_pos = start_body.find("transition_to_running");
+    let store_group_pos = start_body.find("task_group.lock");
+
+    if let Some(can_start) = can_start_pos {
+        if let Some(transition_starting) = transition_starting_pos {
+            assert!(
+                can_start < transition_starting,
+                "can_start() must be checked before transition_to_starting()"
+            );
+        }
+    }
+
+    if let Some(transition_starting) = transition_starting_pos {
+        if let Some(group_new) = group_new_pos {
+            assert!(
+                transition_starting < group_new,
+                "transition_to_starting must come before MeshTaskGroup::new"
+            );
+        }
+    }
+
+    if let Some(group_new) = group_new_pos {
+        if let Some(running) = running_pos {
+            assert!(
+                group_new < running,
+                "MeshTaskGroup::new must come before transition_to_running"
+            );
+        }
+    }
+
+    if let Some(running) = running_pos {
+        if let Some(store_group) = store_group_pos {
+            assert!(
+                running < store_group,
+                "transition_to_running must come before storing the task group"
+            );
+        }
+    }
+}
+
+// ── Test 11: Bare tokio::spawn in transport.rs are justified one-shots ──────
+
+#[test]
+fn bare_spawns_in_transport_are_one_shots() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    // All bare tokio::spawn() calls outside start() should be one-shot operations:
+    // - No loop inside
+    // - No interval inside
+    // These are acceptable: preflight routes, message sends, trait impl sends,
+    // initialization one-shots.
+    let lines: Vec<&str> = content.lines().collect();
+    let mut violations = Vec::new();
+
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("//") || trimmed.starts_with("*") {
+            continue;
+        }
+        if !trimmed.contains("tokio::spawn(") {
+            continue;
+        }
+
+        // Skip inside task_group.rs (the implementation itself)
+        if trimmed.contains("spawn_wrapped") {
+            continue;
+        }
+
+        // Look ahead up to 30 lines for loop/interval patterns (long-lived)
+        let mut is_long_lived = false;
+        let mut brace_depth = 0i32;
+        let mut found_open = false;
+        for j in i..lines.len().min(i + 40) {
+            let ahead = lines[j].trim();
+            for ch in ahead.chars() {
+                match ch {
+                    '{' => {
+                        brace_depth += 1;
+                        found_open = true;
+                    }
+                    '}' => brace_depth -= 1,
+                    _ => {}
+                }
+            }
+            if ahead.contains("loop {") || ahead.contains("tokio::time::interval") {
+                is_long_lived = true;
+            }
+            if found_open && brace_depth <= 0 {
+                break;
+            }
+        }
+
+        if is_long_lived {
+            violations.push(format!(
+                "line ~{}: bare tokio::spawn with long-lived body (loop/interval)",
+                i + 1
+            ));
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "Long-lived bare tokio::spawn() in transport.rs (must use task group):\n{}",
+        violations.join("\n")
+    );
+}

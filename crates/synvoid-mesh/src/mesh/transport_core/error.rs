@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -36,6 +38,14 @@ pub enum MeshTransportError {
     AuthFailed(String),
     #[error("Not implemented for this transport")]
     NotImplemented,
+    #[error("Lifecycle conflict: {0}")]
+    LifecycleConflict(String),
+    #[error("Startup failed: {0}")]
+    StartupFailed(String),
+    #[error("Shutdown timed out after {0:?}")]
+    ShutdownTimeout(Duration),
+    #[error("Already starting")]
+    AlreadyStarting,
 }
 
 impl From<quinn::ConnectionError> for MeshTransportError {

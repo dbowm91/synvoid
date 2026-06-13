@@ -383,6 +383,10 @@ pub struct MeshConnectionConfig {
     pub half_open_max_requests: u32,
     #[serde(default = "default_circuit_close_threshold")]
     pub circuit_close_threshold: u32,
+    #[serde(default = "default_max_concurrent_handshakes")]
+    pub max_concurrent_handshakes: usize,
+    #[serde(default = "default_handshake_timeout_secs")]
+    pub handshake_timeout_secs: u64,
 }
 
 fn default_min_peers() -> usize {
@@ -433,6 +437,14 @@ fn default_circuit_close_threshold() -> u32 {
     3
 }
 
+fn default_max_concurrent_handshakes() -> usize {
+    32
+}
+
+fn default_handshake_timeout_secs() -> u64 {
+    10
+}
+
 impl Default for MeshConnectionConfig {
     fn default() -> Self {
         Self {
@@ -450,6 +462,8 @@ impl Default for MeshConnectionConfig {
             circuit_open_timeout_secs: 30,
             half_open_max_requests: 3,
             circuit_close_threshold: 3,
+            max_concurrent_handshakes: 32,
+            handshake_timeout_secs: 10,
         }
     }
 }

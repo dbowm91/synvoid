@@ -355,6 +355,40 @@ revoke_genesis_key(public_key: &str)
 - Non-empty list = genesis key must be in the list
 - Key rotation tracked via `rotation_sequence` and `GenesisKeyTransition` DHT records
 
+## Mesh Transport Lifecycle (Iteration 68)
+
+### Adding a New Background Task
+
+1. Determine the task class:
+   - `CriticalService` — core mesh functionality
+   - `RestartableBackground` — periodic maintenance
+   - `BoundedChild` — per-connection work
+
+2. In `MeshTransport::start()`, spawn via the task group:
+```rust
+let mut shutdown_rx = group.shutdown_receiver();
+group.spawn_background("task_name", async move {
+    let mut interval = tokio::time::interval(Duration::from_secs(60));
+    loop {
+        tokio::select! {
+            _ = interval.tick() => { /* work */ }
+            _ = shutdown_rx.changed() => {
+                if *shutdown_rx.borrow() { break; }
+            }
+        }
+    }
+});
+```
+
+3. NEVER use bare `tokio::spawn` for long-lived tasks in transport code.
+
+### Lifecycle API
+
+- `MeshTransport::start()` — transactional startup
+- `MeshTransport::shutdown_with_timeout(timeout)` — bounded shutdown returning `MeshShutdownReport`
+- `MeshTransport::subscribe_exits()` — observe task exit events
+- `MeshTransport::lifecycle_state()` — query current state
+
 ## Testing Commands
 
 ```bash

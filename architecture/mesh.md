@@ -130,6 +130,21 @@ crates/synvoid-mesh/src/mesh/kem/
 
 ---
 
+## Lifecycle Management
+
+Mesh transport uses structured lifecycle management (Iteration 68):
+
+- `MeshTaskGroup` owns all spawned tasks with classification
+- `MeshLifecycleState` provides a state machine (Stopped/Starting/Running/Stopping/Failed)
+- Transactional startup with rollback on failure
+- Bounded shutdown with `MeshShutdownReport`
+- Per-peer children bounded by `max_concurrent_handshakes`
+- All periodic loops are cancellation-aware via `watch::Receiver<bool>`
+
+See `architecture/mesh_transport_lifecycle.md` for the full task inventory.
+
+---
+
 ## 3. Major Exported Types
 
 ### Transport Layer

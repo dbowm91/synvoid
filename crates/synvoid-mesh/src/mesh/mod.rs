@@ -20,6 +20,7 @@ pub mod dht;
 pub mod hierarchical_routing;
 pub mod hybrid_signature;
 pub mod kem;
+pub mod lifecycle;
 pub mod ml_dsa;
 pub mod ml_kem_key_exchange;
 pub mod network_security;
@@ -30,6 +31,7 @@ pub mod peer_auth;
 pub mod protocol;
 pub mod proxy;
 pub mod raft;
+pub mod task_group;
 // Domain: canonical. Read-only trust seam over Raft/global-node canonical state.
 pub mod canonical;
 pub mod reputation;
@@ -64,6 +66,7 @@ pub mod transport_types;
 pub mod transports;
 pub mod verification;
 pub mod wasm_dist;
+pub mod worker_integration;
 pub mod yara_rules;
 
 use std::sync::Arc;
@@ -185,6 +188,7 @@ pub fn set_global_record_store(store: Arc<crate::mesh::dht::RecordStoreManager>)
 pub fn get_global_record_store() -> Option<Arc<crate::mesh::dht::RecordStoreManager>> {
     RECORD_STORE_GLOBAL.read().clone()
 }
+pub use worker_integration::{ManagedMeshService, MeshFailureCause, MeshServiceHealth};
 pub use yara_rules::{
     YaraRuleSource, YaraRuleSubmission, YaraRuleSubmissionStatus, YaraRuleVersionInfo,
     YaraRulesManager, YaraRulesStats,

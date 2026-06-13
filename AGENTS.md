@@ -65,6 +65,10 @@ cargo test --test http3_waf_boundary_guard  # HTTP/3 WAF boundary guard
 cargo test --test threat_intel_boundary_guard  # Threat-intel boundary guard
 cargo test --test mesh_id_boundary_guard  # Mesh-ID enforcement boundary guard
 cargo test --test background_task_ownership_guard
+cargo test --test mesh_task_ownership_guard    # Mesh task ownership guardrail
+cargo test --test mesh_lifecycle_tests         # Mesh lifecycle state machine and task group tests
+cargo test -p synvoid-mesh --features mesh lifecycle  # Mesh lifecycle unit tests
+cargo test -p synvoid-mesh --features mesh task_group  # Mesh task group unit tests
 cargo fmt && cargo clippy --lib -- -D warnings
 ```
 
@@ -127,6 +131,10 @@ cargo check --no-default-features --features mesh,dns
 | `architecture/threat_intel_consumer_actionability.md` | New — Iteration 54 consumer actionability inventory |
 | `tests/threat_intel_consumer_actionability_guard.rs` | New — Iteration 54 consumer actionability guardrail test |
 | `src/worker/task_registry.rs` | New — Iteration 61 worker task lifecycle management |
+| `MeshTaskGroup` | `crates/synvoid-mesh/src/mesh/task_group.rs` (new module) |
+| `MeshLifecycleState` | `crates/synvoid-mesh/src/mesh/lifecycle.rs` (new module) |
+| `ManagedMeshService` | `crates/synvoid-mesh/src/mesh/worker_integration.rs` (new module) |
+| `architecture/mesh_transport_lifecycle.md` | New — Iteration 68 mesh lifecycle task inventory |
 
 ## Data-Plane Composition Root Boundary
 
@@ -292,6 +300,16 @@ Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.overrid
 - **BufferPool**: 4 tiers (small/medium/large/jumbo)
 - **DataPlaneServicesBuilder**: `src/worker/unified_server/services.rs` - now requires `serverless_manager` in constructor; under mesh, `DataPlaneServices` carries optional `ThreatIntelPolicyContext` and a low-risk apply helper; a root-side helper can build the context from explicit handles; bootstrap leaves canonical as `None`; the Supervisor's `CanonicalTrustSnapshot` arrives via IPC after bootstrap and is applied through `update_threat_intel_policy_context()`; no global fallback in builder
 - **WorkerTaskRegistry**: `src/worker/task_registry.rs` — worker-level task lifecycle management with `spawn_critical()`, `spawn_critical_result()`, `spawn_background()`, `child_token()`, `subscribe_exits()`, `shutdown_and_join()`; all spawned futures wrapped with `catch_unwind` for panic detection; immediate critical-task supervision via `broadcast::Receiver<NamedTaskExit>`; `TaskExitReason::UnexpectedCompletion` for pre-shutdown exits; `TaskId` for deduplication; metrics recorded in task wrappers with dedup via `reported_exits` map; integrated into unified-worker runtime (heartbeat, bandwidth persist, IPC loop, server run are registry-owned; Iteration 62–63); `shutdown_started_arc` shared flag (`Arc<AtomicBool>`) for UnexpectedCompletion detection; `begin_shutdown()` records intent without broadcast, `broadcast_shutdown()` sends cancel signal; `WorkerShutdownCause` enum for explicit shutdown classification (`ServerExitedUnexpectedly(NamedTaskExit)`, `ServerStoppedForShutdown`, `CriticalTaskExit`, `SupervisorShutdown`, `SupervisorDisconnected`, `RegistryExitChannelClosed`, `ExternalStop`, `RunningFlagCleared`, `WorkerResize{worker_threads}`); `exit_code()` method derives process exit code (100 for resize, 1 for nonzero, 0 otherwise); `is_fatal_exit()` helper for fatality policy by task class and shutdown state; `IpcLoopError` for typed IPC loop failures; `LifecycleRequest` channel with oneshot acknowledgement for composition-root coordination (Iteration 65); subscription-before-spawn invariant (Phase 12); Iteration 66: `SupervisionOutcome` typed enum, cause-preserving helpers, `request_lifecycle_transition()`, corrected `should_notify_supervisor()` semantics; Iteration 67: lifecycle transition errors propagated with `?` (no more `let _ =`), supervision loop is side-effect free (selects causes only, no `state.running.stop()`), `begin_coordinated_shutdown()` helper enforces ordering: `begin_shutdown()` → lifecycle ack → stop signals
+- **MeshTaskGroup**: `crates/synvoid-mesh/src/mesh/task_group.rs` — mesh-local task group managing critical/background/child tasks with unified shutdown propagation and exit reporting; uses `watch::Receiver<bool>` for cancellation, `broadcast::Sender<MeshTaskExit>` for exit events; `spawn_critical()`, `spawn_background()`, `spawn_child()` classify tasks; `begin_shutdown()` signals all; `join_all(timeout)` awaits with bounded timeout and aborts stragglers
+- **MeshLifecycleState**: `crates/synvoid-mesh/src/mesh/lifecycle.rs` — state machine (Stopped/Starting/Running/Stopping/Failed) with validated transitions; `can_start()` allows Stopped or Failed; `can_stop()` allows Running only
+- **MeshTaskExit**: `crates/synvoid-mesh/src/mesh/lifecycle.rs` — exit metadata with `MeshTaskClass` (CriticalService/RestartableBackground/BoundedChild/OneShotStartup), `MeshTaskExitReason` (CleanCompletion/Cancelled/UnexpectedCompletion/Error/Panic/Aborted); `is_fatal()` true for CriticalService with Error/Panic/UnexpectedCompletion
+- **MeshShutdownReport**: `crates/synvoid-mesh/src/mesh/lifecycle.rs` — returned by `shutdown_with_timeout()`, counts clean/failed/aborted tasks and peer-child drainage
+- **ManagedMeshService**: `crates/synvoid-mesh/src/mesh/worker_integration.rs` — worker-facing trait: `subscribe_critical_exits()`, `start()`, `shutdown(timeout)`, `is_running()`; implemented for `Arc<MeshTransport>` behind `#[cfg(feature = "dns")]`
+- **MeshFailureCause**: `crates/synvoid-mesh/src/mesh/worker_integration.rs` — maps mesh task failures to worker shutdown causes: `CriticalServiceExit`, `StartupFailed`, `ShutdownTimeout`
+- **MeshTransport::shutdown_with_timeout()**: `crates/synvoid-mesh/src/mesh/transport.rs` — bounded shutdown with `MeshShutdownReport`; transitions through Stopping → Stopped; signals task group, closes QUIC connections, joins with timeout, aborts remnants
+- **MeshTransport::subscribe_exits()**: `crates/synvoid-mesh/src/mesh/transport.rs` — returns `broadcast::Receiver<MeshTaskExit>` for worker integration
+- **MeshAcceptLoop peer bounding**: `crates/synvoid-mesh/src/mesh/transport.rs` — uses `OwnedSemaphorePermit` + `JoinSet` to bound concurrent handshakes (`max_concurrent_handshakes`, default 32); rejects connections at capacity; drains children with 10s timeout on shutdown
+- **Mesh handshake timeouts**: `crates/synvoid-mesh/src/mesh/transport.rs` — `accept_bi()`, length read, and hello payload read wrapped with `tokio::time::timeout(handshake_timeout_secs)` (default 10s)
 - **SupervisionOutcome**: `src/worker/task_registry.rs` — typed enum (`Lifecycle { event, accepted }` | `DirectCause(WorkerShutdownCause)`) returned by the supervision loop, preserving direct shutdown causes without converting to fake lifecycle events; supervision loop is side-effect free (Iteration 67)
 - **map_task_exit_to_shutdown_cause()**: `src/worker/task_registry.rs` — maps fatal `NamedTaskExit` to `WorkerShutdownCause` (server_run -> ServerExitedUnexpectedly, others -> CriticalTaskExit)
 - **map_exit_recv_error_to_shutdown_cause()**: `src/worker/task_registry.rs` — maps broadcast `RecvError` to cause (Lagged -> RegistryExitChannelClosed, Closed -> RegistryExitChannelClosed if not shutting down)
@@ -366,6 +384,7 @@ The `architecture/` directory contains detailed design documents. Key canonical 
 | Blocklist provenance | `blocklist_reconciliation.md` | `blocklist_provenance_preservation.md` |
 | Data-plane composition root | `worker_data_plane_composition_root.md` | — |
 | Worker task lifecycle | `worker_task_lifecycle.md` | — |
+| Mesh transport lifecycle | `mesh_transport_lifecycle.md` | — |
 
 ## Skills Directory
 
