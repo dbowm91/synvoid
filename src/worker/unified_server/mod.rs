@@ -229,6 +229,9 @@ pub async fn run_unified_server_worker(
         data_plane,
         #[cfg(feature = "mesh")]
         canonical_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+        task_registry: Arc::new(TokioMutex::new(
+            crate::worker::task_registry::WorkerTaskRegistry::new(),
+        )),
     };
 
     {
@@ -239,32 +242,50 @@ pub async fn run_unified_server_worker(
     }
     tracing::info!("Unified Server Worker {} ready", worker_id);
 
-    // ---- Phase 12: spawn lifecycle tasks ----
+    // ---- Phase 12: spawn lifecycle tasks via registry ----
     let worker_exit_code: Arc<AtomicI32> = Arc::new(AtomicI32::new(0));
 
-    let heartbeat_handle = lifecycle::spawn_heartbeat_task(state.clone());
-    state.task_handles.lock().await.push(heartbeat_handle);
+    {
+        let mut registry = state.task_registry.lock().await;
+        lifecycle::spawn_heartbeat_task(state.clone(), &mut registry);
+        lifecycle::spawn_bandwidth_persist_task(&mut registry);
+        lifecycle::spawn_ipc_loop(
+            state.clone(),
+            shared_config.clone(),
+            worker_exit_code.clone(),
+            &mut registry,
+        );
+    }
 
-    let bandwidth_persist_handle = lifecycle::spawn_bandwidth_persist_task();
-    state
-        .task_handles
-        .lock()
-        .await
-        .push(bandwidth_persist_handle);
-
-    let ipc_handle = lifecycle::spawn_ipc_loop(
-        state.clone(),
-        shared_config.clone(),
-        worker_exit_code.clone(),
-    );
-    state.task_handles.lock().await.push(ipc_handle);
+    // Subscribe to critical task exit notifications for immediate supervision.
+    let mut exit_rx = {
+        let registry = state.task_registry.lock().await;
+        registry.subscribe_exits()
+    };
 
     // ---- Phase 13: run unified server ----
     let server_state = state.clone();
     let server_handle = lifecycle::spawn_server_run_task(unified_server.clone(), server_state);
 
     let master_dead_flag = state.master_dead.clone();
-    let _ = server_handle.await;
+
+    // Wait for server completion OR critical task exit.
+    tokio::select! {
+        _ = server_handle => {}
+        exit = exit_rx.recv() => {
+            if let Ok(exit) = exit {
+                if exit.class == crate::worker::task_registry::TaskClass::CriticalService {
+                    tracing::error!(
+                        "Critical task '{}' ({}) exited unexpectedly: {}",
+                        exit.name,
+                        exit.id.0,
+                        exit.reason
+                    );
+                    state.running.stop();
+                }
+            }
+        }
+    }
 
     running.stop();
 
@@ -275,6 +296,30 @@ pub async fn run_unified_server_worker(
         );
         worker_exit_code.store(1, Ordering::Relaxed);
     }
+
+    // ---- Phase 14: shutdown registry ----
+    {
+        let mut registry = state.task_registry.lock().await;
+        let exits = registry
+            .shutdown_and_join(
+                std::time::Duration::from_secs(5),
+                std::time::Duration::from_secs(3),
+            )
+            .await;
+        if !exits.is_empty() {
+            tracing::warn!(
+                "Task registry shutdown: {} tasks with non-clean exits",
+                exits.len()
+            );
+        }
+    }
+
+    // Also abort any remaining non-migrated task handles.
+    let handles = state.task_handles.lock().await;
+    for handle in handles.iter() {
+        handle.abort();
+    }
+    drop(handles);
 
     let exit_code = worker_exit_code.load(Ordering::Relaxed);
     if exit_code != 0 {

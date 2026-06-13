@@ -20,31 +20,28 @@
 //! 3. Join background tasks with timeout
 //! 4. Abort remaining tasks and report
 
+use std::collections::HashMap;
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::panic::AssertUnwindSafe;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use futures::FutureExt;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
+
+/// Opaque task identifier for deduplication in exit records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TaskId(pub u64);
 
 /// Task classification for lifecycle management.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TaskClass {
-    /// Listener accept loops, IPC loops, critical persistence.
-    /// Unexpected exit is fatal; shutdown awaits with timeout.
     CriticalService,
-    /// Health checks, metrics, feed refresh, cache cleanup.
-    /// Unexpected exit logged; optional bounded restart.
     RestartableBackground,
-    /// Per-connection/request tasks.
-    /// Drained or aborted after timeout.
     BoundedChild,
-    /// Compression, minification, blocking I/O.
-    /// Bounded queue; shutdown stops intake and drains.
     CpuOffload,
-    /// Fire-and-forget where result and lifetime don't affect correctness.
-    /// Rare; explicitly documented with rationale.
     Detached,
 }
 
@@ -63,15 +60,11 @@ impl fmt::Display for TaskClass {
 /// Outcome of a task exit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskExitReason {
-    /// Task was cancelled via the registry shutdown signal.
     Cancelled,
-    /// Task completed its work normally.
     CleanCompletion,
-    /// Task panicked.
+    UnexpectedCompletion,
     Panic(String),
-    /// Task returned an error.
     Error(String),
-    /// Task was aborted (e.g., timed out during shutdown).
     Aborted,
 }
 
@@ -80,6 +73,7 @@ impl fmt::Display for TaskExitReason {
         match self {
             Self::Cancelled => write!(f, "cancelled"),
             Self::CleanCompletion => write!(f, "clean_completion"),
+            Self::UnexpectedCompletion => write!(f, "unexpected_completion"),
             Self::Panic(msg) => write!(f, "panic: {}", msg),
             Self::Error(msg) => write!(f, "error: {}", msg),
             Self::Aborted => write!(f, "aborted"),
@@ -90,13 +84,9 @@ impl fmt::Display for TaskExitReason {
 /// Error from [`ManagedService::join`].
 #[derive(Debug)]
 pub enum ServiceExitError {
-    /// The service panicked.
     Panic(String),
-    /// The service returned an error.
     Error(String),
-    /// The service was cancelled.
     Cancelled,
-    /// The join failed (task gone).
     JoinFailed(String),
 }
 
@@ -114,21 +104,21 @@ impl fmt::Display for ServiceExitError {
 impl std::error::Error for ServiceExitError {}
 
 /// A long-lived service with explicit shutdown and join semantics.
-///
-/// Implementors must ensure:
-/// - `shutdown()` is idempotent
-/// - `join()` can be called after `shutdown()`
-/// - no hidden long-lived task survives owner drop unless intentionally detached
 pub trait ManagedService: Send + Sync {
-    /// Human-readable name for logging and metrics.
     fn name(&self) -> &'static str;
-
-    /// Initiate graceful shutdown. Idempotent.
     fn shutdown(&self);
-
-    /// Wait for the service to complete. Can be called after `shutdown()`.
     #[allow(async_fn_in_trait)]
     async fn join(&self) -> Result<(), ServiceExitError>;
+}
+
+/// Result of joining a single task, with metadata for logging and metrics.
+#[derive(Debug, Clone)]
+pub struct NamedTaskExit {
+    pub id: TaskId,
+    pub name: &'static str,
+    pub class: TaskClass,
+    pub reason: TaskExitReason,
+    pub expected_during_shutdown: bool,
 }
 
 /// Metrics counters for the task registry.
@@ -148,23 +138,18 @@ impl TaskRegistryMetrics {
     pub fn record_started(&self) {
         self.tasks_started.fetch_add(1, Ordering::Relaxed);
     }
-
     pub fn record_completed_cleanly(&self) {
         self.tasks_completed_cleanly.fetch_add(1, Ordering::Relaxed);
     }
-
     pub fn record_cancelled(&self) {
         self.tasks_cancelled.fetch_add(1, Ordering::Relaxed);
     }
-
     pub fn record_panicked(&self) {
         self.tasks_panicked.fetch_add(1, Ordering::Relaxed);
     }
-
     pub fn record_aborted(&self) {
         self.tasks_aborted.fetch_add(1, Ordering::Relaxed);
     }
-
     pub fn record_errored(&self) {
         self.tasks_errored.fetch_add(1, Ordering::Relaxed);
     }
@@ -172,139 +157,249 @@ impl TaskRegistryMetrics {
 
 /// Entry for a registered task.
 struct RegisteredTask {
+    id: TaskId,
     name: &'static str,
-    #[allow(dead_code)]
     class: TaskClass,
     handle: JoinHandle<()>,
 }
 
 /// A worker-level task registry that manages long-lived background tasks.
-///
-/// Uses `tokio::sync::watch` for cancellation and `JoinHandle` storage
-/// for ordered shutdown. Critical and background tasks are tracked
-/// separately.
 pub struct WorkerTaskRegistry {
-    /// Shutdown signal: receivers watch this for cancellation.
     shutdown_tx: watch::Sender<bool>,
-    /// Critical service tasks.
     critical: Vec<RegisteredTask>,
-    /// Background/restartable tasks.
     background: Vec<RegisteredTask>,
-    /// Auto-incrementing task ID.
     next_id: AtomicU64,
-    /// Metrics.
     pub metrics: Arc<TaskRegistryMetrics>,
+    shutdown_started: AtomicBool,
+    exit_tx: tokio::sync::broadcast::Sender<NamedTaskExit>,
+    /// Task IDs whose exit has been observed via the broadcast channel.
+    reported_exits: Arc<Mutex<HashMap<TaskId, TaskExitReason>>>,
 }
 
 impl WorkerTaskRegistry {
-    /// Create a new registry.
     pub fn new() -> Self {
         let (shutdown_tx, _) = watch::channel(false);
+        let (exit_tx, _) = tokio::sync::broadcast::channel(64);
         Self {
             shutdown_tx,
             critical: Vec::new(),
             background: Vec::new(),
             next_id: AtomicU64::new(1),
             metrics: Arc::new(TaskRegistryMetrics::default()),
+            shutdown_started: AtomicBool::new(false),
+            exit_tx,
+            reported_exits: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    /// Get a child cancellation token (watch receiver) for a spawned task.
-    ///
-    /// The task should use `tokio::select!` between its work and
-    /// `shutdown_rx.changed()` to implement cooperative cancellation.
     pub fn child_token(&self) -> watch::Receiver<bool> {
         self.shutdown_tx.subscribe()
     }
 
-    /// Register and spawn a critical service task.
+    pub fn subscribe_exits(&self) -> tokio::sync::broadcast::Receiver<NamedTaskExit> {
+        self.exit_tx.subscribe()
+    }
+
+    pub fn is_shutdown_started(&self) -> bool {
+        self.shutdown_started.load(Ordering::Relaxed)
+    }
+
     pub fn spawn_critical<F>(&mut self, name: &'static str, future: F) -> usize
     where
         F: std::future::Future<Output = ()> + Send + 'static,
     {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed) as usize;
-        let handle = tokio::task::spawn(future);
+        let id_val = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let id = TaskId(id_val);
+        let exit_tx = self.exit_tx.clone();
+        let metrics = Arc::clone(&self.metrics);
+        let reported_exits = Arc::clone(&self.reported_exits);
+
+        let handle = tokio::task::spawn(async move {
+            let result = AssertUnwindSafe(future).catch_unwind().await;
+            let exit = classify_unit_result(id, name, TaskClass::CriticalService, result);
+            record_exit_metrics(&exit, &metrics, &reported_exits);
+            let _ = exit_tx.send(exit);
+        });
+
         self.metrics.record_started();
         self.critical.push(RegisteredTask {
+            id,
             name,
             class: TaskClass::CriticalService,
             handle,
         });
-        id
+        id_val as usize
     }
 
-    /// Register and spawn a background/restartable task.
+    pub fn spawn_critical_result<F, E>(&mut self, name: &'static str, future: F) -> usize
+    where
+        F: std::future::Future<Output = Result<(), E>> + Send + 'static,
+        E: fmt::Display + Send + 'static,
+    {
+        let id_val = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let id = TaskId(id_val);
+        let exit_tx = self.exit_tx.clone();
+        let metrics = Arc::clone(&self.metrics);
+        let reported_exits = Arc::clone(&self.reported_exits);
+
+        let handle = tokio::task::spawn(async move {
+            let result = AssertUnwindSafe(future).catch_unwind().await;
+            let exit = classify_result_task(id, name, TaskClass::CriticalService, result);
+            record_exit_metrics(&exit, &metrics, &reported_exits);
+            let _ = exit_tx.send(exit);
+        });
+
+        self.metrics.record_started();
+        self.critical.push(RegisteredTask {
+            id,
+            name,
+            class: TaskClass::CriticalService,
+            handle,
+        });
+        id_val as usize
+    }
+
     pub fn spawn_background<F>(&mut self, name: &'static str, future: F) -> usize
     where
         F: std::future::Future<Output = ()> + Send + 'static,
     {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed) as usize;
-        let handle = tokio::task::spawn(future);
+        let id_val = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let id = TaskId(id_val);
+        let exit_tx = self.exit_tx.clone();
+        let metrics = Arc::clone(&self.metrics);
+        let reported_exits = Arc::clone(&self.reported_exits);
+
+        let handle = tokio::task::spawn(async move {
+            let result = AssertUnwindSafe(future).catch_unwind().await;
+            let exit = classify_unit_result(id, name, TaskClass::RestartableBackground, result);
+            record_exit_metrics(&exit, &metrics, &reported_exits);
+            let _ = exit_tx.send(exit);
+        });
+
         self.metrics.record_started();
         self.background.push(RegisteredTask {
+            id,
             name,
             class: TaskClass::RestartableBackground,
             handle,
         });
-        id
+        id_val as usize
     }
 
-    /// Register and spawn a background task with a cancellation-aware body.
-    ///
-    /// The future should use `tokio::select!` with `child_token()` for
-    /// cooperative cancellation.
     pub fn spawn_cancellable_background<F>(&mut self, name: &'static str, future: F) -> usize
     where
         F: std::future::Future<Output = ()> + Send + 'static,
     {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed) as usize;
-        let handle = tokio::task::spawn(future);
+        let id_val = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let id = TaskId(id_val);
+        let exit_tx = self.exit_tx.clone();
+        let metrics = Arc::clone(&self.metrics);
+        let reported_exits = Arc::clone(&self.reported_exits);
+
+        let handle = tokio::task::spawn(async move {
+            let result = AssertUnwindSafe(future).catch_unwind().await;
+            let exit = classify_unit_result(id, name, TaskClass::RestartableBackground, result);
+            record_exit_metrics(&exit, &metrics, &reported_exits);
+            let _ = exit_tx.send(exit);
+        });
+
         self.metrics.record_started();
         self.background.push(RegisteredTask {
+            id,
             name,
             class: TaskClass::RestartableBackground,
             handle,
         });
-        id
+        id_val as usize
     }
 
-    /// Signal all tasks to shut down.
-    ///
-    /// This sets the watch channel to `true`, which is observed by all
-    /// tasks using `child_token()`. The signal is idempotent.
     pub fn shutdown(&self) {
+        self.shutdown_started.store(true, Ordering::Relaxed);
         let _ = self.shutdown_tx.send(true);
     }
 
-    /// Classify a JoinError for a named task.
-    fn classify_join_error(
-        name: &'static str,
-        e: tokio::task::JoinError,
-    ) -> (&'static str, TaskExitReason) {
-        if e.is_cancelled() {
-            (name, TaskExitReason::Cancelled)
-        } else if e.is_panic() {
-            (name, TaskExitReason::Panic(format!("{}", e)))
-        } else {
-            (name, TaskExitReason::Error(format!("{}", e)))
+    async fn join_task_until(
+        task: RegisteredTask,
+        deadline: tokio::time::Instant,
+        metrics: &TaskRegistryMetrics,
+        reported_exits: &Arc<Mutex<HashMap<TaskId, TaskExitReason>>>,
+    ) -> NamedTaskExit {
+        let mut handle = task.handle;
+
+        match tokio::time::timeout_at(deadline, &mut handle).await {
+            Ok(join_result) => match join_result {
+                Ok(()) => {
+                    let already_reported = reported_exits.lock().unwrap().remove(&task.id);
+                    if let Some(reason) = already_reported {
+                        return NamedTaskExit {
+                            id: task.id,
+                            name: task.name,
+                            class: task.class,
+                            reason,
+                            expected_during_shutdown: true,
+                        };
+                    }
+                    metrics.record_completed_cleanly();
+                    NamedTaskExit {
+                        id: task.id,
+                        name: task.name,
+                        class: task.class,
+                        reason: TaskExitReason::CleanCompletion,
+                        expected_during_shutdown: true,
+                    }
+                }
+                Err(e) => {
+                    let already_reported = reported_exits.lock().unwrap().remove(&task.id);
+                    let reason = classify_join_error(e);
+                    if already_reported.is_none() {
+                        match &reason {
+                            TaskExitReason::Cancelled => metrics.record_cancelled(),
+                            TaskExitReason::Panic(_) => {
+                                metrics.record_panicked();
+                                tracing::error!("Task '{}' panicked", task.name);
+                            }
+                            _ => metrics.record_errored(),
+                        }
+                    }
+                    tracing::debug!("Task '{}' exit: {}", task.name, reason);
+                    NamedTaskExit {
+                        id: task.id,
+                        name: task.name,
+                        class: task.class,
+                        reason,
+                        expected_during_shutdown: false,
+                    }
+                }
+            },
+            Err(_) => {
+                tracing::error!("Task '{}' shutdown timeout exceeded, aborting", task.name);
+                handle.abort();
+                let _ = handle.await;
+                metrics.record_aborted();
+                metrics
+                    .tasks_remaining_at_timeout
+                    .fetch_add(1, Ordering::Relaxed);
+                NamedTaskExit {
+                    id: task.id,
+                    name: task.name,
+                    class: task.class,
+                    reason: TaskExitReason::Aborted,
+                    expected_during_shutdown: false,
+                }
+            }
         }
     }
 
-    /// Initiate shutdown and join all tasks with bounded timeouts.
-    ///
-    /// Returns the list of task names that were aborted (did not complete
-    /// within their timeout).
     pub async fn shutdown_and_join(
         &mut self,
         critical_timeout: Duration,
         background_timeout: Duration,
-    ) -> Vec<(&'static str, TaskExitReason)> {
+    ) -> Vec<NamedTaskExit> {
         let shutdown_start = std::time::Instant::now();
         self.shutdown();
 
-        let mut aborted = Vec::new();
+        let mut exits = Vec::new();
 
-        // Join critical tasks first
         let deadline = tokio::time::Instant::now() + critical_timeout;
         for task in self.critical.drain(..) {
             if tokio::time::Instant::now() >= deadline {
@@ -312,47 +407,28 @@ impl WorkerTaskRegistry {
                     "Critical task shutdown timeout after {:?}, aborting remaining",
                     critical_timeout,
                 );
+                task.handle.abort();
+                let _ = task.handle.await;
+                self.metrics.record_aborted();
                 self.metrics
                     .tasks_remaining_at_timeout
                     .fetch_add(1, Ordering::Relaxed);
-                task.handle.abort();
-                aborted.push((task.name, TaskExitReason::Aborted));
-                self.metrics.record_aborted();
+                exits.push(NamedTaskExit {
+                    id: task.id,
+                    name: task.name,
+                    class: task.class,
+                    reason: TaskExitReason::Aborted,
+                    expected_during_shutdown: false,
+                });
                 continue;
             }
-            let name = task.name;
-            match tokio::time::timeout_at(deadline, task.handle).await {
-                Ok(Ok(())) => {
-                    self.metrics.record_completed_cleanly();
-                    tracing::debug!("Critical task '{}' completed cleanly", name);
-                }
-                Ok(Err(e)) => {
-                    let (name, reason) = Self::classify_join_error(name, e);
-                    match &reason {
-                        TaskExitReason::Cancelled => self.metrics.record_cancelled(),
-                        TaskExitReason::Panic(_) => {
-                            self.metrics.record_panicked();
-                            tracing::error!("Critical task '{}' panicked", name);
-                        }
-                        _ => self.metrics.record_errored(),
-                    }
-                    tracing::debug!("Critical task '{}' exit: {}", name, reason);
-                    aborted.push((name, reason));
-                }
-                Err(_) => {
-                    tracing::error!(
-                        "Critical task '{}' shutdown timeout exceeded, aborting",
-                        name
-                    );
-                    // Handle was already consumed by timeout_at; task is
-                    // dropped which aborts it.
-                    self.metrics.record_aborted();
-                    aborted.push((name, TaskExitReason::Aborted));
-                }
+            let exit =
+                Self::join_task_until(task, deadline, &self.metrics, &self.reported_exits).await;
+            if exit.reason != TaskExitReason::CleanCompletion {
+                exits.push(exit);
             }
         }
 
-        // Join background tasks
         let deadline = tokio::time::Instant::now() + background_timeout;
         for task in self.background.drain(..) {
             if tokio::time::Instant::now() >= deadline {
@@ -360,43 +436,25 @@ impl WorkerTaskRegistry {
                     "Background task shutdown timeout after {:?}, aborting remaining",
                     background_timeout,
                 );
+                task.handle.abort();
+                let _ = task.handle.await;
+                self.metrics.record_aborted();
                 self.metrics
                     .tasks_remaining_at_timeout
                     .fetch_add(1, Ordering::Relaxed);
-                task.handle.abort();
-                aborted.push((task.name, TaskExitReason::Aborted));
-                self.metrics.record_aborted();
+                exits.push(NamedTaskExit {
+                    id: task.id,
+                    name: task.name,
+                    class: task.class,
+                    reason: TaskExitReason::Aborted,
+                    expected_during_shutdown: false,
+                });
                 continue;
             }
-            let name = task.name;
-            match tokio::time::timeout_at(deadline, task.handle).await {
-                Ok(Ok(())) => {
-                    self.metrics.record_completed_cleanly();
-                    tracing::debug!("Background task '{}' completed cleanly", name);
-                }
-                Ok(Err(e)) => {
-                    let (name, reason) = Self::classify_join_error(name, e);
-                    match &reason {
-                        TaskExitReason::Cancelled => self.metrics.record_cancelled(),
-                        TaskExitReason::Panic(_) => {
-                            self.metrics.record_panicked();
-                            tracing::warn!("Background task '{}' panicked", name);
-                        }
-                        _ => self.metrics.record_errored(),
-                    }
-                    tracing::debug!("Background task '{}' exit: {}", name, reason);
-                    aborted.push((name, reason));
-                }
-                Err(_) => {
-                    tracing::warn!(
-                        "Background task '{}' shutdown timeout exceeded, aborting",
-                        name
-                    );
-                    // Handle was already consumed by timeout_at; task is
-                    // dropped which aborts it.
-                    self.metrics.record_aborted();
-                    aborted.push((name, TaskExitReason::Aborted));
-                }
+            let exit =
+                Self::join_task_until(task, deadline, &self.metrics, &self.reported_exits).await;
+            if exit.reason != TaskExitReason::CleanCompletion {
+                exits.push(exit);
             }
         }
 
@@ -405,25 +463,22 @@ impl WorkerTaskRegistry {
             .shutdown_duration_ms
             .store(elapsed.as_millis() as u64, Ordering::Relaxed);
         tracing::info!(
-            "Task registry shutdown complete in {:?}, {} tasks aborted",
+            "Task registry shutdown complete in {:?}, {} tasks with non-clean exits",
             elapsed,
-            aborted.len()
+            exits.len()
         );
 
-        aborted
+        exits
     }
 
-    /// Number of active tasks (critical + background).
     pub fn active_count(&self) -> usize {
         self.critical.len() + self.background.len()
     }
 
-    /// Number of critical tasks.
     pub fn critical_count(&self) -> usize {
         self.critical.len()
     }
 
-    /// Number of background tasks.
     pub fn background_count(&self) -> usize {
         self.background.len()
     }
@@ -435,18 +490,110 @@ impl Default for WorkerTaskRegistry {
     }
 }
 
+/// Record metrics for an exit and mark the task as reported.
+fn record_exit_metrics(
+    exit: &NamedTaskExit,
+    metrics: &TaskRegistryMetrics,
+    reported_exits: &Arc<Mutex<HashMap<TaskId, TaskExitReason>>>,
+) {
+    match &exit.reason {
+        TaskExitReason::CleanCompletion => metrics.record_completed_cleanly(),
+        TaskExitReason::Panic(_) => metrics.record_panicked(),
+        TaskExitReason::Error(_) => metrics.record_errored(),
+        TaskExitReason::Cancelled => metrics.record_cancelled(),
+        _ => {}
+    }
+    reported_exits
+        .lock()
+        .unwrap()
+        .insert(exit.id, exit.reason.clone());
+}
+
+/// Classify a `JoinError` into a `TaskExitReason`.
+fn classify_join_error(e: tokio::task::JoinError) -> TaskExitReason {
+    if e.is_cancelled() {
+        TaskExitReason::Cancelled
+    } else if e.is_panic() {
+        TaskExitReason::Panic(format!("{}", e))
+    } else {
+        TaskExitReason::Error(format!("{}", e))
+    }
+}
+
+/// Classify the result of `catch_unwind` around `Future<Output=()>`.
+fn classify_unit_result(
+    id: TaskId,
+    name: &'static str,
+    class: TaskClass,
+    result: Result<(), Box<dyn std::any::Any + Send>>,
+) -> NamedTaskExit {
+    match result {
+        Ok(()) => NamedTaskExit {
+            id,
+            name,
+            class,
+            reason: TaskExitReason::CleanCompletion,
+            expected_during_shutdown: true,
+        },
+        Err(panic) => {
+            let msg = extract_panic_message(panic);
+            NamedTaskExit {
+                id,
+                name,
+                class,
+                reason: TaskExitReason::Panic(msg),
+                expected_during_shutdown: false,
+            }
+        }
+    }
+}
+
+/// Classify the result of `catch_unwind` around `Future<Output=Result<(), E>>`.
+fn classify_result_task<E: fmt::Display>(
+    id: TaskId,
+    name: &'static str,
+    class: TaskClass,
+    result: Result<Result<(), E>, Box<dyn std::any::Any + Send>>,
+) -> NamedTaskExit {
+    match result {
+        Ok(Ok(())) => NamedTaskExit {
+            id,
+            name,
+            class,
+            reason: TaskExitReason::CleanCompletion,
+            expected_during_shutdown: true,
+        },
+        Ok(Err(e)) => NamedTaskExit {
+            id,
+            name,
+            class,
+            reason: TaskExitReason::Error(format!("{}", e)),
+            expected_during_shutdown: false,
+        },
+        Err(panic) => {
+            let msg = extract_panic_message(panic);
+            NamedTaskExit {
+                id,
+                name,
+                class,
+                reason: TaskExitReason::Panic(msg),
+                expected_during_shutdown: false,
+            }
+        }
+    }
+}
+
+fn extract_panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        s.to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic".to_string()
+    }
+}
+
 /// Helper to run a cancellation-aware interval loop.
-///
-/// Use this in tasks that need periodic work with cooperative shutdown:
-///
-/// ```ignore
-/// let token = registry.child_token();
-/// registry.spawn_cancellable_background("my_task", async move {
-///     cancellation_loop(token, Duration::from_secs(5), || async {
-///         do_periodic_work().await;
-///     }).await;
-/// });
-/// ```
 pub async fn cancellation_loop<F, Fut>(
     mut shutdown_rx: watch::Receiver<bool>,
     interval: Duration,
@@ -488,7 +635,6 @@ mod tests {
     async fn test_child_token_receives_shutdown() {
         let registry = WorkerTaskRegistry::new();
         let mut token = registry.child_token();
-
         assert!(!*token.borrow());
         registry.shutdown();
         token.changed().await.unwrap();
@@ -516,14 +662,13 @@ mod tests {
         });
 
         assert_eq!(registry.critical_count(), 1);
-        // Task starts running immediately
         tokio::task::yield_now().await;
         assert!(started.load(Ordering::SeqCst));
 
-        let aborted = registry
+        let exits = registry
             .shutdown_and_join(Duration::from_secs(5), Duration::from_secs(5))
             .await;
-        assert!(aborted.is_empty());
+        assert!(exits.is_empty());
         assert_eq!(registry.active_count(), 0);
         assert_eq!(
             registry
@@ -553,10 +698,10 @@ mod tests {
 
         assert_eq!(registry.background_count(), 1);
 
-        let aborted = registry
+        let exits = registry
             .shutdown_and_join(Duration::from_secs(5), Duration::from_secs(5))
             .await;
-        assert!(aborted.is_empty());
+        assert!(exits.is_empty());
     }
 
     #[tokio::test]
@@ -566,16 +711,33 @@ mod tests {
             panic!("test panic");
         });
 
-        let aborted = registry
+        // Give the spawned task time to run and record metrics
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let panics_before = registry.metrics.tasks_panicked.load(Ordering::Relaxed);
+        eprintln!("tasks_panicked before shutdown_and_join: {}", panics_before);
+
+        let exits = registry
             .shutdown_and_join(Duration::from_secs(5), Duration::from_secs(5))
             .await;
-        assert_eq!(aborted.len(), 1);
-        assert_eq!(aborted[0].0, "panicking_task");
-        match &aborted[0].1 {
+
+        let panics_after = registry.metrics.tasks_panicked.load(Ordering::Relaxed);
+        eprintln!("tasks_panicked after shutdown_and_join: {}", panics_after);
+        eprintln!(
+            "exits: {:?}",
+            exits
+                .iter()
+                .map(|e| (&e.name, &e.reason))
+                .collect::<Vec<_>>()
+        );
+
+        assert_eq!(exits.len(), 1);
+        assert_eq!(exits[0].name, "panicking_task");
+        match &exits[0].reason {
             TaskExitReason::Panic(msg) => assert!(msg.contains("test panic")),
             other => panic!("Expected Panic, got {:?}", other),
         }
-        assert_eq!(registry.metrics.tasks_panicked.load(Ordering::Relaxed), 1);
+        assert_eq!(panics_after, 1);
     }
 
     #[tokio::test]
@@ -620,16 +782,13 @@ mod tests {
             .await;
         });
 
-        // Let it run for a bit
         tokio::time::sleep(Duration::from_millis(50)).await;
         let count_before = counter.load(Ordering::SeqCst);
         assert!(count_before > 0);
 
-        // Signal shutdown
         tx.send(true).unwrap();
         handle.await.unwrap();
 
-        // Counter should not increase significantly after shutdown
         let count_after = counter.load(Ordering::SeqCst);
         assert!(count_after <= count_before + 1);
     }
@@ -638,19 +797,196 @@ mod tests {
     async fn test_background_task_timeout_aborts() {
         let mut registry = WorkerTaskRegistry::new();
 
-        // Spawn a task that never finishes
         registry.spawn_cancellable_background("hung_task", async {
             loop {
                 tokio::time::sleep(Duration::from_secs(100)).await;
             }
         });
 
-        // Shutdown with very short timeout
-        let aborted = registry
+        let exits = registry
             .shutdown_and_join(Duration::from_millis(100), Duration::from_millis(100))
             .await;
-        assert_eq!(aborted.len(), 1);
-        assert_eq!(aborted[0].0, "hung_task");
-        assert_eq!(aborted[0].1, TaskExitReason::Aborted);
+        assert_eq!(exits.len(), 1);
+        assert_eq!(exits[0].name, "hung_task");
+        assert_eq!(exits[0].reason, TaskExitReason::Aborted);
+    }
+
+    #[tokio::test]
+    async fn test_timeout_abort_actually_terminates_task() {
+        let alive = Arc::new(AtomicU64::new(0));
+        let alive_clone = alive.clone();
+
+        let mut registry = WorkerTaskRegistry::new();
+        registry.spawn_cancellable_background("looping_task", async move {
+            loop {
+                alive_clone.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        });
+
+        let _ = registry
+            .shutdown_and_join(Duration::from_millis(50), Duration::from_millis(50))
+            .await;
+
+        let after = alive.load(Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let after_wait = alive.load(Ordering::SeqCst);
+
+        assert!(
+            after_wait <= after + 1,
+            "Task continued after abort: before={}, after={}, after_wait={}",
+            after,
+            after,
+            after_wait
+        );
+    }
+
+    #[tokio::test]
+    async fn test_drop_guard_proves_termination() {
+        static GUARD_DROPPED: AtomicBool = AtomicBool::new(false);
+        GUARD_DROPPED.store(false, Ordering::SeqCst);
+
+        struct DropGuard;
+        impl Drop for DropGuard {
+            fn drop(&mut self) {
+                GUARD_DROPPED.store(true, Ordering::SeqCst);
+            }
+        }
+
+        let mut registry = WorkerTaskRegistry::new();
+        registry.spawn_cancellable_background("guard_task", async {
+            let _guard = DropGuard;
+            loop {
+                tokio::time::sleep(Duration::from_secs(100)).await;
+            }
+        });
+
+        let _ = registry
+            .shutdown_and_join(Duration::from_millis(50), Duration::from_millis(50))
+            .await;
+
+        assert!(
+            GUARD_DROPPED.load(Ordering::SeqCst),
+            "Drop guard was not dropped - task may not have been terminated"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_immediate_critical_exit_notification() {
+        let mut registry = WorkerTaskRegistry::new();
+        let mut exit_rx = registry.subscribe_exits();
+
+        registry.spawn_critical("immediate_task", async {});
+
+        let exit = tokio::time::timeout(Duration::from_secs(2), exit_rx.recv())
+            .await
+            .expect("Should receive exit notification")
+            .expect("Should Ok");
+
+        assert_eq!(exit.name, "immediate_task");
+        assert_eq!(exit.class, TaskClass::CriticalService);
+    }
+
+    #[tokio::test]
+    async fn test_immediate_panic_notification() {
+        let mut registry = WorkerTaskRegistry::new();
+        let mut exit_rx = registry.subscribe_exits();
+
+        registry.spawn_critical("panicking_task", async {
+            panic!("boom");
+        });
+
+        let exit = tokio::time::timeout(Duration::from_secs(2), exit_rx.recv())
+            .await
+            .expect("Should receive exit notification")
+            .expect("Should Ok");
+
+        assert_eq!(exit.name, "panicking_task");
+        match &exit.reason {
+            TaskExitReason::Panic(msg) => assert!(msg.contains("boom")),
+            other => panic!("Expected Panic, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_no_double_count_on_panic() {
+        let mut registry = WorkerTaskRegistry::new();
+        let mut exit_rx = registry.subscribe_exits();
+
+        registry.spawn_critical("panic_task", async {
+            panic!("double count test");
+        });
+
+        // Observe the immediate exit.
+        let exit = tokio::time::timeout(Duration::from_secs(2), exit_rx.recv())
+            .await
+            .expect("timeout")
+            .expect("recv");
+        assert!(matches!(exit.reason, TaskExitReason::Panic(_)));
+
+        // Now call shutdown_and_join. The panic should NOT be counted again.
+        let _ = registry
+            .shutdown_and_join(Duration::from_secs(5), Duration::from_secs(5))
+            .await;
+
+        assert_eq!(
+            registry.metrics.tasks_panicked.load(Ordering::Relaxed),
+            1,
+            "Panic was double-counted"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_shared_deadline_subsequent_tasks_aborted() {
+        let mut registry = WorkerTaskRegistry::new();
+
+        registry.spawn_cancellable_background("slow_task", async {
+            tokio::time::sleep(Duration::from_secs(100)).await;
+        });
+
+        registry.spawn_cancellable_background("also_hung", async {
+            loop {
+                tokio::time::sleep(Duration::from_secs(100)).await;
+            }
+        });
+
+        let exits = registry
+            .shutdown_and_join(Duration::from_millis(50), Duration::from_millis(50))
+            .await;
+
+        assert_eq!(exits.len(), 2);
+        for exit in &exits {
+            assert_eq!(exit.reason, TaskExitReason::Aborted);
+        }
+
+        assert_eq!(registry.active_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_exits_receives_multiple() {
+        let mut registry = WorkerTaskRegistry::new();
+        let mut exit_rx = registry.subscribe_exits();
+
+        registry.spawn_critical("task_a", async {});
+        registry.spawn_critical("task_b", async {});
+
+        let mut names = Vec::new();
+        for _ in 0..2 {
+            let exit = tokio::time::timeout(Duration::from_secs(2), exit_rx.recv())
+                .await
+                .expect("timeout")
+                .expect("recv");
+            names.push(exit.name);
+        }
+        names.sort();
+        assert_eq!(names, vec!["task_a", "task_b"]);
+    }
+
+    #[tokio::test]
+    async fn test_is_shutdown_started() {
+        let registry = WorkerTaskRegistry::new();
+        assert!(!registry.is_shutdown_started());
+        registry.shutdown();
+        assert!(registry.is_shutdown_started());
     }
 }

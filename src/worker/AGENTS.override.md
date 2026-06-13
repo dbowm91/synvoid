@@ -198,14 +198,23 @@ Boundary exceptions (pass-through types, trait-object delegation) must be
 live-audited. The `boundary_exceptions_are_live_and_audited` test verifies each
 exception token appears in at least one matching source file.
 
-## Worker Task Lifecycle (Iteration 61)
+## Worker Task Lifecycle (Iteration 62)
 
 The `task_registry` module provides structured concurrency management:
 
 - **WorkerTaskRegistry**: register named tasks with classification (CriticalService, RestartableBackground, etc.), cooperative cancellation via `child_token()`, bounded shutdown with `shutdown_and_join()`
+- **Panic detection**: All spawn methods wrap futures with `catch_unwind` for panic capture and classification as `TaskExitReason::Panic`
+- **Immediate supervision**: `subscribe_exits()` returns a `broadcast::Receiver<NamedTaskExit>` for real-time critical-task exit notifications — no need to await `shutdown_and_join`
+- **Deduplication**: `record_exit_metrics()` records metrics in the task wrapper and tracks exits in `reported_exits` map; `shutdown_and_join` checks this map to avoid double-counting
+- **`is_shutdown_started()`**: Check whether `shutdown()` has been called without a watch channel
+- **`NamedTaskExit`**: struct with `id`, `name`, `class`, `reason`, `expected_during_shutdown` fields
+- **`TaskExitReason::UnexpectedCompletion`** variant for tasks that finish before shutdown without being cancelled
+- **`TaskId`** type for deduplication in exit records
 - **ManagedService trait**: `name()`, `shutdown()` (idempotent), `join()` (after shutdown)
 - **cancellation_loop()**: helper for periodic work with cooperative shutdown
-- **ThreatFeedClient** is the first migrated service: uses `select!` with `shutdown_tx` watch channel
+- **Spawn helpers**: `spawn_critical_result()` and `spawn_background_result()` for `Result<(), E>`-returning futures
+- **ThreatFeedClient**: uses `select!` with `shutdown_tx` watch channel; `is_running()` checks `!handle.is_finished()`; `join_with_timeout()` provides bounded join with abort
+- **IPC loop, heartbeat, and bandwidth persist** are now registry-owned (Iteration 62)
 
 ### How to add a new long-lived task
 1. Determine task class (CriticalService, RestartableBackground, BoundedChild, CpuOffload, Detached)

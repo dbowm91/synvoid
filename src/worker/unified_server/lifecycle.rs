@@ -55,14 +55,26 @@ fn ipc_data_to_provenance(kind_str: Option<&str>, source: Option<&str>) -> Block
     }
 }
 
-pub fn spawn_heartbeat_task(state: UnifiedServerWorkerState) -> JoinHandle<()> {
-    tokio::spawn(async move {
+pub fn spawn_heartbeat_task(
+    state: UnifiedServerWorkerState,
+    registry: &mut crate::worker::task_registry::WorkerTaskRegistry,
+) -> usize {
+    let token = registry.child_token();
+    registry.spawn_background("heartbeat", async move {
         let heartbeat_interval = Duration::from_secs(5);
         let mut interval = tokio::time::interval(heartbeat_interval);
         let mut next_heartbeat_at = Instant::now() + heartbeat_interval;
+        let mut shutdown_rx = token;
 
         loop {
-            interval.tick().await;
+            tokio::select! {
+                _ = interval.tick() => {}
+                result = shutdown_rx.changed() => {
+                    if result.is_ok() && *shutdown_rx.borrow() {
+                        break;
+                    }
+                }
+            }
 
             if !state.running.is_running() {
                 break;
@@ -126,12 +138,23 @@ pub fn spawn_heartbeat_task(state: UnifiedServerWorkerState) -> JoinHandle<()> {
     })
 }
 
-pub fn spawn_bandwidth_persist_task() -> JoinHandle<()> {
-    tokio::spawn(async move {
+pub fn spawn_bandwidth_persist_task(
+    registry: &mut crate::worker::task_registry::WorkerTaskRegistry,
+) -> usize {
+    let token = registry.child_token();
+    registry.spawn_background("bandwidth_persist", async move {
         let mut interval = tokio::time::interval(Duration::from_secs(60));
+        let mut shutdown_rx = token;
 
         loop {
-            interval.tick().await;
+            tokio::select! {
+                _ = interval.tick() => {}
+                result = shutdown_rx.changed() => {
+                    if result.is_ok() && *shutdown_rx.borrow() {
+                        break;
+                    }
+                }
+            }
             crate::metrics::bandwidth::persist_global_bandwidth_tracker();
         }
     })
@@ -141,11 +164,21 @@ pub fn spawn_ipc_loop(
     state: UnifiedServerWorkerState,
     shared_config: Arc<tokio::sync::RwLock<crate::config::ConfigManager>>,
     worker_exit_code: Arc<AtomicI32>,
-) -> JoinHandle<()> {
-    tokio::spawn(async move {
+    registry: &mut crate::worker::task_registry::WorkerTaskRegistry,
+) -> usize {
+    let token = registry.child_token();
+    registry.spawn_critical("ipc_loop", async move {
+        let mut shutdown_rx = token;
         loop {
-            if !state.running.is_running() {
-                break;
+            tokio::select! {
+                _ = async {}, if !state.running.is_running() => {
+                    break;
+                }
+                result = shutdown_rx.changed() => {
+                    if result.is_ok() && *shutdown_rx.borrow() {
+                        break;
+                    }
+                }
             }
 
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -190,13 +223,6 @@ pub fn spawn_ipc_loop(
 
                     tracing::info!("Persisting bandwidth data on shutdown...");
                     crate::metrics::bandwidth::persist_global_bandwidth_tracker();
-
-                    tracing::info!("Aborting spawned tasks...");
-                    let handles = state.task_handles.lock().await;
-                    for handle in handles.iter() {
-                        handle.abort();
-                    }
-                    drop(handles);
 
                     let mut ipc = state.ipc.lock().await;
                     let _ = ipc

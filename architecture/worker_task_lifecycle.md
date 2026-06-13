@@ -1,4 +1,4 @@
-# Worker Task Lifecycle — Iteration 61
+# Worker Task Lifecycle — Iteration 62
 
 ## Purpose
 
@@ -59,9 +59,9 @@ All long-lived spawned tasks are listed below, grouped by subsystem.
 
 | # | Task | File:Line | Class | Owner | Cancel Path | Join Path | Failure Policy | Notes |
 |---|------|-----------|-------|-------|-------------|-----------|----------------|-------|
-| 1 | `spawn_heartbeat_task` | `lifecycle.rs:58` | RestartableBackground | UnifiedServerWorkerState | `running.is_running()` check | JoinHandle in `task_handles` | log+continue on error | Periodic heartbeat to supervisor |
-| 2 | `spawn_bandwidth_persist_task` | `lifecycle.rs:129` | RestartableBackground | (unowned) | NONE | JoinHandle in `task_handles` | runs forever | Bandwidth counter persistence |
-| 3 | `spawn_ipc_loop` | `lifecycle.rs:140` | CriticalService | UnifiedServerWorkerState | `running.is_running()` + `MasterShutdown` | JoinHandle in `task_handles` | break on error, marks `master_dead` | Supervisor/worker IPC message loop |
+| 1 | `spawn_heartbeat_task` | `lifecycle.rs:58` | RestartableBackground | WorkerTaskRegistry | `child_token()` watch | Registry join | log+continue on error | **Migrated (Iteration 62)**: Periodic heartbeat to supervisor |
+| 2 | `spawn_bandwidth_persist_task` | `lifecycle.rs:129` | RestartableBackground | WorkerTaskRegistry | `child_token()` watch | Registry join | runs forever | **Migrated (Iteration 62)**: Bandwidth counter persistence |
+| 3 | `spawn_ipc_loop` | `lifecycle.rs:140` | CriticalService | WorkerTaskRegistry | `child_token()` watch | Registry join | break on error, marks `master_dead` | **Migrated (Iteration 62)**: Supervisor/worker IPC message loop |
 | 4 | `spawn_server_run_task` | `lifecycle.rs:744` | CriticalService | UnifiedServerWorkerState | `shutdown_tx` broadcast | Awaited directly | marks `running.stop()` on error | Unified server main run loop |
 | 5 | Shared connection heartbeat | `state.rs:190` | RestartableBackground | (unowned) | NONE | Dropped | runs forever, no shutdown | Per-connection heartbeat; no shutdown signal |
 | 6 | `spawn_port_honeypot` | `init_waf.rs:108` | RestartableBackground | (unowned) | `shutdown_tx` inside runner | Dropped | runs forever | Honeypot listener on configured ports |
@@ -204,7 +204,7 @@ Await background tasks with timeout. Includes all RestartableBackground tasks th
 
 ### Phase 10: Abort Remnants
 
-Abort remaining tasks after timeout and report them. Any tasks still running after the final timeout are forcibly aborted. The task identity and class are logged for post-mortem analysis.
+Abort remaining tasks after timeout and report them. `shutdown_and_join()` explicitly aborts any tasks that exceed their deadline and awaits the abort to complete (no detached tasks remain). The task identity and class are logged for post-mortem analysis.
 
 ### Constraints
 
@@ -242,6 +242,15 @@ Abort remaining tasks after timeout and report them. Any tasks still running aft
   - Detached panic → log at debug level.
 - Avoid silently dropping panic results; always record in metrics.
 
+## Migration Status Labels
+
+Tasks are tracked using the following status labels to indicate their lifecycle management state:
+
+- **`Migrated`** — Task is registered with `WorkerTaskRegistry` and uses registry spawn APIs (`spawn_critical`, `spawn_background`, etc.). Provides automatic panic detection via `catch_unwind`, immediate exit notifications via `subscribe_exits()`, and bounded shutdown with abort.
+- **`LegacyOwned`** — Task is tracked in `state.task_handles` (or equivalent) but not yet migrated to the registry. Owner retains the join handle and is responsible for cancellation/join.
+- **`UnownedKnownGap`** — Task is spawned without proper ownership tracking. The join handle is dropped or not retained. This is a known gap that should be addressed.
+- **`DetachedApproved`** — Task is intentionally fire-and-forget with a documented rationale. Must have an explicit allowlist entry in `tests/background_task_ownership_guard.rs`.
+
 ## WorkerTaskRegistry
 
 The `WorkerTaskRegistry` (introduced in `src/worker/task_registry.rs`) provides structured lifecycle management for spawned background tasks.
@@ -257,29 +266,54 @@ The `WorkerTaskRegistry` (introduced in `src/worker/task_registry.rs`) provides 
 ### API
 
 ```rust
+/// Opaque task identifier for deduplication in exit records.
+pub struct TaskId(pub u64);
+
 pub struct WorkerTaskRegistry { /* ... */ }
 
 impl WorkerTaskRegistry {
-    pub fn new(config: TaskRegistryConfig) -> Self;
-    pub fn shutdown_token(&self) -> CancellationToken;
-    pub fn spawn_critical<F>(&self, name: &'static str, fut: F) -> JoinHandle<F::Output>
-    where
-        F: Future + Send + 'static,
-        F::Output: Send + 'static;
-    pub fn spawn_background<F>(&self, name: &'static str, fut: F) -> JoinHandle<F::Output>
-    where
-        F: Future + Send + 'static,
-        F::Output: Send + 'static;
-    pub async fn shutdown(self) -> TaskRegistryShutdownSummary;
+    pub fn new() -> Self;
+    pub fn child_token(&self) -> watch::Receiver<bool>;
+    pub fn subscribe_exits(&self) -> broadcast::Receiver<NamedTaskExit>;
+    pub fn is_shutdown_started(&self) -> bool;
+    pub fn spawn_critical<F>(&mut self, name: &'static str, fut: F) -> usize;
+    pub fn spawn_critical_result<F, E>(&mut self, name: &'static str, fut: F) -> usize;
+    pub fn spawn_background<F>(&mut self, name: &'static str, fut: F) -> usize;
+    pub fn spawn_cancellable_background<F>(&mut self, name: &'static str, fut: F) -> usize;
+    pub fn shutdown(&self);
+    pub async fn shutdown_and_join(
+        &mut self,
+        critical_timeout: Duration,
+        background_timeout: Duration,
+    ) -> Vec<NamedTaskExit>;
 }
 
-pub struct TaskRegistryShutdownSummary {
-    pub critical_joined: usize,
-    pub background_joined: usize,
-    pub aborted: Vec<(&'static str, TaskClass)>,
-    pub panicked: Vec<(&'static str, TaskClass)>,
+/// Result of joining a single task, with metadata for logging and metrics.
+pub struct NamedTaskExit {
+    pub id: TaskId,
+    pub name: &'static str,
+    pub class: TaskClass,
+    pub reason: TaskExitReason,
+    pub expected_during_shutdown: bool,
+}
+
+/// Outcome of a task exit.
+pub enum TaskExitReason {
+    Cancelled,
+    CleanCompletion,
+    UnexpectedCompletion,
+    Panic(String),
+    Error(String),
+    Aborted,
 }
 ```
+
+**Key behaviors:**
+
+- **Panic detection**: All spawn methods (`spawn_critical`, `spawn_critical_result`, `spawn_background`, `spawn_cancellable_background`) wrap the provided future with `AssertUnwindSafe(future).catch_unwind()` to capture panics and classify them as `TaskExitReason::Panic`.
+- **Immediate supervision**: `subscribe_exits()` returns a broadcast receiver that delivers `NamedTaskExit` events immediately when any task completes, panics, or errors — no need to await `shutdown_and_join`.
+- **Deduplication**: `record_exit_metrics()` records metrics inside the task wrapper and stores the exit in `reported_exits` map. When `shutdown_and_join` later joins the same task, it checks `reported_exits` to avoid double-counting metrics.
+- **`is_shutdown_started()`**: Returns whether `shutdown()` has been called, useful for tasks that check shutdown state without a watch channel.
 
 ## ManagedService Trait
 
@@ -316,6 +350,12 @@ Implementations:
 6. **Add to the shutdown sequence.** If the task has ordering dependencies (e.g., must stop before persistence flush), add an explicit step in the shutdown ordering section.
 7. **For Detached tasks only:** Add an explicit allowlist entry in `tests/background_task_ownership_guard.rs` with a written rationale for why detachment is safe.
 8. **Update this document.** Add a row to the task inventory table with all fields filled in.
+
+## Iteration 62: First Registry-Migrated Tasks
+
+The IPC loop (`spawn_ipc_loop`), heartbeat task (`spawn_heartbeat_task`), and bandwidth persist task (`spawn_bandwidth_persist_task`) are the first set of tasks migrated to `WorkerTaskRegistry` (Iteration 62). These tasks were previously tracked in `state.task_handles` and are now registered via `spawn_critical` / `spawn_background` on the registry.
+
+`spawn_server_run_task` (task #4) remains `LegacyOwned` in `state.task_handles` — it is the unified server main run loop and requires separate ownership semantics due to its direct interaction with the `running` flag and `DataPlaneServices` lifecycle.
 
 ## Guardrail
 

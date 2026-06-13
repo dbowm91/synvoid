@@ -496,6 +496,31 @@ impl ThreatFeedClient {
 
     /// Check if the background task is currently running.
     pub fn is_running(&self) -> bool {
-        self.task_handle.read().is_some()
+        self.task_handle
+            .read()
+            .as_ref()
+            .is_some_and(|handle| !handle.is_finished())
+    }
+
+    /// Wait for the background task to complete, aborting if the timeout elapses.
+    ///
+    /// Returns `Ok(())` if the task exited cleanly or was cancelled within the
+    /// timeout, or `Err` if the timeout was exceeded or the task panicked.
+    pub async fn join_with_timeout(&self, timeout: Duration) -> Result<(), String> {
+        let handle = self.task_handle.write().take();
+        match handle {
+            Some(mut h) => match tokio::time::timeout(timeout, &mut h).await {
+                Ok(Ok(())) => Ok(()),
+                Ok(Err(e)) if e.is_cancelled() => Ok(()),
+                Ok(Err(e)) if e.is_panic() => Err(format!("Threat feed task panicked: {}", e)),
+                Ok(Err(e)) => Err(format!("Threat feed task error: {}", e)),
+                Err(_) => {
+                    h.abort();
+                    let _ = h.await;
+                    Err("Threat feed task join timed out".to_string())
+                }
+            },
+            None => Ok(()),
+        }
     }
 }

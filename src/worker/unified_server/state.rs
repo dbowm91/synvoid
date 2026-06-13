@@ -311,6 +311,8 @@ pub struct UnifiedServerWorkerState {
     pub canonical_snapshot: std::sync::Arc<
         tokio::sync::RwLock<Option<synvoid_mesh::canonical::CanonicalTrustSnapshot>>,
     >,
+    /// Task registry for structured concurrency (Iteration 62).
+    pub task_registry: Arc<tokio::sync::Mutex<crate::worker::task_registry::WorkerTaskRegistry>>,
 }
 
 impl UnifiedServerWorkerState {

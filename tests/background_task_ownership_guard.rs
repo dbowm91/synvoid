@@ -1,6 +1,8 @@
 //! Guardrail test: Background task ownership and structured concurrency.
 //!
 //! Iteration 61 — Worker Structured Concurrency and Lifecycle Audit.
+//! Iteration 62 — Registry-owned lifecycle spawns (heartbeat, bandwidth persist,
+//! IPC loop migrated from tokio::spawn to WorkerTaskRegistry).
 //!
 //! Verifies that long-lived background tasks in the highest-priority
 //! audited paths are either:
@@ -187,10 +189,7 @@ fn enclosing_function(content: &str, line_num: usize) -> Option<String> {
 // ---------------------------------------------------------------------------
 
 const SPAWN_FUNCTION_ALLOWLIST: &[(&str, &str)] = &[
-    // Tasks registered in state.task_handles (handle retained, aborted on shutdown)
-    ("lifecycle.rs", "spawn_heartbeat_task"),
-    ("lifecycle.rs", "spawn_bandwidth_persist_task"),
-    ("lifecycle.rs", "spawn_ipc_loop"),
+    // Direct tokio::spawn with JoinHandle retained (not yet migrated to registry)
     ("lifecycle.rs", "spawn_server_run_task"),
     // One-shot initialization spawns
     ("init_mesh.rs", "init_mesh_and_threat_intel"),
@@ -416,6 +415,26 @@ fn worker_task_registry_exists() {
     assert!(
         content.contains("pub fn child_token"),
         "child_token method not found"
+    );
+    assert!(
+        content.contains("pub fn spawn_critical_result"),
+        "spawn_critical_result method not found"
+    );
+    assert!(
+        content.contains("pub fn subscribe_exits"),
+        "subscribe_exits method not found"
+    );
+    assert!(
+        content.contains("pub struct NamedTaskExit"),
+        "NamedTaskExit struct not found"
+    );
+    assert!(
+        content.contains("pub struct TaskId"),
+        "TaskId struct not found"
+    );
+    assert!(
+        content.contains("UnexpectedCompletion"),
+        "UnexpectedCompletion variant not found"
     );
 }
 
