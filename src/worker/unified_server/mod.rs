@@ -139,7 +139,7 @@ pub async fn run_unified_server_worker(
 
     // ---- Phase 11: build DataPlaneServices + Ready ----
     let metrics = WorkerMetrics::shared();
-    let running = RunningFlag::new();
+    let _running = RunningFlag::new();
     let draining = DrainFlag::new();
     let drain_id = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let stopped_accepting = DrainFlag::new();
@@ -215,7 +215,7 @@ pub async fn run_unified_server_worker(
         metrics: metrics.clone(),
         start_time: std::time::Instant::now(),
         ipc: ipc.clone(),
-        running: running.clone(),
+        running: _running.clone(),
         master_dead: RunningFlag::new(),
         app_servers: app_servers.clone(),
         draining: draining.clone(),
@@ -242,14 +242,20 @@ pub async fn run_unified_server_worker(
     }
     tracing::info!("Unified Server Worker {} ready", worker_id);
 
-    // ---- Phase 12: spawn lifecycle tasks via registry ----
+    // ---- Phase 12: subscribe to exit notifications BEFORE spawning tasks ----
+    let mut exit_rx = {
+        let registry = state.task_registry.lock().await;
+        registry.subscribe_exits()
+    };
+
+    // ---- Phase 13: spawn lifecycle tasks via registry ----
     let worker_exit_code: Arc<AtomicI32> = Arc::new(AtomicI32::new(0));
 
     {
         let mut registry = state.task_registry.lock().await;
         lifecycle::spawn_heartbeat_task(state.clone(), &mut registry);
         lifecycle::spawn_bandwidth_persist_task(&mut registry);
-        lifecycle::spawn_ipc_loop(
+        let (_ipc_id, _ipc_exit_cause) = lifecycle::spawn_ipc_loop(
             state.clone(),
             shared_config.clone(),
             worker_exit_code.clone(),
@@ -257,37 +263,86 @@ pub async fn run_unified_server_worker(
         );
     }
 
-    // Subscribe to critical task exit notifications for immediate supervision.
-    let mut exit_rx = {
-        let registry = state.task_registry.lock().await;
-        registry.subscribe_exits()
-    };
+    // ---- Phase 14: register server run task under registry ownership ----
+    {
+        let mut registry = state.task_registry.lock().await;
+        let _server_state = state.clone();
+        let server_clone = unified_server.clone();
+        registry.spawn_critical_result("server_run", async move {
+            server_clone.run().await.map_err(|e| {
+                tracing::error!("Unified server error: {}", e);
+                e.to_string()
+            })
+        });
+    }
 
-    // ---- Phase 13: run unified server ----
-    let server_state = state.clone();
-    let server_handle = lifecycle::spawn_server_run_task(unified_server.clone(), server_state);
+    // Get the shared shutdown flag for fatality classification.
+    let shutdown_flag = {
+        let registry = state.task_registry.lock().await;
+        registry.shutdown_started_flag()
+    };
 
     let master_dead_flag = state.master_dead.clone();
 
-    // Wait for server completion OR critical task exit.
-    tokio::select! {
-        _ = server_handle => {}
-        exit = exit_rx.recv() => {
-            if let Ok(exit) = exit {
-                if exit.class == crate::worker::task_registry::TaskClass::CriticalService {
-                    tracing::error!(
-                        "Critical task '{}' ({}) exited unexpectedly: {}",
-                        exit.name,
-                        exit.id.0,
-                        exit.reason
-                    );
-                    state.running.stop();
+    // ---- Phase 15: supervision loop ----
+    let shutdown_cause = loop {
+        tokio::select! {
+            exit = exit_rx.recv() => {
+                match exit {
+                    Ok(exit) => {
+                        let shutdown_started = shutdown_flag.load(std::sync::atomic::Ordering::Acquire);
+                        if crate::worker::task_registry::is_fatal_exit(&exit, shutdown_started) {
+                            tracing::error!(
+                                "Critical task '{}' ({}) exited unexpectedly: {} (class={:?})",
+                                exit.name,
+                                exit.id.0,
+                                exit.reason,
+                                exit.class,
+                            );
+                            state.running.stop();
+                            break crate::worker::task_registry::WorkerShutdownCause::CriticalTaskExit(exit);
+                        } else {
+                            tracing::debug!(
+                                "Non-fatal task exit: '{}' ({}) reason={} expected={}",
+                                exit.name,
+                                exit.id.0,
+                                exit.reason,
+                                exit.expected_during_shutdown,
+                            );
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        tracing::error!(
+                            "Exit receiver lagged, skipped {} events — supervision integrity compromised",
+                            skipped
+                        );
+                        // Conservative: treat as lifecycle infrastructure failure.
+                        state.running.stop();
+                        break crate::worker::task_registry::WorkerShutdownCause::RegistryExitChannelClosed;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        let shutdown_started = shutdown_flag.load(std::sync::atomic::Ordering::Acquire);
+                        if shutdown_started {
+                            tracing::debug!("Exit channel closed during shutdown — expected");
+                            break crate::worker::task_registry::WorkerShutdownCause::SupervisorShutdown;
+                        } else {
+                            tracing::error!("Exit channel closed while registry active — lifecycle failure");
+                            state.running.stop();
+                            break crate::worker::task_registry::WorkerShutdownCause::RegistryExitChannelClosed;
+                        }
+                    }
                 }
             }
         }
-    }
+    };
 
-    running.stop();
+    // If the supervision loop exited due to a critical task failure,
+    // running was already stopped. Stop it here for other causes.
+    if !state.running.is_running() {
+        // Already stopped above.
+    } else {
+        state.running.stop();
+    }
 
     if !master_dead_flag.is_running() {
         tracing::error!(
@@ -297,7 +352,7 @@ pub async fn run_unified_server_worker(
         worker_exit_code.store(1, Ordering::Relaxed);
     }
 
-    // ---- Phase 14: shutdown registry ----
+    // ---- Phase 16: shutdown registry (server_run is now registry-owned) ----
     {
         let mut registry = state.task_registry.lock().await;
         let exits = registry
@@ -311,6 +366,9 @@ pub async fn run_unified_server_worker(
                 "Task registry shutdown: {} tasks with non-clean exits",
                 exits.len()
             );
+            for exit in &exits {
+                tracing::warn!("  - '{}' ({}): {}", exit.name, exit.id.0, exit.reason);
+            }
         }
     }
 
@@ -326,6 +384,10 @@ pub async fn run_unified_server_worker(
         std::process::exit(exit_code);
     }
 
-    tracing::info!("Unified Server Worker {} shutting down", worker_id);
+    tracing::info!(
+        "Unified Server Worker {} shutting down (cause: {})",
+        worker_id,
+        shutdown_cause
+    );
     Ok(())
 }

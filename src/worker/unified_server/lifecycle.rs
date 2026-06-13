@@ -1,6 +1,7 @@
 // Submodule: Worker → Supervisor heartbeat task, bandwidth-persistence task,
 // the IPC message-handling loop, and the request-blocklist request helper.
 
+use std::fmt;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -18,6 +19,72 @@ use synvoid_static_files::client::get_global_async_cpu_offload_stats;
 use synvoid_mesh::canonical::CanonicalTrustReader;
 #[cfg(feature = "mesh")]
 use synvoid_mesh::dht::advisory_source::{AdvisoryRecordSource, RecordStoreAdvisorySource};
+
+/// The reason the IPC loop exited.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IpcLoopExit {
+    /// MasterShutdown processed successfully.
+    MasterShutdown,
+    /// Resize command processed.
+    WorkerResize,
+    /// Registry cancellation during coordinated shutdown.
+    RegistryShutdown,
+    /// Worker running flag intentionally cleared.
+    RunningFlagCleared,
+}
+
+/// The error type for IPC loop failures.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IpcLoopError {
+    /// Supervisor connection lost.
+    ConnectionLost,
+    /// Unexpected panic or error.
+    Unexpected(String),
+}
+
+impl fmt::Display for IpcLoopExit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MasterShutdown => write!(f, "master_shutdown"),
+            Self::WorkerResize => write!(f, "worker_resize"),
+            Self::RegistryShutdown => write!(f, "registry_shutdown"),
+            Self::RunningFlagCleared => write!(f, "running_flag_cleared"),
+        }
+    }
+}
+
+impl fmt::Display for IpcLoopError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ConnectionLost => write!(f, "connection_lost"),
+            Self::Unexpected(msg) => write!(f, "unexpected: {}", msg),
+        }
+    }
+}
+
+/// Shared state for the IPC loop to communicate its exit cause.
+/// Used when the loop returns `Ok(())` but the caller needs to know
+/// which expected path was taken.
+#[derive(Debug, Clone, Default)]
+pub struct IpcLoopExitCause {
+    pub exit: std::sync::Arc<tokio::sync::RwLock<Option<IpcLoopExit>>>,
+}
+
+impl IpcLoopExitCause {
+    pub fn new() -> Self {
+        Self {
+            exit: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+        }
+    }
+
+    pub async fn set(&self, cause: IpcLoopExit) {
+        *self.exit.write().await = Some(cause);
+    }
+
+    pub async fn get(&self) -> Option<IpcLoopExit> {
+        self.exit.read().await.clone()
+    }
+}
 
 /// Iteration 50: Convert optional IPC provenance strings back to a typed `BlockProvenance`.
 /// When both fields are `None` (legacy messages), defaults to `SupervisorSync`.
@@ -169,18 +236,22 @@ pub fn spawn_ipc_loop(
     shared_config: Arc<tokio::sync::RwLock<crate::config::ConfigManager>>,
     worker_exit_code: Arc<AtomicI32>,
     registry: &mut crate::worker::task_registry::WorkerTaskRegistry,
-) -> usize {
+) -> (usize, IpcLoopExitCause) {
+    let exit_cause = IpcLoopExitCause::new();
+    let cause_clone = exit_cause.clone();
     let token = registry.child_token();
-    registry.spawn_critical("ipc_loop", async move {
+    let id = registry.spawn_critical_result("ipc_loop", async move {
         let mut shutdown_rx = token;
         loop {
             tokio::select! {
                 _ = async {}, if !state.running.is_running() => {
-                    break;
+                    cause_clone.set(IpcLoopExit::RunningFlagCleared).await;
+                    return Ok(());
                 }
                 result = shutdown_rx.changed() => {
                     if result.is_ok() && *shutdown_rx.borrow() {
-                        break;
+                        cause_clone.set(IpcLoopExit::RegistryShutdown).await;
+                        return Ok(());
                     }
                 }
             }
@@ -195,7 +266,7 @@ pub fn spawn_ipc_loop(
                     Err(_) => {
                         tracing::warn!("Unified server worker lost connection to supervisor");
                         state.master_dead.stop();
-                        break;
+                        return Err(IpcLoopError::ConnectionLost);
                     }
                 }
             };
@@ -234,7 +305,8 @@ pub fn spawn_ipc_loop(
                             id: state.worker_id,
                         })
                         .await;
-                    break;
+                    cause_clone.set(IpcLoopExit::MasterShutdown).await;
+                    return Ok(());
                 }
                 Some(Message::MasterConfigReload { config_path }) => {
                     tracing::info!(
@@ -763,24 +835,14 @@ pub fn spawn_ipc_loop(
                         .await;
 
                     worker_exit_code.store(100, Ordering::Relaxed);
-                    break;
+                    cause_clone.set(IpcLoopExit::WorkerResize).await;
+                    return Ok(());
                 }
                 Some(_) | None => {}
             }
         }
-    })
-}
-
-pub fn spawn_server_run_task(
-    unified_server: Arc<crate::server::UnifiedServer>,
-    state: UnifiedServerWorkerState,
-) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        if let Err(e) = unified_server.run().await {
-            tracing::error!("Unified server error: {}", e);
-            state.running.stop();
-        }
-    })
+    });
+    (id, exit_cause)
 }
 
 /// Abort and join all tasks in the registry with a bounded timeout.

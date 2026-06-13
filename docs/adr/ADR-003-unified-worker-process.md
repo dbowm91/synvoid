@@ -75,3 +75,16 @@ When `unified_server_workers > 1` is explicitly configured:
 ## Structured Concurrency (Iteration 61)
 
 Every long-lived task in the unified worker has an owner, a cancellation path, a join path, and an explicit failure policy. The `WorkerTaskRegistry` in `src/worker/task_registry.rs` provides the lifecycle primitive. See `architecture/worker_task_lifecycle.md` for the full task inventory and shutdown ordering.
+
+## Supervision Edge-Case Corrections (Iteration 63)
+
+The supervision loop was corrected to close several edge-case gaps:
+
+- **Subscription-before-spawn**: `subscribe_exits()` is called before any tasks are spawned to ensure no exit event is missed.
+- **Fatality classification**: `is_fatal_exit()` distinguishes pre-shutdown from during-shutdown state. CriticalService is fatal before shutdown for `UnexpectedCompletion`, `Panic`, `Error`, and `Cancelled`; during shutdown, only abnormal exits are fatal.
+- **`UnexpectedCompletion` semantics**: Pre-shutdown `Ok(())` from a non-cancelled CriticalService is `UnexpectedCompletion` (supervision failure). Post-shutdown `Ok(())` is `CleanCompletion` (expected).
+- **Server run task ownership**: Now registered under `WorkerTaskRegistry` via `spawn_critical_result` as a `CriticalService`, completing the migration of all critical worker tasks.
+- **Broadcast channel robustness**: `Lagged` errors cause conservative shutdown (supervision integrity compromised). `Closed` during shutdown is expected; `Closed` while active is a lifecycle failure.
+- **Typed IPC completion**: `IpcLoopExit`/`IpcLoopError` provide structured exit reasons for the IPC loop, replacing ad-hoc flag checks.
+- **Shutdown cause classification**: `WorkerShutdownCause` enum explicitly classifies the primary cause of worker shutdown for supervisor notification and exit code selection.
+- **Final bandwidth flush**: Bandwidth persist task performs an unconditional final flush after its loop breaks, regardless of shutdown cause.

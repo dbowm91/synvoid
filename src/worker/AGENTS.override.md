@@ -216,6 +216,17 @@ The `task_registry` module provides structured concurrency management:
 - **ThreatFeedClient**: uses `select!` with `shutdown_tx` watch channel; `is_running()` checks `!handle.is_finished()`; `join_with_timeout()` provides bounded join with abort
 - **IPC loop, heartbeat, and bandwidth persist** are now registry-owned (Iteration 62)
 
+### Iteration 63: Supervision Corrections
+
+- **Subscribe-before-spawn invariant**: `subscribe_exits()` is called before any tasks are spawned (Phase 12) to ensure no exit event is missed.
+- **Supervision loop with `is_fatal_exit` classification**: The Phase 15 supervision loop uses `is_fatal_exit(exit, shutdown_started)` to decide whether a task exit triggers worker shutdown. CriticalService is fatal before shutdown for `UnexpectedCompletion`/`Panic`/`Error`/`Cancelled`; during shutdown, only `UnexpectedCompletion`/`Panic`/`Error` are fatal. RestartableBackground is never immediately fatal.
+- **`UnexpectedCompletion` semantics**: Pre-shutdown `Ok(())` from a non-cancelled CriticalService is `UnexpectedCompletion`. Post-shutdown `Ok(())` is `CleanCompletion`.
+- **`WorkerShutdownCause` enum**: Primary shutdown cause classification (`ServerExited`, `CriticalTaskExit`, `SupervisorShutdown`, `SupervisorDisconnected`, `RegistryExitChannelClosed`, `ExternalStop`, `RunningFlagCleared`).
+- **IPC loop typed completion**: `IpcLoopExit` (expected: `MasterShutdown`, `WorkerResize`, `RegistryShutdown`, `RunningFlagCleared`) and `IpcLoopError` (failure: `ConnectionLost`, `Unexpected`) provide typed completion signals. `IpcLoopExitCause` communicates the specific exit path via shared `Arc<RwLock>`.
+- **Bandwidth persistence final flush**: `persist_global_bandwidth_tracker()` called unconditionally after the persist loop breaks on every shutdown cause.
+- **Server run task now registry-owned**: Registered via `spawn_critical_result("server_run", ...)` as CriticalService. Old `spawn_server_run_task` function removed.
+- **Broadcast lag/closure policy**: `Lagged` = conservative shutdown (`RegistryExitChannelClosed`); `Closed` during shutdown = expected (`SupervisorShutdown`); `Closed` while active = lifecycle failure (`RegistryExitChannelClosed`).
+
 ### How to add a new long-lived task
 1. Determine task class (CriticalService, RestartableBackground, BoundedChild, CpuOffload, Detached)
 2. For CriticalService/RestartableBackground: use WorkerTaskRegistry.spawn_critical() or spawn_background()

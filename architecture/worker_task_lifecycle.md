@@ -62,7 +62,7 @@ All long-lived spawned tasks are listed below, grouped by subsystem.
 | 1 | `spawn_heartbeat_task` | `lifecycle.rs:58` | RestartableBackground | WorkerTaskRegistry | `child_token()` watch | Registry join | log+continue on error | **Migrated (Iteration 62)**: Periodic heartbeat to supervisor |
 | 2 | `spawn_bandwidth_persist_task` | `lifecycle.rs:129` | RestartableBackground | WorkerTaskRegistry | `child_token()` watch | Registry join | runs forever | **Migrated (Iteration 62)**: Bandwidth counter persistence |
 | 3 | `spawn_ipc_loop` | `lifecycle.rs:140` | CriticalService | WorkerTaskRegistry | `child_token()` watch | Registry join | break on error, marks `master_dead` | **Migrated (Iteration 62)**: Supervisor/worker IPC message loop |
-| 4 | `spawn_server_run_task` | `lifecycle.rs:744` | CriticalService | UnifiedServerWorkerState | `shutdown_tx` broadcast | Awaited directly | marks `running.stop()` on error | Unified server main run loop |
+| 4 | `spawn_server_run_task` | `lifecycle.rs:744` | CriticalService | WorkerTaskRegistry | `child_token()` watch | Registry join | marks `running.stop()` on error | **Migrated (Iteration 63)**: Unified server main run loop; registered via `spawn_critical_result` as `CriticalService` under `WorkerTaskRegistry` |
 | 5 | Shared connection heartbeat | `state.rs:190` | RestartableBackground | (unowned) | NONE | Dropped | runs forever, no shutdown | Per-connection heartbeat; no shutdown signal |
 | 6 | `spawn_port_honeypot` | `init_waf.rs:108` | RestartableBackground | (unowned) | `shutdown_tx` inside runner | Dropped | runs forever | Honeypot listener on configured ports |
 
@@ -355,7 +355,75 @@ Implementations:
 
 The IPC loop (`spawn_ipc_loop`), heartbeat task (`spawn_heartbeat_task`), and bandwidth persist task (`spawn_bandwidth_persist_task`) are the first set of tasks migrated to `WorkerTaskRegistry` (Iteration 62). These tasks were previously tracked in `state.task_handles` and are now registered via `spawn_critical` / `spawn_background` on the registry.
 
-`spawn_server_run_task` (task #4) remains `LegacyOwned` in `state.task_handles` — it is the unified server main run loop and requires separate ownership semantics due to its direct interaction with the `running` flag and `DataPlaneServices` lifecycle.
+## Iteration 63: Server Run Task Migration + Supervision Corrections
+
+The server run task (`spawn_server_run_task`, task #4) is now registered under `WorkerTaskRegistry` via `spawn_critical_result` as a `CriticalService`. The old standalone `spawn_server_run_task` function has been removed.
+
+### Supervision Control Flow
+
+The supervision loop (`Phase 15`) in `src/worker/unified_server/mod.rs` enforces the following invariants:
+
+#### Subscription-Before-Spawn
+
+`subscribe_exits()` is called **before** any tasks are spawned (Phase 12), ensuring no task exit event is missed. The exit receiver is obtained from the registry's broadcast channel before `spawn_heartbeat_task`, `spawn_bandwidth_persist_task`, `spawn_ipc_loop`, and `spawn_critical_result("server_run", ...)` are invoked.
+
+#### Fatality Policy by Task Class/Reason
+
+The `is_fatal_exit(exit, shutdown_started)` helper classifies task exits:
+
+| Task Class | Before Shutdown | During Shutdown |
+|------------|----------------|-----------------|
+| **CriticalService** | Fatal for `UnexpectedCompletion`, `Panic`, `Error`, and `Cancelled` | Fatal for `UnexpectedCompletion`, `Panic`, `Error` only |
+| **RestartableBackground** | Never fatal (logged/degraded) | Never fatal (logged/degraded) |
+| Other classes | Not part of worker-level exit channel | Not part of worker-level exit channel |
+
+#### True `UnexpectedCompletion` Semantics
+
+- **Pre-shutdown**: `Ok(())` from a `CriticalService` that was not cancelled is classified as `UnexpectedCompletion` — the task finished without being told to stop.
+- **Post-shutdown** (`shutdown_started == true`): `Ok(())` is classified as `CleanCompletion` — the task returned cleanly during coordinated shutdown.
+
+#### Server Task Ownership
+
+The server run task is now registry-owned via `spawn_critical_result("server_run", ...)`. The old standalone `spawn_server_run_task` function has been removed. All supervision, shutdown, and metrics recording flows through `WorkerTaskRegistry`.
+
+#### Broadcast Lag/Closure Policy
+
+The supervision loop handles `broadcast::error::RecvError` as follows:
+
+- **`Lagged(skipped)`**: Treated as a lifecycle infrastructure failure. The receiver missed events, so supervision integrity is compromised. Triggers shutdown with `RegistryExitChannelClosed` cause.
+- **`Closed` during shutdown**: Expected — the registry has been shut down and the broadcast sender dropped. Triggers `SupervisorShutdown` cause.
+- **`Closed` while active**: Lifecycle failure — the exit channel closed while the registry was still running. Triggers `RegistryExitChannelClosed` cause.
+
+#### Final Bandwidth Persistence Guarantee
+
+The bandwidth persist task performs a final flush after its loop breaks on every shutdown cause. `persist_global_bandwidth_tracker()` is called unconditionally after the select-loop exits, ensuring no dirty state is lost regardless of how the shutdown signal was received.
+
+#### Primary Shutdown-Cause Selection
+
+`WorkerShutdownCause` classifies the root cause of worker shutdown:
+
+| Variant | Meaning | Nonzero Exit Code | Notify Supervisor |
+|---------|---------|-------------------|-------------------|
+| `ServerExited` | Server run task exited (normal or error) | No | No |
+| `CriticalTaskExit(NamedTaskExit)` | Critical service exited abnormally | Yes | Yes |
+| `SupervisorShutdown` | Supervisor initiated coordinated shutdown | No | No |
+| `SupervisorDisconnected` | IPC connection lost | Yes | Yes |
+| `RegistryExitChannelClosed` | Broadcast channel closed unexpectedly | Yes | Yes |
+| `ExternalStop` | External stop signal received | No | No |
+| `RunningFlagCleared` | Worker running flag cleared (resize) | No | No |
+
+#### IPC Loop Typed Completion
+
+The IPC loop returns typed completion via `IpcLoopExit` (expected completions) and `IpcLoopError` (failures):
+
+- **`IpcLoopExit::MasterShutdown`**: Processed master shutdown command.
+- **`IpcLoopExit::WorkerResize`**: Processed threadpool resize command.
+- **`IpcLoopExit::RegistryShutdown`**: Registry cancellation during coordinated shutdown.
+- **`IpcLoopExit::RunningFlagCleared`**: Worker running flag intentionally cleared.
+- **`IpcLoopError::ConnectionLost`**: Supervisor connection lost (maps to `SupervisorDisconnected`).
+- **`IpcLoopError::Unexpected(String)`**: Unexpected panic or error.
+
+`IpcLoopExitCause` (shared `Arc<RwLock<Option<IpcLoopExit>>>`) communicates the specific exit path to the caller when the loop returns `Ok(())`.
 
 ## Guardrail
 

@@ -3,6 +3,8 @@
 //! Iteration 61 — Worker Structured Concurrency and Lifecycle Audit.
 //! Iteration 62 — Registry-owned lifecycle spawns (heartbeat, bandwidth persist,
 //! IPC loop migrated from tokio::spawn to WorkerTaskRegistry).
+//! Iteration 63 — Supervision changes: registry-owned server run, subscribe-before-spawn,
+//! noncritical exit handling, bandwidth final flush, deprecated spawn_server_run_task removed.
 //!
 //! Verifies that long-lived background tasks in the highest-priority
 //! audited paths are either:
@@ -189,8 +191,6 @@ fn enclosing_function(content: &str, line_num: usize) -> Option<String> {
 // ---------------------------------------------------------------------------
 
 const SPAWN_FUNCTION_ALLOWLIST: &[(&str, &str)] = &[
-    // Direct tokio::spawn with JoinHandle retained (not yet migrated to registry)
-    ("lifecycle.rs", "spawn_server_run_task"),
     // One-shot initialization spawns
     ("init_mesh.rs", "init_mesh_and_threat_intel"),
     ("init_apps.rs", "spawn_granian_supervisors"),
@@ -460,5 +460,105 @@ fn managed_service_trait_exists() {
     assert!(
         content.contains("async fn join(&self)"),
         "ManagedService::join not found"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Iteration 63 — Supervision guardrails
+// ---------------------------------------------------------------------------
+
+fn read_file(path: &str) -> String {
+    let root = workspace_root();
+    let full = root.join(path);
+    fs::read_to_string(&full).unwrap_or_else(|e| panic!("Failed to read {}: {}", full.display(), e))
+}
+
+/// Server run task must be registered under WorkerTaskRegistry via spawn_critical_result.
+#[test]
+fn server_run_task_is_registry_owned() {
+    let content = read_file("src/worker/unified_server/mod.rs");
+    assert!(
+        content.contains("spawn_critical_result") && content.contains("server_run"),
+        "Server run task must be registered under WorkerTaskRegistry via spawn_critical_result"
+    );
+}
+
+/// Exit receiver must be subscribed before supervised tasks are spawned.
+#[test]
+fn exit_receiver_subscribed_before_task_spawning() {
+    let content = read_file("src/worker/unified_server/mod.rs");
+    let subscribe_pos = content
+        .find("subscribe_exits()")
+        .expect("subscribe_exits not found");
+    let spawn_pos = content
+        .find("spawn_heartbeat_task")
+        .expect("spawn_heartbeat_task not found");
+    assert!(
+        subscribe_pos < spawn_pos,
+        "Exit receiver must be subscribed before supervised tasks are spawned"
+    );
+}
+
+/// Supervision loop must distinguish critical from noncritical exits.
+#[test]
+fn supervision_loop_handles_noncritical_exits() {
+    let content = read_file("src/worker/unified_server/mod.rs");
+    assert!(
+        content.contains("is_fatal_exit"),
+        "Supervision loop must use is_fatal_exit to distinguish critical from noncritical exits"
+    );
+    assert!(
+        content.contains("Non-fatal task exit")
+            || content.contains("nonfatal")
+            || content.contains("non-fatal"),
+        "Supervision loop must log non-fatal task exits"
+    );
+}
+
+/// Bandwidth persist task must flush after the main loop ends.
+#[test]
+fn bandwidth_persist_task_has_final_flush() {
+    let content = read_file("src/worker/unified_server/lifecycle.rs");
+    let persist_loop_end = content
+        .find("persist_global_bandwidth_tracker();")
+        .expect("persist call not found");
+    let second_persist =
+        content[persist_loop_end + 1..].find("persist_global_bandwidth_tracker();");
+    assert!(
+        second_persist.is_some(),
+        "Bandwidth persist task must have a final flush after the main loop"
+    );
+}
+
+/// Server run task must not be spawned via raw tokio::spawn.
+#[test]
+fn no_unmanaged_server_join_handle() {
+    let content = read_file("src/worker/unified_server/mod.rs");
+    let has_raw_spawn =
+        content.contains("tokio::spawn") && content.contains("unified_server.run()");
+    let has_server_run_in_registry =
+        content.contains("spawn_critical_result") && content.contains("server_run");
+    if has_raw_spawn {
+        panic!(
+            "Server run task should not be spawned via raw tokio::spawn — use WorkerTaskRegistry"
+        );
+    }
+    assert!(
+        has_server_run_in_registry,
+        "Server run must be registered as a critical result task"
+    );
+}
+
+/// spawn_server_run_task must be removed since its responsibilities moved to the registry.
+#[test]
+fn spawn_server_run_task_removed() {
+    let content = read_file("src/worker/unified_server/lifecycle.rs");
+    assert!(
+        !content.contains("pub fn spawn_server_run_task"),
+        "spawn_server_run_task should be removed — server run is now registry-owned"
+    );
+    assert!(
+        content.contains("spawn_critical_result"),
+        "lifecycle.rs must reference spawn_critical_result as the replacement"
     );
 }
