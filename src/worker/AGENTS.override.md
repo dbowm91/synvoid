@@ -245,6 +245,25 @@ The `task_registry` module provides structured concurrency management:
 - **Fatal supervisor notification**: Fatal causes (`CriticalTaskExit`, `ServerExitedUnexpectedly`, `RegistryExitChannelClosed`) send `WorkerError` when IPC remains available. `SupervisorDisconnected` is a no-op.
 - **Explicit acknowledgement routing**: The composition root uses a `match` on `WorkerShutdownCause` to route to the correct IPC message: `ShutdownComplete`, `ResizeAck`, or `WorkerError`.
 
+### Iteration 66 — Supervision cause preservation cleanup
+
+The supervision loop returns `SupervisionOutcome` (Lifecycle | DirectCause) instead of `(WorkerLifecycleEvent, Option<oneshot::Sender>)`. This preserves the original failing subsystem through final notification.
+
+**Cause mapping helpers** (`task_registry.rs`):
+- `map_task_exit_to_shutdown_cause(NamedTaskExit)` → server_run → ServerExitedUnexpectedly, others → CriticalTaskExit
+- `map_exit_recv_error_to_shutdown_cause(RecvError, bool)` → Lagged → RegistryExitChannelClosed, Closed → RegistryExitChannelClosed (if active)
+- `map_lifecycle_channel_closed(bool)` → active → RegistryExitChannelClosed, shutting down → None
+
+**IPC lifecycle send** (`lifecycle.rs`):
+- `request_lifecycle_transition()` replaces ignored `let _ = lifecycle_tx.send()` / `let _ = ack_rx.await`
+- Returns `IpcLoopError::Unexpected` on channel closure or dropped acknowledgement
+
+**Notification routing**:
+- `should_notify_supervisor()`: SupervisorDisconnected → false (channel unavailable), ServerExitedUnexpectedly → true
+- Direct causes bypass lifecycle event re-mapping
+
+**Tests**: 15 new in `worker_supervision_control_flow.rs`, 8 new guardrail checks in `background_task_ownership_guard.rs`
+
 ### How to add a new long-lived task
 1. Determine task class (CriticalService, RestartableBackground, BoundedChild, CpuOffload, Detached)
 2. For CriticalService/RestartableBackground: use WorkerTaskRegistry.spawn_critical() or spawn_background()

@@ -607,3 +607,23 @@ Run the guardrail with:
 ```bash
 cargo test --test background_task_ownership_guard
 ```
+
+## Iteration 66: Supervision Cause Preservation Cleanup
+
+The supervision loop now returns a typed `SupervisionOutcome` instead of `(WorkerLifecycleEvent, Option<oneshot::Sender<()>>)`. This preserves direct shutdown causes without converting them to fake lifecycle events.
+
+### Key Changes
+
+- **`SupervisionOutcome` enum**: Two variants — `Lifecycle { event, accepted }` and `DirectCause(WorkerShutdownCause)`. Lifecycle events flow through the existing acknowledgement handshake; direct causes bypass it.
+- **Fatal task exits**: Use `map_task_exit_to_shutdown_cause()` — `server_run` maps to `ServerExitedUnexpectedly`, other critical tasks to `CriticalTaskExit(exit)`.
+- **Registry lag/closure**: Use `map_exit_recv_error_to_shutdown_cause()` — `RecvError::Lagged` always maps to `RegistryExitChannelClosed`; `RecvError::Closed` maps to `RegistryExitChannelClosed` only if shutdown not started.
+- **Lifecycle channel closure**: Use `map_lifecycle_channel_closed()` — returns `RegistryExitChannelClosed` if active, `None` if shutdown already started.
+- **No lifecycle channel closure synthesizes `MasterShutdown`**.
+- **`should_notify_supervisor()` corrected**: `SupervisorDisconnected` returns `false` (channel unavailable), `ServerExitedUnexpectedly` returns `true`.
+- **IPC lifecycle sends**: Use `request_lifecycle_transition()` which returns `IpcLoopError` on channel closure or dropped acknowledgement.
+- **Helper functions** (`map_task_exit_to_shutdown_cause`, `map_exit_recv_error_to_shutdown_cause`, `map_lifecycle_channel_closed`) are public and tested.
+
+### New Tests
+
+- 15 new tests in `tests/worker_supervision_control_flow.rs`
+- 8 new guardrail checks in `tests/background_task_ownership_guard.rs`

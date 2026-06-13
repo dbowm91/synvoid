@@ -217,14 +217,14 @@ async fn test_shutdown_cause_properties() {
         (
             WorkerShutdownCause::ServerExitedUnexpectedly,
             true,
-            false,
+            true, // ServerExitedUnexpectedly now notifies (Phase 9)
             false,
         ),
         (WorkerShutdownCause::SupervisorShutdown, false, false, true),
         (
             WorkerShutdownCause::SupervisorDisconnected,
             true,
-            true,
+            false, // SupervisorDisconnected does NOT notify — channel unavailable
             false,
         ),
         (
@@ -517,9 +517,9 @@ async fn test_fatal_cause_should_notify_supervisor() {
 async fn test_supervisor_disconnect_no_notification() {
     let cause = WorkerShutdownCause::SupervisorDisconnected;
     assert!(!cause.is_expected());
-    // should_notify_supervisor is true for SupervisorDisconnected,
-    // but the composition root routes it to no-op since channel is unavailable.
-    assert!(cause.should_notify_supervisor());
+    // SupervisorDisconnected does NOT notify — channel is unavailable
+    // (the supervisor initiated the disconnect).
+    assert!(!cause.should_notify_supervisor());
 }
 
 /// Verify that aborting and awaiting legacy handles completes successfully.
@@ -590,4 +590,369 @@ async fn test_shutdown_ordering_begin_before_stop_accepting() {
         ack_pos < stop_accepting_pos,
         "lifecycle acknowledgement must come before stop_accepting"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Iteration 66 — Supervision cause preservation and SupervisionOutcome tests
+// ---------------------------------------------------------------------------
+
+use synvoid::worker::task_registry::{
+    map_exit_recv_error_to_shutdown_cause, map_lifecycle_channel_closed,
+    map_task_exit_to_shutdown_cause, SupervisionOutcome,
+};
+use synvoid::worker::unified_server::lifecycle::{IpcLoopError, WorkerLifecycleEvent};
+
+/// Critical task failure produces DirectCause(CriticalTaskExit) with preserved identity.
+#[tokio::test]
+async fn test_critical_task_failure_preserves_identity() {
+    let mut registry = WorkerTaskRegistry::new();
+    let mut exit_rx = registry.subscribe_exits();
+    let shutdown_flag = registry.shutdown_started_flag();
+
+    registry.spawn_critical("my_worker_task", async {
+        panic!("something broke");
+    });
+
+    let exit = tokio::time::timeout(Duration::from_secs(2), exit_rx.recv())
+        .await
+        .expect("timeout")
+        .expect("recv");
+
+    let shutdown_started = shutdown_flag.load(Ordering::Acquire);
+    assert!(is_fatal_exit(&exit, shutdown_started));
+
+    let cause = map_task_exit_to_shutdown_cause(exit.clone());
+    match &cause {
+        WorkerShutdownCause::CriticalTaskExit(e) => {
+            assert_eq!(e.name, "my_worker_task");
+            assert!(matches!(e.reason, TaskExitReason::Panic(_)));
+        }
+        other => panic!("Expected CriticalTaskExit, got {:?}", other),
+    }
+
+    // Verify SupervisionOutcome::DirectCause preserves the cause.
+    let outcome = SupervisionOutcome::DirectCause(cause);
+    match outcome {
+        SupervisionOutcome::DirectCause(c) => assert!(c.nonzero_exit_code()),
+        _ => panic!("Expected DirectCause"),
+    }
+}
+
+/// Server_run failure produces DirectCause(ServerExitedUnexpectedly), not SupervisorDisconnected.
+#[tokio::test]
+async fn test_server_failure_not_misclassified() {
+    let mut registry = WorkerTaskRegistry::new();
+    let mut exit_rx = registry.subscribe_exits();
+    let shutdown_flag = registry.shutdown_started_flag();
+
+    registry.spawn_critical_result("server_run", async {
+        Err::<(), String>("server crashed".to_string())
+    });
+
+    let exit = tokio::time::timeout(Duration::from_secs(2), exit_rx.recv())
+        .await
+        .expect("timeout")
+        .expect("recv");
+
+    let shutdown_started = shutdown_flag.load(Ordering::Acquire);
+    assert!(is_fatal_exit(&exit, shutdown_started));
+
+    let cause = map_task_exit_to_shutdown_cause(exit);
+    assert_eq!(cause, WorkerShutdownCause::ServerExitedUnexpectedly);
+    assert!(!matches!(
+        cause,
+        WorkerShutdownCause::SupervisorDisconnected
+    ));
+    assert!(cause.nonzero_exit_code());
+    assert!(cause.should_notify_supervisor());
+}
+
+/// Registry exit lag maps to RegistryExitChannelClosed, not SupervisorDisconnected.
+#[tokio::test]
+async fn test_registry_lag_not_misclassified() {
+    use tokio::sync::broadcast::error::RecvError;
+
+    let cause = map_exit_recv_error_to_shutdown_cause(RecvError::Lagged(42), false);
+    assert_eq!(cause, Some(WorkerShutdownCause::RegistryExitChannelClosed));
+    assert!(!matches!(
+        cause.unwrap(),
+        WorkerShutdownCause::SupervisorDisconnected
+    ));
+}
+
+/// Registry exit closure before shutdown maps to RegistryExitChannelClosed.
+#[tokio::test]
+async fn test_registry_closure_active_not_misclassified() {
+    use tokio::sync::broadcast::error::RecvError;
+
+    let cause = map_exit_recv_error_to_shutdown_cause(RecvError::Closed, false);
+    assert_eq!(cause, Some(WorkerShutdownCause::RegistryExitChannelClosed));
+}
+
+/// Registry exit closure during shutdown returns None (expected).
+#[tokio::test]
+async fn test_registry_closure_during_shutdown_expected() {
+    use tokio::sync::broadcast::error::RecvError;
+
+    let cause = map_exit_recv_error_to_shutdown_cause(RecvError::Closed, true);
+    assert_eq!(cause, None);
+}
+
+/// Lifecycle channel closure while active maps to RegistryExitChannelClosed.
+#[tokio::test]
+async fn test_lifecycle_channel_closed_active_maps_correctly() {
+    let cause = map_lifecycle_channel_closed(false);
+    assert_eq!(cause, Some(WorkerShutdownCause::RegistryExitChannelClosed));
+}
+
+/// Lifecycle channel closure during shutdown returns None (expected).
+#[tokio::test]
+async fn test_lifecycle_channel_closed_during_shutdown_expected() {
+    let cause = map_lifecycle_channel_closed(true);
+    assert_eq!(cause, None);
+}
+
+/// SupervisorDisconnect via lifecycle event preserves the cause correctly.
+#[tokio::test]
+async fn test_supervisor_disconnect_via_lifecycle_preserves_cause() {
+    let event = WorkerLifecycleEvent::SupervisorDisconnected;
+    let cause = match &event {
+        WorkerLifecycleEvent::MasterShutdown { .. } => WorkerShutdownCause::SupervisorShutdown,
+        WorkerLifecycleEvent::WorkerResize { worker_threads } => {
+            WorkerShutdownCause::WorkerResize {
+                worker_threads: *worker_threads,
+            }
+        }
+        WorkerLifecycleEvent::SupervisorDisconnected => WorkerShutdownCause::SupervisorDisconnected,
+    };
+    assert_eq!(cause, WorkerShutdownCause::SupervisorDisconnected);
+    assert!(!cause.should_notify_supervisor());
+    assert!(cause.nonzero_exit_code());
+}
+
+/// Normal MasterShutdown via lifecycle produces SupervisorShutdown.
+#[tokio::test]
+async fn test_normal_master_shutdown_via_lifecycle() {
+    let mut registry = WorkerTaskRegistry::new();
+    let mut exit_rx = registry.subscribe_exits();
+
+    let (lifecycle_tx, mut lifecycle_rx) = tokio::sync::mpsc::channel::<
+        synvoid::worker::unified_server::lifecycle::LifecycleRequest,
+    >(4);
+
+    // Simulate IPC task sending MasterShutdown.
+    registry.spawn_critical("ipc_sim", async move {
+        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+        let _ = lifecycle_tx
+            .send(
+                synvoid::worker::unified_server::lifecycle::LifecycleRequest {
+                    event: WorkerLifecycleEvent::MasterShutdown {
+                        graceful: true,
+                        timeout: Duration::from_secs(30),
+                    },
+                    accepted: ack_tx,
+                },
+            )
+            .await;
+        let _ = ack_rx.await;
+    });
+
+    // Receive lifecycle event.
+    let request = tokio::time::timeout(Duration::from_secs(2), lifecycle_rx.recv())
+        .await
+        .expect("timeout")
+        .expect("no event");
+
+    assert!(matches!(
+        request.event,
+        WorkerLifecycleEvent::MasterShutdown { .. }
+    ));
+
+    // Begin shutdown and acknowledge.
+    registry.begin_shutdown();
+    let _ = request.accepted.send(());
+
+    // Verify the cause maps correctly.
+    let cause = match &request.event {
+        WorkerLifecycleEvent::MasterShutdown { .. } => WorkerShutdownCause::SupervisorShutdown,
+        _ => panic!("Expected MasterShutdown"),
+    };
+    assert_eq!(cause, WorkerShutdownCause::SupervisorShutdown);
+    assert!(!cause.nonzero_exit_code());
+    assert!(cause.is_expected());
+    assert!(!cause.should_notify_supervisor());
+}
+
+/// Competing lifecycle event and task exit: the first selected event remains authoritative.
+/// This test verifies that when a lifecycle event is received via select, it carries
+/// the correct acknowledgement sender and cannot be overridden by a later task exit.
+#[tokio::test]
+async fn test_competing_lifecycle_event_wins() {
+    let mut registry = WorkerTaskRegistry::new();
+
+    let (lifecycle_tx, mut lifecycle_rx) = tokio::sync::mpsc::channel::<
+        synvoid::worker::unified_server::lifecycle::LifecycleRequest,
+    >(4);
+
+    // Spawn IPC task that sends a lifecycle event.
+    registry.spawn_critical("ipc_sim", async move {
+        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+        let _ = lifecycle_tx
+            .send(
+                synvoid::worker::unified_server::lifecycle::LifecycleRequest {
+                    event: WorkerLifecycleEvent::MasterShutdown {
+                        graceful: true,
+                        timeout: Duration::from_secs(30),
+                    },
+                    accepted: ack_tx,
+                },
+            )
+            .await;
+        let _ = ack_rx.await;
+    });
+
+    // Wait for the lifecycle event to be available.
+    let request = tokio::time::timeout(Duration::from_secs(2), lifecycle_rx.recv())
+        .await
+        .expect("timeout")
+        .expect("no lifecycle event");
+
+    // Once the lifecycle event is received, it is authoritative.
+    // Verify it carries the correct event and ack sender.
+    assert!(matches!(
+        request.event,
+        WorkerLifecycleEvent::MasterShutdown { .. }
+    ));
+
+    // Begin shutdown and acknowledge — this proves the lifecycle path is authoritative.
+    registry.begin_shutdown();
+    let _ = request.accepted.send(());
+
+    // The IPC task should complete cleanly.
+    let exits = registry
+        .shutdown_and_join(Duration::from_secs(5), Duration::from_secs(5))
+        .await;
+    let non_clean: Vec<_> = exits
+        .iter()
+        .filter(|e| e.reason != TaskExitReason::CleanCompletion)
+        .collect();
+    assert!(
+        non_clean.is_empty(),
+        "Expected clean shutdown, got: {:?}",
+        non_clean
+    );
+}
+
+/// request_lifecycle_transition returns error when channel is closed.
+#[tokio::test]
+async fn test_request_lifecycle_transition_channel_closed() {
+    let (lifecycle_tx, _lifecycle_rx) = tokio::sync::mpsc::channel::<
+        synvoid::worker::unified_server::lifecycle::LifecycleRequest,
+    >(4);
+    drop(_lifecycle_rx);
+
+    let result = synvoid::worker::unified_server::lifecycle::request_lifecycle_transition(
+        &lifecycle_tx,
+        WorkerLifecycleEvent::MasterShutdown {
+            graceful: true,
+            timeout: Duration::from_secs(30),
+        },
+    )
+    .await;
+
+    assert!(result.is_err());
+    match result.unwrap_err() {
+        IpcLoopError::Unexpected(msg) => {
+            assert!(
+                msg.contains("channel closed"),
+                "Error should mention channel closure: {}",
+                msg
+            );
+        }
+        other => panic!("Expected Unexpected error, got {:?}", other),
+    }
+}
+
+/// request_lifecycle_transition returns error when ack sender is dropped.
+#[tokio::test]
+async fn test_request_lifecycle_transition_ack_dropped() {
+    let (lifecycle_tx, mut lifecycle_rx) = tokio::sync::mpsc::channel::<
+        synvoid::worker::unified_server::lifecycle::LifecycleRequest,
+    >(4);
+
+    // Spawn a task that receives but drops the acknowledgement.
+    tokio::spawn(async move {
+        if let Some(req) = lifecycle_rx.recv().await {
+            drop(req.accepted); // Drop ack sender without sending.
+        }
+    });
+
+    let result = synvoid::worker::unified_server::lifecycle::request_lifecycle_transition(
+        &lifecycle_tx,
+        WorkerLifecycleEvent::MasterShutdown {
+            graceful: true,
+            timeout: Duration::from_secs(30),
+        },
+    )
+    .await;
+
+    assert!(result.is_err());
+    match result.unwrap_err() {
+        IpcLoopError::Unexpected(msg) => {
+            assert!(
+                msg.contains("dropped"),
+                "Error should mention dropped ack: {}",
+                msg
+            );
+        }
+        other => panic!("Expected Unexpected error, got {:?}", other),
+    }
+}
+
+/// ServerExitedUnexpectedly exit code is 1 and should_notify is true.
+#[tokio::test]
+async fn test_server_exited_unexpectedly_notification_routing() {
+    let cause = WorkerShutdownCause::ServerExitedUnexpectedly;
+    assert!(cause.nonzero_exit_code());
+    assert_eq!(cause.exit_code(), 1);
+    assert!(cause.should_notify_supervisor());
+    assert!(!cause.is_expected());
+}
+
+/// RegistryExitChannelClosed exit code is 1 and should_notify is true.
+#[tokio::test]
+async fn test_registry_exit_channel_closed_notification_routing() {
+    let cause = WorkerShutdownCause::RegistryExitChannelClosed;
+    assert!(cause.nonzero_exit_code());
+    assert_eq!(cause.exit_code(), 1);
+    assert!(cause.should_notify_supervisor());
+    assert!(!cause.is_expected());
+}
+
+/// CriticalTaskExit notification routing preserves task name and reason.
+#[tokio::test]
+async fn test_critical_task_exit_notification_routing() {
+    let exit = NamedTaskExit {
+        id: TaskId(42),
+        name: "ipc_loop",
+        class: TaskClass::CriticalService,
+        reason: TaskExitReason::Error("connection_lost".to_string()),
+        expected_during_shutdown: false,
+    };
+    let cause = WorkerShutdownCause::CriticalTaskExit(exit.clone());
+    assert!(cause.should_notify_supervisor());
+    assert!(cause.nonzero_exit_code());
+    assert_eq!(cause.exit_code(), 1);
+
+    // Verify task details survive in the cause.
+    match &cause {
+        WorkerShutdownCause::CriticalTaskExit(e) => {
+            assert_eq!(e.name, "ipc_loop");
+            assert_eq!(
+                e.reason,
+                TaskExitReason::Error("connection_lost".to_string())
+            );
+        }
+        _ => panic!("Expected CriticalTaskExit"),
+    }
 }

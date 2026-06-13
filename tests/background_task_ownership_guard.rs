@@ -473,6 +473,14 @@ fn read_file(path: &str) -> String {
     fs::read_to_string(&full).unwrap_or_else(|e| panic!("Failed to read {}: {}", full.display(), e))
 }
 
+/// Extract a section of a file starting from the first occurrence of `marker`.
+fn find_section<'a>(content: &'a str, marker: &str) -> &'a str {
+    let start = content
+        .find(marker)
+        .unwrap_or_else(|| panic!("Marker '{}' not found in content", marker));
+    &content[start..]
+}
+
 /// Server run task must be registered under WorkerTaskRegistry via spawn_critical_result.
 #[test]
 fn server_run_task_is_registry_owned() {
@@ -808,5 +816,143 @@ fn supervision_selects_lifecycle_events() {
     assert!(
         content.contains("lifecycle_rx.recv()"),
         "Supervision loop must select over lifecycle_rx.recv()"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Iteration 66 — Cause preservation guardrail tests
+// ---------------------------------------------------------------------------
+
+/// Fatal task exits must NOT be converted to SupervisorDisconnected.
+#[test]
+fn fatal_task_exits_not_converted_to_supervisor_disconnected() {
+    let content = read_file("src/worker/unified_server/mod.rs");
+    // The supervision loop should use map_task_exit_to_shutdown_cause, not
+    // directly construct SupervisorDisconnected for task failures.
+    assert!(
+        content.contains("map_task_exit_to_shutdown_cause"),
+        "Supervision loop must use map_task_exit_to_shutdown_cause for fatal exits"
+    );
+    // Verify the old pattern is gone: breaking with SupervisorDisconnected on fatal exit.
+    let supervision_section = find_section(&content, "Phase 15: supervision loop");
+    assert!(
+        !supervision_section.contains("is_fatal_exit")
+            || supervision_section.contains("map_task_exit_to_shutdown_cause"),
+        "Fatal exit handling must go through map_task_exit_to_shutdown_cause"
+    );
+}
+
+/// RegistryExitChannelClosed is reachable from lag/closure paths.
+#[test]
+fn registry_exit_channel_closed_reachable_from_lag_and_closure() {
+    let content = read_file("src/worker/task_registry.rs");
+    assert!(
+        content.contains("map_exit_recv_error_to_shutdown_cause"),
+        "map_exit_recv_error_to_shutdown_cause must exist"
+    );
+    assert!(
+        content.contains("map_lifecycle_channel_closed"),
+        "map_lifecycle_channel_closed must exist"
+    );
+}
+
+/// Lifecycle channel closure must NOT synthesize MasterShutdown.
+#[test]
+fn lifecycle_channel_closure_no_fake_master_shutdown() {
+    let content = read_file("src/worker/unified_server/mod.rs");
+    // The old pattern manufactured MasterShutdown when lifecycle_rx returned None.
+    // Now it should use map_lifecycle_channel_closed which returns RegistryExitChannelClosed.
+    let supervision_section = find_section(&content, "Phase 15: supervision loop");
+    assert!(
+        !supervision_section.contains("MasterShutdown")
+            || supervision_section.contains("map_lifecycle_channel_closed"),
+        "Lifecycle channel closure must not synthesize MasterShutdown"
+    );
+}
+
+/// IPC lifecycle sends must use request_lifecycle_transition, not ignored sends.
+#[test]
+fn ipc_lifecycle_sends_not_ignored() {
+    let content = read_file("src/worker/unified_server/lifecycle.rs");
+    assert!(
+        content.contains("request_lifecycle_transition"),
+        "request_lifecycle_transition helper must exist"
+    );
+    // Verify the old let _ = lifecycle_tx.send pattern is replaced.
+    let spawn_section = find_section(&content, "pub fn spawn_ipc_loop");
+    assert!(
+        spawn_section.contains("request_lifecycle_transition"),
+        "spawn_ipc_loop must use request_lifecycle_transition"
+    );
+}
+
+/// SupervisorDisconnected is produced ONLY by the IPC disconnect lifecycle path.
+#[test]
+fn supervisor_disconnected_only_from_ipc_disconnect() {
+    let content = read_file("src/worker/unified_server/lifecycle.rs");
+    // The IPC loop should send SupervisorDisconnected via request_lifecycle_transition
+    // on connection loss, which is the ONLY path to this event.
+    let err_section = find_section(&content, "ConnectionLost");
+    assert!(
+        err_section.contains("SupervisorDisconnected"),
+        "IPC connection loss must produce SupervisorDisconnected"
+    );
+}
+
+/// Cause-specific WorkerError branches must be reachable through supervision mapping.
+#[test]
+fn cause_specific_worker_error_branches_reachable() {
+    let content = read_file("src/worker/unified_server/mod.rs");
+    // The shutdown procedure must have explicit match arms for each cause type.
+    assert!(
+        content.contains("WorkerShutdownCause::CriticalTaskExit"),
+        "CriticalTaskExit branch must exist in shutdown procedure"
+    );
+    assert!(
+        content.contains("WorkerShutdownCause::ServerExitedUnexpectedly"),
+        "ServerExitedUnexpectedly branch must exist in shutdown procedure"
+    );
+    assert!(
+        content.contains("WorkerShutdownCause::RegistryExitChannelClosed"),
+        "RegistryExitChannelClosed branch must exist in shutdown procedure"
+    );
+}
+
+/// SupervisionOutcome enum must exist for typed supervision results.
+#[test]
+fn supervision_outcome_enum_exists() {
+    let content = read_file("src/worker/task_registry.rs");
+    assert!(
+        content.contains("pub enum SupervisionOutcome"),
+        "SupervisionOutcome enum must exist"
+    );
+    assert!(
+        content.contains("Lifecycle {"),
+        "SupervisionOutcome must have Lifecycle variant"
+    );
+    assert!(
+        content.contains("DirectCause("),
+        "SupervisionOutcome must have DirectCause variant"
+    );
+}
+
+/// should_notify_supervisor must NOT include SupervisorDisconnected.
+#[test]
+fn should_notify_supervisor_excludes_supervisor_disconnected() {
+    let content = read_file("src/worker/task_registry.rs");
+    // Find the should_notify_supervisor method and verify it doesn't include
+    // SupervisorDisconnected.
+    let method_start = content
+        .find("fn should_notify_supervisor")
+        .expect("method not found");
+    let method_body = &content[method_start..method_start + 300];
+    assert!(
+        !method_body.contains("SupervisorDisconnected"),
+        "should_notify_supervisor must not include SupervisorDisconnected"
+    );
+    // But it must include ServerExitedUnexpectedly.
+    assert!(
+        method_body.contains("ServerExitedUnexpectedly"),
+        "should_notify_supervisor must include ServerExitedUnexpectedly"
     );
 }

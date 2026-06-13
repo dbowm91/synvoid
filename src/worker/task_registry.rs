@@ -93,6 +93,22 @@ pub enum WorkerShutdownCause {
     WorkerResize { worker_threads: usize },
 }
 
+/// Typed outcome from the supervision loop.
+///
+/// Preserves the distinction between IPC lifecycle events (which carry an
+/// acknowledgement sender) and direct worker shutdown causes (task failures,
+/// registry channel failures) that should not be re-mapped through lifecycle events.
+#[derive(Debug)]
+pub enum SupervisionOutcome {
+    /// An IPC lifecycle event was received (MasterShutdown, WorkerResize, SupervisorDisconnected).
+    Lifecycle {
+        event: crate::worker::unified_server::lifecycle::WorkerLifecycleEvent,
+        accepted: tokio::sync::oneshot::Sender<()>,
+    },
+    /// A direct cause from task failure, registry channel failure, etc.
+    DirectCause(WorkerShutdownCause),
+}
+
 impl WorkerShutdownCause {
     pub fn nonzero_exit_code(&self) -> bool {
         match self {
@@ -120,7 +136,7 @@ impl WorkerShutdownCause {
         matches!(
             self,
             Self::CriticalTaskExit(_)
-                | Self::SupervisorDisconnected
+                | Self::ServerExitedUnexpectedly
                 | Self::RegistryExitChannelClosed
         )
     }
@@ -751,6 +767,61 @@ pub fn is_fatal_exit(exit: &NamedTaskExit, shutdown_started: bool) -> bool {
             }
         }
         _ => false,
+    }
+}
+
+/// Map a fatal task exit to the appropriate `WorkerShutdownCause`.
+///
+/// Preserves task identity and reason through the supervision outcome.
+/// Called when `is_fatal_exit` returns true.
+pub fn map_task_exit_to_shutdown_cause(exit: NamedTaskExit) -> WorkerShutdownCause {
+    if exit.name == "server_run" {
+        WorkerShutdownCause::ServerExitedUnexpectedly
+    } else {
+        WorkerShutdownCause::CriticalTaskExit(exit)
+    }
+}
+
+/// Map a broadcast receiver error to a shutdown cause.
+///
+/// `RecvError::Lagged` always maps to `RegistryExitChannelClosed`.
+/// `RecvError::Closed` maps to `RegistryExitChannelClosed` only if
+/// shutdown has not already started (otherwise it's expected).
+pub fn map_exit_recv_error_to_shutdown_cause(
+    error: tokio::sync::broadcast::error::RecvError,
+    shutdown_started: bool,
+) -> Option<WorkerShutdownCause> {
+    match error {
+        tokio::sync::broadcast::error::RecvError::Lagged(skipped) => {
+            tracing::error!(
+                "Exit receiver lagged, skipped {} events — supervision integrity compromised",
+                skipped
+            );
+            Some(WorkerShutdownCause::RegistryExitChannelClosed)
+        }
+        tokio::sync::broadcast::error::RecvError::Closed => {
+            if shutdown_started {
+                None // Expected during shutdown
+            } else {
+                tracing::error!(
+                    "Exit channel closed while registry active — lifecycle infrastructure failure"
+                );
+                Some(WorkerShutdownCause::RegistryExitChannelClosed)
+            }
+        }
+    }
+}
+
+/// Classify a lifecycle channel closure into a shutdown cause.
+///
+/// Returns `None` if shutdown has already started (expected condition).
+/// Returns `RegistryExitChannelClosed` if the IPC task exited without sending
+/// an event while the worker was still active.
+pub fn map_lifecycle_channel_closed(shutdown_started: bool) -> Option<WorkerShutdownCause> {
+    if shutdown_started {
+        None
+    } else {
+        Some(WorkerShutdownCause::RegistryExitChannelClosed)
     }
 }
 

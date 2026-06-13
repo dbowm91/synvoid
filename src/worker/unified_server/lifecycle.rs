@@ -37,6 +37,28 @@ impl fmt::Display for IpcLoopError {
     }
 }
 
+/// Send a lifecycle event and wait for composition-root acknowledgement.
+///
+/// Returns `Err(IpcLoopError)` if the channel is closed or the acknowledgement
+/// sender is dropped, making lifecycle send failures explicit rather than
+/// silently ignored.
+pub async fn request_lifecycle_transition(
+    lifecycle_tx: &tokio::sync::mpsc::Sender<LifecycleRequest>,
+    event: WorkerLifecycleEvent,
+) -> Result<(), IpcLoopError> {
+    let (accepted, ack_rx) = tokio::sync::oneshot::channel();
+    lifecycle_tx
+        .send(LifecycleRequest { event, accepted })
+        .await
+        .map_err(|_| {
+            IpcLoopError::Unexpected("worker lifecycle coordinator channel closed".to_string())
+        })?;
+
+    ack_rx.await.map_err(|_| {
+        IpcLoopError::Unexpected("worker lifecycle coordinator dropped acknowledgement".to_string())
+    })
+}
+
 /// Lifecycle events emitted by the IPC task for composition-root orchestration.
 #[derive(Debug, Clone)]
 pub enum WorkerLifecycleEvent {
@@ -232,14 +254,10 @@ pub fn spawn_ipc_loop(
                         tracing::warn!("Unified server worker lost connection to supervisor");
                         state.master_dead.stop();
                         // Send SupervisorDisconnected via channel and wait for ack.
-                        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
-                        let _ = lifecycle_tx
-                            .send(LifecycleRequest {
-                                event: WorkerLifecycleEvent::SupervisorDisconnected,
-                                accepted: ack_tx,
-                            })
-                            .await;
-                        let _ = ack_rx.await;
+                        let _ = request_lifecycle_transition(
+                            &lifecycle_tx,
+                            WorkerLifecycleEvent::SupervisorDisconnected,
+                        ).await;
                         return Err(IpcLoopError::ConnectionLost);
                     }
                 }
@@ -259,15 +277,7 @@ pub fn spawn_ipc_loop(
 
                     let timeout = Duration::from_secs(timeout_secs as u64);
                     let event = WorkerLifecycleEvent::MasterShutdown { graceful, timeout };
-                    let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
-                    let _ = lifecycle_tx
-                        .send(LifecycleRequest {
-                            event,
-                            accepted: ack_tx,
-                        })
-                        .await;
-                    // Wait for composition root to acknowledge before returning.
-                    let _ = ack_rx.await;
+                    let _ = request_lifecycle_transition(&lifecycle_tx, event).await;
                     return Ok(());
                 }
                 Some(Message::MasterConfigReload { config_path }) => {
@@ -764,15 +774,7 @@ pub fn spawn_ipc_loop(
                     );
 
                     let event = WorkerLifecycleEvent::WorkerResize { worker_threads: worker_threads as usize };
-                    let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
-                    let _ = lifecycle_tx
-                        .send(LifecycleRequest {
-                            event,
-                            accepted: ack_tx,
-                        })
-                        .await;
-                    // Wait for composition root to acknowledge before returning.
-                    let _ = ack_rx.await;
+                    let _ = request_lifecycle_transition(&lifecycle_tx, event).await;
                     return Ok(());
                 }
                 Some(_) | None => {}

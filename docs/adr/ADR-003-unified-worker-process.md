@@ -89,6 +89,10 @@ The supervision loop was corrected to close several edge-case gaps:
 - **Shutdown cause classification**: `WorkerShutdownCause` enum explicitly classifies the primary cause of worker shutdown for supervisor notification and exit code selection.
 - **Final bandwidth flush**: Bandwidth persist task performs an unconditional final flush after its loop breaks, regardless of shutdown cause.
 
+## Supervision Cause Preservation Cleanup (Iteration 66)
+
+The supervision loop now returns `SupervisionOutcome` (Lifecycle or DirectCause) instead of implicit `(WorkerLifecycleEvent, Option<oneshot::Sender>)`. Fatal task exits preserve the original `NamedTaskExit` through `map_task_exit_to_shutdown_cause()`. IPC lifecycle sends use `request_lifecycle_transition()` which returns explicit `IpcLoopError` on failure. `should_notify_supervisor()` is corrected: `SupervisorDisconnected` returns `false` since the channel is unavailable. Registry lag/closure and lifecycle channel closure are mapped to `RegistryExitChannelClosed` instead of `SupervisorDisconnected`.
+
 ## Coordinated Shutdown Intent (Iteration 64)
 
 The worker shutdown procedure was refactored to ensure shutdown intent is recorded before tasks are asked to return:
