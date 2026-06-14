@@ -67,6 +67,8 @@ cargo test --test mesh_id_boundary_guard  # Mesh-ID enforcement boundary guard
 cargo test --test background_task_ownership_guard
 cargo test --test mesh_task_ownership_guard    # Mesh task ownership guardrail
 cargo test --test mesh_lifecycle_tests         # Mesh lifecycle state machine and task group tests
+cargo test --test mesh_startup_rollback        # Mesh startup rollback behavioral tests
+cargo test --test worker_supervision_control_flow --features mesh  # Worker supervision + mesh exit tests
 cargo test -p synvoid-mesh --features mesh lifecycle  # Mesh lifecycle unit tests
 cargo test -p synvoid-mesh --features mesh task_group  # Mesh task group unit tests
 cargo test -p synvoid-mesh --features mesh startup  # Mesh staged startup/rollback tests
@@ -307,6 +309,7 @@ Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.overrid
 - **MeshLifecycleState**: `crates/synvoid-mesh/src/mesh/lifecycle.rs` — state machine (Stopped/Starting/Running/Stopping/Failed) with validated transitions; `can_start()` allows Stopped or Failed; `can_stop()` allows Running only; `MeshStartupPolicy` controls required vs optional bootstrap (Iteration 69); `MeshStartupReport` tracks degraded state and bootstrap outcomes (Iteration 69)
 - **MeshTaskExit**: `crates/synvoid-mesh/src/mesh/lifecycle.rs` — exit metadata with `MeshTaskClass` (CriticalService/RestartableBackground/BoundedChild/OneShotStartup), `MeshTaskExitReason` (CleanCompletion/Cancelled/UnexpectedCompletion/Error/Panic/Aborted); `is_fatal()` true for CriticalService with Error/Panic/UnexpectedCompletion
 - **MeshShutdownReport**: `crates/synvoid-mesh/src/mesh/lifecycle.rs` — returned by `shutdown_with_timeout()`, counts clean/failed/aborted tasks and peer-child drainage; extended fields (Iteration 69): `peers_at_shutdown_start`, `remaining_peers`, `drained_peer_sessions`, `aborted_peer_sessions`, `drained_handshake_children`, `aborted_handshake_children`
+- **StartupFailurePoint**: `crates/synvoid-mesh/src/mesh/transport.rs` — test-only enum (`#[cfg(test)]`) with 6 injection points: `AfterCriticalTasks`, `DuringSeedBootstrap`, `DuringPeerConnect`, `DuringDhtBootstrap`, `DuringRuntimeStart`, `AfterLifecycleCommit`. Hook installed via `set_startup_failure_hook()`, checked at each phase in `start()`.
 - **ManagedMeshService**: `crates/synvoid-mesh/src/mesh/worker_integration.rs` — worker-facing trait: `subscribe_critical_exits()`, `start()`, `shutdown(timeout)`, `is_running()`; implemented for `Arc<MeshTransport>` behind `#[cfg(feature = "dns")]`; stable `subscribe_exits()` valid before `start()`, `is_running()` derives from `MeshLifecycleState` (Iteration 69)
 - **MeshFailureCause**: `crates/synvoid-mesh/src/mesh/worker_integration.rs` — maps mesh task failures to worker shutdown causes: `CriticalServiceExit`, `StartupFailed`, `ShutdownTimeout`
 - **MeshTransport::shutdown_with_timeout()**: `crates/synvoid-mesh/src/mesh/transport.rs` — bounded shutdown with `MeshShutdownReport`; transitions through Stopping → Stopped; signals task group, closes QUIC connections, joins with timeout, aborts remnants

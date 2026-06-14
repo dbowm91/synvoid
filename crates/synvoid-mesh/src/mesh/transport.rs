@@ -168,6 +168,25 @@ pub struct MeshTransport {
     pub(crate) shutdown_started: Arc<AtomicBool>,
     pub(crate) mesh_exit_tx: broadcast::Sender<MeshTaskExit>,
     pub(crate) peer_sessions: Arc<tokio::sync::Mutex<tokio::task::JoinSet<()>>>,
+    pub(crate) startup_failure_hook:
+        Arc<Mutex<Option<Box<dyn Fn(StartupFailurePoint) -> Result<(), String> + Send>>>>,
+}
+
+/// Failure injection points for deterministic startup testing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartupFailurePoint {
+    /// After critical tasks (mesh_maintenance, datagram_listener) are spawned.
+    AfterCriticalTasks,
+    /// During seed bootstrap phase.
+    DuringSeedBootstrap,
+    /// During configured peer connection phase.
+    DuringPeerConnect,
+    /// During DHT bootstrap phase.
+    DuringDhtBootstrap,
+    /// During QUIC runtime server start.
+    DuringRuntimeStart,
+    /// After lifecycle state transitions to Running.
+    AfterLifecycleCommit,
 }
 
 #[derive(Clone, Debug)]
@@ -416,6 +435,7 @@ impl Clone for MeshTransport {
             shutdown_started: self.shutdown_started.clone(),
             mesh_exit_tx: self.mesh_exit_tx.clone(),
             peer_sessions: self.peer_sessions.clone(),
+            startup_failure_hook: self.startup_failure_hook.clone(),
         }
     }
 }
@@ -757,6 +777,7 @@ impl MeshTransport {
                 tx
             },
             peer_sessions: Arc::new(tokio::sync::Mutex::new(tokio::task::JoinSet::new())),
+            startup_failure_hook: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -771,6 +792,24 @@ impl MeshTransport {
         &self,
     ) -> Option<Arc<crate::raft::edge_replica::EdgeReplicaManager>> {
         self.edge_replica_manager.read().clone()
+    }
+
+    /// Set a failure injection hook for startup testing.
+    pub fn set_startup_failure_hook(
+        &self,
+        hook: impl Fn(StartupFailurePoint) -> Result<(), String> + Send + 'static,
+    ) {
+        *self.startup_failure_hook.blocking_lock() = Some(Box::new(hook));
+    }
+
+    /// Clear the startup failure hook.
+    pub fn clear_startup_failure_hook(&self) {
+        *self.startup_failure_hook.blocking_lock() = None;
+    }
+
+    /// Check if a startup failure hook is currently set.
+    pub fn has_startup_failure_hook(&self) -> bool {
+        self.startup_failure_hook.blocking_lock().is_some()
     }
 
     pub fn set_site_config_sync_callback(
@@ -2062,7 +2101,14 @@ impl MeshTransport {
             Self::datagram_listener_loop(peer_connections_dg, datagram_shutdown).await;
         });
 
+        #[cfg(test)]
+        self.check_startup_failure_hook(StartupFailurePoint::AfterCriticalTasks)
+            .await?;
+
         // Phase 4: Bootstrap from seeds
+        #[cfg(test)]
+        self.check_startup_failure_hook(StartupFailurePoint::DuringSeedBootstrap)
+            .await?;
         if !self.config.seeds.is_empty() {
             if let Err(e) = self.bootstrap_from_seeds().await {
                 tracing::warn!("Seed bootstrap failed (continuing): {e}");
@@ -2070,6 +2116,9 @@ impl MeshTransport {
         }
 
         // Phase 5: Connect configured peers
+        #[cfg(test)]
+        self.check_startup_failure_hook(StartupFailurePoint::DuringPeerConnect)
+            .await?;
         if !self.config.peers.is_empty() {
             if let Err(e) = self.connect_to_peers().await {
                 tracing::warn!("Peer connection failed (continuing): {e}");
@@ -2077,6 +2126,9 @@ impl MeshTransport {
         }
 
         // Phase 6: DHT bootstrap
+        #[cfg(test)]
+        self.check_startup_failure_hook(StartupFailurePoint::DuringDhtBootstrap)
+            .await?;
         if let Some(ref rm) = self.routing_manager {
             if rm.is_enabled() {
                 if let Err(e) = self.dht_bootstrap_from_seeds(rm.clone()).await {
@@ -2312,6 +2364,16 @@ impl MeshTransport {
         }
 
         // Phase 9: Start QUIC accept loop
+        #[cfg(test)]
+        {
+            if let Err(e) = self
+                .check_startup_failure_hook(StartupFailurePoint::DuringRuntimeStart)
+                .await
+            {
+                self.rollback_startup(&mut group).await;
+                return Err(e);
+            }
+        }
         if let Some(ref runtime) = self.runtime {
             let incoming = match runtime.start_server().await {
                 Ok(incoming) => incoming,
@@ -2338,6 +2400,17 @@ impl MeshTransport {
             })?;
         }
 
+        #[cfg(test)]
+        {
+            if let Err(e) = self
+                .check_startup_failure_hook(StartupFailurePoint::AfterLifecycleCommit)
+                .await
+            {
+                self.rollback_startup(&mut group).await;
+                return Err(e);
+            }
+        }
+
         // Store the task group and shutdown state
         {
             // Store the shutdown sender for the old shutdown_tx field (backward compat)
@@ -2350,6 +2423,21 @@ impl MeshTransport {
 
         tracing::info!("Mesh transport started (lifecycle: running)");
         Ok(())
+    }
+
+    /// Check and invoke the startup failure hook at the given point.
+    /// Returns `Err` if the hook triggers a failure.
+    #[allow(dead_code)]
+    async fn check_startup_failure_hook(
+        &self,
+        point: StartupFailurePoint,
+    ) -> Result<(), MeshTransportError> {
+        let hook = self.startup_failure_hook.lock().await;
+        if let Some(ref f) = *hook {
+            f(point).map_err(|e| MeshTransportError::StartupFailed(e))
+        } else {
+            Ok(())
+        }
     }
 
     /// Rollback a failed startup: cancel and join all staged tasks, then

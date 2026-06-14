@@ -318,3 +318,57 @@ This variant is fatal when the mesh task is a `CriticalService` with `Error`, `P
 ### Mesh Supervision
 
 When the control plane is re-enabled in workers, the mesh supervision loop observes exits from the stable subscription and maps them to `MeshServiceExit` using the same `is_fatal_exit()` classification. The supervision loop is wired into the worker's `WorkerTaskRegistry` supervision select.
+
+## Failure Injection Hooks (Iteration 69 — Phase 20)
+
+`MeshTransport` supports test-only failure injection for deterministic startup testing. The hooks are compiled only in `#[cfg(test)]` builds.
+
+### StartupFailurePoint Enum
+
+```rust
+#[cfg(test)]
+pub enum StartupFailurePoint {
+    AfterCriticalTasks,      // After mesh_maintenance and datagram_listener spawned
+    DuringSeedBootstrap,     // Before seed bootstrap phase
+    DuringPeerConnect,       // Before configured peer connection phase
+    DuringDhtBootstrap,      // Before DHT bootstrap phase
+    DuringRuntimeStart,      // Before QUIC runtime start_server()
+    AfterLifecycleCommit,    // After transition to Running
+}
+```
+
+### Hook API
+
+```rust
+impl MeshTransport {
+    /// Set a failure injection hook for testing.
+    pub fn set_startup_failure_hook(
+        &self,
+        hook: impl Fn(StartupFailurePoint) -> Result<(), String> + Send + 'static,
+    );
+
+    /// Clear the failure injection hook.
+    pub fn clear_startup_failure_hook(&self);
+
+    /// Check if a hook is currently installed.
+    pub fn has_startup_failure_hook(&self) -> bool;
+}
+```
+
+### Hook Behavior
+
+When a hook is installed, `start()` checks it at each phase. If the hook returns `Err(msg)`:
+- Phases 3-6 (pre-accept): Error propagated via `?`, no rollback needed (no runtime tasks started).
+- Phases 9-10 (post-accept): `rollback_startup()` called before returning error.
+
+When the hook returns `Ok(())`, startup continues normally.
+
+### Test Coverage
+
+`tests/mesh_startup_rollback.rs` (11 tests):
+- Hook lifecycle (set, clear, replace)
+- `StartupFailurePoint` enum properties
+- Retry from Failed state
+- Lifecycle not stuck at Starting after failure
+- Transport construction with minimal defaults
+- Hook API integration

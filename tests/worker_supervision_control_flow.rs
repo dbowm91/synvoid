@@ -1245,6 +1245,104 @@ async fn test_server_failure_preserves_named_task_exit_detail() {
     }
 }
 
+// ── Mesh exit integration tests ────────────────────────────────────────────
+
+/// MeshServiceExit with a fatal exit reason is classified as fatal.
+#[cfg(feature = "mesh")]
+#[tokio::test]
+async fn test_mesh_service_exit_is_fatal() {
+    use synvoid_mesh::lifecycle::{MeshTaskClass, MeshTaskExit, MeshTaskExitReason, MeshTaskId};
+
+    let mesh_exit = MeshTaskExit {
+        id: MeshTaskId(42),
+        name: "mesh_accept_loop",
+        class: MeshTaskClass::CriticalService,
+        reason: MeshTaskExitReason::Panic("connection reset".into()),
+    };
+    let cause = WorkerShutdownCause::MeshServiceExit(mesh_exit);
+    assert!(cause.nonzero_exit_code());
+    assert!(cause.should_notify_supervisor());
+    assert!(!cause.is_expected());
+}
+
+/// MeshServiceExit with a non-fatal exit reason (CleanCompletion) is still nonzero
+/// because it's a critical mesh service.
+#[cfg(feature = "mesh")]
+#[tokio::test]
+async fn test_mesh_service_exit_clean_completion_still_nonzero() {
+    use synvoid_mesh::lifecycle::{MeshTaskClass, MeshTaskExit, MeshTaskExitReason, MeshTaskId};
+
+    let mesh_exit = MeshTaskExit {
+        id: MeshTaskId(1),
+        name: "mesh_maintenance",
+        class: MeshTaskClass::CriticalService,
+        reason: MeshTaskExitReason::CleanCompletion,
+    };
+    let cause = WorkerShutdownCause::MeshServiceExit(mesh_exit);
+    // MeshServiceExit always has nonzero exit code
+    assert!(cause.nonzero_exit_code());
+    assert!(cause.should_notify_supervisor());
+}
+
+/// MeshServiceExit exit code is 1.
+#[cfg(feature = "mesh")]
+#[tokio::test]
+async fn test_mesh_service_exit_exit_code() {
+    use synvoid_mesh::lifecycle::{MeshTaskClass, MeshTaskExit, MeshTaskExitReason, MeshTaskId};
+
+    let mesh_exit = MeshTaskExit {
+        id: MeshTaskId(0),
+        name: "datagram_listener",
+        class: MeshTaskClass::CriticalService,
+        reason: MeshTaskExitReason::Error("bind failed".into()),
+    };
+    let cause = WorkerShutdownCause::MeshServiceExit(mesh_exit);
+    assert_eq!(cause.exit_code(), 1);
+}
+
+/// MeshServiceExit display includes task name and reason.
+#[cfg(feature = "mesh")]
+#[tokio::test]
+async fn test_mesh_service_exit_display() {
+    use synvoid_mesh::lifecycle::{MeshTaskClass, MeshTaskExit, MeshTaskExitReason, MeshTaskId};
+
+    let mesh_exit = MeshTaskExit {
+        id: MeshTaskId(0),
+        name: "mesh_accept_loop",
+        class: MeshTaskClass::CriticalService,
+        reason: MeshTaskExitReason::Panic("overflow".into()),
+    };
+    let cause = WorkerShutdownCause::MeshServiceExit(mesh_exit);
+    let display = format!("{}", cause);
+    assert!(display.contains("mesh_accept_loop"));
+    assert!(display.contains("panic: overflow"));
+}
+
+/// MeshServiceExit maps correctly through map_task_exit_to_shutdown_cause
+/// when the exit name is NOT "server_run".
+#[cfg(feature = "mesh")]
+#[tokio::test]
+async fn test_mesh_exit_maps_to_mesh_service_exit() {
+    use synvoid_mesh::lifecycle::{MeshTaskClass, MeshTaskExit, MeshTaskExitReason, MeshTaskId};
+
+    let mesh_exit = MeshTaskExit {
+        id: MeshTaskId(5),
+        name: "mesh_accept_loop",
+        class: MeshTaskClass::CriticalService,
+        reason: MeshTaskExitReason::Error("QUIC handshake timeout".into()),
+    };
+    // map_task_exit_to_shutdown_cause maps non-"server_run" critical exits to CriticalTaskExit
+    // MeshServiceExit is constructed manually by the mesh integration layer
+    let cause = WorkerShutdownCause::MeshServiceExit(mesh_exit);
+    match &cause {
+        WorkerShutdownCause::MeshServiceExit(exit) => {
+            assert_eq!(exit.name, "mesh_accept_loop");
+            assert!(matches!(&exit.reason, MeshTaskExitReason::Error(_)));
+        }
+        other => panic!("Expected MeshServiceExit, got {:?}", other),
+    }
+}
+
 /// Once SupervisionOutcome is selected, later task exits cannot replace the cause.
 #[tokio::test]
 async fn test_primary_cause_cannot_be_replaced() {

@@ -1,11 +1,16 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use parking_lot::RwLock;
+use synvoid_mesh::cert::MeshCertManager;
+use synvoid_mesh::config::MeshConfig;
 use synvoid_mesh::lifecycle::{
     MeshLifecycleState, MeshShutdownReport, MeshStartupPolicy, MeshStartupReport, MeshTaskClass,
     MeshTaskExit, MeshTaskExitReason, MeshTaskId,
 };
 use synvoid_mesh::task_group::MeshTaskGroup;
+use synvoid_mesh::topology::MeshTopology;
+use synvoid_mesh::transport::MeshTransport;
 
 // ── Lifecycle State Machine Tests ────────────────────────────────────────────
 
@@ -624,4 +629,110 @@ fn test_shutdown_report_extended_fields() {
     assert_eq!(report.peers_at_shutdown_start, 5);
     assert_eq!(report.drained_peer_sessions, 4);
     assert_eq!(report.aborted_peer_sessions, 1);
+}
+
+// ── Phase 23: Peer Session Ownership Tests ───────────────────────────────────
+
+/// Create a minimal `MeshTransport` for testing peer session ownership.
+fn make_test_transport() -> Arc<MeshTransport> {
+    let config = Arc::new(MeshConfig::default());
+    let topology = Arc::new(MeshTopology::new(config.clone()));
+    let cert_manager = Arc::new(RwLock::new(MeshCertManager::new(&config)));
+
+    Arc::new(MeshTransport::new(
+        config,
+        topology,
+        cert_manager,
+        None, // record_store
+        None, // routing_manager
+        None, // threat_intel
+        None, // mesh_signer
+        None, // stake_manager
+        None, // backend_pool
+    ))
+}
+
+#[test]
+fn test_peer_sessions_field_initialized() {
+    // Create a MeshTransport and verify the peer_sessions field is initialized.
+    // We can't access the private field directly, but we verify:
+    // 1. The transport constructs without error
+    // 2. The lifecycle state is Stopped (indicating proper initialization)
+    let transport = make_test_transport();
+    // Transport was created successfully - peer_sessions is initialized
+    // by MeshTransport::new() as an empty JoinSet.
+    assert!(!transport.has_startup_failure_hook());
+}
+
+#[tokio::test]
+async fn test_peer_sessions_drained_on_shutdown() {
+    let transport = make_test_transport();
+
+    // Shutdown with a short timeout. Since no runtime was started,
+    // the task group is empty and shutdown completes immediately.
+    let report = transport
+        .shutdown_with_timeout(Duration::from_millis(100))
+        .await;
+
+    // Verify the report fields are populated (even with empty sessions)
+    // peers_at_shutdown_start should be 0 (no peers connected)
+    assert_eq!(report.peers_at_shutdown_start, 0);
+    // drained_peer_sessions should be 0 (no sessions to drain)
+    assert_eq!(report.drained_peer_sessions, 0);
+    // aborted_peer_sessions should be 0 (nothing to abort)
+    assert_eq!(report.aborted_peer_sessions, 0);
+    // clean_tasks should be >= 0
+    assert!(report.clean_tasks >= 0);
+}
+
+#[tokio::test]
+async fn test_shutdown_report_fields_after_empty_shutdown() {
+    let transport = make_test_transport();
+
+    let report = transport
+        .shutdown_with_timeout(Duration::from_secs(1))
+        .await;
+
+    // All extended fields should be zero for a fresh transport with no sessions
+    assert_eq!(report.peers_at_shutdown_start, 0);
+    assert_eq!(report.drained_peer_sessions, 0);
+    assert_eq!(report.aborted_peer_sessions, 0);
+    assert_eq!(report.drained_peer_children, 0);
+    assert_eq!(report.aborted_peer_children, 0);
+    assert!(report.failed_tasks.is_empty());
+    assert!(report.aborted_tasks.is_empty());
+}
+
+#[tokio::test]
+async fn test_multiple_shutdowns_are_idempotent() {
+    let transport = make_test_transport();
+
+    // First shutdown
+    let report1 = transport
+        .shutdown_with_timeout(Duration::from_millis(100))
+        .await;
+    assert_eq!(report1.peers_at_shutdown_start, 0);
+
+    // Second shutdown should also complete without error
+    let report2 = transport
+        .shutdown_with_timeout(Duration::from_millis(100))
+        .await;
+    assert_eq!(report2.peers_at_shutdown_start, 0);
+}
+
+#[tokio::test]
+async fn test_shutdown_respects_timeout() {
+    let transport = make_test_transport();
+
+    // Shutdown with a very short timeout should still complete
+    // since there are no blocking tasks
+    let start = std::time::Instant::now();
+    let report = transport
+        .shutdown_with_timeout(Duration::from_millis(50))
+        .await;
+    let elapsed = start.elapsed();
+
+    // Should complete well within the timeout
+    assert!(elapsed < Duration::from_secs(5));
+    assert_eq!(report.peers_at_shutdown_start, 0);
 }

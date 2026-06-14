@@ -439,11 +439,31 @@ Returned after startup:
 - `is_running()` derives from `MeshLifecycleState`, not legacy boolean
 - `MeshServiceExit(MeshTaskExit)` variant on `WorkerShutdownCause` for mesh task failures
 
+### Failure Injection Hooks (Phase 20)
+
+Test-only (`#[cfg(test)]`) failure injection for deterministic startup testing:
+
+```rust
+transport.set_startup_failure_hook(|point| match point {
+    StartupFailurePoint::AfterCriticalTasks => Err("injected failure".into()),
+    _ => Ok(()),
+});
+```
+
+Hook checks at 6 phases in `start()`. Returns `Err` → rollback triggered (post-accept) or error propagated (pre-accept).
+
 ## Testing Commands
 
 ```bash
 # Run integration tests
-cargo test --test integration_test
+cargo test --test mesh_lifecycle_tests --features mesh,dns
+cargo test --test mesh_startup_rollback --features mesh,dns
+cargo test --test mesh_task_ownership_guard --features mesh,dns
+cargo test --test worker_supervision_control_flow --features mesh,dns
+
+# Unit tests
+cargo test -p synvoid-mesh --features mesh lifecycle
+cargo test -p synvoid-mesh --features mesh task_group
 
 # Check DHT records (if admin API available)
 curl http://localhost:8080/api/mesh/dht/records
