@@ -1,4 +1,4 @@
-//! Mesh-local task group for Iteration 68.
+//! Mesh-local task group for Iteration 68, 70.
 //!
 //! `MeshTaskGroup` manages the lifecycle of mesh tasks — critical services,
 //! background work, and bounded children — with unified shutdown propagation
@@ -13,7 +13,9 @@ use std::time::{Duration, Instant};
 use futures::FutureExt;
 use tokio::sync::{broadcast, watch};
 
-use crate::lifecycle::{MeshTaskClass, MeshTaskExit, MeshTaskExitReason, MeshTaskId};
+use crate::lifecycle::{
+    MeshTaskClass, MeshTaskExit, MeshTaskExitReason, MeshTaskId, MeshTaskIdGenerator,
+};
 
 /// A named mesh task with its join handle.
 pub(crate) struct NamedMeshTask {
@@ -33,6 +35,7 @@ pub struct MeshTaskGroup {
     exit_tx: broadcast::Sender<MeshTaskExit>,
     forward_tx: Option<broadcast::Sender<MeshTaskExit>>,
     next_id: AtomicU64,
+    id_generator: Option<Arc<MeshTaskIdGenerator>>,
 }
 
 impl MeshTaskGroup {
@@ -49,6 +52,7 @@ impl MeshTaskGroup {
             exit_tx,
             forward_tx: None,
             next_id: AtomicU64::new(0),
+            id_generator: None,
         }
     }
 
@@ -68,6 +72,39 @@ impl MeshTaskGroup {
             exit_tx,
             forward_tx: Some(forward_tx),
             next_id: AtomicU64::new(0),
+            id_generator: None,
+        }
+    }
+
+    /// Creates a new task group with a global ID generator and exit forwarding.
+    ///
+    /// Task IDs allocated through this group are globally unique across
+    /// task-group generations, ensuring no collisions on the stable exit channel.
+    pub fn new_with_forward_and_id_gen(
+        forward_tx: broadcast::Sender<MeshTaskExit>,
+        id_generator: Arc<MeshTaskIdGenerator>,
+    ) -> Self {
+        let (shutdown_tx, _) = watch::channel(false);
+        let (exit_tx, _) = broadcast::channel(64);
+        Self {
+            shutdown_tx,
+            critical: Vec::new(),
+            background: Vec::new(),
+            children: Vec::new(),
+            shutdown_started: Arc::new(AtomicBool::new(false)),
+            exit_tx,
+            forward_tx: Some(forward_tx),
+            next_id: AtomicU64::new(0),
+            id_generator: Some(id_generator),
+        }
+    }
+
+    /// Allocate the next task ID, using the global generator if available.
+    fn next_task_id(&self) -> MeshTaskId {
+        if let Some(ref gen) = self.id_generator {
+            gen.next()
+        } else {
+            MeshTaskId(self.next_id.fetch_add(1, Ordering::Relaxed))
         }
     }
 
@@ -90,7 +127,7 @@ impl MeshTaskGroup {
         name: &'static str,
         future: impl Future<Output = ()> + Send + 'static,
     ) {
-        let id = MeshTaskId(self.next_id.fetch_add(1, Ordering::Relaxed));
+        let id = self.next_task_id();
         let handle = self.spawn_wrapped(name, MeshTaskClass::CriticalService, id, future);
         self.critical.push(NamedMeshTask {
             name,
@@ -109,7 +146,7 @@ impl MeshTaskGroup {
         F: Future<Output = Result<(), E>> + Send + 'static,
         E: std::fmt::Display + Send + 'static,
     {
-        let id = MeshTaskId(self.next_id.fetch_add(1, Ordering::Relaxed));
+        let id = self.next_task_id();
         let handle = self.spawn_wrapped_result(name, MeshTaskClass::CriticalService, id, future);
         self.critical.push(NamedMeshTask {
             name,
@@ -127,7 +164,7 @@ impl MeshTaskGroup {
         name: &'static str,
         future: impl Future<Output = ()> + Send + 'static,
     ) {
-        let id = MeshTaskId(self.next_id.fetch_add(1, Ordering::Relaxed));
+        let id = self.next_task_id();
         let handle = self.spawn_wrapped(name, MeshTaskClass::RestartableBackground, id, future);
         self.background.push(NamedMeshTask {
             name,
@@ -146,7 +183,7 @@ impl MeshTaskGroup {
         F: Future<Output = Result<(), E>> + Send + 'static,
         E: std::fmt::Display + Send + 'static,
     {
-        let id = MeshTaskId(self.next_id.fetch_add(1, Ordering::Relaxed));
+        let id = self.next_task_id();
         let handle =
             self.spawn_wrapped_result(name, MeshTaskClass::RestartableBackground, id, future);
         self.background.push(NamedMeshTask {
@@ -165,7 +202,7 @@ impl MeshTaskGroup {
         name: &'static str,
         future: impl Future<Output = ()> + Send + 'static,
     ) {
-        let id = MeshTaskId(self.next_id.fetch_add(1, Ordering::Relaxed));
+        let id = self.next_task_id();
         let handle = self.spawn_wrapped(name, MeshTaskClass::BoundedChild, id, future);
         self.children.push(NamedMeshTask {
             name,

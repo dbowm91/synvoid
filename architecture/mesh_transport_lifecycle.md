@@ -1,4 +1,4 @@
-# Mesh Transport Lifecycle Inventory — Iteration 69
+# Mesh Transport Lifecycle Inventory — Iteration 70
 
 ## Purpose
 
@@ -77,115 +77,135 @@ Spawned from `threat_intel.rs`.
    │   │
    │   │ startup failed
    │   ▼
-   │ ┌────────┐
-   │ │ Failed │──────────┐
-   │ └────────┘          │ rollback complete
-   │                     ▼
-   │              ┌──────────┐
-   │              │ Stopped  │
-   │              └──────────┘
-   │
-   │ startup complete
-   ▼
-┌──────────┐
-│ Running  │
-└──┬───────┘
-   │
-   │ stop() or fatal error
-   ▼
-┌──────────┐     rollback    ┌──────────┐
-│ Stopping │────────────────→│ Stopped  │
-└──────────┘                 └──────────┘
+   │ ┌──────────────────────────┐
+   │ │ rollback_failed?         │
+   │ │  clean  → Stopped        │
+   │ │  errors → Failed ──────┐ │
+   │ └────────────────────────┘ │
+   │                             │
+   │ startup complete            │ (Failed requires manual recovery)
+   ▼                             │
+┌──────────┐                     │
+│ Running  │                     │
+└──┬───────┘                     │
+   │                             │
+   │ stop() or fatal error       │
+   ▼                             │
+┌──────────┐     rollback        │
+│ Stopping │────────────────→┌───┘
+└──────────┘                 │
+                             ▼
+                      ┌──────────┐
+                      │ Stopped  │ (if rollback clean)
+                      └──────────┘
 ```
 
 ### State Descriptions
 
 | State | Description |
 |-------|-------------|
-| **Stopped** | No tasks running. Initial state and terminal state after shutdown/rollback. |
+| **Stopped** | No tasks running. Initial state and terminal state after clean shutdown/rollback. |
 | **Starting** | Bootstrap in progress: configuration validated, runtime created, peers connecting. |
 | **Running** | All required tasks active. Accepting peer connections. Processing DHT traffic. |
 | **Stopping** | Shutdown initiated. No new peers accepted. Existing peers draining. |
-| **Failed** | Startup failed or runtime encountered a fatal error. Rollback in progress. |
+| **Failed** | Rollback itself had errors. Requires manual recovery. Can transition to `Starting` via `can_start()`. |
 
 ## Startup Ordering
+
+`start_with_policy()` is the primary startup entry point. The legacy `start()` is a convenience wrapper that uses `MeshStartupPolicy::default()` (all-optional). Both acquire the **lifecycle operation lock** (`lifecycle_op: tokio::sync::Mutex<()>`) before proceeding, serializing concurrent start/stop transitions.
 
 The following startup phases execute sequentially. Each phase must complete before the next begins.
 
 | Phase | Description | Required |
 |-------|-------------|----------|
-| 1 | Acquire startup guard. Verify not already running. | Yes |
-| 2 | Validate configuration and required runtime handles. | Yes |
-| 3 | Create fresh task group and shutdown state. | Yes |
-| 4 | Start minimum listener/runtime for bootstrap (QUIC socket). | Yes |
-| 5 | Seed bootstrap (one-shot self-attestation). | No |
-| 6 | Connect configured peers. | No |
-| 7 | DHT bootstrap. | No |
-| 8 | Start critical transport loops: `mesh_maintenance_loop`, `datagram_listener_loop`, `mesh_accept_loop`. | Yes |
-| 9 | Start periodic background loops: `pow_nonce_refresh`, `mlkem_key_rotation`, `connection_maintenance`, `peer_health_check`, `proactive_cache_warming`, `dht_cache_resync`, `load_reporter`, `global_node_heartbeat`, `discovery_maintenance`, `dht_bucket_stats`, `dht_bucket_refresh`, `dht_peer_ping`. | No |
-| 10 | Start one-shot self-attestation (`global_self_attestation`) if applicable. | No |
-| 11 | Commit lifecycle state to `Running`. | Yes |
-| 12 | Set `running = true` only after required startup succeeds. | Yes |
+| 1 | Acquire lifecycle operation lock. Acquire lifecycle state lock. Verify `can_start()` (allows `Stopped` or `Failed`). Transition to `Starting`. | Yes |
+| 2 | Create `MeshStartupStage` with a fresh `MeshTaskGroup` (using stable exit sender + global ID generator). Reset `shutdown_started` flag. | Yes |
+| 3 | Start critical transport loops: `mesh_maintenance_loop`, `datagram_listener_loop`. | Yes |
+| 4 | Seed bootstrap (one-shot self-attestation). Degraded if policy allows; fatal if `require_seed_connectivity`. | No |
+| 5 | Connect configured peers. Degraded if policy allows; fatal if `require_configured_peers`. | No |
+| 6 | DHT bootstrap. Degraded if policy allows; fatal if `require_dht_bootstrap`. | No |
+| 7 | Start periodic background loops: `connection_maintenance`, `peer_health_check`, `proactive_cache_warming`, `dht_cache_resync`, `load_reporter`, `global_node_heartbeat`, `discovery_maintenance`, `dht_bucket_stats`, `dht_bucket_refresh`, `dht_peer_ping`. | No |
+| 8 | Start `mesh_accept_loop` with QUIC runtime. | Yes |
+| 9 | Commit lifecycle state to `Running`. Transfer stage ownership to transport. Set `running_projection = true`. | Yes |
 
 **Note:** Tasks gated on `min_peer_connections > 0` are skipped during startup if no peer connections are configured.
 
+### Lifecycle Operation Lock
+
+A `tokio::sync::Mutex<()>` field (`lifecycle_op`) on `MeshTransport` serializes start and stop transitions. Both `start_with_policy()` and `shutdown_with_timeout()` acquire this lock as their first operation, preventing concurrent lifecycle mutations. This ensures:
+- No overlapping start attempts
+- No start during shutdown
+- No overlapping shutdown calls
+- State transitions are always observable in a consistent order
+
 ## Shutdown Ordering
+
+`shutdown_with_timeout(timeout)` is the primary shutdown entry point. All shutdown phases share **one deadline** derived from the caller's timeout — no phase applies a fresh fixed timeout.
 
 The following shutdown phases execute sequentially. Each phase must complete before the next begins.
 
 | Phase | Description | Required |
 |-------|-------------|----------|
-| 1 | Mark shutdown intent (`Stopping`). | Yes |
-| 2 | Stop accepting new peers (close accept loop). | Yes |
-| 3 | Signal periodic/maintenance tasks (broadcast cancel). | Yes |
-| 4 | Stop datagram/listener loops. | Yes |
-| 5 | Drain peer children (in-flight `incoming_peer_connection` tasks). | Yes |
-| 6 | Close active peer connections. | Yes |
-| 7 | Await critical tasks (`mesh_maintenance_loop`, `datagram_listener_loop`, `mesh_accept_loop`). | Yes |
-| 8 | Await background tasks (`pow_nonce_refresh`, `mlkem_key_rotation`, etc.). | No (best-effort) |
-| 9 | Abort and await remnants (any tasks that did not finish gracefully). | Yes |
-| 10 | Clear lifecycle state (task group, shutdown signal, startup guard). | Yes |
-| 11 | Set `running = false`. | Yes |
+| 1 | Acquire lifecycle operation lock. Verify `can_stop()` (allows `Running` only). Transition to `Stopping`. Clear `running_projection`. | Yes |
+| 2 | Set `shutdown_started` flag. Signal shutdown to task group via `begin_shutdown()`. Also send on legacy broadcast channel. | Yes |
+| 3 | Close all QUIC connections. Capture `peers_at_shutdown_start`. Clear peer connection map. | Yes |
+| 4 | Join all tasks with shared deadline (`remaining(deadline)`). | Yes |
+| 5 | Drain peer sessions with shared deadline. Abort and drain if deadline expires mid-wait. | Yes |
+| 6 | Clear lifecycle state (task group, shutdown signal, startup guard). | Yes |
+| 7 | Transition lifecycle to `Stopped`. | Yes |
 
-## Rollback Behavior
+## Rollback Behavior (Iteration 70)
 
-If any startup phase fails:
+If any startup phase fails after the first task spawn, `rollback_startup()` is called:
 
 1. **Record the startup error** — preserve the original error for the caller.
-2. **Begin cancellation** — signal shutdown to all tasks started during the failed attempt.
-3. **Join/abort all tasks** — await graceful completion with a bounded timeout, then abort.
-4. **Close listener/runtime resources** — release QUIC socket and associated state.
-5. **Clear shutdown/task-group state** — reset internal state to allow a subsequent startup attempt.
-6. **Ensure `running = false`** — guarantee the lifecycle reflects the stopped state.
-7. **Return diagnostics** — return the original startup error plus any rollback diagnostics (e.g., which tasks were started, how many joined vs. aborted).
+2. **Begin cancellation** — signal shutdown to all tasks started during the failed attempt via `stage.task_group.begin_shutdown()`.
+3. **Join/abort all tasks** — await graceful completion with a bounded timeout (5s), then abort.
+4. **Close attempt-created connections** — close and remove QUIC connections for peers connected during this attempt.
+5. **Drain peer sessions** — drain any sessions created during this attempt with a bounded timeout.
+6. **Classify rollback outcome** — `RollbackReport` indicates whether cleanup was clean or had errors.
+
+### Rollback Outcome → Lifecycle Transition
+
+| Rollback Outcome | Lifecycle Transition | Recovery |
+|------------------|---------------------|----------|
+| **Clean** (`RollbackReport.clean = true`) | `Starting → Stopped` | Safe to retry `start_with_policy()` immediately |
+| **Errors** (`RollbackReport.clean = false`) | `Starting → Failed` | Requires manual recovery; `can_start()` allows retry from `Failed` |
 
 ### Rollback Guarantees
 
-- After rollback, the `MeshTransport` is in `Stopped` state and can be restarted.
+- After clean rollback, the `MeshTransport` is in `Stopped` state and can be restarted.
+- After error rollback, the `MeshTransport` is in `Failed` state; `can_start()` permits a subsequent attempt.
 - Partially completed DHT writes from `global_self_attestation` are idempotent and safe to retry.
 - No leaked tasks remain after rollback (all joined or aborted).
 - `DhtRoutingManager` tasks are gracefully cancelled via `watch::Sender` and joined via tracked `JoinHandle`.
+- The stage is never dropped without explicit rollback or commit (ownership is guaranteed).
 
-## Staged Startup/Rollback (Iteration 69)
+## Staged Startup/Rollback (Iterations 69–70)
 
 `MeshStartupStage` owns every task and resource from a single startup attempt. It collects all spawned task handles into a single staging area.
 
 ### MeshStartupStage
 
 - Every task spawned during startup is registered with the stage via `stage.track(handle)`.
-- On success, the stage hands off ownership to the running task group.
-- On failure, `stage.rollback()` cancels and joins all staged tasks — no task group is dropped without cancellation and join.
+- On success, the stage hands off ownership to the running task group (`commit_startup()`).
+- On failure, `stage.rollback_startup()` cancels and joins all staged tasks — no task group is dropped without cancellation and join.
 - The stage ensures atomic cleanup: either all tasks from an attempt survive or none do.
+- `MeshStartupStage` tracks: peer sessions created, peer nodes connected, whether the QUIC runtime was started, and whether the stage has been committed.
 
 ### Lifecycle Transitions
 
 ```
 Stopped → Starting → Running
-                  ↓ (post-spawn error)
-                Failed → rollback → Stopped
+                   ↓ (post-spawn error, rollback clean)
+                 Stopped (safe to retry)
+
+Stopped → Starting → Running
+                   ↓ (post-spawn error, rollback had errors)
+                 Failed (requires recovery, can_start() allows retry)
 ```
 
-`rollback_startup()` is called on any post-spawn error. It signals shutdown to all staged tasks, joins with bounded timeout, aborts stragglers, and clears the startup guard. The transport returns to `Stopped` and is ready for a subsequent attempt.
+`rollback_startup()` is called on any post-spawn error. It signals shutdown to all staged tasks, joins with bounded timeout (5s), aborts stragglers, and clears the startup guard. The transport returns to `Stopped` (clean rollback) or `Failed` (incomplete rollback) and is ready for a subsequent attempt.
 
 ## Required vs Optional Bootstrap Policy (Iteration 69)
 
@@ -231,11 +251,15 @@ Previous implementations created the broadcast exit sender inside the task group
 - Join-returned exit is the authoritative source for `MeshShutdownReport`.
 - No duplicate accounting between broadcast and join — each task reports exactly once.
 
-## Task ID/Dedup Semantics (Iteration 69)
+## Task ID/Dedup Semantics (Iterations 69–70)
+
+### MeshTaskIdGenerator
+
+`MeshTaskIdGenerator` owns a monotonically increasing `AtomicU64` counter. Each `MeshTransport` owns one `Arc<MeshTaskIdGenerator>` and passes it into every new `MeshTaskGroup` via `new_with_forward_and_id_gen()`. This ensures **globally unique task IDs across task-group generations** — no two exit-channel events share the same ID during process lifetime.
 
 ### MeshTaskId
 
-`MeshTaskId(u64)` is assigned at spawn time by `MeshTaskGroup`. The ID is monotonically increasing and unique within the process.
+`MeshTaskId(u64)` is assigned at spawn time by `MeshTaskGroup`. IDs are unique within the process when allocated via `MeshTaskIdGenerator`.
 
 ### Semantics
 
@@ -266,23 +290,21 @@ Previous implementations created the broadcast exit sender inside the task group
 Shutdown → close connections → drain peer sessions → drain handshake children → abort remnants
 ```
 
-## Truthful Shutdown Report (Iteration 69)
+## Truthful Shutdown Report (Iterations 69–70)
 
 `MeshShutdownReport` fields reflect the actual state observed during shutdown:
 
 | Field | Source | Meaning |
 |-------|--------|---------|
-| `total_tasks` | Task group count | Total tasks that were spawned |
-| `clean_shutdown` | Join results | All tasks exited cleanly |
-| `tasks_clean` | Join results | Count of tasks with `CleanCompletion` |
-| `tasks_failed` | Join results | Count of tasks with `Error` |
-| `tasks_aborted` | Join results | Count of tasks that had to be aborted |
+| `clean_tasks` | Join results | Count of tasks that exited cleanly |
+| `failed_tasks` | Join results | Tasks that exited with an error (non-fatal) |
+| `aborted_tasks` | Join results | Tasks that were forcibly aborted |
+| `drained_peer_children` | Join results | Number of bounded peer children that drained cleanly |
+| `aborted_peer_children` | Join results | Number of bounded peer children that were aborted |
 | `peers_at_shutdown_start` | Captured at shutdown begin | Peer count before teardown |
 | `remaining_peers` | Measured after connection close/drain | Peers still active after drain |
 | `drained_peer_sessions` | Session drain result | Number of peer sessions drained cleanly |
 | `aborted_peer_sessions` | Session drain result | Number of peer sessions aborted |
-| `drained_handshake_children` | Handshake drain result | Number of handshake children drained |
-| `aborted_handshake_children` | Handshake drain result | Number of handshake children aborted |
 
 ### Invariants
 
@@ -291,16 +313,23 @@ Shutdown → close connections → drain peer sessions → drain handshake child
 - Handshake child counts propagate into the report from the accept loop's `JoinSet`.
 - The report is truthful — it reflects what actually happened, not what was requested.
 
-## Worker Integration (Iteration 69)
+## Worker Integration (Iterations 69–70)
 
 ### ManagedMeshService Updates
 
 | Method | Behavior |
 |--------|----------|
 | `subscribe_critical_exits()` | Delegates to stable `subscribe_exits()` — valid before `start()`, survives task group replacement |
-| `is_running()` | Derives from `MeshLifecycleState` (not a legacy `AtomicBool`) |
-| `start()` | Calls `MeshTransport::start()` with staged startup |
+| `is_running()` | Reads `running_projection: Arc<AtomicBool>` — set `true` on `commit_startup()`, set `false` on `shutdown_with_timeout()` entry. No Tokio lock contention, no blocking. |
+| `start()` | Compatibility wrapper calling `MeshTransport::start()` (uses default policy) |
+| `start_with_policy(policy)` | Primary API — staged transactional startup via `MeshStartupStage` |
 | `shutdown(timeout)` | Calls `MeshTransport::shutdown_with_timeout()` |
+
+### `running_projection` (AtomicBool)
+
+`is_running()` reads from an `AtomicBool` projection (`running_projection`) rather than locking the lifecycle state mutex. This avoids Tokio mutex contention in hot observation paths. The projection is set:
+- `true` in `commit_startup()` after transitioning to `Running`
+- `false` at the entry of `shutdown_with_timeout()` after transitioning to `Stopping`
 
 ### MeshServiceExit Variant
 
@@ -315,9 +344,11 @@ pub enum WorkerShutdownCause {
 
 This variant is fatal when the mesh task is a `CriticalService` with `Error`, `Panic`, or `UnexpectedCompletion` (following the same fatality policy as other critical services).
 
-### Mesh Supervision
+### Mesh Supervision (Explicitly Deferred — Outcome B)
 
-When the control plane is re-enabled in workers, the mesh supervision loop observes exits from the stable subscription and maps them to `MeshServiceExit` using the same `is_fatal_exit()` classification. The supervision loop is wired into the worker's `WorkerTaskRegistry` supervision select.
+Worker mesh supervision consumption is **explicitly deferred** (Outcome B from Iteration 70). The `MeshServiceExit` variant exists in `WorkerShutdownCause` but is **not wired** in the production worker supervision loop. `ManagedMeshService` trait and `MeshFailureCause` types are staged infrastructure for future integration.
+
+The supervision loop would observe exits from the stable subscription and map them to `MeshServiceExit` using the same `is_fatal_exit()` classification when integration is implemented.
 
 ## Failure Injection Hooks (Iteration 69 — Phase 20)
 

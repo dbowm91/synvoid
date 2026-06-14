@@ -1,14 +1,49 @@
-//! Mesh transport lifecycle types (Iteration 68).
+//! Mesh transport lifecycle types (Iteration 68, 70).
 //!
-//! Defines the state machine, task classification, and shutdown reporting
-//! types used to manage mesh transport lifecycle transitions. These types
-//! decouple lifecycle policy from concrete transport implementations.
+//! Defines the state machine, task classification, startup staging,
+//! and shutdown reporting types used to manage mesh transport lifecycle
+//! transitions. These types decouple lifecycle policy from concrete
+//! transport implementations.
 
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use crate::transport_core::MeshTransportError;
 
+/// Globally unique task ID generator shared across task-group generations.
+///
+/// Each `MeshTransport` owns one `Arc<MeshTaskIdGenerator>` and passes it
+/// into every new `MeshTaskGroup`, ensuring no two events on the stable
+/// exit channel share the same ID during process lifetime.
+pub struct MeshTaskIdGenerator {
+    seq: AtomicU64,
+}
+
+impl MeshTaskIdGenerator {
+    /// Create a new generator starting at zero.
+    pub fn new() -> Self {
+        Self {
+            seq: AtomicU64::new(0),
+        }
+    }
+
+    /// Allocate the next globally unique task ID.
+    pub fn next(&self) -> MeshTaskId {
+        MeshTaskId(self.seq.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
+impl Default for MeshTaskIdGenerator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Unique identifier for a mesh task, assigned at spawn time.
+///
+/// IDs are globally unique across task-group generations when allocated
+/// via `MeshTaskIdGenerator`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MeshTaskId(pub u64);
 
@@ -275,6 +310,90 @@ pub struct MeshStartupReport {
     pub connected_configured_peer_count: usize,
     /// Whether DHT bootstrap succeeded.
     pub dht_bootstrapped: bool,
+}
+
+/// Report from the mesh accept loop about child task drainage.
+#[derive(Debug, Clone, Default)]
+pub struct MeshAcceptLoopReport {
+    /// Number of handshake children that drained cleanly.
+    pub drained_handshakes: usize,
+    /// Number of handshake children that were forcibly aborted.
+    pub aborted_handshakes: usize,
+    /// Number of connections rejected at capacity.
+    pub rejected_at_capacity: usize,
+}
+
+/// Report from a startup rollback attempt.
+#[derive(Debug, Clone, Default)]
+pub struct RollbackReport {
+    /// Whether the rollback completed without errors.
+    pub clean: bool,
+    /// Errors encountered during rollback (may be partial).
+    pub errors: Vec<String>,
+}
+
+/// Tracks resources created during a single mesh startup attempt.
+///
+/// Every task and resource created between the first task spawn and the
+/// lifecycle commit is owned by the stage. On success, the stage is
+/// committed (transferring ownership to `MeshTransport`). On failure,
+/// the stage is rolled back (cancelling tasks, closing connections,
+/// and cleaning up topology state).
+///
+/// The stage is never dropped without explicit rollback or commit.
+pub struct MeshStartupStage {
+    /// The staged task group being built during startup.
+    pub(crate) task_group: crate::task_group::MeshTaskGroup,
+    /// Session IDs created during this startup attempt.
+    pub(crate) created_peer_sessions: Vec<String>,
+    /// Node IDs of peers connected during this startup attempt.
+    pub(crate) created_peer_nodes: Vec<String>,
+    /// Whether the QUIC runtime was started during this attempt.
+    pub(crate) runtime_started: bool,
+    /// Whether this stage has been committed to the transport.
+    pub(crate) committed: bool,
+}
+
+impl MeshStartupStage {
+    /// Create a new stage with a fresh task group.
+    pub fn new(task_group: crate::task_group::MeshTaskGroup) -> Self {
+        Self {
+            task_group,
+            created_peer_sessions: Vec::new(),
+            created_peer_nodes: Vec::new(),
+            runtime_started: false,
+            committed: false,
+        }
+    }
+
+    /// Record a peer session created during this attempt.
+    pub fn record_peer_session(&mut self, session_id: String, node_id: String) {
+        self.created_peer_sessions.push(session_id);
+        self.created_peer_nodes.push(node_id);
+    }
+
+    /// Mark the runtime as started.
+    pub fn mark_runtime_started(&mut self) {
+        self.runtime_started = true;
+    }
+
+    /// Whether this stage has been committed.
+    pub fn is_committed(&self) -> bool {
+        self.committed
+    }
+
+    /// Whether this stage has created any resources.
+    pub fn has_resources(&self) -> bool {
+        self.runtime_started
+            || !self.created_peer_sessions.is_empty()
+            || !self.created_peer_nodes.is_empty()
+    }
+}
+
+/// Compute the remaining time until a deadline, returning `Duration::ZERO`
+/// if the deadline has already passed.
+pub fn remaining(deadline: std::time::Instant) -> Duration {
+    deadline.saturating_duration_since(std::time::Instant::now())
 }
 
 #[cfg(test)]

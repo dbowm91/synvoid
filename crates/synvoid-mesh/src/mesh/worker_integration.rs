@@ -132,8 +132,8 @@ impl ManagedMeshService for std::sync::Arc<crate::transport::MeshTransport> {
     }
 
     fn is_running(&self) -> bool {
-        let state = self.lifecycle_state.blocking_lock();
-        matches!(*state, crate::lifecycle::MeshLifecycleState::Running)
+        self.running_projection
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 

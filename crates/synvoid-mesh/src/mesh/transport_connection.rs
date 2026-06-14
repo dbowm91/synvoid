@@ -77,6 +77,9 @@ impl MeshTransport {
             mesh_exit_tx: self.mesh_exit_tx.clone(),
             peer_sessions: self.peer_sessions.clone(),
             startup_failure_hook: self.startup_failure_hook.clone(),
+            lifecycle_op: tokio::sync::Mutex::new(()),
+            id_generator: self.id_generator.clone(),
+            running_projection: self.running_projection.clone(),
         }
     }
 

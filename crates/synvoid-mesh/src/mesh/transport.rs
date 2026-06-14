@@ -47,7 +47,11 @@ use parking_lot::RwLock;
 
 use tokio::sync::{broadcast, mpsc, oneshot, watch, Mutex};
 
-use crate::lifecycle::{MeshLifecycleState, MeshShutdownReport, MeshTaskExit};
+#[allow(unused_imports)]
+use crate::lifecycle::{
+    remaining, MeshAcceptLoopReport, MeshLifecycleState, MeshShutdownReport, MeshStartupPolicy,
+    MeshStartupReport, MeshStartupStage, MeshTaskExit, MeshTaskIdGenerator, RollbackReport,
+};
 use crate::task_group::MeshTaskGroup;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -170,6 +174,12 @@ pub struct MeshTransport {
     pub(crate) peer_sessions: Arc<tokio::sync::Mutex<tokio::task::JoinSet<()>>>,
     pub(crate) startup_failure_hook:
         Arc<Mutex<Option<Box<dyn Fn(StartupFailurePoint) -> Result<(), String> + Send>>>>,
+    /// Serializes lifecycle start/stop transitions to prevent interleaving.
+    pub(crate) lifecycle_op: tokio::sync::Mutex<()>,
+    /// Globally unique task ID generator shared across task-group generations.
+    pub(crate) id_generator: Arc<MeshTaskIdGenerator>,
+    /// Atomic projection of `Running` lifecycle state for synchronous checks.
+    pub(crate) running_projection: Arc<AtomicBool>,
 }
 
 /// Failure injection points for deterministic startup testing.
@@ -436,6 +446,9 @@ impl Clone for MeshTransport {
             mesh_exit_tx: self.mesh_exit_tx.clone(),
             peer_sessions: self.peer_sessions.clone(),
             startup_failure_hook: self.startup_failure_hook.clone(),
+            lifecycle_op: tokio::sync::Mutex::new(()),
+            id_generator: self.id_generator.clone(),
+            running_projection: self.running_projection.clone(),
         }
     }
 }
@@ -778,6 +791,9 @@ impl MeshTransport {
             },
             peer_sessions: Arc::new(tokio::sync::Mutex::new(tokio::task::JoinSet::new())),
             startup_failure_hook: Arc::new(Mutex::new(None)),
+            lifecycle_op: tokio::sync::Mutex::new(()),
+            id_generator: Arc::new(MeshTaskIdGenerator::new()),
+            running_projection: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -2065,6 +2081,24 @@ impl MeshTransport {
 
     #[cfg(feature = "dns")]
     pub async fn start(&self) -> Result<(), MeshTransportError> {
+        self.start_with_policy(MeshStartupPolicy::default())
+            .await
+            .map(|_| ())
+    }
+
+    /// Start the mesh transport with an explicit startup policy.
+    ///
+    /// This is the primary startup entry point. The policy controls whether
+    /// bootstrap failures (seeds, peers, DHT) are fatal or produce a degraded
+    /// startup report. Every failure after the first task spawn flows through
+    /// the rollback funnel, guaranteeing no orphaned tasks survive a failed attempt.
+    pub async fn start_with_policy(
+        &self,
+        policy: MeshStartupPolicy,
+    ) -> Result<MeshStartupReport, MeshTransportError> {
+        // Serialize lifecycle transitions with the operation lock.
+        let _lifecycle_guard = self.lifecycle_op.lock().await;
+
         // Phase 1: Acquire lifecycle lock and validate state
         {
             let mut state = self.lifecycle_state.lock().await;
@@ -2078,28 +2112,79 @@ impl MeshTransport {
             })?;
         }
 
-        // Phase 2: Create fresh task group and shutdown state
-        let mut group = MeshTaskGroup::new_with_forward(self.mesh_exit_tx.clone());
-        let shutdown_rx = group.shutdown_receiver();
+        // Phase 2: Create staged startup
+        let mut stage = MeshStartupStage::new(MeshTaskGroup::new_with_forward_and_id_gen(
+            self.mesh_exit_tx.clone(),
+            self.id_generator.clone(),
+        ));
+        let shutdown_rx = stage.task_group.shutdown_receiver();
         self.shutdown_started.store(false, Ordering::SeqCst);
 
-        // Phase 3: Start critical transport loops (minimum for bootstrap)
-        // Maintenance loop
+        // Phase 3-10: Run all startup phases, routing failures through rollback
+        match self
+            .run_startup_phases(&mut stage, &policy, &shutdown_rx)
+            .await
+        {
+            Ok(report) => self.commit_startup(stage, report).await,
+            Err(error) => {
+                let rollback = self.rollback_startup(&mut stage).await;
+                self.finish_failed_startup(&rollback).await;
+                Err(error)
+            }
+        }
+    }
+
+    /// Check and invoke the startup failure hook at the given point.
+    /// Returns `Err` if the hook triggers a failure.
+    #[allow(dead_code)]
+    async fn check_startup_failure_hook(
+        &self,
+        point: StartupFailurePoint,
+    ) -> Result<(), MeshTransportError> {
+        let hook = self.startup_failure_hook.lock().await;
+        if let Some(ref f) = *hook {
+            f(point).map_err(|e| MeshTransportError::StartupFailed(e))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Run all startup phases after the first task has been spawned.
+    ///
+    /// Every failure here must flow through the rollback funnel — no post-spawn
+    /// `?` may directly leave this method without rollback.
+    async fn run_startup_phases(
+        &self,
+        stage: &mut MeshStartupStage,
+        policy: &MeshStartupPolicy,
+        shutdown_rx: &tokio::sync::watch::Receiver<bool>,
+    ) -> Result<MeshStartupReport, MeshTransportError> {
+        let mut report = MeshStartupReport::default();
+
+        // Phase 3: Start critical transport loops
         let config = self.config.clone();
         let topology = self.topology.clone();
         let peer_connections = self.peer_connections.clone();
         let maintenance_shutdown = shutdown_rx.clone();
-        group.spawn_critical("mesh_maintenance", async move {
-            Self::mesh_maintenance_loop(config, topology, peer_connections, maintenance_shutdown)
+        stage
+            .task_group
+            .spawn_critical("mesh_maintenance", async move {
+                Self::mesh_maintenance_loop(
+                    config,
+                    topology,
+                    peer_connections,
+                    maintenance_shutdown,
+                )
                 .await;
-        });
+            });
 
-        // Datagram listener
         let peer_connections_dg = self.peer_connections.clone();
         let datagram_shutdown = shutdown_rx.clone();
-        group.spawn_critical("datagram_listener", async move {
-            Self::datagram_listener_loop(peer_connections_dg, datagram_shutdown).await;
-        });
+        stage
+            .task_group
+            .spawn_critical("datagram_listener", async move {
+                Self::datagram_listener_loop(peer_connections_dg, datagram_shutdown).await;
+            });
 
         #[cfg(test)]
         self.check_startup_failure_hook(StartupFailurePoint::AfterCriticalTasks)
@@ -2110,8 +2195,20 @@ impl MeshTransport {
         self.check_startup_failure_hook(StartupFailurePoint::DuringSeedBootstrap)
             .await?;
         if !self.config.seeds.is_empty() {
-            if let Err(e) = self.bootstrap_from_seeds().await {
-                tracing::warn!("Seed bootstrap failed (continuing): {e}");
+            match self.bootstrap_from_seeds().await {
+                Ok(()) => {
+                    report.connected_seed_count = self.config.seeds.len();
+                }
+                Err(e) => {
+                    if policy.require_seed_connectivity {
+                        return Err(MeshTransportError::StartupFailed(format!(
+                            "Seed bootstrap required but failed: {e}"
+                        )));
+                    }
+                    report
+                        .degraded_reasons
+                        .push(format!("Seed bootstrap failed: {e}"));
+                }
             }
         }
 
@@ -2120,8 +2217,20 @@ impl MeshTransport {
         self.check_startup_failure_hook(StartupFailurePoint::DuringPeerConnect)
             .await?;
         if !self.config.peers.is_empty() {
-            if let Err(e) = self.connect_to_peers().await {
-                tracing::warn!("Peer connection failed (continuing): {e}");
+            match self.connect_to_peers().await {
+                Ok(()) => {
+                    report.connected_configured_peer_count = self.config.peers.len();
+                }
+                Err(e) => {
+                    if policy.require_configured_peers {
+                        return Err(MeshTransportError::StartupFailed(format!(
+                            "Configured peer connection required but failed: {e}"
+                        )));
+                    }
+                    report
+                        .degraded_reasons
+                        .push(format!("Peer connection failed: {e}"));
+                }
             }
         }
 
@@ -2131,8 +2240,20 @@ impl MeshTransport {
             .await?;
         if let Some(ref rm) = self.routing_manager {
             if rm.is_enabled() {
-                if let Err(e) = self.dht_bootstrap_from_seeds(rm.clone()).await {
-                    tracing::warn!("DHT bootstrap failed (continuing): {e}");
+                match self.dht_bootstrap_from_seeds(rm.clone()).await {
+                    Ok(()) => {
+                        report.dht_bootstrapped = true;
+                    }
+                    Err(e) => {
+                        if policy.require_dht_bootstrap {
+                            return Err(MeshTransportError::StartupFailed(format!(
+                                "DHT bootstrap required but failed: {e}"
+                            )));
+                        }
+                        report
+                            .degraded_reasons
+                            .push(format!("DHT bootstrap failed: {e}"));
+                    }
                 }
             }
         }
@@ -2142,145 +2263,152 @@ impl MeshTransport {
         let transport_for_maintenance = Arc::new(self.clone_for_maintenance());
 
         if connection_config.min_peer_connections > 0 {
-            // Connection maintenance + auto-slash
             let maintenance_transport = transport_for_maintenance.clone();
             let maintenance_interval = Duration::from_secs(30);
             let mut bg_shutdown = shutdown_rx.clone();
-            group.spawn_background("connection_maintenance", async move {
-                let mut interval = tokio::time::interval(maintenance_interval);
-                loop {
-                    tokio::select! {
-                        _ = interval.tick() => {
-                            maintenance_transport.maintain_connections().await;
-                            maintenance_transport.perform_auto_slash().await;
-                        }
-                        _ = bg_shutdown.changed() => {
-                            if *bg_shutdown.borrow() { break; }
+            stage
+                .task_group
+                .spawn_background("connection_maintenance", async move {
+                    let mut interval = tokio::time::interval(maintenance_interval);
+                    loop {
+                        tokio::select! {
+                            _ = interval.tick() => {
+                                maintenance_transport.maintain_connections().await;
+                                maintenance_transport.perform_auto_slash().await;
+                            }
+                            _ = bg_shutdown.changed() => {
+                                if *bg_shutdown.borrow() { break; }
+                            }
                         }
                     }
-                }
-            });
+                });
 
-            // Peer health checks
             let health_transport = transport_for_maintenance.clone();
             let health_interval = Duration::from_secs(connection_config.health_check_interval_secs);
             let mut health_shutdown = shutdown_rx.clone();
-            group.spawn_background("peer_health_check", async move {
-                let mut interval = tokio::time::interval(health_interval);
-                loop {
-                    tokio::select! {
-                        _ = interval.tick() => {
-                            let peers: Vec<String> = health_transport
-                                .peer_connections
-                                .iter()
-                                .map(|e| e.value().node_id.clone())
-                                .collect();
-                            for peer_id in peers {
-                                health_transport.perform_health_check(&peer_id).await;
+            stage
+                .task_group
+                .spawn_background("peer_health_check", async move {
+                    let mut interval = tokio::time::interval(health_interval);
+                    loop {
+                        tokio::select! {
+                            _ = interval.tick() => {
+                                let peers: Vec<String> = health_transport
+                                    .peer_connections
+                                    .iter()
+                                    .map(|e| e.value().node_id.clone())
+                                    .collect();
+                                for peer_id in peers {
+                                    health_transport.perform_health_check(&peer_id).await;
+                                }
+                            }
+                            _ = health_shutdown.changed() => {
+                                if *health_shutdown.borrow() { break; }
                             }
                         }
-                        _ = health_shutdown.changed() => {
-                            if *health_shutdown.borrow() { break; }
-                        }
                     }
-                }
-            });
+                });
 
-            // Proactive cache warming
             let cache_warm_transport = transport_for_maintenance.clone();
             let cache_warm_interval = Duration::from_secs(60);
             let mut cache_shutdown = shutdown_rx.clone();
-            group.spawn_background("cache_warming", async move {
-                let mut interval = tokio::time::interval(cache_warm_interval);
-                loop {
-                    tokio::select! {
-                        _ = interval.tick() => {
-                            cache_warm_transport.proactive_cache_warm().await;
-                        }
-                        _ = cache_shutdown.changed() => {
-                            if *cache_shutdown.borrow() { break; }
+            stage
+                .task_group
+                .spawn_background("cache_warming", async move {
+                    let mut interval = tokio::time::interval(cache_warm_interval);
+                    loop {
+                        tokio::select! {
+                            _ = interval.tick() => {
+                                cache_warm_transport.proactive_cache_warm().await;
+                            }
+                            _ = cache_shutdown.changed() => {
+                                if *cache_shutdown.borrow() { break; }
+                            }
                         }
                     }
-                }
-            });
+                });
 
-            // DHT cache resync
             let dht_resync_transport = transport_for_maintenance.clone();
             let mut dht_shutdown = shutdown_rx.clone();
-            group.spawn_background("dht_cache_resync", async move {
-                let mut interval = tokio::time::interval(Duration::from_secs(30));
-                loop {
-                    tokio::select! {
-                        _ = interval.tick() => {
-                            dht_resync_transport.dht_cache_resync().await;
-                        }
-                        _ = dht_shutdown.changed() => {
-                            if *dht_shutdown.borrow() { break; }
+            stage
+                .task_group
+                .spawn_background("dht_cache_resync", async move {
+                    let mut interval = tokio::time::interval(Duration::from_secs(30));
+                    loop {
+                        tokio::select! {
+                            _ = interval.tick() => {
+                                dht_resync_transport.dht_cache_resync().await;
+                            }
+                            _ = dht_shutdown.changed() => {
+                                if *dht_shutdown.borrow() { break; }
+                            }
                         }
                     }
-                }
-            });
+                });
 
-            // Load reporter
             let load_report_transport = transport_for_maintenance.clone();
             let load_report_interval = Duration::from_secs(60);
             let mut load_shutdown = shutdown_rx.clone();
-            group.spawn_background("load_reporter", async move {
-                let mut interval = tokio::time::interval(load_report_interval);
-                loop {
-                    tokio::select! {
-                        _ = interval.tick() => {
-                            load_report_transport.send_load_report_to_peers().await;
-                        }
-                        _ = load_shutdown.changed() => {
-                            if *load_shutdown.borrow() { break; }
+            stage
+                .task_group
+                .spawn_background("load_reporter", async move {
+                    let mut interval = tokio::time::interval(load_report_interval);
+                    loop {
+                        tokio::select! {
+                            _ = interval.tick() => {
+                                load_report_transport.send_load_report_to_peers().await;
+                            }
+                            _ = load_shutdown.changed() => {
+                                if *load_shutdown.borrow() { break; }
+                            }
                         }
                     }
-                }
-            });
+                });
 
-            // Global node heartbeat
             let heartbeat_transport = transport_for_maintenance.clone();
             let heartbeat_interval = Duration::from_secs(30);
             let mut heartbeat_shutdown = shutdown_rx.clone();
-            group.spawn_background("global_node_heartbeat", async move {
-                let mut interval = tokio::time::interval(heartbeat_interval);
-                loop {
-                    tokio::select! {
-                        _ = interval.tick() => {
-                            heartbeat_transport.publish_global_node_heartbeat().await;
-                        }
-                        _ = heartbeat_shutdown.changed() => {
-                            if *heartbeat_shutdown.borrow() { break; }
+            stage
+                .task_group
+                .spawn_background("global_node_heartbeat", async move {
+                    let mut interval = tokio::time::interval(heartbeat_interval);
+                    loop {
+                        tokio::select! {
+                            _ = interval.tick() => {
+                                heartbeat_transport.publish_global_node_heartbeat().await;
+                            }
+                            _ = heartbeat_shutdown.changed() => {
+                                if *heartbeat_shutdown.borrow() { break; }
+                            }
                         }
                     }
-                }
-            });
+                });
         }
 
-        // Phase 8: Start one-shot self-attestation if applicable
+        // Phase 8: Role-specific tasks
         if self.config.role.is_global() {
             let transport_for_attest = Arc::new(self.clone_for_maintenance());
             let mut attest_shutdown = shutdown_rx.clone();
-            group.spawn_background("global_self_attestation", async move {
-                let node_id = transport_for_attest.config.node_id().to_string();
-                tokio::select! {
-                    _ = tokio::time::sleep(Duration::from_secs(5)) => {
-                        transport_for_attest.attest_capability(&node_id, "waf").await;
-                        transport_for_attest.attest_capability(&node_id, "threat_intel").await;
-                        transport_for_attest.attest_capability(&node_id, "dns").await;
-                        tracing::info!("Global node '{}' self-attested capabilities", node_id);
+            stage
+                .task_group
+                .spawn_background("global_self_attestation", async move {
+                    let node_id = transport_for_attest.config.node_id().to_string();
+                    tokio::select! {
+                        _ = tokio::time::sleep(Duration::from_secs(5)) => {
+                            transport_for_attest.attest_capability(&node_id, "waf").await;
+                            transport_for_attest.attest_capability(&node_id, "threat_intel").await;
+                            transport_for_attest.attest_capability(&node_id, "dns").await;
+                            tracing::info!("Global node '{}' self-attested capabilities", node_id);
+                        }
+                        _ = attest_shutdown.changed() => {}
                     }
-                    _ = attest_shutdown.changed() => {}
-                }
-            });
+                });
         }
 
-        // PoW refresh for edge nodes
         if self.config.role.is_edge() {
             let pow_config = self.config.clone();
             let mut pow_shutdown = shutdown_rx.clone();
-            group.spawn_background("pow_nonce_refresh", async move {
+            stage.task_group.spawn_background("pow_nonce_refresh", async move {
                 let refresh_interval = Duration::from_secs(2700);
                 let mut interval = tokio::time::interval(refresh_interval);
                 loop {
@@ -2311,13 +2439,12 @@ impl MeshTransport {
             });
         }
 
-        // ML-KEM key rotation
         if let Some(ref mlkem_manager) = self.mlkem_session_manager {
             let mlkem_manager = mlkem_manager.clone();
             let rotation_interval = mlkem_manager.config().rotation_interval;
             let session_rotation_transport = Arc::new(self.clone_for_maintenance());
             let mut kem_shutdown = shutdown_rx.clone();
-            group.spawn_background("mlkem_key_rotation", async move {
+            stage.task_group.spawn_background("mlkem_key_rotation", async move {
                 let mut interval = tokio::time::interval(rotation_interval);
                 loop {
                     tokio::select! {
@@ -2365,32 +2492,41 @@ impl MeshTransport {
 
         // Phase 9: Start QUIC accept loop
         #[cfg(test)]
-        {
-            if let Err(e) = self
-                .check_startup_failure_hook(StartupFailurePoint::DuringRuntimeStart)
-                .await
-            {
-                self.rollback_startup(&mut group).await;
-                return Err(e);
-            }
-        }
+        self.check_startup_failure_hook(StartupFailurePoint::DuringRuntimeStart)
+            .await?;
         if let Some(ref runtime) = self.runtime {
-            let incoming = match runtime.start_server().await {
-                Ok(incoming) => incoming,
-                Err(e) => {
-                    // Rollback: cancel and join all spawned tasks
-                    self.rollback_startup(&mut group).await;
-                    return Err(MeshTransportError::ConnectionFailed(e.to_string()));
-                }
-            };
+            let incoming = runtime
+                .start_server()
+                .await
+                .map_err(|e| MeshTransportError::ConnectionFailed(e.to_string()))?;
             let transport = Arc::new(self.clone_for_maintenance());
             let accept_shutdown = shutdown_rx.clone();
-            group.spawn_critical("mesh_accept_loop", async move {
-                Self::mesh_accept_loop(transport, incoming, accept_shutdown).await;
-            });
+            stage
+                .task_group
+                .spawn_critical("mesh_accept_loop", async move {
+                    Self::mesh_accept_loop(transport, incoming, accept_shutdown).await;
+                });
+            stage.mark_runtime_started();
         }
 
-        // Phase 10: Commit lifecycle state
+        Ok(report)
+    }
+
+    /// Commit a successful startup: transfer staged resources to the transport
+    /// and transition lifecycle to `Running`.
+    ///
+    /// Commit order is documented and race-safe:
+    /// 1. All fallible startup phases complete
+    /// 2. Staged runtime/listener handles are ready
+    /// 3. Lifecycle state transitions to `Running`
+    /// 4. Task group is stored (visible to shutdown)
+    /// 5. Running projection is set
+    async fn commit_startup(
+        &self,
+        mut stage: MeshStartupStage,
+        report: MeshStartupReport,
+    ) -> Result<MeshStartupReport, MeshTransportError> {
+        // Transition lifecycle state
         {
             let mut state = self.lifecycle_state.lock().await;
             state.transition_to_running().map_err(|e| {
@@ -2406,48 +2542,97 @@ impl MeshTransport {
                 .check_startup_failure_hook(StartupFailurePoint::AfterLifecycleCommit)
                 .await
             {
-                self.rollback_startup(&mut group).await;
+                let rollback = self.rollback_startup(&mut stage).await;
+                self.finish_failed_startup(&rollback).await;
                 return Err(e);
             }
         }
 
         // Store the task group and shutdown state
         {
-            // Store the shutdown sender for the old shutdown_tx field (backward compat)
             let (compat_tx, _) = broadcast::channel(1);
             let _ = compat_tx.send(());
             *self.shutdown_tx.write() = Some(compat_tx);
         }
-        *self.task_group.lock().await = group;
+        *self.task_group.lock().await = stage.task_group;
         self.shutdown_started.store(false, Ordering::SeqCst);
+        stage.committed = true;
 
-        tracing::info!("Mesh transport started (lifecycle: running)");
-        Ok(())
+        // Set running projection
+        self.running_projection.store(true, Ordering::SeqCst);
+
+        tracing::info!(
+            "Mesh transport started (lifecycle: running, degraded={})",
+            !report.degraded_reasons.is_empty()
+        );
+        Ok(report)
     }
 
-    /// Check and invoke the startup failure hook at the given point.
-    /// Returns `Err` if the hook triggers a failure.
-    #[allow(dead_code)]
-    async fn check_startup_failure_hook(
-        &self,
-        point: StartupFailurePoint,
-    ) -> Result<(), MeshTransportError> {
-        let hook = self.startup_failure_hook.lock().await;
-        if let Some(ref f) = *hook {
-            f(point).map_err(|e| MeshTransportError::StartupFailed(e))
-        } else {
-            Ok(())
-        }
-    }
-
-    /// Rollback a failed startup: cancel and join all staged tasks, then
-    /// transition lifecycle state to Failed.
-    async fn rollback_startup(&self, group: &mut MeshTaskGroup) {
+    /// Rollback a failed startup: cancel and join all staged tasks, close
+    /// attempt-created connections, and transition lifecycle to `Failed` or `Stopped`.
+    ///
+    /// Returns a `RollbackReport` indicating whether cleanup completed cleanly.
+    async fn rollback_startup(&self, stage: &mut MeshStartupStage) -> RollbackReport {
         tracing::warn!("Rolling back mesh startup");
-        group.begin_shutdown().await;
-        let _ = group.join_all(Duration::from_secs(5)).await;
+        let mut errors = Vec::new();
+
+        // Signal shutdown to all staged tasks
+        stage.task_group.begin_shutdown().await;
+
+        // Close attempt-created QUIC connections
+        for node_id in &stage.created_peer_nodes {
+            if let Some(entry) = self.peer_connections.get(node_id) {
+                entry
+                    .value()
+                    .connection
+                    .close(0u32.into(), b"Startup rollback");
+            }
+            self.peer_connections.remove(node_id);
+        }
+
+        // Join staged tasks with a bounded timeout
+        let exits = stage.task_group.join_all(Duration::from_secs(5)).await;
+
+        // Check for task failures during rollback
+        for exit in &exits {
+            if exit.is_fatal() {
+                errors.push(format!(
+                    "Task '{}' exited fatally during rollback: {}",
+                    exit.name, exit.reason
+                ));
+            }
+        }
+
+        // Drain any peer sessions created during this attempt
+        let mut sessions = self.peer_sessions.lock().await;
+        let mut _drained = 0;
+        while let Ok(Some(_)) =
+            tokio::time::timeout(Duration::from_secs(2), sessions.join_next()).await
+        {
+            _drained += 1;
+        }
+        drop(sessions);
+
+        let clean = errors.is_empty();
+        RollbackReport { clean, errors }
+    }
+
+    /// Complete a failed startup by transitioning to `Stopped` (if rollback
+    /// was clean) or `Failed` (if rollback itself had issues).
+    async fn finish_failed_startup(&self, rollback: &RollbackReport) {
         let mut state = self.lifecycle_state.lock().await;
-        state.transition_to_failed();
+        if rollback.clean {
+            // Successful rollback -> Stopped (safe to retry)
+            state.transition_to_stopped();
+            tracing::info!("Mesh startup rolled back cleanly; lifecycle: stopped");
+        } else {
+            // Incomplete rollback -> Failed (operator intervention needed)
+            state.transition_to_failed();
+            tracing::warn!(
+                "Mesh startup rolled back with errors; lifecycle: failed ({} errors)",
+                rollback.errors.len()
+            );
+        }
     }
 
     #[allow(dead_code)]
@@ -2802,7 +2987,15 @@ impl MeshTransport {
     ///
     /// Returns a report describing which tasks were cleanly joined, which
     /// were aborted, and peer-child drainage statistics.
+    ///
+    /// All shutdown phases share one deadline derived from the caller's
+    /// timeout. No phase applies a fresh fixed timeout.
     pub async fn shutdown_with_timeout(&self, timeout: Duration) -> MeshShutdownReport {
+        let deadline = std::time::Instant::now() + timeout;
+
+        // Serialize lifecycle transitions
+        let _lifecycle_guard = self.lifecycle_op.lock().await;
+
         // Transition to Stopping
         {
             let mut state = self.lifecycle_state.lock().await;
@@ -2815,6 +3008,9 @@ impl MeshTransport {
             }
             state.transition_to_stopping().ok();
         }
+
+        // Clear running projection
+        self.running_projection.store(false, Ordering::SeqCst);
 
         // Signal shutdown to all tasks
         self.shutdown_started.store(true, Ordering::SeqCst);
@@ -2838,28 +3034,48 @@ impl MeshTransport {
         let peers_at_shutdown_start = self.peer_connections.len();
         self.peer_connections.clear();
 
-        // Join all tasks with timeout
+        // Join all tasks with the shared deadline
+        let task_timeout = remaining(deadline);
         let mut group = self.task_group.lock().await;
-        let exits = group.join_all(timeout).await;
+        let exits = group.join_all(task_timeout).await;
+        drop(group);
 
-        // Drain peer sessions
+        // Drain peer sessions with the shared deadline
         let mut sessions = self.peer_sessions.lock().await;
         let mut drained = 0;
         let mut aborted = 0;
-        let session_timeout = Duration::from_secs(5);
-        while let Ok(Some(result)) =
-            tokio::time::timeout(session_timeout, sessions.join_next()).await
-        {
-            match result {
-                Ok(()) => {
-                    drained += 1;
+        loop {
+            let remaining_time = remaining(deadline);
+            if remaining_time.is_zero() {
+                // Deadline expired — abort all remaining and join them
+                sessions.abort_all();
+                while let Some(result) = sessions.join_next().await {
+                    match result {
+                        Ok(()) => drained += 1,
+                        Err(_) => aborted += 1,
+                    }
                 }
+                break;
+            }
+            match tokio::time::timeout(remaining_time, sessions.join_next()).await {
+                Ok(Some(result)) => match result {
+                    Ok(()) => drained += 1,
+                    Err(_) => aborted += 1,
+                },
+                Ok(None) => break, // JoinSet is empty
                 Err(_) => {
-                    aborted += 1;
+                    // Deadline expired during wait — abort and drain
+                    sessions.abort_all();
+                    while let Some(result) = sessions.join_next().await {
+                        match result {
+                            Ok(()) => drained += 1,
+                            Err(_) => aborted += 1,
+                        }
+                    }
+                    break;
                 }
             }
         }
-        sessions.abort_all();
         drop(sessions);
 
         // Build report
@@ -2890,10 +3106,11 @@ impl MeshTransport {
         }
 
         tracing::info!(
-            "Mesh transport stopped (clean={}, failed={}, aborted={})",
+            "Mesh transport stopped (clean={}, failed={}, aborted={}, duration={:?})",
             report.clean_tasks,
             report.failed_tasks.len(),
-            report.aborted_tasks.len()
+            report.aborted_tasks.len(),
+            deadline.elapsed()
         );
 
         report

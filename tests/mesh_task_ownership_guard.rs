@@ -52,25 +52,25 @@ fn extract_function(content: &str, fn_name: &str) -> String {
 #[test]
 fn no_detached_spawns_in_transport_start() {
     let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
-    let start_body = extract_function(&content, "start");
+    let start_body = extract_function(&content, "run_startup_phases");
 
     let bare_spawn_count = count_occurrences(&start_body, "tokio::spawn(");
-    let group_spawn_count = count_occurrences(&start_body, "group.spawn_");
+    let group_spawn_count = count_occurrences(&start_body, "stage.task_group.spawn_");
 
-    // The start() method should use group.spawn_* for long-lived tasks.
-    // Bare tokio::spawn inside start() should be zero (all long-lived work
+    // The run_startup_phases() method should use stage.task_group.spawn_* for
+    // long-lived tasks. Bare tokio::spawn should be zero (all long-lived work
     // goes through the task group).
     assert!(
         bare_spawn_count == 0,
-        "start() contains {bare_spawn_count} bare tokio::spawn() calls; \
-         all long-lived tasks must use group.spawn_*(). Found at: {}",
+        "run_startup_phases() contains {bare_spawn_count} bare tokio::spawn() calls; \
+         all long-lived tasks must use stage.task_group.spawn_*(). Found at: {}",
         find_bare_spawn_lines(&start_body)
     );
 
     // Verify the task group is actually used for spawning
     assert!(
         group_spawn_count >= 2,
-        "start() should spawn at least 2 tasks via group.spawn_*(), found {group_spawn_count}"
+        "run_startup_phases() should spawn at least 2 tasks via stage.task_group.spawn_*(), found {group_spawn_count}"
     );
 }
 
@@ -179,30 +179,31 @@ fn start_uses_lifecycle_state() {
         "transport.rs must import and use MeshLifecycleState"
     );
 
-    let start_body = extract_function(&content, "start");
+    let start_body = extract_function(&content, "start_with_policy");
 
     // Must transition to Starting before committing work
     assert!(
         start_body.contains("transition_to_starting"),
-        "start() must transition lifecycle to Starting before spawning tasks"
+        "start_with_policy() must transition lifecycle to Starting before spawning tasks"
     );
 
     // Must transition to Running after all tasks are registered
+    // (now in commit_startup, called by start_with_policy)
     assert!(
-        start_body.contains("transition_to_running"),
-        "start() must transition lifecycle to Running after task registration"
+        content.contains("transition_to_running"),
+        "commit_startup() must transition lifecycle to Running after task registration"
     );
 
     // Must validate can_start() before proceeding
     assert!(
         start_body.contains("can_start"),
-        "start() must check can_start() to validate state machine"
+        "start_with_policy() must check can_start() to validate state machine"
     );
 
     // Must store the task group after all spawns
     assert!(
         start_body.contains("task_group"),
-        "start() must store the MeshTaskGroup after spawning tasks"
+        "start_with_policy() must store the MeshTaskGroup after spawning tasks"
     );
 }
 
@@ -241,7 +242,7 @@ fn start_does_not_commit_prematurely() {
 #[test]
 fn failed_startup_uses_failed_state() {
     let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
-    let start_body = extract_function(&content, "start");
+    let start_body = extract_function(&content, "start_with_policy");
 
     // The function body (between braces) won't contain the Result< signature.
     // Instead verify that the body uses error-returning patterns:
@@ -251,14 +252,14 @@ fn failed_startup_uses_failed_state() {
         || start_body.contains("StartupFailed");
     assert!(
         has_error_returns,
-        "start() must have error-returning paths (return Err/map_err/StartupFailed) \
+        "start_with_policy() must have error-returning paths (return Err/map_err/StartupFailed) \
          to handle startup failures without committing to Running"
     );
 
     // Verify MeshTransportError is used for startup failure reporting
     assert!(
         start_body.contains("StartupFailed") || start_body.contains("LifecycleConflict"),
-        "start() must map errors to MeshTransportError variants for startup failures"
+        "start_with_policy() must map errors to MeshTransportError variants for startup failures"
     );
 }
 

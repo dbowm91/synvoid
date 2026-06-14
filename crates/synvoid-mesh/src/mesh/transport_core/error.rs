@@ -42,6 +42,11 @@ pub enum MeshTransportError {
     LifecycleConflict(String),
     #[error("Startup failed: {0}")]
     StartupFailed(String),
+    #[error("Startup failed: {startup_error}; rollback: {rollback_errors:?}")]
+    StartupRollbackFailed {
+        startup_error: String,
+        rollback_errors: Vec<String>,
+    },
     #[error("Shutdown timed out after {0:?}")]
     ShutdownTimeout(Duration),
     #[error("Already starting")]
