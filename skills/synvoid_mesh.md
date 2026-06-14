@@ -444,7 +444,7 @@ Returned after startup:
 - `peers_at_shutdown_start` — captured at shutdown begin
 - `remaining_peers` — measured after connection close/drain
 - `drained_peer_sessions` / `aborted_peer_sessions` — from session drain
-- `drained_peer_children` / `aborted_peer_children` — from accept loop (**non-authoritative**: currently always zero, accept loop report not yet wired)
+- `drained_peer_children` / `aborted_peer_children` — from accept loop report (populated during accept-loop shutdown, Iteration 71)
 
 ### Worker Integration
 

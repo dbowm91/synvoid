@@ -181,6 +181,8 @@ pub struct MeshTransport {
     pub(crate) id_generator: Arc<MeshTaskIdGenerator>,
     /// Atomic projection of `Running` lifecycle state for synchronous checks.
     pub(crate) running_projection: Arc<AtomicBool>,
+    /// Report from the mesh accept loop, populated during shutdown.
+    pub(crate) accept_loop_report: Arc<tokio::sync::Mutex<MeshAcceptLoopReport>>,
 }
 
 /// Failure injection points for deterministic startup testing.
@@ -450,6 +452,7 @@ impl Clone for MeshTransport {
             lifecycle_op: tokio::sync::Mutex::new(()),
             id_generator: self.id_generator.clone(),
             running_projection: self.running_projection.clone(),
+            accept_loop_report: self.accept_loop_report.clone(),
         }
     }
 }
@@ -795,6 +798,7 @@ impl MeshTransport {
             lifecycle_op: tokio::sync::Mutex::new(()),
             id_generator: Arc::new(MeshTaskIdGenerator::new()),
             running_projection: Arc::new(AtomicBool::new(false)),
+            accept_loop_report: Arc::new(tokio::sync::Mutex::new(MeshAcceptLoopReport::default())),
         }
     }
 
@@ -2689,12 +2693,13 @@ impl MeshTransport {
             }
         }
 
-        // Phase 7: Mark runtime cleanup
+        // Phase 7: Active runtime cleanup
         if stage.runtime_started {
-            // The QUIC accept loop is part of the staged task group and was
-            // already shut down in Phase 4. The endpoint is dropped when the
-            // runtime is dropped. For now, record the cleanup.
-            runtime_stopped = true;
+            if let Some(ref runtime) = self.runtime {
+                runtime.stop_server().await;
+                runtime_stopped = true;
+                tracing::debug!("QUIC runtime stopped during rollback");
+            }
         }
 
         let clean = errors.is_empty();
@@ -2830,25 +2835,39 @@ impl MeshTransport {
                         tracing::info!("Mesh accept loop shutting down, draining {} child tasks", children.len());
                         let drain_timeout = Duration::from_secs(10);
                         let deadline = tokio::time::Instant::now() + drain_timeout;
+                        let mut drained = 0usize;
+                        let mut aborted = 0usize;
                         while !children.is_empty() {
                             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
                             if remaining.is_zero() {
-                                tracing::warn!("Aborting {} remaining peer children", children.len());
+                                let remaining_count = children.len();
+                                tracing::warn!("Aborting {} remaining peer children", remaining_count);
                                 children.abort_all();
                                 let _ = children.join_all().await;
+                                aborted += remaining_count;
                                 break;
                             }
                             tokio::select! {
                                 _ = tokio::time::sleep(remaining) => {
-                                    tracing::warn!("Aborting {} remaining peer children after timeout", children.len());
+                                    let remaining_count = children.len();
+                                    tracing::warn!("Aborting {} remaining peer children after timeout", remaining_count);
                                     children.abort_all();
                                     let _ = children.join_all().await;
+                                    aborted += remaining_count;
                                     break;
                                 }
-                                Some(_) = children.join_next() => {}
+                                Some(_) = children.join_next() => {
+                                    drained += 1;
+                                }
                             }
                         }
-                        tracing::info!("Mesh accept loop stopped");
+                        // Publish accept loop report
+                        {
+                            let mut report = self.accept_loop_report.lock().await;
+                            report.drained_handshakes = drained;
+                            report.aborted_handshakes = aborted;
+                        }
+                        tracing::info!("Mesh accept loop stopped (drained: {drained}, aborted: {aborted})");
                         break;
                     }
                 }
@@ -3236,12 +3255,17 @@ impl MeshTransport {
         }
         drop(sessions);
 
+        // Include accept loop report in shutdown report
+        let accept_report = self.accept_loop_report.lock().await.clone();
+
         // Build report
         let mut report = MeshShutdownReport::default();
         report.peers_at_shutdown_start = peers_at_shutdown_start;
         report.remaining_peers = self.peer_connections.len();
         report.drained_peer_sessions = drained;
         report.aborted_peer_sessions = aborted;
+        report.drained_peer_children = accept_report.drained_handshakes;
+        report.aborted_peer_children = accept_report.aborted_handshakes;
         for exit in &exits {
             match exit.reason {
                 crate::lifecycle::MeshTaskExitReason::Aborted => {

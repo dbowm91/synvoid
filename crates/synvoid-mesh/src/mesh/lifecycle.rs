@@ -1,4 +1,4 @@
-//! Mesh transport lifecycle types (Iteration 68, 70).
+//! Mesh transport lifecycle types (Iteration 68, 70, 71).
 //!
 //! Defines the state machine, task classification, startup staging,
 //! and shutdown reporting types used to manage mesh transport lifecycle
@@ -249,12 +249,8 @@ pub struct MeshShutdownReport {
     /// Tasks that were forcibly aborted.
     pub aborted_tasks: Vec<MeshTaskExit>,
     /// Number of bounded peer children that drained cleanly.
-    /// **Non-authoritative**: currently always zero because the accept loop
-    /// does not publish its report. Will be wired in a future iteration.
     pub drained_peer_children: usize,
     /// Number of bounded peer children that were aborted.
-    /// **Non-authoritative**: currently always zero because the accept loop
-    /// does not publish its report. Will be wired in a future iteration.
     pub aborted_peer_children: usize,
     /// Number of peers remaining after shutdown (should be zero for clean shutdown).
     pub remaining_peers: usize,
@@ -318,19 +314,14 @@ pub struct MeshStartupReport {
 
 /// Report from the mesh accept loop about child task drainage.
 ///
-/// Currently deferred — fields are not wired into the accept loop.
-/// Values will always be zero. Do not rely on these for correctness
-/// decisions until the accept loop publishes its report.
+/// Populated during shutdown when the accept loop drains its child tasks.
 #[derive(Debug, Clone, Default)]
 pub struct MeshAcceptLoopReport {
     /// Number of handshake children that drained cleanly.
-    /// **Deferred**: always zero until accept-loop reporting is wired.
     pub drained_handshakes: usize,
     /// Number of handshake children that were forcibly aborted.
-    /// **Deferred**: always zero until accept-loop reporting is wired.
     pub aborted_handshakes: usize,
     /// Number of connections rejected at capacity.
-    /// **Deferred**: always zero until accept-loop reporting is wired.
     pub rejected_at_capacity: usize,
 }
 

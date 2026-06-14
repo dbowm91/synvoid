@@ -757,18 +757,31 @@ fn startup_rollback_failed_constructed() {
     );
 }
 
-// ── Test 26: Handshake report fields are documented as deferred ──────────────
+// ── Test 26: Handshake report fields are wired (Iteration 71) ────────────────
 
 #[test]
-fn handshake_report_fields_deferred() {
+fn handshake_report_fields_wired() {
     let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
 
-    // MeshAcceptLoopReport should have deferred documentation
+    // MeshAcceptLoopReport fields must no longer be deferred since they're wired
+    let report_start = content
+        .find("pub struct MeshAcceptLoopReport")
+        .expect("MeshAcceptLoopReport struct not found");
+    let report_window = &content[report_start..report_start + 500];
     assert!(
-        content.contains("Deferred")
-            || content.contains("non-authoritative")
-            || content.contains("Non-authoritative"),
-        "MeshAcceptLoopReport fields must be documented as deferred/non-authoritative"
+        !report_window.contains("Deferred"),
+        "MeshAcceptLoopReport fields must not be annotated as Deferred (they are now wired)"
+    );
+
+    // The accept loop must populate the report
+    let transport_content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        transport_content.contains("report.drained_handshakes"),
+        "mesh_accept_loop must populate report.drained_handshakes"
+    );
+    assert!(
+        transport_content.contains("report.aborted_handshakes"),
+        "mesh_accept_loop must populate report.aborted_handshakes"
     );
 }
 

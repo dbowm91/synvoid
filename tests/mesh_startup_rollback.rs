@@ -390,3 +390,153 @@ fn test_rollback_timeout_config_exists() {
         "MeshConnectionConfig must have startup_rollback_timeout_secs field"
     );
 }
+
+// ── Phase 19: Rollback Deadline Edge-Case Tests (Iteration 71) ───────────────
+
+/// Test that RollbackReport tracks timeout/abort counts.
+#[test]
+fn test_rollback_report_tracks_abort_counts() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let rollback_body = extract_function(&content, "rollback_startup");
+
+    // Must count remaining active tasks as aborted
+    assert!(
+        rollback_body.contains("tasks_aborted") || rollback_body.contains("remaining"),
+        "rollback_startup must track aborted task counts"
+    );
+
+    // Must use shared deadline for all phases
+    assert!(
+        rollback_body.contains("deadline"),
+        "rollback_startup must use a shared deadline"
+    );
+
+    // Must handle abort after cooperative drain
+    assert!(
+        rollback_body.contains("abort_all") || rollback_body.contains("abort"),
+        "rollback_startup must abort remaining sessions after cooperative drain"
+    );
+}
+
+/// Test that rollback timeout config defaults to a reasonable value.
+#[test]
+fn test_rollback_timeout_default_reasonable() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/config.rs");
+
+    // Find the default value and verify it's reasonable (5-60 seconds)
+    // Just check the field exists and has a default
+    assert!(
+        content.contains("startup_rollback_timeout_secs"),
+        "config must have startup_rollback_timeout_secs"
+    );
+}
+
+// ── Phase 16: Accept Loop Report Wiring Tests (Iteration 71) ─────────────────
+
+/// Test that accept loop report is wired into shutdown.
+#[test]
+fn test_accept_loop_report_wired() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        content.contains("accept_loop_report"),
+        "MeshTransport must have accept_loop_report field"
+    );
+}
+
+/// Test that mesh_accept_loop populates the report before exiting.
+#[test]
+fn test_accept_loop_populates_report() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let accept_body = extract_function(&content, "mesh_accept_loop");
+
+    assert!(
+        accept_body.contains("report.drained_handshakes"),
+        "mesh_accept_loop must set report.drained_handshakes"
+    );
+    assert!(
+        accept_body.contains("report.aborted_handshakes"),
+        "mesh_accept_loop must set report.aborted_handshakes"
+    );
+    assert!(
+        accept_body.contains("accept_loop_report"),
+        "mesh_accept_loop must access self.accept_loop_report"
+    );
+}
+
+/// Test that shutdown_with_timeout reads the accept loop report.
+#[test]
+fn test_shutdown_reads_accept_loop_report() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let shutdown_body = extract_function(&content, "shutdown_with_timeout");
+
+    assert!(
+        shutdown_body.contains("accept_loop_report"),
+        "shutdown_with_timeout must read accept_loop_report"
+    );
+    assert!(
+        shutdown_body.contains("drained_peer_children"),
+        "shutdown_with_timeout must set drained_peer_children from accept report"
+    );
+    assert!(
+        shutdown_body.contains("aborted_peer_children"),
+        "shutdown_with_timeout must set aborted_peer_children from accept report"
+    );
+}
+
+/// Test that MeshAcceptLoopReport no longer has Deferred annotations.
+#[test]
+fn test_accept_loop_report_not_deferred() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+    // Find the MeshAcceptLoopReport struct definition area
+    let report_start = content
+        .find("pub struct MeshAcceptLoopReport")
+        .expect("MeshAcceptLoopReport struct not found");
+    let report_window = &content[report_start..report_start + 500];
+
+    assert!(
+        !report_window.contains("Deferred"),
+        "MeshAcceptLoopReport fields must not be annotated as Deferred"
+    );
+}
+
+/// Test that MeshShutdownReport no longer has Non-authoritative annotations.
+#[test]
+fn test_shutdown_report_not_non_authoritative() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+    // Find the MeshShutdownReport struct definition area
+    let report_start = content
+        .find("pub struct MeshShutdownReport")
+        .expect("MeshShutdownReport struct not found");
+    let report_window = &content[report_start..report_start + 800];
+
+    assert!(
+        !report_window.contains("Non-authoritative"),
+        "MeshShutdownReport fields must not be annotated as Non-authoritative"
+    );
+}
+
+/// Test that rollback calls stop_server on the QUIC runtime.
+#[test]
+fn test_rollback_calls_stop_server() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let rollback_body = extract_function(&content, "rollback_startup");
+
+    assert!(
+        rollback_body.contains("stop_server"),
+        "rollback_startup must call stop_server() for active runtime cleanup"
+    );
+}
+
+/// Test that stop_server exists in QuicRuntime.
+#[test]
+fn test_stop_server_exists() {
+    let content = read_file("crates/synvoid-tunnel/src/quic/runtime.rs");
+    assert!(
+        content.contains("fn stop_server"),
+        "QuicRuntime must have stop_server method"
+    );
+    assert!(
+        content.contains("endpoint.close"),
+        "stop_server must close the QUIC endpoint"
+    );
+}

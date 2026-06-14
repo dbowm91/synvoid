@@ -80,6 +80,9 @@ impl MeshTransport {
             lifecycle_op: tokio::sync::Mutex::new(()),
             id_generator: self.id_generator.clone(),
             running_projection: self.running_projection.clone(),
+            accept_loop_report: Arc::new(tokio::sync::Mutex::new(
+                crate::lifecycle::MeshAcceptLoopReport::default(),
+            )),
         }
     }
 

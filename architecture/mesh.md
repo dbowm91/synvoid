@@ -146,8 +146,8 @@ Mesh transport uses structured lifecycle management (Iterations 68–71):
 - `MeshStartupPolicy` controls required vs optional bootstrap (seed connectivity, configured peers, DHT bootstrap); default is all-optional (degraded startup allowed)
 - `MeshStartupReport` communicates bootstrap outcome (degraded reasons, peers connected, DHT status)
 - Bounded shutdown with shared deadline — `shutdown_with_timeout(timeout)` derives one deadline for all phases; truthful `MeshShutdownReport` reflects actual state
-- `MeshAcceptLoopReport` fields are deferred/non-authoritative (always zero until wired)
-- `MeshShutdownReport.drained_peer_children` and `aborted_peer_children` are non-authoritative (currently always zero)
+- `MeshAcceptLoopReport` is wired — accept loop tracks drained/aborted handshake children; `rejected_at_capacity` remains untracked
+- `MeshShutdownReport.drained_peer_children` and `aborted_peer_children` are populated from the accept loop report (Iteration 71)
 - Peer sessions (`peer_sessions: Arc<Mutex<JoinSet<()>>>`) are owned separately from handshake children; shutdown drains sessions after closing connections
 - `mesh_exit_tx: broadcast::Sender<MeshTaskExit>` on `MeshTransport` survives task group replacement; `subscribe_exits()` is synchronous and valid before `start()`
 - `running_projection: Arc<AtomicBool>` provides lock-free `is_running()` observation — set on commit, cleared on shutdown entry

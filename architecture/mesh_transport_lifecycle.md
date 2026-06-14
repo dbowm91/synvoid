@@ -350,8 +350,8 @@ Shutdown → close connections → drain peer sessions → drain handshake child
 | `clean_tasks` | Join results | Count of tasks that exited cleanly |
 | `failed_tasks` | Join results | Tasks that exited with an error (non-fatal) |
 | `aborted_tasks` | Join results | Tasks that were forcibly aborted |
-| `drained_peer_children` | Join results | Number of bounded peer children that drained cleanly (**non-authoritative**: currently always zero — accept loop report not yet wired) |
-| `aborted_peer_children` | Join results | Number of bounded peer children that were aborted (**non-authoritative**: currently always zero — accept loop report not yet wired) |
+| `drained_peer_children` | Accept loop report | Number of bounded peer children that drained cleanly during accept-loop shutdown |
+| `aborted_peer_children` | Accept loop report | Number of bounded peer children that were aborted after timeout during accept-loop shutdown |
 | `peers_at_shutdown_start` | Captured at shutdown begin | Peer count before teardown |
 | `remaining_peers` | Measured after connection close/drain | Peers still active after drain |
 | `drained_peer_sessions` | Session drain result | Number of peer sessions drained cleanly |
@@ -359,7 +359,9 @@ Shutdown → close connections → drain peer sessions → drain handshake child
 
 ### MeshAcceptLoopReport
 
-The `MeshAcceptLoopReport` struct (`lifecycle.rs:325`) is declared with `drained_handshakes`, `aborted_handshakes`, and `rejected_at_capacity` fields. All fields are **deferred/non-authoritative** — they are always zero because the accept loop does not yet publish its report. The struct exists for future wiring; callers must not rely on these values for correctness decisions.
+The `MeshAcceptLoopReport` struct (`lifecycle.rs:325`) is wired into the mesh accept loop. When the accept loop shuts down, it tracks `drained_handshakes` (cooperatively exited children) and `aborted_handshakes` (forcibly aborted after timeout). The report is stored in `MeshTransport::accept_loop_report` and read by `shutdown_with_timeout()` to populate `MeshShutdownReport.drained_peer_children` / `aborted_peer_children`.
+
+The `rejected_at_capacity` field remains untracked (always zero) — it would require incrementing a counter in the accept loop's semaphore rejection path.
 
 ### Invariants
 
@@ -367,6 +369,7 @@ The `MeshAcceptLoopReport` struct (`lifecycle.rs:325`) is declared with `drained
 - `peers_at_shutdown_start` is captured at the beginning of shutdown for comparison.
 - Handshake child counts propagate into the report from the accept loop's `JoinSet`.
 - The report is truthful — it reflects what actually happened, not what was requested.
+- `drained_peer_children` and `aborted_peer_children` in `MeshShutdownReport` are now populated from the accept loop report (Iteration 71).
 
 ## Worker Integration (Iterations 69–70)
 
@@ -464,4 +467,4 @@ When the hook returns `Ok(())`, startup continues normally.
 | Iteration | Changes |
 |-----------|---------|
 | 70 | Initial lifecycle state machine, staged startup/rollback, task groups, truthful shutdown report, failure injection hooks, worker integration |
-| 71 | Commit ordering: task group install → lifecycle transition → running projection. `rollback_and_return()` centralizes rollback error propagation, constructing `StartupRollbackFailed` when cleanup is incomplete. `StagedPeerResource` tracks exact peer mutations. Rollback uses `session_id` for `peer_connections` removal. Topology entries created during failed startup removed on rollback. `RollbackReport` expanded with `tasks_joined`, `tasks_aborted`, `peer_connections_closed`, `topology_entries_restored`, `peer_sessions_cleaned`, `runtime_stopped`. `verify_rollback_complete()` checks post-rollback invariants. Shared rollback deadline (`startup_rollback_timeout_secs`, default 15s). Peer session cleanup: cooperative drain → abort all → brief wait. `MeshAcceptLoopReport` fields documented as deferred/non-authoritative. `MeshShutdownReport.drained_peer_children` and `aborted_peer_children` documented as non-authoritative. |
+| 71 | Commit ordering: task group install → lifecycle transition → running projection. `rollback_and_return()` centralizes rollback error propagation, constructing `StartupRollbackFailed` when cleanup is incomplete. `StagedPeerResource` tracks exact peer mutations. Rollback uses `session_id` for `peer_connections` removal. Topology entries created during failed startup removed on rollback. `RollbackReport` expanded with `tasks_joined`, `tasks_aborted`, `peer_connections_closed`, `topology_entries_restored`, `peer_sessions_cleaned`, `runtime_stopped`. `verify_rollback_complete()` checks post-rollback invariants. Shared rollback deadline (`startup_rollback_timeout_secs`, default 15s). Peer session cleanup: cooperative drain → abort all → brief wait. `QuicRuntime::stop_server()` provides active endpoint cleanup during rollback. `MeshAcceptLoopReport` wired — accept loop tracks drained/aborted handshake children and publishes report; `MeshShutdownReport.drained_peer_children` and `aborted_peer_children` populated from accept loop report. |

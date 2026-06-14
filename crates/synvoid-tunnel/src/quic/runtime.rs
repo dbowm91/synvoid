@@ -482,6 +482,22 @@ impl QuicRuntime {
         let _ = self.shutdown_tx.send(());
     }
 
+    /// Stop the QUIC server: signal shutdown and close the endpoint.
+    ///
+    /// This is an active cleanup that ensures the bound socket is released
+    /// immediately rather than waiting for the Arc to drop.
+    pub async fn stop_server(&self) {
+        // Signal shutdown to internal accept loop
+        self.shutdown();
+
+        // Close the QUIC endpoint to release the bound socket
+        let mut endpoint_guard = self.endpoint.lock().await;
+        if let Some(endpoint) = endpoint_guard.take() {
+            endpoint.close(0u32.into(), b"Server shutdown");
+            tracing::debug!("QUIC server endpoint closed");
+        }
+    }
+
     pub fn subscribe_shutdown(&self) -> broadcast::Receiver<()> {
         self.shutdown_tx.subscribe()
     }
