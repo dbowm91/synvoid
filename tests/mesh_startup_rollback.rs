@@ -9,6 +9,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use synvoid_mesh::cert::MeshCertManager;
 use synvoid_mesh::config::{MeshConfig, MeshNodeRole};
+use synvoid_mesh::dht::{NodeId, PeerContact};
 use synvoid_mesh::lifecycle::{
     DhtPeerMutation, DhtPeerSnapshot, FailedStartupResidue, MeshLifecycleState, MeshShutdownReport,
     MeshStartupStage, RecoveryVerification, RollbackReport, StagedPeerResource,
@@ -324,9 +325,9 @@ fn test_staged_peer_resource_in_rollback() {
         "rollback_startup must use session_id for connection removal"
     );
     assert!(
-        rollback_body.contains("topology_existed_before")
+        rollback_body.contains("restore_and_verify_peer_logical_state")
             || rollback_body.contains("restore_peer_logical_state"),
-        "rollback_startup must handle topology restoration"
+        "rollback_startup must handle topology/DHT restoration"
     );
 }
 
@@ -381,6 +382,10 @@ fn test_rollback_report_expanded() {
     assert!(
         content.contains("runtime_stopped:"),
         "RollbackReport must have runtime_stopped field"
+    );
+    assert!(
+        content.contains("unresolved_peers:"),
+        "RollbackReport must have unresolved_peers field"
     );
 }
 
@@ -619,10 +624,15 @@ fn rollback_and_return_merges_verification_before_lifecycle_selection() {
 fn rollback_selective_session_cleanup_uses_staged_ids() {
     let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
 
-    // Rollback should iterate staged session IDs, not abort all sessions
+    // Rollback should iterate staged peers for selective cleanup.
+    // Accept either the old staged_session_ids pattern or the new
+    // stop_staged_peer_activity per-peer pattern (Iteration 75).
     assert!(
-        content.contains("staged_session_ids") || content.contains("created_peers.iter()"),
-        "Rollback must use staged session IDs for selective cleanup"
+        content.contains("staged_session_ids")
+            || content.contains("created_peers.iter()")
+            || content.contains("for peer in &stage.created_peers")
+            || content.contains("stop_staged_peer_activity"),
+        "Rollback must use staged session IDs or per-peer helper for selective cleanup"
     );
 }
 
@@ -925,15 +935,13 @@ fn topology_snapshot_existing_peer_preserves_state() {
         connection_inserted: true,
         session_task_id: Some("sess-2".to_string()),
         dht_mutation: DhtPeerMutation::Previous(DhtPeerSnapshot {
-            node_id: "node-2".to_string(),
-            address: "5.6.7.8:443".to_string(),
-            port: 443,
-            role: MeshNodeRole::GLOBAL,
-            geo: None,
-            latency_ms: None,
-            is_trusted: false,
-            pow_nonce: None,
-            public_key: None,
+            contact: PeerContact::new(
+                NodeId::from_node_id_string("node-2"),
+                "node-2".to_string(),
+                "5.6.7.8".to_string(),
+                443,
+            )
+            .with_global(true),
         }),
         session_generation: 2,
     };
@@ -978,15 +986,13 @@ fn dht_mutation_created_for_new_peer() {
 #[test]
 fn dht_mutation_previous_preserves_prior_state() {
     let snapshot = DhtPeerSnapshot {
-        node_id: "node-1".to_string(),
-        address: "1.2.3.4:443".to_string(),
-        port: 443,
-        role: MeshNodeRole::EDGE,
-        geo: None,
-        latency_ms: Some(12),
-        is_trusted: false,
-        pow_nonce: None,
-        public_key: None,
+        contact: PeerContact::new(
+            NodeId::from_node_id_string("node-1"),
+            "node-1".to_string(),
+            "1.2.3.4".to_string(),
+            443,
+        )
+        .with_latency(12),
     };
     let resource = StagedPeerResource {
         session_id: "sess-1".to_string(),
@@ -999,10 +1005,10 @@ fn dht_mutation_previous_preserves_prior_state() {
     };
     match &resource.dht_mutation {
         DhtPeerMutation::Previous(s) => {
-            assert_eq!(s.node_id, "node-1");
-            assert_eq!(s.address, "1.2.3.4:443");
-            assert_eq!(s.port, 443);
-            assert_eq!(s.latency_ms, Some(12));
+            assert_eq!(s.contact.node_id_string, "node-1");
+            assert_eq!(s.contact.address, "1.2.3.4");
+            assert_eq!(s.contact.port, 443);
+            assert_eq!(s.contact.latency_ms, Some(12));
         }
         _ => panic!("Expected Previous variant"),
     }
@@ -1011,15 +1017,15 @@ fn dht_mutation_previous_preserves_prior_state() {
 #[test]
 fn dht_mutation_previous_in_place_preserves_state() {
     let snapshot = DhtPeerSnapshot {
-        node_id: "node-2".to_string(),
-        address: "5.6.7.8:8080".to_string(),
-        port: 8080,
-        role: MeshNodeRole::GLOBAL,
-        geo: None,
-        latency_ms: None,
-        is_trusted: true,
-        pow_nonce: Some(99),
-        public_key: Some(vec![10, 20, 30]),
+        contact: PeerContact::new(
+            NodeId::from_node_id_string("node-2"),
+            "node-2".to_string(),
+            "5.6.7.8".to_string(),
+            8080,
+        )
+        .with_global(true)
+        .with_trusted(true)
+        .with_pow(99, vec![10, 20, 30]),
     };
     let resource = StagedPeerResource {
         session_id: "sess-2".to_string(),
@@ -1213,10 +1219,11 @@ async fn test_recovery_applies_residue_before_clearing() {
         "recover_failed_state must iterate residue peers"
     );
 
-    // Should call restore_peer_logical_state
+    // Should call restore_and_verify_peer_logical_state or restore_peer_logical_state
     assert!(
-        recovery_fn.contains("restore_peer_logical_state"),
-        "recover_failed_state must use restore_peer_logical_state for residue"
+        recovery_fn.contains("restore_and_verify_peer_logical_state")
+            || recovery_fn.contains("restore_peer_logical_state"),
+        "recover_failed_state must use restore_and_verify_peer_logical_state or restore_peer_logical_state for residue"
     );
 
     // Should retain unresolved residue on error
@@ -1396,27 +1403,28 @@ async fn test_stale_accept_report_suppression() {
 
 #[tokio::test]
 async fn test_dht_peer_snapshot_has_all_contact_fields() {
-    // Verify DhtPeerSnapshot captures all PeerContact fields (Iteration 74, Phase 51).
-    let snapshot = DhtPeerSnapshot {
-        node_id: "test-node".to_string(),
-        address: "10.0.0.1:443".to_string(),
-        port: 443,
-        role: MeshNodeRole::GLOBAL,
-        geo: None,
-        latency_ms: Some(42),
-        is_trusted: true,
-        pow_nonce: Some(12345),
-        public_key: Some(vec![1, 2, 3, 4]),
-    };
+    // Verify DhtPeerSnapshot stores complete PeerContact (Iteration 75, Phase 3).
+    let contact = PeerContact::new(
+        NodeId::from_node_id_string("test-node"),
+        "test-node".to_string(),
+        "10.0.0.1".to_string(),
+        443,
+    )
+    .with_global(true)
+    .with_trusted(true)
+    .with_latency(42)
+    .with_pow(12345, vec![1, 2, 3, 4]);
+    let snapshot = DhtPeerSnapshot { contact };
 
-    // Verify all fields are accessible
-    assert_eq!(snapshot.node_id, "test-node");
-    assert_eq!(snapshot.address, "10.0.0.1:443");
-    assert_eq!(snapshot.port, 443);
-    assert!(snapshot.is_trusted);
-    assert_eq!(snapshot.latency_ms, Some(42));
-    assert_eq!(snapshot.pow_nonce, Some(12345));
-    assert_eq!(snapshot.public_key, Some(vec![1, 2, 3, 4]));
+    // Verify all fields are accessible via the contact
+    assert_eq!(snapshot.contact.node_id_string, "test-node");
+    assert_eq!(snapshot.contact.address, "10.0.0.1");
+    assert_eq!(snapshot.contact.port, 443);
+    assert!(snapshot.contact.is_global);
+    assert!(snapshot.contact.is_trusted);
+    assert_eq!(snapshot.contact.latency_ms, Some(42));
+    assert_eq!(snapshot.contact.pow_nonce, Some(12345));
+    assert_eq!(snapshot.contact.public_key, Some(vec![1, 2, 3, 4]));
 }
 
 #[tokio::test]
@@ -1466,21 +1474,617 @@ async fn test_peer_state_snapshot_preserves_all_fields() {
 fn test_dht_snapshot_covers_peer_contact_fields() {
     let snapshot_source = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
 
-    // PeerContact fields that DhtPeerSnapshot should capture
-    let required_fields = [
-        "address",
-        "port",
-        "is_trusted",
-        "latency_ms",
-        "pow_nonce",
-        "public_key",
-    ];
+    // DhtPeerSnapshot must store a complete PeerContact
+    assert!(
+        snapshot_source.contains("pub contact:"),
+        "DhtPeerSnapshot must have a 'contact' field storing the complete PeerContact"
+    );
+}
 
-    for field in required_fields {
+// ── Phase 11: Topology Secondary-Index Tests (Iteration 75) ────────────────
+
+/// Helper to create a non-default PeerState with distinct values for every field.
+fn make_distinct_peer_state(node_id: &str, is_global: bool) -> PeerState {
+    PeerState {
+        node_id: node_id.to_string(),
+        address: "10.99.88.77:8443".to_string(),
+        role: if is_global {
+            MeshNodeRole::GLOBAL
+        } else {
+            MeshNodeRole::EDGE
+        },
+        status: PeerStatus::Healthy,
+        capabilities: synvoid_mesh::protocol::MeshCapabilities {
+            can_route: true,
+            can_proxy: false,
+            can_serve_dns: false,
+            is_global: false,
+            waf_enabled: false,
+            max_hops: 3,
+            supported_services: vec!["svc-a".to_string()],
+            preferred_transport: None,
+            supported_protocols: vec!["http".to_string()],
+        },
+        upstreams: ["upstream-a".to_string(), "upstream-b".to_string()]
+            .into_iter()
+            .collect(),
+        latency_ms: Some(137),
+        first_seen: 9001,
+        last_seen: 9002,
+        is_global,
+        is_trusted: true,
+        connection_handle: None,
+        geo: Some("eu-west-3".to_string()),
+        audit_successes: 42,
+        audit_failures: 3,
+        performance_audit_successes: 21,
+        performance_audit_failures: 1,
+        quic_port: Some(8443),
+        wireguard_port: Some(51820),
+        advertised_port: Some(9443),
+        previous_reputation: Some(0.73),
+    }
+}
+
+/// Global to non-global restoration: prior state non-global, startup writes global,
+/// rollback restores prior, assert absent from global_nodes.
+#[tokio::test]
+async fn test_restore_global_to_non_global_removes_from_global_nodes() {
+    let transport = make_test_transport();
+
+    // Add a non-global peer
+    let peer = make_distinct_peer_state("node-restore-1", false);
+    transport
+        .get_topology()
+        .restore_peer_state(peer.clone())
+        .await;
+
+    // Verify NOT in global_nodes (non-global)
+    let globals = transport.get_topology().get_global_nodes().await;
+    assert!(
+        !globals.contains(&"node-restore-1".to_string()),
+        "non-global peer should not be in global_nodes after restore"
+    );
+
+    // Now simulate startup writing a global version
+    let mut global_peer = peer.clone();
+    global_peer.is_global = true;
+    transport
+        .get_topology()
+        .restore_peer_state(global_peer)
+        .await;
+
+    let globals = transport.get_topology().get_global_nodes().await;
+    assert!(
+        globals.contains(&"node-restore-1".to_string()),
+        "global peer should be in global_nodes after restore"
+    );
+
+    // Rollback restores the original non-global state
+    transport
+        .get_topology()
+        .restore_peer_state(peer.clone())
+        .await;
+
+    let globals = transport.get_topology().get_global_nodes().await;
+    assert!(
+        !globals.contains(&"node-restore-1".to_string()),
+        "after rollback, non-global peer must be removed from global_nodes"
+    );
+}
+
+/// New global peer removal: startup adds new global peer, rollback removes it,
+/// assert absent from both primary store and global_nodes.
+#[tokio::test]
+async fn test_rollback_removes_new_global_peer_entirely() {
+    let transport = make_test_transport();
+
+    // Simulate startup adding a brand new global peer (no prior state)
+    let peer = make_distinct_peer_state("node-new-global", true);
+    transport.get_topology().restore_peer_state(peer).await;
+
+    // Verify present in both primary store and global_nodes
+    assert!(
+        transport
+            .get_topology()
+            .get_peer("node-new-global")
+            .await
+            .is_some(),
+        "new global peer should exist in primary store"
+    );
+    let globals = transport.get_topology().get_global_nodes().await;
+    assert!(
+        globals.contains(&"node-new-global".to_string()),
+        "new global peer should be in global_nodes"
+    );
+
+    // Rollback removes it (previous_topology was None -> peer_absent)
+    transport
+        .get_topology()
+        .remove_peer("node-new-global")
+        .await;
+
+    assert!(
+        transport
+            .get_topology()
+            .get_peer("node-new-global")
+            .await
+            .is_none(),
+        "after rollback removal, peer must be absent from primary store"
+    );
+    let globals = transport.get_topology().get_global_nodes().await;
+    assert!(
+        !globals.contains(&"node-new-global".to_string()),
+        "after rollback removal, peer must be absent from global_nodes"
+    );
+}
+
+/// Non-global to global restoration: prior state global, startup writes non-global,
+/// rollback restores prior, assert global_nodes contains the node.
+#[tokio::test]
+async fn test_restore_non_global_to_global_adds_to_global_nodes() {
+    let transport = make_test_transport();
+
+    // Add a global peer
+    let peer = make_distinct_peer_state("node-restore-2", true);
+    transport
+        .get_topology()
+        .restore_peer_state(peer.clone())
+        .await;
+
+    let globals = transport.get_topology().get_global_nodes().await;
+    assert!(
+        globals.contains(&"node-restore-2".to_string()),
+        "global peer should be in global_nodes after restore"
+    );
+
+    // Simulate startup writing a non-global version
+    let mut non_global_peer = peer.clone();
+    non_global_peer.is_global = false;
+    transport
+        .get_topology()
+        .restore_peer_state(non_global_peer)
+        .await;
+
+    let globals = transport.get_topology().get_global_nodes().await;
+    assert!(
+        !globals.contains(&"node-restore-2".to_string()),
+        "non-global peer should not be in global_nodes after restore"
+    );
+
+    // Rollback restores the original global state
+    transport
+        .get_topology()
+        .restore_peer_state(peer.clone())
+        .await;
+
+    let globals = transport.get_topology().get_global_nodes().await;
+    assert!(
+        globals.contains(&"node-restore-2".to_string()),
+        "after rollback, global peer must be re-added to global_nodes"
+    );
+}
+
+/// Complete field equality: use distinct non-default values for every snapshotted
+/// field, restore, and assert exact restoration via topology_matches_snapshot().
+#[tokio::test]
+async fn test_complete_field_equality_after_rollback() {
+    let transport = make_test_transport();
+
+    let original = make_distinct_peer_state("node-complete", true);
+    let snapshot = StagedTopologySnapshot {
+        peer_state: original.clone(),
+    };
+
+    // Restore the original state
+    transport.get_topology().restore_peer_state(original).await;
+
+    // Verify exact match via topology_matches_snapshot
+    assert!(
+        transport
+            .get_topology()
+            .topology_matches_snapshot(&snapshot)
+            .await,
+        "topology_matches_snapshot must return true after exact restoration"
+    );
+
+    // Verify all fields individually for clarity
+    let current = transport
+        .get_topology()
+        .get_peer("node-complete")
+        .await
+        .unwrap();
+    assert_eq!(current.node_id, "node-complete");
+    assert_eq!(current.address, "10.99.88.77:8443");
+    assert_eq!(current.role, MeshNodeRole::GLOBAL);
+    assert_eq!(current.status, PeerStatus::Healthy);
+    assert!(current.capabilities.can_route);
+    assert!(!current.capabilities.can_proxy);
+    assert!(!current.capabilities.can_serve_dns);
+    assert!(!current.capabilities.is_global);
+    assert!(!current.capabilities.waf_enabled);
+    assert_eq!(current.capabilities.max_hops, 3);
+    assert_eq!(
+        current.capabilities.supported_services,
+        vec!["svc-a".to_string()]
+    );
+    assert!(current.capabilities.preferred_transport.is_none());
+    assert_eq!(
+        current.capabilities.supported_protocols,
+        vec!["http".to_string()]
+    );
+    assert!(current.upstreams.contains("upstream-a"));
+    assert!(current.upstreams.contains("upstream-b"));
+    assert_eq!(current.latency_ms, Some(137));
+    assert_eq!(current.first_seen, 9001);
+    assert_eq!(current.last_seen, 9002);
+    assert!(current.is_global);
+    assert!(current.is_trusted);
+    assert_eq!(current.geo, Some("eu-west-3".to_string()));
+    assert_eq!(current.audit_successes, 42);
+    assert_eq!(current.audit_failures, 3);
+    assert_eq!(current.performance_audit_successes, 21);
+    assert_eq!(current.performance_audit_failures, 1);
+    assert_eq!(current.quic_port, Some(8443));
+    assert_eq!(current.wireguard_port, Some(51820));
+    assert_eq!(current.advertised_port, Some(9443));
+    assert_eq!(current.previous_reputation, Some(0.73));
+
+    // Verify global_nodes membership
+    let globals = transport.get_topology().get_global_nodes().await;
+    assert!(
+        globals.contains(&"node-complete".to_string()),
+        "global_nodes must contain the node after restore"
+    );
+}
+
+/// Verify topology_matches_snapshot correctly detects non-matching global_nodes.
+#[tokio::test]
+async fn test_topology_matches_snapshot_detects_global_mismatch() {
+    let transport = make_test_transport();
+
+    // Create a global peer
+    let peer = make_distinct_peer_state("node-mismatch", true);
+    transport.get_topology().restore_peer_state(peer).await;
+
+    // Create snapshot with is_global=false (mismatch with actual global_nodes state)
+    let mut snapshot_peer = make_distinct_peer_state("node-mismatch", false);
+    snapshot_peer.is_global = false;
+    let snapshot = StagedTopologySnapshot {
+        peer_state: snapshot_peer,
+    };
+
+    // Should NOT match because global_nodes has the node but snapshot says non-global
+    assert!(
+        !transport
+            .get_topology()
+            .topology_matches_snapshot(&snapshot)
+            .await,
+        "topology_matches_snapshot must detect global_nodes mismatch"
+    );
+}
+
+/// Verify topology_matches_snapshot detects capability mismatches.
+#[tokio::test]
+async fn test_topology_matches_snapshot_detects_capability_mismatch() {
+    let transport = make_test_transport();
+
+    // Restore a peer with specific capabilities
+    let peer = make_distinct_peer_state("node-caps", false);
+    transport.get_topology().restore_peer_state(peer).await;
+
+    // Create snapshot with different capabilities
+    let mut snapshot_peer = make_distinct_peer_state("node-caps", false);
+    snapshot_peer.capabilities = synvoid_mesh::protocol::MeshCapabilities {
+        can_route: false,
+        can_proxy: true,
+        can_serve_dns: false,
+        is_global: false,
+        waf_enabled: false,
+        max_hops: 0,
+        supported_services: Vec::new(),
+        preferred_transport: None,
+        supported_protocols: Vec::new(),
+    };
+    let snapshot = StagedTopologySnapshot {
+        peer_state: snapshot_peer,
+    };
+
+    assert!(
+        !transport
+            .get_topology()
+            .topology_matches_snapshot(&snapshot)
+            .await,
+        "topology_matches_snapshot must detect capability mismatch"
+    );
+}
+
+/// Verify topology_matches_snapshot detects timestamp mismatches.
+#[tokio::test]
+async fn test_topology_matches_snapshot_detects_timestamp_mismatch() {
+    let transport = make_test_transport();
+
+    let peer = make_distinct_peer_state("node-ts", false);
+    transport.get_topology().restore_peer_state(peer).await;
+
+    // Create snapshot with different timestamps
+    let mut snapshot_peer = make_distinct_peer_state("node-ts", false);
+    snapshot_peer.first_seen = 99999;
+    snapshot_peer.last_seen = 88888;
+    let snapshot = StagedTopologySnapshot {
+        peer_state: snapshot_peer,
+    };
+
+    assert!(
+        !transport
+            .get_topology()
+            .topology_matches_snapshot(&snapshot)
+            .await,
+        "topology_matches_snapshot must detect timestamp mismatch"
+    );
+}
+
+// ── Phase 16: Late-Write Race Test (Iteration 75, Part C) ────────────────────
+
+/// Verify that rollback stops peer sessions BEFORE logical restoration.
+///
+/// The Iteration 75 invariant: no peer/session/auxiliary task that can
+/// mutate topology or DHT remains live before restoration begins. This
+/// test checks the structural ordering in rollback_startup() to ensure
+/// session teardown appears before `restore_peer_logical_state`.
+#[test]
+fn test_rollback_stops_sessions_before_logical_restoration() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let rollback_body = extract_function(&content, "rollback_startup");
+
+    // stop_staged_peer_activity (session teardown) must appear before
+    // restore_peer_logical_state (logical restoration)
+    let idx_session_teardown = rollback_body
+        .find("stop_staged_peer_activity")
+        .expect("rollback_startup must call stop_staged_peer_activity");
+    let idx_restore = rollback_body
+        .find("restore_and_verify_peer_logical_state")
+        .or_else(|| rollback_body.find("restore_peer_logical_state"))
+        .expect("rollback_startup must call restore_and_verify_peer_logical_state");
+
+    assert!(
+        idx_session_teardown < idx_restore,
+        "Session/auxiliary teardown (stop_staged_peer_activity at pos {idx_session_teardown}) \
+         must occur BEFORE logical restoration (pos {idx_restore}). \
+         This is the Iteration 75 invariant: physical teardown before logical restoration."
+    );
+
+    // The session teardown must also appear before the topology/DHT verification
+    let idx_verify_topology = rollback_body
+        .find("topology_matches_snapshot")
+        .unwrap_or(rollback_body.find("peer_absent").unwrap_or(usize::MAX));
+    let idx_verify_dht = rollback_body
+        .find("peer_matches_snapshot")
+        .unwrap_or(usize::MAX);
+    let idx_verification = idx_verify_topology.min(idx_verify_dht);
+
+    if idx_verification < usize::MAX {
         assert!(
-            snapshot_source.contains(&format!("pub {}: ", field)),
-            "DhtPeerSnapshot must have field '{}' to match PeerContact",
-            field
+            idx_session_teardown < idx_verification,
+            "Session/auxiliary teardown must also occur BEFORE topology/DHT verification"
         );
     }
+}
+
+/// Verify that the stop_staged_peer_activity helper exists and handles
+/// auxiliary task cancellation before session drain.
+#[test]
+fn test_stop_staged_peer_activity_cancels_auxiliary_before_session() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    // The helper method must exist
+    assert!(
+        content.contains("fn stop_staged_peer_activity"),
+        "transport.rs must contain stop_staged_peer_activity helper method"
+    );
+
+    let helper_body = extract_function(&content, "stop_staged_peer_activity");
+
+    // Must cancel auxiliary tasks first
+    assert!(
+        helper_body.contains("cancel_auxiliary_tasks_for_sessions"),
+        "stop_staged_peer_activity must cancel auxiliary tasks"
+    );
+
+    // Must remove from peer_sessions
+    assert!(
+        helper_body.contains("sessions.remove") || helper_body.contains("peer_sessions"),
+        "stop_staged_peer_activity must stop peer sessions"
+    );
+
+    // Auxiliary cancellation must appear before session drain in the helper
+    let idx_aux_cancel = helper_body
+        .find("cancel_auxiliary_tasks_for_sessions")
+        .expect("helper must call cancel_auxiliary_tasks_for_sessions");
+    let idx_session_drain = helper_body
+        .find("sessions.remove")
+        .or_else(|| helper_body.find("peer_sessions"))
+        .expect("helper must access peer_sessions");
+
+    assert!(
+        idx_aux_cancel < idx_session_drain,
+        "Auxiliary task cancellation must occur before session drain in stop_staged_peer_activity"
+    );
+}
+
+// ── Phase 17: Auxiliary Late-Write Test (Iteration 75, Part C) ────────────────
+
+/// Verify that rollback terminates auxiliary tasks BEFORE logical restoration.
+///
+/// Auxiliary tasks (e.g., preflight route queries) can read/write topology
+/// and DHT state. They must be cancelled before the topology/DHT restoration
+/// phase to prevent late writes from invalidating restored state.
+#[test]
+fn test_rollback_cancels_auxiliary_tasks_before_restoration() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let rollback_body = extract_function(&content, "rollback_startup");
+
+    // cancel_auxiliary_tasks_for_sessions must appear via stop_staged_peer_activity
+    // in the rollback body. Find the stop_staged_peer_activity call and verify
+    // auxiliary cancellation is part of the teardown before restoration.
+    let idx_teardown = rollback_body
+        .find("stop_staged_peer_activity")
+        .expect("rollback_startup must call stop_staged_peer_activity for auxiliary cancellation");
+    let idx_restore = rollback_body
+        .find("restore_and_verify_peer_logical_state")
+        .or_else(|| rollback_body.find("restore_peer_logical_state"))
+        .expect("rollback_startup must call restore_and_verify_peer_logical_state");
+
+    assert!(
+        idx_teardown < idx_restore,
+        "stop_staged_peer_activity (which cancels auxiliary tasks) must appear \
+         BEFORE restore_and_verify_peer_logical_state in rollback_startup"
+    );
+
+    // Verify the stop_staged_peer_activity helper itself cancels auxiliary tasks
+    let helper_body = extract_function(&content, "stop_staged_peer_activity");
+    assert!(
+        helper_body.contains("cancel_auxiliary_tasks_for_sessions"),
+        "stop_staged_peer_activity must cancel auxiliary tasks for the session"
+    );
+
+    // Verify auxiliary cancellation happens before session handle drain
+    let idx_aux = helper_body
+        .find("cancel_auxiliary_tasks_for_sessions")
+        .unwrap();
+    let idx_handle = helper_body
+        .find("handle.abort()")
+        .or_else(|| helper_body.find("tokio::select!"))
+        .unwrap_or(usize::MAX);
+
+    assert!(
+        idx_aux < idx_handle,
+        "Auxiliary task cancellation (pos {idx_aux}) must precede session handle \
+         operations (pos {idx_handle}) in stop_staged_peer_activity"
+    );
+}
+
+// ── Part D: Verification-Failure Residue Retention Tests ────────────────────
+
+/// Verify that rollback_startup uses restore_and_verify_peer_logical_state()
+/// (combined restore + verify) rather than separate restore and verify loops.
+#[test]
+fn test_rollback_uses_combined_restore_and_verify() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let rollback_body = extract_function(&content, "rollback_startup");
+
+    // rollback_startup must call restore_and_verify_peer_logical_state
+    assert!(
+        rollback_body.contains("restore_and_verify_peer_logical_state"),
+        "rollback_startup must use restore_and_verify_peer_logical_state (combined restore + verify)"
+    );
+
+    // Must NOT have separate verify logic for topology/DHT in rollback_startup
+    // (the combined helper handles verification internally)
+    // Allow topology_matches_snapshot/peer_absent only if they appear inside
+    // the combined helper, not in rollback_startup directly
+    let idx_combined = rollback_body
+        .find("restore_and_verify_peer_logical_state")
+        .unwrap();
+    let remaining_after_combined = &rollback_body[idx_combined..];
+    // The only topology/DHT checks should be within the combined helper call,
+    // not separate loops
+    assert!(
+        !remaining_after_combined.contains("for peer in &stage.created_peers")
+            || remaining_after_combined.matches("for peer in").count() <= 1,
+        "rollback_startup should not have a second loop over created_peers for separate verification"
+    );
+}
+
+/// Verify that rollback_startup tracks unresolved peers on verification failure.
+#[test]
+fn test_rollback_tracks_unresolved_peers() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let rollback_body = extract_function(&content, "rollback_startup");
+
+    // Must push to report.unresolved_peers on error
+    assert!(
+        rollback_body.contains("report.unresolved_peers.push"),
+        "rollback_startup must push failed peers to report.unresolved_peers"
+    );
+}
+
+/// Verify that rollback_and_return stores only unresolved peers in residue.
+#[test]
+fn test_rollback_and_return_stores_only_unresolved_in_residue() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    // rollback_and_return must use rollback.unresolved_peers for residue, not stage.created_peers
+    assert!(
+        content.contains("rollback.unresolved_peers.clone()"),
+        "rollback_and_return must use rollback.unresolved_peers for residue"
+    );
+    // Should NOT store all staged peers
+    assert!(
+        !content.contains("peers: stage.created_peers.clone()"),
+        "rollback_and_return must NOT store all staged peers in residue"
+    );
+}
+
+/// Verify that recover_failed_state uses restore_and_verify_peer_logical_state().
+#[test]
+fn test_recovery_uses_combined_restore_and_verify() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let recovery_fn = extract_function(&content, "recover_failed_state");
+
+    assert!(
+        recovery_fn.contains("restore_and_verify_peer_logical_state"),
+        "recover_failed_state must use restore_and_verify_peer_logical_state"
+    );
+}
+
+/// Verify that recover_failed_state retains unresolved peers in residue.
+#[test]
+fn test_recovery_retains_unresolved_peers() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let recovery_fn = extract_function(&content, "recover_failed_state");
+
+    // Must track remaining_peers
+    assert!(
+        recovery_fn.contains("remaining_peers"),
+        "recover_failed_state must track remaining_peers"
+    );
+
+    // Must re-store FailedStartupResidue with remaining peers
+    assert!(
+        recovery_fn.contains("FailedStartupResidue {"),
+        "recover_failed_state must reconstruct FailedStartupResidue"
+    );
+}
+
+/// Verify that recover_failed_state deduplicates errors.
+#[test]
+fn test_recovery_deduplicates_errors() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let recovery_fn = extract_function(&content, "recover_failed_state");
+
+    assert!(
+        recovery_fn.contains("remaining_errors.contains(&error)"),
+        "recover_failed_state must deduplicate errors with contains check"
+    );
+}
+
+/// Verify that RollbackReport has unresolved_peers field.
+#[test]
+fn test_rollback_report_has_unresolved_peers() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+    assert!(
+        content.contains("pub unresolved_peers: Vec<StagedPeerResource>"),
+        "RollbackReport must have pub unresolved_peers field"
+    );
+}
+
+/// Verify that restore_and_verify_peer_logical_state exists as a method.
+#[test]
+fn test_restore_and_verify_method_exists() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        content.contains("fn restore_and_verify_peer_logical_state"),
+        "transport.rs must contain restore_and_verify_peer_logical_state method"
+    );
 }

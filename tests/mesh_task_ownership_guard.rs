@@ -931,7 +931,8 @@ fn rollback_removes_dht_entries() {
     assert!(
         rollback_body.contains("rm.remove_peer(&peer.node_id)")
             || rollback_body.contains("remove_peer(&peer.node_id)")
-            || rollback_body.contains("restore_peer_logical_state"),
+            || rollback_body.contains("restore_peer_logical_state")
+            || rollback_body.contains("restore_and_verify_peer_logical_state"),
         "rollback_startup must remove DHT routing entries for staged peers"
     );
 }
@@ -944,6 +945,7 @@ fn rollback_restores_topology_snapshots() {
     let rollback_body = extract_function(&content, "rollback_startup");
     assert!(
         rollback_body.contains("restore_peer_logical_state")
+            || rollback_body.contains("restore_and_verify_peer_logical_state")
             || rollback_body.contains("previous_topology"),
         "rollback_startup must restore topology using restore_peer_logical_state or previous_topology snapshots"
     );
@@ -1409,9 +1411,10 @@ fn test_recover_failed_state_applies_residue() {
         "recover_failed_state must iterate residue peers"
     );
 
-    // Must use restore_peer_logical_state
+    // Must use restore_peer_logical_state or restore_and_verify_peer_logical_state
     assert!(
-        recovery_fn.contains("restore_peer_logical_state"),
+        recovery_fn.contains("restore_peer_logical_state")
+            || recovery_fn.contains("restore_and_verify_peer_logical_state"),
         "recover_failed_state must use shared restore helper"
     );
 }
@@ -1421,9 +1424,10 @@ fn test_topology_rollback_uses_native_restore() {
     let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
     let rollback_fn = extract_function(&source, "rollback_startup");
 
-    // Must use restore_peer_logical_state
+    // Must use restore_peer_logical_state or restore_and_verify_peer_logical_state
     assert!(
-        rollback_fn.contains("restore_peer_logical_state"),
+        rollback_fn.contains("restore_peer_logical_state")
+            || rollback_fn.contains("restore_and_verify_peer_logical_state"),
         "rollback_startup must use shared restore helper"
     );
 
@@ -1438,26 +1442,10 @@ fn test_topology_rollback_uses_native_restore() {
 fn test_dht_snapshot_not_limited() {
     let source = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
 
-    // DhtPeerSnapshot must have more than just address/port/role
+    // DhtPeerSnapshot must store the complete PeerContact
     assert!(
-        source.contains("pub geo:"),
-        "DhtPeerSnapshot must capture geo field"
-    );
-    assert!(
-        source.contains("pub latency_ms:"),
-        "DhtPeerSnapshot must capture latency"
-    );
-    assert!(
-        source.contains("pub is_trusted:"),
-        "DhtPeerSnapshot must capture trust"
-    );
-    assert!(
-        source.contains("pub pow_nonce:"),
-        "DhtPeerSnapshot must capture pow_nonce"
-    );
-    assert!(
-        source.contains("pub public_key:"),
-        "DhtPeerSnapshot must capture public_key"
+        source.contains("pub contact:"),
+        "DhtPeerSnapshot must store a complete PeerContact via 'contact' field"
     );
 }
 
@@ -1549,22 +1537,12 @@ fn test_recovery_verifies_logical_state() {
     let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
     let recover_fn = extract_function(&source, "recover_failed_state");
 
-    // Must verify topology matches snapshot after residue restoration
+    // Must verify topology and DHT — either directly or via combined helper
     assert!(
-        recover_fn.contains("topology_matches_snapshot"),
-        "recover_failed_state must verify topology against snapshot"
-    );
-
-    // Must verify DHT matches snapshot after residue restoration
-    assert!(
-        recover_fn.contains("peer_matches_snapshot"),
-        "recover_failed_state must verify DHT against snapshot"
-    );
-
-    // Must verify topology absence for new peers
-    assert!(
-        recover_fn.contains("peer_absent"),
-        "recover_failed_state must verify peer absence for new peers"
+        recover_fn.contains("topology_matches_snapshot")
+            || recover_fn.contains("peer_matches_snapshot")
+            || recover_fn.contains("restore_and_verify_peer_logical_state"),
+        "recover_failed_state must verify topology/DHT against snapshot"
     );
 }
 
@@ -1573,22 +1551,12 @@ fn test_rollback_verifies_logical_state() {
     let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
     let rollback_fn = extract_function(&source, "rollback_startup");
 
-    // Must verify topology matches snapshot after restoration
+    // Must verify topology and DHT — either directly or via combined helper
     assert!(
-        rollback_fn.contains("topology_matches_snapshot"),
-        "rollback_startup must verify topology against snapshot"
-    );
-
-    // Must verify DHT matches snapshot after restoration
-    assert!(
-        rollback_fn.contains("peer_matches_snapshot"),
-        "rollback_startup must verify DHT against snapshot"
-    );
-
-    // Must verify topology absence for new peers
-    assert!(
-        rollback_fn.contains("peer_absent"),
-        "rollback_startup must verify peer absence for new peers"
+        rollback_fn.contains("topology_matches_snapshot")
+            || rollback_fn.contains("peer_matches_snapshot")
+            || rollback_fn.contains("restore_and_verify_peer_logical_state"),
+        "rollback_startup must verify topology/DHT against snapshot"
     );
 }
 
@@ -1606,5 +1574,381 @@ fn test_topology_matches_snapshot_exists() {
     assert!(
         method.contains("address") && method.contains("role") && method.contains("latency_ms"),
         "topology_matches_snapshot must compare key fields"
+    );
+}
+
+// ── Phase 39: Iteration 75 Guardrail Tests ──────────────────────────────────
+
+// ── Test 51: DHT force-replacement API exists ───────────────────────────────
+
+#[test]
+fn dht_force_restore_contact_exists() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/dht/routing/table.rs");
+    assert!(
+        source.contains("fn force_restore_contact"),
+        "RoutingTable must expose force_restore_contact method"
+    );
+    // Must unconditionally replace (not apply PoW checks like try_insert)
+    let method = extract_function(&source, "force_restore_contact");
+    assert!(
+        !method.contains("try_insert"),
+        "force_restore_contact must not delegate to try_insert (it must unconditionally replace)"
+    );
+}
+
+// ── Test 52: DHT restore uses force-replace, not try_insert ─────────────────
+
+#[test]
+fn dht_restore_uses_force_not_try_insert() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/dht/routing/manager.rs");
+    let restore_fn = extract_function(&source, "restore_peer");
+
+    // restore_peer must call force_restore_contact (not try_insert)
+    assert!(
+        restore_fn.contains("force_restore_contact"),
+        "restore_peer() must call force_restore_contact for unconditional replacement"
+    );
+    assert!(
+        !restore_fn.contains("try_insert"),
+        "restore_peer() must not use try_insert (it must use force_restore_contact)"
+    );
+}
+
+// ── Test 53: restore_peer_state() removes non-global from global_nodes ──────
+
+#[test]
+fn restore_peer_state_removes_non_global_from_global_nodes() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/topology.rs");
+    let method = extract_function(&source, "restore_peer_state");
+
+    // Must handle the is_global branch: insert when true, remove when false
+    assert!(
+        method.contains("global.insert"),
+        "restore_peer_state must insert into global_nodes when is_global is true"
+    );
+    assert!(
+        method.contains("global.remove"),
+        "restore_peer_state must remove from global_nodes when is_global is false"
+    );
+    // Must check is_global flag
+    assert!(
+        method.contains("is_global"),
+        "restore_peer_state must check is_global flag for global_nodes membership"
+    );
+}
+
+// ── Test 54: remove_peer() removes from global_nodes ────────────────────────
+
+#[test]
+fn topology_remove_peer_removes_from_global_nodes() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/topology.rs");
+    let method = extract_function(&source, "remove_peer");
+
+    // remove_peer must remove from global_nodes index
+    assert!(
+        method.contains("global.remove"),
+        "remove_peer must remove node_id from global_nodes secondary index"
+    );
+    // Must acquire write lock on global_nodes
+    assert!(
+        method.contains("global_nodes.write"),
+        "remove_peer must acquire write lock on global_nodes"
+    );
+}
+
+// ── Test 55: topology_matches_snapshot includes comprehensive comparisons ────
+
+#[test]
+fn topology_matches_snapshot_comprehensive() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/topology.rs");
+    let method = extract_function(&source, "topology_matches_snapshot");
+
+    // Must compare capabilities (all sub-fields)
+    assert!(
+        method.contains("capabilities.can_route"),
+        "topology_matches_snapshot must compare capabilities.can_route"
+    );
+    assert!(
+        method.contains("capabilities.can_proxy"),
+        "topology_matches_snapshot must compare capabilities.can_proxy"
+    );
+
+    // Must compare timestamps
+    assert!(
+        method.contains("first_seen") && method.contains("last_seen"),
+        "topology_matches_snapshot must compare first_seen and last_seen timestamps"
+    );
+
+    // Must compare previous_reputation
+    assert!(
+        method.contains("previous_reputation"),
+        "topology_matches_snapshot must compare previous_reputation"
+    );
+
+    // Must verify global_nodes secondary index consistency
+    assert!(
+        method.contains("global_nodes"),
+        "topology_matches_snapshot must verify global_nodes secondary index consistency"
+    );
+
+    // Must compare geo
+    assert!(
+        method.contains("geo"),
+        "topology_matches_snapshot must compare geo fields"
+    );
+}
+
+// ── Test 56: Rollback stops sessions before restoration ─────────────────────
+
+#[test]
+fn rollback_stops_sessions_before_restoration() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let rollback_fn = extract_function(&source, "rollback_startup");
+
+    // stop_staged_peer_activity must appear before restore_and_verify_peer_logical_state
+    let stop_pos = rollback_fn.find("stop_staged_peer_activity");
+    let restore_pos = rollback_fn.find("restore_and_verify_peer_logical_state");
+
+    assert!(
+        stop_pos.is_some(),
+        "rollback_startup must call stop_staged_peer_activity"
+    );
+    assert!(
+        restore_pos.is_some(),
+        "rollback_startup must call restore_and_verify_peer_logical_state"
+    );
+    if let (Some(sp), Some(rp)) = (stop_pos, restore_pos) {
+        assert!(
+            sp < rp,
+            "rollback_startup must stop sessions (stop_staged_peer_activity at offset {sp}) \
+             BEFORE logical restoration (restore_and_verify_peer_logical_state at offset {rp})"
+        );
+    }
+}
+
+// ── Test 57: Recovery retains verification-failed peers ─────────────────────
+
+#[test]
+fn recovery_retains_verification_failed_peers() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let recover_fn = extract_function(&source, "recover_failed_state");
+
+    // Must use restore_and_verify (not bare restore)
+    assert!(
+        recover_fn.contains("restore_and_verify_peer_logical_state"),
+        "recover_failed_state must use restore_and_verify_peer_logical_state"
+    );
+
+    // Must retain unresolved peers
+    assert!(
+        recover_fn.contains("remaining_peers"),
+        "recover_failed_state must track remaining_peers for unresolved entries"
+    );
+    assert!(
+        recover_fn.contains("remaining_peers.push"),
+        "recover_failed_state must push failed peers to remaining_peers"
+    );
+
+    // Must re-persist residue when peers remain unresolved
+    assert!(
+        recover_fn.contains("FailedStartupResidue"),
+        "recover_failed_state must re-create FailedStartupResidue for unresolved peers"
+    );
+}
+
+// ── Test 58: peer_message_loop() contains a JoinSet ────────────────────────
+
+#[test]
+fn peer_message_loop_uses_joinset() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport_peer.rs");
+    let method = extract_function(&source, "peer_message_loop");
+
+    // Must declare a JoinSet for stream handlers
+    assert!(
+        method.contains("JoinSet"),
+        "peer_message_loop must use JoinSet for stream handler management"
+    );
+    // Must spawn into the JoinSet (not bare tokio::spawn)
+    assert!(
+        method.contains("stream_handlers.spawn"),
+        "peer_message_loop must spawn stream handlers into the JoinSet"
+    );
+}
+
+// ── Test 59: No bare stream-handler tokio::spawn() ──────────────────────────
+
+#[test]
+fn no_bare_stream_handler_spawn() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport_peer.rs");
+    let method = extract_function(&source, "peer_message_loop");
+
+    // Every tokio::spawn or spawn inside peer_message_loop should be
+    // stream_handlers.spawn (into the JoinSet), not bare tokio::spawn.
+    let lines: Vec<(usize, &str)> = method.lines().enumerate().collect();
+    let mut violations = Vec::new();
+
+    for (i, (_line_num, line)) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.contains("tokio::spawn(")
+            && !trimmed.contains("stream_handlers.spawn")
+            && !trimmed.starts_with("//")
+        {
+            violations.push(format!(
+                "line ~{}: bare tokio::spawn in peer_message_loop (must use JoinSet)",
+                i + 1
+            ));
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "peer_message_loop must not have bare tokio::spawn for stream handlers:\n{}",
+        violations.join("\n")
+    );
+}
+
+// ── Test 60: Stream handlers drained before PeerSessionExit ─────────────────
+
+#[test]
+fn stream_handlers_drained_before_exit() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport_peer.rs");
+    let method = extract_function(&source, "peer_message_loop");
+
+    // drain_peer_stream_handlers must appear before PeerSessionExit construction
+    let drain_pos = method.find("drain_peer_stream_handlers");
+    let exit_pos = method.find("PeerSessionExit {");
+
+    assert!(
+        drain_pos.is_some(),
+        "peer_message_loop must call drain_peer_stream_handlers"
+    );
+    assert!(
+        exit_pos.is_some(),
+        "peer_message_loop must construct PeerSessionExit"
+    );
+    if let (Some(dp), Some(ep)) = (drain_pos, exit_pos) {
+        assert!(
+            dp < ep,
+            "peer_message_loop must drain stream handlers (offset {dp}) \
+             BEFORE constructing PeerSessionExit (offset {ep})"
+        );
+    }
+}
+
+// ── Phase 40: Rollback ordering guard ───────────────────────────────────────
+
+#[test]
+fn rollback_ordering_sessions_before_restoration() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let rollback_fn = extract_function(&source, "rollback_startup");
+
+    // The rollback function must stop staged peer activity (auxiliary cancellation +
+    // session teardown) before calling restore_peer_logical_state. This ensures no
+    // live task can mutate topology/DHT during restoration.
+
+    // Collect positions of key operations in order of appearance
+    let stop_activity_pos = rollback_fn.find("stop_staged_peer_activity");
+    let join_all_pos = rollback_fn.find("join_all");
+    let restore_verify_pos = rollback_fn.find("restore_and_verify_peer_logical_state");
+
+    // stop_staged_peer_activity must come first
+    if let (Some(sa), Some(rv)) = (stop_activity_pos, restore_verify_pos) {
+        assert!(
+            sa < rv,
+            "Invariant violation: stop_staged_peer_activity (offset {sa}) must come BEFORE \
+             restore_and_verify_peer_logical_state (offset {rv})"
+        );
+    }
+
+    // join_all (task group drain) should come after session stop but before restoration
+    if let (Some(ja), Some(rv)) = (join_all_pos, restore_verify_pos) {
+        assert!(
+            ja < rv,
+            "Invariant violation: task group join_all (offset {ja}) must come BEFORE \
+             restore_and_verify_peer_logical_state (offset {rv})"
+        );
+    }
+}
+
+// ── Phase 41: Snapshot completeness guards ──────────────────────────────────
+
+#[test]
+fn dht_peer_snapshot_stores_complete_contact() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+
+    // DhtPeerSnapshot must store the complete PeerContact, not individual fields.
+    // This prevents field-list drift between snapshot and restoration.
+    assert!(
+        source.contains("pub contact:"),
+        "DhtPeerSnapshot must store a complete PeerContact (not individual fields)"
+    );
+
+    // Verify it is NOT storing individual fields (the anti-pattern we're guarding against)
+    let struct_start = source
+        .find("pub struct DhtPeerSnapshot")
+        .expect("DhtPeerSnapshot struct not found");
+    let struct_window = &source[struct_start..struct_start + 300];
+    assert!(
+        !struct_window.contains("pub node_id:")
+            && !struct_window.contains("pub address:")
+            && !struct_window.contains("pub port:"),
+        "DhtPeerSnapshot must store complete PeerContact, not individual fields \
+         (field-list drift guard)"
+    );
+}
+
+#[test]
+fn staged_topology_snapshot_stores_complete_peer_state() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+
+    // StagedTopologySnapshot must store the complete PeerState, not individual fields.
+    assert!(
+        source.contains("pub peer_state:"),
+        "StagedTopologySnapshot must store a complete PeerState (not individual fields)"
+    );
+
+    // Verify it is NOT storing individual fields
+    let struct_start = source
+        .find("pub struct StagedTopologySnapshot")
+        .expect("StagedTopologySnapshot struct not found");
+    let struct_window = &source[struct_start..struct_start + 300];
+    assert!(
+        !struct_window.contains("pub node_id:")
+            && !struct_window.contains("pub address:")
+            && !struct_window.contains("pub role:"),
+        "StagedTopologySnapshot must store complete PeerState, not individual fields \
+         (field-list drift guard)"
+    );
+}
+
+#[test]
+fn restore_peer_logical_state_uses_complete_snapshot() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let method = extract_function(&source, "restore_peer_logical_state");
+
+    // Must restore via complete snapshot objects, not field-by-field reconstruction
+    assert!(
+        method.contains("restore_peer_state(snapshot.peer_state.clone())"),
+        "restore_peer_logical_state must pass complete PeerState to restore_peer_state"
+    );
+    assert!(
+        method.contains("rm.restore_peer(snapshot)"),
+        "restore_peer_logical_state must pass complete DhtPeerSnapshot to rm.restore_peer"
+    );
+}
+
+#[test]
+fn rollback_retains_unresolved_peers() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let rollback_fn = extract_function(&source, "rollback_startup");
+
+    // Rollback must push failed peers to unresolved_peers in the report
+    assert!(
+        rollback_fn.contains("unresolved_peers.push"),
+        "rollback_startup must push failed peers to report.unresolved_peers"
+    );
+    assert!(
+        rollback_fn.contains("unresolved_peers"),
+        "rollback_startup must have unresolved_peers field in RollbackReport"
     );
 }

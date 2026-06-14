@@ -354,11 +354,15 @@ pub struct PeerSessionTask {
     pub generation: u64,
 }
 
-/// Snapshot of a peer's topology state before a startup attempt modified it.
+/// Logical topology snapshot capturing the primary `PeerState` before modification.
 ///
-/// Stores the native `PeerState` for exact restoration (Iteration 73, Phase 3).
-/// Previously this stored a lossy `MeshPeerInfo` conversion; now it preserves
-/// the full peer record including audit counts, timestamps, and reputation.
+/// Secondary per-peer metrics (PeerScore, connection_failures, connection_successes,
+/// latency_history, peer_versions, route_stability, bandwidth_trackers) are
+/// intentionally not included — they are operational metrics that naturally
+/// repopulate through normal peer interaction after restoration.
+///
+/// The snapshot is used by startup rollback to restore exact audit counts,
+/// timestamps, reputation, and all primary `PeerState` fields.
 #[derive(Debug, Clone)]
 pub struct StagedTopologySnapshot {
     /// The complete peer state before modification.
@@ -409,6 +413,8 @@ pub struct RollbackReport {
     pub peer_sessions_failed: usize,
     /// Whether the runtime was marked as stopped during rollback.
     pub runtime_stopped: bool,
+    /// Peers whose restoration or verification failed — retained in residue for retry.
+    pub unresolved_peers: Vec<StagedPeerResource>,
 }
 
 impl Default for RollbackReport {
@@ -424,6 +430,7 @@ impl Default for RollbackReport {
             peer_sessions_aborted: 0,
             peer_sessions_failed: 0,
             runtime_stopped: false,
+            unresolved_peers: Vec::new(),
         }
     }
 }
@@ -529,28 +536,12 @@ pub enum DhtPeerMutation {
 
 /// Complete snapshot of a DHT peer's routing state before mutation.
 ///
-/// Stores all mutable fields from `PeerContact` for exact restoration
-/// on rollback (Iteration 74, Phase 9).
+/// Stores the complete `PeerContact` for exact restoration on rollback.
+/// The contact carries all fields natively, avoiding lossy conversions.
 #[derive(Debug, Clone)]
 pub struct DhtPeerSnapshot {
-    /// Node ID string for routing table key.
-    pub node_id: String,
-    /// Network address.
-    pub address: String,
-    /// Port number.
-    pub port: u16,
-    /// Node role (Global/Edge).
-    pub role: crate::config::MeshNodeRole,
-    /// Geographic routing info.
-    pub geo: Option<crate::dht::routing::contact::GeoInfo>,
-    /// Latency measurement in milliseconds.
-    pub latency_ms: Option<u32>,
-    /// Whether the node is trusted.
-    pub is_trusted: bool,
-    /// Proof-of-work nonce (edge nodes).
-    pub pow_nonce: Option<u64>,
-    /// Public key bytes.
-    pub public_key: Option<Vec<u8>>,
+    /// The complete DHT routing contact for exact restoration.
+    pub contact: crate::dht::routing::contact::PeerContact,
 }
 
 /// Metadata for a peer session exit, used by the session reaper (Iteration 73, Phase 15-16).
@@ -679,6 +670,21 @@ impl RecoveryVerification {
     pub fn is_clean(&self) -> bool {
         self.issues.is_empty()
     }
+}
+
+/// Report from draining per-stream message handlers before a peer session exits (Iteration 75).
+///
+/// Every stream handler spawned by `peer_message_loop` is drained cooperatively
+/// with a deadline, then forcibly aborted if the deadline is exceeded. This
+/// ensures no handler outlives the session that owns it.
+#[derive(Debug, Clone, Default)]
+pub struct PeerStreamDrainReport {
+    /// Number of handlers that completed within the drain deadline.
+    pub drained: usize,
+    /// Number of handlers that were forcibly aborted after the deadline.
+    pub aborted: usize,
+    /// Number of handlers that failed (panic or error).
+    pub failed: usize,
 }
 
 /// Internal report of recovery outcomes (Iteration 74, Phase 35).
@@ -927,6 +933,7 @@ mod tests {
         assert_eq!(report.peer_sessions_aborted, 0);
         assert_eq!(report.peer_sessions_failed, 0);
         assert!(!report.runtime_stopped);
+        assert!(report.unresolved_peers.is_empty());
     }
 
     #[test]
@@ -957,27 +964,26 @@ mod tests {
         let created = DhtPeerMutation::Created;
         assert!(matches!(created, DhtPeerMutation::Created));
 
-        let snapshot = DhtPeerSnapshot {
-            node_id: "node-1".to_string(),
-            address: "1.2.3.4:443".to_string(),
-            port: 443,
-            role: crate::config::MeshNodeRole::EDGE,
-            geo: None,
-            latency_ms: Some(15),
-            is_trusted: true,
-            pow_nonce: Some(42),
-            public_key: Some(vec![1, 2, 3]),
-        };
+        let contact = crate::dht::routing::contact::PeerContact::new(
+            crate::dht::routing::node_id::NodeId::from_node_id_string("node-1"),
+            "node-1".to_string(),
+            "1.2.3.4".to_string(),
+            443,
+        )
+        .with_latency(15)
+        .with_trusted(true)
+        .with_pow(42, vec![1, 2, 3]);
+        let snapshot = DhtPeerSnapshot { contact };
         let previous = DhtPeerMutation::Previous(snapshot.clone());
         assert!(matches!(previous, DhtPeerMutation::Previous(_)));
 
         if let DhtPeerMutation::Previous(s) = previous {
-            assert_eq!(s.node_id, "node-1");
-            assert_eq!(s.address, "1.2.3.4:443");
-            assert_eq!(s.port, 443);
-            assert_eq!(s.latency_ms, Some(15));
-            assert!(s.is_trusted);
-            assert_eq!(s.pow_nonce, Some(42));
+            assert_eq!(s.contact.node_id_string, "node-1");
+            assert_eq!(s.contact.address, "1.2.3.4");
+            assert_eq!(s.contact.port, 443);
+            assert_eq!(s.contact.latency_ms, Some(15));
+            assert!(s.contact.is_trusted);
+            assert_eq!(s.contact.pow_nonce, Some(42));
         } else {
             panic!("Expected Previous variant");
         }
@@ -1050,5 +1056,25 @@ mod tests {
         assert_eq!(gen1, 1);
         assert_eq!(gen2, 2);
         assert_eq!(gen3, 3);
+    }
+
+    #[test]
+    fn peer_stream_drain_report_default() {
+        let report = PeerStreamDrainReport::default();
+        assert_eq!(report.drained, 0);
+        assert_eq!(report.aborted, 0);
+        assert_eq!(report.failed, 0);
+    }
+
+    #[test]
+    fn peer_stream_drain_report_fields() {
+        let report = PeerStreamDrainReport {
+            drained: 5,
+            aborted: 2,
+            failed: 1,
+        };
+        assert_eq!(report.drained, 5);
+        assert_eq!(report.aborted, 2);
+        assert_eq!(report.failed, 1);
     }
 }

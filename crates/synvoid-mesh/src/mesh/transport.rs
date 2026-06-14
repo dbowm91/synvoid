@@ -2943,7 +2943,9 @@ impl MeshTransport {
             DhtPeerMutation::Previous(snapshot) => {
                 // Restore the previous routing entry
                 if let Some(ref rm) = self.routing_manager {
-                    rm.restore_peer(snapshot).await;
+                    rm.restore_peer(snapshot)
+                        .await
+                        .map_err(|e| format!("DHT restore failed for {}: {}", peer.node_id, e))?;
                     tracing::debug!(
                         "Restored DHT routing entry for peer {} during restoration",
                         peer.node_id
@@ -2955,8 +2957,67 @@ impl MeshTransport {
         Ok(())
     }
 
-    /// Rollback a failed startup: cancel and join all staged tasks, close
-    /// attempt-created connections, and transition lifecycle to `Failed` or `Stopped`.
+    /// Restore a peer's logical topology and DHT state, then verify the
+    /// restoration succeeded. Returns `Ok(())` only when both restoration
+    /// and verification pass.
+    async fn restore_and_verify_peer_logical_state(
+        &self,
+        peer: &StagedPeerResource,
+    ) -> Result<(), String> {
+        // Step 1: Restore
+        self.restore_peer_logical_state(peer).await?;
+
+        // Step 2: Verify topology
+        if let Some(ref snapshot) = peer.previous_topology {
+            if !self.topology.topology_matches_snapshot(snapshot).await {
+                return Err(format!(
+                    "Topology verification failed after restoration for peer {}",
+                    peer.node_id
+                ));
+            }
+        } else {
+            // New peer — should be absent
+            if !self.topology.peer_absent(&peer.node_id).await {
+                return Err(format!(
+                    "New peer {} still present after restoration (expected absent)",
+                    peer.node_id
+                ));
+            }
+        }
+
+        // Step 3: Verify DHT
+        if let Some(ref rm) = self.routing_manager {
+            match &peer.dht_mutation {
+                crate::lifecycle::DhtPeerMutation::Previous(ref snapshot) => {
+                    if !rm.peer_matches_snapshot(snapshot).await {
+                        return Err(format!(
+                            "DHT verification failed after restoration for peer {}",
+                            peer.node_id
+                        ));
+                    }
+                }
+                crate::lifecycle::DhtPeerMutation::Created => {
+                    if !rm.peer_absent(&peer.node_id).await {
+                        return Err(format!(
+                            "New DHT entry for peer {} still present after restoration",
+                            peer.node_id
+                        ));
+                    }
+                }
+                crate::lifecycle::DhtPeerMutation::None => {}
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Rollback a failed startup: close connections, stop sessions and
+    /// auxiliary tasks, then restore topology/DHT state.
+    ///
+    /// The critical ordering guarantee (Iteration 75, Part C):
+    /// **Physical teardown (connections, sessions, auxiliary tasks) completes
+    /// BEFORE logical restoration (topology, DHT).** This prevents late peer
+    /// session writes from invalidating the restored state.
     ///
     /// Returns a `RollbackReport` indicating whether cleanup completed cleanly.
     async fn rollback_startup(&self, stage: &mut MeshStartupStage) -> RollbackReport {
@@ -2980,12 +3041,20 @@ impl MeshTransport {
             }
         }
 
-        // Phase 3: Use a single deadline for task join + session cleanup
+        // Phase 3: Use a single deadline for all cleanup phases
         let rollback_timeout =
             Duration::from_secs(self.config.connection.startup_rollback_timeout_secs);
         let deadline = std::time::Instant::now() + rollback_timeout;
 
-        // Phase 4: Join staged tasks with remaining time budget
+        // Phase 4: Stop staged peer sessions and auxiliary tasks BEFORE logical
+        // restoration. This is the Iteration 75 invariant: no peer/session/auxiliary
+        // task that can mutate topology or DHT remains live before restoration begins.
+        for peer in &stage.created_peers {
+            self.stop_staged_peer_activity(peer, deadline, &mut report)
+                .await;
+        }
+
+        // Phase 5: Join remaining staged tasks with remaining time budget
         let task_remaining = remaining(deadline);
         let exits = if task_remaining.is_zero() {
             Vec::new()
@@ -3010,128 +3079,27 @@ impl MeshTransport {
             .count();
         report.tasks_aborted += tasks_aborted_from_exits;
 
-        // Phase 5: Restore topology and DHT entries (Iteration 74, Phase 1)
+        // Phase 6: Restore and verify logical state. Safe because all peer
+        // sessions and auxiliary tasks that could mutate this state have been
+        // stopped in Phase 4 (Iteration 75 invariant).
         for peer in &stage.created_peers {
-            if let Err(e) = self.restore_peer_logical_state(peer).await {
-                report.errors.push(e);
-            } else {
-                report.topology_entries_restored += 1;
-            }
-        }
-
-        // Phase 5b: Verify logical topology/DHT restoration (Iteration 74, Phase 4)
-        for peer in &stage.created_peers {
-            // Verify topology state matches snapshot
-            match &peer.previous_topology {
-                None => {
-                    if !self.topology.peer_absent(&peer.node_id).await {
-                        report.errors.push(format!(
-                            "Topology verification failed for {}: peer still present after \
-                             rollback of new peer",
-                            peer.node_id
-                        ));
-                    }
+            match self.restore_and_verify_peer_logical_state(peer).await {
+                Ok(()) => {
+                    report.topology_entries_restored += 1;
                 }
-                Some(snapshot) => {
-                    if !self.topology.topology_matches_snapshot(snapshot).await {
-                        report.errors.push(format!(
-                            "Topology verification failed for {}: restored state does not \
-                             match snapshot",
-                            peer.node_id
-                        ));
-                    }
-                }
-            }
-
-            // Verify DHT state matches snapshot
-            match &peer.dht_mutation {
-                DhtPeerMutation::None => {}
-                DhtPeerMutation::Created => {
-                    if let Some(ref rm) = self.routing_manager {
-                        if !rm.peer_absent(&peer.node_id).await {
-                            report.errors.push(format!(
-                                "DHT verification failed for {}: routing entry still present \
-                                 after rollback of created peer",
-                                peer.node_id
-                            ));
-                        }
-                    }
-                }
-                DhtPeerMutation::Previous(snapshot) => {
-                    if let Some(ref rm) = self.routing_manager {
-                        if !rm.peer_matches_snapshot(snapshot).await {
-                            report.errors.push(format!(
-                                "DHT verification failed for {}: restored routing state does \
-                                 not match snapshot",
-                                peer.node_id
-                            ));
-                        }
-                    }
+                Err(error) => {
+                    tracing::error!(
+                        "Failed to restore/verify logical state for peer {}: {}",
+                        peer.node_id,
+                        error
+                    );
+                    report.errors.push(error);
+                    report.unresolved_peers.push(peer.clone());
                 }
             }
         }
 
-        // Phase 6: Selectively abort and await startup-created peer sessions (Iteration 73)
-        {
-            let mut sessions = self.peer_sessions.lock().await;
-            let staged_session_ids: Vec<String> = stage
-                .created_peers
-                .iter()
-                .filter(|p| p.session_task_id.is_some())
-                .map(|p| p.session_id.clone())
-                .collect();
-
-            let mut to_abort = Vec::new();
-            for session_id in &staged_session_ids {
-                if let Some(task) = sessions.remove(session_id) {
-                    let left = remaining(deadline);
-                    if left.is_zero() {
-                        to_abort.push(task);
-                        continue;
-                    }
-                    let mut handle = task.handle;
-                    let sleep = tokio::time::sleep(left);
-                    tokio::pin!(sleep);
-                    tokio::select! {
-                        result = &mut handle => {
-                            match result {
-                                Ok(()) => report.peer_sessions_drained += 1,
-                                Err(err) if err.is_panic() => report.peer_sessions_failed += 1,
-                                Err(_) => report.peer_sessions_failed += 1,
-                            }
-                        }
-                        _ = &mut sleep => {
-                            to_abort.push(PeerSessionTask {
-                                session_id: task.session_id,
-                                node_id: task.node_id,
-                                handle,
-                                generation: task.generation,
-                            });
-                        }
-                    }
-                }
-            }
-
-            for task in to_abort {
-                task.handle.abort();
-                let _ = task.handle.await;
-                report.peer_sessions_aborted += 1;
-                report.tasks_aborted += 1;
-                sessions.remove(&task.session_id);
-            }
-        }
-
-        // Phase 6b: Cancel auxiliary tasks associated with staged sessions (Phase 14)
-        {
-            let session_ids: Vec<String> = stage
-                .created_peers
-                .iter()
-                .filter_map(|p| p.session_task_id.as_ref().cloned())
-                .collect();
-            self.cancel_auxiliary_tasks_for_sessions(&session_ids).await;
-        }
-
-        // Phase 7: Active runtime cleanup
+        // Phase 8: Active runtime cleanup
         if stage.runtime_started {
             if let Some(ref runtime) = self.runtime {
                 runtime.stop_server().await;
@@ -3140,7 +3108,7 @@ impl MeshTransport {
             }
         }
 
-        // Phase 8: Reset accept-loop report for diagnostics and future generations
+        // Phase 9: Reset accept-loop report for diagnostics and future generations
         if stage.runtime_started {
             let mut ar = self.accept_loop_report.lock().await;
             ar.drained_handshakes = 0;
@@ -3151,6 +3119,62 @@ impl MeshTransport {
 
         report.clean = report.errors.is_empty();
         report
+    }
+
+    /// Stop all activity for a single staged peer during rollback.
+    ///
+    /// Must be called BEFORE logical restoration (topology/DHT) to satisfy
+    /// the Iteration 75 invariant: no session or auxiliary task that can
+    /// mutate topology or DHT remains live before restoration begins.
+    ///
+    /// This method:
+    /// 1. Cancels session-bound auxiliary tasks (e.g., preflight queries)
+    /// 2. Drains/aborts the peer session task with the shared deadline
+    async fn stop_staged_peer_activity(
+        &self,
+        peer: &StagedPeerResource,
+        deadline: std::time::Instant,
+        report: &mut RollbackReport,
+    ) {
+        // Cancel auxiliary tasks for this session first — they may be
+        // performing topology/DHT reads or writes.
+        if let Some(ref _task_id) = peer.session_task_id {
+            self.cancel_auxiliary_tasks_for_sessions(&[peer.session_id.clone()])
+                .await;
+        }
+
+        // Stop the peer session with deadline-bounded drain
+        if peer.session_task_id.is_some() {
+            let mut sessions = self.peer_sessions.lock().await;
+            if let Some(task) = sessions.remove(&peer.session_id) {
+                let left = remaining(deadline);
+                if left.is_zero() {
+                    task.handle.abort();
+                    let _ = task.handle.await;
+                    report.peer_sessions_aborted += 1;
+                    report.tasks_aborted += 1;
+                    return;
+                }
+                let mut handle = task.handle;
+                let sleep = tokio::time::sleep(left);
+                tokio::pin!(sleep);
+                tokio::select! {
+                    result = &mut handle => {
+                        match result {
+                            Ok(()) => report.peer_sessions_drained += 1,
+                            Err(err) if err.is_panic() => report.peer_sessions_failed += 1,
+                            Err(_) => report.peer_sessions_failed += 1,
+                        }
+                    }
+                    _ = &mut sleep => {
+                        handle.abort();
+                        let _ = handle.await;
+                        report.peer_sessions_aborted += 1;
+                        report.tasks_aborted += 1;
+                    }
+                }
+            }
+        }
     }
 
     /// Verify that rollback completed successfully by checking that no
@@ -3333,105 +3357,51 @@ impl MeshTransport {
             guard.take()
         };
 
-        let mut residue_errors: Vec<String> = Vec::new();
         let mut remaining_peers: Vec<StagedPeerResource> = Vec::new();
-        let mut successfully_restored: Vec<StagedPeerResource> = Vec::new();
+        let mut remaining_errors: Vec<String> = Vec::new();
 
         if let Some(residue) = residue {
-            for peer in residue.peers {
-                match self.restore_peer_logical_state(&peer).await {
+            for peer in &residue.peers {
+                match self.restore_and_verify_peer_logical_state(peer).await {
                     Ok(()) => {
                         // Successfully restored - also close connection if still present
                         if peer.connection_inserted {
-                            if let Some(entry) = self.peer_connections.get(&peer.session_id) {
-                                entry
-                                    .value()
+                            if let Some((_key, peer_conn)) =
+                                self.peer_connections.remove(&peer.session_id)
+                            {
+                                peer_conn
                                     .connection
                                     .close(0u32.into(), b"Recovery residue cleanup");
                             }
-                            self.peer_connections.remove(&peer.session_id);
                         }
-                        successfully_restored.push(peer);
                     }
                     Err(error) => {
-                        residue_errors.push(format!(
-                            "Residue restoration failed for peer {}: {}",
-                            peer.node_id, error
-                        ));
-                        remaining_peers.push(peer);
+                        tracing::error!(
+                            "Recovery: failed to restore/verify peer {}: {}",
+                            peer.node_id,
+                            error
+                        );
+                        remaining_peers.push(peer.clone());
+                        if !remaining_errors.contains(&error) {
+                            remaining_errors.push(error);
+                        }
                     }
                 }
             }
 
-            // If there are unresolved peers, retain the residue
+            // Retain residue if any peers are unresolved
             if !remaining_peers.is_empty() {
                 *self.failed_startup_residue.lock().await = Some(FailedStartupResidue {
                     peers: remaining_peers,
                     generation: residue.generation,
                     runtime_started: residue.runtime_started,
-                    rollback_errors: residue
-                        .rollback_errors
-                        .into_iter()
-                        .chain(residue_errors.clone())
-                        .collect(),
+                    rollback_errors: {
+                        let mut errors = residue.rollback_errors;
+                        errors.extend(remaining_errors.clone());
+                        errors.dedup();
+                        errors
+                    },
                 });
-            }
-        }
-
-        // Phase 7b: Verify logical topology/DHT restoration for successfully
-        // restored peers (Iteration 74, Phase 4)
-        for peer in &successfully_restored {
-            // Verify topology state matches snapshot
-            match &peer.previous_topology {
-                None => {
-                    // New peer - topology must not contain the entry
-                    if !self.topology.peer_absent(&peer.node_id).await {
-                        residue_errors.push(format!(
-                            "Topology verification failed for {}: peer still present after \
-                             restoration of new peer",
-                            peer.node_id
-                        ));
-                    }
-                }
-                Some(snapshot) => {
-                    // Existing peer - topology must exactly match the snapshot
-                    if !self.topology.topology_matches_snapshot(snapshot).await {
-                        residue_errors.push(format!(
-                            "Topology verification failed for {}: restored state does not \
-                             match snapshot",
-                            peer.node_id
-                        ));
-                    }
-                }
-            }
-
-            // Verify DHT state matches snapshot
-            match &peer.dht_mutation {
-                DhtPeerMutation::None => {}
-                DhtPeerMutation::Created => {
-                    // New DHT entry - routing table must not contain the peer
-                    if let Some(ref rm) = self.routing_manager {
-                        if !rm.peer_absent(&peer.node_id).await {
-                            residue_errors.push(format!(
-                                "DHT verification failed for {}: routing entry still present \
-                                 after restoration of created peer",
-                                peer.node_id
-                            ));
-                        }
-                    }
-                }
-                DhtPeerMutation::Previous(snapshot) => {
-                    // Existing DHT entry - must exactly match the snapshot
-                    if let Some(ref rm) = self.routing_manager {
-                        if !rm.peer_matches_snapshot(snapshot).await {
-                            residue_errors.push(format!(
-                                "DHT verification failed for {}: restored routing state does \
-                                 not match snapshot",
-                                peer.node_id
-                            ));
-                        }
-                    }
-                }
             }
         }
 
@@ -3457,7 +3427,7 @@ impl MeshTransport {
 
         // Phase 10: Full verification
         let mut issues = Vec::new();
-        issues.extend(residue_errors);
+        issues.extend(remaining_errors);
 
         // Verify task group is empty
         {
@@ -3553,7 +3523,7 @@ impl MeshTransport {
         // Store failed-startup residue if rollback was incomplete (Phase 8)
         if !rollback.clean {
             let residue = FailedStartupResidue {
-                peers: stage.created_peers.clone(),
+                peers: rollback.unresolved_peers.clone(),
                 generation: self.accept_loop_report.lock().await.generation,
                 runtime_started: stage.runtime_started,
                 rollback_errors: rollback.errors.clone(),

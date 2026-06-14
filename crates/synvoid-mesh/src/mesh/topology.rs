@@ -626,6 +626,10 @@ impl MeshTopology {
     }
 
     pub async fn remove_peer(&self, node_id: &str) {
+        {
+            let mut global = self.global_nodes.write().await;
+            global.remove(node_id);
+        }
         if let Some(mut peer) = self.peer_store.remove_peer(node_id) {
             peer.save_reputation_before_disconnect();
             tracing::debug!("Removed peer {} from topology", node_id);
@@ -634,11 +638,19 @@ impl MeshTopology {
 
     /// Restore an exact `PeerState` (used by startup rollback to preserve
     /// audit counts, timestamps, and reputation).
+    ///
+    /// Bidirectionally updates `global_nodes`: inserts when `is_global` is
+    /// true, removes when false. This ensures rollback corrects both
+    /// primary topology state and secondary index membership.
     pub async fn restore_peer_state(&self, peer_state: PeerState) {
         let node_id = peer_state.node_id.clone();
-        if peer_state.is_global {
+        {
             let mut global = self.global_nodes.write().await;
-            global.insert(node_id.clone());
+            if peer_state.is_global {
+                global.insert(node_id.clone());
+            } else {
+                global.remove(&node_id);
+            }
         }
         self.peer_store.upsert_peer(peer_state);
         tracing::debug!("Restored peer state for {}", node_id);
@@ -648,8 +660,14 @@ impl MeshTopology {
     /// (Iteration 74, Phase 4).
     ///
     /// Used by rollback/recovery verification to prove exact logical restoration.
-    /// Returns `true` if the peer is absent and the snapshot indicates it was
-    /// absent before, or if all key fields match.
+    /// Compares all primary `PeerState` fields (excluding `connection_handle`,
+    /// which is non-restorable) and verifies `global_nodes` index membership
+    /// matches the snapshot's `is_global` flag.
+    ///
+    /// Secondary per-peer metrics (scores, failures, successes, latency history,
+    /// versions, route stability, bandwidth) are intentionally excluded — they
+    /// are operational metrics that naturally repopulate per the snapshot
+    /// boundary decision (Iteration 75, Phase 8).
     pub async fn topology_matches_snapshot(&self, snapshot: &StagedTopologySnapshot) -> bool {
         match self.get_peer(&snapshot.peer_state.node_id).await {
             None => false,
@@ -658,7 +676,19 @@ impl MeshTopology {
                     && current.address == snapshot.peer_state.address
                     && current.role == snapshot.peer_state.role
                     && current.status == snapshot.peer_state.status
+                    && current.capabilities.can_route == snapshot.peer_state.capabilities.can_route
+                    && current.capabilities.can_proxy == snapshot.peer_state.capabilities.can_proxy
+                    && current.capabilities.can_serve_dns == snapshot.peer_state.capabilities.can_serve_dns
+                    && current.capabilities.is_global == snapshot.peer_state.capabilities.is_global
+                    && current.capabilities.waf_enabled == snapshot.peer_state.capabilities.waf_enabled
+                    && current.capabilities.max_hops == snapshot.peer_state.capabilities.max_hops
+                    && current.capabilities.supported_services == snapshot.peer_state.capabilities.supported_services
+                    && current.capabilities.preferred_transport == snapshot.peer_state.capabilities.preferred_transport
+                    && current.capabilities.supported_protocols == snapshot.peer_state.capabilities.supported_protocols
+                    && current.upstreams == snapshot.peer_state.upstreams
                     && current.latency_ms == snapshot.peer_state.latency_ms
+                    && current.first_seen == snapshot.peer_state.first_seen
+                    && current.last_seen == snapshot.peer_state.last_seen
                     && current.is_global == snapshot.peer_state.is_global
                     && current.is_trusted == snapshot.peer_state.is_trusted
                     && current.geo == snapshot.peer_state.geo
@@ -671,7 +701,10 @@ impl MeshTopology {
                     && current.quic_port == snapshot.peer_state.quic_port
                     && current.wireguard_port == snapshot.peer_state.wireguard_port
                     && current.advertised_port == snapshot.peer_state.advertised_port
-                    && current.upstreams == snapshot.peer_state.upstreams
+                    && current.previous_reputation == snapshot.peer_state.previous_reputation
+                    // Verify global_nodes secondary index matches primary is_global
+                    && self.global_nodes.read().await.contains(&snapshot.peer_state.node_id)
+                        == snapshot.peer_state.is_global
             }
         }
     }

@@ -501,6 +501,12 @@ pub struct MeshConnectionConfig {
     pub announce_interval_secs: u64,
     #[serde(default = "default_keepalive_interval")]
     pub keepalive_interval_secs: u64,
+    /// Maximum number of concurrent per-stream message handlers per peer session.
+    #[serde(default = "default_max_concurrent_peer_streams")]
+    pub max_concurrent_peer_streams: usize,
+    /// Per-stream message handler timeout in seconds.
+    #[serde(default = "default_peer_message_timeout_secs")]
+    pub peer_message_timeout_secs: u64,
 }
 
 fn default_min_peers() -> usize {
@@ -516,6 +522,14 @@ fn default_keepalive_interval() -> u64 {
     10
 }
 
+fn default_max_concurrent_peer_streams() -> usize {
+    64
+}
+
+fn default_peer_message_timeout_secs() -> u64 {
+    30
+}
+
 impl Default for MeshConnectionConfig {
     fn default() -> Self {
         Self {
@@ -524,6 +538,8 @@ impl Default for MeshConnectionConfig {
             health_check_interval_secs: 30,
             announce_interval_secs: 30,
             keepalive_interval_secs: 10,
+            max_concurrent_peer_streams: 64,
+            peer_message_timeout_secs: 30,
         }
     }
 }

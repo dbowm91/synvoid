@@ -165,6 +165,34 @@ impl KBucket {
         &mut self.peers
     }
 
+    /// Force-replace a contact with the same node ID, or insert if absent.
+    /// Used by rollback restoration — does not apply admission checks.
+    /// Returns the previously stored contact if one existed.
+    pub fn force_replace(&mut self, contact: PeerContact) -> Option<PeerContact> {
+        let node_id = contact.node_id;
+
+        // Remove existing contact with the same node ID
+        if let Some(existing_idx) = self.peers.iter().position(|p| p.node_id == node_id) {
+            let existing = self.peers.remove(existing_idx);
+            self.peers.push(contact);
+            self.last_updated = Instant::now();
+            return Some(existing);
+        }
+
+        // No existing contact — insert if there's room, or evict oldest if full
+        if self.peers.len() < K_SIZE {
+            self.peers.push(contact);
+            self.last_updated = Instant::now();
+            None
+        } else {
+            // Bucket full and peer doesn't exist — evict oldest to make room
+            let evicted = self.peers.remove(0);
+            self.peers.push(contact);
+            self.last_updated = Instant::now();
+            Some(evicted)
+        }
+    }
+
     pub fn replace_oldest_if_stale(
         &mut self,
         new_peer: PeerContact,
@@ -278,5 +306,35 @@ mod tests {
         let closest = bucket.get_closest(&target, 3);
 
         assert_eq!(closest.len(), 3);
+    }
+
+    #[test]
+    fn test_force_replace_existing() {
+        let mut bucket = KBucket::new(0);
+        let peer_a = make_contact(0x01);
+        bucket.insert(peer_a.clone()).unwrap();
+
+        let mut peer_b = make_contact(0x01);
+        peer_b.address = "mutated".to_string();
+        let result = bucket.force_replace(peer_b);
+
+        assert!(result.is_some()); // returned previous
+        let stored = bucket.get(&NodeId([0x01; 32])).unwrap();
+        assert_eq!(stored.address, "mutated");
+    }
+
+    #[test]
+    fn test_force_replace_full_bucket() {
+        let mut bucket = KBucket::new(0);
+        for i in 0..K_SIZE {
+            bucket.insert(make_contact(i as u8)).unwrap();
+        }
+        assert!(bucket.is_full());
+
+        // Force replace should evict oldest to make room for new peer
+        let new_peer = make_contact(0xFF);
+        let result = bucket.force_replace(new_peer);
+        assert!(result.is_some()); // evicted oldest
+        assert!(bucket.contains(&NodeId([0xFF; 32])));
     }
 }

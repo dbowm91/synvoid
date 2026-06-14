@@ -370,9 +370,8 @@ impl DhtRoutingManager {
 
     /// Snapshot the current DHT routing state for a peer before mutation.
     ///
-    /// Returns `None` if the peer has no routing entry. The snapshot captures
-    /// all mutable `PeerContact` fields for exact restoration on rollback
-    /// (Iteration 73, Phase 4; expanded Iteration 74, Phase 10).
+    /// Returns `None` if the peer has no routing entry. The snapshot stores
+    /// the complete `PeerContact` for exact restoration on rollback.
     pub async fn snapshot_peer(&self, peer_node_id: &str) -> Option<DhtPeerSnapshot> {
         let rt = self.routing_table.read().await;
         let table = match rt.as_ref() {
@@ -383,49 +382,32 @@ impl DhtRoutingManager {
         let node_id = NodeId::from_node_id_string(peer_node_id);
         let contact = table.get_contact(&node_id)?;
 
-        Some(DhtPeerSnapshot {
-            node_id: contact.node_id_string.clone(),
-            address: contact.address.clone(),
-            port: contact.port,
-            role: if contact.is_global {
-                MeshNodeRole::GLOBAL
-            } else {
-                MeshNodeRole::EDGE
-            },
-            geo: contact.geo.clone(),
-            latency_ms: contact.latency_ms,
-            is_trusted: contact.is_trusted,
-            pow_nonce: contact.pow_nonce,
-            public_key: contact.public_key.clone(),
-        })
+        Some(DhtPeerSnapshot { contact })
     }
 
     /// Restore a peer's DHT routing state from a snapshot taken before mutation.
     ///
-    /// Re-inserts the contact with all fields from the snapshot. The
-    /// `last_seen` timestamp is refreshed to `Instant::now()` since the peer
-    /// was recently connected (Iteration 73, Phase 5; expanded Iteration 74, Phase 10).
-    pub async fn restore_peer(&self, snapshot: &DhtPeerSnapshot) {
+    /// Uses `force_restore_contact` to unconditionally replace any existing
+    /// contact with the same node ID. The `last_seen` timestamp is refreshed
+    /// to `Instant::now()` since the peer was recently connected.
+    pub async fn restore_peer(&self, snapshot: &DhtPeerSnapshot) -> Result<(), String> {
         let mut rt = self.routing_table.write().await;
         let table = match rt.as_mut() {
             Some(t) => t,
-            None => return,
+            None => return Err("DHT routing table not initialized".to_string()),
         };
 
-        let node_id = NodeId::from_node_id_string(&snapshot.node_id);
-        let mut contact = PeerContact::new(
-            node_id,
-            snapshot.node_id.clone(),
-            snapshot.address.clone(),
-            snapshot.port,
-        );
-        contact.is_global = snapshot.role.is_global();
-        contact.geo = snapshot.geo.clone();
-        contact.latency_ms = snapshot.latency_ms;
-        contact.is_trusted = snapshot.is_trusted;
-        contact.pow_nonce = snapshot.pow_nonce;
-        contact.public_key = snapshot.public_key.clone();
-        table.try_insert(contact);
+        // Clone the contact from the snapshot — it carries all fields exactly.
+        // Refresh last_seen since the peer was recently connected.
+        let mut contact = snapshot.contact.clone();
+        contact.last_seen = Instant::now();
+
+        table.force_restore_contact(contact).map_err(|e| {
+            format!(
+                "DHT force-restore failed for {}: {:?}",
+                snapshot.contact.node_id_string, e
+            )
+        })
     }
 
     /// Verify that the current routing entry matches a snapshot (Iteration 74, Phase 11).
@@ -438,24 +420,31 @@ impl DhtRoutingManager {
             None => return false,
         };
 
-        let node_id = NodeId::from_node_id_string(&snapshot.node_id);
+        let node_id = NodeId::from_node_id_string(&snapshot.contact.node_id_string);
         let contact = match table.get_contact(&node_id) {
             Some(c) => c,
             None => return false,
         };
 
-        contact.node_id_string == snapshot.node_id
-            && contact.address == snapshot.address
-            && contact.port == snapshot.port
-            && contact.is_global == snapshot.role.is_global()
-            && contact.is_trusted == snapshot.is_trusted
-            && contact.latency_ms == snapshot.latency_ms
-            && contact.pow_nonce == snapshot.pow_nonce
-            && contact.public_key == snapshot.public_key
-            // Geo comparison: check both None or both Some with same content
-            && match (&contact.geo, &snapshot.geo) {
+        // Compare all fields that restore_peer writes (contact fields + refreshed last_seen)
+        // Since we store the full contact, compare all fields except last_seen which is
+        // always refreshed to Instant::now() during restore.
+        contact.node_id_string == snapshot.contact.node_id_string
+            && contact.address == snapshot.contact.address
+            && contact.port == snapshot.contact.port
+            && contact.is_global == snapshot.contact.is_global
+            && contact.is_trusted == snapshot.contact.is_trusted
+            && contact.latency_ms == snapshot.contact.latency_ms
+            && contact.pow_nonce == snapshot.contact.pow_nonce
+            && contact.public_key == snapshot.contact.public_key
+            && contact.node_id == snapshot.contact.node_id
+            // Geo comparison: exact match including lat/lon
+            && match (&contact.geo, &snapshot.contact.geo) {
                 (None, None) => true,
-                (Some(a), Some(b)) => a.country == b.country && a.region == b.region,
+                (Some(a), Some(b)) => a.country == b.country
+                    && a.region == b.region
+                    && a.latitude == b.latitude
+                    && a.longitude == b.longitude,
                 _ => false,
             }
     }

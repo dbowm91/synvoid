@@ -763,3 +763,68 @@ fn peer_session_exit_reason_variants() {
     );
     assert_eq!(PeerSessionExitReason::Aborted.to_string(), "aborted");
 }
+
+// ── Phase 30: Stream Ownership Tests (Iteration 75) ─────────────────────────
+
+#[test]
+fn peer_stream_drain_report_defaults() {
+    use synvoid_mesh::lifecycle::PeerStreamDrainReport;
+
+    let report = PeerStreamDrainReport::default();
+    assert_eq!(report.drained, 0);
+    assert_eq!(report.aborted, 0);
+    assert_eq!(report.failed, 0);
+}
+
+#[test]
+fn peer_stream_drain_report_fields() {
+    use synvoid_mesh::lifecycle::PeerStreamDrainReport;
+
+    let report = PeerStreamDrainReport {
+        drained: 10,
+        aborted: 3,
+        failed: 1,
+    };
+    assert_eq!(report.drained, 10);
+    assert_eq!(report.aborted, 3);
+    assert_eq!(report.failed, 1);
+}
+
+#[test]
+fn mesh_connection_config_has_stream_limits() {
+    use synvoid_mesh::config::MeshConnectionConfig;
+
+    let config = MeshConnectionConfig::default();
+    // Phase 25: Capacity limit defaults
+    assert_eq!(config.max_concurrent_peer_streams, 64);
+    // Phase 26: Timeout defaults
+    assert_eq!(config.peer_message_timeout_secs, 30);
+}
+
+#[test]
+fn mesh_connection_config_custom_stream_limits() {
+    use synvoid_mesh::config::MeshConnectionConfig;
+
+    let config = MeshConnectionConfig {
+        max_concurrent_peer_streams: 128,
+        peer_message_timeout_secs: 60,
+        ..MeshConnectionConfig::default()
+    };
+    assert_eq!(config.max_concurrent_peer_streams, 128);
+    assert_eq!(config.peer_message_timeout_secs, 60);
+}
+
+#[test]
+fn drain_report_is_clone() {
+    use synvoid_mesh::lifecycle::PeerStreamDrainReport;
+
+    let report = PeerStreamDrainReport {
+        drained: 5,
+        aborted: 2,
+        failed: 1,
+    };
+    let cloned = report.clone();
+    assert_eq!(report.drained, cloned.drained);
+    assert_eq!(report.aborted, cloned.aborted);
+    assert_eq!(report.failed, cloned.failed);
+}

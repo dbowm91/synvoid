@@ -390,6 +390,14 @@ pub struct MeshConnectionConfig {
     /// Total timeout for startup rollback operations.
     #[serde(default = "default_startup_rollback_timeout_secs")]
     pub startup_rollback_timeout_secs: u64,
+    /// Maximum number of concurrent per-stream message handlers per peer session.
+    /// Streams beyond this limit are rejected (QUIC stream reset).
+    #[serde(default = "default_max_concurrent_peer_streams")]
+    pub max_concurrent_peer_streams: usize,
+    /// Per-stream message handler timeout in seconds.
+    /// Handlers exceeding this timeout are aborted during session drain.
+    #[serde(default = "default_peer_message_timeout_secs")]
+    pub peer_message_timeout_secs: u64,
 }
 
 fn default_min_peers() -> usize {
@@ -452,6 +460,14 @@ fn default_startup_rollback_timeout_secs() -> u64 {
     15
 }
 
+fn default_max_concurrent_peer_streams() -> usize {
+    64
+}
+
+fn default_peer_message_timeout_secs() -> u64 {
+    30
+}
+
 impl Default for MeshConnectionConfig {
     fn default() -> Self {
         Self {
@@ -472,6 +488,8 @@ impl Default for MeshConnectionConfig {
             max_concurrent_handshakes: 32,
             handshake_timeout_secs: 10,
             startup_rollback_timeout_secs: 15,
+            max_concurrent_peer_streams: 64,
+            peer_message_timeout_secs: 30,
         }
     }
 }

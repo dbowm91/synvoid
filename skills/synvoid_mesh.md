@@ -355,7 +355,7 @@ revoke_genesis_key(public_key: &str)
 - Non-empty list = genesis key must be in the list
 - Key rotation tracked via `rotation_sequence` and `GenesisKeyTransition` DHT records
 
-## Mesh Transport Lifecycle (Iterations 68–74)
+## Mesh Transport Lifecycle (Iterations 68–75)
 
 ### Adding a New Background Task
 
@@ -387,7 +387,7 @@ group.spawn_background("task_name", async move {
 - `MeshTransport::start_with_policy(policy)` — primary staged transactional startup via `MeshStartupStage` with explicit `MeshStartupPolicy`
 - `MeshTransport::start()` — compatibility wrapper using `MeshStartupPolicy::default()` (all-optional)
 - `MeshTransport::shutdown_with_timeout(timeout)` — bounded shutdown returning truthful `MeshShutdownReport`; all phases share one deadline
-- `MeshTransport::recover_failed_state(timeout)` (Iterations 72, 74) — recovery from `Failed` state: acquires lifecycle lock, re-runs cleanup, **applies retained residue via `restore_peer_logical_state()` before clearing** (Iteration 74), verifies no owned resources remain, transitions to `Stopped`. Recovery outcomes tracked via `RecoveryReport`.
+- `MeshTransport::recover_failed_state(timeout)` (Iterations 72, 74, 75) — recovery from `Failed` state: acquires lifecycle lock, re-runs cleanup, **applies retained residue via `restore_and_verify_peer_logical_state()` before clearing** (Iteration 75), verifies no owned resources remain, transitions to `Stopped`. Recovery outcomes tracked via `RecoveryReport`.
 - `MeshTransport::subscribe_exits()` — stable exit subscription (valid before `start()`, survives task group replacement)
 - `MeshTransport::lifecycle_state()` — query current state
 - `MeshTransport::rollback_and_return()` (Iteration 71) — rollback a failed startup and return an appropriate error, constructing `StartupRollbackFailed` when cleanup is incomplete
@@ -397,7 +397,7 @@ group.spawn_background("task_name", async move {
 
 `Failed` means incomplete rollback — some resources may still be owned. **`can_start()` only allows `Stopped`, not `Failed`.** The transport must recover before it can restart.
 
-- `recover_failed_state(timeout)` acquires lifecycle lock, re-runs cleanup, **applies retained residue via `restore_peer_logical_state()` before clearing** (Iteration 74) — restores topology and DHT entries, closes connections, retains partially restored peers in residue for subsequent attempts
+- `recover_failed_state(timeout)` acquires lifecycle lock, re-runs cleanup, **applies retained residue via `restore_and_verify_peer_logical_state()` before clearing** (Iteration 75) — restores topology and DHT entries, closes connections, retains partially restored peers in residue for subsequent attempts
 - If recovery fails (timeout or verification issues), transport transitions back to `Failed`
 - Multiple recovery attempts are safe
 - Recovery outcomes tracked via `RecoveryReport` (Iteration 74)
@@ -407,10 +407,11 @@ group.spawn_background("task_name", async move {
 `MeshStartupStage` owns every task and resource from a single startup attempt. On failure, `rollback_and_return()` (Iteration 71) centralizes rollback error propagation — it calls `rollback_startup()`, then `verify_rollback_complete()`, merges verification issues into the report before `finish_failed_startup()`, and constructs `StartupRollbackFailed` when cleanup is incomplete.
 
 - Peer resources tracked via `StagedPeerResource` with exact mutation metadata (`session_id`, `node_id`, `topology_existed_before`, `connection_inserted`, `session_task_created`, `dht_registration_created`)
-- **`restore_peer_logical_state()` (Iteration 74)**: shared helper used by both `rollback_startup()` and `recover_failed_state()` for deduplicated topology/DHT restoration
-- Topology snapshots (`StagedTopologySnapshot`) capture native `PeerState` (Iteration 74 — replaces lossy `MeshPeerInfo` + `PeerStatus`); rollback uses `restore_peer_state()` for exact prior state
+- **`restore_and_verify_peer_logical_state()` (Iteration 75)**: combined helper used by both `rollback_startup()` and `recover_failed_state()` for restoration + verification in one call
+- Topology snapshots (`StagedTopologySnapshot`) capture native `PeerState` (Iteration 74 — replaces lossy `MeshPeerInfo` + `PeerStatus`); rollback uses `restore_peer_state()` for exact prior state; `restore_peer_state()` bidirectionally updates `global_nodes` (Iteration 75)
 - Selective peer-session ownership via `HashMap<String, PeerSessionTask>` keyed registry; rollback targets only staged sessions
-- DHT routing entries restored from `DhtPeerSnapshot` when `DhtPeerMutation::Previous(snapshot)` or removed when `DhtPeerMutation::Created` — lossless restoration (Iteration 74)
+- DHT routing entries restored from `DhtPeerSnapshot` via `restore_peer()` using force-replacement (`force_restore_contact()`) — unconditionally replaces existing contacts (Iteration 75)
+- `rollback_startup()` stops all peer sessions and auxiliary tasks **before** logical restoration (Iteration 75)
 - `tasks_aborted` derived from `MeshTaskExitReason::Aborted` exit metadata (authoritative, not `active_count()`)
 - `commit_startup()` logs warning when replacing non-empty old task group
 - Shared rollback deadline (`startup_rollback_timeout_secs`, default 15s)
@@ -504,15 +505,15 @@ These snapshots feed into `StagedPeerResource` for precise rollback.
 
 ### Iteration 74 Lifecycle Semantics
 
-**Shared `restore_peer_logical_state()` helper**: Used by both `rollback_startup()` and `recover_failed_state()` for deduplicated topology/DHT restoration. Restores topology via `restore_peer_state()` (native `PeerState`, not lossy conversion) and DHT via `restore_peer()` from `DhtPeerSnapshot`. Idempotent.
+**Shared `restore_peer_logical_state()` helper**: Used by both `rollback_startup()` and `recover_failed_state()` for deduplicated topology/DHT restoration. Restores topology via `restore_peer_state()` (native `PeerState`, not lossy conversion) and DHT via `restore_peer()` from `DhtPeerSnapshot`. Idempotent. **Iteration 75**: Combined into `restore_and_verify_peer_logical_state()` which adds verification in the same call.
 
-**Lossless DHT snapshots**: `DhtPeerSnapshot` expanded (Iteration 74, Phase 10) to capture all `PeerContact` fields: `node_id`, `address`, `port`, `role`, `geo`, `latency_ms`, `is_trusted`, `pow_nonce`, `public_key`. `restore_peer()` re-inserts the contact with all fields. `peer_matches_snapshot()` verifies restoration correctness (Phase 11).
+**Lossless DHT snapshots**: `DhtPeerSnapshot` expanded (Iteration 74, Phase 10) to capture all `PeerContact` fields. **Iteration 75**: Now stores `pub contact: PeerContact` (a clone of the native `PeerContact`) instead of individual fields — eliminates field drift entirely. `restore_peer()` uses `force_restore_contact()` which unconditionally replaces existing contacts.
 
 **DhtPeerMutation simplified**: `Replaced` and `UpdatedInPlace` collapsed into single `Previous(DhtPeerSnapshot)` variant (Iteration 74, Phase 9). Both cases carry the same prior-state snapshot for lossless restoration.
 
 **Native topology restoration**: `StagedTopologySnapshot` now stores native `PeerState` (not `MeshPeerInfo` + `PeerStatus`). Rollback uses `restore_peer_state()` instead of lossy conversion.
 
-**Residue application during recovery**: `recover_failed_state()` now applies `FailedStartupResidue` via `restore_peer_logical_state()` before clearing (Iteration 74, Phase 2-3). Successfully restored peers have connections closed. Partially restored peers retain residue for subsequent attempts.
+**Residue application during recovery**: `recover_failed_state()` now applies `FailedStartupResidue` via `restore_and_verify_peer_logical_state()` before clearing (Iteration 75) — restores topology and DHT entries, closes connections, retains partially restored peers in residue for subsequent attempts.
 
 **Session reaper cancellation-awareness**: Uses `tokio::select!` with `session_reaper_shutdown: watch::Sender<bool>` signal (Iteration 74, Phase 14). Handles are awaited **outside** the `peer_sessions` lock (Phase 15). Broadcast lag recovery scans for `is_finished()` handles (Phase 17).
 
@@ -523,6 +524,26 @@ These snapshots feed into `StagedPeerResource` for precise rollback.
 **Accept-loop report freshness**: `MeshShutdownReport.accept_loop_report` is now `Option<MeshAcceptLoopReport>` (Iteration 74, Phase 29–30). Stale reports (generation mismatch or no prior startup) are `None` instead of potentially misattributed counts.
 
 **RecoveryReport**: Internal accounting struct (Iteration 74, Phase 35) tracking `tasks_joined`, `sessions_joined`, `auxiliary_joined`, `topology_restored`, `dht_restored`, `errors`.
+
+### Iteration 75 Lifecycle Semantics
+
+**Force-replacement DHT restoration**: `DhtRoutingManager::restore_peer()` now returns `Result<(), String>` and uses `RoutingTable::force_restore_contact()` which unconditionally replaces existing contacts. No more silent failures on full buckets.
+
+**Complete PeerContact snapshot**: `DhtPeerSnapshot` now stores `pub contact: PeerContact` (a clone of the native `PeerContact`) instead of individual fields. This eliminates field drift — any future `PeerContact` additions are automatically captured. `restore_peer()` inserts the contact with all fields from the snapshot.
+
+**Topology secondary-index restoration**: `restore_peer_state()` now bidirectionally updates `global_nodes` — inserts when global, removes when non-global. `remove_peer()` also clears `global_nodes` to prevent stale entries.
+
+**Teardown-before-restoration ordering**: `rollback_startup()` stops all peer sessions and auxiliary tasks **before** logical restoration, preventing late writes from invalidating restored state.
+
+**Combined restore-and-verify**: `restore_and_verify_peer_logical_state()` combines restoration and verification in one call, ensuring atomicity. Used by both `rollback_startup()` and `recover_failed_state()`.
+
+**Residue retention through verification failure**: Failed peers are retained in `FailedStartupResidue` for retry. `rollback_and_return()` stores only unresolved peers (not all staged peers) in the residue. Successfully restored peers do not pollute the residue.
+
+**Session-local stream handler ownership**: `peer_message_loop()` uses a `JoinSet` for per-stream handlers. Handlers are reaped during the session, capacity-limited via `max_concurrent_peer_streams` config (default 32), timeout-wrapped via `peer_message_timeout_secs` (default 30s), and drained before session exit.
+
+**`PeerStreamDrainReport`**: New type tracking stream drain statistics: `drained_streams`, `aborted_streams`, `timed_out_streams`.
+
+**Worker mesh supervision**: remains deferred (Outcome B from Iteration 70).
 
 ### Failure Injection Hooks (Phase 20)
 

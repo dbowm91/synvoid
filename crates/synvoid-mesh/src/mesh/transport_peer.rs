@@ -2748,6 +2748,13 @@ impl MeshTransport {
         topology: Arc<MeshTopology>,
         generation: u64,
     ) -> crate::lifecycle::PeerSessionExit {
+        use tokio::task::JoinSet;
+
+        let mut stream_handlers: JoinSet<Result<(), MeshTransportError>> = JoinSet::new();
+        let max_concurrent_streams = self.config.connection.max_concurrent_peer_streams;
+        let peer_message_timeout =
+            Duration::from_secs(self.config.connection.peer_message_timeout_secs);
+
         let topology_for_loop = topology.clone();
         let peer_node_id_for_loop = peer_node_id.clone();
         loop {
@@ -2755,48 +2762,94 @@ impl MeshTransport {
                 result = connection.accept_bi() => {
                     match result {
                         Ok((mut send_stream, mut recv_stream)) => {
-                            let topo = topology_for_loop.clone();
+                            // Phase 25: Capacity limit — reject streams beyond the bound
+                            if stream_handlers.len() >= max_concurrent_streams {
+                                tracing::warn!(
+                                    "Peer {} session {}: stream handler capacity reached ({}/{}), rejecting stream",
+                                    peer_node_id, session_id, stream_handlers.len(), max_concurrent_streams
+                                );
+                                drop(send_stream);
+                                drop(recv_stream);
+                                continue;
+                            }
+
                             let transport = self.clone();
-                            let peer_id = peer_node_id_for_loop.clone();
-                            tokio::spawn(async move {
-                                if let Err(e) = transport.handle_peer_message(&mut send_stream, &mut recv_stream, &topo, peer_id).await {
-                                    tracing::debug!("Peer message error: {}", e);
-                                }
+                            let topo = topology_for_loop.clone();
+                            let pid = peer_node_id_for_loop.clone();
+                            let timeout = peer_message_timeout;
+
+                            // Phase 23: Spawn into JoinSet instead of bare tokio::spawn
+                            stream_handlers.spawn(async move {
+                                // Phase 26: Apply per-stream timeout
+                                tokio::time::timeout(timeout, async {
+                                    transport.handle_peer_message(&mut send_stream, &mut recv_stream, &topo, pid).await
+                                }).await.unwrap_or_else(|_| {
+                                    Err(MeshTransportError::Timeout)
+                                })
                             });
                         }
                         Err(quinn::ConnectionError::ApplicationClosed(_)) => {
                             tracing::info!("Peer {} disconnected", peer_node_id);
-                            topology.update_peer_status(&peer_node_id, PeerStatus::Disconnected).await;
-                            return crate::lifecycle::PeerSessionExit {
-                                session_id,
-                                node_id: peer_node_id,
-                                reason: crate::lifecycle::PeerSessionExitReason::ConnectionClosed,
-                                generation,
-                            };
+                            break;
                         }
                         Err(e) => {
                             tracing::warn!("Peer {} connection error: {}", peer_node_id, e);
-                            topology.update_peer_status(&peer_node_id, PeerStatus::Disconnected).await;
-                            return crate::lifecycle::PeerSessionExit {
-                                session_id,
-                                node_id: peer_node_id,
-                                reason: crate::lifecycle::PeerSessionExitReason::ConnectionClosed,
-                                generation,
-                            };
+                            break;
+                        }
+                    }
+                }
+                // Phase 24: Reap completed handlers during the session lifetime
+                Some(result) = stream_handlers.join_next(), if !stream_handlers.is_empty() => {
+                    match result {
+                        Ok(Ok(())) => {
+                            // Clean handler completion — no action needed
+                        }
+                        Ok(Err(e)) => {
+                            tracing::debug!(
+                                "Peer session {} stream handler error: {}",
+                                session_id, e
+                            );
+                        }
+                        Err(join_error) => {
+                            if join_error.is_panic() {
+                                tracing::warn!(
+                                    "Peer session {} stream handler panicked: {}",
+                                    session_id, join_error
+                                );
+                            }
+                            // Cancelled during shutdown — expected
                         }
                     }
                 }
                 _ = connection.closed() => {
                     tracing::info!("Peer {} connection closed", peer_node_id);
-                    topology.update_peer_status(&peer_node_id, PeerStatus::Disconnected).await;
-                    return crate::lifecycle::PeerSessionExit {
-                        session_id,
-                        node_id: peer_node_id,
-                        reason: crate::lifecycle::PeerSessionExitReason::ConnectionClosed,
-                        generation,
-                    };
+                    break;
                 }
             }
+        }
+
+        // Phase 27: Drain handlers before emitting PeerSessionExit
+        let drain_report =
+            drain_peer_stream_handlers(&mut stream_handlers, Duration::from_secs(5)).await;
+
+        tracing::debug!(
+            "Peer session {} stream drain: drained={}, aborted={}, failed={}",
+            session_id,
+            drain_report.drained,
+            drain_report.aborted,
+            drain_report.failed
+        );
+
+        // Update topology status
+        topology
+            .update_peer_status(&peer_node_id, PeerStatus::Disconnected)
+            .await;
+
+        crate::lifecycle::PeerSessionExit {
+            session_id,
+            node_id: peer_node_id,
+            reason: crate::lifecycle::PeerSessionExitReason::ConnectionClosed,
+            generation,
         }
     }
 
@@ -4609,4 +4662,51 @@ impl MeshTransport {
         };
         let _ = self.send_datagram_to_peer(peer_id, &response).await;
     }
+}
+
+/// Drain all per-stream message handlers before emitting a `PeerSessionExit`.
+///
+/// Cooperative drain with a deadline, followed by abort of remaining handlers.
+/// This ensures no handler outlives the session that owns it (Iteration 75).
+async fn drain_peer_stream_handlers(
+    handlers: &mut tokio::task::JoinSet<Result<(), MeshTransportError>>,
+    timeout: Duration,
+) -> crate::lifecycle::PeerStreamDrainReport {
+    use crate::lifecycle::PeerStreamDrainReport;
+    use std::time::Instant;
+
+    let mut report = PeerStreamDrainReport::default();
+
+    if handlers.is_empty() {
+        return report;
+    }
+
+    // First, allow handlers to drain cooperatively
+    let deadline = Instant::now() + timeout;
+    while let Some(result) = handlers.join_next().await {
+        match result {
+            Ok(Ok(())) => report.drained += 1,
+            Ok(Err(_)) => report.failed += 1,
+            Err(e) if e.is_panic() => report.failed += 1,
+            Err(_) => {} // cancelled
+        }
+
+        if Instant::now() >= deadline {
+            break;
+        }
+    }
+
+    // Abort remaining handlers
+    let remaining = handlers.len();
+    if remaining > 0 {
+        handlers.abort_all();
+        // Await all aborted handlers so JoinSet is empty
+        while let Some(result) = handlers.join_next().await {
+            report.aborted += 1;
+            // Suppress JoinError for aborted tasks
+            let _ = result;
+        }
+    }
+
+    report
 }

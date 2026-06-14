@@ -633,6 +633,32 @@ impl RoutingTable {
         self.buckets[bucket_index].get(node_id).cloned()
     }
 
+    /// Force-restore a contact during rollback/recovery.
+    ///
+    /// Unlike `try_insert`, this unconditionally replaces any existing contact
+    /// with the same node ID and does not apply PoW admission checks — the
+    /// contact was previously accepted state. If the bucket is full and the
+    /// peer does not exist, the oldest entry is evicted to make room.
+    ///
+    /// Returns `Ok(())` on success, `Err(InsertError::SameNodeId)` if the
+    /// contact is the local node.
+    pub fn force_restore_contact(&mut self, contact: PeerContact) -> Result<(), InsertError> {
+        if contact.node_id == self.local_node_id {
+            return Err(InsertError::SameNodeId);
+        }
+
+        let bucket_index = contact.node_id.bucket_index(&self.local_node_id);
+        let node_id = contact.node_id;
+        let bucket = &mut self.buckets[bucket_index];
+
+        bucket.force_replace(contact);
+
+        self.closest_cache.invalidate_all();
+        self.pending_pings.remove(&node_id);
+
+        Ok(())
+    }
+
     pub fn get_sparse_bucket_indices(&self, k: usize) -> Vec<usize> {
         self.buckets
             .iter()
@@ -722,5 +748,111 @@ mod tests {
         let restored = RoutingTable::from_persisted(persisted, local);
 
         assert_eq!(restored.total_peers(), 5);
+    }
+
+    #[test]
+    fn test_force_restore_existing_contact() {
+        let local = NodeId::from_node_id_string("local-node");
+        let mut table = RoutingTable::new(local, "local-node".to_string());
+
+        // Insert contact A
+        let mut contact_a = make_contact(0x01);
+        contact_a.address = "10.0.0.1".to_string();
+        contact_a.port = 8443;
+        contact_a.is_global = true;
+        contact_a.is_trusted = true;
+        contact_a.latency_ms = Some(100);
+        table.insert(contact_a.clone()).unwrap();
+
+        // Verify A is present
+        let node_id = NodeId::from_node_id_string("node-0100");
+        let stored = table.get_contact(&node_id).unwrap();
+        assert_eq!(stored.address, "10.0.0.1");
+
+        // Mutate the contact in-place (simulating startup mutation)
+        let bucket_idx = node_id.bucket_index(&local);
+        let bucket = &mut table.buckets[bucket_idx];
+        let existing = bucket.get_mut(&node_id).unwrap();
+        existing.address = "10.0.0.2".to_string();
+        existing.port = 9443;
+        existing.is_global = false;
+        existing.latency_ms = Some(200);
+
+        // Verify B is present
+        let stored = table.get_contact(&node_id).unwrap();
+        assert_eq!(stored.address, "10.0.0.2");
+
+        // Force restore A
+        table.force_restore_contact(contact_a.clone()).unwrap();
+
+        // Verify A is restored
+        let stored = table.get_contact(&node_id).unwrap();
+        assert_eq!(stored.address, "10.0.0.1");
+        assert_eq!(stored.port, 8443);
+        assert!(stored.is_global);
+        assert!(stored.is_trusted);
+        assert_eq!(stored.latency_ms, Some(100));
+    }
+
+    #[test]
+    fn test_force_restore_no_eviction_of_unrelated() {
+        let local = NodeId::from_node_id_string("local-node");
+        let mut table = RoutingTable::new(local, "local-node".to_string());
+
+        // Fill a bucket
+        for i in 0..20u8 {
+            table.insert(make_contact(i)).unwrap();
+        }
+        assert_eq!(table.total_peers(), 20);
+
+        // Mutate an existing contact in-place
+        let node_id = make_contact(0x01).node_id;
+        let bucket_idx = node_id.bucket_index(&local);
+        let bucket = &mut table.buckets[bucket_idx];
+        let existing = bucket.get_mut(&node_id).unwrap();
+        existing.address = "mutated".to_string();
+
+        // Force restore original — should replace in-place, not evict
+        let original = make_contact(0x01);
+        table.force_restore_contact(original).unwrap();
+
+        // All 20 peers still present, no unrelated eviction
+        assert_eq!(table.total_peers(), 20);
+    }
+
+    #[test]
+    fn test_force_restore_invalidation() {
+        let local = NodeId::from_node_id_string("local-node");
+        let mut table = RoutingTable::new(local, "local-node".to_string());
+
+        let peer = make_contact(0x01);
+        table.insert(peer.clone()).unwrap();
+
+        // Prime the cache
+        let target = NodeId::from_node_id_string("target");
+        let _ = table.find_closest(&target, 5);
+
+        // Force restore should invalidate cache
+        table.force_restore_contact(make_contact(0x01)).unwrap();
+
+        // Subsequent lookup should not use stale cache (just verify no panic)
+        let _ = table.find_closest(&target, 5);
+    }
+
+    #[test]
+    fn test_force_restore_pending_ping_cleanup() {
+        let local = NodeId::from_node_id_string("local-node");
+        let mut table = RoutingTable::new(local, "local-node".to_string());
+
+        let peer = make_contact(0x01);
+        let node_id = peer.node_id;
+        table.insert(peer).unwrap();
+
+        // Add a pending ping
+        table.pending_pings.insert(node_id, Instant::now());
+
+        // Force restore should clear the pending ping
+        table.force_restore_contact(make_contact(0x01)).unwrap();
+        assert!(!table.pending_pings.contains_key(&node_id));
     }
 }
