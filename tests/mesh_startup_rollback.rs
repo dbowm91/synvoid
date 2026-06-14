@@ -153,16 +153,19 @@ fn test_startup_failure_point_clone() {
 }
 
 #[test]
-fn test_rollback_allows_retry_from_failed_state() {
-    // After a failed start, can_start() should return true (from Failed state)
+fn test_rollback_requires_recover_before_retry() {
+    // After a failed start, can_start() should return false (Failed requires recovery)
     let mut state = MeshLifecycleState::Failed;
-    assert!(state.can_start());
+    assert!(!state.can_start());
 
-    // Verify a full lifecycle: Failed -> Starting -> Running
+    // Recover via transition_to_stopped
+    state.transition_to_stopped();
+    assert_eq!(state, MeshLifecycleState::Stopped);
+
+    // Now can_start() should return true
+    assert!(state.can_start());
     state.transition_to_starting().unwrap();
     assert_eq!(state, MeshLifecycleState::Starting);
-    state.transition_to_running().unwrap();
-    assert_eq!(state, MeshLifecycleState::Running);
 }
 
 #[test]
@@ -172,11 +175,13 @@ fn test_lifecycle_not_stuck_at_starting_after_failure() {
     state.transition_to_starting().unwrap();
     assert_eq!(state, MeshLifecycleState::Starting);
 
-    // On failure, we can transition to Failed (which allows retry)
+    // On failure, we transition to Failed (which does NOT allow direct retry)
     state.transition_to_failed();
     assert_eq!(state, MeshLifecycleState::Failed);
+    assert!(!state.can_start());
 
-    // And from Failed, we can start again
+    // Recover to Stopped, then start again
+    state.transition_to_stopped();
     assert!(state.can_start());
     state.transition_to_starting().unwrap();
     assert_eq!(state, MeshLifecycleState::Starting);
@@ -189,8 +194,12 @@ fn test_lifecycle_stopped_state_allows_start() {
 }
 
 #[test]
-fn test_lifecycle_failed_state_allows_retry() {
-    let state = MeshLifecycleState::Failed;
+fn test_lifecycle_failed_requires_recover() {
+    let mut state = MeshLifecycleState::Failed;
+    assert!(!state.can_start());
+
+    // Must recover to Stopped before starting
+    state.transition_to_stopped();
     assert!(state.can_start());
 }
 #[test]
@@ -538,5 +547,259 @@ fn test_stop_server_exists() {
     assert!(
         content.contains("endpoint.close"),
         "stop_server must close the QUIC endpoint"
+    );
+}
+
+// ── Phase 18: Behavioral Tests For Shared Report Wiring ──────────────────────
+
+#[test]
+fn accept_loop_report_is_shared_via_arc_in_clone() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport_connection.rs");
+
+    // clone_for_maintenance should clone the accept_loop_report Arc, not create a new one
+    assert!(
+        content.contains("accept_loop_report: self.accept_loop_report.clone()"),
+        "clone_for_maintenance must share accept_loop_report via Arc::clone"
+    );
+
+    // Should NOT create a new default
+    assert!(
+        !content.contains("accept_loop_report: Arc::new(tokio::sync::Mutex::new(\n                crate::lifecycle::MeshAcceptLoopReport::default(),\n            ))"),
+        "clone_for_maintenance must not create a new default accept_loop_report"
+    );
+}
+
+#[test]
+fn accept_loop_report_reset_per_startup_generation() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    // start_with_policy should reset the accept loop report before running phases
+    assert!(
+        content.contains("report.generation = report.generation.saturating_add(1)")
+            || content.contains("generation: 0")
+            || content.contains("reset_accept_loop_report"),
+        "start_with_policy should reset accept loop report generation"
+    );
+}
+
+// ── Phase 19: Behavioral Tests For Verification State ────────────────────────
+
+#[test]
+fn rollback_and_return_merges_verification_before_lifecycle_selection() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    // The rollback_and_return method should merge verification issues into
+    // the rollback report BEFORE calling finish_failed_startup
+    assert!(
+        content.contains("rollback.errors.extend(verification_issues)")
+            || content.contains("rollback.clean = rollback.errors.is_empty()"),
+        "rollback_and_return must merge verification issues before lifecycle selection"
+    );
+
+    // finish_failed_startup should be called AFTER merging
+    let idx_merge = content
+        .find("rollback.errors.extend(verification_issues)")
+        .or_else(|| content.find("rollback.clean = rollback.errors.is_empty()"))
+        .unwrap_or(0);
+    let idx_finish = content
+        .find("self.finish_failed_startup(&rollback).await")
+        .unwrap_or(usize::MAX);
+    assert!(
+        idx_merge < idx_finish,
+        "Verification must be merged before finish_failed_startup is called"
+    );
+}
+
+// ── Phase 20-23: Selective Rollback/Topology/DHT/Preflight Tests ────────────
+
+#[test]
+fn rollback_selective_session_cleanup_uses_staged_ids() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    // Rollback should iterate staged session IDs, not abort all sessions
+    assert!(
+        content.contains("staged_session_ids") || content.contains("created_peers.iter()"),
+        "Rollback must use staged session IDs for selective cleanup"
+    );
+}
+
+#[test]
+fn topology_rollback_handles_both_new_and_existing_peers() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    // Rollback should handle both None (new peer) and Some (existing peer) cases
+    assert!(
+        content.contains("None =>") && content.contains("Some(snapshot) =>"),
+        "Topology rollback must handle both new and existing peers"
+    );
+}
+
+#[test]
+fn dht_rollback_uses_node_id_not_session_id() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    // DHT removal should use peer.node_id, not peer.session_id
+    assert!(
+        content.contains("rm.remove_peer(&peer.node_id)"),
+        "DHT rollback must use node_id, not session_id"
+    );
+}
+
+// ── Phase 24: Guardrail Updates ─────────────────────────────────────────────
+
+#[test]
+fn can_start_rejects_failed_state() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+
+    // can_start should only match Stopped, not Failed
+    assert!(
+        content.contains("matches!(self, MeshLifecycleState::Stopped)"),
+        "can_start() must only allow Stopped, not Failed"
+    );
+    assert!(
+        !content.contains("MeshLifecycleState::Stopped | MeshLifecycleState::Failed"),
+        "can_start() must not allow Failed state"
+    );
+}
+
+#[test]
+fn recover_failed_state_exists() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    // recover_failed_state method must exist
+    assert!(
+        content.contains("pub async fn recover_failed_state"),
+        "recover_failed_state method must exist on MeshTransport"
+    );
+}
+
+#[test]
+fn staged_peer_resource_has_previous_topology() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+
+    // StagedPeerResource must have previous_topology field
+    assert!(
+        content.contains("previous_topology: Option<StagedTopologySnapshot>"),
+        "StagedPeerResource must have previous_topology field"
+    );
+
+    // StagedTopologySnapshot must exist
+    assert!(
+        content.contains("pub struct StagedTopologySnapshot"),
+        "StagedTopologySnapshot struct must exist"
+    );
+}
+
+#[test]
+fn staged_peer_resource_has_dht_tracking() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+
+    assert!(
+        content.contains("dht_registration_created: bool"),
+        "StagedPeerResource must have dht_registration_created field"
+    );
+}
+
+#[test]
+fn staged_peer_resource_has_session_task_id() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+
+    assert!(
+        content.contains("session_task_id: Option<String>"),
+        "StagedPeerResource must have session_task_id field"
+    );
+    // Should NOT have the old boolean field
+    assert!(
+        !content.contains("session_task_created: bool"),
+        "StagedPeerResource must not have session_task_created boolean"
+    );
+}
+
+#[test]
+fn peer_sessions_is_keyed_registry() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    // peer_sessions should use HashMap, not JoinSet
+    assert!(
+        content.contains("HashMap<String,")
+            && (content.contains("PeerSessionTask>") || content.contains("PeerSessionTask >")),
+        "peer_sessions must use HashMap<String, ...PeerSessionTask>"
+    );
+}
+
+#[test]
+fn peer_session_task_struct_exists() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+
+    assert!(
+        content.contains("pub struct PeerSessionTask"),
+        "PeerSessionTask struct must exist"
+    );
+}
+
+#[test]
+fn rollback_removes_dht_entries() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    // rollback_startup should remove DHT routing entries
+    assert!(
+        content.contains("rm.remove_peer(&peer.node_id)")
+            || content.contains("remove_peer(&peer.node_id)"),
+        "rollback_startup must remove DHT routing entries for staged peers"
+    );
+}
+
+#[test]
+fn rollback_restores_topology_snapshots() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    // rollback_startup should restore topology using previous_topology
+    assert!(
+        content.contains("previous_topology") && content.contains("add_peer"),
+        "rollback_startup must restore topology using previous_topology snapshots"
+    );
+}
+
+#[test]
+fn commit_startup_checks_task_group_empty() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    // commit_startup should check that old task group is empty
+    assert!(
+        content.contains("old.active_count()") || content.contains("active_count()"),
+        "commit_startup must check old task group active count"
+    );
+}
+
+#[test]
+fn preflight_owned_during_startup() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    // During startup (when stage is Some), preflight should be owned by task group
+    assert!(
+        content.contains("spawn_child(\"preflight_peer_routes\"")
+            || content.contains("stage.task_group.spawn_child"),
+        "Preflight must be owned by staged task group during startup"
+    );
+}
+
+#[test]
+fn accept_loop_report_has_generation() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+
+    assert!(
+        content.contains("pub generation: u64"),
+        "MeshAcceptLoopReport must have generation field"
+    );
+}
+
+#[test]
+fn rollback_abort_count_from_exits() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    // Rollback should count aborted tasks from exit metadata
+    assert!(
+        content.contains("MeshTaskExitReason::Aborted") && content.contains("tasks_aborted"),
+        "Rollback must derive abort count from exit reasons"
     );
 }

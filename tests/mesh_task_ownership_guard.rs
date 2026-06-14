@@ -618,9 +618,10 @@ fn peer_sessions_field_exists() {
         content.contains("peer_sessions:"),
         "MeshTransport must have a peer_sessions field"
     );
+    // peer_sessions must use a keyed registry (HashMap), not JoinSet
     assert!(
-        content.contains("JoinSet"),
-        "peer_sessions must use JoinSet"
+        content.contains("HashMap<String,") && content.contains("PeerSessionTask>"),
+        "peer_sessions must use HashMap<String, ...PeerSessionTask> for keyed session tracking"
     );
 }
 
@@ -818,5 +819,167 @@ fn verify_rollback_complete_checks_invariants() {
     assert!(
         verify_body.contains("peer_connections") || verify_body.contains("session_id"),
         "verify_rollback_complete must check peer connections were removed"
+    );
+}
+
+// ── Test 29: can_start() rejects Failed state (Iteration 72) ─────────────────
+
+#[test]
+fn can_start_rejects_failed_state() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+    assert!(
+        content.contains("matches!(self, MeshLifecycleState::Stopped)"),
+        "can_start() must only allow Stopped, not Failed"
+    );
+    assert!(
+        !content.contains("MeshLifecycleState::Stopped | MeshLifecycleState::Failed"),
+        "can_start() must not allow Failed state"
+    );
+}
+
+// ── Test 30: recover_failed_state exists on MeshTransport ────────────────────
+
+#[test]
+fn recover_failed_state_exists() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        content.contains("pub async fn recover_failed_state"),
+        "recover_failed_state method must exist on MeshTransport"
+    );
+}
+
+// ── Test 31: StagedPeerResource has previous_topology field ──────────────────
+
+#[test]
+fn staged_peer_resource_has_previous_topology() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+    assert!(
+        content.contains("previous_topology: Option<StagedTopologySnapshot>"),
+        "StagedPeerResource must have previous_topology field"
+    );
+    assert!(
+        content.contains("pub struct StagedTopologySnapshot"),
+        "StagedTopologySnapshot struct must exist"
+    );
+}
+
+// ── Test 32: StagedPeerResource has dht_registration_created field ───────────
+
+#[test]
+fn staged_peer_resource_has_dht_tracking() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+    assert!(
+        content.contains("dht_registration_created: bool"),
+        "StagedPeerResource must have dht_registration_created field"
+    );
+}
+
+// ── Test 33: StagedPeerResource uses session_task_id, not boolean ────────────
+
+#[test]
+fn staged_peer_resource_has_session_task_id() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+    assert!(
+        content.contains("session_task_id: Option<String>"),
+        "StagedPeerResource must have session_task_id field"
+    );
+    assert!(
+        !content.contains("session_task_created: bool"),
+        "StagedPeerResource must not have session_task_created boolean"
+    );
+}
+
+// ── Test 34: PeerSessionTask struct exists ───────────────────────────────────
+
+#[test]
+fn peer_session_task_struct_exists() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+    assert!(
+        content.contains("pub struct PeerSessionTask"),
+        "PeerSessionTask struct must exist"
+    );
+}
+
+// ── Test 35: peer_sessions uses HashMap keyed registry ───────────────────────
+
+#[test]
+fn peer_sessions_is_keyed_registry() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        content.contains("HashMap<String,") && content.contains("PeerSessionTask>"),
+        "peer_sessions must use HashMap<String, ...PeerSessionTask>"
+    );
+}
+
+// ── Test 36: MeshAcceptLoopReport has generation field ───────────────────────
+
+#[test]
+fn accept_loop_report_has_generation() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+    assert!(
+        content.contains("pub generation: u64"),
+        "MeshAcceptLoopReport must have generation field"
+    );
+}
+
+// ── Test 37: rollback_startup removes DHT entries ───────────────────────────
+
+#[test]
+fn rollback_removes_dht_entries() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let rollback_body = extract_function(&content, "rollback_startup");
+    assert!(
+        rollback_body.contains("rm.remove_peer(&peer.node_id)")
+            || rollback_body.contains("remove_peer(&peer.node_id)"),
+        "rollback_startup must remove DHT routing entries for staged peers"
+    );
+}
+
+// ── Test 38: rollback restores topology from snapshots ──────────────────────
+
+#[test]
+fn rollback_restores_topology_snapshots() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let rollback_body = extract_function(&content, "rollback_startup");
+    assert!(
+        rollback_body.contains("previous_topology") && rollback_body.contains("add_peer"),
+        "rollback_startup must restore topology using previous_topology snapshots"
+    );
+}
+
+// ── Test 39: commit_startup checks old task group is empty ──────────────────
+
+#[test]
+fn commit_startup_checks_task_group_empty() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let commit_body = extract_function(&content, "commit_startup");
+    assert!(
+        commit_body.contains("old.active_count()") || commit_body.contains("active_count()"),
+        "commit_startup must check old task group active count"
+    );
+}
+
+// ── Test 40: preflight uses spawn_child during startup ──────────────────────
+
+#[test]
+fn preflight_owned_during_startup() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        content.contains("spawn_child(\"preflight_peer_routes\"")
+            || content.contains("stage.task_group.spawn_child"),
+        "Preflight must be owned by staged task group during startup"
+    );
+}
+
+// ── Test 41: rollback abort count derived from exit reasons ─────────────────
+
+#[test]
+fn rollback_abort_count_from_exits() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let rollback_body = extract_function(&content, "rollback_startup");
+    assert!(
+        rollback_body.contains("MeshTaskExitReason::Aborted")
+            && rollback_body.contains("tasks_aborted"),
+        "Rollback must derive abort count from exit reasons"
     );
 }

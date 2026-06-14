@@ -355,7 +355,7 @@ revoke_genesis_key(public_key: &str)
 - Non-empty list = genesis key must be in the list
 - Key rotation tracked via `rotation_sequence` and `GenesisKeyTransition` DHT records
 
-## Mesh Transport Lifecycle (Iterations 68–71)
+## Mesh Transport Lifecycle (Iterations 68–72)
 
 ### Adding a New Background Task
 
@@ -387,23 +387,34 @@ group.spawn_background("task_name", async move {
 - `MeshTransport::start_with_policy(policy)` — primary staged transactional startup via `MeshStartupStage` with explicit `MeshStartupPolicy`
 - `MeshTransport::start()` — compatibility wrapper using `MeshStartupPolicy::default()` (all-optional)
 - `MeshTransport::shutdown_with_timeout(timeout)` — bounded shutdown returning truthful `MeshShutdownReport`; all phases share one deadline
+- `MeshTransport::recover_failed_state(timeout)` (Iteration 72) — recovery from `Failed` state: acquires lifecycle lock, re-runs cleanup, verifies no owned resources remain, transitions to `Stopped`
 - `MeshTransport::subscribe_exits()` — stable exit subscription (valid before `start()`, survives task group replacement)
 - `MeshTransport::lifecycle_state()` — query current state
 - `MeshTransport::rollback_and_return()` (Iteration 71) — rollback a failed startup and return an appropriate error, constructing `StartupRollbackFailed` when cleanup is incomplete
 - `MeshTransport::verify_rollback_complete()` (Iteration 71) — check post-rollback invariants after rollback
 
+### Failed State Recovery (Iteration 72)
+
+`Failed` means incomplete rollback — some resources may still be owned. **`can_start()` only allows `Stopped`, not `Failed`.** The transport must recover before it can restart.
+
+- `recover_failed_state(timeout)` acquires lifecycle lock, re-runs cleanup, verifies no owned resources remain, transitions to `Stopped`
+- If recovery fails (timeout or verification issues), transport transitions back to `Failed`
+- Multiple recovery attempts are safe
+
 ### Staged Startup/Rollback
 
-`MeshStartupStage` owns every task and resource from a single startup attempt. On failure, `rollback_and_return()` (Iteration 71) centralizes rollback error propagation — it calls `rollback_startup()`, then `verify_rollback_complete()`, and constructs `StartupRollbackFailed` when cleanup is incomplete.
+`MeshStartupStage` owns every task and resource from a single startup attempt. On failure, `rollback_and_return()` (Iteration 71) centralizes rollback error propagation — it calls `rollback_startup()`, then `verify_rollback_complete()`, merges verification issues into the report before `finish_failed_startup()`, and constructs `StartupRollbackFailed` when cleanup is incomplete.
 
-- Peer resources tracked via `StagedPeerResource` with exact mutation metadata (`session_id`, `node_id`, `topology_existed_before`, `connection_inserted`, `session_task_created`)
-- Rollback uses `session_id` (not `node_id`) for `peer_connections` DashMap removal
-- Topology entries created during failed startup are removed on rollback
-- Peer session cleanup: cooperative drain → abort all → brief wait
+- Peer resources tracked via `StagedPeerResource` with exact mutation metadata (`session_id`, `node_id`, `topology_existed_before`, `connection_inserted`, `session_task_created`, `dht_registration_created`)
+- Topology snapshots (`StagedTopologySnapshot`) capture `MeshPeerInfo` + `PeerStatus` before modification; rollback restores exact prior state for existing peers, removes new peers
+- Selective peer-session ownership via `HashMap<String, PeerSessionTask>` keyed registry; rollback targets only staged sessions
+- DHT routing entries removed when `dht_registration_created = true` on staged resource
+- `tasks_aborted` derived from `MeshTaskExitReason::Aborted` exit metadata (authoritative, not `active_count()`)
+- `commit_startup()` logs warning when replacing non-empty old task group
 - Shared rollback deadline (`startup_rollback_timeout_secs`, default 15s)
 - `verify_rollback_complete()` checks post-rollback invariants
 - **Clean rollback** → `Stopped` state (safe to retry immediately)
-- **Error rollback** → `Failed` state (`can_start()` permits retry from `Failed`)
+- **Error rollback** → `Failed` state (requires `recover_failed_state()` to recover)
 
 The lifecycle operation lock (`lifecycle_op: tokio::sync::Mutex<()>`) serializes start/stop transitions.
 
@@ -432,10 +443,11 @@ Returned after startup:
 
 `MeshTaskIdGenerator` provides globally unique `MeshTaskId(u64)` across task-group generations. Each `MeshTransport` owns one `Arc<MeshTaskIdGenerator>` and passes it to every new `MeshTaskGroup`. Broadcast delivery is for runtime observation only; join-returned exit is authoritative for shutdown reports. No duplicate accounting between broadcast and join.
 
-### Handshake/Session Ownership Split
+### Handshake/Session Ownership Split (Iteration 72)
 
 - Handshake children: bounded, short-lived, semaphore-limited (in `JoinSet`)
-- Peer sessions: long-lived, stored in `peer_sessions: Arc<Mutex<JoinSet<()>>>`
+- Peer sessions: long-lived, stored in `peer_sessions: HashMap<String, PeerSessionTask>` keyed by `session_id` (Iteration 72 — replaces global `JoinSet<()>`)
+- Rollback targets only staged sessions via the keyed registry
 - Shutdown drains peer sessions after closing connections
 
 ### Truthful Shutdown Report
@@ -445,6 +457,7 @@ Returned after startup:
 - `remaining_peers` — measured after connection close/drain
 - `drained_peer_sessions` / `aborted_peer_sessions` — from session drain
 - `drained_peer_children` / `aborted_peer_children` — from accept loop report (populated during accept-loop shutdown, Iteration 71)
+- `MeshAcceptLoopReport` includes `generation: u64` (Iteration 72) — distinguishes reports across startup cycles; reset at each `start_with_policy()`
 
 ### Worker Integration
 

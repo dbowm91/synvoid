@@ -15,9 +15,9 @@ use synvoid_mesh::transport::MeshTransport;
 // ── Lifecycle State Machine Tests ────────────────────────────────────────────
 
 #[test]
-fn lifecycle_can_start_from_stopped_and_failed() {
+fn lifecycle_can_start_from_stopped_not_failed() {
     assert!(MeshLifecycleState::Stopped.can_start());
-    assert!(MeshLifecycleState::Failed.can_start());
+    assert!(!MeshLifecycleState::Failed.can_start());
     assert!(!MeshLifecycleState::Starting.can_start());
     assert!(!MeshLifecycleState::Running.can_start());
     assert!(!MeshLifecycleState::Stopping.can_start());
@@ -50,8 +50,16 @@ fn lifecycle_valid_transition_sequence() {
 }
 
 #[test]
-fn lifecycle_restart_after_failure() {
+fn lifecycle_restart_after_failure_requires_recovery() {
     let mut state = MeshLifecycleState::Failed;
+
+    // Failed cannot directly transition to Starting
+    assert!(state.transition_to_starting().is_err());
+    assert_eq!(state, MeshLifecycleState::Failed);
+
+    // Must recover to Stopped first
+    state.transition_to_stopped();
+    assert_eq!(state, MeshLifecycleState::Stopped);
 
     state.transition_to_starting().unwrap();
     assert_eq!(state, MeshLifecycleState::Starting);

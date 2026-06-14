@@ -186,12 +186,10 @@ impl fmt::Display for MeshLifecycleState {
 impl MeshLifecycleState {
     /// Returns `true` if the transport can transition to `Starting`.
     ///
-    /// Allowed from `Stopped` (initial start) or `Failed` (restart after rollback).
+    /// Only allowed from `Stopped`. `Failed` requires explicit recovery
+    /// via `recover_failed_state()` before a new startup attempt.
     pub fn can_start(&self) -> bool {
-        matches!(
-            self,
-            MeshLifecycleState::Stopped | MeshLifecycleState::Failed
-        )
+        matches!(self, MeshLifecycleState::Stopped)
     }
 
     /// Returns `true` if the transport can transition to `Stopping`.
@@ -201,7 +199,7 @@ impl MeshLifecycleState {
         matches!(self, MeshLifecycleState::Running)
     }
 
-    /// Transition from `Stopped` or `Failed` to `Starting`.
+    /// Transition from `Stopped` to `Starting`.
     pub fn transition_to_starting(&mut self) -> Result<(), MeshTransportError> {
         if !self.can_start() {
             return Err(MeshTransportError::NotAvailable);
@@ -323,6 +321,27 @@ pub struct MeshAcceptLoopReport {
     pub aborted_handshakes: usize,
     /// Number of connections rejected at capacity.
     pub rejected_at_capacity: usize,
+    /// Generation counter to distinguish reports across startup cycles.
+    pub generation: u64,
+}
+
+/// A tracked peer session task with its identity and handle.
+pub struct PeerSessionTask {
+    /// Session identifier for this peer connection.
+    pub session_id: String,
+    /// Node identifier for the peer.
+    pub node_id: String,
+    /// Join handle for the session task.
+    pub handle: tokio::task::JoinHandle<()>,
+}
+
+/// Snapshot of a peer's topology state before a startup attempt modified it.
+#[derive(Debug, Clone)]
+pub struct StagedTopologySnapshot {
+    /// The peer info before modification.
+    pub peer_info: crate::protocol::MeshPeerInfo,
+    /// The peer status before modification.
+    pub status: crate::topology::PeerStatus,
 }
 
 /// Records a single peer mutation created during startup, used for
@@ -333,12 +352,15 @@ pub struct StagedPeerResource {
     pub session_id: String,
     /// Node identifier for the peer.
     pub node_id: String,
-    /// Whether a topology entry existed before this startup attempt.
-    pub topology_existed_before: bool,
+    /// Topology snapshot before this startup attempt modified the peer entry.
+    /// `None` means no prior topology entry existed (new peer).
+    pub previous_topology: Option<StagedTopologySnapshot>,
     /// Whether the connection was inserted into the connection map.
     pub connection_inserted: bool,
-    /// Whether a session task was spawned.
-    pub session_task_created: bool,
+    /// Session ID used as the key in the session-task registry, if a session task was spawned.
+    pub session_task_id: Option<String>,
+    /// Whether a DHT routing entry was created during this startup attempt.
+    pub dht_registration_created: bool,
 }
 
 /// Report from a startup rollback attempt.
@@ -421,9 +443,10 @@ impl MeshStartupStage {
         self.record_peer(StagedPeerResource {
             session_id,
             node_id,
-            topology_existed_before: false,
+            previous_topology: None,
             connection_inserted: true,
-            session_task_created: true,
+            session_task_id: None,
+            dht_registration_created: false,
         });
     }
 
@@ -483,7 +506,7 @@ mod tests {
     #[test]
     fn lifecycle_can_start() {
         assert!(MeshLifecycleState::Stopped.can_start());
-        assert!(MeshLifecycleState::Failed.can_start());
+        assert!(!MeshLifecycleState::Failed.can_start());
         assert!(!MeshLifecycleState::Starting.can_start());
         assert!(!MeshLifecycleState::Running.can_start());
         assert!(!MeshLifecycleState::Stopping.can_start());
@@ -647,15 +670,17 @@ mod tests {
         let resource = StagedPeerResource {
             session_id: "sess-1".to_string(),
             node_id: "node-1".to_string(),
-            topology_existed_before: false,
+            previous_topology: None,
             connection_inserted: true,
-            session_task_created: true,
+            session_task_id: Some("sess-1".to_string()),
+            dht_registration_created: false,
         };
         assert_eq!(resource.session_id, "sess-1");
         assert_eq!(resource.node_id, "node-1");
-        assert!(!resource.topology_existed_before);
+        assert!(resource.previous_topology.is_none());
         assert!(resource.connection_inserted);
-        assert!(resource.session_task_created);
+        assert_eq!(resource.session_task_id.as_deref(), Some("sess-1"));
+        assert!(!resource.dht_registration_created);
     }
 
     #[test]
@@ -679,9 +704,10 @@ mod tests {
         stage.record_peer(StagedPeerResource {
             session_id: "sess-1".to_string(),
             node_id: "node-1".to_string(),
-            topology_existed_before: false,
+            previous_topology: None,
             connection_inserted: true,
-            session_task_created: true,
+            session_task_id: Some("sess-1".to_string()),
+            dht_registration_created: false,
         });
 
         assert_eq!(stage.created_peers.len(), 1);

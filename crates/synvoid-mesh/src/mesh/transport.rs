@@ -50,8 +50,8 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch, Mutex};
 #[allow(unused_imports)]
 use crate::lifecycle::{
     remaining, MeshAcceptLoopReport, MeshLifecycleState, MeshShutdownReport, MeshStartupPolicy,
-    MeshStartupReport, MeshStartupStage, MeshTaskExit, MeshTaskIdGenerator, RollbackReport,
-    StagedPeerResource,
+    MeshStartupReport, MeshStartupStage, MeshTaskExit, MeshTaskExitReason, MeshTaskIdGenerator,
+    PeerSessionTask, RollbackReport, StagedPeerResource, StagedTopologySnapshot,
 };
 use crate::task_group::MeshTaskGroup;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -172,7 +172,8 @@ pub struct MeshTransport {
     pub(crate) lifecycle_state: Arc<tokio::sync::Mutex<MeshLifecycleState>>,
     pub(crate) shutdown_started: Arc<AtomicBool>,
     pub(crate) mesh_exit_tx: broadcast::Sender<MeshTaskExit>,
-    pub(crate) peer_sessions: Arc<tokio::sync::Mutex<tokio::task::JoinSet<()>>>,
+    pub(crate) peer_sessions:
+        Arc<tokio::sync::Mutex<HashMap<String, crate::lifecycle::PeerSessionTask>>>,
     pub(crate) startup_failure_hook:
         Arc<Mutex<Option<Box<dyn Fn(StartupFailurePoint) -> Result<(), String> + Send>>>>,
     /// Serializes lifecycle start/stop transitions to prevent interleaving.
@@ -793,7 +794,7 @@ impl MeshTransport {
                 let (tx, _) = broadcast::channel(64);
                 tx
             },
-            peer_sessions: Arc::new(tokio::sync::Mutex::new(tokio::task::JoinSet::new())),
+            peer_sessions: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             startup_failure_hook: Arc::new(Mutex::new(None)),
             lifecycle_op: tokio::sync::Mutex::new(()),
             id_generator: Arc::new(MeshTaskIdGenerator::new()),
@@ -2124,6 +2125,15 @@ impl MeshTransport {
         let shutdown_rx = stage.task_group.shutdown_receiver();
         self.shutdown_started.store(false, Ordering::SeqCst);
 
+        // Reset accept loop report for this startup generation
+        {
+            let mut report = self.accept_loop_report.lock().await;
+            report.generation = report.generation.saturating_add(1);
+            report.drained_handshakes = 0;
+            report.aborted_handshakes = 0;
+            report.rejected_at_capacity = 0;
+        }
+
         // Phase 3-10: Run all startup phases, routing ALL failures through rollback
         let report = match self
             .run_startup_phases(&mut stage, &policy, &shutdown_rx)
@@ -2562,7 +2572,19 @@ impl MeshTransport {
         // 4. Transfer staged task group into transport ownership
         let old_task_group = {
             let mut tg = self.task_group.lock().await;
-            std::mem::replace(&mut *tg, std::mem::take(&mut stage.task_group))
+            let old = std::mem::replace(&mut *tg, std::mem::take(&mut stage.task_group));
+            // Safety check: the old group should be empty before replacement.
+            // A non-empty group means tasks from a previous generation are still live.
+            let (c, b, ch) = old.active_count();
+            if c + b + ch > 0 {
+                tracing::error!(
+                    "Replacing non-empty task group: {} critical, {} background, {} children",
+                    c,
+                    b,
+                    ch
+                );
+            }
+            old
         };
         // old_task_group is dropped here (its tasks were already forwarded via exit_tx)
 
@@ -2653,43 +2675,96 @@ impl MeshTransport {
             }
         }
 
-        // Count any remaining active tasks as aborted
-        let active = stage.task_group.active_count();
-        let remaining_active = active.0 + active.1 + active.2;
-        if remaining_active > 0 {
-            tasks_aborted += remaining_active;
+        // Count tasks that were forcibly aborted from the exit metadata
+        let tasks_aborted_from_exits = exits
+            .iter()
+            .filter(|exit| matches!(exit.reason, MeshTaskExitReason::Aborted))
+            .count();
+        tasks_aborted += tasks_aborted_from_exits;
+
+        // Phase 5: Restore topology entries
+        for peer in &stage.created_peers {
+            match &peer.previous_topology {
+                None => {
+                    // New peer - remove the entry entirely
+                    self.topology.remove_peer(&peer.node_id).await;
+                    topology_entries_restored += 1;
+                }
+                Some(snapshot) => {
+                    // Existing peer was overwritten - restore exact prior state
+                    self.topology
+                        .add_peer(snapshot.peer_info.clone(), snapshot.status)
+                        .await;
+                    topology_entries_restored += 1;
+                }
+            }
         }
 
-        // Phase 5: Restore topology entries that didn't exist before startup
+        // Phase 5b: Remove DHT routing entries created during startup
         for peer in &stage.created_peers {
-            if !peer.topology_existed_before {
-                self.topology.remove_peer(&peer.node_id).await;
-                topology_entries_restored += 1;
+            if peer.dht_registration_created {
+                if let Some(ref rm) = self.routing_manager {
+                    if rm.is_enabled() {
+                        rm.remove_peer(&peer.node_id).await;
+                        tracing::debug!(
+                            "Removed DHT routing entry for peer {} during rollback",
+                            peer.node_id
+                        );
+                    }
+                }
             }
         }
 
         // Phase 6: Selectively abort and await startup-created peer sessions
-        let session_remaining = remaining(deadline);
-        if !session_remaining.is_zero() {
+        {
             let mut sessions = self.peer_sessions.lock().await;
-            // Drain cooperatively first
-            while let Ok(Some(_)) =
-                tokio::time::timeout(session_remaining, sessions.join_next()).await
-            {
-                peer_sessions_cleaned += 1;
-            }
-            // If there are still sessions, abort them
-            let remaining_count = sessions.len();
-            if remaining_count > 0 {
-                sessions.abort_all();
-                // Wait briefly for abort to take effect
-                let abort_deadline = std::time::Instant::now() + Duration::from_millis(100);
-                while let Ok(Some(_)) =
-                    tokio::time::timeout(remaining(abort_deadline), sessions.join_next()).await
-                {
-                    peer_sessions_cleaned += 1;
+            // Collect session IDs from staged peers for selective cleanup
+            let staged_session_ids: Vec<String> = stage
+                .created_peers
+                .iter()
+                .filter(|p| p.session_task_id.is_some())
+                .map(|p| p.session_id.clone())
+                .collect();
+
+            // First, drain cooperatively with remaining deadline
+            let mut to_abort = Vec::new();
+            for session_id in &staged_session_ids {
+                if let Some(task) = sessions.remove(session_id) {
+                    let left = remaining(deadline);
+                    if left.is_zero() {
+                        to_abort.push(task);
+                        continue;
+                    }
+                    let mut handle = task.handle;
+                    let sleep = tokio::time::sleep(left);
+                    tokio::pin!(sleep);
+                    tokio::select! {
+                        result = &mut handle => {
+                            match result {
+                                Ok(()) | Err(_) => peer_sessions_cleaned += 1,
+                            }
+                        }
+                        _ = &mut sleep => {
+                            to_abort.push(PeerSessionTask {
+                                session_id: task.session_id,
+                                node_id: task.node_id,
+                                handle,
+                            });
+                        }
+                    }
                 }
-                tasks_aborted += remaining_count;
+            }
+
+            // Abort remaining staged sessions
+            for task in to_abort {
+                task.handle.abort();
+                let left = remaining(deadline);
+                if !left.is_zero() {
+                    let _ = tokio::time::timeout(left, task.handle).await;
+                }
+                peer_sessions_cleaned += 1;
+                tasks_aborted += 1;
+                sessions.remove(&task.session_id);
             }
         }
 
@@ -2700,6 +2775,15 @@ impl MeshTransport {
                 runtime_stopped = true;
                 tracing::debug!("QUIC runtime stopped during rollback");
             }
+        }
+
+        // Phase 8: Reset accept-loop report for diagnostics and future generations
+        if stage.runtime_started {
+            let mut report = self.accept_loop_report.lock().await;
+            report.drained_handshakes = 0;
+            report.aborted_handshakes = 0;
+            report.rejected_at_capacity = 0;
+            // Don't increment generation here - that happens at next startup
         }
 
         let clean = errors.is_empty();
@@ -2727,6 +2811,21 @@ impl MeshTransport {
                     "Peer connection for session {} still present after rollback",
                     peer.session_id
                 ));
+            }
+        }
+
+        // Check that no staged session IDs remain in the session-task registry
+        {
+            let sessions = self.peer_sessions.lock().await;
+            for peer in &stage.created_peers {
+                if let Some(ref task_id) = peer.session_task_id {
+                    if sessions.contains_key(&peer.session_id) {
+                        issues.push(format!(
+                            "Peer session {} (task {}) still present in registry after rollback",
+                            peer.session_id, task_id
+                        ));
+                    }
+                }
             }
         }
 
@@ -2764,6 +2863,88 @@ impl MeshTransport {
         }
     }
 
+    /// Recover from a `Failed` lifecycle state by re-running cleanup
+    /// and transitioning back to `Stopped`.
+    ///
+    /// This method:
+    /// 1. Acquires the lifecycle operation lock
+    /// 2. Verifies current state is `Failed`
+    /// 3. Re-runs cleanup against any remaining resources
+    /// 4. Verifies no owned tasks/sessions/connections remain
+    /// 5. Transitions to `Stopped` only after successful verification
+    pub async fn recover_failed_state(&self, _timeout: Duration) -> Result<(), MeshTransportError> {
+        let _lifecycle_guard = self.lifecycle_op.lock().await;
+
+        // Verify current state is Failed
+        {
+            let state = self.lifecycle_state.lock().await;
+            if !matches!(*state, MeshLifecycleState::Failed) {
+                return Err(MeshTransportError::LifecycleConflict(format!(
+                    "Cannot recover: current state is {state}, expected Failed"
+                )));
+            }
+        }
+
+        tracing::info!("Attempting recovery from Failed lifecycle state");
+
+        // Re-run cleanup: close any remaining peer connections
+        for entry in self.peer_connections.iter() {
+            entry
+                .value()
+                .connection
+                .close(0u32.into(), b"Recovery cleanup");
+        }
+        self.peer_connections.clear();
+
+        // Drain and abort any remaining peer sessions
+        {
+            let mut sessions = self.peer_sessions.lock().await;
+            for (_key, task) in sessions.drain() {
+                task.handle.abort();
+                let _ = task.handle.await;
+            }
+        }
+
+        // Stop runtime if present
+        if let Some(ref runtime) = self.runtime {
+            runtime.stop_server().await;
+        }
+
+        // Clear running projection
+        self.running_projection.store(false, Ordering::SeqCst);
+
+        // Verify cleanup is complete
+        let mut issues = Vec::new();
+        if !self.peer_connections.is_empty() {
+            issues.push(format!(
+                "{} peer connections still present",
+                self.peer_connections.len()
+            ));
+        }
+        if self.running_projection.load(Ordering::SeqCst) {
+            issues.push("running_projection is still true".to_string());
+        }
+        {
+            let state = self.lifecycle_state.lock().await;
+            if matches!(*state, MeshLifecycleState::Running) {
+                issues.push("lifecycle state is Running".to_string());
+            }
+        }
+
+        if issues.is_empty() {
+            let mut state = self.lifecycle_state.lock().await;
+            state.transition_to_stopped();
+            tracing::info!("Recovery from Failed state complete; lifecycle: stopped");
+            Ok(())
+        } else {
+            tracing::warn!("Recovery incomplete: {:?}", issues);
+            Err(MeshTransportError::StartupRollbackFailed {
+                startup_error: "Recovery from Failed state".to_string(),
+                rollback_errors: issues,
+            })
+        }
+    }
+
     /// Roll back a failed startup and return an appropriate error.
     ///
     /// If rollback completed cleanly, returns the original startup error.
@@ -2774,26 +2955,25 @@ impl MeshTransport {
         stage: &mut MeshStartupStage,
         startup_error: MeshTransportError,
     ) -> Result<T, MeshTransportError> {
-        let rollback = self.rollback_startup(stage).await;
+        let mut rollback = self.rollback_startup(stage).await;
 
-        // Verify rollback completeness
+        // Verify rollback completeness and merge into rollback result BEFORE lifecycle selection
         let verification_issues = self.verify_rollback_complete(stage).await;
         for issue in &verification_issues {
             tracing::error!("Rollback verification failed: {}", issue);
         }
+        rollback.errors.extend(verification_issues);
+        rollback.clean = rollback.errors.is_empty();
 
+        // Lifecycle selection now reflects actual cleanup reality
         self.finish_failed_startup(&rollback).await;
 
-        if rollback.clean && verification_issues.is_empty() {
+        if rollback.clean {
             Err(startup_error)
         } else {
-            let mut all_errors = rollback.errors;
-            for issue in verification_issues {
-                all_errors.push(issue);
-            }
             Err(MeshTransportError::StartupRollbackFailed {
                 startup_error: startup_error.to_string(),
-                rollback_errors: all_errors,
+                rollback_errors: rollback.errors,
             })
         }
     }
@@ -3146,12 +3326,22 @@ impl MeshTransport {
 
         let transport = self.clone();
         let topo = self.topology.clone();
-        let mut sessions = self.peer_sessions.lock().await;
-        sessions.spawn(async move {
+        let session_id_for_loop = session_id.clone();
+        let peer_node_id_for_loop = peer_node_id.clone();
+        let handle = tokio::spawn(async move {
             transport
-                .peer_message_loop(session_id, peer_node_id, connection, topo)
+                .peer_message_loop(session_id_for_loop, peer_node_id_for_loop, connection, topo)
                 .await;
         });
+        let mut sessions = self.peer_sessions.lock().await;
+        sessions.insert(
+            session_id.clone(),
+            PeerSessionTask {
+                session_id: session_id.clone(),
+                node_id: peer_node_id,
+                handle,
+            },
+        );
 
         Ok(())
     }
@@ -3221,35 +3411,31 @@ impl MeshTransport {
         let mut sessions = self.peer_sessions.lock().await;
         let mut drained = 0;
         let mut aborted = 0;
-        loop {
-            let remaining_time = remaining(deadline);
-            if remaining_time.is_zero() {
-                // Deadline expired — abort all remaining and join them
-                sessions.abort_all();
-                while let Some(result) = sessions.join_next().await {
-                    match result {
-                        Ok(()) => drained += 1,
-                        Err(_) => aborted += 1,
-                    }
+        let session_keys: Vec<String> = sessions.keys().cloned().collect();
+
+        for key in session_keys {
+            if let Some(task) = sessions.remove(&key) {
+                let left = remaining(deadline);
+                if left.is_zero() {
+                    task.handle.abort();
+                    let _ = task.handle.await;
+                    aborted += 1;
+                    continue;
                 }
-                break;
-            }
-            match tokio::time::timeout(remaining_time, sessions.join_next()).await {
-                Ok(Some(result)) => match result {
-                    Ok(()) => drained += 1,
-                    Err(_) => aborted += 1,
-                },
-                Ok(None) => break, // JoinSet is empty
-                Err(_) => {
-                    // Deadline expired during wait — abort and drain
-                    sessions.abort_all();
-                    while let Some(result) = sessions.join_next().await {
+                let mut handle = task.handle;
+                let sleep = tokio::time::sleep(left);
+                tokio::pin!(sleep);
+                tokio::select! {
+                    result = &mut handle => {
                         match result {
-                            Ok(()) => drained += 1,
-                            Err(_) => aborted += 1,
+                            Ok(()) | Err(_) => drained += 1,
                         }
                     }
-                    break;
+                    _ = &mut sleep => {
+                        handle.abort();
+                        let _ = handle.await;
+                        aborted += 1;
+                    }
                 }
             }
         }
@@ -3350,7 +3536,7 @@ impl MeshTransport {
     pub(crate) async fn connect_to_peer(
         &self,
         peer_config: &MeshPeerConfig,
-        stage: Option<&mut MeshStartupStage>,
+        mut stage: Option<&mut MeshStartupStage>,
     ) -> Result<MeshPeerConnection, MeshTransportError> {
         if !self.check_rate_limit() {
             return Err(MeshTransportError::RateLimited);
@@ -3552,7 +3738,7 @@ impl MeshTransport {
             MeshTransportError::ReceiveFailed("Failed to decode response".to_string())
         })?;
 
-        let (session_id, peer_info, topology_existed_before) = match response {
+        let (session_id, peer_info) = match response {
             MeshMessage::HelloAck {
                 version,
                 node_id,
@@ -3744,9 +3930,6 @@ impl MeshTransport {
                     )))),
                 };
 
-                let topology_existed_before =
-                    self.topology.get_peer(&node_id.to_string()).await.is_some();
-
                 self.topology
                     .add_peer(
                         MeshPeerInfo {
@@ -3767,7 +3950,7 @@ impl MeshTransport {
                     )
                     .await;
 
-                (session_id, peer_connection, topology_existed_before)
+                (session_id, peer_connection)
             }
             MeshMessage::Error { code, message } => {
                 return Err(MeshTransportError::PeerError {
@@ -3795,40 +3978,93 @@ impl MeshTransport {
         }
 
         // Preflight: query the new peer for their known routes to warm our cache
-        let transport = self.clone();
-        let peer_node_id_for_preflight = peer_node_id.clone();
-        tokio::spawn(async move {
-            if let Err(e) = transport
-                .preflight_peer_routes(&peer_node_id_for_preflight)
+        //
+        // Preflight failure policy: nonfatal, best-effort.
+        // - Failure logs only; does not affect startup or connection success.
+        // - Task completion is owned (by task group during startup, detached otherwise).
+        // - Rollback cancellation is expected during startup.
+        // - Route/cache state is not mutated after rollback completion.
+        let preflight_node_id = peer_node_id.clone();
+        let preflight_transport = self.clone();
+        let preflight_future = async move {
+            if let Err(e) = preflight_transport
+                .preflight_peer_routes(&preflight_node_id)
                 .await
             {
-                tracing::debug!(
-                    "Preflight routes from {}: {}",
-                    peer_node_id_for_preflight,
-                    e
-                );
+                tracing::debug!("Preflight routes from {}: {}", preflight_node_id, e);
             }
-        });
+        };
+        // During startup, preflight is owned by the staged task group for rollback.
+        // During steady-state, it runs detached (best-effort, nonfatal).
+        if let Some(ref mut startup_stage) = stage {
+            startup_stage
+                .task_group
+                .spawn_child("preflight_peer_routes", preflight_future);
+        } else {
+            tokio::spawn(preflight_future);
+        }
 
         let transport = self.clone();
         let conn = connection;
         let topo = self.topology.clone();
         let peer_node_id_for_loop = peer_node_id.clone();
-        let session_id_str = session_id.to_string();
-        let mut sessions = self.peer_sessions.lock().await;
-        sessions.spawn(async move {
+        let session_id_for_loop = session_id.to_string();
+        let node_id_for_session = peer_node_id.clone();
+        let session_id_key = session_id.to_string();
+        let handle = tokio::spawn(async move {
             transport
-                .peer_message_loop(session_id_str, peer_node_id_for_loop, conn, topo)
+                .peer_message_loop(session_id_for_loop, peer_node_id_for_loop, conn, topo)
                 .await;
         });
+        let mut sessions = self.peer_sessions.lock().await;
+        sessions.insert(
+            session_id_key,
+            PeerSessionTask {
+                session_id: session_id.to_string(),
+                node_id: node_id_for_session,
+                handle,
+            },
+        );
 
         if let Some(stage) = stage {
+            // Capture topology snapshot before modification
+            let peer_node_id_str = peer_info_return.node_id.clone();
+            let previous_topology =
+                self.topology
+                    .get_peer(&peer_node_id_str)
+                    .await
+                    .map(|ps| StagedTopologySnapshot {
+                        peer_info: crate::protocol::MeshPeerInfo {
+                            node_id: ps.node_id.clone(),
+                            address: ps.address.clone(),
+                            role: ps.role,
+                            capabilities: crate::protocol::MeshCapabilities::from_config(
+                                &self.config,
+                                ps.role,
+                            ),
+                            is_global: ps.is_global,
+                            latency_ms: ps.latency_ms,
+                            upstreams: ps.upstreams.iter().cloned().collect(),
+                            is_trusted: ps.is_trusted,
+                            quic_port: ps.quic_port,
+                            wireguard_port: ps.wireguard_port,
+                            advertised_port: ps.advertised_port,
+                            dns_serving_healthy: false,
+                        },
+                        status: ps.status,
+                    });
+
+            let dht_created = self
+                .routing_manager
+                .as_ref()
+                .map_or(false, |rm| rm.is_enabled());
             stage.record_peer(StagedPeerResource {
                 session_id: session_id.to_string(),
                 node_id: peer_info_return.node_id.clone(),
-                topology_existed_before,
+                previous_topology,
                 connection_inserted: true,
-                session_task_created: true,
+                session_task_id: Some(session_id.to_string()),
+                dht_registration_created: dht_created,
             });
         }
 
