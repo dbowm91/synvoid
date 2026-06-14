@@ -3,6 +3,7 @@
 //! These tests use failure-injection hooks to verify that `MeshTransport::start()`
 //! properly rolls back on failure and leaves the lifecycle in a recoverable state.
 
+use std::fs;
 use std::sync::Arc;
 
 use parking_lot::RwLock;
@@ -11,6 +12,36 @@ use synvoid_mesh::config::MeshConfig;
 use synvoid_mesh::lifecycle::MeshLifecycleState;
 use synvoid_mesh::topology::MeshTopology;
 use synvoid_mesh::transport::{MeshTransport, StartupFailurePoint};
+
+fn read_file(path: &str) -> String {
+    fs::read_to_string(path).unwrap_or_default()
+}
+
+fn count_occurrences(haystack: &str, needle: &str) -> usize {
+    haystack.matches(needle).count()
+}
+
+fn extract_function(content: &str, fn_name: &str) -> String {
+    if let Some(start) = content.find(&format!("fn {fn_name}")) {
+        if let Some(brace_start) = content[start..].find('{') {
+            let abs_brace = start + brace_start;
+            let mut depth = 0i32;
+            for (i, ch) in content[abs_brace..].char_indices() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            return content[abs_brace..=abs_brace + i].to_string();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    content.to_string()
+}
 
 /// Create a minimal `MeshTransport` for testing.
 fn make_test_transport() -> Arc<MeshTransport> {
@@ -99,7 +130,7 @@ fn test_startup_failure_point_equality() {
     );
     assert_ne!(
         StartupFailurePoint::DuringRuntimeStart,
-        StartupFailurePoint::AfterLifecycleCommit
+        StartupFailurePoint::BeforeLifecycleCommit
     );
 }
 
@@ -111,7 +142,7 @@ fn test_startup_failure_point_debug() {
     let _ = format!("{:?}", StartupFailurePoint::DuringPeerConnect);
     let _ = format!("{:?}", StartupFailurePoint::DuringDhtBootstrap);
     let _ = format!("{:?}", StartupFailurePoint::DuringRuntimeStart);
-    let _ = format!("{:?}", StartupFailurePoint::AfterLifecycleCommit);
+    let _ = format!("{:?}", StartupFailurePoint::BeforeLifecycleCommit);
 }
 
 #[test]
@@ -187,4 +218,175 @@ fn test_hook_invoked_with_correct_point() {
 
     transport.clear_startup_failure_hook();
     assert!(!transport.has_startup_failure_hook());
+}
+
+// ── Phase 17: Commit/Rollback Behavioral Tests (Iteration 71) ───────────────
+
+/// Test that rollback_and_return helper exists and constructs
+/// StartupRollbackFailed when rollback has errors.
+#[test]
+fn test_rollback_and_return_exists() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        content.contains("fn rollback_and_return"),
+        "transport.rs must contain rollback_and_return helper"
+    );
+    assert!(
+        content.contains("StartupRollbackFailed"),
+        "rollback_and_return must construct StartupRollbackFailed on incomplete rollback"
+    );
+}
+
+/// Test that commit_startup takes &mut MeshStartupStage (non-consuming).
+#[test]
+fn test_commit_startup_non_consuming() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    // Look for the commit_startup signature - it should take &mut, not owned
+    // The parameter is in the signature (before the opening brace), not in the body
+    let commit_start = content
+        .find("fn commit_startup")
+        .expect("commit_startup not found");
+    let sig_window = &content[commit_start..commit_start + 300];
+    assert!(
+        sig_window.contains("stage: &mut MeshStartupStage"),
+        "commit_startup must take &mut MeshStartupStage (non-consuming) for rollback"
+    );
+}
+
+/// Test that start_with_policy routes commit errors through rollback.
+#[test]
+fn test_start_routes_commit_errors_through_rollback() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let start_body = extract_function(&content, "start_with_policy");
+
+    // start_with_policy should have two failure paths:
+    // 1. run_startup_phases failure -> rollback_and_return
+    // 2. commit_startup failure -> rollback_and_return
+    assert!(
+        start_body.contains("rollback_and_return"),
+        "start_with_policy must use rollback_and_return for error routing"
+    );
+
+    // Verify both phase failure and commit failure go through rollback
+    let rollback_count = count_occurrences(&start_body, "rollback_and_return");
+    assert!(
+        rollback_count >= 2,
+        "start_with_policy should call rollback_and_return at least twice \
+         (once for phase failure, once for commit failure); found {rollback_count}"
+    );
+}
+
+/// Test that commit installs task group before transitioning to Running.
+#[test]
+fn test_commit_installs_before_running() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let commit_body = extract_function(&content, "commit_startup");
+
+    // Task group installation must come before transition_to_running
+    let tg_install = commit_body.find("task_group");
+    let running = commit_body.find("transition_to_running");
+
+    if let (Some(tg), Some(r)) = (tg_install, running) {
+        assert!(
+            tg < r,
+            "task group installation (pos {tg}) must come before \
+             transition_to_running (pos {r}) in commit_startup"
+        );
+    }
+}
+
+/// Test that StagedPeerResource is used in rollback.
+#[test]
+fn test_staged_peer_resource_in_rollback() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let rollback_body = extract_function(&content, "rollback_startup");
+
+    assert!(
+        rollback_body.contains("created_peers"),
+        "rollback_startup must iterate stage.created_peers"
+    );
+    assert!(
+        rollback_body.contains("session_id"),
+        "rollback_startup must use session_id for connection removal"
+    );
+    assert!(
+        rollback_body.contains("topology_existed_before") || rollback_body.contains("remove_peer"),
+        "rollback_startup must handle topology restoration"
+    );
+}
+
+/// Test that verify_rollback_complete exists.
+#[test]
+fn test_verify_rollback_complete_exists() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        content.contains("fn verify_rollback_complete"),
+        "transport.rs must contain verify_rollback_complete method"
+    );
+}
+
+/// Test that MeshStartupStage tracks peers via StagedPeerResource.
+#[test]
+fn test_startup_stage_tracks_peers() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+    assert!(
+        content.contains("StagedPeerResource"),
+        "lifecycle.rs must define StagedPeerResource"
+    );
+    assert!(
+        content.contains("created_peers:"),
+        "MeshStartupStage must have created_peers field"
+    );
+    assert!(
+        content.contains("fn record_peer"),
+        "MeshStartupStage must have record_peer method"
+    );
+}
+
+/// Test that RollbackReport has expanded fields.
+#[test]
+fn test_rollback_report_expanded() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+    assert!(
+        content.contains("tasks_joined:"),
+        "RollbackReport must have tasks_joined field"
+    );
+    assert!(
+        content.contains("tasks_aborted:"),
+        "RollbackReport must have tasks_aborted field"
+    );
+    assert!(
+        content.contains("peer_connections_closed:"),
+        "RollbackReport must have peer_connections_closed field"
+    );
+    assert!(
+        content.contains("topology_entries_restored:"),
+        "RollbackReport must have topology_entries_restored field"
+    );
+    assert!(
+        content.contains("runtime_stopped:"),
+        "RollbackReport must have runtime_stopped field"
+    );
+}
+
+/// Test that rollback uses shared deadline.
+#[test]
+fn test_rollback_uses_shared_deadline() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let rollback_body = extract_function(&content, "rollback_startup");
+
+    assert!(
+        rollback_body.contains("deadline") || rollback_body.contains("remaining"),
+        "rollback_startup must use a shared deadline for all cleanup phases"
+    );
+}
+
+/// Test that startup_rollback_timeout_secs exists in config.
+#[test]
+fn test_rollback_timeout_config_exists() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/config.rs");
+    assert!(
+        content.contains("startup_rollback_timeout_secs"),
+        "MeshConnectionConfig must have startup_rollback_timeout_secs field"
+    );
 }

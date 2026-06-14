@@ -249,8 +249,12 @@ pub struct MeshShutdownReport {
     /// Tasks that were forcibly aborted.
     pub aborted_tasks: Vec<MeshTaskExit>,
     /// Number of bounded peer children that drained cleanly.
+    /// **Non-authoritative**: currently always zero because the accept loop
+    /// does not publish its report. Will be wired in a future iteration.
     pub drained_peer_children: usize,
     /// Number of bounded peer children that were aborted.
+    /// **Non-authoritative**: currently always zero because the accept loop
+    /// does not publish its report. Will be wired in a future iteration.
     pub aborted_peer_children: usize,
     /// Number of peers remaining after shutdown (should be zero for clean shutdown).
     pub remaining_peers: usize,
@@ -313,23 +317,73 @@ pub struct MeshStartupReport {
 }
 
 /// Report from the mesh accept loop about child task drainage.
+///
+/// Currently deferred — fields are not wired into the accept loop.
+/// Values will always be zero. Do not rely on these for correctness
+/// decisions until the accept loop publishes its report.
 #[derive(Debug, Clone, Default)]
 pub struct MeshAcceptLoopReport {
     /// Number of handshake children that drained cleanly.
+    /// **Deferred**: always zero until accept-loop reporting is wired.
     pub drained_handshakes: usize,
     /// Number of handshake children that were forcibly aborted.
+    /// **Deferred**: always zero until accept-loop reporting is wired.
     pub aborted_handshakes: usize,
     /// Number of connections rejected at capacity.
+    /// **Deferred**: always zero until accept-loop reporting is wired.
     pub rejected_at_capacity: usize,
 }
 
+/// Records a single peer mutation created during startup, used for
+/// precise rollback.
+#[derive(Debug, Clone)]
+pub struct StagedPeerResource {
+    /// Session identifier for the peer connection.
+    pub session_id: String,
+    /// Node identifier for the peer.
+    pub node_id: String,
+    /// Whether a topology entry existed before this startup attempt.
+    pub topology_existed_before: bool,
+    /// Whether the connection was inserted into the connection map.
+    pub connection_inserted: bool,
+    /// Whether a session task was spawned.
+    pub session_task_created: bool,
+}
+
 /// Report from a startup rollback attempt.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct RollbackReport {
     /// Whether the rollback completed without errors.
     pub clean: bool,
     /// Errors encountered during rollback (may be partial).
     pub errors: Vec<String>,
+    /// Number of staged tasks that completed during rollback.
+    pub tasks_joined: usize,
+    /// Number of staged tasks that were still active after join timeout.
+    pub tasks_aborted: usize,
+    /// Number of peer connections closed during rollback.
+    pub peer_connections_closed: usize,
+    /// Number of topology entries restored (best-effort) during rollback.
+    pub topology_entries_restored: usize,
+    /// Number of peer sessions cleaned up during rollback.
+    pub peer_sessions_cleaned: usize,
+    /// Whether the runtime was marked as stopped during rollback.
+    pub runtime_stopped: bool,
+}
+
+impl Default for RollbackReport {
+    fn default() -> Self {
+        Self {
+            clean: true,
+            errors: Vec::new(),
+            tasks_joined: 0,
+            tasks_aborted: 0,
+            peer_connections_closed: 0,
+            topology_entries_restored: 0,
+            peer_sessions_cleaned: 0,
+            runtime_stopped: false,
+        }
+    }
 }
 
 /// Tracks resources created during a single mesh startup attempt.
@@ -344,10 +398,8 @@ pub struct RollbackReport {
 pub struct MeshStartupStage {
     /// The staged task group being built during startup.
     pub(crate) task_group: crate::task_group::MeshTaskGroup,
-    /// Session IDs created during this startup attempt.
-    pub(crate) created_peer_sessions: Vec<String>,
-    /// Node IDs of peers connected during this startup attempt.
-    pub(crate) created_peer_nodes: Vec<String>,
+    /// Peer resources created during this startup attempt.
+    pub(crate) created_peers: Vec<StagedPeerResource>,
     /// Whether the QUIC runtime was started during this attempt.
     pub(crate) runtime_started: bool,
     /// Whether this stage has been committed to the transport.
@@ -359,17 +411,29 @@ impl MeshStartupStage {
     pub fn new(task_group: crate::task_group::MeshTaskGroup) -> Self {
         Self {
             task_group,
-            created_peer_sessions: Vec::new(),
-            created_peer_nodes: Vec::new(),
+            created_peers: Vec::new(),
             runtime_started: false,
             committed: false,
         }
     }
 
-    /// Record a peer session created during this attempt.
+    /// Record a peer resource created during this attempt.
+    pub fn record_peer(&mut self, resource: StagedPeerResource) {
+        self.created_peers.push(resource);
+    }
+
+    /// Record a peer session created during this attempt (compatibility wrapper).
+    ///
+    /// Creates a `StagedPeerResource` with conservative defaults for callers
+    /// that don't yet provide full resource metadata.
     pub fn record_peer_session(&mut self, session_id: String, node_id: String) {
-        self.created_peer_sessions.push(session_id);
-        self.created_peer_nodes.push(node_id);
+        self.record_peer(StagedPeerResource {
+            session_id,
+            node_id,
+            topology_existed_before: false,
+            connection_inserted: true,
+            session_task_created: true,
+        });
     }
 
     /// Mark the runtime as started.
@@ -384,9 +448,7 @@ impl MeshStartupStage {
 
     /// Whether this stage has created any resources.
     pub fn has_resources(&self) -> bool {
-        self.runtime_started
-            || !self.created_peer_sessions.is_empty()
-            || !self.created_peer_nodes.is_empty()
+        self.runtime_started || !self.created_peers.is_empty()
     }
 }
 
@@ -587,5 +649,52 @@ mod tests {
         assert_eq!(MeshLifecycleState::Running.to_string(), "running");
         assert_eq!(MeshLifecycleState::Stopping.to_string(), "stopping");
         assert_eq!(MeshLifecycleState::Failed.to_string(), "failed");
+    }
+
+    #[test]
+    fn staged_peer_resource_fields() {
+        let resource = StagedPeerResource {
+            session_id: "sess-1".to_string(),
+            node_id: "node-1".to_string(),
+            topology_existed_before: false,
+            connection_inserted: true,
+            session_task_created: true,
+        };
+        assert_eq!(resource.session_id, "sess-1");
+        assert_eq!(resource.node_id, "node-1");
+        assert!(!resource.topology_existed_before);
+        assert!(resource.connection_inserted);
+        assert!(resource.session_task_created);
+    }
+
+    #[test]
+    fn rollback_report_expanded_defaults() {
+        let report = RollbackReport::default();
+        assert!(report.clean);
+        assert!(report.errors.is_empty());
+        assert_eq!(report.tasks_joined, 0);
+        assert_eq!(report.tasks_aborted, 0);
+        assert_eq!(report.peer_connections_closed, 0);
+        assert_eq!(report.topology_entries_restored, 0);
+        assert_eq!(report.peer_sessions_cleaned, 0);
+        assert!(!report.runtime_stopped);
+    }
+
+    #[test]
+    fn startup_stage_record_peer() {
+        let tg = crate::task_group::MeshTaskGroup::new();
+        let mut stage = MeshStartupStage::new(tg);
+
+        stage.record_peer(StagedPeerResource {
+            session_id: "sess-1".to_string(),
+            node_id: "node-1".to_string(),
+            topology_existed_before: false,
+            connection_inserted: true,
+            session_task_created: true,
+        });
+
+        assert_eq!(stage.created_peers.len(), 1);
+        assert_eq!(stage.created_peers[0].session_id, "sess-1");
+        assert!(stage.has_resources());
     }
 }

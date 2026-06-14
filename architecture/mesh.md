@@ -132,16 +132,22 @@ crates/synvoid-mesh/src/mesh/kem/
 
 ## Lifecycle Management
 
-Mesh transport uses structured lifecycle management (Iterations 68–70):
+Mesh transport uses structured lifecycle management (Iterations 68–71):
 
 - `MeshTaskGroup` owns all spawned tasks with classification; `new_with_forward_and_id_gen(exit_tx, id_gen)` creates groups that forward exits to a stable broadcast sender on `MeshTransport` with globally unique task IDs across generations
 - `MeshLifecycleState` provides a state machine (Stopped/Starting/Running/Stopping/Failed) with validated transitions; `can_start()` allows `Stopped` or `Failed`, `can_stop()` allows `Running` only
 - `lifecycle_op: tokio::sync::Mutex<()>` serializes start/stop transitions — no concurrent lifecycle mutations
 - Transactional startup via `MeshStartupStage` with rollback on failure — clean rollback returns to `Stopped` (safe to retry), incomplete rollback returns to `Failed` (requires recovery)
+- **Commit ordering (Iteration 71)**: `commit_startup()` transfers task group ownership → transitions lifecycle to `Running` → sets `running_projection` — ensuring the task group is installed before the state is visible
+- `rollback_and_return()` (Iteration 71) centralizes rollback error propagation, constructing `StartupRollbackFailed` when cleanup is incomplete; `verify_rollback_complete()` checks post-rollback invariants
+- `StagedPeerResource` (Iteration 71) tracks exact peer mutations (`session_id`, `node_id`, `topology_existed_before`, `connection_inserted`, `session_task_created`) for precise rollback
+- Shared rollback deadline (`startup_rollback_timeout_secs`, default 15s) governs all rollback phases
 - `start_with_policy(policy)` is the primary startup API; `start()` is a compatibility wrapper using default policy
 - `MeshStartupPolicy` controls required vs optional bootstrap (seed connectivity, configured peers, DHT bootstrap); default is all-optional (degraded startup allowed)
 - `MeshStartupReport` communicates bootstrap outcome (degraded reasons, peers connected, DHT status)
 - Bounded shutdown with shared deadline — `shutdown_with_timeout(timeout)` derives one deadline for all phases; truthful `MeshShutdownReport` reflects actual state
+- `MeshAcceptLoopReport` fields are deferred/non-authoritative (always zero until wired)
+- `MeshShutdownReport.drained_peer_children` and `aborted_peer_children` are non-authoritative (currently always zero)
 - Peer sessions (`peer_sessions: Arc<Mutex<JoinSet<()>>>`) are owned separately from handshake children; shutdown drains sessions after closing connections
 - `mesh_exit_tx: broadcast::Sender<MeshTaskExit>` on `MeshTransport` survives task group replacement; `subscribe_exits()` is synchronous and valid before `start()`
 - `running_projection: Arc<AtomicBool>` provides lock-free `is_running()` observation — set on commit, cleared on shutdown entry

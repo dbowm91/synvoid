@@ -1,4 +1,4 @@
-# Mesh Transport Lifecycle Inventory — Iteration 70
+# Mesh Transport Lifecycle Inventory — Iteration 71
 
 ## Purpose
 
@@ -126,7 +126,7 @@ The following startup phases execute sequentially. Each phase must complete befo
 | 6 | DHT bootstrap. Degraded if policy allows; fatal if `require_dht_bootstrap`. | No |
 | 7 | Start periodic background loops: `connection_maintenance`, `peer_health_check`, `proactive_cache_warming`, `dht_cache_resync`, `load_reporter`, `global_node_heartbeat`, `discovery_maintenance`, `dht_bucket_stats`, `dht_bucket_refresh`, `dht_peer_ping`. | No |
 | 8 | Start `mesh_accept_loop` with QUIC runtime. | Yes |
-| 9 | Commit lifecycle state to `Running`. Transfer stage ownership to transport. Set `running_projection = true`. | Yes |
+| 9 | Transfer staged task group into transport ownership. Transition lifecycle state to `Running`. Set `running_projection = true`. Mark stage as committed. | Yes |
 
 **Note:** Tasks gated on `min_peer_connections > 0` are skipped during startup if no peer connections are configured.
 
@@ -154,16 +154,64 @@ The following shutdown phases execute sequentially. Each phase must complete bef
 | 6 | Clear lifecycle state (task group, shutdown signal, startup guard). | Yes |
 | 7 | Transition lifecycle to `Stopped`. | Yes |
 
-## Rollback Behavior (Iteration 70)
+## Rollback Behavior (Iterations 70–71)
 
-If any startup phase fails after the first task spawn, `rollback_startup()` is called:
+If any startup phase fails after the first task spawn, `rollback_and_return()` is called:
 
 1. **Record the startup error** — preserve the original error for the caller.
 2. **Begin cancellation** — signal shutdown to all tasks started during the failed attempt via `stage.task_group.begin_shutdown()`.
-3. **Join/abort all tasks** — await graceful completion with a bounded timeout (5s), then abort.
-4. **Close attempt-created connections** — close and remove QUIC connections for peers connected during this attempt.
-5. **Drain peer sessions** — drain any sessions created during this attempt with a bounded timeout.
-6. **Classify rollback outcome** — `RollbackReport` indicates whether cleanup was clean or had errors.
+3. **Close attempt-created connections** — close and remove QUIC connections for peers connected during this attempt. Rollback uses `session_id` (not `node_id`) for `peer_connections` DashMap removal.
+4. **Join/abort all tasks** — await graceful completion with a bounded timeout, then abort.
+5. **Restore topology entries** — remove topology entries that were created during the failed startup (entries that did not exist before).
+6. **Clean up peer sessions** — cooperative drain → abort all → brief wait.
+7. **Stop the QUIC runtime** (if started).
+8. **Verify rollback completeness** — `verify_rollback_complete()` checks post-rollback invariants.
+9. **Classify rollback outcome** — `RollbackReport` indicates whether cleanup was clean or had errors.
+
+### StagedPeerResource
+
+Each peer mutation during startup is tracked with `StagedPeerResource`:
+
+| Field | Meaning |
+|-------|---------|
+| `session_id` | Session identifier for the peer connection |
+| `node_id` | Node identifier for the peer |
+| `topology_existed_before` | Whether a topology entry existed before this startup attempt |
+| `connection_inserted` | Whether the connection was inserted into the connection map |
+| `session_task_created` | Whether a session task was spawned |
+
+This enables precise rollback: connections are removed by `session_id`, topology entries are only removed if they were created during this attempt, and session tasks are selectively aborted.
+
+### rollback_and_return()
+
+`rollback_and_return<T>(stage, startup_error)` centralizes rollback error propagation:
+
+1. Calls `rollback_startup()` to perform cleanup.
+2. Calls `verify_rollback_complete()` to check post-rollback invariants.
+3. Calls `finish_failed_startup()` to handle lifecycle state transition.
+4. If rollback was clean and verification passed, returns the original startup error.
+5. If rollback had errors or verification found issues, returns `StartupRollbackFailed` with both the original error and the rollback/verification errors.
+
+This ensures callers always receive a meaningful error, even when rollback itself fails.
+
+### Rollback Report
+
+`RollbackReport` tracks rollback outcome with expanded fields:
+
+| Field | Meaning |
+|-------|---------|
+| `clean` | Whether the rollback completed without errors |
+| `errors` | Errors encountered during rollback (may be partial) |
+| `tasks_joined` | Number of staged tasks that completed during rollback |
+| `tasks_aborted` | Number of staged tasks still active after join timeout |
+| `peer_connections_closed` | Number of peer connections closed during rollback |
+| `topology_entries_restored` | Number of topology entries restored (best-effort) |
+| `peer_sessions_cleaned` | Number of peer sessions cleaned up |
+| `runtime_stopped` | Whether the QUIC runtime was stopped |
+
+### Shared Rollback Deadline
+
+All rollback phases share a single deadline governed by `startup_rollback_timeout_secs` (default 15s). This ensures bounded rollback regardless of how many resources were created. The same timeout governs task joining, session cleanup, and topology restoration.
 
 ### Rollback Outcome → Lifecycle Transition
 
@@ -176,22 +224,25 @@ If any startup phase fails after the first task spawn, `rollback_startup()` is c
 
 - After clean rollback, the `MeshTransport` is in `Stopped` state and can be restarted.
 - After error rollback, the `MeshTransport` is in `Failed` state; `can_start()` permits a subsequent attempt.
+- `rollback_and_return()` constructs `StartupRollbackFailed` when cleanup is incomplete, preserving both the original error and rollback errors.
+- `verify_rollback_complete()` checks post-rollback invariants (e.g., no remaining connections, no orphaned topology entries) and reports issues.
 - Partially completed DHT writes from `global_self_attestation` are idempotent and safe to retry.
 - No leaked tasks remain after rollback (all joined or aborted).
 - `DhtRoutingManager` tasks are gracefully cancelled via `watch::Sender` and joined via tracked `JoinHandle`.
 - The stage is never dropped without explicit rollback or commit (ownership is guaranteed).
 
-## Staged Startup/Rollback (Iterations 69–70)
+## Staged Startup/Rollback (Iterations 69–71)
 
 `MeshStartupStage` owns every task and resource from a single startup attempt. It collects all spawned task handles into a single staging area.
 
 ### MeshStartupStage
 
 - Every task spawned during startup is registered with the stage via `stage.track(handle)`.
-- On success, the stage hands off ownership to the running task group (`commit_startup()`).
-- On failure, `stage.rollback_startup()` cancels and joins all staged tasks — no task group is dropped without cancellation and join.
-- The stage ensures atomic cleanup: either all tasks from an attempt survive or none do.
-- `MeshStartupStage` tracks: peer sessions created, peer nodes connected, whether the QUIC runtime was started, and whether the stage has been committed.
+- Peer resources created during startup (connections, topology entries, sessions) are recorded via `stage.record_peer(StagedPeerResource)` with exact mutation metadata.
+- On success, `commit_startup()` transfers ownership in this order: (1) install staged task group into transport, (2) transition lifecycle state to `Running`, (3) set `running_projection = true`, (4) mark stage as committed.
+- On failure, `rollback_startup()` cancels and joins all staged tasks, closes attempt-created connections, restores topology entries, cleans up peer sessions, and stops the runtime — no task group is dropped without cancellation and join.
+- The stage ensures atomic cleanup: either all resources from an attempt survive or none do.
+- `MeshStartupStage` tracks: `created_peers: Vec<StagedPeerResource>` (exact peer mutations), `runtime_started` (whether QUIC runtime was started), and `committed` (whether the stage has been committed).
 
 ### Lifecycle Transitions
 
@@ -290,7 +341,7 @@ Previous implementations created the broadcast exit sender inside the task group
 Shutdown → close connections → drain peer sessions → drain handshake children → abort remnants
 ```
 
-## Truthful Shutdown Report (Iterations 69–70)
+## Truthful Shutdown Report (Iterations 69–71)
 
 `MeshShutdownReport` fields reflect the actual state observed during shutdown:
 
@@ -299,12 +350,16 @@ Shutdown → close connections → drain peer sessions → drain handshake child
 | `clean_tasks` | Join results | Count of tasks that exited cleanly |
 | `failed_tasks` | Join results | Tasks that exited with an error (non-fatal) |
 | `aborted_tasks` | Join results | Tasks that were forcibly aborted |
-| `drained_peer_children` | Join results | Number of bounded peer children that drained cleanly |
-| `aborted_peer_children` | Join results | Number of bounded peer children that were aborted |
+| `drained_peer_children` | Join results | Number of bounded peer children that drained cleanly (**non-authoritative**: currently always zero — accept loop report not yet wired) |
+| `aborted_peer_children` | Join results | Number of bounded peer children that were aborted (**non-authoritative**: currently always zero — accept loop report not yet wired) |
 | `peers_at_shutdown_start` | Captured at shutdown begin | Peer count before teardown |
 | `remaining_peers` | Measured after connection close/drain | Peers still active after drain |
 | `drained_peer_sessions` | Session drain result | Number of peer sessions drained cleanly |
 | `aborted_peer_sessions` | Session drain result | Number of peer sessions aborted |
+
+### MeshAcceptLoopReport
+
+The `MeshAcceptLoopReport` struct (`lifecycle.rs:325`) is declared with `drained_handshakes`, `aborted_handshakes`, and `rejected_at_capacity` fields. All fields are **deferred/non-authoritative** — they are always zero because the accept loop does not yet publish its report. The struct exists for future wiring; callers must not rely on these values for correctness decisions.
 
 ### Invariants
 
@@ -364,7 +419,7 @@ pub enum StartupFailurePoint {
     DuringPeerConnect,       // Before configured peer connection phase
     DuringDhtBootstrap,      // Before DHT bootstrap phase
     DuringRuntimeStart,      // Before QUIC runtime start_server()
-    AfterLifecycleCommit,    // After transition to Running
+    BeforeLifecycleCommit,   // Before lifecycle state transitions to Running (renamed from AfterLifecycleCommit)
 }
 ```
 
@@ -403,3 +458,10 @@ When the hook returns `Ok(())`, startup continues normally.
 - Lifecycle not stuck at Starting after failure
 - Transport construction with minimal defaults
 - Hook API integration
+
+## Changelog
+
+| Iteration | Changes |
+|-----------|---------|
+| 70 | Initial lifecycle state machine, staged startup/rollback, task groups, truthful shutdown report, failure injection hooks, worker integration |
+| 71 | Commit ordering: task group install → lifecycle transition → running projection. `rollback_and_return()` centralizes rollback error propagation, constructing `StartupRollbackFailed` when cleanup is incomplete. `StagedPeerResource` tracks exact peer mutations. Rollback uses `session_id` for `peer_connections` removal. Topology entries created during failed startup removed on rollback. `RollbackReport` expanded with `tasks_joined`, `tasks_aborted`, `peer_connections_closed`, `topology_entries_restored`, `peer_sessions_cleaned`, `runtime_stopped`. `verify_rollback_complete()` checks post-rollback invariants. Shared rollback deadline (`startup_rollback_timeout_secs`, default 15s). Peer session cleanup: cooperative drain → abort all → brief wait. `MeshAcceptLoopReport` fields documented as deferred/non-authoritative. `MeshShutdownReport.drained_peer_children` and `aborted_peer_children` documented as non-authoritative. |

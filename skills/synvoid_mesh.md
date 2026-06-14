@@ -355,7 +355,7 @@ revoke_genesis_key(public_key: &str)
 - Non-empty list = genesis key must be in the list
 - Key rotation tracked via `rotation_sequence` and `GenesisKeyTransition` DHT records
 
-## Mesh Transport Lifecycle (Iterations 68–70)
+## Mesh Transport Lifecycle (Iterations 68–71)
 
 ### Adding a New Background Task
 
@@ -389,12 +389,19 @@ group.spawn_background("task_name", async move {
 - `MeshTransport::shutdown_with_timeout(timeout)` — bounded shutdown returning truthful `MeshShutdownReport`; all phases share one deadline
 - `MeshTransport::subscribe_exits()` — stable exit subscription (valid before `start()`, survives task group replacement)
 - `MeshTransport::lifecycle_state()` — query current state
-- `MeshTransport::rollback_startup()` — cancel and join all staged tasks on post-spawn error
+- `MeshTransport::rollback_and_return()` (Iteration 71) — rollback a failed startup and return an appropriate error, constructing `StartupRollbackFailed` when cleanup is incomplete
+- `MeshTransport::verify_rollback_complete()` (Iteration 71) — check post-rollback invariants after rollback
 
 ### Staged Startup/Rollback
 
-`MeshStartupStage` owns every task and resource from a single startup attempt. On failure, `rollback_startup()` cancels and joins all staged tasks — no task group is dropped without cancellation and join.
+`MeshStartupStage` owns every task and resource from a single startup attempt. On failure, `rollback_and_return()` (Iteration 71) centralizes rollback error propagation — it calls `rollback_startup()`, then `verify_rollback_complete()`, and constructs `StartupRollbackFailed` when cleanup is incomplete.
 
+- Peer resources tracked via `StagedPeerResource` with exact mutation metadata (`session_id`, `node_id`, `topology_existed_before`, `connection_inserted`, `session_task_created`)
+- Rollback uses `session_id` (not `node_id`) for `peer_connections` DashMap removal
+- Topology entries created during failed startup are removed on rollback
+- Peer session cleanup: cooperative drain → abort all → brief wait
+- Shared rollback deadline (`startup_rollback_timeout_secs`, default 15s)
+- `verify_rollback_complete()` checks post-rollback invariants
 - **Clean rollback** → `Stopped` state (safe to retry immediately)
 - **Error rollback** → `Failed` state (`can_start()` permits retry from `Failed`)
 
@@ -437,7 +444,7 @@ Returned after startup:
 - `peers_at_shutdown_start` — captured at shutdown begin
 - `remaining_peers` — measured after connection close/drain
 - `drained_peer_sessions` / `aborted_peer_sessions` — from session drain
-- `drained_peer_children` / `aborted_peer_children` — from accept loop
+- `drained_peer_children` / `aborted_peer_children` — from accept loop (**non-authoritative**: currently always zero, accept loop report not yet wired)
 
 ### Worker Integration
 
@@ -452,12 +459,12 @@ Test-only (`#[cfg(test)]`) failure injection for deterministic startup testing:
 
 ```rust
 transport.set_startup_failure_hook(|point| match point {
-    StartupFailurePoint::AfterCriticalTasks => Err("injected failure".into()),
+    StartupFailurePoint::BeforeLifecycleCommit => Err("injected failure".into()),
     _ => Ok(()),
 });
 ```
 
-Hook checks at 6 phases in `start()`. Returns `Err` → rollback triggered (post-accept) or error propagated (pre-accept).
+Hook checks at 6 phases in `start()`. `BeforeLifecycleCommit` (renamed from `AfterLifecycleCommit`) runs before state publication. Returns `Err` → rollback triggered (post-accept) or error propagated (pre-accept).
 
 ## Testing Commands
 
@@ -466,6 +473,7 @@ Hook checks at 6 phases in `start()`. Returns `Err` → rollback triggered (post
 cargo test --test mesh_lifecycle_tests --features mesh,dns
 cargo test --test mesh_startup_rollback --features mesh,dns
 cargo test --test mesh_task_ownership_guard --features mesh,dns
+cargo test --test worker_supervision_control_flow --features mesh,dns
 cargo test --test worker_supervision_control_flow --features mesh,dns
 
 # Unit tests

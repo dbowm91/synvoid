@@ -387,6 +387,9 @@ pub struct MeshConnectionConfig {
     pub max_concurrent_handshakes: usize,
     #[serde(default = "default_handshake_timeout_secs")]
     pub handshake_timeout_secs: u64,
+    /// Total timeout for startup rollback operations.
+    #[serde(default = "default_startup_rollback_timeout_secs")]
+    pub startup_rollback_timeout_secs: u64,
 }
 
 fn default_min_peers() -> usize {
@@ -445,6 +448,10 @@ fn default_handshake_timeout_secs() -> u64 {
     10
 }
 
+fn default_startup_rollback_timeout_secs() -> u64 {
+    15
+}
+
 impl Default for MeshConnectionConfig {
     fn default() -> Self {
         Self {
@@ -464,6 +471,7 @@ impl Default for MeshConnectionConfig {
             circuit_close_threshold: 3,
             max_concurrent_handshakes: 32,
             handshake_timeout_secs: 10,
+            startup_rollback_timeout_secs: 15,
         }
     }
 }

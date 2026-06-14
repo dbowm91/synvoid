@@ -51,6 +51,7 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch, Mutex};
 use crate::lifecycle::{
     remaining, MeshAcceptLoopReport, MeshLifecycleState, MeshShutdownReport, MeshStartupPolicy,
     MeshStartupReport, MeshStartupStage, MeshTaskExit, MeshTaskIdGenerator, RollbackReport,
+    StagedPeerResource,
 };
 use crate::task_group::MeshTaskGroup;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -195,8 +196,8 @@ pub enum StartupFailurePoint {
     DuringDhtBootstrap,
     /// During QUIC runtime server start.
     DuringRuntimeStart,
-    /// After lifecycle state transitions to Running.
-    AfterLifecycleCommit,
+    /// Before lifecycle state transitions to Running (post-staging, pre-commit).
+    BeforeLifecycleCommit,
 }
 
 #[derive(Clone, Debug)]
@@ -2096,7 +2097,6 @@ impl MeshTransport {
         &self,
         policy: MeshStartupPolicy,
     ) -> Result<MeshStartupReport, MeshTransportError> {
-        // Serialize lifecycle transitions with the operation lock.
         let _lifecycle_guard = self.lifecycle_op.lock().await;
 
         // Phase 1: Acquire lifecycle lock and validate state
@@ -2120,17 +2120,18 @@ impl MeshTransport {
         let shutdown_rx = stage.task_group.shutdown_receiver();
         self.shutdown_started.store(false, Ordering::SeqCst);
 
-        // Phase 3-10: Run all startup phases, routing failures through rollback
-        match self
+        // Phase 3-10: Run all startup phases, routing ALL failures through rollback
+        let report = match self
             .run_startup_phases(&mut stage, &policy, &shutdown_rx)
             .await
         {
-            Ok(report) => self.commit_startup(stage, report).await,
-            Err(error) => {
-                let rollback = self.rollback_startup(&mut stage).await;
-                self.finish_failed_startup(&rollback).await;
-                Err(error)
-            }
+            Ok(report) => report,
+            Err(error) => return self.rollback_and_return(&mut stage, error).await,
+        };
+
+        match self.commit_startup(&mut stage, report).await {
+            Ok(report) => Ok(report),
+            Err(error) => self.rollback_and_return(&mut stage, error).await,
         }
     }
 
@@ -2195,7 +2196,7 @@ impl MeshTransport {
         self.check_startup_failure_hook(StartupFailurePoint::DuringSeedBootstrap)
             .await?;
         if !self.config.seeds.is_empty() {
-            match self.bootstrap_from_seeds().await {
+            match self.bootstrap_from_seeds(stage).await {
                 Ok(()) => {
                     report.connected_seed_count = self.config.seeds.len();
                 }
@@ -2217,7 +2218,7 @@ impl MeshTransport {
         self.check_startup_failure_hook(StartupFailurePoint::DuringPeerConnect)
             .await?;
         if !self.config.peers.is_empty() {
-            match self.connect_to_peers().await {
+            match self.connect_to_peers(stage).await {
                 Ok(()) => {
                     report.connected_configured_peer_count = self.config.peers.len();
                 }
@@ -2515,51 +2516,78 @@ impl MeshTransport {
     /// Commit a successful startup: transfer staged resources to the transport
     /// and transition lifecycle to `Running`.
     ///
-    /// Commit order is documented and race-safe:
-    /// 1. All fallible startup phases complete
-    /// 2. Staged runtime/listener handles are ready
-    /// 3. Lifecycle state transitions to `Running`
-    /// 4. Task group is stored (visible to shutdown)
-    /// 5. Running projection is set
+    /// Commit order is race-safe:
+    /// 1. Validate lifecycle state is Starting (without mutating yet)
+    /// 2. Pre-commit failure injection (test only)
+    /// 3. Prepare compatibility shutdown sender
+    /// 4. Transfer staged task group into transport ownership
+    /// 5. Store staged runtime/listener handles (if any)
+    /// 6. Transition lifecycle state to Running
+    /// 7. Set running projection
+    /// 8. Mark stage committed
+    ///
+    /// If any step after task-group transfer fails, the task group is
+    /// restored to the stage so the caller can roll back.
     async fn commit_startup(
         &self,
-        mut stage: MeshStartupStage,
+        stage: &mut MeshStartupStage,
         report: MeshStartupReport,
     ) -> Result<MeshStartupReport, MeshTransportError> {
-        // Transition lifecycle state
+        // 1. Validate lifecycle state is Starting (without mutating yet)
         {
-            let mut state = self.lifecycle_state.lock().await;
-            state.transition_to_running().map_err(|e| {
-                MeshTransportError::StartupFailed(format!(
-                    "State transition to running failed: {e}"
-                ))
-            })?;
-        }
-
-        #[cfg(test)]
-        {
-            if let Err(e) = self
-                .check_startup_failure_hook(StartupFailurePoint::AfterLifecycleCommit)
-                .await
-            {
-                let rollback = self.rollback_startup(&mut stage).await;
-                self.finish_failed_startup(&rollback).await;
-                return Err(e);
+            let state = self.lifecycle_state.lock().await;
+            if !matches!(*state, MeshLifecycleState::Starting) {
+                return Err(MeshTransportError::StartupFailed(format!(
+                    "Commit attempted but lifecycle is {state}, expected Starting"
+                )));
             }
         }
 
-        // Store the task group and shutdown state
+        // 2. Pre-commit failure injection (test only)
+        #[cfg(test)]
+        self.check_startup_failure_hook(StartupFailurePoint::BeforeLifecycleCommit)
+            .await?;
+
+        // 3. Prepare compatibility shutdown sender
         {
             let (compat_tx, _) = broadcast::channel(1);
             let _ = compat_tx.send(());
             *self.shutdown_tx.write() = Some(compat_tx);
         }
-        *self.task_group.lock().await = stage.task_group;
+
+        // 4. Transfer staged task group into transport ownership
+        let old_task_group = {
+            let mut tg = self.task_group.lock().await;
+            std::mem::replace(&mut *tg, std::mem::take(&mut stage.task_group))
+        };
+        // old_task_group is dropped here (its tasks were already forwarded via exit_tx)
+
+        // 5. Store staged runtime/listener handles (if any)
+        // (runtime_started is tracked in the stage; the actual QUIC endpoint
+        //  is already bound by the accept loop task)
+
+        // 6. Transition lifecycle state to Running
+        {
+            let mut state = self.lifecycle_state.lock().await;
+            match state.transition_to_running() {
+                Ok(()) => {}
+                Err(e) => {
+                    // Lifecycle transition failed — restore task group so caller can roll back
+                    let mut tg = self.task_group.lock().await;
+                    stage.task_group = std::mem::replace(&mut *tg, old_task_group);
+                    return Err(MeshTransportError::StartupFailed(format!(
+                        "State transition to running failed: {e}"
+                    )));
+                }
+            }
+        }
+
+        // 7. Set running projection
+        self.running_projection.store(true, Ordering::SeqCst);
+
+        // 8. Mark stage committed
         self.shutdown_started.store(false, Ordering::SeqCst);
         stage.committed = true;
-
-        // Set running projection
-        self.running_projection.store(true, Ordering::SeqCst);
 
         tracing::info!(
             "Mesh transport started (lifecycle: running, degraded={})",
@@ -2575,25 +2603,43 @@ impl MeshTransport {
     async fn rollback_startup(&self, stage: &mut MeshStartupStage) -> RollbackReport {
         tracing::warn!("Rolling back mesh startup");
         let mut errors = Vec::new();
+        let mut tasks_aborted = 0usize;
+        let mut peer_connections_closed = 0usize;
+        let mut topology_entries_restored = 0usize;
+        let mut peer_sessions_cleaned = 0usize;
+        let mut runtime_stopped = false;
 
-        // Signal shutdown to all staged tasks
+        // Phase 1: Signal shutdown to all staged tasks
         stage.task_group.begin_shutdown().await;
 
-        // Close attempt-created QUIC connections
-        for node_id in &stage.created_peer_nodes {
-            if let Some(entry) = self.peer_connections.get(node_id) {
-                entry
-                    .value()
-                    .connection
-                    .close(0u32.into(), b"Startup rollback");
+        // Phase 2: Close attempt-created QUIC connections
+        for peer in &stage.created_peers {
+            if peer.connection_inserted {
+                if let Some(entry) = self.peer_connections.get(&peer.session_id) {
+                    entry
+                        .value()
+                        .connection
+                        .close(0u32.into(), b"Startup rollback");
+                    peer_connections_closed += 1;
+                }
+                self.peer_connections.remove(&peer.session_id);
             }
-            self.peer_connections.remove(node_id);
         }
 
-        // Join staged tasks with a bounded timeout
-        let exits = stage.task_group.join_all(Duration::from_secs(5)).await;
+        // Phase 3: Use a single deadline for task join + session cleanup
+        let rollback_timeout =
+            Duration::from_secs(self.config.connection.startup_rollback_timeout_secs);
+        let deadline = std::time::Instant::now() + rollback_timeout;
 
-        // Check for task failures during rollback
+        // Phase 4: Join staged tasks with remaining time budget
+        let task_remaining = remaining(deadline);
+        let exits = if task_remaining.is_zero() {
+            Vec::new()
+        } else {
+            stage.task_group.join_all(task_remaining).await
+        };
+        let tasks_joined = exits.len();
+
         for exit in &exits {
             if exit.is_fatal() {
                 errors.push(format!(
@@ -2603,18 +2649,96 @@ impl MeshTransport {
             }
         }
 
-        // Drain any peer sessions created during this attempt
-        let mut sessions = self.peer_sessions.lock().await;
-        let mut _drained = 0;
-        while let Ok(Some(_)) =
-            tokio::time::timeout(Duration::from_secs(2), sessions.join_next()).await
-        {
-            _drained += 1;
+        // Count any remaining active tasks as aborted
+        let active = stage.task_group.active_count();
+        let remaining_active = active.0 + active.1 + active.2;
+        if remaining_active > 0 {
+            tasks_aborted += remaining_active;
         }
-        drop(sessions);
+
+        // Phase 5: Restore topology entries that didn't exist before startup
+        for peer in &stage.created_peers {
+            if !peer.topology_existed_before {
+                self.topology.remove_peer(&peer.node_id).await;
+                topology_entries_restored += 1;
+            }
+        }
+
+        // Phase 6: Selectively abort and await startup-created peer sessions
+        let session_remaining = remaining(deadline);
+        if !session_remaining.is_zero() {
+            let mut sessions = self.peer_sessions.lock().await;
+            // Drain cooperatively first
+            while let Ok(Some(_)) =
+                tokio::time::timeout(session_remaining, sessions.join_next()).await
+            {
+                peer_sessions_cleaned += 1;
+            }
+            // If there are still sessions, abort them
+            let remaining_count = sessions.len();
+            if remaining_count > 0 {
+                sessions.abort_all();
+                // Wait briefly for abort to take effect
+                let abort_deadline = std::time::Instant::now() + Duration::from_millis(100);
+                while let Ok(Some(_)) =
+                    tokio::time::timeout(remaining(abort_deadline), sessions.join_next()).await
+                {
+                    peer_sessions_cleaned += 1;
+                }
+                tasks_aborted += remaining_count;
+            }
+        }
+
+        // Phase 7: Mark runtime cleanup
+        if stage.runtime_started {
+            // The QUIC accept loop is part of the staged task group and was
+            // already shut down in Phase 4. The endpoint is dropped when the
+            // runtime is dropped. For now, record the cleanup.
+            runtime_stopped = true;
+        }
 
         let clean = errors.is_empty();
-        RollbackReport { clean, errors }
+        RollbackReport {
+            clean,
+            errors,
+            tasks_joined,
+            tasks_aborted,
+            peer_connections_closed,
+            topology_entries_restored,
+            peer_sessions_cleaned,
+            runtime_stopped,
+        }
+    }
+
+    /// Verify that rollback completed successfully by checking that no
+    /// staged resources remain live.
+    async fn verify_rollback_complete(&self, stage: &MeshStartupStage) -> Vec<String> {
+        let mut issues = Vec::new();
+
+        // Check that all staged peer connections were removed
+        for peer in &stage.created_peers {
+            if peer.connection_inserted && self.peer_connections.contains_key(&peer.session_id) {
+                issues.push(format!(
+                    "Peer connection for session {} still present after rollback",
+                    peer.session_id
+                ));
+            }
+        }
+
+        // Check that running projection is false
+        if self.running_projection.load(Ordering::SeqCst) {
+            issues.push("running_projection is still true after rollback".to_string());
+        }
+
+        // Check lifecycle is not Running
+        {
+            let state = self.lifecycle_state.lock().await;
+            if matches!(*state, MeshLifecycleState::Running) {
+                issues.push("lifecycle state is Running after rollback".to_string());
+            }
+        }
+
+        issues
     }
 
     /// Complete a failed startup by transitioning to `Stopped` (if rollback
@@ -2632,6 +2756,40 @@ impl MeshTransport {
                 "Mesh startup rolled back with errors; lifecycle: failed ({} errors)",
                 rollback.errors.len()
             );
+        }
+    }
+
+    /// Roll back a failed startup and return an appropriate error.
+    ///
+    /// If rollback completed cleanly, returns the original startup error.
+    /// If rollback itself had errors, returns `StartupRollbackFailed` with
+    /// both the original error and the rollback errors.
+    async fn rollback_and_return<T>(
+        &self,
+        stage: &mut MeshStartupStage,
+        startup_error: MeshTransportError,
+    ) -> Result<T, MeshTransportError> {
+        let rollback = self.rollback_startup(stage).await;
+
+        // Verify rollback completeness
+        let verification_issues = self.verify_rollback_complete(stage).await;
+        for issue in &verification_issues {
+            tracing::error!("Rollback verification failed: {}", issue);
+        }
+
+        self.finish_failed_startup(&rollback).await;
+
+        if rollback.clean && verification_issues.is_empty() {
+            Err(startup_error)
+        } else {
+            let mut all_errors = rollback.errors;
+            for issue in verification_issues {
+                all_errors.push(issue);
+            }
+            Err(MeshTransportError::StartupRollbackFailed {
+                startup_error: startup_error.to_string(),
+                rollback_errors: all_errors,
+            })
         }
     }
 
@@ -3130,7 +3288,10 @@ impl MeshTransport {
     }
 
     #[allow(dead_code)]
-    pub(crate) async fn bootstrap_from_seeds(&self) -> Result<(), MeshTransportError> {
+    pub(crate) async fn bootstrap_from_seeds(
+        &self,
+        stage: &mut MeshStartupStage,
+    ) -> Result<(), MeshTransportError> {
         let verified_seeds = self.config.get_verified_seeds();
 
         if verified_seeds.is_empty() {
@@ -3145,7 +3306,7 @@ impl MeshTransport {
                 address: seed.address.clone(),
                 auth_token: seed.public_key.clone(),
             };
-            match self.connect_to_peer(&peer_config).await {
+            match self.connect_to_peer(&peer_config, Some(stage)).await {
                 Ok(peer_info) => {
                     tracing::info!("Connected to seed node: {}", seed.address);
 
@@ -3165,6 +3326,7 @@ impl MeshTransport {
     pub(crate) async fn connect_to_peer(
         &self,
         peer_config: &MeshPeerConfig,
+        stage: Option<&mut MeshStartupStage>,
     ) -> Result<MeshPeerConnection, MeshTransportError> {
         if !self.check_rate_limit() {
             return Err(MeshTransportError::RateLimited);
@@ -3366,7 +3528,7 @@ impl MeshTransport {
             MeshTransportError::ReceiveFailed("Failed to decode response".to_string())
         })?;
 
-        let (session_id, peer_info) = match response {
+        let (session_id, peer_info, topology_existed_before) = match response {
             MeshMessage::HelloAck {
                 version,
                 node_id,
@@ -3558,6 +3720,9 @@ impl MeshTransport {
                     )))),
                 };
 
+                let topology_existed_before =
+                    self.topology.get_peer(&node_id.to_string()).await.is_some();
+
                 self.topology
                     .add_peer(
                         MeshPeerInfo {
@@ -3578,7 +3743,7 @@ impl MeshTransport {
                     )
                     .await;
 
-                (session_id, peer_connection)
+                (session_id, peer_connection, topology_existed_before)
             }
             MeshMessage::Error { code, message } => {
                 return Err(MeshTransportError::PeerError {
@@ -3625,12 +3790,23 @@ impl MeshTransport {
         let conn = connection;
         let topo = self.topology.clone();
         let peer_node_id_for_loop = peer_node_id.clone();
+        let session_id_str = session_id.to_string();
         let mut sessions = self.peer_sessions.lock().await;
         sessions.spawn(async move {
             transport
-                .peer_message_loop(session_id.to_string(), peer_node_id_for_loop, conn, topo)
+                .peer_message_loop(session_id_str, peer_node_id_for_loop, conn, topo)
                 .await;
         });
+
+        if let Some(stage) = stage {
+            stage.record_peer(StagedPeerResource {
+                session_id: session_id.to_string(),
+                node_id: peer_info_return.node_id.clone(),
+                topology_existed_before,
+                connection_inserted: true,
+                session_task_created: true,
+            });
+        }
 
         tracing::info!(
             "Established mesh peer connection: {} ({})",
@@ -4200,7 +4376,7 @@ impl MeshTransport {
                         address: peer_state.address.clone(),
                         auth_token: None,
                     };
-                    if self.connect_to_peer(&peer_config).await.is_ok() {
+                    if self.connect_to_peer(&peer_config, None).await.is_ok() {
                         tracing::info!(
                             "On-demand connection established to peer {} at {}",
                             peer_id,

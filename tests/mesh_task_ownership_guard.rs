@@ -638,3 +638,172 @@ fn mesh_service_exit_cause_exists() {
         "task_registry.rs must import MeshTaskExit from synvoid_mesh::lifecycle"
     );
 }
+
+// ── Test 18: commit_startup errors cannot bypass rollback (Iteration 71) ────
+
+#[test]
+fn commit_errors_cannot_bypass_rollback() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let start_body = extract_function(&content, "start_with_policy");
+
+    // start_with_policy must route BOTH phase failures and commit failures
+    // through rollback_and_return
+    assert!(
+        start_body.contains("rollback_and_return"),
+        "start_with_policy must use rollback_and_return to prevent commit errors from bypassing rollback"
+    );
+}
+
+// ── Test 19: lifecycle transitions to Running only after task group install ──
+
+#[test]
+fn running_after_task_group_install() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let commit_body = extract_function(&content, "commit_startup");
+
+    // Find task_group and transition_to_running positions
+    let tg_pos = commit_body.find("task_group");
+    let running_pos = commit_body.find("transition_to_running");
+
+    if let (Some(tg), Some(r)) = (tg_pos, running_pos) {
+        assert!(
+            tg < r,
+            "task_group must be installed before transition_to_running in commit_startup"
+        );
+    }
+}
+
+// ── Test 20: StagedPeerResource recording methods exist ─────────────────────
+
+#[test]
+fn staged_peer_resource_recording_exists() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    // connect_to_peer must accept stage parameter
+    assert!(
+        content.contains("stage: Option<&mut MeshStartupStage>"),
+        "connect_to_peer must accept optional stage for peer recording"
+    );
+
+    // bootstrap_from_seeds must accept stage
+    assert!(
+        content.contains("fn bootstrap_from_seeds")
+            && extract_function(&content, "bootstrap_from_seeds").contains("stage"),
+        "bootstrap_from_seeds must accept stage parameter"
+    );
+}
+
+// ── Test 21: rollback removes peer connections by session_id ─────────────────
+
+#[test]
+fn rollback_removes_by_session_id() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let rollback_body = extract_function(&content, "rollback_startup");
+
+    // Must look up connections by session_id (the DashMap key)
+    assert!(
+        rollback_body.contains("session_id"),
+        "rollback_startup must use session_id to look up peer_connections (DashMap key)"
+    );
+}
+
+// ── Test 22: topology rollback code exists ───────────────────────────────────
+
+#[test]
+fn topology_rollback_code_exists() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let rollback_body = extract_function(&content, "rollback_startup");
+
+    assert!(
+        rollback_body.contains("remove_peer") || rollback_body.contains("topology"),
+        "rollback_startup must contain topology cleanup code"
+    );
+}
+
+// ── Test 23: runtime_started has cleanup path ────────────────────────────────
+
+#[test]
+fn runtime_cleanup_path_exists() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let rollback_body = extract_function(&content, "rollback_startup");
+
+    assert!(
+        rollback_body.contains("runtime_started"),
+        "rollback_startup must handle runtime_started cleanup"
+    );
+}
+
+// ── Test 24: rollback session cleanup uses abort ─────────────────────────────
+
+#[test]
+fn rollback_session_cleanup_uses_abort() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let rollback_body = extract_function(&content, "rollback_startup");
+
+    assert!(
+        rollback_body.contains("abort_all") || rollback_body.contains("abort"),
+        "rollback_startup must abort remaining peer sessions after cooperative drain"
+    );
+}
+
+// ── Test 25: StartupRollbackFailed constructed in startup flow ───────────────
+
+#[test]
+fn startup_rollback_failed_constructed() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        content.contains("StartupRollbackFailed"),
+        "MeshTransportError::StartupRollbackFailed must be constructed in startup flow"
+    );
+}
+
+// ── Test 26: Handshake report fields are documented as deferred ──────────────
+
+#[test]
+fn handshake_report_fields_deferred() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+
+    // MeshAcceptLoopReport should have deferred documentation
+    assert!(
+        content.contains("Deferred")
+            || content.contains("non-authoritative")
+            || content.contains("Non-authoritative"),
+        "MeshAcceptLoopReport fields must be documented as deferred/non-authoritative"
+    );
+}
+
+// ── Test 27: BeforeLifecycleCommit hook exists ───────────────────────────────
+
+#[test]
+fn before_lifecycle_commit_hook_exists() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        content.contains("BeforeLifecycleCommit"),
+        "StartupFailurePoint must have BeforeLifecycleCommit variant"
+    );
+    assert!(
+        !content.contains("AfterLifecycleCommit"),
+        "AfterLifecycleCommit should be renamed to BeforeLifecycleCommit"
+    );
+}
+
+// ── Test 28: verify_rollback_complete checks key invariants ──────────────────
+
+#[test]
+fn verify_rollback_complete_checks_invariants() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let verify_body = extract_function(&content, "verify_rollback_complete");
+
+    assert!(
+        verify_body.contains("running_projection"),
+        "verify_rollback_complete must check running_projection"
+    );
+    assert!(
+        verify_body.contains("lifecycle") || verify_body.contains("Running"),
+        "verify_rollback_complete must check lifecycle is not Running"
+    );
+    assert!(
+        verify_body.contains("peer_connections") || verify_body.contains("session_id"),
+        "verify_rollback_complete must check peer connections were removed"
+    );
+}

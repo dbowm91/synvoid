@@ -400,9 +400,12 @@ impl MeshTransport {
         }
     }
 
-    pub(crate) async fn connect_to_peers(&self) -> Result<(), MeshTransportError> {
+    pub(crate) async fn connect_to_peers(
+        &self,
+        stage: &mut crate::lifecycle::MeshStartupStage,
+    ) -> Result<(), MeshTransportError> {
         for peer_config in &self.config.peers {
-            match self.connect_to_peer(peer_config).await {
+            match self.connect_to_peer(peer_config, Some(stage)).await {
                 Ok(_) => {
                     tracing::info!("Connected to peer: {}", peer_config.address);
                 }
@@ -559,7 +562,7 @@ impl MeshTransport {
                 auth_token: None,
             };
 
-            match self.connect_to_peer(&peer_config).await {
+            match self.connect_to_peer(&peer_config, None).await {
                 Ok(_) => {
                     tracing::info!("Connected to prioritized peer: {}", node_id);
                 }
