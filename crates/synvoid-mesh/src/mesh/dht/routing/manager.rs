@@ -460,6 +460,17 @@ impl DhtRoutingManager {
             }
     }
 
+    /// Check that a peer is absent from the DHT routing table (Iteration 74, Phase 4).
+    pub async fn peer_absent(&self, peer_node_id: &str) -> bool {
+        let rt = self.routing_table.read().await;
+        let table = match rt.as_ref() {
+            Some(t) => t,
+            None => return true,
+        };
+        let node_id = NodeId::from_node_id_string(peer_node_id);
+        table.get_contact(&node_id).is_none()
+    }
+
     pub async fn update_peer_latency(&self, peer_node_id: &str, latency_ms: u32) {
         let mut rt = self.routing_table.write().await;
         let table = match rt.as_mut() {

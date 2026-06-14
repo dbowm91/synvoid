@@ -1543,3 +1543,68 @@ fn test_no_dns_serving_healthy_false_hardcoded() {
         "rollback must not hardcode dns_serving_healthy: false"
     );
 }
+
+#[test]
+fn test_recovery_verifies_logical_state() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let recover_fn = extract_function(&source, "recover_failed_state");
+
+    // Must verify topology matches snapshot after residue restoration
+    assert!(
+        recover_fn.contains("topology_matches_snapshot"),
+        "recover_failed_state must verify topology against snapshot"
+    );
+
+    // Must verify DHT matches snapshot after residue restoration
+    assert!(
+        recover_fn.contains("peer_matches_snapshot"),
+        "recover_failed_state must verify DHT against snapshot"
+    );
+
+    // Must verify topology absence for new peers
+    assert!(
+        recover_fn.contains("peer_absent"),
+        "recover_failed_state must verify peer absence for new peers"
+    );
+}
+
+#[test]
+fn test_rollback_verifies_logical_state() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let rollback_fn = extract_function(&source, "rollback_startup");
+
+    // Must verify topology matches snapshot after restoration
+    assert!(
+        rollback_fn.contains("topology_matches_snapshot"),
+        "rollback_startup must verify topology against snapshot"
+    );
+
+    // Must verify DHT matches snapshot after restoration
+    assert!(
+        rollback_fn.contains("peer_matches_snapshot"),
+        "rollback_startup must verify DHT against snapshot"
+    );
+
+    // Must verify topology absence for new peers
+    assert!(
+        rollback_fn.contains("peer_absent"),
+        "rollback_startup must verify peer absence for new peers"
+    );
+}
+
+#[test]
+fn test_topology_matches_snapshot_exists() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/topology.rs");
+
+    assert!(
+        source.contains("fn topology_matches_snapshot"),
+        "topology.rs must have topology_matches_snapshot method"
+    );
+
+    // Must compare key fields, not just check existence
+    let method = extract_function(&source, "topology_matches_snapshot");
+    assert!(
+        method.contains("address") && method.contains("role") && method.contains("latency_ms"),
+        "topology_matches_snapshot must compare key fields"
+    );
+}

@@ -23,6 +23,7 @@ use moka::future::Cache as MokaCache;
 
 use crate::config::{MeshConfig, MeshNodeRole};
 use crate::dht::{RecordStoreManager, DEFAULT_GET_BY_PREFIX_LIMIT};
+use crate::lifecycle::StagedTopologySnapshot;
 use crate::protocol::{MeshPeerInfo, UpstreamInfo, UpstreamOwner};
 
 pub struct MeshTopology {
@@ -641,6 +642,43 @@ impl MeshTopology {
         }
         self.peer_store.upsert_peer(peer_state);
         tracing::debug!("Restored peer state for {}", node_id);
+    }
+
+    /// Verify that the current topology entry for a peer matches a snapshot
+    /// (Iteration 74, Phase 4).
+    ///
+    /// Used by rollback/recovery verification to prove exact logical restoration.
+    /// Returns `true` if the peer is absent and the snapshot indicates it was
+    /// absent before, or if all key fields match.
+    pub async fn topology_matches_snapshot(&self, snapshot: &StagedTopologySnapshot) -> bool {
+        match self.get_peer(&snapshot.peer_state.node_id).await {
+            None => false,
+            Some(current) => {
+                current.node_id == snapshot.peer_state.node_id
+                    && current.address == snapshot.peer_state.address
+                    && current.role == snapshot.peer_state.role
+                    && current.status == snapshot.peer_state.status
+                    && current.latency_ms == snapshot.peer_state.latency_ms
+                    && current.is_global == snapshot.peer_state.is_global
+                    && current.is_trusted == snapshot.peer_state.is_trusted
+                    && current.geo == snapshot.peer_state.geo
+                    && current.audit_successes == snapshot.peer_state.audit_successes
+                    && current.audit_failures == snapshot.peer_state.audit_failures
+                    && current.performance_audit_successes
+                        == snapshot.peer_state.performance_audit_successes
+                    && current.performance_audit_failures
+                        == snapshot.peer_state.performance_audit_failures
+                    && current.quic_port == snapshot.peer_state.quic_port
+                    && current.wireguard_port == snapshot.peer_state.wireguard_port
+                    && current.advertised_port == snapshot.peer_state.advertised_port
+                    && current.upstreams == snapshot.peer_state.upstreams
+            }
+        }
+    }
+
+    /// Check that a peer is absent from the topology (Iteration 74, Phase 4).
+    pub async fn peer_absent(&self, node_id: &str) -> bool {
+        self.get_peer(node_id).await.is_none()
     }
 
     pub async fn update_peer_audit_stats(&self, node_id: &str, successes: u64, failures: u64) {

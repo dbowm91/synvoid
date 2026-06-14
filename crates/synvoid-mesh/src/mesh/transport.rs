@@ -3019,6 +3019,58 @@ impl MeshTransport {
             }
         }
 
+        // Phase 5b: Verify logical topology/DHT restoration (Iteration 74, Phase 4)
+        for peer in &stage.created_peers {
+            // Verify topology state matches snapshot
+            match &peer.previous_topology {
+                None => {
+                    if !self.topology.peer_absent(&peer.node_id).await {
+                        report.errors.push(format!(
+                            "Topology verification failed for {}: peer still present after \
+                             rollback of new peer",
+                            peer.node_id
+                        ));
+                    }
+                }
+                Some(snapshot) => {
+                    if !self.topology.topology_matches_snapshot(snapshot).await {
+                        report.errors.push(format!(
+                            "Topology verification failed for {}: restored state does not \
+                             match snapshot",
+                            peer.node_id
+                        ));
+                    }
+                }
+            }
+
+            // Verify DHT state matches snapshot
+            match &peer.dht_mutation {
+                DhtPeerMutation::None => {}
+                DhtPeerMutation::Created => {
+                    if let Some(ref rm) = self.routing_manager {
+                        if !rm.peer_absent(&peer.node_id).await {
+                            report.errors.push(format!(
+                                "DHT verification failed for {}: routing entry still present \
+                                 after rollback of created peer",
+                                peer.node_id
+                            ));
+                        }
+                    }
+                }
+                DhtPeerMutation::Previous(snapshot) => {
+                    if let Some(ref rm) = self.routing_manager {
+                        if !rm.peer_matches_snapshot(snapshot).await {
+                            report.errors.push(format!(
+                                "DHT verification failed for {}: restored routing state does \
+                                 not match snapshot",
+                                peer.node_id
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
         // Phase 6: Selectively abort and await startup-created peer sessions (Iteration 73)
         {
             let mut sessions = self.peer_sessions.lock().await;
@@ -3283,6 +3335,7 @@ impl MeshTransport {
 
         let mut residue_errors: Vec<String> = Vec::new();
         let mut remaining_peers: Vec<StagedPeerResource> = Vec::new();
+        let mut successfully_restored: Vec<StagedPeerResource> = Vec::new();
 
         if let Some(residue) = residue {
             for peer in residue.peers {
@@ -3298,6 +3351,7 @@ impl MeshTransport {
                             }
                             self.peer_connections.remove(&peer.session_id);
                         }
+                        successfully_restored.push(peer);
                     }
                     Err(error) => {
                         residue_errors.push(format!(
@@ -3321,6 +3375,63 @@ impl MeshTransport {
                         .chain(residue_errors.clone())
                         .collect(),
                 });
+            }
+        }
+
+        // Phase 7b: Verify logical topology/DHT restoration for successfully
+        // restored peers (Iteration 74, Phase 4)
+        for peer in &successfully_restored {
+            // Verify topology state matches snapshot
+            match &peer.previous_topology {
+                None => {
+                    // New peer - topology must not contain the entry
+                    if !self.topology.peer_absent(&peer.node_id).await {
+                        residue_errors.push(format!(
+                            "Topology verification failed for {}: peer still present after \
+                             restoration of new peer",
+                            peer.node_id
+                        ));
+                    }
+                }
+                Some(snapshot) => {
+                    // Existing peer - topology must exactly match the snapshot
+                    if !self.topology.topology_matches_snapshot(snapshot).await {
+                        residue_errors.push(format!(
+                            "Topology verification failed for {}: restored state does not \
+                             match snapshot",
+                            peer.node_id
+                        ));
+                    }
+                }
+            }
+
+            // Verify DHT state matches snapshot
+            match &peer.dht_mutation {
+                DhtPeerMutation::None => {}
+                DhtPeerMutation::Created => {
+                    // New DHT entry - routing table must not contain the peer
+                    if let Some(ref rm) = self.routing_manager {
+                        if !rm.peer_absent(&peer.node_id).await {
+                            residue_errors.push(format!(
+                                "DHT verification failed for {}: routing entry still present \
+                                 after restoration of created peer",
+                                peer.node_id
+                            ));
+                        }
+                    }
+                }
+                DhtPeerMutation::Previous(snapshot) => {
+                    // Existing DHT entry - must exactly match the snapshot
+                    if let Some(ref rm) = self.routing_manager {
+                        if !rm.peer_matches_snapshot(snapshot).await {
+                            residue_errors.push(format!(
+                                "DHT verification failed for {}: restored routing state does \
+                                 not match snapshot",
+                                peer.node_id
+                            ));
+                        }
+                    }
+                }
             }
         }
 
