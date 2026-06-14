@@ -1,4 +1,4 @@
-# Mesh Transport Lifecycle Inventory — Iteration 72
+# Mesh Transport Lifecycle Inventory — Iteration 73
 
 ## Purpose
 
@@ -525,6 +525,150 @@ When the hook returns `Ok(())`, startup continues normally.
 - Transport construction with minimal defaults
 - Hook API integration
 
+## Hard Rejection of Non-Empty Task Group Replacement (Iteration 73)
+
+`commit_startup()` now **hard-rejects** replacement when the old task group is non-empty:
+
+```rust
+let old_task_group = {
+    let mut tg = self.task_group.lock().await;
+    let (c, b, ch) = tg.active_count();
+    if c + b + ch > 0 {
+        return Err(MeshTransportError::LifecycleConflict(format!(
+            "cannot commit startup over non-empty task group: {c} critical, {b} background, {ch} children"
+        )));
+    }
+    std::mem::replace(&mut *tg, std::mem::take(&mut stage.task_group))
+};
+```
+
+This is a hard error, not a warning — replacing a non-empty task group would orphan running tasks. The guard runs **before** `std::mem::replace`.
+
+## Pre-Mutation Topology and DHT Snapshots (Iteration 73)
+
+The outbound `connect_to_peer` path now captures state **before** mutation:
+
+1. **Topology snapshot**: `self.topology.get_peer(&node_id).await` is called **before** `self.topology.add_peer(...)`.
+2. **DHT snapshot**: `rm.snapshot_peer(&peer_node_id).await` is called **before** `self.dht_on_peer_connected(...)`.
+
+These snapshots feed into `StagedPeerResource` for rollback:
+- `previous_topology: Option<StagedTopologySnapshot>` — restored on rollback
+- `dht_mutation: DhtPeerMutation` — derived from pre-mutation snapshot (not from `rm.is_enabled()` alone)
+
+### DhtPeerMutation
+
+`DhtPeerMutation` is an enum tracking what DHT state was created or modified:
+
+| Variant | Meaning |
+|---------|---------|
+| `None` | No DHT mutation (routing disabled or no snapshot) |
+| `Created` | New DHT peer entry created (no prior snapshot) |
+| `Replaced(DhtPeerSnapshot)` | Prior DHT state existed and was replaced |
+| `UpdatedInPlace(DhtPeerSnapshot)` | Prior DHT state was updated without full replacement |
+
+The mutation is derived from the pre-mutation snapshot comparison, **not** from `rm.is_enabled()` directly. This ensures rollback can accurately restore the prior DHT state.
+
+## Retained Failed-Startup Residue (Iteration 73)
+
+When rollback is incomplete, `rollback_and_return()` now stores a `FailedStartupResidue` on the transport:
+
+```rust
+pub struct FailedStartupResidue {
+    pub peers: Vec<StagedPeerResource>,
+    pub generation: u64,
+    pub runtime_started: bool,
+    pub rollback_errors: Vec<String>,
+}
+```
+
+This residue is consumed by `recover_failed_state()` during the recovery phase (Phase 7) — cleared after cleanup completes. The residue provides `recover_failed_state()` with context about what was created during the failed startup attempt, enabling targeted cleanup.
+
+## Full Recovery Ownership Guarantees (Iteration 73)
+
+`recover_failed_state(timeout)` now performs a comprehensive verification after cleanup:
+
+| Phase | Verification |
+|-------|-------------|
+| Phase 10a | Task group `active_count()` must be `(0, 0, 0)` |
+| Phase 10b | `peer_sessions` must be empty |
+| Phase 10c | `peer_connections` must be empty |
+| Phase 10d | `auxiliary_tasks` must be empty |
+| Phase 10e | `failed_startup_residue` must be `None` |
+
+If any check fails, the issues are collected and the transport transitions back to `Failed` with a detailed error message.
+
+## Cooperative Deadline vs. Forced Abort-and-Await (Iteration 73)
+
+All abort paths now follow the **abort-and-await** pattern:
+
+```rust
+handle.abort();
+let _ = handle.await;
+```
+
+This ensures the task's resources are fully released before proceeding. The pattern applies to:
+- Peer session drain (shutdown + recovery)
+- Auxiliary task cleanup (shutdown + recovery)
+- Handshake child drain (accept loop)
+
+The `remaining(deadline)` helper computes the remaining budget. If the budget is exhausted before cooperative completion, tasks are forcibly aborted and immediately awaited.
+
+## Owned Auxiliary/Preflight Tasks (Iteration 73)
+
+Preflight tasks (`preflight_peer_routes`) now have explicit ownership:
+
+| Phase | Ownership | Registry |
+|-------|-----------|----------|
+| **Startup** | Bounded child in staged task group | `stage.task_group.spawn_child(...)` |
+| **Steady-state** | Transport-owned auxiliary task | `auxiliary_tasks: HashMap<MeshTaskId, AuxiliaryTask>` |
+
+During startup, preflight runs as a bounded child — it participates in rollback cancellation. During steady-state, it runs detached but is tracked in the `auxiliary_tasks` registry. On shutdown, all auxiliary tasks are aborted and awaited.
+
+```rust
+pub struct AuxiliaryTask {
+    pub task_id: MeshTaskId,
+    pub session_id: Option<String>,
+    pub kind: AuxiliaryTaskKind,
+    pub handle: JoinHandle<MeshTaskExit>,
+}
+
+pub enum AuxiliaryTaskKind {
+    PreflightRoute,
+}
+```
+
+## Peer-Session Completion Reaping and Exit Classification (Iteration 73)
+
+Peer sessions now report structured exit metadata:
+
+```rust
+pub struct PeerSessionExit {
+    pub session_id: String,
+    pub node_id: String,
+    pub reason: PeerSessionExitReason,
+    pub generation: u64,
+}
+
+pub enum PeerSessionExitReason {
+    Clean,
+    ConnectionClosed,
+    Cancelled,
+    Error(String),
+    Panic(String),
+    Aborted,
+}
+```
+
+The `generation` counter prevents stale completions from removing newer entries. Shutdown uses `PeerSessionExitReason` to classify session outcomes into `drained_peer_sessions`, `aborted_peer_sessions`, and `failed_peer_sessions` in `MeshShutdownReport`.
+
+### MeshShutdownReport Extension
+
+`MeshShutdownReport` now includes `failed_peer_sessions: usize` — sessions that exited with a panic or unexpected error (distinct from `aborted_peer_sessions` which are deadline-forced).
+
+## Worker Mesh Supervision Remains Deferred (Iteration 73)
+
+Worker mesh supervision consumption remains **explicitly deferred** (Outcome B from Iteration 70). The `MeshServiceExit` variant exists in `WorkerShutdownCause` but is **not wired** in the production worker supervision loop. `ManagedMeshService` trait and `MeshFailureCause` types are staged infrastructure for future integration.
+
 ## Changelog
 
 | Iteration | Changes |
@@ -532,3 +676,4 @@ When the hook returns `Ok(())`, startup continues normally.
 | 70 | Initial lifecycle state machine, staged startup/rollback, task groups, truthful shutdown report, failure injection hooks, worker integration |
 | 71 | Commit ordering: task group install → lifecycle transition → running projection. `rollback_and_return()` centralizes rollback error propagation, constructing `StartupRollbackFailed` when cleanup is incomplete. `StagedPeerResource` tracks exact peer mutations. Rollback uses `session_id` for `peer_connections` removal. Topology entries created during failed startup removed on rollback. `RollbackReport` expanded with `tasks_joined`, `tasks_aborted`, `peer_connections_closed`, `topology_entries_restored`, `peer_sessions_cleaned`, `runtime_stopped`. `verify_rollback_complete()` checks post-rollback invariants. Shared rollback deadline (`startup_rollback_timeout_secs`, default 15s). Peer session cleanup: cooperative drain → abort all → brief wait. `QuicRuntime::stop_server()` provides active endpoint cleanup during rollback. `MeshAcceptLoopReport` wired — accept loop tracks drained/aborted handshake children and publishes report; `MeshShutdownReport.drained_peer_children` and `aborted_peer_children` populated from accept loop report. |
 | 72 | **Failed state recovery**: `recover_failed_state(timeout)` acquires lifecycle lock, re-runs cleanup, verifies no owned resources remain, transitions to `Stopped`. `can_start()` now only allows `Stopped` (not `Failed`). **Selective peer-session ownership**: `HashMap<String, PeerSessionTask>` keyed registry replaces global `JoinSet<()>`. Rollback targets only staged sessions. **Topology snapshots**: `StagedTopologySnapshot` captures `MeshPeerInfo` + `PeerStatus` before modification; rollback restores exact prior state for existing peers, removes new peers. **DHT mutation tracking**: `dht_registration_created: bool` on `StagedPeerResource`; rollback removes DHT routing entries via `remove_peer()`. **Owned preflight tasks**: `preflight_peer_routes` runs as bounded child during startup, detached during steady-state. **Accept-loop report generation**: `generation: u64` field distinguishes reports across startup cycles; reset at each `start_with_policy()`. **Authoritative abort accounting**: `tasks_aborted` derived from `MeshTaskExitReason::Aborted` exit metadata, not `active_count()`. **Verification merged before lifecycle selection**: `rollback_and_return()` merges verification issues into `RollbackReport` before `finish_failed_startup()`. **Non-empty task group guard**: `commit_startup()` logs warning when replacing non-empty old task group. |
+| 73 | **Hard rejection of non-empty task group replacement**: `commit_startup()` returns `LifecycleConflict` error if old task group is non-empty (checked before `std::mem::replace`). **Pre-mutation snapshots**: `get_peer()` (topology) and `snapshot_peer()` (DHT) captured before `add_peer()` and `dht_on_peer_connected()` in outbound connection path. **DhtPeerMutation enum**: `Created`, `Replaced(snapshot)`, `UpdatedInPlace(snapshot)`, `None` — derived from pre-mutation snapshot comparison, not `rm.is_enabled()` alone. **FailedStartupResidue**: retained on transport when rollback is incomplete; consumed and cleared by `recover_failed_state()`. **Full recovery verification**: `recover_failed_state()` verifies task group empty, peer sessions empty, auxiliary tasks empty, connections empty, residue cleared. **Abort-and-await pattern**: all `.abort()` calls followed by `.await` to reap task resources. **Auxiliary task ownership**: preflight tracked in `auxiliary_tasks: HashMap<MeshTaskId, AuxiliaryTask>` during steady-state; `AuxiliaryTaskKind::PreflightRoute` variant. **Peer-session exit classification**: `PeerSessionExitReason` enum (Clean/ConnectionClosed/Cancelled/Error/Panic/Aborted), `PeerSessionExit` struct with generation counter. **MeshShutdownReport.failed_peer_sessions**: new field for panic/error session exits. **Worker mesh supervision**: remains deferred (Outcome B from Iteration 70). |

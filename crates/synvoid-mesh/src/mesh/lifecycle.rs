@@ -1,9 +1,19 @@
-//! Mesh transport lifecycle types (Iteration 68, 70, 71).
+//! Mesh transport lifecycle types (Iteration 68, 70, 71, 73).
 //!
 //! Defines the state machine, task classification, startup staging,
 //! and shutdown reporting types used to manage mesh transport lifecycle
 //! transitions. These types decouple lifecycle policy from concrete
 //! transport implementations.
+//!
+//! Iteration 73 corrects semantic mismatches:
+//! - Non-empty task-group replacement is a hard failure (Phase 1)
+//! - Topology snapshots are captured before mutation (Phase 2-3)
+//! - DHT mutations are tracked explicitly, not inferred (Phase 4-6)
+//! - Recovery consumes its timeout and verifies all registries (Phase 7-9)
+//! - Cooperative deadline is separated from forced abort (Phase 10-12)
+//! - Steady-state preflight is transport-owned (Phase 13-14)
+//! - Peer-session completion is reaped (Phase 15-18)
+//! - Shutdown reports distinguish drained/aborted/failed sessions (Phase 17)
 
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -258,6 +268,8 @@ pub struct MeshShutdownReport {
     pub drained_peer_sessions: usize,
     /// Number of peer sessions that were forcibly aborted.
     pub aborted_peer_sessions: usize,
+    /// Number of peer sessions that failed (panic or unexpected error).
+    pub failed_peer_sessions: usize,
 }
 
 impl Default for MeshShutdownReport {
@@ -272,6 +284,7 @@ impl Default for MeshShutdownReport {
             peers_at_shutdown_start: 0,
             drained_peer_sessions: 0,
             aborted_peer_sessions: 0,
+            failed_peer_sessions: 0,
         }
     }
 }
@@ -325,7 +338,7 @@ pub struct MeshAcceptLoopReport {
     pub generation: u64,
 }
 
-/// A tracked peer session task with its identity and handle.
+/// A tracked peer session task with its identity and handle (Iteration 73, Phase 18).
 pub struct PeerSessionTask {
     /// Session identifier for this peer connection.
     pub session_id: String,
@@ -333,37 +346,43 @@ pub struct PeerSessionTask {
     pub node_id: String,
     /// Join handle for the session task.
     pub handle: tokio::task::JoinHandle<()>,
+    /// Generation counter to prevent stale completions from removing newer entries.
+    pub generation: u64,
 }
 
 /// Snapshot of a peer's topology state before a startup attempt modified it.
+///
+/// Stores the native `PeerState` for exact restoration (Iteration 73, Phase 3).
+/// Previously this stored a lossy `MeshPeerInfo` conversion; now it preserves
+/// the full peer record including audit counts, timestamps, and reputation.
 #[derive(Debug, Clone)]
 pub struct StagedTopologySnapshot {
-    /// The peer info before modification.
-    pub peer_info: crate::protocol::MeshPeerInfo,
-    /// The peer status before modification.
-    pub status: crate::topology::PeerStatus,
+    /// The complete peer state before modification.
+    pub peer_state: crate::topology::PeerState,
 }
 
 /// Records a single peer mutation created during startup, used for
-/// precise rollback.
+/// precise rollback (Iteration 73, Phases 1-6).
 #[derive(Debug, Clone)]
 pub struct StagedPeerResource {
     /// Session identifier for the peer connection.
     pub session_id: String,
     /// Node identifier for the peer.
     pub node_id: String,
-    /// Topology snapshot before this startup attempt modified the peer entry.
+    /// Topology snapshot captured before this startup attempt modified the peer entry.
     /// `None` means no prior topology entry existed (new peer).
     pub previous_topology: Option<StagedTopologySnapshot>,
     /// Whether the connection was inserted into the connection map.
     pub connection_inserted: bool,
     /// Session ID used as the key in the session-task registry, if a session task was spawned.
     pub session_task_id: Option<String>,
-    /// Whether a DHT routing entry was created during this startup attempt.
-    pub dht_registration_created: bool,
+    /// The exact DHT mutation that occurred during this startup attempt.
+    pub dht_mutation: DhtPeerMutation,
+    /// Generation counter for the session, used to prevent stale completions.
+    pub session_generation: u64,
 }
 
-/// Report from a startup rollback attempt.
+/// Report from a startup rollback attempt (Iteration 73, Phases 10-12).
 #[derive(Debug, Clone)]
 pub struct RollbackReport {
     /// Whether the rollback completed without errors.
@@ -378,8 +397,12 @@ pub struct RollbackReport {
     pub peer_connections_closed: usize,
     /// Number of topology entries restored (best-effort) during rollback.
     pub topology_entries_restored: usize,
-    /// Number of peer sessions cleaned up during rollback.
-    pub peer_sessions_cleaned: usize,
+    /// Number of peer sessions drained cleanly during rollback.
+    pub peer_sessions_drained: usize,
+    /// Number of peer sessions that were forcibly aborted.
+    pub peer_sessions_aborted: usize,
+    /// Number of peer sessions that failed (panic or unexpected error).
+    pub peer_sessions_failed: usize,
     /// Whether the runtime was marked as stopped during rollback.
     pub runtime_stopped: bool,
 }
@@ -393,7 +416,9 @@ impl Default for RollbackReport {
             tasks_aborted: 0,
             peer_connections_closed: 0,
             topology_entries_restored: 0,
-            peer_sessions_cleaned: 0,
+            peer_sessions_drained: 0,
+            peer_sessions_aborted: 0,
+            peer_sessions_failed: 0,
             runtime_stopped: false,
         }
     }
@@ -417,6 +442,8 @@ pub struct MeshStartupStage {
     pub(crate) runtime_started: bool,
     /// Whether this stage has been committed to the transport.
     pub(crate) committed: bool,
+    /// Session generation counter, incremented for each peer session created.
+    pub(crate) session_generation_counter: u64,
 }
 
 impl MeshStartupStage {
@@ -427,6 +454,7 @@ impl MeshStartupStage {
             created_peers: Vec::new(),
             runtime_started: false,
             committed: false,
+            session_generation_counter: 0,
         }
     }
 
@@ -440,14 +468,22 @@ impl MeshStartupStage {
     /// Creates a `StagedPeerResource` with conservative defaults for callers
     /// that don't yet provide full resource metadata.
     pub fn record_peer_session(&mut self, session_id: String, node_id: String) {
+        self.session_generation_counter += 1;
         self.record_peer(StagedPeerResource {
             session_id,
             node_id,
             previous_topology: None,
             connection_inserted: true,
             session_task_id: None,
-            dht_registration_created: false,
+            dht_mutation: DhtPeerMutation::None,
+            session_generation: self.session_generation_counter,
         });
+    }
+
+    /// Allocate the next session generation ID.
+    pub fn next_session_generation(&mut self) -> u64 {
+        self.session_generation_counter += 1;
+        self.session_generation_counter
     }
 
     /// Mark the runtime as started.
@@ -470,6 +506,152 @@ impl MeshStartupStage {
 /// if the deadline has already passed.
 pub fn remaining(deadline: std::time::Instant) -> Duration {
     deadline.saturating_duration_since(std::time::Instant::now())
+}
+
+/// Describes the DHT mutation that occurred when a peer connected during startup.
+///
+/// Used by `StagedPeerResource` to track exactly what DHT state was created or
+/// modified, enabling precise rollback (Iteration 73, Phase 4).
+#[derive(Debug, Clone)]
+pub enum DhtPeerMutation {
+    /// No DHT mutation occurred (DHT disabled or peer already registered with same state).
+    None,
+    /// A new routing entry was created for this peer.
+    Created,
+    /// An existing routing entry was replaced; contains the prior state for restoration.
+    Replaced(DhtPeerSnapshot),
+    /// An existing routing entry was updated in-place; contains the prior state for restoration.
+    UpdatedInPlace(DhtPeerSnapshot),
+}
+
+/// Snapshot of a peer's DHT routing state before a startup mutation.
+///
+/// Used by `DhtPeerMutation::Replaced` and `DhtPeerMutation::UpdatedInPlace`
+/// to enable precise rollback (Iteration 73, Phase 5).
+#[derive(Debug, Clone)]
+pub struct DhtPeerSnapshot {
+    /// The node ID in the DHT routing table.
+    pub node_id: String,
+    /// The address recorded in the routing entry.
+    pub address: String,
+    /// The port recorded in the routing entry.
+    pub port: u16,
+    /// The role recorded in the routing entry.
+    pub role: crate::config::MeshNodeRole,
+}
+
+/// Metadata for a peer session exit, used by the session reaper (Iteration 73, Phase 15-16).
+#[derive(Debug, Clone)]
+pub struct PeerSessionExit {
+    /// Session identifier.
+    pub session_id: String,
+    /// Node identifier for the peer.
+    pub node_id: String,
+    /// Reason the session exited.
+    pub reason: PeerSessionExitReason,
+    /// Generation counter to prevent stale completions from removing newer entries.
+    pub generation: u64,
+}
+
+/// Classification of how a peer session exited (Iteration 73, Phase 16).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PeerSessionExitReason {
+    /// Session completed cleanly (connection closed by peer or local).
+    Clean,
+    /// The QUIC connection was closed.
+    ConnectionClosed,
+    /// Session was cancelled during shutdown.
+    Cancelled,
+    /// Session exited with an error.
+    Error(String),
+    /// Session panicked.
+    Panic(String),
+    /// Session was forcibly aborted (deadline exceeded).
+    Aborted,
+}
+
+impl fmt::Display for PeerSessionExitReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PeerSessionExitReason::Clean => write!(f, "clean"),
+            PeerSessionExitReason::ConnectionClosed => write!(f, "connection closed"),
+            PeerSessionExitReason::Cancelled => write!(f, "cancelled"),
+            PeerSessionExitReason::Error(msg) => write!(f, "error: {msg}"),
+            PeerSessionExitReason::Panic(msg) => write!(f, "panic: {msg}"),
+            PeerSessionExitReason::Aborted => write!(f, "aborted"),
+        }
+    }
+}
+
+/// An auxiliary (preflight/best-effort) task owned by the transport (Iteration 73, Phase 13-14).
+///
+/// Auxiliary tasks are one-shot operations associated with peer connections
+/// (e.g., route preflight queries). They are owned by the transport and
+/// cancelled/awaited during shutdown and recovery.
+#[derive(Debug)]
+pub struct AuxiliaryTask {
+    /// Unique identifier for this auxiliary task.
+    pub task_id: MeshTaskId,
+    /// Optional session ID linking this task to a peer session.
+    pub session_id: Option<String>,
+    /// Classification of the auxiliary task.
+    pub kind: AuxiliaryTaskKind,
+    /// Join handle for the task.
+    pub handle: tokio::task::JoinHandle<MeshTaskExit>,
+}
+
+/// Classification of auxiliary tasks (Iteration 73, Phase 14).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuxiliaryTaskKind {
+    /// Preflight route query for a newly connected peer.
+    PreflightRoute,
+    /// Other one-shot best-effort work.
+    Other,
+}
+
+/// Retained metadata from an incomplete startup rollback (Iteration 73, Phase 8).
+///
+/// When `rollback_and_return()` encounters errors, the `MeshStartupStage` is
+/// partially consumed. This residue is stored on `MeshTransport` so that
+/// `recover_failed_state()` can target the exact resources that were not cleaned up.
+#[derive(Debug, Clone)]
+pub struct FailedStartupResidue {
+    /// Peer resources created during the failed startup.
+    pub peers: Vec<StagedPeerResource>,
+    /// The generation counter at the time of failure.
+    pub generation: u64,
+    /// Whether the QUIC runtime was started.
+    pub runtime_started: bool,
+    /// Errors encountered during the original rollback attempt.
+    pub rollback_errors: Vec<String>,
+}
+
+/// Result of verifying recovery completeness (Iteration 73, Phase 20).
+#[derive(Debug, Clone)]
+pub struct RecoveryVerification {
+    /// Whether all owned task counts are zero.
+    pub tasks_empty: bool,
+    /// Whether the peer-session registry is empty.
+    pub sessions_empty: bool,
+    /// Whether the auxiliary task registry is empty.
+    pub auxiliary_empty: bool,
+    /// Whether all peer connections are closed.
+    pub connections_empty: bool,
+    /// Whether the runtime is stopped.
+    pub runtime_stopped: bool,
+    /// Whether the failed-startup residue has been cleared.
+    pub residue_cleared: bool,
+    /// Whether the running projection is false.
+    pub projection_clear: bool,
+    /// Any issues found during verification.
+    pub issues: Vec<String>,
+}
+
+impl RecoveryVerification {
+    /// Returns true if all verifications passed.
+    pub fn is_clean(&self) -> bool {
+        self.issues.is_empty()
+    }
 }
 
 #[cfg(test)]
@@ -654,6 +836,7 @@ mod tests {
         assert_eq!(report.peers_at_shutdown_start, 0);
         assert_eq!(report.drained_peer_sessions, 0);
         assert_eq!(report.aborted_peer_sessions, 0);
+        assert_eq!(report.failed_peer_sessions, 0);
     }
 
     #[test]
@@ -673,14 +856,16 @@ mod tests {
             previous_topology: None,
             connection_inserted: true,
             session_task_id: Some("sess-1".to_string()),
-            dht_registration_created: false,
+            dht_mutation: DhtPeerMutation::None,
+            session_generation: 1,
         };
         assert_eq!(resource.session_id, "sess-1");
         assert_eq!(resource.node_id, "node-1");
         assert!(resource.previous_topology.is_none());
         assert!(resource.connection_inserted);
         assert_eq!(resource.session_task_id.as_deref(), Some("sess-1"));
-        assert!(!resource.dht_registration_created);
+        assert!(matches!(resource.dht_mutation, DhtPeerMutation::None));
+        assert_eq!(resource.session_generation, 1);
     }
 
     #[test]
@@ -692,7 +877,9 @@ mod tests {
         assert_eq!(report.tasks_aborted, 0);
         assert_eq!(report.peer_connections_closed, 0);
         assert_eq!(report.topology_entries_restored, 0);
-        assert_eq!(report.peer_sessions_cleaned, 0);
+        assert_eq!(report.peer_sessions_drained, 0);
+        assert_eq!(report.peer_sessions_aborted, 0);
+        assert_eq!(report.peer_sessions_failed, 0);
         assert!(!report.runtime_stopped);
     }
 
@@ -707,11 +894,102 @@ mod tests {
             previous_topology: None,
             connection_inserted: true,
             session_task_id: Some("sess-1".to_string()),
-            dht_registration_created: false,
+            dht_mutation: DhtPeerMutation::None,
+            session_generation: 1,
         });
 
         assert_eq!(stage.created_peers.len(), 1);
         assert_eq!(stage.created_peers[0].session_id, "sess-1");
         assert!(stage.has_resources());
+    }
+
+    #[test]
+    fn dht_peer_mutation_variants() {
+        let none = DhtPeerMutation::None;
+        assert!(matches!(none, DhtPeerMutation::None));
+
+        let created = DhtPeerMutation::Created;
+        assert!(matches!(created, DhtPeerMutation::Created));
+
+        let snapshot = DhtPeerSnapshot {
+            node_id: "node-1".to_string(),
+            address: "1.2.3.4:443".to_string(),
+            port: 443,
+            role: crate::config::MeshNodeRole::EDGE,
+        };
+        let replaced = DhtPeerMutation::Replaced(snapshot.clone());
+        assert!(matches!(replaced, DhtPeerMutation::Replaced(_)));
+
+        let updated = DhtPeerMutation::UpdatedInPlace(snapshot);
+        assert!(matches!(updated, DhtPeerMutation::UpdatedInPlace(_)));
+    }
+
+    #[test]
+    fn peer_session_exit_reason_display() {
+        assert_eq!(PeerSessionExitReason::Clean.to_string(), "clean");
+        assert_eq!(
+            PeerSessionExitReason::Error("timeout".into()).to_string(),
+            "error: timeout"
+        );
+        assert_eq!(
+            PeerSessionExitReason::Panic("overflow".into()).to_string(),
+            "panic: overflow"
+        );
+        assert_eq!(PeerSessionExitReason::Aborted.to_string(), "aborted");
+    }
+
+    #[test]
+    fn failed_startup_residue() {
+        let residue = FailedStartupResidue {
+            peers: Vec::new(),
+            generation: 42,
+            runtime_started: true,
+            rollback_errors: vec!["test error".to_string()],
+        };
+        assert!(residue.peers.is_empty());
+        assert_eq!(residue.generation, 42);
+        assert!(residue.runtime_started);
+        assert_eq!(residue.rollback_errors.len(), 1);
+    }
+
+    #[test]
+    fn recovery_verification() {
+        let v = RecoveryVerification {
+            tasks_empty: true,
+            sessions_empty: true,
+            auxiliary_empty: true,
+            connections_empty: true,
+            runtime_stopped: true,
+            residue_cleared: true,
+            projection_clear: true,
+            issues: Vec::new(),
+        };
+        assert!(v.is_clean());
+
+        let v = RecoveryVerification {
+            tasks_empty: false,
+            sessions_empty: true,
+            auxiliary_empty: true,
+            connections_empty: true,
+            runtime_stopped: true,
+            residue_cleared: true,
+            projection_clear: true,
+            issues: vec!["task count not zero".to_string()],
+        };
+        assert!(!v.is_clean());
+    }
+
+    #[test]
+    fn session_generation_counter() {
+        let tg = crate::task_group::MeshTaskGroup::new();
+        let mut stage = MeshStartupStage::new(tg);
+
+        let gen1 = stage.next_session_generation();
+        let gen2 = stage.next_session_generation();
+        let gen3 = stage.next_session_generation();
+
+        assert_eq!(gen1, 1);
+        assert_eq!(gen2, 2);
+        assert_eq!(gen3, 3);
     }
 }

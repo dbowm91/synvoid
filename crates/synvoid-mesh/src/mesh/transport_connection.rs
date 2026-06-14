@@ -81,6 +81,8 @@ impl MeshTransport {
             id_generator: self.id_generator.clone(),
             running_projection: self.running_projection.clone(),
             accept_loop_report: self.accept_loop_report.clone(),
+            failed_startup_residue: self.failed_startup_residue.clone(),
+            auxiliary_tasks: self.auxiliary_tasks.clone(),
         }
     }
 

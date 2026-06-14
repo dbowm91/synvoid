@@ -132,20 +132,24 @@ crates/synvoid-mesh/src/mesh/kem/
 
 ## Lifecycle Management
 
-Mesh transport uses structured lifecycle management (Iterations 68–72):
+Mesh transport uses structured lifecycle management (Iterations 68–73):
 
 - `MeshTaskGroup` owns all spawned tasks with classification; `new_with_forward_and_id_gen(exit_tx, id_gen)` creates groups that forward exits to a stable broadcast sender on `MeshTransport` with globally unique task IDs across generations
 - `MeshLifecycleState` provides a state machine (Stopped/Starting/Running/Stopping/Failed) with validated transitions; `can_start()` allows `Stopped` only (not `Failed`), `can_stop()` allows `Running` only
-- **Failed state recovery (Iteration 72)**: `Failed` means incomplete rollback — not safe to restart. `recover_failed_state(timeout)` acquires lifecycle lock, re-runs cleanup, verifies no owned resources remain, transitions to `Stopped`
+- **Failed state recovery (Iteration 72, expanded 73)**: `Failed` means incomplete rollback — not safe to restart. `recover_failed_state(timeout)` acquires lifecycle lock, re-runs cleanup (task group shutdown, QUIC stop, connection close, session drain, auxiliary task cleanup, residue clearing), verifies no owned resources remain (task group empty, sessions empty, auxiliary tasks empty, connections empty, residue cleared), transitions to `Stopped`
 - `lifecycle_op: tokio::sync::Mutex<()>` serializes start/stop transitions — no concurrent lifecycle mutations
 - Transactional startup via `MeshStartupStage` with rollback on failure — clean rollback returns to `Stopped` (safe to retry), incomplete rollback returns to `Failed` (requires `recover_failed_state()`)
-- **Commit ordering (Iteration 71)**: `commit_startup()` transfers task group ownership → transitions lifecycle to `Running` → sets `running_projection` — ensuring the task group is installed before the state is visible. **Non-empty guard (Iteration 72)**: warns when replacing non-empty old task group.
+- **Commit ordering (Iteration 71)**: `commit_startup()` transfers task group ownership → transitions lifecycle to `Running` → sets `running_projection` — ensuring the task group is installed before the state is visible. **Hard rejection of non-empty task group (Iteration 73)**: returns `LifecycleConflict` error if old task group is non-empty (checked before `std::mem::replace`).
 - `rollback_and_return()` (Iteration 71) centralizes rollback error propagation, constructing `StartupRollbackFailed` when cleanup is incomplete; merges verification issues before lifecycle selection (Iteration 72); `verify_rollback_complete()` checks post-rollback invariants
-- `StagedPeerResource` (Iterations 71–72) tracks exact peer mutations (`session_id`, `node_id`, `topology_existed_before`, `connection_inserted`, `session_task_created`, `dht_registration_created`) for precise rollback
-- **Topology snapshots (Iteration 72)**: `StagedTopologySnapshot` captures `MeshPeerInfo` + `PeerStatus` before modification; rollback restores exact prior state for existing peers, removes new peers
+- **FailedStartupResidue (Iteration 73)**: retained on `MeshTransport` when rollback is incomplete; consumed and cleared by `recover_failed_state()`
+- `StagedPeerResource` (Iterations 71–73) tracks exact peer mutations (`session_id`, `node_id`, `topology_existed_before`, `connection_inserted`, `session_task_created`, `dht_registration_created`, `dht_mutation`, `session_generation`) for precise rollback
+- **Topology snapshots (Iteration 72, hardening 73)**: `StagedTopologySnapshot` captures `MeshPeerInfo` + `PeerStatus` before modification; rollback restores exact prior state for existing peers, removes new peers. `get_peer()` captured before `add_peer()` in outbound connection path.
 - **Selective peer-session ownership (Iteration 72)**: `HashMap<String, PeerSessionTask>` keyed registry replaces global `JoinSet<()>`; rollback targets only staged sessions
-- **DHT mutation tracking (Iteration 72)**: `dht_registration_created` on `StagedPeerResource` enables rollback to remove DHT routing entries via `remove_peer()`
-- **Preflight tasks (Iteration 72)**: `preflight_peer_routes` runs as bounded child during startup, detached (best-effort) during steady-state
+- **DHT mutation tracking (Iteration 72, hardened 73)**: `dht_mutation: DhtPeerMutation` on `StagedPeerResource` derived from pre-mutation snapshot comparison (not `rm.is_enabled()` alone); `DhtPeerMutation` enum: `None`, `Created`, `Replaced(snapshot)`, `UpdatedInPlace(snapshot)`
+- **Auxiliary task ownership (Iteration 73)**: preflight tasks tracked in `auxiliary_tasks: HashMap<MeshTaskId, AuxiliaryTask>` during steady-state; `AuxiliaryTaskKind::PreflightRoute` variant. Shutdown aborts and awaits all auxiliary tasks.
+- **Peer-session exit classification (Iteration 73)**: `PeerSessionExitReason` enum (`Clean`, `ConnectionClosed`, `Cancelled`, `Error(String)`, `Panic(String)`, `Aborted`) with generation counter to prevent stale completions. `MeshShutdownReport.failed_peer_sessions` tracks panic/error exits.
+- **Abort-and-await pattern (Iteration 73)**: all `.abort()` calls followed by `.await` to reap task resources.
+- **Preflight tasks (Iteration 72)**: `preflight_peer_routes` runs as bounded child during startup, tracked in auxiliary registry during steady-state
 - **Abort accounting (Iteration 72)**: `tasks_aborted` derived from `MeshTaskExitReason::Aborted` exit metadata, not `active_count()`
 - Shared rollback deadline (`startup_rollback_timeout_secs`, default 15s) governs all rollback phases
 - `start_with_policy(policy)` is the primary startup API; `start()` is a compatibility wrapper using default policy
@@ -153,7 +157,7 @@ Mesh transport uses structured lifecycle management (Iterations 68–72):
 - `MeshStartupReport` communicates bootstrap outcome (degraded reasons, peers connected, DHT status)
 - Bounded shutdown with shared deadline — `shutdown_with_timeout(timeout)` derives one deadline for all phases; truthful `MeshShutdownReport` reflects actual state
 - `MeshAcceptLoopReport` with `generation: u64` (Iteration 72) distinguishes reports across startup cycles; `rejected_at_capacity` remains untracked
-- `MeshShutdownReport.drained_peer_children` and `aborted_peer_children` are populated from the accept loop report (Iteration 71)
+- `MeshShutdownReport.drained_peer_children` and `aborted_peer_children` are populated from the accept loop report (Iteration 71); `failed_peer_sessions` (Iteration 73) tracks panic/error session exits
 - Peer sessions (`HashMap<String, PeerSessionTask>`, Iteration 72) are owned separately from handshake children; shutdown drains sessions after closing connections
 - `mesh_exit_tx: broadcast::Sender<MeshTaskExit>` on `MeshTransport` survives task group replacement; `subscribe_exits()` is synchronous and valid before `start()`
 - `running_projection: Arc<AtomicBool>` provides lock-free `is_running()` observation — set on commit, cleared on shutdown entry

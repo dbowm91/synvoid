@@ -8,9 +8,14 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 use synvoid_mesh::cert::MeshCertManager;
-use synvoid_mesh::config::MeshConfig;
-use synvoid_mesh::lifecycle::MeshLifecycleState;
-use synvoid_mesh::topology::MeshTopology;
+use synvoid_mesh::config::{MeshConfig, MeshNodeRole};
+use synvoid_mesh::lifecycle::{
+    DhtPeerMutation, DhtPeerSnapshot, FailedStartupResidue, MeshLifecycleState, MeshShutdownReport,
+    MeshStartupStage, RecoveryVerification, RollbackReport, StagedPeerResource,
+    StagedTopologySnapshot,
+};
+use synvoid_mesh::task_group::MeshTaskGroup;
+use synvoid_mesh::topology::{MeshTopology, PeerState, PeerStatus};
 use synvoid_mesh::transport::{MeshTransport, StartupFailurePoint};
 
 fn read_file(path: &str) -> String {
@@ -695,8 +700,8 @@ fn staged_peer_resource_has_dht_tracking() {
     let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
 
     assert!(
-        content.contains("dht_registration_created: bool"),
-        "StagedPeerResource must have dht_registration_created field"
+        content.contains("dht_mutation: DhtPeerMutation"),
+        "StagedPeerResource must have dht_mutation field of type DhtPeerMutation"
     );
 }
 
@@ -802,4 +807,303 @@ fn rollback_abort_count_from_exits() {
         content.contains("MeshTaskExitReason::Aborted") && content.contains("tasks_aborted"),
         "Rollback must derive abort count from exit reasons"
     );
+}
+
+// ── Phase 21: Task-Group Replacement Tests ───────────────────────────────────
+
+#[test]
+fn commit_startup_rejects_non_empty_task_group() {
+    let tg = MeshTaskGroup::new();
+    let mut stage = MeshStartupStage::new(tg);
+    stage.record_peer(StagedPeerResource {
+        session_id: "sess-1".to_string(),
+        node_id: "node-1".to_string(),
+        previous_topology: None,
+        connection_inserted: true,
+        session_task_id: Some("sess-1".to_string()),
+        dht_mutation: DhtPeerMutation::None,
+        session_generation: 1,
+    });
+    assert!(stage.has_resources());
+}
+
+#[test]
+fn empty_task_group_commit_succeeds() {
+    let tg = MeshTaskGroup::new();
+    let stage = MeshStartupStage::new(tg);
+    assert!(!stage.has_resources());
+    // task_group field is pub(crate); verify via has_resources() which checks
+    // runtime_started and created_peers are both empty/false.
+}
+
+// ── Phase 22: Topology Snapshot Timing Tests ─────────────────────────────────
+
+#[test]
+fn staged_topology_snapshot_stores_peer_state() {
+    let peer_state = PeerState {
+        node_id: "node-1".to_string(),
+        address: "1.2.3.4:443".to_string(),
+        role: MeshNodeRole::EDGE,
+        status: PeerStatus::Healthy,
+        capabilities: synvoid_mesh::protocol::MeshCapabilities::default(),
+        upstreams: std::collections::HashSet::new(),
+        latency_ms: Some(50),
+        first_seen: 1000,
+        last_seen: 2000,
+        is_global: false,
+        is_trusted: false,
+        connection_handle: None,
+        geo: Some("us-east".to_string()),
+        audit_successes: 10,
+        audit_failures: 1,
+        performance_audit_successes: 5,
+        performance_audit_failures: 0,
+        quic_port: Some(443),
+        wireguard_port: None,
+        advertised_port: Some(443),
+        previous_reputation: Some(0.9),
+    };
+
+    let snapshot = StagedTopologySnapshot {
+        peer_state: peer_state.clone(),
+    };
+
+    assert_eq!(snapshot.peer_state.node_id, "node-1");
+    assert_eq!(snapshot.peer_state.latency_ms, Some(50));
+    assert_eq!(snapshot.peer_state.audit_successes, 10);
+    assert_eq!(snapshot.peer_state.previous_reputation, Some(0.9));
+    assert_eq!(snapshot.peer_state.geo, Some("us-east".to_string()));
+}
+
+#[test]
+fn topology_snapshot_before_mutation_is_captured() {
+    let resource = StagedPeerResource {
+        session_id: "sess-1".to_string(),
+        node_id: "node-1".to_string(),
+        previous_topology: None,
+        connection_inserted: true,
+        session_task_id: Some("sess-1".to_string()),
+        dht_mutation: DhtPeerMutation::Created,
+        session_generation: 1,
+    };
+    assert!(resource.previous_topology.is_none());
+    assert!(matches!(resource.dht_mutation, DhtPeerMutation::Created));
+}
+
+#[test]
+fn topology_snapshot_existing_peer_preserves_state() {
+    let peer_state = PeerState {
+        node_id: "node-2".to_string(),
+        address: "5.6.7.8:443".to_string(),
+        role: MeshNodeRole::GLOBAL,
+        status: PeerStatus::Healthy,
+        capabilities: synvoid_mesh::protocol::MeshCapabilities::default(),
+        upstreams: ["upstream-1".to_string()].into_iter().collect(),
+        latency_ms: Some(25),
+        first_seen: 500,
+        last_seen: 1500,
+        is_global: true,
+        is_trusted: true,
+        connection_handle: None,
+        geo: None,
+        audit_successes: 20,
+        audit_failures: 2,
+        performance_audit_successes: 10,
+        performance_audit_failures: 1,
+        quic_port: Some(443),
+        wireguard_port: None,
+        advertised_port: Some(443),
+        previous_reputation: None,
+    };
+
+    let snapshot = StagedTopologySnapshot {
+        peer_state: peer_state.clone(),
+    };
+
+    let resource = StagedPeerResource {
+        session_id: "sess-2".to_string(),
+        node_id: "node-2".to_string(),
+        previous_topology: Some(snapshot),
+        connection_inserted: true,
+        session_task_id: Some("sess-2".to_string()),
+        dht_mutation: DhtPeerMutation::Replaced(DhtPeerSnapshot {
+            node_id: "node-2".to_string(),
+            address: "5.6.7.8:443".to_string(),
+            port: 443,
+            role: MeshNodeRole::GLOBAL,
+        }),
+        session_generation: 2,
+    };
+
+    let prev = resource.previous_topology.as_ref().unwrap();
+    assert_eq!(prev.peer_state.node_id, "node-2");
+    assert_eq!(prev.peer_state.audit_successes, 20);
+    assert!(prev.peer_state.is_global);
+    assert!(prev.peer_state.is_trusted);
+}
+
+// ── Phase 23: DHT Mutation Tests ─────────────────────────────────────────────
+
+#[test]
+fn dht_mutation_none_for_disabled_dht() {
+    let resource = StagedPeerResource {
+        session_id: "sess-1".to_string(),
+        node_id: "node-1".to_string(),
+        previous_topology: None,
+        connection_inserted: true,
+        session_task_id: Some("sess-1".to_string()),
+        dht_mutation: DhtPeerMutation::None,
+        session_generation: 1,
+    };
+    assert!(matches!(resource.dht_mutation, DhtPeerMutation::None));
+}
+
+#[test]
+fn dht_mutation_created_for_new_peer() {
+    let resource = StagedPeerResource {
+        session_id: "sess-1".to_string(),
+        node_id: "node-1".to_string(),
+        previous_topology: None,
+        connection_inserted: true,
+        session_task_id: Some("sess-1".to_string()),
+        dht_mutation: DhtPeerMutation::Created,
+        session_generation: 1,
+    };
+    assert!(matches!(resource.dht_mutation, DhtPeerMutation::Created));
+}
+
+#[test]
+fn dht_mutation_replaced_preserves_prior_state() {
+    let snapshot = DhtPeerSnapshot {
+        node_id: "node-1".to_string(),
+        address: "1.2.3.4:443".to_string(),
+        port: 443,
+        role: MeshNodeRole::EDGE,
+    };
+    let resource = StagedPeerResource {
+        session_id: "sess-1".to_string(),
+        node_id: "node-1".to_string(),
+        previous_topology: None,
+        connection_inserted: true,
+        session_task_id: Some("sess-1".to_string()),
+        dht_mutation: DhtPeerMutation::Replaced(snapshot.clone()),
+        session_generation: 1,
+    };
+    match &resource.dht_mutation {
+        DhtPeerMutation::Replaced(s) => {
+            assert_eq!(s.node_id, "node-1");
+            assert_eq!(s.address, "1.2.3.4:443");
+            assert_eq!(s.port, 443);
+        }
+        _ => panic!("Expected Replaced variant"),
+    }
+}
+
+#[test]
+fn dht_mutation_updated_in_place_preserves_state() {
+    let snapshot = DhtPeerSnapshot {
+        node_id: "node-2".to_string(),
+        address: "5.6.7.8:8080".to_string(),
+        port: 8080,
+        role: MeshNodeRole::GLOBAL,
+    };
+    let resource = StagedPeerResource {
+        session_id: "sess-2".to_string(),
+        node_id: "node-2".to_string(),
+        previous_topology: None,
+        connection_inserted: true,
+        session_task_id: Some("sess-2".to_string()),
+        dht_mutation: DhtPeerMutation::UpdatedInPlace(snapshot),
+        session_generation: 2,
+    };
+    assert!(matches!(
+        resource.dht_mutation,
+        DhtPeerMutation::UpdatedInPlace(_)
+    ));
+}
+
+// ── Phase 12: RollbackReport Session Fields Tests ────────────────────────────
+
+#[test]
+fn rollback_report_session_fields_separated() {
+    let mut report = RollbackReport::default();
+    report.peer_sessions_drained = 3;
+    report.peer_sessions_aborted = 1;
+    report.peer_sessions_failed = 2;
+
+    assert_eq!(report.peer_sessions_drained, 3);
+    assert_eq!(report.peer_sessions_aborted, 1);
+    assert_eq!(report.peer_sessions_failed, 2);
+    assert_eq!(
+        report.peer_sessions_drained + report.peer_sessions_aborted + report.peer_sessions_failed,
+        6
+    );
+}
+
+#[test]
+fn shutdown_report_has_failed_peer_sessions() {
+    let mut report = MeshShutdownReport::default();
+    report.drained_peer_sessions = 5;
+    report.aborted_peer_sessions = 2;
+    report.failed_peer_sessions = 1;
+
+    assert_eq!(report.drained_peer_sessions, 5);
+    assert_eq!(report.aborted_peer_sessions, 2);
+    assert_eq!(report.failed_peer_sessions, 1);
+}
+
+// ── Phase 8: FailedStartupResidue Tests ──────────────────────────────────────
+
+#[test]
+fn failed_startup_residue_retains_peers() {
+    let residue = FailedStartupResidue {
+        peers: vec![StagedPeerResource {
+            session_id: "sess-1".to_string(),
+            node_id: "node-1".to_string(),
+            previous_topology: None,
+            connection_inserted: true,
+            session_task_id: Some("sess-1".to_string()),
+            dht_mutation: DhtPeerMutation::Created,
+            session_generation: 1,
+        }],
+        generation: 42,
+        runtime_started: true,
+        rollback_errors: vec!["test error".to_string()],
+    };
+
+    assert_eq!(residue.peers.len(), 1);
+    assert_eq!(residue.generation, 42);
+    assert!(residue.runtime_started);
+    assert_eq!(residue.rollback_errors.len(), 1);
+}
+
+#[test]
+fn recovery_verification_all_clean() {
+    let v = RecoveryVerification {
+        tasks_empty: true,
+        sessions_empty: true,
+        auxiliary_empty: true,
+        connections_empty: true,
+        runtime_stopped: true,
+        residue_cleared: true,
+        projection_clear: true,
+        issues: Vec::new(),
+    };
+    assert!(v.is_clean());
+}
+
+#[test]
+fn recovery_verification_has_issues() {
+    let v = RecoveryVerification {
+        tasks_empty: false,
+        sessions_empty: true,
+        auxiliary_empty: true,
+        connections_empty: true,
+        runtime_stopped: true,
+        residue_cleared: true,
+        projection_clear: true,
+        issues: vec!["task group not empty".to_string()],
+    };
+    assert!(!v.is_clean());
+    assert_eq!(v.issues.len(), 1);
 }

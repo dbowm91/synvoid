@@ -49,9 +49,11 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch, Mutex};
 
 #[allow(unused_imports)]
 use crate::lifecycle::{
-    remaining, MeshAcceptLoopReport, MeshLifecycleState, MeshShutdownReport, MeshStartupPolicy,
-    MeshStartupReport, MeshStartupStage, MeshTaskExit, MeshTaskExitReason, MeshTaskIdGenerator,
-    PeerSessionTask, RollbackReport, StagedPeerResource, StagedTopologySnapshot,
+    remaining, AuxiliaryTask, AuxiliaryTaskKind, DhtPeerMutation, DhtPeerSnapshot,
+    FailedStartupResidue, MeshAcceptLoopReport, MeshLifecycleState, MeshShutdownReport,
+    MeshStartupPolicy, MeshStartupReport, MeshStartupStage, MeshTaskExit, MeshTaskExitReason,
+    MeshTaskId, MeshTaskIdGenerator, PeerSessionTask, RollbackReport, StagedPeerResource,
+    StagedTopologySnapshot,
 };
 use crate::task_group::MeshTaskGroup;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -184,6 +186,10 @@ pub struct MeshTransport {
     pub(crate) running_projection: Arc<AtomicBool>,
     /// Report from the mesh accept loop, populated during shutdown.
     pub(crate) accept_loop_report: Arc<tokio::sync::Mutex<MeshAcceptLoopReport>>,
+    /// Retained metadata from an incomplete startup rollback (Iteration 73, Phase 8).
+    pub(crate) failed_startup_residue: Arc<tokio::sync::Mutex<Option<FailedStartupResidue>>>,
+    /// Auxiliary (preflight/best-effort) tasks owned by the transport (Iteration 73, Phase 13-14).
+    pub(crate) auxiliary_tasks: Arc<tokio::sync::Mutex<HashMap<MeshTaskId, AuxiliaryTask>>>,
 }
 
 /// Failure injection points for deterministic startup testing.
@@ -454,6 +460,8 @@ impl Clone for MeshTransport {
             id_generator: self.id_generator.clone(),
             running_projection: self.running_projection.clone(),
             accept_loop_report: self.accept_loop_report.clone(),
+            failed_startup_residue: self.failed_startup_residue.clone(),
+            auxiliary_tasks: self.auxiliary_tasks.clone(),
         }
     }
 }
@@ -800,6 +808,8 @@ impl MeshTransport {
             id_generator: Arc::new(MeshTaskIdGenerator::new()),
             running_projection: Arc::new(AtomicBool::new(false)),
             accept_loop_report: Arc::new(tokio::sync::Mutex::new(MeshAcceptLoopReport::default())),
+            failed_startup_residue: Arc::new(tokio::sync::Mutex::new(None)),
+            auxiliary_tasks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
     }
 
@@ -2572,19 +2582,13 @@ impl MeshTransport {
         // 4. Transfer staged task group into transport ownership
         let old_task_group = {
             let mut tg = self.task_group.lock().await;
-            let old = std::mem::replace(&mut *tg, std::mem::take(&mut stage.task_group));
-            // Safety check: the old group should be empty before replacement.
-            // A non-empty group means tasks from a previous generation are still live.
-            let (c, b, ch) = old.active_count();
+            let (c, b, ch) = tg.active_count();
             if c + b + ch > 0 {
-                tracing::error!(
-                    "Replacing non-empty task group: {} critical, {} background, {} children",
-                    c,
-                    b,
-                    ch
-                );
+                return Err(MeshTransportError::LifecycleConflict(format!(
+                    "cannot commit startup over non-empty task group: {c} critical, {b} background, {ch} children"
+                )));
             }
-            old
+            std::mem::replace(&mut *tg, std::mem::take(&mut stage.task_group))
         };
         // old_task_group is dropped here (its tasks were already forwarded via exit_tx)
 
@@ -2628,12 +2632,7 @@ impl MeshTransport {
     /// Returns a `RollbackReport` indicating whether cleanup completed cleanly.
     async fn rollback_startup(&self, stage: &mut MeshStartupStage) -> RollbackReport {
         tracing::warn!("Rolling back mesh startup");
-        let mut errors = Vec::new();
-        let mut tasks_aborted = 0usize;
-        let mut peer_connections_closed = 0usize;
-        let mut topology_entries_restored = 0usize;
-        let mut peer_sessions_cleaned = 0usize;
-        let mut runtime_stopped = false;
+        let mut report = RollbackReport::default();
 
         // Phase 1: Signal shutdown to all staged tasks
         stage.task_group.begin_shutdown().await;
@@ -2646,7 +2645,7 @@ impl MeshTransport {
                         .value()
                         .connection
                         .close(0u32.into(), b"Startup rollback");
-                    peer_connections_closed += 1;
+                    report.peer_connections_closed += 1;
                 }
                 self.peer_connections.remove(&peer.session_id);
             }
@@ -2664,11 +2663,11 @@ impl MeshTransport {
         } else {
             stage.task_group.join_all(task_remaining).await
         };
-        let tasks_joined = exits.len();
+        report.tasks_joined = exits.len();
 
         for exit in &exits {
             if exit.is_fatal() {
-                errors.push(format!(
+                report.errors.push(format!(
                     "Task '{}' exited fatally during rollback: {}",
                     exit.name, exit.reason
                 ));
@@ -2680,7 +2679,7 @@ impl MeshTransport {
             .iter()
             .filter(|exit| matches!(exit.reason, MeshTaskExitReason::Aborted))
             .count();
-        tasks_aborted += tasks_aborted_from_exits;
+        report.tasks_aborted += tasks_aborted_from_exits;
 
         // Phase 5: Restore topology entries
         for peer in &stage.created_peers {
@@ -2688,23 +2687,40 @@ impl MeshTransport {
                 None => {
                     // New peer - remove the entry entirely
                     self.topology.remove_peer(&peer.node_id).await;
-                    topology_entries_restored += 1;
+                    report.topology_entries_restored += 1;
                 }
                 Some(snapshot) => {
                     // Existing peer was overwritten - restore exact prior state
-                    self.topology
-                        .add_peer(snapshot.peer_info.clone(), snapshot.status)
-                        .await;
-                    topology_entries_restored += 1;
+                    let ps = &snapshot.peer_state;
+                    let peer_info = crate::protocol::MeshPeerInfo {
+                        node_id: ps.node_id.clone(),
+                        address: ps.address.clone(),
+                        role: ps.role,
+                        capabilities: ps.capabilities.clone(),
+                        is_global: ps.is_global,
+                        latency_ms: ps.latency_ms,
+                        upstreams: ps.upstreams.iter().cloned().collect(),
+                        is_trusted: ps.is_trusted,
+                        quic_port: ps.quic_port,
+                        wireguard_port: ps.wireguard_port,
+                        advertised_port: ps.advertised_port,
+                        dns_serving_healthy: false,
+                    };
+                    self.topology.add_peer(peer_info, ps.status).await;
+                    report.topology_entries_restored += 1;
                 }
             }
         }
 
-        // Phase 5b: Remove DHT routing entries created during startup
+        // Phase 5b: Restore DHT state based on exact mutation (Iteration 73, Phase 5)
         for peer in &stage.created_peers {
-            if peer.dht_registration_created {
-                if let Some(ref rm) = self.routing_manager {
-                    if rm.is_enabled() {
+            match &peer.dht_mutation {
+                DhtPeerMutation::None => {
+                    // No mutation to undo
+                }
+                DhtPeerMutation::Created => {
+                    // Remove the new routing entry
+                    if let Some(ref rm) = self.routing_manager {
                         rm.remove_peer(&peer.node_id).await;
                         tracing::debug!(
                             "Removed DHT routing entry for peer {} during rollback",
@@ -2712,13 +2728,22 @@ impl MeshTransport {
                         );
                     }
                 }
+                DhtPeerMutation::Replaced(snapshot) | DhtPeerMutation::UpdatedInPlace(snapshot) => {
+                    // Restore the previous routing entry
+                    if let Some(ref rm) = self.routing_manager {
+                        rm.restore_peer(snapshot).await;
+                        tracing::debug!(
+                            "Restored DHT routing entry for peer {} during rollback",
+                            peer.node_id
+                        );
+                    }
+                }
             }
         }
 
-        // Phase 6: Selectively abort and await startup-created peer sessions
+        // Phase 6: Selectively abort and await startup-created peer sessions (Iteration 73)
         {
             let mut sessions = self.peer_sessions.lock().await;
-            // Collect session IDs from staged peers for selective cleanup
             let staged_session_ids: Vec<String> = stage
                 .created_peers
                 .iter()
@@ -2726,7 +2751,6 @@ impl MeshTransport {
                 .map(|p| p.session_id.clone())
                 .collect();
 
-            // First, drain cooperatively with remaining deadline
             let mut to_abort = Vec::new();
             for session_id in &staged_session_ids {
                 if let Some(task) = sessions.remove(session_id) {
@@ -2741,7 +2765,9 @@ impl MeshTransport {
                     tokio::select! {
                         result = &mut handle => {
                             match result {
-                                Ok(()) | Err(_) => peer_sessions_cleaned += 1,
+                                Ok(()) => report.peer_sessions_drained += 1,
+                                Err(err) if err.is_panic() => report.peer_sessions_failed += 1,
+                                Err(_) => report.peer_sessions_failed += 1,
                             }
                         }
                         _ = &mut sleep => {
@@ -2749,21 +2775,18 @@ impl MeshTransport {
                                 session_id: task.session_id,
                                 node_id: task.node_id,
                                 handle,
+                                generation: task.generation,
                             });
                         }
                     }
                 }
             }
 
-            // Abort remaining staged sessions
             for task in to_abort {
                 task.handle.abort();
-                let left = remaining(deadline);
-                if !left.is_zero() {
-                    let _ = tokio::time::timeout(left, task.handle).await;
-                }
-                peer_sessions_cleaned += 1;
-                tasks_aborted += 1;
+                let _ = task.handle.await;
+                report.peer_sessions_aborted += 1;
+                report.tasks_aborted += 1;
                 sessions.remove(&task.session_id);
             }
         }
@@ -2772,31 +2795,22 @@ impl MeshTransport {
         if stage.runtime_started {
             if let Some(ref runtime) = self.runtime {
                 runtime.stop_server().await;
-                runtime_stopped = true;
+                report.runtime_stopped = true;
                 tracing::debug!("QUIC runtime stopped during rollback");
             }
         }
 
         // Phase 8: Reset accept-loop report for diagnostics and future generations
         if stage.runtime_started {
-            let mut report = self.accept_loop_report.lock().await;
-            report.drained_handshakes = 0;
-            report.aborted_handshakes = 0;
-            report.rejected_at_capacity = 0;
+            let mut ar = self.accept_loop_report.lock().await;
+            ar.drained_handshakes = 0;
+            ar.aborted_handshakes = 0;
+            ar.rejected_at_capacity = 0;
             // Don't increment generation here - that happens at next startup
         }
 
-        let clean = errors.is_empty();
-        RollbackReport {
-            clean,
-            errors,
-            tasks_joined,
-            tasks_aborted,
-            peer_connections_closed,
-            topology_entries_restored,
-            peer_sessions_cleaned,
-            runtime_stopped,
-        }
+        report.clean = report.errors.is_empty();
+        report
     }
 
     /// Verify that rollback completed successfully by checking that no
@@ -2872,8 +2886,9 @@ impl MeshTransport {
     /// 3. Re-runs cleanup against any remaining resources
     /// 4. Verifies no owned tasks/sessions/connections remain
     /// 5. Transitions to `Stopped` only after successful verification
-    pub async fn recover_failed_state(&self, _timeout: Duration) -> Result<(), MeshTransportError> {
+    pub async fn recover_failed_state(&self, timeout: Duration) -> Result<(), MeshTransportError> {
         let _lifecycle_guard = self.lifecycle_op.lock().await;
+        let deadline = std::time::Instant::now() + timeout;
 
         // Verify current state is Failed
         {
@@ -2885,9 +2900,26 @@ impl MeshTransport {
             }
         }
 
-        tracing::info!("Attempting recovery from Failed lifecycle state");
+        tracing::info!(
+            "Attempting recovery from Failed lifecycle state (timeout: {:?})",
+            timeout
+        );
 
-        // Re-run cleanup: close any remaining peer connections
+        // Phase 1: Signal shutdown intent
+        self.shutdown_started.store(true, Ordering::SeqCst);
+
+        // Phase 2: Signal the top-level MeshTaskGroup
+        {
+            let group = self.task_group.lock().await;
+            group.begin_shutdown().await;
+        }
+
+        // Phase 3: Stop the QUIC runtime/endpoint
+        if let Some(ref runtime) = self.runtime {
+            runtime.stop_server().await;
+        }
+
+        // Phase 4: Close all peer connections
         for entry in self.peer_connections.iter() {
             entry
                 .value()
@@ -2896,34 +2928,117 @@ impl MeshTransport {
         }
         self.peer_connections.clear();
 
-        // Drain and abort any remaining peer sessions
+        // Phase 5: Drain/abort/await peer sessions
         {
             let mut sessions = self.peer_sessions.lock().await;
-            for (_key, task) in sessions.drain() {
+            let session_keys: Vec<String> = sessions.keys().cloned().collect();
+            for key in session_keys {
+                if let Some(task) = sessions.remove(&key) {
+                    let left = remaining(deadline);
+                    if left.is_zero() {
+                        task.handle.abort();
+                        let _ = task.handle.await;
+                        continue;
+                    }
+                    let mut handle = task.handle;
+                    let sleep = tokio::time::sleep(left);
+                    tokio::pin!(sleep);
+                    tokio::select! {
+                        _ = &mut handle => {}
+                        _ = &mut sleep => {
+                            handle.abort();
+                            let _ = handle.await;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Phase 6: Drain/abort/await the top-level task group
+        {
+            let task_remaining = remaining(deadline);
+            let mut group = self.task_group.lock().await;
+            let _exits = group.join_all(task_remaining).await;
+        }
+
+        // Phase 7: Clear failed-startup residue
+        {
+            let mut residue_guard = self.failed_startup_residue.lock().await;
+            *residue_guard = None;
+        }
+
+        // Phase 8: Clear auxiliary tasks
+        {
+            let mut aux = self.auxiliary_tasks.lock().await;
+            for (_id, task) in aux.drain() {
                 task.handle.abort();
                 let _ = task.handle.await;
             }
         }
 
-        // Stop runtime if present
-        if let Some(ref runtime) = self.runtime {
-            runtime.stop_server().await;
+        // Phase 9: Clear accept-loop report
+        {
+            let mut report = self.accept_loop_report.lock().await;
+            report.drained_handshakes = 0;
+            report.aborted_handshakes = 0;
+            report.rejected_at_capacity = 0;
         }
 
         // Clear running projection
         self.running_projection.store(false, Ordering::SeqCst);
 
-        // Verify cleanup is complete
+        // Phase 10: Full verification
         let mut issues = Vec::new();
+
+        // Verify task group is empty
+        {
+            let group = self.task_group.lock().await;
+            let (c, b, ch) = group.active_count();
+            if c + b + ch > 0 {
+                issues.push(format!(
+                    "task group not empty: {c} critical, {b} background, {ch} children"
+                ));
+            }
+        }
+
+        // Verify peer-session registry is empty
+        {
+            let sessions = self.peer_sessions.lock().await;
+            if !sessions.is_empty() {
+                issues.push(format!("{} peer sessions still present", sessions.len()));
+            }
+        }
+
+        // Verify peer connections are empty
         if !self.peer_connections.is_empty() {
             issues.push(format!(
                 "{} peer connections still present",
                 self.peer_connections.len()
             ));
         }
+
+        // Verify auxiliary tasks are empty
+        {
+            let aux = self.auxiliary_tasks.lock().await;
+            if !aux.is_empty() {
+                issues.push(format!("{} auxiliary tasks still present", aux.len()));
+            }
+        }
+
+        // Verify failed-startup residue is cleared
+        {
+            let residue = self.failed_startup_residue.lock().await;
+            if residue.is_some() {
+                issues.push("failed_startup_residue is still present".to_string());
+            }
+        }
+
+        // Verify running projection is clear
         if self.running_projection.load(Ordering::SeqCst) {
             issues.push("running_projection is still true".to_string());
         }
+
+        // Verify lifecycle is not Running
         {
             let state = self.lifecycle_state.lock().await;
             if matches!(*state, MeshLifecycleState::Running) {
@@ -2934,6 +3049,7 @@ impl MeshTransport {
         if issues.is_empty() {
             let mut state = self.lifecycle_state.lock().await;
             state.transition_to_stopped();
+            self.shutdown_started.store(false, Ordering::SeqCst);
             tracing::info!("Recovery from Failed state complete; lifecycle: stopped");
             Ok(())
         } else {
@@ -2964,6 +3080,17 @@ impl MeshTransport {
         }
         rollback.errors.extend(verification_issues);
         rollback.clean = rollback.errors.is_empty();
+
+        // Store failed-startup residue if rollback was incomplete (Phase 8)
+        if !rollback.clean {
+            let residue = FailedStartupResidue {
+                peers: stage.created_peers.clone(),
+                generation: self.accept_loop_report.lock().await.generation,
+                runtime_started: stage.runtime_started,
+                rollback_errors: rollback.errors.clone(),
+            };
+            *self.failed_startup_residue.lock().await = Some(residue);
+        }
 
         // Lifecycle selection now reflects actual cleanup reality
         self.finish_failed_startup(&rollback).await;
@@ -3340,6 +3467,7 @@ impl MeshTransport {
                 session_id: session_id.clone(),
                 node_id: peer_node_id,
                 handle,
+                generation: 0,
             },
         );
 
@@ -3401,16 +3529,26 @@ impl MeshTransport {
         let peers_at_shutdown_start = self.peer_connections.len();
         self.peer_connections.clear();
 
+        // Drain auxiliary tasks (Iteration 73, Phase 13-14)
+        {
+            let mut aux = self.auxiliary_tasks.lock().await;
+            for (_id, task) in aux.drain() {
+                task.handle.abort();
+                let _ = task.handle.await;
+            }
+        }
+
         // Join all tasks with the shared deadline
         let task_timeout = remaining(deadline);
         let mut group = self.task_group.lock().await;
         let exits = group.join_all(task_timeout).await;
         drop(group);
 
-        // Drain peer sessions with the shared deadline
+        // Drain peer sessions with the shared deadline (Iteration 73, Phase 17)
         let mut sessions = self.peer_sessions.lock().await;
         let mut drained = 0;
         let mut aborted = 0;
+        let mut failed = 0;
         let session_keys: Vec<String> = sessions.keys().cloned().collect();
 
         for key in session_keys {
@@ -3428,7 +3566,9 @@ impl MeshTransport {
                 tokio::select! {
                     result = &mut handle => {
                         match result {
-                            Ok(()) | Err(_) => drained += 1,
+                            Ok(()) => drained += 1,
+                            Err(err) if err.is_panic() => failed += 1,
+                            Err(_) => failed += 1,
                         }
                     }
                     _ = &mut sleep => {
@@ -3450,6 +3590,7 @@ impl MeshTransport {
         report.remaining_peers = self.peer_connections.len();
         report.drained_peer_sessions = drained;
         report.aborted_peer_sessions = aborted;
+        report.failed_peer_sessions = failed;
         report.drained_peer_children = accept_report.drained_handshakes;
         report.aborted_peer_children = accept_report.aborted_handshakes;
         for exit in &exits {
@@ -3738,6 +3879,10 @@ impl MeshTransport {
             MeshTransportError::ReceiveFailed("Failed to decode response".to_string())
         })?;
 
+        // Capture topology state before mutation (Iteration 73, Phase 2-3)
+        // Defined before the match so it survives the HelloAck arm scope.
+        let mut topology_snapshot_before: Option<crate::topology::PeerState> = None;
+
         let (session_id, peer_info) = match response {
             MeshMessage::HelloAck {
                 version,
@@ -3930,6 +4075,13 @@ impl MeshTransport {
                     )))),
                 };
 
+                // Capture topology state before mutation (Iteration 73, Phase 2-3)
+                topology_snapshot_before = if stage.is_some() {
+                    self.topology.get_peer(&node_id).await
+                } else {
+                    None
+                };
+
                 self.topology
                     .add_peer(
                         MeshPeerInfo {
@@ -3970,6 +4122,21 @@ impl MeshTransport {
         self.peer_connections
             .insert(session_id.to_string(), peer_info);
 
+        // Capture DHT state before mutation (Iteration 73, Phase 4-6)
+        let dht_snapshot_before = if stage.is_some() {
+            if let Some(ref rm) = self.routing_manager {
+                if rm.is_enabled() {
+                    rm.snapshot_peer(&peer_node_id).await
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         if let Some(ref rm) = self.routing_manager {
             if rm.is_enabled() {
                 self.dht_on_peer_connected(&peer_node_id, &peer_address, peer_role)
@@ -3995,13 +4162,33 @@ impl MeshTransport {
             }
         };
         // During startup, preflight is owned by the staged task group for rollback.
-        // During steady-state, it runs detached (best-effort, nonfatal).
+        // During steady-state, it runs detached but is tracked in the auxiliary registry.
         if let Some(ref mut startup_stage) = stage {
             startup_stage
                 .task_group
                 .spawn_child("preflight_peer_routes", preflight_future);
         } else {
-            tokio::spawn(preflight_future);
+            let task_id = self.id_generator.next();
+            let session_id_clone = session_id.to_string();
+            let preflight_handle = tokio::spawn(async move {
+                preflight_future.await;
+                MeshTaskExit {
+                    id: task_id,
+                    name: "preflight_peer_routes",
+                    class: crate::lifecycle::MeshTaskClass::BoundedChild,
+                    reason: crate::lifecycle::MeshTaskExitReason::CleanCompletion,
+                }
+            });
+            let mut aux = self.auxiliary_tasks.lock().await;
+            aux.insert(
+                task_id,
+                AuxiliaryTask {
+                    task_id,
+                    session_id: Some(session_id_clone),
+                    kind: AuxiliaryTaskKind::PreflightRoute,
+                    handle: preflight_handle,
+                },
+            );
         }
 
         let transport = self.clone();
@@ -4023,48 +4210,37 @@ impl MeshTransport {
                 session_id: session_id.to_string(),
                 node_id: node_id_for_session,
                 handle,
+                generation: 0,
             },
         );
 
         if let Some(stage) = stage {
-            // Capture topology snapshot before modification
-            let peer_node_id_str = peer_info_return.node_id.clone();
             let previous_topology =
-                self.topology
-                    .get_peer(&peer_node_id_str)
-                    .await
-                    .map(|ps| StagedTopologySnapshot {
-                        peer_info: crate::protocol::MeshPeerInfo {
-                            node_id: ps.node_id.clone(),
-                            address: ps.address.clone(),
-                            role: ps.role,
-                            capabilities: crate::protocol::MeshCapabilities::from_config(
-                                &self.config,
-                                ps.role,
-                            ),
-                            is_global: ps.is_global,
-                            latency_ms: ps.latency_ms,
-                            upstreams: ps.upstreams.iter().cloned().collect(),
-                            is_trusted: ps.is_trusted,
-                            quic_port: ps.quic_port,
-                            wireguard_port: ps.wireguard_port,
-                            advertised_port: ps.advertised_port,
-                            dns_serving_healthy: false,
-                        },
-                        status: ps.status,
-                    });
+                topology_snapshot_before.map(|ps| StagedTopologySnapshot { peer_state: ps });
+            let session_generation = stage.next_session_generation();
 
-            let dht_created = self
-                .routing_manager
-                .as_ref()
-                .map_or(false, |rm| rm.is_enabled());
+            // Derive DHT mutation from pre-mutation snapshot
+            let dht_mutation = if let Some(ref rm) = self.routing_manager {
+                if rm.is_enabled() {
+                    match dht_snapshot_before {
+                        None => DhtPeerMutation::Created,
+                        Some(snapshot) => DhtPeerMutation::Replaced(snapshot),
+                    }
+                } else {
+                    DhtPeerMutation::None
+                }
+            } else {
+                DhtPeerMutation::None
+            };
+
             stage.record_peer(StagedPeerResource {
                 session_id: session_id.to_string(),
                 node_id: peer_info_return.node_id.clone(),
                 previous_topology,
                 connection_inserted: true,
                 session_task_id: Some(session_id.to_string()),
-                dht_registration_created: dht_created,
+                dht_mutation,
+                session_generation,
             });
         }
 

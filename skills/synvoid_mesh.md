@@ -355,7 +355,7 @@ revoke_genesis_key(public_key: &str)
 - Non-empty list = genesis key must be in the list
 - Key rotation tracked via `rotation_sequence` and `GenesisKeyTransition` DHT records
 
-## Mesh Transport Lifecycle (Iterations 68–72)
+## Mesh Transport Lifecycle (Iterations 68–73)
 
 ### Adding a New Background Task
 
@@ -465,6 +465,28 @@ Returned after startup:
 - `is_running()` reads `running_projection: Arc<AtomicBool>` — lock-free, no Tokio contention
 - `MeshServiceExit(MeshTaskExit)` variant on `WorkerShutdownCause` for mesh task failures
 - Worker mesh supervision consumption is **explicitly deferred** (Outcome B from Iteration 70) — staged infrastructure not yet wired
+
+### Iteration 73 Lifecycle Semantics
+
+**Hard rejection of non-empty task group replacement**: `commit_startup()` returns `LifecycleConflict` error if old task group is non-empty (checked before `std::mem::replace`). This prevents orphaning running tasks during lifecycle transitions.
+
+**Pre-mutation snapshots for topology and DHT**: The outbound `connect_to_peer` path captures state before mutation:
+- `self.topology.get_peer(&node_id)` before `self.topology.add_peer(...)`
+- `rm.snapshot_peer(&peer_node_id)` before `self.dht_on_peer_connected(...)`
+
+These snapshots feed into `StagedPeerResource` for precise rollback.
+
+**Explicit DHT mutation tracking**: `DhtPeerMutation` enum (`None`, `Created`, `Replaced(snapshot)`, `UpdatedInPlace(snapshot)`) is derived from pre-mutation snapshot comparison, not from `rm.is_enabled()` alone. This ensures rollback can accurately restore prior DHT state.
+
+**Retained failed-startup residue**: When rollback is incomplete, `rollback_and_return()` stores `FailedStartupResidue` on the transport — consumed and cleared by `recover_failed_state()`.
+
+**Full recovery with timeout consumption**: `recover_failed_state(timeout)` derives a deadline from the timeout parameter, uses it for bounded operations (session drain, auxiliary task cleanup), and performs full verification (task group empty, sessions empty, auxiliary tasks empty, connections empty, residue cleared). All abort calls are followed by `.await` to reap task resources.
+
+**Session exit classification**: `PeerSessionExitReason` enum classifies peer session exits (`Clean`, `ConnectionClosed`, `Cancelled`, `Error(String)`, `Panic(String)`, `Aborted`). `PeerSessionExit` struct carries the reason with a `generation` counter to prevent stale completions from removing newer entries.
+
+**Auxiliary task ownership**: Preflight tasks tracked in `auxiliary_tasks: HashMap<MeshTaskId, AuxiliaryTask>` during steady-state (`AuxiliaryTaskKind::PreflightRoute`). During startup, preflight runs as a bounded child in the staged task group. Shutdown aborts and awaits all auxiliary tasks.
+
+**Shutdown report extension**: `MeshShutdownReport.failed_peer_sessions: usize` tracks panic/error session exits (distinct from `aborted_peer_sessions`).
 
 ### Failure Injection Hooks (Phase 20)
 

@@ -863,14 +863,14 @@ fn staged_peer_resource_has_previous_topology() {
     );
 }
 
-// ── Test 32: StagedPeerResource has dht_registration_created field ───────────
+// ── Test 32: StagedPeerResource has dht_mutation field ───────────────────
 
 #[test]
 fn staged_peer_resource_has_dht_tracking() {
     let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
     assert!(
-        content.contains("dht_registration_created: bool"),
-        "StagedPeerResource must have dht_registration_created field"
+        content.contains("dht_mutation: DhtPeerMutation"),
+        "StagedPeerResource must have dht_mutation field of type DhtPeerMutation"
     );
 }
 
@@ -981,5 +981,285 @@ fn rollback_abort_count_from_exits() {
         rollback_body.contains("MeshTaskExitReason::Aborted")
             && rollback_body.contains("tasks_aborted"),
         "Rollback must derive abort count from exit reasons"
+    );
+}
+
+// ── Test 42: commit_startup checks task group emptiness before replacement ──
+
+#[test]
+fn commit_startup_rejects_nonempty_task_group() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let commit_body = extract_function(&content, "commit_startup");
+
+    // Must check active_count() BEFORE std::mem::replace
+    let active_count_pos = commit_body.find("active_count()");
+    let replace_pos = commit_body.find("std::mem::replace");
+
+    assert!(
+        active_count_pos.is_some(),
+        "commit_startup must call active_count() to check task group emptiness"
+    );
+    assert!(
+        replace_pos.is_some(),
+        "commit_startup must use std::mem::replace to swap task groups"
+    );
+    if let (Some(ac), Some(repl)) = (active_count_pos, replace_pos) {
+        assert!(
+            ac < repl,
+            "commit_startup must check active_count() BEFORE std::mem::replace"
+        );
+    }
+
+    // Must reject non-empty groups (return Err)
+    assert!(
+        commit_body.contains("non-empty"),
+        "commit_startup must return error when replacing non-empty task group"
+    );
+}
+
+// ── Test 43: topology snapshot captured before add_peer ──────────────────────
+
+#[test]
+fn topology_snapshot_before_add_peer() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let connect_body = extract_function(&content, "connect_to_peer");
+
+    // get_peer() must appear before add_peer() in the outbound connection path
+    let get_peer_pos = connect_body.find("get_peer(");
+    let add_peer_pos = connect_body.find(".add_peer(");
+
+    assert!(
+        get_peer_pos.is_some(),
+        "connect_to_peer must capture topology snapshot via get_peer() before mutation"
+    );
+    assert!(
+        add_peer_pos.is_some(),
+        "connect_to_peer must call add_peer() to register peer in topology"
+    );
+    if let (Some(gp), Some(ap)) = (get_peer_pos, add_peer_pos) {
+        assert!(
+            gp < ap,
+            "topology snapshot (get_peer) must appear BEFORE topology mutation (add_peer)"
+        );
+    }
+}
+
+// ── Test 44: DHT mutation not derived from rm.is_enabled() alone ─────────────
+
+#[test]
+fn dht_mutation_not_from_is_enabled() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    // DhtPeerMutation construction must be based on snapshot comparison,
+    // not directly from rm.is_enabled(). The pattern should be:
+    //   rm.is_enabled() -> check dht_snapshot_before -> DhtPeerMutation::Created/Replaced/None
+    // Not: rm.is_enabled() -> DhtPeerMutation::Created
+    //
+    // Only check construction sites (right side of = or struct field), not match arms.
+
+    let lines: Vec<(usize, &str)> = content.lines().enumerate().collect();
+    let mut violations = Vec::new();
+
+    for (i, (_line_num, line)) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        // Skip match arms (lines starting with `DhtPeerMutation::` in match context)
+        if trimmed.starts_with("DhtPeerMutation::") {
+            continue;
+        }
+        // Check for construction: `= DhtPeerMutation::Created` or `DhtPeerMutation::Created,`
+        if trimmed.contains("DhtPeerMutation::Created")
+            && (trimmed.contains("= DhtPeerMutation::Created")
+                || trimmed.contains("DhtPeerMutation::Created,"))
+        {
+            // Look backwards up to 10 lines for the guard pattern
+            let mut found_snapshot_check = false;
+            for j in i.saturating_sub(10)..i {
+                if lines[j].1.contains("dht_snapshot_before") {
+                    found_snapshot_check = true;
+                    break;
+                }
+            }
+            if !found_snapshot_check {
+                violations.push(format!(
+                    "line ~{}: DhtPeerMutation::Created construction not guarded by dht_snapshot_before check",
+                    i + 1
+                ));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "DhtPeerMutation must be derived from pre-mutation snapshot, not just rm.is_enabled():\n{}",
+        violations.join("\n")
+    );
+}
+
+// ── Test 45: recover_failed_state consumes timeout parameter ─────────────────
+
+#[test]
+fn recover_failed_state_uses_timeout() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    // The timeout parameter must NOT be prefixed with underscore (unused)
+    // Search the full file for the function signature
+    assert!(
+        content.contains("fn recover_failed_state(&self, timeout: Duration)"),
+        "recover_failed_state must accept timeout parameter (not _timeout)"
+    );
+
+    let recover_body = extract_function(&content, "recover_failed_state");
+
+    // Must derive a deadline from the timeout
+    assert!(
+        recover_body.contains("deadline"),
+        "recover_failed_state must derive a deadline from the timeout parameter"
+    );
+
+    // Must use deadline for bounded operations
+    assert!(
+        recover_body.contains("remaining(deadline)")
+            || recover_body.contains("Instant::now() + timeout"),
+        "recover_failed_state must use the timeout for bounding operations"
+    );
+}
+
+// ── Test 46: abort followed by await in shutdown/recovery paths ──────────────
+
+#[test]
+fn abort_awaited_after_handle() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let lines: Vec<&str> = content.lines().collect();
+    let mut violations = Vec::new();
+
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.contains(".abort()") && !trimmed.starts_with("//") {
+            // Look ahead up to 5 lines for .await
+            let mut found_await = false;
+            for j in (i + 1)..lines.len().min(i + 6) {
+                if lines[j].contains(".await") {
+                    found_await = true;
+                    break;
+                }
+            }
+            if !found_await {
+                violations.push(format!(
+                    "line ~{}: .abort() without following .await within 5 lines",
+                    i + 1
+                ));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "All abort() calls must be followed by .await to reap the task:\n{}",
+        violations.join("\n")
+    );
+}
+
+// ── Test 47: no bare preflight spawn in steady-state paths ──────────────────
+
+#[test]
+fn no_bare_preflight_spawn() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    // Preflight must either use stage.task_group.spawn_child during startup
+    // or auxiliary_tasks registry during steady-state. Bare tokio::spawn(preflight...)
+    // without auxiliary registration is forbidden.
+    let lines: Vec<(usize, &str)> = content.lines().enumerate().collect();
+    let mut violations = Vec::new();
+
+    for (i, (_line_num, line)) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.contains("tokio::spawn(")
+            && trimmed.contains("preflight")
+            && !trimmed.starts_with("//")
+        {
+            // Check if this is the steady-state preflight path
+            // It should be followed by auxiliary_tasks registration
+            let mut found_aux_register = false;
+            for j in (i + 1)..lines.len().min(i + 20) {
+                if lines[j].1.contains("auxiliary_tasks") || lines[j].1.contains("aux.insert") {
+                    found_aux_register = true;
+                    break;
+                }
+            }
+            // The startup path uses stage.task_group.spawn_child, not tokio::spawn
+            if !found_aux_register {
+                violations.push(format!(
+                    "line ~{}: bare tokio::spawn for preflight without auxiliary task registration",
+                    i + 1
+                ));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "Preflight tasks must use task group during startup or auxiliary registry during steady-state:\n{}",
+        violations.join("\n")
+    );
+}
+
+// ── Test 48: PeerSessionExitReason enum exists ──────────────────────────────
+
+#[test]
+fn peer_session_exit_reason_exists() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+    assert!(
+        content.contains("pub enum PeerSessionExitReason"),
+        "PeerSessionExitReason enum must exist in lifecycle.rs"
+    );
+    // Must have key variants for exit classification
+    assert!(
+        content.contains("PeerSessionExitReason::Clean"),
+        "PeerSessionExitReason must have Clean variant"
+    );
+    assert!(
+        content.contains("PeerSessionExitReason::Aborted"),
+        "PeerSessionExitReason must have Aborted variant"
+    );
+    assert!(
+        content.contains("PeerSessionExitReason::Cancelled"),
+        "PeerSessionExitReason must have Cancelled variant"
+    );
+}
+
+// ── Test 49: MeshShutdownReport has failed_peer_sessions field ───────────────
+
+#[test]
+fn shutdown_report_has_failed_peer_sessions() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+    assert!(
+        content.contains("pub failed_peer_sessions: usize"),
+        "MeshShutdownReport must have failed_peer_sessions field"
+    );
+}
+
+// ── Test 50: recover_failed_state verifies registries ───────────────────────
+
+#[test]
+fn recover_failed_state_verifies_registries() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let recover_body = extract_function(&content, "recover_failed_state");
+
+    // Must verify task group is empty
+    assert!(
+        recover_body.contains("active_count()"),
+        "recover_failed_state must check task group active count"
+    );
+
+    // Must verify peer sessions are empty
+    assert!(
+        recover_body.contains("peer_sessions"),
+        "recover_failed_state must verify peer session registry"
+    );
+
+    // Must verify auxiliary tasks are empty
+    assert!(
+        recover_body.contains("auxiliary_tasks") || recover_body.contains("aux."),
+        "recover_failed_state must verify auxiliary task registry"
     );
 }

@@ -631,6 +631,18 @@ impl MeshTopology {
         }
     }
 
+    /// Restore an exact `PeerState` (used by startup rollback to preserve
+    /// audit counts, timestamps, and reputation).
+    pub async fn restore_peer_state(&self, peer_state: PeerState) {
+        let node_id = peer_state.node_id.clone();
+        if peer_state.is_global {
+            let mut global = self.global_nodes.write().await;
+            global.insert(node_id.clone());
+        }
+        self.peer_store.upsert_peer(peer_state);
+        tracing::debug!("Restored peer state for {}", node_id);
+    }
+
     pub async fn update_peer_audit_stats(&self, node_id: &str, successes: u64, failures: u64) {
         self.peer_store.update_peer(node_id, |peer| {
             peer.audit_successes = peer.audit_successes.saturating_add(successes);

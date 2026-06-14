@@ -14,6 +14,7 @@ use crate::dht::routing::regional_hubs::{RegionalHub, RegionalHubConfig};
 use crate::dht::routing::table::PersistedRoutingTable;
 use crate::dht::routing::table::RoutingTable;
 use crate::dht::routing::table::{BUCKET_COUNT, BUCKET_REFRESH_INTERVAL, REPLICATION_K};
+use crate::lifecycle::DhtPeerSnapshot;
 use crate::protocol::MeshMessage;
 
 pub trait FindNodeTransport: Send + Sync {
@@ -365,6 +366,56 @@ impl DhtRoutingManager {
         if table.remove(&node_id).is_some() {
             crate::stubs::metrics::record_dht_peer_removed();
         }
+    }
+
+    /// Snapshot the current DHT routing state for a peer before mutation.
+    ///
+    /// Returns `None` if the peer has no routing entry. The snapshot captures
+    /// the minimal state needed to restore the entry on rollback (Iteration 73, Phase 4).
+    pub async fn snapshot_peer(&self, peer_node_id: &str) -> Option<DhtPeerSnapshot> {
+        let rt = self.routing_table.read().await;
+        let table = match rt.as_ref() {
+            Some(t) => t,
+            None => return None,
+        };
+
+        let node_id = NodeId::from_node_id_string(peer_node_id);
+        let contact = table.get_contact(&node_id)?;
+
+        Some(DhtPeerSnapshot {
+            node_id: contact.node_id_string.clone(),
+            address: contact.address.clone(),
+            port: contact.port,
+            role: if contact.is_global {
+                MeshNodeRole::GLOBAL
+            } else {
+                MeshNodeRole::EDGE
+            },
+        })
+    }
+
+    /// Restore a peer's DHT routing state from a snapshot taken before mutation.
+    ///
+    /// Re-inserts the contact with the same address, port, and role. The
+    /// `last_seen` timestamp is refreshed to `Instant::now()` since the peer
+    /// was recently connected (Iteration 73, Phase 5).
+    pub async fn restore_peer(&self, snapshot: &DhtPeerSnapshot) {
+        let mut rt = self.routing_table.write().await;
+        let table = match rt.as_mut() {
+            Some(t) => t,
+            None => return,
+        };
+
+        let node_id = NodeId::from_node_id_string(&snapshot.node_id);
+        let contact = PeerContact::new(
+            node_id,
+            snapshot.node_id.clone(),
+            snapshot.address.clone(),
+            snapshot.port,
+        );
+        let mut contact = contact;
+        contact.is_global = snapshot.role.is_global();
+        table.try_insert(contact);
     }
 
     pub async fn update_peer_latency(&self, peer_node_id: &str, latency_ms: u32) {

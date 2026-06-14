@@ -6,7 +6,7 @@ use synvoid_mesh::cert::MeshCertManager;
 use synvoid_mesh::config::MeshConfig;
 use synvoid_mesh::lifecycle::{
     MeshLifecycleState, MeshShutdownReport, MeshStartupPolicy, MeshStartupReport, MeshTaskClass,
-    MeshTaskExit, MeshTaskExitReason, MeshTaskId,
+    MeshTaskExit, MeshTaskExitReason, MeshTaskId, PeerSessionExitReason,
 };
 use synvoid_mesh::task_group::MeshTaskGroup;
 use synvoid_mesh::topology::MeshTopology;
@@ -743,4 +743,25 @@ async fn test_shutdown_respects_timeout() {
     // Should complete well within the timeout
     assert!(elapsed < Duration::from_secs(5));
     assert_eq!(report.peers_at_shutdown_start, 0);
+}
+
+// ── Phase 16: PeerSessionExitReason Tests ────────────────────────────────────
+
+#[test]
+fn peer_session_exit_reason_variants() {
+    assert_eq!(PeerSessionExitReason::Clean.to_string(), "clean");
+    assert_eq!(
+        PeerSessionExitReason::ConnectionClosed.to_string(),
+        "connection closed"
+    );
+    assert_eq!(PeerSessionExitReason::Cancelled.to_string(), "cancelled");
+    assert_eq!(
+        PeerSessionExitReason::Error("timeout".to_string()).to_string(),
+        "error: timeout"
+    );
+    assert_eq!(
+        PeerSessionExitReason::Panic("overflow".to_string()).to_string(),
+        "panic: overflow"
+    );
+    assert_eq!(PeerSessionExitReason::Aborted.to_string(), "aborted");
 }
