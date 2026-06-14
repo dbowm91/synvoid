@@ -488,6 +488,14 @@ These snapshots feed into `StagedPeerResource` for precise rollback.
 
 **Shutdown report extension**: `MeshShutdownReport.failed_peer_sessions: usize` tracks panic/error session exits (distinct from `aborted_peer_sessions`).
 
+**Session reaper implementation (Phases 15–18)**: After lifecycle commit, `spawn_session_reaper()` runs as a critical background task on the transport's task group. It subscribes to `session_exit_tx: broadcast::Sender<PeerSessionExit>` and watches for session exit events. On receiving an exit, it checks the `generation` field: if `task.generation == exit.generation` (or exit generation is 0 for legacy paths), the entry is removed from `peer_sessions`. Stale entries (generation mismatch) are skipped with debug logging. The reaper exits cleanly when the broadcast channel closes (transport dropped). The channel sender is cloned into each session task's `tokio::spawn` closure, so the reaper is notified when any session completes.
+
+**Auxiliary task session binding and rollback cancellation (Phase 14)**: Each `AuxiliaryTask` carries an optional `session_id` field linking it to the peer session it was spawned for. During rollback, `rollback_startup()` collects session IDs from `StagedPeerResource.session_task_id` and calls `cancel_auxiliary_tasks_for_sessions(&session_ids)`. This filters `auxiliary_tasks` by matching `task.session_id`, then aborts and awaits each matching task. Ensures preflight queries do not outlive the peer sessions they were spawned for.
+
+**Accept-loop generation verification (Phase 19)**: `MeshTransport` carries `startup_generation: Arc<AtomicU64>` (initialized to 0). Each `start_with_policy()` increments it via `fetch_add(1, SeqCst) + 1` before any startup phases run, and writes the new generation into the accept-loop report. At shutdown, `shutdown_with_timeout()` compares `accept_loop_report.generation` against the current `startup_generation`. A mismatch (guarded by `current_gen != 0`) logs a warning indicating stale handshake counts. This prevents misattributing prior-cycle accept-loop data to the current shutdown.
+
+**Generation field wiring from stage to PeerSessionTask (Phase 18)**: When a peer session is created during startup, `stage.next_session_generation()` is called before spawning the session task. The same generation value is used for both `PeerSessionTask.generation` (used by the session reaper) and `StagedPeerResource.session_generation` (used by rollback). This ensures the reaper and rollback share consistent generation semantics — a session created during startup A cannot be erroneously reaped by startup B's reaper.
+
 ### Failure Injection Hooks (Phase 20)
 
 Test-only (`#[cfg(test)]`) failure injection for deterministic startup testing:

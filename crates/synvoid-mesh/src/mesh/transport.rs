@@ -56,7 +56,7 @@ use crate::lifecycle::{
     StagedTopologySnapshot,
 };
 use crate::task_group::MeshTaskGroup;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::cert::MeshCertManager;
 use crate::config::{MeshConfig, MeshPeerConfig, MeshTlsMode};
@@ -190,6 +190,10 @@ pub struct MeshTransport {
     pub(crate) failed_startup_residue: Arc<tokio::sync::Mutex<Option<FailedStartupResidue>>>,
     /// Auxiliary (preflight/best-effort) tasks owned by the transport (Iteration 73, Phase 13-14).
     pub(crate) auxiliary_tasks: Arc<tokio::sync::Mutex<HashMap<MeshTaskId, AuxiliaryTask>>>,
+    /// Channel for peer session exit events, consumed by the session reaper (Iteration 73, Phase 15-18).
+    pub(crate) session_exit_tx: broadcast::Sender<crate::lifecycle::PeerSessionExit>,
+    /// Generation counter incremented at each startup, used to validate accept-loop report freshness (Phase 19).
+    pub(crate) startup_generation: Arc<AtomicU64>,
 }
 
 /// Failure injection points for deterministic startup testing.
@@ -462,6 +466,8 @@ impl Clone for MeshTransport {
             accept_loop_report: self.accept_loop_report.clone(),
             failed_startup_residue: self.failed_startup_residue.clone(),
             auxiliary_tasks: self.auxiliary_tasks.clone(),
+            startup_generation: self.startup_generation.clone(),
+            session_exit_tx: self.session_exit_tx.clone(),
         }
     }
 }
@@ -810,6 +816,11 @@ impl MeshTransport {
             accept_loop_report: Arc::new(tokio::sync::Mutex::new(MeshAcceptLoopReport::default())),
             failed_startup_residue: Arc::new(tokio::sync::Mutex::new(None)),
             auxiliary_tasks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            session_exit_tx: {
+                let (tx, _) = broadcast::channel(64);
+                tx
+            },
+            startup_generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -2138,7 +2149,8 @@ impl MeshTransport {
         // Reset accept loop report for this startup generation
         {
             let mut report = self.accept_loop_report.lock().await;
-            report.generation = report.generation.saturating_add(1);
+            let gen = self.startup_generation.fetch_add(1, Ordering::SeqCst) + 1;
+            report.generation = gen;
             report.drained_handshakes = 0;
             report.aborted_handshakes = 0;
             report.rejected_at_capacity = 0;
@@ -2619,11 +2631,62 @@ impl MeshTransport {
         self.shutdown_started.store(false, Ordering::SeqCst);
         stage.committed = true;
 
+        // 9. Spawn session reaper on the committed task group (Iteration 73, Phase 15-18)
+        self.spawn_session_reaper().await;
+
         tracing::info!(
             "Mesh transport started (lifecycle: running, degraded={})",
             !report.degraded_reasons.is_empty()
         );
         Ok(report)
+    }
+
+    /// Spawn the session reaper task that watches for peer session completions
+    /// and removes entries from the peer_sessions registry (Iteration 73, Phase 15-18).
+    ///
+    /// The reaper is spawned as a critical background task on the transport's task group.
+    /// It uses generation counters to prevent stale completions from removing newer entries.
+    async fn spawn_session_reaper(&self) {
+        let transport = self.clone();
+        let mut exit_rx = self.session_exit_tx.subscribe();
+
+        let mut group = self.task_group.lock().await;
+        group.spawn_critical("session_reaper", async move {
+            loop {
+                match exit_rx.recv().await {
+                    Ok(exit) => {
+                        let mut sessions = transport.peer_sessions.lock().await;
+                        if let Some(task) = sessions.get(&exit.session_id) {
+                            // Only remove if the generation matches (prevents stale removal).
+                            // generation==0 means the caller didn't set it (e.g., during
+                            // startup before generation tracking), so allow unconditionally.
+                            if task.generation == exit.generation || exit.generation == 0 {
+                                sessions.remove(&exit.session_id);
+                                tracing::debug!(
+                                    "Session reaper removed entry for {} ({:?})",
+                                    exit.session_id,
+                                    exit.reason
+                                );
+                            } else {
+                                tracing::debug!(
+                                    "Session reaper skipped stale entry for {} (exit gen={}, registry gen={})",
+                                    exit.session_id,
+                                    exit.generation,
+                                    task.generation
+                                );
+                            }
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("Session reaper lagged by {} events", n);
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        // Channel closed (transport dropped), reaper should exit
+                        break;
+                    }
+                }
+            }
+        });
     }
 
     /// Rollback a failed startup: cancel and join all staged tasks, close
@@ -2791,6 +2854,16 @@ impl MeshTransport {
             }
         }
 
+        // Phase 6b: Cancel auxiliary tasks associated with staged sessions (Phase 14)
+        {
+            let session_ids: Vec<String> = stage
+                .created_peers
+                .iter()
+                .filter_map(|p| p.session_task_id.as_ref().cloned())
+                .collect();
+            self.cancel_auxiliary_tasks_for_sessions(&session_ids).await;
+        }
+
         // Phase 7: Active runtime cleanup
         if stage.runtime_started {
             if let Some(ref runtime) = self.runtime {
@@ -2857,6 +2930,29 @@ impl MeshTransport {
         }
 
         issues
+    }
+
+    /// Cancel auxiliary tasks associated with the given session IDs.
+    ///
+    /// Called during rollback to ensure auxiliary tasks (e.g., preflight route
+    /// queries) do not outlive the peer sessions they were spawned for (Phase 14).
+    async fn cancel_auxiliary_tasks_for_sessions(&self, session_ids: &[String]) {
+        let mut aux = self.auxiliary_tasks.lock().await;
+        let to_remove: Vec<MeshTaskId> = aux
+            .iter()
+            .filter(|(_, task)| {
+                task.session_id
+                    .as_ref()
+                    .is_some_and(|sid| session_ids.contains(sid))
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in to_remove {
+            if let Some(task) = aux.remove(&id) {
+                task.handle.abort();
+                let _ = task.handle.await;
+            }
+        }
     }
 
     /// Complete a failed startup by transitioning to `Stopped` (if rollback
@@ -3455,10 +3551,12 @@ impl MeshTransport {
         let topo = self.topology.clone();
         let session_id_for_loop = session_id.clone();
         let peer_node_id_for_loop = peer_node_id.clone();
+        let exit_tx = self.session_exit_tx.clone();
         let handle = tokio::spawn(async move {
-            transport
+            let exit = transport
                 .peer_message_loop(session_id_for_loop, peer_node_id_for_loop, connection, topo)
                 .await;
+            let _ = exit_tx.send(exit);
         });
         let mut sessions = self.peer_sessions.lock().await;
         sessions.insert(
@@ -3581,8 +3679,16 @@ impl MeshTransport {
         }
         drop(sessions);
 
-        // Include accept loop report in shutdown report
+        // Include accept loop report in shutdown report (Phase 19: verify generation)
         let accept_report = self.accept_loop_report.lock().await.clone();
+        let current_gen = self.startup_generation.load(Ordering::SeqCst);
+        if accept_report.generation != current_gen && current_gen != 0 {
+            tracing::warn!(
+                "Accept-loop report generation mismatch: report={}, current={}; counts may be stale",
+                accept_report.generation,
+                current_gen
+            );
+        }
 
         // Build report
         let mut report = MeshShutdownReport::default();
@@ -4191,6 +4297,14 @@ impl MeshTransport {
             );
         }
 
+        // Pre-compute generation for session task (Phase 18): call next_session_generation()
+        // early so the same value is used in PeerSessionTask AND StagedPeerResource.
+        let session_generation_for_task = if let Some(ref mut s) = stage {
+            s.next_session_generation()
+        } else {
+            0
+        };
+
         let transport = self.clone();
         let conn = connection;
         let topo = self.topology.clone();
@@ -4198,10 +4312,12 @@ impl MeshTransport {
         let session_id_for_loop = session_id.to_string();
         let node_id_for_session = peer_node_id.clone();
         let session_id_key = session_id.to_string();
+        let exit_tx = self.session_exit_tx.clone();
         let handle = tokio::spawn(async move {
-            transport
+            let exit = transport
                 .peer_message_loop(session_id_for_loop, peer_node_id_for_loop, conn, topo)
                 .await;
+            let _ = exit_tx.send(exit);
         });
         let mut sessions = self.peer_sessions.lock().await;
         sessions.insert(
@@ -4210,14 +4326,13 @@ impl MeshTransport {
                 session_id: session_id.to_string(),
                 node_id: node_id_for_session,
                 handle,
-                generation: 0,
+                generation: session_generation_for_task,
             },
         );
 
         if let Some(stage) = stage {
             let previous_topology =
                 topology_snapshot_before.map(|ps| StagedTopologySnapshot { peer_state: ps });
-            let session_generation = stage.next_session_generation();
 
             // Derive DHT mutation from pre-mutation snapshot
             let dht_mutation = if let Some(ref rm) = self.routing_manager {
@@ -4240,7 +4355,7 @@ impl MeshTransport {
                 connection_inserted: true,
                 session_task_id: Some(session_id.to_string()),
                 dht_mutation,
-                session_generation,
+                session_generation: session_generation_for_task,
             });
         }
 

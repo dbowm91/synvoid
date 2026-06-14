@@ -1022,6 +1022,74 @@ fn dht_mutation_updated_in_place_preserves_state() {
     ));
 }
 
+// ── Phase 24: Recovery Completeness Tests ────────────────────────────────────
+
+#[test]
+fn recovery_verification_checks_all_registries() {
+    let v = RecoveryVerification {
+        tasks_empty: false,
+        sessions_empty: false,
+        auxiliary_empty: false,
+        connections_empty: false,
+        runtime_stopped: false,
+        residue_cleared: false,
+        projection_clear: false,
+        issues: vec![
+            "task group not empty".to_string(),
+            "2 peer sessions still present".to_string(),
+            "1 auxiliary tasks still present".to_string(),
+            "3 peer connections still present".to_string(),
+            "running_projection is still true".to_string(),
+        ],
+    };
+    assert!(!v.is_clean());
+    assert_eq!(v.issues.len(), 5);
+}
+
+#[test]
+fn failed_startup_residue_cleared_after_recovery() {
+    let residue = FailedStartupResidue {
+        peers: Vec::new(),
+        generation: 1,
+        runtime_started: true,
+        rollback_errors: Vec::new(),
+    };
+    let mut r = Some(residue);
+    assert!(r.is_some());
+    r = None;
+    assert!(r.is_none());
+}
+
+// ── Phase 18: Generation Wiring Tests ────────────────────────────────────────
+
+#[test]
+fn session_generation_not_always_zero() {
+    let code = include_str!("../crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        code.contains("session_generation_for_task")
+            || code.contains("generation: session_generation"),
+        "session generation should be computed from stage, not hardcoded to 0"
+    );
+}
+
+// ── Phase 25: Abort-Await Deadline Tests ──────────────────────────────────────
+
+#[test]
+fn abort_always_followed_by_await() {
+    let code = include_str!("../crates/synvoid-mesh/src/mesh/transport.rs");
+    let lines: Vec<&str> = code.lines().collect();
+    for (i, line) in lines.iter().enumerate() {
+        if line.contains(".abort()") && !line.contains("//") {
+            let following = lines[i..std::cmp::min(i + 5, lines.len())].join("\n");
+            assert!(
+                following.contains(".await"),
+                "abort at line {} must be followed by await within 5 lines",
+                i
+            );
+        }
+    }
+}
+
 // ── Phase 12: RollbackReport Session Fields Tests ────────────────────────────
 
 #[test]

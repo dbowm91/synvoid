@@ -2742,11 +2742,11 @@ impl MeshTransport {
 
     pub(crate) async fn peer_message_loop(
         &self,
-        _session_id: String,
+        session_id: String,
         peer_node_id: String,
         connection: Connection,
         topology: Arc<MeshTopology>,
-    ) {
+    ) -> crate::lifecycle::PeerSessionExit {
         let topology_for_loop = topology.clone();
         let peer_node_id_for_loop = peer_node_id.clone();
         loop {
@@ -2766,19 +2766,34 @@ impl MeshTransport {
                         Err(quinn::ConnectionError::ApplicationClosed(_)) => {
                             tracing::info!("Peer {} disconnected", peer_node_id);
                             topology.update_peer_status(&peer_node_id, PeerStatus::Disconnected).await;
-                            break;
+                            return crate::lifecycle::PeerSessionExit {
+                                session_id,
+                                node_id: peer_node_id,
+                                reason: crate::lifecycle::PeerSessionExitReason::ConnectionClosed,
+                                generation: 0,
+                            };
                         }
                         Err(e) => {
                             tracing::warn!("Peer {} connection error: {}", peer_node_id, e);
                             topology.update_peer_status(&peer_node_id, PeerStatus::Disconnected).await;
-                            break;
+                            return crate::lifecycle::PeerSessionExit {
+                                session_id,
+                                node_id: peer_node_id,
+                                reason: crate::lifecycle::PeerSessionExitReason::ConnectionClosed,
+                                generation: 0,
+                            };
                         }
                     }
                 }
                 _ = connection.closed() => {
                     tracing::info!("Peer {} connection closed", peer_node_id);
                     topology.update_peer_status(&peer_node_id, PeerStatus::Disconnected).await;
-                    break;
+                    return crate::lifecycle::PeerSessionExit {
+                        session_id,
+                        node_id: peer_node_id,
+                        reason: crate::lifecycle::PeerSessionExitReason::ConnectionClosed,
+                        generation: 0,
+                    };
                 }
             }
         }

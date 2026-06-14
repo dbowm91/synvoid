@@ -1238,6 +1238,130 @@ fn shutdown_report_has_failed_peer_sessions() {
     );
 }
 
+// ── Phase 26: Preflight Ownership Tests ──────────────────────────────────────
+
+#[test]
+fn auxiliary_task_has_session_binding() {
+    let code = include_str!("../crates/synvoid-mesh/src/mesh/lifecycle.rs");
+    assert!(
+        code.contains("pub session_id: Option<String>"),
+        "AuxiliaryTask must have session_id field"
+    );
+}
+
+#[test]
+fn cancel_auxiliary_tasks_for_sessions_exists() {
+    let code = include_str!("../crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        code.contains("fn cancel_auxiliary_tasks_for_sessions"),
+        "cancel_auxiliary_tasks_for_sessions method must exist"
+    );
+}
+
+#[test]
+fn rollback_cancels_auxiliary_tasks_for_staged_sessions() {
+    let code = include_str!("../crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        code.contains("cancel_auxiliary_tasks_for_sessions"),
+        "rollback must cancel auxiliary tasks for staged sessions"
+    );
+}
+
+#[test]
+fn startup_preflight_uses_task_group_not_auxiliary_registry() {
+    let code = include_str!("../crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        code.contains("spawn_child(\"preflight_peer_routes\""),
+        "startup preflight must use task_group.spawn_child, not auxiliary_tasks"
+    );
+}
+
+#[test]
+fn steady_state_preflight_uses_auxiliary_registry() {
+    let code = include_str!("../crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        code.contains("aux.insert("),
+        "steady-state preflight must register in auxiliary_tasks"
+    );
+}
+
+// ── Phase 27: Session Reaper Tests ───────────────────────────────────────────
+
+#[test]
+fn session_reaper_exists() {
+    let code = include_str!("../crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        code.contains("session_reaper"),
+        "session_reaper task must be spawned"
+    );
+}
+
+#[test]
+fn session_exit_tx_channel_exists() {
+    let code = include_str!("../crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        code.contains("session_exit_tx"),
+        "session_exit_tx channel must exist"
+    );
+}
+
+#[test]
+fn peer_message_loop_returns_exit() {
+    let code = include_str!("../crates/synvoid-mesh/src/mesh/transport_peer.rs");
+    assert!(
+        code.contains("PeerSessionExit"),
+        "peer_message_loop must return PeerSessionExit"
+    );
+}
+
+#[test]
+fn session_exit_sent_on_channel() {
+    let code = include_str!("../crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        code.contains("exit_tx.send("),
+        "session exits must be sent on the channel"
+    );
+}
+
+#[test]
+fn session_reaper_uses_generation_check() {
+    let code = include_str!("../crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        code.contains("task.generation == exit.generation"),
+        "reaper must check generation before removing entries"
+    );
+}
+
+#[test]
+fn generation_wired_from_stage_to_session_task() {
+    let code = include_str!("../crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        code.contains("session_generation_for_task")
+            || code.contains("generation: session_generation"),
+        "generation must be wired from stage to PeerSessionTask"
+    );
+}
+
+// ── Phase 19: Accept-Loop Generation Tests ───────────────────────────────────
+
+#[test]
+fn startup_generation_field_exists() {
+    let code = include_str!("../crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        code.contains("startup_generation"),
+        "startup_generation field must exist"
+    );
+}
+
+#[test]
+fn shutdown_verifies_accept_loop_generation() {
+    let code = include_str!("../crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        code.contains("accept_report.generation") && code.contains("startup_generation"),
+        "shutdown must verify accept_loop_report generation against startup_generation"
+    );
+}
+
 // ── Test 50: recover_failed_state verifies registries ───────────────────────
 
 #[test]

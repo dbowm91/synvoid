@@ -386,8 +386,11 @@ Peer sessions now use a **keyed HashMap** (`HashMap<String, PeerSessionTask>`) i
 | `session_id` | Session identifier (same as `StagedPeerResource.session_id`) |
 | `task_handle` | `JoinHandle<()>` for the session task |
 | `node_id` | Node identifier for the peer (for logging) |
+| `generation: u64` | Generation counter wired from `stage.next_session_generation()` (Phase 18); prevents stale completions from removing newer entries |
 
 **Rollback behavior**: `rollback_startup()` iterates `created_peers` and aborts only the matching `PeerSessionTask` entries by `session_id`. Existing sessions from prior startups are untouched.
+
+**Generation wiring (Phase 18)**: When a peer session is created during startup, `next_session_generation()` is called on the stage before spawning the session task. The same generation value is used for both the `PeerSessionTask.generation` field and the `StagedPeerResource.session_generation` field, ensuring the session reaper and rollback share the same generation for consistency.
 
 **Steady-state behavior**: New connections add entries to the map; disconnections remove them. The map is protected by `tokio::sync::Mutex`.
 
@@ -425,6 +428,27 @@ The `MeshAcceptLoopReport` struct (`lifecycle.rs:325`) is wired into the mesh ac
 | `generation: u64` | Distinguishes reports across startup cycles; reset at each `start_with_policy()` |
 
 The `generation` field (Iteration 72) ensures that a stale report from a previous startup cycle is not misattributed to the current cycle. Each call to `start_with_policy()` increments the generation counter, and the accept loop tags its report with the current generation.
+
+### Accept-Loop Generation Verification (Phase 19)
+
+`MeshTransport` carries a `startup_generation: Arc<AtomicU64>` field (initialized to 0). Each call to `start_with_policy()` increments it via `fetch_add(1, SeqCst) + 1` before any startup phases run. The new generation is also written into the accept-loop report (`report.generation = gen`), resetting its handshake counters.
+
+At shutdown, `shutdown_with_timeout()` loads the current generation and compares it against the accept-loop report's generation:
+
+```rust
+// transport.rs:3682-3691
+let accept_report = self.accept_loop_report.lock().await.clone();
+let current_gen = self.startup_generation.load(Ordering::SeqCst);
+if accept_report.generation != current_gen && current_gen != 0 {
+    tracing::warn!(
+        "Accept-loop report generation mismatch: report={}, current={}; counts may be stale",
+        accept_report.generation,
+        current_gen
+    );
+}
+```
+
+A mismatch indicates the accept-loop report is from a prior startup cycle (e.g., after a rollback and restart). The warning prevents misattributing stale handshake counts to the current shutdown. The `current_gen != 0` guard avoids a spurious warning before the first startup.
 
 ### Invariants
 
@@ -624,6 +648,22 @@ Preflight tasks (`preflight_peer_routes`) now have explicit ownership:
 
 During startup, preflight runs as a bounded child — it participates in rollback cancellation. During steady-state, it runs detached but is tracked in the `auxiliary_tasks` registry. On shutdown, all auxiliary tasks are aborted and awaited.
 
+### Session Binding and Rollback Cancellation (Phase 14)
+
+Auxiliary tasks are bound to peer sessions via the `session_id` field on `AuxiliaryTask`. During rollback, `rollback_startup()` collects the `session_id` values from staged peers and calls `cancel_auxiliary_tasks_for_sessions(&session_ids)`:
+
+```rust
+// Phase 6b: Cancel auxiliary tasks associated with staged sessions (Phase 14)
+let session_ids: Vec<String> = stage
+    .created_peers
+    .iter()
+    .filter_map(|p| p.session_task_id.as_ref().cloned())
+    .collect();
+self.cancel_auxiliary_tasks_for_sessions(&session_ids).await;
+```
+
+`cancel_auxiliary_tasks_for_sessions()` filters `auxiliary_tasks` by matching `task.session_id` against the staged session IDs, then aborts and awaits each matching task. This ensures preflight queries do not outlive the peer sessions they were spawned for.
+
 ```rust
 pub struct AuxiliaryTask {
     pub task_id: MeshTaskId,
@@ -660,6 +700,39 @@ pub enum PeerSessionExitReason {
 ```
 
 The `generation` counter prevents stale completions from removing newer entries. Shutdown uses `PeerSessionExitReason` to classify session outcomes into `drained_peer_sessions`, `aborted_peer_sessions`, and `failed_peer_sessions` in `MeshShutdownReport`.
+
+### Session Reaper (Phases 15–18)
+
+The session reaper is a critical background task spawned after lifecycle commit. It watches for `PeerSessionExit` events via the `session_exit_tx` channel and removes entries from the `peer_sessions` registry:
+
+- **Channel**: `session_exit_tx: broadcast::Sender<PeerSessionExit>` on `MeshTransport`, cloned into each session task's `tokio::spawn` closure
+- **Subscription**: reaper subscribes via `self.session_exit_tx.subscribe()` during `spawn_session_reaper()` (called from `commit_startup()`)
+- **Generation check**: removes entry only when `task.generation == exit.generation` (or exit generation is 0 for legacy/startup paths)
+- **Stale skip**: when generation mismatches, the reaper logs a debug message and leaves the entry untouched
+- **Exit on channel close**: reaper exits cleanly when the broadcast channel closes (transport dropped)
+
+```rust
+// transport.rs:2649-2689
+async fn spawn_session_reaper(&self) {
+    let mut exit_rx = self.session_exit_tx.subscribe();
+    group.spawn_critical("session_reaper", async move {
+        loop {
+            match exit_rx.recv().await {
+                Ok(exit) => {
+                    let mut sessions = transport.peer_sessions.lock().await;
+                    if let Some(task) = sessions.get(&exit.session_id) {
+                        if task.generation == exit.generation || exit.generation == 0 {
+                            sessions.remove(&exit.session_id);
+                        }
+                    }
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
+                _ => {}
+            }
+        }
+    });
+}
+```
 
 ### MeshShutdownReport Extension
 
