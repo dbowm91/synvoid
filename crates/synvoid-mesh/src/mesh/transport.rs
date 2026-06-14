@@ -194,6 +194,9 @@ pub struct MeshTransport {
     pub(crate) session_exit_tx: broadcast::Sender<crate::lifecycle::PeerSessionExit>,
     /// Generation counter incremented at each startup, used to validate accept-loop report freshness (Phase 19).
     pub(crate) startup_generation: Arc<AtomicU64>,
+    /// Per-session generation counter for incoming connections (accept-loop path).
+    /// Outbound sessions use the stage counter; inbound sessions use this atomic.
+    pub(crate) session_generation: Arc<AtomicU64>,
 }
 
 /// Failure injection points for deterministic startup testing.
@@ -467,6 +470,7 @@ impl Clone for MeshTransport {
             failed_startup_residue: self.failed_startup_residue.clone(),
             auxiliary_tasks: self.auxiliary_tasks.clone(),
             startup_generation: self.startup_generation.clone(),
+            session_generation: self.session_generation.clone(),
             session_exit_tx: self.session_exit_tx.clone(),
         }
     }
@@ -821,6 +825,7 @@ impl MeshTransport {
                 tx
             },
             startup_generation: Arc::new(AtomicU64::new(0)),
+            session_generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -2658,9 +2663,7 @@ impl MeshTransport {
                         let mut sessions = transport.peer_sessions.lock().await;
                         if let Some(task) = sessions.get(&exit.session_id) {
                             // Only remove if the generation matches (prevents stale removal).
-                            // generation==0 means the caller didn't set it (e.g., during
-                            // startup before generation tracking), so allow unconditionally.
-                            if task.generation == exit.generation || exit.generation == 0 {
+                            if task.generation == exit.generation {
                                 sessions.remove(&exit.session_id);
                                 tracing::debug!(
                                     "Session reaper removed entry for {} ({:?})",
@@ -3552,9 +3555,17 @@ impl MeshTransport {
         let session_id_for_loop = session_id.clone();
         let peer_node_id_for_loop = peer_node_id.clone();
         let exit_tx = self.session_exit_tx.clone();
+        let gen = self.session_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let handle_gen = gen;
         let handle = tokio::spawn(async move {
             let exit = transport
-                .peer_message_loop(session_id_for_loop, peer_node_id_for_loop, connection, topo)
+                .peer_message_loop(
+                    session_id_for_loop,
+                    peer_node_id_for_loop,
+                    connection,
+                    topo,
+                    handle_gen,
+                )
                 .await;
             let _ = exit_tx.send(exit);
         });
@@ -3565,7 +3576,7 @@ impl MeshTransport {
                 session_id: session_id.clone(),
                 node_id: peer_node_id,
                 handle,
-                generation: 0,
+                generation: gen,
             },
         );
 
@@ -4313,9 +4324,10 @@ impl MeshTransport {
         let node_id_for_session = peer_node_id.clone();
         let session_id_key = session_id.to_string();
         let exit_tx = self.session_exit_tx.clone();
+        let gen = session_generation_for_task;
         let handle = tokio::spawn(async move {
             let exit = transport
-                .peer_message_loop(session_id_for_loop, peer_node_id_for_loop, conn, topo)
+                .peer_message_loop(session_id_for_loop, peer_node_id_for_loop, conn, topo, gen)
                 .await;
             let _ = exit_tx.send(exit);
         });

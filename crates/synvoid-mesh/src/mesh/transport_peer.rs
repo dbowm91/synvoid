@@ -2746,6 +2746,7 @@ impl MeshTransport {
         peer_node_id: String,
         connection: Connection,
         topology: Arc<MeshTopology>,
+        generation: u64,
     ) -> crate::lifecycle::PeerSessionExit {
         let topology_for_loop = topology.clone();
         let peer_node_id_for_loop = peer_node_id.clone();
@@ -2770,7 +2771,7 @@ impl MeshTransport {
                                 session_id,
                                 node_id: peer_node_id,
                                 reason: crate::lifecycle::PeerSessionExitReason::ConnectionClosed,
-                                generation: 0,
+                                generation,
                             };
                         }
                         Err(e) => {
@@ -2780,7 +2781,7 @@ impl MeshTransport {
                                 session_id,
                                 node_id: peer_node_id,
                                 reason: crate::lifecycle::PeerSessionExitReason::ConnectionClosed,
-                                generation: 0,
+                                generation,
                             };
                         }
                     }
@@ -2792,7 +2793,7 @@ impl MeshTransport {
                         session_id,
                         node_id: peer_node_id,
                         reason: crate::lifecycle::PeerSessionExitReason::ConnectionClosed,
-                        generation: 0,
+                        generation,
                     };
                 }
             }

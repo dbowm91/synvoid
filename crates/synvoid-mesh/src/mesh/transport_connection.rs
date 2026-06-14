@@ -84,6 +84,7 @@ impl MeshTransport {
             failed_startup_residue: self.failed_startup_residue.clone(),
             auxiliary_tasks: self.auxiliary_tasks.clone(),
             startup_generation: self.startup_generation.clone(),
+            session_generation: self.session_generation.clone(),
             session_exit_tx: self.session_exit_tx.clone(),
         }
     }

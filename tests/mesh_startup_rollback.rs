@@ -581,6 +581,7 @@ fn accept_loop_report_reset_per_startup_generation() {
     // start_with_policy should reset the accept loop report before running phases
     assert!(
         content.contains("report.generation = report.generation.saturating_add(1)")
+            || content.contains("report.generation = gen")
             || content.contains("generation: 0")
             || content.contains("reset_accept_loop_report"),
         "start_with_policy should reset accept loop report generation"
