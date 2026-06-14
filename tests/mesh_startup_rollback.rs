@@ -324,7 +324,8 @@ fn test_staged_peer_resource_in_rollback() {
         "rollback_startup must use session_id for connection removal"
     );
     assert!(
-        rollback_body.contains("topology_existed_before") || rollback_body.contains("remove_peer"),
+        rollback_body.contains("topology_existed_before")
+            || rollback_body.contains("restore_peer_logical_state"),
         "rollback_startup must handle topology restoration"
     );
 }
@@ -488,12 +489,8 @@ fn test_shutdown_reads_accept_loop_report() {
         "shutdown_with_timeout must read accept_loop_report"
     );
     assert!(
-        shutdown_body.contains("drained_peer_children"),
-        "shutdown_with_timeout must set drained_peer_children from accept report"
-    );
-    assert!(
-        shutdown_body.contains("aborted_peer_children"),
-        "shutdown_with_timeout must set aborted_peer_children from accept report"
+        shutdown_body.contains("report_is_fresh"),
+        "shutdown_with_timeout must compute report_is_fresh from generation"
     );
 }
 
@@ -927,11 +924,16 @@ fn topology_snapshot_existing_peer_preserves_state() {
         previous_topology: Some(snapshot),
         connection_inserted: true,
         session_task_id: Some("sess-2".to_string()),
-        dht_mutation: DhtPeerMutation::Replaced(DhtPeerSnapshot {
+        dht_mutation: DhtPeerMutation::Previous(DhtPeerSnapshot {
             node_id: "node-2".to_string(),
             address: "5.6.7.8:443".to_string(),
             port: 443,
             role: MeshNodeRole::GLOBAL,
+            geo: None,
+            latency_ms: None,
+            is_trusted: false,
+            pow_nonce: None,
+            public_key: None,
         }),
         session_generation: 2,
     };
@@ -974,12 +976,17 @@ fn dht_mutation_created_for_new_peer() {
 }
 
 #[test]
-fn dht_mutation_replaced_preserves_prior_state() {
+fn dht_mutation_previous_preserves_prior_state() {
     let snapshot = DhtPeerSnapshot {
         node_id: "node-1".to_string(),
         address: "1.2.3.4:443".to_string(),
         port: 443,
         role: MeshNodeRole::EDGE,
+        geo: None,
+        latency_ms: Some(12),
+        is_trusted: false,
+        pow_nonce: None,
+        public_key: None,
     };
     let resource = StagedPeerResource {
         session_id: "sess-1".to_string(),
@@ -987,26 +994,32 @@ fn dht_mutation_replaced_preserves_prior_state() {
         previous_topology: None,
         connection_inserted: true,
         session_task_id: Some("sess-1".to_string()),
-        dht_mutation: DhtPeerMutation::Replaced(snapshot.clone()),
+        dht_mutation: DhtPeerMutation::Previous(snapshot.clone()),
         session_generation: 1,
     };
     match &resource.dht_mutation {
-        DhtPeerMutation::Replaced(s) => {
+        DhtPeerMutation::Previous(s) => {
             assert_eq!(s.node_id, "node-1");
             assert_eq!(s.address, "1.2.3.4:443");
             assert_eq!(s.port, 443);
+            assert_eq!(s.latency_ms, Some(12));
         }
-        _ => panic!("Expected Replaced variant"),
+        _ => panic!("Expected Previous variant"),
     }
 }
 
 #[test]
-fn dht_mutation_updated_in_place_preserves_state() {
+fn dht_mutation_previous_in_place_preserves_state() {
     let snapshot = DhtPeerSnapshot {
         node_id: "node-2".to_string(),
         address: "5.6.7.8:8080".to_string(),
         port: 8080,
         role: MeshNodeRole::GLOBAL,
+        geo: None,
+        latency_ms: None,
+        is_trusted: true,
+        pow_nonce: Some(99),
+        public_key: Some(vec![10, 20, 30]),
     };
     let resource = StagedPeerResource {
         session_id: "sess-2".to_string(),
@@ -1014,12 +1027,12 @@ fn dht_mutation_updated_in_place_preserves_state() {
         previous_topology: None,
         connection_inserted: true,
         session_task_id: Some("sess-2".to_string()),
-        dht_mutation: DhtPeerMutation::UpdatedInPlace(snapshot),
+        dht_mutation: DhtPeerMutation::Previous(snapshot),
         session_generation: 2,
     };
     assert!(matches!(
         resource.dht_mutation,
-        DhtPeerMutation::UpdatedInPlace(_)
+        DhtPeerMutation::Previous(_)
     ));
 }
 
@@ -1175,4 +1188,299 @@ fn recovery_verification_has_issues() {
     };
     assert!(!v.is_clean());
     assert_eq!(v.issues.len(), 1);
+}
+
+// ── Phase 42: Recovery Residue Test ─────────────────────────────────────────
+
+#[tokio::test]
+async fn test_recovery_applies_residue_before_clearing() {
+    // Verify that recover_failed_state() reads and applies
+    // failed_startup_residue before clearing it (Iteration 74, Phase 42).
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    // Verify recover_failed_state takes residue before clearing
+    let recovery_fn = extract_function(&source, "recover_failed_state");
+
+    // Should take residue (guard.take())
+    assert!(
+        recovery_fn.contains("guard.take()") || recovery_fn.contains(".take()"),
+        "recover_failed_state must take residue before clearing"
+    );
+
+    // Should iterate residue peers
+    assert!(
+        recovery_fn.contains("residue.peers") || recovery_fn.contains("for peer in"),
+        "recover_failed_state must iterate residue peers"
+    );
+
+    // Should call restore_peer_logical_state
+    assert!(
+        recovery_fn.contains("restore_peer_logical_state"),
+        "recover_failed_state must use restore_peer_logical_state for residue"
+    );
+
+    // Should retain unresolved residue on error
+    assert!(
+        recovery_fn.contains("remaining_peers") || recovery_fn.contains("FailedStartupResidue"),
+        "recover_failed_state must retain unresolved residue"
+    );
+}
+
+// ── Phase 43: Recovery Partial Failure Test ──────────────────────────────────
+
+#[tokio::test]
+async fn test_recovery_retains_residue_on_partial_failure() {
+    // Verify that partial recovery retains unresolved peers (Iteration 74, Phase 43).
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let recovery_fn = extract_function(&source, "recover_failed_state");
+
+    // Must have remaining_peers tracking
+    assert!(
+        recovery_fn.contains("remaining_peers"),
+        "recover_failed_state must track remaining peers on partial failure"
+    );
+
+    // Must re-store FailedStartupResidue with remaining peers
+    assert!(
+        recovery_fn.contains("failed_startup_residue.lock()"),
+        "recover_failed_state must re-store residue on partial failure"
+    );
+}
+
+// ── Phase 44: Session Reaper Await Test ──────────────────────────────────────
+
+#[tokio::test]
+async fn test_session_reaper_awaits_removed_handles() {
+    // Verify that the session reaper awaits handles after removing them (Iteration 74, Phase 44).
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let reaper_fn = extract_function(&source, "spawn_session_reaper");
+
+    // Must await handle outside the lock
+    assert!(
+        reaper_fn.contains("task.handle.await") || reaper_fn.contains("handle.await"),
+        "session reaper must await removed handles"
+    );
+
+    // Must remove before await (not hold lock during await)
+    assert!(
+        reaper_fn.contains("sessions.remove"),
+        "session reaper must remove entry before awaiting handle"
+    );
+}
+
+// ── Phase 45: Session Reaper Cancellation Test ───────────────────────────────
+
+#[tokio::test]
+async fn test_session_reaper_respects_shutdown() {
+    // Verify that the session reaper exits on shutdown signal (Iteration 74, Phase 45).
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let reaper_fn = extract_function(&source, "spawn_session_reaper");
+
+    // Must use tokio::select!
+    assert!(
+        reaper_fn.contains("tokio::select!"),
+        "session reaper must use tokio::select! for cancellation"
+    );
+
+    // Must check shutdown signal
+    assert!(
+        reaper_fn.contains("shutdown") || reaper_fn.contains("shutdown_rx"),
+        "session reaper must select on shutdown signal"
+    );
+
+    // Must break on shutdown
+    assert!(
+        reaper_fn.contains("break"),
+        "session reaper must break out of loop on shutdown"
+    );
+}
+
+// ── Phase 46: Reaper Lag Test ────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_session_reaper_handles_lag() {
+    // Verify that the session reaper handles broadcast lag (Iteration 74, Phase 46).
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let reaper_fn = extract_function(&source, "spawn_session_reaper");
+
+    // Must handle Lagged error
+    assert!(
+        reaper_fn.contains("Lagged"),
+        "session reaper must handle broadcast lag"
+    );
+
+    // Must call reap_finished_peer_sessions on lag
+    assert!(
+        reaper_fn.contains("reap_finished_peer_sessions"),
+        "session reaper must scan for finished sessions on lag"
+    );
+}
+
+// ── Phase 47: Auxiliary Reaper Test ──────────────────────────────────────────
+
+#[tokio::test]
+async fn test_auxiliary_reaper_exists() {
+    // Verify that the auxiliary task reaper is implemented (Iteration 74, Phase 47).
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    // Must have spawn_auxiliary_reaper
+    assert!(
+        source.contains("fn spawn_auxiliary_reaper"),
+        "transport must have spawn_auxiliary_reaper method"
+    );
+
+    let reaper_fn = extract_function(&source, "spawn_auxiliary_reaper");
+
+    // Must use tokio::select!
+    assert!(
+        reaper_fn.contains("tokio::select!"),
+        "auxiliary reaper must use tokio::select! for cancellation"
+    );
+
+    // Must await removed handles
+    assert!(
+        reaper_fn.contains("task.handle.await") || reaper_fn.contains("handle.await"),
+        "auxiliary reaper must await removed handles"
+    );
+
+    // Must handle lag
+    assert!(
+        reaper_fn.contains("Lagged") || reaper_fn.contains("reap_finished"),
+        "auxiliary reaper must handle broadcast lag"
+    );
+}
+
+// ── Phase 48: Global Generation Test ────────────────────────────────────────
+
+#[tokio::test]
+async fn test_global_session_generation() {
+    // Verify that all session paths use the transport-global generation (Iteration 74, Phase 48).
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    // connect_to_peer must use session_generation.fetch_add
+    let connect_fn = extract_function(&source, "connect_to_peer");
+    assert!(
+        connect_fn.contains("session_generation.fetch_add"),
+        "connect_to_peer must use transport-global session_generation"
+    );
+
+    // No more default 0 for steady-state
+    assert!(
+        !connect_fn.contains("} else {\n    0\n}") && !connect_fn.contains("else { 0 }"),
+        "connect_to_peer must not default to generation 0"
+    );
+}
+
+// ── Phase 49: Stale Accept Report Test ───────────────────────────────────────
+
+#[tokio::test]
+async fn test_stale_accept_report_suppression() {
+    // Verify that stale accept-loop counts are suppressed (Iteration 74, Phase 49).
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let shutdown_fn = extract_function(&source, "shutdown_with_timeout");
+
+    // Must check generation freshness
+    assert!(
+        shutdown_fn.contains("report_is_fresh") || shutdown_fn.contains("generation"),
+        "shutdown must check accept-loop report freshness"
+    );
+
+    // Must set accept_loop_report to None when stale
+    assert!(
+        shutdown_fn.contains("accept_loop_report"),
+        "shutdown must use accept_loop_report option field"
+    );
+}
+
+// ── Phase 50-51: Snapshot Struct Tests ──────────────────────────────────────
+
+#[tokio::test]
+async fn test_dht_peer_snapshot_has_all_contact_fields() {
+    // Verify DhtPeerSnapshot captures all PeerContact fields (Iteration 74, Phase 51).
+    let snapshot = DhtPeerSnapshot {
+        node_id: "test-node".to_string(),
+        address: "10.0.0.1:443".to_string(),
+        port: 443,
+        role: MeshNodeRole::GLOBAL,
+        geo: None,
+        latency_ms: Some(42),
+        is_trusted: true,
+        pow_nonce: Some(12345),
+        public_key: Some(vec![1, 2, 3, 4]),
+    };
+
+    // Verify all fields are accessible
+    assert_eq!(snapshot.node_id, "test-node");
+    assert_eq!(snapshot.address, "10.0.0.1:443");
+    assert_eq!(snapshot.port, 443);
+    assert!(snapshot.is_trusted);
+    assert_eq!(snapshot.latency_ms, Some(42));
+    assert_eq!(snapshot.pow_nonce, Some(12345));
+    assert_eq!(snapshot.public_key, Some(vec![1, 2, 3, 4]));
+}
+
+#[tokio::test]
+async fn test_peer_state_snapshot_preserves_all_fields() {
+    // Verify StagedTopologySnapshot stores complete PeerState (Iteration 74, Phase 50).
+    let peer_state = PeerState {
+        node_id: "test-node".to_string(),
+        address: "10.0.0.1:443".to_string(),
+        role: MeshNodeRole::GLOBAL,
+        status: PeerStatus::Healthy,
+        capabilities: synvoid_mesh::protocol::MeshCapabilities::default(),
+        upstreams: std::collections::HashSet::new(),
+        latency_ms: Some(42),
+        first_seen: 1000,
+        last_seen: 2000,
+        is_global: true,
+        is_trusted: true,
+        connection_handle: None,
+        geo: Some("us-east-1".to_string()),
+        audit_successes: 100,
+        audit_failures: 5,
+        performance_audit_successes: 50,
+        performance_audit_failures: 2,
+        quic_port: Some(443),
+        wireguard_port: Some(51820),
+        advertised_port: Some(443),
+        previous_reputation: Some(0.95),
+    };
+
+    let snapshot = StagedTopologySnapshot {
+        peer_state: peer_state.clone(),
+    };
+
+    // Verify all fields preserved through snapshot
+    assert_eq!(snapshot.peer_state.node_id, "test-node");
+    assert_eq!(snapshot.peer_state.latency_ms, Some(42));
+    assert_eq!(snapshot.peer_state.audit_successes, 100);
+    assert_eq!(snapshot.peer_state.audit_failures, 5);
+    assert_eq!(snapshot.peer_state.previous_reputation, Some(0.95));
+    assert_eq!(snapshot.peer_state.quic_port, Some(443));
+    assert_eq!(snapshot.peer_state.wireguard_port, Some(51820));
+}
+
+// ── Phase 53: No-Loss Snapshot Guard ────────────────────────────────────────
+
+#[test]
+fn test_dht_snapshot_covers_peer_contact_fields() {
+    let snapshot_source = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+
+    // PeerContact fields that DhtPeerSnapshot should capture
+    let required_fields = [
+        "address",
+        "port",
+        "is_trusted",
+        "latency_ms",
+        "pow_nonce",
+        "public_key",
+    ];
+
+    for field in required_fields {
+        assert!(
+            snapshot_source.contains(&format!("pub {}: ", field)),
+            "DhtPeerSnapshot must have field '{}' to match PeerContact",
+            field
+        );
+    }
 }

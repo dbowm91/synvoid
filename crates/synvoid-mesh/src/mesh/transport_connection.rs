@@ -86,6 +86,8 @@ impl MeshTransport {
             startup_generation: self.startup_generation.clone(),
             session_generation: self.session_generation.clone(),
             session_exit_tx: self.session_exit_tx.clone(),
+            session_reaper_shutdown: self.session_reaper_shutdown.clone(),
+            auxiliary_exit_tx: self.auxiliary_exit_tx.clone(),
         }
     }
 

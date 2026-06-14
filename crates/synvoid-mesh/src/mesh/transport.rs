@@ -49,11 +49,11 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch, Mutex};
 
 #[allow(unused_imports)]
 use crate::lifecycle::{
-    remaining, AuxiliaryTask, AuxiliaryTaskKind, DhtPeerMutation, DhtPeerSnapshot,
-    FailedStartupResidue, MeshAcceptLoopReport, MeshLifecycleState, MeshShutdownReport,
-    MeshStartupPolicy, MeshStartupReport, MeshStartupStage, MeshTaskExit, MeshTaskExitReason,
-    MeshTaskId, MeshTaskIdGenerator, PeerSessionTask, RollbackReport, StagedPeerResource,
-    StagedTopologySnapshot,
+    remaining, AuxiliaryTask, AuxiliaryTaskExit, AuxiliaryTaskKind, DhtPeerMutation,
+    DhtPeerSnapshot, FailedStartupResidue, MeshAcceptLoopReport, MeshLifecycleState,
+    MeshShutdownReport, MeshStartupPolicy, MeshStartupReport, MeshStartupStage, MeshTaskExit,
+    MeshTaskExitReason, MeshTaskId, MeshTaskIdGenerator, PeerSessionTask, RecoveryReport,
+    RollbackReport, StagedPeerResource, StagedTopologySnapshot,
 };
 use crate::task_group::MeshTaskGroup;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -197,6 +197,10 @@ pub struct MeshTransport {
     /// Per-session generation counter for incoming connections (accept-loop path).
     /// Outbound sessions use the stage counter; inbound sessions use this atomic.
     pub(crate) session_generation: Arc<AtomicU64>,
+    /// Shutdown signal for the session reaper (Iteration 74, Phase 14).
+    pub(crate) session_reaper_shutdown: Arc<watch::Sender<bool>>,
+    /// Channel for auxiliary task exit events, consumed by the auxiliary reaper (Iteration 74, Phase 20).
+    pub(crate) auxiliary_exit_tx: broadcast::Sender<crate::lifecycle::AuxiliaryTaskExit>,
 }
 
 /// Failure injection points for deterministic startup testing.
@@ -472,6 +476,8 @@ impl Clone for MeshTransport {
             startup_generation: self.startup_generation.clone(),
             session_generation: self.session_generation.clone(),
             session_exit_tx: self.session_exit_tx.clone(),
+            session_reaper_shutdown: self.session_reaper_shutdown.clone(),
+            auxiliary_exit_tx: self.auxiliary_exit_tx.clone(),
         }
     }
 }
@@ -826,6 +832,14 @@ impl MeshTransport {
             },
             startup_generation: Arc::new(AtomicU64::new(0)),
             session_generation: Arc::new(AtomicU64::new(0)),
+            session_reaper_shutdown: {
+                let (tx, _) = watch::channel(false);
+                Arc::new(tx)
+            },
+            auxiliary_exit_tx: {
+                let (tx, _) = broadcast::channel(64);
+                tx
+            },
         }
     }
 
@@ -2638,6 +2652,8 @@ impl MeshTransport {
 
         // 9. Spawn session reaper on the committed task group (Iteration 73, Phase 15-18)
         self.spawn_session_reaper().await;
+        // 10. Spawn auxiliary task reaper (Iteration 74, Phase 21)
+        self.spawn_auxiliary_reaper().await;
 
         tracing::info!(
             "Mesh transport started (lifecycle: running, degraded={})",
@@ -2651,45 +2667,292 @@ impl MeshTransport {
     ///
     /// The reaper is spawned as a critical background task on the transport's task group.
     /// It uses generation counters to prevent stale completions from removing newer entries.
+    ///
+    /// The reaper is cancellation-aware: it selects on both the exit receiver and a
+    /// shutdown signal, ensuring it exits cleanly during shutdown (Iteration 74, Phase 14).
+    /// Removed handles are awaited outside the lock to avoid holding it during join
+    /// (Iteration 74, Phase 15).
     async fn spawn_session_reaper(&self) {
         let transport = self.clone();
         let mut exit_rx = self.session_exit_tx.subscribe();
+        let mut shutdown_rx = self.session_reaper_shutdown.subscribe();
 
         let mut group = self.task_group.lock().await;
         group.spawn_critical("session_reaper", async move {
             loop {
-                match exit_rx.recv().await {
-                    Ok(exit) => {
-                        let mut sessions = transport.peer_sessions.lock().await;
-                        if let Some(task) = sessions.get(&exit.session_id) {
-                            // Only remove if the generation matches (prevents stale removal).
-                            if task.generation == exit.generation {
-                                sessions.remove(&exit.session_id);
-                                tracing::debug!(
-                                    "Session reaper removed entry for {} ({:?})",
-                                    exit.session_id,
-                                    exit.reason
-                                );
-                            } else {
-                                tracing::debug!(
-                                    "Session reaper skipped stale entry for {} (exit gen={}, registry gen={})",
-                                    exit.session_id,
-                                    exit.generation,
-                                    task.generation
-                                );
+                tokio::select! {
+                    event = exit_rx.recv() => {
+                        match event {
+                            Ok(exit) => {
+                                let removed = {
+                                    let mut sessions = transport.peer_sessions.lock().await;
+                                    match sessions.get(&exit.session_id) {
+                                        Some(task) if task.generation == exit.generation => {
+                                            sessions.remove(&exit.session_id)
+                                        }
+                                        Some(task) => {
+                                            tracing::debug!(
+                                                "Session reaper skipped stale entry for {} (exit gen={}, registry gen={})",
+                                                exit.session_id,
+                                                exit.generation,
+                                                task.generation
+                                            );
+                                            None
+                                        }
+                                        None => None,
+                                    }
+                                };
+                                // Await the handle outside the lock (Iteration 74, Phase 15)
+                                if let Some(task) = removed {
+                                    match task.handle.await {
+                                        Ok(()) => {
+                                            tracing::debug!(
+                                                "Session reaper joined handle for {} ({:?})",
+                                                exit.session_id,
+                                                exit.reason
+                                            );
+                                        }
+                                        Err(error) if error.is_panic() => {
+                                            tracing::warn!(
+                                                "Session reaper: wrapper task for {} panicked after sending exit event",
+                                                exit.session_id
+                                            );
+                                        }
+                                        Err(error) => {
+                                            tracing::debug!(
+                                                "Session reaper: wrapper task for {} cancelled after sending exit event: {}",
+                                                exit.session_id,
+                                                error
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                            Err(broadcast::error::RecvError::Lagged(n)) => {
+                                tracing::warn!("Session reaper lagged by {} events, scanning for finished sessions", n);
+                                transport.reap_finished_peer_sessions().await;
+                            }
+                            Err(broadcast::error::RecvError::Closed) => {
+                                break;
                             }
                         }
                     }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!("Session reaper lagged by {} events", n);
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
-                        // Channel closed (transport dropped), reaper should exit
-                        break;
+                    _ = shutdown_rx.changed() => {
+                        if *shutdown_rx.borrow() {
+                            tracing::debug!("Session reaper received shutdown signal");
+                            break;
+                        }
                     }
                 }
             }
         });
+    }
+
+    /// Scan peer_sessions for completed handles and remove them (Iteration 74, Phase 17).
+    ///
+    /// This handles the case where the broadcast reaper lagged and missed exit events.
+    /// Finished handles are joined outside the lock to avoid holding it during await.
+    async fn reap_finished_peer_sessions(&self) {
+        let mut to_join = Vec::new();
+        {
+            let mut sessions = self.peer_sessions.lock().await;
+            let mut to_remove = Vec::new();
+            for (session_id, task) in sessions.iter() {
+                if task.handle.is_finished() {
+                    to_remove.push(session_id.clone());
+                }
+            }
+            for session_id in to_remove {
+                if let Some(task) = sessions.remove(&session_id) {
+                    to_join.push(task);
+                }
+            }
+        }
+        // Join all finished handles outside the lock
+        for task in to_join {
+            match task.handle.await {
+                Ok(()) => {
+                    tracing::debug!(
+                        "Reaper lag recovery: joined finished session handle for {}",
+                        task.session_id
+                    );
+                }
+                Err(error) if error.is_panic() => {
+                    tracing::warn!(
+                        "Reaper lag recovery: finished session handle for {} panicked",
+                        task.session_id
+                    );
+                }
+                Err(error) => {
+                    tracing::debug!(
+                        "Reaper lag recovery: finished session handle for {} cancelled: {}",
+                        task.session_id,
+                        error
+                    );
+                }
+            }
+        }
+    }
+
+    /// Spawn the auxiliary task reaper that watches for completed auxiliary tasks
+    /// and removes them from the auxiliary_tasks registry (Iteration 74, Phase 21).
+    ///
+    /// The reaper is cancellation-aware and handles broadcast lag gracefully.
+    async fn spawn_auxiliary_reaper(&self) {
+        let transport = self.clone();
+        let mut exit_rx = self.auxiliary_exit_tx.subscribe();
+        let mut shutdown_rx = self.session_reaper_shutdown.subscribe();
+
+        let mut group = self.task_group.lock().await;
+        group.spawn_critical("auxiliary_reaper", async move {
+            loop {
+                tokio::select! {
+                    event = exit_rx.recv() => {
+                        match event {
+                            Ok(exit) => {
+                                let removed = {
+                                    let mut aux = transport.auxiliary_tasks.lock().await;
+                                    aux.remove(&exit.task_id)
+                                };
+                                if let Some(task) = removed {
+                                    match task.handle.await {
+                                        Ok(_) => {
+                                            tracing::debug!(
+                                                "Auxiliary reaper joined handle for task {} ({:?})",
+                                                exit.task_id,
+                                                exit.reason
+                                            );
+                                        }
+                                        Err(error) if error.is_panic() => {
+                                            tracing::warn!(
+                                                "Auxiliary reaper: task {} panicked after exit event",
+                                                exit.task_id
+                                            );
+                                        }
+                                        Err(error) => {
+                                            tracing::debug!(
+                                                "Auxiliary reaper: task {} cancelled after exit: {}",
+                                                exit.task_id,
+                                                error
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                            Err(broadcast::error::RecvError::Lagged(n)) => {
+                                tracing::warn!("Auxiliary reaper lagged by {} events, scanning", n);
+                                transport.reap_finished_auxiliary_tasks().await;
+                            }
+                            Err(broadcast::error::RecvError::Closed) => {
+                                break;
+                            }
+                        }
+                    }
+                    _ = shutdown_rx.changed() => {
+                        if *shutdown_rx.borrow() {
+                            tracing::debug!("Auxiliary reaper received shutdown signal");
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    /// Scan auxiliary_tasks for completed handles and remove them (Iteration 74, Phase 21).
+    ///
+    /// Handles the case where the broadcast reaper lagged and missed exit events.
+    /// Finished handles are joined outside the lock to avoid holding it during await.
+    async fn reap_finished_auxiliary_tasks(&self) {
+        let mut to_join = Vec::new();
+        {
+            let mut aux = self.auxiliary_tasks.lock().await;
+            let mut to_remove = Vec::new();
+            for (task_id, task) in aux.iter() {
+                if task.handle.is_finished() {
+                    to_remove.push(*task_id);
+                }
+            }
+            for task_id in to_remove {
+                if let Some(task) = aux.remove(&task_id) {
+                    to_join.push(task);
+                }
+            }
+        }
+        for task in to_join {
+            match task.handle.await {
+                Ok(_) => {
+                    tracing::debug!(
+                        "Auxiliary reaper lag recovery: joined finished task {}",
+                        task.task_id
+                    );
+                }
+                Err(error) if error.is_panic() => {
+                    tracing::warn!(
+                        "Auxiliary reaper lag recovery: task {} panicked",
+                        task.task_id
+                    );
+                }
+                Err(error) => {
+                    tracing::debug!(
+                        "Auxiliary reaper lag recovery: task {} cancelled: {}",
+                        task.task_id,
+                        error
+                    );
+                }
+            }
+        }
+    }
+
+    /// Restore a staged peer resource's topology and DHT state to pre-mutation
+    /// values (Iteration 74, Phase 1).
+    ///
+    /// Used by both `rollback_startup()` and `recover_failed_state()` to avoid
+    /// duplicated restoration logic. Idempotent: restoring an already-restored
+    /// entry is success.
+    async fn restore_peer_logical_state(&self, peer: &StagedPeerResource) -> Result<(), String> {
+        // Restore topology state
+        match &peer.previous_topology {
+            None => {
+                // New peer - remove the entry entirely
+                self.topology.remove_peer(&peer.node_id).await;
+            }
+            Some(snapshot) => {
+                // Existing peer was overwritten - restore exact native state
+                self.topology
+                    .restore_peer_state(snapshot.peer_state.clone())
+                    .await;
+            }
+        }
+
+        // Restore DHT state
+        match &peer.dht_mutation {
+            DhtPeerMutation::None => {
+                // No mutation to undo
+            }
+            DhtPeerMutation::Created => {
+                // Remove the new routing entry
+                if let Some(ref rm) = self.routing_manager {
+                    rm.remove_peer(&peer.node_id).await;
+                    tracing::debug!(
+                        "Removed DHT routing entry for peer {} during restoration",
+                        peer.node_id
+                    );
+                }
+            }
+            DhtPeerMutation::Previous(snapshot) => {
+                // Restore the previous routing entry
+                if let Some(ref rm) = self.routing_manager {
+                    rm.restore_peer(snapshot).await;
+                    tracing::debug!(
+                        "Restored DHT routing entry for peer {} during restoration",
+                        peer.node_id
+                    );
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Rollback a failed startup: cancel and join all staged tasks, close
@@ -2747,63 +3010,12 @@ impl MeshTransport {
             .count();
         report.tasks_aborted += tasks_aborted_from_exits;
 
-        // Phase 5: Restore topology entries
+        // Phase 5: Restore topology and DHT entries (Iteration 74, Phase 1)
         for peer in &stage.created_peers {
-            match &peer.previous_topology {
-                None => {
-                    // New peer - remove the entry entirely
-                    self.topology.remove_peer(&peer.node_id).await;
-                    report.topology_entries_restored += 1;
-                }
-                Some(snapshot) => {
-                    // Existing peer was overwritten - restore exact prior state
-                    let ps = &snapshot.peer_state;
-                    let peer_info = crate::protocol::MeshPeerInfo {
-                        node_id: ps.node_id.clone(),
-                        address: ps.address.clone(),
-                        role: ps.role,
-                        capabilities: ps.capabilities.clone(),
-                        is_global: ps.is_global,
-                        latency_ms: ps.latency_ms,
-                        upstreams: ps.upstreams.iter().cloned().collect(),
-                        is_trusted: ps.is_trusted,
-                        quic_port: ps.quic_port,
-                        wireguard_port: ps.wireguard_port,
-                        advertised_port: ps.advertised_port,
-                        dns_serving_healthy: false,
-                    };
-                    self.topology.add_peer(peer_info, ps.status).await;
-                    report.topology_entries_restored += 1;
-                }
-            }
-        }
-
-        // Phase 5b: Restore DHT state based on exact mutation (Iteration 73, Phase 5)
-        for peer in &stage.created_peers {
-            match &peer.dht_mutation {
-                DhtPeerMutation::None => {
-                    // No mutation to undo
-                }
-                DhtPeerMutation::Created => {
-                    // Remove the new routing entry
-                    if let Some(ref rm) = self.routing_manager {
-                        rm.remove_peer(&peer.node_id).await;
-                        tracing::debug!(
-                            "Removed DHT routing entry for peer {} during rollback",
-                            peer.node_id
-                        );
-                    }
-                }
-                DhtPeerMutation::Replaced(snapshot) | DhtPeerMutation::UpdatedInPlace(snapshot) => {
-                    // Restore the previous routing entry
-                    if let Some(ref rm) = self.routing_manager {
-                        rm.restore_peer(snapshot).await;
-                        tracing::debug!(
-                            "Restored DHT routing entry for peer {} during rollback",
-                            peer.node_id
-                        );
-                    }
-                }
+            if let Err(e) = self.restore_peer_logical_state(peer).await {
+                report.errors.push(e);
+            } else {
+                report.topology_entries_restored += 1;
             }
         }
 
@@ -3013,6 +3225,9 @@ impl MeshTransport {
             group.begin_shutdown().await;
         }
 
+        // Signal session and auxiliary reapers to exit (Iteration 74, Phase 14/20)
+        let _ = self.session_reaper_shutdown.send(true);
+
         // Phase 3: Stop the QUIC runtime/endpoint
         if let Some(ref runtime) = self.runtime {
             runtime.stop_server().await;
@@ -3060,10 +3275,53 @@ impl MeshTransport {
             let _exits = group.join_all(task_remaining).await;
         }
 
-        // Phase 7: Clear failed-startup residue
-        {
-            let mut residue_guard = self.failed_startup_residue.lock().await;
-            *residue_guard = None;
+        // Phase 7: Apply retained residue before clearing (Iteration 74, Phase 2-3)
+        let residue = {
+            let mut guard = self.failed_startup_residue.lock().await;
+            guard.take()
+        };
+
+        let mut residue_errors: Vec<String> = Vec::new();
+        let mut remaining_peers: Vec<StagedPeerResource> = Vec::new();
+
+        if let Some(residue) = residue {
+            for peer in residue.peers {
+                match self.restore_peer_logical_state(&peer).await {
+                    Ok(()) => {
+                        // Successfully restored - also close connection if still present
+                        if peer.connection_inserted {
+                            if let Some(entry) = self.peer_connections.get(&peer.session_id) {
+                                entry
+                                    .value()
+                                    .connection
+                                    .close(0u32.into(), b"Recovery residue cleanup");
+                            }
+                            self.peer_connections.remove(&peer.session_id);
+                        }
+                    }
+                    Err(error) => {
+                        residue_errors.push(format!(
+                            "Residue restoration failed for peer {}: {}",
+                            peer.node_id, error
+                        ));
+                        remaining_peers.push(peer);
+                    }
+                }
+            }
+
+            // If there are unresolved peers, retain the residue
+            if !remaining_peers.is_empty() {
+                *self.failed_startup_residue.lock().await = Some(FailedStartupResidue {
+                    peers: remaining_peers,
+                    generation: residue.generation,
+                    runtime_started: residue.runtime_started,
+                    rollback_errors: residue
+                        .rollback_errors
+                        .into_iter()
+                        .chain(residue_errors.clone())
+                        .collect(),
+                });
+            }
         }
 
         // Phase 8: Clear auxiliary tasks
@@ -3088,6 +3346,7 @@ impl MeshTransport {
 
         // Phase 10: Full verification
         let mut issues = Vec::new();
+        issues.extend(residue_errors);
 
         // Verify task group is empty
         {
@@ -3628,6 +3887,9 @@ impl MeshTransport {
             let _ = tx.send(());
         }
 
+        // Signal session and auxiliary reapers to exit (Iteration 74, Phase 14/20)
+        let _ = self.session_reaper_shutdown.send(true);
+
         // Close all QUIC connections
         for entry in self.peer_connections.iter() {
             entry
@@ -3690,16 +3952,22 @@ impl MeshTransport {
         }
         drop(sessions);
 
-        // Include accept loop report in shutdown report (Phase 19: verify generation)
+        // Include accept loop report in shutdown report (Iteration 74, Phase 29-30)
         let accept_report = self.accept_loop_report.lock().await.clone();
         let current_gen = self.startup_generation.load(Ordering::SeqCst);
-        if accept_report.generation != current_gen && current_gen != 0 {
+        let report_is_fresh = if current_gen == 0 {
+            // No startup yet; accept-loop report is not meaningful
+            false
+        } else if accept_report.generation == current_gen {
+            true
+        } else {
             tracing::warn!(
-                "Accept-loop report generation mismatch: report={}, current={}; counts may be stale",
+                "Accept-loop report generation mismatch: report={}, current={}; counts suppressed",
                 accept_report.generation,
                 current_gen
             );
-        }
+            false
+        };
 
         // Build report
         let mut report = MeshShutdownReport::default();
@@ -3708,8 +3976,11 @@ impl MeshTransport {
         report.drained_peer_sessions = drained;
         report.aborted_peer_sessions = aborted;
         report.failed_peer_sessions = failed;
-        report.drained_peer_children = accept_report.drained_handshakes;
-        report.aborted_peer_children = accept_report.aborted_handshakes;
+        report.accept_loop_report = if report_is_fresh {
+            Some(accept_report.clone())
+        } else {
+            None
+        };
         for exit in &exits {
             match exit.reason {
                 crate::lifecycle::MeshTaskExitReason::Aborted => {
@@ -3723,6 +3994,15 @@ impl MeshTransport {
                     report.failed_tasks.push(exit.clone());
                 }
             }
+        }
+
+        // Phase 31: Reset accept-loop report counts after consuming
+        if report_is_fresh {
+            let mut ar = self.accept_loop_report.lock().await;
+            ar.drained_handshakes = 0;
+            ar.aborted_handshakes = 0;
+            ar.rejected_at_capacity = 0;
+            // Retain generation for diagnostics but mark consumed
         }
 
         // Transition to Stopped
@@ -4287,8 +4567,15 @@ impl MeshTransport {
         } else {
             let task_id = self.id_generator.next();
             let session_id_clone = session_id.to_string();
+            let aux_exit_tx = self.auxiliary_exit_tx.clone();
+            let session_id_for_exit = session_id.to_string();
             let preflight_handle = tokio::spawn(async move {
                 preflight_future.await;
+                let _ = aux_exit_tx.send(crate::lifecycle::AuxiliaryTaskExit {
+                    task_id,
+                    session_id: Some(session_id_for_exit),
+                    reason: crate::lifecycle::MeshTaskExitReason::CleanCompletion,
+                });
                 MeshTaskExit {
                     id: task_id,
                     name: "preflight_peer_routes",
@@ -4308,13 +4595,9 @@ impl MeshTransport {
             );
         }
 
-        // Pre-compute generation for session task (Phase 18): call next_session_generation()
-        // early so the same value is used in PeerSessionTask AND StagedPeerResource.
-        let session_generation_for_task = if let Some(ref mut s) = stage {
-            s.next_session_generation()
-        } else {
-            0
-        };
+        // Use transport-global generation for every session (Iteration 74, Phase 25).
+        let session_generation_for_task =
+            self.session_generation.fetch_add(1, Ordering::SeqCst) + 1;
 
         let transport = self.clone();
         let conn = connection;
@@ -4351,7 +4634,7 @@ impl MeshTransport {
                 if rm.is_enabled() {
                     match dht_snapshot_before {
                         None => DhtPeerMutation::Created,
-                        Some(snapshot) => DhtPeerMutation::Replaced(snapshot),
+                        Some(snapshot) => DhtPeerMutation::Previous(snapshot),
                     }
                 } else {
                     DhtPeerMutation::None

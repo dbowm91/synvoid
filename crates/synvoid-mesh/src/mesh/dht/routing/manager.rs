@@ -371,7 +371,8 @@ impl DhtRoutingManager {
     /// Snapshot the current DHT routing state for a peer before mutation.
     ///
     /// Returns `None` if the peer has no routing entry. The snapshot captures
-    /// the minimal state needed to restore the entry on rollback (Iteration 73, Phase 4).
+    /// all mutable `PeerContact` fields for exact restoration on rollback
+    /// (Iteration 73, Phase 4; expanded Iteration 74, Phase 10).
     pub async fn snapshot_peer(&self, peer_node_id: &str) -> Option<DhtPeerSnapshot> {
         let rt = self.routing_table.read().await;
         let table = match rt.as_ref() {
@@ -391,14 +392,19 @@ impl DhtRoutingManager {
             } else {
                 MeshNodeRole::EDGE
             },
+            geo: contact.geo.clone(),
+            latency_ms: contact.latency_ms,
+            is_trusted: contact.is_trusted,
+            pow_nonce: contact.pow_nonce,
+            public_key: contact.public_key.clone(),
         })
     }
 
     /// Restore a peer's DHT routing state from a snapshot taken before mutation.
     ///
-    /// Re-inserts the contact with the same address, port, and role. The
+    /// Re-inserts the contact with all fields from the snapshot. The
     /// `last_seen` timestamp is refreshed to `Instant::now()` since the peer
-    /// was recently connected (Iteration 73, Phase 5).
+    /// was recently connected (Iteration 73, Phase 5; expanded Iteration 74, Phase 10).
     pub async fn restore_peer(&self, snapshot: &DhtPeerSnapshot) {
         let mut rt = self.routing_table.write().await;
         let table = match rt.as_mut() {
@@ -407,15 +413,51 @@ impl DhtRoutingManager {
         };
 
         let node_id = NodeId::from_node_id_string(&snapshot.node_id);
-        let contact = PeerContact::new(
+        let mut contact = PeerContact::new(
             node_id,
             snapshot.node_id.clone(),
             snapshot.address.clone(),
             snapshot.port,
         );
-        let mut contact = contact;
         contact.is_global = snapshot.role.is_global();
+        contact.geo = snapshot.geo.clone();
+        contact.latency_ms = snapshot.latency_ms;
+        contact.is_trusted = snapshot.is_trusted;
+        contact.pow_nonce = snapshot.pow_nonce;
+        contact.public_key = snapshot.public_key.clone();
         table.try_insert(contact);
+    }
+
+    /// Verify that the current routing entry matches a snapshot (Iteration 74, Phase 11).
+    ///
+    /// Used by rollback/recovery verification to prove exact logical restoration.
+    pub async fn peer_matches_snapshot(&self, snapshot: &DhtPeerSnapshot) -> bool {
+        let rt = self.routing_table.read().await;
+        let table = match rt.as_ref() {
+            Some(t) => t,
+            None => return false,
+        };
+
+        let node_id = NodeId::from_node_id_string(&snapshot.node_id);
+        let contact = match table.get_contact(&node_id) {
+            Some(c) => c,
+            None => return false,
+        };
+
+        contact.node_id_string == snapshot.node_id
+            && contact.address == snapshot.address
+            && contact.port == snapshot.port
+            && contact.is_global == snapshot.role.is_global()
+            && contact.is_trusted == snapshot.is_trusted
+            && contact.latency_ms == snapshot.latency_ms
+            && contact.pow_nonce == snapshot.pow_nonce
+            && contact.public_key == snapshot.public_key
+            // Geo comparison: check both None or both Some with same content
+            && match (&contact.geo, &snapshot.geo) {
+                (None, None) => true,
+                (Some(a), Some(b)) => a.country == b.country && a.region == b.region,
+                _ => false,
+            }
     }
 
     pub async fn update_peer_latency(&self, peer_node_id: &str, latency_ms: u32) {

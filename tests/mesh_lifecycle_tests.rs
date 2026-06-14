@@ -573,8 +573,7 @@ fn shutdown_report_default_zeroed() {
     assert_eq!(report.clean_tasks, 0);
     assert!(report.failed_tasks.is_empty());
     assert!(report.aborted_tasks.is_empty());
-    assert_eq!(report.drained_peer_children, 0);
-    assert_eq!(report.aborted_peer_children, 0);
+    assert!(report.accept_loop_report.is_none());
     assert_eq!(report.remaining_peers, 0);
     assert_eq!(report.peers_at_shutdown_start, 0);
     assert_eq!(report.drained_peer_sessions, 0);
@@ -705,8 +704,7 @@ async fn test_shutdown_report_fields_after_empty_shutdown() {
     assert_eq!(report.peers_at_shutdown_start, 0);
     assert_eq!(report.drained_peer_sessions, 0);
     assert_eq!(report.aborted_peer_sessions, 0);
-    assert_eq!(report.drained_peer_children, 0);
-    assert_eq!(report.aborted_peer_children, 0);
+    assert!(report.accept_loop_report.is_none());
     assert!(report.failed_tasks.is_empty());
     assert!(report.aborted_tasks.is_empty());
 }

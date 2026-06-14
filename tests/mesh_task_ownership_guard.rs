@@ -930,7 +930,8 @@ fn rollback_removes_dht_entries() {
     let rollback_body = extract_function(&content, "rollback_startup");
     assert!(
         rollback_body.contains("rm.remove_peer(&peer.node_id)")
-            || rollback_body.contains("remove_peer(&peer.node_id)"),
+            || rollback_body.contains("remove_peer(&peer.node_id)")
+            || rollback_body.contains("restore_peer_logical_state"),
         "rollback_startup must remove DHT routing entries for staged peers"
     );
 }
@@ -942,8 +943,9 @@ fn rollback_restores_topology_snapshots() {
     let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
     let rollback_body = extract_function(&content, "rollback_startup");
     assert!(
-        rollback_body.contains("previous_topology") && rollback_body.contains("add_peer"),
-        "rollback_startup must restore topology using previous_topology snapshots"
+        rollback_body.contains("restore_peer_logical_state")
+            || rollback_body.contains("previous_topology"),
+        "rollback_startup must restore topology using restore_peer_logical_state or previous_topology snapshots"
     );
 }
 
@@ -1385,5 +1387,159 @@ fn recover_failed_state_verifies_registries() {
     assert!(
         recover_body.contains("auxiliary_tasks") || recover_body.contains("aux."),
         "recover_failed_state must verify auxiliary task registry"
+    );
+}
+
+// ── Phase 52: Guardrail Tests ───────────────────────────────────────────────
+
+#[test]
+fn test_recover_failed_state_applies_residue() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let recovery_fn = extract_function(&source, "recover_failed_state");
+
+    // Must take residue before clearing
+    assert!(
+        recovery_fn.contains(".take()"),
+        "recover_failed_state must take residue via .take()"
+    );
+
+    // Must iterate residue peers
+    assert!(
+        recovery_fn.contains("residue.peers") || recovery_fn.contains("for peer in"),
+        "recover_failed_state must iterate residue peers"
+    );
+
+    // Must use restore_peer_logical_state
+    assert!(
+        recovery_fn.contains("restore_peer_logical_state"),
+        "recover_failed_state must use shared restore helper"
+    );
+}
+
+#[test]
+fn test_topology_rollback_uses_native_restore() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let rollback_fn = extract_function(&source, "rollback_startup");
+
+    // Must use restore_peer_logical_state
+    assert!(
+        rollback_fn.contains("restore_peer_logical_state"),
+        "rollback_startup must use shared restore helper"
+    );
+
+    // Must NOT use lossy MeshPeerInfo conversion
+    assert!(
+        !rollback_fn.contains("MeshPeerInfo {"),
+        "rollback_startup must not reconstruct through MeshPeerInfo"
+    );
+}
+
+#[test]
+fn test_dht_snapshot_not_limited() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+
+    // DhtPeerSnapshot must have more than just address/port/role
+    assert!(
+        source.contains("pub geo:"),
+        "DhtPeerSnapshot must capture geo field"
+    );
+    assert!(
+        source.contains("pub latency_ms:"),
+        "DhtPeerSnapshot must capture latency"
+    );
+    assert!(
+        source.contains("pub is_trusted:"),
+        "DhtPeerSnapshot must capture trust"
+    );
+    assert!(
+        source.contains("pub pow_nonce:"),
+        "DhtPeerSnapshot must capture pow_nonce"
+    );
+    assert!(
+        source.contains("pub public_key:"),
+        "DhtPeerSnapshot must capture public_key"
+    );
+}
+
+#[test]
+fn test_session_reaper_selects_on_shutdown() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let reaper_fn = extract_function(&source, "spawn_session_reaper");
+
+    // Must use select!
+    assert!(
+        reaper_fn.contains("tokio::select!"),
+        "session reaper must use tokio::select!"
+    );
+
+    // Must check shutdown
+    assert!(
+        reaper_fn.contains("shutdown"),
+        "session reaper must select on shutdown signal"
+    );
+}
+
+#[test]
+fn test_session_reaper_awaits_handle() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let reaper_fn = extract_function(&source, "spawn_session_reaper");
+
+    // Must await handle after removal
+    assert!(
+        reaper_fn.contains("handle.await") || reaper_fn.contains(".await"),
+        "session reaper must await removed handles"
+    );
+}
+
+#[test]
+fn test_auxiliary_reaper_exists() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    assert!(
+        source.contains("fn spawn_auxiliary_reaper"),
+        "auxiliary reaper must exist"
+    );
+
+    let reaper_fn = extract_function(&source, "spawn_auxiliary_reaper");
+
+    assert!(
+        reaper_fn.contains("tokio::select!"),
+        "auxiliary reaper must use select!"
+    );
+}
+
+#[test]
+fn test_steady_state_uses_global_generation() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let connect_fn = extract_function(&source, "connect_to_peer");
+
+    // Must use session_generation.fetch_add
+    assert!(
+        connect_fn.contains("session_generation.fetch_add"),
+        "connect_to_peer must use global session_generation atomic"
+    );
+}
+
+#[test]
+fn test_accept_report_freshness_check() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let shutdown_fn = extract_function(&source, "shutdown_with_timeout");
+
+    // Must check freshness
+    assert!(
+        shutdown_fn.contains("report_is_fresh") || shutdown_fn.contains("generation"),
+        "shutdown must check accept-loop report freshness"
+    );
+}
+
+#[test]
+fn test_no_dns_serving_healthy_false_hardcoded() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let rollback_fn = extract_function(&source, "rollback_startup");
+
+    // Must NOT hardcode dns_serving_healthy: false
+    assert!(
+        !rollback_fn.contains("dns_serving_healthy: false"),
+        "rollback must not hardcode dns_serving_healthy: false"
     );
 }

@@ -1,4 +1,4 @@
-//! Mesh transport lifecycle types (Iteration 68, 70, 71, 73).
+//! Mesh transport lifecycle types (Iteration 68, 70, 71, 73, 74).
 //!
 //! Defines the state machine, task classification, startup staging,
 //! and shutdown reporting types used to manage mesh transport lifecycle
@@ -60,6 +60,12 @@ pub struct MeshTaskId(pub u64);
 impl Default for MeshTaskId {
     fn default() -> Self {
         Self(0)
+    }
+}
+
+impl fmt::Display for MeshTaskId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
@@ -256,10 +262,9 @@ pub struct MeshShutdownReport {
     pub failed_tasks: Vec<MeshTaskExit>,
     /// Tasks that were forcibly aborted.
     pub aborted_tasks: Vec<MeshTaskExit>,
-    /// Number of bounded peer children that drained cleanly.
-    pub drained_peer_children: usize,
-    /// Number of bounded peer children that were aborted.
-    pub aborted_peer_children: usize,
+    /// Accept-loop report, if available and from the current generation.
+    /// `None` means the report was stale or unavailable.
+    pub accept_loop_report: Option<MeshAcceptLoopReport>,
     /// Number of peers remaining after shutdown (should be zero for clean shutdown).
     pub remaining_peers: usize,
     /// Number of peers present at shutdown start (before drain).
@@ -278,8 +283,7 @@ impl Default for MeshShutdownReport {
             clean_tasks: 0,
             failed_tasks: Vec::new(),
             aborted_tasks: Vec::new(),
-            drained_peer_children: 0,
-            aborted_peer_children: 0,
+            accept_loop_report: None,
             remaining_peers: 0,
             peers_at_shutdown_start: 0,
             drained_peer_sessions: 0,
@@ -518,26 +522,35 @@ pub enum DhtPeerMutation {
     None,
     /// A new routing entry was created for this peer.
     Created,
-    /// An existing routing entry was replaced; contains the prior state for restoration.
-    Replaced(DhtPeerSnapshot),
-    /// An existing routing entry was updated in-place; contains the prior state for restoration.
-    UpdatedInPlace(DhtPeerSnapshot),
+    /// The peer was present before; the previous contact is preserved for restoration.
+    /// Covers both replacement and in-place update semantics (Iteration 74).
+    Previous(DhtPeerSnapshot),
 }
 
-/// Snapshot of a peer's DHT routing state before a startup mutation.
+/// Complete snapshot of a DHT peer's routing state before mutation.
 ///
-/// Used by `DhtPeerMutation::Replaced` and `DhtPeerMutation::UpdatedInPlace`
-/// to enable precise rollback (Iteration 73, Phase 5).
+/// Stores all mutable fields from `PeerContact` for exact restoration
+/// on rollback (Iteration 74, Phase 9).
 #[derive(Debug, Clone)]
 pub struct DhtPeerSnapshot {
-    /// The node ID in the DHT routing table.
+    /// Node ID string for routing table key.
     pub node_id: String,
-    /// The address recorded in the routing entry.
+    /// Network address.
     pub address: String,
-    /// The port recorded in the routing entry.
+    /// Port number.
     pub port: u16,
-    /// The role recorded in the routing entry.
+    /// Node role (Global/Edge).
     pub role: crate::config::MeshNodeRole,
+    /// Geographic routing info.
+    pub geo: Option<crate::dht::routing::contact::GeoInfo>,
+    /// Latency measurement in milliseconds.
+    pub latency_ms: Option<u32>,
+    /// Whether the node is trusted.
+    pub is_trusted: bool,
+    /// Proof-of-work nonce (edge nodes).
+    pub pow_nonce: Option<u64>,
+    /// Public key bytes.
+    pub public_key: Option<Vec<u8>>,
 }
 
 /// Metadata for a peer session exit, used by the session reaper (Iteration 73, Phase 15-16).
@@ -609,6 +622,20 @@ pub enum AuxiliaryTaskKind {
     Other,
 }
 
+/// Exit event from an auxiliary task (Iteration 74, Phase 20).
+///
+/// Published to the auxiliary reaper when an auxiliary task completes,
+/// triggering removal from the `auxiliary_tasks` registry.
+#[derive(Debug, Clone)]
+pub struct AuxiliaryTaskExit {
+    /// Unique identifier of the completed auxiliary task.
+    pub task_id: MeshTaskId,
+    /// Optional session ID linking this task to a peer session.
+    pub session_id: Option<String>,
+    /// Exit reason.
+    pub reason: MeshTaskExitReason,
+}
+
 /// Retained metadata from an incomplete startup rollback (Iteration 73, Phase 8).
 ///
 /// When `rollback_and_return()` encounters errors, the `MeshStartupStage` is
@@ -652,6 +679,26 @@ impl RecoveryVerification {
     pub fn is_clean(&self) -> bool {
         self.issues.is_empty()
     }
+}
+
+/// Internal report of recovery outcomes (Iteration 74, Phase 35).
+///
+/// Used for structured recovery accounting and testing. The public API
+/// (`recover_failed_state`) returns `Result<(), MeshTransportError>`.
+#[derive(Debug, Clone, Default)]
+pub struct RecoveryReport {
+    /// Number of tasks joined during recovery.
+    pub tasks_joined: usize,
+    /// Number of peer sessions joined.
+    pub sessions_joined: usize,
+    /// Number of auxiliary tasks joined.
+    pub auxiliary_joined: usize,
+    /// Number of topology entries restored from residue.
+    pub topology_restored: usize,
+    /// Number of DHT entries restored from residue.
+    pub dht_restored: usize,
+    /// Errors encountered during recovery.
+    pub errors: Vec<String>,
 }
 
 #[cfg(test)]
@@ -830,8 +877,7 @@ mod tests {
         assert_eq!(report.clean_tasks, 0);
         assert!(report.failed_tasks.is_empty());
         assert!(report.aborted_tasks.is_empty());
-        assert_eq!(report.drained_peer_children, 0);
-        assert_eq!(report.aborted_peer_children, 0);
+        assert!(report.accept_loop_report.is_none());
         assert_eq!(report.remaining_peers, 0);
         assert_eq!(report.peers_at_shutdown_start, 0);
         assert_eq!(report.drained_peer_sessions, 0);
@@ -916,12 +962,25 @@ mod tests {
             address: "1.2.3.4:443".to_string(),
             port: 443,
             role: crate::config::MeshNodeRole::EDGE,
+            geo: None,
+            latency_ms: Some(15),
+            is_trusted: true,
+            pow_nonce: Some(42),
+            public_key: Some(vec![1, 2, 3]),
         };
-        let replaced = DhtPeerMutation::Replaced(snapshot.clone());
-        assert!(matches!(replaced, DhtPeerMutation::Replaced(_)));
+        let previous = DhtPeerMutation::Previous(snapshot.clone());
+        assert!(matches!(previous, DhtPeerMutation::Previous(_)));
 
-        let updated = DhtPeerMutation::UpdatedInPlace(snapshot);
-        assert!(matches!(updated, DhtPeerMutation::UpdatedInPlace(_)));
+        if let DhtPeerMutation::Previous(s) = previous {
+            assert_eq!(s.node_id, "node-1");
+            assert_eq!(s.address, "1.2.3.4:443");
+            assert_eq!(s.port, 443);
+            assert_eq!(s.latency_ms, Some(15));
+            assert!(s.is_trusted);
+            assert_eq!(s.pow_nonce, Some(42));
+        } else {
+            panic!("Expected Previous variant");
+        }
     }
 
     #[test]
