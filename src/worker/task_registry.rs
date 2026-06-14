@@ -28,6 +28,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures::FutureExt;
+#[cfg(feature = "mesh")]
+use synvoid_mesh::lifecycle::MeshTaskExit;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
@@ -85,12 +87,17 @@ pub enum WorkerShutdownCause {
     ServerExitedUnexpectedly(NamedTaskExit),
     ServerStoppedForShutdown,
     CriticalTaskExit(NamedTaskExit),
+    /// A critical mesh service exited unexpectedly.
+    #[cfg(feature = "mesh")]
+    MeshServiceExit(MeshTaskExit),
     SupervisorShutdown,
     SupervisorDisconnected,
     RegistryExitChannelClosed,
     ExternalStop,
     RunningFlagCleared,
-    WorkerResize { worker_threads: usize },
+    WorkerResize {
+        worker_threads: usize,
+    },
 }
 
 /// Typed outcome from the supervision loop.
@@ -115,6 +122,8 @@ impl WorkerShutdownCause {
             Self::ServerExitedUnexpectedly(_) => true,
             Self::ServerStoppedForShutdown => false,
             Self::CriticalTaskExit(_) => true,
+            #[cfg(feature = "mesh")]
+            Self::MeshServiceExit(_) => true,
             Self::SupervisorShutdown => false,
             Self::SupervisorDisconnected => true,
             Self::RegistryExitChannelClosed => true,
@@ -138,7 +147,16 @@ impl WorkerShutdownCause {
             Self::CriticalTaskExit(_)
                 | Self::ServerExitedUnexpectedly(_)
                 | Self::RegistryExitChannelClosed
-        )
+        ) || {
+            #[cfg(feature = "mesh")]
+            {
+                matches!(self, Self::MeshServiceExit(_))
+            }
+            #[cfg(not(feature = "mesh"))]
+            {
+                false
+            }
+        }
     }
 
     pub fn is_expected(&self) -> bool {
@@ -166,6 +184,10 @@ impl fmt::Display for WorkerShutdownCause {
             Self::ServerStoppedForShutdown => write!(f, "server_stopped_for_shutdown"),
             Self::CriticalTaskExit(exit) => {
                 write!(f, "critical_task_exit: {} ({})", exit.name, exit.reason)
+            }
+            #[cfg(feature = "mesh")]
+            Self::MeshServiceExit(exit) => {
+                write!(f, "mesh_service_exit: {} ({})", exit.name, exit.reason)
             }
             Self::SupervisorShutdown => write!(f, "supervisor_shutdown"),
             Self::SupervisorDisconnected => write!(f, "supervisor_disconnected"),

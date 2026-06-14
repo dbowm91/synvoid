@@ -2,7 +2,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use synvoid_mesh::lifecycle::{
-    MeshLifecycleState, MeshShutdownReport, MeshTaskClass, MeshTaskExit, MeshTaskExitReason,
+    MeshLifecycleState, MeshShutdownReport, MeshStartupPolicy, MeshStartupReport, MeshTaskClass,
+    MeshTaskExit, MeshTaskExitReason, MeshTaskId,
 };
 use synvoid_mesh::task_group::MeshTaskGroup;
 
@@ -296,7 +297,8 @@ async fn task_group_clean_completion_before_shutdown() {
 
     let exits = group.join_all(Duration::from_secs(5)).await;
     assert_eq!(exits.len(), 1);
-    assert_eq!(exits[0].reason, MeshTaskExitReason::CleanCompletion);
+    // Critical services completing before shutdown is UnexpectedCompletion
+    assert_eq!(exits[0].reason, MeshTaskExitReason::UnexpectedCompletion);
 }
 
 #[tokio::test]
@@ -365,6 +367,7 @@ async fn task_group_multiple_task_types_join_order() {
 fn exit_fatal_for_critical_service() {
     // UnexpectedCompletion is fatal for critical tasks
     let exit = MeshTaskExit {
+        id: MeshTaskId(0),
         name: "server",
         class: MeshTaskClass::CriticalService,
         reason: MeshTaskExitReason::UnexpectedCompletion,
@@ -373,6 +376,7 @@ fn exit_fatal_for_critical_service() {
 
     // Error is fatal for critical tasks
     let exit = MeshTaskExit {
+        id: MeshTaskId(0),
         name: "server",
         class: MeshTaskClass::CriticalService,
         reason: MeshTaskExitReason::Error("bind failed".into()),
@@ -381,6 +385,7 @@ fn exit_fatal_for_critical_service() {
 
     // Panic is fatal for critical tasks
     let exit = MeshTaskExit {
+        id: MeshTaskId(0),
         name: "server",
         class: MeshTaskClass::CriticalService,
         reason: MeshTaskExitReason::Panic("overflow".into()),
@@ -389,6 +394,7 @@ fn exit_fatal_for_critical_service() {
 
     // CleanCompletion is NOT fatal for critical tasks
     let exit = MeshTaskExit {
+        id: MeshTaskId(0),
         name: "server",
         class: MeshTaskClass::CriticalService,
         reason: MeshTaskExitReason::CleanCompletion,
@@ -397,6 +403,7 @@ fn exit_fatal_for_critical_service() {
 
     // Cancelled is NOT fatal for critical tasks
     let exit = MeshTaskExit {
+        id: MeshTaskId(0),
         name: "server",
         class: MeshTaskClass::CriticalService,
         reason: MeshTaskExitReason::Cancelled,
@@ -405,6 +412,7 @@ fn exit_fatal_for_critical_service() {
 
     // Aborted is NOT fatal for critical tasks
     let exit = MeshTaskExit {
+        id: MeshTaskId(0),
         name: "server",
         class: MeshTaskClass::CriticalService,
         reason: MeshTaskExitReason::Aborted,
@@ -416,6 +424,7 @@ fn exit_fatal_for_critical_service() {
 fn exit_fatal_for_non_critical_never() {
     // UnexpectedCompletion is not fatal for non-critical tasks
     let exit = MeshTaskExit {
+        id: MeshTaskId(0),
         name: "bg_sync",
         class: MeshTaskClass::RestartableBackground,
         reason: MeshTaskExitReason::UnexpectedCompletion,
@@ -424,6 +433,7 @@ fn exit_fatal_for_non_critical_never() {
 
     // Error is not fatal for non-critical tasks
     let exit = MeshTaskExit {
+        id: MeshTaskId(0),
         name: "child_task",
         class: MeshTaskClass::BoundedChild,
         reason: MeshTaskExitReason::Error("oops".into()),
@@ -432,6 +442,7 @@ fn exit_fatal_for_non_critical_never() {
 
     // Panic is not fatal for non-critical tasks
     let exit = MeshTaskExit {
+        id: MeshTaskId(0),
         name: "startup",
         class: MeshTaskClass::OneShotStartup,
         reason: MeshTaskExitReason::Panic("init failed".into()),
@@ -443,6 +454,7 @@ fn exit_fatal_for_non_critical_never() {
 fn exit_pre_shutdown_before_shutdown() {
     // Before shutdown (shutdown_started=false): non-cancelled exits are pre-shutdown
     let exit = MeshTaskExit {
+        id: MeshTaskId(0),
         name: "task",
         class: MeshTaskClass::CriticalService,
         reason: MeshTaskExitReason::UnexpectedCompletion,
@@ -450,6 +462,7 @@ fn exit_pre_shutdown_before_shutdown() {
     assert!(exit.is_pre_shutdown(false));
 
     let exit = MeshTaskExit {
+        id: MeshTaskId(0),
         name: "task",
         class: MeshTaskClass::CriticalService,
         reason: MeshTaskExitReason::CleanCompletion,
@@ -457,6 +470,7 @@ fn exit_pre_shutdown_before_shutdown() {
     assert!(exit.is_pre_shutdown(false));
 
     let exit = MeshTaskExit {
+        id: MeshTaskId(0),
         name: "task",
         class: MeshTaskClass::CriticalService,
         reason: MeshTaskExitReason::Error("fail".into()),
@@ -464,6 +478,7 @@ fn exit_pre_shutdown_before_shutdown() {
     assert!(exit.is_pre_shutdown(false));
 
     let exit = MeshTaskExit {
+        id: MeshTaskId(0),
         name: "task",
         class: MeshTaskClass::CriticalService,
         reason: MeshTaskExitReason::Panic("boom".into()),
@@ -472,6 +487,7 @@ fn exit_pre_shutdown_before_shutdown() {
 
     // Cancelled is NOT pre-shutdown even before shutdown signal
     let exit = MeshTaskExit {
+        id: MeshTaskId(0),
         name: "task",
         class: MeshTaskClass::CriticalService,
         reason: MeshTaskExitReason::Cancelled,
@@ -483,6 +499,7 @@ fn exit_pre_shutdown_before_shutdown() {
 fn exit_pre_shutdown_after_shutdown() {
     // After shutdown (shutdown_started=true): only UnexpectedCompletion is pre-shutdown
     let exit = MeshTaskExit {
+        id: MeshTaskId(0),
         name: "task",
         class: MeshTaskClass::CriticalService,
         reason: MeshTaskExitReason::UnexpectedCompletion,
@@ -491,6 +508,7 @@ fn exit_pre_shutdown_after_shutdown() {
 
     // CleanCompletion after shutdown is NOT pre-shutdown
     let exit = MeshTaskExit {
+        id: MeshTaskId(0),
         name: "task",
         class: MeshTaskClass::CriticalService,
         reason: MeshTaskExitReason::CleanCompletion,
@@ -499,6 +517,7 @@ fn exit_pre_shutdown_after_shutdown() {
 
     // Error after shutdown is NOT pre-shutdown
     let exit = MeshTaskExit {
+        id: MeshTaskId(0),
         name: "task",
         class: MeshTaskClass::CriticalService,
         reason: MeshTaskExitReason::Error("timeout".into()),
@@ -507,6 +526,7 @@ fn exit_pre_shutdown_after_shutdown() {
 
     // Panic after shutdown is NOT pre-shutdown
     let exit = MeshTaskExit {
+        id: MeshTaskId(0),
         name: "task",
         class: MeshTaskClass::CriticalService,
         reason: MeshTaskExitReason::Panic("segfault".into()),
@@ -515,6 +535,7 @@ fn exit_pre_shutdown_after_shutdown() {
 
     // Cancelled after shutdown is NOT pre-shutdown
     let exit = MeshTaskExit {
+        id: MeshTaskId(0),
         name: "task",
         class: MeshTaskClass::CriticalService,
         reason: MeshTaskExitReason::Cancelled,
@@ -523,6 +544,7 @@ fn exit_pre_shutdown_after_shutdown() {
 
     // Aborted after shutdown is NOT pre-shutdown
     let exit = MeshTaskExit {
+        id: MeshTaskId(0),
         name: "task",
         class: MeshTaskClass::CriticalService,
         reason: MeshTaskExitReason::Aborted,
@@ -541,4 +563,65 @@ fn shutdown_report_default_zeroed() {
     assert_eq!(report.drained_peer_children, 0);
     assert_eq!(report.aborted_peer_children, 0);
     assert_eq!(report.remaining_peers, 0);
+    assert_eq!(report.peers_at_shutdown_start, 0);
+    assert_eq!(report.drained_peer_sessions, 0);
+    assert_eq!(report.aborted_peer_sessions, 0);
+}
+
+// ── New Iteration Tests ──────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_mesh_task_exit_dedup() {
+    let mut group = MeshTaskGroup::new();
+    let mut exit_rx = group.subscribe_exits();
+
+    group.spawn_critical("dedup_task", async {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    });
+
+    // Wait for the task to finish and emit its exit event.
+    let exit = tokio::time::timeout(Duration::from_secs(5), exit_rx.recv())
+        .await
+        .expect("timeout waiting for exit event")
+        .expect("exit channel closed");
+
+    // The broadcast and join should return the same task ID.
+    let exits = group.join_all(Duration::from_secs(5)).await;
+    assert_eq!(exits.len(), 1);
+    assert_eq!(exit.id, exits[0].id);
+    assert_eq!(exit.name, exits[0].name);
+    assert_eq!(exit.class, exits[0].class);
+}
+
+#[test]
+fn test_mesh_startup_policy_defaults() {
+    let policy = MeshStartupPolicy::default();
+    assert!(!policy.require_seed_connectivity);
+    assert!(!policy.require_configured_peers);
+    assert!(!policy.require_dht_bootstrap);
+}
+
+#[test]
+fn test_mesh_startup_report_default() {
+    let report = MeshStartupReport::default();
+    assert!(report.degraded_reasons.is_empty());
+    assert_eq!(report.connected_seed_count, 0);
+    assert_eq!(report.connected_configured_peer_count, 0);
+    assert!(!report.dht_bootstrapped);
+}
+
+#[test]
+fn test_shutdown_report_extended_fields() {
+    let report = MeshShutdownReport::default();
+    assert_eq!(report.peers_at_shutdown_start, 0);
+    assert_eq!(report.drained_peer_sessions, 0);
+    assert_eq!(report.aborted_peer_sessions, 0);
+
+    let mut report = MeshShutdownReport::default();
+    report.peers_at_shutdown_start = 5;
+    report.drained_peer_sessions = 4;
+    report.aborted_peer_sessions = 1;
+    assert_eq!(report.peers_at_shutdown_start, 5);
+    assert_eq!(report.drained_peer_sessions, 4);
+    assert_eq!(report.aborted_peer_sessions, 1);
 }

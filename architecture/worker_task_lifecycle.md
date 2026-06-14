@@ -676,7 +676,7 @@ After a primary cause is selected, secondary task exits are classified as expect
 - 8 new tests in `tests/worker_supervision_control_flow.rs` covering lifecycle transition failures, secondary exit classification, server exit detail preservation, and primary cause immutability
 - 4 new guardrail checks in `tests/background_task_ownership_guard.rs` verifying supervision side-effect freedom, helper encapsulation, lifecycle error propagation, and server exit detail preservation
 
-## Mesh Transport Lifecycle (Iteration 68)
+## Mesh Transport Lifecycle (Iterations 68–69)
 
 The mesh transport now uses structured lifecycle management:
 
@@ -691,27 +691,49 @@ The mesh transport now uses structured lifecycle management:
 - `Starting -> Failed -> Stopped` (rollback on startup failure)
 - `Running -> Failed -> Stopping/Stopped`
 
-### Transactional Startup
-Startup proceeds in phases:
+### Transactional Startup (Iteration 69: Staged)
+Startup proceeds in phases using `MeshStartupStage`:
 1. Validate state and configuration
-2. Create fresh MeshTaskGroup
-3. Start critical loops
-4. Bootstrap seeds/peers/DHT
-5. Start background loops
-6. Commit lifecycle state
+2. Create fresh `MeshStartupStage` and `MeshTaskGroup`
+3. Start critical loops (staged)
+4. Bootstrap seeds/peers/DHT (policy-gated via `MeshStartupPolicy`)
+5. Start background loops (staged)
+6. Commit lifecycle state; stage hands off to running task group
 
-If any phase fails, rollback clears all started tasks.
+If any phase fails, `rollback_startup()` cancels and joins all staged tasks — no task group is dropped without cancellation and join.
 
-### Bounded Shutdown
+### MeshStartupPolicy
+Controls required vs optional bootstrap:
+- `require_seed_connectivity` (default false)
+- `require_configured_peers` (default false)
+- `require_dht_bootstrap` (default false)
+
+Default is all-optional (degraded startup allowed). A required bootstrap failure triggers rollback.
+
+### Bounded Shutdown (Iteration 69: Truthful Reporting)
 `shutdown_with_timeout(timeout)` returns `MeshShutdownReport`:
-1. Transition to Stopping
-2. Signal all tasks via watch channel
-3. Close QUIC connections
-4. Join tasks with timeout, aborting stragglers
-5. Transition to Stopped
+1. Capture `peers_at_shutdown_start`
+2. Transition to Stopping
+3. Signal all tasks via watch channel
+4. Close QUIC connections
+5. Drain peer sessions (`peer_sessions: Arc<Mutex<JoinSet<()>>>`)
+6. Drain handshake children
+7. Join tasks with timeout, aborting stragglers
+8. Measure `remaining_peers` after drain
+9. Transition to Stopped
 
-### Peer Child Bounding
-- `max_concurrent_handshakes` (default 32) limits concurrent peer handshakes
-- `handshake_timeout_secs` (default 10) bounds individual handshake duration
-- Accept loop rejects connections when at capacity
-- Shutdown drains children with 10s timeout before abort
+### Peer Session Ownership (Iteration 69)
+- Handshake children: bounded, short-lived, semaphore-limited (in `JoinSet`)
+- Peer sessions: long-lived, stored in `peer_sessions: Arc<Mutex<JoinSet<()>>>`
+- Shutdown drains sessions after closing connections
+
+### MeshServiceExit Variant (Iteration 69)
+`WorkerShutdownCause` gains `MeshServiceExit(MeshTaskExit)` for mesh task failures. Fatal when the mesh task is `CriticalService` with `Error`, `Panic`, or `UnexpectedCompletion`. Worker supervision observes mesh exits via stable `subscribe_exits()` on `ManagedMeshService`.
+
+### Mesh Shutdown Ordering (Iteration 69)
+Mesh is drained before worker persistence/finalization:
+1. Mesh `shutdown_with_timeout()` runs (stops mesh tasks, closes connections, drains sessions)
+2. Worker stops CPU offload
+3. Worker drains request children
+4. Worker flushes persistent state
+5. Worker awaits critical services

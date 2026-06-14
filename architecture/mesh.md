@@ -132,16 +132,20 @@ crates/synvoid-mesh/src/mesh/kem/
 
 ## Lifecycle Management
 
-Mesh transport uses structured lifecycle management (Iteration 68):
+Mesh transport uses structured lifecycle management (Iterations 68–69):
 
-- `MeshTaskGroup` owns all spawned tasks with classification
+- `MeshTaskGroup` owns all spawned tasks with classification; `new_with_forward(exit_tx)` creates groups that forward exits to a stable broadcast sender on `MeshTransport`
 - `MeshLifecycleState` provides a state machine (Stopped/Starting/Running/Stopping/Failed)
-- Transactional startup with rollback on failure
-- Bounded shutdown with `MeshShutdownReport`
+- Transactional startup via `MeshStartupStage` with rollback on failure — all staged tasks are cancelled and joined before returning to Stopped
+- `MeshStartupPolicy` controls required vs optional bootstrap (seed connectivity, configured peers, DHT bootstrap); default is all-optional (degraded startup allowed)
+- `MeshStartupReport` communicates bootstrap outcome (degraded, peers connected, DHT status)
+- Bounded shutdown with truthful `MeshShutdownReport` — `peers_at_shutdown_start`, `remaining_peers`, `drained_peer_sessions`, `aborted_peer_sessions` reflect actual state
+- Peer sessions (`peer_sessions: Arc<Mutex<JoinSet<()>>>`) are owned separately from handshake children; shutdown drains sessions after closing connections
+- `mesh_exit_tx: broadcast::Sender<MeshTaskExit>` on `MeshTransport` survives task group replacement; `subscribe_exits()` is synchronous and valid before `start()`
 - Per-peer children bounded by `max_concurrent_handshakes`
 - All periodic loops are cancellation-aware via `watch::Receiver<bool>`
 
-See `architecture/mesh_transport_lifecycle.md` for the full task inventory.
+See `architecture/mesh_transport_lifecycle.md` for the full task inventory and iteration details.
 
 ---
 

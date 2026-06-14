@@ -8,6 +8,16 @@ use std::fmt;
 
 use crate::transport_core::MeshTransportError;
 
+/// Unique identifier for a mesh task, assigned at spawn time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MeshTaskId(pub u64);
+
+impl Default for MeshTaskId {
+    fn default() -> Self {
+        Self(0)
+    }
+}
+
 /// Classification of mesh tasks by criticality and restart behavior.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MeshTaskClass {
@@ -68,8 +78,10 @@ impl fmt::Display for MeshTaskExitReason {
 }
 
 /// Metadata for a mesh task exit event.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MeshTaskExit {
+    /// Unique identifier for the task, assigned at spawn time.
+    pub id: MeshTaskId,
     /// Static name identifying the task.
     pub name: &'static str,
     /// Classification of the task.
@@ -207,6 +219,12 @@ pub struct MeshShutdownReport {
     pub aborted_peer_children: usize,
     /// Number of peers remaining after shutdown (should be zero for clean shutdown).
     pub remaining_peers: usize,
+    /// Number of peers present at shutdown start (before drain).
+    pub peers_at_shutdown_start: usize,
+    /// Number of peer sessions that drained cleanly.
+    pub drained_peer_sessions: usize,
+    /// Number of peer sessions that were forcibly aborted.
+    pub aborted_peer_sessions: usize,
 }
 
 impl Default for MeshShutdownReport {
@@ -218,8 +236,45 @@ impl Default for MeshShutdownReport {
             drained_peer_children: 0,
             aborted_peer_children: 0,
             remaining_peers: 0,
+            peers_at_shutdown_start: 0,
+            drained_peer_sessions: 0,
+            aborted_peer_sessions: 0,
         }
     }
+}
+
+/// Policy for classifying bootstrap failures during mesh startup.
+#[derive(Debug, Clone)]
+pub struct MeshStartupPolicy {
+    /// If true, seed bootstrap failure is fatal (required for non-genesis nodes).
+    pub require_seed_connectivity: bool,
+    /// If true, configured peer connection failure is fatal.
+    pub require_configured_peers: bool,
+    /// If true, DHT bootstrap failure is fatal (required for node role).
+    pub require_dht_bootstrap: bool,
+}
+
+impl Default for MeshStartupPolicy {
+    fn default() -> Self {
+        Self {
+            require_seed_connectivity: false,
+            require_configured_peers: false,
+            require_dht_bootstrap: false,
+        }
+    }
+}
+
+/// Report of mesh startup outcomes.
+#[derive(Debug, Clone, Default)]
+pub struct MeshStartupReport {
+    /// Non-fatal reasons the mesh is in a degraded state.
+    pub degraded_reasons: Vec<String>,
+    /// Number of seeds successfully connected.
+    pub connected_seed_count: usize,
+    /// Number of configured peers successfully connected.
+    pub connected_configured_peer_count: usize,
+    /// Whether DHT bootstrap succeeded.
+    pub dht_bootstrapped: bool,
 }
 
 #[cfg(test)]
@@ -313,6 +368,7 @@ mod tests {
     #[test]
     fn exit_fatal() {
         let exit = MeshTaskExit {
+            id: MeshTaskId(0),
             name: "server_run",
             class: MeshTaskClass::CriticalService,
             reason: MeshTaskExitReason::UnexpectedCompletion,
@@ -320,6 +376,7 @@ mod tests {
         assert!(exit.is_fatal());
 
         let exit = MeshTaskExit {
+            id: MeshTaskId(0),
             name: "server_run",
             class: MeshTaskClass::CriticalService,
             reason: MeshTaskExitReason::Error("bind failed".into()),
@@ -327,6 +384,7 @@ mod tests {
         assert!(exit.is_fatal());
 
         let exit = MeshTaskExit {
+            id: MeshTaskId(0),
             name: "server_run",
             class: MeshTaskClass::CriticalService,
             reason: MeshTaskExitReason::Panic("overflow".into()),
@@ -335,6 +393,7 @@ mod tests {
 
         // Non-critical task exits are never fatal
         let exit = MeshTaskExit {
+            id: MeshTaskId(0),
             name: "bg_sync",
             class: MeshTaskClass::RestartableBackground,
             reason: MeshTaskExitReason::UnexpectedCompletion,
@@ -343,6 +402,7 @@ mod tests {
 
         // Clean completion is never fatal
         let exit = MeshTaskExit {
+            id: MeshTaskId(0),
             name: "server_run",
             class: MeshTaskClass::CriticalService,
             reason: MeshTaskExitReason::CleanCompletion,
@@ -354,6 +414,7 @@ mod tests {
     fn exit_pre_shutdown() {
         // Before shutdown: non-cancelled exits are pre-shutdown
         let exit = MeshTaskExit {
+            id: MeshTaskId(0),
             name: "server_run",
             class: MeshTaskClass::CriticalService,
             reason: MeshTaskExitReason::UnexpectedCompletion,
@@ -361,6 +422,7 @@ mod tests {
         assert!(exit.is_pre_shutdown(false));
 
         let exit = MeshTaskExit {
+            id: MeshTaskId(0),
             name: "server_run",
             class: MeshTaskClass::CriticalService,
             reason: MeshTaskExitReason::Cancelled,
@@ -369,6 +431,7 @@ mod tests {
 
         // After shutdown: only UnexpectedCompletion is pre-shutdown
         let exit = MeshTaskExit {
+            id: MeshTaskId(0),
             name: "server_run",
             class: MeshTaskClass::CriticalService,
             reason: MeshTaskExitReason::UnexpectedCompletion,
@@ -376,6 +439,7 @@ mod tests {
         assert!(exit.is_pre_shutdown(true));
 
         let exit = MeshTaskExit {
+            id: MeshTaskId(0),
             name: "server_run",
             class: MeshTaskClass::CriticalService,
             reason: MeshTaskExitReason::Error("timeout".into()),
@@ -392,6 +456,9 @@ mod tests {
         assert_eq!(report.drained_peer_children, 0);
         assert_eq!(report.aborted_peer_children, 0);
         assert_eq!(report.remaining_peers, 0);
+        assert_eq!(report.peers_at_shutdown_start, 0);
+        assert_eq!(report.drained_peer_sessions, 0);
+        assert_eq!(report.aborted_peer_sessions, 0);
     }
 
     #[test]

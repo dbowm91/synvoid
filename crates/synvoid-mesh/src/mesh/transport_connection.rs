@@ -74,6 +74,8 @@ impl MeshTransport {
             task_group: self.task_group.clone(),
             lifecycle_state: self.lifecycle_state.clone(),
             shutdown_started: self.shutdown_started.clone(),
+            mesh_exit_tx: self.mesh_exit_tx.clone(),
+            peer_sessions: self.peer_sessions.clone(),
         }
     }
 

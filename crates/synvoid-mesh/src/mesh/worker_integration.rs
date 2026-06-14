@@ -4,13 +4,11 @@
 //! from concrete mesh transport internals, and the `MeshFailureCause` type
 //! that maps mesh task failures into worker-level shutdown causes.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::broadcast;
 
 use crate::lifecycle::{MeshShutdownReport, MeshTaskExit};
-use crate::transport::MeshTransport;
 use crate::transport_core::MeshTransportError;
 
 /// Worker-facing trait for managing mesh transport lifecycle.
@@ -120,20 +118,13 @@ impl MeshFailureCause {
 }
 
 #[cfg(feature = "dns")]
-impl ManagedMeshService for Arc<MeshTransport> {
+impl ManagedMeshService for std::sync::Arc<crate::transport::MeshTransport> {
     fn subscribe_critical_exits(&self) -> broadcast::Receiver<MeshTaskExit> {
-        // Known limitation: the returned receiver is not wired to the
-        // task_group's exit channel. The proper fix is to add a dedicated
-        // broadcast::Sender<MeshTaskExit> field on MeshTransport at
-        // construction time (not behind the async task_group lock), so
-        // subscribe can be both sync and connected. This is addressed in
-        // the next iteration.
-        let (_, rx) = broadcast::channel(64);
-        rx
+        self.subscribe_exits()
     }
 
     async fn start(&self) -> Result<(), MeshTransportError> {
-        MeshTransport::start(self).await
+        crate::transport::MeshTransport::start(self).await
     }
 
     async fn shutdown(&self, timeout: Duration) -> MeshShutdownReport {
@@ -141,18 +132,20 @@ impl ManagedMeshService for Arc<MeshTransport> {
     }
 
     fn is_running(&self) -> bool {
-        *self.running.read()
+        let state = self.lifecycle_state.blocking_lock();
+        matches!(*state, crate::lifecycle::MeshLifecycleState::Running)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lifecycle::{MeshTaskClass, MeshTaskExitReason};
+    use crate::lifecycle::{MeshTaskClass, MeshTaskExitReason, MeshTaskId};
 
     #[test]
     fn failure_cause_task_name() {
         let exit = MeshTaskExit {
+            id: MeshTaskId(0),
             name: "server_run",
             class: MeshTaskClass::CriticalService,
             reason: MeshTaskExitReason::UnexpectedCompletion,
@@ -173,6 +166,7 @@ mod tests {
     #[test]
     fn failure_cause_exit_reason() {
         let exit = MeshTaskExit {
+            id: MeshTaskId(0),
             name: "server_run",
             class: MeshTaskClass::CriticalService,
             reason: MeshTaskExitReason::Panic("overflow".into()),
@@ -185,6 +179,7 @@ mod tests {
 
         let cause = MeshFailureCause::ShutdownTimeout {
             aborted_tasks: vec![MeshTaskExit {
+                id: MeshTaskId(0),
                 name: "bg_sync",
                 class: MeshTaskClass::RestartableBackground,
                 reason: MeshTaskExitReason::Aborted,
@@ -201,6 +196,7 @@ mod tests {
     fn failure_cause_is_fatal() {
         // Critical service exit with fatal reason
         let exit = MeshTaskExit {
+            id: MeshTaskId(0),
             name: "server_run",
             class: MeshTaskClass::CriticalService,
             reason: MeshTaskExitReason::UnexpectedCompletion,
@@ -210,6 +206,7 @@ mod tests {
 
         // Critical service exit with non-fatal reason
         let exit = MeshTaskExit {
+            id: MeshTaskId(0),
             name: "server_run",
             class: MeshTaskClass::CriticalService,
             reason: MeshTaskExitReason::CleanCompletion,
@@ -248,6 +245,7 @@ mod tests {
         }
 
         let exit = MeshTaskExit {
+            id: MeshTaskId(0),
             name: "datagram_listener",
             class: MeshTaskClass::CriticalService,
             reason: MeshTaskExitReason::Error("bind failed".into()),

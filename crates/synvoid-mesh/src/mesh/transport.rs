@@ -166,6 +166,8 @@ pub struct MeshTransport {
     pub(crate) task_group: Arc<tokio::sync::Mutex<MeshTaskGroup>>,
     pub(crate) lifecycle_state: Arc<tokio::sync::Mutex<MeshLifecycleState>>,
     pub(crate) shutdown_started: Arc<AtomicBool>,
+    pub(crate) mesh_exit_tx: broadcast::Sender<MeshTaskExit>,
+    pub(crate) peer_sessions: Arc<tokio::sync::Mutex<tokio::task::JoinSet<()>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -412,6 +414,8 @@ impl Clone for MeshTransport {
             task_group: self.task_group.clone(),
             lifecycle_state: self.lifecycle_state.clone(),
             shutdown_started: self.shutdown_started.clone(),
+            mesh_exit_tx: self.mesh_exit_tx.clone(),
+            peer_sessions: self.peer_sessions.clone(),
         }
     }
 }
@@ -748,6 +752,11 @@ impl MeshTransport {
             task_group: Arc::new(tokio::sync::Mutex::new(MeshTaskGroup::new())),
             lifecycle_state: Arc::new(tokio::sync::Mutex::new(MeshLifecycleState::Stopped)),
             shutdown_started: Arc::new(AtomicBool::new(false)),
+            mesh_exit_tx: {
+                let (tx, _) = broadcast::channel(64);
+                tx
+            },
+            peer_sessions: Arc::new(tokio::sync::Mutex::new(tokio::task::JoinSet::new())),
         }
     }
 
@@ -2031,7 +2040,7 @@ impl MeshTransport {
         }
 
         // Phase 2: Create fresh task group and shutdown state
-        let mut group = MeshTaskGroup::new();
+        let mut group = MeshTaskGroup::new_with_forward(self.mesh_exit_tx.clone());
         let shutdown_rx = group.shutdown_receiver();
         self.shutdown_started.store(false, Ordering::SeqCst);
 
@@ -2304,10 +2313,14 @@ impl MeshTransport {
 
         // Phase 9: Start QUIC accept loop
         if let Some(ref runtime) = self.runtime {
-            let incoming = runtime
-                .start_server()
-                .await
-                .map_err(|e| MeshTransportError::ConnectionFailed(e.to_string()))?;
+            let incoming = match runtime.start_server().await {
+                Ok(incoming) => incoming,
+                Err(e) => {
+                    // Rollback: cancel and join all spawned tasks
+                    self.rollback_startup(&mut group).await;
+                    return Err(MeshTransportError::ConnectionFailed(e.to_string()));
+                }
+            };
             let transport = Arc::new(self.clone_for_maintenance());
             let accept_shutdown = shutdown_rx.clone();
             group.spawn_critical("mesh_accept_loop", async move {
@@ -2337,6 +2350,16 @@ impl MeshTransport {
 
         tracing::info!("Mesh transport started (lifecycle: running)");
         Ok(())
+    }
+
+    /// Rollback a failed startup: cancel and join all staged tasks, then
+    /// transition lifecycle state to Failed.
+    async fn rollback_startup(&self, group: &mut MeshTaskGroup) {
+        tracing::warn!("Rolling back mesh startup");
+        group.begin_shutdown().await;
+        let _ = group.join_all(Duration::from_secs(5)).await;
+        let mut state = self.lifecycle_state.lock().await;
+        state.transition_to_failed();
     }
 
     #[allow(dead_code)]
@@ -2673,7 +2696,8 @@ impl MeshTransport {
 
         let transport = self.clone();
         let topo = self.topology.clone();
-        tokio::spawn(async move {
+        let mut sessions = self.peer_sessions.lock().await;
+        sessions.spawn(async move {
             transport
                 .peer_message_loop(session_id, peer_node_id, connection, topo)
                 .await;
@@ -2723,16 +2747,39 @@ impl MeshTransport {
                 .connection
                 .close(0u32.into(), b"Mesh shutdown");
         }
-        let remaining_peers = self.peer_connections.len();
+        let peers_at_shutdown_start = self.peer_connections.len();
         self.peer_connections.clear();
 
         // Join all tasks with timeout
         let mut group = self.task_group.lock().await;
         let exits = group.join_all(timeout).await;
 
+        // Drain peer sessions
+        let mut sessions = self.peer_sessions.lock().await;
+        let mut drained = 0;
+        let mut aborted = 0;
+        let session_timeout = Duration::from_secs(5);
+        while let Ok(Some(result)) =
+            tokio::time::timeout(session_timeout, sessions.join_next()).await
+        {
+            match result {
+                Ok(()) => {
+                    drained += 1;
+                }
+                Err(_) => {
+                    aborted += 1;
+                }
+            }
+        }
+        sessions.abort_all();
+        drop(sessions);
+
         // Build report
         let mut report = MeshShutdownReport::default();
-        report.remaining_peers = remaining_peers;
+        report.peers_at_shutdown_start = peers_at_shutdown_start;
+        report.remaining_peers = self.peer_connections.len();
+        report.drained_peer_sessions = drained;
+        report.aborted_peer_sessions = aborted;
         for exit in &exits {
             match exit.reason {
                 crate::lifecycle::MeshTaskExitReason::Aborted => {
@@ -2768,9 +2815,8 @@ impl MeshTransport {
     ///
     /// The worker composition root should subscribe before calling `start()`
     /// to avoid missing early critical exits.
-    pub async fn subscribe_exits(&self) -> broadcast::Receiver<MeshTaskExit> {
-        let group = self.task_group.lock().await;
-        group.subscribe_exits()
+    pub fn subscribe_exits(&self) -> broadcast::Receiver<MeshTaskExit> {
+        self.mesh_exit_tx.subscribe()
     }
 
     /// Returns the current lifecycle state.
@@ -3274,7 +3320,8 @@ impl MeshTransport {
         let conn = connection;
         let topo = self.topology.clone();
         let peer_node_id_for_loop = peer_node_id.clone();
-        tokio::spawn(async move {
+        let mut sessions = self.peer_sessions.lock().await;
+        sessions.spawn(async move {
             transport
                 .peer_message_loop(session_id.to_string(), peer_node_id_for_loop, conn, topo)
                 .await;

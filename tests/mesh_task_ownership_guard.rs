@@ -544,3 +544,96 @@ fn bare_spawns_in_transport_are_one_shots() {
         violations.join("\n")
     );
 }
+
+// ── Test 12: rollback_startup exists in transport.rs ─────────────────────────
+
+#[test]
+fn rollback_startup_exists() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        content.contains("fn rollback_startup"),
+        "transport.rs must contain rollback_startup function"
+    );
+}
+
+// ── Test 13: mesh_exit_tx field exists on MeshTransport ──────────────────────
+
+#[test]
+fn mesh_exit_tx_field_exists() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        content.contains("mesh_exit_tx:"),
+        "MeshTransport must have a mesh_exit_tx field"
+    );
+    assert!(
+        content.contains("broadcast::Sender<MeshTaskExit>"),
+        "mesh_exit_tx must be broadcast::Sender<MeshTaskExit>"
+    );
+}
+
+// ── Test 14: subscribe_exits is NOT async ────────────────────────────────────
+
+#[test]
+fn subscribe_exits_is_sync() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    // Find the subscribe_exits function and verify it's not async
+    let lines: Vec<&str> = content.lines().collect();
+    for (i, line) in lines.iter().enumerate() {
+        if line.contains("fn subscribe_exits") {
+            // Check the line does NOT contain "async"
+            assert!(
+                !line.contains("async"),
+                "subscribe_exits at line ~{} must not be async; found: {}",
+                i + 1,
+                line.trim()
+            );
+            return;
+        }
+    }
+    panic!("subscribe_exits function not found in transport.rs");
+}
+
+// ── Test 15: MeshTaskGroup has forward_tx field ──────────────────────────────
+
+#[test]
+fn forward_tx_in_task_group() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/task_group.rs");
+    assert!(
+        content.contains("forward_tx:"),
+        "MeshTaskGroup must have a forward_tx field"
+    );
+    assert!(
+        content.contains("new_with_forward"),
+        "MeshTaskGroup must have new_with_forward constructor"
+    );
+}
+
+// ── Test 16: peer_sessions field exists on MeshTransport ─────────────────────
+
+#[test]
+fn peer_sessions_field_exists() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        content.contains("peer_sessions:"),
+        "MeshTransport must have a peer_sessions field"
+    );
+    assert!(
+        content.contains("JoinSet"),
+        "peer_sessions must use JoinSet"
+    );
+}
+
+// ── Test 17: MeshServiceExit variant exists in WorkerShutdownCause ───────────
+
+#[test]
+fn mesh_service_exit_cause_exists() {
+    let content = read_file("src/worker/task_registry.rs");
+    assert!(
+        content.contains("MeshServiceExit"),
+        "WorkerShutdownCause must have MeshServiceExit variant"
+    );
+    assert!(
+        content.contains("synvoid_mesh::lifecycle::MeshTaskExit"),
+        "task_registry.rs must import MeshTaskExit from synvoid_mesh::lifecycle"
+    );
+}

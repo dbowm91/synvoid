@@ -355,7 +355,7 @@ revoke_genesis_key(public_key: &str)
 - Non-empty list = genesis key must be in the list
 - Key rotation tracked via `rotation_sequence` and `GenesisKeyTransition` DHT records
 
-## Mesh Transport Lifecycle (Iteration 68)
+## Mesh Transport Lifecycle (Iterations 68–69)
 
 ### Adding a New Background Task
 
@@ -384,10 +384,60 @@ group.spawn_background("task_name", async move {
 
 ### Lifecycle API
 
-- `MeshTransport::start()` — transactional startup
-- `MeshTransport::shutdown_with_timeout(timeout)` — bounded shutdown returning `MeshShutdownReport`
-- `MeshTransport::subscribe_exits()` — observe task exit events
+- `MeshTransport::start()` — staged transactional startup via `MeshStartupStage`
+- `MeshTransport::shutdown_with_timeout(timeout)` — bounded shutdown returning truthful `MeshShutdownReport`
+- `MeshTransport::subscribe_exits()` — stable exit subscription (valid before `start()`, survives task group replacement)
 - `MeshTransport::lifecycle_state()` — query current state
+- `MeshTransport::rollback_startup()` — cancel and join all staged tasks on post-spawn error
+
+### Staged Startup/Rollback
+
+`MeshStartupStage` owns every task and resource from a single startup attempt. On failure, `rollback_startup()` cancels and joins all staged tasks — no task group is dropped without cancellation and join. The transport returns to `Stopped` and can be restarted.
+
+### MeshStartupPolicy
+
+Controls required vs optional bootstrap:
+- `require_seed_connectivity` (default: false)
+- `require_configured_peers` (default: false)
+- `require_dht_bootstrap` (default: false)
+
+Default is all-optional (degraded startup allowed). A required failure triggers rollback.
+
+### MeshStartupReport
+
+Returned after startup:
+- `bootstrap_degraded: bool` — startup succeeded despite missing optional targets
+- `peers_connected: usize` — peers connected during startup
+- `dht_bootstrap_ok: bool` — DHT bootstrap status
+- `seed_attestation_ok: bool` — seed self-attestation status
+
+### Stable Exit Subscription
+
+`mesh_exit_tx: broadcast::Sender<MeshTaskExit>` on `MeshTransport` survives task group replacement. Task groups are created with `MeshTaskGroup::new_with_forward(exit_tx)` to forward exits to the stable sender. `subscribe_exits()` is synchronous and valid before `start()`.
+
+### Task ID/Dedup
+
+`MeshTaskId(u64)` assigned at spawn time. Broadcast delivery is for runtime observation only; join-returned exit is authoritative for shutdown reports. No duplicate accounting between broadcast and join.
+
+### Handshake/Session Ownership Split
+
+- Handshake children: bounded, short-lived, semaphore-limited (in `JoinSet`)
+- Peer sessions: long-lived, stored in `peer_sessions: Arc<Mutex<JoinSet<()>>>`
+- Shutdown drains peer sessions after closing connections
+
+### Truthful Shutdown Report
+
+`MeshShutdownReport` includes:
+- `peers_at_shutdown_start` — captured at shutdown begin
+- `remaining_peers` — measured after connection close/drain
+- `drained_peer_sessions` / `aborted_peer_sessions` — from session drain
+- `drained_handshake_children` / `aborted_handshake_children` — from accept loop
+
+### Worker Integration
+
+- `ManagedMeshService::subscribe_critical_exits()` delegates to stable `subscribe_exits()`
+- `is_running()` derives from `MeshLifecycleState`, not legacy boolean
+- `MeshServiceExit(MeshTaskExit)` variant on `WorkerShutdownCause` for mesh task failures
 
 ## Testing Commands
 

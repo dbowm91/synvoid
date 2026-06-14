@@ -6,20 +6,21 @@
 
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures::FutureExt;
 use tokio::sync::{broadcast, watch};
 
-use crate::lifecycle::{MeshTaskClass, MeshTaskExit, MeshTaskExitReason};
+use crate::lifecycle::{MeshTaskClass, MeshTaskExit, MeshTaskExitReason, MeshTaskId};
 
 /// A named mesh task with its join handle.
-struct NamedMeshTask {
-    name: &'static str,
-    class: MeshTaskClass,
-    handle: tokio::task::JoinHandle<()>,
+pub(crate) struct NamedMeshTask {
+    pub(crate) name: &'static str,
+    pub(crate) class: MeshTaskClass,
+    pub(crate) id: MeshTaskId,
+    pub(crate) handle: tokio::task::JoinHandle<MeshTaskExit>,
 }
 
 /// Mesh-local task group managing critical, background, and child tasks.
@@ -30,14 +31,15 @@ pub struct MeshTaskGroup {
     children: Vec<NamedMeshTask>,
     shutdown_started: Arc<AtomicBool>,
     exit_tx: broadcast::Sender<MeshTaskExit>,
-    exit_rx: broadcast::Receiver<MeshTaskExit>,
+    forward_tx: Option<broadcast::Sender<MeshTaskExit>>,
+    next_id: AtomicU64,
 }
 
 impl MeshTaskGroup {
     /// Creates a new task group with a fresh shutdown channel.
     pub fn new() -> Self {
         let (shutdown_tx, _) = watch::channel(false);
-        let (exit_tx, exit_rx) = broadcast::channel(64);
+        let (exit_tx, _) = broadcast::channel(64);
         Self {
             shutdown_tx,
             critical: Vec::new(),
@@ -45,7 +47,27 @@ impl MeshTaskGroup {
             children: Vec::new(),
             shutdown_started: Arc::new(AtomicBool::new(false)),
             exit_tx,
-            exit_rx,
+            forward_tx: None,
+            next_id: AtomicU64::new(0),
+        }
+    }
+
+    /// Creates a new task group that forwards exit events to an external sender.
+    ///
+    /// This allows a parent (e.g., `MeshTransport`) to maintain a stable
+    /// broadcast channel that survives task group replacements during restart.
+    pub fn new_with_forward(forward_tx: broadcast::Sender<MeshTaskExit>) -> Self {
+        let (shutdown_tx, _) = watch::channel(false);
+        let (exit_tx, _) = broadcast::channel(64);
+        Self {
+            shutdown_tx,
+            critical: Vec::new(),
+            background: Vec::new(),
+            children: Vec::new(),
+            shutdown_started: Arc::new(AtomicBool::new(false)),
+            exit_tx,
+            forward_tx: Some(forward_tx),
+            next_id: AtomicU64::new(0),
         }
     }
 
@@ -68,10 +90,31 @@ impl MeshTaskGroup {
         name: &'static str,
         future: impl Future<Output = ()> + Send + 'static,
     ) {
-        let handle = self.spawn_wrapped(name, MeshTaskClass::CriticalService, future);
+        let id = MeshTaskId(self.next_id.fetch_add(1, Ordering::Relaxed));
+        let handle = self.spawn_wrapped(name, MeshTaskClass::CriticalService, id, future);
         self.critical.push(NamedMeshTask {
             name,
             class: MeshTaskClass::CriticalService,
+            id,
+            handle,
+        });
+    }
+
+    /// Spawns a critical service task that returns a `Result`.
+    ///
+    /// `Ok(())` is classified like `spawn_critical`. `Ok(Err(e))` is
+    /// classified as `Error(e.to_string())`.
+    pub fn spawn_critical_result<F, E>(&mut self, name: &'static str, future: F)
+    where
+        F: Future<Output = Result<(), E>> + Send + 'static,
+        E: std::fmt::Display + Send + 'static,
+    {
+        let id = MeshTaskId(self.next_id.fetch_add(1, Ordering::Relaxed));
+        let handle = self.spawn_wrapped_result(name, MeshTaskClass::CriticalService, id, future);
+        self.critical.push(NamedMeshTask {
+            name,
+            class: MeshTaskClass::CriticalService,
+            id,
             handle,
         });
     }
@@ -84,10 +127,32 @@ impl MeshTaskGroup {
         name: &'static str,
         future: impl Future<Output = ()> + Send + 'static,
     ) {
-        let handle = self.spawn_wrapped(name, MeshTaskClass::RestartableBackground, future);
+        let id = MeshTaskId(self.next_id.fetch_add(1, Ordering::Relaxed));
+        let handle = self.spawn_wrapped(name, MeshTaskClass::RestartableBackground, id, future);
         self.background.push(NamedMeshTask {
             name,
             class: MeshTaskClass::RestartableBackground,
+            id,
+            handle,
+        });
+    }
+
+    /// Spawns a background task that returns a `Result`.
+    ///
+    /// `Ok(())` is classified like `spawn_background`. `Ok(Err(e))` is
+    /// classified as `Error(e.to_string())`.
+    pub fn spawn_background_result<F, E>(&mut self, name: &'static str, future: F)
+    where
+        F: Future<Output = Result<(), E>> + Send + 'static,
+        E: std::fmt::Display + Send + 'static,
+    {
+        let id = MeshTaskId(self.next_id.fetch_add(1, Ordering::Relaxed));
+        let handle =
+            self.spawn_wrapped_result(name, MeshTaskClass::RestartableBackground, id, future);
+        self.background.push(NamedMeshTask {
+            name,
+            class: MeshTaskClass::RestartableBackground,
+            id,
             handle,
         });
     }
@@ -100,10 +165,12 @@ impl MeshTaskGroup {
         name: &'static str,
         future: impl Future<Output = ()> + Send + 'static,
     ) {
-        let handle = self.spawn_wrapped(name, MeshTaskClass::BoundedChild, future);
+        let id = MeshTaskId(self.next_id.fetch_add(1, Ordering::Relaxed));
+        let handle = self.spawn_wrapped(name, MeshTaskClass::BoundedChild, id, future);
         self.children.push(NamedMeshTask {
             name,
             class: MeshTaskClass::BoundedChild,
+            id,
             handle,
         });
     }
@@ -135,6 +202,7 @@ impl MeshTaskGroup {
             let NamedMeshTask {
                 name,
                 class,
+                id,
                 mut handle,
             } = task;
 
@@ -142,6 +210,7 @@ impl MeshTaskGroup {
                 handle.abort();
                 let _ = handle.await;
                 exits.push(MeshTaskExit {
+                    id,
                     name,
                     class,
                     reason: MeshTaskExitReason::Aborted,
@@ -149,29 +218,11 @@ impl MeshTaskGroup {
                 continue;
             }
 
-            // Poll the handle with a deadline. We use futures::poll_fn to
-            // bridge between JoinHandle's poll and tokio's timeout.
             let poll_result = tokio::time::timeout(remaining, poll_handle(&mut handle)).await;
 
             match poll_result {
-                Ok(Ok(())) => {
-                    // The wrapper completed. Check the exit channel for
-                    // detailed exit info (panics are caught by spawn_wrapped
-                    // and sent through exit_tx before the handle resolves).
-                    if let Some(exit) = self.drain_exit_for(name) {
-                        exits.push(exit);
-                    } else {
-                        let reason = if self.shutdown_started.load(Ordering::SeqCst) {
-                            MeshTaskExitReason::Cancelled
-                        } else {
-                            MeshTaskExitReason::CleanCompletion
-                        };
-                        exits.push(MeshTaskExit {
-                            name,
-                            class,
-                            reason,
-                        });
-                    }
+                Ok(Ok(exit)) => {
+                    exits.push(exit);
                 }
                 Ok(Err(join_err)) => {
                     let reason = if join_err.is_cancelled() {
@@ -180,6 +231,7 @@ impl MeshTaskGroup {
                         MeshTaskExitReason::Error(format!("join error: {join_err}"))
                     };
                     exits.push(MeshTaskExit {
+                        id,
                         name,
                         class,
                         reason,
@@ -189,6 +241,7 @@ impl MeshTaskGroup {
                     handle.abort();
                     let _ = handle.await;
                     exits.push(MeshTaskExit {
+                        id,
                         name,
                         class,
                         reason: MeshTaskExitReason::Aborted,
@@ -198,17 +251,6 @@ impl MeshTaskGroup {
         }
 
         exits
-    }
-
-    /// Drains the exit channel looking for an event matching the given task name.
-    fn drain_exit_for(&mut self, name: &str) -> Option<MeshTaskExit> {
-        let mut found = None;
-        while let Ok(exit) = self.exit_rx.try_recv() {
-            if exit.name == name {
-                found = Some(exit);
-            }
-        }
-        found
     }
 
     /// Returns the count of (critical, background, children) tasks.
@@ -231,9 +273,11 @@ impl MeshTaskGroup {
         &self,
         name: &'static str,
         class: MeshTaskClass,
+        id: MeshTaskId,
         future: impl Future<Output = ()> + Send + 'static,
-    ) -> tokio::task::JoinHandle<()> {
+    ) -> tokio::task::JoinHandle<MeshTaskExit> {
         let exit_tx = self.exit_tx.clone();
+        let forward_tx = self.forward_tx.clone();
         let shutdown_flag = self.shutdown_started.clone();
 
         tokio::spawn(async move {
@@ -241,12 +285,24 @@ impl MeshTaskGroup {
 
             let reason = match result {
                 Ok(()) => {
-                    // The future completed without panic. Determine if this was
-                    // expected based on shutdown state.
                     if shutdown_flag.load(Ordering::SeqCst) {
-                        MeshTaskExitReason::Cancelled
+                        match class {
+                            MeshTaskClass::CriticalService
+                            | MeshTaskClass::RestartableBackground => MeshTaskExitReason::Cancelled,
+                            MeshTaskClass::BoundedChild | MeshTaskClass::OneShotStartup => {
+                                MeshTaskExitReason::CleanCompletion
+                            }
+                        }
                     } else {
-                        MeshTaskExitReason::CleanCompletion
+                        match class {
+                            MeshTaskClass::CriticalService
+                            | MeshTaskClass::RestartableBackground => {
+                                MeshTaskExitReason::UnexpectedCompletion
+                            }
+                            MeshTaskClass::BoundedChild | MeshTaskClass::OneShotStartup => {
+                                MeshTaskExitReason::CleanCompletion
+                            }
+                        }
                     }
                 }
                 Err(panic_payload) => {
@@ -261,11 +317,86 @@ impl MeshTaskGroup {
                 }
             };
 
-            let _ = exit_tx.send(MeshTaskExit {
+            let exit = MeshTaskExit {
+                id,
                 name,
                 class,
                 reason,
-            });
+            };
+            let _ = exit_tx.send(exit.clone());
+            if let Some(fwd) = forward_tx {
+                let _ = fwd.send(exit.clone());
+            }
+            exit
+        })
+    }
+
+    /// Wraps a `Result`-returning future with panic detection, exit reporting,
+    /// and cancellation classification, then spawns it on the Tokio runtime.
+    fn spawn_wrapped_result<F, E>(
+        &self,
+        name: &'static str,
+        class: MeshTaskClass,
+        id: MeshTaskId,
+        future: F,
+    ) -> tokio::task::JoinHandle<MeshTaskExit>
+    where
+        F: Future<Output = Result<(), E>> + Send + 'static,
+        E: std::fmt::Display + Send + 'static,
+    {
+        let exit_tx = self.exit_tx.clone();
+        let forward_tx = self.forward_tx.clone();
+        let shutdown_flag = self.shutdown_started.clone();
+
+        tokio::spawn(async move {
+            let result = AssertUnwindSafe(future).catch_unwind().await;
+
+            let reason = match result {
+                Ok(Ok(())) => {
+                    if shutdown_flag.load(Ordering::SeqCst) {
+                        match class {
+                            MeshTaskClass::CriticalService
+                            | MeshTaskClass::RestartableBackground => MeshTaskExitReason::Cancelled,
+                            MeshTaskClass::BoundedChild | MeshTaskClass::OneShotStartup => {
+                                MeshTaskExitReason::CleanCompletion
+                            }
+                        }
+                    } else {
+                        match class {
+                            MeshTaskClass::CriticalService
+                            | MeshTaskClass::RestartableBackground => {
+                                MeshTaskExitReason::UnexpectedCompletion
+                            }
+                            MeshTaskClass::BoundedChild | MeshTaskClass::OneShotStartup => {
+                                MeshTaskExitReason::CleanCompletion
+                            }
+                        }
+                    }
+                }
+                Ok(Err(e)) => MeshTaskExitReason::Error(e.to_string()),
+                Err(panic_payload) => {
+                    let msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {
+                        s.to_string()
+                    } else if let Some(s) = panic_payload.downcast_ref::<String>() {
+                        s.clone()
+                    } else {
+                        "unknown panic".to_string()
+                    };
+                    MeshTaskExitReason::Panic(msg)
+                }
+            };
+
+            let exit = MeshTaskExit {
+                id,
+                name,
+                class,
+                reason,
+            };
+            let _ = exit_tx.send(exit.clone());
+            if let Some(fwd) = forward_tx {
+                let _ = fwd.send(exit.clone());
+            }
+            exit
         })
     }
 }
@@ -276,8 +407,8 @@ impl MeshTaskGroup {
 /// `!Unpin`) and contexts that require an `Unpin`-compatible future, such
 /// as `tokio::time::timeout`.
 async fn poll_handle(
-    handle: &mut tokio::task::JoinHandle<()>,
-) -> Result<(), tokio::task::JoinError> {
+    handle: &mut tokio::task::JoinHandle<MeshTaskExit>,
+) -> Result<MeshTaskExit, tokio::task::JoinError> {
     std::future::poll_fn(|cx| std::pin::Pin::new(&mut *handle).poll(cx)).await
 }
 
@@ -396,5 +527,165 @@ mod tests {
             let _ = rx4.await;
         });
         assert_eq!(group.active_count(), (2, 1, 1));
+    }
+
+    #[tokio::test]
+    async fn test_spawn_critical_result_ok() {
+        let mut group = MeshTaskGroup::new();
+
+        group.spawn_critical_result("critical_result_ok", async { Ok::<_, String>(()) });
+
+        let exits = group.join_all(Duration::from_secs(5)).await;
+        assert_eq!(exits.len(), 1);
+        assert_eq!(exits[0].name, "critical_result_ok");
+        assert_eq!(exits[0].class, MeshTaskClass::CriticalService);
+        // Before shutdown, Ok(()) on critical → UnexpectedCompletion
+        assert_eq!(exits[0].reason, MeshTaskExitReason::UnexpectedCompletion);
+    }
+
+    #[tokio::test]
+    async fn test_spawn_critical_result_err() {
+        let mut group = MeshTaskGroup::new();
+
+        group.spawn_critical_result("critical_result_err", async {
+            Err::<(), String>("something went wrong".into())
+        });
+
+        let exits = group.join_all(Duration::from_secs(5)).await;
+        assert_eq!(exits.len(), 1);
+        assert_eq!(exits[0].name, "critical_result_err");
+        assert_eq!(
+            exits[0].reason,
+            MeshTaskExitReason::Error("something went wrong".into())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_spawn_background_result_err() {
+        let mut group = MeshTaskGroup::new();
+
+        group.spawn_background_result("bg_result_err", async {
+            Err::<(), String>("bg error".into())
+        });
+
+        let exits = group.join_all(Duration::from_secs(5)).await;
+        assert_eq!(exits.len(), 1);
+        assert_eq!(exits[0].name, "bg_result_err");
+        assert_eq!(
+            exits[0].reason,
+            MeshTaskExitReason::Error("bg error".into())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_task_ids_are_unique() {
+        let mut group = MeshTaskGroup::new();
+
+        group.spawn_critical("t1", async {});
+        group.spawn_background("t2", async {});
+        group.spawn_child("t3", async {});
+
+        let exits = group.join_all(Duration::from_secs(5)).await;
+        assert_eq!(exits.len(), 3);
+
+        let ids: Vec<_> = exits.iter().map(|e| e.id).collect();
+        assert_eq!(ids[0], MeshTaskId(0));
+        assert_eq!(ids[1], MeshTaskId(1));
+        assert_eq!(ids[2], MeshTaskId(2));
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_exits_receives_events() {
+        let group = MeshTaskGroup::new();
+        let mut exit_rx = group.subscribe_exits();
+
+        let mut child_group = MeshTaskGroup::new();
+        // Transfer the exit_tx so spawned tasks send to the same channel
+        child_group.exit_tx = group.exit_tx.clone();
+        child_group.spawn_critical("observed_task", async {});
+
+        let exits = child_group.join_all(Duration::from_secs(5)).await;
+        assert_eq!(exits.len(), 1);
+
+        // The subscriber should have received the exit event
+        let received = exit_rx.try_recv();
+        assert!(received.is_ok());
+        assert_eq!(received.unwrap().name, "observed_task");
+    }
+
+    #[tokio::test]
+    async fn test_critical_task_classification_before_shutdown() {
+        let mut group = MeshTaskGroup::new();
+
+        group.spawn_critical("crit_pre", async {});
+
+        let exits = group.join_all(Duration::from_secs(5)).await;
+        assert_eq!(exits[0].reason, MeshTaskExitReason::UnexpectedCompletion);
+    }
+
+    #[tokio::test]
+    async fn test_critical_task_classification_after_shutdown() {
+        let mut group = MeshTaskGroup::new();
+        group.begin_shutdown().await;
+
+        group.spawn_critical("crit_post", async {});
+
+        let exits = group.join_all(Duration::from_secs(5)).await;
+        assert_eq!(exits[0].reason, MeshTaskExitReason::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn test_child_task_classification_before_shutdown() {
+        let mut group = MeshTaskGroup::new();
+
+        group.spawn_child("child_pre", async {});
+
+        let exits = group.join_all(Duration::from_secs(5)).await;
+        assert_eq!(exits[0].reason, MeshTaskExitReason::CleanCompletion);
+    }
+
+    #[tokio::test]
+    async fn test_child_task_classification_after_shutdown() {
+        let mut group = MeshTaskGroup::new();
+        group.begin_shutdown().await;
+
+        group.spawn_child("child_post", async {});
+
+        let exits = group.join_all(Duration::from_secs(5)).await;
+        assert_eq!(exits[0].reason, MeshTaskExitReason::CleanCompletion);
+    }
+
+    #[tokio::test]
+    async fn test_panic_in_spawn_critical() {
+        let mut group = MeshTaskGroup::new();
+
+        group.spawn_critical("panicker", async {
+            panic!("test panic message");
+        });
+
+        let exits = group.join_all(Duration::from_secs(5)).await;
+        assert_eq!(exits.len(), 1);
+        assert!(matches!(
+            &exits[0].reason,
+            MeshTaskExitReason::Panic(msg) if msg.contains("test panic message")
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_panic_in_spawn_critical_result() {
+        let mut group = MeshTaskGroup::new();
+
+        group.spawn_critical_result("panicker_result", async {
+            panic!("result panic");
+            #[allow(unreachable_code)]
+            Ok::<_, String>(())
+        });
+
+        let exits = group.join_all(Duration::from_secs(5)).await;
+        assert_eq!(exits.len(), 1);
+        assert!(matches!(
+            &exits[0].reason,
+            MeshTaskExitReason::Panic(msg) if msg.contains("result panic")
+        ));
     }
 }
