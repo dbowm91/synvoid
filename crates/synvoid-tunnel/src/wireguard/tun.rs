@@ -168,7 +168,7 @@ mod platform {
 
         pub fn into_async(self) -> Result<AsyncTunDevice, io::Error> {
             let fd = self.fd;
-            let name = self.name;
+            let name = self.name.clone();
 
             std::mem::forget(self);
 

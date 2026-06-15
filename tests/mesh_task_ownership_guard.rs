@@ -2041,12 +2041,9 @@ fn iter76_peer_message_loop_uses_biased_select_on_shutdown() {
     // session starved by incoming events would never observe the
     // shutdown signal. The biased keyword is on its own line in the
     // source (typical Rust style).
-    let has_biased_select = source
-        .lines()
-        .collect::<Vec<_>>()
-        .windows(2)
-        .any(|pair| pair[0].contains("select!") && pair[0].contains('{') && pair[1].trim() == "biased;")
-        || source.contains("select! { biased;")
+    let has_biased_select = source.lines().collect::<Vec<_>>().windows(2).any(|pair| {
+        pair[0].contains("select!") && pair[0].contains('{') && pair[1].trim() == "biased;"
+    }) || source.contains("select! { biased;")
         || source.contains("select!{biased;");
     assert!(
         has_biased_select,
@@ -2144,15 +2141,248 @@ fn iter76_distinct_stream_timeout_config_fields() {
     );
 }
 
-/// Guardrail: `peer_message_loop` must apply the per-message read timeout
-/// via a dedicated helper, distinct from the optional total stream
-/// lifetime timeout. The split prevents long-lived proxy streams from
-/// being killed by the short per-message framing timeout.
+/// Guardrail: In Iteration 76, `apply_read_timeouts` wrapped the entire
+/// handler future. In Iteration 77, this was removed — read timeout is
+/// now passed into `handle_peer_message` and applied at actual read
+/// operations only. This test verifies the old pattern is gone.
 #[test]
-fn iter76_apply_read_timeouts_helper_exists() {
+fn iter77_apply_read_timeouts_removed_read_timeout_at_reads() {
     let source = read_file("crates/synvoid-mesh/src/mesh/transport_peer.rs");
+
     assert!(
-        source.contains("fn apply_read_timeouts"),
-        "transport_peer.rs must define apply_read_timeouts helper (Iteration 76 Part E)"
+        !source.contains("fn apply_read_timeouts"),
+        "apply_read_timeouts must be removed in Iteration 77 — read timeout is now at actual reads"
+    );
+    assert!(
+        source.contains("fn read_exact_with_timeout"),
+        "transport_peer.rs must define read_exact_with_timeout for actual RecvStream reads"
+    );
+    assert!(
+        source.contains("fn drain_peer_stream_handlers"),
+        "drain_peer_stream_handlers must still exist"
+    );
+    assert!(
+        source.contains("tokio::time::timeout(left, handlers.join_next())"),
+        "drain_peer_stream_handlers must use timeout around join_next for deadline enforcement"
+    );
+}
+
+// ── Iteration 77: Nested-Cleanup Corrective Guardrails ────────────────────
+
+/// Guardrail: `drain_peer_stream_handlers` must use `tokio::time::timeout`
+/// around `join_next()` so a single hung handler cannot block beyond the
+/// cooperative deadline. Bare `join_next().await` without timeout is the
+/// defect corrected in this iteration.
+#[test]
+fn iter77_drain_uses_timeout_around_join_next() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport_peer.rs");
+
+    assert!(
+        source.contains("tokio::time::timeout(left, handlers.join_next())"),
+        "drain_peer_stream_handlers must wrap join_next() with timeout for deadline enforcement"
+    );
+    assert!(
+        source.contains("fn classify_stream_join"),
+        "stream join classification helper must exist"
+    );
+    assert!(
+        source.contains("fn classify_forced_stream_join"),
+        "forced stream join classification helper must exist"
+    );
+}
+
+/// Guardrail: Zero-budget forced parent abort must return
+/// `ForcedParentAbort`, not `Failed("parent cancelled")`. The
+/// `force_abort_peer_session` helper ensures both zero-budget and
+/// cooperative-timeout paths use identical classification.
+#[test]
+fn iter77_forced_abort_returns_forced_parent_abort_not_failed() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    assert!(
+        source.contains("fn force_abort_peer_session"),
+        "force_abort_peer_session helper must exist for consistent classification"
+    );
+    // The zero-budget branch must delegate to the helper, not inline Failed
+    assert!(
+        source.contains("Self::force_abort_peer_session(handle).await"),
+        "zero-budget and timeout paths must use force_abort_peer_session helper"
+    );
+}
+
+/// Guardrail: `stop_staged_peer_activity` must handle all three
+/// `PeerSessionStopOutcome` variants. `Failed` outcomes must produce
+/// rollback errors, not be silently ignored.
+#[test]
+fn iter77_stop_staged_handles_all_outcomes() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    // Must match on all three variants
+    assert!(
+        source.contains("PeerSessionStopOutcome::Drained(_) => {}"),
+        "stop_staged_peer_activity must handle Drained variant"
+    );
+    assert!(
+        source.contains("PeerSessionStopOutcome::ForcedParentAbort =>"),
+        "stop_staged_peer_activity must handle ForcedParentAbort variant"
+    );
+    assert!(
+        source.contains("PeerSessionStopOutcome::Failed(error) =>"),
+        "stop_staged_peer_activity must handle Failed variant"
+    );
+}
+
+/// Guardrail: `recover_failed_state` must merge `session_errors` into
+/// the final `issues` vector. Without this merge, session cleanup
+/// failures are silently dropped and recovery falsely transitions to
+/// `Stopped`.
+#[test]
+fn iter77_recovery_merges_session_errors_into_issues() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    assert!(
+        source.contains("issues.extend(session_errors)"),
+        "recover_failed_state must merge session_errors into issues for final verification"
+    );
+}
+
+/// Guardrail: `recover_failed_state` must handle all three
+/// `PeerSessionStopOutcome` variants in its session drain loop.
+/// `Failed` outcomes must produce session errors, not be silently
+/// ignored.
+#[test]
+fn iter77_recovery_handles_all_session_outcomes() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+
+    // Find the recovery session drain loop and verify all outcomes handled
+    assert!(
+        source.contains("PeerSessionStopOutcome::Failed(error) =>"),
+        "recover_failed_state must handle Failed variant in session drain loop"
+    );
+}
+
+/// Guardrail: `start_datagram_handler` must no longer use bare
+/// `tokio::spawn()` for incoming datagrams. Handlers must be owned by
+/// a `JoinSet` and drained/aborted before the function returns.
+#[test]
+fn iter77_no_bare_datagram_spawn_in_handler() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport_peer.rs");
+
+    // Extract only the start_datagram_handler function body
+    let handler_body = extract_function(&source, "start_datagram_handler");
+
+    assert!(
+        !handler_body.contains("tokio::spawn(async move"),
+        "start_datagram_handler must not use bare tokio::spawn — use JoinSet instead"
+    );
+    assert!(
+        handler_body.contains("JoinSet"),
+        "start_datagram_handler must use JoinSet for handler ownership"
+    );
+    assert!(
+        handler_body.contains("handlers.spawn("),
+        "start_datagram_handler must spawn into JoinSet"
+    );
+}
+
+/// Guardrail: Datagram handler JoinSet must be drained before
+/// `start_datagram_handler` returns. The drain pattern must use
+/// deadline-aware timeout around `join_next()` followed by
+/// `abort_all()` for remaining handlers.
+#[test]
+fn iter77_datagram_handler_drained_before_return() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport_peer.rs");
+
+    let handler_body = extract_function(&source, "start_datagram_handler");
+
+    assert!(
+        handler_body.contains("handlers.abort_all()"),
+        "start_datagram_handler must abort remaining handlers after drain deadline"
+    );
+    assert!(
+        handler_body.contains("while let Some(result) = handlers.join_next()"),
+        "start_datagram_handler must await all aborted handlers"
+    );
+}
+
+/// Guardrail: Datagram concurrency must be bounded by
+/// `max_concurrent_datagram_handlers` config field.
+#[test]
+fn iter77_datagram_concurrency_bounded_by_config() {
+    let cfg_src = read_file("crates/synvoid-config/src/mesh.rs");
+    let mesh_cfg_src = read_file("crates/synvoid-mesh/src/mesh/config.rs");
+
+    assert!(
+        cfg_src.contains("max_concurrent_datagram_handlers"),
+        "config crate MeshConnectionConfig must define max_concurrent_datagram_handlers"
+    );
+    assert!(
+        mesh_cfg_src.contains("max_concurrent_datagram_handlers"),
+        "mesh crate MeshConnectionConfig must define max_concurrent_datagram_handlers"
+    );
+}
+
+/// Guardrail: Peer stream drain timeout must be configurable via
+/// `peer_stream_drain_timeout_secs`.
+#[test]
+fn iter77_drain_timeout_configurable() {
+    let cfg_src = read_file("crates/synvoid-config/src/mesh.rs");
+    let mesh_cfg_src = read_file("crates/synvoid-mesh/src/mesh/config.rs");
+
+    assert!(
+        cfg_src.contains("peer_stream_drain_timeout_secs"),
+        "config crate MeshConnectionConfig must define peer_stream_drain_timeout_secs"
+    );
+    assert!(
+        mesh_cfg_src.contains("peer_stream_drain_timeout_secs"),
+        "mesh crate MeshConnectionConfig must define peer_stream_drain_timeout_secs"
+    );
+}
+
+/// Guardrail: `handle_peer_message` must accept a `read_timeout`
+/// parameter and thread it into actual `RecvStream` read operations,
+/// not wrap the entire handler future.
+#[test]
+fn iter77_handle_peer_message_accepts_read_timeout() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport_peer.rs");
+
+    assert!(
+        source.contains("read_timeout: Duration,"),
+        "handle_peer_message must accept read_timeout parameter"
+    );
+    assert!(
+        source.contains("read_exact_with_timeout(recv_stream"),
+        "handle_peer_message must use read_exact_with_timeout for reads"
+    );
+}
+
+/// Guardrail: HTTP header framing must be bounded (stop at \r\n\r\n)
+/// instead of reading until EOF via `BufReader::read_to_string`.
+#[test]
+fn iter77_http_header_framing_bounded() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport_peer.rs");
+
+    assert!(
+        !source.contains("read_to_string(&mut remainder)"),
+        "unbounded BufReader::read_to_string must be replaced with bounded framing"
+    );
+    assert!(
+        source.contains(r"\r\n\r\n"),
+        "HTTP header framing must stop at \r\n\r\n"
+    );
+}
+
+/// Guardrail: The `peer_message_loop` spawn block must not call
+/// `apply_read_timeouts`. The read timeout is passed into
+/// `handle_peer_message` directly.
+#[test]
+fn iter77_spawn_block_no_apply_read_timeouts() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport_peer.rs");
+
+    let loop_body = extract_function(&source, "peer_message_loop");
+
+    assert!(
+        !loop_body.contains("apply_read_timeouts"),
+        "peer_message_loop must not call apply_read_timeouts — read timeout is in handle_peer_message"
     );
 }

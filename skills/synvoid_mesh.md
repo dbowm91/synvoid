@@ -483,7 +483,7 @@ These snapshots feed into `StagedPeerResource` for precise rollback.
 
 **Retained failed-startup residue**: When rollback is incomplete, `rollback_and_return()` stores `FailedStartupResidue` on the transport — consumed and cleared by `recover_failed_state()`.
 
-**Full recovery with timeout consumption**: `recover_failed_state(timeout)` derives a deadline from the timeout parameter, uses it for bounded operations (session drain, auxiliary task cleanup), and performs full verification (task group empty, sessions empty, auxiliary tasks empty, connections empty, residue cleared). All abort calls are followed by `.await` to reap task resources.
+**Full recovery with timeout consumption**: `recover_failed_state(timeout)` derives a deadline from the timeout parameter, uses it for bounded operations (session drain, auxiliary task cleanup), and performs full verification (task group empty, sessions empty, auxiliary tasks empty, connections empty, residue cleared). All abort calls are followed by `.await` to reap task resources. **Iteration 77**: `session_errors` from peer session drain are merged into `issues` for recovery diagnostics.
 
 **Session exit classification**: `PeerSessionExitReason` enum classifies peer session exits (`Clean`, `ConnectionClosed`, `Cancelled`, `Error(String)`, `Panic(String)`, `Aborted`). `PeerSessionExit` struct carries the reason with a `generation` counter to prevent stale completions from removing newer entries.
 
@@ -558,7 +558,7 @@ transport.set_startup_failure_hook(|point| match point {
 
 Hook checks at 6 phases in `start()`. `BeforeLifecycleCommit` (renamed from `AfterLifecycleCommit`) runs before state publication. Returns `Err` → rollback triggered (post-accept) or error propagated (pre-accept).
 
-## Forced-Cleanup Corrective Pass (Iteration 76)
+## Forced-Cleanup Corrective Pass (Iterations 76–77)
 
 Iteration 76 corrects three classes of bugs that survived Iteration 75 and
 adds mechanical guardrails to prevent regression. The full architecture
@@ -633,6 +633,43 @@ Two independent timeout fields replace the single per-message read timeout:
 `peer_message_loop` must apply the per-message read timeout via
 `apply_read_timeouts` and the optional total stream lifetime timeout at
 the JoinSet spawn level. Conflating the two timeouts is a regression.
+
+**Iteration 77**: `apply_read_timeouts()` was removed. The wrapper was
+misleadingly a total handler lifetime timeout when applied at the future
+level. Per-message reads now use `read_exact_with_timeout()` and
+`read_to_end_with_timeout()` directly, applying the timeout to the actual
+I/O operation.
+
+### Part F — Deadline-aware stream drain (Iteration 77)
+
+`drain_peer_stream_handlers()` now uses `tokio::time::timeout(left, handlers.join_next()).await`
+so no cooperative wait exceeds the supplied timeout. A hung stream handler can no longer block
+session finalization indefinitely.
+
+### Part G — Datagram handler ownership (Iteration 77)
+
+`start_datagram_handler()` now owns incoming datagram handlers in a bounded `JoinSet`
+(`max_concurrent_datagram_handlers`, default 32) instead of bare `tokio::spawn()`. This
+closes the last visible detached mesh task path. The `JoinSet` is drained on shutdown.
+
+### Part H — Forced abort classification (Iteration 77)
+
+`stop_peer_session_task()` zero-budget branch now correctly returns `ForcedParentAbort`
+instead of `Failed("parent cancelled")`. A new `force_abort_peer_session()` helper wraps
+the cooperative abort + await pattern for callers that need to forcibly terminate a session.
+
+### New Config Fields (Iteration 77)
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `peer_stream_drain_timeout_secs` | 5 | Timeout for draining per-stream handlers before forced abort |
+| `max_concurrent_datagram_handlers` | 32 | Bounded concurrency for datagram handler tasks |
+
+### New Helpers (Iteration 77)
+
+- `force_abort_peer_session()` — cooperative abort + await for forcibly terminating a session
+- `classify_stream_join()` / `classify_forced_stream_join()` — classify join results for stream handlers
+- `read_exact_with_timeout()` / `read_to_end_with_timeout()` — deadline-aware reads replacing the removed `apply_read_timeouts` wrapper
 
 ## Testing Commands
 

@@ -33,7 +33,7 @@ impl AsyncIpcTransport for UnixStream {
         use std::os::unix::io::AsRawFd;
 
         let sock_ref = SockRef::from(self);
-        let _raw_fd = sock_ref.as_raw_fd();
+        let raw_fd = sock_ref.as_raw_fd();
 
         #[repr(C)]
         struct UCred {
@@ -42,8 +42,8 @@ impl AsyncIpcTransport for UnixStream {
             gid: libc::gid_t,
         }
 
-        let _cred: UCred = unsafe { std::mem::zeroed() };
-        let _cred_len = size_of::<UCred>() as libc::socklen_t;
+        let mut cred: UCred = unsafe { std::mem::zeroed() };
+        let mut cred_len = size_of::<UCred>() as libc::socklen_t;
 
         #[cfg(target_os = "linux")]
         {

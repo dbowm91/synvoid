@@ -34,22 +34,67 @@ impl MeshTransport {
         self: Arc<Self>,
         mut shutdown_rx: broadcast::Receiver<()>,
     ) {
+        use tokio::task::JoinSet;
+
+        let max_concurrent = self.config.connection.max_concurrent_datagram_handlers;
+        let mut handlers: JoinSet<Result<(), MeshTransportError>> = JoinSet::new();
+
         loop {
             tokio::select! {
+                biased;
                 _ = shutdown_rx.recv() => {
-                    tracing::info!("Datagram handler stopped");
+                    tracing::info!("Datagram handler shutting down, draining {} handlers", handlers.len());
                     break;
+                }
+                Some(result) = handlers.join_next(), if !handlers.is_empty() => {
+                    match result {
+                        Ok(Ok(())) => {}
+                        Ok(Err(e)) => {
+                            tracing::debug!("Datagram handler error: {}", e);
+                        }
+                        Err(e) if e.is_panic() => {
+                            tracing::warn!("Datagram handler panicked: {}", e);
+                        }
+                        Err(_) => {} // cancelled during shutdown
+                    }
                 }
                 peer_entry = self.wait_for_peer_datagrams() => {
                     if let Some((peer_id, data)) = peer_entry {
+                        if handlers.len() >= max_concurrent {
+                            tracing::trace!(
+                                "Datagram handler capacity reached ({}/{}), dropping datagram from {}",
+                                handlers.len(), max_concurrent, peer_id
+                            );
+                            continue;
+                        }
                         let transport = self.clone();
-                        tokio::spawn(async move {
-                            if let Err(e) = transport.handle_incoming_datagram(&peer_id, data).await {
-                                tracing::warn!("Failed to handle datagram from {}: {}", peer_id, e);
-                            }
+                        handlers.spawn(async move {
+                            transport.handle_incoming_datagram(&peer_id, data).await
                         });
                     }
                 }
+            }
+        }
+
+        // Iteration 77, Phase 22: drain/abort/await all handlers before return
+        let drain_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while !handlers.is_empty() {
+            let left = drain_deadline.saturating_duration_since(tokio::time::Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            match tokio::time::timeout(left, handlers.join_next()).await {
+                Ok(Some(result)) => {
+                    let _ = result;
+                }
+                Ok(None) => break,
+                Err(_) => break,
+            }
+        }
+        if !handlers.is_empty() {
+            handlers.abort_all();
+            while let Some(result) = handlers.join_next().await {
+                let _ = result;
             }
         }
     }
@@ -2801,43 +2846,24 @@ impl MeshTransport {
                             let read_timeout = peer_message_read_timeout;
                             let total_timeout = peer_stream_total_timeout;
 
-                            // Phase 23 + Iteration 76 Phase 20-21: Spawn into
-                            // JoinSet. Apply the per-stream total timeout
-                            // (optional, opt-in) which itself wraps the
-                            // framing/read timeout. The framing timeout
-                            // governs read calls; the total timeout
-                            // (when enabled) governs the entire handler
-                            // lifetime so a malformed peer cannot keep a
-                            // long-lived proxy stream alive past the
-                            // operator-configured total bound.
+                            // Iteration 77, Phase 5: read timeout is passed
+                            // into handle_peer_message for actual reads only.
+                            // Optional total timeout wraps the entire handler.
                             stream_handlers.spawn(async move {
+                                let handler = transport.handle_peer_message(
+                                    &mut send_stream,
+                                    &mut recv_stream,
+                                    &topo,
+                                    pid,
+                                    read_timeout,
+                                );
+
                                 if let Some(total) = total_timeout {
-                                    tokio::time::timeout(total, async move {
-                                        apply_read_timeouts(
-                                            &read_timeout,
-                                            transport.handle_peer_message(
-                                                &mut send_stream,
-                                                &mut recv_stream,
-                                                &topo,
-                                                pid,
-                                            ),
-                                        ).await
-                                    }).await.unwrap_or_else(|_| {
-                                        Err(MeshTransportError::Timeout)
-                                    })
+                                    tokio::time::timeout(total, handler)
+                                        .await
+                                        .unwrap_or(Err(MeshTransportError::Timeout))
                                 } else {
-                                    // No total timeout — preserve long-lived
-                                    // proxy/streaming work. The per-message
-                                    // read/framing timeout still applies.
-                                    apply_read_timeouts(
-                                        &read_timeout,
-                                        transport.handle_peer_message(
-                                            &mut send_stream,
-                                            &mut recv_stream,
-                                            &topo,
-                                            pid,
-                                        ),
-                                    ).await
+                                    handler.await
                                 }
                             });
                         }
@@ -2885,7 +2911,8 @@ impl MeshTransport {
         // (connection close, error, cooperative cancellation) passes through
         // the same child cleanup. The drain timeout is bounded by the
         // remaining budget passed in via `drain_budget`.
-        let drain_budget = Duration::from_secs(5);
+        let drain_budget =
+            Duration::from_secs(self.config.connection.peer_stream_drain_timeout_secs);
         let drain_report = drain_peer_stream_handlers(&mut stream_handlers, drain_budget).await;
 
         tracing::debug!(
@@ -2924,12 +2951,46 @@ impl MeshTransport {
         recv_stream: &mut RecvStream,
         topology: &MeshTopology,
         peer_node_id: String,
+        read_timeout: Duration,
     ) -> Result<(), MeshTransportError> {
+        // Iteration 77, Phase 7: read-timeout helpers that wrap only
+        // RecvStream reads, not the entire handler.
+
+        async fn read_exact_with_timeout(
+            recv: &mut RecvStream,
+            buf: &mut [u8],
+            timeout: Duration,
+        ) -> Result<(), MeshTransportError> {
+            tokio::time::timeout(timeout, recv.read_exact(buf))
+                .await
+                .map_err(|_| MeshTransportError::Timeout)?
+                .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))
+        }
+
+        async fn read_to_end_with_timeout(
+            recv: &mut RecvStream,
+            max_len: usize,
+            timeout: Duration,
+        ) -> Result<Vec<u8>, MeshTransportError> {
+            let mut buf = vec![0u8; max_len];
+            let n = tokio::time::timeout(timeout, recv.read(&mut buf))
+                .await
+                .map_err(|_| MeshTransportError::Timeout)?
+                .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
+            match n {
+                Some(n) => {
+                    buf.truncate(n);
+                    Ok(buf)
+                }
+                None => {
+                    buf.truncate(0);
+                    Ok(buf)
+                }
+            }
+        }
+
         let mut first_byte = [0u8; 1];
-        recv_stream
-            .read_exact(&mut first_byte)
-            .await
-            .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
+        read_exact_with_timeout(recv_stream, &mut first_byte, read_timeout).await?;
 
         let http_methods = [
             b'G', // GET
@@ -2942,16 +3003,42 @@ impl MeshTransport {
         ];
 
         if http_methods.contains(&first_byte[0]) {
-            let mut remainder = String::new();
+            // Iteration 77, Phase 8: bounded HTTP header framing — stop at
+            // \r\n\r\n instead of reading until EOF. Read timeout applies to
+            // each framing read.
             let mut total_header_buf = vec![first_byte[0]];
-
-            let mut reader = tokio::io::BufReader::with_capacity(4096, recv_stream);
-            use tokio::io::AsyncReadExt;
-            reader
-                .read_to_string(&mut remainder)
-                .await
-                .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
-            total_header_buf.extend_from_slice(remainder.as_bytes());
+            {
+                use tokio::io::AsyncReadExt;
+                let mut header_framing_buf = [0u8; 4096];
+                let mut accumulated = 0usize;
+                let header_cap = 16384; // max header bytes
+                loop {
+                    let left = total_header_buf.len();
+                    if left >= header_cap {
+                        return Err(MeshTransportError::ReceiveFailed(
+                            "HTTP headers too large".to_string(),
+                        ));
+                    }
+                    let read_size = header_cap.min(header_framing_buf.len());
+                    let n = tokio::time::timeout(
+                        read_timeout,
+                        recv_stream.read(&mut header_framing_buf[..read_size]),
+                    )
+                    .await
+                    .map_err(|_| MeshTransportError::Timeout)?
+                    .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
+                    match n {
+                        Some(0) | None => break,
+                        Some(n) => {
+                            total_header_buf.extend_from_slice(&header_framing_buf[..n]);
+                            accumulated += n;
+                        }
+                    }
+                    if total_header_buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+            }
 
             let http_data = total_header_buf.clone();
             let header_str = String::from_utf8_lossy(&total_header_buf);
@@ -2968,10 +3055,7 @@ impl MeshTransport {
         }
 
         let mut len_buf = [0u8; 3];
-        recv_stream
-            .read_exact(&mut len_buf)
-            .await
-            .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
+        read_exact_with_timeout(recv_stream, &mut len_buf, read_timeout).await?;
 
         let full_len_buf = [first_byte[0], len_buf[0], len_buf[1], len_buf[2]];
         let len = u32::from_be_bytes(full_len_buf) as usize;
@@ -2982,10 +3066,7 @@ impl MeshTransport {
             )));
         }
         let mut data = vec![0u8; len];
-        recv_stream
-            .read_exact(&mut data)
-            .await
-            .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
+        read_exact_with_timeout(recv_stream, &mut data, read_timeout).await?;
 
         let msg = MeshMessage::decode(&data).ok_or_else(|| {
             MeshTransportError::ReceiveFailed("Failed to decode message".to_string())
@@ -4729,6 +4810,39 @@ impl MeshTransport {
     }
 }
 
+/// Classify a cooperative drain join result (Iteration 77, Phase 2).
+///
+/// Post-abort cancellations are classified as aborted only when we
+/// explicitly called `abort_all()` — which happens after this loop.
+/// Unexpected cancellation before explicit abort is classified as failed.
+fn classify_stream_join(
+    result: Result<Result<(), MeshTransportError>, tokio::task::JoinError>,
+    report: &mut crate::lifecycle::PeerStreamDrainReport,
+) {
+    match result {
+        Ok(Ok(())) => report.drained += 1,
+        Ok(Err(_)) => report.failed += 1,
+        Err(e) if e.is_panic() => report.failed += 1,
+        Err(_) => report.failed += 1,
+    }
+}
+
+/// Classify a forced-abort join result (Iteration 77, Phase 2).
+///
+/// After `abort_all()`, cancelled tasks are expected. Panicked or
+/// already-failed tasks are counted as failed.
+fn classify_forced_stream_join(
+    result: Result<Result<(), MeshTransportError>, tokio::task::JoinError>,
+    report: &mut crate::lifecycle::PeerStreamDrainReport,
+) {
+    match result {
+        Ok(Ok(())) => report.drained += 1,
+        Ok(Err(_)) => report.failed += 1,
+        Err(e) if e.is_panic() => report.failed += 1,
+        Err(_) => report.aborted += 1,
+    }
+}
+
 /// Drain all per-stream message handlers before emitting a `PeerSessionExit`.
 ///
 /// Cooperative drain with a deadline, followed by abort of remaining handlers.
@@ -4738,7 +4852,6 @@ async fn drain_peer_stream_handlers(
     timeout: Duration,
 ) -> crate::lifecycle::PeerStreamDrainReport {
     use crate::lifecycle::PeerStreamDrainReport;
-    use std::time::Instant;
 
     let mut report = PeerStreamDrainReport::default();
 
@@ -4746,79 +4859,64 @@ async fn drain_peer_stream_handlers(
         return report;
     }
 
-    // First, allow handlers to drain cooperatively
-    let deadline = Instant::now() + timeout;
-    while let Some(result) = handlers.join_next().await {
-        match result {
-            Ok(Ok(())) => report.drained += 1,
-            Ok(Err(_)) => report.failed += 1,
-            Err(e) if e.is_panic() => report.failed += 1,
-            Err(_) => {} // cancelled
+    let deadline = tokio::time::Instant::now() + timeout;
+
+    // Cooperative drain with deadline enforcement — a single hung handler
+    // cannot prevent the deadline from being observed (Iteration 77, Phase 1).
+    while !handlers.is_empty() {
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if left.is_zero() {
+            break;
         }
 
-        if Instant::now() >= deadline {
-            break;
+        match tokio::time::timeout(left, handlers.join_next()).await {
+            Ok(Some(result)) => classify_stream_join(result, &mut report),
+            Ok(None) => break,
+            Err(_) => break,
         }
     }
 
-    // Abort remaining handlers
-    let remaining = handlers.len();
-    if remaining > 0 {
+    // Abort remaining handlers and await every one (Iteration 77, Phase 1).
+    let forced = handlers.len();
+    if forced > 0 {
         handlers.abort_all();
-        // Await all aborted handlers so JoinSet is empty
         while let Some(result) = handlers.join_next().await {
-            report.aborted += 1;
-            // Suppress JoinError for aborted tasks
-            let _ = result;
+            classify_forced_stream_join(result, &mut report);
         }
     }
 
     report
 }
 
-/// Wrap an in-flight `handle_peer_message` future with the configured
-/// read/framing timeout (Iteration 76, Phase 20-21).
-///
-/// The read timeout applies to the entire handler lifetime as a single
-/// per-call bound, distinct from the optional total stream lifetime
-/// timeout applied by the caller. This keeps partial framing stalls from
-/// silently consuming the full total budget when the operator enables
-/// both knobs.
-async fn apply_read_timeouts<F>(read_timeout: &Duration, fut: F) -> Result<(), MeshTransportError>
-where
-    F: std::future::Future<Output = Result<(), MeshTransportError>>,
-{
-    // Iteration 76, Phase 21: apply the read/framing timeout at the
-    // future boundary so that partial reads that stall for the configured
-    // duration surface as a `Timeout` error rather than blocking an
-    // arbitrary long-lived proxy/streaming operation. The total stream
-    // lifetime timeout is applied separately by the caller when enabled.
-    tokio::time::timeout(*read_timeout, fut)
-        .await
-        .unwrap_or_else(|_| Err(MeshTransportError::Timeout))
-}
-
 impl MeshTransport {
-    /// Per-stream read/framing timeout (Iteration 76, Phase 20-21).
+    /// Per-stream read/framing timeout (Iteration 77, Phase 5-7).
     ///
-    /// Distinct from the optional total stream lifetime timeout. This
-    /// guards against partial reads stalling a stream handler past the
-    /// configured bound while leaving long-lived proxy/streaming
-    /// operations untouched by default.
+    /// Applied only to actual `RecvStream` read operations, not to the
+    /// entire handler lifetime. Long-lived post-framing work (proxy,
+    /// streaming) is not bounded by this timeout.
     pub(crate) fn peer_message_read_timeout(&self) -> Duration {
         Duration::from_secs(self.config.connection.peer_message_timeout_secs)
     }
 
     /// Optional total stream lifetime timeout (Iteration 76, Phase 20).
     ///
-    /// When `None` (default for newly-migrated configs), no total bound is
-    /// applied — the read timeout continues to guard framing, and explicit
-    /// session cancellation bounds the lifetime otherwise. When `Some(_)`,
-    /// the entire stream handler is bounded by this duration.
+    /// When `None` (default), no total bound is applied — read timeouts
+    /// guard framing, and explicit session cancellation bounds lifetime.
+    /// When `Some(_)`, the entire stream handler is bounded by this duration.
     pub(crate) fn peer_stream_total_timeout(&self) -> Option<Duration> {
         match self.config.connection.peer_stream_total_timeout_secs {
             0 => None,
             secs => Some(Duration::from_secs(secs)),
         }
     }
+}
+
+// ── Iteration 77: Test-visible helpers ──────────────────────────────────────
+
+#[cfg(test)]
+pub async fn drain_peer_stream_handlers_for_test(
+    handlers: &mut tokio::task::JoinSet<Result<(), MeshTransportError>>,
+    timeout: Duration,
+) -> crate::lifecycle::PeerStreamDrainReport {
+    drain_peer_stream_handlers(handlers, timeout).await
 }

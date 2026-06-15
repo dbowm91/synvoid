@@ -517,6 +517,12 @@ pub struct MeshConnectionConfig {
     /// total bound.
     #[serde(default)]
     pub peer_stream_total_timeout_secs: u64,
+    /// Timeout for draining per-stream message handlers during session shutdown.
+    #[serde(default = "default_peer_stream_drain_timeout_secs")]
+    pub peer_stream_drain_timeout_secs: u64,
+    /// Maximum concurrent datagram handler tasks.
+    #[serde(default = "default_max_concurrent_datagram_handlers")]
+    pub max_concurrent_datagram_handlers: usize,
 }
 
 fn default_min_peers() -> usize {
@@ -540,6 +546,14 @@ fn default_peer_message_timeout_secs() -> u64 {
     30
 }
 
+fn default_peer_stream_drain_timeout_secs() -> u64 {
+    5
+}
+
+fn default_max_concurrent_datagram_handlers() -> usize {
+    32
+}
+
 impl Default for MeshConnectionConfig {
     fn default() -> Self {
         Self {
@@ -551,6 +565,8 @@ impl Default for MeshConnectionConfig {
             max_concurrent_peer_streams: 64,
             peer_message_timeout_secs: 30,
             peer_stream_total_timeout_secs: 0,
+            peer_stream_drain_timeout_secs: 5,
+            max_concurrent_datagram_handlers: 32,
         }
     }
 }

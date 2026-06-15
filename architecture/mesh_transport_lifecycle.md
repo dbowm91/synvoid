@@ -1,4 +1,4 @@
-# Mesh Transport Lifecycle Inventory — Iteration 76
+# Mesh Transport Lifecycle Inventory — Iteration 77
 
 ## Purpose
 
@@ -80,8 +80,10 @@ Two independent timeout fields replace the single per-message read timeout:
 | `peer_stream_total_timeout_secs` | 0 (disabled) | Total stream lifetime | Optional cap for long-lived streams |
 
 The split prevents long-lived proxy streams from being killed by the
-short per-message framing timeout. `apply_read_timeouts` helper wraps each
-per-message read with `tokio::time::timeout`.
+short per-message framing timeout. In Iteration 77, `apply_read_timeouts`
+was removed — per-message read timeouts are now applied directly at
+`read_exact_with_timeout()` / `read_to_end_with_timeout()` call sites
+in `peer_message_loop`, not via a wrapper around the full handler future.
 
 ### Guardrails
 
@@ -89,6 +91,58 @@ per-message read with `tokio::time::timeout`.
 - **`tests/mesh_task_ownership_guard.rs`**: 9 new `iter76_*` assertions.
 - **`tests/mesh_startup_rollback.rs`**: 8 new behavioral assertions.
 - **`tests/mesh_lifecycle_tests.rs`**: 1 cooperative-cancellation test.
+
+## Iteration 77 — Nested-Cleanup Corrective Pass
+
+Iteration 77 addresses four classes of issues from Iteration 76:
+
+### Part A — Deadline-aware stream drain
+
+`drain_peer_stream_handlers()` now uses `tokio::time::timeout(left, handlers.join_next()).await`
+so no cooperative wait exceeds the supplied timeout. A hung stream handler can no longer block
+session finalization indefinitely.
+
+### Part B — Remove `apply_read_timeouts`
+
+The `apply_read_timeouts()` wrapper around the full `handle_peer_message()` future was removed.
+The configured read/framing timeout was misleadingly a total handler lifetime timeout when
+applied at the future level. Per-message reads now use `read_exact_with_timeout()` and
+`read_to_end_with_timeout()` directly, applying the timeout to the actual I/O operation.
+
+### Part C — Forced abort classification
+
+`stop_peer_session_task()` zero-budget branch now correctly returns `ForcedParentAbort`
+instead of `Failed("parent cancelled")`. A new `force_abort_peer_session()` helper wraps
+the cooperative abort + await pattern for callers that need to forcibly terminate a session.
+
+### Part D — Rollback error accounting
+
+Rollback and recovery now record `ForcedParentAbort` and `Failed` outcomes as incomplete
+cleanup errors, preventing false clean lifecycle transitions.
+
+### Part E — Datagram handler ownership
+
+`start_datagram_handler()` now owns incoming datagram handlers in a bounded `JoinSet`
+(`max_concurrent_datagram_handlers`, default 32) instead of bare `tokio::spawn()`. This
+closes the last visible detached mesh task path. The `JoinSet` is drained on shutdown.
+
+### New Config Fields
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `peer_stream_drain_timeout_secs` | 5 | Timeout for draining per-stream handlers before forced abort |
+| `max_concurrent_datagram_handlers` | 32 | Bounded concurrency for datagram handler tasks |
+
+### New Helpers
+
+- `force_abort_peer_session()` — cooperative abort + await for forcibly terminating a session
+- `classify_stream_join()` / `classify_forced_stream_join()` — classify join results for stream handlers
+- `read_exact_with_timeout()` / `read_to_end_with_timeout()` — deadline-aware reads replacing the removed `apply_read_timeouts` wrapper
+
+### Guardrails
+
+- **`tests/mesh_forced_cleanup.rs`**: new `iter77_*` behavioral tests
+- **`tests/mesh_task_ownership_guard.rs`**: new `iter77_*` guardrails
 
 ## Task Classification Definitions
 
@@ -216,7 +270,7 @@ pub async fn recover_failed_state(
 2. **Transition from `Failed` to `Starting`** — allows cleanup to proceed.
 3. **Re-run cleanup** — re-executes the same rollback steps (signal shutdown, close connections, join/abort tasks, restore topology, clean sessions, stop runtime).
 4. **Apply retained residue before clearing** — `FailedStartupResidue` from the previous incomplete rollback is applied via `restore_and_verify_peer_logical_state()` (Iteration 75) which combines restoration and verification in one call. Successfully restored peers have their connections closed and removed. Partially restored peers retain residue for a subsequent attempt (Iteration 74, Phase 2–3).
-5. **Verify no owned resources remain** — checks connection map is empty, topology entries are clean, task group is drained.
+5. **Verify no owned resources remain** — checks connection map is empty, topology entries are clean, task group is drained. **Iteration 77**: `session_errors` from peer session drain are merged into `issues` so they appear in recovery diagnostics rather than being silently discarded.
 6. **Transition to `Stopped`** — marks transport as clean and safe to restart.
 
 If recovery fails (timeout or verification issues), the transport transitions back to `Failed`. Multiple recovery attempts are safe.
@@ -1039,3 +1093,4 @@ Secondary metrics (scores, failures, latency) are intentionally excluded from sn
 | 74 | **Residue application during recovery**: `recover_failed_state()` now applies `FailedStartupResidue` via `restore_peer_logical_state()` before clearing — restores topology and DHT entries for each peer, closes connections. Partially restored peers retain residue for subsequent attempts. **Native topology restoration**: `StagedTopologySnapshot` stores native `PeerState` (not lossy `MeshPeerInfo` + `PeerStatus`); rollback uses `restore_peer_state()` for exact prior state. **Native DHT restoration**: `DhtPeerSnapshot` expanded to capture all `PeerContact` fields (geo, latency, trust, PoW nonce, public key); `restore_peer()` re-inserts contact with all fields; `peer_matches_snapshot()` verification method added. **DhtPeerMutation simplified**: `Replaced` and `UpdatedInPlace` collapsed into single `Previous(DhtPeerSnapshot)` variant. **Session reaper cancellation-awareness**: uses `tokio::select!` with `session_reaper_shutdown` watch signal; handles await outside the lock; broadcast lag recovery scans for finished handles. **Auxiliary task reaper**: `spawn_auxiliary_reaper()` as critical background task; `AuxiliaryTaskExit` type for exit events; same `select!` + lag-recovery pattern. **One global session-generation domain**: `session_generation: Arc<AtomicU64>` on `MeshTransport` used by both outbound and inbound sessions (replaces split stage/zero counters). **Accept-loop report freshness**: `MeshShutdownReport.accept_loop_report` is now `Option<MeshAcceptLoopReport>`; stale reports are `None` instead of potentially misattributed counts. **RecoveryReport**: internal accounting struct for structured recovery outcomes. **Shared `restore_peer_logical_state()`**: used by both `rollback_startup()` and `recover_failed_state()` for deduplication. **Worker mesh supervision**: remains deferred (Outcome B from Iteration 70). |
 | 75 | **Force-replacement DHT restoration**: `restore_peer()` uses `force_restore_contact()` which unconditionally replaces existing contacts, eliminating silent failures on full buckets. **Complete PeerContact snapshot**: `DhtPeerSnapshot` stores a clone of the native `PeerContact` instead of individual fields, eliminating field drift. **Topology secondary-index restoration**: `restore_peer_state()` bidirectionally updates `global_nodes` (inserts when global, removes when non-global); `remove_peer()` also clears `global_nodes`. **Teardown-before-restoration ordering**: `rollback_startup()` stops all peer sessions and auxiliary tasks before logical restoration. **Combined restore-and-verify**: `restore_and_verify_peer_logical_state()` combines restoration and verification in one call. **Residue retention**: `rollback_and_return()` stores only unresolved peers in `FailedStartupResidue`. **Session-local stream handlers**: `peer_message_loop()` uses a `JoinSet` for per-stream handlers with capacity limiting, timeout wrapping, and drain-before-exit. **`PeerStreamDrainReport`**: new type tracking stream drain statistics. **Worker mesh supervision**: remains deferred (Outcome B from Iteration 70). |
 | 76 | **Forced-cleanup corrective pass**. **Part A — Zero-budget finalization**: `rollback_startup()` and `recover_failed_state()` now always call `MeshTaskGroup::join_all(remaining(deadline))` — never skip on zero budget. The pre-fix call site did `if task_remaining.is_zero() { Vec::new() }`, leaving tasks orphaned in the registry without exit reporting. `join_all(Duration::ZERO)` itself aborts and awaits each task with synthetic `Aborted` exits, so the contract is preserved. **Part B — Cooperative session cancellation**: `PeerSessionTask` gains a `shutdown_tx: watch::Sender<bool>` field. `peer_message_loop` selects on the cooperative signal via `tokio::select! { biased; ... }` so the cancel branch wins the race against incoming events. The shared `stop_peer_session_task()` helper classifies cleanup as `PeerSessionStopOutcome::{Drained, ForcedParentAbort, Failed}` so callers can distinguish cooperative drain from forced parent abort. `stop_staged_peer_activity()` always sends the cooperative signal before delegating to the helper. **Part C — Safe DHT force restoration**: `KBucket::force_replace` returns `Result<Option<PeerContact>, ForceRestoreError>` instead of `Option<PeerContact>`. A full bucket with an absent target now fails closed with `BucketFullTargetAbsent` rather than silently evicting an unrelated contact. `RoutingTable::force_restore_contact` returns `Result<PeerContact, ForceRestoreContactError>` and propagates the bucket-level error. **Part D — DHT snapshot boundary**: `DhtPeerSnapshot` is documented as a *logical* snapshot; `last_seen` is intentionally refreshed to `now()` during restore and must not be relied on for byte-for-byte restoration. **Part E — Refined stream timeout**: per-message read timeout (`peer_message_timeout_secs`) is now distinct from the optional total stream lifetime timeout (`peer_stream_total_timeout_secs`, default 0 = disabled). The split prevents long-lived proxy streams from being killed by the short framing timeout. `apply_read_timeouts` helper wraps each per-message read with `tokio::time::timeout`. **Guardrails**: `tests/mesh_forced_cleanup.rs` (8 integration tests), `tests/mesh_task_ownership_guard.rs` (9 new `iter76_*` assertions), `tests/mesh_startup_rollback.rs` (8 new behavioral assertions), `tests/mesh_lifecycle_tests.rs` (1 cooperative-cancellation test). **Worker mesh supervision**: remains deferred (Outcome B from Iteration 70). |
+| 77 | **Nested-cleanup corrective pass**. **Part A — Deadline-aware stream drain**: `drain_peer_stream_handlers()` uses `tokio::time::timeout(left, handlers.join_next()).await` so no cooperative wait exceeds the supplied timeout. **Part B — Remove `apply_read_timeouts`**: The wrapper was misleadingly a total handler lifetime timeout; per-message reads now use `read_exact_with_timeout()` / `read_to_end_with_timeout()` directly at I/O sites. **Part C — Forced abort classification**: `stop_peer_session_task()` zero-budget branch returns `ForcedParentAbort` (was `Failed`). New `force_abort_peer_session()` helper wraps cooperative abort + await. **Part D — Rollback error accounting**: `ForcedParentAbort` and `Failed` outcomes recorded as incomplete cleanup errors, preventing false clean transitions. **Part E — Datagram handler ownership**: `start_datagram_handler()` owns handlers in a bounded `JoinSet` (`max_concurrent_datagram_handlers`, default 32) instead of bare `tokio::spawn()`. New config: `peer_stream_drain_timeout_secs` (default 5), `max_concurrent_datagram_handlers` (default 32). |

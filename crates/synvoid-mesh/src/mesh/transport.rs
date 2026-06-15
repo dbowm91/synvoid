@@ -3163,17 +3163,41 @@ impl MeshTransport {
 
                 let left = remaining(deadline);
                 let outcome = Self::stop_peer_session_task(task.handle, left, Some(report)).await;
-                if let PeerSessionStopOutcome::ForcedParentAbort = outcome {
-                    // Parent abort means we cannot prove the child stream
-                    // handler JoinSet was drained through the normal path;
-                    // surface as a cleanup error (Phase 11).
-                    report.errors.push(format!(
-                        "Peer session {} required parent abort; \
-                         child stream cleanup could not be proven cooperative",
-                        peer.session_id
-                    ));
+                match outcome {
+                    PeerSessionStopOutcome::Drained(_) => {}
+                    PeerSessionStopOutcome::ForcedParentAbort => {
+                        report.errors.push(format!(
+                            "Peer session {} (node {}) required parent abort; \
+                             child stream cleanup could not be proven cooperative",
+                            peer.session_id, peer.node_id
+                        ));
+                    }
+                    PeerSessionStopOutcome::Failed(error) => {
+                        report.errors.push(format!(
+                            "Peer session {} (node {}) failed during stop: {}",
+                            peer.session_id, peer.node_id, error
+                        ));
+                    }
                 }
             }
+        }
+    }
+
+    /// Force-abort a peer session parent task and classify the outcome
+    /// (Iteration 77, Phase 12).
+    ///
+    /// Used for both zero-budget and cooperative-timeout paths to ensure
+    /// identical classification. A cancelled `JoinError` is the expected
+    /// result of `abort()` and maps to `ForcedParentAbort`, not `Failed`.
+    async fn force_abort_peer_session(
+        mut handle: tokio::task::JoinHandle<()>,
+    ) -> PeerSessionStopOutcome {
+        handle.abort();
+        match handle.await {
+            Err(err) if err.is_panic() => PeerSessionStopOutcome::Failed(format!(
+                "peer-session parent panicked during forced abort: {err}"
+            )),
+            _ => PeerSessionStopOutcome::ForcedParentAbort,
         }
     }
 
@@ -3197,23 +3221,13 @@ impl MeshTransport {
         let mut handle = handle;
 
         if budget.is_zero() {
-            // No cooperative budget remaining — forced abort. We still
-            // await the handle so the JoinHandle is reaped.
-            handle.abort();
-            let join = handle.await;
+            // No cooperative budget remaining — forced abort (Iteration 77,
+            // Phase 11). Use the shared helper for consistent classification.
             if let Some(r) = report.as_deref_mut() {
                 r.peer_sessions_aborted += 1;
                 r.tasks_aborted += 1;
             }
-            return match join {
-                Ok(()) => PeerSessionStopOutcome::Drained(
-                    crate::lifecycle::PeerSessionExitReason::Aborted,
-                ),
-                Err(err) if err.is_panic() => {
-                    PeerSessionStopOutcome::Failed("parent panic".to_string())
-                }
-                Err(_) => PeerSessionStopOutcome::Failed("parent cancelled".to_string()),
-            };
+            return Self::force_abort_peer_session(handle).await;
         }
 
         // Attempt cooperative cancellation first. The session's
@@ -3248,15 +3262,13 @@ impl MeshTransport {
             }
             Err(()) => {
                 // Cooperative return did not complete in the budget; forced
-                // parent abort. Child stream handler JoinSet drain cannot be
-                // proven cooperative from this path.
-                handle.abort();
-                let _ = handle.await;
+                // parent abort (Iteration 77, Phase 12). Use the shared
+                // helper for consistent classification.
                 if let Some(r) = report.as_deref_mut() {
                     r.peer_sessions_aborted += 1;
                     r.tasks_aborted += 1;
                 }
-                PeerSessionStopOutcome::ForcedParentAbort
+                Self::force_abort_peer_session(handle).await
             }
         }
     }
@@ -3418,12 +3430,21 @@ impl MeshTransport {
 
                     let left = remaining(deadline);
                     let outcome = Self::stop_peer_session_task(task.handle, left, None).await;
-                    if let PeerSessionStopOutcome::ForcedParentAbort = outcome {
-                        session_errors.push(format!(
-                            "Recovery: peer session {} required parent abort; \
-                             child stream cleanup could not be proven cooperative",
-                            key
-                        ));
+                    match outcome {
+                        PeerSessionStopOutcome::Drained(_) => {}
+                        PeerSessionStopOutcome::ForcedParentAbort => {
+                            session_errors.push(format!(
+                                "Recovery: peer session {} required parent abort; \
+                                 child stream cleanup could not be proven cooperative",
+                                key
+                            ));
+                        }
+                        PeerSessionStopOutcome::Failed(error) => {
+                            session_errors.push(format!(
+                                "Recovery: peer session {} failed during stop: {}",
+                                key, error
+                            ));
+                        }
                     }
                 }
             }
@@ -3514,6 +3535,7 @@ impl MeshTransport {
 
         // Phase 10: Full verification
         let mut issues = Vec::new();
+        issues.extend(session_errors);
         issues.extend(remaining_errors);
 
         // Verify task group is empty
