@@ -2088,3 +2088,230 @@ fn test_restore_and_verify_method_exists() {
         "transport.rs must contain restore_and_verify_peer_logical_state method"
     );
 }
+
+// ── Iteration 76: Part A — Zero-budget rollback finalization ──────────────
+
+/// Verify that `rollback_startup` ALWAYS calls `join_all` on the staged
+/// `MeshTaskGroup`, even when the remaining budget is zero. Prior to
+/// Iteration 76 Part A, the call site skipped `join_all` entirely if
+/// `task_remaining.is_zero()`, leaving tasks orphaned in the registry.
+///
+/// This test reads the source to enforce the post-fix invariant: there is
+/// no conditional skip path between `task_remaining` and `join_all`.
+#[test]
+fn test_rollback_startup_always_finalizes_task_group() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let rollback_body = extract_function(&content, "rollback_startup");
+
+    // Must contain a call to `join_all(remaining(deadline))` or
+    // `join_all(task_remaining)` — but not guarded by `is_zero()`.
+    assert!(
+        rollback_body.contains("join_all("),
+        "rollback_startup must call join_all unconditionally"
+    );
+
+    // The historical bug: a `if task_remaining.is_zero() { Vec::new() }`
+    // skip-block must not be present.
+    assert!(
+        !rollback_body.contains("if task_remaining.is_zero()"),
+        "rollback_startup must not skip join_all when budget is zero (Iteration 76 Part A)"
+    );
+
+    // The pre-fix variant used a `let _exits = group.join_all(...)` form
+    // with an early `Vec::new()`. The post-fix variant must use
+    // `let exits = stage.task_group.join_all(remaining(deadline))`.
+    assert!(
+        rollback_body.contains("let exits = stage.task_group.join_all(remaining(deadline))"),
+        "rollback_startup must compute exits from a single join_all call"
+    );
+}
+
+/// Verify that `recover_failed_state` ALWAYS finalizes its task group, even
+/// under a zero remaining budget. Recovery is a sibling of rollback and
+/// must not regress the Iteration 76 Part A contract.
+#[test]
+fn test_recover_failed_state_always_finalizes_task_group() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let recovery_body = extract_function(&content, "recover_failed_state");
+
+    assert!(
+        recovery_body.contains("join_all("),
+        "recover_failed_state must call join_all unconditionally"
+    );
+
+    // No zero-budget skip path.
+    assert!(
+        !recovery_body.contains("if task_remaining.is_zero()"),
+        "recover_failed_state must not skip join_all when budget is zero (Iteration 76 Part A)"
+    );
+}
+
+// ── Iteration 76: Part B — Cooperative session cancellation ───────────────
+
+/// Verify that `stop_staged_peer_activity` always sends the cooperative
+/// shutdown signal before draining/aborting the session handle.
+///
+/// This is the Iteration 76 Part B invariant: the session's
+/// `peer_message_loop` must be given a chance to observe the watch signal
+/// and run its child JoinSet drain path before parent abort is considered.
+#[test]
+fn test_stop_staged_peer_activity_sends_shutdown_signal() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let stop_body = extract_function(&content, "stop_staged_peer_activity");
+
+    assert!(
+        stop_body.contains("shutdown_tx.send(true)"),
+        "stop_staged_peer_activity must send cooperative shutdown signal before stopping handle"
+    );
+
+    // Must call stop_peer_session_task with a budget.
+    assert!(
+        stop_body.contains("stop_peer_session_task"),
+        "stop_staged_peer_activity must delegate to stop_peer_session_task"
+    );
+}
+
+/// Verify that `stop_peer_session_task` exists as a shared helper and
+/// returns a `PeerSessionStopOutcome` so callers can distinguish drained
+/// from forcibly-aborted sessions.
+#[test]
+fn test_stop_peer_session_task_helper_exists() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        content.contains("fn stop_peer_session_task"),
+        "transport.rs must define stop_peer_session_task helper (Iteration 76 Part B)"
+    );
+    assert!(
+        content.contains("PeerSessionStopOutcome"),
+        "transport.rs must use PeerSessionStopOutcome to classify cleanup paths"
+    );
+}
+
+/// Verify that `PeerSessionTask` carries a `shutdown_tx` field so the
+/// session can be cooperatively cancelled. This is the Iteration 76 Part B
+/// type-level invariant.
+#[test]
+fn test_peer_session_task_has_shutdown_tx() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+    assert!(
+        content.contains("pub struct PeerSessionTask"),
+        "lifecycle.rs must define PeerSessionTask"
+    );
+
+    // The shutdown_tx field is the cooperative-cancellation carrier.
+    // Look for it in the struct body.
+    let struct_start = content
+        .find("pub struct PeerSessionTask")
+        .expect("PeerSessionTask struct must exist");
+    let struct_body_start = content[struct_start..]
+        .find('{')
+        .map(|i| struct_start + i)
+        .expect("PeerSessionTask must have a body");
+    // Scan forward to find the closing brace at depth 0.
+    let mut depth = 0i32;
+    let mut struct_end = struct_body_start;
+    for (i, ch) in content[struct_body_start..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    struct_end = struct_body_start + i;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let struct_body = &content[struct_body_start..=struct_end];
+    assert!(
+        struct_body.contains("shutdown_tx"),
+        "PeerSessionTask must contain a shutdown_tx field for cooperative cancellation"
+    );
+}
+
+// ── Iteration 76: Part C — Safe DHT force restoration ─────────────────────
+
+/// Verify that `KBucket::force_replace` returns a `Result` (not an `Option`)
+/// so that a full bucket with an absent target can fail closed without
+/// evicting an unrelated contact. The historical signature was
+/// `Option<PeerContact>`, which silently evicted the oldest peer.
+#[test]
+fn test_kbucket_force_replace_returns_result() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/dht/routing/bucket.rs");
+    assert!(
+        content.contains("pub fn force_replace"),
+        "KBucket must define force_replace"
+    );
+
+    // Find the signature and assert it returns a Result, not Option.
+    let sig_marker = "pub fn force_replace(";
+    let sig_pos = content
+        .find(sig_marker)
+        .expect("force_replace must be defined");
+    // Walk forward to find the return-type `->` (it may span multiple lines).
+    let after_sig = &content[sig_pos..];
+    let arrow_pos = after_sig
+        .find("->")
+        .expect("force_replace must have a return type");
+    let return_type_end = after_sig[arrow_pos + 2..]
+        .find(')')
+        .map(|i| arrow_pos + 2 + i)
+        .unwrap_or(after_sig.len());
+    let return_type = &after_sig[arrow_pos..return_type_end];
+    assert!(
+        return_type.contains("Result"),
+        "force_replace must return Result, not Option (Iteration 76 Part C). Found: {return_type}"
+    );
+    assert!(
+        return_type.contains("ForceRestoreError"),
+        "force_replace must return ForceRestoreError on conflict"
+    );
+}
+
+/// Verify that `RoutingTable::force_restore_contact` returns a typed
+/// `Result` with `ForceRestoreContactError`, mapping the bucket-level
+/// conflict error to the table-level error type.
+#[test]
+fn test_routing_table_force_restore_returns_typed_error() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/dht/routing/table.rs");
+    assert!(
+        content.contains("ForceRestoreContactError"),
+        "RoutingTable must define ForceRestoreContactError"
+    );
+    assert!(
+        content.contains("pub fn force_restore_contact"),
+        "RoutingTable must define force_restore_contact"
+    );
+}
+
+// ── Iteration 76: Part E — Refined stream timeout semantics ───────────────
+
+/// Verify that the peer message loop applies a per-message read timeout
+/// distinctly from the optional total stream lifetime timeout. The two
+/// timeouts are independently configurable and must not be conflated.
+#[test]
+fn test_peer_message_loop_has_distinct_timeouts() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport_peer.rs");
+
+    // The per-message read timeout accessor.
+    assert!(
+        content.contains("peer_message_read_timeout")
+            || content.contains("peer_message_timeout_secs"),
+        "transport_peer.rs must define a per-message read timeout"
+    );
+
+    // The total stream lifetime timeout accessor (opt-in).
+    assert!(
+        content.contains("peer_stream_total_timeout")
+            || content.contains("peer_stream_total_timeout_secs"),
+        "transport_peer.rs must define an opt-in total stream lifetime timeout"
+    );
+
+    // `apply_read_timeouts` helper must exist to wrap reads with the
+    // per-message timeout.
+    assert!(
+        content.contains("apply_read_timeouts"),
+        "transport_peer.rs must define apply_read_timeouts helper (Iteration 76 Part E)"
+    );
+}

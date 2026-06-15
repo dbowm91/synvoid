@@ -355,7 +355,7 @@ revoke_genesis_key(public_key: &str)
 - Non-empty list = genesis key must be in the list
 - Key rotation tracked via `rotation_sequence` and `GenesisKeyTransition` DHT records
 
-## Mesh Transport Lifecycle (Iterations 68–75)
+## Mesh Transport Lifecycle (Iterations 68–76)
 
 ### Adding a New Background Task
 
@@ -558,6 +558,82 @@ transport.set_startup_failure_hook(|point| match point {
 
 Hook checks at 6 phases in `start()`. `BeforeLifecycleCommit` (renamed from `AfterLifecycleCommit`) runs before state publication. Returns `Err` → rollback triggered (post-accept) or error propagated (pre-accept).
 
+## Forced-Cleanup Corrective Pass (Iteration 76)
+
+Iteration 76 corrects three classes of bugs that survived Iteration 75 and
+adds mechanical guardrails to prevent regression. The full architecture
+inventory lives in `architecture/mesh_transport_lifecycle.md`; this section
+summarizes the contracts agents should follow when editing mesh lifecycle
+code.
+
+### Part A — Always finalize `MeshTaskGroup`
+
+`rollback_startup()` and `recover_failed_state()` MUST always call
+`MeshTaskGroup::join_all(remaining(deadline))`. A zero remaining budget
+changes cleanup from drain to forced abort — it never permits skipping
+ownership finalization. The pre-fix call site did
+`if task_remaining.is_zero() { Vec::new() }`, which left tasks orphaned in
+the registry without exit reporting. **Never reintroduce that skip.**
+
+`join_all(Duration::ZERO)` itself takes the zero-budget branch internally
+(`handle.abort()` + `handle.await` + synthetic `Aborted` exit). The
+contract is verified by `tests/mesh_task_ownership_guard.rs` and
+`tests/mesh_startup_rollback.rs`.
+
+### Part B — Cooperative peer-session cancellation
+
+`PeerSessionTask` carries a `shutdown_tx: watch::Sender<bool>` field. The
+session's `peer_message_loop` selects on the cooperative signal via:
+
+```rust
+tokio::select! {
+    biased;
+    _ = shutdown_rx.changed() => { /* cooperative drain */ }
+    stream = accept_bi() => { ... }
+}
+```
+
+The `biased` keyword is mandatory — without it, a session starved by
+incoming events would never observe the shutdown signal. A shared
+`stop_peer_session_task()` helper classifies cleanup as
+`PeerSessionStopOutcome::{Drained, ForcedParentAbort, Failed}`. Callers
+should always send the cooperative signal **before** delegating to the
+helper, and surface `ForcedParentAbort` as an incomplete-cleanup error
+because the child stream-handler `JoinSet` was not drained through the
+normal path.
+
+### Part C — Safe DHT force restoration
+
+`KBucket::force_replace` returns
+`Result<Option<PeerContact>, ForceRestoreError>`. A full bucket with an
+absent target fails closed with `BucketFullTargetAbsent` rather than
+silently evicting an unrelated contact. Restoration paths must always
+check the `Err` arm and surface the conflict rather than discarding it.
+`RoutingTable::force_restore_contact` propagates the bucket-level error
+as `Result<PeerContact, ForceRestoreContactError>`.
+
+### Part D — DHT snapshot boundary
+
+`DhtPeerSnapshot` is a **logical** snapshot. The `last_seen` field is
+intentionally refreshed to `now()` during restore. Callers that need
+recency must use the freshly-snapshotted `PeerContact` (which is
+restored verbatim), not `DhtPeerSnapshot.last_seen`. Restoration
+verification compares the post-restore `PeerContact` to the snapshot
+via `peer_matches_snapshot()`.
+
+### Part E — Refined stream timeout semantics
+
+Two independent timeout fields replace the single per-message read timeout:
+
+| Field | Default | Scope | Use case |
+|-------|---------|-------|----------|
+| `peer_message_timeout_secs` | 30s | Per-message read/framing | Bounds I/O stall on a single message |
+| `peer_stream_total_timeout_secs` | 0 (disabled) | Total stream lifetime | Optional cap for long-lived streams |
+
+`peer_message_loop` must apply the per-message read timeout via
+`apply_read_timeouts` and the optional total stream lifetime timeout at
+the JoinSet spawn level. Conflating the two timeouts is a regression.
+
 ## Testing Commands
 
 ```bash
@@ -565,7 +641,7 @@ Hook checks at 6 phases in `start()`. `BeforeLifecycleCommit` (renamed from `Aft
 cargo test --test mesh_lifecycle_tests --features mesh,dns
 cargo test --test mesh_startup_rollback --features mesh,dns
 cargo test --test mesh_task_ownership_guard --features mesh,dns
-cargo test --test worker_supervision_control_flow --features mesh,dns
+cargo test --test mesh_forced_cleanup --features mesh,dns
 cargo test --test worker_supervision_control_flow --features mesh,dns
 
 # Unit tests

@@ -725,4 +725,69 @@ mod tests {
             MeshTaskExitReason::Panic(msg) if msg.contains("result panic")
         ));
     }
+
+    // ── Iteration 76, Phase 4: Zero-budget contract ──────────────────────
+    //
+    // `join_all(Duration::ZERO)` must abort, await, and report every
+    // owned task — it must not skip cleanup. This test defines the
+    // contract that rollback/recovery/shutdown rely on.
+    #[tokio::test]
+    async fn test_join_all_zero_budget_aborts_and_awaits() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let mut group = MeshTaskGroup::new();
+
+        // Drop-guard to prove the task was actually finalized.
+        let drop_flag = Arc::new(AtomicBool::new(false));
+        let drop_flag_for_task = drop_flag.clone();
+        group.spawn_critical("zero_budget_task", async move {
+            // A task that never exits cooperatively.
+            let _hold = drop_flag_for_task;
+            futures::future::pending::<()>().await;
+        });
+
+        assert_eq!(group.active_count(), (1, 0, 0));
+        assert!(!group.is_empty());
+
+        // Zero budget — the cleanup must still abort and await the task.
+        let exits = group.join_all(Duration::ZERO).await;
+
+        // Exactly one exit was reported.
+        assert_eq!(exits.len(), 1);
+        assert_eq!(exits[0].name, "zero_budget_task");
+        // The exit reason must be `Aborted` (not `Cancelled` or
+        // `UnexpectedCompletion`).
+        assert_eq!(exits[0].reason, MeshTaskExitReason::Aborted);
+
+        // The group is empty.
+        assert!(group.is_empty());
+        assert_eq!(group.active_count(), (0, 0, 0));
+    }
+
+    #[tokio::test]
+    async fn test_join_all_zero_budget_drains_all_classes() {
+        // All three classes (critical, background, child) must be
+        // finalized under a zero budget, not just the first task.
+        let mut group = MeshTaskGroup::new();
+
+        group.spawn_critical("zero_crit", futures::future::pending::<()>());
+        group.spawn_background("zero_bg", futures::future::pending::<()>());
+        group.spawn_child("zero_child", futures::future::pending::<()>());
+
+        assert_eq!(group.active_count(), (1, 1, 1));
+
+        let exits = group.join_all(Duration::ZERO).await;
+
+        assert_eq!(exits.len(), 3);
+        for exit in &exits {
+            assert_eq!(
+                exit.reason,
+                MeshTaskExitReason::Aborted,
+                "{:?} was not aborted",
+                exit
+            );
+        }
+        assert!(group.is_empty());
+    }
 }

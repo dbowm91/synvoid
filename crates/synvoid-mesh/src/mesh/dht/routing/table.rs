@@ -28,6 +28,40 @@ pub enum InsertError {
     PowVerificationFailed,
 }
 
+/// Error returned by `force_restore_contact` (Iteration 76, Part C).
+///
+/// Distinct from `InsertError` because the restore path has different
+/// failure semantics: it must not silently evict an unrelated contact
+/// when the target is absent and the bucket is full. Restoration callers
+/// surface this error up to the rollback/recovery path so that residue
+/// can be retained and the lifecycle remains `Failed`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForceRestoreContactError {
+    /// The target contact is the local node — rejected.
+    SameNodeId,
+    /// The target contact is not in the bucket and the bucket is full.
+    /// Restoration cannot proceed without evicting an unrelated peer.
+    BucketFullTargetAbsent,
+}
+
+impl std::fmt::Display for ForceRestoreContactError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ForceRestoreContactError::SameNodeId => {
+                write!(f, "DHT force-restore rejected: target is local node")
+            }
+            ForceRestoreContactError::BucketFullTargetAbsent => {
+                write!(
+                    f,
+                    "DHT force-restore rejected: bucket is full and target is absent"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for ForceRestoreContactError {}
+
 #[derive(Clone, Debug, Serialize, Deserialize, Archive, RkyvDeserialize, RkyvSerialize)]
 pub struct PersistedRoutingTable {
     pub local_node_id: String,
@@ -637,21 +671,32 @@ impl RoutingTable {
     ///
     /// Unlike `try_insert`, this unconditionally replaces any existing contact
     /// with the same node ID and does not apply PoW admission checks — the
-    /// contact was previously accepted state. If the bucket is full and the
-    /// peer does not exist, the oldest entry is evicted to make room.
+    /// contact was previously accepted state. **Does not** evict an
+    /// unrelated contact to make room for an absent target; the underlying
+    /// `KBucket::force_replace()` returns `BucketFullTargetAbsent` instead
+    /// (Iteration 76, Part C).
     ///
-    /// Returns `Ok(())` on success, `Err(InsertError::SameNodeId)` if the
-    /// contact is the local node.
-    pub fn force_restore_contact(&mut self, contact: PeerContact) -> Result<(), InsertError> {
+    /// Returns `Ok(())` on success. Errors:
+    /// - `InsertError::SameNodeId` if the contact is the local node.
+    /// - `ForceRestoreContactError::BucketFullTargetAbsent` if the target
+    ///   contact is not in the bucket and the bucket is full.
+    pub fn force_restore_contact(
+        &mut self,
+        contact: PeerContact,
+    ) -> Result<(), ForceRestoreContactError> {
         if contact.node_id == self.local_node_id {
-            return Err(InsertError::SameNodeId);
+            return Err(ForceRestoreContactError::SameNodeId);
         }
 
         let bucket_index = contact.node_id.bucket_index(&self.local_node_id);
         let node_id = contact.node_id;
         let bucket = &mut self.buckets[bucket_index];
 
-        bucket.force_replace(contact);
+        bucket.force_replace(contact).map_err(|e| match e {
+            super::bucket::ForceRestoreError::BucketFullTargetAbsent => {
+                ForceRestoreContactError::BucketFullTargetAbsent
+            }
+        })?;
 
         self.closest_cache.invalidate_all();
         self.pending_pings.remove(&node_id);
@@ -854,5 +899,96 @@ mod tests {
         // Force restore should clear the pending ping
         table.force_restore_contact(make_contact(0x01)).unwrap();
         assert!(!table.pending_pings.contains_key(&node_id));
+    }
+
+    #[test]
+    fn test_force_restore_full_bucket_absent_target_returns_conflict() {
+        // Iteration 76, Phase 16: A full bucket with the target absent
+        // must return `BucketFullTargetAbsent` without evicting any
+        // unrelated contact. Residue remains unresolved.
+        //
+        // We directly fill a single bucket by mutating the routing
+        // table's `buckets` field. This bypasses the
+        // `insert()` admission checks (PoW, ping responsiveness) and
+        // deterministically produces a full bucket. The
+        // `force_restore_contact()` path is then exercised against
+        // this fixture.
+        //
+        // `bucket_index(self, local) = 255 - common_prefix_len`. So
+        // bucket 255 is for contacts whose high bits differ from the
+        // local node (common prefix = 0). With local = [0; 32], any
+        // contact whose first byte is non-zero lands in bucket 255.
+        let local = NodeId([0u8; 32]);
+        let mut table = RoutingTable::new(local, "local-node".to_string());
+
+        // Pick bucket 255 (the "first byte differs" bucket) as our
+        // test bucket.
+        let bucket_idx = 255usize;
+
+        // Fill the bucket with 20 distinct contacts. We use byte values
+        // that flip the **high bit** of the first byte (0x80, 0x81, ...
+        // 0x93), since `common_prefix_len` measures the number of leading
+        // matching bits and we want the prefix to be 0 bits long for
+        // bucket 255. Anything with bit 7 of the first byte set produces
+        // a common prefix of 0 against local = [0; 32].
+        let mut before: Vec<NodeId> = Vec::new();
+        for i in 0u8..20u8 {
+            let mut bytes = [0u8; 32];
+            // 0x80 | i ensures bit 7 is set; the lower nibble varies so
+            // the 20 contacts are all distinct.
+            bytes[0] = 0x80 | i;
+            let id = NodeId(bytes);
+            assert_eq!(
+                id.bucket_index(&local),
+                bucket_idx,
+                "synthesized contact {i} (0x{:02x}) landed in bucket {}",
+                bytes[0],
+                id.bucket_index(&local)
+            );
+            table
+                .buckets
+                .get_mut(bucket_idx)
+                .unwrap()
+                .insert(PeerContact::new(
+                    id,
+                    format!("peer-{}", i),
+                    "1.1.1.1".into(),
+                    443,
+                ))
+                .expect("insert into empty slot");
+            before.push(id);
+        }
+        assert_eq!(table.buckets[bucket_idx].len(), 20);
+
+        // Synthesize an absent target that ALSO maps to bucket 255
+        // (different node_id than any of the existing 20). Pick a
+        // node_id whose first byte is 0xFE — that's not in {0..20}.
+        let absent_id = NodeId({
+            let mut bytes = [0u8; 32];
+            bytes[0] = 0xFE;
+            bytes
+        });
+        assert_eq!(absent_id.bucket_index(&local), bucket_idx);
+        assert!(!table.buckets[bucket_idx].contains(&absent_id));
+        let absent_target =
+            PeerContact::new(absent_id, "absent-target".into(), "9.9.9.9".into(), 443);
+
+        // Force-restore the absent target. Bucket is full, target is
+        // absent → must return conflict without evicting anyone.
+        let result = table.force_restore_contact(absent_target);
+        assert_eq!(
+            result,
+            Err(ForceRestoreContactError::BucketFullTargetAbsent),
+            "full bucket with absent target must return conflict"
+        );
+
+        // No unrelated contact was evicted
+        assert_eq!(table.buckets[bucket_idx].len(), 20);
+        for id in &before {
+            assert!(
+                table.buckets[bucket_idx].contains(id),
+                "unrelated contact {id:?} was evicted during force-restore"
+            );
+        }
     }
 }

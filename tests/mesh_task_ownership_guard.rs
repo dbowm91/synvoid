@@ -1952,3 +1952,207 @@ fn rollback_retains_unresolved_peers() {
         "rollback_startup must have unresolved_peers field in RollbackReport"
     );
 }
+
+// ── Iteration 76: Part A — Zero-budget rollback finalization guard ───────
+
+/// Guardrail: `rollback_startup` must NOT skip `join_all` when the
+/// remaining budget is zero. The pre-Iteration-76 code path did
+/// `if task_remaining.is_zero() { Vec::new() }` which left tasks
+/// orphaned in the task registry without exit reporting.
+#[test]
+fn iter76_rollback_does_not_skip_join_all_on_zero_budget() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let rollback_fn = extract_function(&source, "rollback_startup");
+
+    assert!(
+        !rollback_fn.contains("if task_remaining.is_zero()"),
+        "rollback_startup must not skip join_all on zero remaining budget (Iteration 76 Part A)"
+    );
+
+    // The post-fix call is the unconditional one.
+    assert!(
+        rollback_fn.contains("let exits = stage.task_group.join_all(remaining(deadline))"),
+        "rollback_startup must always call join_all(remaining(deadline))"
+    );
+}
+
+/// Guardrail: `recover_failed_state` must NOT skip `join_all` on a zero
+/// budget. Recovery is a sibling of rollback and inherits the same
+/// finalization contract.
+#[test]
+fn iter76_recovery_does_not_skip_join_all_on_zero_budget() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let recovery_fn = extract_function(&source, "recover_failed_state");
+
+    assert!(
+        !recovery_fn.contains("if task_remaining.is_zero()"),
+        "recover_failed_state must not skip join_all on zero remaining budget (Iteration 76 Part A)"
+    );
+}
+
+// ── Iteration 76: Part B — Cooperative cancellation guard ────────────────
+
+/// Guardrail: every `PeerSessionTask` construction site in `transport.rs`
+/// must include the `shutdown_tx` field. This is the type-level
+/// invariant: any new construction that forgets the cooperative
+/// cancellation carrier will fail to compile, but this test catches the
+/// case where the field is removed from the struct definition itself.
+#[test]
+fn iter76_peer_session_task_has_shutdown_tx_field() {
+    let lifecycle_src = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+    let struct_pos = lifecycle_src
+        .find("pub struct PeerSessionTask")
+        .expect("PeerSessionTask must exist");
+    let body_start = lifecycle_src[struct_pos..]
+        .find('{')
+        .map(|i| struct_pos + i)
+        .expect("struct body must open");
+    let mut depth = 0i32;
+    let mut body_end = body_start;
+    for (i, ch) in lifecycle_src[body_start..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    body_end = body_start + i;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let struct_body = &lifecycle_src[body_start..=body_end];
+    assert!(
+        struct_body.contains("shutdown_tx"),
+        "PeerSessionTask must carry shutdown_tx field for cooperative cancellation"
+    );
+}
+
+/// Guardrail: `peer_message_loop` in `transport_peer.rs` must select on
+/// the cooperative shutdown signal BEFORE other branches. Using
+/// `tokio::select! { biased; ... }` ensures the cancel branch wins the
+/// race against a steady stream of incoming events.
+#[test]
+fn iter76_peer_message_loop_uses_biased_select_on_shutdown() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport_peer.rs");
+
+    // The biased select is the cancellation contract. Without it, a
+    // session starved by incoming events would never observe the
+    // shutdown signal. The biased keyword is on its own line in the
+    // source (typical Rust style).
+    let has_biased_select = source
+        .lines()
+        .collect::<Vec<_>>()
+        .windows(2)
+        .any(|pair| pair[0].contains("select!") && pair[0].contains('{') && pair[1].trim() == "biased;")
+        || source.contains("select! { biased;")
+        || source.contains("select!{biased;");
+    assert!(
+        has_biased_select,
+        "transport_peer.rs must use tokio::select! {{ biased; ... }} for cooperative shutdown (Iteration 76 Part B)"
+    );
+}
+
+/// Guardrail: `stop_staged_peer_activity` must always send the
+/// cooperative shutdown signal before draining/aborting the session.
+#[test]
+fn iter76_stop_staged_peer_activity_sends_signal_first() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let body = extract_function(&source, "stop_staged_peer_activity");
+
+    let signal_pos = body
+        .find("shutdown_tx.send(true)")
+        .expect("stop_staged_peer_activity must send cooperative shutdown signal");
+    let handle_pos = body
+        .find("stop_peer_session_task")
+        .expect("stop_staged_peer_activity must call stop_peer_session_task");
+
+    assert!(
+        signal_pos < handle_pos,
+        "cooperative signal must be sent BEFORE the session handle is stopped (signal at {signal_pos}, handle at {handle_pos})"
+    );
+}
+
+// ── Iteration 76: Part C — Safe DHT force restoration guard ──────────────
+
+/// Guardrail: `KBucket::force_replace` must return a `Result` so that a
+/// full bucket with an absent target fails closed instead of silently
+/// evicting an unrelated contact. The pre-Iteration-76 signature
+/// `Option<PeerContact>` could corrupt the bucket during rollback.
+#[test]
+fn iter76_kbucket_force_replace_returns_result() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/dht/routing/bucket.rs");
+
+    let sig_marker = "pub fn force_replace(";
+    let sig_pos = source.find(sig_marker).expect("force_replace must exist");
+    let after_sig = &source[sig_pos..];
+    let arrow_pos = after_sig
+        .find("->")
+        .expect("force_replace must have a return type");
+    let return_type = &after_sig[arrow_pos..arrow_pos + 80];
+
+    assert!(
+        return_type.contains("Result"),
+        "force_replace must return Result, not Option (Iteration 76 Part C)"
+    );
+    assert!(
+        return_type.contains("ForceRestoreError"),
+        "force_replace must return ForceRestoreError on conflict"
+    );
+}
+
+/// Guardrail: `RoutingTable::force_restore_contact` must propagate
+/// bucket-level errors as `ForceRestoreContactError`. Rollback and
+/// recovery use this to decide whether to surface unresolved peers.
+#[test]
+fn iter76_routing_table_force_restore_uses_typed_error() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/dht/routing/table.rs");
+
+    assert!(
+        source.contains("ForceRestoreContactError"),
+        "RoutingTable must define ForceRestoreContactError"
+    );
+    assert!(
+        source.contains("BucketFullTargetAbsent"),
+        "RoutingTable must surface bucket-level BucketFullTargetAbsent as a typed error"
+    );
+}
+
+// ── Iteration 76: Part E — Stream timeout semantics guard ───────────────
+
+/// Guardrail: peer stream read timeout and total stream lifetime timeout
+/// must be distinct, independently configurable values. The two have
+/// different semantics: read timeout bounds per-message I/O, total
+/// timeout bounds the entire stream lifetime.
+#[test]
+fn iter76_distinct_stream_timeout_config_fields() {
+    let cfg_src = read_file("crates/synvoid-config/src/mesh.rs");
+    let mesh_cfg_src = read_file("crates/synvoid-mesh/src/mesh/config.rs");
+
+    assert!(
+        cfg_src.contains("peer_message_timeout_secs"),
+        "MeshConnectionConfig must define peer_message_timeout_secs (per-message read)"
+    );
+    assert!(
+        cfg_src.contains("peer_stream_total_timeout_secs"),
+        "MeshConnectionConfig must define peer_stream_total_timeout_secs (opt-in total lifetime)"
+    );
+    assert!(
+        mesh_cfg_src.contains("peer_stream_total_timeout_secs"),
+        "synvoid-mesh MeshConnectionConfig must also define peer_stream_total_timeout_secs"
+    );
+}
+
+/// Guardrail: `peer_message_loop` must apply the per-message read timeout
+/// via a dedicated helper, distinct from the optional total stream
+/// lifetime timeout. The split prevents long-lived proxy streams from
+/// being killed by the short per-message framing timeout.
+#[test]
+fn iter76_apply_read_timeouts_helper_exists() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport_peer.rs");
+    assert!(
+        source.contains("fn apply_read_timeouts"),
+        "transport_peer.rs must define apply_read_timeouts helper (Iteration 76 Part E)"
+    );
+}

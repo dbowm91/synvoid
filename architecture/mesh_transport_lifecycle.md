@@ -1,8 +1,94 @@
-# Mesh Transport Lifecycle Inventory — Iteration 75
+# Mesh Transport Lifecycle Inventory — Iteration 76
 
 ## Purpose
 
 This document is the **canonical inventory** of every task spawned by `MeshTransport`, `MeshDiscovery`, `DhtRoutingManager`, and `ThreatIntelligenceManager` during the mesh runtime lifecycle. It classifies each task, documents its current cancellation/join behavior, and defines the target lifecycle state machine, startup ordering, and shutdown ordering.
+
+## Iteration 76 — Forced-Cleanup Corrective Pass
+
+Iteration 76 corrects three classes of bugs that survived Iteration 75 and adds
+mechanical guardrails to prevent regression:
+
+### Part A — Always finalize `MeshTaskGroup`
+
+`rollback_startup()` and `recover_failed_state()` now **always** call
+`MeshTaskGroup::join_all(remaining(deadline))`. The pre-fix call site did
+`if task_remaining.is_zero() { Vec::new() }`, which left tasks orphaned in the
+registry without exit reporting. The contract is:
+
+> A zero remaining budget changes cleanup from drain to forced abort — it
+> never permits skipping ownership finalization.
+
+`join_all(Duration::ZERO)` itself takes the zero-budget branch internally
+(`handle.abort()` + `handle.await` + synthetic `Aborted` exit). The single
+call site is now `let exits = stage.task_group.join_all(remaining(deadline))`.
+
+### Part B — Cooperative peer-session cancellation
+
+`PeerSessionTask` gains a `shutdown_tx: watch::Sender<bool>` field. The
+session's `peer_message_loop` selects on the cooperative signal via:
+
+```rust
+tokio::select! {
+    biased;
+    _ = shutdown_rx.changed() => { /* cooperative drain */ }
+    stream = accept_bi() => { ... }
+}
+```
+
+The `biased` keyword ensures the cancel branch wins the race against a
+steady stream of incoming events. A shared `stop_peer_session_task()` helper
+classifies cleanup as `PeerSessionStopOutcome::{Drained, ForcedParentAbort,
+Failed}` so rollback/recovery/shutdown can distinguish cooperative drain
+from forced parent abort (which cannot prove the child stream-handler
+`JoinSet` was drained through the normal path).
+
+`stop_staged_peer_activity()` always sends the cooperative signal **before**
+delegating to the helper:
+
+```rust
+let _ = task.shutdown_tx.send(true);
+let outcome = Self::stop_peer_session_task(task.handle, left, Some(report)).await;
+```
+
+### Part C — Safe DHT force restoration
+
+`KBucket::force_replace` signature changed from `Option<PeerContact>` to
+`Result<Option<PeerContact>, ForceRestoreError>`. A full bucket with an
+absent target now fails closed with `BucketFullTargetAbsent` rather than
+silently evicting an unrelated contact. The new error type is propagated
+through `RoutingTable::force_restore_contact` as
+`Result<PeerContact, ForceRestoreContactError>`, which is then translated
+to `String` in `DhtRoutingManager::restore_peer` for the report.
+
+### Part D — DHT snapshot boundary
+
+`DhtPeerSnapshot` is documented as a **logical** snapshot. The
+`last_seen` field is intentionally refreshed to `now()` during restore
+because rolling the clock backwards on a contact that may have legitimately
+been seen again would be incorrect. Callers that need recency must use the
+freshly-snapshotted `PeerContact` (which is restored verbatim), not
+`DhtPeerSnapshot.last_seen`.
+
+### Part E — Refined stream timeout semantics
+
+Two independent timeout fields replace the single per-message read timeout:
+
+| Field | Default | Scope | Use case |
+|-------|---------|-------|----------|
+| `peer_message_timeout_secs` | 30s | Per-message read/framing | Bounds I/O stall on a single message |
+| `peer_stream_total_timeout_secs` | 0 (disabled) | Total stream lifetime | Optional cap for long-lived streams |
+
+The split prevents long-lived proxy streams from being killed by the
+short per-message framing timeout. `apply_read_timeouts` helper wraps each
+per-message read with `tokio::time::timeout`.
+
+### Guardrails
+
+- **`tests/mesh_forced_cleanup.rs`** (new): 8 integration tests covering Parts A/B/C/D.
+- **`tests/mesh_task_ownership_guard.rs`**: 9 new `iter76_*` assertions.
+- **`tests/mesh_startup_rollback.rs`**: 8 new behavioral assertions.
+- **`tests/mesh_lifecycle_tests.rs`**: 1 cooperative-cancellation test.
 
 ## Task Classification Definitions
 
@@ -952,3 +1038,4 @@ Secondary metrics (scores, failures, latency) are intentionally excluded from sn
 | 73 | **Hard rejection of non-empty task group replacement**: `commit_startup()` returns `LifecycleConflict` error if old task group is non-empty (checked before `std::mem::replace`). **Pre-mutation snapshots**: `get_peer()` (topology) and `snapshot_peer()` (DHT) captured before `add_peer()` and `dht_on_peer_connected()` in outbound connection path. **DhtPeerMutation enum**: `Created`, `Replaced(snapshot)`, `UpdatedInPlace(snapshot)`, `None` — derived from pre-mutation snapshot comparison, not `rm.is_enabled()` alone. **FailedStartupResidue**: retained on transport when rollback is incomplete; consumed and cleared by `recover_failed_state()`. **Full recovery verification**: `recover_failed_state()` verifies task group empty, peer sessions empty, auxiliary tasks empty, connections empty, residue cleared. **Abort-and-await pattern**: all `.abort()` calls followed by `.await` to reap task resources. **Auxiliary task ownership**: preflight tracked in `auxiliary_tasks: HashMap<MeshTaskId, AuxiliaryTask>` during steady-state; `AuxiliaryTaskKind::PreflightRoute` variant. **Peer-session exit classification**: `PeerSessionExitReason` enum (Clean/ConnectionClosed/Cancelled/Error/Panic/Aborted), `PeerSessionExit` struct with generation counter. **MeshShutdownReport.failed_peer_sessions**: new field for panic/error session exits. **Worker mesh supervision**: remains deferred (Outcome B from Iteration 70). |
 | 74 | **Residue application during recovery**: `recover_failed_state()` now applies `FailedStartupResidue` via `restore_peer_logical_state()` before clearing — restores topology and DHT entries for each peer, closes connections. Partially restored peers retain residue for subsequent attempts. **Native topology restoration**: `StagedTopologySnapshot` stores native `PeerState` (not lossy `MeshPeerInfo` + `PeerStatus`); rollback uses `restore_peer_state()` for exact prior state. **Native DHT restoration**: `DhtPeerSnapshot` expanded to capture all `PeerContact` fields (geo, latency, trust, PoW nonce, public key); `restore_peer()` re-inserts contact with all fields; `peer_matches_snapshot()` verification method added. **DhtPeerMutation simplified**: `Replaced` and `UpdatedInPlace` collapsed into single `Previous(DhtPeerSnapshot)` variant. **Session reaper cancellation-awareness**: uses `tokio::select!` with `session_reaper_shutdown` watch signal; handles await outside the lock; broadcast lag recovery scans for finished handles. **Auxiliary task reaper**: `spawn_auxiliary_reaper()` as critical background task; `AuxiliaryTaskExit` type for exit events; same `select!` + lag-recovery pattern. **One global session-generation domain**: `session_generation: Arc<AtomicU64>` on `MeshTransport` used by both outbound and inbound sessions (replaces split stage/zero counters). **Accept-loop report freshness**: `MeshShutdownReport.accept_loop_report` is now `Option<MeshAcceptLoopReport>`; stale reports are `None` instead of potentially misattributed counts. **RecoveryReport**: internal accounting struct for structured recovery outcomes. **Shared `restore_peer_logical_state()`**: used by both `rollback_startup()` and `recover_failed_state()` for deduplication. **Worker mesh supervision**: remains deferred (Outcome B from Iteration 70). |
 | 75 | **Force-replacement DHT restoration**: `restore_peer()` uses `force_restore_contact()` which unconditionally replaces existing contacts, eliminating silent failures on full buckets. **Complete PeerContact snapshot**: `DhtPeerSnapshot` stores a clone of the native `PeerContact` instead of individual fields, eliminating field drift. **Topology secondary-index restoration**: `restore_peer_state()` bidirectionally updates `global_nodes` (inserts when global, removes when non-global); `remove_peer()` also clears `global_nodes`. **Teardown-before-restoration ordering**: `rollback_startup()` stops all peer sessions and auxiliary tasks before logical restoration. **Combined restore-and-verify**: `restore_and_verify_peer_logical_state()` combines restoration and verification in one call. **Residue retention**: `rollback_and_return()` stores only unresolved peers in `FailedStartupResidue`. **Session-local stream handlers**: `peer_message_loop()` uses a `JoinSet` for per-stream handlers with capacity limiting, timeout wrapping, and drain-before-exit. **`PeerStreamDrainReport`**: new type tracking stream drain statistics. **Worker mesh supervision**: remains deferred (Outcome B from Iteration 70). |
+| 76 | **Forced-cleanup corrective pass**. **Part A — Zero-budget finalization**: `rollback_startup()` and `recover_failed_state()` now always call `MeshTaskGroup::join_all(remaining(deadline))` — never skip on zero budget. The pre-fix call site did `if task_remaining.is_zero() { Vec::new() }`, leaving tasks orphaned in the registry without exit reporting. `join_all(Duration::ZERO)` itself aborts and awaits each task with synthetic `Aborted` exits, so the contract is preserved. **Part B — Cooperative session cancellation**: `PeerSessionTask` gains a `shutdown_tx: watch::Sender<bool>` field. `peer_message_loop` selects on the cooperative signal via `tokio::select! { biased; ... }` so the cancel branch wins the race against incoming events. The shared `stop_peer_session_task()` helper classifies cleanup as `PeerSessionStopOutcome::{Drained, ForcedParentAbort, Failed}` so callers can distinguish cooperative drain from forced parent abort. `stop_staged_peer_activity()` always sends the cooperative signal before delegating to the helper. **Part C — Safe DHT force restoration**: `KBucket::force_replace` returns `Result<Option<PeerContact>, ForceRestoreError>` instead of `Option<PeerContact>`. A full bucket with an absent target now fails closed with `BucketFullTargetAbsent` rather than silently evicting an unrelated contact. `RoutingTable::force_restore_contact` returns `Result<PeerContact, ForceRestoreContactError>` and propagates the bucket-level error. **Part D — DHT snapshot boundary**: `DhtPeerSnapshot` is documented as a *logical* snapshot; `last_seen` is intentionally refreshed to `now()` during restore and must not be relied on for byte-for-byte restoration. **Part E — Refined stream timeout**: per-message read timeout (`peer_message_timeout_secs`) is now distinct from the optional total stream lifetime timeout (`peer_stream_total_timeout_secs`, default 0 = disabled). The split prevents long-lived proxy streams from being killed by the short framing timeout. `apply_read_timeouts` helper wraps each per-message read with `tokio::time::timeout`. **Guardrails**: `tests/mesh_forced_cleanup.rs` (8 integration tests), `tests/mesh_task_ownership_guard.rs` (9 new `iter76_*` assertions), `tests/mesh_startup_rollback.rs` (8 new behavioral assertions), `tests/mesh_lifecycle_tests.rs` (1 cooperative-cancellation test). **Worker mesh supervision**: remains deferred (Outcome B from Iteration 70). |

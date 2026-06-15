@@ -14,6 +14,30 @@ pub enum BucketError {
     SameNodeId,
 }
 
+/// Error returned by `KBucket::force_replace` when the bucket is full and
+/// the target contact is not present (Iteration 76, Part C).
+///
+/// Restoration paths must never silently evict an unrelated contact to
+/// make room for a missing target — that would corrupt the bucket.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForceRestoreError {
+    /// The target contact is not in the bucket and the bucket is full.
+    /// Restoration cannot proceed without evicting an unrelated peer.
+    BucketFullTargetAbsent,
+}
+
+impl std::fmt::Display for ForceRestoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ForceRestoreError::BucketFullTargetAbsent => {
+                write!(f, "DHT bucket is full and target contact is absent")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ForceRestoreError {}
+
 #[derive(Clone, Debug)]
 pub struct KBucket {
     pub index: usize,
@@ -165,10 +189,15 @@ impl KBucket {
         &mut self.peers
     }
 
-    /// Force-replace a contact with the same node ID, or insert if absent.
-    /// Used by rollback restoration — does not apply admission checks.
-    /// Returns the previously stored contact if one existed.
-    pub fn force_replace(&mut self, contact: PeerContact) -> Option<PeerContact> {
+    /// Error returned by `force_replace` when the bucket is full and the
+    /// target contact is not present (Iteration 76, Part C).
+    ///
+    /// Restoration paths must never silently evict an unrelated contact to
+    /// make room for a missing target — that would corrupt the bucket.
+    pub fn force_replace(
+        &mut self,
+        contact: PeerContact,
+    ) -> Result<Option<PeerContact>, ForceRestoreError> {
         let node_id = contact.node_id;
 
         // Remove existing contact with the same node ID
@@ -176,20 +205,18 @@ impl KBucket {
             let existing = self.peers.remove(existing_idx);
             self.peers.push(contact);
             self.last_updated = Instant::now();
-            return Some(existing);
+            return Ok(Some(existing));
         }
 
-        // No existing contact — insert if there's room, or evict oldest if full
+        // No existing contact — insert if there's room. If the bucket is
+        // full, refuse the insertion rather than evicting an unrelated
+        // contact (Iteration 76, Part C).
         if self.peers.len() < K_SIZE {
             self.peers.push(contact);
             self.last_updated = Instant::now();
-            None
+            Ok(None)
         } else {
-            // Bucket full and peer doesn't exist — evict oldest to make room
-            let evicted = self.peers.remove(0);
-            self.peers.push(contact);
-            self.last_updated = Instant::now();
-            Some(evicted)
+            Err(ForceRestoreError::BucketFullTargetAbsent)
         }
     }
 
@@ -316,7 +343,7 @@ mod tests {
 
         let mut peer_b = make_contact(0x01);
         peer_b.address = "mutated".to_string();
-        let result = bucket.force_replace(peer_b);
+        let result = bucket.force_replace(peer_b).unwrap();
 
         assert!(result.is_some()); // returned previous
         let stored = bucket.get(&NodeId([0x01; 32])).unwrap();
@@ -324,17 +351,68 @@ mod tests {
     }
 
     #[test]
-    fn test_force_replace_full_bucket() {
+    fn test_force_replace_full_bucket_target_absent_returns_conflict() {
         let mut bucket = KBucket::new(0);
         for i in 0..K_SIZE {
             bucket.insert(make_contact(i as u8)).unwrap();
         }
         assert!(bucket.is_full());
 
-        // Force replace should evict oldest to make room for new peer
+        // Snapshot the bucket contents before the failed restore
+        let before: Vec<NodeId> = bucket.get_all().iter().map(|p| p.node_id).collect();
+
+        // Force-replace a peer that is not in the bucket — must NOT evict
+        // an unrelated contact (Iteration 76, Phase 13-14).
         let new_peer = make_contact(0xFF);
         let result = bucket.force_replace(new_peer);
-        assert!(result.is_some()); // evicted oldest
-        assert!(bucket.contains(&NodeId([0xFF; 32])));
+        assert!(matches!(
+            result,
+            Err(ForceRestoreError::BucketFullTargetAbsent)
+        ));
+        assert!(!bucket.contains(&NodeId([0xFF; 32])));
+
+        // Every unrelated contact is still present
+        for node_id in &before {
+            assert!(
+                bucket.contains(node_id),
+                "unrelated contact {node_id:?} was evicted during force_replace"
+            );
+        }
+        assert_eq!(bucket.len(), K_SIZE);
+    }
+
+    #[test]
+    fn test_force_replace_full_bucket_target_present_succeeds() {
+        let mut bucket = KBucket::new(0);
+        for i in 0..K_SIZE {
+            bucket.insert(make_contact(i as u8)).unwrap();
+        }
+        assert!(bucket.is_full());
+
+        // Force-replace an existing peer in a full bucket — must replace
+        // in place, not evict an unrelated contact.
+        let mut updated = make_contact(0x01);
+        updated.address = "mutated".to_string();
+        let result = bucket.force_replace(updated).unwrap();
+        assert!(result.is_some());
+
+        let stored = bucket.get(&NodeId([0x01; 32])).unwrap();
+        assert_eq!(stored.address, "mutated");
+        assert_eq!(bucket.len(), K_SIZE);
+    }
+
+    #[test]
+    fn test_force_replace_absent_with_capacity_inserts() {
+        let mut bucket = KBucket::new(0);
+        for i in 0..(K_SIZE - 1) {
+            bucket.insert(make_contact(i as u8)).unwrap();
+        }
+        assert_eq!(bucket.len(), K_SIZE - 1);
+
+        // Bucket has room — insertion succeeds.
+        let new_peer = make_contact(0xFE);
+        let result = bucket.force_replace(new_peer).unwrap();
+        assert!(result.is_none()); // no previous
+        assert!(bucket.contains(&NodeId([0xFE; 32])));
     }
 }

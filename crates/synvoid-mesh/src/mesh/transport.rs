@@ -52,8 +52,8 @@ use crate::lifecycle::{
     remaining, AuxiliaryTask, AuxiliaryTaskExit, AuxiliaryTaskKind, DhtPeerMutation,
     DhtPeerSnapshot, FailedStartupResidue, MeshAcceptLoopReport, MeshLifecycleState,
     MeshShutdownReport, MeshStartupPolicy, MeshStartupReport, MeshStartupStage, MeshTaskExit,
-    MeshTaskExitReason, MeshTaskId, MeshTaskIdGenerator, PeerSessionTask, RecoveryReport,
-    RollbackReport, StagedPeerResource, StagedTopologySnapshot,
+    MeshTaskExitReason, MeshTaskId, MeshTaskIdGenerator, PeerSessionStopOutcome, PeerSessionTask,
+    RecoveryReport, RollbackReport, StagedPeerResource, StagedTopologySnapshot,
 };
 use crate::task_group::MeshTaskGroup;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -3054,13 +3054,12 @@ impl MeshTransport {
                 .await;
         }
 
-        // Phase 5: Join remaining staged tasks with remaining time budget
-        let task_remaining = remaining(deadline);
-        let exits = if task_remaining.is_zero() {
-            Vec::new()
-        } else {
-            stage.task_group.join_all(task_remaining).await
-        };
+        // Phase 5: Always finalize staged tasks. A zero remaining budget changes
+        // cleanup from drain to forced abort, but it never permits skipping
+        // ownership finalization (Iteration 76, Part A). `join_all(ZERO)` takes
+        // its zero-budget branch internally: abort-and-await each task with
+        // synthetic `Aborted` exits.
+        let exits = stage.task_group.join_all(remaining(deadline)).await;
         report.tasks_joined = exits.len();
 
         for exit in &exits {
@@ -3143,36 +3142,121 @@ impl MeshTransport {
                 .await;
         }
 
-        // Stop the peer session with deadline-bounded drain
+        // Stop the peer session with deadline-bounded drain. A zero remaining
+        // budget changes cleanup from drain to forced abort, but it never
+        // permits skipping ownership finalization (Iteration 76, Part A/B).
+        //
+        // We always send the cooperative shutdown signal first; then we wait
+        // for the parent to return within the remaining budget. If the
+        // budget is exhausted before cooperative return, we abort the parent
+        // and surface that as incomplete cleanup (Phase 11).
         if peer.session_task_id.is_some() {
-            let mut sessions = self.peer_sessions.lock().await;
-            if let Some(task) = sessions.remove(&peer.session_id) {
+            let task = {
+                let mut sessions = self.peer_sessions.lock().await;
+                sessions.remove(&peer.session_id)
+            };
+            if let Some(task) = task {
+                // Signal cooperative cancellation so the session's loop can
+                // run its child stream handler drain path before parent
+                // return (Iteration 76, Phase 6-9).
+                let _ = task.shutdown_tx.send(true);
+
                 let left = remaining(deadline);
-                if left.is_zero() {
-                    task.handle.abort();
-                    let _ = task.handle.await;
-                    report.peer_sessions_aborted += 1;
-                    report.tasks_aborted += 1;
-                    return;
+                let outcome = Self::stop_peer_session_task(task.handle, left, Some(report)).await;
+                if let PeerSessionStopOutcome::ForcedParentAbort = outcome {
+                    // Parent abort means we cannot prove the child stream
+                    // handler JoinSet was drained through the normal path;
+                    // surface as a cleanup error (Phase 11).
+                    report.errors.push(format!(
+                        "Peer session {} required parent abort; \
+                         child stream cleanup could not be proven cooperative",
+                        peer.session_id
+                    ));
                 }
-                let mut handle = task.handle;
-                let sleep = tokio::time::sleep(left);
-                tokio::pin!(sleep);
-                tokio::select! {
-                    result = &mut handle => {
-                        match result {
-                            Ok(()) => report.peer_sessions_drained += 1,
-                            Err(err) if err.is_panic() => report.peer_sessions_failed += 1,
-                            Err(_) => report.peer_sessions_failed += 1,
-                        }
-                    }
-                    _ = &mut sleep => {
-                        handle.abort();
-                        let _ = handle.await;
-                        report.peer_sessions_aborted += 1;
-                        report.tasks_aborted += 1;
-                    }
+            }
+        }
+    }
+
+    /// Stop a single peer session task with cooperative cancellation, falling
+    /// back to forced parent abort only if the cooperative return does not
+    /// complete within the supplied budget (Iteration 76, Phase 10).
+    ///
+    /// Invariant: `handle` is always awaited (cooperatively, on cancellation,
+    /// or after a forced abort). The returned `PeerSessionStopOutcome` lets
+    /// the caller distinguish a clean cooperative return from a forced
+    /// parent abort (which cannot prove the child stream-handler `JoinSet`
+    /// was drained through the normal path).
+    ///
+    /// `report` may be `None` for callers that already maintain their own
+    /// session accounting (e.g., recovery and shutdown paths).
+    async fn stop_peer_session_task(
+        handle: tokio::task::JoinHandle<()>,
+        budget: std::time::Duration,
+        mut report: Option<&mut RollbackReport>,
+    ) -> PeerSessionStopOutcome {
+        let mut handle = handle;
+
+        if budget.is_zero() {
+            // No cooperative budget remaining — forced abort. We still
+            // await the handle so the JoinHandle is reaped.
+            handle.abort();
+            let join = handle.await;
+            if let Some(r) = report.as_deref_mut() {
+                r.peer_sessions_aborted += 1;
+                r.tasks_aborted += 1;
+            }
+            return match join {
+                Ok(()) => PeerSessionStopOutcome::Drained(
+                    crate::lifecycle::PeerSessionExitReason::Aborted,
+                ),
+                Err(err) if err.is_panic() => {
+                    PeerSessionStopOutcome::Failed("parent panic".to_string())
                 }
+                Err(_) => PeerSessionStopOutcome::Failed("parent cancelled".to_string()),
+            };
+        }
+
+        // Attempt cooperative cancellation first. The session's
+        // peer_message_loop is expected to observe the shutdown_tx signal,
+        // stop accepting new streams, and run its child JoinSet drain path
+        // before returning.
+        let sleep = tokio::time::sleep(budget);
+        tokio::pin!(sleep);
+        let result = tokio::select! {
+            join = &mut handle => Ok(join),
+            _ = &mut sleep => Err(()),
+        };
+
+        match result {
+            Ok(Ok(())) => {
+                if let Some(r) = report.as_deref_mut() {
+                    r.peer_sessions_drained += 1;
+                }
+                PeerSessionStopOutcome::Drained(crate::lifecycle::PeerSessionExitReason::Cancelled)
+            }
+            Ok(Err(err)) if err.is_panic() => {
+                if let Some(r) = report.as_deref_mut() {
+                    r.peer_sessions_failed += 1;
+                }
+                PeerSessionStopOutcome::Failed("parent panic".to_string())
+            }
+            Ok(Err(_)) => {
+                if let Some(r) = report.as_deref_mut() {
+                    r.peer_sessions_failed += 1;
+                }
+                PeerSessionStopOutcome::Failed("parent cancelled".to_string())
+            }
+            Err(()) => {
+                // Cooperative return did not complete in the budget; forced
+                // parent abort. Child stream handler JoinSet drain cannot be
+                // proven cooperative from this path.
+                handle.abort();
+                let _ = handle.await;
+                if let Some(r) = report.as_deref_mut() {
+                    r.peer_sessions_aborted += 1;
+                    r.tasks_aborted += 1;
+                }
+                PeerSessionStopOutcome::ForcedParentAbort
             }
         }
     }
@@ -3318,33 +3402,36 @@ impl MeshTransport {
         }
         self.peer_connections.clear();
 
-        // Phase 5: Drain/abort/await peer sessions
+        // Phase 5: Drain/abort/await peer sessions using the shared
+        // `stop_peer_session_task` helper (Iteration 76, Phase 10). A zero
+        // remaining budget changes cleanup to forced abort, but the
+        // JoinHandle is always awaited and forced parent abort is reported
+        // as incomplete cleanup.
+        let mut session_errors: Vec<String> = Vec::new();
         {
             let mut sessions = self.peer_sessions.lock().await;
             let session_keys: Vec<String> = sessions.keys().cloned().collect();
             for key in session_keys {
                 if let Some(task) = sessions.remove(&key) {
+                    // Always signal cooperative cancellation first.
+                    let _ = task.shutdown_tx.send(true);
+
                     let left = remaining(deadline);
-                    if left.is_zero() {
-                        task.handle.abort();
-                        let _ = task.handle.await;
-                        continue;
-                    }
-                    let mut handle = task.handle;
-                    let sleep = tokio::time::sleep(left);
-                    tokio::pin!(sleep);
-                    tokio::select! {
-                        _ = &mut handle => {}
-                        _ = &mut sleep => {
-                            handle.abort();
-                            let _ = handle.await;
-                        }
+                    let outcome = Self::stop_peer_session_task(task.handle, left, None).await;
+                    if let PeerSessionStopOutcome::ForcedParentAbort = outcome {
+                        session_errors.push(format!(
+                            "Recovery: peer session {} required parent abort; \
+                             child stream cleanup could not be proven cooperative",
+                            key
+                        ));
                     }
                 }
             }
         }
 
-        // Phase 6: Drain/abort/await the top-level task group
+        // Phase 6: Drain/abort/await the top-level task group. A zero
+        // remaining budget is fine: join_all(ZERO) takes its zero-budget
+        // branch (abort + await + synthetic Aborted exit).
         {
             let task_remaining = remaining(deadline);
             let mut group = self.task_group.lock().await;
@@ -3897,6 +3984,8 @@ impl MeshTransport {
         let exit_tx = self.session_exit_tx.clone();
         let gen = self.session_generation.fetch_add(1, Ordering::SeqCst) + 1;
         let handle_gen = gen;
+        // Cooperative cancellation channel (Iteration 76, Phase 6).
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let handle = tokio::spawn(async move {
             let exit = transport
                 .peer_message_loop(
@@ -3905,6 +3994,7 @@ impl MeshTransport {
                     connection,
                     topo,
                     handle_gen,
+                    shutdown_rx,
                 )
                 .await;
             let _ = exit_tx.send(exit);
@@ -3917,6 +4007,7 @@ impl MeshTransport {
                 node_id: peer_node_id,
                 handle,
                 generation: gen,
+                shutdown_tx,
             },
         );
 
@@ -3996,7 +4087,10 @@ impl MeshTransport {
         let exits = group.join_all(task_timeout).await;
         drop(group);
 
-        // Drain peer sessions with the shared deadline (Iteration 73, Phase 17)
+        // Drain peer sessions with the shared deadline (Iteration 76, Phase 10)
+        // using the shared `stop_peer_session_task` helper. Always signal
+        // cooperative cancellation first; only fall back to forced parent
+        // abort if the cooperative return does not complete in time.
         let mut sessions = self.peer_sessions.lock().await;
         let mut drained = 0;
         let mut aborted = 0;
@@ -4005,29 +4099,15 @@ impl MeshTransport {
 
         for key in session_keys {
             if let Some(task) = sessions.remove(&key) {
+                // Always signal cooperative cancellation first.
+                let _ = task.shutdown_tx.send(true);
+
                 let left = remaining(deadline);
-                if left.is_zero() {
-                    task.handle.abort();
-                    let _ = task.handle.await;
-                    aborted += 1;
-                    continue;
-                }
-                let mut handle = task.handle;
-                let sleep = tokio::time::sleep(left);
-                tokio::pin!(sleep);
-                tokio::select! {
-                    result = &mut handle => {
-                        match result {
-                            Ok(()) => drained += 1,
-                            Err(err) if err.is_panic() => failed += 1,
-                            Err(_) => failed += 1,
-                        }
-                    }
-                    _ = &mut sleep => {
-                        handle.abort();
-                        let _ = handle.await;
-                        aborted += 1;
-                    }
+                let outcome = Self::stop_peer_session_task(task.handle, left, None).await;
+                match outcome {
+                    PeerSessionStopOutcome::Drained(_) => drained += 1,
+                    PeerSessionStopOutcome::ForcedParentAbort => aborted += 1,
+                    PeerSessionStopOutcome::Failed(_) => failed += 1,
                 }
             }
         }
@@ -4689,9 +4769,18 @@ impl MeshTransport {
         let session_id_key = session_id.to_string();
         let exit_tx = self.session_exit_tx.clone();
         let gen = session_generation_for_task;
+        // Cooperative cancellation channel (Iteration 76, Phase 6).
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let handle = tokio::spawn(async move {
             let exit = transport
-                .peer_message_loop(session_id_for_loop, peer_node_id_for_loop, conn, topo, gen)
+                .peer_message_loop(
+                    session_id_for_loop,
+                    peer_node_id_for_loop,
+                    conn,
+                    topo,
+                    gen,
+                    shutdown_rx,
+                )
                 .await;
             let _ = exit_tx.send(exit);
         });
@@ -4703,6 +4792,7 @@ impl MeshTransport {
                 node_id: node_id_for_session,
                 handle,
                 generation: session_generation_for_task,
+                shutdown_tx,
             },
         );
 

@@ -2747,18 +2747,40 @@ impl MeshTransport {
         connection: Connection,
         topology: Arc<MeshTopology>,
         generation: u64,
+        mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
     ) -> crate::lifecycle::PeerSessionExit {
         use tokio::task::JoinSet;
 
         let mut stream_handlers: JoinSet<Result<(), MeshTransportError>> = JoinSet::new();
         let max_concurrent_streams = self.config.connection.max_concurrent_peer_streams;
-        let peer_message_timeout =
-            Duration::from_secs(self.config.connection.peer_message_timeout_secs);
+        let peer_message_read_timeout = self.peer_message_read_timeout();
+        let peer_stream_total_timeout = self.peer_stream_total_timeout();
 
         let topology_for_loop = topology.clone();
         let peer_node_id_for_loop = peer_node_id.clone();
+
+        // Track the session exit reason across all paths. Cooperative
+        // cancellation wins over connection close (Phase 7-8, Phase 9).
+        let mut cancelled = false;
+
         loop {
             tokio::select! {
+                biased;
+                // Phase 6-7: Cooperative session cancellation branch.
+                // When the parent rollback/recovery/shutdown code calls
+                // `task.shutdown_tx.send(true)`, we stop accepting new
+                // streams and proceed into the normal drain path before
+                // parent return.
+                _ = shutdown_rx.changed() => {
+                    if *shutdown_rx.borrow() {
+                        tracing::debug!(
+                            "Peer session {} received cooperative shutdown signal",
+                            session_id
+                        );
+                        cancelled = true;
+                        break;
+                    }
+                }
                 result = connection.accept_bi() => {
                     match result {
                         Ok((mut send_stream, mut recv_stream)) => {
@@ -2776,16 +2798,47 @@ impl MeshTransport {
                             let transport = self.clone();
                             let topo = topology_for_loop.clone();
                             let pid = peer_node_id_for_loop.clone();
-                            let timeout = peer_message_timeout;
+                            let read_timeout = peer_message_read_timeout;
+                            let total_timeout = peer_stream_total_timeout;
 
-                            // Phase 23: Spawn into JoinSet instead of bare tokio::spawn
+                            // Phase 23 + Iteration 76 Phase 20-21: Spawn into
+                            // JoinSet. Apply the per-stream total timeout
+                            // (optional, opt-in) which itself wraps the
+                            // framing/read timeout. The framing timeout
+                            // governs read calls; the total timeout
+                            // (when enabled) governs the entire handler
+                            // lifetime so a malformed peer cannot keep a
+                            // long-lived proxy stream alive past the
+                            // operator-configured total bound.
                             stream_handlers.spawn(async move {
-                                // Phase 26: Apply per-stream timeout
-                                tokio::time::timeout(timeout, async {
-                                    transport.handle_peer_message(&mut send_stream, &mut recv_stream, &topo, pid).await
-                                }).await.unwrap_or_else(|_| {
-                                    Err(MeshTransportError::Timeout)
-                                })
+                                if let Some(total) = total_timeout {
+                                    tokio::time::timeout(total, async move {
+                                        apply_read_timeouts(
+                                            &read_timeout,
+                                            transport.handle_peer_message(
+                                                &mut send_stream,
+                                                &mut recv_stream,
+                                                &topo,
+                                                pid,
+                                            ),
+                                        ).await
+                                    }).await.unwrap_or_else(|_| {
+                                        Err(MeshTransportError::Timeout)
+                                    })
+                                } else {
+                                    // No total timeout — preserve long-lived
+                                    // proxy/streaming work. The per-message
+                                    // read/framing timeout still applies.
+                                    apply_read_timeouts(
+                                        &read_timeout,
+                                        transport.handle_peer_message(
+                                            &mut send_stream,
+                                            &mut recv_stream,
+                                            &topo,
+                                            pid,
+                                        ),
+                                    ).await
+                                }
                             });
                         }
                         Err(quinn::ConnectionError::ApplicationClosed(_)) => {
@@ -2828,9 +2881,12 @@ impl MeshTransport {
             }
         }
 
-        // Phase 27: Drain handlers before emitting PeerSessionExit
-        let drain_report =
-            drain_peer_stream_handlers(&mut stream_handlers, Duration::from_secs(5)).await;
+        // Phase 27 / Phase 8: Centralized finalization — every exit path
+        // (connection close, error, cooperative cancellation) passes through
+        // the same child cleanup. The drain timeout is bounded by the
+        // remaining budget passed in via `drain_budget`.
+        let drain_budget = Duration::from_secs(5);
+        let drain_report = drain_peer_stream_handlers(&mut stream_handlers, drain_budget).await;
 
         tracing::debug!(
             "Peer session {} stream drain: drained={}, aborted={}, failed={}",
@@ -2845,10 +2901,19 @@ impl MeshTransport {
             .update_peer_status(&peer_node_id, PeerStatus::Disconnected)
             .await;
 
+        // Phase 7-8: Emit the exit reason that reflects which path the
+        // session took. Cooperative cancellation takes precedence over
+        // connection close when both are present.
+        let reason = if cancelled {
+            crate::lifecycle::PeerSessionExitReason::Cancelled
+        } else {
+            crate::lifecycle::PeerSessionExitReason::ConnectionClosed
+        };
+
         crate::lifecycle::PeerSessionExit {
             session_id,
             node_id: peer_node_id,
-            reason: crate::lifecycle::PeerSessionExitReason::ConnectionClosed,
+            reason,
             generation,
         }
     }
@@ -4709,4 +4774,51 @@ async fn drain_peer_stream_handlers(
     }
 
     report
+}
+
+/// Wrap an in-flight `handle_peer_message` future with the configured
+/// read/framing timeout (Iteration 76, Phase 20-21).
+///
+/// The read timeout applies to the entire handler lifetime as a single
+/// per-call bound, distinct from the optional total stream lifetime
+/// timeout applied by the caller. This keeps partial framing stalls from
+/// silently consuming the full total budget when the operator enables
+/// both knobs.
+async fn apply_read_timeouts<F>(read_timeout: &Duration, fut: F) -> Result<(), MeshTransportError>
+where
+    F: std::future::Future<Output = Result<(), MeshTransportError>>,
+{
+    // Iteration 76, Phase 21: apply the read/framing timeout at the
+    // future boundary so that partial reads that stall for the configured
+    // duration surface as a `Timeout` error rather than blocking an
+    // arbitrary long-lived proxy/streaming operation. The total stream
+    // lifetime timeout is applied separately by the caller when enabled.
+    tokio::time::timeout(*read_timeout, fut)
+        .await
+        .unwrap_or_else(|_| Err(MeshTransportError::Timeout))
+}
+
+impl MeshTransport {
+    /// Per-stream read/framing timeout (Iteration 76, Phase 20-21).
+    ///
+    /// Distinct from the optional total stream lifetime timeout. This
+    /// guards against partial reads stalling a stream handler past the
+    /// configured bound while leaving long-lived proxy/streaming
+    /// operations untouched by default.
+    pub(crate) fn peer_message_read_timeout(&self) -> Duration {
+        Duration::from_secs(self.config.connection.peer_message_timeout_secs)
+    }
+
+    /// Optional total stream lifetime timeout (Iteration 76, Phase 20).
+    ///
+    /// When `None` (default for newly-migrated configs), no total bound is
+    /// applied — the read timeout continues to guard framing, and explicit
+    /// session cancellation bounds the lifetime otherwise. When `Some(_)`,
+    /// the entire stream handler is bounded by this duration.
+    pub(crate) fn peer_stream_total_timeout(&self) -> Option<Duration> {
+        match self.config.connection.peer_stream_total_timeout_secs {
+            0 => None,
+            secs => Some(Duration::from_secs(secs)),
+        }
+    }
 }

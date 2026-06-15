@@ -398,6 +398,14 @@ pub struct MeshConnectionConfig {
     /// Handlers exceeding this timeout are aborted during session drain.
     #[serde(default = "default_peer_message_timeout_secs")]
     pub peer_message_timeout_secs: u64,
+    /// Optional total stream lifetime timeout in seconds (Iteration 76,
+    /// Phase 20). When `0` (default), no total bound is applied — the
+    /// per-stream `peer_message_timeout_secs` continues to bound framing
+    /// reads, and explicit session cancellation bounds lifetime
+    /// otherwise. When non-zero, the entire stream handler is bounded by
+    /// this duration.
+    #[serde(default)]
+    pub peer_stream_total_timeout_secs: u64,
 }
 
 fn default_min_peers() -> usize {
@@ -490,6 +498,7 @@ impl Default for MeshConnectionConfig {
             startup_rollback_timeout_secs: 15,
             max_concurrent_peer_streams: 64,
             peer_message_timeout_secs: 30,
+            peer_stream_total_timeout_secs: 0,
         }
     }
 }

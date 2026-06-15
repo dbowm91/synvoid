@@ -343,6 +343,13 @@ pub struct MeshAcceptLoopReport {
 }
 
 /// A tracked peer session task with its identity and handle (Iteration 73, Phase 18).
+///
+/// `shutdown_tx` (Iteration 76, Phase 6) is a watch sender that the
+/// `peer_message_loop` selects on. Sending `true` requests cooperative
+/// cancellation: the loop stops accepting new streams and runs the normal
+/// child-handler drain path before returning. Rollback/recovery/shutdown
+/// paths send `true` before considering parent abort; forced parent abort
+/// is then treated as incomplete cleanup.
 pub struct PeerSessionTask {
     /// Session identifier for this peer connection.
     pub session_id: String,
@@ -352,6 +359,27 @@ pub struct PeerSessionTask {
     pub handle: tokio::task::JoinHandle<()>,
     /// Generation counter to prevent stale completions from removing newer entries.
     pub generation: u64,
+    /// Watch sender for cooperative cancellation (Iteration 76, Phase 6).
+    pub shutdown_tx: tokio::sync::watch::Sender<bool>,
+}
+
+/// Outcome of stopping a single peer session task (Iteration 76, Phase 10).
+///
+/// Returned by `stop_peer_session_task()` so that rollback, recovery, and
+/// shutdown can distinguish cooperative cleanup (which proves child stream
+/// handlers were drained through the normal `drain_peer_stream_handlers`
+/// path) from a forced parent abort (which cannot prove child cleanup).
+#[derive(Debug)]
+pub enum PeerSessionStopOutcome {
+    /// Session returned cooperatively (or was cancelled) within the budget.
+    /// Child stream handler cleanup is proven through the normal path.
+    Drained(crate::lifecycle::PeerSessionExitReason),
+    /// Cooperative cancellation timed out; the parent was forcibly aborted.
+    /// Child stream handler cleanup is **not** proven — recorded as a
+    /// cleanup error in rollback/recovery.
+    ForcedParentAbort,
+    /// Join itself failed (panic or unexpected JoinError).
+    Failed(String),
 }
 
 /// Logical topology snapshot capturing the primary `PeerState` before modification.
@@ -536,11 +564,35 @@ pub enum DhtPeerMutation {
 
 /// Complete snapshot of a DHT peer's routing state before mutation.
 ///
-/// Stores the complete `PeerContact` for exact restoration on rollback.
-/// The contact carries all fields natively, avoiding lossy conversions.
+/// Stores the complete `PeerContact` for **logical** restoration on
+/// rollback (Iteration 76, Phase 17). The contact carries all persistent
+/// fields natively, avoiding lossy conversions.
+///
+/// **Snapshot contract (Iteration 76, Phase 17 — logical snapshot):**
+///
+/// Included logical fields:
+/// - `node_id`, `node_id_string` (identity)
+/// - `address`, `port` (network endpoint)
+/// - `geo` (country/region/coords)
+/// - `latency_ms` (operational metric, preserved)
+/// - `is_global`, `is_trusted` (capability flags)
+/// - `pow_nonce`, `public_key` (admission proof)
+/// - `last_pinged` (preserved as captured; routing policy decides refresh
+///   behavior — see `restore_peer`)
+/// - `mark_seen_called` / mark flags: see `PeerContact`
+///
+/// Excluded / intentionally refreshed fields:
+/// - `last_seen`: always set to `Instant::now()` on restore — recency is
+///   an operational observation, not a logical state. The captured
+///   `last_seen` is preserved on the snapshot for diagnostic purposes but
+///   is not written back through the restore path.
+///
+/// Restoration may rewrite `last_seen` to `Instant::now()` and
+/// `last_pinged` according to routing policy. Use the actual restored
+/// contact for verification, not the raw snapshot.
 #[derive(Debug, Clone)]
 pub struct DhtPeerSnapshot {
-    /// The complete DHT routing contact for exact restoration.
+    /// The complete DHT routing contact for logical restoration.
     pub contact: crate::dht::routing::contact::PeerContact,
 }
 
@@ -1076,5 +1128,46 @@ mod tests {
         assert_eq!(report.drained, 5);
         assert_eq!(report.aborted, 2);
         assert_eq!(report.failed, 1);
+    }
+
+    #[tokio::test]
+    async fn peer_session_task_has_shutdown_tx() {
+        // Iteration 76, Phase 6: PeerSessionTask carries a watch sender
+        // for cooperative cancellation. Verify the field is present and
+        // the channel round-trips a `true` value.
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+        let task = PeerSessionTask {
+            session_id: "s1".to_string(),
+            node_id: "n1".to_string(),
+            handle: tokio::spawn(async {}),
+            generation: 1,
+            shutdown_tx: shutdown_tx.clone(),
+        };
+        assert_eq!(task.session_id, "s1");
+        assert_eq!(task.generation, 1);
+
+        // Initially the receiver sees `false`.
+        assert!(!*shutdown_rx.borrow());
+
+        // Send `true`; the receiver observes it.
+        let _ = task.shutdown_tx.send(true);
+        // The watch channel delivers the new value to the receiver.
+        assert!(*shutdown_rx.borrow_and_update());
+    }
+
+    #[test]
+    fn peer_session_stop_outcome_variants() {
+        // Iteration 76, Phase 10: PeerSessionStopOutcome distinguishes
+        // cooperative drain from forced parent abort so rollback can
+        // surface incomplete cleanup.
+        let drained =
+            PeerSessionStopOutcome::Drained(crate::lifecycle::PeerSessionExitReason::Cancelled);
+        let abort = PeerSessionStopOutcome::ForcedParentAbort;
+        let failed = PeerSessionStopOutcome::Failed("boom".to_string());
+
+        // Just confirm Debug is implemented and variants are distinct.
+        assert_ne!(format!("{drained:?}"), format!("{abort:?}"));
+        assert_ne!(format!("{drained:?}"), format!("{failed:?}"));
+        assert_ne!(format!("{abort:?}"), format!("{failed:?}"));
     }
 }

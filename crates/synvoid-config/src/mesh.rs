@@ -507,6 +507,16 @@ pub struct MeshConnectionConfig {
     /// Per-stream message handler timeout in seconds.
     #[serde(default = "default_peer_message_timeout_secs")]
     pub peer_message_timeout_secs: u64,
+    /// Optional total stream lifetime timeout in seconds (Iteration 76,
+    /// Phase 20). When `0` (default), no total bound is applied — the
+    /// per-stream framing timeout (`peer_message_timeout_secs`) continues
+    /// to bound reads, and explicit session cancellation bounds lifetime
+    /// otherwise. When non-zero, the entire stream handler is bounded by
+    /// this duration. Set this for environments where malformed peers
+    /// must not keep long-lived proxy streams alive past the configured
+    /// total bound.
+    #[serde(default)]
+    pub peer_stream_total_timeout_secs: u64,
 }
 
 fn default_min_peers() -> usize {
@@ -540,6 +550,7 @@ impl Default for MeshConnectionConfig {
             keepalive_interval_secs: 10,
             max_concurrent_peer_streams: 64,
             peer_message_timeout_secs: 30,
+            peer_stream_total_timeout_secs: 0,
         }
     }
 }
