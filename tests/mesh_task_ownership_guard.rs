@@ -2230,6 +2230,16 @@ fn iter77_stop_staged_handles_all_outcomes() {
         source.contains("PeerSessionStopOutcome::Failed(error) =>"),
         "stop_staged_peer_activity must handle Failed variant"
     );
+
+    // Phase 14: Error messages must include session_generation for context
+    assert!(
+        source.contains("peer.session_generation"),
+        "stop_staged_peer_activity error messages must include session_generation (Phase 14)"
+    );
+    assert!(
+        source.contains("session_gen"),
+        "recover_failed_state error messages must include session_gen (Phase 14)"
+    );
 }
 
 /// Guardrail: `recover_failed_state` must merge `session_errors` into

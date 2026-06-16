@@ -3172,15 +3172,15 @@ impl MeshTransport {
                     PeerSessionStopOutcome::Drained(_) => {}
                     PeerSessionStopOutcome::ForcedParentAbort => {
                         report.errors.push(format!(
-                            "Peer session {} (node {}) required parent abort; \
+                            "Peer session {} (gen {}, node {}) required parent abort; \
                              child stream cleanup could not be proven cooperative",
-                            peer.session_id, peer.node_id
+                            peer.session_id, peer.session_generation, peer.node_id
                         ));
                     }
                     PeerSessionStopOutcome::Failed(error) => {
                         report.errors.push(format!(
-                            "Peer session {} (node {}) failed during stop: {}",
-                            peer.session_id, peer.node_id, error
+                            "Peer session {} (gen {}, node {}) failed during stop: {}",
+                            peer.session_id, peer.session_generation, peer.node_id, error
                         ));
                     }
                 }
@@ -3433,21 +3433,26 @@ impl MeshTransport {
                     // Always signal cooperative cancellation first.
                     let _ = task.shutdown_tx.send(true);
 
+                    // Phase 14: capture generation and node_id before task
+                    // is consumed by stop_peer_session_task
+                    let session_gen = task.generation;
+                    let session_node_id = task.node_id.clone();
+
                     let left = remaining(deadline);
                     let outcome = Self::stop_peer_session_task(task.handle, left, None).await;
                     match outcome {
                         PeerSessionStopOutcome::Drained(_) => {}
                         PeerSessionStopOutcome::ForcedParentAbort => {
                             session_errors.push(format!(
-                                "Recovery: peer session {} required parent abort; \
+                                "Recovery: peer session {} (gen {}, node {}) required parent abort; \
                                  child stream cleanup could not be proven cooperative",
-                                key
+                                key, session_gen, session_node_id
                             ));
                         }
                         PeerSessionStopOutcome::Failed(error) => {
                             session_errors.push(format!(
-                                "Recovery: peer session {} failed during stop: {}",
-                                key, error
+                                "Recovery: peer session {} (gen {}, node {}) failed during stop: {}",
+                                key, session_gen, session_node_id, error
                             ));
                         }
                     }
