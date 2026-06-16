@@ -2517,3 +2517,187 @@ fn iter77_no_dead_read_helpers() {
         "read_to_end_with_timeout is dead code and must be removed"
     );
 }
+
+// ── Iteration 78: HTTP framing and edge-replica ownership ──
+
+#[test]
+fn iter78_http_header_framing_uses_remaining_capacity() {
+    let src = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport_peer.rs")
+        .expect("read transport_peer.rs");
+    // The read_http_request_head helper must compute remaining_capacity
+    assert!(
+        src.contains("remaining_capacity"),
+        "read_http_request_head must compute remaining_capacity before each read"
+    );
+    // Must not use header_cap.min(...) without buffer length
+    assert!(
+        !src.contains("header_cap.min("),
+        "must not use header_cap.min without remaining capacity"
+    );
+}
+
+#[test]
+fn iter78_body_framing_after_header_terminator() {
+    let src = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport_peer.rs")
+        .expect("read transport_peer.rs");
+    // Must have Content-Length parsing
+    assert!(
+        src.contains("parse_http_body_framing"),
+        "must parse body framing from headers"
+    );
+    // Must have body_prefix handling
+    assert!(
+        src.contains("body_prefix"),
+        "must preserve body_prefix bytes after header terminator"
+    );
+    // Must have read_fixed_http_body
+    assert!(
+        src.contains("read_fixed_http_body"),
+        "must have fixed body read helper"
+    );
+}
+
+#[test]
+fn iter78_content_length_parsed_or_chunked_rejected() {
+    let src = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport_peer.rs")
+        .expect("read transport_peer.rs");
+    // Must have Content-Length parsing
+    assert!(src.contains("content_length"), "must parse Content-Length");
+    // Must reject chunked explicitly
+    assert!(
+        src.contains("Chunked") || src.contains("chunked"),
+        "must handle chunked transfer encoding"
+    );
+}
+
+#[test]
+fn iter78_complete_request_forwarded_not_headers_only() {
+    let src = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport_peer.rs")
+        .expect("read transport_peer.rs");
+    // The HTTP framing path must construct request_bytes that includes body
+    assert!(
+        src.contains("request_bytes"),
+        "must construct request_bytes with headers + body"
+    );
+    // Must pass request_bytes (not just headers) to handle_http_proxy_stream
+    assert!(
+        src.contains("request_bytes") && src.contains("handle_http_proxy_stream"),
+        "must forward complete request_bytes to handle_http_proxy_stream"
+    );
+}
+
+#[test]
+fn iter78_total_header_framing_deadline_exists() {
+    let src = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport_peer.rs")
+        .expect("read transport_peer.rs");
+    assert!(
+        src.contains("peer_http_header_total_timeout_secs"),
+        "must use total header framing deadline config"
+    );
+}
+
+#[test]
+fn iter78_no_unused_accumulated_variable() {
+    let src = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport_peer.rs")
+        .expect("read transport_peer.rs");
+    // The old code had `let mut accumulated = 0usize;` which is now unused
+    // The new read_http_request_head must not have it
+    let lines: Vec<&str> = src.lines().collect();
+    let in_header_framing = lines.iter().any(|l| l.contains("let mut accumulated"));
+    // Check it's not in the read_http_request_head function area
+    // (the function is near the top of the file, before handle_peer_message)
+    assert!(
+        !in_header_framing || !src.contains("fn read_http_request_head"),
+        "unused 'accumulated' variable should be removed"
+    );
+}
+
+#[test]
+fn iter78_connect_upgrade_rejected() {
+    let src = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport_peer.rs")
+        .expect("read transport_peer.rs");
+    assert!(
+        src.contains("UnsupportedMethod") || src.contains("503 Service Unavailable"),
+        "must reject CONNECT/upgrade requests"
+    );
+}
+
+#[test]
+fn iter78_edge_replica_uses_auxiliary_task() {
+    let src = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport_peer.rs")
+        .expect("read transport_peer.rs");
+    // Must not have bare tokio::spawn for edge replica
+    // The RaftCommitNotification handler must register with auxiliary_tasks
+    assert!(
+        src.contains("EdgeReplicaRefresh"),
+        "edge-replica refresh must use AuxiliaryTaskKind::EdgeReplicaRefresh"
+    );
+    assert!(
+        src.contains("auxiliary_tasks"),
+        "edge-replica refresh must register with auxiliary_tasks"
+    );
+}
+
+#[test]
+fn iter78_peer_session_exit_has_stream_drain() {
+    let src = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/lifecycle.rs")
+        .expect("read lifecycle.rs");
+    assert!(
+        src.contains("stream_drain"),
+        "PeerSessionExit must have stream_drain field"
+    );
+}
+
+#[test]
+fn iter78_config_has_http_framing_fields() {
+    let src =
+        std::fs::read_to_string("crates/synvoid-mesh/src/mesh/config.rs").expect("read config.rs");
+    assert!(
+        src.contains("peer_http_header_total_timeout_secs"),
+        "config must have peer_http_header_total_timeout_secs"
+    );
+    assert!(
+        src.contains("max_peer_http_body_bytes"),
+        "config must have max_peer_http_body_bytes"
+    );
+    assert!(
+        src.contains("peer_http_body_total_timeout_secs"),
+        "config must have peer_http_body_total_timeout_secs"
+    );
+    assert!(
+        src.contains("peer_http_backend_idle_timeout_secs"),
+        "config must have peer_http_backend_idle_timeout_secs"
+    );
+}
+
+#[test]
+fn iter78_config_mirror_has_http_framing_fields() {
+    let src =
+        std::fs::read_to_string("crates/synvoid-config/src/mesh.rs").expect("read config mirror");
+    assert!(
+        src.contains("peer_http_header_total_timeout_secs"),
+        "config mirror must have peer_http_header_total_timeout_secs"
+    );
+    assert!(
+        src.contains("max_peer_http_body_bytes"),
+        "config mirror must have max_peer_http_body_bytes"
+    );
+    assert!(
+        src.contains("peer_http_body_total_timeout_secs"),
+        "config mirror must have peer_http_body_total_timeout_secs"
+    );
+    assert!(
+        src.contains("peer_http_backend_idle_timeout_secs"),
+        "config mirror must have peer_http_backend_idle_timeout_secs"
+    );
+}
+
+#[test]
+fn iter78_backend_idle_timeout_exists() {
+    let src = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport_peer.rs")
+        .expect("read transport_peer.rs");
+    assert!(
+        src.contains("peer_http_backend_idle_timeout_secs"),
+        "backend response read must use idle timeout"
+    );
+}

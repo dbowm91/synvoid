@@ -21,6 +21,284 @@ use crate::protocol::{ArcStr, HealthStatus, MeshMessage, RaftSnapshotFrame};
 
 use crate::topology::{MeshTopology, PeerStatus};
 
+/// Parsed result of reading an HTTP request head (headers + body prefix).
+///
+/// The `body_prefix` contains any bytes coalesced with the final header
+/// read that belong to the request body. The complete request is
+/// `header_bytes` ++ `body_prefix` ++ remaining body reads.
+#[derive(Debug)]
+pub struct FramedHttpRequestHead {
+    /// Raw header bytes including the terminating \r\n\r\n.
+    pub header_bytes: Vec<u8>,
+    /// Body bytes that arrived in the same read as the header terminator.
+    pub body_prefix: Vec<u8>,
+    /// Parsed Content-Length value, if present and valid.
+    pub content_length: Option<usize>,
+    /// Whether chunked Transfer-Encoding was detected.
+    pub chunked: bool,
+}
+
+/// Classification of the HTTP request body framing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HttpBodyKind {
+    /// No body (GET, HEAD, DELETE, etc. or no Content-Length/Transfer-Encoding).
+    None,
+    /// Fixed-length body with the given byte count.
+    ContentLength(usize),
+    /// Chunked Transfer-Encoding.
+    Chunked,
+}
+
+/// Errors specific to HTTP-over-mesh framing.
+#[derive(Debug)]
+pub enum HttpFramingError {
+    /// Headers exceeded the configured byte limit.
+    HeaderTooLarge,
+    /// Total header framing deadline expired.
+    HeaderFramingTimeout,
+    /// Invalid or conflicting Content-Length header.
+    InvalidContentLength(String),
+    /// Unsupported Transfer-Encoding (e.g., chunked not implemented).
+    UnsupportedTransferEncoding(String),
+    /// Request body exceeds the configured byte limit.
+    BodyTooLarge { limit: usize, declared: usize },
+    /// Premature EOF before the declared body was fully received.
+    PrematureEof { expected: usize, received: usize },
+    /// CONNECT or upgrade request not supported.
+    UnsupportedMethod(String),
+    /// Malformed HTTP header syntax.
+    MalformedHeaders(String),
+    /// I/O error during framing.
+    Io(String),
+}
+
+impl std::fmt::Display for HttpFramingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::HeaderTooLarge => write!(f, "HTTP headers exceeded maximum size"),
+            Self::HeaderFramingTimeout => write!(f, "HTTP header framing deadline expired"),
+            Self::InvalidContentLength(msg) => write!(f, "Invalid Content-Length: {msg}"),
+            Self::UnsupportedTransferEncoding(msg) => {
+                write!(f, "Unsupported Transfer-Encoding: {msg}")
+            }
+            Self::BodyTooLarge { limit, declared } => {
+                write!(
+                    f,
+                    "Body too large: declared {declared} bytes, limit {limit}"
+                )
+            }
+            Self::PrematureEof { expected, received } => {
+                write!(
+                    f,
+                    "Premature EOF: expected {expected} bytes, received {received}"
+                )
+            }
+            Self::UnsupportedMethod(method) => {
+                write!(f, "Unsupported HTTP method for mesh proxy: {method}")
+            }
+            Self::MalformedHeaders(msg) => write!(f, "Malformed HTTP headers: {msg}"),
+            Self::Io(msg) => write!(f, "I/O error during HTTP framing: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for HttpFramingError {}
+
+impl From<HttpFramingError> for MeshTransportError {
+    fn from(e: HttpFramingError) -> Self {
+        MeshTransportError::ReceiveFailed(e.to_string())
+    }
+}
+
+/// Read an HTTP/1.x request head from an async reader.
+///
+/// Reads until `\r\n\r\n` is found, enforcing:
+/// - per-read idle timeout
+/// - total header framing deadline
+/// - maximum header byte cap
+///
+/// Returns the parsed header head including any body bytes coalesced
+/// with the final header read.
+pub async fn read_http_request_head<R: tokio::io::AsyncRead + Unpin>(
+    reader: &mut R,
+    first_byte: u8,
+    idle_timeout: Duration,
+    total_timeout: Duration,
+    max_header_bytes: usize,
+) -> Result<FramedHttpRequestHead, HttpFramingError> {
+    if max_header_bytes < 4 {
+        return Err(HttpFramingError::HeaderTooLarge);
+    }
+
+    let deadline = tokio::time::Instant::now() + total_timeout;
+    let mut buffer = vec![first_byte];
+    let mut read_buf = [0u8; 4096];
+
+    loop {
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return Err(HttpFramingError::HeaderFramingTimeout);
+        }
+        let remaining_total = deadline.duration_since(now);
+        let effective_timeout = idle_timeout.min(remaining_total);
+
+        let remaining_capacity = max_header_bytes
+            .checked_sub(buffer.len())
+            .ok_or(HttpFramingError::HeaderTooLarge)?;
+        if remaining_capacity == 0 {
+            return Err(HttpFramingError::HeaderTooLarge);
+        }
+        let read_size = remaining_capacity.min(read_buf.len());
+
+        use tokio::io::AsyncReadExt;
+        let n = tokio::time::timeout(effective_timeout, reader.read(&mut read_buf[..read_size]))
+            .await
+            .map_err(|_| HttpFramingError::HeaderFramingTimeout)?
+            .map_err(|e| HttpFramingError::Io(e.to_string()))?;
+
+        match n {
+            0 => {
+                return Err(HttpFramingError::MalformedHeaders(
+                    "Connection closed before header terminator".to_string(),
+                ));
+            }
+            n => {
+                buffer.extend_from_slice(&read_buf[..n]);
+            }
+        }
+
+        if buffer.len() > max_header_bytes {
+            return Err(HttpFramingError::HeaderTooLarge);
+        }
+
+        if let Some(pos) = buffer.windows(4).position(|w| w == b"\r\n\r\n") {
+            let header_end = pos + 4;
+            let header_bytes = buffer[..header_end].to_vec();
+            let body_prefix = buffer[header_end..].to_vec();
+
+            let header_str = String::from_utf8_lossy(&header_bytes);
+            let (content_length, chunked) = match parse_http_body_framing(&header_str) {
+                Ok(framing) => framing,
+                Err(e) => return Err(e),
+            };
+
+            return Ok(FramedHttpRequestHead {
+                header_bytes,
+                body_prefix,
+                content_length,
+                chunked,
+            });
+        }
+    }
+}
+
+/// Parse Content-Length and Transfer-Encoding from raw HTTP header bytes.
+fn parse_http_body_framing(header_str: &str) -> Result<(Option<usize>, bool), HttpFramingError> {
+    let mut content_length: Option<usize> = None;
+    let mut chunked = false;
+
+    for line in header_str.lines() {
+        let line_lower = line.to_lowercase();
+        if line_lower.starts_with("content-length:") {
+            let value_str = line["content-length:".len()..].trim();
+            let value: usize = value_str.parse().map_err(|_| {
+                HttpFramingError::InvalidContentLength(format!("non-numeric value: {value_str}"))
+            })?;
+            if let Some(existing) = content_length {
+                if existing != value {
+                    return Err(HttpFramingError::InvalidContentLength(format!(
+                        "conflicting values: {existing} and {value}"
+                    )));
+                }
+            }
+            content_length = Some(value);
+        } else if line_lower.starts_with("transfer-encoding:") {
+            let value = line["transfer-encoding:".len()..].trim().to_lowercase();
+            if value == "chunked" {
+                chunked = true;
+            } else {
+                return Err(HttpFramingError::UnsupportedTransferEncoding(value));
+            }
+        }
+    }
+
+    if chunked && content_length.is_some() {
+        return Err(HttpFramingError::InvalidContentLength(
+            "both Content-Length and Transfer-Encoding: chunked present".to_string(),
+        ));
+    }
+
+    Ok((content_length, chunked))
+}
+
+/// Read a fixed-length HTTP body from an async reader.
+///
+/// Reads exactly `content_length` bytes, preserving any `prefix` bytes
+/// that were already coalesced with the header read.
+pub async fn read_fixed_http_body<R: tokio::io::AsyncRead + Unpin>(
+    reader: &mut R,
+    prefix: Vec<u8>,
+    content_length: usize,
+    idle_timeout: Duration,
+    total_timeout: Duration,
+) -> Result<Vec<u8>, HttpFramingError> {
+    if prefix.len() > content_length {
+        return Err(HttpFramingError::MalformedHeaders(format!(
+            "body prefix {} bytes exceeds declared Content-Length {content_length}",
+            prefix.len(),
+        )));
+    }
+
+    let remaining = content_length - prefix.len();
+    if remaining == 0 {
+        return Ok(prefix);
+    }
+
+    let deadline = tokio::time::Instant::now() + total_timeout;
+    let mut body = prefix;
+    body.reserve(remaining);
+    let mut read_buf = [0u8; 8192];
+    let mut total_read = 0usize;
+
+    loop {
+        if total_read >= remaining {
+            break;
+        }
+
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return Err(HttpFramingError::Io(
+                "body framing deadline expired".to_string(),
+            ));
+        }
+        let remaining_total = deadline.duration_since(now);
+        let effective_timeout = idle_timeout.min(remaining_total);
+
+        let to_read = (remaining - total_read).min(read_buf.len());
+
+        use tokio::io::AsyncReadExt;
+        let n = tokio::time::timeout(effective_timeout, reader.read(&mut read_buf[..to_read]))
+            .await
+            .map_err(|_| HttpFramingError::Io("body read timeout".to_string()))?
+            .map_err(|e| HttpFramingError::Io(e.to_string()))?;
+
+        match n {
+            0 => {
+                return Err(HttpFramingError::PrematureEof {
+                    expected: remaining,
+                    received: total_read,
+                });
+            }
+            n => {
+                body.extend_from_slice(&read_buf[..n]);
+                total_read += n;
+            }
+        }
+    }
+
+    Ok(body)
+}
+
 /// Iteration 77, Phase 7: read-timeout helper that wraps only RecvStream
 /// reads, not the entire handler. Used by both `handle_peer_message` and
 /// `perform_health_check`.
@@ -2971,6 +3249,7 @@ impl MeshTransport {
             node_id: peer_node_id,
             reason,
             generation,
+            stream_drain: drain_report,
         }
     }
 
@@ -2996,50 +3275,99 @@ impl MeshTransport {
         ];
 
         if http_methods.contains(&first_byte[0]) {
-            // Iteration 77, Phase 8: bounded HTTP header framing — stop at
-            // \r\n\r\n instead of reading until EOF. Read timeout applies to
-            // each framing read. Uses configurable max_peer_http_header_bytes.
-            let mut total_header_buf = vec![first_byte[0]];
-            let header_cap = self.config.connection.max_peer_http_header_bytes;
-            {
-                use tokio::io::AsyncReadExt;
-                let mut header_framing_buf = [0u8; 4096];
-                let mut accumulated = 0usize;
-                loop {
-                    let left = total_header_buf.len();
-                    if left >= header_cap {
-                        return Err(MeshTransportError::ReceiveFailed(
-                            "HTTP headers too large".to_string(),
-                        ));
-                    }
-                    let read_size = header_cap.min(header_framing_buf.len());
-                    let n = tokio::time::timeout(
-                        read_timeout,
-                        recv_stream.read(&mut header_framing_buf[..read_size]),
-                    )
+            // Iteration 78: HTTP-over-mesh framing with body support.
+            // One QUIC bidirectional stream carries exactly one HTTP/1.x
+            // request and one HTTP/1.x response.
+            let method_char = first_byte[0] as char;
+            let total_timeout =
+                Duration::from_secs(self.config.connection.peer_http_header_total_timeout_secs);
+
+            let head = read_http_request_head(
+                recv_stream,
+                first_byte[0],
+                read_timeout,
+                total_timeout,
+                self.config.connection.max_peer_http_header_bytes,
+            )
+            .await?;
+
+            // Reject CONNECT and upgrade requests — not supported.
+            // Build header_str from a borrowed view, then move header_bytes
+            // into request_bytes to avoid borrow conflicts.
+            let mut request_bytes = head.header_bytes;
+            let header_str = String::from_utf8_lossy(&request_bytes).into_owned();
+            let method_line = header_str.lines().next().unwrap_or("");
+            if method_char == 'C' || method_line.to_uppercase().starts_with("CONNECT") {
+                let resp = b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                send_stream
+                    .write_all(resp)
                     .await
-                    .map_err(|_| MeshTransportError::Timeout)?
-                    .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
-                    match n {
-                        Some(0) | None => break,
-                        Some(n) => {
-                            total_header_buf.extend_from_slice(&header_framing_buf[..n]);
-                            accumulated += n;
-                        }
-                    }
-                    if total_header_buf.windows(4).any(|w| w == b"\r\n\r\n") {
-                        break;
-                    }
-                }
+                    .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+                let _ = send_stream.finish();
+                return Ok(());
+            }
+            if header_str.to_lowercase().contains("upgrade:") {
+                let resp = b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                send_stream
+                    .write_all(resp)
+                    .await
+                    .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+                let _ = send_stream.finish();
+                return Ok(());
             }
 
-            let http_data = total_header_buf.clone();
-            let header_str = String::from_utf8_lossy(&total_header_buf);
+            // Determine body kind and read body if present.
+            let body_kind = match (head.content_length, head.chunked) {
+                (Some(len), false) => HttpBodyKind::ContentLength(len),
+                (None, true) => HttpBodyKind::Chunked,
+                (None, false) => HttpBodyKind::None,
+                // parse_http_body_framing already rejects (Some, true).
+                _ => unreachable!(),
+            };
+
+            match body_kind {
+                HttpBodyKind::None => {}
+                HttpBodyKind::ContentLength(content_length) => {
+                    let max_body = self.config.connection.max_peer_http_body_bytes;
+                    if content_length > max_body {
+                        let resp = b"HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                        send_stream
+                            .write_all(resp)
+                            .await
+                            .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+                        let _ = send_stream.finish();
+                        return Ok(());
+                    }
+
+                    let body_total_timeout = Duration::from_secs(
+                        self.config.connection.peer_http_body_total_timeout_secs,
+                    );
+                    let body = read_fixed_http_body(
+                        recv_stream,
+                        head.body_prefix,
+                        content_length,
+                        read_timeout,
+                        body_total_timeout,
+                    )
+                    .await?;
+                    request_bytes.extend_from_slice(&body);
+                }
+                HttpBodyKind::Chunked => {
+                    // Explicitly reject chunked requests for now.
+                    let resp = b"HTTP/1.1 501 Not Implemented\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                    send_stream
+                        .write_all(resp)
+                        .await
+                        .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+                    let _ = send_stream.finish();
+                    return Ok(());
+                }
+            }
 
             return self
                 .handle_http_proxy_stream(
                     &header_str,
-                    http_data,
+                    request_bytes,
                     send_stream,
                     topology,
                     peer_node_id,
@@ -3302,47 +3630,63 @@ impl MeshTransport {
                     namespace,
                     key_id
                 );
-                if let Some(ref edge_replica) = *self.edge_replica_manager.read() {
-                    if let Some(ref rclient) = self.org_key_manager.get_raft_client() {
-                        let erm = edge_replica.clone();
-                        let rclient = rclient.clone();
-                        let ns = namespace.clone();
-                        let key = key_id.clone();
-                        // Phase 24: edge replica notification is intentionally
-                        // fire-and-forget. The edge replica is a cache — stale
-                        // data is acceptable and will be refreshed on next read.
-                        // Blocking the datagram handler on the leader query would
-                        // add latency to every RaftCommitNotification. Failure to
-                        // update the cache is logged but does not affect core DHT
-                        // state or datagram response.
-                        tokio::spawn(async move {
-                            match rclient.query_leader_for_record(ns.clone(), &key).await {
-                                Ok(Some(data)) => {
-                                    if let Err(e) = erm.update_from_notification(&ns, &key, &data) {
-                                        tracing::error!("Failed to update edge replica: {}", e);
-                                    } else {
-                                        tracing::info!(
-                                            "Edge replica updated for {:?} key {}",
-                                            ns,
-                                            key
-                                        );
-                                    }
-                                }
-                                Ok(None) => {
-                                    if let Err(e) = erm.delete_from_notification(&ns, &key) {
-                                        tracing::error!(
-                                            "Failed to delete from edge replica: {}",
-                                            e
-                                        );
-                                    }
-                                }
-                                Err(e) => {
-                                    tracing::error!("Failed to query leader for record: {}", e);
-                                }
+                // Clone Arcs outside the guard scope to keep the future Send.
+                let (erm, rclient) = {
+                    let guard = self.edge_replica_manager.read();
+                    let Some(ref edge_replica) = *guard else {
+                        return Ok(());
+                    };
+                    let Some(ref rclient) = self.org_key_manager.get_raft_client() else {
+                        return Ok(());
+                    };
+                    (edge_replica.clone(), rclient.clone())
+                };
+                let ns = namespace.clone();
+                let key = key_id.clone();
+                // Phase 24: edge replica notification is intentionally
+                // fire-and-forget. The edge replica is a cache — stale
+                // data is acceptable and will be refreshed on next read.
+                // Blocking the datagram handler on the leader query would
+                // add latency to every RaftCommitNotification. Failure to
+                // update the cache is logged but does not affect core DHT
+                // state or datagram response.
+                let task_id = self.id_generator.next();
+                let handle = tokio::spawn(async move {
+                    match rclient.query_leader_for_record(ns.clone(), &key).await {
+                        Ok(Some(data)) => {
+                            if let Err(e) = erm.update_from_notification(&ns, &key, &data) {
+                                tracing::error!("Failed to update edge replica: {}", e);
+                            } else {
+                                tracing::info!("Edge replica updated for {:?} key {}", ns, key);
                             }
-                        });
+                        }
+                        Ok(None) => {
+                            if let Err(e) = erm.delete_from_notification(&ns, &key) {
+                                tracing::error!("Failed to delete from edge replica: {}", e);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to query leader for record: {}", e);
+                        }
                     }
-                }
+                    crate::lifecycle::MeshTaskExit {
+                        id: task_id,
+                        name: "edge-replica-refresh".into(),
+                        class: crate::lifecycle::MeshTaskClass::RestartableBackground,
+                        reason: crate::lifecycle::MeshTaskExitReason::CleanCompletion,
+                    }
+                });
+                // Register as auxiliary task.
+                let mut aux = self.auxiliary_tasks.lock().await;
+                aux.insert(
+                    task_id,
+                    crate::lifecycle::AuxiliaryTask {
+                        task_id,
+                        session_id: None,
+                        kind: crate::lifecycle::AuxiliaryTaskKind::EdgeReplicaRefresh,
+                        handle,
+                    },
+                );
             }
             MeshMessage::JoinRequest {
                 request_id,
@@ -4273,10 +4617,17 @@ impl MeshTransport {
 
         let mut full_response = Vec::new();
         let mut resp_buf = vec![0u8; 65536];
+        let backend_idle_timeout =
+            Duration::from_secs(self.config.connection.peer_http_backend_idle_timeout_secs);
         loop {
-            let n = backend_conn.read(&mut resp_buf).await.map_err(|e| {
-                MeshTransportError::ReceiveFailed(format!("Backend read failed: {}", e))
-            })?;
+            let n = tokio::time::timeout(backend_idle_timeout, backend_conn.read(&mut resp_buf))
+                .await
+                .map_err(|_| {
+                    MeshTransportError::ReceiveFailed("Backend response read timeout".to_string())
+                })?
+                .map_err(|e| {
+                    MeshTransportError::ReceiveFailed(format!("Backend read failed: {}", e))
+                })?;
             if n == 0 {
                 break;
             }
@@ -4916,7 +5267,6 @@ impl MeshTransport {
 
 // ── Iteration 77: Test-visible helpers ──────────────────────────────────────
 
-#[cfg(test)]
 pub async fn drain_peer_stream_handlers_for_test(
     handlers: &mut tokio::task::JoinSet<Result<(), MeshTransportError>>,
     timeout: Duration,

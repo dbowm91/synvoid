@@ -422,6 +422,24 @@ pub struct MeshConnectionConfig {
     /// Handlers that do not complete within this deadline are forcibly aborted.
     #[serde(default = "default_datagram_handler_drain_timeout_secs")]
     pub datagram_handler_drain_timeout_secs: u64,
+    /// Total deadline for HTTP header framing in seconds. Protects against
+    /// slow-fragment attacks where each individual read stays below the idle
+    /// timeout but the complete header block takes excessive time.
+    #[serde(default = "default_peer_http_header_total_timeout_secs")]
+    pub peer_http_header_total_timeout_secs: u64,
+    /// Maximum HTTP request body bytes accepted from a peer during framing.
+    /// Request bodies exceeding this limit are rejected before excessive allocation.
+    #[serde(default = "default_max_peer_http_body_bytes")]
+    pub max_peer_http_body_bytes: usize,
+    /// Total deadline for HTTP body framing in seconds. Bounds the complete
+    /// body read for fixed-length requests independently of per-read idle timeout.
+    #[serde(default = "default_peer_http_body_total_timeout_secs")]
+    pub peer_http_body_total_timeout_secs: u64,
+    /// Idle timeout in seconds for reading the backend HTTP response.
+    /// Prevents a backend that never closes from pinning a stream forever
+    /// when total stream timeout is disabled.
+    #[serde(default = "default_peer_http_backend_idle_timeout_secs")]
+    pub peer_http_backend_idle_timeout_secs: u64,
 }
 
 fn default_min_peers() -> usize {
@@ -508,6 +526,22 @@ fn default_datagram_handler_drain_timeout_secs() -> u64 {
     5
 }
 
+fn default_peer_http_header_total_timeout_secs() -> u64 {
+    30
+}
+
+fn default_max_peer_http_body_bytes() -> usize {
+    65536
+}
+
+fn default_peer_http_body_total_timeout_secs() -> u64 {
+    60
+}
+
+fn default_peer_http_backend_idle_timeout_secs() -> u64 {
+    30
+}
+
 impl Default for MeshConnectionConfig {
     fn default() -> Self {
         Self {
@@ -535,6 +569,10 @@ impl Default for MeshConnectionConfig {
             max_concurrent_datagram_handlers: 32,
             max_peer_http_header_bytes: 16384,
             datagram_handler_drain_timeout_secs: 5,
+            peer_http_header_total_timeout_secs: 30,
+            max_peer_http_body_bytes: 65536,
+            peer_http_body_total_timeout_secs: 60,
+            peer_http_backend_idle_timeout_secs: 30,
         }
     }
 }

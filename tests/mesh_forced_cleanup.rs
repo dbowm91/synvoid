@@ -30,6 +30,7 @@ use synvoid_mesh::dht::routing::node_id::NodeId;
 use synvoid_mesh::dht::routing::table::{ForceRestoreContactError, RoutingTable};
 use synvoid_mesh::lifecycle::{PeerSessionExitReason, PeerSessionStopOutcome};
 use synvoid_mesh::task_group::MeshTaskGroup;
+use synvoid_mesh::MeshTransportError;
 
 // ── Part A: Always Finalize `MeshTaskGroup` ────────────────────────────────
 
@@ -478,4 +479,29 @@ async fn iter77_datagram_capacity_drops_at_limit() {
     let dropped = handlers.len() >= max_concurrent;
     assert!(dropped, "datagram must be dropped at capacity");
     assert_eq!(handlers.len(), max_concurrent, "capacity must not change");
+}
+
+// ── Iteration 78: Real Behavioral Tests ─────────────────────────────────────
+
+/// Iteration 78: `drain_peer_stream_handlers_for_test` must cooperatively
+/// drain a JoinSet, aborting hung handlers after the deadline.
+#[tokio::test]
+async fn iter78_drain_stream_handlers_real() {
+    let mut handlers = tokio::task::JoinSet::<Result<(), MeshTransportError>>::new();
+    // Spawn a task that completes immediately.
+    handlers.spawn(async { Ok(()) });
+    // Spawn a hanging task.
+    handlers.spawn(std::future::pending::<Result<(), MeshTransportError>>());
+
+    let report = synvoid_mesh::mesh::transport_peer::drain_peer_stream_handlers_for_test(
+        &mut handlers,
+        Duration::from_millis(100),
+    )
+    .await;
+
+    assert!(
+        report.aborted >= 1,
+        "expected at least 1 aborted: {report:?}"
+    );
+    assert!(handlers.is_empty(), "JoinSet should be empty after drain");
 }

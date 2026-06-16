@@ -607,6 +607,8 @@ pub struct PeerSessionExit {
     pub reason: PeerSessionExitReason,
     /// Generation counter to prevent stale completions from removing newer entries.
     pub generation: u64,
+    /// Stream handler drain/abort/failure diagnostics for this session.
+    pub stream_drain: PeerStreamDrainReport,
 }
 
 /// Classification of how a peer session exited (Iteration 73, Phase 16).
@@ -661,6 +663,8 @@ pub struct AuxiliaryTask {
 pub enum AuxiliaryTaskKind {
     /// Preflight route query for a newly connected peer.
     PreflightRoute,
+    /// Periodic edge-replica refresh to keep replica state synchronized.
+    EdgeReplicaRefresh,
     /// Other one-shot best-effort work.
     Other,
 }

@@ -671,6 +671,29 @@ the cooperative abort + await pattern for callers that need to forcibly terminat
 - `classify_stream_join()` / `classify_forced_stream_join()` — classify join results for stream handlers
 - `read_exact_with_timeout()` / `read_to_end_with_timeout()` — deadline-aware reads replacing the removed `apply_read_timeouts` wrapper
 
+## Iteration 78 — HTTP Framing and Nested Ownership
+
+Iteration 78 corrects HTTP-over-mesh request framing, closes the remaining edge-replica ownership exception, preserves nested failure diagnostics, and replaces simulated tests with implementation-level tests.
+
+**HTTP-over-mesh contract**: One QUIC bidirectional stream carries exactly one HTTP/1.x request + response. Supported framing: headers via `\r\n\r\n`, fixed-length body via `Content-Length`. Rejected: chunked encoding (501), CONNECT/upgrade (503), pipelining, ambiguous Content-Length.
+
+**Framing helpers** (in `transport_peer.rs`):
+- `read_http_request_head()` — generic `AsyncRead` helper, enforces remaining-capacity header cap, idle + total deadlines, parses Content-Length/Transfer-Encoding
+- `read_fixed_http_body()` — bounded fixed-body read with idle + total deadlines
+- `parse_http_body_framing()` — strict Content-Length and Transfer-Encoding parser
+
+**Config fields** (both `synvoid-mesh` and `synvoid-config` crates):
+- `peer_http_header_total_timeout_secs` (default 30) — total header framing deadline
+- `max_peer_http_body_bytes` (default 65536) — body size limit
+- `peer_http_body_total_timeout_secs` (default 60) — total body framing deadline
+- `peer_http_backend_idle_timeout_secs` (default 30) — backend response idle timeout
+
+**Edge-replica ownership**: `RaftCommitNotification` refresh tasks now register as `AuxiliaryTaskKind::EdgeReplicaRefresh` in the auxiliary task registry, bounded and drained during shutdown/recovery.
+
+**Diagnostics**: `PeerSessionExit` now carries `stream_drain: PeerStreamDrainReport` with actual drain/abort/failure counts.
+
+**Tests**: 13 HTTP framing unit tests, 1 real drain test, 12 guardrail assertions.
+
 ## Testing Commands
 
 ```bash
@@ -679,6 +702,7 @@ cargo test --test mesh_lifecycle_tests --features mesh,dns
 cargo test --test mesh_startup_rollback --features mesh,dns
 cargo test --test mesh_task_ownership_guard --features mesh,dns
 cargo test --test mesh_forced_cleanup --features mesh,dns
+cargo test --test mesh_http_framing --features mesh,dns
 cargo test --test worker_supervision_control_flow --features mesh,dns
 
 # Unit tests
