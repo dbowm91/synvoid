@@ -688,11 +688,11 @@ Iteration 78 corrects HTTP-over-mesh request framing, closes the remaining edge-
 - `peer_http_body_total_timeout_secs` (default 60) — total body framing deadline
 - `peer_http_backend_idle_timeout_secs` (default 30) — backend response idle timeout
 
-**Edge-replica ownership**: `RaftCommitNotification` refresh tasks now register as `AuxiliaryTaskKind::EdgeReplicaRefresh` in the auxiliary task registry, bounded and drained during shutdown/recovery.
+**Edge-replica ownership**: `RaftCommitNotification` refresh tasks now register as `AuxiliaryTaskKind::EdgeReplicaRefresh` in the auxiliary task registry, bounded and drained during shutdown/recovery. Edge-replica refresh tasks are capped at 8 concurrent (`MAX_CONCURRENT_EDGE_REPLICA_REFRESH`); excess tasks are dropped (fire-and-forget contract).
 
-**Diagnostics**: `PeerSessionExit` now carries `stream_drain: PeerStreamDrainReport` with actual drain/abort/failure counts.
+**Diagnostics**: `PeerSessionExit` now carries `stream_drain: PeerStreamDrainReport` with actual drain/abort/failure counts. `ChildTaskFailed` variant in `PeerSessionExitReason` surfaces non-zero drain failures. `MeshShutdownReport` carries `stream_handler_drain` aggregate field. `MeshTransport` tracks aggregate handler counters (`aggregate_handler_drained`, `aggregate_handler_aborted`, `aggregate_handler_failed`).
 
-**Tests**: 13 HTTP framing unit tests, 1 real drain test, 12 guardrail assertions.
+**Tests**: 13 HTTP framing unit tests, 1 real drain test, 19 guardrail assertions.
 
 ## Testing Commands
 

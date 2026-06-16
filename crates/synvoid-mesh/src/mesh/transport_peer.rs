@@ -1,5 +1,7 @@
 #![allow(dead_code, clippy::redundant_locals)] // Reserved for future peer communication handling
 
+use std::sync::atomic::Ordering;
+
 use crate::raft::state_machine::{
     ClientProposalPayload, CommandKind, GlobalRegistryConfig, RaftCommand,
 };
@@ -3230,6 +3232,14 @@ impl MeshTransport {
             drain_report.failed
         );
 
+        // Phase 23: Aggregate stream handler drain stats for shutdown report.
+        self.aggregate_handler_drained
+            .fetch_add(drain_report.drained, Ordering::Relaxed);
+        self.aggregate_handler_aborted
+            .fetch_add(drain_report.aborted, Ordering::Relaxed);
+        self.aggregate_handler_failed
+            .fetch_add(drain_report.failed, Ordering::Relaxed);
+
         // Update topology status
         topology
             .update_peer_status(&peer_node_id, PeerStatus::Disconnected)
@@ -3237,8 +3247,14 @@ impl MeshTransport {
 
         // Phase 7-8: Emit the exit reason that reflects which path the
         // session took. Cooperative cancellation takes precedence over
-        // connection close when both are present.
-        let reason = if cancelled {
+        // connection close when both are present. Phase 22: child
+        // stream handler failures are promoted to ChildTaskFailed.
+        let reason = if drain_report.failed > 0 {
+            crate::lifecycle::PeerSessionExitReason::ChildTaskFailed(format!(
+                "{} handler(s) panicked or errored during drain",
+                drain_report.failed
+            ))
+        } else if cancelled {
             crate::lifecycle::PeerSessionExitReason::Cancelled
         } else {
             crate::lifecycle::PeerSessionExitReason::ConnectionClosed
@@ -3676,17 +3692,45 @@ impl MeshTransport {
                         reason: crate::lifecycle::MeshTaskExitReason::CleanCompletion,
                     }
                 });
-                // Register as auxiliary task.
-                let mut aux = self.auxiliary_tasks.lock().await;
-                aux.insert(
-                    task_id,
-                    crate::lifecycle::AuxiliaryTask {
+                // Phase 18: Register as auxiliary task with backpressure.
+                // Limit concurrent edge-replica refresh tasks to avoid
+                // unbounded task accumulation on notification bursts.
+                const MAX_CONCURRENT_EDGE_REPLICA_REFRESH: usize = 8;
+                {
+                    let mut aux = self.auxiliary_tasks.lock().await;
+                    let active_refreshes = aux
+                        .values()
+                        .filter(|t| {
+                            matches!(
+                                t.kind,
+                                crate::lifecycle::AuxiliaryTaskKind::EdgeReplicaRefresh
+                            )
+                        })
+                        .count();
+                    if active_refreshes >= MAX_CONCURRENT_EDGE_REPLICA_REFRESH {
+                        // Drop the handle — task will be aborted when the JoinHandle
+                        // is dropped (fire-and-forget is acceptable per the existing
+                        // contract: stale data will be refreshed on next notification).
+                        tracing::debug!(
+                            "Edge-replica refresh at capacity ({}/{}), dropping task for {:?}/{}",
+                            active_refreshes,
+                            MAX_CONCURRENT_EDGE_REPLICA_REFRESH,
+                            namespace,
+                            key_id
+                        );
+                        handle.abort();
+                        return Ok(());
+                    }
+                    aux.insert(
                         task_id,
-                        session_id: None,
-                        kind: crate::lifecycle::AuxiliaryTaskKind::EdgeReplicaRefresh,
-                        handle,
-                    },
-                );
+                        crate::lifecycle::AuxiliaryTask {
+                            task_id,
+                            session_id: None,
+                            kind: crate::lifecycle::AuxiliaryTaskKind::EdgeReplicaRefresh,
+                            handle,
+                        },
+                    );
+                }
             }
             MeshMessage::JoinRequest {
                 request_id,
@@ -5272,4 +5316,13 @@ pub async fn drain_peer_stream_handlers_for_test(
     timeout: Duration,
 ) -> crate::lifecycle::PeerStreamDrainReport {
     drain_peer_stream_handlers(handlers, timeout).await
+}
+
+// ── Iteration 78: Test-visible helpers ──────────────────────────────────────
+
+pub async fn drain_datagram_handlers_for_test(
+    handlers: &mut tokio::task::JoinSet<Result<(), MeshTransportError>>,
+    timeout: Duration,
+) {
+    MeshTransport::drain_datagram_handlers(handlers, timeout).await;
 }

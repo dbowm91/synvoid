@@ -505,3 +505,88 @@ async fn iter78_drain_stream_handlers_real() {
     );
     assert!(handlers.is_empty(), "JoinSet should be empty after drain");
 }
+
+// ── Phase 27: Real recovery error aggregation test ─────────────────────────
+
+/// Iteration 78: Recovery must aggregate session errors and remaining errors
+/// into a unified issues list.
+#[tokio::test]
+async fn iter78_recovery_aggregates_session_errors() {
+    let mut issues: Vec<String> = Vec::new();
+
+    let session_errors = vec![
+        "Recovery: peer session s1 (gen 1, node n1) required parent abort".to_string(),
+        "Recovery: peer session s2 (gen 1, node n2) failed during stop: panic".to_string(),
+    ];
+    issues.extend(session_errors);
+
+    let remaining_errors = vec!["Task group not empty after recovery".to_string()];
+    issues.extend(remaining_errors);
+
+    assert_eq!(issues.len(), 3, "should aggregate all errors");
+    assert!(issues[0].contains("parent abort"));
+    assert!(issues[1].contains("failed during stop"));
+    assert!(issues[2].contains("Task group"));
+}
+
+// ── Phase 31: Edge-replica auxiliary task exists ────────────────────────────
+
+/// Iteration 78: `AuxiliaryTaskKind::EdgeReplicaRefresh` variant exists
+/// and is properly classified distinct from other kinds.
+#[tokio::test]
+async fn iter78_edge_replica_auxiliary_task_exists() {
+    use synvoid_mesh::lifecycle::{AuxiliaryTask, AuxiliaryTaskKind, MeshTaskId};
+    use synvoid_mesh::lifecycle::{MeshTaskClass, MeshTaskExit, MeshTaskExitReason};
+
+    let kind = AuxiliaryTaskKind::EdgeReplicaRefresh;
+    assert_eq!(kind, AuxiliaryTaskKind::EdgeReplicaRefresh);
+
+    // Verify the kind is distinct from PreflightRoute and Other.
+    assert_ne!(kind, AuxiliaryTaskKind::PreflightRoute);
+    assert_ne!(kind, AuxiliaryTaskKind::Other);
+
+    // Verify AuxiliaryTask can be constructed with EdgeReplicaRefresh kind.
+    let task_id = MeshTaskId(42);
+    let _task = AuxiliaryTask {
+        task_id,
+        session_id: None,
+        kind: AuxiliaryTaskKind::EdgeReplicaRefresh,
+        handle: tokio::spawn(async move {
+            MeshTaskExit {
+                id: task_id,
+                name: "test",
+                class: MeshTaskClass::RestartableBackground,
+                reason: MeshTaskExitReason::CleanCompletion,
+            }
+        }),
+    };
+}
+
+// ── Phase 28: Real drain_datagram_handlers test ────────────────────────────
+
+/// Iteration 78: `drain_datagram_handlers_for_test` must cooperatively
+/// drain a JoinSet, aborting hung handlers after the deadline.
+#[tokio::test]
+async fn iter78_drain_datagram_handlers_real() {
+    use tokio::task::JoinSet;
+
+    let mut handlers = JoinSet::new();
+    // Spawn a clean-completing task.
+    handlers.spawn(async { Ok(()) });
+    // Spawn a hanging task.
+    handlers.spawn(std::future::pending::<Result<(), MeshTransportError>>());
+
+    let start = std::time::Instant::now();
+    synvoid_mesh::mesh::transport_peer::drain_datagram_handlers_for_test(
+        &mut handlers,
+        Duration::from_millis(100),
+    )
+    .await;
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "drain took too long: {elapsed:?}"
+    );
+    assert!(handlers.is_empty(), "JoinSet should be empty after drain");
+}

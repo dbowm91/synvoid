@@ -56,7 +56,7 @@ use crate::lifecycle::{
     RecoveryReport, RollbackReport, StagedPeerResource, StagedTopologySnapshot,
 };
 use crate::task_group::MeshTaskGroup;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 use crate::cert::MeshCertManager;
 use crate::config::{MeshConfig, MeshPeerConfig, MeshTlsMode};
@@ -201,6 +201,11 @@ pub struct MeshTransport {
     pub(crate) session_reaper_shutdown: Arc<watch::Sender<bool>>,
     /// Channel for auxiliary task exit events, consumed by the auxiliary reaper (Iteration 74, Phase 20).
     pub(crate) auxiliary_exit_tx: broadcast::Sender<crate::lifecycle::AuxiliaryTaskExit>,
+    /// Aggregate stream handler drain counters (Phase 23). Incremented in
+    /// `peer_message_loop` after each session's drain, read during shutdown.
+    pub(crate) aggregate_handler_drained: Arc<AtomicUsize>,
+    pub(crate) aggregate_handler_aborted: Arc<AtomicUsize>,
+    pub(crate) aggregate_handler_failed: Arc<AtomicUsize>,
 }
 
 /// Failure injection points for deterministic startup testing.
@@ -478,6 +483,9 @@ impl Clone for MeshTransport {
             session_exit_tx: self.session_exit_tx.clone(),
             session_reaper_shutdown: self.session_reaper_shutdown.clone(),
             auxiliary_exit_tx: self.auxiliary_exit_tx.clone(),
+            aggregate_handler_drained: self.aggregate_handler_drained.clone(),
+            aggregate_handler_aborted: self.aggregate_handler_aborted.clone(),
+            aggregate_handler_failed: self.aggregate_handler_failed.clone(),
         }
     }
 }
@@ -840,6 +848,9 @@ impl MeshTransport {
                 let (tx, _) = broadcast::channel(64);
                 tx
             },
+            aggregate_handler_drained: Arc::new(AtomicUsize::new(0)),
+            aggregate_handler_aborted: Arc::new(AtomicUsize::new(0)),
+            aggregate_handler_failed: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -3277,7 +3288,19 @@ impl MeshTransport {
             }
         }
     }
+}
 
+#[cfg(test)]
+impl MeshTransport {
+    pub(crate) async fn stop_peer_session_task_for_test(
+        handle: tokio::task::JoinHandle<()>,
+        budget: std::time::Duration,
+    ) -> PeerSessionStopOutcome {
+        Self::stop_peer_session_task(handle, budget, None).await
+    }
+}
+
+impl MeshTransport {
     /// Verify that rollback completed successfully by checking that no
     /// staged resources remain live.
     async fn verify_rollback_complete(&self, stage: &MeshStartupStage) -> Vec<String> {
@@ -4169,6 +4192,11 @@ impl MeshTransport {
         report.drained_peer_sessions = drained;
         report.aborted_peer_sessions = aborted;
         report.failed_peer_sessions = failed;
+        report.stream_handler_drain = crate::lifecycle::PeerStreamDrainReport {
+            drained: self.aggregate_handler_drained.swap(0, Ordering::Relaxed),
+            aborted: self.aggregate_handler_aborted.swap(0, Ordering::Relaxed),
+            failed: self.aggregate_handler_failed.swap(0, Ordering::Relaxed),
+        };
         report.accept_loop_report = if report_is_fresh {
             Some(accept_report.clone())
         } else {

@@ -2701,3 +2701,83 @@ fn iter78_backend_idle_timeout_exists() {
         "backend response read must use idle timeout"
     );
 }
+
+// ── Iteration 78 (completion pass): additional guardrails ──
+
+#[test]
+fn iter78_child_task_failed_variant_exists() {
+    let src = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/lifecycle.rs")
+        .expect("read lifecycle.rs");
+    assert!(
+        src.contains("ChildTaskFailed"),
+        "PeerSessionExitReason must have ChildTaskFailed variant"
+    );
+}
+
+#[test]
+fn iter78_peer_message_loop_promotes_child_failure() {
+    let src = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport_peer.rs")
+        .expect("read transport_peer.rs");
+    assert!(
+        src.contains("drain_report.failed > 0"),
+        "peer_message_loop must check drain_report.failed > 0 for ChildTaskFailed promotion"
+    );
+}
+
+#[test]
+fn iter78_shutdown_report_has_stream_handler_drain() {
+    let src = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/lifecycle.rs")
+        .expect("read lifecycle.rs");
+    assert!(
+        src.contains("stream_handler_drain"),
+        "MeshShutdownReport must have stream_handler_drain field"
+    );
+}
+
+#[test]
+fn iter78_edge_replica_has_backpressure() {
+    let src = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport_peer.rs")
+        .expect("read transport_peer.rs");
+    assert!(
+        src.contains("MAX_CONCURRENT_EDGE_REPLICA_REFRESH"),
+        "edge-replica refresh must have concurrency limit"
+    );
+}
+
+#[test]
+fn iter78_stop_peer_session_task_has_test_adapter() {
+    let src = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport.rs")
+        .expect("read transport.rs");
+    assert!(
+        src.contains("stop_peer_session_task_for_test"),
+        "stop_peer_session_task must have test adapter"
+    );
+}
+
+#[test]
+fn iter78_drain_datagram_handlers_has_test_adapter() {
+    let src = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport_peer.rs")
+        .expect("read transport_peer.rs");
+    assert!(
+        src.contains("drain_datagram_handlers_for_test"),
+        "drain_datagram_handlers must have test adapter"
+    );
+}
+
+#[test]
+fn iter78_aggregate_handler_counters_exist() {
+    let src = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport.rs")
+        .expect("read transport.rs");
+    assert!(
+        src.contains("aggregate_handler_drained"),
+        "MeshTransport must have aggregate_handler_drained counter"
+    );
+    assert!(
+        src.contains("aggregate_handler_aborted"),
+        "MeshTransport must have aggregate_handler_aborted counter"
+    );
+    assert!(
+        src.contains("aggregate_handler_failed"),
+        "MeshTransport must have aggregate_handler_failed counter"
+    );
+}

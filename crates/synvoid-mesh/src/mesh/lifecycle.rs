@@ -275,6 +275,8 @@ pub struct MeshShutdownReport {
     pub aborted_peer_sessions: usize,
     /// Number of peer sessions that failed (panic or unexpected error).
     pub failed_peer_sessions: usize,
+    /// Aggregate stream handler drain statistics across all peer sessions.
+    pub stream_handler_drain: PeerStreamDrainReport,
 }
 
 impl Default for MeshShutdownReport {
@@ -289,6 +291,7 @@ impl Default for MeshShutdownReport {
             drained_peer_sessions: 0,
             aborted_peer_sessions: 0,
             failed_peer_sessions: 0,
+            stream_handler_drain: PeerStreamDrainReport::default(),
         }
     }
 }
@@ -624,6 +627,8 @@ pub enum PeerSessionExitReason {
     Error(String),
     /// Session panicked.
     Panic(String),
+    /// A child stream handler panicked or failed unexpectedly.
+    ChildTaskFailed(String),
     /// Session was forcibly aborted (deadline exceeded).
     Aborted,
 }
@@ -636,6 +641,7 @@ impl fmt::Display for PeerSessionExitReason {
             PeerSessionExitReason::Cancelled => write!(f, "cancelled"),
             PeerSessionExitReason::Error(msg) => write!(f, "error: {msg}"),
             PeerSessionExitReason::Panic(msg) => write!(f, "panic: {msg}"),
+            PeerSessionExitReason::ChildTaskFailed(msg) => write!(f, "child task failed: {msg}"),
             PeerSessionExitReason::Aborted => write!(f, "aborted"),
         }
     }
@@ -1055,6 +1061,13 @@ mod tests {
         assert_eq!(
             PeerSessionExitReason::Panic("overflow".into()).to_string(),
             "panic: overflow"
+        );
+        assert_eq!(
+            PeerSessionExitReason::ChildTaskFailed(
+                "2 handler(s) panicked or errored during drain".into()
+            )
+            .to_string(),
+            "child task failed: 2 handler(s) panicked or errored during drain"
         );
         assert_eq!(PeerSessionExitReason::Aborted.to_string(), "aborted");
     }

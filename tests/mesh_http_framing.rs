@@ -388,3 +388,162 @@ async fn invalid_content_length_rejected() {
         other => panic!("expected InvalidContentLength, got: {other:?}"),
     }
 }
+
+// ── Phase 10: Chunked rejection explicitly ─────────────────────────────────
+
+#[tokio::test]
+async fn chunked_transfer_encoding_only_is_parsed() {
+    let req = b"POST / HTTP/1.1\r\nHost: example.com\r\nTransfer-Encoding: chunked\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(req.len() - 1);
+    client.write_all(&req[1..]).await.unwrap();
+
+    let head = read_http_request_head(
+        &mut server,
+        req[0],
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        MAX_HEADER_BYTES,
+    )
+    .await
+    .unwrap();
+
+    assert!(head.chunked, "chunked should be detected");
+    assert_eq!(
+        head.content_length, None,
+        "content_length should be None for chunked-only"
+    );
+}
+
+#[tokio::test]
+async fn chunked_with_content_length_is_rejected() {
+    let req = b"POST / HTTP/1.1\r\nHost: example.com\r\nTransfer-Encoding: chunked\r\nContent-Length: 10\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(req.len() - 1);
+    client.write_all(&req[1..]).await.unwrap();
+
+    let err = read_http_request_head(
+        &mut server,
+        req[0],
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        MAX_HEADER_BYTES,
+    )
+    .await;
+
+    assert!(err.is_err());
+    match err.unwrap_err() {
+        HttpFramingError::InvalidContentLength(msg) => {
+            assert!(msg.contains("chunked"), "should mention chunked: {msg}");
+        }
+        other => panic!("expected InvalidContentLength for chunked+CL, got: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn unsupported_transfer_encoding_rejected() {
+    let req = b"POST / HTTP/1.1\r\nHost: example.com\r\nTransfer-Encoding: gzip\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(req.len() - 1);
+    client.write_all(&req[1..]).await.unwrap();
+
+    let err = read_http_request_head(
+        &mut server,
+        req[0],
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        MAX_HEADER_BYTES,
+    )
+    .await;
+
+    assert!(err.is_err());
+    match err.unwrap_err() {
+        HttpFramingError::UnsupportedTransferEncoding(msg) => {
+            assert!(
+                msg.contains("gzip"),
+                "should mention the unsupported encoding: {msg}"
+            );
+        }
+        other => panic!("expected UnsupportedTransferEncoding, got: {other:?}"),
+    }
+}
+
+// ── Phase 15: CONNECT/upgrade rejection explicitly ─────────────────────────
+
+#[tokio::test]
+async fn connect_method_first_byte_detected() {
+    let req = b"CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(req.len() - 1);
+    client.write_all(&req[1..]).await.unwrap();
+
+    let head = read_http_request_head(
+        &mut server,
+        req[0],
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        MAX_HEADER_BYTES,
+    )
+    .await
+    .unwrap();
+
+    let header_str = String::from_utf8_lossy(&head.header_bytes);
+    assert!(header_str.starts_with("CONNECT"));
+}
+
+#[tokio::test]
+async fn upgrade_header_detected_in_framing() {
+    let req =
+        b"GET / HTTP/1.1\r\nHost: example.com\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(req.len() - 1);
+    client.write_all(&req[1..]).await.unwrap();
+
+    let head = read_http_request_head(
+        &mut server,
+        req[0],
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        MAX_HEADER_BYTES,
+    )
+    .await
+    .unwrap();
+
+    let header_str = String::from_utf8_lossy(&head.header_bytes);
+    assert!(header_str.to_lowercase().contains("upgrade:"));
+}
+
+// ── Phase 30: End-to-end proxy body test ───────────────────────────────────
+
+#[tokio::test]
+async fn end_to_end_request_bytes_preserved() {
+    let headers = b"POST /api/data HTTP/1.1\r\nHost: example.com\r\nContent-Length: 13\r\n\r\n";
+    let body = b"hello, world!";
+    let full = [headers.as_slice(), body.as_slice()].concat();
+    let (mut client, mut server) = tokio::io::duplex(full.len() - 1);
+    client.write_all(&full[1..]).await.unwrap();
+
+    let head = read_http_request_head(
+        &mut server,
+        full[0],
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        MAX_HEADER_BYTES,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(head.header_bytes, headers);
+    assert_eq!(head.content_length, Some(13));
+
+    let body_bytes = read_fixed_http_body(
+        &mut server,
+        head.body_prefix,
+        13,
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+    )
+    .await
+    .unwrap();
+
+    let mut request_bytes = head.header_bytes;
+    request_bytes.extend_from_slice(&body_bytes);
+
+    assert_eq!(request_bytes, full);
+    assert_eq!(request_bytes.len(), headers.len() + body.len());
+}
