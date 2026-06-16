@@ -2286,22 +2286,34 @@ fn iter77_no_bare_datagram_spawn_in_handler() {
 }
 
 /// Guardrail: Datagram handler JoinSet must be drained before
-/// `start_datagram_handler` returns. The drain pattern must use
+/// `start_datagram_handler` returns. The drain pattern uses a
 /// deadline-aware timeout around `join_next()` followed by
 /// `abort_all()` for remaining handlers.
+/// Phase 22: Extracted to `drain_datagram_handlers` standalone helper.
 #[test]
 fn iter77_datagram_handler_drained_before_return() {
     let source = read_file("crates/synvoid-mesh/src/mesh/transport_peer.rs");
 
+    // Verify start_datagram_handler calls the drain helper
     let handler_body = extract_function(&source, "start_datagram_handler");
-
     assert!(
-        handler_body.contains("handlers.abort_all()"),
-        "start_datagram_handler must abort remaining handlers after drain deadline"
+        handler_body.contains("drain_datagram_handlers("),
+        "start_datagram_handler must call drain_datagram_handlers helper"
+    );
+
+    // Verify drain_datagram_handlers implements the correct drain pattern
+    let drain_body = extract_function(&source, "drain_datagram_handlers");
+    assert!(
+        drain_body.contains("abort_all()"),
+        "drain_datagram_handlers must abort remaining handlers after drain deadline"
     );
     assert!(
-        handler_body.contains("while let Some(result) = handlers.join_next()"),
-        "start_datagram_handler must await all aborted handlers"
+        drain_body.contains("join_next().await"),
+        "drain_datagram_handlers must await all aborted handlers"
+    );
+    assert!(
+        drain_body.contains("saturating_duration_since"),
+        "drain_datagram_handlers must use deadline-aware timeout"
     );
 }
 
@@ -2385,4 +2397,36 @@ fn iter77_spawn_block_no_apply_read_timeouts() {
         !loop_body.contains("apply_read_timeouts"),
         "peer_message_loop must not call apply_read_timeouts — read timeout is in handle_peer_message"
     );
+}
+
+/// Guardrail: Phase 24 audit — `handle_incoming_datagram` contains one
+/// fire-and-forget spawn for edge replica notification. This is a
+/// documented exception: the edge replica is a cache, and stale data
+/// is acceptable. The spawn is not blocking critical state.
+#[test]
+fn iter77_datagram_nested_spawn_has_documented_exception() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport_peer.rs");
+
+    let handler_body = extract_function(&source, "handle_incoming_datagram");
+
+    // Check if there are any tokio::spawn calls in handle_incoming_datagram
+    let has_spawn = handler_body.contains("tokio::spawn(async move");
+
+    if has_spawn {
+        // If spawn exists, verify it has a documented exception comment
+        assert!(
+            handler_body.contains("fire-and-forget"),
+            "handle_incoming_datagram contains tokio::spawn without documented exception comment"
+        );
+        assert!(
+            handler_body.contains("edge replica"),
+            "handle_incoming_datagram spawn must be edge replica notification (the only acceptable fire-and-forget case)"
+        );
+        assert!(
+            handler_body.contains("cache"),
+            "handle_incoming_datagram spawn must document that edge replica is a cache (stale data acceptable)"
+        );
+    }
+    // If no spawn found, that's fine — the exception is only for the
+    // edge replica notification which is intentionally fire-and-forget
 }

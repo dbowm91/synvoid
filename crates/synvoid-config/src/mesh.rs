@@ -523,6 +523,12 @@ pub struct MeshConnectionConfig {
     /// Maximum concurrent datagram handler tasks.
     #[serde(default = "default_max_concurrent_datagram_handlers")]
     pub max_concurrent_datagram_handlers: usize,
+    /// Maximum HTTP header bytes accepted from a peer during framing.
+    #[serde(default = "default_max_peer_http_header_bytes")]
+    pub max_peer_http_header_bytes: usize,
+    /// Timeout for draining datagram handler tasks on shutdown.
+    #[serde(default = "default_datagram_handler_drain_timeout_secs")]
+    pub datagram_handler_drain_timeout_secs: u64,
 }
 
 fn default_min_peers() -> usize {
@@ -554,6 +560,14 @@ fn default_max_concurrent_datagram_handlers() -> usize {
     32
 }
 
+fn default_max_peer_http_header_bytes() -> usize {
+    16384
+}
+
+fn default_datagram_handler_drain_timeout_secs() -> u64 {
+    5
+}
+
 impl Default for MeshConnectionConfig {
     fn default() -> Self {
         Self {
@@ -567,6 +581,8 @@ impl Default for MeshConnectionConfig {
             peer_stream_total_timeout_secs: 0,
             peer_stream_drain_timeout_secs: 5,
             max_concurrent_datagram_handlers: 32,
+            max_peer_http_header_bytes: 16384,
+            datagram_handler_drain_timeout_secs: 5,
         }
     }
 }

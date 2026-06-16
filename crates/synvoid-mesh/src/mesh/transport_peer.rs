@@ -30,6 +30,38 @@ impl MeshTransport {
             .await
     }
 
+    /// Iteration 77, Phase 22: deadline-aware drain of datagram handler tasks.
+    ///
+    /// Cooperative drain with a deadline, followed by abort of remaining handlers.
+    /// This ensures no handler outlives the service shutdown signal.
+    async fn drain_datagram_handlers(
+        handlers: &mut tokio::task::JoinSet<Result<(), MeshTransportError>>,
+        timeout: Duration,
+    ) {
+        let deadline = tokio::time::Instant::now() + timeout;
+
+        while !handlers.is_empty() {
+            let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            match tokio::time::timeout(left, handlers.join_next()).await {
+                Ok(Some(result)) => {
+                    let _ = result;
+                }
+                Ok(None) => break,
+                Err(_) => break,
+            }
+        }
+
+        if !handlers.is_empty() {
+            handlers.abort_all();
+            while let Some(result) = handlers.join_next().await {
+                let _ = result;
+            }
+        }
+    }
+
     pub(crate) async fn start_datagram_handler(
         self: Arc<Self>,
         mut shutdown_rx: broadcast::Receiver<()>,
@@ -37,6 +69,8 @@ impl MeshTransport {
         use tokio::task::JoinSet;
 
         let max_concurrent = self.config.connection.max_concurrent_datagram_handlers;
+        let drain_timeout =
+            Duration::from_secs(self.config.connection.datagram_handler_drain_timeout_secs);
         let mut handlers: JoinSet<Result<(), MeshTransportError>> = JoinSet::new();
 
         loop {
@@ -77,26 +111,7 @@ impl MeshTransport {
         }
 
         // Iteration 77, Phase 22: drain/abort/await all handlers before return
-        let drain_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-        while !handlers.is_empty() {
-            let left = drain_deadline.saturating_duration_since(tokio::time::Instant::now());
-            if left.is_zero() {
-                break;
-            }
-            match tokio::time::timeout(left, handlers.join_next()).await {
-                Ok(Some(result)) => {
-                    let _ = result;
-                }
-                Ok(None) => break,
-                Err(_) => break,
-            }
-        }
-        if !handlers.is_empty() {
-            handlers.abort_all();
-            while let Some(result) = handlers.join_next().await {
-                let _ = result;
-            }
-        }
+        Self::drain_datagram_handlers(&mut handlers, drain_timeout).await;
     }
 
     pub(crate) async fn wait_for_peer_datagrams(&self) -> Option<(String, Bytes)> {
@@ -3005,13 +3020,13 @@ impl MeshTransport {
         if http_methods.contains(&first_byte[0]) {
             // Iteration 77, Phase 8: bounded HTTP header framing — stop at
             // \r\n\r\n instead of reading until EOF. Read timeout applies to
-            // each framing read.
+            // each framing read. Uses configurable max_peer_http_header_bytes.
             let mut total_header_buf = vec![first_byte[0]];
+            let header_cap = self.config.connection.max_peer_http_header_bytes;
             {
                 use tokio::io::AsyncReadExt;
                 let mut header_framing_buf = [0u8; 4096];
                 let mut accumulated = 0usize;
-                let header_cap = 16384; // max header bytes
                 loop {
                     let left = total_header_buf.len();
                     if left >= header_cap {
@@ -3315,6 +3330,13 @@ impl MeshTransport {
                         let rclient = rclient.clone();
                         let ns = namespace.clone();
                         let key = key_id.clone();
+                        // Phase 24: edge replica notification is intentionally
+                        // fire-and-forget. The edge replica is a cache — stale
+                        // data is acceptable and will be refreshed on next read.
+                        // Blocking the datagram handler on the leader query would
+                        // add latency to every RaftCommitNotification. Failure to
+                        // update the cache is logged but does not affect core DHT
+                        // state or datagram response.
                         tokio::spawn(async move {
                             match rclient.query_leader_for_record(ns.clone(), &key).await {
                                 Ok(Some(data)) => {
