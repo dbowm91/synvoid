@@ -72,6 +72,8 @@ pub enum HttpFramingError {
     MalformedHeaders(String),
     /// I/O error during framing.
     Io(String),
+    /// No-body request has trailing bytes after header terminator.
+    AmbiguousTrailingBytes { count: usize },
 }
 
 impl std::fmt::Display for HttpFramingError {
@@ -100,6 +102,12 @@ impl std::fmt::Display for HttpFramingError {
             }
             Self::MalformedHeaders(msg) => write!(f, "Malformed HTTP headers: {msg}"),
             Self::Io(msg) => write!(f, "I/O error during HTTP framing: {msg}"),
+            Self::AmbiguousTrailingBytes { count } => {
+                write!(
+                    f,
+                    "No-body request has {count} trailing bytes after header terminator"
+                )
+            }
         }
     }
 }
@@ -110,6 +118,519 @@ impl From<HttpFramingError> for MeshTransportError {
     fn from(e: HttpFramingError) -> Self {
         MeshTransportError::ReceiveFailed(e.to_string())
     }
+}
+
+/// Parsed result of reading an HTTP response head from a backend.
+#[derive(Debug)]
+pub struct FramedHttpResponseHead {
+    pub header_bytes: Vec<u8>,
+    pub body_prefix: Vec<u8>,
+    pub status_code: u16,
+    pub content_length: Option<usize>,
+    pub chunked: bool,
+    pub connection_close: bool,
+}
+
+/// Errors specific to HTTP response framing.
+#[derive(Debug)]
+pub enum HttpResponseFramingError {
+    MalformedStatusLine(String),
+    InvalidStatusCode(String),
+    HeaderTooLarge,
+    HeaderFramingTimeout,
+    InvalidContentLength(String),
+    UnsupportedTransferEncoding(String),
+    BodyTooLarge { limit: usize, declared: usize },
+    PrematureEof { expected: usize, received: usize },
+    MalformedChunkedBody(String),
+    BackendClosedBeforeCompleteResponse,
+    Io(String),
+}
+
+impl std::fmt::Display for HttpResponseFramingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MalformedStatusLine(msg) => write!(f, "Malformed status line: {msg}"),
+            Self::InvalidStatusCode(msg) => write!(f, "Invalid status code: {msg}"),
+            Self::HeaderTooLarge => write!(f, "Response headers exceeded maximum size"),
+            Self::HeaderFramingTimeout => write!(f, "Response header framing deadline expired"),
+            Self::InvalidContentLength(msg) => write!(f, "Invalid Content-Length: {msg}"),
+            Self::UnsupportedTransferEncoding(msg) => {
+                write!(f, "Unsupported Transfer-Encoding: {msg}")
+            }
+            Self::BodyTooLarge { limit, declared } => {
+                write!(
+                    f,
+                    "Response body too large: declared {declared} bytes, limit {limit}"
+                )
+            }
+            Self::PrematureEof { expected, received } => {
+                write!(
+                    f,
+                    "Premature EOF: expected {expected} bytes, received {received}"
+                )
+            }
+            Self::MalformedChunkedBody(msg) => write!(f, "Malformed chunked body: {msg}"),
+            Self::BackendClosedBeforeCompleteResponse => {
+                write!(f, "Backend closed before complete response")
+            }
+            Self::Io(msg) => write!(f, "I/O error during response framing: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for HttpResponseFramingError {}
+
+impl From<HttpResponseFramingError> for MeshTransportError {
+    fn from(e: HttpResponseFramingError) -> Self {
+        MeshTransportError::ReceiveFailed(e.to_string())
+    }
+}
+
+/// Parse Content-Length, Transfer-Encoding, and Connection from response header bytes.
+fn parse_http_response_framing(
+    header_str: &str,
+) -> Result<(Option<usize>, bool, bool), HttpResponseFramingError> {
+    let mut content_length: Option<usize> = None;
+    let mut chunked = false;
+    let mut connection_close = false;
+
+    for line in header_str.lines() {
+        let line_lower = line.to_lowercase();
+        if line_lower.starts_with("content-length:") {
+            let value_str = line["content-length:".len()..].trim();
+            let value: usize = value_str.parse().map_err(|_| {
+                HttpResponseFramingError::InvalidContentLength(format!(
+                    "non-numeric value: {value_str}"
+                ))
+            })?;
+            if let Some(existing) = content_length {
+                if existing != value {
+                    return Err(HttpResponseFramingError::InvalidContentLength(format!(
+                        "conflicting values: {existing} and {value}"
+                    )));
+                }
+            }
+            content_length = Some(value);
+        } else if line_lower.starts_with("transfer-encoding:") {
+            let value = line["transfer-encoding:".len()..].trim().to_lowercase();
+            if value == "chunked" {
+                chunked = true;
+            } else {
+                return Err(HttpResponseFramingError::UnsupportedTransferEncoding(value));
+            }
+        } else if line_lower.starts_with("connection:") {
+            let value = line["connection:".len()..].trim().to_lowercase();
+            if value == "close" {
+                connection_close = true;
+            }
+        }
+    }
+
+    if chunked && content_length.is_some() {
+        return Err(HttpResponseFramingError::InvalidContentLength(
+            "both Content-Length and Transfer-Encoding: chunked present".to_string(),
+        ));
+    }
+
+    Ok((content_length, chunked, connection_close))
+}
+
+/// Read an HTTP/1.x response head from an async reader.
+///
+/// Reads until `\r\n\r\n` is found, enforcing per-read idle timeout,
+/// total header framing deadline, and maximum header byte cap.
+pub async fn read_http_response_head<R: tokio::io::AsyncRead + Unpin>(
+    reader: &mut R,
+    idle_timeout: Duration,
+    total_timeout: Duration,
+    max_header_bytes: usize,
+) -> Result<FramedHttpResponseHead, HttpResponseFramingError> {
+    if max_header_bytes < 4 {
+        return Err(HttpResponseFramingError::HeaderTooLarge);
+    }
+
+    let deadline = tokio::time::Instant::now() + total_timeout;
+    let mut buffer = Vec::with_capacity(4096);
+    let mut read_buf = [0u8; 4096];
+
+    loop {
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return Err(HttpResponseFramingError::HeaderFramingTimeout);
+        }
+        let remaining_total = deadline.duration_since(now);
+        let effective_timeout = idle_timeout.min(remaining_total);
+
+        let remaining_capacity = max_header_bytes
+            .checked_sub(buffer.len())
+            .ok_or(HttpResponseFramingError::HeaderTooLarge)?;
+        if remaining_capacity == 0 {
+            return Err(HttpResponseFramingError::HeaderTooLarge);
+        }
+        let read_size = remaining_capacity.min(read_buf.len());
+
+        use tokio::io::AsyncReadExt;
+        let n = tokio::time::timeout(effective_timeout, reader.read(&mut read_buf[..read_size]))
+            .await
+            .map_err(|_| HttpResponseFramingError::HeaderFramingTimeout)?
+            .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
+
+        match n {
+            0 => {
+                return Err(HttpResponseFramingError::BackendClosedBeforeCompleteResponse);
+            }
+            n => {
+                buffer.extend_from_slice(&read_buf[..n]);
+            }
+        }
+
+        if let Some(pos) = buffer.windows(4).position(|w| w == b"\r\n\r\n") {
+            let header_end = pos + 4;
+            let header_bytes = buffer[..header_end].to_vec();
+            let body_prefix = buffer[header_end..].to_vec();
+
+            let header_str = String::from_utf8_lossy(&header_bytes);
+
+            let status_line = header_str.lines().next().unwrap_or("");
+            let parts: Vec<&str> = status_line.split_whitespace().collect();
+            if parts.len() < 2 {
+                return Err(HttpResponseFramingError::MalformedStatusLine(
+                    status_line.to_string(),
+                ));
+            }
+            let status_code: u16 = parts[1]
+                .parse()
+                .map_err(|_| HttpResponseFramingError::InvalidStatusCode(parts[1].to_string()))?;
+
+            let (content_length, chunked, connection_close) =
+                parse_http_response_framing(&header_str)?;
+
+            return Ok(FramedHttpResponseHead {
+                header_bytes,
+                body_prefix,
+                status_code,
+                content_length,
+                chunked,
+                connection_close,
+            });
+        }
+    }
+}
+
+/// Read a fixed-length HTTP response body from an async reader.
+pub async fn read_fixed_http_response_body<R: tokio::io::AsyncRead + Unpin>(
+    reader: &mut R,
+    prefix: Vec<u8>,
+    content_length: usize,
+    idle_timeout: Duration,
+    total_timeout: Duration,
+    max_body_bytes: usize,
+) -> Result<Vec<u8>, HttpResponseFramingError> {
+    if prefix.len() > content_length {
+        return Err(HttpResponseFramingError::MalformedChunkedBody(format!(
+            "body prefix {} bytes exceeds declared Content-Length {content_length}",
+            prefix.len(),
+        )));
+    }
+
+    if content_length > max_body_bytes {
+        return Err(HttpResponseFramingError::BodyTooLarge {
+            limit: max_body_bytes,
+            declared: content_length,
+        });
+    }
+
+    let remaining = content_length - prefix.len();
+    if remaining == 0 {
+        return Ok(prefix);
+    }
+
+    let deadline = tokio::time::Instant::now() + total_timeout;
+    let mut body = prefix;
+    body.reserve(remaining);
+    let mut read_buf = [0u8; 8192];
+    let mut total_read = 0usize;
+
+    loop {
+        if total_read >= remaining {
+            break;
+        }
+
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return Err(HttpResponseFramingError::Io(
+                "body framing deadline expired".to_string(),
+            ));
+        }
+        let remaining_total = deadline.duration_since(now);
+        let effective_timeout = idle_timeout.min(remaining_total);
+
+        let to_read = (remaining - total_read).min(read_buf.len());
+
+        use tokio::io::AsyncReadExt;
+        let n = tokio::time::timeout(effective_timeout, reader.read(&mut read_buf[..to_read]))
+            .await
+            .map_err(|_| HttpResponseFramingError::Io("body read timeout".to_string()))?
+            .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
+
+        match n {
+            0 => {
+                return Err(HttpResponseFramingError::PrematureEof {
+                    expected: remaining,
+                    received: total_read,
+                });
+            }
+            n => {
+                body.extend_from_slice(&read_buf[..n]);
+                total_read += n;
+            }
+        }
+    }
+
+    Ok(body)
+}
+
+/// Read a chunked HTTP response body from an async reader.
+///
+/// Preserves the raw wire chunked framing in the returned bytes.
+pub async fn read_chunked_http_response_body<R: tokio::io::AsyncRead + Unpin>(
+    reader: &mut R,
+    mut prefix: Vec<u8>,
+    idle_timeout: Duration,
+    total_timeout: Duration,
+    max_body_bytes: usize,
+    max_trailer_bytes: usize,
+) -> Result<Vec<u8>, HttpResponseFramingError> {
+    let deadline = tokio::time::Instant::now() + total_timeout;
+    let mut total_wire_bytes = prefix.len();
+    let mut line_buf: Vec<u8> = Vec::with_capacity(64);
+
+    loop {
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return Err(HttpResponseFramingError::Io(
+                "chunked body framing deadline expired".to_string(),
+            ));
+        }
+        let remaining_total = deadline.duration_since(now);
+        let effective_timeout = idle_timeout.min(remaining_total);
+
+        line_buf.clear();
+        loop {
+            if line_buf.len() >= 2 && line_buf[line_buf.len() - 2..] == *b"\r\n" {
+                break;
+            }
+            if line_buf.len() >= max_trailer_bytes {
+                return Err(HttpResponseFramingError::MalformedChunkedBody(
+                    "trailer exceeded maximum size".to_string(),
+                ));
+            }
+            let mut byte = [0u8; 1];
+            use tokio::io::AsyncReadExt;
+            let n = tokio::time::timeout(effective_timeout, reader.read(&mut byte))
+                .await
+                .map_err(|_| HttpResponseFramingError::Io("chunk read timeout".to_string()))?
+                .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
+            if n == 0 {
+                return Err(HttpResponseFramingError::BackendClosedBeforeCompleteResponse);
+            }
+            line_buf.push(byte[0]);
+        }
+
+        total_wire_bytes += line_buf.len();
+        if total_wire_bytes > max_body_bytes {
+            return Err(HttpResponseFramingError::BodyTooLarge {
+                limit: max_body_bytes,
+                declared: total_wire_bytes,
+            });
+        }
+        prefix.extend_from_slice(&line_buf);
+
+        let line_str = String::from_utf8_lossy(&line_buf);
+        let size_str = line_str.trim_end_matches("\r\n");
+        let size_str = size_str.split(';').next().unwrap_or("").trim();
+        let chunk_size = usize::from_str_radix(size_str, 16).map_err(|_| {
+            HttpResponseFramingError::MalformedChunkedBody(format!(
+                "invalid chunk size: {size_str}"
+            ))
+        })?;
+
+        if chunk_size == 0 {
+            loop {
+                let now = tokio::time::Instant::now();
+                if now >= deadline {
+                    return Err(HttpResponseFramingError::Io(
+                        "chunked trailer deadline expired".to_string(),
+                    ));
+                }
+                let remaining_total = deadline.duration_since(now);
+                let effective_timeout = idle_timeout.min(remaining_total);
+
+                let mut byte = [0u8; 1];
+                use tokio::io::AsyncReadExt;
+                let n = tokio::time::timeout(effective_timeout, reader.read(&mut byte))
+                    .await
+                    .map_err(|_| HttpResponseFramingError::Io("trailer read timeout".to_string()))?
+                    .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
+                if n == 0 {
+                    return Ok(prefix);
+                }
+                total_wire_bytes += 1;
+                if total_wire_bytes > max_body_bytes {
+                    return Err(HttpResponseFramingError::BodyTooLarge {
+                        limit: max_body_bytes,
+                        declared: total_wire_bytes,
+                    });
+                }
+                prefix.push(byte[0]);
+
+                if prefix.len() >= 4 && prefix[prefix.len() - 4..] == *b"\r\n\r\n" {
+                    return Ok(prefix);
+                }
+            }
+        }
+
+        let payload_and_crlf = chunk_size + 2;
+        let mut remaining = payload_and_crlf;
+        let mut chunk_buf = Vec::with_capacity(payload_and_crlf.min(8192));
+
+        while remaining > 0 {
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                return Err(HttpResponseFramingError::Io(
+                    "chunked body framing deadline expired".to_string(),
+                ));
+            }
+            let remaining_total = deadline.duration_since(now);
+            let effective_timeout = idle_timeout.min(remaining_total);
+
+            let to_read = remaining.min(4096);
+            let mut read_buf = vec![0u8; to_read];
+            use tokio::io::AsyncReadExt;
+            let n = tokio::time::timeout(effective_timeout, reader.read(&mut read_buf))
+                .await
+                .map_err(|_| HttpResponseFramingError::Io("chunk data read timeout".to_string()))?
+                .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
+
+            if n == 0 {
+                return Err(HttpResponseFramingError::BackendClosedBeforeCompleteResponse);
+            }
+            chunk_buf.extend_from_slice(&read_buf[..n]);
+            remaining -= n;
+        }
+
+        total_wire_bytes += chunk_buf.len();
+        if total_wire_bytes > max_body_bytes {
+            return Err(HttpResponseFramingError::BodyTooLarge {
+                limit: max_body_bytes,
+                declared: total_wire_bytes,
+            });
+        }
+        prefix.extend_from_slice(&chunk_buf);
+    }
+}
+
+/// Strictly parsed HTTP request metadata extracted from header bytes only.
+///
+/// Avoids decoding body bytes as UTF-8 and prevents body content from
+/// corrupting host/path/method extraction.
+#[derive(Debug, Clone)]
+pub struct ParsedHttpRequestMeta {
+    pub method: String,
+    pub target: String,
+    pub version: String,
+    pub host: String,
+    pub upgrade_requested: bool,
+    pub connection_upgrade: bool,
+}
+
+/// Parse an HTTP request head from header bytes (NOT the full body).
+///
+/// Extracts method, target, version, Host, and upgrade semantics.
+/// Rejects malformed request lines, missing Host for HTTP/1.1,
+/// conflicting duplicate Host values, and empty/missing headers.
+pub fn parse_http_request_meta(
+    header_bytes: &[u8],
+) -> Result<ParsedHttpRequestMeta, HttpFramingError> {
+    let header_str = String::from_utf8_lossy(header_bytes);
+
+    let mut lines = header_str.lines();
+    let request_line = lines
+        .next()
+        .ok_or_else(|| HttpFramingError::MalformedHeaders("empty request".to_string()))?;
+    let request_line = request_line.trim();
+    if request_line.is_empty() {
+        return Err(HttpFramingError::MalformedHeaders(
+            "empty request line".to_string(),
+        ));
+    }
+
+    let tokens: Vec<&str> = request_line.split(' ').filter(|s| !s.is_empty()).collect();
+    if tokens.len() != 3 {
+        return Err(HttpFramingError::MalformedHeaders(format!(
+            "expected 3 tokens in request line, got {}",
+            tokens.len()
+        )));
+    }
+
+    let method = tokens[0].to_string();
+    let target = tokens[1].to_string();
+    let version = tokens[2].to_string();
+
+    let mut host_found: Option<String> = None;
+    let mut upgrade_header = false;
+    let mut connection_upgrade = false;
+
+    for line in lines {
+        let line = line.trim();
+        if line.is_empty() {
+            break;
+        }
+
+        if let Some(colon_pos) = line.find(':') {
+            let name = line[..colon_pos].trim();
+            let value = line[colon_pos + 1..].trim();
+
+            if name.eq_ignore_ascii_case("Host") {
+                let host_val = value.to_string();
+                if let Some(existing) = &host_found {
+                    if existing != &host_val {
+                        return Err(HttpFramingError::MalformedHeaders(
+                            "conflicting Host header values".to_string(),
+                        ));
+                    }
+                } else {
+                    host_found = Some(host_val);
+                }
+            } else if name.eq_ignore_ascii_case("Upgrade") {
+                upgrade_header = true;
+            } else if name.eq_ignore_ascii_case("Connection") {
+                for token in value.split(',') {
+                    if token.trim().eq_ignore_ascii_case("upgrade") {
+                        connection_upgrade = true;
+                    }
+                }
+            }
+        }
+    }
+
+    if version.eq_ignore_ascii_case("HTTP/1.1") && host_found.is_none() {
+        return Err(HttpFramingError::MalformedHeaders(
+            "HTTP/1.1 requires Host header".to_string(),
+        ));
+    }
+
+    let host = host_found.unwrap_or_default();
+
+    Ok(ParsedHttpRequestMeta {
+        method,
+        target,
+        version,
+        host,
+        upgrade_requested: upgrade_header,
+        connection_upgrade,
+    })
 }
 
 /// Read an HTTP/1.x request head from an async reader.
@@ -3294,7 +3815,6 @@ impl MeshTransport {
             // Iteration 78: HTTP-over-mesh framing with body support.
             // One QUIC bidirectional stream carries exactly one HTTP/1.x
             // request and one HTTP/1.x response.
-            let method_char = first_byte[0] as char;
             let total_timeout =
                 Duration::from_secs(self.config.connection.peer_http_header_total_timeout_secs);
 
@@ -3308,12 +3828,9 @@ impl MeshTransport {
             .await?;
 
             // Reject CONNECT and upgrade requests — not supported.
-            // Build header_str from a borrowed view, then move header_bytes
-            // into request_bytes to avoid borrow conflicts.
             let mut request_bytes = head.header_bytes;
-            let header_str = String::from_utf8_lossy(&request_bytes).into_owned();
-            let method_line = header_str.lines().next().unwrap_or("");
-            if method_char == 'C' || method_line.to_uppercase().starts_with("CONNECT") {
+            let parsed_meta = parse_http_request_meta(&request_bytes)?;
+            if parsed_meta.method.eq_ignore_ascii_case("CONNECT") {
                 let resp = b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
                 send_stream
                     .write_all(resp)
@@ -3322,7 +3839,7 @@ impl MeshTransport {
                 let _ = send_stream.finish();
                 return Ok(());
             }
-            if header_str.to_lowercase().contains("upgrade:") {
+            if parsed_meta.upgrade_requested || parsed_meta.connection_upgrade {
                 let resp = b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
                 send_stream
                     .write_all(resp)
@@ -3342,7 +3859,17 @@ impl MeshTransport {
             };
 
             match body_kind {
-                HttpBodyKind::None => {}
+                HttpBodyKind::None => {
+                    if !head.body_prefix.is_empty() {
+                        let resp = b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                        send_stream
+                            .write_all(resp)
+                            .await
+                            .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+                        let _ = send_stream.finish();
+                        return Ok(());
+                    }
+                }
                 HttpBodyKind::ContentLength(content_length) => {
                     let max_body = self.config.connection.max_peer_http_body_bytes;
                     if content_length > max_body {
@@ -3382,7 +3909,7 @@ impl MeshTransport {
 
             return self
                 .handle_http_proxy_stream(
-                    &header_str,
+                    &parsed_meta,
                     request_bytes,
                     send_stream,
                     topology,
@@ -3666,91 +4193,57 @@ impl MeshTransport {
                 // add latency to every RaftCommitNotification. Failure to
                 // update the cache is logged but does not affect core DHT
                 // state or datagram response.
-                let task_id = self.id_generator.next();
-                let handle = tokio::spawn(async move {
+                let refresh_future = async move {
                     match rclient.query_leader_for_record(ns.clone(), &key).await {
                         Ok(Some(data)) => {
                             if let Err(e) = erm.update_from_notification(&ns, &key, &data) {
                                 tracing::error!("Failed to update edge replica: {}", e);
+                                crate::lifecycle::MeshTaskExitReason::Error(format!(
+                                    "update failed: {}",
+                                    e
+                                ))
                             } else {
                                 tracing::info!("Edge replica updated for {:?} key {}", ns, key);
+                                crate::lifecycle::MeshTaskExitReason::CleanCompletion
                             }
                         }
                         Ok(None) => {
                             if let Err(e) = erm.delete_from_notification(&ns, &key) {
                                 tracing::error!("Failed to delete from edge replica: {}", e);
+                                crate::lifecycle::MeshTaskExitReason::Error(format!(
+                                    "delete failed: {}",
+                                    e
+                                ))
+                            } else {
+                                crate::lifecycle::MeshTaskExitReason::CleanCompletion
                             }
                         }
                         Err(e) => {
                             tracing::error!("Failed to query leader for record: {}", e);
+                            crate::lifecycle::MeshTaskExitReason::Error(format!(
+                                "leader query failed: {}",
+                                e
+                            ))
                         }
                     }
-                    crate::lifecycle::MeshTaskExit {
-                        id: task_id,
-                        name: "edge-replica-refresh".into(),
-                        class: crate::lifecycle::MeshTaskClass::RestartableBackground,
-                        reason: crate::lifecycle::MeshTaskExitReason::CleanCompletion,
-                    }
-                });
-                // Phase 18: Register as auxiliary task with backpressure
-                // and (namespace, key_id) deduplication. Duplicate
-                // notifications for the same key share one task; only the
-                // latest notification triggers a new refresh. Excess tasks
-                // beyond the cap are dropped (fire-and-forget contract).
-                const MAX_CONCURRENT_EDGE_REPLICA_REFRESH: usize = 8;
+                };
+                let dedup_key = Some(format!("edge_refresh:{}:{}", namespace.as_str(), key_id));
+                // Phase 22-25: Spawn via shared helper which handles AuxiliaryTaskExit
+                // publication, deduplication (abort+await), and capacity gating.
+                if let Err(()) = self
+                    .spawn_auxiliary_task(
+                        crate::lifecycle::AuxiliaryTaskKind::EdgeReplicaRefresh,
+                        "edge-replica-refresh",
+                        None,
+                        dedup_key,
+                        refresh_future,
+                    )
+                    .await
                 {
-                    let mut aux = self.auxiliary_tasks.lock().await;
-
-                    // Deduplication: abort any existing refresh for the
-                    // same (namespace, key_id) before inserting the new one.
-                    let dedup_key = Some(format!("edge_refresh:{}:{}", namespace.as_str(), key_id));
-                    let stale_ids: Vec<_> = aux
-                        .iter()
-                        .filter(|(_id, t)| t.dedup_key == dedup_key)
-                        .map(|(id, _)| *id)
-                        .collect();
-                    for stale_id in stale_ids {
-                        if let Some(old_task) = aux.remove(&stale_id) {
-                            old_task.handle.abort();
-                            tracing::debug!(
-                                "Aborted stale edge-replica refresh for {:?}/{} (task {})",
-                                namespace,
-                                key_id,
-                                stale_id
-                            );
-                        }
-                    }
-
-                    // Backpressure: cap concurrent edge-replica refresh tasks.
-                    let active_refreshes = aux
-                        .values()
-                        .filter(|t| {
-                            matches!(
-                                t.kind,
-                                crate::lifecycle::AuxiliaryTaskKind::EdgeReplicaRefresh
-                            )
-                        })
-                        .count();
-                    if active_refreshes >= MAX_CONCURRENT_EDGE_REPLICA_REFRESH {
-                        tracing::debug!(
-                            "Edge-replica refresh at capacity ({}/{}), dropping task for {:?}/{}",
-                            active_refreshes,
-                            MAX_CONCURRENT_EDGE_REPLICA_REFRESH,
-                            namespace,
-                            key_id
-                        );
-                        handle.abort();
-                        return Ok(());
-                    }
-                    aux.insert(
-                        task_id,
-                        crate::lifecycle::AuxiliaryTask {
-                            task_id,
-                            session_id: None,
-                            kind: crate::lifecycle::AuxiliaryTaskKind::EdgeReplicaRefresh,
-                            handle,
-                            dedup_key,
-                        },
+                    tracing::debug!(
+                        "Edge-replica refresh at capacity, dropping task for {:?}/{}",
+                        namespace,
+                        key_id
                     );
                 }
             }
@@ -4534,21 +5027,18 @@ impl MeshTransport {
 
     async fn handle_http_proxy_stream(
         &self,
-        _header_str: &str,
+        parsed_meta: &ParsedHttpRequestMeta,
         http_data: Vec<u8>,
         send_stream: &mut SendStream,
         topology: &MeshTopology,
         peer_node_id: String,
     ) -> Result<(), MeshTransportError> {
-        let host = self.extract_host_from_http(&http_data);
-        let upstream_id = match host {
-            Some(h) => format!("http://{}", h),
-            None => {
-                return Err(MeshTransportError::ReceiveFailed(
-                    "No Host header found in HTTP request".to_string(),
-                ));
-            }
-        };
+        if parsed_meta.host.is_empty() {
+            return Err(MeshTransportError::ReceiveFailed(
+                "No Host header found in HTTP request".to_string(),
+            ));
+        }
+        let upstream_id = format!("http://{}", parsed_meta.host);
 
         let upstream_info = topology.get_upstream_info(&upstream_id).await;
         let backend_url = match upstream_info {
@@ -4566,25 +5056,30 @@ impl MeshTransport {
         };
 
         #[cfg(feature = "dns")]
-        if let Some(token) = header_str.strip_prefix("GET /.well-known/acme-challenge/") {
-            let token = token.trim();
-            if !token.is_empty() && !token.contains('\r') && !token.contains('\n') {
-                if let Some(key_authz) = self.get_http01_challenge(token) {
-                    tracing::debug!(
-                        "ACME HTTP-01 challenge served from mesh for token {}",
-                        token
-                    );
-                    let resp = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
-                        key_authz.len(),
-                        key_authz
-                    );
-                    send_stream
-                        .write_all(resp.as_bytes())
-                        .await
-                        .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
-                    let _ = send_stream.finish();
-                    return Ok(());
+        if parsed_meta.method.eq_ignore_ascii_case("GET") {
+            if let Some(token) = parsed_meta
+                .target
+                .strip_prefix("/.well-known/acme-challenge/")
+            {
+                let token = token.trim();
+                if !token.is_empty() && !token.contains('\r') && !token.contains('\n') {
+                    if let Some(key_authz) = self.get_http01_challenge(token) {
+                        tracing::debug!(
+                            "ACME HTTP-01 challenge served from mesh for token {}",
+                            token
+                        );
+                        let resp = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
+                            key_authz.len(),
+                            key_authz
+                        );
+                        send_stream
+                            .write_all(resp.as_bytes())
+                            .await
+                            .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+                        let _ = send_stream.finish();
+                        return Ok(());
+                    }
                 }
             }
         }
@@ -4681,24 +5176,128 @@ impl MeshTransport {
             .await
             .map_err(|e| MeshTransportError::SendFailed(format!("Backend write failed: {}", e)))?;
 
-        let mut full_response = Vec::new();
-        let mut resp_buf = vec![0u8; 65536];
-        let backend_idle_timeout =
+        let idle_timeout =
             Duration::from_secs(self.config.connection.peer_http_backend_idle_timeout_secs);
-        loop {
-            let n = tokio::time::timeout(backend_idle_timeout, backend_conn.read(&mut resp_buf))
-                .await
-                .map_err(|_| {
-                    MeshTransportError::ReceiveFailed("Backend response read timeout".to_string())
-                })?
-                .map_err(|e| {
-                    MeshTransportError::ReceiveFailed(format!("Backend read failed: {}", e))
-                })?;
-            if n == 0 {
-                break;
+        let header_total_timeout = Duration::from_secs(
+            self.config
+                .connection
+                .peer_http_response_header_total_timeout_secs,
+        );
+        let body_total_timeout = Duration::from_secs(
+            self.config
+                .connection
+                .peer_http_response_body_total_timeout_secs,
+        );
+        let max_header_bytes = self.config.connection.max_peer_http_response_header_bytes;
+        let max_body_bytes = self.config.connection.max_peer_http_response_body_bytes;
+        let max_trailer_bytes = self.config.connection.max_peer_http_response_trailer_bytes;
+
+        let resp_head = match read_http_response_head(
+            &mut backend_conn,
+            idle_timeout,
+            header_total_timeout,
+            max_header_bytes,
+        )
+        .await
+        {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::warn!("Backend response header read error: {}", e);
+                let err_resp = b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n";
+                send_stream
+                    .write_all(err_resp)
+                    .await
+                    .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+                let _ = send_stream.finish();
+                return Ok(());
             }
-            full_response.extend_from_slice(&resp_buf[..n]);
-        }
+        };
+
+        let is_head = parsed_meta.method.eq_ignore_ascii_case("HEAD");
+        let is_no_body_status = resp_head.status_code < 200
+            || resp_head.status_code == 204
+            || resp_head.status_code == 304;
+
+        let body_bytes = if is_head || is_no_body_status {
+            Vec::new()
+        } else if resp_head.chunked {
+            match read_chunked_http_response_body(
+                &mut backend_conn,
+                resp_head.body_prefix,
+                idle_timeout,
+                body_total_timeout,
+                max_body_bytes,
+                max_trailer_bytes,
+            )
+            .await
+            {
+                Ok(b) => b,
+                Err(e) => {
+                    tracing::warn!("Backend chunked body read error: {}", e);
+                    let err_resp = b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n";
+                    send_stream
+                        .write_all(err_resp)
+                        .await
+                        .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+                    let _ = send_stream.finish();
+                    return Ok(());
+                }
+            }
+        } else if let Some(cl) = resp_head.content_length {
+            match read_fixed_http_response_body(
+                &mut backend_conn,
+                resp_head.body_prefix,
+                cl,
+                idle_timeout,
+                body_total_timeout,
+                max_body_bytes,
+            )
+            .await
+            {
+                Ok(b) => b,
+                Err(e) => {
+                    tracing::warn!("Backend fixed body read error: {}", e);
+                    let err_resp = b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n";
+                    send_stream
+                        .write_all(err_resp)
+                        .await
+                        .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+                    let _ = send_stream.finish();
+                    return Ok(());
+                }
+            }
+        } else {
+            let mut full_body = resp_head.body_prefix;
+            let mut read_buf = vec![0u8; 8192];
+            loop {
+                let n = tokio::time::timeout(idle_timeout, backend_conn.read(&mut read_buf))
+                    .await
+                    .map_err(|_| {
+                        MeshTransportError::ReceiveFailed(
+                            "Backend response read timeout".to_string(),
+                        )
+                    })?
+                    .map_err(|e| {
+                        MeshTransportError::ReceiveFailed(format!("Backend read failed: {}", e))
+                    })?;
+                if n == 0 {
+                    break;
+                }
+                full_body.extend_from_slice(&read_buf[..n]);
+                if full_body.len() > max_body_bytes {
+                    tracing::warn!(
+                        "Backend close-delimited body exceeded limit ({} > {})",
+                        full_body.len(),
+                        max_body_bytes
+                    );
+                    break;
+                }
+            }
+            full_body
+        };
+
+        let mut full_response = resp_head.header_bytes;
+        full_response.extend_from_slice(&body_bytes);
 
         let (transformed_response, did_transform) = match self
             .apply_response_transforms(&full_response, &upstream_id)
@@ -4725,76 +5324,63 @@ impl MeshTransport {
         Ok(())
     }
 
-    fn extract_host_from_http(&self, http_data: &[u8]) -> Option<String> {
-        let header_str = match String::from_utf8(http_data.to_vec()) {
-            Ok(s) => s,
-            Err(_) => return None,
-        };
+    fn extract_host_from_http(&self, header_bytes: &[u8]) -> Option<String> {
+        let header_str = String::from_utf8_lossy(header_bytes);
 
         for line in header_str.lines() {
-            let line_lower = line.to_lowercase();
-            if line_lower.starts_with("host:") {
-                let host_part = line
-                    .split(':')
-                    .skip(1)
-                    .collect::<String>()
-                    .trim()
-                    .to_string();
-                return Some(host_part);
+            if let Some(colon_pos) = line.find(':') {
+                let name = line[..colon_pos].trim();
+                if name.eq_ignore_ascii_case("Host") {
+                    let value = line[colon_pos + 1..].trim();
+                    return Some(value.to_string());
+                }
             }
         }
         None
     }
 
-    fn extract_path_from_http(&self, http_data: &[u8]) -> String {
-        let header_str = match String::from_utf8(http_data.to_vec()) {
-            Ok(s) => s,
-            Err(_) => return "/".to_string(),
-        };
+    fn extract_path_from_http(&self, header_bytes: &[u8]) -> String {
+        let header_str = String::from_utf8_lossy(header_bytes);
 
         for line in header_str.lines() {
             let trimmed = line.trim();
-            if trimmed.starts_with("GET ")
-                || trimmed.starts_with("POST ")
-                || trimmed.starts_with("PUT ")
-                || trimmed.starts_with("PATCH ")
-                || trimmed.starts_with("DELETE ")
-                || trimmed.starts_with("OPTIONS ")
-                || trimmed.starts_with("HEAD ")
-                || trimmed.starts_with("TRACE ")
-                || trimmed.starts_with("CONNECT ")
+            if let Some(rest) = trimmed
+                .strip_prefix("GET ")
+                .or_else(|| trimmed.strip_prefix("POST "))
+                .or_else(|| trimmed.strip_prefix("PUT "))
+                .or_else(|| trimmed.strip_prefix("PATCH "))
+                .or_else(|| trimmed.strip_prefix("DELETE "))
+                .or_else(|| trimmed.strip_prefix("OPTIONS "))
+                .or_else(|| trimmed.strip_prefix("HEAD "))
+                .or_else(|| trimmed.strip_prefix("TRACE "))
+                .or_else(|| trimmed.strip_prefix("CONNECT "))
             {
-                if let Some(second_space) = trimmed.find(' ') {
-                    if let Some(third_space) = trimmed[second_space + 1..].find(' ') {
-                        return trimmed[second_space + 1..second_space + 1 + third_space]
-                            .to_string();
-                    }
+                if let Some(third_space) = rest.find(' ') {
+                    return rest[..third_space].to_string();
                 }
             }
         }
         "/".to_string()
     }
 
-    fn extract_method_from_http(&self, http_data: &[u8]) -> Option<String> {
-        let header_str = match String::from_utf8(http_data.to_vec()) {
-            Ok(s) => s,
-            Err(_) => return None,
-        };
+    fn extract_method_from_http(&self, header_bytes: &[u8]) -> Option<String> {
+        let header_str = String::from_utf8_lossy(header_bytes);
 
         for line in header_str.lines() {
             let trimmed = line.trim();
-            if trimmed.starts_with("GET ")
-                || trimmed.starts_with("POST ")
-                || trimmed.starts_with("PUT ")
-                || trimmed.starts_with("PATCH ")
-                || trimmed.starts_with("DELETE ")
-                || trimmed.starts_with("OPTIONS ")
-                || trimmed.starts_with("HEAD ")
-                || trimmed.starts_with("TRACE ")
-                || trimmed.starts_with("CONNECT ")
-            {
-                if let Some(space) = trimmed.find(' ') {
-                    return Some(trimmed[..space].to_string());
+            if let Some(space) = trimmed.find(' ') {
+                let candidate = &trimmed[..space];
+                if candidate.eq_ignore_ascii_case("GET")
+                    || candidate.eq_ignore_ascii_case("POST")
+                    || candidate.eq_ignore_ascii_case("PUT")
+                    || candidate.eq_ignore_ascii_case("PATCH")
+                    || candidate.eq_ignore_ascii_case("DELETE")
+                    || candidate.eq_ignore_ascii_case("OPTIONS")
+                    || candidate.eq_ignore_ascii_case("HEAD")
+                    || candidate.eq_ignore_ascii_case("TRACE")
+                    || candidate.eq_ignore_ascii_case("CONNECT")
+                {
+                    return Some(candidate.to_string());
                 }
             }
         }
@@ -5333,7 +5919,7 @@ impl MeshTransport {
 
 // ── Iteration 77: Test-visible helpers ──────────────────────────────────────
 
-pub async fn drain_peer_stream_handlers_for_test(
+pub(crate) async fn drain_peer_stream_handlers_for_test(
     handlers: &mut tokio::task::JoinSet<Result<(), MeshTransportError>>,
     timeout: Duration,
 ) -> crate::lifecycle::PeerStreamDrainReport {
@@ -5342,9 +5928,48 @@ pub async fn drain_peer_stream_handlers_for_test(
 
 // ── Iteration 78: Test-visible helpers ──────────────────────────────────────
 
-pub async fn drain_datagram_handlers_for_test(
+pub(crate) async fn drain_datagram_handlers_for_test(
     handlers: &mut tokio::task::JoinSet<Result<(), MeshTransportError>>,
     timeout: Duration,
 ) {
     MeshTransport::drain_datagram_handlers(handlers, timeout).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn drain_stream_handlers_aborts_hung_handlers() {
+        let mut handlers = tokio::task::JoinSet::<Result<(), MeshTransportError>>::new();
+        handlers.spawn(async { Ok(()) });
+        handlers.spawn(std::future::pending::<Result<(), MeshTransportError>>());
+
+        let report =
+            drain_peer_stream_handlers_for_test(&mut handlers, Duration::from_millis(100)).await;
+
+        assert!(
+            report.aborted >= 1,
+            "expected at least 1 aborted: {report:?}"
+        );
+        assert!(handlers.is_empty(), "JoinSet should be empty after drain");
+    }
+
+    #[tokio::test]
+    async fn drain_datagram_handlers_aborts_hung_handlers() {
+        let mut handlers = tokio::task::JoinSet::<Result<(), MeshTransportError>>::new();
+        handlers.spawn(async { Ok(()) });
+        handlers.spawn(std::future::pending::<Result<(), MeshTransportError>>());
+
+        let start = std::time::Instant::now();
+        drain_datagram_handlers_for_test(&mut handlers, Duration::from_millis(100)).await;
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "drain took too long: {elapsed:?}"
+        );
+        assert!(handlers.is_empty(), "JoinSet should be empty after drain");
+    }
 }

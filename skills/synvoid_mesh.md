@@ -696,9 +696,64 @@ Iteration 78 corrects HTTP-over-mesh request framing, closes the remaining edge-
 
 **Config validation**: `max_peer_http_header_bytes >= 4` enforced at runtime. Serde tests (`http_framing_config_defaults` in `config.rs`) verify default values for all HTTP framing fields.
 
-**Test visibility**: `stop_peer_session_task_for_test` is `pub` (not `#[cfg(test)]`) so integration tests in `tests/` can call it directly.
+**Test visibility (Iteration 78)**: `stop_peer_session_task_for_test` was initially `pub` (not `#[cfg(test)]`) so integration tests in `tests/` could call it directly. **Iteration 79**: Changed from `pub` to `pub(crate)` along with `drain_peer_stream_handlers_for_test` and `drain_datagram_handlers_for_test`.
 
 **Tests**: 13 HTTP framing unit tests, 1 real drain test, 23 guardrail assertions.
+
+## Iteration 79 — HTTP Response Framing and Auxiliary Ownership Corrective Pass
+
+Iteration 79 completes the HTTP-over-mesh framing contract with proper backend response framing, replaces substring-based upgrade detection with parsed header analysis, and centralizes auxiliary task spawning.
+
+### Parts A-B: Backend HTTP Response Framing
+
+Backend responses are now parsed with proper HTTP/1.1 framing instead of EOF-only detection:
+
+- **`FramedHttpResponseHead`**: Parsed response head with `status_code: u16`, `content_length: Option<usize>`, `chunked: bool`, `connection_close: bool`
+- **`HttpResponseFramingError`**: Typed error enum covering `HeaderTooLarge`, `HeaderFramingTimeout`, `MalformedStatusLine`, `InvalidStatusCode`, `InvalidContentLength`, `UnsupportedTransferEncoding`, `BackendClosedBeforeCompleteResponse`, `PrematureEof`, `BodyTooLarge`, `MalformedChunkedBody`, `Io`
+- **`read_http_response_head()`**: Generic `AsyncRead` helper with idle/total timeouts. Enforces `max_peer_http_response_header_bytes` capacity
+- **`read_fixed_http_response_body()`**: Reads exact Content-Length bytes with `max_peer_http_response_body_bytes` limit. Returns after declared body, ignoring any trailing bytes
+- **`read_chunked_http_response_body()`**: Parses chunked Transfer-Encoding with trailer support. Enforces `max_peer_http_response_trailer_bytes`
+
+**No-body response semantics**: HEAD requests, 1xx, 204, and 304 status codes produce empty bodies. The `is_no_body_status()` and `is_head` checks handle this before attempting body reads.
+
+### Parts C-D: Request Metadata Parsing
+
+- **`ParsedHttpRequestMeta`**: Header-only metadata extraction (method, target, host, upgrade flags). Bodies are not parsed — binary bodies no longer affect host/path extraction
+- **`parse_http_request_meta()`**: Extracts method, target, host, and upgrade detection from raw header bytes only
+- **Upgrade detection**: Uses exact parsed header names/tokens (`Connection` header + `Upgrade` value), not substring matching on lowercased full request bytes
+- **Trailing byte rejection**: Requests with trailing bytes after headers and body are rejected
+
+### Parts E-F: Auxiliary Task Ownership
+
+- **`spawn_auxiliary_task()`**: Shared helper wrapping auxiliary task futures with `AuxiliaryTaskExit` publication, deduplication, and capacity gating
+- **Edge-replica refresh**: Now uses `spawn_auxiliary_task()` with `AuxiliaryTaskKind::EdgeReplicaRefresh` and `dedup_key` for `(namespace, key_id)` deduplication
+- **Deduplication**: Stale tasks with the same `dedup_key` are aborted AND awaited before inserting the replacement
+- **Capacity**: Rejection happens before spawning, creating no orphan handles
+
+### Part G: Test-Only API Surface
+
+- `stop_peer_session_task_for_test`: `pub` → `pub(crate)`
+- `drain_peer_stream_handlers_for_test`: `pub` → `pub(crate)`
+- `drain_datagram_handlers_for_test`: `pub` → `pub(crate)`
+
+### HTTP-over-mesh Response Framing Contract
+
+| Framing | Supported | Handling |
+|---------|-----------|----------|
+| Fixed-length (Content-Length) | Yes | `read_fixed_http_response_body()` reads exact bytes |
+| Chunked Transfer-Encoding | Yes | `read_chunked_http_response_body()` with trailer support |
+| Connection-close delimited | Yes | Reads until EOF, returns remaining bytes |
+| No-body (HEAD, 1xx, 204, 304) | Yes | Skips body read entirely |
+
+### Config Fields
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `max_peer_http_response_header_bytes` | 8192 | Max response header size |
+| `max_peer_http_response_body_bytes` | 65536 | Max response body size |
+| `peer_http_response_header_total_timeout_secs` | 30 | Total header framing deadline |
+| `peer_http_response_body_total_timeout_secs` | 60 | Total body framing deadline |
+| `max_peer_http_response_trailer_bytes` | 4096 | Max chunked response trailer size |
 
 ## Testing Commands
 

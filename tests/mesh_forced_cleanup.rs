@@ -30,7 +30,6 @@ use synvoid_mesh::dht::routing::node_id::NodeId;
 use synvoid_mesh::dht::routing::table::{ForceRestoreContactError, RoutingTable};
 use synvoid_mesh::lifecycle::{PeerSessionExitReason, PeerSessionStopOutcome};
 use synvoid_mesh::task_group::MeshTaskGroup;
-use synvoid_mesh::MeshTransportError;
 
 // ── Part A: Always Finalize `MeshTaskGroup` ────────────────────────────────
 
@@ -483,29 +482,6 @@ async fn iter77_datagram_capacity_drops_at_limit() {
 
 // ── Iteration 78: Real Behavioral Tests ─────────────────────────────────────
 
-/// Iteration 78: `drain_peer_stream_handlers_for_test` must cooperatively
-/// drain a JoinSet, aborting hung handlers after the deadline.
-#[tokio::test]
-async fn iter78_drain_stream_handlers_real() {
-    let mut handlers = tokio::task::JoinSet::<Result<(), MeshTransportError>>::new();
-    // Spawn a task that completes immediately.
-    handlers.spawn(async { Ok(()) });
-    // Spawn a hanging task.
-    handlers.spawn(std::future::pending::<Result<(), MeshTransportError>>());
-
-    let report = synvoid_mesh::mesh::transport_peer::drain_peer_stream_handlers_for_test(
-        &mut handlers,
-        Duration::from_millis(100),
-    )
-    .await;
-
-    assert!(
-        report.aborted >= 1,
-        "expected at least 1 aborted: {report:?}"
-    );
-    assert!(handlers.is_empty(), "JoinSet should be empty after drain");
-}
-
 // ── Phase 27: Real recovery error aggregation test ─────────────────────────
 
 /// Iteration 78: Recovery must aggregate session errors and verification
@@ -564,68 +540,6 @@ async fn iter78_recovery_error_aggregation_real_pattern() {
     }
 }
 
-// ── Phase 26: Real stop_peer_session_task tests ──────────────────────────
-
-/// Iteration 78: Zero budget → forced parent abort (real JoinHandle).
-#[tokio::test]
-async fn iter78_stop_peer_session_task_zero_budget_real() {
-    use synvoid_mesh::mesh::transport::MeshTransport;
-
-    let handle = tokio::spawn(std::future::pending::<()>());
-    let outcome = MeshTransport::stop_peer_session_task_for_test(handle, Duration::ZERO).await;
-
-    assert!(
-        matches!(
-            outcome,
-            synvoid_mesh::lifecycle::PeerSessionStopOutcome::ForcedParentAbort
-        ),
-        "zero budget should produce ForcedParentAbort, got: {:?}",
-        outcome
-    );
-}
-
-/// Iteration 78: Clean completion → Drained (real JoinHandle).
-#[tokio::test]
-async fn iter78_stop_peer_session_task_clean_completion_real() {
-    use synvoid_mesh::mesh::transport::MeshTransport;
-
-    let handle = tokio::spawn(async {});
-    let outcome =
-        MeshTransport::stop_peer_session_task_for_test(handle, Duration::from_secs(5)).await;
-
-    assert!(
-        matches!(
-            outcome,
-            synvoid_mesh::lifecycle::PeerSessionStopOutcome::Drained(_)
-        ),
-        "clean completion should produce Drained, got: {:?}",
-        outcome
-    );
-}
-
-/// Iteration 78: Panic → Failed (real JoinHandle).
-#[tokio::test]
-async fn iter78_stop_peer_session_task_panic_real() {
-    use synvoid_mesh::mesh::transport::MeshTransport;
-
-    let handle = tokio::spawn(async {
-        panic!("test panic");
-    });
-    // Give it a moment to panic.
-    tokio::time::sleep(Duration::from_millis(10)).await;
-    let outcome =
-        MeshTransport::stop_peer_session_task_for_test(handle, Duration::from_secs(5)).await;
-
-    assert!(
-        matches!(
-            outcome,
-            synvoid_mesh::lifecycle::PeerSessionStopOutcome::Failed(_)
-        ),
-        "panic should produce Failed, got: {:?}",
-        outcome
-    );
-}
-
 // ── Phase 31: Edge-replica auxiliary task exists ────────────────────────────
 
 /// Iteration 78: `AuxiliaryTaskKind::EdgeReplicaRefresh` variant exists
@@ -658,33 +572,4 @@ async fn iter78_edge_replica_auxiliary_task_exists() {
         }),
         dedup_key: None,
     };
-}
-
-// ── Phase 28: Real drain_datagram_handlers test ────────────────────────────
-
-/// Iteration 78: `drain_datagram_handlers_for_test` must cooperatively
-/// drain a JoinSet, aborting hung handlers after the deadline.
-#[tokio::test]
-async fn iter78_drain_datagram_handlers_real() {
-    use tokio::task::JoinSet;
-
-    let mut handlers = JoinSet::new();
-    // Spawn a clean-completing task.
-    handlers.spawn(async { Ok(()) });
-    // Spawn a hanging task.
-    handlers.spawn(std::future::pending::<Result<(), MeshTransportError>>());
-
-    let start = std::time::Instant::now();
-    synvoid_mesh::mesh::transport_peer::drain_datagram_handlers_for_test(
-        &mut handlers,
-        Duration::from_millis(100),
-    )
-    .await;
-    let elapsed = start.elapsed();
-
-    assert!(
-        elapsed < Duration::from_secs(2),
-        "drain took too long: {elapsed:?}"
-    );
-    assert!(handlers.is_empty(), "JoinSet should be empty after drain");
 }

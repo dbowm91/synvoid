@@ -9,7 +9,9 @@
 
 use std::time::Duration;
 use synvoid_mesh::mesh::transport_peer::{
-    read_fixed_http_body, read_http_request_head, HttpFramingError,
+    parse_http_request_meta, read_chunked_http_response_body, read_fixed_http_body,
+    read_fixed_http_response_body, read_http_request_head, read_http_response_head,
+    HttpFramingError, HttpResponseFramingError,
 };
 use tokio::io::AsyncWriteExt;
 
@@ -546,4 +548,448 @@ async fn end_to_end_request_bytes_preserved() {
 
     assert_eq!(request_bytes, full);
     assert_eq!(request_bytes.len(), headers.len() + body.len());
+}
+
+// ── Phase 34: Binary Request Body Test ─────────────────────────────────────
+
+#[tokio::test]
+async fn binary_request_body_parsing_succeeds() {
+    let headers = b"POST /api/data HTTP/1.1\r\nHost: example.com\r\nContent-Length: 10\r\n\r\n";
+    let body: Vec<u8> = vec![0x48, 0x65, 0x6C, 0x6C, 0x6F, 0xFF, 0xFE, 0x00, 0xAB, 0xCD];
+    let full: Vec<u8> = [headers.as_slice(), body.as_slice()].concat();
+    let (mut client, mut server) = tokio::io::duplex(full.len());
+    client.write_all(&full[1..]).await.unwrap();
+
+    let head = read_http_request_head(
+        &mut server,
+        full[0],
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        MAX_HEADER_BYTES,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(head.header_bytes, headers);
+    assert_eq!(head.content_length, Some(10));
+
+    let meta = parse_http_request_meta(&head.header_bytes).unwrap();
+    assert_eq!(meta.method, "POST");
+    assert_eq!(meta.target, "/api/data");
+    assert_eq!(meta.host, "example.com");
+
+    let body_bytes = read_fixed_http_body(
+        &mut server,
+        head.body_prefix,
+        10,
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(body_bytes.len(), 10);
+    assert_eq!(body_bytes, body.as_slice());
+}
+
+// ── Phase 35: No-Body Trailing Bytes Test ──────────────────────────────────
+
+#[tokio::test]
+async fn no_body_request_trailing_bytes_detected() {
+    let req = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\nEXTRA";
+    let (mut client, mut server) = tokio::io::duplex(req.len());
+    client.write_all(&req[1..]).await.unwrap();
+
+    let head = read_http_request_head(
+        &mut server,
+        req[0],
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        MAX_HEADER_BYTES,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        head.header_bytes,
+        b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"
+    );
+    assert_eq!(head.content_length, None);
+    assert_eq!(head.body_prefix, b"EXTRA");
+    assert!(!head.body_prefix.is_empty());
+}
+
+// ── Phase 36: Exact Upgrade Parsing Tests ──────────────────────────────────
+
+#[test]
+fn parse_request_meta_upgrade_exact() {
+    // Case 1: exact "Upgrade: websocket" header -> upgrade_requested = true
+    let req = b"GET / HTTP/1.1\r\nHost: example.com\r\nUpgrade: websocket\r\n\r\n";
+    let meta = parse_http_request_meta(req).unwrap();
+    assert!(
+        meta.upgrade_requested,
+        "Upgrade header must set upgrade_requested"
+    );
+    assert!(
+        !meta.connection_upgrade,
+        "Upgrade header alone must not set connection_upgrade"
+    );
+
+    // Case 2: "Connection: keep-alive, Upgrade" plus "Upgrade: websocket" -> both flags true
+    let req = b"GET / HTTP/1.1\r\nHost: example.com\r\nConnection: keep-alive, Upgrade\r\nUpgrade: websocket\r\n\r\n";
+    let meta = parse_http_request_meta(req).unwrap();
+    assert!(
+        meta.upgrade_requested,
+        "Upgrade header must set upgrade_requested"
+    );
+    assert!(
+        meta.connection_upgrade,
+        "Connection: Upgrade must set connection_upgrade"
+    );
+
+    // Case 3: unrelated header value containing text "upgrade:" -> not falsely detected
+    let req =
+        b"GET / HTTP/1.1\r\nHost: example.com\r\nX-Custom: this is not upgrade: related\r\n\r\n";
+    let meta = parse_http_request_meta(req).unwrap();
+    assert!(
+        !meta.upgrade_requested,
+        "non-Upgrade header must not trigger upgrade"
+    );
+    assert!(
+        !meta.connection_upgrade,
+        "non-Connection header must not trigger connection_upgrade"
+    );
+
+    // Case 4: header names with mixed case -> parsed correctly
+    let req =
+        b"GET / HTTP/1.1\r\nHost: example.com\r\nupgrade: websocket\r\nconnection: Upgrade\r\n\r\n";
+    let meta = parse_http_request_meta(req).unwrap();
+    assert!(
+        meta.upgrade_requested,
+        "mixed-case upgrade: must be detected"
+    );
+    assert!(
+        meta.connection_upgrade,
+        "mixed-case connection: Upgrade must be detected"
+    );
+}
+
+// ── Phase 37: Response Framing Tests ───────────────────────────────────────
+
+#[tokio::test]
+async fn response_head_basic() {
+    let resp = b"HTTP/1.1 200 OK\r\nContent-Length: 13\r\n\r\nhello, world!";
+    let (mut client, mut server) = tokio::io::duplex(resp.len());
+    client.write_all(resp).await.unwrap();
+
+    let head = read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+        .await
+        .unwrap();
+
+    assert_eq!(head.status_code, 200);
+    assert_eq!(head.content_length, Some(13));
+    assert!(!head.chunked);
+    assert!(!head.connection_close);
+    assert_eq!(head.header_bytes, &resp[..head.header_bytes.len()]);
+}
+
+#[tokio::test]
+async fn response_head_chunked() {
+    let resp = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(resp.len());
+    client.write_all(resp).await.unwrap();
+
+    let head = read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+        .await
+        .unwrap();
+
+    assert_eq!(head.status_code, 200);
+    assert!(head.chunked);
+    assert_eq!(head.content_length, None);
+}
+
+#[tokio::test]
+async fn response_head_connection_close() {
+    let resp = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello";
+    let (mut client, mut server) = tokio::io::duplex(resp.len());
+    client.write_all(resp).await.unwrap();
+
+    let head = read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+        .await
+        .unwrap();
+
+    assert_eq!(head.status_code, 200);
+    assert!(head.connection_close);
+    assert_eq!(head.content_length, Some(5));
+}
+
+#[tokio::test]
+async fn response_fixed_body_exact() {
+    let resp = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nabcde";
+    let (mut client, mut server) = tokio::io::duplex(resp.len());
+    client.write_all(resp).await.unwrap();
+
+    let head = read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+        .await
+        .unwrap();
+
+    assert_eq!(head.status_code, 200);
+    assert_eq!(head.content_length, Some(5));
+
+    let body = read_fixed_http_response_body(
+        &mut server,
+        head.body_prefix,
+        5,
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        65536,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(body, b"abcde");
+}
+
+#[tokio::test]
+async fn response_fixed_body_premature_eof() {
+    let resp = b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nshort";
+    let (mut client, mut server) = tokio::io::duplex(resp.len());
+    client.write_all(resp).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let head = read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+        .await
+        .unwrap();
+
+    assert_eq!(head.content_length, Some(100));
+    let prefix_len = head.body_prefix.len();
+
+    let err = read_fixed_http_response_body(
+        &mut server,
+        head.body_prefix,
+        100,
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        65536,
+    )
+    .await;
+
+    assert!(err.is_err());
+    match err.unwrap_err() {
+        HttpResponseFramingError::PrematureEof { expected, received } => {
+            assert_eq!(expected, 100 - prefix_len);
+            assert_eq!(received, 0);
+        }
+        other => panic!("expected PrematureEof, got: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn response_chunked_body() {
+    // 3-byte chunk "abc", 2-byte chunk "de", zero chunk, empty trailer
+    let headers = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
+    let body = b"3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(headers.len() + body.len());
+
+    // Write headers first, read them, then write body separately
+    // so body_prefix is empty and the chunked parser reads from the reader.
+    client.write_all(headers).await.unwrap();
+
+    let head = read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+        .await
+        .unwrap();
+
+    assert_eq!(head.status_code, 200);
+    assert!(head.chunked);
+    assert!(head.body_prefix.is_empty());
+
+    // Now write the chunked body data
+    client.write_all(body).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let result = read_chunked_http_response_body(
+        &mut server,
+        head.body_prefix,
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        65536,
+        4096,
+    )
+    .await
+    .unwrap();
+
+    let body_str = String::from_utf8_lossy(&result);
+    assert!(
+        body_str.contains("3\r\nabc\r\n"),
+        "must contain first chunk"
+    );
+    assert!(
+        body_str.contains("2\r\nde\r\n"),
+        "must contain second chunk"
+    );
+    assert!(
+        body_str.contains("0\r\n\r\n"),
+        "must contain terminating chunk"
+    );
+}
+
+#[tokio::test]
+async fn response_chunked_malformed_size() {
+    let headers = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
+    let body = b"ZZ\r\n";
+    let (mut client, mut server) = tokio::io::duplex(headers.len() + body.len());
+
+    client.write_all(headers).await.unwrap();
+
+    let head = read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+        .await
+        .unwrap();
+
+    assert!(head.chunked);
+
+    // Write the malformed body
+    client.write_all(body).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let err = read_chunked_http_response_body(
+        &mut server,
+        head.body_prefix,
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        65536,
+        4096,
+    )
+    .await;
+
+    assert!(err.is_err());
+    match err.unwrap_err() {
+        HttpResponseFramingError::MalformedChunkedBody(msg) => {
+            assert!(msg.contains("ZZ"), "must mention the bad hex: {msg}");
+        }
+        other => panic!("expected MalformedChunkedBody, got: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn response_no_body_head() {
+    // HEAD response: has Content-Length header but no body bytes
+    let resp = b"HTTP/1.1 200 OK\r\nContent-Length: 42\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(resp.len());
+    client.write_all(resp).await.unwrap();
+
+    let head = read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+        .await
+        .unwrap();
+
+    assert_eq!(head.status_code, 200);
+    assert_eq!(head.content_length, Some(42));
+    assert!(head.body_prefix.is_empty());
+    // HEAD responses have no body even if Content-Length is present.
+    // The caller is responsible for not calling read_fixed_http_response_body for HEAD.
+}
+
+#[tokio::test]
+async fn response_no_body_204() {
+    let resp = b"HTTP/1.1 204 No Content\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(resp.len());
+    client.write_all(resp).await.unwrap();
+
+    let head = read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+        .await
+        .unwrap();
+
+    assert_eq!(head.status_code, 204);
+    assert_eq!(head.content_length, None);
+    assert!(!head.chunked);
+    assert!(head.body_prefix.is_empty());
+}
+
+#[tokio::test]
+async fn response_no_body_304() {
+    let resp = b"HTTP/1.1 304 Not Modified\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(resp.len());
+    client.write_all(resp).await.unwrap();
+
+    let head = read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+        .await
+        .unwrap();
+
+    assert_eq!(head.status_code, 304);
+    assert_eq!(head.content_length, None);
+    assert!(!head.chunked);
+    assert!(head.body_prefix.is_empty());
+}
+
+// ── Phase 38: Close-Delimited Response ─────────────────────────────────────
+
+#[tokio::test]
+async fn response_close_delimited_body() {
+    // HTTP/1.0 without Content-Length -> close-delimited
+    let resp = b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\ndata";
+    let (mut client, mut server) = tokio::io::duplex(resp.len());
+    client.write_all(resp).await.unwrap();
+
+    let head = read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+        .await
+        .unwrap();
+
+    assert_eq!(head.status_code, 200);
+    assert!(head.connection_close);
+    assert_eq!(head.content_length, None);
+    // The body_prefix contains "data" which was coalesced with the headers.
+    assert_eq!(head.body_prefix, b"data");
+}
+
+// ── Phase 39: Response Body Too Large ──────────────────────────────────────
+
+#[tokio::test]
+async fn response_body_too_large() {
+    let resp = b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(resp.len());
+    client.write_all(resp).await.unwrap();
+
+    let head = read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+        .await
+        .unwrap();
+
+    assert_eq!(head.content_length, Some(1000));
+
+    let err = read_fixed_http_response_body(
+        &mut server,
+        head.body_prefix,
+        1000,
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        100, // small max_body_bytes
+    )
+    .await;
+
+    assert!(err.is_err());
+    match err.unwrap_err() {
+        HttpResponseFramingError::BodyTooLarge { limit, declared } => {
+            assert_eq!(limit, 100);
+            assert_eq!(declared, 1000);
+        }
+        other => panic!("expected BodyTooLarge, got: {other:?}"),
+    }
+}
+
+// ── Phase 40: Conflicting Content-Length in Response ────────────────────────
+
+#[tokio::test]
+async fn response_conflicting_content_length_rejected() {
+    let resp = b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\nContent-Length: 20\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(resp.len());
+    client.write_all(resp).await.unwrap();
+
+    let err =
+        read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES).await;
+
+    assert!(err.is_err());
+    match err.unwrap_err() {
+        HttpResponseFramingError::InvalidContentLength(msg) => {
+            assert!(msg.contains("conflicting"), "unexpected msg: {msg}");
+        }
+        other => panic!("expected InvalidContentLength, got: {other:?}"),
+    }
 }

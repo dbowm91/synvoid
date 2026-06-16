@@ -2810,6 +2810,97 @@ impl MeshTransport {
         }
     }
 
+    /// Spawn an auxiliary task with deduplication, capacity gating, and
+    /// proper exit publication (Iteration 79, Phase 21-22).
+    ///
+    /// Every task spawned through this wrapper publishes `AuxiliaryTaskExit`
+    /// on completion, ensuring the reaper removes it from the registry.
+    /// Stale tasks with a matching `dedup_key` are aborted and awaited
+    /// before the new task is inserted. Capacity rejections also await
+    /// the handle to maintain the abort-and-await ownership invariant.
+    pub(crate) async fn spawn_auxiliary_task<F>(
+        &self,
+        kind: AuxiliaryTaskKind,
+        name: &'static str,
+        session_id: Option<String>,
+        dedup_key: Option<String>,
+        future: F,
+    ) -> Result<MeshTaskId, ()>
+    where
+        F: std::future::Future<Output = MeshTaskExitReason> + Send + 'static,
+    {
+        let task_id = self.id_generator.next();
+        let aux_exit_tx = self.auxiliary_exit_tx.clone();
+        let task_id_for_exit = task_id;
+        let session_id_for_exit = session_id.clone();
+
+        let handle = tokio::spawn(async move {
+            let reason = future.await;
+            let _ = aux_exit_tx.send(AuxiliaryTaskExit {
+                task_id: task_id_for_exit,
+                session_id: session_id_for_exit,
+                reason: reason.clone(),
+            });
+            MeshTaskExit {
+                id: task_id_for_exit,
+                name,
+                class: crate::lifecycle::MeshTaskClass::RestartableBackground,
+                reason,
+            }
+        });
+
+        // Phase 22: Deduplication — abort and await stale matching tasks.
+        {
+            let mut aux = self.auxiliary_tasks.lock().await;
+
+            if let Some(ref dk) = dedup_key {
+                let stale_ids: Vec<_> = aux
+                    .iter()
+                    .filter(|(_id, t)| t.dedup_key.as_ref() == Some(dk))
+                    .map(|(id, _)| *id)
+                    .collect();
+                for id in stale_ids {
+                    if let Some(old_task) = aux.remove(&id) {
+                        old_task.handle.abort();
+                        let _ = old_task.handle.await;
+                        tracing::debug!(
+                            "Aborted stale auxiliary task {} for dedup key {:?}",
+                            id,
+                            dk
+                        );
+                    }
+                }
+            }
+        }
+
+        // Capacity check — reject new task if at limit.
+        const MAX_CONCURRENT_EDGE_REPLICA_REFRESH: usize = 8;
+        {
+            let mut aux = self.auxiliary_tasks.lock().await;
+            let active_refreshes = aux
+                .values()
+                .filter(|t| matches!(t.kind, AuxiliaryTaskKind::EdgeReplicaRefresh))
+                .count();
+            if active_refreshes >= MAX_CONCURRENT_EDGE_REPLICA_REFRESH {
+                handle.abort();
+                let _ = handle.await;
+                return Err(());
+            }
+            aux.insert(
+                task_id,
+                AuxiliaryTask {
+                    task_id,
+                    session_id,
+                    kind,
+                    handle,
+                    dedup_key,
+                },
+            );
+        }
+
+        Ok(task_id)
+    }
+
     /// Spawn the auxiliary task reaper that watches for completed auxiliary tasks
     /// and removes them from the auxiliary_tasks registry (Iteration 74, Phase 21).
     ///
@@ -3291,9 +3382,9 @@ impl MeshTransport {
 }
 
 impl MeshTransport {
-    /// Test-visible adapter for `stop_peer_session_task`. Allows integration
+    /// Test-visible adapter for `stop_peer_session_task`. Allows module-local
     /// tests to exercise the real session-stop code path with actual JoinHandles.
-    pub async fn stop_peer_session_task_for_test(
+    pub(crate) async fn stop_peer_session_task_for_test(
         handle: tokio::task::JoinHandle<()>,
         budget: std::time::Duration,
     ) -> PeerSessionStopOutcome {
@@ -5845,5 +5936,56 @@ mod tests {
             "peer-c"
         )
         .is_ok());
+    }
+
+    #[tokio::test]
+    async fn stop_peer_session_task_zero_budget_forces_abort() {
+        let handle = tokio::spawn(std::future::pending::<()>());
+        let outcome = super::MeshTransport::stop_peer_session_task_for_test(
+            handle,
+            std::time::Duration::ZERO,
+        )
+        .await;
+
+        assert!(
+            matches!(outcome, super::PeerSessionStopOutcome::ForcedParentAbort),
+            "zero budget should produce ForcedParentAbort, got: {:?}",
+            outcome
+        );
+    }
+
+    #[tokio::test]
+    async fn stop_peer_session_task_clean_completion_drains() {
+        let handle = tokio::spawn(async {});
+        let outcome = super::MeshTransport::stop_peer_session_task_for_test(
+            handle,
+            std::time::Duration::from_secs(5),
+        )
+        .await;
+
+        assert!(
+            matches!(outcome, super::PeerSessionStopOutcome::Drained(_)),
+            "clean completion should produce Drained, got: {:?}",
+            outcome
+        );
+    }
+
+    #[tokio::test]
+    async fn stop_peer_session_task_panic_produces_failed() {
+        let handle = tokio::spawn(async {
+            panic!("test panic");
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        let outcome = super::MeshTransport::stop_peer_session_task_for_test(
+            handle,
+            std::time::Duration::from_secs(5),
+        )
+        .await;
+
+        assert!(
+            matches!(outcome, super::PeerSessionStopOutcome::Failed(_)),
+            "panic should produce Failed, got: {:?}",
+            outcome
+        );
     }
 }

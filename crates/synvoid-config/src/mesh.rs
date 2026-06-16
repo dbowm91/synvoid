@@ -541,6 +541,21 @@ pub struct MeshConnectionConfig {
     /// Idle timeout for reading the backend HTTP response.
     #[serde(default = "default_peer_http_backend_idle_timeout_secs")]
     pub peer_http_backend_idle_timeout_secs: u64,
+    /// Maximum HTTP response header bytes accepted from a backend during framing.
+    #[serde(default = "default_max_peer_http_response_header_bytes")]
+    pub max_peer_http_response_header_bytes: usize,
+    /// Maximum HTTP response body bytes accepted from a backend during framing.
+    #[serde(default = "default_max_peer_http_response_body_bytes")]
+    pub max_peer_http_response_body_bytes: usize,
+    /// Total deadline for HTTP response header framing in seconds.
+    #[serde(default = "default_peer_http_response_header_total_timeout_secs")]
+    pub peer_http_response_header_total_timeout_secs: u64,
+    /// Total deadline for HTTP response body framing in seconds.
+    #[serde(default = "default_peer_http_response_body_total_timeout_secs")]
+    pub peer_http_response_body_total_timeout_secs: u64,
+    /// Maximum bytes for a chunked response trailer block.
+    #[serde(default = "default_max_peer_http_response_trailer_bytes")]
+    pub max_peer_http_response_trailer_bytes: usize,
 }
 
 fn default_min_peers() -> usize {
@@ -596,6 +611,26 @@ fn default_peer_http_backend_idle_timeout_secs() -> u64 {
     30
 }
 
+fn default_max_peer_http_response_header_bytes() -> usize {
+    16384
+}
+
+fn default_max_peer_http_response_body_bytes() -> usize {
+    65536
+}
+
+fn default_peer_http_response_header_total_timeout_secs() -> u64 {
+    30
+}
+
+fn default_peer_http_response_body_total_timeout_secs() -> u64 {
+    60
+}
+
+fn default_max_peer_http_response_trailer_bytes() -> usize {
+    8192
+}
+
 impl Default for MeshConnectionConfig {
     fn default() -> Self {
         Self {
@@ -615,6 +650,11 @@ impl Default for MeshConnectionConfig {
             max_peer_http_body_bytes: 65536,
             peer_http_body_total_timeout_secs: 60,
             peer_http_backend_idle_timeout_secs: 30,
+            max_peer_http_response_header_bytes: 16384,
+            max_peer_http_response_body_bytes: 65536,
+            peer_http_response_header_total_timeout_secs: 30,
+            peer_http_response_body_total_timeout_secs: 60,
+            max_peer_http_response_trailer_bytes: 8192,
         }
     }
 }

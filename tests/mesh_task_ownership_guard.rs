@@ -2624,17 +2624,22 @@ fn iter78_connect_upgrade_rejected() {
 
 #[test]
 fn iter78_edge_replica_uses_auxiliary_task() {
-    let src = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport_peer.rs")
+    // Iteration 79: edge-replica spawn delegated to spawn_auxiliary_task helper
+    let src_peer = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport_peer.rs")
         .expect("read transport_peer.rs");
-    // Must not have bare tokio::spawn for edge replica
-    // The RaftCommitNotification handler must register with auxiliary_tasks
     assert!(
-        src.contains("EdgeReplicaRefresh"),
+        src_peer.contains("EdgeReplicaRefresh"),
         "edge-replica refresh must use AuxiliaryTaskKind::EdgeReplicaRefresh"
     );
     assert!(
-        src.contains("auxiliary_tasks"),
-        "edge-replica refresh must register with auxiliary_tasks"
+        src_peer.contains("spawn_auxiliary_task"),
+        "edge-replica refresh must delegate to spawn_auxiliary_task helper"
+    );
+    let src_transport = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport.rs")
+        .expect("read transport.rs");
+    assert!(
+        src_transport.contains("spawn_auxiliary_task"),
+        "spawn_auxiliary_task helper must exist in transport.rs"
     );
 }
 
@@ -2736,11 +2741,12 @@ fn iter78_shutdown_report_has_stream_handler_drain() {
 
 #[test]
 fn iter78_edge_replica_has_backpressure() {
-    let src = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport_peer.rs")
-        .expect("read transport_peer.rs");
+    // Iteration 79: concurrency limit moved to spawn_auxiliary_task helper in transport.rs
+    let src_transport = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport.rs")
+        .expect("read transport.rs");
     assert!(
-        src.contains("MAX_CONCURRENT_EDGE_REPLICA_REFRESH"),
-        "edge-replica refresh must have concurrency limit"
+        src_transport.contains("MAX_CONCURRENT_EDGE_REPLICA_REFRESH"),
+        "edge-replica refresh must have concurrency limit in spawn_auxiliary_task"
     );
 }
 
@@ -2796,21 +2802,28 @@ fn iter78_auxiliary_task_has_dedup_key() {
 
 #[test]
 fn iter78_edge_replica_deduplication_exists() {
-    let src = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport_peer.rs")
+    // Iteration 79: dedup_key passed to spawn_auxiliary_task helper
+    let src_peer = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport_peer.rs")
         .expect("read transport_peer.rs");
     assert!(
-        src.contains("edge_refresh:") && src.contains("dedup_key"),
+        src_peer.contains("edge_refresh:") && src_peer.contains("dedup_key"),
         "edge-replica registration must use dedup_key for deduplication"
+    );
+    let src_transport = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport.rs")
+        .expect("read transport.rs");
+    assert!(
+        src_transport.contains("dedup_key") && src_transport.contains("stale_ids"),
+        "spawn_auxiliary_task must implement deduplication via dedup_key"
     );
 }
 
 #[test]
-fn iter78_stop_peer_session_task_is_pub() {
+fn iter78_stop_peer_session_task_is_pub_crate() {
     let src = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport.rs")
         .expect("read transport.rs");
     assert!(
-        src.contains("pub async fn stop_peer_session_task_for_test"),
-        "stop_peer_session_task_for_test must be pub for integration tests"
+        src.contains("pub(crate) async fn stop_peer_session_task_for_test"),
+        "stop_peer_session_task_for_test must be pub(crate) to avoid public API surface"
     );
 }
 
@@ -2821,5 +2834,111 @@ fn iter78_config_has_serde_http_framing_tests() {
     assert!(
         src.contains("http_framing_config_defaults"),
         "config must have serde validation tests for HTTP framing fields"
+    );
+}
+
+// ── Iteration 79: Guardrails (Phases 51–54) ────────────────────────────────
+
+// ── Phase 51: HTTP Response Framing Guardrails ──────────────────────────────
+
+#[test]
+fn iter79_response_framing_exists() {
+    let tp = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport_peer.rs").unwrap();
+    assert!(
+        tp.contains("read_http_response_head"),
+        "read_http_response_head must exist"
+    );
+    assert!(
+        tp.contains("read_fixed_http_response_body"),
+        "read_fixed_http_response_body must exist"
+    );
+    assert!(
+        tp.contains("read_chunked_http_response_body"),
+        "read_chunked_http_response_body must exist"
+    );
+    assert!(
+        tp.contains("FramedHttpResponseHead"),
+        "FramedHttpResponseHead must exist"
+    );
+    assert!(
+        tp.contains("HttpResponseFramingError"),
+        "HttpResponseFramingError must exist"
+    );
+    assert!(
+        !tp.contains("loop {") || tp.contains("max_body_bytes"),
+        "Backend reads must be bounded"
+    );
+}
+
+#[test]
+fn iter79_no_body_response_handled() {
+    let tp = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport_peer.rs").unwrap();
+    assert!(
+        tp.contains("is_no_body_status"),
+        "Must check no-body status codes"
+    );
+    assert!(tp.contains("is_head"), "Must check HEAD method for no-body");
+}
+
+// ── Phase 52: Header-Only Metadata Guardrails ───────────────────────────────
+
+#[test]
+fn iter79_request_metadata_from_headers_only() {
+    let tp = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport_peer.rs").unwrap();
+    assert!(
+        tp.contains("ParsedHttpRequestMeta"),
+        "ParsedHttpRequestMeta must exist"
+    );
+    assert!(
+        tp.contains("parse_http_request_meta"),
+        "parse_http_request_meta must exist"
+    );
+    assert!(
+        tp.contains("fn extract_host_from_http(&self, header_bytes: &[u8])"),
+        "extract_host_from_http must accept header bytes"
+    );
+    assert!(
+        !tp.contains("to_lowercase().contains(\"upgrade:\")"),
+        "Substring upgrade detection must be removed"
+    );
+}
+
+// ── Phase 53: Auxiliary Ownership Guardrails ─────────────────────────────────
+
+#[test]
+fn iter79_auxiliary_spawn_helper_exists() {
+    let tr = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport.rs").unwrap();
+    assert!(
+        tr.contains("fn spawn_auxiliary_task"),
+        "spawn_auxiliary_task helper must exist"
+    );
+    assert!(
+        tr.contains("AuxiliaryTaskExit"),
+        "AuxiliaryTaskExit must be published"
+    );
+}
+
+#[test]
+fn iter79_edge_refresh_uses_spawn_helper() {
+    let tp = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport_peer.rs").unwrap();
+    assert!(
+        tp.contains("spawn_auxiliary_task"),
+        "Edge refresh must use spawn_auxiliary_task"
+    );
+}
+
+// ── Phase 54: Public API Guard ──────────────────────────────────────────────
+
+#[test]
+fn iter79_stop_peer_session_task_for_test_not_public() {
+    let tr = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport.rs").unwrap();
+    let idx = tr
+        .find("stop_peer_session_task_for_test")
+        .expect("stop_peer_session_task_for_test must exist");
+    let before = &tr[..idx];
+    assert!(
+        before.ends_with("    pub(crate) async fn ")
+            || before.ends_with("    pub(crate)\n    async fn "),
+        "stop_peer_session_task_for_test must be pub(crate), not pub"
     );
 }
