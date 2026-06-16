@@ -2308,10 +2308,14 @@ fn test_peer_message_loop_has_distinct_timeouts() {
         "transport_peer.rs must define an opt-in total stream lifetime timeout"
     );
 
-    // `apply_read_timeouts` helper must exist to wrap reads with the
-    // per-message timeout.
+    // Iteration 77 removed `apply_read_timeouts` — read timeout is now at
+    // actual read operations via `read_exact_with_timeout`.
     assert!(
-        content.contains("apply_read_timeouts"),
-        "transport_peer.rs must define apply_read_timeouts helper (Iteration 76 Part E)"
+        content.contains("read_exact_with_timeout"),
+        "transport_peer.rs must define read_exact_with_timeout at actual read sites (Iteration 77)"
+    );
+    assert!(
+        !content.contains("fn apply_read_timeouts"),
+        "apply_read_timeouts must be removed — read timeout is now at actual reads (Iteration 77)"
     );
 }

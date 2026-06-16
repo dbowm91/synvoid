@@ -2430,3 +2430,80 @@ fn iter77_datagram_nested_spawn_has_documented_exception() {
     // If no spawn found, that's fine — the exception is only for the
     // edge replica notification which is intentionally fire-and-forget
 }
+
+/// Guardrail (Phase 33): All bare `tokio::spawn()` calls in datagram
+/// handler paths must have documented exception comments explaining why
+/// fire-and-forget is acceptable. Unreviewed bare spawns in datagram
+/// paths are rejected.
+#[test]
+fn iter77_all_datagram_path_spawns_have_documented_exceptions() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport_peer.rs");
+
+    // start_datagram_handler must NOT contain bare tokio::spawn — all
+    // handlers are owned by the JoinSet.
+    let handler_body = extract_function(&source, "start_datagram_handler");
+    assert!(
+        !handler_body.contains("tokio::spawn("),
+        "start_datagram_handler must not contain bare tokio::spawn — use JoinSet"
+    );
+
+    // handle_incoming_datagram may contain spawns only with documented
+    // exception comments (already tested by
+    // iter77_datagram_nested_spawn_has_documented_exception).
+}
+
+/// Guardrail (Phase 34): Timeout naming must be truthful. A "read"
+/// timeout must wrap only read operations, not the complete handler.
+/// A "total" or "lifetime" timeout wraps the complete handler.
+#[test]
+fn iter77_timeout_naming_is_truthful() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport_peer.rs");
+
+    // read_exact_with_timeout must exist and wrap only recv reads
+    assert!(
+        source.contains("fn read_exact_with_timeout"),
+        "read_exact_with_timeout helper must exist for read-boundary timeouts"
+    );
+
+    // The per-message read timeout must be named with "read" or
+    // "timeout" (not "total" or "lifetime")
+    assert!(
+        source.contains("read_timeout"),
+        "per-message read timeout must be named read_timeout (not total/lifetime)"
+    );
+
+    // The total stream timeout must use "total" in its name when wrapping
+    // the complete handler — verify it does not reuse the read timeout
+    // variable for the full-handler wrapper
+    let loop_body = extract_function(&source, "peer_message_loop");
+    assert!(
+        loop_body.contains("total_timeout") || loop_body.contains("peer_stream_total_timeout"),
+        "complete-handler timeout must be named total_timeout or peer_stream_total_timeout (not read_timeout)"
+    );
+
+    // Verify the read timeout is NOT used to wrap the complete handler
+    // (it should only appear inside handle_peer_message at read sites)
+    let handler_sig = source.find("async fn handle_peer_message");
+    if let Some(sig_pos) = handler_sig {
+        // The read_timeout parameter should only appear in handle_peer_message
+        // and its inner helpers, not wrapping the entire handler in peer_message_loop
+        let loop_section = &loop_body[..loop_body.len().min(2000)];
+        // The loop should NOT have: timeout(read_timeout, handler)
+        assert!(
+            !loop_section.contains("timeout(read_timeout,") && !loop_section.contains("timeout( read_timeout,"),
+            "peer_message_loop must not wrap the complete handler with read_timeout — use total_timeout"
+        );
+    }
+}
+
+/// Guardrail: `read_to_end_with_timeout` must not exist as dead code.
+/// All read helpers must be actively used.
+#[test]
+fn iter77_no_dead_read_helpers() {
+    let source = read_file("crates/synvoid-mesh/src/mesh/transport_peer.rs");
+
+    assert!(
+        !source.contains("fn read_to_end_with_timeout"),
+        "read_to_end_with_timeout is dead code and must be removed"
+    );
+}

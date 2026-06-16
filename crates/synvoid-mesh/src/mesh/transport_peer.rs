@@ -21,6 +21,20 @@ use crate::protocol::{ArcStr, HealthStatus, MeshMessage, RaftSnapshotFrame};
 
 use crate::topology::{MeshTopology, PeerStatus};
 
+/// Iteration 77, Phase 7: read-timeout helper that wraps only RecvStream
+/// reads, not the entire handler. Used by both `handle_peer_message` and
+/// `perform_health_check`.
+async fn read_exact_with_timeout(
+    recv: &mut RecvStream,
+    buf: &mut [u8],
+    timeout: Duration,
+) -> Result<(), MeshTransportError> {
+    tokio::time::timeout(timeout, recv.read_exact(buf))
+        .await
+        .map_err(|_| MeshTransportError::Timeout)?
+        .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))
+}
+
 impl MeshTransport {
     pub(crate) async fn send_keepalive_datagram(
         &self,
@@ -2968,42 +2982,6 @@ impl MeshTransport {
         peer_node_id: String,
         read_timeout: Duration,
     ) -> Result<(), MeshTransportError> {
-        // Iteration 77, Phase 7: read-timeout helpers that wrap only
-        // RecvStream reads, not the entire handler.
-
-        async fn read_exact_with_timeout(
-            recv: &mut RecvStream,
-            buf: &mut [u8],
-            timeout: Duration,
-        ) -> Result<(), MeshTransportError> {
-            tokio::time::timeout(timeout, recv.read_exact(buf))
-                .await
-                .map_err(|_| MeshTransportError::Timeout)?
-                .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))
-        }
-
-        async fn read_to_end_with_timeout(
-            recv: &mut RecvStream,
-            max_len: usize,
-            timeout: Duration,
-        ) -> Result<Vec<u8>, MeshTransportError> {
-            let mut buf = vec![0u8; max_len];
-            let n = tokio::time::timeout(timeout, recv.read(&mut buf))
-                .await
-                .map_err(|_| MeshTransportError::Timeout)?
-                .map_err(|e| MeshTransportError::ReceiveFailed(e.to_string()))?;
-            match n {
-                Some(n) => {
-                    buf.truncate(n);
-                    Ok(buf)
-                }
-                None => {
-                    buf.truncate(0);
-                    Ok(buf)
-                }
-            }
-        }
-
         let mut first_byte = [0u8; 1];
         read_exact_with_timeout(recv_stream, &mut first_byte, read_timeout).await?;
 
@@ -4075,6 +4053,9 @@ impl MeshTransport {
 
     pub(crate) async fn perform_health_check(&self, peer_id: &str) -> Option<u32> {
         let start = Instant::now();
+        // Iteration 77, Phase 9: health check reads bounded by per-message
+        // read timeout to prevent indefinite stalls on dead/slow peers.
+        let read_timeout = Duration::from_secs(self.config.connection.peer_message_timeout_secs);
 
         if let Some(peer) = self.peer_connections.get(peer_id) {
             let result = async {
@@ -4095,7 +4076,7 @@ impl MeshTransport {
                 send_stream.write_all(&encoded).await?;
 
                 let mut len_buf = [0u8; 4];
-                recv_stream.read_exact(&mut len_buf).await?;
+                read_exact_with_timeout(&mut recv_stream, &mut len_buf, read_timeout).await?;
                 let len = u32::from_be_bytes(len_buf) as usize;
                 if len > MAX_MESSAGE_SIZE {
                     return Err(MeshTransportError::ReceiveFailed(format!(
@@ -4104,7 +4085,7 @@ impl MeshTransport {
                     )));
                 }
                 let mut buf = vec![0u8; len];
-                recv_stream.read_exact(&mut buf).await?;
+                read_exact_with_timeout(&mut recv_stream, &mut buf, read_timeout).await?;
 
                 {
                     let mut pool = peer.stream_pool.lock().await;

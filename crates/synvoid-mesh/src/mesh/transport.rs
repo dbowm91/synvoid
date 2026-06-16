@@ -1597,6 +1597,11 @@ impl MeshTransport {
             if let Some(ref manager) = *transport_arc.edge_replica_manager.read() {
                 let rc = raft_client.clone();
                 let m = manager.clone();
+                // Phase 24: One-shot initialization — sets the edge replica
+                // manager on the raft client. Completes immediately; if it
+                // fails, the edge replica manager is simply not wired and
+                // subsequent raft operations log the absence. No lifecycle
+                // ownership needed.
                 tokio::spawn(async move {
                     rc.set_edge_replica_manager(m).await;
                 });
@@ -5678,6 +5683,10 @@ impl crate::dht::routing::manager::FindNodeTransport for MeshTransport {
     fn send_find_node(&self, target: crate::dht::routing::node_id::NodeId, request_id: String) {
         let this = self.clone();
         let node_id = self.config.node_id();
+        // Phase 24: Fire-and-forget datagram send — the response arrives
+        // asynchronously as a separate datagram routed to pending queries
+        // in the DHT layer. The send completes or fails silently; DHT
+        // retry logic handles failures via timeout on the pending query.
         tokio::spawn(async move {
             let find_node = MeshMessage::FindNode {
                 request_id: request_id.into(),
@@ -5697,6 +5706,9 @@ impl crate::dht::routing::manager::PingTransport for MeshTransport {
         let this = self.clone();
         let node_id_owned = node_id.to_string();
         let _node_id = node_id;
+        // Phase 24: Fire-and-forget datagram send — same pattern as
+        // FindNode. Response arrives as a separate datagram routed to
+        // pending queries. DHT retry logic handles failures.
         tokio::spawn(async move {
             let ping = MeshMessage::Ping {
                 request_id: request_id.into(),
