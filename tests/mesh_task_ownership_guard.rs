@@ -2781,3 +2781,45 @@ fn iter78_aggregate_handler_counters_exist() {
         "MeshTransport must have aggregate_handler_failed counter"
     );
 }
+
+// ── Iteration 78 (final): dedup, visibility, config validation ──
+
+#[test]
+fn iter78_auxiliary_task_has_dedup_key() {
+    let src = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/lifecycle.rs")
+        .expect("read lifecycle.rs");
+    assert!(
+        src.contains("dedup_key"),
+        "AuxiliaryTask must have dedup_key field"
+    );
+}
+
+#[test]
+fn iter78_edge_replica_deduplication_exists() {
+    let src = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport_peer.rs")
+        .expect("read transport_peer.rs");
+    assert!(
+        src.contains("edge_refresh:") && src.contains("dedup_key"),
+        "edge-replica registration must use dedup_key for deduplication"
+    );
+}
+
+#[test]
+fn iter78_stop_peer_session_task_is_pub() {
+    let src = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport.rs")
+        .expect("read transport.rs");
+    assert!(
+        src.contains("pub async fn stop_peer_session_task_for_test"),
+        "stop_peer_session_task_for_test must be pub for integration tests"
+    );
+}
+
+#[test]
+fn iter78_config_has_serde_http_framing_tests() {
+    let src =
+        std::fs::read_to_string("crates/synvoid-mesh/src/mesh/config.rs").expect("read config.rs");
+    assert!(
+        src.contains("http_framing_config_defaults"),
+        "config must have serde validation tests for HTTP framing fields"
+    );
+}

@@ -3290,9 +3290,10 @@ impl MeshTransport {
     }
 }
 
-#[cfg(test)]
 impl MeshTransport {
-    pub(crate) async fn stop_peer_session_task_for_test(
+    /// Test-visible adapter for `stop_peer_session_task`. Allows integration
+    /// tests to exercise the real session-stop code path with actual JoinHandles.
+    pub async fn stop_peer_session_task_for_test(
         handle: tokio::task::JoinHandle<()>,
         budget: std::time::Duration,
     ) -> PeerSessionStopOutcome {
@@ -4812,6 +4813,7 @@ impl MeshTransport {
                     session_id: Some(session_id_clone),
                     kind: AuxiliaryTaskKind::PreflightRoute,
                     handle: preflight_handle,
+                    dedup_key: None,
                 },
             );
         }

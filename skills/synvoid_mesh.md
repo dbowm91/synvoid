@@ -692,7 +692,13 @@ Iteration 78 corrects HTTP-over-mesh request framing, closes the remaining edge-
 
 **Diagnostics**: `PeerSessionExit` now carries `stream_drain: PeerStreamDrainReport` with actual drain/abort/failure counts. `ChildTaskFailed` variant in `PeerSessionExitReason` surfaces non-zero drain failures. `MeshShutdownReport` carries `stream_handler_drain` aggregate field. `MeshTransport` tracks aggregate handler counters (`aggregate_handler_drained`, `aggregate_handler_aborted`, `aggregate_handler_failed`).
 
-**Tests**: 13 HTTP framing unit tests, 1 real drain test, 19 guardrail assertions.
+**Edge-replica deduplication**: Tasks are deduplicated by `(namespace, key_id)` via `dedup_key` field on `AuxiliaryTask`. Prevents duplicate edge-replica refresh tasks for the same key when multiple `RaftCommitNotification` events arrive concurrently.
+
+**Config validation**: `max_peer_http_header_bytes >= 4` enforced at runtime. Serde tests (`http_framing_config_defaults` in `config.rs`) verify default values for all HTTP framing fields.
+
+**Test visibility**: `stop_peer_session_task_for_test` is `pub` (not `#[cfg(test)]`) so integration tests in `tests/` can call it directly.
+
+**Tests**: 13 HTTP framing unit tests, 1 real drain test, 23 guardrail assertions.
 
 ## Testing Commands
 

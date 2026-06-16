@@ -1887,4 +1887,68 @@ mod tests {
         let result = config.decrypt_key(short_ciphertext, Some("pass"));
         assert!(result.is_err(), "Short ciphertext should fail decryption");
     }
+
+    #[test]
+    fn http_framing_config_defaults() {
+        let config = MeshConnectionConfig::default();
+        assert_eq!(config.peer_http_header_total_timeout_secs, 30);
+        assert_eq!(config.max_peer_http_body_bytes, 65536);
+        assert_eq!(config.peer_http_body_total_timeout_secs, 60);
+        assert_eq!(config.peer_http_backend_idle_timeout_secs, 30);
+        // max_peer_http_header_bytes must be >= 4 for read_http_request_head safety.
+        assert!(
+            config.max_peer_http_header_bytes >= 4,
+            "max_peer_http_header_bytes must be >= 4, got {}",
+            config.max_peer_http_header_bytes
+        );
+    }
+
+    #[test]
+    fn http_framing_config_serde_roundtrip() {
+        let config = MeshConnectionConfig::default();
+        let json = serde_json::to_string(&config).expect("serialize");
+        let deserialized: MeshConnectionConfig = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(
+            deserialized.peer_http_header_total_timeout_secs,
+            config.peer_http_header_total_timeout_secs
+        );
+        assert_eq!(
+            deserialized.max_peer_http_body_bytes,
+            config.max_peer_http_body_bytes
+        );
+        assert_eq!(
+            deserialized.peer_http_body_total_timeout_secs,
+            config.peer_http_body_total_timeout_secs
+        );
+        assert_eq!(
+            deserialized.peer_http_backend_idle_timeout_secs,
+            config.peer_http_backend_idle_timeout_secs
+        );
+        assert_eq!(
+            deserialized.max_peer_http_header_bytes,
+            config.max_peer_http_header_bytes
+        );
+    }
+
+    #[test]
+    fn http_framing_config_serde_defaults_from_empty() {
+        // An empty JSON object should produce all defaults via serde.
+        let deserialized: MeshConnectionConfig =
+            serde_json::from_str("{}").expect("deserialize empty");
+        assert_eq!(deserialized.peer_http_header_total_timeout_secs, 30);
+        assert_eq!(deserialized.max_peer_http_body_bytes, 65536);
+        assert_eq!(deserialized.peer_http_body_total_timeout_secs, 60);
+        assert_eq!(deserialized.peer_http_backend_idle_timeout_secs, 30);
+        assert_eq!(deserialized.max_peer_http_header_bytes, 16384);
+    }
+
+    #[test]
+    fn http_framing_config_zero_header_limit_serde() {
+        // Verify that zero is deserialized (runtime guard catches it).
+        let json = r#"{"max_peer_http_header_bytes": 0}"#;
+        let deserialized: MeshConnectionConfig =
+            serde_json::from_str(json).expect("deserialize zero");
+        assert_eq!(deserialized.max_peer_http_header_bytes, 0);
+        // read_http_request_head rejects this at runtime (< 4).
+    }
 }

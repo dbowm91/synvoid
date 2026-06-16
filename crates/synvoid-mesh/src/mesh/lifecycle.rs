@@ -662,6 +662,11 @@ pub struct AuxiliaryTask {
     pub kind: AuxiliaryTaskKind,
     /// Join handle for the task.
     pub handle: tokio::task::JoinHandle<MeshTaskExit>,
+    /// Optional deduplication key for coalescing concurrent refresh tasks.
+    /// When set, a new task with the same key replaces any in-flight task
+    /// sharing that key (e.g., `"edge_refresh:namespace:key_id"` for
+    /// edge-replica refresh).
+    pub dedup_key: Option<String>,
 }
 
 /// Classification of auxiliary tasks (Iteration 73, Phase 14).

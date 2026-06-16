@@ -3692,12 +3692,36 @@ impl MeshTransport {
                         reason: crate::lifecycle::MeshTaskExitReason::CleanCompletion,
                     }
                 });
-                // Phase 18: Register as auxiliary task with backpressure.
-                // Limit concurrent edge-replica refresh tasks to avoid
-                // unbounded task accumulation on notification bursts.
+                // Phase 18: Register as auxiliary task with backpressure
+                // and (namespace, key_id) deduplication. Duplicate
+                // notifications for the same key share one task; only the
+                // latest notification triggers a new refresh. Excess tasks
+                // beyond the cap are dropped (fire-and-forget contract).
                 const MAX_CONCURRENT_EDGE_REPLICA_REFRESH: usize = 8;
                 {
                     let mut aux = self.auxiliary_tasks.lock().await;
+
+                    // Deduplication: abort any existing refresh for the
+                    // same (namespace, key_id) before inserting the new one.
+                    let dedup_key = Some(format!("edge_refresh:{}:{}", namespace.as_str(), key_id));
+                    let stale_ids: Vec<_> = aux
+                        .iter()
+                        .filter(|(_id, t)| t.dedup_key == dedup_key)
+                        .map(|(id, _)| *id)
+                        .collect();
+                    for stale_id in stale_ids {
+                        if let Some(old_task) = aux.remove(&stale_id) {
+                            old_task.handle.abort();
+                            tracing::debug!(
+                                "Aborted stale edge-replica refresh for {:?}/{} (task {})",
+                                namespace,
+                                key_id,
+                                stale_id
+                            );
+                        }
+                    }
+
+                    // Backpressure: cap concurrent edge-replica refresh tasks.
                     let active_refreshes = aux
                         .values()
                         .filter(|t| {
@@ -3708,9 +3732,6 @@ impl MeshTransport {
                         })
                         .count();
                     if active_refreshes >= MAX_CONCURRENT_EDGE_REPLICA_REFRESH {
-                        // Drop the handle — task will be aborted when the JoinHandle
-                        // is dropped (fire-and-forget is acceptable per the existing
-                        // contract: stale data will be refreshed on next notification).
                         tracing::debug!(
                             "Edge-replica refresh at capacity ({}/{}), dropping task for {:?}/{}",
                             active_refreshes,
@@ -3728,6 +3749,7 @@ impl MeshTransport {
                             session_id: None,
                             kind: crate::lifecycle::AuxiliaryTaskKind::EdgeReplicaRefresh,
                             handle,
+                            dedup_key,
                         },
                     );
                 }
