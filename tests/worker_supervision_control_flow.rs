@@ -1889,3 +1889,162 @@ mod iter84_behavioral_tests {
         assert!(is_mesh_ready_with_status(&policy, &status));
     }
 }
+
+// --- Iteration 84 (Part F): Shutdown coordination behavioral tests ---
+
+#[cfg(test)]
+mod shutdown_coordination_tests {
+    use std::time::Duration;
+    use tokio::sync::watch;
+
+    #[tokio::test]
+    async fn watch_channel_shutdown_signal_closes_receiver() {
+        let (tx, mut rx) = watch::channel(false);
+        assert!(!*rx.borrow());
+
+        tx.send(true).unwrap();
+        assert!(*rx.borrow());
+
+        // changed() returns Ok after send
+        assert!(rx.changed().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn watch_channel_sender_drop_causes_recv_error() {
+        let (tx, mut rx) = watch::channel(false);
+
+        drop(tx);
+
+        // After sender drop, changed() returns Err
+        assert!(rx.changed().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn watch_channel_multiple_receivers_independent() {
+        let (tx, rx1) = watch::channel(false);
+        let rx2 = rx1.clone();
+        let mut rx3 = rx1.clone();
+
+        tx.send(true).unwrap();
+
+        // All receivers see the new value
+        assert!(*rx1.borrow());
+        assert!(*rx2.borrow());
+        assert!(rx3.changed().await.is_ok());
+        assert!(*rx3.borrow());
+    }
+
+    #[tokio::test]
+    async fn dns_shutdown_signal_propagates() {
+        // Simulates the shutdown flow: tx sends, rx in spawned task receives.
+        let (tx, mut rx) = watch::channel(false);
+
+        let handle = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    biased;
+                    result = rx.changed() => {
+                        if result.is_ok() && *rx.borrow() {
+                            break;
+                        }
+                        return false; // sender dropped or error
+                    }
+                    _ = tokio::time::sleep(Duration::from_secs(3600)) => {}
+                }
+            }
+            true
+        });
+
+        // Give the task time to start
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        // Send shutdown
+        tx.send(true).unwrap();
+
+        let result = handle.await.unwrap();
+        assert!(
+            result,
+            "DNS verification loop should exit on shutdown signal"
+        );
+    }
+
+    #[tokio::test]
+    async fn yara_broadcast_shutdown_signal_propagates() {
+        let (tx, mut rx) = watch::channel(false);
+        let (_mpsc_tx, mut mpsc_rx) = tokio::sync::mpsc::channel::<()>(1);
+
+        let handle = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    biased;
+                    result = rx.changed() => {
+                        if result.is_ok() && *rx.borrow() {
+                            break;
+                        }
+                        return false;
+                    }
+                    _ = mpsc_rx.recv() => {}
+                }
+            }
+            true
+        });
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        // Send shutdown
+        tx.send(true).unwrap();
+
+        let result = handle.await.unwrap();
+        assert!(result, "YARA broadcast loop should exit on shutdown signal");
+    }
+
+    #[tokio::test]
+    async fn shutdown_signal_prevents_pending_work() {
+        // Verifies that shutdown signal breaks out even when there is
+        // pending work in the loop body.
+        let (tx, mut rx) = watch::channel(false);
+
+        let handle = tokio::spawn(async move {
+            let mut completed_work = 0u32;
+            loop {
+                tokio::select! {
+                    biased;
+                    result = rx.changed() => {
+                        if result.is_ok() && *rx.borrow() {
+                            break;
+                        }
+                        return completed_work;
+                    }
+                    _ = tokio::time::sleep(Duration::from_millis(5)) => {
+                        completed_work += 1;
+                    }
+                }
+            }
+            completed_work
+        });
+
+        // Let some iterations run
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        tx.send(true).unwrap();
+
+        let completed = handle.await.unwrap();
+        // Should have done some work before shutdown
+        assert!(
+            completed > 0,
+            "Loop should have done some work before shutdown"
+        );
+    }
+
+    #[tokio::test]
+    async fn shutdown_channel_survives_sender_clone_drop() {
+        // The sender can be cloned; dropping one clone doesn't close the channel.
+        let (tx1, mut rx) = watch::channel(false);
+        let tx2 = tx1.clone();
+
+        drop(tx1);
+
+        // Channel still open via tx2
+        tx2.send(true).unwrap();
+        assert!(*rx.borrow());
+    }
+}

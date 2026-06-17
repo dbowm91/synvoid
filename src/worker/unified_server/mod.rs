@@ -188,7 +188,9 @@ pub async fn run_unified_server_worker(
                     canonical_reader,
                     advisory_source,
                 ),
-            );
+            )
+            .with_dns_shutdown_tx(mesh_init.dns_shutdown_tx)
+            .with_yara_broadcast_shutdown_tx(mesh_init.yara_broadcast_shutdown_tx);
     }
     #[cfg(not(feature = "mesh"))]
     {
@@ -663,6 +665,12 @@ pub async fn run_unified_server_worker(
     // Step 1: Record coordinated shutdown intent before any teardown,
     // and acknowledge the lifecycle event so the IPC task can return.
     lifecycle::begin_coordinated_shutdown(&state.task_registry, lifecycle_ack).await;
+
+    // Step 1.2: Signal mesh background tasks (DNS verification loops,
+    // YARA broadcast) to shut down early so they drain during the
+    // connection-drain window rather than running until process exit.
+    #[cfg(feature = "mesh")]
+    state.data_plane.shutdown_mesh_background_tasks();
 
     // Step 1.5: Establish real shutdown deadline (Phase 19).
     // All subsequent timeout calculations derive from this deadline,

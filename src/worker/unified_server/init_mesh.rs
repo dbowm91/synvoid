@@ -15,13 +15,13 @@
 //
 // Task Ownership Inventory (Iteration 84):
 //
-// Task                                     | Correct Owner              | Start Phase   | Stop Signal       | Join Path                      | Restart Generation
-// -----------------------------------------|----------------------------|---------------|-------------------|--------------------------------|--------------------
-// topology.start_background_tasks()        | Mesh topology              | transport init| mesh shutdown     | mesh task group                | per-generation
-// routing_manager.init()                   | DHT routing                | transport init| mesh shutdown     | mesh task group                | per-generation
-// DnsRegistry.start_verification_loop()    | DNS verification           | transport init| mesh shutdown     | mesh task group                | per-generation
-// threat_intel.start_background_tasks()    | Threat intel               | transport init| mesh shutdown     | mesh task group                | per-generation
-// YARA broadcast loop                      | Threat intel broadcast     | transport init| mesh shutdown     | mesh task group                | per-generation
+// Task                                     | Correct Owner              | Start Phase   | Stop Signal              | Join Path                      | Restart Generation
+// -----------------------------------------|----------------------------|---------------|--------------------------|--------------------------------|--------------------
+// topology.start_background_tasks()        | Mesh topology              | transport init| mesh shutdown            | mesh task group                | per-generation
+// routing_manager.init()                   | DHT routing                | transport init| mesh shutdown            | mesh task group                | per-generation
+// DnsRegistry.start_verification_loop()    | DNS verification           | transport init| watch::channel shutdown   | mesh task group                | per-generation
+// threat_intel.start_background_tasks()    | Threat intel               | transport init| mesh shutdown            | mesh task group                | per-generation
+// YARA broadcast loop                      | Threat intel broadcast     | transport init| watch::channel shutdown   | mesh task group                | per-generation
 //
 // Classification of bare spawns in this file:
 //
@@ -37,21 +37,21 @@
 //    - Correct owner: MeshTransport startup (MeshTaskGroup)
 //    - Start phase: After transport init
 //    - Restart: Per-generation
-//    - Move: YES — should be part of MeshTransport startup, registered in MeshTaskGroup
+//    - Shutdown: watch::channel receiver — exits on mesh transport shutdown
 //
 // 3. Global DnsRegistry.start_verification_loop() spawn (line ~284):
 //    - What: Runs DNS zone verification loop for global nodes
 //    - Correct owner: MeshTransport startup (MeshTaskGroup)
 //    - Start phase: After transport init
 //    - Restart: Per-generation
-//    - Move: YES — same as edge variant
+//    - Shutdown: watch::channel receiver — exits on mesh transport shutdown
 //
 // 4. YARA broadcast loop (outer recv, line ~348):
 //    - What: Receives threat-intel messages from mpsc and dispatches to peers
 //    - Correct owner: MeshTransport startup (MeshTaskGroup)
 //    - Start phase: After transport init, after threat_intel.start_background_tasks()
 //    - Restart: Per-generation
-//    - Move: YES — the outer loop is a transport-level concern
+//    - Shutdown: watch::channel receiver — exits on mesh transport shutdown
 //
 // 5. broadcast_to_all_peers dispatch (inner spawn, line ~352):
 //    - What: Fire-and-forget broadcast per message, bounded by semaphore
@@ -100,6 +100,13 @@ pub struct MeshInit {
     /// Canonical trust snapshot from Supervisor, if available.
     #[cfg(feature = "mesh")]
     pub canonical_snapshot: Option<synvoid_mesh::canonical::CanonicalTrustSnapshot>,
+    /// Sender that signals DNS verification loops to shut down.
+    /// The receiver is passed to each verification loop spawned during init.
+    #[cfg(feature = "mesh")]
+    pub dns_shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
+    /// Sender that signals the YARA broadcast loop to shut down.
+    #[cfg(feature = "mesh")]
+    pub yara_broadcast_shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
 }
 
 /// Initialize the mesh + threat-intel subsystem. Returns
@@ -211,6 +218,8 @@ pub async fn init_mesh_and_threat_intel(
                     threat_intel: None,
                     mesh_signer: None,
                     canonical_snapshot: None,
+                    dns_shutdown_tx: None,
+                    yara_broadcast_shutdown_tx: None,
                 };
             };
 
@@ -247,6 +256,14 @@ pub async fn init_mesh_and_threat_intel(
                 mesh_config.role,
                 Some(Arc::new(signer_for_threat)),
             ));
+
+            // Iteration 84: Watch channels for long-lived task shutdown.
+            // DNS verification loops and YARA broadcast loop receive these
+            // receivers and exit when the signal is set, ensuring clean
+            // termination during mesh transport shutdown.
+            let (dns_shutdown_tx, dns_shutdown_rx) = tokio::sync::watch::channel(false);
+            let (yara_broadcast_shutdown_tx, mut yara_broadcast_shutdown_rx) =
+                tokio::sync::watch::channel(false);
 
             #[cfg(feature = "dns")]
             {
@@ -292,10 +309,13 @@ pub async fn init_mesh_and_threat_intel(
                             registry_config,
                         );
                         let registry_clone = Arc::new(registry);
-                        // Iteration 84: documented ownership — see inventory comment above
-                        // Correct owner: MeshTransport startup (MeshTaskGroup)
+                        // Iteration 84: DNS verification loop with shutdown coordination.
+                        // The receiver is cloned per-loop so each can exit independently.
+                        let shutdown_rx = dns_shutdown_rx.clone();
                         tokio::spawn(async move {
-                            registry_clone.start_verification_loop().await;
+                            registry_clone
+                                .start_verification_loop(Some(shutdown_rx))
+                                .await;
                         });
                     } else {
                         let upstream_servers: Vec<std::net::IpAddr> = dns_cfg
@@ -342,10 +362,12 @@ pub async fn init_mesh_and_threat_intel(
                                         .with_dns_resolver(resolver);
 
                                     let registry_clone = Arc::new(registry);
-                                    // Iteration 84: documented ownership — see inventory comment above
-                                    // Correct owner: MeshTransport startup (MeshTaskGroup)
+                                    // Iteration 84: DNS verification loop with shutdown coordination.
+                                    let shutdown_rx = dns_shutdown_rx.clone();
                                     tokio::spawn(async move {
-                                        registry_clone.start_verification_loop().await;
+                                        registry_clone
+                                            .start_verification_loop(Some(shutdown_rx))
+                                            .await;
                                     });
                                 }
                                 Err(e) => {
@@ -408,23 +430,41 @@ pub async fn init_mesh_and_threat_intel(
                     if let Some(quic_transport) = transport_manager.get_quic_transport() {
                         let mesh_transport = quic_transport.get_inner();
                         let broadcast_semaphore = Arc::new(tokio::sync::Semaphore::new(10));
-                        // Iteration 84: documented ownership — see inventory comment above
-                        // Correct owner: MeshTransport startup (MeshTaskGroup)
+                        // Iteration 84: YARA broadcast loop with shutdown coordination.
+                        // Exits when either the mpsc sender is dropped (normal) or
+                        // the shutdown signal is received (mesh transport shutdown).
                         tokio::spawn(async move {
-                            while let Some(msg) = mesh_broadcast_rx.recv().await {
-                                let transport = mesh_transport.clone();
-                                let permit = broadcast_semaphore.clone().acquire_owned().await.ok();
-                                // Iteration 84: documented ownership — see inventory comment above
-                                // Correct owner: Fire-and-forget (bounded by owned semaphore)
-                                tokio::spawn(async move {
-                                    transport
-                                        .broadcast_to_all_peers(
-                                            msg,
-                                            Some(crate::mesh::config::MeshNodeRole::GLOBAL),
-                                        )
-                                        .await;
-                                    drop(permit);
-                                });
+                            loop {
+                                tokio::select! {
+                                    biased;
+                                    result = yara_broadcast_shutdown_rx.changed() => {
+                                        if result.is_ok() && *yara_broadcast_shutdown_rx.borrow() {
+                                            tracing::debug!("YARA broadcast loop received shutdown signal");
+                                            break;
+                                        }
+                                    }
+                                    msg = mesh_broadcast_rx.recv() => {
+                                        match msg {
+                                            Some(msg) => {
+                                                let transport = mesh_transport.clone();
+                                                let permit = broadcast_semaphore.clone().acquire_owned().await.ok();
+                                                tokio::spawn(async move {
+                                                    transport
+                                                        .broadcast_to_all_peers(
+                                                            msg,
+                                                            Some(crate::mesh::config::MeshNodeRole::GLOBAL),
+                                                        )
+                                                        .await;
+                                                    drop(permit);
+                                                });
+                                            }
+                                            None => {
+                                                tracing::debug!("YARA broadcast mpsc channel closed, exiting loop");
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         });
                     }
@@ -516,6 +556,8 @@ pub async fn init_mesh_and_threat_intel(
                     signer_key_clone,
                 ))),
                 canonical_snapshot: None,
+                dns_shutdown_tx: Some(dns_shutdown_tx),
+                yara_broadcast_shutdown_tx: Some(yara_broadcast_shutdown_tx),
             };
         }
 
@@ -529,6 +571,8 @@ pub async fn init_mesh_and_threat_intel(
             threat_intel: Some(dummy_threat),
             mesh_signer: None,
             canonical_snapshot: None,
+            dns_shutdown_tx: None,
+            yara_broadcast_shutdown_tx: None,
         }
     }
 

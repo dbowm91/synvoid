@@ -528,7 +528,15 @@ impl MeshDnsRegistry {
         })
     }
 
-    pub async fn start_verification_loop(&self) {
+    /// Start the DNS verification loop.
+    ///
+    /// When `shutdown_rx` is provided, the loop exits when the signal is
+    /// received. Without a receiver the loop runs until the process exits
+    /// (backwards-compatible behavior).
+    pub async fn start_verification_loop(
+        &self,
+        shutdown_rx: Option<tokio::sync::watch::Receiver<bool>>,
+    ) {
         let resolver = match &self.dns_resolver {
             Some(r) => Arc::clone(r),
             None => {
@@ -553,8 +561,24 @@ impl MeshDnsRegistry {
         );
 
         tokio::spawn(async move {
+            let mut shutdown = shutdown_rx;
             loop {
-                tokio::time::sleep(tokio::time::Duration::from_secs(retry_interval)).await;
+                // When a shutdown receiver is present, use select! so we
+                // exit promptly instead of blocking on the sleep.
+                if let Some(ref mut rx) = shutdown {
+                    tokio::select! {
+                        biased;
+                        result = rx.changed() => {
+                            if result.is_ok() && *rx.borrow() {
+                                tracing::debug!("DNS verification loop received shutdown signal");
+                                break;
+                            }
+                        }
+                        _ = tokio::time::sleep(tokio::time::Duration::from_secs(retry_interval)) => {}
+                    }
+                } else {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(retry_interval)).await;
+                }
 
                 let now = current_timestamp();
                 let mut to_retry = Vec::new();
