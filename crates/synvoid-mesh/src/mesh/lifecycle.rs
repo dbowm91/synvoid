@@ -745,6 +745,32 @@ pub enum MeshTransportState {
     Failed,
 }
 
+/// Error returned when `spawn_auxiliary_task` rejects a submission (Iteration 81, Phase 25).
+///
+/// Each variant identifies a specific rejection reason for diagnostics and metrics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SpawnAuxiliaryError {
+    /// Lifecycle state does not allow auxiliary submissions.
+    LifecycleNotRunning(MeshTransportState),
+    /// All capacity slots for this task kind are occupied.
+    CapacityExceeded,
+}
+
+impl std::fmt::Display for SpawnAuxiliaryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::LifecycleNotRunning(state) => {
+                write!(f, "auxiliary submission rejected: lifecycle state {state:?} does not allow submission")
+            }
+            Self::CapacityExceeded => {
+                write!(f, "auxiliary submission rejected: capacity exceeded")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SpawnAuxiliaryError {}
+
 /// Exit event from an auxiliary task (Iteration 74, Phase 20).
 ///
 /// Published to the auxiliary reaper when an auxiliary task completes,

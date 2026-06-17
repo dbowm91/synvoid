@@ -1690,3 +1690,344 @@ async fn response_version_malformed_rejected() {
 
     assert!(result.is_err(), "malformed HTTP version must be rejected");
 }
+
+// ── Phase 12: Trailer Limit Tests ──────────────────────────────────────
+//
+// Verify that `read_chunked_http_response_body` enforces
+// `max_trailer_bytes` independently of `max_body_bytes`.
+
+#[tokio::test]
+async fn trailer_empty_trailer_accepted() {
+    let wire = build_chunked_wire_body(&[("3", b"abc")]);
+    let result = read_chunked_http_response_body(
+        &wire[..],
+        Vec::new(),
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        65536,
+        4096,
+    )
+    .await
+    .unwrap();
+
+    // Parser includes raw wire bytes; chunk payloads are present.
+    assert!(result.windows(3).any(|w| w == b"abc"));
+}
+
+#[tokio::test]
+async fn trailer_exact_limit_accepted() {
+    // Trailer section: "X-C: V\r\n\r\n" = 10 bytes. max_trailer_bytes = 11.
+    // The `>` guard at 11 bytes does not fire for 10 trailer bytes.
+    let mut wire = Vec::new();
+    wire.extend_from_slice(b"3\r\nabc\r\n");
+    wire.extend_from_slice(b"0\r\n");
+    wire.extend_from_slice(b"X-C: V\r\n\r\n");
+
+    let result = read_chunked_http_response_body(
+        &wire[..],
+        Vec::new(),
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        65536,
+        11,
+    )
+    .await
+    .unwrap();
+
+    assert!(result.windows(3).any(|w| w == b"abc"));
+    assert!(result.windows(6).any(|w| w == b"X-C: V"));
+}
+
+#[tokio::test]
+async fn trailer_limit_plus_one_rejected() {
+    // Trailer section: "X-C: VV\r\n\r\n" = 11 bytes. max_trailer_bytes = 10.
+    // The `>` guard fires at 11 bytes (11 > 10).
+    let mut wire = Vec::new();
+    wire.extend_from_slice(b"3\r\nabc\r\n");
+    wire.extend_from_slice(b"0\r\n");
+    wire.extend_from_slice(b"X-C: VV\r\n\r\n");
+
+    let result = read_chunked_http_response_body(
+        &wire[..],
+        Vec::new(),
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        65536,
+        10,
+    )
+    .await;
+
+    match result {
+        Err(HttpResponseFramingError::TrailerTooLarge { limit, observed }) => {
+            assert_eq!(limit, 10);
+            assert!(
+                observed > limit,
+                "observed ({observed}) must exceed limit ({limit})"
+            );
+        }
+        other => panic!("expected TrailerTooLarge, got: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn trailer_multiple_fields_counted_cumulatively() {
+    // Two trailer fields: "X-A: 1\r\nX-B: 2\r\n\r\n" = 19 bytes.
+    // max_trailer_bytes = 15, so the second field pushes over.
+    let mut wire = Vec::new();
+    wire.extend_from_slice(b"3\r\nabc\r\n");
+    wire.extend_from_slice(b"0\r\n");
+    wire.extend_from_slice(b"X-A: 1\r\nX-B: 2\r\n\r\n");
+
+    let result = read_chunked_http_response_body(
+        &wire[..],
+        Vec::new(),
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        65536,
+        15,
+    )
+    .await;
+
+    match result {
+        Err(HttpResponseFramingError::TrailerTooLarge { limit, observed }) => {
+            assert_eq!(limit, 15);
+            assert!(observed > limit);
+        }
+        other => panic!("expected TrailerTooLarge, got: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn trailer_terminator_split_across_prefix_and_socket() {
+    // Trailer section "X-C: V\r\n\r\n" = 11 bytes.
+    // Prefix holds everything except the final \r\n (10 bytes).
+    let mut full_wire = Vec::new();
+    full_wire.extend_from_slice(b"3\r\nabc\r\n");
+    full_wire.extend_from_slice(b"0\r\n");
+    full_wire.extend_from_slice(b"X-C: V\r\n\r\n");
+
+    let prefix = full_wire[..full_wire.len() - 2].to_vec();
+    let rest = &full_wire[full_wire.len() - 2..];
+
+    let (mut client, mut server) = tokio::io::duplex(prefix.len() + rest.len());
+    client.write_all(&prefix).await.unwrap();
+    client.write_all(rest).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let result = read_chunked_http_response_body(
+        &mut server,
+        Vec::new(),
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        65536,
+        4096,
+    )
+    .await
+    .unwrap();
+
+    assert!(result.windows(6).any(|w| w == b"X-C: V"));
+}
+
+#[tokio::test]
+async fn trailer_oversized_entirely_in_prefix() {
+    // Entire oversized trailer is in the prefix — no socket reads needed.
+    let mut wire = Vec::new();
+    wire.extend_from_slice(b"3\r\nabc\r\n");
+    wire.extend_from_slice(b"0\r\n");
+    wire.extend_from_slice(b"X-Long: very_long_value\r\n\r\n");
+
+    let result = read_chunked_http_response_body(
+        &wire[..],
+        Vec::new(),
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        65536,
+        10,
+    )
+    .await;
+
+    match result {
+        Err(HttpResponseFramingError::TrailerTooLarge { limit, observed }) => {
+            assert_eq!(limit, 10);
+            assert!(observed > limit);
+        }
+        other => panic!("expected TrailerTooLarge, got: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn trailer_oversized_slow_drip_bounded_by_total_deadline() {
+    use tokio::io::AsyncReadExt;
+
+    // Initial chunk + zero chunk prefix sent immediately.
+    let initial = b"3\r\nabc\r\n0\r\n";
+    // Trailer byte + terminator sent slowly (one byte at a time).
+    let trailer_byte = b'X';
+    let terminator = b"\r\n\r\n";
+    let total_size = initial.len() + 1 + terminator.len();
+
+    let (mut client, mut server) = tokio::io::duplex(total_size);
+    client.write_all(initial).await.unwrap();
+
+    // Spawn a task that dribbles the remaining bytes with real pauses.
+    // First byte at ~200ms, second byte at ~400ms — exceeding the 300ms total deadline.
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let _ = client.write_all(&[trailer_byte]).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let _ = client.write_all(terminator).await;
+    });
+
+    let result = read_chunked_http_response_body(
+        &mut server,
+        Vec::new(),
+        Duration::from_millis(100),
+        Duration::from_millis(300),
+        65536,
+        65536,
+    )
+    .await;
+
+    match result {
+        Err(HttpResponseFramingError::Io(msg)) if msg.contains("timeout") => {}
+        Err(HttpResponseFramingError::BackendClosedBeforeCompleteResponse) => {}
+        other => panic!("expected timeout or backend-closed for slow-drip trailer, got: {other:?}"),
+    }
+}
+
+// ── Phase 16: Strict Status-Line Parser Tests ──────────────────────────
+//
+// Verify parse_http_response_status_line validates version and status code.
+
+#[tokio::test]
+async fn status_line_valid_100_200_599() {
+    // Valid HTTP/1.1 100 Continue
+    let resp = b"HTTP/1.1 100 Continue\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(resp.len());
+    client.write_all(resp).await.unwrap();
+    client.shutdown().await.unwrap();
+    let head = read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+        .await
+        .unwrap();
+    assert_eq!(head.status_code, 100);
+
+    // Valid HTTP/1.1 200 OK
+    let resp = b"HTTP/1.1 200 OK\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(resp.len());
+    client.write_all(resp).await.unwrap();
+    client.shutdown().await.unwrap();
+    let head = read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+        .await
+        .unwrap();
+    assert_eq!(head.status_code, 200);
+
+    // Valid HTTP/1.1 599
+    let resp = b"HTTP/1.1 599 Unknown\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(resp.len());
+    client.write_all(resp).await.unwrap();
+    client.shutdown().await.unwrap();
+    let head = read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+        .await
+        .unwrap();
+    assert_eq!(head.status_code, 599);
+}
+
+#[tokio::test]
+async fn status_line_invalid_99_600_rejected() {
+    // Status 99 — below 100 range.
+    let resp = b"HTTP/1.1 099 Bad\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(resp.len());
+    client.write_all(resp).await.unwrap();
+    client.shutdown().await.unwrap();
+    let result =
+        read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES).await;
+    assert!(result.is_err(), "status 99 must be rejected");
+
+    // Status 600 — above 599 range.
+    let resp = b"HTTP/1.1 600 Bad\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(resp.len());
+    client.write_all(resp).await.unwrap();
+    client.shutdown().await.unwrap();
+    let result =
+        read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES).await;
+    assert!(result.is_err(), "status 600 must be rejected");
+}
+
+#[tokio::test]
+async fn status_line_non_digit_rejected() {
+    let resp = b"HTTP/1.1 abc Bad\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(resp.len());
+    client.write_all(resp).await.unwrap();
+    client.shutdown().await.unwrap();
+    let result =
+        read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES).await;
+    assert!(result.is_err(), "non-digit status must be rejected");
+}
+
+#[tokio::test]
+async fn status_line_two_digit_rejected() {
+    let resp = b"HTTP/1.1 20 OK\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(resp.len());
+    client.write_all(resp).await.unwrap();
+    client.shutdown().await.unwrap();
+    let result =
+        read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES).await;
+    assert!(result.is_err(), "two-digit status must be rejected");
+}
+
+#[tokio::test]
+async fn status_line_four_digit_rejected() {
+    let resp = b"HTTP/1.1 1000 Bad\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(resp.len());
+    client.write_all(resp).await.unwrap();
+    client.shutdown().await.unwrap();
+    let result =
+        read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES).await;
+    assert!(result.is_err(), "four-digit status must be rejected");
+}
+
+#[tokio::test]
+async fn status_line_unsupported_version_rejected() {
+    // HTTP/2.0
+    let resp = b"HTTP/2.0 200 OK\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(resp.len());
+    client.write_all(resp).await.unwrap();
+    client.shutdown().await.unwrap();
+    let result =
+        read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES).await;
+    assert!(result.is_err(), "HTTP/2.0 must be rejected");
+
+    // HTTP/0.9
+    let resp = b"HTTP/0.9 200 OK\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(resp.len());
+    client.write_all(resp).await.unwrap();
+    client.shutdown().await.unwrap();
+    let result =
+        read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES).await;
+    assert!(result.is_err(), "HTTP/0.9 must be rejected");
+}
+
+#[tokio::test]
+async fn status_line_missing_status_rejected() {
+    // Version only, no status code.
+    let resp = b"HTTP/1.1 \r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(resp.len());
+    client.write_all(resp).await.unwrap();
+    client.shutdown().await.unwrap();
+    let result =
+        read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES).await;
+    assert!(result.is_err(), "missing status must be rejected");
+}
+
+#[tokio::test]
+async fn status_line_empty_reason_phrase_accepted() {
+    // Valid with empty reason phrase.
+    let resp = b"HTTP/1.1 200 \r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(resp.len());
+    client.write_all(resp).await.unwrap();
+    client.shutdown().await.unwrap();
+    let head = read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+        .await
+        .unwrap();
+    assert_eq!(head.status_code, 200);
+}

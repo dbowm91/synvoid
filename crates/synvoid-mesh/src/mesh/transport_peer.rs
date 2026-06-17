@@ -4603,7 +4603,7 @@ impl MeshTransport {
                 let dedup_key = Some(format!("edge_refresh:{}:{}", namespace.as_str(), key_id));
                 // Phase 22-25: Spawn via shared helper which handles AuxiliaryTaskExit
                 // publication, deduplication (abort+await), and capacity gating.
-                if let Err(()) = self
+                if let Err(e) = self
                     .spawn_auxiliary_task(
                         crate::lifecycle::AuxiliaryTaskKind::EdgeReplicaRefresh,
                         "edge-replica-refresh",
@@ -4614,7 +4614,7 @@ impl MeshTransport {
                     .await
                 {
                     tracing::debug!(
-                        "Edge-replica refresh at capacity, dropping task for {:?}/{}",
+                        "Edge-replica refresh rejected for {:?}/{}: {e}",
                         namespace,
                         key_id
                     );

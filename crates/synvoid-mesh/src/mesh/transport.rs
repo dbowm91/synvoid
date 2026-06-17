@@ -2850,7 +2850,7 @@ impl MeshTransport {
         session_id: Option<String>,
         dedup_key: Option<String>,
         future: F,
-    ) -> Result<MeshTaskId, ()>
+    ) -> Result<MeshTaskId, crate::lifecycle::SpawnAuxiliaryError>
     where
         F: std::future::Future<Output = MeshTaskExitReason> + Send + 'static,
     {
@@ -2940,7 +2940,9 @@ impl MeshTransport {
                 drop(start_tx);
                 handle.abort();
                 let _ = handle.await;
-                return Err(());
+                return Err(crate::lifecycle::SpawnAuxiliaryError::LifecycleNotRunning(
+                    transport_state,
+                ));
             }
         }
 
@@ -2967,7 +2969,7 @@ impl MeshTransport {
                     drop(start_tx);
                     handle.abort();
                     let _ = handle.await;
-                    return Err(());
+                    return Err(crate::lifecycle::SpawnAuxiliaryError::CapacityExceeded);
                 }
             }
         };
@@ -4494,6 +4496,56 @@ impl MeshTransport {
         *self.lifecycle_state.lock().await
     }
 
+    /// Force-set the lifecycle state for testing.
+    ///
+    /// Bypasses transition validation to allow integration tests to place the
+    /// transport in any state without going through `start_with_policy()`.
+    #[cfg(test)]
+    pub async fn force_set_lifecycle_state(&self, state: MeshLifecycleState) {
+        {
+            let mut lock = self.lifecycle_state.lock().await;
+            *lock = state;
+        }
+        self.running_projection.store(
+            state == MeshLifecycleState::Running,
+            std::sync::atomic::Ordering::SeqCst,
+        );
+    }
+
+    /// Spawn an auxiliary task via the production path (test-only public wrapper).
+    #[cfg(test)]
+    pub async fn spawn_auxiliary_task_for_test<F>(
+        &self,
+        kind: AuxiliaryTaskKind,
+        name: &'static str,
+        session_id: Option<String>,
+        dedup_key: Option<String>,
+        future: F,
+    ) -> Result<MeshTaskId, crate::lifecycle::SpawnAuxiliaryError>
+    where
+        F: std::future::Future<Output = MeshTaskExitReason> + Send + 'static,
+    {
+        self.spawn_auxiliary_task(kind, name, session_id, dedup_key, future)
+            .await
+    }
+
+    /// Check whether a task ID is present in the auxiliary registry (test-only).
+    #[cfg(test)]
+    pub async fn has_auxiliary_task(&self, task_id: &MeshTaskId) -> bool {
+        self.auxiliary_tasks.lock().await.contains_key(task_id)
+    }
+
+    /// Count active auxiliary tasks of a given kind (test-only).
+    #[cfg(test)]
+    pub async fn count_auxiliary_tasks(&self, kind: AuxiliaryTaskKind) -> usize {
+        self.auxiliary_tasks
+            .lock()
+            .await
+            .values()
+            .filter(|e| e.kind() == kind)
+            .count()
+    }
+
     #[allow(dead_code)]
     pub(crate) async fn bootstrap_from_seeds(
         &self,
@@ -5998,6 +6050,12 @@ mod tests {
         mesh_tls_mode_requires_peer_cert_identity, validate_peer_identity_state_for_mode,
         MeshTlsMode, PeerIdentityState,
     };
+    use crate::mesh::cert::MeshCertManager;
+    use crate::mesh::config::MeshConfig;
+    use crate::mesh::lifecycle::{AuxiliaryTaskKind, MeshLifecycleState, MeshTaskExitReason};
+    use crate::mesh::topology::MeshTopology;
+    use crate::mesh::transport::MeshTransport;
+    use std::sync::Arc;
 
     #[test]
     fn mesh_tls_mode_requires_identity_for_strict() {
@@ -6809,5 +6867,228 @@ mod tests {
             assert!(matches!(task_exit.reason, MeshTaskExitReason::Cancelled));
         }
         assert!(map.is_empty());
+    }
+
+    // ── Phase 22: Production-Path Auxiliary Race Tests ──────────────────
+    //
+    // Exercise spawn_auxiliary_task on a real MeshTransport instance.
+
+    fn make_test_transport_for_aux() -> Arc<MeshTransport> {
+        let config = Arc::new(MeshConfig::default());
+        let topology = Arc::new(MeshTopology::new(config.clone()));
+        let cert_manager = Arc::new(parking_lot::RwLock::new(MeshCertManager::new(&config)));
+        Arc::new(MeshTransport::new(
+            config,
+            topology,
+            cert_manager,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            #[cfg(feature = "dns")]
+            None,
+            #[cfg(feature = "dns")]
+            None,
+        ))
+    }
+
+    #[tokio::test]
+    async fn aux_submission_rejected_when_stopped() {
+        let transport = make_test_transport_for_aux();
+        let result = transport
+            .spawn_auxiliary_task(
+                AuxiliaryTaskKind::EdgeReplicaRefresh,
+                "test-stopped",
+                None,
+                Some("key:1".into()),
+                async { MeshTaskExitReason::CleanCompletion },
+            )
+            .await;
+        assert!(result.is_err(), "submission must be rejected when Stopped");
+    }
+
+    #[tokio::test]
+    async fn aux_immediate_completion_through_production_path() {
+        let transport = make_test_transport_for_aux();
+        transport
+            .force_set_lifecycle_state(crate::lifecycle::MeshLifecycleState::Running)
+            .await;
+
+        let task_id = transport
+            .spawn_auxiliary_task(
+                AuxiliaryTaskKind::EdgeReplicaRefresh,
+                "test-immediate",
+                None,
+                Some("immediate:1".into()),
+                async { MeshTaskExitReason::CleanCompletion },
+            )
+            .await
+            .expect("submission must succeed in Running state");
+
+        // Registry entry is installed before the future executes (gate pattern).
+        assert!(
+            transport.has_auxiliary_task(&task_id).await,
+            "registry must contain the task after successful submission"
+        );
+    }
+
+    #[tokio::test]
+    async fn aux_concurrent_duplicate_submissions_dedup() {
+        let transport = make_test_transport_for_aux();
+        transport
+            .force_set_lifecycle_state(crate::lifecycle::MeshLifecycleState::Running)
+            .await;
+
+        let dedup_key = Some("edge_refresh:ns:dup_key".into());
+
+        let id1 = transport
+            .spawn_auxiliary_task(
+                AuxiliaryTaskKind::EdgeReplicaRefresh,
+                "test-dup1",
+                None,
+                dedup_key.clone(),
+                async {
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                    MeshTaskExitReason::CleanCompletion
+                },
+            )
+            .await
+            .expect("first submission must succeed");
+
+        let id2 = transport
+            .spawn_auxiliary_task(
+                AuxiliaryTaskKind::EdgeReplicaRefresh,
+                "test-dup2",
+                None,
+                dedup_key.clone(),
+                async {
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                    MeshTaskExitReason::CleanCompletion
+                },
+            )
+            .await
+            .expect("second submission (dedup) must succeed");
+
+        assert_ne!(id1, id2, "task IDs must differ");
+
+        // First task must have been aborted (stale dedup).
+        assert!(
+            !transport.has_auxiliary_task(&id1).await,
+            "stale dedup entry must be removed"
+        );
+        assert!(
+            transport.has_auxiliary_task(&id2).await,
+            "new dedup entry must remain"
+        );
+    }
+
+    #[tokio::test]
+    async fn aux_capacity_boundary_never_exceeded() {
+        let transport = make_test_transport_for_aux();
+        transport
+            .force_set_lifecycle_state(crate::lifecycle::MeshLifecycleState::Running)
+            .await;
+
+        // MAX_CONCURRENT_EDGE_REPLICA_REFRESH = 8.
+        for i in 0..9 {
+            let key = Some(format!("edge_refresh:ns:cap_{i}"));
+            let _result = transport
+                .spawn_auxiliary_task(
+                    AuxiliaryTaskKind::EdgeReplicaRefresh,
+                    "test-cap",
+                    None,
+                    key,
+                    async {
+                        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                        MeshTaskExitReason::CleanCompletion
+                    },
+                )
+                .await;
+        }
+
+        let active = transport
+            .count_auxiliary_tasks(AuxiliaryTaskKind::EdgeReplicaRefresh)
+            .await;
+        assert!(active <= 8, "registry must not exceed capacity: {active}");
+    }
+
+    #[tokio::test]
+    async fn aux_shutdown_rejects_new_submissions() {
+        let transport = make_test_transport_for_aux();
+        transport
+            .force_set_lifecycle_state(crate::lifecycle::MeshLifecycleState::Running)
+            .await;
+
+        // Begin shutdown — sets lifecycle to Stopping.
+        transport
+            .force_set_lifecycle_state(crate::lifecycle::MeshLifecycleState::Stopping)
+            .await;
+
+        let result = transport
+            .spawn_auxiliary_task(
+                AuxiliaryTaskKind::EdgeReplicaRefresh,
+                "test-shutdown",
+                None,
+                Some("shutdown:1".into()),
+                async { MeshTaskExitReason::CleanCompletion },
+            )
+            .await;
+        assert!(
+            result.is_err(),
+            "submission must be rejected after shutdown begins"
+        );
+    }
+
+    #[tokio::test]
+    async fn aux_rejected_future_does_not_execute() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let transport = make_test_transport_for_aux();
+        // Transport is Stopped — submission will be rejected.
+
+        let executed = Arc::new(AtomicBool::new(false));
+        let executed_clone = executed.clone();
+
+        let _result = transport
+            .spawn_auxiliary_task(
+                AuxiliaryTaskKind::EdgeReplicaRefresh,
+                "test-no-exec",
+                None,
+                Some("noexec:1".into()),
+                async move {
+                    executed_clone.store(true, Ordering::SeqCst);
+                    MeshTaskExitReason::CleanCompletion
+                },
+            )
+            .await;
+
+        // Give the gated task time to process the cancellation.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        assert!(
+            !executed.load(Ordering::SeqCst),
+            "rejected future must not execute its body"
+        );
+    }
+
+    #[tokio::test]
+    async fn aux_failed_state_rejects_submissions() {
+        let transport = make_test_transport_for_aux();
+        transport
+            .force_set_lifecycle_state(crate::lifecycle::MeshLifecycleState::Failed)
+            .await;
+
+        let result = transport
+            .spawn_auxiliary_task(
+                AuxiliaryTaskKind::EdgeReplicaRefresh,
+                "test-failed",
+                None,
+                Some("failed:1".into()),
+                async { MeshTaskExitReason::CleanCompletion },
+            )
+            .await;
+        assert!(result.is_err(), "submission must be rejected when Failed");
     }
 }
