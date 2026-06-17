@@ -2754,9 +2754,11 @@ fn iter78_edge_replica_has_backpressure() {
 fn iter78_stop_peer_session_task_has_test_adapter() {
     let src = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport.rs")
         .expect("read transport.rs");
+    // Iteration 79, Phase 31: The test adapter was removed. Module-local
+    // tests now call the private stop_peer_session_task() directly.
     assert!(
-        src.contains("stop_peer_session_task_for_test"),
-        "stop_peer_session_task must have test adapter"
+        !src.contains("stop_peer_session_task_for_test"),
+        "stop_peer_session_task_for_test adapter must be removed (tests call private fn directly)"
     );
 }
 
@@ -2821,9 +2823,11 @@ fn iter78_edge_replica_deduplication_exists() {
 fn iter78_stop_peer_session_task_is_pub_crate() {
     let src = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport.rs")
         .expect("read transport.rs");
+    // Iteration 79, Phase 31: The pub(crate) adapter was removed entirely.
+    // Module-local tests now call the private function directly.
     assert!(
-        src.contains("pub(crate) async fn stop_peer_session_task_for_test"),
-        "stop_peer_session_task_for_test must be pub(crate) to avoid public API surface"
+        !src.contains("pub(crate) async fn stop_peer_session_task_for_test"),
+        "stop_peer_session_task_for_test adapter must be removed"
     );
 }
 
@@ -2932,13 +2936,11 @@ fn iter79_edge_refresh_uses_spawn_helper() {
 #[test]
 fn iter79_stop_peer_session_task_for_test_not_public() {
     let tr = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport.rs").unwrap();
-    let idx = tr
-        .find("stop_peer_session_task_for_test")
-        .expect("stop_peer_session_task_for_test must exist");
-    let before = &tr[..idx];
+    // Iteration 79, Phase 31: The adapter was removed entirely. Module-local
+    // tests now call the private stop_peer_session_task() directly, so no
+    // public or pub(crate) test adapter remains.
     assert!(
-        before.ends_with("    pub(crate) async fn ")
-            || before.ends_with("    pub(crate)\n    async fn "),
-        "stop_peer_session_task_for_test must be pub(crate), not pub"
+        !tr.contains("stop_peer_session_task_for_test"),
+        "stop_peer_session_task_for_test must not exist — tests call private fn directly"
     );
 }

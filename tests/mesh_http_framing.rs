@@ -1080,3 +1080,132 @@ async fn persistent_backend_returns_without_waiting_for_eof() {
     drop(stream);
     server_handle.abort();
 }
+
+// ── Phase 38: Chunked Backend Response — Keep-Alive Without EOF ────────────
+//
+// Verifies the chunked response parser returns the complete response
+// (including zero chunk and trailers) without waiting for TCP EOF.
+// Uses duplex to avoid real-TCP timing issues while still exercising
+// the full parser path.
+
+#[tokio::test]
+async fn persistent_backend_chunked_response_returns_without_eof() {
+    let headers =
+        b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n";
+    let body = b"3\r\nabc\r\n2\r\nde\r\n0\r\nX-Checksum: deadbeef\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(headers.len() + body.len());
+
+    // Write headers, read them, then write the chunked body separately
+    // so body_prefix is empty and the parser reads from the reader.
+    client.write_all(headers).await.unwrap();
+
+    let head = read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+        .await
+        .unwrap();
+
+    assert_eq!(head.status_code, 200);
+    assert!(head.chunked, "must detect chunked Transfer-Encoding");
+    assert!(
+        head.body_prefix.is_empty(),
+        "body_prefix should be empty when headers read separately"
+    );
+
+    // Write the chunked body.
+    client.write_all(body).await.unwrap();
+
+    // Do NOT close the client side — proving the parser returns after
+    // trailers without waiting for EOF / connection close.
+    let start = std::time::Instant::now();
+    let result = read_chunked_http_response_body(
+        &mut server,
+        head.body_prefix,
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        65536,
+        4096,
+    )
+    .await
+    .unwrap();
+    let elapsed = start.elapsed();
+
+    let body_str = String::from_utf8_lossy(&result);
+    assert!(
+        body_str.contains("3\r\nabc\r\n"),
+        "must contain first chunk"
+    );
+    assert!(
+        body_str.contains("2\r\nde\r\n"),
+        "must contain second chunk"
+    );
+    assert!(
+        body_str.contains("0\r\nX-Checksum: deadbeef\r\n\r\n"),
+        "must contain terminating chunk with trailer"
+    );
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "chunked response should return immediately after trailers, not wait for EOF (took {elapsed:?})"
+    );
+}
+
+// ── Phase 38: Chunked Backend Response — Premature EOF Test ───────────────
+//
+// Backend sends a partial chunked response (missing zero chunk) and then
+// closes the connection. The parser must reject this as an error rather
+// than silently accepting incomplete data.
+
+#[tokio::test]
+async fn response_chunked_premature_eof() {
+    // Headers + a chunk without the terminating zero chunk. Client side
+    // is dropped immediately to simulate backend close.
+    let headers = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
+    let partial_body = b"3\r\nabc\r\n";
+    let (mut client, mut server) = tokio::io::duplex(headers.len() + partial_body.len());
+
+    client.write_all(headers).await.unwrap();
+
+    let head = read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+        .await
+        .unwrap();
+
+    assert!(head.chunked);
+
+    // Write partial chunked body and close immediately (premature EOF).
+    client.write_all(partial_body).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let result = read_chunked_http_response_body(
+        &mut server,
+        head.body_prefix,
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        65536,
+        4096,
+    )
+    .await;
+
+    assert!(
+        result.is_err(),
+        "premature EOF must produce an error, got: {result:?}"
+    );
+
+    match result.unwrap_err() {
+        HttpResponseFramingError::PrematureEof { expected, received } => {
+            assert!(
+                expected > 0,
+                "must indicate expected byte count: expected={expected} received={received}"
+            );
+        }
+        HttpResponseFramingError::MalformedChunkedBody(msg) => {
+            assert!(
+                msg.contains("EOF") || msg.contains("incomplete"),
+                "malformed error must indicate incomplete data: {msg}"
+            );
+        }
+        HttpResponseFramingError::BackendClosedBeforeCompleteResponse => {
+            // Acceptable — backend closed before all chunks were received.
+        }
+        other => {
+            panic!("expected PrematureEof, MalformedChunkedBody, or BackendClosed, got: {other:?}")
+        }
+    }
+}

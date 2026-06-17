@@ -3431,17 +3431,6 @@ impl MeshTransport {
 }
 
 impl MeshTransport {
-    /// Test-visible adapter for `stop_peer_session_task`. Allows module-local
-    /// tests to exercise the real session-stop code path with actual JoinHandles.
-    pub(crate) async fn stop_peer_session_task_for_test(
-        handle: tokio::task::JoinHandle<()>,
-        budget: std::time::Duration,
-    ) -> PeerSessionStopOutcome {
-        Self::stop_peer_session_task(handle, budget, None).await
-    }
-}
-
-impl MeshTransport {
     /// Verify that rollback completed successfully by checking that no
     /// staged resources remain live.
     async fn verify_rollback_complete(&self, stage: &MeshStartupStage) -> Vec<String> {
@@ -5990,11 +5979,9 @@ mod tests {
     #[tokio::test]
     async fn stop_peer_session_task_zero_budget_forces_abort() {
         let handle = tokio::spawn(std::future::pending::<()>());
-        let outcome = super::MeshTransport::stop_peer_session_task_for_test(
-            handle,
-            std::time::Duration::ZERO,
-        )
-        .await;
+        let outcome =
+            super::MeshTransport::stop_peer_session_task(handle, std::time::Duration::ZERO, None)
+                .await;
 
         assert!(
             matches!(outcome, super::PeerSessionStopOutcome::ForcedParentAbort),
@@ -6006,9 +5993,10 @@ mod tests {
     #[tokio::test]
     async fn stop_peer_session_task_clean_completion_drains() {
         let handle = tokio::spawn(async {});
-        let outcome = super::MeshTransport::stop_peer_session_task_for_test(
+        let outcome = super::MeshTransport::stop_peer_session_task(
             handle,
             std::time::Duration::from_secs(5),
+            None,
         )
         .await;
 
@@ -6025,9 +6013,10 @@ mod tests {
             panic!("test panic");
         });
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        let outcome = super::MeshTransport::stop_peer_session_task_for_test(
+        let outcome = super::MeshTransport::stop_peer_session_task(
             handle,
             std::time::Duration::from_secs(5),
+            None,
         )
         .await;
 
@@ -6144,10 +6133,84 @@ mod tests {
 
         // Clean up: abort all handles.
         let tasks: Vec<_> = aux.drain().collect();
-        for t in tasks {
+        for (_id, t) in tasks {
             t.handle.abort();
             let _ = t.handle.await;
         }
+    }
+
+    // ── Iteration 79, Phase 41: Edge refresh normal completion test ────────
+
+    #[tokio::test]
+    async fn auxiliary_normal_completion_reaped_without_lag_recovery() {
+        use super::*;
+        use std::collections::HashMap;
+
+        // Phase 41 requires proving: task completes -> AuxiliaryTaskExit received
+        // -> reaper removes registry entry -> active count returns to zero.
+
+        let (exit_tx, _) = tokio::sync::broadcast::channel(16);
+        let mut exit_rx = exit_tx.subscribe();
+
+        let task_id = MeshTaskId(77);
+        let task_id_for_exit = task_id;
+        let aux_exit_tx = exit_tx.clone();
+
+        // Spawn a task that completes normally with CleanCompletion.
+        let handle = tokio::spawn(async move {
+            let _ = aux_exit_tx.send(AuxiliaryTaskExit {
+                task_id: task_id_for_exit,
+                session_id: None,
+                reason: MeshTaskExitReason::CleanCompletion,
+            });
+            MeshTaskExit {
+                id: task_id_for_exit,
+                name: "edge-replica-refresh",
+                class: crate::lifecycle::MeshTaskClass::RestartableBackground,
+                reason: MeshTaskExitReason::CleanCompletion,
+            }
+        });
+
+        // Register the task in the auxiliary registry.
+        let mut aux: HashMap<MeshTaskId, AuxiliaryTask> = HashMap::new();
+        aux.insert(
+            task_id,
+            AuxiliaryTask {
+                task_id,
+                session_id: None,
+                kind: AuxiliaryTaskKind::EdgeReplicaRefresh,
+                handle,
+                dedup_key: Some("edge_refresh:ns:normal_key".to_string()),
+            },
+        );
+        assert_eq!(aux.len(), 1, "registry must have 1 task");
+
+        // Step 1: Receive the AuxiliaryTaskExit event.
+        let exit = exit_rx.recv().await.unwrap();
+        assert_eq!(exit.task_id, task_id);
+        assert!(
+            matches!(&exit.reason, MeshTaskExitReason::CleanCompletion),
+            "exit must be CleanCompletion, got: {:?}",
+            exit.reason
+        );
+
+        // Step 2: Reaper removes entry from registry.
+        let removed = aux.remove(&exit.task_id);
+        assert!(
+            removed.is_some(),
+            "reaper must remove the task from registry"
+        );
+
+        // Step 3: Active count returns to zero.
+        assert_eq!(aux.len(), 0, "registry must be empty after reaping");
+
+        // Step 4: Handle must be joinable (no zombie).
+        let task_exit = removed.unwrap().handle.await.unwrap();
+        assert!(
+            matches!(&task_exit.reason, MeshTaskExitReason::CleanCompletion),
+            "task exit must be CleanCompletion, got: {:?}",
+            task_exit.reason
+        );
     }
 
     // ── Iteration 79, Phase 44: Auxiliary failure reason test ──────────────

@@ -696,7 +696,7 @@ Iteration 78 corrects HTTP-over-mesh request framing, closes the remaining edge-
 
 **Config validation**: `max_peer_http_header_bytes >= 4` enforced at runtime. Serde tests (`http_framing_config_defaults` in `config.rs`) verify default values for all HTTP framing fields.
 
-**Test visibility (Iteration 78)**: `stop_peer_session_task_for_test` was initially `pub` (not `#[cfg(test)]`) so integration tests in `tests/` could call it directly. **Iteration 79**: Changed from `pub` to `pub(crate)` along with `drain_peer_stream_handlers_for_test` and `drain_datagram_handlers_for_test`.
+**Test visibility (Iteration 79)**: `stop_peer_session_task_for_test` adapter was removed entirely — module-local tests now call the private `stop_peer_session_task()` directly. `drain_peer_stream_handlers_for_test` and `drain_datagram_handlers_for_test` remain `pub(crate)`.
 
 **Tests**: 13 HTTP framing unit tests, 1 real drain test, 23 guardrail assertions.
 
@@ -732,7 +732,7 @@ Backend responses are now parsed with proper HTTP/1.1 framing instead of EOF-onl
 
 ### Part G: Test-Only API Surface
 
-- `stop_peer_session_task_for_test`: `pub` → `pub(crate)`
+- `stop_peer_session_task_for_test`: **removed** (tests call private `stop_peer_session_task()` directly)
 - `drain_peer_stream_handlers_for_test`: `pub` → `pub(crate)`
 - `drain_datagram_handlers_for_test`: `pub` → `pub(crate)`
 
