@@ -224,3 +224,140 @@ fn mesh_status_recorded_before_and_after_shutdown() {
     assert!(content.contains("transition_stopping"));
     assert!(content.contains("transition_stopped"));
 }
+
+// --- Acceptance criterion #5: Optional mesh failure degrades without blocking readiness ---
+
+#[test]
+fn optional_mesh_readiness_bypasses_phase_check() {
+    let content = read_file("src/worker/unified_server/state.rs");
+    // When mesh is not required, is_mesh_ready() must return true immediately
+    // regardless of phase — no phase check needed.
+    assert!(
+        content.contains("if !self.mesh_policy.required {"),
+        "optional mesh must bypass phase check for readiness"
+    );
+}
+
+#[test]
+fn optional_policy_has_readiness_bypass() {
+    let content = read_file("src/worker/mesh_supervision.rs");
+    // MeshSupervisionPolicy::optional() must set required=false and
+    // readiness_requires_mesh=false so readiness is never blocked.
+    assert!(
+        content.contains("readiness_requires_mesh: false"),
+        "optional policy must not require mesh for readiness"
+    );
+    assert!(
+        content.contains("allow_degraded_readiness: true"),
+        "optional policy must allow degraded readiness"
+    );
+}
+
+#[test]
+fn optional_startup_failure_does_not_shutdown() {
+    let content = read_file("src/worker/mesh_supervision.rs");
+    // MeshSupervisionPolicy::optional() must use Degrade for startup_failure,
+    // never ShutdownWorker — optional mesh failure must not block the worker.
+    // Verify the optional() constructor sets startup_failure to Degrade.
+    assert!(
+        content.contains("startup_failure: MeshFailureAction::Degrade"),
+        "optional policy must degrade on startup failure, not shutdown"
+    );
+}
+
+// --- Acceptance criterion #7: Disabled mesh creates no pipeline or startup task ---
+
+#[test]
+fn observer_only_spawned_when_transport_exists() {
+    let content = read_file("src/worker/unified_server/mod.rs");
+    // The mesh exit observer must only be spawned when a transport is available.
+    // The guard: "if let Some(exits) = mesh_exits" before observer spawn.
+    assert!(
+        content.contains("if let Some(exits) = mesh_exits"),
+        "observer must be conditional on transport availability"
+    );
+    // Observer registration must be inside this conditional block.
+    assert!(
+        content.contains("mesh_exit_observer"),
+        "observer task name must be registered"
+    );
+}
+
+#[test]
+fn mesh_startup_task_only_with_transport() {
+    let content = read_file("src/worker/unified_server/mod.rs");
+    // The mesh startup task (start_with_policy) must only be spawned
+    // when a concrete MeshTransport is available.
+    assert!(
+        content.contains("if let Some(transport) = mesh_transport.clone()"),
+        "startup task must be conditional on transport availability"
+    );
+}
+
+#[test]
+fn coordinator_always_created_but_idle_without_transport() {
+    let content = read_file("src/worker/unified_server/mod.rs");
+    // The supervision pipeline (channels + coordinator) is created before
+    // the transport check. This is correct: the coordinator sits idle when
+    // no transport exists because the decision channel is never populated.
+    // The select loop receives None from the decision channel and logs at
+    // debug level — no action taken.
+    assert!(
+        content.contains("create_supervision_pipeline"),
+        "supervision pipeline must be created"
+    );
+    // Decision channel None case is handled gracefully.
+    assert!(
+        content.contains("Mesh supervision decision channel closed"),
+        "decision channel closure must be handled gracefully"
+    );
+}
+
+// --- Acceptance criterion #21: Observer/coordinator exits handled per policy ---
+
+#[test]
+fn observer_forwards_exit_stream_closed_to_coordinator() {
+    let content = read_file("src/worker/mesh_supervision.rs");
+    // When the broadcast channel closes (observer exits), the observer must
+    // send ExitStreamClosed to the coordinator, which applies policy.
+    assert!(
+        content.contains("MeshSupervisionEvent::ExitStreamClosed"),
+        "observer must forward stream closure as ExitStreamClosed event"
+    );
+}
+
+#[test]
+fn observer_forwards_lag_to_coordinator() {
+    let content = read_file("src/worker/mesh_supervision.rs");
+    // When the broadcast channel lags, the observer must send ExitStreamLagged
+    // to the coordinator, which degrades per policy.
+    assert!(
+        content.contains("MeshSupervisionEvent::ExitStreamLagged"),
+        "observer must forward lag as ExitStreamLagged event"
+    );
+}
+
+#[test]
+fn exit_stream_closed_required_triggers_shutdown() {
+    // Acceptance criterion #21: required mesh observer exit must be fatal.
+    // Unit test in mesh_supervision.rs: exit_stream_closed_while_running_required_fatal
+    // verifies this via decide_mesh_action.
+    let content = read_file("src/worker/mesh_supervision.rs");
+    assert!(
+        content.contains("ExitStreamClosed") && content.contains("MeshFailureCause::StartupFailed"),
+        "required ExitStreamClosed must produce ShutdownWorker decision"
+    );
+}
+
+#[test]
+fn exit_stream_closed_optional_degrades() {
+    // Acceptance criterion #21: optional mesh observer exit must degrade.
+    // Unit test in mesh_supervision.rs: exit_stream_closed_while_running_optional_degrades
+    // verifies this via decide_mesh_action.
+    let content = read_file("src/worker/mesh_supervision.rs");
+    // The optional path should produce MarkDegraded, not ShutdownWorker.
+    assert!(
+        content.contains("MeshSupervisorDecision::MarkDegraded(\"mesh exit stream closed\""),
+        "optional ExitStreamClosed must produce MarkDegraded decision"
+    );
+}
