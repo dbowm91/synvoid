@@ -216,6 +216,7 @@ impl From<HttpResponseFramingError> for MeshTransportError {
 /// Used by chunked framing to treat body_prefix as unread input.
 struct PrefixReader<R> {
     prefix: std::io::Cursor<Vec<u8>>,
+    prefix_exhausted: bool,
     inner: R,
 }
 
@@ -223,6 +224,7 @@ impl<R: tokio::io::AsyncRead + Unpin> PrefixReader<R> {
     fn new(prefix: Vec<u8>, inner: R) -> Self {
         Self {
             prefix: std::io::Cursor::new(prefix),
+            prefix_exhausted: false,
             inner,
         }
     }
@@ -234,11 +236,16 @@ impl<R: tokio::io::AsyncRead + Unpin> PrefixReader<R> {
     ) -> Result<u8, HttpResponseFramingError> {
         let mut buf = [0u8; 1];
         loop {
-            // Try prefix first (synchronous read from Cursor)
-            let n = std::io::Read::read(&mut self.prefix, &mut buf)
-                .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
-            if n == 1 {
-                return Ok(buf[0]);
+            // Try prefix first (synchronous read from Cursor), but only if not exhausted.
+            if !self.prefix_exhausted {
+                use std::io::Read;
+                let n = std::io::Read::read(&mut self.prefix, &mut buf)
+                    .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
+                if n == 1 {
+                    return Ok(buf[0]);
+                }
+                // n == 0 means prefix is exhausted (EOF on Cursor).
+                self.prefix_exhausted = true;
             }
             // Read from inner (async)
             let now = tokio::time::Instant::now();
@@ -267,12 +274,18 @@ impl<R: tokio::io::AsyncRead + Unpin> PrefixReader<R> {
     ) -> Result<(), HttpResponseFramingError> {
         let mut filled = 0;
         while filled < buf.len() {
-            // Try prefix first (synchronous read from Cursor)
-            let n = std::io::Read::read(&mut self.prefix, &mut buf[filled..])
-                .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
-            filled += n;
-            if filled == buf.len() {
-                return Ok(());
+            // Try prefix first (synchronous read from Cursor), but only if not exhausted.
+            if !self.prefix_exhausted {
+                use std::io::Read;
+                let n = std::io::Read::read(&mut self.prefix, &mut buf[filled..])
+                    .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
+                filled += n;
+                if filled == buf.len() {
+                    return Ok(());
+                }
+                if n == 0 {
+                    self.prefix_exhausted = true;
+                }
             }
             // Read from inner (async)
             let now = tokio::time::Instant::now();
@@ -467,6 +480,10 @@ pub async fn read_http_response_head<R: tokio::io::AsyncRead + Unpin>(
 /// Informational responses (100 Continue, 103 Early Hints, etc.) are consumed
 /// and discarded. `101 Switching Protocols` is rejected because upgrades are
 /// unsupported. If the backend closes before a final response, an error is returned.
+///
+/// Leftover body_prefix bytes from informational responses are carried forward
+/// to subsequent reads so that coalesced responses in a single TCP write are
+/// handled correctly.
 pub async fn read_http_response_sequence<R: tokio::io::AsyncRead + Unpin>(
     reader: &mut R,
     idle_timeout: Duration,
@@ -474,8 +491,76 @@ pub async fn read_http_response_sequence<R: tokio::io::AsyncRead + Unpin>(
     max_header_bytes: usize,
 ) -> Result<FramedHttpResponseHead, HttpResponseFramingError> {
     let deadline = tokio::time::Instant::now() + total_timeout;
+    let mut leftover: Vec<u8> = Vec::new();
+
     loop {
         let remaining = deadline.duration_since(tokio::time::Instant::now());
+
+        // If we have leftover bytes from a previous response, try to parse
+        // a complete header from them synchronously (no socket I/O needed).
+        if !leftover.is_empty() {
+            if let Some(pos) = leftover.windows(4).position(|w| w == b"\r\n\r\n") {
+                let header_end = pos + 4;
+                let header_bytes = leftover[..header_end].to_vec();
+                let body_prefix = leftover[header_end..].to_vec();
+
+                let header_str = String::from_utf8_lossy(&header_bytes);
+                let status_line = header_str.lines().next().unwrap_or("");
+                let parts: Vec<&str> = status_line.split_whitespace().collect();
+                if parts.len() < 2 {
+                    return Err(HttpResponseFramingError::MalformedStatusLine(
+                        status_line.to_string(),
+                    ));
+                }
+                let status_code: u16 = parts[1].parse().map_err(|_| {
+                    HttpResponseFramingError::InvalidStatusCode(parts[1].to_string())
+                })?;
+
+                if status_code == 101 {
+                    return Err(HttpResponseFramingError::MalformedStatusLine(
+                        "101 Switching Protocols not supported".to_string(),
+                    ));
+                }
+                if status_code >= 200 {
+                    let (content_length, chunked, connection_close) =
+                        parse_http_response_framing(&header_str)?;
+                    let http_version = match parts[0] {
+                        "HTTP/1.0" => HttpVersion::Http10,
+                        "HTTP/1.1" => HttpVersion::Http11,
+                        v => {
+                            return Err(HttpResponseFramingError::MalformedStatusLine(format!(
+                                "unsupported HTTP version: {v}"
+                            )))
+                        }
+                    };
+                    let body_encoding = if chunked {
+                        HttpResponseBodyEncoding::Chunked
+                    } else if content_length.is_some() {
+                        HttpResponseBodyEncoding::FixedLength
+                    } else if connection_close || matches!(http_version, HttpVersion::Http10) {
+                        HttpResponseBodyEncoding::CloseDelimited
+                    } else {
+                        HttpResponseBodyEncoding::None
+                    };
+                    return Ok(FramedHttpResponseHead {
+                        header_bytes,
+                        body_prefix,
+                        status_code,
+                        content_length,
+                        chunked,
+                        connection_close,
+                        http_version,
+                        body_encoding,
+                    });
+                }
+                // Informational — carry forward remaining body_prefix bytes.
+                leftover = body_prefix;
+                continue;
+            }
+            // Leftover doesn't contain a complete header yet — need more bytes.
+        }
+
+        // No leftover or incomplete leftover — read from the socket.
         let head =
             read_http_response_head(reader, idle_timeout, remaining, max_header_bytes).await?;
 
@@ -489,8 +574,8 @@ pub async fn read_http_response_sequence<R: tokio::io::AsyncRead + Unpin>(
             return Ok(head);
         }
 
-        // Informational response (1xx, except 101) — consume body and continue.
-        // Informational responses have no body per HTTP spec.
+        // Informational — carry forward any body_prefix bytes.
+        leftover = head.body_prefix;
     }
 }
 
@@ -581,10 +666,10 @@ pub async fn read_chunked_http_response_body<R: tokio::io::AsyncRead + Unpin>(
     max_trailer_bytes: usize,
 ) -> Result<Vec<u8>, HttpResponseFramingError> {
     let deadline = tokio::time::Instant::now() + total_timeout;
-    let mut total_wire_bytes = prefix.len();
-    let mut output = prefix;
+    let mut total_wire_bytes = 0usize;
+    let mut output = Vec::new();
     let mut line_buf: Vec<u8> = Vec::with_capacity(64);
-    let mut reader = PrefixReader::new(output.clone(), reader);
+    let mut reader = PrefixReader::new(prefix, reader);
 
     loop {
         line_buf.clear();

@@ -2816,13 +2816,15 @@ impl MeshTransport {
     }
 
     /// Spawn an auxiliary task with deduplication, capacity gating, and
-    /// proper exit publication (Iteration 79, Phase 21-22).
+    /// proper exit publication (Iteration 80).
     ///
-    /// Every task spawned through this wrapper publishes `AuxiliaryTaskExit`
-    /// on completion, ensuring the reaper removes it from the registry.
-    /// Stale tasks with a matching `dedup_key` are aborted and awaited
-    /// before the new task is inserted. Capacity rejections also await
-    /// the handle to maintain the abort-and-await ownership invariant.
+    /// Uses a gated-start pattern: the future is spawned but waits for a
+    /// oneshot signal before executing. The ownership record is inserted
+    /// before the gate is opened, ensuring completion cannot race ahead
+    /// of registration.
+    ///
+    /// Serialized by `auxiliary_submission_lock` so that deduplication,
+    /// capacity checking, stale-task teardown, and insertion are atomic.
     pub(crate) async fn spawn_auxiliary_task<F>(
         &self,
         kind: AuxiliaryTaskKind,
@@ -2841,7 +2843,26 @@ impl MeshTransport {
 
         metrics::counter!("edge_refresh_submitted").increment(1);
 
+        // Gate: future cannot start until registration is complete.
+        let (start_tx, start_rx) = tokio::sync::oneshot::channel();
+
         let handle = tokio::spawn(async move {
+            // Wait for registration to complete before executing user future.
+            if start_rx.await.is_err() {
+                // Gate dropped (submission rejected after spawn).
+                let reason = MeshTaskExitReason::Cancelled;
+                let _ = aux_exit_tx.send(AuxiliaryTaskExit {
+                    task_id: task_id_for_exit,
+                    session_id: session_id_for_exit,
+                    reason: reason.clone(),
+                });
+                return MeshTaskExit {
+                    id: task_id_for_exit,
+                    name,
+                    class: crate::lifecycle::MeshTaskClass::RestartableBackground,
+                    reason,
+                };
+            }
             let reason = future.await;
             match &reason {
                 MeshTaskExitReason::CleanCompletion => {
@@ -2867,8 +2888,10 @@ impl MeshTransport {
             }
         });
 
-        // Phase 22: Deduplication — abort and await stale matching tasks.
-        // Phase 26: Capacity check — reject if at limit.
+        // Acquire submission lock — serializes all dedup/capacity/reservation/insert operations.
+        let _guard = self.auxiliary_submission_lock.lock().await;
+
+        // Deduplication and capacity check.
         const MAX_CONCURRENT_EDGE_REPLICA_REFRESH: usize = 8;
         let stale_tasks = {
             let mut aux = self.auxiliary_tasks.lock().await;
@@ -2887,18 +2910,23 @@ impl MeshTransport {
                 }
                 Err(()) => {
                     metrics::counter!("edge_refresh_capacity_dropped").increment(1);
+                    // Drop start_tx — gated task will see Err and exit cleanly.
+                    drop(start_tx);
                     handle.abort();
                     let _ = handle.await;
                     return Err(());
                 }
             }
         };
-        // Abort and await stale tasks outside the lock.
+
+        // Abort and await stale tasks (still under submission lock — volume is low).
         for old_task in stale_tasks {
             old_task.handle.abort();
             let _ = old_task.handle.await;
             tracing::debug!("Aborted stale auxiliary task {} (dedup)", old_task.task_id);
         }
+
+        // Insert into registry BEFORE opening the gate.
         {
             let mut aux = self.auxiliary_tasks.lock().await;
             aux.insert(
@@ -2912,6 +2940,9 @@ impl MeshTransport {
                 }),
             );
         }
+
+        // Signal the gate — future can now execute.
+        let _ = start_tx.send(());
 
         Ok(task_id)
     }

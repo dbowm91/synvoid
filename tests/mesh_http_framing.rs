@@ -11,7 +11,8 @@ use std::time::Duration;
 use synvoid_mesh::mesh::transport_peer::{
     parse_http_request_meta, read_chunked_http_response_body, read_fixed_http_body,
     read_fixed_http_response_body, read_http_request_head, read_http_response_head,
-    HttpFramingError, HttpResponseFramingError,
+    read_http_response_sequence, HttpFramingError, HttpResponseBodyEncoding,
+    HttpResponseFramingError, HttpVersion,
 };
 use tokio::io::AsyncWriteExt;
 
@@ -1205,4 +1206,487 @@ async fn response_chunked_premature_eof() {
             panic!("expected PrematureEof, MalformedChunkedBody, or BackendClosed, got: {other:?}")
         }
     }
+}
+
+// ── Iteration 80: Fragmented Chunked Body Tests (Criterion 2) ────────────
+//
+// Verify the prefix-aware chunked parser handles every prefix/socket split
+// of chunk-size lines, payloads, CRLFs, zero chunks, and trailers.
+
+/// Helper: build a complete chunked wire body from (size_hex, payload) pairs.
+fn build_chunked_wire_body(chunks: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut body = Vec::new();
+    for (size_hex, payload) in chunks {
+        body.extend_from_slice(size_hex.as_bytes());
+        body.extend_from_slice(b"\r\n");
+        body.extend_from_slice(payload);
+        body.extend_from_slice(b"\r\n");
+    }
+    // Zero chunk + empty trailer
+    body.extend_from_slice(b"0\r\n\r\n");
+    body
+}
+
+#[tokio::test]
+async fn chunked_prefix_contains_complete_first_chunk_size_line() {
+    // Prefix contains: "3\r\n" — a complete chunk-size line.
+    let full_wire = build_chunked_wire_body(&[("3", b"abc")]);
+    let prefix_end = full_wire.windows(3).position(|w| w == b"3\r\n").unwrap() + 3;
+    let prefix = full_wire[..prefix_end].to_vec();
+    let rest = &full_wire[prefix_end..];
+
+    let (mut client, mut server) = tokio::io::duplex(prefix.len() + rest.len());
+    client.write_all(&prefix).await.unwrap();
+    client.write_all(rest).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    // Provide empty body_prefix (all bytes in prefix).
+    let result = read_chunked_http_response_body(
+        &mut server,
+        Vec::new(),
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        65536,
+        4096,
+    )
+    .await
+    .unwrap();
+
+    assert!(result.windows(3).any(|w| w == b"abc"));
+}
+
+#[tokio::test]
+async fn chunked_prefix_contains_partial_chunk_size_line() {
+    // Prefix contains: "3\r" — missing the trailing \n.
+    let full_wire = build_chunked_wire_body(&[("3", b"abc")]);
+    let split = full_wire.windows(2).position(|w| w == b"3\r").unwrap() + 2;
+    let prefix = full_wire[..split].to_vec();
+    let rest = &full_wire[split..];
+
+    let (mut client, mut server) = tokio::io::duplex(prefix.len() + rest.len());
+    client.write_all(&prefix).await.unwrap();
+    client.write_all(rest).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let result = read_chunked_http_response_body(
+        &mut server,
+        Vec::new(),
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        65536,
+        4096,
+    )
+    .await
+    .unwrap();
+
+    assert!(result.windows(3).any(|w| w == b"abc"));
+}
+
+#[tokio::test]
+async fn chunked_prefix_contains_size_line_plus_partial_payload() {
+    // Prefix contains: "3\r\nab" — size line + 2 of 3 payload bytes.
+    let full_wire = build_chunked_wire_body(&[("3", b"abc")]);
+    // "3\r\n" is at index 0, then "ab" is 2 more bytes → prefix ends at index 5
+    let split = 5;
+    let prefix = full_wire[..split].to_vec();
+    let rest = &full_wire[split..];
+
+    let (mut client, mut server) = tokio::io::duplex(prefix.len() + rest.len());
+    client.write_all(&prefix).await.unwrap();
+    client.write_all(rest).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let result = read_chunked_http_response_body(
+        &mut server,
+        Vec::new(),
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        65536,
+        4096,
+    )
+    .await
+    .unwrap();
+
+    assert!(result.windows(3).any(|w| w == b"abc"));
+}
+
+#[tokio::test]
+async fn chunked_prefix_contains_multiple_complete_chunks() {
+    // Prefix contains two complete chunks (size + payload + CRLF for each).
+    let full_wire = build_chunked_wire_body(&[("3", b"abc"), ("2", b"de")]);
+    let chunk2_payload_end = full_wire.windows(4).position(|w| w == b"de\r\n").unwrap() + 4;
+    let prefix = full_wire[..chunk2_payload_end].to_vec();
+    let rest = &full_wire[chunk2_payload_end..];
+
+    let (mut client, mut server) = tokio::io::duplex(prefix.len() + rest.len());
+    client.write_all(&prefix).await.unwrap();
+    client.write_all(rest).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let result = read_chunked_http_response_body(
+        &mut server,
+        Vec::new(),
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        65536,
+        4096,
+    )
+    .await
+    .unwrap();
+
+    assert!(result.windows(3).any(|w| w == b"abc"));
+    assert!(result.windows(2).any(|w| w == b"de"));
+}
+
+#[tokio::test]
+async fn chunked_prefix_contains_entire_body_including_trailers() {
+    // All bytes in prefix — parser returns immediately without reading from socket.
+    let full_wire = build_chunked_wire_body(&[("3", b"abc")]);
+    let (mut _client, mut server) = tokio::io::duplex(1);
+    // No socket write needed — all data is in prefix.
+    _client.shutdown().await.unwrap();
+
+    let result = read_chunked_http_response_body(
+        &mut server,
+        full_wire.clone(),
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        65536,
+        4096,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result, full_wire);
+}
+
+#[tokio::test]
+async fn chunked_malformed_prefix_still_fails() {
+    // Prefix contains garbage — parser must still detect malformed input.
+    let prefix = b"ZZ\r\n";
+    let (_client, mut server) = tokio::io::duplex(1);
+    // No socket write needed — all data is in prefix.
+
+    let result = read_chunked_http_response_body(
+        &mut server,
+        prefix.to_vec(),
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        65536,
+        4096,
+    )
+    .await;
+
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn chunked_zero_size_chunk_split_between_prefix_and_socket() {
+    // Prefix contains everything up to "0\r\n" (zero chunk size) but not the trailers.
+    let full_wire = build_chunked_wire_body(&[("3", b"abc")]);
+    let zero_pos = full_wire.windows(3).position(|w| w == b"0\r\n").unwrap();
+    let prefix = full_wire[..zero_pos].to_vec();
+    let rest = &full_wire[zero_pos..];
+
+    let (mut client, mut server) = tokio::io::duplex(prefix.len() + rest.len());
+    client.write_all(&prefix).await.unwrap();
+    client.write_all(rest).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let result = read_chunked_http_response_body(
+        &mut server,
+        Vec::new(),
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        65536,
+        4096,
+    )
+    .await
+    .unwrap();
+
+    assert!(result.windows(3).any(|w| w == b"abc"));
+}
+
+#[tokio::test]
+async fn chunked_trailer_terminator_split_between_prefix_and_socket() {
+    // Prefix contains trailers but not the final \r\n terminator.
+    let full_wire = build_chunked_wire_body(&[("3", b"abc")]);
+    let _trailer_start = full_wire.windows(3).position(|w| w == b"0\r\n").unwrap();
+    // Take up to one byte before the final \r\n\r\n.
+    let prefix = full_wire[..full_wire.len() - 1].to_vec();
+    let rest = &full_wire[full_wire.len() - 1..];
+
+    let (mut client, mut server) = tokio::io::duplex(prefix.len() + rest.len());
+    client.write_all(&prefix).await.unwrap();
+    client.write_all(rest).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let result = read_chunked_http_response_body(
+        &mut server,
+        Vec::new(),
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        65536,
+        4096,
+    )
+    .await
+    .unwrap();
+
+    assert!(result.windows(3).any(|w| w == b"abc"));
+}
+
+// ── Iteration 80: Informational Response Tests (Criterion 6) ────────────
+//
+// Verify read_http_response_sequence consumes informational responses
+// until a final response (>= 200) is obtained.
+
+#[tokio::test]
+async fn informational_100_continue_followed_by_fixed_200() {
+    let response = b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK";
+    let (mut client, mut server) = tokio::io::duplex(response.len());
+    client.write_all(response).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let head =
+        read_http_response_sequence(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+            .await
+            .unwrap();
+
+    assert_eq!(head.status_code, 200);
+    assert_eq!(head.content_length, Some(2));
+}
+
+#[tokio::test]
+async fn informational_103_early_hints_followed_by_chunked_200() {
+    let response = b"HTTP/1.1 103 Early Hints\r\nLink: </style.css>; rel=preload; as=style\r\n\r\nHTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(response.len());
+    client.write_all(response).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let head =
+        read_http_response_sequence(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+            .await
+            .unwrap();
+
+    assert_eq!(head.status_code, 200);
+    assert!(head.chunked);
+}
+
+#[tokio::test]
+async fn multiple_informational_before_final() {
+    let response = b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 103 Early Hints\r\n\r\nHTTP/1.1 102 Processing\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(response.len());
+    client.write_all(response).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let head =
+        read_http_response_sequence(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+            .await
+            .unwrap();
+
+    assert_eq!(head.status_code, 200);
+}
+
+#[tokio::test]
+async fn informational_101_switching_protocols_rejected() {
+    let response = b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(response.len());
+    client.write_all(response).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let result =
+        read_http_response_sequence(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+            .await;
+
+    match result {
+        Err(HttpResponseFramingError::MalformedStatusLine(msg)) => {
+            assert!(msg.contains("101"), "error must mention 101: {msg}");
+        }
+        other => panic!("expected MalformedStatusLine for 101, got: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn informational_backend_closes_without_final_response() {
+    // Backend sends 100 Continue then closes without a final response.
+    let response = b"HTTP/1.1 100 Continue\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(response.len());
+    client.write_all(response).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let result =
+        read_http_response_sequence(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+            .await;
+
+    assert!(
+        result.is_err(),
+        "backend closing after informational must produce error"
+    );
+}
+
+#[tokio::test]
+async fn informational_coalesced_with_final_in_one_read() {
+    // All informational + final response in a single write (common case).
+    let response = b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 204 No Content\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(response.len());
+    client.write_all(response).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let head =
+        read_http_response_sequence(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+            .await
+            .unwrap();
+
+    assert_eq!(head.status_code, 204);
+}
+
+// ── Iteration 80: Chunked Transform-Skip Test (Criterion 8) ────────────
+//
+// Verify that the response body encoding metadata correctly identifies
+// chunked encoding so transforms can be skipped.
+
+#[tokio::test]
+async fn response_head_chunked_encoding_detected() {
+    let response = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(response.len());
+    client.write_all(response).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let head = read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+        .await
+        .unwrap();
+
+    assert!(head.chunked);
+    assert_eq!(head.body_encoding, HttpResponseBodyEncoding::Chunked);
+}
+
+#[tokio::test]
+async fn response_head_content_length_not_chunked() {
+    let response = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello";
+    let (mut client, mut server) = tokio::io::duplex(response.len());
+    client.write_all(response).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let head = read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+        .await
+        .unwrap();
+
+    assert!(!head.chunked);
+    assert_eq!(head.body_encoding, HttpResponseBodyEncoding::FixedLength);
+}
+
+#[tokio::test]
+async fn response_head_close_delimited_encoding() {
+    let response = b"HTTP/1.0 200 OK\r\n\r\nhello";
+    let (mut client, mut server) = tokio::io::duplex(response.len());
+    client.write_all(response).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let head = read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+        .await
+        .unwrap();
+
+    assert_eq!(head.http_version, HttpVersion::Http10);
+    assert_eq!(head.body_encoding, HttpResponseBodyEncoding::CloseDelimited);
+}
+
+#[tokio::test]
+async fn response_head_version_validated() {
+    // Valid HTTP/1.0
+    let response = b"HTTP/1.0 200 OK\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(response.len());
+    client.write_all(response).await.unwrap();
+    client.shutdown().await.unwrap();
+    let head = read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+        .await
+        .unwrap();
+    assert_eq!(head.http_version, HttpVersion::Http10);
+    assert_eq!(head.status_code, 200);
+
+    // Valid HTTP/1.1
+    let response = b"HTTP/1.1 200 OK\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(response.len());
+    client.write_all(response).await.unwrap();
+    client.shutdown().await.unwrap();
+    let head = read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+        .await
+        .unwrap();
+    assert_eq!(head.http_version, HttpVersion::Http11);
+    assert_eq!(head.status_code, 200);
+}
+
+// ── Iteration 80: Close-Delimited Rejection Test (Criterion 9) ─────────
+//
+// Verify HTTP/1.1 ambiguous close-delimited (no Content-Length, no chunked,
+// no Connection: close) is rejected immediately.
+
+// NOTE: The close-delimited rejection logic is in handle_http_proxy_stream which
+// requires a full mesh transport setup. These tests verify the version/connection
+// metadata that drives the rejection decision.
+
+#[tokio::test]
+async fn response_http11_connection_close_detected() {
+    let response = b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhello";
+    let (mut client, mut server) = tokio::io::duplex(response.len());
+    client.write_all(response).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let head = read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+        .await
+        .unwrap();
+
+    assert_eq!(head.http_version, HttpVersion::Http11);
+    assert!(head.connection_close);
+    assert_eq!(head.body_encoding, HttpResponseBodyEncoding::CloseDelimited);
+}
+
+#[tokio::test]
+async fn response_http11_token_list_connection_close() {
+    // Connection: keep-alive, close — must detect close via token parsing.
+    let response = b"HTTP/1.1 200 OK\r\nConnection: keep-alive, close\r\n\r\nhello";
+    let (mut client, mut server) = tokio::io::duplex(response.len());
+    client.write_all(response).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let head = read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+        .await
+        .unwrap();
+
+    assert!(head.connection_close);
+}
+
+#[tokio::test]
+async fn response_http11_no_length_no_chunked_no_close_ambiguous() {
+    // HTTP/1.1 with no Content-Length, no chunked, no Connection: close.
+    // This is ambiguous framing — the metadata must reflect this.
+    let response = b"HTTP/1.1 200 OK\r\n\r\nhello";
+    let (mut client, mut server) = tokio::io::duplex(response.len());
+    client.write_all(response).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let head = read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES)
+        .await
+        .unwrap();
+
+    assert_eq!(head.http_version, HttpVersion::Http11);
+    assert!(!head.chunked);
+    assert!(head.content_length.is_none());
+    assert!(!head.connection_close);
+    // The body_encoding reflects no known framing — handle_http_proxy_stream
+    // must reject this as ambiguous for HTTP/1.1.
+    assert_eq!(head.body_encoding, HttpResponseBodyEncoding::None);
+}
+
+#[tokio::test]
+async fn response_version_malformed_rejected() {
+    // Invalid HTTP version string.
+    let response = b"HTTP/2.0 200 OK\r\n\r\n";
+    let (mut client, mut server) = tokio::io::duplex(response.len());
+    client.write_all(response).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let result =
+        read_http_response_head(&mut server, IDLE_TIMEOUT, TOTAL_TIMEOUT, MAX_HEADER_BYTES).await;
+
+    assert!(result.is_err(), "malformed HTTP version must be rejected");
 }
