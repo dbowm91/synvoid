@@ -4,7 +4,7 @@ This skill documents the buffer pool implementation in the SynVoid codebase.
 
 ## Overview
 
-The buffer pool (`crates/synvoid-utils/crates/synvoid-utils/src/buffer/pool.rs`) provides high-performance buffer allocation using sharded mutex backing instead of lock-free CAS (to eliminate ABA hazards).
+The buffer pool (`crates/synvoid-utils/src/buffer/pool.rs`) provides high-performance buffer allocation using sharded mutex backing instead of lock-free CAS (to eliminate ABA hazards).
 
 ## Architecture
 

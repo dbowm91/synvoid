@@ -13,10 +13,20 @@ admin-ui/
 │   ├── lib.rs             # Library root
 │   ├── pages/             # Page components (one per route)
 │   │   ├── mod.rs         # Page module exports
+│   │   ├── alerts.rs      # Alert management
 │   │   ├── dashboard.rs   # Dashboard home
+│   │   ├── dns.rs         # DNS management
+│   │   ├── honeypot.rs    # Honeypot controls
+│   │   ├── login.rs       # Login page
+│   │   ├── logs.rs        # Log viewer
+│   │   ├── mesh.rs        # Mesh network status
+│   │   ├── process_management.rs  # Process management
+│   │   ├── settings.rs    # Global settings
+│   │   ├── sites.rs       # Site list
 │   │   ├── system_status.rs  # System status + mesh status + genesis key modal
 │   │   ├── threat_level.rs   # Threat level controls
-│   │   └── ...               # Other pages
+│   │   ├── workers.rs     # Worker management
+│   │   └── ...               # Other pages (23 total)
 │   ├── services/          # API client
 │   │   ├── api.rs         # ApiService with all REST methods
 │   │   └── websocket.rs   # WebSocket for realtime updates

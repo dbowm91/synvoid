@@ -8,9 +8,8 @@ The static files module (`src/static_files/`) serves static content from the fil
 
 | File | Purpose |
 |------|---------|
-| `src/static_files/mod.rs` | StaticFileHandler, main serving logic |
-| `src/static_files/directory.rs` | Directory listing rendering |
-| `src/config/site/static_files.rs` | SiteStaticThemeConfig |
+| `src/static_files/mod.rs` | StaticFileHandler, main serving logic, directory listing rendering |
+| `crates/synvoid-config/src/site/static_files.rs` | SiteStaticThemeConfig |
 
 ## StaticFileHandler
 

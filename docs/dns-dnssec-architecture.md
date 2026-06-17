@@ -68,5 +68,5 @@ In forwarding mode AD is passed through from upstream. In authoritative mode AD 
 
 - `src/dns/dnssec.rs` — NSEC3 generation, base32 encoding, key tag calculation
 - `src/dns/trust_anchor.rs` — RFC 5011 state machine
-- `src/dns/dnssec_handler.rs` — DNSSEC response assembly
+- `src/dns/server/dnssec_impl.rs` — DNSSEC response assembly
 - `src/dns/server/dnssec_impl.rs` — Server-side NSEC3 synthesis

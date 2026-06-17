@@ -136,9 +136,9 @@ pub struct BotDetector {
 
 | File | Purpose |
 |------|---------|
-| `src/waf/bot.rs` | BotDetector implementation |
+| `crates/synvoid-waf/src/bot.rs` | BotDetector implementation (re-exported via `src/waf/mod.rs`) |
 | `src/tls/server.rs:56-84` | JA4 computation in HttpsConnection |
-| `src/waf/mod.rs:1181-1215` | check_bot_protection() |
+| `src/waf/mod.rs` | check_bot_protection() — verify current line numbers |
 | `src/http/server.rs` | Plain HTTP (no JA4 available) |
 | `src/proxy.rs` | Proxy path (no JA4 available) |
 

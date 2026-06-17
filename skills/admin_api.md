@@ -131,74 +131,9 @@ let api_routes = Router::new()
     // ...
 ```
 
-## Overseer Status Pattern
+## Supervisor Status Pattern
 
-### Writing Status (Overseer Process)
-
-The Overseer writes status to a file periodically:
-
-```rust
-// In src/supervisor/process.rs
-const SUPERVISOR_STATUS_FILE: &str = "overseer_status.json";
-
-struct OverseerStatusFile {
-    running: bool,
-    pid: Option<u32>,
-    master_pid: Option<u32>,
-    master_status: String,
-    uptime_secs: u64,
-    upgrade_mode: String,
-    drain_status: String,
-    workers: Vec<WorkerStatusInfo>,
-    version: String,
-    last_updated: u64,
-}
-
-impl OverseerProcess {
-    async fn write_status_file(&self) {
-        let status = self.collect_status();
-        let json = serde_json::to_string_pretty(&status).unwrap();
-        let path = self.runtime_dir.join(OVERSESEER_STATUS_FILE);
-        // Write atomically via temp file
-        tokio::fs::write(&temp_path, json).await;
-        tokio::fs::rename(&temp_path, &path).await;
-    }
-}
-```
-
-### Reading Status (Admin Handler)
-
-```rust
-// In src/admin/handlers/system.rs
-fn get_overseer_status_file_path() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/var/run"))
-        .join("synvoid")
-        .join("overseer_status.json")
-}
-
-pub async fn get_overseer(
-    State(state): State<Arc<AdminState>>,
-    _auth: OptionalAuth,
-) -> Result<Json<OverseerStatusResponse>, StatusCode> {
-    let path = get_overseer_status_file_path();
-    
-    if path.exists() {
-        if let Ok(content) = tokio::fs::read_to_string(&path).await {
-            if let Ok(json) = serde_json::from_str::<Value>(&content) {
-                return Ok(Json(OverseerStatusResponse {
-                    running: json.get("running").and_then(|v| v.as_bool()).unwrap_or(false),
-                    // ... map other fields
-                }));
-            }
-        }
-    }
-    
-    // Fallback to ProcessManager state
-    // ...
-}
-```
+The Supervisor manages worker lifecycle and exposes status via the Admin API. Use `get_supervisor` / `get_supervisor_status` handlers to read supervisor state (the old "Overseer" terminology has been fully replaced by "Supervisor").
 
 ## DefaultsConfig Sub-configs
 

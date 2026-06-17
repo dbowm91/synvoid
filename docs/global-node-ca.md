@@ -54,4 +54,4 @@ Compromise of a global node's private key allows impersonation of any node in th
 
 - `src/mesh/cert_dist.rs` — Site TLS cert distribution (origin → edge)
 - `src/mesh/` — Mesh protocol, peer authentication
-- `src/tls/acme.rs` — ACME client (separate from mesh CA)
+- `crates/synvoid-tls/src/acme.rs` — ACME client (separate from mesh CA)

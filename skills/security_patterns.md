@@ -1517,7 +1517,7 @@ impl DhtRecord {
 
 ### Trusted Proxy XFF Handling
 
-**Location**: `src/waf/request_sanitization.rs`
+**Location**: `src/proxy/headers.rs`
 
 **Issue**: `get_real_ip()` returned `ips[0]` (first IP) but standard XFF order is `client, proxy1, proxy2`. The client is the first untrusted public IP before the trusted proxy suffix, not the first IP overall.
 

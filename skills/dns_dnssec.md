@@ -96,7 +96,7 @@ authentic_data: is_dnssec_validated,  // From upstream resolver
 
 ## Configuration
 
-### Recursive DNS Config (`src/config/dns/dns_recursive.rs`)
+### Recursive DNS Config (`crates/synvoid-config/src/dns/dns_recursive.rs`)
 
 | Option | Default | Description |
 |--------|---------|-------------|
@@ -106,7 +106,7 @@ authentic_data: is_dnssec_validated,  // From upstream resolver
 | `root_hints_path` | `"root.hints"` | Root server hints |
 | `trust_anchor_path` | `"trusted-key.key"` | Trust anchor file |
 
-### Trust Anchor Config (`src/config/dns/dns_dnssec.rs`)
+### Trust Anchor Config (`crates/synvoid-config/src/dns/dns_dnssec.rs`)
 
 | Option | Default | Description |
 |--------|---------|-------------|

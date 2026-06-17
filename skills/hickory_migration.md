@@ -1,10 +1,10 @@
 # hickory-dns 0.25 → 0.26 Migration
 
-**Status**: COMPLETED (2026-04-26)
+**Status**: COMPLETED (2026-04-26) — Historical reference only.
 
 ## Overview
 
-The hickory-dns crates (hickory-proto, hickory-resolver, hickory-recursor) version 0.26 has been successfully implemented.
+The hickory-dns crates (hickory-proto, hickory-resolver, hickory-recursor) version 0.26 has been successfully implemented. This document is retained for historical reference; the migration is complete and no further action is needed.
 
 ## Key Changes Applied
 

@@ -103,7 +103,7 @@ allow_downgrade = false
 - `signature.rs` - Ed25519 verification
 - `storage.rs` - Local rule persistence
 
-### 2. Configuration (`src/config/`)
+### 2. Configuration (`crates/synvoid-config/src/`)
 
 - Add `RuleFeedConfig` to main config
 - Add to defaults

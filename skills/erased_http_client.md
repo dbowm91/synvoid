@@ -37,10 +37,9 @@ To fully switch the streaming path to erased pooling:
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `src/http_client/mod.rs` | 34-41 | Moka cache for HTTP clients |
-| `src/http_client/erased_pool.rs` | 245-283 | `checkout()` with error handling (NEW-63 added doc comments) |
+| `crates/synvoid-http-client/src/client.rs` | - | Moka cache for HTTP clients |
+| `crates/synvoid-http-client/src/erased_pool.rs` | - | `checkout()` with error handling, erased-body + pool primitives |
 | `src/http/server.rs` | body-forwarding branch | Uses `StreamingHttpClient` for active streaming send path |
-| `src/http_client/erased_pool.rs` | - | Erased-body + pool primitives |
 
 ## Verification Commands
 
@@ -54,5 +53,4 @@ cargo test --lib erased_pool
 
 ## Related Skills
 
-- `performance_patterns.md` - Connection pooling and buffer management
 - `httpserver.md` - HTTP server patterns

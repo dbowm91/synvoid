@@ -131,4 +131,4 @@ The `dns_serving_healthy` field is:
 - `src/dns/server/` — DNS server mesh integration
 - `src/mesh/cert_dist.rs` — Certificate distribution (origin → edge)
 - `src/dns/trust_anchor.rs` — RFC 5011 trust anchor management
-- `src/tls/acme.rs` — ACME client implementation
+- `crates/synvoid-tls/src/acme.rs` — ACME client implementation

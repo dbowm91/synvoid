@@ -129,7 +129,7 @@ At 1000K RPS:
 
 ## StreamingWafBody for True Streaming (Wave P1)
 
-**Location**: `src/http_client/mod.rs:92-203`
+**Location**: `crates/synvoid-http-client/src/streaming_waf_body.rs` (re-exported via `src/http_client/streaming_waf_body.rs`)
 
 For true streaming to upstream (without full body buffering), a `StreamingWafBody<B>` type was added that wraps `hyper::body::Body` and performs WAF scanning on chunks as they pass through:
 
@@ -169,7 +169,7 @@ send_request_streaming(&client, method, url, body_stream, headers, timeout).awai
 
 ## Type-Erased Body Infrastructure (2026-05-04)
 
-**Location**: `src/http_client/erased_pool.rs`
+**Location**: `crates/synvoid-http-client/src/erased_pool.rs`
 
 For type-erased body handling in the connection pool, the following types were added:
 
