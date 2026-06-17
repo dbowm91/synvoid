@@ -20,6 +20,8 @@ pub mod cpu_task;
 pub mod drain_adapter;
 pub mod drain_state;
 pub mod extension;
+#[cfg(feature = "mesh")]
+pub mod mesh_supervision;
 pub mod metrics;
 pub mod task_registry;
 pub mod traits;

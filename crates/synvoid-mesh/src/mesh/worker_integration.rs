@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use tokio::sync::broadcast;
 
-use crate::lifecycle::{MeshShutdownReport, MeshTaskExit};
+use crate::lifecycle::{MeshLifecycleState, MeshShutdownReport, MeshTaskExit};
 use crate::transport_core::MeshTransportError;
 
 /// Worker-facing trait for managing mesh transport lifecycle.
@@ -37,6 +37,14 @@ pub trait ManagedMeshService: Send + Sync {
 
     /// Check if the mesh is currently running.
     fn is_running(&self) -> bool;
+
+    /// Prepare the mesh for restart. If the transport is in a Failed state,
+    /// this recovers it to Stopped. Returns Ok(()) if the transport is ready
+    /// to be started again.
+    async fn prepare_restart(&self, timeout: Duration) -> Result<(), MeshTransportError>;
+
+    /// Returns the current lifecycle state of the mesh transport.
+    async fn lifecycle_state(&self) -> MeshLifecycleState;
 }
 
 /// Health status of the mesh service, as observed by the worker.
@@ -134,6 +142,22 @@ impl ManagedMeshService for std::sync::Arc<crate::transport::MeshTransport> {
     fn is_running(&self) -> bool {
         self.running_projection
             .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    async fn prepare_restart(&self, timeout: Duration) -> Result<(), MeshTransportError> {
+        let state = self.lifecycle_state().await;
+        match state {
+            MeshLifecycleState::Stopped => Ok(()),
+            MeshLifecycleState::Failed => self.recover_failed_state(timeout).await,
+            _ => Err(MeshTransportError::Other(format!(
+                "cannot restart from lifecycle state {:?}",
+                state
+            ))),
+        }
+    }
+
+    async fn lifecycle_state(&self) -> MeshLifecycleState {
+        self.lifecycle_state().await
     }
 }
 

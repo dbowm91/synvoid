@@ -276,6 +276,44 @@ The supervision loop returns `SupervisionOutcome` (Lifecycle | DirectCause) inst
 
 **Secondary exit classification**: Exits after primary cause selection are expected cleanup. They do not increment `tasks_unexpectedly_completed` and cannot replace the primary cause.
 
+### Iteration 82 — Mesh Transport Polish and Worker Supervision
+
+**Mesh transport polish** (Part A):
+- `parse_http_response_framing()` now rejects malformed header lines (no colon separator) with `MalformedHeaderLine` instead of silently skipping them
+- `read_http_response_sequence()` rejects non-empty `body_prefix` for 204/304 responses (`UnexpectedBodyBytesForNoBodyResponse`)
+- `try_parse_http_response_head()` enforces `max_header_bytes` internally (not just in callers)
+- All `duration_since` calls use saturating arithmetic with explicit deadline checks
+- `spawn_auxiliary_task()` reordered: admission checks happen before spawning the gated wrapper
+- Auxiliary metrics renamed from `edge_refresh_*` to `mesh_auxiliary_*` for task-kind correctness
+- `AuxiliarySubmissionTestHooks` (cfg(test)) provides deterministic barrier-based race testing
+
+**Worker mesh supervision** (Parts B-H):
+- `src/worker/mesh_supervision.rs` — new module with policy types, status tracking, event/decision types, and pure classification logic
+  - `MeshSupervisionPolicy` — configurable failure response with `required()` and `optional()` presets
+  - `MeshFailureAction` — `Ignore`/`Degrade`/`RestartMesh`/`ShutdownWorker`
+  - `WorkerMeshPhase`/`WorkerMeshStatus` — worker-side mesh status projection
+  - `MeshSupervisionEvent` — events from mesh observer to coordinator
+  - `MeshSupervisorDecision` — decisions from coordinator to composition root
+  - `decide_mesh_action()` — pure, unit-testable classifier
+  - `RestartBudget` — bounded restart tracking with sliding window
+  - `compute_backoff()` — exponential backoff with jitter
+  - `MeshShutdownDisposition`/`classify_mesh_shutdown_report()` — shutdown report classifier
+  - `create_supervision_pipeline()` — creates channels and coordinator (composition root spawns both)
+  - `run_mesh_exit_observer()` — async task receiving mesh exit events
+
+- `WorkerShutdownCause` extended with:
+  - `MeshStartupFailed(String)` — mesh startup failure
+  - `MeshShutdownIncomplete(String)` — mesh shutdown did not complete cleanly
+
+- Worker composition root integration (`src/worker/unified_server/mod.rs`):
+  - Subscribe to mesh exits before starting mesh (subscribe-before-start invariant)
+  - Mesh exit observer registered in `WorkerTaskRegistry` as `RestartableBackground`
+  - Mesh supervision coordinator registered in `WorkerTaskRegistry` as `RestartableBackground`
+  - Supervision `tokio::select!` loop includes mesh decision branch
+  - `UnifiedServerWorkerState` carries `mesh_status` and `mesh_policy` fields
+
+- **Ownership invariant**: The mesh service reports facts; the worker decides policy. Mesh internals never directly terminate the process.
+
 ### How to add a new long-lived task
 1. Determine task class (CriticalService, RestartableBackground, BoundedChild, CpuOffload, Detached)
 2. For CriticalService/RestartableBackground: use WorkerTaskRegistry.spawn_critical() or spawn_background()

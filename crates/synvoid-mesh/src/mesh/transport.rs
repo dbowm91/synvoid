@@ -101,6 +101,22 @@ pub(crate) const MAX_SNAPSHOT_RECORDS: usize = 10000;
 /// Maximum duration for a block received from another node (24 hours)
 pub(crate) const MAX_BLOCK_DURATION_SECS: u64 = 86400;
 
+pub(crate) struct AuxiliarySubmissionTestHooks {
+    pub after_lock: Option<std::sync::Arc<tokio::sync::Barrier>>,
+    pub before_insert: Option<std::sync::Arc<tokio::sync::Barrier>>,
+    pub before_gate_release: Option<std::sync::Arc<tokio::sync::Barrier>>,
+}
+
+impl Default for AuxiliarySubmissionTestHooks {
+    fn default() -> Self {
+        Self {
+            after_lock: None,
+            before_insert: None,
+            before_gate_release: None,
+        }
+    }
+}
+
 pub struct MeshTransport {
     pub(crate) config: Arc<MeshConfig>,
     pub(crate) topology: Arc<MeshTopology>,
@@ -209,6 +225,7 @@ pub struct MeshTransport {
     pub(crate) aggregate_handler_drained: Arc<AtomicUsize>,
     pub(crate) aggregate_handler_aborted: Arc<AtomicUsize>,
     pub(crate) aggregate_handler_failed: Arc<AtomicUsize>,
+    pub(crate) auxiliary_test_hooks: Arc<Mutex<Option<AuxiliarySubmissionTestHooks>>>,
 }
 
 /// Failure injection points for deterministic startup testing.
@@ -490,6 +507,7 @@ impl Clone for MeshTransport {
             aggregate_handler_drained: self.aggregate_handler_drained.clone(),
             aggregate_handler_aborted: self.aggregate_handler_aborted.clone(),
             aggregate_handler_failed: self.aggregate_handler_failed.clone(),
+            auxiliary_test_hooks: self.auxiliary_test_hooks.clone(),
         }
     }
 }
@@ -856,6 +874,7 @@ impl MeshTransport {
             aggregate_handler_drained: Arc::new(AtomicUsize::new(0)),
             aggregate_handler_aborted: Arc::new(AtomicUsize::new(0)),
             aggregate_handler_failed: Arc::new(AtomicUsize::new(0)),
+            auxiliary_test_hooks: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -888,6 +907,16 @@ impl MeshTransport {
     /// Check if a startup failure hook is currently set.
     pub fn has_startup_failure_hook(&self) -> bool {
         self.startup_failure_hook.blocking_lock().is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_auxiliary_test_hooks(&self, hooks: AuxiliarySubmissionTestHooks) {
+        *self.auxiliary_test_hooks.blocking_lock() = Some(hooks);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clear_auxiliary_test_hooks(&self) {
+        *self.auxiliary_test_hooks.blocking_lock() = None;
     }
 
     pub fn set_site_config_sync_callback(
@@ -2855,59 +2884,16 @@ impl MeshTransport {
         F: std::future::Future<Output = MeshTaskExitReason> + Send + 'static,
     {
         let task_id = self.id_generator.next();
-        let aux_exit_tx = self.auxiliary_exit_tx.clone();
-        let task_id_for_exit = task_id;
-        let session_id_for_exit = session_id.clone();
-
-        metrics::counter!("edge_refresh_submitted").increment(1);
-
-        // Gate: future cannot start until registration is complete.
-        let (start_tx, start_rx) = tokio::sync::oneshot::channel();
-
-        let handle = tokio::spawn(async move {
-            // Wait for registration to complete before executing user future.
-            if start_rx.await.is_err() {
-                // Gate dropped (submission rejected after spawn).
-                let reason = MeshTaskExitReason::Cancelled;
-                let _ = aux_exit_tx.send(AuxiliaryTaskExit {
-                    task_id: task_id_for_exit,
-                    session_id: session_id_for_exit,
-                    reason: reason.clone(),
-                });
-                return MeshTaskExit {
-                    id: task_id_for_exit,
-                    name,
-                    class: crate::lifecycle::MeshTaskClass::RestartableBackground,
-                    reason,
-                };
-            }
-            let reason = future.await;
-            match &reason {
-                MeshTaskExitReason::CleanCompletion => {
-                    metrics::counter!("edge_refresh_succeeded").increment(1);
-                }
-                MeshTaskExitReason::Error(_) => {
-                    metrics::counter!("edge_refresh_failed").increment(1);
-                }
-                _ => {
-                    metrics::counter!("edge_refresh_failed").increment(1);
-                }
-            }
-            let _ = aux_exit_tx.send(AuxiliaryTaskExit {
-                task_id: task_id_for_exit,
-                session_id: session_id_for_exit,
-                reason: reason.clone(),
-            });
-            MeshTaskExit {
-                id: task_id_for_exit,
-                name,
-                class: crate::lifecycle::MeshTaskClass::RestartableBackground,
-                reason,
-            }
-        });
 
         // Acquire submission lock — serializes all state/dedup/capacity/insert operations.
         let _guard = self.auxiliary_submission_lock.lock().await;
+
+        #[cfg(test)]
+        if let Some(ref hooks) = *self.auxiliary_test_hooks.lock().await {
+            if let Some(ref barrier) = hooks.after_lock {
+                barrier.wait().await;
+            }
+        }
 
         // Recheck lifecycle state under the lock (Phase 19).
         {
@@ -2935,11 +2921,7 @@ impl MeshTransport {
                     transport_state,
                     kind
                 );
-                metrics::counter!("edge_refresh_capacity_dropped").increment(1);
-                // Drop start_tx — gated task will see Err and exit cleanly.
-                drop(start_tx);
-                handle.abort();
-                let _ = handle.await;
+                metrics::counter!("mesh_auxiliary_capacity_dropped").increment(1);
                 return Err(crate::lifecycle::SpawnAuxiliaryError::LifecycleNotRunning(
                     transport_state,
                 ));
@@ -2958,17 +2940,13 @@ impl MeshTransport {
             ) {
                 Ok(stale) => {
                     if !stale.is_empty() {
-                        metrics::counter!("edge_refresh_deduplicated")
+                        metrics::counter!("mesh_auxiliary_deduplicated")
                             .increment(stale.len() as u64);
                     }
                     stale
                 }
                 Err(()) => {
-                    metrics::counter!("edge_refresh_capacity_dropped").increment(1);
-                    // Drop start_tx — gated task will see Err and exit cleanly.
-                    drop(start_tx);
-                    handle.abort();
-                    let _ = handle.await;
+                    metrics::counter!("mesh_auxiliary_capacity_dropped").increment(1);
                     return Err(crate::lifecycle::SpawnAuxiliaryError::CapacityExceeded);
                 }
             }
@@ -2979,6 +2957,63 @@ impl MeshTransport {
             old_task.handle.abort();
             let _ = old_task.handle.await;
             tracing::debug!("Aborted stale auxiliary task {} (dedup)", old_task.task_id);
+        }
+
+        metrics::counter!("mesh_auxiliary_submitted").increment(1);
+
+        // Gate: future cannot start until registration is complete.
+        let (start_tx, start_rx) = tokio::sync::oneshot::channel();
+        let aux_exit_tx = self.auxiliary_exit_tx.clone();
+        let task_id_for_exit = task_id;
+        let session_id_for_exit = session_id.clone();
+
+        let handle = tokio::spawn(async move {
+            // Wait for registration to complete before executing user future.
+            if start_rx.await.is_err() {
+                // Gate dropped (submission rejected after spawn).
+                let reason = MeshTaskExitReason::Cancelled;
+                let _ = aux_exit_tx.send(AuxiliaryTaskExit {
+                    task_id: task_id_for_exit,
+                    session_id: session_id_for_exit,
+                    reason: reason.clone(),
+                });
+                return MeshTaskExit {
+                    id: task_id_for_exit,
+                    name,
+                    class: crate::lifecycle::MeshTaskClass::RestartableBackground,
+                    reason,
+                };
+            }
+            let reason = future.await;
+            match &reason {
+                MeshTaskExitReason::CleanCompletion => {
+                    metrics::counter!("mesh_auxiliary_succeeded").increment(1);
+                }
+                MeshTaskExitReason::Error(_) => {
+                    metrics::counter!("mesh_auxiliary_failed").increment(1);
+                }
+                _ => {
+                    metrics::counter!("mesh_auxiliary_failed").increment(1);
+                }
+            }
+            let _ = aux_exit_tx.send(AuxiliaryTaskExit {
+                task_id: task_id_for_exit,
+                session_id: session_id_for_exit,
+                reason: reason.clone(),
+            });
+            MeshTaskExit {
+                id: task_id_for_exit,
+                name,
+                class: crate::lifecycle::MeshTaskClass::RestartableBackground,
+                reason,
+            }
+        });
+
+        #[cfg(test)]
+        if let Some(ref hooks) = *self.auxiliary_test_hooks.lock().await {
+            if let Some(ref barrier) = hooks.before_insert {
+                barrier.wait().await;
+            }
         }
 
         // Insert into registry BEFORE opening the gate.
@@ -2994,6 +3029,13 @@ impl MeshTransport {
                     dedup_key,
                 }),
             );
+        }
+
+        #[cfg(test)]
+        if let Some(ref hooks) = *self.auxiliary_test_hooks.lock().await {
+            if let Some(ref barrier) = hooks.before_gate_release {
+                barrier.wait().await;
+            }
         }
 
         // Signal the gate — future can now execute.
@@ -7148,11 +7190,15 @@ mod tests {
             .await;
 
         // The concurrent submission must have completed (either accepted or rejected).
-        let submission_result = submission_handle.await.expect("submission task must complete");
+        let submission_result = submission_handle
+            .await
+            .expect("submission task must complete");
 
         // Regardless of which won the race, the registry must be empty.
         assert_eq!(
-            transport.count_auxiliary_tasks(AuxiliaryTaskKind::EdgeReplicaRefresh).await,
+            transport
+                .count_auxiliary_tasks(AuxiliaryTaskKind::EdgeReplicaRefresh)
+                .await,
             0,
             "shutdown must drain all auxiliary tasks"
         );
@@ -7227,7 +7273,9 @@ mod tests {
 
         // After recovery, registry must be empty (all tasks drained).
         assert_eq!(
-            transport.count_auxiliary_tasks(AuxiliaryTaskKind::EdgeReplicaRefresh).await,
+            transport
+                .count_auxiliary_tasks(AuxiliaryTaskKind::EdgeReplicaRefresh)
+                .await,
             0,
             "recovery must drain all auxiliary tasks"
         );
@@ -7277,7 +7325,9 @@ mod tests {
         }
 
         // Verify all tasks are registered.
-        let active = transport.count_auxiliary_tasks(AuxiliaryTaskKind::EdgeReplicaRefresh).await;
+        let active = transport
+            .count_auxiliary_tasks(AuxiliaryTaskKind::EdgeReplicaRefresh)
+            .await;
         assert_eq!(active, 4, "must have 4 active auxiliary tasks");
 
         // Shutdown drains everything.
@@ -7286,7 +7336,9 @@ mod tests {
             .await;
 
         // Verify: registry empty, all handles cleaned up, lifecycle in Stopped.
-        let remaining = transport.count_auxiliary_tasks(AuxiliaryTaskKind::EdgeReplicaRefresh).await;
+        let remaining = transport
+            .count_auxiliary_tasks(AuxiliaryTaskKind::EdgeReplicaRefresh)
+            .await;
         assert_eq!(remaining, 0, "shutdown must drain all auxiliary tasks");
 
         for id in &ids {

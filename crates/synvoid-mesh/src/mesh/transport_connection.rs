@@ -92,6 +92,7 @@ impl MeshTransport {
             aggregate_handler_drained: self.aggregate_handler_drained.clone(),
             aggregate_handler_aborted: self.aggregate_handler_aborted.clone(),
             aggregate_handler_failed: self.aggregate_handler_failed.clone(),
+            auxiliary_test_hooks: self.auxiliary_test_hooks.clone(),
         }
     }
 

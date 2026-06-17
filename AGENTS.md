@@ -67,11 +67,13 @@ cargo test --test mesh_id_boundary_guard  # Mesh-ID enforcement boundary guard
 cargo test --test mesh_forced_cleanup --features mesh,dns  # includes iter77_* behavioral tests
 cargo test --test background_task_ownership_guard
 cargo test --test mesh_task_ownership_guard --features mesh,dns  # includes iter77_* guardrails
+cargo test --test worker_mesh_supervision_boundary_guard --features mesh,dns
 cargo test --test mesh_http_framing --features mesh,dns
 cargo test -p synvoid-mesh --features mesh auxiliary  # mesh auxiliary task unit tests
 cargo test --test mesh_lifecycle_tests         # Mesh lifecycle state machine and task group tests
 cargo test --test mesh_startup_rollback        # Mesh startup rollback behavioral tests
 cargo test --test worker_supervision_control_flow --features mesh  # Worker supervision + mesh exit tests
+cargo test -p synvoid --lib worker::mesh_supervision --features mesh
 cargo test -p synvoid-mesh --features mesh lifecycle  # Mesh lifecycle unit tests
 cargo test -p synvoid-mesh --features mesh task_group  # Mesh task group unit tests
 cargo test -p synvoid-mesh --features mesh startup  # Mesh staged startup/rollback tests
@@ -170,6 +172,7 @@ cargo check --no-default-features --features mesh,dns
 | `peer_stream_drain_timeout_secs` | Config (Iteration 77 — stream drain timeout, default 5s) |
 | `max_concurrent_datagram_handlers` | Config (Iteration 77 — bounded datagram handler concurrency, default 32) |
 | `extract_host_from_http` / `extract_path_from_http` / `extract_method_from_http` | Removed in Iteration 80 — use `ParsedHttpRequestMeta` instead |
+| `src/worker/mesh_supervision.rs` | New — Iteration 82 worker mesh supervision policy, status, and decision types |
 
 ## Data-Plane Composition Root Boundary
 
@@ -407,6 +410,12 @@ Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.overrid
 - **map_lifecycle_channel_closed()**: `src/worker/task_registry.rs` — maps lifecycle channel closure to cause (active -> RegistryExitChannelClosed, shutting down -> None)
 - **request_lifecycle_transition()**: `src/worker/unified_server/lifecycle.rs` — sends lifecycle event with oneshot acknowledgement, returns `IpcLoopError` on channel closure or dropped ack
 - **ManagedService trait**: `src/worker/task_registry.rs` — `name()`, `shutdown()`, `join()` contract for long-lived services
+- **MeshSupervisionPolicy**: `src/worker/mesh_supervision.rs` — worker-level mesh supervision policy with `required()` and `optional()` presets; controls startup/critical/restartable failure actions, restart budget, and readiness requirements
+- **WorkerMeshPhase**: `src/worker/mesh_supervision.rs` — worker-observed mesh phase (Disabled/Starting/Running/Degraded/Restarting/Failed/Stopping/Stopped), separate from transport's internal MeshLifecycleState
+- **decide_mesh_action()**: `src/worker/mesh_supervision.rs` — pure classifier mapping (policy, status, event, shutdown_intent) to MeshSupervisorDecision (NoAction/MarkDegraded/RestartMesh/ShutdownWorker)
+- **MeshSupervisionCoordinator**: `src/worker/mesh_supervision.rs` — receives MeshSupervisionEvents from observer, consults policy, produces MeshSupervisorDecisions for composition root
+- **RestartBudget**: `src/worker/mesh_supervision.rs` — bounded restart tracking with sliding window expiry
+- **MeshShutdownDisposition**: `src/worker/mesh_supervision.rs` — classifies MeshShutdownReport into Clean/ForcedButComplete/Incomplete
 - **ThreatFeedClient lifecycle**: `src/waf/threat_intel/feed_client.rs` — uses `select!` with `shutdown_tx` watch channel; `is_running()` checks `!handle.is_finished()` (Iteration 62); `join_with_timeout()` provides bounded join with abort (Iteration 62)
 - **build_default_serverless_manager()**: `src/worker/unified_server/init_apps.rs` - helper function consolidating global plugin manager fallback logic
 - **RECORD_STORE_GLOBAL**: `crates/synvoid-mesh/src/mesh/mod.rs:180` - **legacy/fallback only** — all production paths use explicit injection via `DataPlaneServices.record_store`

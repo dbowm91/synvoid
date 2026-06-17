@@ -164,6 +164,8 @@ pub enum HttpResponseFramingError {
     MalformedChunkedBody(String),
     BackendClosedBeforeCompleteResponse,
     ResponseBodyPrefixExceedsContentLength { prefix: usize, declared: usize },
+    MalformedHeaderLine(String),
+    UnexpectedBodyBytesForNoBodyResponse { status: u16, observed: usize },
     Io(String),
 }
 
@@ -204,6 +206,15 @@ impl std::fmt::Display for HttpResponseFramingError {
                 write!(
                     f,
                     "Response body prefix ({prefix} bytes) exceeds declared Content-Length ({declared})"
+                )
+            }
+            Self::MalformedHeaderLine(line) => {
+                write!(f, "malformed response header line: {line}")
+            }
+            Self::UnexpectedBodyBytesForNoBodyResponse { status, observed } => {
+                write!(
+                    f,
+                    "unexpected {observed} bytes after {status} response with no body"
                 )
             }
             Self::Io(msg) => write!(f, "I/O error during response framing: {msg}"),
@@ -403,6 +414,9 @@ fn try_parse_http_response_head(
     };
 
     let header_end = pos + 4;
+    if header_end > max_header_bytes {
+        return Err(HttpResponseFramingError::HeaderTooLarge);
+    }
     let header_bytes = buffer[..header_end].to_vec();
     let body_prefix = buffer[header_end..].to_vec();
 
@@ -462,8 +476,11 @@ fn parse_http_response_framing(
     let mut chunked = false;
     let mut connection_close = false;
 
-    for line in header_str.lines() {
-        // Skip the status line and empty lines.
+    for (i, line) in header_str.lines().enumerate() {
+        // Skip the status line (first line) and empty lines.
+        if i == 0 {
+            continue;
+        }
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
@@ -472,7 +489,11 @@ fn parse_http_response_framing(
         // Exact header-name splitting: require a colon separator.
         let (name, value) = match trimmed.split_once(':') {
             Some(pair) => pair,
-            None => continue, // Malformed header line without colon — skip.
+            None => {
+                return Err(HttpResponseFramingError::MalformedHeaderLine(
+                    line.to_string(),
+                ));
+            }
         };
 
         let name = name.trim();
@@ -610,6 +631,23 @@ pub async fn read_http_response_sequence<R: tokio::io::AsyncRead + Unpin>(
                 // Final response — return with body prefix.
                 let mut final_head = head;
                 final_head.body_prefix = remainder;
+
+                // For HEAD requests (checking the request method), 204, and 304 responses,
+                // reject non-empty body_prefix bytes.
+                // Note: We don't have access to request method in this function,
+                // so we only check 204 and 304 here. HEAD response handling
+                // requires request-method context from the caller.
+                if (final_head.status_code == 204 || final_head.status_code == 304)
+                    && !final_head.body_prefix.is_empty()
+                {
+                    return Err(
+                        HttpResponseFramingError::UnexpectedBodyBytesForNoBodyResponse {
+                            status: final_head.status_code,
+                            observed: final_head.body_prefix.len(),
+                        },
+                    );
+                }
+
                 return Ok(final_head);
             }
 
@@ -619,12 +657,11 @@ pub async fn read_http_response_sequence<R: tokio::io::AsyncRead + Unpin>(
         }
 
         // Need more bytes — read from the socket.
-        let remaining = deadline.duration_since(tokio::time::Instant::now());
-
         let now = tokio::time::Instant::now();
         if now >= deadline {
             return Err(HttpResponseFramingError::HeaderFramingTimeout);
         }
+        let remaining = deadline.saturating_duration_since(now);
         let effective_timeout = idle_timeout.min(remaining);
 
         let remaining_capacity = max_header_bytes
@@ -6432,5 +6469,251 @@ mod tests {
             result, wire_body,
             "chunked parser must return the complete wire body unchanged"
         );
+    }
+
+    // ── Iteration 82: Focused polish tests for response framing ──
+
+    #[test]
+    fn malformed_header_line_rejected() {
+        let mut buffer = b"HTTP/1.1 200 OK\r\nBadHeader\r\n\r\n".to_vec();
+        let result = try_parse_http_response_head(&mut buffer, 4096);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            HttpResponseFramingError::MalformedHeaderLine(line) => {
+                assert!(
+                    line.contains("BadHeader"),
+                    "error should reference the bad header: {line}"
+                );
+            }
+            other => panic!("expected MalformedHeaderLine, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn folded_header_line_rejected() {
+        let mut buffer = b"HTTP/1.1 200 OK\r\nX-Header: value\r\n folded-value\r\n\r\n".to_vec();
+        let result = try_parse_http_response_head(&mut buffer, 4096);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            HttpResponseFramingError::MalformedHeaderLine(line) => {
+                assert!(
+                    line.contains("folded-value"),
+                    "error should reference the folded line: {line}"
+                );
+            }
+            other => panic!("expected MalformedHeaderLine, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn empty_header_lines_are_skipped() {
+        // Status line + bare \r\n (the header terminator) — should succeed.
+        let mut buffer = b"HTTP/1.1 200 OK\r\n\r\n".to_vec();
+        let result = try_parse_http_response_head(&mut buffer, 4096);
+        assert!(result.is_ok());
+        let (head, _consumed) = result.unwrap().expect("should parse successfully");
+        assert_eq!(head.status_code, 200);
+    }
+
+    #[test]
+    fn pure_parser_enforces_header_limit() {
+        let mut buffer = b"HTTP/1.1 200 OK\r\nX-Long: aaaaabbbbcccccdddddeeeee\r\n\r\n".to_vec();
+        // max_header_bytes=10 is less than the actual header size.
+        let result = try_parse_http_response_head(&mut buffer, 10);
+        assert!(result.is_err());
+        assert!(
+            matches!(
+                result.unwrap_err(),
+                HttpResponseFramingError::HeaderTooLarge
+            ),
+            "expected HeaderTooLarge"
+        );
+    }
+
+    #[test]
+    fn valid_headers_accepted() {
+        let mut buffer =
+            b"HTTP/1.1 200 OK\r\nContent-Length: 42\r\nContent-Type: text/plain\r\n\r\n".to_vec();
+        let result = try_parse_http_response_head(&mut buffer, 4096);
+        assert!(result.is_ok());
+        let (head, _consumed) = result.unwrap().expect("should parse successfully");
+        assert_eq!(head.status_code, 200);
+        assert_eq!(head.content_length, Some(42));
+    }
+
+    #[test]
+    fn conflicting_content_length_rejected() {
+        let mut buffer =
+            b"HTTP/1.1 200 OK\r\nContent-Length: 42\r\nContent-Length: 100\r\n\r\n".to_vec();
+        let result = try_parse_http_response_head(&mut buffer, 4096);
+        assert!(result.is_err());
+        assert!(
+            matches!(
+                result.unwrap_err(),
+                HttpResponseFramingError::InvalidContentLength(_)
+            ),
+            "expected InvalidContentLength for conflicting values"
+        );
+    }
+
+    #[test]
+    fn duplicate_equal_content_length_accepted() {
+        let mut buffer =
+            b"HTTP/1.1 200 OK\r\nContent-Length: 42\r\nContent-Length: 42\r\n\r\n".to_vec();
+        let result = try_parse_http_response_head(&mut buffer, 4096);
+        assert!(result.is_ok());
+        let (head, _consumed) = result.unwrap().expect("should parse successfully");
+        assert_eq!(head.content_length, Some(42));
+    }
+
+    #[test]
+    fn chunked_and_content_length_rejected() {
+        let mut buffer =
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 10\r\n\r\n".to_vec();
+        let result = try_parse_http_response_head(&mut buffer, 4096);
+        assert!(result.is_err());
+        assert!(
+            matches!(
+                result.unwrap_err(),
+                HttpResponseFramingError::InvalidContentLength(_)
+            ),
+            "expected InvalidContentLength for chunked + CL"
+        );
+    }
+
+    #[test]
+    fn unsupported_transfer_encoding_rejected() {
+        let mut buffer = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\n".to_vec();
+        let result = try_parse_http_response_head(&mut buffer, 4096);
+        assert!(result.is_err());
+        assert!(
+            matches!(
+                result.unwrap_err(),
+                HttpResponseFramingError::UnsupportedTransferEncoding(_)
+            ),
+            "expected UnsupportedTransferEncoding"
+        );
+    }
+
+    #[test]
+    fn invalid_status_line_rejected() {
+        let mut buffer = b"HTTP/1.1 2000 OK\r\n\r\n".to_vec();
+        let result = try_parse_http_response_head(&mut buffer, 4096);
+        assert!(result.is_err());
+        assert!(
+            matches!(
+                result.unwrap_err(),
+                HttpResponseFramingError::InvalidStatusCode(_)
+            ),
+            "expected InvalidStatusCode"
+        );
+    }
+
+    #[test]
+    fn malformed_status_line_rejected() {
+        let mut buffer = b"NOTHTTP 200 OK\r\n\r\n".to_vec();
+        let result = try_parse_http_response_head(&mut buffer, 4096);
+        assert!(result.is_err());
+        assert!(
+            matches!(
+                result.unwrap_err(),
+                HttpResponseFramingError::MalformedStatusLine(_)
+            ),
+            "expected MalformedStatusLine"
+        );
+    }
+
+    #[test]
+    fn informational_1xx_returns_empty_body_prefix() {
+        // 103 Early Hints — informational, body_prefix should be empty.
+        let mut buffer = b"HTTP/1.1 103 Early Hints\r\nLink: </style.css>; rel=preload\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello".to_vec();
+        let result = try_parse_http_response_head(&mut buffer, 4096);
+        assert!(result.is_ok());
+        let (head, consumed) = result.unwrap().expect("should parse successfully");
+        assert_eq!(head.status_code, 103);
+        assert!(
+            head.body_prefix.is_empty(),
+            "informational response must have empty body_prefix"
+        );
+        // consumed should point past the first \r\n\r\n, into the second response.
+        assert_eq!(&buffer[consumed..consumed + 5], b"HTTP/");
+    }
+
+    #[test]
+    fn body_prefix_present_for_final_response() {
+        let mut buffer = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhelloworld".to_vec();
+        let result = try_parse_http_response_head(&mut buffer, 4096);
+        assert!(result.is_ok());
+        let (head, consumed) = result.unwrap().expect("should parse successfully");
+        assert_eq!(head.status_code, 200);
+        assert_eq!(head.body_prefix, b"helloworld");
+        assert_eq!(
+            consumed,
+            b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n".len()
+        );
+    }
+
+    #[test]
+    fn header_limit_at_exact_boundary_accepted() {
+        // Header exactly at the limit should be accepted.
+        let header = b"HTTP/1.1 200 OK\r\nX-Header: short\r\n\r\n";
+        let mut buffer = header.to_vec();
+        let result = try_parse_http_response_head(&mut buffer, header.len());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn header_limit_one_byte_over_rejected() {
+        let header = b"HTTP/1.1 200 OK\r\nX-Header: short\r\n\r\n";
+        let mut buffer = header.to_vec();
+        let result = try_parse_http_response_head(&mut buffer, header.len() - 1);
+        assert!(result.is_err());
+        assert!(
+            matches!(
+                result.unwrap_err(),
+                HttpResponseFramingError::HeaderTooLarge
+            ),
+            "expected HeaderTooLarge one byte over limit"
+        );
+    }
+
+    #[test]
+    fn connection_close_detected() {
+        let mut buffer = b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n".to_vec();
+        let result = try_parse_http_response_head(&mut buffer, 4096);
+        assert!(result.is_ok());
+        let (head, _consumed) = result.unwrap().expect("should parse successfully");
+        assert!(head.connection_close);
+        assert_eq!(head.body_encoding, HttpResponseBodyEncoding::CloseDelimited);
+    }
+
+    #[test]
+    fn http10_default_close_delimited() {
+        let mut buffer = b"HTTP/1.0 200 OK\r\n\r\n".to_vec();
+        let result = try_parse_http_response_head(&mut buffer, 4096);
+        assert!(result.is_ok());
+        let (head, _consumed) = result.unwrap().expect("should parse successfully");
+        assert_eq!(head.http_version, HttpVersion::Http10);
+        assert_eq!(head.body_encoding, HttpResponseBodyEncoding::CloseDelimited);
+    }
+
+    #[test]
+    fn chunked_encoding_detected() {
+        let mut buffer = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
+        let result = try_parse_http_response_head(&mut buffer, 4096);
+        assert!(result.is_ok());
+        let (head, _consumed) = result.unwrap().expect("should parse successfully");
+        assert!(head.chunked);
+        assert_eq!(head.body_encoding, HttpResponseBodyEncoding::Chunked);
+    }
+
+    #[test]
+    fn no_body_response_none_encoding() {
+        let mut buffer = b"HTTP/1.1 204 No Content\r\n\r\n".to_vec();
+        let result = try_parse_http_response_head(&mut buffer, 4096);
+        assert!(result.is_ok());
+        let (head, _consumed) = result.unwrap().expect("should parse successfully");
+        assert_eq!(head.status_code, 204);
+        assert_eq!(head.body_encoding, HttpResponseBodyEncoding::None);
     }
 }

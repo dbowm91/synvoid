@@ -90,6 +90,12 @@ pub enum WorkerShutdownCause {
     /// A critical mesh service exited unexpectedly.
     #[cfg(feature = "mesh")]
     MeshServiceExit(MeshTaskExit),
+    /// Mesh startup failed and was rolled back.
+    #[cfg(feature = "mesh")]
+    MeshStartupFailed(String),
+    /// Mesh shutdown did not complete cleanly.
+    #[cfg(feature = "mesh")]
+    MeshShutdownIncomplete(String),
     SupervisorShutdown,
     SupervisorDisconnected,
     RegistryExitChannelClosed,
@@ -124,6 +130,10 @@ impl WorkerShutdownCause {
             Self::CriticalTaskExit(_) => true,
             #[cfg(feature = "mesh")]
             Self::MeshServiceExit(_) => true,
+            #[cfg(feature = "mesh")]
+            Self::MeshStartupFailed(_) => true,
+            #[cfg(feature = "mesh")]
+            Self::MeshShutdownIncomplete(_) => true,
             Self::SupervisorShutdown => false,
             Self::SupervisorDisconnected => true,
             Self::RegistryExitChannelClosed => true,
@@ -150,7 +160,12 @@ impl WorkerShutdownCause {
         ) || {
             #[cfg(feature = "mesh")]
             {
-                matches!(self, Self::MeshServiceExit(_))
+                matches!(
+                    self,
+                    Self::MeshServiceExit(_)
+                        | Self::MeshStartupFailed(_)
+                        | Self::MeshShutdownIncomplete(_)
+                )
             }
             #[cfg(not(feature = "mesh"))]
             {
@@ -188,6 +203,14 @@ impl fmt::Display for WorkerShutdownCause {
             #[cfg(feature = "mesh")]
             Self::MeshServiceExit(exit) => {
                 write!(f, "mesh_service_exit: {} ({})", exit.name, exit.reason)
+            }
+            #[cfg(feature = "mesh")]
+            Self::MeshStartupFailed(reason) => {
+                write!(f, "mesh_startup_failed: {}", reason)
+            }
+            #[cfg(feature = "mesh")]
+            Self::MeshShutdownIncomplete(reason) => {
+                write!(f, "mesh_shutdown_incomplete: {}", reason)
             }
             Self::SupervisorShutdown => write!(f, "supervisor_shutdown"),
             Self::SupervisorDisconnected => write!(f, "supervisor_disconnected"),

@@ -228,6 +228,12 @@ pub async fn run_unified_server_worker(
         data_plane,
         #[cfg(feature = "mesh")]
         canonical_snapshot: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+        #[cfg(feature = "mesh")]
+        mesh_status: std::sync::Arc::new(tokio::sync::RwLock::new(
+            crate::worker::mesh_supervision::WorkerMeshStatus::default(),
+        )),
+        #[cfg(feature = "mesh")]
+        mesh_policy: crate::worker::mesh_supervision::MeshSupervisionPolicy::default(),
         task_registry: Arc::new(TokioMutex::new(
             crate::worker::task_registry::WorkerTaskRegistry::new(),
         )),
@@ -274,6 +280,90 @@ pub async fn run_unified_server_worker(
         let registry = state.task_registry.lock().await;
         registry.shutdown_started_flag()
     };
+
+    // ---- Phase 14.5: mesh supervision pipeline ----
+    //
+    // Subscribe to mesh exits via the concrete MeshTransport, start the
+    // observer task, and run the supervision coordinator. Decisions are
+    // consumed in the main supervision select loop below.
+    //
+    // `mesh_decision_rx_opt` is always created (but `None` without mesh feature)
+    // so the select loop can unconditionally poll it.
+    #[cfg(feature = "mesh")]
+    let mut mesh_decision_rx_opt: Option<
+        tokio::sync::mpsc::Receiver<crate::worker::mesh_supervision::MeshSupervisorDecision>,
+    > = {
+        let mesh_status = std::sync::Arc::new(tokio::sync::RwLock::new(
+            crate::worker::mesh_supervision::WorkerMeshStatus::default(),
+        ));
+
+        // Get the concrete MeshTransport from the transport manager.
+        let mesh_transport: Option<std::sync::Arc<synvoid_mesh::MeshTransport>> = state
+            .data_plane
+            .mesh_transport_manager
+            .as_ref()
+            .and_then(|tm| tm.get_quic_transport())
+            .map(|quic| quic.get_inner());
+
+        // Create the supervision pipeline: channels + coordinator.
+        let (event_tx, coordinator, decision_rx) =
+            crate::worker::mesh_supervision::create_supervision_pipeline(
+                mesh_status.clone(),
+                state.mesh_policy.clone(),
+            );
+
+        // Spawn the coordinator as a registered background task.
+        {
+            let shutdown_rx = state.task_registry.lock().await.child_token();
+            let mut registry = state.task_registry.lock().await;
+            let mut coord = coordinator;
+            registry.spawn_background("mesh_supervision_coordinator", async move {
+                coord.run(shutdown_rx).await;
+            });
+            tracing::info!("Mesh supervision coordinator started");
+        }
+
+        // Subscribe to mesh exit events BEFORE starting mesh.
+        // subscribe_exits() is a direct method on MeshTransport.
+        let mesh_exits = mesh_transport.as_ref().map(|t| t.subscribe_exits());
+
+        // Spawn the mesh exit observer if we have a transport.
+        // Registered in WorkerTaskRegistry for lifecycle management.
+        if let Some(exits) = mesh_exits {
+            let shutdown_rx = state.task_registry.lock().await.child_token();
+            let status = mesh_status.clone();
+            let mut registry = state.task_registry.lock().await;
+            registry.spawn_background(
+                "mesh_exit_observer",
+                crate::worker::mesh_supervision::run_mesh_exit_observer(
+                    exits,
+                    status,
+                    event_tx.clone(),
+                    shutdown_rx,
+                ),
+            );
+            tracing::info!("Mesh exit observer started");
+        }
+
+        // Mesh transport start is gated behind the dns feature because
+        // MeshTransport::start() requires it. The supervision infrastructure
+        // (observer + coordinator) is wired here so it's ready when mesh
+        // startup is enabled in init_mesh.
+        //
+        // NOTE: mesh.start() is not called here because the current init_mesh
+        // code path always takes the dummy branch (Phase 3). When mesh startup
+        // is re-enabled, add the start call here with:
+        //   #[cfg(feature = "dns")]
+        //   if let Some(transport) = mesh_transport {
+        //       tokio::spawn(async move { transport.start().await ... });
+        //   }
+
+        Some(decision_rx)
+    };
+    #[cfg(not(feature = "mesh"))]
+    let mut mesh_decision_rx_opt: Option<
+        tokio::sync::mpsc::Receiver<crate::worker::mesh_supervision::MeshSupervisorDecision>,
+    > = None;
 
     // ---- Phase 15: supervision loop ----
     //
@@ -352,6 +442,40 @@ pub async fn run_unified_server_worker(
                     }
                 }
             }
+            // Mesh supervision decisions. Inlined async block avoids
+            // moving a captured future across loop iterations.
+            mesh_decision = async {
+                match &mut mesh_decision_rx_opt {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                match mesh_decision {
+                    Some(crate::worker::mesh_supervision::MeshSupervisorDecision::ShutdownWorker(cause)) => {
+                        tracing::error!(
+                            "Mesh supervision shutting down worker: {} ({})",
+                            cause.task_name(),
+                            cause.exit_reason()
+                        );
+                        break crate::worker::task_registry::SupervisionOutcome::DirectCause(
+                            crate::worker::task_registry::WorkerShutdownCause::MeshStartupFailed(
+                                cause.exit_reason()
+                            )
+                        );
+                    }
+                    Some(crate::worker::mesh_supervision::MeshSupervisorDecision::RestartMesh) => {
+                        tracing::warn!("mesh restart requested but not yet implemented");
+                    }
+                    Some(crate::worker::mesh_supervision::MeshSupervisorDecision::MarkDegraded(reason)) => {
+                        tracing::warn!(reason = %reason, "mesh degraded");
+                    }
+                    Some(crate::worker::mesh_supervision::MeshSupervisorDecision::NoAction) => {}
+                    None => {
+                        // Mesh decision channel closed — observer exited.
+                        tracing::debug!("Mesh supervision decision channel closed");
+                    }
+                }
+            }
         }
     };
 
@@ -397,6 +521,9 @@ pub async fn run_unified_server_worker(
                     | crate::worker::task_registry::WorkerShutdownCause::CriticalTaskExit(_)
                     | crate::worker::task_registry::WorkerShutdownCause::RegistryExitChannelClosed
                     | crate::worker::task_registry::WorkerShutdownCause::SupervisorDisconnected
+                    | crate::worker::task_registry::WorkerShutdownCause::MeshStartupFailed(_)
+                    | crate::worker::task_registry::WorkerShutdownCause::MeshShutdownIncomplete(_)
+                    | crate::worker::task_registry::WorkerShutdownCause::MeshServiceExit(_)
             );
             let drain_timeout = if graceful {
                 std::time::Duration::from_secs(30)
@@ -551,6 +678,42 @@ pub async fn run_unified_server_worker(
                     id: worker_id,
                     error: "Registry exit channel closed — lifecycle infrastructure failure"
                         .to_string(),
+                    severity: crate::process::ErrorSeverity::Critical,
+                    error_code: crate::process::ErrorCode::Unknown,
+                })
+                .await;
+        }
+        #[cfg(feature = "mesh")]
+        crate::worker::task_registry::WorkerShutdownCause::MeshStartupFailed(ref reason) => {
+            let mut ipc_guard = state.ipc.lock().await;
+            let _ = ipc_guard
+                .send(&crate::process::Message::WorkerError {
+                    id: worker_id,
+                    error: format!("Mesh startup failed: {}", reason),
+                    severity: crate::process::ErrorSeverity::Critical,
+                    error_code: crate::process::ErrorCode::Unknown,
+                })
+                .await;
+        }
+        #[cfg(feature = "mesh")]
+        crate::worker::task_registry::WorkerShutdownCause::MeshShutdownIncomplete(ref reason) => {
+            let mut ipc_guard = state.ipc.lock().await;
+            let _ = ipc_guard
+                .send(&crate::process::Message::WorkerError {
+                    id: worker_id,
+                    error: format!("Mesh shutdown incomplete: {}", reason),
+                    severity: crate::process::ErrorSeverity::Critical,
+                    error_code: crate::process::ErrorCode::Unknown,
+                })
+                .await;
+        }
+        #[cfg(feature = "mesh")]
+        crate::worker::task_registry::WorkerShutdownCause::MeshServiceExit(ref exit) => {
+            let mut ipc_guard = state.ipc.lock().await;
+            let _ = ipc_guard
+                .send(&crate::process::Message::WorkerError {
+                    id: worker_id,
+                    error: format!("Mesh service '{}' exited: {}", exit.name, exit.reason),
                     severity: crate::process::ErrorSeverity::Critical,
                     error_code: crate::process::ErrorCode::Unknown,
                 })

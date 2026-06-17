@@ -16,6 +16,8 @@ use super::super::metrics::WorkerMetrics;
 use crate::common::setup_panic_handler;
 use crate::platform::fs::PlatformPaths;
 use crate::server::UnifiedServer;
+#[cfg(feature = "mesh")]
+use crate::worker::mesh_supervision::{MeshSupervisionPolicy, WorkerMeshStatus};
 use crate::{DrainFlag, RunningFlag};
 use synvoid_app_server::GranianSupervisor;
 use synvoid_config::ConfigManager;
@@ -311,6 +313,12 @@ pub struct UnifiedServerWorkerState {
     pub canonical_snapshot: std::sync::Arc<
         tokio::sync::RwLock<Option<synvoid_mesh::canonical::CanonicalTrustSnapshot>>,
     >,
+    /// Worker-observed mesh status projection.
+    #[cfg(feature = "mesh")]
+    pub mesh_status: std::sync::Arc<tokio::sync::RwLock<WorkerMeshStatus>>,
+    /// Policy controlling how the worker responds to mesh conditions.
+    #[cfg(feature = "mesh")]
+    pub mesh_policy: MeshSupervisionPolicy,
     /// Task registry for structured concurrency (Iteration 62).
     pub task_registry: Arc<tokio::sync::Mutex<crate::worker::task_registry::WorkerTaskRegistry>>,
 }

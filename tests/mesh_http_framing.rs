@@ -9,9 +9,9 @@
 
 use std::time::Duration;
 use synvoid_mesh::mesh::transport_peer::{
-    parse_http_request_meta, read_chunked_http_response_body, read_close_delimited_http_response_body,
-    read_fixed_http_body, read_fixed_http_response_body, read_http_request_head,
-    read_http_response_head, read_http_response_sequence, HttpFramingError,
+    parse_http_request_meta, read_chunked_http_response_body,
+    read_close_delimited_http_response_body, read_fixed_http_body, read_fixed_http_response_body,
+    read_http_request_head, read_http_response_head, read_http_response_sequence, HttpFramingError,
     HttpResponseBodyEncoding, HttpResponseFramingError, HttpVersion,
 };
 use tokio::io::AsyncWriteExt;
