@@ -9,10 +9,10 @@
 
 use std::time::Duration;
 use synvoid_mesh::mesh::transport_peer::{
-    parse_http_request_meta, read_chunked_http_response_body, read_fixed_http_body,
-    read_fixed_http_response_body, read_http_request_head, read_http_response_head,
-    read_http_response_sequence, HttpFramingError, HttpResponseBodyEncoding,
-    HttpResponseFramingError, HttpVersion,
+    parse_http_request_meta, read_chunked_http_response_body, read_close_delimited_http_response_body,
+    read_fixed_http_body, read_fixed_http_response_body, read_http_request_head,
+    read_http_response_head, read_http_response_sequence, HttpFramingError,
+    HttpResponseBodyEncoding, HttpResponseFramingError, HttpVersion,
 };
 use tokio::io::AsyncWriteExt;
 
@@ -970,6 +970,62 @@ async fn response_body_too_large() {
         HttpResponseFramingError::BodyTooLarge { limit, declared } => {
             assert_eq!(limit, 100);
             assert_eq!(declared, 1000);
+        }
+        other => panic!("expected BodyTooLarge, got: {other:?}"),
+    }
+}
+
+// ── Close-Delimited Body Overflow Test (Criterion 5) ────────────────────
+
+#[tokio::test]
+async fn close_delimited_body_exceeds_limit_returns_body_too_large() {
+    use tokio::io::AsyncWriteExt;
+
+    // Send body data exceeding max_body_bytes through a duplex stream.
+    let max_body = 5;
+    let body_data = b"this body is ten bytes";
+
+    let (mut client, mut server) = tokio::io::duplex(body_data.len());
+    client.write_all(body_data).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    let result = read_close_delimited_http_response_body(
+        &mut server,
+        Vec::new(),
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        max_body,
+    )
+    .await;
+
+    match result {
+        Err(HttpResponseFramingError::BodyTooLarge { limit, declared }) => {
+            assert_eq!(limit, max_body);
+            assert!(declared > max_body);
+        }
+        other => panic!("expected BodyTooLarge, got: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn close_delimited_prefix_exceeds_limit_returns_body_too_large() {
+    // Prefix alone exceeds max_body_bytes — rejected immediately.
+    let prefix = b"this body is ten bytes".to_vec();
+    let max_body = 5;
+
+    let result = read_close_delimited_http_response_body(
+        &mut &prefix[..],
+        prefix.clone(),
+        IDLE_TIMEOUT,
+        TOTAL_TIMEOUT,
+        max_body,
+    )
+    .await;
+
+    match result {
+        Err(HttpResponseFramingError::BodyTooLarge { limit, declared }) => {
+            assert_eq!(limit, max_body);
+            assert!(declared > max_body);
         }
         other => panic!("expected BodyTooLarge, got: {other:?}"),
     }

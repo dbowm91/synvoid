@@ -7091,4 +7091,215 @@ mod tests {
             .await;
         assert!(result.is_err(), "submission must be rejected when Failed");
     }
+
+    // ── Phase 22: True Concurrent Race Tests ─────────────────────────────
+    //
+    // These tests exercise actual concurrency between submission and
+    // shutdown/recovery, verifying the submission lock prevents races.
+
+    #[tokio::test]
+    async fn aux_shutdown_races_with_active_submission() {
+        use std::sync::Arc;
+
+        let transport = make_test_transport_for_aux();
+        transport
+            .force_set_lifecycle_state(crate::lifecycle::MeshLifecycleState::Running)
+            .await;
+
+        // Submit a long-running task so the registry is non-empty.
+        let task_id = transport
+            .spawn_auxiliary_task(
+                AuxiliaryTaskKind::EdgeReplicaRefresh,
+                "test-race-shutdown",
+                None,
+                Some("race-shutdown:1".into()),
+                async {
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                    MeshTaskExitReason::CleanCompletion
+                },
+            )
+            .await
+            .expect("initial submission must succeed");
+        assert!(
+            transport.has_auxiliary_task(&task_id).await,
+            "registry must contain the task"
+        );
+
+        // Spawn a concurrent submission attempt.
+        let transport_clone = Arc::clone(&transport);
+        let submission_handle = tokio::spawn(async move {
+            transport_clone
+                .spawn_auxiliary_task(
+                    AuxiliaryTaskKind::EdgeReplicaRefresh,
+                    "test-race-concurrent",
+                    None,
+                    Some("race-concurrent:1".into()),
+                    async {
+                        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                        MeshTaskExitReason::CleanCompletion
+                    },
+                )
+                .await
+        });
+
+        // Begin shutdown — drains auxiliary tasks under the submission lock.
+        transport
+            .shutdown_with_timeout(std::time::Duration::from_secs(10))
+            .await;
+
+        // The concurrent submission must have completed (either accepted or rejected).
+        let submission_result = submission_handle.await.expect("submission task must complete");
+
+        // Regardless of which won the race, the registry must be empty.
+        assert_eq!(
+            transport.count_auxiliary_tasks(AuxiliaryTaskKind::EdgeReplicaRefresh).await,
+            0,
+            "shutdown must drain all auxiliary tasks"
+        );
+
+        // If the submission was accepted, its handle must have been aborted by shutdown.
+        if let Ok(submitted_id) = submission_result {
+            assert!(
+                !transport.has_auxiliary_task(&submitted_id).await,
+                "shutdown-drained entry must not remain in registry"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn aux_recovery_drains_during_submission() {
+        use std::sync::Arc;
+
+        let transport = make_test_transport_for_aux();
+        transport
+            .force_set_lifecycle_state(crate::lifecycle::MeshLifecycleState::Running)
+            .await;
+
+        // Submit a long-running task.
+        let task_id = transport
+            .spawn_auxiliary_task(
+                AuxiliaryTaskKind::EdgeReplicaRefresh,
+                "test-race-recovery",
+                None,
+                Some("race-recovery:1".into()),
+                async {
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                    MeshTaskExitReason::CleanCompletion
+                },
+            )
+            .await
+            .expect("initial submission must succeed");
+
+        // Simulate transport entering Failed state.
+        transport
+            .force_set_lifecycle_state(crate::lifecycle::MeshLifecycleState::Failed)
+            .await;
+
+        // Spawn recovery — will acquire submission lock and drain tasks.
+        let transport_clone = Arc::clone(&transport);
+        let recovery_handle = tokio::spawn(async move {
+            transport_clone
+                .recover_failed_state(std::time::Duration::from_secs(10))
+                .await
+        });
+
+        // Spawn a concurrent submission attempt that races with recovery.
+        let transport_clone2 = Arc::clone(&transport);
+        let submission_handle = tokio::spawn(async move {
+            transport_clone2
+                .spawn_auxiliary_task(
+                    AuxiliaryTaskKind::EdgeReplicaRefresh,
+                    "test-race-recovery-submission",
+                    None,
+                    Some("race-recovery-sub:1".into()),
+                    async {
+                        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                        MeshTaskExitReason::CleanCompletion
+                    },
+                )
+                .await
+        });
+
+        // Wait for both to complete.
+        let (recovery_result, submission_result) = tokio::join!(recovery_handle, submission_handle);
+        let _recovery_result = recovery_result.expect("recovery task must not panic");
+        let submission_result = submission_result.expect("submission task must complete");
+
+        // After recovery, registry must be empty (all tasks drained).
+        assert_eq!(
+            transport.count_auxiliary_tasks(AuxiliaryTaskKind::EdgeReplicaRefresh).await,
+            0,
+            "recovery must drain all auxiliary tasks"
+        );
+
+        // Recovery must have transitioned to Stopped.
+        assert_eq!(
+            transport.lifecycle_state().await,
+            crate::lifecycle::MeshLifecycleState::Stopped,
+            "recovery must transition to Stopped"
+        );
+
+        // The submission was either rejected (Failed state) or accepted and drained.
+        if let Ok(submitted_id) = submission_result {
+            assert!(
+                !transport.has_auxiliary_task(&submitted_id).await,
+                "recovery-drained entry must not remain in registry"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn aux_full_lifecycle_cleanup() {
+        // Criterion 14: verify that all auxiliary resources are cleaned up
+        // after a full submit-shutdown lifecycle.
+        let transport = make_test_transport_for_aux();
+        transport
+            .force_set_lifecycle_state(crate::lifecycle::MeshLifecycleState::Running)
+            .await;
+
+        // Submit multiple tasks of different kinds.
+        let mut ids = Vec::new();
+        for i in 0..4 {
+            let id = transport
+                .spawn_auxiliary_task(
+                    AuxiliaryTaskKind::EdgeReplicaRefresh,
+                    "test-cleanup",
+                    None,
+                    Some(format!("cleanup:{i}")),
+                    async {
+                        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                        MeshTaskExitReason::CleanCompletion
+                    },
+                )
+                .await
+                .expect("submission must succeed");
+            ids.push(id);
+        }
+
+        // Verify all tasks are registered.
+        let active = transport.count_auxiliary_tasks(AuxiliaryTaskKind::EdgeReplicaRefresh).await;
+        assert_eq!(active, 4, "must have 4 active auxiliary tasks");
+
+        // Shutdown drains everything.
+        transport
+            .shutdown_with_timeout(std::time::Duration::from_secs(10))
+            .await;
+
+        // Verify: registry empty, all handles cleaned up, lifecycle in Stopped.
+        let remaining = transport.count_auxiliary_tasks(AuxiliaryTaskKind::EdgeReplicaRefresh).await;
+        assert_eq!(remaining, 0, "shutdown must drain all auxiliary tasks");
+
+        for id in &ids {
+            assert!(
+                !transport.has_auxiliary_task(id).await,
+                "task {id:?} must not remain after shutdown"
+            );
+        }
+
+        assert_eq!(
+            transport.lifecycle_state().await,
+            crate::lifecycle::MeshLifecycleState::Stopped,
+            "lifecycle must be Stopped after shutdown"
+        );
+    }
 }
