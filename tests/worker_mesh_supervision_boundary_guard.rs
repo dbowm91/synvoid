@@ -29,14 +29,14 @@ fn worker_mesh_status_in_state() {
 fn mesh_exit_observer_registered_in_registry() {
     let content = read_file("src/worker/unified_server/mod.rs");
     assert!(content.contains("mesh_exit_observer"));
-    assert!(content.contains("spawn_background"));
+    assert!(content.contains("spawn_critical"));
 }
 
 #[test]
 fn mesh_coordinator_registered_in_registry() {
     let content = read_file("src/worker/unified_server/mod.rs");
     assert!(content.contains("mesh_supervision_coordinator"));
-    assert!(content.contains("spawn_background"));
+    assert!(content.contains("spawn_critical"));
 }
 
 #[test]
@@ -158,10 +158,10 @@ fn no_outer_timeout_on_mesh_startup() {
     let content = read_file("src/worker/unified_server/mod.rs");
     // Phase 12: No tokio::time::timeout wrapping start_with_policy.
     // The mesh startup block should call start_with_policy directly.
-    assert!(content.contains("transport.start_with_policy("));
+    assert!(content.contains(".start_with_policy("));
     // Must NOT wrap it in timeout
     assert!(
-        !content.contains("tokio::time::timeout(\n                        std::time::Duration::from_secs(60),\n                        transport.start_with_policy("),
+        !content.contains("tokio::time::timeout(\n                        std::time::Duration::from_secs(60),\n                        mesh_transport.start_with_policy("),
         "outer timeout still wraps start_with_policy"
     );
 }
@@ -270,13 +270,14 @@ fn optional_startup_failure_does_not_shutdown() {
 #[test]
 fn observer_only_spawned_when_transport_exists() {
     let content = read_file("src/worker/unified_server/mod.rs");
-    // The mesh exit observer must only be spawned when a transport is available.
-    // The guard: "if let Some(exits) = mesh_exits" before observer spawn.
+    // The mesh exit observer is only spawned when a transport is available.
+    // The guard: has_mesh_transport check before creating the pipeline.
+    // If !has_mesh_transport, None is returned (no pipeline, no observer).
     assert!(
-        content.contains("if let Some(exits) = mesh_exits"),
+        content.contains("if !has_mesh_transport"),
         "observer must be conditional on transport availability"
     );
-    // Observer registration must be inside this conditional block.
+    // Observer registration must be inside the transport-available block.
     assert!(
         content.contains("mesh_exit_observer"),
         "observer task name must be registered"
@@ -286,30 +287,33 @@ fn observer_only_spawned_when_transport_exists() {
 #[test]
 fn mesh_startup_task_only_with_transport() {
     let content = read_file("src/worker/unified_server/mod.rs");
-    // The mesh startup task (start_with_policy) must only be spawned
-    // when a concrete MeshTransport is available.
+    // The mesh startup task must only be spawned when a concrete MeshTransport
+    // is available AND mesh is required/optional (not disabled).
+    // The guard: has_mesh_transport check gates the entire pipeline.
     assert!(
-        content.contains("if let Some(transport) = mesh_transport.clone()"),
-        "startup task must be conditional on transport availability"
+        content.contains("if !has_mesh_transport"),
+        "startup must be conditional on transport availability"
+    );
+    // For required mesh, startup is awaited inline; for optional, as background.
+    assert!(
+        content.contains("state.mesh_policy.required"),
+        "startup path must branch on mesh policy"
     );
 }
 
 #[test]
 fn coordinator_always_created_but_idle_without_transport() {
     let content = read_file("src/worker/unified_server/mod.rs");
-    // The supervision pipeline (channels + coordinator) is created before
-    // the transport check. This is correct: the coordinator sits idle when
-    // no transport exists because the decision channel is never populated.
-    // The select loop receives None from the decision channel and logs at
-    // debug level — no action taken.
+    // The supervision pipeline (channels + coordinator) is created when
+    // mesh transport is available. Without transport, no pipeline is created.
     assert!(
         content.contains("create_supervision_pipeline"),
         "supervision pipeline must be created"
     );
-    // Decision channel None case is handled gracefully.
+    // When no transport exists, None is returned (no pipeline, no coordinator).
     assert!(
-        content.contains("Mesh supervision decision channel closed"),
-        "decision channel closure must be handled gracefully"
+        content.contains("Mesh disabled — no supervision pipeline created"),
+        "disabled mesh must log and return None"
     );
 }
 

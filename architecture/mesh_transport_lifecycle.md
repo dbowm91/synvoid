@@ -1213,6 +1213,54 @@ The DHT and topology restoration paths now have well-defined accuracy guarantees
 
 Secondary metrics (scores, failures, latency) are intentionally excluded from snapshots because they are ephemeral observations that naturally repopulate through normal peer interaction. Capturing them would add complexity without improving rollback correctness — a restored peer's metrics will converge back to accurate values within minutes of steady-state operation.
 
+## Iteration 84 — Config-Driven Mesh Supervision Policy
+
+### Config-Driven Policy Derivation
+
+`MeshSupervisionPolicy` is now derived from `MeshSupervisionConfig` (TOML-deserializable) via `build_mesh_supervision_policy()`. The function returns `None` when mesh is disabled (no transport exists), which means no observer, coordinator, startup task, or decision channel is created.
+
+```rust
+pub fn build_mesh_supervision_policy(
+    mesh_enabled: bool,
+    config: &MeshSupervisionConfig,
+) -> Option<MeshSupervisionPolicy>
+```
+
+Restart is disabled by default: `restart_enabled=false` → `restart_limit=0`, and `MeshFailureAction::RestartMesh` is treated as `ShutdownWorker` in the policy derivation.
+
+### MeshSupervisionConfig
+
+Located in `crates/synvoid-config/src/mesh.rs`:
+
+| Field | Default | Purpose |
+|-------|---------|---------|
+| `required` | `true` | Whether mesh participation is required |
+| `restart_enabled` | `false` | Whether restart is enabled (disabled by default) |
+| `restart_limit` | `3` | Max restart attempts in window |
+| `restart_window_secs` | `300` | Window for counting restart attempts |
+| `restart_backoff_initial_secs` | `5` | Initial backoff for restarts |
+| `restart_backoff_max_secs` | `60` | Maximum backoff for restarts |
+| `allow_degraded_readiness` | `false` | Whether degraded mesh satisfies readiness |
+
+Config field path: `config.main.tunnel.mesh.supervision`
+
+### Required vs Optional Startup Paths
+
+- **Required mesh**: `start_mesh_generation()` is awaited inline before the worker sends its ready signal. Worker startup blocks on mesh readiness.
+- **Optional mesh**: Mesh starts asynchronously; worker proceeds without waiting for mesh to reach `Running` state.
+
+### Critical Observer/Coordinator Registration
+
+Both `mesh_exit_observer` and `mesh_supervision_coordinator` are registered as `spawn_critical` (not `spawn_background`). A critical exit triggers the shutdown pipeline rather than being silently ignored.
+
+### OneShot Task Class
+
+`TaskClass::OneShot` added to `TaskClass` enum in `src/worker/task_registry.rs` for tasks that run once during initialization and complete (not restarted, dropped after completion). Mesh startup uses this class for `start_mesh_generation()`.
+
+### Guardrails
+
+- **`tests/worker_supervision_control_flow.rs`**: 27 new behavioral tests covering config-driven policy, critical observer/coordinator, disabled mesh (no pipeline), OneShot task class, required vs optional startup gating, and `start_mesh_generation()`.
+
 ## Changelog
 
 | Iteration | Changes |
@@ -1229,3 +1277,4 @@ Secondary metrics (scores, failures, latency) are intentionally excluded from sn
 | 79 | **HTTP response framing and auxiliary ownership corrective pass**. **Parts A-B — Backend HTTP response framing**: Added `FramedHttpResponseHead` type for parsed response heads; `HttpResponseFramingError` enum for typed response framing errors; `read_http_response_head()` generic async reader for response headers with idle/total timeouts; `read_fixed_http_response_body()` reads exact Content-Length bytes; `read_chunked_http_response_body()` parses chunked Transfer-Encoding with trailer support. Replaced EOF-only backend response loop with proper HTTP/1.1 framing. Backend persistent connections no longer define response termination. Config: `max_peer_http_response_header_bytes`, `max_peer_http_response_body_bytes`, `peer_http_response_header_total_timeout_secs`, `peer_http_response_body_total_timeout_secs`, `max_peer_http_response_trailer_bytes`. **Parts C-D — Request metadata parsing**: Added `ParsedHttpRequestMeta` struct and `parse_http_request_meta()` for header-only metadata extraction. Binary request bodies no longer affect host/path extraction. Upgrade detection uses exact parsed header names/tokens. No-body requests with trailing bytes rejected. `extract_host_from_http()`, `extract_path_from_http()`, `extract_method_from_http()` now accept header bytes only. **Parts E-F — Auxiliary task ownership**: Added `spawn_auxiliary_task()` shared helper that wraps future with `AuxiliaryTaskExit` publication. Edge-replica refresh tasks now publish `AuxiliaryTaskExit` on completion. Deduplication aborts AND awaits stale tasks before inserting replacement. Capacity rejection happens before spawning, creating no orphan handles. Edge-refresh failures return proper error reasons instead of `CleanCompletion`. **Part G — Test-only API surface**: `stop_peer_session_task_for_test` adapter removed entirely — module-local tests now call the private `stop_peer_session_task()` directly. `drain_peer_stream_handlers_for_test` and `drain_datagram_handlers_for_test` changed from `pub` to `pub(crate)`. **Part H — Behavioral tests**: Response framing tests (basic head, chunked, connection close, fixed body, premature EOF, no-body statuses). Request metadata tests (binary body, trailing bytes, upgrade parsing). **Part J — Guardrails**: Source-level checks for response framing types/functions, header-only metadata parsing, auxiliary spawn helper usage, and public API surface. |
 | 81 | **Response-sequence parsing, auxiliary submission cleanup, and lock ordering**. **Part A — Persistent buffered response-sequence parsing**: `try_parse_http_response_head()` pure parser on pre-filled byte buffer, used by `read_http_response_sequence()` to drain informational (1xx) responses. Buffer advanced only on `Some`/error; `None` leaves buffer untouched. **Part B — Extracted close-delimited body reader**: `read_close_delimited_http_response_body()` with total deadline replaces inline close-delimited loop. Per-chunk `read_exact_with_timeout()` enforces overall body budget. **Part C — Independent trailer byte accounting**: Chunked trailers bounded by `max_peer_http_response_trailer_bytes` independently from body budget. New `TrailerTooLarge` error variant in `HttpResponseFramingError`. **Part D — Centralized strict response-head parsing**: `parse_http_response_status_line()` (strict status-line validation) and `parse_http_response_framing()` (exact header-name splitting for Content-Length/Transfer-Encoding/Connection) replace ad-hoc parsing. Both pure, testable without I/O. **Part E — Auxiliary submission serialized with cleanup**: `auxiliary_submission_allowed()` checks lifecycle state under `auxiliary_submission_lock`; lifecycle state rechecked atomically; `Reserved` variant removed from `AuxiliaryRegistryEntry` (gated-start replaced by atomic check-then-register). **Part F — Lock ordering documented**: `lifecycle_op → task_group → auxiliary_tasks → peer_sessions` with `debug_assert!` verification. |
 | 82 | **Mesh transport polish and worker-level supervision**. **Part A — Transport polish**: `parse_http_response_framing()` rejects malformed header lines (no colon) with `MalformedHeaderLine` instead of silent skip; `read_http_response_sequence()` rejects non-empty `body_prefix` for 204/304 (`UnexpectedBodyBytesForNoBodyResponse`); `try_parse_http_response_head()` enforces `max_header_bytes` internally; saturating deadline arithmetic; `spawn_auxiliary_task()` reordered (admission before spawn); auxiliary metrics renamed `edge_refresh_*` → `mesh_auxiliary_*`; `AuxiliarySubmissionTestHooks` for deterministic race testing. **Parts B-H — Worker mesh supervision**: `src/worker/mesh_supervision.rs` — policy types (`MeshSupervisionPolicy`, `MeshFailureAction`), status tracking (`WorkerMeshPhase`, `WorkerMeshStatus`), event/decision types, pure `decide_mesh_action()` classifier, `RestartBudget`, `compute_backoff()`, `MeshShutdownDisposition`, observer + coordinator pipeline. `WorkerShutdownCause` extended with `MeshStartupFailed`/`MeshShutdownInactive`. Composition root: subscribe-before-start, observer + coordinator registered in `WorkerTaskRegistry`, supervision `tokio::select!` includes mesh decisions. Mesh transport/lifecycle marked as closed; worker supervision is the active ownership layer. |
+| 84 | **Config-driven mesh supervision policy**. `MeshSupervisionConfig` in config crate (`crates/synvoid-config/src/mesh.rs`) provides TOML-deserializable supervision settings. `build_mesh_supervision_policy()` derives `MeshSupervisionPolicy` from config + `mesh_enabled` flag; returns `None` when mesh disabled (no pipeline created). Restart disabled by default (`restart_enabled=false`). `start_mesh_generation()` async helper composes `transport.start()` with `WorkerMeshStatus` transitions. Required mesh startup awaited inline before worker ready; optional mesh starts async. `mesh_exit_observer` and `mesh_supervision_coordinator` registered as `spawn_critical`. `TaskClass::OneShot` added for initialization-only tasks. 27 new behavioral tests in `tests/worker_supervision_control_flow.rs`. |

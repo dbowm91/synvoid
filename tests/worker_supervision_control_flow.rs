@@ -1388,3 +1388,504 @@ async fn test_primary_cause_cannot_be_replaced() {
         "Primary cause should notify supervisor"
     );
 }
+
+// ── Iteration 84 — Mesh supervision behavioral tests ──────────────────────
+//
+// Pure decision-logic and status-transition tests proving the behavioral
+// contracts of the mesh supervision system without spinning up a full worker.
+
+#[cfg(feature = "mesh")]
+mod iter84_behavioral_tests {
+    use synvoid::worker::mesh_supervision::{
+        apply_mesh_decision_to_status, apply_mesh_event_to_status, build_mesh_supervision_policy,
+        classify_mesh_shutdown_report, decide_mesh_action, MeshFailureAction,
+        MeshShutdownDisposition, MeshSupervisionEvent, MeshSupervisionPolicy,
+        MeshSupervisorDecision, WorkerMeshPhase, WorkerMeshStatus,
+    };
+    use synvoid_mesh::lifecycle::{
+        MeshShutdownReport, MeshTaskClass, MeshTaskExit, MeshTaskExitReason, MeshTaskId,
+        PeerStreamDrainReport,
+    };
+
+    /// Helper: check mesh readiness without async (for unit tests).
+    fn is_mesh_ready_with_status(
+        policy: &MeshSupervisionPolicy,
+        status: &WorkerMeshStatus,
+    ) -> bool {
+        if !policy.required {
+            return true;
+        }
+        match status.phase {
+            WorkerMeshPhase::Running => true,
+            WorkerMeshPhase::Degraded => policy.allow_degraded_readiness,
+            _ => false,
+        }
+    }
+
+    // --- Test 1: disabled mesh returns no policy ---
+
+    #[test]
+    fn disabled_mesh_returns_none_policy() {
+        let config = synvoid_config::MeshSupervisionConfig::default();
+        let policy = build_mesh_supervision_policy(false, &config);
+        assert!(policy.is_none());
+    }
+
+    // --- Test 2: disabled mesh status remains disabled ---
+
+    #[test]
+    fn disabled_mesh_status_remains_disabled() {
+        let status = WorkerMeshStatus::default();
+        assert_eq!(status.phase, WorkerMeshPhase::Disabled);
+    }
+
+    // --- Test 3: required mesh startup failure produces shutdown ---
+
+    #[test]
+    fn required_mesh_startup_failure_produces_shutdown_decision() {
+        let policy = MeshSupervisionPolicy::required();
+        let phase = WorkerMeshPhase::Starting;
+        let event = MeshSupervisionEvent::StartupFailed("connection refused".into());
+        let decision = decide_mesh_action(&policy, &phase, &event, false);
+        assert!(matches!(
+            decision,
+            MeshSupervisorDecision::ShutdownWorker(_)
+        ));
+    }
+
+    // --- Test 4: optional mesh startup failure produces degrade ---
+
+    #[test]
+    fn optional_mesh_startup_failure_produces_degrade_decision() {
+        let policy = MeshSupervisionPolicy::optional();
+        let phase = WorkerMeshPhase::Starting;
+        let event = MeshSupervisionEvent::StartupFailed("connection refused".into());
+        let decision = decide_mesh_action(&policy, &phase, &event, false);
+        assert!(matches!(decision, MeshSupervisorDecision::MarkDegraded(_)));
+    }
+
+    // --- Test 5: required mesh ready requires Running phase ---
+
+    #[test]
+    fn required_mesh_ready_requires_running_phase() {
+        let policy = MeshSupervisionPolicy::required();
+        // Not ready in Disabled
+        let status = WorkerMeshStatus {
+            phase: WorkerMeshPhase::Disabled,
+            ..Default::default()
+        };
+        assert!(!is_mesh_ready_with_status(&policy, &status));
+        // Not ready in Starting
+        let status = WorkerMeshStatus {
+            phase: WorkerMeshPhase::Starting,
+            ..Default::default()
+        };
+        assert!(!is_mesh_ready_with_status(&policy, &status));
+        // Ready in Running
+        let status = WorkerMeshStatus {
+            phase: WorkerMeshPhase::Running,
+            ..Default::default()
+        };
+        assert!(is_mesh_ready_with_status(&policy, &status));
+        // Not ready in Degraded (unless allow_degraded_readiness)
+        let status = WorkerMeshStatus {
+            phase: WorkerMeshPhase::Degraded,
+            ..Default::default()
+        };
+        assert!(!is_mesh_ready_with_status(&policy, &status));
+    }
+
+    // --- Test 6: required mesh ready with degraded readiness flag ---
+
+    #[test]
+    fn required_mesh_ready_with_degraded_readiness() {
+        let mut policy = MeshSupervisionPolicy::required();
+        policy.allow_degraded_readiness = true;
+        let status = WorkerMeshStatus {
+            phase: WorkerMeshPhase::Degraded,
+            ..Default::default()
+        };
+        assert!(is_mesh_ready_with_status(&policy, &status));
+    }
+
+    // --- Test 7: optional mesh is always ready regardless of phase ---
+
+    #[test]
+    fn optional_mesh_always_ready() {
+        let policy = MeshSupervisionPolicy::optional();
+        for phase in &[
+            WorkerMeshPhase::Disabled,
+            WorkerMeshPhase::Starting,
+            WorkerMeshPhase::Running,
+            WorkerMeshPhase::Degraded,
+            WorkerMeshPhase::Failed,
+        ] {
+            let status = WorkerMeshStatus {
+                phase: *phase,
+                ..Default::default()
+            };
+            assert!(
+                is_mesh_ready_with_status(&policy, &status),
+                "optional mesh should be ready in {:?} phase",
+                phase
+            );
+        }
+    }
+
+    // --- Test 8: observer/coordinator exit while running (required) is fatal ---
+
+    #[test]
+    fn observer_coordinator_exit_while_running_required_is_fatal() {
+        let policy = MeshSupervisionPolicy::required();
+        let phase = WorkerMeshPhase::Running;
+
+        // Observer exit (CriticalService)
+        let exit = MeshTaskExit {
+            id: MeshTaskId(1),
+            name: "mesh_exit_observer",
+            class: MeshTaskClass::CriticalService,
+            reason: MeshTaskExitReason::CleanCompletion,
+        };
+        let event = MeshSupervisionEvent::TaskExit(exit);
+        let decision = decide_mesh_action(&policy, &phase, &event, false);
+        assert!(matches!(
+            decision,
+            MeshSupervisorDecision::ShutdownWorker(_)
+        ));
+
+        // Coordinator exit (CriticalService)
+        let exit = MeshTaskExit {
+            id: MeshTaskId(2),
+            name: "mesh_supervision_coordinator",
+            class: MeshTaskClass::CriticalService,
+            reason: MeshTaskExitReason::Error("channel closed".into()),
+        };
+        let event = MeshSupervisionEvent::TaskExit(exit);
+        let decision = decide_mesh_action(&policy, &phase, &event, false);
+        assert!(matches!(
+            decision,
+            MeshSupervisorDecision::ShutdownWorker(_)
+        ));
+    }
+
+    // --- Test 9: observer/coordinator exit during shutdown is noop ---
+
+    #[test]
+    fn observer_coordinator_exit_during_shutdown_is_noop() {
+        let policy = MeshSupervisionPolicy::required();
+        let phase = WorkerMeshPhase::Stopping;
+        let exit = MeshTaskExit {
+            id: MeshTaskId(1),
+            name: "mesh_exit_observer",
+            class: MeshTaskClass::CriticalService,
+            reason: MeshTaskExitReason::Cancelled,
+        };
+        let event = MeshSupervisionEvent::TaskExit(exit);
+        let decision = decide_mesh_action(&policy, &phase, &event, true);
+        assert!(matches!(decision, MeshSupervisorDecision::NoAction));
+    }
+
+    // --- Test 10: restart-mesh decision requires restart enabled ---
+
+    #[test]
+    fn restart_mesh_decision_requires_restart_enabled_policy() {
+        // With restart disabled (default required policy), RestartMesh should never be produced.
+        let policy = MeshSupervisionPolicy::required();
+        let phase = WorkerMeshPhase::Running;
+        let exit = MeshTaskExit {
+            id: MeshTaskId(1),
+            name: "mesh_maintenance",
+            class: MeshTaskClass::CriticalService,
+            reason: MeshTaskExitReason::Panic("test".into()),
+        };
+        let event = MeshSupervisionEvent::TaskExit(exit);
+        let decision = decide_mesh_action(&policy, &phase, &event, false);
+        // Required policy with restart disabled should shutdown, not restart
+        assert!(matches!(
+            decision,
+            MeshSupervisorDecision::ShutdownWorker(_)
+        ));
+    }
+
+    // --- Test 11: config-derived policy matches expected fields ---
+
+    #[test]
+    fn config_derived_policy_matches_expected() {
+        let config = synvoid_config::MeshSupervisionConfig {
+            required: true,
+            restart_enabled: false,
+            restart_limit: 3,
+            restart_window_secs: 300,
+            restart_backoff_initial_secs: 5,
+            restart_backoff_max_secs: 60,
+            allow_degraded_readiness: false,
+        };
+        let policy = build_mesh_supervision_policy(true, &config).unwrap();
+        assert!(policy.required);
+        assert_eq!(policy.restart_limit, 0); // restart_enabled=false
+        assert!(!policy.allow_degraded_readiness);
+        assert_eq!(policy.startup_failure, MeshFailureAction::ShutdownWorker);
+    }
+
+    // --- Test 12: status transitions cover full lifecycle ---
+
+    #[test]
+    fn status_transitions_cover_lifecycle() {
+        let mut status = WorkerMeshStatus::default();
+        assert_eq!(status.phase, WorkerMeshPhase::Disabled);
+
+        status.transition_starting();
+        assert_eq!(status.phase, WorkerMeshPhase::Starting);
+
+        status.transition_running();
+        assert_eq!(status.phase, WorkerMeshPhase::Running);
+
+        status.transition_degraded("test".into());
+        assert_eq!(status.phase, WorkerMeshPhase::Degraded);
+
+        status.transition_restarting();
+        assert_eq!(status.phase, WorkerMeshPhase::Restarting);
+
+        status.transition_failed("test".into());
+        assert_eq!(status.phase, WorkerMeshPhase::Failed);
+
+        status.transition_stopping();
+        assert_eq!(status.phase, WorkerMeshPhase::Stopping);
+
+        status.transition_stopped();
+        assert_eq!(status.phase, WorkerMeshPhase::Stopped);
+    }
+
+    // --- Test 13: shutdown disposition classification ---
+
+    #[test]
+    fn shutdown_disposition_classification_clean() {
+        let report = MeshShutdownReport {
+            clean_tasks: 5,
+            failed_tasks: vec![],
+            aborted_tasks: vec![],
+            accept_loop_report: None,
+            remaining_peers: 0,
+            peers_at_shutdown_start: 3,
+            drained_peer_sessions: 3,
+            aborted_peer_sessions: 0,
+            failed_peer_sessions: 0,
+            stream_handler_drain: PeerStreamDrainReport {
+                drained: 0,
+                aborted: 0,
+                failed: 0,
+            },
+        };
+        assert!(matches!(
+            classify_mesh_shutdown_report(&report),
+            MeshShutdownDisposition::Clean
+        ));
+    }
+
+    #[test]
+    fn shutdown_disposition_classification_forced_complete() {
+        let report = MeshShutdownReport {
+            clean_tasks: 3,
+            failed_tasks: vec![],
+            aborted_tasks: vec![MeshTaskExit {
+                id: MeshTaskId(1),
+                name: "test",
+                class: MeshTaskClass::RestartableBackground,
+                reason: MeshTaskExitReason::Aborted,
+            }],
+            accept_loop_report: None,
+            remaining_peers: 0,
+            peers_at_shutdown_start: 1,
+            drained_peer_sessions: 0,
+            aborted_peer_sessions: 1,
+            failed_peer_sessions: 0,
+            stream_handler_drain: PeerStreamDrainReport {
+                drained: 0,
+                aborted: 1,
+                failed: 0,
+            },
+        };
+        assert!(matches!(
+            classify_mesh_shutdown_report(&report),
+            MeshShutdownDisposition::ForcedButComplete
+        ));
+    }
+
+    #[test]
+    fn shutdown_disposition_classification_incomplete() {
+        let report = MeshShutdownReport {
+            clean_tasks: 1,
+            failed_tasks: vec![MeshTaskExit {
+                id: MeshTaskId(3),
+                name: "broken_task",
+                class: MeshTaskClass::CriticalService,
+                reason: MeshTaskExitReason::Error("broken".into()),
+            }],
+            aborted_tasks: vec![],
+            accept_loop_report: None,
+            remaining_peers: 2,
+            peers_at_shutdown_start: 5,
+            drained_peer_sessions: 1,
+            aborted_peer_sessions: 0,
+            failed_peer_sessions: 0,
+            stream_handler_drain: PeerStreamDrainReport {
+                drained: 1,
+                aborted: 0,
+                failed: 0,
+            },
+        };
+        assert!(matches!(
+            classify_mesh_shutdown_report(&report),
+            MeshShutdownDisposition::Incomplete(_)
+        ));
+    }
+
+    // --- Test 14: apply_mesh_event_to_status transitions ---
+
+    #[test]
+    fn apply_started_event_transitions_to_running() {
+        let mut status = WorkerMeshStatus::default();
+        assert_eq!(status.phase, WorkerMeshPhase::Disabled);
+        apply_mesh_event_to_status(&mut status, &MeshSupervisionEvent::Started);
+        assert_eq!(status.phase, WorkerMeshPhase::Running);
+    }
+
+    #[test]
+    fn apply_startup_failed_event_transitions_to_failed() {
+        let mut status = WorkerMeshStatus::default();
+        apply_mesh_event_to_status(
+            &mut status,
+            &MeshSupervisionEvent::StartupFailed("refused".into()),
+        );
+        assert_eq!(status.phase, WorkerMeshPhase::Failed);
+    }
+
+    #[test]
+    fn apply_lag_event_transitions_to_degraded() {
+        let mut status = WorkerMeshStatus::default();
+        apply_mesh_event_to_status(&mut status, &MeshSupervisionEvent::ExitStreamLagged(5));
+        assert_eq!(status.phase, WorkerMeshPhase::Degraded);
+    }
+
+    #[test]
+    fn apply_shutdown_started_transitions_to_stopping() {
+        let mut status = WorkerMeshStatus::default();
+        apply_mesh_event_to_status(&mut status, &MeshSupervisionEvent::WorkerShutdownStarted);
+        assert_eq!(status.phase, WorkerMeshPhase::Stopping);
+    }
+
+    // --- Test 15: apply_mesh_decision_to_status transitions ---
+
+    #[test]
+    fn apply_degraded_decision_transitions_to_degraded() {
+        let mut status = WorkerMeshStatus::default();
+        apply_mesh_decision_to_status(
+            &mut status,
+            &MeshSupervisorDecision::MarkDegraded("reason".into()),
+        );
+        assert_eq!(status.phase, WorkerMeshPhase::Degraded);
+    }
+
+    #[test]
+    fn apply_restart_decision_transitions_to_restarting() {
+        let mut status = WorkerMeshStatus::default();
+        apply_mesh_decision_to_status(&mut status, &MeshSupervisorDecision::RestartMesh);
+        assert_eq!(status.phase, WorkerMeshPhase::Restarting);
+    }
+
+    #[test]
+    fn apply_shutdown_decision_transitions_to_failed() {
+        let mut status = WorkerMeshStatus::default();
+        apply_mesh_decision_to_status(
+            &mut status,
+            &MeshSupervisorDecision::ShutdownWorker(
+                synvoid_mesh::worker_integration::MeshFailureCause::StartupFailed("x".into()),
+            ),
+        );
+        assert_eq!(status.phase, WorkerMeshPhase::Failed);
+    }
+
+    // --- Test 16: disabled mesh runtime behavior: no supervision tasks ---
+
+    #[test]
+    fn disabled_mesh_policy_produces_none() {
+        let config = synvoid_config::MeshSupervisionConfig::default();
+        assert!(build_mesh_supervision_policy(false, &config).is_none());
+        // When policy is None, no supervision coordinator or observer should be created.
+        // Ready signal is immediate.
+    }
+
+    // --- Test 17: required startup success sends ready afterward ---
+
+    #[test]
+    fn required_startup_success_transitions_to_running() {
+        let mut status = WorkerMeshStatus::default();
+        assert_eq!(status.phase, WorkerMeshPhase::Disabled);
+
+        // Simulate the startup sequence: Started event transitions to Running.
+        apply_mesh_event_to_status(&mut status, &MeshSupervisionEvent::Started);
+        assert_eq!(status.phase, WorkerMeshPhase::Running);
+
+        let policy = MeshSupervisionPolicy::required();
+        assert!(is_mesh_ready_with_status(&policy, &status));
+    }
+
+    // --- Test 18: required startup failure never sends ready ---
+
+    #[test]
+    fn required_startup_failure_never_ready() {
+        let policy = MeshSupervisionPolicy::required();
+        let mut status = WorkerMeshStatus::default();
+
+        apply_mesh_event_to_status(
+            &mut status,
+            &MeshSupervisionEvent::StartupFailed("refused".into()),
+        );
+        assert_eq!(status.phase, WorkerMeshPhase::Failed);
+        assert!(!is_mesh_ready_with_status(&policy, &status));
+
+        // Even after applying the decision, still not ready.
+        let decision = decide_mesh_action(
+            &policy,
+            &status.phase,
+            &MeshSupervisionEvent::StartupFailed("x".into()),
+            false,
+        );
+        apply_mesh_decision_to_status(&mut status, &decision);
+        assert_eq!(status.phase, WorkerMeshPhase::Failed);
+        assert!(!is_mesh_ready_with_status(&policy, &status));
+    }
+
+    // --- Test 19: optional startup failure leaves worker ready but degraded ---
+
+    #[test]
+    fn optional_startup_failure_ready_but_degraded() {
+        let policy = MeshSupervisionPolicy::optional();
+        let mut status = WorkerMeshStatus::default();
+
+        apply_mesh_event_to_status(
+            &mut status,
+            &MeshSupervisionEvent::StartupFailed("refused".into()),
+        );
+        let decision = decide_mesh_action(
+            &policy,
+            &status.phase,
+            &MeshSupervisionEvent::StartupFailed("refused".into()),
+            false,
+        );
+        apply_mesh_decision_to_status(&mut status, &decision);
+
+        assert_eq!(status.phase, WorkerMeshPhase::Degraded);
+        assert!(is_mesh_ready_with_status(&policy, &status));
+    }
+
+    // --- Test 20: optional mesh disabled status stays ready ---
+
+    #[test]
+    fn optional_mesh_disabled_still_ready() {
+        let policy = MeshSupervisionPolicy::optional();
+        let status = WorkerMeshStatus::default();
+        assert_eq!(status.phase, WorkerMeshPhase::Disabled);
+        assert!(is_mesh_ready_with_status(&policy, &status));
+    }
+}

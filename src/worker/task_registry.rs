@@ -45,6 +45,7 @@ pub enum TaskClass {
     BoundedChild,
     CpuOffload,
     Detached,
+    OneShot,
 }
 
 impl fmt::Display for TaskClass {
@@ -55,6 +56,7 @@ impl fmt::Display for TaskClass {
             Self::BoundedChild => write!(f, "bounded_child"),
             Self::CpuOffload => write!(f, "cpu_offload"),
             Self::Detached => write!(f, "detached"),
+            Self::OneShot => write!(f, "one_shot"),
         }
     }
 }

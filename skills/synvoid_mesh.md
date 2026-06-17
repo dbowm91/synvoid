@@ -467,7 +467,7 @@ Returned after startup:
 - `ManagedMeshService::subscribe_critical_exits()` delegates to stable `subscribe_exits()`
 - `is_running()` reads `running_projection: Arc<AtomicBool>` — lock-free, no Tokio contention
 - `MeshServiceExit(MeshTaskExit)` variant on `WorkerShutdownCause` for mesh task failures
-- **Worker mesh supervision pipeline** (Iteration 82–83): fully implemented in `src/worker/mesh_supervision.rs`. See [Worker Mesh Supervision](#worker-mesh-supervision-iteration-82-83) below.
+- **Worker mesh supervision pipeline** (Iteration 82–84): fully implemented in `src/worker/mesh_supervision.rs`. See [Worker Mesh Supervision](#worker-mesh-supervision-iterations-82-84) below.
 
 ### Iteration 73 Lifecycle Semantics
 
@@ -910,9 +910,31 @@ lifecycle_op -> auxiliary_submission_lock -> auxiliary_tasks
 
 `shutdown_with_timeout()` and `recover_failed_state()` hold `lifecycle_op` while acquiring `auxiliary_submission_lock` and draining `auxiliary_tasks`. `spawn_auxiliary_task()` acquires only `auxiliary_submission_lock`. The ordering prevents deadlocks and ensures no auxiliary task is spawned during shutdown/recovery cleanup.
 
-## Worker Mesh Supervision (Iterations 82–83)
+## Worker Mesh Supervision (Iterations 82–84)
 
 Worker-level mesh supervision is implemented in `src/worker/mesh_supervision.rs`. The mesh service reports facts (start result, task exit, lifecycle state, shutdown report); the worker decides policy (ready, degraded, restart, shutdown, exit code).
+
+### Config-Driven Policy (Iteration 84)
+
+`MeshSupervisionPolicy` is now derived from `MeshSupervisionConfig` (TOML-deserializable in `crates/synvoid-config/src/mesh.rs`) via `build_mesh_supervision_policy()`. Returns `None` when mesh is disabled — no observer, coordinator, startup task, or decision channel is created.
+
+```rust
+pub fn build_mesh_supervision_policy(
+    mesh_enabled: bool,
+    config: &MeshSupervisionConfig,
+) -> Option<MeshSupervisionPolicy>
+```
+
+Restart is disabled by default: `restart_enabled=false` → `restart_limit=0`. `MeshFailureAction::RestartMesh` is treated as `ShutdownWorker` when restart is not enabled.
+
+### Required vs Optional Startup (Iteration 84)
+
+- **Required mesh**: `start_mesh_generation()` is awaited inline before the worker sends its ready signal. Worker startup blocks on mesh readiness.
+- **Optional mesh**: Mesh starts asynchronously; worker proceeds without waiting.
+
+### Critical Observer/Coordinator (Iteration 84)
+
+Both `mesh_exit_observer` and `mesh_supervision_coordinator` are registered as `spawn_critical` (not `spawn_background`). A critical exit triggers the shutdown pipeline rather than being silently ignored.
 
 ### Supervision Pipeline
 
@@ -944,6 +966,8 @@ pub fn decide_mesh_action(
 Operates on `WorkerMeshPhase` snapshots — not the live `WorkerMeshStatus` reference. The coordinator takes a `status.phase` snapshot after applying the event, then passes it to this pure function. This makes the policy decision deterministic and testable without I/O.
 
 ### `MeshSupervisionPolicy`
+
+**Iteration 84**: Policy is now config-driven via `MeshSupervisionConfig`. Use `build_mesh_supervision_policy()` instead of `MeshSupervisionPolicy::required()` / `MeshSupervisionPolicy::optional()`.
 
 | Field | `required()` default | `optional()` default | Purpose |
 |-------|---------------------|---------------------|---------|
@@ -1004,13 +1028,14 @@ When multiple shutdown causes arise during a single shutdown sequence, the highe
 
 | File | Purpose |
 |------|---------|
-| `src/worker/mesh_supervision.rs` | Policy types, pure classifiers, coordinator, observer, pipeline creation |
+| `src/worker/mesh_supervision.rs` | Policy types, pure classifiers, coordinator, observer, pipeline creation, `build_mesh_supervision_policy()`, `start_mesh_generation()` |
+| `crates/synvoid-config/src/mesh.rs` | `MeshSupervisionConfig` TOML-deserializable config |
 | `src/worker/unified_server/mod.rs` | Composition root integration, decision processing, `remaining_budget()` |
-| `src/worker/task_registry.rs` | `WorkerShutdownCause`, `SupervisionOutcome`, exit code derivation |
+| `src/worker/task_registry.rs` | `WorkerShutdownCause`, `SupervisionOutcome`, exit code derivation, `TaskClass::OneShot` |
 
 ## Testing Commands
 
-> **Note**: The mesh transport and lifecycle subsystem is closed as of Iteration 81. All HTTP response framing, auxiliary task ownership, and lock ordering invariants are complete. Guardrail tests enforce the boundaries below.
+> **Note**: The mesh transport and lifecycle subsystem is closed as of Iteration 81. Worker mesh supervision is config-driven as of Iteration 84. All HTTP response framing, auxiliary task ownership, and lock ordering invariants are complete. Guardrail tests enforce the boundaries below.
 
 ```bash
 # Run integration tests

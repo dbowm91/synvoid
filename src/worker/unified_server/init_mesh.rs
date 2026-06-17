@@ -12,6 +12,63 @@
 // `CanonicalTrustSnapshot` via IPC. The snapshot itself implements
 // `CanonicalTrustReader` and is carried in `MeshInit` so the
 // composition root can use it to build the policy context.
+//
+// Task Ownership Inventory (Iteration 84):
+//
+// Task                                     | Correct Owner              | Start Phase   | Stop Signal       | Join Path                      | Restart Generation
+// -----------------------------------------|----------------------------|---------------|-------------------|--------------------------------|--------------------
+// topology.start_background_tasks()        | Mesh topology              | transport init| mesh shutdown     | mesh task group                | per-generation
+// routing_manager.init()                   | DHT routing                | transport init| mesh shutdown     | mesh task group                | per-generation
+// DnsRegistry.start_verification_loop()    | DNS verification           | transport init| mesh shutdown     | mesh task group                | per-generation
+// threat_intel.start_background_tasks()    | Threat intel               | transport init| mesh shutdown     | mesh task group                | per-generation
+// YARA broadcast loop                      | Threat intel broadcast     | transport init| mesh shutdown     | mesh task group                | per-generation
+//
+// Classification of bare spawns in this file:
+//
+// 1. routing_manager.init() spawn (line ~100):
+//    - What: Calls DhtRoutingManager::init() which populates the DHT routing table
+//    - Correct owner: MeshTransport startup (MeshTaskGroup)
+//    - Start phase: After transport init, before transport starts serving
+//    - Restart: Per-generation (re-initialized on each mesh restart)
+//    - Move: YES — should be part of MeshTransport::start_with_policy() staged startup
+//
+// 2. Edge DnsRegistry.start_verification_loop() spawn (line ~236):
+//    - What: Runs DNS zone verification loop for edge nodes
+//    - Correct owner: MeshTransport startup (MeshTaskGroup)
+//    - Start phase: After transport init
+//    - Restart: Per-generation
+//    - Move: YES — should be part of MeshTransport startup, registered in MeshTaskGroup
+//
+// 3. Global DnsRegistry.start_verification_loop() spawn (line ~284):
+//    - What: Runs DNS zone verification loop for global nodes
+//    - Correct owner: MeshTransport startup (MeshTaskGroup)
+//    - Start phase: After transport init
+//    - Restart: Per-generation
+//    - Move: YES — same as edge variant
+//
+// 4. YARA broadcast loop (outer recv, line ~348):
+//    - What: Receives threat-intel messages from mpsc and dispatches to peers
+//    - Correct owner: MeshTransport startup (MeshTaskGroup)
+//    - Start phase: After transport init, after threat_intel.start_background_tasks()
+//    - Restart: Per-generation
+//    - Move: YES — the outer loop is a transport-level concern
+//
+// 5. broadcast_to_all_peers dispatch (inner spawn, line ~352):
+//    - What: Fire-and-forget broadcast per message, bounded by semaphore
+//    - Correct owner: Fire-and-forget (bounded by owned semaphore)
+//    - Move: NO — this is a bounded fire-and-forget dispatch, not a long-lived task
+//
+// Concerns about moving spawns:
+// - The routing_manager.init() spawn runs once and completes — it should be an
+//   await in the startup sequence, not a bare spawn. Moving it into
+//   MeshTransport::start_with_policy() is straightforward.
+// - DNS verification loops are long-lived and need shutdown coordination — moving
+//   them into MeshTaskGroup gives proper cancellation and join semantics.
+// - The YARA broadcast loop needs the mpsc channel sender wired into threat_intel
+//   before it starts, so it must be spawned after threat_intel.init(). The current
+//   ordering is correct; it just needs ownership transfer.
+// - The inner broadcast dispatch (line ~352) is already bounded by a semaphore and
+//   fire-and-forget — it is correct as-is.
 
 use std::sync::Arc;
 
@@ -97,6 +154,8 @@ pub async fn init_mesh_and_threat_intel(
                 ));
                 let manager_clone = manager.clone();
                 manager.start_background_tasks();
+                // Iteration 84: documented ownership — see inventory comment above
+                // Correct owner: MeshTransport startup (MeshTaskGroup)
                 tokio::spawn(async move {
                     manager_clone.init().await;
                 });
@@ -233,6 +292,8 @@ pub async fn init_mesh_and_threat_intel(
                             registry_config,
                         );
                         let registry_clone = Arc::new(registry);
+                        // Iteration 84: documented ownership — see inventory comment above
+                        // Correct owner: MeshTransport startup (MeshTaskGroup)
                         tokio::spawn(async move {
                             registry_clone.start_verification_loop().await;
                         });
@@ -281,6 +342,8 @@ pub async fn init_mesh_and_threat_intel(
                                         .with_dns_resolver(resolver);
 
                                     let registry_clone = Arc::new(registry);
+                                    // Iteration 84: documented ownership — see inventory comment above
+                                    // Correct owner: MeshTransport startup (MeshTaskGroup)
                                     tokio::spawn(async move {
                                         registry_clone.start_verification_loop().await;
                                     });
@@ -345,10 +408,14 @@ pub async fn init_mesh_and_threat_intel(
                     if let Some(quic_transport) = transport_manager.get_quic_transport() {
                         let mesh_transport = quic_transport.get_inner();
                         let broadcast_semaphore = Arc::new(tokio::sync::Semaphore::new(10));
+                        // Iteration 84: documented ownership — see inventory comment above
+                        // Correct owner: MeshTransport startup (MeshTaskGroup)
                         tokio::spawn(async move {
                             while let Some(msg) = mesh_broadcast_rx.recv().await {
                                 let transport = mesh_transport.clone();
                                 let permit = broadcast_semaphore.clone().acquire_owned().await.ok();
+                                // Iteration 84: documented ownership — see inventory comment above
+                                // Correct owner: Fire-and-forget (bounded by owned semaphore)
                                 tokio::spawn(async move {
                                     transport
                                         .broadcast_to_all_peers(

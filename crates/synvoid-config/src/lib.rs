@@ -97,7 +97,7 @@ pub use validation::{parse_size_string, ConfigValidationError};
 pub use mesh::{
     MeshCompressionConfig, MeshConfig, MeshImageProtectionConfig, MeshLocalUpstream,
     MeshMinificationConfig, MeshNodeRole, MeshPeerConfig, MeshRoutingConfig, MeshSeedNode,
-    MeshServicePolicy, MeshTlsConfig, MeshUpstreamConfig, MeshUpstreamPeer,
+    MeshServicePolicy, MeshSupervisionConfig, MeshTlsConfig, MeshUpstreamConfig, MeshUpstreamPeer,
 };
 pub use site::{
     SiteBasicAuthConfig, SiteConfig, SiteCookieConfig, SiteCorsConfig, SiteGeoipConfig, SiteInfo,

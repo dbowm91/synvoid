@@ -711,6 +711,9 @@ pub struct MeshConfig {
     pub origin_signing_key: Option<String>,
     #[serde(default)]
     pub authority_freshness: AuthorityFreshnessConfig,
+    /// Worker-level mesh supervision configuration.
+    #[serde(default)]
+    pub supervision: MeshSupervisionConfig,
     #[serde(skip)]
     pub cached_pow: Arc<RwLock<Option<(u64, std::time::Instant)>>>,
 }
@@ -750,6 +753,7 @@ impl Default for MeshConfig {
             yara_rules: super::protection::YaraRulesMeshConfig::default(),
             origin_signing_key: None,
             authority_freshness: AuthorityFreshnessConfig::default(),
+            supervision: MeshSupervisionConfig::default(),
             cached_pow: Arc::new(RwLock::new(None)),
         }
     }
@@ -925,4 +929,91 @@ fn default_canonical_snapshot_stale_grace_max_age_ms() -> u64 {
 }
 fn default_canonical_snapshot_stale_mode() -> String {
     "fail_open_defer".to_string()
+}
+
+/// Worker-level mesh supervision configuration.
+#[derive(Debug, Clone, Deserialize, Serialize, Default, JsonSchema)]
+pub struct MeshSupervisionConfig {
+    /// Whether mesh participation is required for this worker role.
+    #[serde(default = "default_supervision_required")]
+    pub required: bool,
+    /// Whether mesh restart is enabled.
+    #[serde(default)]
+    pub restart_enabled: bool,
+    /// Maximum number of restart attempts within the restart window.
+    #[serde(default = "default_restart_limit")]
+    pub restart_limit: u32,
+    /// Time window for counting restart attempts (seconds).
+    #[serde(default = "default_restart_window_secs")]
+    pub restart_window_secs: u64,
+    /// Initial backoff duration for restart attempts (seconds).
+    #[serde(default = "default_restart_backoff_initial_secs")]
+    pub restart_backoff_initial_secs: u64,
+    /// Maximum backoff duration for restart attempts (seconds).
+    #[serde(default = "default_restart_backoff_max_secs")]
+    pub restart_backoff_max_secs: u64,
+    /// Whether degraded mesh still satisfies readiness.
+    #[serde(default)]
+    pub allow_degraded_readiness: bool,
+}
+
+fn default_supervision_required() -> bool {
+    true
+}
+fn default_restart_limit() -> u32 {
+    3
+}
+fn default_restart_window_secs() -> u64 {
+    300
+}
+fn default_restart_backoff_initial_secs() -> u64 {
+    5
+}
+fn default_restart_backoff_max_secs() -> u64 {
+    60
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mesh_supervision_config_defaults() {
+        let config: MeshSupervisionConfig = serde_json::from_str("{}").unwrap();
+        assert!(config.required);
+        assert!(!config.restart_enabled);
+        assert_eq!(config.restart_limit, 3);
+        assert_eq!(config.restart_window_secs, 300);
+        assert_eq!(config.restart_backoff_initial_secs, 5);
+        assert_eq!(config.restart_backoff_max_secs, 60);
+        assert!(!config.allow_degraded_readiness);
+    }
+
+    #[test]
+    fn mesh_supervision_config_custom() {
+        let json = r#"{
+            "required": false,
+            "restart_enabled": true,
+            "restart_limit": 5,
+            "restart_window_secs": 600,
+            "restart_backoff_initial_secs": 10,
+            "restart_backoff_max_secs": 120,
+            "allow_degraded_readiness": true
+        }"#;
+        let config: MeshSupervisionConfig = serde_json::from_str(json).unwrap();
+        assert!(!config.required);
+        assert!(config.restart_enabled);
+        assert_eq!(config.restart_limit, 5);
+        assert_eq!(config.restart_window_secs, 600);
+        assert_eq!(config.restart_backoff_initial_secs, 10);
+        assert_eq!(config.restart_backoff_max_secs, 120);
+        assert!(config.allow_degraded_readiness);
+    }
+
+    #[test]
+    fn mesh_config_has_supervision_field() {
+        let config: MeshConfig =
+            serde_json::from_str(r#"{"supervision": {"required": false}}"#).unwrap();
+        assert!(!config.supervision.required);
+    }
 }

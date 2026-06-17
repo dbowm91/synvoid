@@ -209,6 +209,31 @@ pub async fn run_unified_server_worker(
 
     let data_plane = std::sync::Arc::new(data_plane);
 
+    // ---- Phase 11.5: derive mesh supervision policy from config ----
+    #[cfg(feature = "mesh")]
+    let mesh_policy = {
+        let config_guard = shared_config.read().await;
+        let mesh_enabled = config_guard
+            .main
+            .tunnel
+            .mesh
+            .as_ref()
+            .map(|m| m.enabled)
+            .unwrap_or(false);
+        let supervision_config = config_guard
+            .main
+            .tunnel
+            .mesh
+            .as_ref()
+            .map(|m| m.supervision.clone())
+            .unwrap_or_default();
+        crate::worker::mesh_supervision::build_mesh_supervision_policy(
+            mesh_enabled,
+            &supervision_config,
+        )
+        .unwrap_or_else(crate::worker::mesh_supervision::MeshSupervisionPolicy::required)
+    };
+
     let state = UnifiedServerWorkerState {
         worker_id,
         metrics: metrics.clone(),
@@ -233,19 +258,33 @@ pub async fn run_unified_server_worker(
             crate::worker::mesh_supervision::WorkerMeshStatus::default(),
         )),
         #[cfg(feature = "mesh")]
-        mesh_policy: crate::worker::mesh_supervision::MeshSupervisionPolicy::default(),
+        mesh_policy,
         task_registry: Arc::new(TokioMutex::new(
             crate::worker::task_registry::WorkerTaskRegistry::new(),
         )),
     };
 
-    {
+    // ---- Phase 11.5: send ready message ----
+    // Required mesh defers ready until mesh startup completes.
+    // Optional/disabled mesh sends ready immediately.
+    #[cfg(feature = "mesh")]
+    let ready_deferred =
+        state.mesh_policy.required && state.data_plane.mesh_transport_manager.is_some();
+    #[cfg(not(feature = "mesh"))]
+    let ready_deferred = false;
+
+    if !ready_deferred {
         let mut ipc_guard = ipc.lock().await;
         ipc_guard
             .send(&crate::process::Message::UnifiedServerWorkerReady { id: worker_id })
             .await?;
+        tracing::info!("Unified Server Worker {} ready", worker_id);
+    } else {
+        tracing::info!(
+            "Unified Server Worker {} deferring ready until mesh startup completes",
+            worker_id
+        );
     }
-    tracing::info!("Unified Server Worker {} ready", worker_id);
 
     // ---- Phase 12: subscribe to exit notifications BEFORE spawning tasks ----
     let mut exit_rx = {
@@ -283,9 +322,11 @@ pub async fn run_unified_server_worker(
 
     // ---- Phase 14.5: mesh supervision pipeline ----
     //
-    // Subscribe to mesh exits via the concrete MeshTransport, start the
-    // observer task, and run the supervision coordinator. Decisions are
-    // consumed in the main supervision select loop below.
+    // Required mesh: observer + coordinator as critical tasks, startup awaited inline,
+    //   ready sent after startup success.
+    // Optional mesh: observer + coordinator as critical tasks, startup as background,
+    //   ready already sent.
+    // Disabled mesh: no pipeline at all.
     //
     // `mesh_decision_rx_opt` is always created (but `None` without mesh feature)
     // so the select loop can unconditionally poll it.
@@ -293,71 +334,115 @@ pub async fn run_unified_server_worker(
     let mut mesh_decision_rx_opt: Option<
         tokio::sync::mpsc::Receiver<crate::worker::mesh_supervision::MeshSupervisorDecision>,
     > = {
-        // Use the authoritative status from worker state (Phase 1: single allocation).
         let mesh_status = state.mesh_status.clone();
 
-        // Get the concrete MeshTransport from the transport manager.
-        let mesh_transport: Option<std::sync::Arc<synvoid_mesh::MeshTransport>> = state
+        // Check if mesh transport exists.
+        let has_mesh_transport = state
             .data_plane
             .mesh_transport_manager
             .as_ref()
             .and_then(|tm| tm.get_quic_transport())
-            .map(|quic| quic.get_inner());
+            .is_some();
 
-        // Create the supervision pipeline: channels + coordinator.
-        let (event_tx, coordinator, decision_rx) =
-            crate::worker::mesh_supervision::create_supervision_pipeline(
-                mesh_status.clone(),
-                state.mesh_policy.clone(),
-            );
+        if !has_mesh_transport {
+            // Mesh disabled — no pipeline, no tasks, no channels.
+            tracing::info!("Mesh disabled — no supervision pipeline created");
+            None
+        } else {
+            // Mesh enabled (required or optional) — create pipeline.
+            let mesh_transport: std::sync::Arc<synvoid_mesh::MeshTransport> = state
+                .data_plane
+                .mesh_transport_manager
+                .as_ref()
+                .and_then(|tm| tm.get_quic_transport())
+                .expect("mesh transport verified above")
+                .get_inner();
 
-        // Spawn the coordinator as a registered background task.
-        {
-            let shutdown_rx = state.task_registry.lock().await.child_token();
-            let mut registry = state.task_registry.lock().await;
-            let mut coord = coordinator;
-            registry.spawn_background("mesh_supervision_coordinator", async move {
-                coord.run(shutdown_rx).await;
-            });
-            tracing::info!("Mesh supervision coordinator started");
-        }
+            let (event_tx, coordinator, decision_rx) =
+                crate::worker::mesh_supervision::create_supervision_pipeline(
+                    mesh_status.clone(),
+                    state.mesh_policy.clone(),
+                );
 
-        // Subscribe to mesh exit events BEFORE starting mesh.
-        // subscribe_exits() is a direct method on MeshTransport.
-        let mesh_exits = mesh_transport.as_ref().map(|t| t.subscribe_exits());
+            // Register coordinator as critical supervision infrastructure.
+            {
+                let shutdown_rx = state.task_registry.lock().await.child_token();
+                let mut registry = state.task_registry.lock().await;
+                let mut coord = coordinator;
+                registry.spawn_critical("mesh_supervision_coordinator", async move {
+                    coord.run(shutdown_rx).await;
+                });
+                tracing::info!("Mesh supervision coordinator started (critical)");
+            }
 
-        // Spawn the mesh exit observer if we have a transport.
-        // Registered in WorkerTaskRegistry for lifecycle management.
-        if let Some(exits) = mesh_exits {
-            let shutdown_rx = state.task_registry.lock().await.child_token();
-            let status = mesh_status.clone();
-            let mut registry = state.task_registry.lock().await;
-            registry.spawn_background(
-                "mesh_exit_observer",
-                crate::worker::mesh_supervision::run_mesh_exit_observer(
-                    exits,
-                    status,
-                    event_tx.clone(),
-                    shutdown_rx,
-                ),
-            );
-            tracing::info!("Mesh exit observer started");
-        }
+            // Subscribe to mesh exit events and register observer as critical.
+            {
+                let exits = mesh_transport.subscribe_exits();
+                let shutdown_rx = state.task_registry.lock().await.child_token();
+                let status = mesh_status.clone();
+                let mut registry = state.task_registry.lock().await;
+                registry.spawn_critical(
+                    "mesh_exit_observer",
+                    crate::worker::mesh_supervision::run_mesh_exit_observer(
+                        exits,
+                        status,
+                        event_tx.clone(),
+                        shutdown_rx,
+                    ),
+                );
+                tracing::info!("Mesh exit observer started (critical)");
+            }
 
-        // Mesh transport start is gated behind the dns feature because
-        // MeshTransport::start_with_policy() requires it.
-        #[cfg(feature = "dns")]
-        if let Some(transport) = mesh_transport.clone() {
-            let event_tx_for_start = event_tx.clone();
-            let mut registry = state.task_registry.lock().await;
-            registry.spawn_background(
-                "mesh_startup",
-                async move {
-                    // No outer timeout — start_with_policy has its own bounded
-                    // stage deadlines, and cancellation would bypass rollback.
-                    let result = transport.start_with_policy(
-                        synvoid_mesh::lifecycle::MeshStartupPolicy::default(),
-                    ).await;
+            // Start mesh transport — gated behind dns feature.
+            #[cfg(feature = "dns")]
+            if state.mesh_policy.required {
+                // Required mesh: await startup inline before ready.
+                let event_tx_for_start = event_tx.clone();
+                match crate::worker::mesh_supervision::start_mesh_generation(
+                    &mesh_transport,
+                    &mesh_status,
+                    0,
+                )
+                .await
+                {
+                    Ok(()) => {
+                        let _ = event_tx_for_start
+                            .send(crate::worker::mesh_supervision::MeshSupervisionEvent::Started)
+                            .await;
+                        // Send ready after successful required mesh startup.
+                        if ready_deferred {
+                            let mut ipc_guard = state.ipc.lock().await;
+                            ipc_guard
+                                .send(&crate::process::Message::UnifiedServerWorkerReady {
+                                    id: worker_id,
+                                })
+                                .await?;
+                            tracing::info!(
+                                "Unified Server Worker {} ready (mesh started)",
+                                worker_id
+                            );
+                        }
+                    }
+                    Err(cause) => {
+                        let _ = event_tx_for_start
+                            .send(
+                                crate::worker::mesh_supervision::MeshSupervisionEvent::StartupFailed(
+                                    cause.exit_reason(),
+                                ),
+                            )
+                            .await;
+                        // Required mesh startup failed — ready was never sent,
+                        // worker will shut down via supervision decision.
+                    }
+                }
+            } else {
+                // Optional mesh: start as background task.
+                let event_tx_for_start = event_tx.clone();
+                let mut registry = state.task_registry.lock().await;
+                registry.spawn_critical("mesh_startup", async move {
+                    let result = mesh_transport
+                        .start_with_policy(synvoid_mesh::lifecycle::MeshStartupPolicy::default())
+                        .await;
                     match result {
                         Ok(report) => {
                             tracing::info!(?report, "Mesh transport started");
@@ -368,17 +453,24 @@ pub async fn run_unified_server_worker(
                         Err(e) => {
                             tracing::error!("Mesh startup failed: {}", e);
                             let _ = event_tx_for_start
-                                .send(crate::worker::mesh_supervision::MeshSupervisionEvent::StartupFailed(
-                                    e.to_string(),
-                                ))
+                                .send(
+                                    crate::worker::mesh_supervision::MeshSupervisionEvent::StartupFailed(
+                                        e.to_string(),
+                                    ),
+                                )
                                 .await;
                         }
                     }
-                },
-            );
-        }
+                });
+            }
+            #[cfg(not(feature = "dns"))]
+            {
+                let _ = mesh_transport;
+                tracing::warn!("Mesh transport start requires dns feature");
+            }
 
-        Some(decision_rx)
+            Some(decision_rx)
+        }
     };
     #[cfg(not(feature = "mesh"))]
     let mut mesh_decision_rx_opt: Option<
@@ -482,7 +574,22 @@ pub async fn run_unified_server_worker(
                         );
                     }
                     Some(crate::worker::mesh_supervision::MeshSupervisorDecision::RestartMesh) => {
-                        tracing::warn!("mesh restart requested but not yet implemented");
+                        tracing::error!("BUG: RestartMesh decision received but restart is not implemented");
+                        #[cfg(feature = "mesh")]
+                        {
+                            break crate::worker::task_registry::SupervisionOutcome::DirectCause(
+                                crate::worker::task_registry::WorkerShutdownCause::MeshRestartExhausted {
+                                    attempts: 0,
+                                    last_error: "restart not implemented".to_string(),
+                                }
+                            );
+                        }
+                        #[cfg(not(feature = "mesh"))]
+                        {
+                            break crate::worker::task_registry::SupervisionOutcome::DirectCause(
+                                crate::worker::task_registry::WorkerShutdownCause::ServerStoppedForShutdown,
+                            );
+                        }
                     }
                     Some(crate::worker::mesh_supervision::MeshSupervisorDecision::MarkDegraded(reason)) => {
                         tracing::warn!(reason = %reason, "mesh degraded");

@@ -809,6 +809,96 @@ pub fn create_supervision_pipeline(
     (event_tx, coordinator, decision_rx)
 }
 
+/// Build a mesh supervision policy from authoritative configuration.
+///
+/// Returns `None` when mesh is disabled (no transport exists).
+pub fn build_mesh_supervision_policy(
+    mesh_enabled: bool,
+    config: &synvoid_config::MeshSupervisionConfig,
+) -> Option<MeshSupervisionPolicy> {
+    if !mesh_enabled {
+        return None;
+    }
+
+    let restart_limit = if config.restart_enabled {
+        config.restart_limit
+    } else {
+        0
+    };
+
+    let startup_failure = if config.required {
+        MeshFailureAction::ShutdownWorker
+    } else {
+        MeshFailureAction::Degrade
+    };
+
+    let critical_exit = if config.required {
+        MeshFailureAction::ShutdownWorker
+    } else {
+        MeshFailureAction::Degrade
+    };
+
+    let restartable_exit = if config.restart_enabled && restart_limit > 0 {
+        MeshFailureAction::RestartMesh
+    } else if config.required {
+        MeshFailureAction::ShutdownWorker
+    } else {
+        MeshFailureAction::Degrade
+    };
+
+    Some(MeshSupervisionPolicy {
+        required: config.required,
+        startup_failure,
+        critical_exit,
+        restartable_exit,
+        restart_limit,
+        restart_window: Duration::from_secs(config.restart_window_secs),
+        restart_backoff_initial: Duration::from_secs(config.restart_backoff_initial_secs),
+        restart_backoff_max: Duration::from_secs(config.restart_backoff_max_secs),
+        readiness_requires_mesh: config.required,
+        allow_degraded_readiness: config.allow_degraded_readiness,
+    })
+}
+
+/// Start mesh transport for a given generation.
+///
+/// Transitions status to Starting, awaits managed startup, and
+/// transitions to Running/Failed according to the result.
+/// Returns Ok(()) on success, Err(MeshFailureCause) on failure.
+#[cfg(feature = "mesh")]
+pub async fn start_mesh_generation(
+    transport: &std::sync::Arc<synvoid_mesh::MeshTransport>,
+    status: &Arc<RwLock<WorkerMeshStatus>>,
+    generation: u64,
+) -> Result<(), MeshFailureCause> {
+    {
+        let mut s = status.write().await;
+        s.transition_starting();
+    }
+
+    let result = transport.start().await;
+
+    match result {
+        Ok(()) => {
+            {
+                let mut s = status.write().await;
+                s.transition_running();
+            }
+            tracing::info!(generation, "Mesh transport started successfully");
+            Ok(())
+        }
+        Err(e) => {
+            let reason = e.to_string();
+            {
+                let mut s = status.write().await;
+                s.transition_failed(format!("startup failed: {reason}"));
+            }
+            tracing::error!(generation, "Mesh startup failed: {}", e);
+            Err(MeshFailureCause::StartupFailed(reason))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1197,5 +1287,82 @@ mod tests {
             "after window expiry, restart should be allowed again, got {:?}",
             d3
         );
+    }
+
+    #[test]
+    fn build_policy_disabled_mesh_returns_none() {
+        let config = synvoid_config::MeshSupervisionConfig::default();
+        assert!(build_mesh_supervision_policy(false, &config).is_none());
+    }
+
+    #[test]
+    fn build_policy_required_config() {
+        let config = synvoid_config::MeshSupervisionConfig {
+            required: true,
+            restart_enabled: false,
+            restart_limit: 3,
+            restart_window_secs: 300,
+            restart_backoff_initial_secs: 5,
+            restart_backoff_max_secs: 60,
+            allow_degraded_readiness: false,
+        };
+        let policy = build_mesh_supervision_policy(true, &config).unwrap();
+        assert!(policy.required);
+        assert_eq!(policy.startup_failure, MeshFailureAction::ShutdownWorker);
+        assert_eq!(policy.restart_limit, 0); // restart_enabled=false
+        assert!(!policy.allow_degraded_readiness);
+    }
+
+    #[test]
+    fn build_policy_optional_config() {
+        let config = synvoid_config::MeshSupervisionConfig {
+            required: false,
+            restart_enabled: true,
+            restart_limit: 5,
+            restart_window_secs: 600,
+            restart_backoff_initial_secs: 10,
+            restart_backoff_max_secs: 120,
+            allow_degraded_readiness: true,
+        };
+        let policy = build_mesh_supervision_policy(true, &config).unwrap();
+        assert!(!policy.required);
+        assert_eq!(policy.startup_failure, MeshFailureAction::Degrade);
+        assert_eq!(policy.restart_limit, 5);
+        assert_eq!(policy.restart_window, Duration::from_secs(600));
+        assert_eq!(policy.restart_backoff_initial, Duration::from_secs(10));
+        assert_eq!(policy.restart_backoff_max, Duration::from_secs(120));
+        assert!(policy.allow_degraded_readiness);
+    }
+
+    #[test]
+    fn build_policy_restart_disabled_makes_restart_impossible() {
+        let config = synvoid_config::MeshSupervisionConfig {
+            required: false,
+            restart_enabled: false,
+            restart_limit: 3,
+            ..Default::default()
+        };
+        let policy = build_mesh_supervision_policy(true, &config).unwrap();
+        assert_eq!(policy.restart_limit, 0);
+        // With restart disabled and optional, restartable_exit should be Degrade, not RestartMesh
+        assert_eq!(policy.restartable_exit, MeshFailureAction::Degrade);
+    }
+
+    #[test]
+    fn build_policy_restart_enabled_with_required() {
+        let config = synvoid_config::MeshSupervisionConfig {
+            required: true,
+            restart_enabled: true,
+            restart_limit: 2,
+            restart_window_secs: 100,
+            restart_backoff_initial_secs: 3,
+            restart_backoff_max_secs: 30,
+            ..Default::default()
+        };
+        let policy = build_mesh_supervision_policy(true, &config).unwrap();
+        assert!(policy.required);
+        assert_eq!(policy.restart_limit, 2);
+        // With restart enabled and required, restartable_exit should be RestartMesh
+        assert_eq!(policy.restartable_exit, MeshFailureAction::RestartMesh);
     }
 }
