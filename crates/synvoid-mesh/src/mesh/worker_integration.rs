@@ -125,7 +125,6 @@ impl MeshFailureCause {
     }
 }
 
-#[cfg(feature = "dns")]
 impl ManagedMeshService for std::sync::Arc<crate::transport::MeshTransport> {
     fn subscribe_critical_exits(&self) -> broadcast::Receiver<MeshTaskExit> {
         self.subscribe_exits()
@@ -149,7 +148,7 @@ impl ManagedMeshService for std::sync::Arc<crate::transport::MeshTransport> {
         match state {
             MeshLifecycleState::Stopped => Ok(()),
             MeshLifecycleState::Failed => self.recover_failed_state(timeout).await,
-            _ => Err(MeshTransportError::Other(format!(
+            _ => Err(MeshTransportError::LifecycleConflict(format!(
                 "cannot restart from lifecycle state {:?}",
                 state
             ))),
@@ -157,7 +156,7 @@ impl ManagedMeshService for std::sync::Arc<crate::transport::MeshTransport> {
     }
 
     async fn lifecycle_state(&self) -> MeshLifecycleState {
-        self.lifecycle_state().await
+        (**self).lifecycle_state().await
     }
 }
 

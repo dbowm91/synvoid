@@ -2175,7 +2175,6 @@ impl MeshTransport {
         routing_manager.update_peer_latency(node_id, 0).await;
     }
 
-    #[cfg(feature = "dns")]
     pub async fn start(&self) -> Result<(), MeshTransportError> {
         self.start_with_policy(MeshStartupPolicy::default())
             .await

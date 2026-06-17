@@ -331,6 +331,24 @@ impl UnifiedServerWorkerState {
     ) -> Option<synvoid_mesh::canonical::CanonicalTrustSnapshot> {
         self.canonical_snapshot.read().await.clone()
     }
+
+    /// Check if mesh is ready to serve traffic.
+    ///
+    /// Returns `true` if mesh is optional (doesn't block readiness) or if mesh
+    /// is in Running or Degraded phase. Returns `false` only when mesh is
+    /// required and not yet in a service-capable phase.
+    #[cfg(feature = "mesh")]
+    pub async fn is_mesh_ready(&self) -> bool {
+        let status = self.mesh_status.read().await;
+        if !self.mesh_policy.required {
+            return true;
+        }
+        matches!(
+            status.phase,
+            crate::worker::mesh_supervision::WorkerMeshPhase::Running
+                | crate::worker::mesh_supervision::WorkerMeshPhase::Degraded
+        )
+    }
 }
 
 pub async fn wait_for_drain(

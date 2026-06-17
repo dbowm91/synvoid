@@ -346,17 +346,48 @@ pub async fn run_unified_server_worker(
         }
 
         // Mesh transport start is gated behind the dns feature because
-        // MeshTransport::start() requires it. The supervision infrastructure
-        // (observer + coordinator) is wired here so it's ready when mesh
-        // startup is enabled in init_mesh.
-        //
-        // NOTE: mesh.start() is not called here because the current init_mesh
-        // code path always takes the dummy branch (Phase 3). When mesh startup
-        // is re-enabled, add the start call here with:
-        //   #[cfg(feature = "dns")]
-        //   if let Some(transport) = mesh_transport {
-        //       tokio::spawn(async move { transport.start().await ... });
-        //   }
+        // MeshTransport::start_with_policy() requires it.
+        #[cfg(feature = "dns")]
+        if let Some(transport) = mesh_transport.clone() {
+            let event_tx_for_start = event_tx.clone();
+            let mut registry = state.task_registry.lock().await;
+            registry.spawn_background(
+                "mesh_startup",
+                async move {
+                    let result = tokio::time::timeout(
+                        std::time::Duration::from_secs(60),
+                        transport.start_with_policy(
+                            synvoid_mesh::lifecycle::MeshStartupPolicy::default(),
+                        ),
+                    )
+                    .await;
+                    match result {
+                        Ok(Ok(report)) => {
+                            tracing::info!(?report, "Mesh transport started");
+                            let _ = event_tx_for_start
+                                .send(crate::worker::mesh_supervision::MeshSupervisionEvent::Started)
+                                .await;
+                        }
+                        Ok(Err(e)) => {
+                            tracing::error!("Mesh startup failed: {}", e);
+                            let _ = event_tx_for_start
+                                .send(crate::worker::mesh_supervision::MeshSupervisionEvent::StartupFailed(
+                                    e.to_string(),
+                                ))
+                                .await;
+                        }
+                        Err(_) => {
+                            tracing::error!("Mesh startup timed out");
+                            let _ = event_tx_for_start
+                                .send(crate::worker::mesh_supervision::MeshSupervisionEvent::StartupFailed(
+                                    "startup timed out".into(),
+                                ))
+                                .await;
+                        }
+                    }
+                },
+            );
+        }
 
         Some(decision_rx)
     };
@@ -573,6 +604,35 @@ pub async fn run_unified_server_worker(
         supervisor.stop().await;
     }
     drop(app_servers);
+
+    // Step 4.5: Shutdown mesh transport (if running).
+    #[cfg(feature = "dns")]
+    {
+        if let Some(tm) = state.data_plane.mesh_transport_manager.as_ref() {
+            if let Some(quic) = tm.get_quic_transport() {
+                let transport = quic.get_inner();
+                if synvoid_mesh::ManagedMeshService::is_running(&transport) {
+                    let remaining = drain_timeout.saturating_sub(state.start_time.elapsed());
+                    let report = transport.shutdown_with_timeout(remaining).await;
+                    let disposition =
+                        crate::worker::mesh_supervision::classify_mesh_shutdown_report(&report);
+                    match disposition {
+                        crate::worker::mesh_supervision::MeshShutdownDisposition::Clean => {
+                            tracing::info!("Mesh shutdown completed cleanly");
+                        }
+                        crate::worker::mesh_supervision::MeshShutdownDisposition::ForcedButComplete => {
+                            tracing::warn!("Mesh shutdown forced but complete");
+                        }
+                        crate::worker::mesh_supervision::MeshShutdownDisposition::Incomplete(
+                            cause,
+                        ) => {
+                            tracing::error!("Mesh shutdown incomplete: {}", cause.exit_reason());
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // Step 5: Clear running flag.
     state.running.stop();

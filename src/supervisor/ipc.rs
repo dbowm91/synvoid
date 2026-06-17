@@ -78,6 +78,10 @@ mod tests {
             last_request_at: None,
             active_connections: 5,
             restart_count: 0,
+            mesh_phase: String::new(),
+            mesh_restart_attempts: 0,
+            mesh_healthy: false,
+            mesh_degraded: false,
         };
         let message = Message::WorkerHeartbeat {
             id: WorkerId(3),

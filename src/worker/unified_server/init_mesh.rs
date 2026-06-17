@@ -78,23 +78,6 @@ pub async fn init_mesh_and_threat_intel(
             // workers have no access to a SnapshotCanonicalTrustReader or
             // EdgeReplicaManager — the snapshot arrives later via IPC
             // (CanonicalTrustSnapshotUpdate) and is handled in lifecycle.rs.
-            if true {
-                tracing::info!("Mesh control plane is disabled in worker process");
-                let dummy_threat = build_dummy_threat_intel(config_path).await;
-                dummy_threat.start_background_tasks();
-                crate::waf::set_threat_intel(dummy_threat.clone());
-                return MeshInit {
-                    transport_manager: None,
-                    threat_intel: Some(dummy_threat),
-                    mesh_signer: None,
-                    canonical_snapshot: None,
-                };
-            }
-
-            // The else branch constructs the full mesh transport. It is
-            // intentionally preserved verbatim from the original code path so
-            // that behavior is unchanged when the Phase 3 control plane is
-            // re-enabled.
             let node_id = mesh_config.node_id();
             let mesh_config_arc = Arc::new(mesh_config.clone());
 
@@ -206,9 +189,17 @@ pub async fn init_mesh_and_threat_intel(
                 Some(Arc::new(signer_for_threat)),
             ));
 
-            #[cfg(any())]
+            #[cfg(feature = "dns")]
             {
-                let dns_registry: Option<Arc<crate::dns::MeshDnsRegistry>> = {
+                let backend_pool = Arc::new(crate::mesh::backend::MeshBackendPool::new(
+                    proxy.clone(),
+                    topology.clone(),
+                ));
+                let signer_for_mesh =
+                    crate::mesh::protocol::MeshMessageSigner::new(signer_key_clone)
+                        .with_verification_pool(verification_pool.clone());
+
+                {
                     let config = shared_config.read().await;
                     let dns_cfg = config.main.dns.clone();
 
@@ -220,13 +211,12 @@ pub async fn init_mesh_and_threat_intel(
                                  zone signing) will be unavailable."
                             );
                         }
-                        None
                     } else if !mesh_config.role.is_global() {
                         tracing::debug!(
                             "Edge node - DNS resolver not created (verification only on global nodes)"
                         );
 
-                        let registry_config = crate::dns::MeshDnsRegistryConfig {
+                        let registry_config = crate::dns::mesh_sync::MeshDnsRegistryConfig {
                             verification_timeout_secs: dns_cfg.mesh.verification_timeout_secs,
                             verification_retry_interval_secs: dns_cfg
                                 .mesh
@@ -237,12 +227,15 @@ pub async fn init_mesh_and_threat_intel(
                             ..Default::default()
                         };
 
-                        let registry = crate::dns::MeshDnsRegistry::with_config(
+                        let registry = crate::dns::mesh_sync::MeshDnsRegistry::with_config(
                             mesh_config.node_id(),
                             false,
                             registry_config,
                         );
-                        Some(Arc::new(registry))
+                        let registry_clone = Arc::new(registry);
+                        tokio::spawn(async move {
+                            registry_clone.start_verification_loop().await;
+                        });
                     } else {
                         let upstream_servers: Vec<std::net::IpAddr> = dns_cfg
                             .mesh
@@ -255,7 +248,6 @@ pub async fn init_mesh_and_threat_intel(
                             tracing::warn!(
                                 "No valid upstream DNS servers configured, DNS verification will not work"
                             );
-                            None
                         } else {
                             match crate::dns::HickoryResolver::with_upstream_servers(
                                 &upstream_servers,
@@ -266,50 +258,47 @@ pub async fn init_mesh_and_threat_intel(
                                         upstream_servers
                                     );
 
-                                    let registry_config = crate::dns::MeshDnsRegistryConfig {
-                                        verification_timeout_secs: dns_cfg
-                                            .mesh
-                                            .verification_timeout_secs,
-                                        verification_retry_interval_secs: dns_cfg
-                                            .mesh
-                                            .verification_retry_interval_secs,
-                                        require_cert_chain_verification: dns_cfg
-                                            .mesh
-                                            .require_cert_chain_verification,
-                                        ..Default::default()
-                                    };
+                                    let registry_config =
+                                        crate::dns::mesh_sync::MeshDnsRegistryConfig {
+                                            verification_timeout_secs: dns_cfg
+                                                .mesh
+                                                .verification_timeout_secs,
+                                            verification_retry_interval_secs: dns_cfg
+                                                .mesh
+                                                .verification_retry_interval_secs,
+                                            require_cert_chain_verification: dns_cfg
+                                                .mesh
+                                                .require_cert_chain_verification,
+                                            ..Default::default()
+                                        };
 
-                                    let registry = crate::dns::MeshDnsRegistry::with_config(
-                                        mesh_config.node_id(),
-                                        true,
-                                        registry_config,
-                                    )
-                                    .with_dns_resolver(resolver);
+                                    let registry =
+                                        crate::dns::mesh_sync::MeshDnsRegistry::with_config(
+                                            mesh_config.node_id(),
+                                            true,
+                                            registry_config,
+                                        )
+                                        .with_dns_resolver(resolver);
 
-                                    let registry_clone = registry.clone();
+                                    let registry_clone = Arc::new(registry);
                                     tokio::spawn(async move {
                                         registry_clone.start_verification_loop().await;
                                     });
-
-                                    Some(Arc::new(registry))
                                 }
                                 Err(e) => {
                                     tracing::error!("Failed to create DNS resolver: {}", e);
-                                    None
                                 }
                             }
                         }
                     }
-                };
+                }
 
                 if let Err(e) = crate::mesh::backend::initialize_mesh_transports(
                     mesh_config,
                     transport_manager.clone(),
-                    backend_pool.clone(),
+                    backend_pool,
                     Some(threat_intel.clone()),
                     Some(Arc::new(signer_for_mesh)),
-                    None::<Arc<dyn crate::dns::resolver::DnsResolver>>,
-                    dns_registry,
                 )
                 .await
                 {
@@ -345,7 +334,7 @@ pub async fn init_mesh_and_threat_intel(
                 }
             }
 
-            #[cfg(any())]
+            #[cfg(feature = "dns")]
             {
                 let mesh_broadcast_tx_for_yara = {
                     let (mesh_broadcast_tx, mut mesh_broadcast_rx) =

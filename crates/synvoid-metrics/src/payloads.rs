@@ -116,6 +116,10 @@ pub struct WorkerMetricsPayload {
     pub last_request_at: Option<u64>,
     pub active_connections: u64,
     pub restart_count: u32,
+    pub mesh_phase: String,
+    pub mesh_restart_attempts: u32,
+    pub mesh_healthy: bool,
+    pub mesh_degraded: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

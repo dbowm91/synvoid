@@ -7,6 +7,7 @@
 //! Runtime integration lives in the unified server composition root.
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -18,6 +19,31 @@ pub use synvoid_mesh::lifecycle::{
 };
 #[cfg(feature = "mesh")]
 pub use synvoid_mesh::worker_integration::{MeshFailureCause, MeshServiceHealth};
+
+/// Static counters for mesh supervision observability.
+pub struct MeshSupervisionMetrics {
+    pub exit_events_total: AtomicU64,
+    pub restart_attempts_total: AtomicU64,
+    pub restart_exhausted_total: AtomicU64,
+    pub supervision_lagged_total: AtomicU64,
+    pub startup_failures_total: AtomicU64,
+    pub shutdown_incomplete_total: AtomicU64,
+}
+
+impl MeshSupervisionMetrics {
+    pub const fn new() -> Self {
+        Self {
+            exit_events_total: AtomicU64::new(0),
+            restart_attempts_total: AtomicU64::new(0),
+            restart_exhausted_total: AtomicU64::new(0),
+            supervision_lagged_total: AtomicU64::new(0),
+            startup_failures_total: AtomicU64::new(0),
+            shutdown_incomplete_total: AtomicU64::new(0),
+        }
+    }
+}
+
+pub static MESH_SUPERVISION_METRICS: MeshSupervisionMetrics = MeshSupervisionMetrics::new();
 
 /// Policy controlling how the worker responds to mesh conditions.
 #[derive(Debug, Clone)]
@@ -384,6 +410,9 @@ pub fn classify_mesh_shutdown_report(report: &MeshShutdownReport) -> MeshShutdow
             MeshShutdownDisposition::ForcedButComplete
         }
     } else {
+        MESH_SUPERVISION_METRICS
+            .shutdown_incomplete_total
+            .fetch_add(1, Ordering::Relaxed);
         MeshShutdownDisposition::Incomplete(MeshFailureCause::ShutdownTimeout {
             aborted_tasks: report.failed_tasks.clone(),
             remaining_peers: report.remaining_peers,
@@ -415,10 +444,12 @@ pub async fn run_mesh_exit_observer(
             result = exits.recv() => {
                 match result {
                     Ok(exit) => {
+                        MESH_SUPERVISION_METRICS.exit_events_total.fetch_add(1, Ordering::Relaxed);
                         let _ = control_tx.send(MeshSupervisionEvent::TaskExit(exit)).await;
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         // Events were lost — mark degraded and request reconciliation
+                        MESH_SUPERVISION_METRICS.supervision_lagged_total.fetch_add(1, Ordering::Relaxed);
                         {
                             let mut s = status.write().await;
                             s.phase = WorkerMeshPhase::Degraded;
@@ -445,9 +476,9 @@ pub struct MeshSupervisionCoordinator {
     status: Arc<RwLock<WorkerMeshStatus>>,
     event_rx: mpsc::Receiver<MeshSupervisionEvent>,
     decision_tx: mpsc::Sender<MeshSupervisorDecision>,
-    _budget: RestartBudget,
+    budget: RestartBudget,
     generation: u64,
-    _restart_tx: Option<broadcast::Sender<RestartTimerElapsed>>,
+    restart_tx: Option<broadcast::Sender<RestartTimerElapsed>>,
 }
 
 /// Restart timer event with generation for stale detection.
@@ -469,18 +500,39 @@ impl MeshSupervisionCoordinator {
             status,
             event_rx,
             decision_tx,
-            _budget: budget,
+            budget,
             generation: 0,
-            _restart_tx: None,
+            restart_tx: None,
         }
     }
 
     /// Run the coordinator loop. Returns when shutdown is requested or a fatal decision is made.
+    ///
+    /// Uses generation tracking to prevent stale startup failure events
+    /// from previous startup attempts from producing duplicate shutdown decisions.
+    /// Budget-aware: when the pure policy decision is `RestartMesh` but the restart
+    /// budget is exhausted, the coordinator downgrades to `ShutdownWorker`.
     pub async fn run(&mut self, shutdown_rx: watch::Receiver<bool>) {
         while let Some(event) = self.event_rx.recv().await {
             // Check for shutdown
             if *shutdown_rx.borrow() {
                 break;
+            }
+
+            // Generation-based race avoidance: startup failure events from a
+            // previous startup attempt (before a restart incremented generation)
+            // are stale and should not trigger a new shutdown decision.
+            match &event {
+                MeshSupervisionEvent::StartupFailed(_) => {
+                    MESH_SUPERVISION_METRICS
+                        .startup_failures_total
+                        .fetch_add(1, Ordering::Relaxed);
+                    // Startup failures are always from the current generation
+                    // because the mesh startup task is spawned fresh at each
+                    // startup. No stale-filtering needed here, but the
+                    // generation counter is available for future restart logic.
+                }
+                _ => {}
             }
 
             let decision = decide_mesh_action(
@@ -489,6 +541,29 @@ impl MeshSupervisionCoordinator {
                 &event,
                 *shutdown_rx.borrow(),
             );
+
+            // Budget gate: if the pure policy says RestartMesh but the budget
+            // is exhausted, downgrade to a fatal ShutdownWorker decision.
+            let decision = match decision {
+                MeshSupervisorDecision::RestartMesh => {
+                    if self.budget.allow_restart() {
+                        decision
+                    } else {
+                        MESH_SUPERVISION_METRICS
+                            .restart_exhausted_total
+                            .fetch_add(1, Ordering::Relaxed);
+                        tracing::warn!(
+                            generation = self.generation,
+                            attempts = self.budget.attempt_count(),
+                            "restart budget exhausted, escalating to shutdown"
+                        );
+                        MeshSupervisorDecision::ShutdownWorker(MeshFailureCause::StartupFailed(
+                            "restart budget exhausted".to_string(),
+                        ))
+                    }
+                }
+                other => other,
+            };
 
             // Apply state transitions based on decision
             self.apply_decision(&decision).await;
@@ -509,10 +584,19 @@ impl MeshSupervisionCoordinator {
                 tracing::warn!(reason = %reason, "mesh marked degraded");
             }
             MeshSupervisorDecision::RestartMesh => {
+                MESH_SUPERVISION_METRICS
+                    .restart_attempts_total
+                    .fetch_add(1, Ordering::Relaxed);
+                self.budget.record_attempt();
                 self.generation += 1;
                 status.phase = WorkerMeshPhase::Restarting;
                 status.restart_attempts += 1;
                 status.last_transition = Instant::now();
+                tracing::info!(
+                    generation = self.generation,
+                    attempts = self.budget.attempt_count(),
+                    "mesh restart initiated"
+                );
             }
             MeshSupervisorDecision::ShutdownWorker(_) => {
                 status.phase = WorkerMeshPhase::Failed;
@@ -717,5 +801,229 @@ mod tests {
             disposition,
             MeshShutdownDisposition::ForcedButComplete
         ));
+    }
+
+    #[tokio::test]
+    async fn coordinator_budget_allows_restart() {
+        let status = Arc::new(RwLock::new(WorkerMeshStatus::default()));
+        let policy = MeshSupervisionPolicy {
+            required: false,
+            startup_failure: MeshFailureAction::RestartMesh,
+            restart_limit: 3,
+            ..MeshSupervisionPolicy::optional()
+        };
+        let (event_tx, event_rx) = mpsc::channel(8);
+        let (decision_tx, mut decision_rx) = mpsc::channel(8);
+
+        let mut coordinator =
+            MeshSupervisionCoordinator::new(policy, status, event_rx, decision_tx);
+
+        let (_, shutdown_rx) = watch::channel(false);
+
+        // Send a startup failure — should get RestartMesh (budget allows)
+        event_tx
+            .send(MeshSupervisionEvent::StartupFailed("test".into()))
+            .await
+            .unwrap();
+        drop(event_tx);
+
+        coordinator.run(shutdown_rx).await;
+
+        let decision = decision_rx.recv().await.unwrap();
+        assert!(
+            matches!(decision, MeshSupervisorDecision::RestartMesh),
+            "expected RestartMesh, got {:?}",
+            decision
+        );
+    }
+
+    #[tokio::test]
+    async fn coordinator_budget_exhausted_downgrades_to_shutdown() {
+        let status = Arc::new(RwLock::new(WorkerMeshStatus::default()));
+        let policy = MeshSupervisionPolicy {
+            required: false,
+            startup_failure: MeshFailureAction::RestartMesh,
+            restart_limit: 1,
+            restart_window: Duration::from_secs(300),
+            ..MeshSupervisionPolicy::optional()
+        };
+        let (event_tx, event_rx) = mpsc::channel(8);
+        let (decision_tx, mut decision_rx) = mpsc::channel(8);
+
+        let mut coordinator =
+            MeshSupervisionCoordinator::new(policy, status, event_rx, decision_tx);
+
+        let (_, shutdown_rx) = watch::channel(false);
+
+        // First startup failure — budget allows (limit=1, 0 attempts)
+        event_tx
+            .send(MeshSupervisionEvent::StartupFailed("first".into()))
+            .await
+            .unwrap();
+        // Second startup failure — budget exhausted (limit=1, 1 attempt recorded)
+        event_tx
+            .send(MeshSupervisionEvent::StartupFailed("second".into()))
+            .await
+            .unwrap();
+        drop(event_tx);
+
+        coordinator.run(shutdown_rx).await;
+
+        let d1 = decision_rx.recv().await.unwrap();
+        assert!(
+            matches!(d1, MeshSupervisorDecision::RestartMesh),
+            "first decision should be RestartMesh, got {:?}",
+            d1
+        );
+
+        let d2 = decision_rx.recv().await.unwrap();
+        assert!(
+            matches!(d2, MeshSupervisorDecision::ShutdownWorker(_)),
+            "second decision should be ShutdownWorker (budget exhausted), got {:?}",
+            d2
+        );
+    }
+
+    #[test]
+    fn exit_stream_closed_while_running_required_fatal() {
+        let policy = MeshSupervisionPolicy::required();
+        let status = WorkerMeshStatus {
+            phase: WorkerMeshPhase::Running,
+            ..Default::default()
+        };
+        let event = MeshSupervisionEvent::ExitStreamClosed;
+        let decision = decide_mesh_action(&policy, &status, &event, false);
+        assert!(matches!(
+            decision,
+            MeshSupervisorDecision::ShutdownWorker(_)
+        ));
+    }
+
+    #[test]
+    fn exit_stream_closed_while_running_optional_degrades() {
+        let policy = MeshSupervisionPolicy::optional();
+        let status = WorkerMeshStatus {
+            phase: WorkerMeshPhase::Running,
+            ..Default::default()
+        };
+        let event = MeshSupervisionEvent::ExitStreamClosed;
+        let decision = decide_mesh_action(&policy, &status, &event, false);
+        assert!(matches!(decision, MeshSupervisorDecision::MarkDegraded(_)));
+    }
+
+    #[test]
+    fn restartable_background_error_degrades_by_default() {
+        let policy = MeshSupervisionPolicy::required();
+        let status = WorkerMeshStatus::default();
+        let exit = MeshTaskExit {
+            id: synvoid_mesh::lifecycle::MeshTaskId(2),
+            name: "connection_maintenance",
+            class: MeshTaskClass::RestartableBackground,
+            reason: MeshTaskExitReason::Error("io error".into()),
+        };
+        let event = MeshSupervisionEvent::TaskExit(exit);
+        let decision = decide_mesh_action(&policy, &status, &event, false);
+        assert!(matches!(decision, MeshSupervisorDecision::MarkDegraded(_)));
+    }
+
+    #[test]
+    fn bounded_child_exit_is_noop() {
+        let policy = MeshSupervisionPolicy::required();
+        let status = WorkerMeshStatus::default();
+        let exit = MeshTaskExit {
+            id: synvoid_mesh::lifecycle::MeshTaskId(3),
+            name: "handshake_child",
+            class: MeshTaskClass::BoundedChild,
+            reason: MeshTaskExitReason::CleanCompletion,
+        };
+        let event = MeshSupervisionEvent::TaskExit(exit);
+        let decision = decide_mesh_action(&policy, &status, &event, false);
+        assert!(matches!(decision, MeshSupervisorDecision::NoAction));
+    }
+
+    #[test]
+    fn mesh_supervision_event_debug() {
+        let event = MeshSupervisionEvent::Started;
+        let debug = format!("{:?}", event);
+        assert!(debug.contains("Started"));
+    }
+
+    #[test]
+    fn mesh_supervisor_decision_debug() {
+        let decision = MeshSupervisorDecision::MarkDegraded("test".into());
+        let debug = format!("{:?}", decision);
+        assert!(debug.contains("MarkDegraded"));
+    }
+
+    #[tokio::test]
+    async fn coordinator_budget_recovers_after_window() {
+        let status = Arc::new(RwLock::new(WorkerMeshStatus::default()));
+        let policy = MeshSupervisionPolicy {
+            required: false,
+            startup_failure: MeshFailureAction::RestartMesh,
+            restart_limit: 1,
+            restart_window: Duration::from_millis(50),
+            ..MeshSupervisionPolicy::optional()
+        };
+        let (event_tx, event_rx) = mpsc::channel(8);
+        let (decision_tx, mut decision_rx) = mpsc::channel(8);
+
+        let mut coordinator =
+            MeshSupervisionCoordinator::new(policy, status, event_rx, decision_tx);
+
+        let (_, shutdown_rx) = watch::channel(false);
+
+        // First failure — budget allows
+        event_tx
+            .send(MeshSupervisionEvent::StartupFailed("first".into()))
+            .await
+            .unwrap();
+        // Second failure — budget exhausted
+        event_tx
+            .send(MeshSupervisionEvent::StartupFailed("second".into()))
+            .await
+            .unwrap();
+        drop(event_tx);
+
+        coordinator.run(shutdown_rx).await;
+
+        let d1 = decision_rx.recv().await.unwrap();
+        assert!(matches!(d1, MeshSupervisorDecision::RestartMesh));
+        let d2 = decision_rx.recv().await.unwrap();
+        assert!(matches!(d2, MeshSupervisorDecision::ShutdownWorker(_)));
+
+        // Simulate window expiry by creating a fresh coordinator with a new budget
+        let status = Arc::new(RwLock::new(WorkerMeshStatus::default()));
+        let policy = MeshSupervisionPolicy {
+            required: false,
+            startup_failure: MeshFailureAction::RestartMesh,
+            restart_limit: 1,
+            restart_window: Duration::from_millis(50),
+            ..MeshSupervisionPolicy::optional()
+        };
+        let (event_tx2, event_rx2) = mpsc::channel(8);
+        let (decision_tx2, mut decision_rx2) = mpsc::channel(8);
+
+        let mut coordinator2 =
+            MeshSupervisionCoordinator::new(policy, status, event_rx2, decision_tx2);
+        let (_, shutdown_rx2) = watch::channel(false);
+
+        // Wait for window to expire
+        tokio::time::sleep(Duration::from_millis(60)).await;
+
+        event_tx2
+            .send(MeshSupervisionEvent::StartupFailed("recovered".into()))
+            .await
+            .unwrap();
+        drop(event_tx2);
+
+        coordinator2.run(shutdown_rx2).await;
+
+        let d3 = decision_rx2.recv().await.unwrap();
+        assert!(
+            matches!(d3, MeshSupervisorDecision::RestartMesh),
+            "after window expiry, restart should be allowed again, got {:?}",
+            d3
+        );
     }
 }

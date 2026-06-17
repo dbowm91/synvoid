@@ -181,7 +181,24 @@ pub fn spawn_heartbeat_task(
             next_heartbeat_at += heartbeat_interval;
 
             let uptime = state.start_time.elapsed().as_secs();
-            let payload = state.metrics.to_payload(uptime);
+            let mut payload = state.metrics.to_payload(uptime);
+
+            // Mesh health snapshot
+            #[cfg(feature = "mesh")]
+            {
+                let mesh_status = state.mesh_status.read().await;
+                payload.mesh_phase = format!("{:?}", mesh_status.phase);
+                payload.mesh_restart_attempts = mesh_status.restart_attempts;
+                payload.mesh_healthy = matches!(
+                    mesh_status.phase,
+                    crate::worker::mesh_supervision::WorkerMeshPhase::Running
+                );
+                payload.mesh_degraded = matches!(
+                    mesh_status.phase,
+                    crate::worker::mesh_supervision::WorkerMeshPhase::Degraded
+                );
+            }
+
             let timestamp = current_timestamp();
             let worker_id = state.worker_id;
 
