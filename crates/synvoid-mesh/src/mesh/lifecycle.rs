@@ -647,19 +647,12 @@ impl fmt::Display for PeerSessionExitReason {
     }
 }
 
-/// A pending or running auxiliary task in the registry (Iteration 80).
+/// A running auxiliary task in the registry (Iteration 81).
 ///
-/// `Reserved` entries represent tasks whose ownership record exists but whose
-/// future has not yet started (gated by a oneshot). This prevents completion
-/// events from racing ahead of registration.
+/// The gated-start pattern (oneshot signal before user-future execution)
+/// is handled inside the spawned task itself; the registry only tracks
+/// tasks with known join handles.
 pub enum AuxiliaryRegistryEntry {
-    /// Ownership reserved; task future is gated and has not started.
-    Reserved {
-        task_id: MeshTaskId,
-        kind: AuxiliaryTaskKind,
-        session_id: Option<String>,
-        dedup_key: Option<String>,
-    },
     /// Task is running with a known join handle.
     Running(AuxiliaryTask),
 }
@@ -668,7 +661,6 @@ impl AuxiliaryRegistryEntry {
     /// Returns the task ID.
     pub fn task_id(&self) -> MeshTaskId {
         match self {
-            AuxiliaryRegistryEntry::Reserved { task_id, .. } => *task_id,
             AuxiliaryRegistryEntry::Running(t) => t.task_id,
         }
     }
@@ -676,7 +668,6 @@ impl AuxiliaryRegistryEntry {
     /// Returns the task kind.
     pub fn kind(&self) -> AuxiliaryTaskKind {
         match self {
-            AuxiliaryRegistryEntry::Reserved { kind, .. } => *kind,
             AuxiliaryRegistryEntry::Running(t) => t.kind,
         }
     }
@@ -684,7 +675,6 @@ impl AuxiliaryRegistryEntry {
     /// Returns a reference to the dedup key.
     pub fn dedup_key(&self) -> Option<&str> {
         match self {
-            AuxiliaryRegistryEntry::Reserved { dedup_key, .. } => dedup_key.as_deref(),
             AuxiliaryRegistryEntry::Running(t) => t.dedup_key.as_deref(),
         }
     }
@@ -692,7 +682,6 @@ impl AuxiliaryRegistryEntry {
     /// Returns a reference to the session ID.
     pub fn session_id(&self) -> Option<&str> {
         match self {
-            AuxiliaryRegistryEntry::Reserved { session_id, .. } => session_id.as_deref(),
             AuxiliaryRegistryEntry::Running(t) => t.session_id.as_deref(),
         }
     }
@@ -729,6 +718,31 @@ pub enum AuxiliaryTaskKind {
     EdgeReplicaRefresh,
     /// Other one-shot best-effort work.
     Other,
+}
+
+/// Check whether auxiliary task submission is allowed in the given lifecycle state.
+///
+/// Submissions are rejected when the transport is `Stopping`, `Stopped`, or `Failed`.
+/// `Starting` allows only task kinds explicitly required during startup.
+/// `Running` allows all task kinds.
+pub fn auxiliary_submission_allowed(state: MeshTransportState, kind: AuxiliaryTaskKind) -> bool {
+    match state {
+        MeshTransportState::Running => true,
+        MeshTransportState::Starting => matches!(kind, AuxiliaryTaskKind::PreflightRoute),
+        MeshTransportState::Stopping | MeshTransportState::Stopped | MeshTransportState::Failed => {
+            false
+        }
+    }
+}
+
+/// Lifecycle states as a simple enum for submission eligibility checks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MeshTransportState {
+    Stopped,
+    Starting,
+    Running,
+    Stopping,
+    Failed,
 }
 
 /// Exit event from an auxiliary task (Iteration 74, Phase 20).

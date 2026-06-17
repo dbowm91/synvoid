@@ -825,7 +825,94 @@ let _guard = self.auxiliary_submission_lock.lock().await;
 - `header_contains_token()` — case-insensitive token check in comma-separated header values
 - `PrefixReader` — internal adapter combining prefix byte buffer with async reader for chunked response parsing
 
+## Iteration 81 — Mesh Transport Subsystem Closure
+
+Iteration 81 closes the HTTP response parsing pipeline with persistent buffered parsing, a standalone close-delimited body reader, independent trailer accounting, strict response-head validation, and serialized auxiliary submission with documented lock ordering.
+
+### Part A: Persistent Buffered Response-Sequence Parsing
+
+`read_http_response_sequence()` now uses a single persistent `Vec<u8>` buffer across all response heads. Previously, leftover bytes after parsing an informational response could be re-read from the socket or lost; now partial heads after informational responses are preserved in the buffer and appended to on subsequent reads. This eliminates duplicated status/version/header parsing logic between leftover and socket paths.
+
+- **`try_parse_http_response_head()`**: Pure parser taking `&[u8]`, returns `Option<(FramedHttpResponseHead, usize)>`. Returns `None` when the buffer does not yet contain a complete head (`\r\n\r\n` terminator not found). Returns `Some((head, consumed))` with the parsed head and number of bytes consumed. No I/O, no side effects.
+- **`read_http_response_head()`**: Rewritten to call `try_parse_http_response_head()` after every `read_exact` into the persistent buffer. The buffer is grown as needed and never truncated between reads. This ensures a partially-read head from a previous iteration is completed by the next socket read.
+- **`read_http_response_sequence()`**: Rewritten with one persistent `Vec<u8>` buffer shared across the entire loop. Informational response heads are parsed and consumed from the buffer; any trailing bytes after the final head are retained for body reading. No duplicated status/version/header logic — all parsing is delegated to `try_parse_http_response_head()`.
+
+### Part B: Close-Dimited Body Reader
+
+`read_close_delimited_http_response_body()` is extracted as a standalone function, separate from the fixed-length and chunked body readers.
+
+- Enforces both per-read idle timeout (`body_idle_timeout`) and total body deadline (`body_total_timeout`)
+- Returns error on body-limit overflow (`max_peer_http_response_body_bytes`) or timeout — never silently truncates output
+- Reads until EOF (connection close), returning all bytes received
+- Validates that total body size does not exceed the configured limit before returning
+
+### Part C: Independent Trailer Byte Accounting
+
+Trailer bytes in chunked responses are now tracked independently from body bytes.
+
+- **`TrailerTooLarge { limit, observed }`**: New error variant in `HttpResponseFramingError`. Returned when the cumulative trailer byte count exceeds `max_peer_http_response_trailer_bytes`
+- Trailer bytes are counted separately from body bytes after the zero-size chunk (`0\r\n\r\n`) terminator
+- `max_peer_http_response_trailer_bytes` is enforced independently of `max_peer_http_response_body_bytes` — a large trailer does not consume body budget and vice versa
+
+### Part D: Strict Response-Head Parsing
+
+Response-head parsing is tightened with exact header-name splitting and strict status-line validation.
+
+- **`parse_http_response_status_line()`**: Validates the HTTP version field is exactly `HTTP/1.0` or `HTTP/1.1` (case-sensitive). Status code must be exactly 3 ASCII digits in the range 100..=599. Returns `Err` on any deviation — no partial or lenient parsing.
+- **`parse_http_response_framing()`**: Rewritten with exact `split_once(':')` on header names instead of substring or lowercased matching. Header names are compared case-insensitively after splitting. Prevents ambiguous parsing when header values contain colons.
+- **`parse_http_body_framing()`**: Same pattern — `split_once(':')` for exact header-name extraction, case-insensitive comparison for `Content-Length` and `Transfer-Encoding`.
+
+### Part E: Auxiliary Submission Serialized With Cleanup
+
+Auxiliary task submission is now lifecycle-aware and serialized with shutdown/recovery cleanup.
+
+- **`auxiliary_submission_allowed()`**: Helper checking `MeshTransportState` and `AuxiliaryTaskKind`. Returns whether submission is permitted in the current lifecycle state. Prevents auxiliary task spawning after shutdown has begun.
+- **`spawn_auxiliary_task()`**: Rechecks lifecycle state under `auxiliary_submission_lock` before proceeding. The previous pattern checked state before acquiring the lock; a shutdown could begin between the check and the lock acquisition, resulting in a task being spawned into a draining registry.
+- **Shutdown and recovery**: Both `shutdown_with_timeout()` and `recover_failed_state()` now acquire `auxiliary_submission_lock` before draining the auxiliary task registry. This serializes with concurrent `spawn_auxiliary_task()` calls and prevents new tasks from being registered during cleanup.
+- **`AuxiliaryRegistryEntry::Reserved` removed**: Only the `Running` variant remains. The two-phase Reserved→Running pattern was necessary when the spawn could fail after reservation; with lifecycle-aware gating, rejection happens before any registry mutation.
+
+### Part F: Lock Ordering
+
+The following lock ordering is documented and enforced:
+
+```text
+lifecycle operation lock (lifecycle_op)
+  -> auxiliary_submission_lock
+    -> auxiliary_tasks lock
+```
+
+All code paths acquiring multiple locks must follow this order. `shutdown_with_timeout()` and `recover_failed_state()` acquire `lifecycle_op` first, then `auxiliary_submission_lock`, then drain `auxiliary_tasks`. `spawn_auxiliary_task()` acquires `auxiliary_submission_lock` only. Violations are caught by deadlock-detection CI runs.
+
+### New/Modified Types
+
+| Type | Location | Purpose |
+|------|----------|---------|
+| `parse_http_response_status_line()` | `transport_peer.rs` | Strict status-line parser (version, status code) |
+| `try_parse_http_response_head()` | `transport_peer.rs` | Pure buffer-oriented head parser (no I/O) |
+| `read_close_delimited_http_response_body()` | `transport_peer.rs` | Extracted close-delimited body reader |
+| `HttpResponseFramingError::TrailerTooLarge` | `transport_peer.rs` | Independent trailer error with `limit`/`observed` fields |
+| `auxiliary_submission_allowed()` | `transport.rs` | Lifecycle-state gate for auxiliary submissions |
+| `MeshTransportState` | `transport.rs` | Simple enum for submission eligibility checks |
+
+### Config Fields (unchanged)
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `peer_http_backend_idle_timeout_secs` | 30 | Backend response idle timeout |
+| `peer_http_response_body_total_timeout_secs` | 60 | Total body framing deadline |
+| `max_peer_http_response_trailer_bytes` | 4096 | Max chunked response trailer size |
+
+### Lock Ordering Invariant
+
+```text
+lifecycle_op -> auxiliary_submission_lock -> auxiliary_tasks
+```
+
+`shutdown_with_timeout()` and `recover_failed_state()` hold `lifecycle_op` while acquiring `auxiliary_submission_lock` and draining `auxiliary_tasks`. `spawn_auxiliary_task()` acquires only `auxiliary_submission_lock`. The ordering prevents deadlocks and ensures no auxiliary task is spawned during shutdown/recovery cleanup.
+
 ## Testing Commands
+
+> **Note**: The mesh transport and lifecycle subsystem is closed as of Iteration 81. All HTTP response framing, auxiliary task ownership, and lock ordering invariants are complete. Guardrail tests enforce the boundaries below.
 
 ```bash
 # Run integration tests
@@ -839,6 +926,14 @@ cargo test --test worker_supervision_control_flow --features mesh,dns
 # Unit tests
 cargo test -p synvoid-mesh --features mesh lifecycle
 cargo test -p synvoid-mesh --features mesh task_group
+cargo test -p synvoid-mesh --features mesh auxiliary
+
+# Mesh transport closure verification
+cargo test -p synvoid-mesh --features mesh http_response_parsing
+cargo test -p synvoid-mesh --features mesh auxiliary_submission
+
+# Lock ordering verification (deadlock detection)
+cargo test --test mesh_lock_ordering --features mesh,dns
 
 # Check DHT records (if admin API available)
 curl http://localhost:8080/api/mesh/dht/records

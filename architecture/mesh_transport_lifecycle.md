@@ -1,4 +1,4 @@
-# Mesh Transport Lifecycle Inventory — Iteration 79
+# Mesh Transport Lifecycle Inventory — Iteration 81
 
 ## Purpose
 
@@ -194,6 +194,86 @@ close-delimited. Ambiguous HTTP/1.1 framing is rejected immediately.
 
 `extract_host_from_http`, `extract_path_from_http`, and `extract_method_from_http`
 have been removed. All callers now use `ParsedHttpRequestMeta`.
+
+## Iteration 81 — Response-Sequence Parsing, Auxiliary Submission Cleanup, and Lock Ordering
+
+### Part A — Persistent buffered response-sequence parsing
+
+`try_parse_http_response_head()` is a new pure parser that operates on a
+pre-filled byte buffer rather than an async reader. It is used by
+`read_http_response_sequence()` to drain informational (1xx) responses
+that have already been read into a prefix buffer. The parser returns
+`Option<FramedHttpResponseHead>` — `Some` when a complete head is found,
+`None` when more bytes are needed, or an error on malformed input.
+
+**Key invariant**: The buffer is advanced (bytes consumed) only when the
+parser returns `Some` or an error. A `None` return leaves the buffer
+untouched for the next read.
+
+### Part B — Extracted `read_close_delimited_http_response_body()`
+
+Close-delimited response bodies are now parsed by a dedicated
+`read_close_delimited_http_response_body()` helper with a total deadline.
+This replaces the inline loop that previously handled close-delimited
+responses. The total deadline is enforced via `read_exact_with_timeout()`
+at the per-chunk level, preventing a stalled backend from exceeding the
+overall body budget.
+
+### Part C — Independent trailer byte accounting
+
+Chunked response trailers are now counted against
+`max_peer_http_response_trailer_bytes` independently from the body byte
+budget. Previously, trailer bytes were not bounded, allowing an
+adversary to send arbitrarily large trailers. A `TrailerTooLarge` error
+variant in `HttpResponseFramingError` is returned when the trailer exceeds
+the configured limit.
+
+### Part D — Centralized strict response-head parsing
+
+Two new centralized helpers replace ad-hoc response-head parsing:
+
+- **`parse_http_response_status_line()`** — parses the status line
+  (`HTTP/1.x STATUS REASON\r\n`) with strict validation. Validates
+  version (exactly `HTTP/1.0` or `HTTP/1.1`), numeric status code, and
+  reason phrase.
+- **`parse_http_response_framing()`** — extracts framing metadata from
+  parsed header pairs. Uses exact header-name splitting (no
+  case-insensitive scan) for `Content-Length`, `Transfer-Encoding`, and
+  `Connection`. Conflicting `Content-Length` values are rejected.
+
+Both helpers operate on owned `Vec<u8>` / `Vec<HeaderPair>` inputs and
+return `Result<T, HttpResponseFramingError>`, making them testable
+without I/O.
+
+### Part E — Auxiliary submission serialized with cleanup
+
+Auxiliary task submission is now serialized with lifecycle-aware cleanup:
+
+- **`auxiliary_submission_allowed()`** — helper that checks lifecycle
+  state under the `auxiliary_submission_lock`. Returns `false` when the
+  transport is `Stopping` or `Stopped`, preventing new auxiliary tasks
+  from being registered during teardown.
+- **Lifecycle state rechecked** under `auxiliary_submission_lock` — the
+  `Reserved` → `Running` transition is now atomic with the lifecycle
+  check, preventing a TOCTOU race where submission could succeed after
+  shutdown begins.
+- **`Reserved` variant removed** from `AuxiliaryRegistryEntry` — the
+  gated-start pattern (reserve → spawn) is replaced by a single
+  atomic check-then-register under the lock. This eliminates the window
+  where a `Reserved` entry could outlive the submission lock.
+
+### Part F — Lock ordering
+
+Lock acquisition order is now documented and enforced:
+
+```
+lifecycle_op → task_group → auxiliary_tasks → peer_sessions
+```
+
+All paths that acquire multiple locks follow this ordering. A
+`debug_assert!` in `auxiliary_submission_allowed()` verifies the
+`auxiliary_tasks` lock is held (not the `peer_sessions` lock) when the
+helper is called.
 
 ## Task Classification Definitions
 
@@ -1147,3 +1227,4 @@ Secondary metrics (scores, failures, latency) are intentionally excluded from sn
 | 77 | **Nested-cleanup corrective pass**. **Part A — Deadline-aware stream drain**: `drain_peer_stream_handlers()` uses `tokio::time::timeout(left, handlers.join_next()).await` so no cooperative wait exceeds the supplied timeout. **Part B — Remove `apply_read_timeouts`**: The wrapper was misleadingly a total handler lifetime timeout; per-message reads now use `read_exact_with_timeout()` directly at I/O sites. **Part C — Forced abort classification**: `stop_peer_session_task()` zero-budget branch returns `ForcedParentAbort` (was `Failed`). New `force_abort_peer_session()` helper wraps cooperative abort + await. **Part D — Rollback error accounting**: `ForcedParentAbort` and `Failed` outcomes recorded as incomplete cleanup errors, preventing false clean transitions. **Part E — Datagram handler ownership**: `start_datagram_handler()` owns handlers in a bounded `JoinSet` (`max_concurrent_datagram_handlers`, default 32) instead of bare `tokio::spawn()`. New config: `peer_stream_drain_timeout_secs` (default 5), `max_concurrent_datagram_handlers` (default 32). |
 | 78 | **HTTP framing and nested ownership corrective pass**. **Part A — HTTP-over-mesh framing contract**: A single QUIC bidirectional stream carries exactly one HTTP/1.x request + response. Supported: headers terminated by `\r\n\r\n`, fixed-body with valid `Content-Length`. Rejected: chunked Transfer-Encoding (501), CONNECT/upgrade (503), pipelined requests, ambiguous Content-Length. **`read_http_request_head()`** (in `transport_peer.rs`): generic `AsyncRead` helper; enforces remaining-capacity header cap, per-read idle timeout + total header framing deadline (`peer_http_header_total_timeout_secs`, default 30s), parses Content-Length (strict: conflicting values rejected, non-numeric rejected) and Transfer-Encoding. **`read_fixed_http_body()`**: reads exactly `content_length` bytes with idle + total body framing deadlines (`peer_http_body_total_timeout_secs`, default 60s); rejects premature EOF and body prefix exceeding declared length. **New config**: `peer_http_header_total_timeout_secs` (default 30), `max_peer_http_body_bytes` (default 65536), `peer_http_body_total_timeout_secs` (default 60), `peer_http_backend_idle_timeout_secs` (default 30). **Part B — Backend idle timeout**: `handle_http_proxy_stream()` backend response reads use `peer_http_backend_idle_timeout_secs` to prevent a never-closing backend from pinning a stream. **Part C — Edge-replica notification ownership**: `RaftCommitNotification` handler no longer uses bare `tokio::spawn()`; refresh tasks registered as `AuxiliaryTaskKind::EdgeReplicaRefresh` in the auxiliary task registry, bounded and drained during shutdown/recovery. **Part D — PeerSessionExit stream-drain diagnostics**: `PeerSessionExit` carries `stream_drain: PeerStreamDrainReport` with actual drain/abort/failure counts. **Tests**: `tests/mesh_http_framing.rs` (13 tests), `iter78_drain_stream_handlers_real` in `tests/mesh_forced_cleanup.rs`, 12 guardrail assertions in `tests/mesh_task_ownership_guard.rs`. |
 | 79 | **HTTP response framing and auxiliary ownership corrective pass**. **Parts A-B — Backend HTTP response framing**: Added `FramedHttpResponseHead` type for parsed response heads; `HttpResponseFramingError` enum for typed response framing errors; `read_http_response_head()` generic async reader for response headers with idle/total timeouts; `read_fixed_http_response_body()` reads exact Content-Length bytes; `read_chunked_http_response_body()` parses chunked Transfer-Encoding with trailer support. Replaced EOF-only backend response loop with proper HTTP/1.1 framing. Backend persistent connections no longer define response termination. Config: `max_peer_http_response_header_bytes`, `max_peer_http_response_body_bytes`, `peer_http_response_header_total_timeout_secs`, `peer_http_response_body_total_timeout_secs`, `max_peer_http_response_trailer_bytes`. **Parts C-D — Request metadata parsing**: Added `ParsedHttpRequestMeta` struct and `parse_http_request_meta()` for header-only metadata extraction. Binary request bodies no longer affect host/path extraction. Upgrade detection uses exact parsed header names/tokens. No-body requests with trailing bytes rejected. `extract_host_from_http()`, `extract_path_from_http()`, `extract_method_from_http()` now accept header bytes only. **Parts E-F — Auxiliary task ownership**: Added `spawn_auxiliary_task()` shared helper that wraps future with `AuxiliaryTaskExit` publication. Edge-replica refresh tasks now publish `AuxiliaryTaskExit` on completion. Deduplication aborts AND awaits stale tasks before inserting replacement. Capacity rejection happens before spawning, creating no orphan handles. Edge-refresh failures return proper error reasons instead of `CleanCompletion`. **Part G — Test-only API surface**: `stop_peer_session_task_for_test` adapter removed entirely — module-local tests now call the private `stop_peer_session_task()` directly. `drain_peer_stream_handlers_for_test` and `drain_datagram_handlers_for_test` changed from `pub` to `pub(crate)`. **Part H — Behavioral tests**: Response framing tests (basic head, chunked, connection close, fixed body, premature EOF, no-body statuses). Request metadata tests (binary body, trailing bytes, upgrade parsing). **Part J — Guardrails**: Source-level checks for response framing types/functions, header-only metadata parsing, auxiliary spawn helper usage, and public API surface. |
+| 81 | **Response-sequence parsing, auxiliary submission cleanup, and lock ordering**. **Part A — Persistent buffered response-sequence parsing**: `try_parse_http_response_head()` pure parser on pre-filled byte buffer, used by `read_http_response_sequence()` to drain informational (1xx) responses. Buffer advanced only on `Some`/error; `None` leaves buffer untouched. **Part B — Extracted close-delimited body reader**: `read_close_delimited_http_response_body()` with total deadline replaces inline close-delimited loop. Per-chunk `read_exact_with_timeout()` enforces overall body budget. **Part C — Independent trailer byte accounting**: Chunked trailers bounded by `max_peer_http_response_trailer_bytes` independently from body budget. New `TrailerTooLarge` error variant in `HttpResponseFramingError`. **Part D — Centralized strict response-head parsing**: `parse_http_response_status_line()` (strict status-line validation) and `parse_http_response_framing()` (exact header-name splitting for Content-Length/Transfer-Encoding/Connection) replace ad-hoc parsing. Both pure, testable without I/O. **Part E — Auxiliary submission serialized with cleanup**: `auxiliary_submission_allowed()` checks lifecycle state under `auxiliary_submission_lock`; lifecycle state rechecked atomically; `Reserved` variant removed from `AuxiliaryRegistryEntry` (gated-start replaced by atomic check-then-register). **Part F — Lock ordering documented**: `lifecycle_op → task_group → auxiliary_tasks → peer_sessions` with `debug_assert!` verification. |

@@ -2824,7 +2824,25 @@ impl MeshTransport {
     /// of registration.
     ///
     /// Serialized by `auxiliary_submission_lock` so that deduplication,
-    /// capacity checking, stale-task teardown, and insertion are atomic.
+    /// capacity checking, state validation, stale-task teardown, and
+    /// insertion are atomic. Lifecycle state is rechecked under the lock
+    /// to prevent submissions after shutdown/recovery intent begins.
+    ///
+    /// # Lock ordering
+    ///
+    /// Submission acquires locks in this order (never reversed):
+    /// ```text
+    /// auxiliary_submission_lock
+    ///   -> lifecycle_state lock
+    ///   -> auxiliary_tasks lock
+    /// ```
+    ///
+    /// Shutdown/recovery acquires:
+    /// ```text
+    /// lifecycle operation lock (lifecycle_op)
+    ///   -> auxiliary_submission_lock
+    ///     -> auxiliary_tasks lock
+    /// ```
     pub(crate) async fn spawn_auxiliary_task<F>(
         &self,
         kind: AuxiliaryTaskKind,
@@ -2888,8 +2906,43 @@ impl MeshTransport {
             }
         });
 
-        // Acquire submission lock — serializes all dedup/capacity/reservation/insert operations.
+        // Acquire submission lock — serializes all state/dedup/capacity/insert operations.
         let _guard = self.auxiliary_submission_lock.lock().await;
+
+        // Recheck lifecycle state under the lock (Phase 19).
+        {
+            let state = self.lifecycle_state.lock().await;
+            let transport_state = match *state {
+                crate::lifecycle::MeshLifecycleState::Stopped => {
+                    crate::lifecycle::MeshTransportState::Stopped
+                }
+                crate::lifecycle::MeshLifecycleState::Starting => {
+                    crate::lifecycle::MeshTransportState::Starting
+                }
+                crate::lifecycle::MeshLifecycleState::Running => {
+                    crate::lifecycle::MeshTransportState::Running
+                }
+                crate::lifecycle::MeshLifecycleState::Stopping => {
+                    crate::lifecycle::MeshTransportState::Stopping
+                }
+                crate::lifecycle::MeshLifecycleState::Failed => {
+                    crate::lifecycle::MeshTransportState::Failed
+                }
+            };
+            if !crate::lifecycle::auxiliary_submission_allowed(transport_state, kind) {
+                tracing::debug!(
+                    "Auxiliary submission rejected: lifecycle state {:?} does not allow {:?}",
+                    transport_state,
+                    kind
+                );
+                metrics::counter!("edge_refresh_capacity_dropped").increment(1);
+                // Drop start_tx — gated task will see Err and exit cleanly.
+                drop(start_tx);
+                handle.abort();
+                let _ = handle.await;
+                return Err(());
+            }
+        }
 
         // Deduplication and capacity check.
         const MAX_CONCURRENT_EDGE_REPLICA_REFRESH: usize = 8;
@@ -3033,12 +3086,6 @@ impl MeshTransport {
                                             }
                                         }
                                     }
-                                    Some(AuxiliaryRegistryEntry::Reserved { task_id, .. }) => {
-                                        tracing::debug!(
-                                            "Auxiliary reaper: received exit for Reserved entry {} (gate not yet opened)",
-                                            task_id
-                                        );
-                                    }
                                     None => {}
                                 }
                             }
@@ -3077,9 +3124,6 @@ impl MeshTransport {
                         if task.handle.is_finished() {
                             to_remove.push(*task_id);
                         }
-                    }
-                    AuxiliaryRegistryEntry::Reserved { .. } => {
-                        // Reserved entry — gate not yet opened, nothing to reap.
                     }
                 }
             }
@@ -3734,14 +3778,15 @@ impl MeshTransport {
             }
         }
 
-        // Phase 8: Clear auxiliary tasks
+        // Phase 8: Clear auxiliary tasks.
+        // Acquire submission lock first to prevent new submissions during drain.
         {
+            let _aux_submission_guard = self.auxiliary_submission_lock.lock().await;
             let mut aux = self.auxiliary_tasks.lock().await;
             for (_id, entry) in aux.drain() {
-                if let AuxiliaryRegistryEntry::Running(task) = entry {
-                    task.handle.abort();
-                    let _ = task.handle.await;
-                }
+                let AuxiliaryRegistryEntry::Running(task) = entry;
+                task.handle.abort();
+                let _ = task.handle.await;
             }
         }
 
@@ -4317,14 +4362,15 @@ impl MeshTransport {
         let peers_at_shutdown_start = self.peer_connections.len();
         self.peer_connections.clear();
 
-        // Drain auxiliary tasks (Iteration 73, Phase 13-14)
+        // Drain auxiliary tasks (Iteration 73, Phase 13-14).
+        // Acquire submission lock first to prevent new submissions during drain.
         {
+            let _aux_submission_guard = self.auxiliary_submission_lock.lock().await;
             let mut aux = self.auxiliary_tasks.lock().await;
             for (_id, entry) in aux.drain() {
-                if let AuxiliaryRegistryEntry::Running(task) = entry {
-                    task.handle.abort();
-                    let _ = task.handle.await;
-                }
+                let AuxiliaryRegistryEntry::Running(task) = entry;
+                task.handle.abort();
+                let _ = task.handle.await;
             }
         }
 

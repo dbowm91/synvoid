@@ -159,6 +159,7 @@ pub enum HttpResponseFramingError {
     InvalidContentLength(String),
     UnsupportedTransferEncoding(String),
     BodyTooLarge { limit: usize, declared: usize },
+    TrailerTooLarge { limit: usize, observed: usize },
     PrematureEof { expected: usize, received: usize },
     MalformedChunkedBody(String),
     BackendClosedBeforeCompleteResponse,
@@ -181,6 +182,12 @@ impl std::fmt::Display for HttpResponseFramingError {
                 write!(
                     f,
                     "Response body too large: declared {declared} bytes, limit {limit}"
+                )
+            }
+            Self::TrailerTooLarge { limit, observed } => {
+                write!(
+                    f,
+                    "Response trailer too large: {observed} bytes exceeds limit {limit}"
                 )
             }
             Self::PrematureEof { expected, received } => {
@@ -235,35 +242,32 @@ impl<R: tokio::io::AsyncRead + Unpin> PrefixReader<R> {
         idle_timeout: Duration,
     ) -> Result<u8, HttpResponseFramingError> {
         let mut buf = [0u8; 1];
-        loop {
-            // Try prefix first (synchronous read from Cursor), but only if not exhausted.
-            if !self.prefix_exhausted {
-                use std::io::Read;
-                let n = std::io::Read::read(&mut self.prefix, &mut buf)
-                    .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
-                if n == 1 {
-                    return Ok(buf[0]);
-                }
-                // n == 0 means prefix is exhausted (EOF on Cursor).
-                self.prefix_exhausted = true;
-            }
-            // Read from inner (async)
-            let now = tokio::time::Instant::now();
-            if now >= deadline {
-                return Err(HttpResponseFramingError::Io("read timeout".to_string()));
-            }
-            let remaining = deadline.duration_since(now);
-            let effective = idle_timeout.min(remaining);
-            use tokio::io::AsyncReadExt;
-            let n = tokio::time::timeout(effective, self.inner.read(&mut buf))
-                .await
-                .map_err(|_| HttpResponseFramingError::Io("read timeout".to_string()))?
+        // Try prefix first (synchronous read from Cursor), but only if not exhausted.
+        if !self.prefix_exhausted {
+            let n = std::io::Read::read(&mut self.prefix, &mut buf)
                 .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
-            if n == 0 {
-                return Err(HttpResponseFramingError::BackendClosedBeforeCompleteResponse);
+            if n == 1 {
+                return Ok(buf[0]);
             }
-            return Ok(buf[0]);
+            // n == 0 means prefix is exhausted (EOF on Cursor).
+            self.prefix_exhausted = true;
         }
+        // Read from inner (async)
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return Err(HttpResponseFramingError::Io("read timeout".to_string()));
+        }
+        let remaining = deadline.duration_since(now);
+        let effective = idle_timeout.min(remaining);
+        use tokio::io::AsyncReadExt;
+        let n = tokio::time::timeout(effective, self.inner.read(&mut buf))
+            .await
+            .map_err(|_| HttpResponseFramingError::Io("read timeout".to_string()))?
+            .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
+        if n == 0 {
+            return Err(HttpResponseFramingError::BackendClosedBeforeCompleteResponse);
+        }
+        Ok(buf[0])
     }
 
     async fn read_exact_with_timeout(
@@ -321,7 +325,136 @@ fn header_contains_token(value: &str, token: &str) -> bool {
     false
 }
 
+/// Strictly parse an HTTP response status line.
+///
+/// Validates:
+/// - Version token is exactly `HTTP/1.0` or `HTTP/1.1`
+/// - Status token is exactly 3 ASCII digits in `100..=599`
+/// - Malformed control characters are rejected
+fn parse_http_response_status_line(
+    line: &str,
+) -> Result<(HttpVersion, u16), HttpResponseFramingError> {
+    let mut parts = line.splitn(3, ' ');
+    let version_str = parts
+        .next()
+        .ok_or_else(|| {
+            HttpResponseFramingError::MalformedStatusLine("missing version token".to_string())
+        })?
+        .trim_end();
+
+    let http_version = match version_str {
+        "HTTP/1.0" => HttpVersion::Http10,
+        "HTTP/1.1" => HttpVersion::Http11,
+        other => {
+            return Err(HttpResponseFramingError::MalformedStatusLine(format!(
+                "unsupported HTTP version: {other}"
+            )));
+        }
+    };
+
+    let status_str = parts
+        .next()
+        .ok_or_else(|| {
+            HttpResponseFramingError::MalformedStatusLine("missing status code".to_string())
+        })?
+        .trim();
+
+    // Status must be exactly 3 ASCII digits
+    if status_str.len() != 3 {
+        return Err(HttpResponseFramingError::InvalidStatusCode(format!(
+            "status code must be 3 digits, got {} chars: {status_str}",
+            status_str.len()
+        )));
+    }
+    for byte in status_str.bytes() {
+        if !byte.is_ascii_digit() {
+            return Err(HttpResponseFramingError::InvalidStatusCode(format!(
+                "non-digit in status code: {status_str}"
+            )));
+        }
+    }
+    let status_code: u16 = status_str.parse().map_err(|_| {
+        HttpResponseFramingError::InvalidStatusCode(format!("out of range: {status_str}"))
+    })?;
+    if !(100..=599).contains(&status_code) {
+        return Err(HttpResponseFramingError::InvalidStatusCode(format!(
+            "status code {status_code} out of range 100..=599"
+        )));
+    }
+
+    Ok((http_version, status_code))
+}
+
+/// Try to parse a complete HTTP response head from a byte buffer.
+///
+/// Returns:
+/// - `Ok(None)` when `\r\n\r\n` is not yet present in the buffer
+/// - `Ok(Some((head, consumed)))` when a complete head is available;
+///   `consumed` is the byte index immediately after the header terminator
+/// - `Err(...)` on malformed input
+///
+/// The caller retains bytes after `consumed` for subsequent reads.
+fn try_parse_http_response_head(
+    buffer: &[u8],
+    max_header_bytes: usize,
+) -> Result<Option<(FramedHttpResponseHead, usize)>, HttpResponseFramingError> {
+    let Some(pos) = buffer.windows(4).position(|w| w == b"\r\n\r\n") else {
+        return Ok(None);
+    };
+
+    let header_end = pos + 4;
+    let header_bytes = buffer[..header_end].to_vec();
+    let body_prefix = buffer[header_end..].to_vec();
+
+    let header_str = String::from_utf8_lossy(&header_bytes);
+    let status_line = header_str.lines().next().unwrap_or("");
+
+    let (http_version, status_code) = parse_http_response_status_line(status_line)?;
+
+    let (content_length, chunked, connection_close) = parse_http_response_framing(&header_str)?;
+
+    let body_encoding = if chunked {
+        HttpResponseBodyEncoding::Chunked
+    } else if content_length.is_some() {
+        HttpResponseBodyEncoding::FixedLength
+    } else if connection_close || matches!(http_version, HttpVersion::Http10) {
+        HttpResponseBodyEncoding::CloseDelimited
+    } else {
+        HttpResponseBodyEncoding::None
+    };
+
+    // For informational responses, the body prefix is NOT returned to the
+    // caller — it becomes part of the sequence buffer for the next response.
+    // For final responses, body_prefix is returned for body framing.
+    let is_informational = status_code < 200;
+    let returned_prefix = if is_informational {
+        Vec::new()
+    } else {
+        body_prefix
+    };
+
+    Ok(Some((
+        FramedHttpResponseHead {
+            header_bytes,
+            body_prefix: returned_prefix,
+            status_code,
+            content_length,
+            chunked,
+            connection_close,
+            http_version,
+            body_encoding,
+        },
+        header_end,
+    )))
+}
+
 /// Parse Content-Length, Transfer-Encoding, and Connection from response header bytes.
+///
+/// Uses exact header-name splitting (`split_once(':')`) rather than prefix
+/// matching to prevent accidental matches against malformed names such as
+/// `Content-Length-Extra:`. Duplicate equal Content-Length values are accepted;
+/// conflicting duplicates are rejected. Only a single `chunked` Transfer-Encoding
+/// token is accepted; lists containing other codings are rejected.
 fn parse_http_response_framing(
     header_str: &str,
 ) -> Result<(Option<usize>, bool, bool), HttpResponseFramingError> {
@@ -330,31 +463,45 @@ fn parse_http_response_framing(
     let mut connection_close = false;
 
     for line in header_str.lines() {
-        let line_lower = line.to_lowercase();
-        if line_lower.starts_with("content-length:") {
-            let value_str = line["content-length:".len()..].trim();
-            let value: usize = value_str.parse().map_err(|_| {
+        // Skip the status line and empty lines.
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // Exact header-name splitting: require a colon separator.
+        let (name, value) = match trimmed.split_once(':') {
+            Some(pair) => pair,
+            None => continue, // Malformed header line without colon — skip.
+        };
+
+        let name = name.trim();
+        let value = value.trim();
+
+        if name.eq_ignore_ascii_case("content-length") {
+            let v: usize = value.parse().map_err(|_| {
                 HttpResponseFramingError::InvalidContentLength(format!(
-                    "non-numeric value: {value_str}"
+                    "non-numeric value: {value}"
                 ))
             })?;
             if let Some(existing) = content_length {
-                if existing != value {
+                if existing != v {
                     return Err(HttpResponseFramingError::InvalidContentLength(format!(
-                        "conflicting values: {existing} and {value}"
+                        "conflicting values: {existing} and {v}"
                     )));
                 }
             }
-            content_length = Some(value);
-        } else if line_lower.starts_with("transfer-encoding:") {
-            let value = line["transfer-encoding:".len()..].trim().to_lowercase();
-            if value == "chunked" {
+            content_length = Some(v);
+        } else if name.eq_ignore_ascii_case("transfer-encoding") {
+            let te_lower = value.to_lowercase();
+            if te_lower == "chunked" {
                 chunked = true;
             } else {
-                return Err(HttpResponseFramingError::UnsupportedTransferEncoding(value));
+                return Err(HttpResponseFramingError::UnsupportedTransferEncoding(
+                    te_lower,
+                ));
             }
-        } else if line_lower.starts_with("connection:") {
-            let value = line["connection:".len()..].trim();
+        } else if name.eq_ignore_ascii_case("connection") {
             if header_contains_token(value, "close") {
                 connection_close = true;
             }
@@ -372,8 +519,9 @@ fn parse_http_response_framing(
 
 /// Read an HTTP/1.x response head from an async reader.
 ///
-/// Reads until `\r\n\r\n` is found, enforcing per-read idle timeout,
-/// total header framing deadline, and maximum header byte cap.
+/// Maintains a local buffer and calls `try_parse_http_response_head()` after
+/// every read. Enforces per-read idle timeout, total header framing deadline,
+/// and maximum header byte cap.
 pub async fn read_http_response_head<R: tokio::io::AsyncRead + Unpin>(
     reader: &mut R,
     idle_timeout: Duration,
@@ -389,6 +537,11 @@ pub async fn read_http_response_head<R: tokio::io::AsyncRead + Unpin>(
     let mut read_buf = [0u8; 4096];
 
     loop {
+        // Try to parse from what we have so far.
+        if let Some((head, _consumed)) = try_parse_http_response_head(&buffer, max_header_bytes)? {
+            return Ok(head);
+        }
+
         let now = tokio::time::Instant::now();
         if now >= deadline {
             return Err(HttpResponseFramingError::HeaderFramingTimeout);
@@ -418,72 +571,20 @@ pub async fn read_http_response_head<R: tokio::io::AsyncRead + Unpin>(
                 buffer.extend_from_slice(&read_buf[..n]);
             }
         }
-
-        if let Some(pos) = buffer.windows(4).position(|w| w == b"\r\n\r\n") {
-            let header_end = pos + 4;
-            let header_bytes = buffer[..header_end].to_vec();
-            let body_prefix = buffer[header_end..].to_vec();
-
-            let header_str = String::from_utf8_lossy(&header_bytes);
-
-            let status_line = header_str.lines().next().unwrap_or("");
-            let parts: Vec<&str> = status_line.split_whitespace().collect();
-            if parts.len() < 2 {
-                return Err(HttpResponseFramingError::MalformedStatusLine(
-                    status_line.to_string(),
-                ));
-            }
-            let status_code: u16 = parts[1]
-                .parse()
-                .map_err(|_| HttpResponseFramingError::InvalidStatusCode(parts[1].to_string()))?;
-
-            let http_version = match parts[0] {
-                "HTTP/1.0" => HttpVersion::Http10,
-                "HTTP/1.1" => HttpVersion::Http11,
-                other => {
-                    return Err(HttpResponseFramingError::MalformedStatusLine(format!(
-                        "unsupported HTTP version: {other}"
-                    )));
-                }
-            };
-
-            let (content_length, chunked, connection_close) =
-                parse_http_response_framing(&header_str)?;
-
-            let body_encoding = if chunked {
-                HttpResponseBodyEncoding::Chunked
-            } else if content_length.is_some() {
-                HttpResponseBodyEncoding::FixedLength
-            } else if connection_close || matches!(http_version, HttpVersion::Http10) {
-                HttpResponseBodyEncoding::CloseDelimited
-            } else {
-                HttpResponseBodyEncoding::None
-            };
-
-            return Ok(FramedHttpResponseHead {
-                header_bytes,
-                body_prefix,
-                status_code,
-                content_length,
-                chunked,
-                connection_close,
-                http_version,
-                body_encoding,
-            });
-        }
     }
 }
 
 /// Read an HTTP/1.x response sequence, consuming informational responses (1xx)
 /// until a final response (>= 200) is obtained.
 ///
+/// Uses a single persistent buffer across all responses so that partial final
+/// heads left over after an informational response are preserved until more
+/// bytes arrive. Every response is parsed by the same `try_parse_http_response_head`
+/// parser — no duplicated status/version/header logic.
+///
 /// Informational responses (100 Continue, 103 Early Hints, etc.) are consumed
 /// and discarded. `101 Switching Protocols` is rejected because upgrades are
 /// unsupported. If the backend closes before a final response, an error is returned.
-///
-/// Leftover body_prefix bytes from informational responses are carried forward
-/// to subsequent reads so that coalesced responses in a single TCP write are
-/// handled correctly.
 pub async fn read_http_response_sequence<R: tokio::io::AsyncRead + Unpin>(
     reader: &mut R,
     idle_timeout: Duration,
@@ -491,91 +592,69 @@ pub async fn read_http_response_sequence<R: tokio::io::AsyncRead + Unpin>(
     max_header_bytes: usize,
 ) -> Result<FramedHttpResponseHead, HttpResponseFramingError> {
     let deadline = tokio::time::Instant::now() + total_timeout;
-    let mut leftover: Vec<u8> = Vec::new();
+    let mut buffer: Vec<u8> = Vec::new();
 
     loop {
+        // Try to parse from what we have so far.
+        if let Some((head, consumed)) = try_parse_http_response_head(&buffer, max_header_bytes)? {
+            if head.status_code == 101 {
+                return Err(HttpResponseFramingError::MalformedStatusLine(
+                    "101 Switching Protocols not supported".to_string(),
+                ));
+            }
+
+            // Split off bytes after the header terminator.
+            let remainder = buffer.split_off(consumed);
+
+            if head.status_code >= 200 {
+                // Final response — return with body prefix.
+                let mut final_head = head;
+                final_head.body_prefix = remainder;
+                return Ok(final_head);
+            }
+
+            // Informational — carry forward remaining bytes, loop for next response.
+            buffer = remainder;
+            continue;
+        }
+
+        // Need more bytes — read from the socket.
         let remaining = deadline.duration_since(tokio::time::Instant::now());
 
-        // If we have leftover bytes from a previous response, try to parse
-        // a complete header from them synchronously (no socket I/O needed).
-        if !leftover.is_empty() {
-            if let Some(pos) = leftover.windows(4).position(|w| w == b"\r\n\r\n") {
-                let header_end = pos + 4;
-                let header_bytes = leftover[..header_end].to_vec();
-                let body_prefix = leftover[header_end..].to_vec();
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return Err(HttpResponseFramingError::HeaderFramingTimeout);
+        }
+        let effective_timeout = idle_timeout.min(remaining);
 
-                let header_str = String::from_utf8_lossy(&header_bytes);
-                let status_line = header_str.lines().next().unwrap_or("");
-                let parts: Vec<&str> = status_line.split_whitespace().collect();
-                if parts.len() < 2 {
-                    return Err(HttpResponseFramingError::MalformedStatusLine(
-                        status_line.to_string(),
-                    ));
-                }
-                let status_code: u16 = parts[1].parse().map_err(|_| {
-                    HttpResponseFramingError::InvalidStatusCode(parts[1].to_string())
-                })?;
+        let remaining_capacity = max_header_bytes
+            .checked_sub(buffer.len())
+            .ok_or(HttpResponseFramingError::HeaderTooLarge)?;
+        if remaining_capacity == 0 {
+            return Err(HttpResponseFramingError::HeaderTooLarge);
+        }
 
-                if status_code == 101 {
-                    return Err(HttpResponseFramingError::MalformedStatusLine(
-                        "101 Switching Protocols not supported".to_string(),
-                    ));
+        let mut read_buf = [0u8; 4096];
+        let read_size = remaining_capacity.min(read_buf.len());
+
+        use tokio::io::AsyncReadExt;
+        let n = tokio::time::timeout(effective_timeout, reader.read(&mut read_buf[..read_size]))
+            .await
+            .map_err(|_| HttpResponseFramingError::HeaderFramingTimeout)?
+            .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
+
+        match n {
+            0 => {
+                // Backend EOF — if buffer has partial data, that's an error.
+                if !buffer.is_empty() {
+                    return Err(HttpResponseFramingError::BackendClosedBeforeCompleteResponse);
                 }
-                if status_code >= 200 {
-                    let (content_length, chunked, connection_close) =
-                        parse_http_response_framing(&header_str)?;
-                    let http_version = match parts[0] {
-                        "HTTP/1.0" => HttpVersion::Http10,
-                        "HTTP/1.1" => HttpVersion::Http11,
-                        v => {
-                            return Err(HttpResponseFramingError::MalformedStatusLine(format!(
-                                "unsupported HTTP version: {v}"
-                            )))
-                        }
-                    };
-                    let body_encoding = if chunked {
-                        HttpResponseBodyEncoding::Chunked
-                    } else if content_length.is_some() {
-                        HttpResponseBodyEncoding::FixedLength
-                    } else if connection_close || matches!(http_version, HttpVersion::Http10) {
-                        HttpResponseBodyEncoding::CloseDelimited
-                    } else {
-                        HttpResponseBodyEncoding::None
-                    };
-                    return Ok(FramedHttpResponseHead {
-                        header_bytes,
-                        body_prefix,
-                        status_code,
-                        content_length,
-                        chunked,
-                        connection_close,
-                        http_version,
-                        body_encoding,
-                    });
-                }
-                // Informational — carry forward remaining body_prefix bytes.
-                leftover = body_prefix;
-                continue;
+                return Err(HttpResponseFramingError::BackendClosedBeforeCompleteResponse);
             }
-            // Leftover doesn't contain a complete header yet — need more bytes.
+            n => {
+                buffer.extend_from_slice(&read_buf[..n]);
+            }
         }
-
-        // No leftover or incomplete leftover — read from the socket.
-        let head =
-            read_http_response_head(reader, idle_timeout, remaining, max_header_bytes).await?;
-
-        if head.status_code == 101 {
-            return Err(HttpResponseFramingError::MalformedStatusLine(
-                "101 Switching Protocols not supported".to_string(),
-            ));
-        }
-
-        if head.status_code >= 200 {
-            return Ok(head);
-        }
-
-        // Informational — carry forward any body_prefix bytes.
-        leftover = head.body_prefix;
     }
 }
 
@@ -657,6 +736,8 @@ pub async fn read_fixed_http_response_body<R: tokio::io::AsyncRead + Unpin>(
 /// Read a chunked HTTP response body from an async reader.
 ///
 /// Preserves the raw wire chunked framing in the returned bytes.
+/// Trailer bytes are independently capped by `max_trailer_bytes` after the
+/// zero-size chunk, separate from the broader `max_body_bytes` limit.
 pub async fn read_chunked_http_response_body<R: tokio::io::AsyncRead + Unpin>(
     reader: R,
     prefix: Vec<u8>,
@@ -678,9 +759,10 @@ pub async fn read_chunked_http_response_body<R: tokio::io::AsyncRead + Unpin>(
                 break;
             }
             if line_buf.len() >= max_trailer_bytes {
-                return Err(HttpResponseFramingError::MalformedChunkedBody(
-                    "trailer exceeded maximum size".to_string(),
-                ));
+                return Err(HttpResponseFramingError::TrailerTooLarge {
+                    limit: max_trailer_bytes,
+                    observed: line_buf.len(),
+                });
             }
             let byte = reader
                 .read_byte_with_timeout(deadline, idle_timeout)
@@ -707,10 +789,19 @@ pub async fn read_chunked_http_response_body<R: tokio::io::AsyncRead + Unpin>(
         })?;
 
         if chunk_size == 0 {
+            // Trailer section: independently bounded by max_trailer_bytes.
+            let mut trailer_bytes = 0usize;
             loop {
                 let byte = reader
                     .read_byte_with_timeout(deadline, idle_timeout)
                     .await?;
+                trailer_bytes += 1;
+                if trailer_bytes > max_trailer_bytes {
+                    return Err(HttpResponseFramingError::TrailerTooLarge {
+                        limit: max_trailer_bytes,
+                        observed: trailer_bytes,
+                    });
+                }
                 total_wire_bytes += 1;
                 if total_wire_bytes > max_body_bytes {
                     return Err(HttpResponseFramingError::BodyTooLarge {
@@ -739,6 +830,63 @@ pub async fn read_chunked_http_response_body<R: tokio::io::AsyncRead + Unpin>(
             });
         }
         output.extend_from_slice(&chunk_buf);
+    }
+}
+
+/// Read a close-delimited HTTP response body from an async reader.
+///
+/// Enforces both per-read idle timeout and total body deadline. The prefix
+/// bytes (already coalesced with the header read) are included in size
+/// accounting. EOF terminates successfully. Returns an error on body-limit
+/// overflow or timeout — never truncated output.
+pub async fn read_close_delimited_http_response_body<R: tokio::io::AsyncRead + Unpin>(
+    reader: &mut R,
+    prefix: Vec<u8>,
+    idle_timeout: Duration,
+    total_timeout: Duration,
+    max_body_bytes: usize,
+) -> Result<Vec<u8>, HttpResponseFramingError> {
+    if prefix.len() > max_body_bytes {
+        return Err(HttpResponseFramingError::BodyTooLarge {
+            limit: max_body_bytes,
+            declared: prefix.len(),
+        });
+    }
+
+    let deadline = tokio::time::Instant::now() + total_timeout;
+    let mut body = prefix;
+    let mut read_buf = [0u8; 8192];
+
+    loop {
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return Err(HttpResponseFramingError::Io(
+                "close-delimited body total deadline expired".to_string(),
+            ));
+        }
+        let remaining_total = deadline.duration_since(now);
+        let effective_timeout = idle_timeout.min(remaining_total);
+
+        use tokio::io::AsyncReadExt;
+        let n = tokio::time::timeout(effective_timeout, reader.read(&mut read_buf))
+            .await
+            .map_err(|_| {
+                HttpResponseFramingError::Io("close-delimited body read timeout".to_string())
+            })?
+            .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
+
+        if n == 0 {
+            // EOF — successful close-delimited termination.
+            return Ok(body);
+        }
+
+        body.extend_from_slice(&read_buf[..n]);
+        if body.len() > max_body_bytes {
+            return Err(HttpResponseFramingError::BodyTooLarge {
+                limit: max_body_bytes,
+                declared: body.len(),
+            });
+        }
     }
 }
 
@@ -927,31 +1075,45 @@ pub async fn read_http_request_head<R: tokio::io::AsyncRead + Unpin>(
 }
 
 /// Parse Content-Length and Transfer-Encoding from raw HTTP header bytes.
+///
+/// Uses exact header-name splitting (`split_once(':')`) for consistency with
+/// the response-side parser.
 fn parse_http_body_framing(header_str: &str) -> Result<(Option<usize>, bool), HttpFramingError> {
     let mut content_length: Option<usize> = None;
     let mut chunked = false;
 
     for line in header_str.lines() {
-        let line_lower = line.to_lowercase();
-        if line_lower.starts_with("content-length:") {
-            let value_str = line["content-length:".len()..].trim();
-            let value: usize = value_str.parse().map_err(|_| {
-                HttpFramingError::InvalidContentLength(format!("non-numeric value: {value_str}"))
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let (name, value) = match trimmed.split_once(':') {
+            Some(pair) => pair,
+            None => continue,
+        };
+
+        let name = name.trim();
+        let value = value.trim();
+
+        if name.eq_ignore_ascii_case("content-length") {
+            let v: usize = value.parse().map_err(|_| {
+                HttpFramingError::InvalidContentLength(format!("non-numeric value: {value}"))
             })?;
             if let Some(existing) = content_length {
-                if existing != value {
+                if existing != v {
                     return Err(HttpFramingError::InvalidContentLength(format!(
-                        "conflicting values: {existing} and {value}"
+                        "conflicting values: {existing} and {v}"
                     )));
                 }
             }
-            content_length = Some(value);
-        } else if line_lower.starts_with("transfer-encoding:") {
-            let value = line["transfer-encoding:".len()..].trim().to_lowercase();
-            if value == "chunked" {
+            content_length = Some(v);
+        } else if name.eq_ignore_ascii_case("transfer-encoding") {
+            let te_lower = value.to_lowercase();
+            if te_lower == "chunked" {
                 chunked = true;
             } else {
-                return Err(HttpFramingError::UnsupportedTransferEncoding(value));
+                return Err(HttpFramingError::UnsupportedTransferEncoding(te_lower));
             }
         }
     }
@@ -5371,7 +5533,7 @@ impl MeshTransport {
 
         let addr = format!("{}:{}", host_str, port);
 
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::io::AsyncWriteExt;
         use tokio::net::TcpStream;
 
         let mut backend_conn = match TcpStream::connect(&addr).await {
@@ -5501,37 +5663,43 @@ impl MeshTransport {
                 let _ = send_stream.finish();
                 return Ok(());
             }
-            let mut full_body = resp_head.body_prefix;
-            let mut total_read = full_body.len();
-            let mut read_buf = vec![0u8; 8192];
-            loop {
-                let n = tokio::time::timeout(idle_timeout, backend_conn.read(&mut read_buf))
-                    .await
-                    .map_err(|_| {
-                        MeshTransportError::ReceiveFailed(
-                            "Backend response read timeout".to_string(),
-                        )
-                    })?
-                    .map_err(|e| {
-                        MeshTransportError::ReceiveFailed(format!("Backend read failed: {}", e))
-                    })?;
-                if n == 0 {
-                    break;
-                }
-                total_read += n;
-                if total_read > max_body_bytes {
+            match read_close_delimited_http_response_body(
+                &mut backend_conn,
+                resp_head.body_prefix,
+                idle_timeout,
+                body_total_timeout,
+                max_body_bytes,
+            )
+            .await
+            {
+                Ok(body) => body,
+                Err(HttpResponseFramingError::BodyTooLarge { limit, declared }) => {
                     tracing::warn!(
-                        "Backend close-delimited body exceeded limit ({} > {})",
-                        total_read,
-                        max_body_bytes
+                        "Backend close-delimited body exceeded limit ({declared} > {limit})"
                     );
                     return Err(MeshTransportError::ReceiveFailed(format!(
-                        "Close-delimited body exceeded limit: {total_read} > {max_body_bytes}"
+                        "Close-delimited body exceeded limit: {declared} > {limit}"
                     )));
                 }
-                full_body.extend_from_slice(&read_buf[..n]);
+                Err(HttpResponseFramingError::Io(msg)) => {
+                    if msg.contains("timeout") {
+                        tracing::warn!("Backend close-delimited body timed out: {}", msg);
+                        return Err(MeshTransportError::ReceiveFailed(format!(
+                            "Close-delimited body timeout: {msg}"
+                        )));
+                    }
+                    tracing::warn!("Backend close-delimited body read error: {}", msg);
+                    return Err(MeshTransportError::ReceiveFailed(format!(
+                        "Close-delimited body error: {msg}"
+                    )));
+                }
+                Err(e) => {
+                    tracing::warn!("Backend close-delimited body error: {}", e);
+                    return Err(MeshTransportError::ReceiveFailed(format!(
+                        "Close-delimited body error: {e}"
+                    )));
+                }
             }
-            full_body
         };
 
         let mut full_response = resp_head.header_bytes;

@@ -132,7 +132,7 @@ crates/synvoid-mesh/src/mesh/kem/
 
 ## Lifecycle Management
 
-Mesh transport uses structured lifecycle management (Iterations 68–75):
+Mesh transport uses structured lifecycle management (Iterations 68–81):
 
 - `MeshTaskGroup` owns all spawned tasks with classification; `new_with_forward_and_id_gen(exit_tx, id_gen)` creates groups that forward exits to a stable broadcast sender on `MeshTransport` with globally unique task IDs across generations
 - `MeshLifecycleState` provides a state machine (Stopped/Starting/Running/Stopping/Failed) with validated transitions; `can_start()` allows `Stopped` only (not `Failed`), `can_stop()` allows `Running` only
@@ -172,8 +172,17 @@ Mesh transport uses structured lifecycle management (Iterations 68–75):
 - Per-peer children bounded by `max_concurrent_handshakes`
 - All periodic loops are cancellation-aware via `watch::Receiver<bool>`
 - Worker mesh supervision is staged but **explicitly deferred** (Outcome B from Iteration 70)
+- **Persistent buffered response-sequence parsing (Iteration 81)**: one shared `try_parse_http_response_head` parser for both leftover and socket bytes
+- **Close-delimited body reader (Iteration 81)**: `read_close_delimited_http_response_body` with total deadline
+- **Independent trailer byte accounting (Iteration 81)**: `TrailerTooLarge` error variant
+- **Strict shared response status/header parsing (Iteration 81)**: `parse_http_response_status_line`
+- **Auxiliary submission exclusion during shutdown/recovery (Iteration 81)**: lifecycle state checked under `auxiliary_submission_lock`
+- **AuxiliaryRegistryEntry::Reserved removed (Iteration 81)**: production path always inserts `Running` directly
+- **Lock ordering documented (Iteration 81)**: `lifecycle_op` → `auxiliary_submission_lock` → `auxiliary_tasks`
 
 See `architecture/mesh_transport_lifecycle.md` for the full task inventory and iteration details.
+
+> **Mesh transport/lifecycle subsystem considered closed (Iteration 81).** No further iterations planned unless regressions or new requirements surface.
 
 ---
 
