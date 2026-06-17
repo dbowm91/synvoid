@@ -335,19 +335,22 @@ impl UnifiedServerWorkerState {
     /// Check if mesh is ready to serve traffic.
     ///
     /// Returns `true` if mesh is optional (doesn't block readiness) or if mesh
-    /// is in Running or Degraded phase. Returns `false` only when mesh is
-    /// required and not yet in a service-capable phase.
+    /// is in Running phase, or in Degraded phase when `allow_degraded_readiness`
+    /// is enabled. Returns `false` only when mesh is required and not in a
+    /// readiness-satisfying phase.
     #[cfg(feature = "mesh")]
     pub async fn is_mesh_ready(&self) -> bool {
         let status = self.mesh_status.read().await;
         if !self.mesh_policy.required {
             return true;
         }
-        matches!(
-            status.phase,
-            crate::worker::mesh_supervision::WorkerMeshPhase::Running
-                | crate::worker::mesh_supervision::WorkerMeshPhase::Degraded
-        )
+        match status.phase {
+            crate::worker::mesh_supervision::WorkerMeshPhase::Running => true,
+            crate::worker::mesh_supervision::WorkerMeshPhase::Degraded => {
+                self.mesh_policy.allow_degraded_readiness
+            }
+            _ => false,
+        }
     }
 }
 

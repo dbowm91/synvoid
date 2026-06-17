@@ -467,7 +467,7 @@ Returned after startup:
 - `ManagedMeshService::subscribe_critical_exits()` delegates to stable `subscribe_exits()`
 - `is_running()` reads `running_projection: Arc<AtomicBool>` — lock-free, no Tokio contention
 - `MeshServiceExit(MeshTaskExit)` variant on `WorkerShutdownCause` for mesh task failures
-- Worker mesh supervision consumption is **explicitly deferred** (Outcome B from Iteration 70) — staged infrastructure not yet wired
+- **Worker mesh supervision pipeline** (Iteration 82–83): fully implemented in `src/worker/mesh_supervision.rs`. See [Worker Mesh Supervision](#worker-mesh-supervision-iteration-82-83) below.
 
 ### Iteration 73 Lifecycle Semantics
 
@@ -543,7 +543,7 @@ These snapshots feed into `StagedPeerResource` for precise rollback.
 
 **`PeerStreamDrainReport`**: New type tracking stream drain statistics: `drained_streams`, `aborted_streams`, `timed_out_streams`.
 
-**Worker mesh supervision**: remains deferred (Outcome B from Iteration 70).
+**Worker mesh supervision**: implemented in Iteration 82–83. See dedicated section below.
 
 ### Failure Injection Hooks (Phase 20)
 
@@ -909,6 +909,104 @@ lifecycle_op -> auxiliary_submission_lock -> auxiliary_tasks
 ```
 
 `shutdown_with_timeout()` and `recover_failed_state()` hold `lifecycle_op` while acquiring `auxiliary_submission_lock` and draining `auxiliary_tasks`. `spawn_auxiliary_task()` acquires only `auxiliary_submission_lock`. The ordering prevents deadlocks and ensures no auxiliary task is spawned during shutdown/recovery cleanup.
+
+## Worker Mesh Supervision (Iterations 82–83)
+
+Worker-level mesh supervision is implemented in `src/worker/mesh_supervision.rs`. The mesh service reports facts (start result, task exit, lifecycle state, shutdown report); the worker decides policy (ready, degraded, restart, shutdown, exit code).
+
+### Supervision Pipeline
+
+The pipeline consists of three components wired by the composition root:
+
+1. **Observer** (`run_mesh_exit_observer`): Receives mesh exit events from the broadcast channel, handles lag/closure explicitly, forwards typed `MeshSupervisionEvent` to the coordinator. Registered in `WorkerTaskRegistry` for lifecycle management.
+2. **Coordinator** (`MeshSupervisionCoordinator`): Receives events from the observer, applies event-level status transitions **before** consulting the pure policy classifier, applies budget gating, and produces typed `MeshSupervisorDecision` for the composition root.
+3. **Composition root**: Processes decisions (degrade, restart, shutdown) in the supervision select loop.
+
+### Authoritative Status Allocation
+
+A single `WorkerMeshStatus` (`Arc<RwLock<WorkerMeshStatus>>`) is shared between the observer and coordinator. The composition root clones this `Arc` for its own reads. The coordinator writes via `apply_mesh_event_to_status()` and `apply_mesh_decision_to_status()`.
+
+### Event-Level Transitions Before Policy Decisions
+
+The coordinator applies event-level status mutations (`apply_mesh_event_to_status`) **before** calling the pure policy classifier (`decide_mesh_action`). This ensures the `WorkerMeshPhase` snapshot used by the policy reflects the event that just arrived. A separate decision-level mutation (`apply_mesh_decision_to_status`) is applied after the policy returns.
+
+### Pure Policy Classifier: `decide_mesh_action()`
+
+```rust
+pub fn decide_mesh_action(
+    policy: &MeshSupervisionPolicy,
+    phase: &WorkerMeshPhase,   // snapshot taken after event-level transition
+    event: &MeshSupervisionEvent,
+    worker_shutdown_started: bool,
+) -> MeshSupervisorDecision
+```
+
+Operates on `WorkerMeshPhase` snapshots — not the live `WorkerMeshStatus` reference. The coordinator takes a `status.phase` snapshot after applying the event, then passes it to this pure function. This makes the policy decision deterministic and testable without I/O.
+
+### `MeshSupervisionPolicy`
+
+| Field | `required()` default | `optional()` default | Purpose |
+|-------|---------------------|---------------------|---------|
+| `required` | `true` | `false` | Whether mesh participation is required |
+| `startup_failure` | `ShutdownWorker` | `Degrade` | Action on startup failure |
+| `critical_exit` | `ShutdownWorker` | `Degrade` | Action on critical task exit |
+| `restartable_exit` | `Degrade` | `Degrade` | Action on restartable task exit |
+| `restart_limit` | `0` | `3` | Max restart attempts in window |
+| `allow_degraded_readiness` | `false` | `true` | Whether degraded mesh satisfies readiness |
+
+**`allow_degraded_readiness`**: When `readiness_requires_mesh` is true, this field controls whether a degraded mesh still satisfies worker readiness. `required()` defaults to `false` (degraded mesh blocks readiness); `optional()` defaults to `true`.
+
+### Typed Cause Conversion: `mesh_failure_to_worker_cause()`
+
+Converts `MeshFailureCause` into `WorkerShutdownCause` preserving the specific mesh failure type:
+
+| `MeshFailureCause` | → `WorkerShutdownCause` |
+|---------------------|------------------------|
+| `CriticalServiceExit(exit)` | `MeshServiceExit(exit)` |
+| `StartupFailed(reason)` | `MeshStartupFailed(reason)` |
+| `ShutdownTimeout { .. }` | `MeshShutdownIncomplete(msg)` |
+
+### `MeshRestartExhausted`
+
+The coordinator gates `RestartMesh` decisions against the `RestartBudget`. When the budget is exhausted, the coordinator downgrades to `ShutdownWorker(MeshFailureCause::StartupFailed("restart budget exhausted"))`. The composition root converts this to `WorkerShutdownCause::MeshRestartExhausted { attempts, last_error }` which is classified as fatal (`is_fatal_exit()` returns true).
+
+### No Outer Timeout on Mesh Startup
+
+Mesh startup (`start_with_policy()`) has no outer `tokio::time::timeout` wrapping it. Cancellation safety is handled by mesh-internal stage deadlines (`MeshStartupStage`). The composition root does not impose an additional timeout layer.
+
+### Real Shutdown Deadline
+
+The composition root computes a real deadline: `shutdown_deadline = shutdown_started_at + drain_timeout`. The `remaining_budget()` closure computes `shutdown_deadline.saturating_duration_since(Instant::now())` — not `state.start_time.elapsed()`. Incomplete mesh shutdown accumulates into the final cause via `merge_worker_shutdown_cause()`.
+
+### Priority-Based Cause Accumulation: `merge_worker_shutdown_cause()`
+
+When multiple shutdown causes arise during a single shutdown sequence, the highest-priority cause is retained:
+
+| Priority | Cause |
+|----------|-------|
+| 1 (highest) | Process infrastructure (`ServerExitedUnexpectedly`, `CriticalTaskExit`, `RegistryExitChannelClosed`) |
+| 2 | Critical runtime mesh failure (`MeshServiceExit`) |
+| 3 | Startup/restart exhaustion (`MeshStartupFailed`, `MeshRestartExhausted`) |
+| 4 | Incomplete mesh shutdown (`MeshShutdownIncomplete`) |
+| 5 (lowest) | Expected shutdown (`SupervisorShutdown`, `ExternalStop`, `WorkerResize`) |
+
+### MeshShutdownDisposition
+
+`classify_mesh_shutdown_report()` maps `MeshShutdownReport` to a disposition:
+
+| Disposition | Condition |
+|-------------|-----------|
+| `Clean` | No failed tasks, no remaining peers, no aborted sessions |
+| `ForcedButComplete` | Aborted tasks/sessions present but no failures or remaining peers |
+| `Incomplete(MeshFailureCause)` | Failed tasks, remaining peers, or failed peer sessions |
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `src/worker/mesh_supervision.rs` | Policy types, pure classifiers, coordinator, observer, pipeline creation |
+| `src/worker/unified_server/mod.rs` | Composition root integration, decision processing, `remaining_budget()` |
+| `src/worker/task_registry.rs` | `WorkerShutdownCause`, `SupervisionOutcome`, exit code derivation |
 
 ## Testing Commands
 

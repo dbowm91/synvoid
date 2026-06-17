@@ -66,6 +66,8 @@ pub struct MeshSupervisionPolicy {
     pub restart_backoff_max: Duration,
     /// Whether worker readiness depends on mesh being healthy/running.
     pub readiness_requires_mesh: bool,
+    /// Whether degraded mesh still satisfies readiness (only matters when readiness_requires_mesh is true).
+    pub allow_degraded_readiness: bool,
 }
 
 impl Default for MeshSupervisionPolicy {
@@ -80,6 +82,7 @@ impl Default for MeshSupervisionPolicy {
             restart_backoff_initial: Duration::from_secs(5),
             restart_backoff_max: Duration::from_secs(60),
             readiness_requires_mesh: true,
+            allow_degraded_readiness: false,
         }
     }
 }
@@ -102,6 +105,7 @@ impl MeshSupervisionPolicy {
             restart_backoff_initial: Duration::from_secs(5),
             restart_backoff_max: Duration::from_secs(60),
             readiness_requires_mesh: false,
+            allow_degraded_readiness: true,
         }
     }
 }
@@ -168,6 +172,60 @@ impl Default for WorkerMeshStatus {
     }
 }
 
+impl WorkerMeshStatus {
+    pub fn transition_starting(&mut self) {
+        self.phase = WorkerMeshPhase::Starting;
+        self.health = MeshServiceHealth::Healthy;
+        self.last_transition = Instant::now();
+    }
+
+    pub fn transition_running(&mut self) {
+        self.phase = WorkerMeshPhase::Running;
+        self.health = MeshServiceHealth::Healthy;
+        self.last_transition = Instant::now();
+    }
+
+    pub fn transition_degraded(&mut self, reason: String) {
+        self.phase = WorkerMeshPhase::Degraded;
+        self.health = MeshServiceHealth::Degraded { reason };
+        self.last_transition = Instant::now();
+    }
+
+    pub fn transition_restarting(&mut self) {
+        self.phase = WorkerMeshPhase::Restarting;
+        self.last_transition = Instant::now();
+    }
+
+    pub fn transition_failed(&mut self, reason: String) {
+        self.phase = WorkerMeshPhase::Failed;
+        self.health = MeshServiceHealth::Failed {
+            exit: MeshTaskExit {
+                id: synvoid_mesh::lifecycle::MeshTaskId(0),
+                name: "mesh_supervision",
+                class: MeshTaskClass::CriticalService,
+                reason: MeshTaskExitReason::Error(reason),
+            },
+        };
+        self.last_transition = Instant::now();
+    }
+
+    pub fn transition_stopping(&mut self) {
+        self.phase = WorkerMeshPhase::Stopping;
+        self.last_transition = Instant::now();
+    }
+
+    pub fn transition_stopped(&mut self) {
+        self.phase = WorkerMeshPhase::Stopped;
+        self.health = MeshServiceHealth::Healthy;
+        self.last_transition = Instant::now();
+    }
+
+    pub fn record_exit(&mut self, exit: MeshTaskExit) {
+        self.last_exit = Some(exit);
+        self.last_transition = Instant::now();
+    }
+}
+
 /// Events from the mesh observer to the supervision coordinator.
 #[derive(Debug)]
 pub enum MeshSupervisionEvent {
@@ -213,12 +271,120 @@ impl std::fmt::Debug for MeshSupervisorDecision {
     }
 }
 
+/// Apply event-level status mutations before policy classification.
+pub fn apply_mesh_event_to_status(status: &mut WorkerMeshStatus, event: &MeshSupervisionEvent) {
+    match event {
+        MeshSupervisionEvent::Started => {
+            status.transition_running();
+        }
+        MeshSupervisionEvent::StartupFailed(reason) => {
+            status.transition_failed(format!("startup failed: {reason}"));
+        }
+        MeshSupervisionEvent::TaskExit(exit) => {
+            status.record_exit(exit.clone());
+        }
+        MeshSupervisionEvent::ExitStreamLagged(_) => {
+            status.transition_degraded("exit stream lagged".to_string());
+        }
+        MeshSupervisionEvent::ExitStreamClosed => {
+            status.transition_degraded("exit stream closed".to_string());
+        }
+        MeshSupervisionEvent::RestartTimerElapsed { .. } => {}
+        MeshSupervisionEvent::WorkerShutdownStarted => {
+            status.transition_stopping();
+        }
+    }
+}
+
+/// Apply decision-level status mutations after policy classification.
+pub fn apply_mesh_decision_to_status(
+    status: &mut WorkerMeshStatus,
+    decision: &MeshSupervisorDecision,
+) {
+    match decision {
+        MeshSupervisorDecision::NoAction => {}
+        MeshSupervisorDecision::MarkDegraded(reason) => {
+            status.transition_degraded(reason.clone());
+        }
+        MeshSupervisorDecision::RestartMesh => {
+            status.transition_restarting();
+        }
+        MeshSupervisorDecision::ShutdownWorker(_) => {
+            status.transition_failed("shutdown requested".to_string());
+        }
+    }
+}
+
+/// Convert a `MeshFailureCause` into a typed `WorkerShutdownCause`.
+///
+/// This preserves the specific mesh failure type rather than collapsing
+/// everything into `MeshStartupFailed`.
+pub fn mesh_failure_to_worker_cause(
+    cause: MeshFailureCause,
+) -> crate::worker::task_registry::WorkerShutdownCause {
+    match cause {
+        MeshFailureCause::CriticalServiceExit(exit) => {
+            crate::worker::task_registry::WorkerShutdownCause::MeshServiceExit(exit)
+        }
+        MeshFailureCause::StartupFailed(reason) => {
+            crate::worker::task_registry::WorkerShutdownCause::MeshStartupFailed(reason)
+        }
+        MeshFailureCause::ShutdownTimeout {
+            aborted_tasks,
+            remaining_peers,
+        } => crate::worker::task_registry::WorkerShutdownCause::MeshShutdownIncomplete(format!(
+            "shutdown timed out: {} tasks aborted, {} peers remaining",
+            aborted_tasks.len(),
+            remaining_peers
+        )),
+    }
+}
+
+/// Merge two shutdown causes, preserving the higher-priority cause.
+///
+/// Priority order (highest first):
+/// 1. Process/lifecycle infrastructure failure
+/// 2. Critical runtime mesh failure
+/// 3. Startup/restart exhaustion
+/// 4. Incomplete mesh shutdown
+/// 5. External expected shutdown
+pub fn merge_worker_shutdown_cause(
+    current: crate::worker::task_registry::WorkerShutdownCause,
+    new: crate::worker::task_registry::WorkerShutdownCause,
+) -> crate::worker::task_registry::WorkerShutdownCause {
+    use crate::worker::task_registry::WorkerShutdownCause;
+
+    fn cause_priority(c: &WorkerShutdownCause) -> u8 {
+        match c {
+            WorkerShutdownCause::ServerExitedUnexpectedly(_)
+            | WorkerShutdownCause::CriticalTaskExit(_)
+            | WorkerShutdownCause::RegistryExitChannelClosed => 1,
+            WorkerShutdownCause::MeshServiceExit(_) => 2,
+            WorkerShutdownCause::MeshStartupFailed(_)
+            | WorkerShutdownCause::MeshRestartExhausted { .. } => 3,
+            WorkerShutdownCause::MeshShutdownIncomplete(_) => 4,
+            WorkerShutdownCause::SupervisorShutdown
+            | WorkerShutdownCause::SupervisorDisconnected
+            | WorkerShutdownCause::ExternalStop
+            | WorkerShutdownCause::RunningFlagCleared
+            | WorkerShutdownCause::ServerStoppedForShutdown
+            | WorkerShutdownCause::WorkerResize { .. } => 5,
+        }
+    }
+
+    if cause_priority(&current) <= cause_priority(&new) {
+        current
+    } else {
+        new
+    }
+}
+
 /// Classify a mesh task exit into a supervision decision.
 ///
 /// This is a pure function — all state needed for the decision is passed in.
 pub fn decide_mesh_action(
     policy: &MeshSupervisionPolicy,
-    status: &WorkerMeshStatus,
+    phase: &WorkerMeshPhase,
     event: &MeshSupervisionEvent,
     worker_shutdown_started: bool,
 ) -> MeshSupervisorDecision {
@@ -238,7 +404,7 @@ pub fn decide_mesh_action(
                 MeshFailureCause::StartupFailed(reason.clone()),
             ),
         },
-        MeshSupervisionEvent::TaskExit(exit) => classify_task_exit(policy, status, exit),
+        MeshSupervisionEvent::TaskExit(exit) => classify_task_exit(policy, phase, exit),
         MeshSupervisionEvent::ExitStreamLagged(n) => MeshSupervisorDecision::MarkDegraded(format!(
             "mesh exit stream lagged by {} events, reconciliation required",
             n
@@ -259,7 +425,7 @@ pub fn decide_mesh_action(
 
 fn classify_task_exit(
     policy: &MeshSupervisionPolicy,
-    _status: &WorkerMeshStatus,
+    _phase: &WorkerMeshPhase,
     exit: &MeshTaskExit,
 ) -> MeshSupervisorDecision {
     match exit.class {
@@ -452,7 +618,7 @@ pub async fn run_mesh_exit_observer(
                         MESH_SUPERVISION_METRICS.supervision_lagged_total.fetch_add(1, Ordering::Relaxed);
                         {
                             let mut s = status.write().await;
-                            s.phase = WorkerMeshPhase::Degraded;
+                            s.transition_degraded(format!("exit stream lagged by {} events", n));
                         }
                         let _ = control_tx.send(MeshSupervisionEvent::ExitStreamLagged(n)).await;
                     }
@@ -535,9 +701,21 @@ impl MeshSupervisionCoordinator {
                 _ => {}
             }
 
+            // Apply event-level status transitions before policy classification
+            {
+                let mut status = self.status.write().await;
+                apply_mesh_event_to_status(&mut status, &event);
+            }
+
+            // Take a snapshot of the current status for policy classification
+            let status_snapshot = {
+                let status = self.status.read().await;
+                status.phase
+            };
+
             let decision = decide_mesh_action(
                 &self.policy,
-                &WorkerMeshStatus::default(),
+                &status_snapshot,
                 &event,
                 *shutdown_rx.borrow(),
             );
@@ -580,7 +758,7 @@ impl MeshSupervisionCoordinator {
         match decision {
             MeshSupervisorDecision::NoAction => {}
             MeshSupervisorDecision::MarkDegraded(reason) => {
-                status.phase = WorkerMeshPhase::Degraded;
+                status.transition_degraded(reason.clone());
                 tracing::warn!(reason = %reason, "mesh marked degraded");
             }
             MeshSupervisorDecision::RestartMesh => {
@@ -589,9 +767,8 @@ impl MeshSupervisionCoordinator {
                     .fetch_add(1, Ordering::Relaxed);
                 self.budget.record_attempt();
                 self.generation += 1;
-                status.phase = WorkerMeshPhase::Restarting;
+                status.transition_restarting();
                 status.restart_attempts += 1;
-                status.last_transition = Instant::now();
                 tracing::info!(
                     generation = self.generation,
                     attempts = self.budget.attempt_count(),
@@ -599,8 +776,7 @@ impl MeshSupervisionCoordinator {
                 );
             }
             MeshSupervisorDecision::ShutdownWorker(_) => {
-                status.phase = WorkerMeshPhase::Failed;
-                status.last_transition = Instant::now();
+                status.transition_failed("shutdown requested".to_string());
             }
         }
     }
@@ -645,6 +821,7 @@ mod tests {
         assert_eq!(policy.critical_exit, MeshFailureAction::ShutdownWorker);
         assert_eq!(policy.restartable_exit, MeshFailureAction::Degrade);
         assert!(!policy.restart_limit > 0);
+        assert!(!policy.allow_degraded_readiness);
     }
 
     #[test]
@@ -653,14 +830,15 @@ mod tests {
         assert!(!policy.required);
         assert_eq!(policy.startup_failure, MeshFailureAction::Degrade);
         assert!(policy.restart_limit > 0);
+        assert!(policy.allow_degraded_readiness);
     }
 
     #[test]
     fn startup_failure_required_shutdowns() {
         let policy = MeshSupervisionPolicy::required();
-        let status = WorkerMeshStatus::default();
+        let phase = WorkerMeshPhase::Starting;
         let event = MeshSupervisionEvent::StartupFailed("connection refused".into());
-        let decision = decide_mesh_action(&policy, &status, &event, false);
+        let decision = decide_mesh_action(&policy, &phase, &event, false);
         assert!(matches!(
             decision,
             MeshSupervisorDecision::ShutdownWorker(_)
@@ -670,16 +848,16 @@ mod tests {
     #[test]
     fn startup_failure_optional_degrades() {
         let policy = MeshSupervisionPolicy::optional();
-        let status = WorkerMeshStatus::default();
+        let phase = WorkerMeshPhase::Starting;
         let event = MeshSupervisionEvent::StartupFailed("connection refused".into());
-        let decision = decide_mesh_action(&policy, &status, &event, false);
+        let decision = decide_mesh_action(&policy, &phase, &event, false);
         assert!(matches!(decision, MeshSupervisorDecision::MarkDegraded(_)));
     }
 
     #[test]
     fn critical_panic_required_shutdowns() {
         let policy = MeshSupervisionPolicy::required();
-        let status = WorkerMeshStatus::default();
+        let phase = WorkerMeshPhase::Running;
         let exit = MeshTaskExit {
             id: synvoid_mesh::lifecycle::MeshTaskId(1),
             name: "mesh_maintenance",
@@ -687,7 +865,7 @@ mod tests {
             reason: MeshTaskExitReason::Panic("test".into()),
         };
         let event = MeshSupervisionEvent::TaskExit(exit);
-        let decision = decide_mesh_action(&policy, &status, &event, false);
+        let decision = decide_mesh_action(&policy, &phase, &event, false);
         assert!(matches!(
             decision,
             MeshSupervisorDecision::ShutdownWorker(_)
@@ -697,7 +875,7 @@ mod tests {
     #[test]
     fn shutdown_expected_exits_are_noop() {
         let policy = MeshSupervisionPolicy::required();
-        let status = WorkerMeshStatus::default();
+        let phase = WorkerMeshPhase::Running;
         let exit = MeshTaskExit {
             id: synvoid_mesh::lifecycle::MeshTaskId(1),
             name: "mesh_maintenance",
@@ -705,16 +883,16 @@ mod tests {
             reason: MeshTaskExitReason::Cancelled,
         };
         let event = MeshSupervisionEvent::TaskExit(exit);
-        let decision = decide_mesh_action(&policy, &status, &event, true);
+        let decision = decide_mesh_action(&policy, &phase, &event, true);
         assert!(matches!(decision, MeshSupervisorDecision::NoAction));
     }
 
     #[test]
     fn broadcast_lag_degrades() {
         let policy = MeshSupervisionPolicy::required();
-        let status = WorkerMeshStatus::default();
+        let phase = WorkerMeshPhase::Running;
         let event = MeshSupervisionEvent::ExitStreamLagged(5);
-        let decision = decide_mesh_action(&policy, &status, &event, false);
+        let decision = decide_mesh_action(&policy, &phase, &event, false);
         assert!(matches!(decision, MeshSupervisorDecision::MarkDegraded(_)));
     }
 
@@ -887,12 +1065,9 @@ mod tests {
     #[test]
     fn exit_stream_closed_while_running_required_fatal() {
         let policy = MeshSupervisionPolicy::required();
-        let status = WorkerMeshStatus {
-            phase: WorkerMeshPhase::Running,
-            ..Default::default()
-        };
+        let phase = WorkerMeshPhase::Running;
         let event = MeshSupervisionEvent::ExitStreamClosed;
-        let decision = decide_mesh_action(&policy, &status, &event, false);
+        let decision = decide_mesh_action(&policy, &phase, &event, false);
         assert!(matches!(
             decision,
             MeshSupervisorDecision::ShutdownWorker(_)
@@ -902,19 +1077,16 @@ mod tests {
     #[test]
     fn exit_stream_closed_while_running_optional_degrades() {
         let policy = MeshSupervisionPolicy::optional();
-        let status = WorkerMeshStatus {
-            phase: WorkerMeshPhase::Running,
-            ..Default::default()
-        };
+        let phase = WorkerMeshPhase::Running;
         let event = MeshSupervisionEvent::ExitStreamClosed;
-        let decision = decide_mesh_action(&policy, &status, &event, false);
+        let decision = decide_mesh_action(&policy, &phase, &event, false);
         assert!(matches!(decision, MeshSupervisorDecision::MarkDegraded(_)));
     }
 
     #[test]
     fn restartable_background_error_degrades_by_default() {
         let policy = MeshSupervisionPolicy::required();
-        let status = WorkerMeshStatus::default();
+        let phase = WorkerMeshPhase::Disabled;
         let exit = MeshTaskExit {
             id: synvoid_mesh::lifecycle::MeshTaskId(2),
             name: "connection_maintenance",
@@ -922,14 +1094,14 @@ mod tests {
             reason: MeshTaskExitReason::Error("io error".into()),
         };
         let event = MeshSupervisionEvent::TaskExit(exit);
-        let decision = decide_mesh_action(&policy, &status, &event, false);
+        let decision = decide_mesh_action(&policy, &phase, &event, false);
         assert!(matches!(decision, MeshSupervisorDecision::MarkDegraded(_)));
     }
 
     #[test]
     fn bounded_child_exit_is_noop() {
         let policy = MeshSupervisionPolicy::required();
-        let status = WorkerMeshStatus::default();
+        let phase = WorkerMeshPhase::Disabled;
         let exit = MeshTaskExit {
             id: synvoid_mesh::lifecycle::MeshTaskId(3),
             name: "handshake_child",
@@ -937,7 +1109,7 @@ mod tests {
             reason: MeshTaskExitReason::CleanCompletion,
         };
         let event = MeshSupervisionEvent::TaskExit(exit);
-        let decision = decide_mesh_action(&policy, &status, &event, false);
+        let decision = decide_mesh_action(&policy, &phase, &event, false);
         assert!(matches!(decision, MeshSupervisorDecision::NoAction));
     }
 

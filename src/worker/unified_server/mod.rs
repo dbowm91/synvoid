@@ -293,9 +293,8 @@ pub async fn run_unified_server_worker(
     let mut mesh_decision_rx_opt: Option<
         tokio::sync::mpsc::Receiver<crate::worker::mesh_supervision::MeshSupervisorDecision>,
     > = {
-        let mesh_status = std::sync::Arc::new(tokio::sync::RwLock::new(
-            crate::worker::mesh_supervision::WorkerMeshStatus::default(),
-        ));
+        // Use the authoritative status from worker state (Phase 1: single allocation).
+        let mesh_status = state.mesh_status.clone();
 
         // Get the concrete MeshTransport from the transport manager.
         let mesh_transport: Option<std::sync::Arc<synvoid_mesh::MeshTransport>> = state
@@ -354,33 +353,23 @@ pub async fn run_unified_server_worker(
             registry.spawn_background(
                 "mesh_startup",
                 async move {
-                    let result = tokio::time::timeout(
-                        std::time::Duration::from_secs(60),
-                        transport.start_with_policy(
-                            synvoid_mesh::lifecycle::MeshStartupPolicy::default(),
-                        ),
-                    )
-                    .await;
+                    // No outer timeout — start_with_policy has its own bounded
+                    // stage deadlines, and cancellation would bypass rollback.
+                    let result = transport.start_with_policy(
+                        synvoid_mesh::lifecycle::MeshStartupPolicy::default(),
+                    ).await;
                     match result {
-                        Ok(Ok(report)) => {
+                        Ok(report) => {
                             tracing::info!(?report, "Mesh transport started");
                             let _ = event_tx_for_start
                                 .send(crate::worker::mesh_supervision::MeshSupervisionEvent::Started)
                                 .await;
                         }
-                        Ok(Err(e)) => {
+                        Err(e) => {
                             tracing::error!("Mesh startup failed: {}", e);
                             let _ = event_tx_for_start
                                 .send(crate::worker::mesh_supervision::MeshSupervisionEvent::StartupFailed(
                                     e.to_string(),
-                                ))
-                                .await;
-                        }
-                        Err(_) => {
-                            tracing::error!("Mesh startup timed out");
-                            let _ = event_tx_for_start
-                                .send(crate::worker::mesh_supervision::MeshSupervisionEvent::StartupFailed(
-                                    "startup timed out".into(),
                                 ))
                                 .await;
                         }
@@ -489,9 +478,7 @@ pub async fn run_unified_server_worker(
                             cause.exit_reason()
                         );
                         break crate::worker::task_registry::SupervisionOutcome::DirectCause(
-                            crate::worker::task_registry::WorkerShutdownCause::MeshStartupFailed(
-                                cause.exit_reason()
-                            )
+                            crate::worker::mesh_supervision::mesh_failure_to_worker_cause(cause)
                         );
                     }
                     Some(crate::worker::mesh_supervision::MeshSupervisorDecision::RestartMesh) => {
@@ -517,7 +504,7 @@ pub async fn run_unified_server_worker(
     // the ordered shutdown sequence.
 
     // Extract the shutdown cause and lifecycle acknowledgement from the outcome.
-    let (shutdown_cause, lifecycle_ack, graceful, drain_timeout) = match outcome {
+    let (mut shutdown_cause, lifecycle_ack, graceful, drain_timeout) = match outcome {
         crate::worker::task_registry::SupervisionOutcome::Lifecycle { event, accepted } => {
             let (graceful, drain_timeout) = match &event {
                 lifecycle::WorkerLifecycleEvent::MasterShutdown { graceful, timeout } => {
@@ -555,6 +542,7 @@ pub async fn run_unified_server_worker(
                     | crate::worker::task_registry::WorkerShutdownCause::MeshStartupFailed(_)
                     | crate::worker::task_registry::WorkerShutdownCause::MeshShutdownIncomplete(_)
                     | crate::worker::task_registry::WorkerShutdownCause::MeshServiceExit(_)
+                    | crate::worker::task_registry::WorkerShutdownCause::MeshRestartExhausted { .. }
             );
             let drain_timeout = if graceful {
                 std::time::Duration::from_secs(30)
@@ -568,6 +556,15 @@ pub async fn run_unified_server_worker(
     // Step 1: Record coordinated shutdown intent before any teardown,
     // and acknowledge the lifecycle event so the IPC task can return.
     lifecycle::begin_coordinated_shutdown(&state.task_registry, lifecycle_ack).await;
+
+    // Step 1.5: Establish real shutdown deadline (Phase 19).
+    // All subsequent timeout calculations derive from this deadline,
+    // not from worker uptime.
+    let shutdown_started_at = std::time::Instant::now();
+    let shutdown_deadline = shutdown_started_at + drain_timeout;
+    let remaining_budget = || -> std::time::Duration {
+        shutdown_deadline.saturating_duration_since(std::time::Instant::now())
+    };
 
     // Step 2: Stop accepting new connections.
     let tx_guard = state.stop_accepting_tx.lock().await;
@@ -606,29 +603,50 @@ pub async fn run_unified_server_worker(
     drop(app_servers);
 
     // Step 4.5: Shutdown mesh transport (if running).
+    // Record final mesh status and use real shutdown budget (Phases 19-22).
     #[cfg(feature = "dns")]
     {
+        // Phase 22: Mark mesh as stopping before shutdown
+        {
+            let mut mesh_status = state.mesh_status.write().await;
+            mesh_status.transition_stopping();
+        }
         if let Some(tm) = state.data_plane.mesh_transport_manager.as_ref() {
             if let Some(quic) = tm.get_quic_transport() {
                 let transport = quic.get_inner();
                 if synvoid_mesh::ManagedMeshService::is_running(&transport) {
-                    let remaining = drain_timeout.saturating_sub(state.start_time.elapsed());
+                    let remaining = remaining_budget();
                     let report = transport.shutdown_with_timeout(remaining).await;
                     let disposition =
                         crate::worker::mesh_supervision::classify_mesh_shutdown_report(&report);
                     match disposition {
                         crate::worker::mesh_supervision::MeshShutdownDisposition::Clean => {
                             tracing::info!("Mesh shutdown completed cleanly");
+                            let mut mesh_status = state.mesh_status.write().await;
+                            mesh_status.transition_stopped();
                         }
                         crate::worker::mesh_supervision::MeshShutdownDisposition::ForcedButComplete => {
                             tracing::warn!("Mesh shutdown forced but complete");
+                            let mut mesh_status = state.mesh_status.write().await;
+                            mesh_status.transition_stopped();
                         }
                         crate::worker::mesh_supervision::MeshShutdownDisposition::Incomplete(
                             cause,
                         ) => {
-                            tracing::error!("Mesh shutdown incomplete: {}", cause.exit_reason());
+                            let reason = cause.exit_reason();
+                            tracing::error!("Mesh shutdown incomplete: {}", reason);
+                            let mut mesh_status = state.mesh_status.write().await;
+                            mesh_status.transition_failed(reason);
+                            // Phase 20: Accumulate incomplete mesh shutdown into final cause.
+                            shutdown_cause = crate::worker::mesh_supervision::merge_worker_shutdown_cause(
+                                shutdown_cause,
+                                crate::worker::mesh_supervision::mesh_failure_to_worker_cause(cause),
+                            );
                         }
                     }
+                } else {
+                    let mut mesh_status = state.mesh_status.write().await;
+                    mesh_status.transition_stopped();
                 }
             }
         }
@@ -774,6 +792,24 @@ pub async fn run_unified_server_worker(
                 .send(&crate::process::Message::WorkerError {
                     id: worker_id,
                     error: format!("Mesh service '{}' exited: {}", exit.name, exit.reason),
+                    severity: crate::process::ErrorSeverity::Critical,
+                    error_code: crate::process::ErrorCode::Unknown,
+                })
+                .await;
+        }
+        #[cfg(feature = "mesh")]
+        crate::worker::task_registry::WorkerShutdownCause::MeshRestartExhausted {
+            attempts,
+            ref last_error,
+        } => {
+            let mut ipc_guard = state.ipc.lock().await;
+            let _ = ipc_guard
+                .send(&crate::process::Message::WorkerError {
+                    id: worker_id,
+                    error: format!(
+                        "Mesh restart exhausted after {} attempts: {}",
+                        attempts, last_error
+                    ),
                     severity: crate::process::ErrorSeverity::Critical,
                     error_code: crate::process::ErrorCode::Unknown,
                 })

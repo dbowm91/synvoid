@@ -314,6 +314,26 @@ The supervision loop returns `SupervisionOutcome` (Lifecycle | DirectCause) inst
 
 - **Ownership invariant**: The mesh service reports facts; the worker decides policy. Mesh internals never directly terminate the process.
 
+### Iteration 83 — Mesh Supervision Pipeline Refinements
+
+**Single authoritative status allocation**: The supervision pipeline uses `state.mesh_status.clone()` (an `Arc<RwLock<WorkerMeshStatus>>`) as the single allocation shared between the observer, coordinator, and composition root. No separate status copies exist.
+
+**Coordinator event-before-policy ordering**: `MeshSupervisionCoordinator::run()` applies event-level status transitions (`apply_mesh_event_to_status`) *before* calling `decide_mesh_action()`. The phase snapshot used for classification reflects the post-transition state.
+
+**`decide_mesh_action()` signature**: Takes `&WorkerMeshPhase` (the phase enum, not `&WorkerMeshStatus`). Pure function — all state needed for the decision is passed in, no I/O.
+
+**`mesh_failure_to_worker_cause()`**: Converts `MeshFailureCause` → `WorkerShutdownCause` preserving typed information (`MeshServiceExit`, `MeshStartupFailed`, `MeshShutdownIncomplete`).
+
+**`merge_worker_shutdown_cause()`**: Priority-based cause merging (highest priority wins). Infrastructure failures > mesh failures > restart exhaustion > incomplete shutdown > expected shutdown. Used by composition root to accumulate causes from mesh supervision and task registry.
+
+**No outer timeout on mesh startup**: `start_with_policy()` is spawned without an outer `tokio::time::timeout`. Cancellation-safe via mesh-internal stage deadlines; outer timeout would bypass rollback.
+
+**Real shutdown deadline**: The composition root computes `remaining_budget()` closure from `shutdown_started_at + drain_timeout` — not `state.start_time.elapsed()`. Incomplete mesh shutdown accumulates into final cause via `merge_worker_shutdown_cause()`.
+
+**`MeshRestartExhausted` variant**: `WorkerShutdownCause::MeshRestartExhausted { attempts, last_error }` — raised when restart budget is exhausted. Classified as fatal (`is_fatal_exit()` returns true). Budget tracked via `RestartBudget` with sliding window.
+
+**`allow_degraded_readiness` field**: `MeshSupervisionPolicy::allow_degraded_readiness` (bool). When `required()` preset: `false` (mesh must be fully running for readiness). When `optional()` preset: `true` (degraded mesh still satisfies readiness). Gated by readiness check in `UnifiedServerWorkerState::is_ready()`.
+
 ### How to add a new long-lived task
 1. Determine task class (CriticalService, RestartableBackground, BoundedChild, CpuOffload, Detached)
 2. For CriticalService/RestartableBackground: use WorkerTaskRegistry.spawn_critical() or spawn_background()

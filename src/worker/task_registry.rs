@@ -93,6 +93,12 @@ pub enum WorkerShutdownCause {
     /// Mesh startup failed and was rolled back.
     #[cfg(feature = "mesh")]
     MeshStartupFailed(String),
+    /// Mesh restart budget exhausted.
+    #[cfg(feature = "mesh")]
+    MeshRestartExhausted {
+        attempts: u32,
+        last_error: String,
+    },
     /// Mesh shutdown did not complete cleanly.
     #[cfg(feature = "mesh")]
     MeshShutdownIncomplete(String),
@@ -133,6 +139,8 @@ impl WorkerShutdownCause {
             #[cfg(feature = "mesh")]
             Self::MeshStartupFailed(_) => true,
             #[cfg(feature = "mesh")]
+            Self::MeshRestartExhausted { .. } => true,
+            #[cfg(feature = "mesh")]
             Self::MeshShutdownIncomplete(_) => true,
             Self::SupervisorShutdown => false,
             Self::SupervisorDisconnected => true,
@@ -164,6 +172,7 @@ impl WorkerShutdownCause {
                     self,
                     Self::MeshServiceExit(_)
                         | Self::MeshStartupFailed(_)
+                        | Self::MeshRestartExhausted { .. }
                         | Self::MeshShutdownIncomplete(_)
                 )
             }
@@ -207,6 +216,17 @@ impl fmt::Display for WorkerShutdownCause {
             #[cfg(feature = "mesh")]
             Self::MeshStartupFailed(reason) => {
                 write!(f, "mesh_startup_failed: {}", reason)
+            }
+            #[cfg(feature = "mesh")]
+            Self::MeshRestartExhausted {
+                attempts,
+                last_error,
+            } => {
+                write!(
+                    f,
+                    "mesh_restart_exhausted: {} attempts, last: {}",
+                    attempts, last_error
+                )
             }
             #[cfg(feature = "mesh")]
             Self::MeshShutdownIncomplete(reason) => {
