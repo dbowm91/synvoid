@@ -120,6 +120,22 @@ impl From<HttpFramingError> for MeshTransportError {
     }
 }
 
+/// HTTP response version.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HttpVersion {
+    Http10,
+    Http11,
+}
+
+/// Encoding of the response body as received on the wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HttpResponseBodyEncoding {
+    None,
+    FixedLength,
+    Chunked,
+    CloseDelimited,
+}
+
 /// Parsed result of reading an HTTP response head from a backend.
 #[derive(Debug)]
 pub struct FramedHttpResponseHead {
@@ -129,6 +145,8 @@ pub struct FramedHttpResponseHead {
     pub content_length: Option<usize>,
     pub chunked: bool,
     pub connection_close: bool,
+    pub http_version: HttpVersion,
+    pub body_encoding: HttpResponseBodyEncoding,
 }
 
 /// Errors specific to HTTP response framing.
@@ -144,6 +162,7 @@ pub enum HttpResponseFramingError {
     PrematureEof { expected: usize, received: usize },
     MalformedChunkedBody(String),
     BackendClosedBeforeCompleteResponse,
+    ResponseBodyPrefixExceedsContentLength { prefix: usize, declared: usize },
     Io(String),
 }
 
@@ -174,6 +193,12 @@ impl std::fmt::Display for HttpResponseFramingError {
             Self::BackendClosedBeforeCompleteResponse => {
                 write!(f, "Backend closed before complete response")
             }
+            Self::ResponseBodyPrefixExceedsContentLength { prefix, declared } => {
+                write!(
+                    f,
+                    "Response body prefix ({prefix} bytes) exceeds declared Content-Length ({declared})"
+                )
+            }
             Self::Io(msg) => write!(f, "I/O error during response framing: {msg}"),
         }
     }
@@ -185,6 +210,102 @@ impl From<HttpResponseFramingError> for MeshTransportError {
     fn from(e: HttpResponseFramingError) -> Self {
         MeshTransportError::ReceiveFailed(e.to_string())
     }
+}
+
+/// Internal adapter that consumes prefix bytes before reading from the inner reader.
+/// Used by chunked framing to treat body_prefix as unread input.
+struct PrefixReader<R> {
+    prefix: std::io::Cursor<Vec<u8>>,
+    inner: R,
+}
+
+impl<R: tokio::io::AsyncRead + Unpin> PrefixReader<R> {
+    fn new(prefix: Vec<u8>, inner: R) -> Self {
+        Self {
+            prefix: std::io::Cursor::new(prefix),
+            inner,
+        }
+    }
+
+    async fn read_byte_with_timeout(
+        &mut self,
+        deadline: tokio::time::Instant,
+        idle_timeout: Duration,
+    ) -> Result<u8, HttpResponseFramingError> {
+        let mut buf = [0u8; 1];
+        loop {
+            // Try prefix first (synchronous read from Cursor)
+            let n = std::io::Read::read(&mut self.prefix, &mut buf)
+                .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
+            if n == 1 {
+                return Ok(buf[0]);
+            }
+            // Read from inner (async)
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                return Err(HttpResponseFramingError::Io("read timeout".to_string()));
+            }
+            let remaining = deadline.duration_since(now);
+            let effective = idle_timeout.min(remaining);
+            use tokio::io::AsyncReadExt;
+            let n = tokio::time::timeout(effective, self.inner.read(&mut buf))
+                .await
+                .map_err(|_| HttpResponseFramingError::Io("read timeout".to_string()))?
+                .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
+            if n == 0 {
+                return Err(HttpResponseFramingError::BackendClosedBeforeCompleteResponse);
+            }
+            return Ok(buf[0]);
+        }
+    }
+
+    async fn read_exact_with_timeout(
+        &mut self,
+        buf: &mut [u8],
+        deadline: tokio::time::Instant,
+        idle_timeout: Duration,
+    ) -> Result<(), HttpResponseFramingError> {
+        let mut filled = 0;
+        while filled < buf.len() {
+            // Try prefix first (synchronous read from Cursor)
+            let n = std::io::Read::read(&mut self.prefix, &mut buf[filled..])
+                .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
+            filled += n;
+            if filled == buf.len() {
+                return Ok(());
+            }
+            // Read from inner (async)
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                return Err(HttpResponseFramingError::Io("read timeout".to_string()));
+            }
+            let remaining = deadline.duration_since(now);
+            let effective = idle_timeout.min(remaining);
+            use tokio::io::AsyncReadExt;
+            let n = tokio::time::timeout(effective, self.inner.read(&mut buf[filled..]))
+                .await
+                .map_err(|_| HttpResponseFramingError::Io("read timeout".to_string()))?
+                .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
+            if n == 0 {
+                return Err(HttpResponseFramingError::PrematureEof {
+                    expected: buf.len(),
+                    received: filled,
+                });
+            }
+            filled += n;
+        }
+        Ok(())
+    }
+}
+
+/// Case-insensitive check for a token within a comma-separated header value.
+fn header_contains_token(value: &str, token: &str) -> bool {
+    for part in value.split(',') {
+        if part.trim().eq_ignore_ascii_case(token) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Parse Content-Length, Transfer-Encoding, and Connection from response header bytes.
@@ -220,8 +341,8 @@ fn parse_http_response_framing(
                 return Err(HttpResponseFramingError::UnsupportedTransferEncoding(value));
             }
         } else if line_lower.starts_with("connection:") {
-            let value = line["connection:".len()..].trim().to_lowercase();
-            if value == "close" {
+            let value = line["connection:".len()..].trim();
+            if header_contains_token(value, "close") {
                 connection_close = true;
             }
         }
@@ -303,8 +424,28 @@ pub async fn read_http_response_head<R: tokio::io::AsyncRead + Unpin>(
                 .parse()
                 .map_err(|_| HttpResponseFramingError::InvalidStatusCode(parts[1].to_string()))?;
 
+            let http_version = match parts[0] {
+                "HTTP/1.0" => HttpVersion::Http10,
+                "HTTP/1.1" => HttpVersion::Http11,
+                other => {
+                    return Err(HttpResponseFramingError::MalformedStatusLine(format!(
+                        "unsupported HTTP version: {other}"
+                    )));
+                }
+            };
+
             let (content_length, chunked, connection_close) =
                 parse_http_response_framing(&header_str)?;
+
+            let body_encoding = if chunked {
+                HttpResponseBodyEncoding::Chunked
+            } else if content_length.is_some() {
+                HttpResponseBodyEncoding::FixedLength
+            } else if connection_close || matches!(http_version, HttpVersion::Http10) {
+                HttpResponseBodyEncoding::CloseDelimited
+            } else {
+                HttpResponseBodyEncoding::None
+            };
 
             return Ok(FramedHttpResponseHead {
                 header_bytes,
@@ -313,8 +454,43 @@ pub async fn read_http_response_head<R: tokio::io::AsyncRead + Unpin>(
                 content_length,
                 chunked,
                 connection_close,
+                http_version,
+                body_encoding,
             });
         }
+    }
+}
+
+/// Read an HTTP/1.x response sequence, consuming informational responses (1xx)
+/// until a final response (>= 200) is obtained.
+///
+/// Informational responses (100 Continue, 103 Early Hints, etc.) are consumed
+/// and discarded. `101 Switching Protocols` is rejected because upgrades are
+/// unsupported. If the backend closes before a final response, an error is returned.
+pub async fn read_http_response_sequence<R: tokio::io::AsyncRead + Unpin>(
+    reader: &mut R,
+    idle_timeout: Duration,
+    total_timeout: Duration,
+    max_header_bytes: usize,
+) -> Result<FramedHttpResponseHead, HttpResponseFramingError> {
+    let deadline = tokio::time::Instant::now() + total_timeout;
+    loop {
+        let remaining = deadline.duration_since(tokio::time::Instant::now());
+        let head =
+            read_http_response_head(reader, idle_timeout, remaining, max_header_bytes).await?;
+
+        if head.status_code == 101 {
+            return Err(HttpResponseFramingError::MalformedStatusLine(
+                "101 Switching Protocols not supported".to_string(),
+            ));
+        }
+
+        if head.status_code >= 200 {
+            return Ok(head);
+        }
+
+        // Informational response (1xx, except 101) — consume body and continue.
+        // Informational responses have no body per HTTP spec.
     }
 }
 
@@ -328,10 +504,12 @@ pub async fn read_fixed_http_response_body<R: tokio::io::AsyncRead + Unpin>(
     max_body_bytes: usize,
 ) -> Result<Vec<u8>, HttpResponseFramingError> {
     if prefix.len() > content_length {
-        return Err(HttpResponseFramingError::MalformedChunkedBody(format!(
-            "body prefix {} bytes exceeds declared Content-Length {content_length}",
-            prefix.len(),
-        )));
+        return Err(
+            HttpResponseFramingError::ResponseBodyPrefixExceedsContentLength {
+                prefix: prefix.len(),
+                declared: content_length,
+            },
+        );
     }
 
     if content_length > max_body_bytes {
@@ -395,8 +573,8 @@ pub async fn read_fixed_http_response_body<R: tokio::io::AsyncRead + Unpin>(
 ///
 /// Preserves the raw wire chunked framing in the returned bytes.
 pub async fn read_chunked_http_response_body<R: tokio::io::AsyncRead + Unpin>(
-    reader: &mut R,
-    mut prefix: Vec<u8>,
+    reader: R,
+    prefix: Vec<u8>,
     idle_timeout: Duration,
     total_timeout: Duration,
     max_body_bytes: usize,
@@ -404,18 +582,11 @@ pub async fn read_chunked_http_response_body<R: tokio::io::AsyncRead + Unpin>(
 ) -> Result<Vec<u8>, HttpResponseFramingError> {
     let deadline = tokio::time::Instant::now() + total_timeout;
     let mut total_wire_bytes = prefix.len();
+    let mut output = prefix;
     let mut line_buf: Vec<u8> = Vec::with_capacity(64);
+    let mut reader = PrefixReader::new(output.clone(), reader);
 
     loop {
-        let now = tokio::time::Instant::now();
-        if now >= deadline {
-            return Err(HttpResponseFramingError::Io(
-                "chunked body framing deadline expired".to_string(),
-            ));
-        }
-        let remaining_total = deadline.duration_since(now);
-        let effective_timeout = idle_timeout.min(remaining_total);
-
         line_buf.clear();
         loop {
             if line_buf.len() >= 2 && line_buf[line_buf.len() - 2..] == *b"\r\n" {
@@ -426,16 +597,10 @@ pub async fn read_chunked_http_response_body<R: tokio::io::AsyncRead + Unpin>(
                     "trailer exceeded maximum size".to_string(),
                 ));
             }
-            let mut byte = [0u8; 1];
-            use tokio::io::AsyncReadExt;
-            let n = tokio::time::timeout(effective_timeout, reader.read(&mut byte))
-                .await
-                .map_err(|_| HttpResponseFramingError::Io("chunk read timeout".to_string()))?
-                .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
-            if n == 0 {
-                return Err(HttpResponseFramingError::BackendClosedBeforeCompleteResponse);
-            }
-            line_buf.push(byte[0]);
+            let byte = reader
+                .read_byte_with_timeout(deadline, idle_timeout)
+                .await?;
+            line_buf.push(byte);
         }
 
         total_wire_bytes += line_buf.len();
@@ -445,7 +610,7 @@ pub async fn read_chunked_http_response_body<R: tokio::io::AsyncRead + Unpin>(
                 declared: total_wire_bytes,
             });
         }
-        prefix.extend_from_slice(&line_buf);
+        output.extend_from_slice(&line_buf);
 
         let line_str = String::from_utf8_lossy(&line_buf);
         let size_str = line_str.trim_end_matches("\r\n");
@@ -458,24 +623,9 @@ pub async fn read_chunked_http_response_body<R: tokio::io::AsyncRead + Unpin>(
 
         if chunk_size == 0 {
             loop {
-                let now = tokio::time::Instant::now();
-                if now >= deadline {
-                    return Err(HttpResponseFramingError::Io(
-                        "chunked trailer deadline expired".to_string(),
-                    ));
-                }
-                let remaining_total = deadline.duration_since(now);
-                let effective_timeout = idle_timeout.min(remaining_total);
-
-                let mut byte = [0u8; 1];
-                use tokio::io::AsyncReadExt;
-                let n = tokio::time::timeout(effective_timeout, reader.read(&mut byte))
-                    .await
-                    .map_err(|_| HttpResponseFramingError::Io("trailer read timeout".to_string()))?
-                    .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
-                if n == 0 {
-                    return Ok(prefix);
-                }
+                let byte = reader
+                    .read_byte_with_timeout(deadline, idle_timeout)
+                    .await?;
                 total_wire_bytes += 1;
                 if total_wire_bytes > max_body_bytes {
                     return Err(HttpResponseFramingError::BodyTooLarge {
@@ -483,42 +633,18 @@ pub async fn read_chunked_http_response_body<R: tokio::io::AsyncRead + Unpin>(
                         declared: total_wire_bytes,
                     });
                 }
-                prefix.push(byte[0]);
-
-                if prefix.len() >= 4 && prefix[prefix.len() - 4..] == *b"\r\n\r\n" {
-                    return Ok(prefix);
+                output.push(byte);
+                if output.len() >= 4 && output[output.len() - 4..] == *b"\r\n\r\n" {
+                    return Ok(output);
                 }
             }
         }
 
         let payload_and_crlf = chunk_size + 2;
-        let mut remaining = payload_and_crlf;
-        let mut chunk_buf = Vec::with_capacity(payload_and_crlf.min(8192));
-
-        while remaining > 0 {
-            let now = tokio::time::Instant::now();
-            if now >= deadline {
-                return Err(HttpResponseFramingError::Io(
-                    "chunked body framing deadline expired".to_string(),
-                ));
-            }
-            let remaining_total = deadline.duration_since(now);
-            let effective_timeout = idle_timeout.min(remaining_total);
-
-            let to_read = remaining.min(4096);
-            let mut read_buf = vec![0u8; to_read];
-            use tokio::io::AsyncReadExt;
-            let n = tokio::time::timeout(effective_timeout, reader.read(&mut read_buf))
-                .await
-                .map_err(|_| HttpResponseFramingError::Io("chunk data read timeout".to_string()))?
-                .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
-
-            if n == 0 {
-                return Err(HttpResponseFramingError::BackendClosedBeforeCompleteResponse);
-            }
-            chunk_buf.extend_from_slice(&read_buf[..n]);
-            remaining -= n;
-        }
+        let mut chunk_buf = vec![0u8; payload_and_crlf];
+        reader
+            .read_exact_with_timeout(&mut chunk_buf, deadline, idle_timeout)
+            .await?;
 
         total_wire_bytes += chunk_buf.len();
         if total_wire_bytes > max_body_bytes {
@@ -527,7 +653,7 @@ pub async fn read_chunked_http_response_body<R: tokio::io::AsyncRead + Unpin>(
                 declared: total_wire_bytes,
             });
         }
-        prefix.extend_from_slice(&chunk_buf);
+        output.extend_from_slice(&chunk_buf);
     }
 }
 
@@ -5086,7 +5212,13 @@ impl MeshTransport {
 
         if upstream_id.starts_with("serverless_function:") {
             return self
-                .handle_serverless_proxy_stream(&upstream_id, &http_data, send_stream, peer_node_id)
+                .handle_serverless_proxy_stream(
+                    &upstream_id,
+                    parsed_meta,
+                    &http_data,
+                    send_stream,
+                    peer_node_id,
+                )
                 .await;
         }
 
@@ -5192,7 +5324,7 @@ impl MeshTransport {
         let max_body_bytes = self.config.connection.max_peer_http_response_body_bytes;
         let max_trailer_bytes = self.config.connection.max_peer_http_response_trailer_bytes;
 
-        let resp_head = match read_http_response_head(
+        let resp_head = match read_http_response_sequence(
             &mut backend_conn,
             idle_timeout,
             header_total_timeout,
@@ -5222,7 +5354,7 @@ impl MeshTransport {
             Vec::new()
         } else if resp_head.chunked {
             match read_chunked_http_response_body(
-                &mut backend_conn,
+                backend_conn,
                 resp_head.body_prefix,
                 idle_timeout,
                 body_total_timeout,
@@ -5267,7 +5399,25 @@ impl MeshTransport {
                 }
             }
         } else {
+            let allowed_close_delimited = match resp_head.http_version {
+                HttpVersion::Http10 => true,
+                HttpVersion::Http11 => resp_head.connection_close,
+            };
+            if !allowed_close_delimited {
+                tracing::warn!(
+                    "HTTP/1.1 response with no Content-Length, no chunked encoding, \
+                     and no Connection: close — ambiguous framing rejected"
+                );
+                let err_resp = b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n";
+                send_stream
+                    .write_all(err_resp)
+                    .await
+                    .map_err(|e| MeshTransportError::SendFailed(e.to_string()))?;
+                let _ = send_stream.finish();
+                return Ok(());
+            }
             let mut full_body = resp_head.body_prefix;
+            let mut total_read = full_body.len();
             let mut read_buf = vec![0u8; 8192];
             loop {
                 let n = tokio::time::timeout(idle_timeout, backend_conn.read(&mut read_buf))
@@ -5283,15 +5433,18 @@ impl MeshTransport {
                 if n == 0 {
                     break;
                 }
-                full_body.extend_from_slice(&read_buf[..n]);
-                if full_body.len() > max_body_bytes {
+                total_read += n;
+                if total_read > max_body_bytes {
                     tracing::warn!(
                         "Backend close-delimited body exceeded limit ({} > {})",
-                        full_body.len(),
+                        total_read,
                         max_body_bytes
                     );
-                    break;
+                    return Err(MeshTransportError::ReceiveFailed(format!(
+                        "Close-delimited body exceeded limit: {total_read} > {max_body_bytes}"
+                    )));
                 }
+                full_body.extend_from_slice(&read_buf[..n]);
             }
             full_body
         };
@@ -5299,14 +5452,26 @@ impl MeshTransport {
         let mut full_response = resp_head.header_bytes;
         full_response.extend_from_slice(&body_bytes);
 
-        let (transformed_response, did_transform) = match self
-            .apply_response_transforms(&full_response, &upstream_id)
-            .await
-        {
-            Ok((resp, transformed)) => (resp, transformed),
-            Err(e) => {
-                tracing::warn!("Transform error for {}: {}", upstream_id, e);
-                (full_response, false)
+        let skip_transforms = resp_head.body_encoding == HttpResponseBodyEncoding::Chunked;
+        if skip_transforms {
+            tracing::debug!(
+                "Skipping response transforms for chunked body from {}",
+                upstream_id
+            );
+        }
+
+        let (transformed_response, did_transform) = if skip_transforms {
+            (full_response, false)
+        } else {
+            match self
+                .apply_response_transforms(&full_response, &upstream_id)
+                .await
+            {
+                Ok((resp, transformed)) => (resp, transformed),
+                Err(e) => {
+                    tracing::warn!("Transform error for {}: {}", upstream_id, e);
+                    (full_response, false)
+                }
             }
         };
 
@@ -5322,69 +5487,6 @@ impl MeshTransport {
         let _ = send_stream.finish();
 
         Ok(())
-    }
-
-    fn extract_host_from_http(&self, header_bytes: &[u8]) -> Option<String> {
-        let header_str = String::from_utf8_lossy(header_bytes);
-
-        for line in header_str.lines() {
-            if let Some(colon_pos) = line.find(':') {
-                let name = line[..colon_pos].trim();
-                if name.eq_ignore_ascii_case("Host") {
-                    let value = line[colon_pos + 1..].trim();
-                    return Some(value.to_string());
-                }
-            }
-        }
-        None
-    }
-
-    fn extract_path_from_http(&self, header_bytes: &[u8]) -> String {
-        let header_str = String::from_utf8_lossy(header_bytes);
-
-        for line in header_str.lines() {
-            let trimmed = line.trim();
-            if let Some(rest) = trimmed
-                .strip_prefix("GET ")
-                .or_else(|| trimmed.strip_prefix("POST "))
-                .or_else(|| trimmed.strip_prefix("PUT "))
-                .or_else(|| trimmed.strip_prefix("PATCH "))
-                .or_else(|| trimmed.strip_prefix("DELETE "))
-                .or_else(|| trimmed.strip_prefix("OPTIONS "))
-                .or_else(|| trimmed.strip_prefix("HEAD "))
-                .or_else(|| trimmed.strip_prefix("TRACE "))
-                .or_else(|| trimmed.strip_prefix("CONNECT "))
-            {
-                if let Some(third_space) = rest.find(' ') {
-                    return rest[..third_space].to_string();
-                }
-            }
-        }
-        "/".to_string()
-    }
-
-    fn extract_method_from_http(&self, header_bytes: &[u8]) -> Option<String> {
-        let header_str = String::from_utf8_lossy(header_bytes);
-
-        for line in header_str.lines() {
-            let trimmed = line.trim();
-            if let Some(space) = trimmed.find(' ') {
-                let candidate = &trimmed[..space];
-                if candidate.eq_ignore_ascii_case("GET")
-                    || candidate.eq_ignore_ascii_case("POST")
-                    || candidate.eq_ignore_ascii_case("PUT")
-                    || candidate.eq_ignore_ascii_case("PATCH")
-                    || candidate.eq_ignore_ascii_case("DELETE")
-                    || candidate.eq_ignore_ascii_case("OPTIONS")
-                    || candidate.eq_ignore_ascii_case("HEAD")
-                    || candidate.eq_ignore_ascii_case("TRACE")
-                    || candidate.eq_ignore_ascii_case("CONNECT")
-                {
-                    return Some(candidate.to_string());
-                }
-            }
-        }
-        None
     }
 
     async fn apply_response_transforms(
@@ -5523,6 +5625,7 @@ impl MeshTransport {
     async fn handle_serverless_proxy_stream(
         &self,
         upstream_id: &str,
+        parsed_meta: &ParsedHttpRequestMeta,
         http_data: &[u8],
         send_stream: &mut SendStream,
         peer_node_id: String,
@@ -5556,10 +5659,8 @@ impl MeshTransport {
 
         let caller = synvoid_serverless::manager::CallerContext::mesh(peer_node_id, peer_role);
 
-        let method = self.extract_method_from_http(http_data);
-        let path = self.extract_path_from_http(http_data);
-
-        let method = method.unwrap_or_else(|| "GET".to_string());
+        let method = parsed_meta.method.clone();
+        let path = parsed_meta.target.clone();
 
         let header_str = match String::from_utf8(http_data.to_vec()) {
             Ok(s) => s,

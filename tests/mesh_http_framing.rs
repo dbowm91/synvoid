@@ -1041,9 +1041,6 @@ async fn persistent_backend_returns_without_waiting_for_eof() {
     stream.write_all(request).await.unwrap();
 
     // Read response using the framing helpers.
-    let mut read_buf = [0u8; 1];
-    stream.read_exact(&mut read_buf).await.unwrap();
-
     let start = std::time::Instant::now();
     let head = read_http_response_head(
         &mut stream,

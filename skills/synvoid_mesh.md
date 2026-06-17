@@ -755,6 +755,76 @@ Backend responses are now parsed with proper HTTP/1.1 framing instead of EOF-onl
 | `peer_http_response_body_total_timeout_secs` | 60 | Total body framing deadline |
 | `max_peer_http_response_trailer_bytes` | 4096 | Max chunked response trailer size |
 
+## Iteration 80 — Response Sequence Parsing, Auxiliary Registration, and PrefixReader
+
+Iteration 80 hardens HTTP response sequence handling (1xx informational responses, close-delimited bodies), introduces an atomic auxiliary task registration pattern, and adds a `PrefixReader` adapter for efficient chunked response parsing.
+
+### Parts A-B: HTTP Response Sequence and Encoding
+
+Backend responses may include informational responses (1xx) before the final response. `read_http_response_sequence()` reads response heads in a loop, consuming 1xx responses until a final response (status >= 200) is obtained. This prevents informational responses from being treated as the final response.
+
+- **`read_http_response_sequence()`**: Generic `AsyncRead` helper. Reads `read_http_response_head()` in a loop. Yields each `FramedHttpResponseHead` for informational statuses (1xx). Terminates when status >= 200 is reached. Enforces `max_informational_response_count` (default 10) to prevent infinite loops from misbehaving backends.
+
+**HttpVersion**: Enum (`Http10`, `Http11`) stored in `FramedHttpResponseHead`. Parsed from the response status line HTTP version field. Used for downstream protocol selection.
+
+**HttpResponseBodyEncoding**: Enum (`None`, `FixedLength`, `Chunked`, `CloseDelimited`) stored in `FramedHttpResponseHead`. Determined during response head parsing:
+- `None` — no-body status (HEAD, 1xx, 204, 304)
+- `FixedLength` — valid `Content-Length` present
+- `Chunked` — `Transfer-Encoding: chunked` detected
+- `CloseDelimited` — no `Content-Length` or `Transfer-Encoding`; body read until connection close
+
+Used to skip transforms for chunked responses and select the correct body read strategy.
+
+**header_contains_token**: Case-insensitive helper for checking tokens in comma-separated header values. Used for `Connection: close` parsing in response headers. Performs case-insensitive token matching against a header value that may contain comma-separated tokens.
+
+**ResponseBodyPrefixExceedsContentLength**: New error variant in `HttpResponseFramingError`. Returned when the body prefix consumed by `PrefixReader` exceeds the declared `Content-Length`, indicating a protocol violation.
+
+### Part C: PrefixReader
+
+**PrefixReader**: Internal adapter struct combining a prefix byte buffer with an async reader. Used by `read_chunked_http_response_body()` to consume `body_prefix` bytes before delegating to socket reads. The prefix contains bytes already read from the socket during response head/body framing. Implements `tokio::io::AsyncRead` by first draining the prefix buffer synchronously via `std::io::Read`, then forwarding reads to the inner async reader.
+
+```rust
+pub(crate) struct PrefixReader<R> {
+    prefix: std::io::Cursor<Vec<u8>>,
+    inner: R,
+}
+```
+
+This avoids re-reading prefix bytes from the socket and keeps the chunked body parser operating on a contiguous byte stream.
+
+### Part D: Atomic Auxiliary Registration
+
+The auxiliary task registry now uses an atomic registration pattern to prevent races between deduplication and insertion.
+
+**AuxiliaryRegistryEntry**: Enum in `lifecycle.rs` with two variants:
+- `Reserved` — gated, not yet running. Created when `spawn_auxiliary_task()` acquires the registry slot. The actual future is pending submission to the task group.
+- `Running` — active join handle. Set after the future is successfully spawned.
+
+This two-phase pattern ensures that capacity checks, deduplication, and slot reservation are atomic with respect to concurrent auxiliary task spawns.
+
+**auxiliary_submission_lock**: `Arc<tokio::sync::Mutex<()>>` on `MeshTransport`. Serializes the critical section of auxiliary task registration: deduplication check, capacity check, `Reserved` slot insertion, spawn, and upgrade to `Running`. Without this lock, two concurrent callers could both pass the capacity check and insert, exceeding the configured maximum.
+
+```rust
+// Registration flow (simplified)
+let _guard = self.auxiliary_submission_lock.lock().await;
+// 1. Check dedup_key — abort existing task if present
+// 2. Check capacity — reject if at max
+// 3. Insert Reserved entry
+// 4. Spawn future, upgrade to Running(JoinHandle)
+```
+
+### Config Fields
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `max_informational_response_count` | 10 | Max informational (1xx) responses before final response |
+
+### New Helpers
+
+- `read_http_response_sequence()` — reads response heads in a loop, consuming 1xx informational responses until status >= 200
+- `header_contains_token()` — case-insensitive token check in comma-separated header values
+- `PrefixReader` — internal adapter combining prefix byte buffer with async reader for chunked response parsing
+
 ## Testing Commands
 
 ```bash

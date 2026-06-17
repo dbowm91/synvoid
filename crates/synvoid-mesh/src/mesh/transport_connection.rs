@@ -83,6 +83,7 @@ impl MeshTransport {
             accept_loop_report: self.accept_loop_report.clone(),
             failed_startup_residue: self.failed_startup_residue.clone(),
             auxiliary_tasks: self.auxiliary_tasks.clone(),
+            auxiliary_submission_lock: self.auxiliary_submission_lock.clone(),
             startup_generation: self.startup_generation.clone(),
             session_generation: self.session_generation.clone(),
             session_exit_tx: self.session_exit_tx.clone(),

@@ -49,11 +49,11 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch, Mutex};
 
 #[allow(unused_imports)]
 use crate::lifecycle::{
-    remaining, AuxiliaryTask, AuxiliaryTaskExit, AuxiliaryTaskKind, DhtPeerMutation,
-    DhtPeerSnapshot, FailedStartupResidue, MeshAcceptLoopReport, MeshLifecycleState,
-    MeshShutdownReport, MeshStartupPolicy, MeshStartupReport, MeshStartupStage, MeshTaskExit,
-    MeshTaskExitReason, MeshTaskId, MeshTaskIdGenerator, PeerSessionStopOutcome, PeerSessionTask,
-    RecoveryReport, RollbackReport, StagedPeerResource, StagedTopologySnapshot,
+    remaining, AuxiliaryRegistryEntry, AuxiliaryTask, AuxiliaryTaskExit, AuxiliaryTaskKind,
+    DhtPeerMutation, DhtPeerSnapshot, FailedStartupResidue, MeshAcceptLoopReport,
+    MeshLifecycleState, MeshShutdownReport, MeshStartupPolicy, MeshStartupReport, MeshStartupStage,
+    MeshTaskExit, MeshTaskExitReason, MeshTaskId, MeshTaskIdGenerator, PeerSessionStopOutcome,
+    PeerSessionTask, RecoveryReport, RollbackReport, StagedPeerResource, StagedTopologySnapshot,
 };
 use crate::task_group::MeshTaskGroup;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -189,7 +189,10 @@ pub struct MeshTransport {
     /// Retained metadata from an incomplete startup rollback (Iteration 73, Phase 8).
     pub(crate) failed_startup_residue: Arc<tokio::sync::Mutex<Option<FailedStartupResidue>>>,
     /// Auxiliary (preflight/best-effort) tasks owned by the transport (Iteration 73, Phase 13-14).
-    pub(crate) auxiliary_tasks: Arc<tokio::sync::Mutex<HashMap<MeshTaskId, AuxiliaryTask>>>,
+    pub(crate) auxiliary_tasks:
+        Arc<tokio::sync::Mutex<HashMap<MeshTaskId, AuxiliaryRegistryEntry>>>,
+    /// Serializes auxiliary task deduplication, capacity, reservation, and insertion (Iteration 80).
+    pub(crate) auxiliary_submission_lock: Arc<tokio::sync::Mutex<()>>,
     /// Channel for peer session exit events, consumed by the session reaper (Iteration 73, Phase 15-18).
     pub(crate) session_exit_tx: broadcast::Sender<crate::lifecycle::PeerSessionExit>,
     /// Generation counter incremented at each startup, used to validate accept-loop report freshness (Phase 19).
@@ -478,6 +481,7 @@ impl Clone for MeshTransport {
             accept_loop_report: self.accept_loop_report.clone(),
             failed_startup_residue: self.failed_startup_residue.clone(),
             auxiliary_tasks: self.auxiliary_tasks.clone(),
+            auxiliary_submission_lock: self.auxiliary_submission_lock.clone(),
             startup_generation: self.startup_generation.clone(),
             session_generation: self.session_generation.clone(),
             session_exit_tx: self.session_exit_tx.clone(),
@@ -834,6 +838,7 @@ impl MeshTransport {
             accept_loop_report: Arc::new(tokio::sync::Mutex::new(MeshAcceptLoopReport::default())),
             failed_startup_residue: Arc::new(tokio::sync::Mutex::new(None)),
             auxiliary_tasks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            auxiliary_submission_lock: Arc::new(tokio::sync::Mutex::new(())),
             session_exit_tx: {
                 let (tx, _) = broadcast::channel(64);
                 tx
@@ -2898,13 +2903,13 @@ impl MeshTransport {
             let mut aux = self.auxiliary_tasks.lock().await;
             aux.insert(
                 task_id,
-                AuxiliaryTask {
+                AuxiliaryRegistryEntry::Running(AuxiliaryTask {
                     task_id,
                     session_id,
                     kind,
                     handle,
                     dedup_key,
-                },
+                }),
             );
         }
 
@@ -2921,7 +2926,7 @@ impl MeshTransport {
     /// is responsible for aborting and awaiting the returned handles outside
     /// the registry lock.
     pub(crate) fn dedup_and_check_capacity(
-        aux: &mut std::collections::HashMap<MeshTaskId, AuxiliaryTask>,
+        aux: &mut std::collections::HashMap<MeshTaskId, AuxiliaryRegistryEntry>,
         kind: AuxiliaryTaskKind,
         dedup_key: &Option<String>,
         capacity: usize,
@@ -2931,18 +2936,20 @@ impl MeshTransport {
         if let Some(ref dk) = dedup_key {
             let stale_ids: Vec<_> = aux
                 .iter()
-                .filter(|(_id, t)| t.dedup_key.as_ref() == Some(dk))
+                .filter(|(_id, entry)| entry.dedup_key().as_deref() == Some(dk.as_str()))
                 .map(|(id, _)| *id)
                 .collect();
             for id in stale_ids {
-                if let Some(task) = aux.remove(&id) {
-                    stale.push(task);
+                if let Some(entry) = aux.remove(&id) {
+                    if let AuxiliaryRegistryEntry::Running(task) = entry {
+                        stale.push(task);
+                    }
                 }
             }
         }
 
         // Capacity check: count active tasks of the matching kind.
-        let active = aux.values().filter(|t| t.kind == kind).count();
+        let active = aux.values().filter(|e| e.kind() == kind).count();
         if active >= capacity {
             return Err(());
         }
@@ -2970,29 +2977,38 @@ impl MeshTransport {
                                     let mut aux = transport.auxiliary_tasks.lock().await;
                                     aux.remove(&exit.task_id)
                                 };
-                                if let Some(task) = removed {
-                                    match task.handle.await {
-                                        Ok(_) => {
-                                            tracing::debug!(
-                                                "Auxiliary reaper joined handle for task {} ({:?})",
-                                                exit.task_id,
-                                                exit.reason
-                                            );
-                                        }
-                                        Err(error) if error.is_panic() => {
-                                            tracing::warn!(
-                                                "Auxiliary reaper: task {} panicked after exit event",
-                                                exit.task_id
-                                            );
-                                        }
-                                        Err(error) => {
-                                            tracing::debug!(
-                                                "Auxiliary reaper: task {} cancelled after exit: {}",
-                                                exit.task_id,
-                                                error
-                                            );
+                                match removed {
+                                    Some(AuxiliaryRegistryEntry::Running(task)) => {
+                                        match task.handle.await {
+                                            Ok(_) => {
+                                                tracing::debug!(
+                                                    "Auxiliary reaper joined handle for task {} ({:?})",
+                                                    exit.task_id,
+                                                    exit.reason
+                                                );
+                                            }
+                                            Err(error) if error.is_panic() => {
+                                                tracing::warn!(
+                                                    "Auxiliary reaper: task {} panicked after exit event",
+                                                    exit.task_id
+                                                );
+                                            }
+                                            Err(error) => {
+                                                tracing::debug!(
+                                                    "Auxiliary reaper: task {} cancelled after exit: {}",
+                                                    exit.task_id,
+                                                    error
+                                                );
+                                            }
                                         }
                                     }
+                                    Some(AuxiliaryRegistryEntry::Reserved { task_id, .. }) => {
+                                        tracing::debug!(
+                                            "Auxiliary reaper: received exit for Reserved entry {} (gate not yet opened)",
+                                            task_id
+                                        );
+                                    }
+                                    None => {}
                                 }
                             }
                             Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -3024,14 +3040,23 @@ impl MeshTransport {
         {
             let mut aux = self.auxiliary_tasks.lock().await;
             let mut to_remove = Vec::new();
-            for (task_id, task) in aux.iter() {
-                if task.handle.is_finished() {
-                    to_remove.push(*task_id);
+            for (task_id, entry) in aux.iter() {
+                match entry {
+                    AuxiliaryRegistryEntry::Running(task) => {
+                        if task.handle.is_finished() {
+                            to_remove.push(*task_id);
+                        }
+                    }
+                    AuxiliaryRegistryEntry::Reserved { .. } => {
+                        // Reserved entry — gate not yet opened, nothing to reap.
+                    }
                 }
             }
             for task_id in to_remove {
-                if let Some(task) = aux.remove(&task_id) {
-                    to_join.push(task);
+                if let Some(entry) = aux.remove(&task_id) {
+                    if let AuxiliaryRegistryEntry::Running(task) = entry {
+                        to_join.push(task);
+                    }
                 }
             }
         }
@@ -3485,17 +3510,19 @@ impl MeshTransport {
         let mut aux = self.auxiliary_tasks.lock().await;
         let to_remove: Vec<MeshTaskId> = aux
             .iter()
-            .filter(|(_, task)| {
-                task.session_id
-                    .as_ref()
-                    .is_some_and(|sid| session_ids.contains(sid))
+            .filter(|(_, entry)| {
+                entry
+                    .session_id()
+                    .is_some_and(|sid| session_ids.contains(&sid.to_string()))
             })
             .map(|(id, _)| *id)
             .collect();
         for id in to_remove {
-            if let Some(task) = aux.remove(&id) {
-                task.handle.abort();
-                let _ = task.handle.await;
+            if let Some(entry) = aux.remove(&id) {
+                if let AuxiliaryRegistryEntry::Running(task) = entry {
+                    task.handle.abort();
+                    let _ = task.handle.await;
+                }
             }
         }
     }
@@ -3679,9 +3706,11 @@ impl MeshTransport {
         // Phase 8: Clear auxiliary tasks
         {
             let mut aux = self.auxiliary_tasks.lock().await;
-            for (_id, task) in aux.drain() {
-                task.handle.abort();
-                let _ = task.handle.await;
+            for (_id, entry) in aux.drain() {
+                if let AuxiliaryRegistryEntry::Running(task) = entry {
+                    task.handle.abort();
+                    let _ = task.handle.await;
+                }
             }
         }
 
@@ -4260,9 +4289,11 @@ impl MeshTransport {
         // Drain auxiliary tasks (Iteration 73, Phase 13-14)
         {
             let mut aux = self.auxiliary_tasks.lock().await;
-            for (_id, task) in aux.drain() {
-                task.handle.abort();
-                let _ = task.handle.await;
+            for (_id, entry) in aux.drain() {
+                if let AuxiliaryRegistryEntry::Running(task) = entry {
+                    task.handle.abort();
+                    let _ = task.handle.await;
+                }
             }
         }
 
@@ -4937,13 +4968,13 @@ impl MeshTransport {
             let mut aux = self.auxiliary_tasks.lock().await;
             aux.insert(
                 task_id,
-                AuxiliaryTask {
+                AuxiliaryRegistryEntry::Running(AuxiliaryTask {
                     task_id,
                     session_id: Some(session_id_clone),
                     kind: AuxiliaryTaskKind::PreflightRoute,
                     handle: preflight_handle,
                     dedup_key: None,
-                },
+                }),
             );
         }
 
@@ -6034,7 +6065,7 @@ mod tests {
         use super::*;
         use std::collections::HashMap;
 
-        let mut aux: HashMap<MeshTaskId, AuxiliaryTask> = HashMap::new();
+        let mut aux: HashMap<MeshTaskId, AuxiliaryRegistryEntry> = HashMap::new();
         let dedup_key = Some("edge_refresh:ns:key1".to_string());
 
         // Insert task A with the dedup key.
@@ -6049,13 +6080,13 @@ mod tests {
         });
         aux.insert(
             task_id_a,
-            AuxiliaryTask {
+            AuxiliaryRegistryEntry::Running(AuxiliaryTask {
                 task_id: task_id_a,
                 session_id: None,
                 kind: AuxiliaryTaskKind::EdgeReplicaRefresh,
                 handle: handle_a,
                 dedup_key: dedup_key.clone(),
-            },
+            }),
         );
         assert_eq!(aux.len(), 1);
 
@@ -6088,7 +6119,7 @@ mod tests {
         use super::*;
         use std::collections::HashMap;
 
-        let mut aux: HashMap<MeshTaskId, AuxiliaryTask> = HashMap::new();
+        let mut aux: HashMap<MeshTaskId, AuxiliaryRegistryEntry> = HashMap::new();
         let capacity = 3; // use small capacity for test
 
         // Fill capacity with 3 distinct tasks (no dedup key).
@@ -6104,13 +6135,13 @@ mod tests {
             });
             aux.insert(
                 task_id,
-                AuxiliaryTask {
+                AuxiliaryRegistryEntry::Running(AuxiliaryTask {
                     task_id,
                     session_id: None,
                     kind: AuxiliaryTaskKind::EdgeReplicaRefresh,
                     handle,
                     dedup_key: None,
-                },
+                }),
             );
         }
         assert_eq!(aux.len(), capacity);
@@ -6132,10 +6163,12 @@ mod tests {
         );
 
         // Clean up: abort all handles.
-        let tasks: Vec<_> = aux.drain().collect();
-        for (_id, t) in tasks {
-            t.handle.abort();
-            let _ = t.handle.await;
+        let entries: Vec<_> = aux.drain().collect();
+        for (_id, entry) in entries {
+            if let AuxiliaryRegistryEntry::Running(t) = entry {
+                t.handle.abort();
+                let _ = t.handle.await;
+            }
         }
     }
 
@@ -6172,16 +6205,16 @@ mod tests {
         });
 
         // Register the task in the auxiliary registry.
-        let mut aux: HashMap<MeshTaskId, AuxiliaryTask> = HashMap::new();
+        let mut aux: HashMap<MeshTaskId, AuxiliaryRegistryEntry> = HashMap::new();
         aux.insert(
             task_id,
-            AuxiliaryTask {
+            AuxiliaryRegistryEntry::Running(AuxiliaryTask {
                 task_id,
                 session_id: None,
                 kind: AuxiliaryTaskKind::EdgeReplicaRefresh,
                 handle,
                 dedup_key: Some("edge_refresh:ns:normal_key".to_string()),
-            },
+            }),
         );
         assert_eq!(aux.len(), 1, "registry must have 1 task");
 
@@ -6205,7 +6238,12 @@ mod tests {
         assert_eq!(aux.len(), 0, "registry must be empty after reaping");
 
         // Step 4: Handle must be joinable (no zombie).
-        let task_exit = removed.unwrap().handle.await.unwrap();
+        let entry = removed.unwrap();
+        let task = match entry {
+            AuxiliaryRegistryEntry::Running(t) => t,
+            _ => panic!("expected Running entry"),
+        };
+        let task_exit = task.handle.await.unwrap();
         assert!(
             matches!(&task_exit.reason, MeshTaskExitReason::CleanCompletion),
             "task exit must be CleanCompletion, got: {:?}",
@@ -6257,5 +6295,122 @@ mod tests {
             "task exit must carry error, got: {:?}",
             task_exit.reason
         );
+    }
+
+    // ── Iteration 80: Atomic auxiliary task registration tests ──────────────
+
+    #[tokio::test]
+    async fn immediate_completion_registry_entry_exists_before_reap() {
+        use super::*;
+        use std::collections::HashMap;
+
+        let gen = Arc::new(MeshTaskIdGenerator::new());
+        let (_exit_tx, _) = broadcast::channel::<crate::lifecycle::AuxiliaryTaskExit>(64);
+        let id = gen.next();
+        let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
+
+        let handle = tokio::spawn(async move {
+            let _ = start_rx.await;
+            MeshTaskExit {
+                id: MeshTaskId(0),
+                name: "test",
+                class: crate::lifecycle::MeshTaskClass::RestartableBackground,
+                reason: MeshTaskExitReason::CleanCompletion,
+            }
+        });
+
+        let entry = AuxiliaryRegistryEntry::Running(AuxiliaryTask {
+            task_id: id,
+            session_id: None,
+            kind: AuxiliaryTaskKind::Other,
+            handle,
+            dedup_key: None,
+        });
+
+        let mut map = HashMap::new();
+        map.insert(id, entry);
+
+        let _ = start_tx.send(());
+        assert!(map.contains_key(&id));
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(map.contains_key(&id));
+    }
+
+    #[tokio::test]
+    async fn dedup_removes_stale_matching_key() {
+        use super::*;
+        use std::collections::HashMap;
+
+        let mut map = HashMap::new();
+        let stale_id = MeshTaskId(100);
+        let stale_handle = tokio::spawn(async move {
+            MeshTaskExit {
+                id: stale_id,
+                name: "test",
+                class: crate::lifecycle::MeshTaskClass::RestartableBackground,
+                reason: MeshTaskExitReason::CleanCompletion,
+            }
+        });
+        map.insert(
+            stale_id,
+            AuxiliaryRegistryEntry::Running(AuxiliaryTask {
+                task_id: stale_id,
+                session_id: None,
+                kind: AuxiliaryTaskKind::EdgeReplicaRefresh,
+                handle: stale_handle,
+                dedup_key: Some("edge_refresh:ns:key1".to_string()),
+            }),
+        );
+
+        let stale = MeshTransport::dedup_and_check_capacity(
+            &mut map,
+            AuxiliaryTaskKind::EdgeReplicaRefresh,
+            &Some("edge_refresh:ns:key1".to_string()),
+            8,
+        )
+        .unwrap();
+
+        assert_eq!(stale.len(), 1);
+        assert_eq!(stale[0].task_id, stale_id);
+        assert!(!map.contains_key(&stale_id));
+    }
+
+    #[tokio::test]
+    async fn capacity_rejection_returns_error() {
+        use super::*;
+        use std::collections::HashMap;
+
+        let mut map = HashMap::new();
+
+        for i in 0..8 {
+            let id = MeshTaskId(i);
+            let handle = tokio::spawn(async {
+                MeshTaskExit {
+                    id: MeshTaskId(0),
+                    name: "test",
+                    class: crate::lifecycle::MeshTaskClass::RestartableBackground,
+                    reason: MeshTaskExitReason::CleanCompletion,
+                }
+            });
+            map.insert(
+                id,
+                AuxiliaryRegistryEntry::Running(AuxiliaryTask {
+                    task_id: id,
+                    session_id: None,
+                    kind: AuxiliaryTaskKind::EdgeReplicaRefresh,
+                    handle,
+                    dedup_key: None,
+                }),
+            );
+        }
+
+        let result = MeshTransport::dedup_and_check_capacity(
+            &mut map,
+            AuxiliaryTaskKind::EdgeReplicaRefresh,
+            &None,
+            8,
+        );
+        assert!(result.is_err());
     }
 }

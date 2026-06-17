@@ -2897,9 +2897,19 @@ fn iter79_request_metadata_from_headers_only() {
         tp.contains("parse_http_request_meta"),
         "parse_http_request_meta must exist"
     );
+    // Iteration 80: Obsolete whole-header metadata helpers are removed.
+    // All callers must use ParsedHttpRequestMeta instead.
     assert!(
-        tp.contains("fn extract_host_from_http(&self, header_bytes: &[u8])"),
-        "extract_host_from_http must accept header bytes"
+        !tp.contains("fn extract_host_from_http("),
+        "extract_host_from_http must be removed — use ParsedHttpRequestMeta"
+    );
+    assert!(
+        !tp.contains("fn extract_path_from_http("),
+        "extract_path_from_http must be removed — use ParsedHttpRequestMeta"
+    );
+    assert!(
+        !tp.contains("fn extract_method_from_http("),
+        "extract_method_from_http must be removed — use ParsedHttpRequestMeta"
     );
     assert!(
         !tp.contains("to_lowercase().contains(\"upgrade:\")"),

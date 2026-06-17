@@ -143,6 +143,58 @@ closes the last visible detached mesh task path. The `JoinSet` is drained on shu
 - **`tests/mesh_forced_cleanup.rs`**: new `iter77_*` behavioral tests
 - **`tests/mesh_task_ownership_guard.rs`**: new `iter77_*` guardrails
 
+## Iteration 80 — HTTP Chunked Framing Prefix-Awareness and Auxiliary Atomicity
+
+### Chunked Parser Prefix-Awareness
+
+The chunked HTTP response parser now uses a `PrefixReader` adapter that consumes
+`body_prefix` bytes (coalesced with the header terminator) before reading from
+the socket. This ensures all already-read bytes are parsed before requesting more
+data from the backend connection.
+
+**Key invariant**: Framing parsers must consume all bytes already read before
+requesting more bytes from the socket.
+
+### Auxiliary Task Registration Atomicity
+
+Auxiliary task registration is now serialized via `auxiliary_submission_lock`.
+A gated-start pattern ensures the ownership record exists before the task future
+can execute or publish completion events.
+
+**Key invariant**: An auxiliary completion event must never be observable before
+the corresponding ownership record exists.
+
+### Informational Response Handling
+
+HTTP informational responses (100 Continue, 103 Early Hints) are consumed and
+discarded until a final response (>= 200) is obtained. `101 Switching Protocols`
+is explicitly rejected.
+
+### Response Transform Safety
+
+Raw chunked response bodies are not passed through entity-body transforms.
+The `HttpResponseBodyEncoding` metadata tracks wire encoding, and transforms
+are skipped for chunked responses to prevent corrupting chunk framing.
+
+### Close-Delimited Response Restrictions
+
+HTTP/1.1 close-delimited responses now require explicit `Connection: close`.
+HTTP/1.0 responses without Content-Length or chunked encoding are allowed
+close-delimited. Ambiguous HTTP/1.1 framing is rejected immediately.
+
+### Parser Error Corrections
+
+- `ResponseBodyPrefixExceedsContentLength` error variant replaces the
+  incorrect `MalformedChunkedBody` for prefix > Content-Length cases.
+- `Connection` header token parsing is now case-insensitive and supports
+  comma-separated token lists.
+- Response version is validated (exactly `HTTP/1.0` or `HTTP/1.1`).
+
+### Removed Obsolete Helpers
+
+`extract_host_from_http`, `extract_path_from_http`, and `extract_method_from_http`
+have been removed. All callers now use `ParsedHttpRequestMeta`.
+
 ## Task Classification Definitions
 
 | Class | Definition |

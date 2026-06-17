@@ -647,6 +647,57 @@ impl fmt::Display for PeerSessionExitReason {
     }
 }
 
+/// A pending or running auxiliary task in the registry (Iteration 80).
+///
+/// `Reserved` entries represent tasks whose ownership record exists but whose
+/// future has not yet started (gated by a oneshot). This prevents completion
+/// events from racing ahead of registration.
+pub enum AuxiliaryRegistryEntry {
+    /// Ownership reserved; task future is gated and has not started.
+    Reserved {
+        task_id: MeshTaskId,
+        kind: AuxiliaryTaskKind,
+        session_id: Option<String>,
+        dedup_key: Option<String>,
+    },
+    /// Task is running with a known join handle.
+    Running(AuxiliaryTask),
+}
+
+impl AuxiliaryRegistryEntry {
+    /// Returns the task ID.
+    pub fn task_id(&self) -> MeshTaskId {
+        match self {
+            AuxiliaryRegistryEntry::Reserved { task_id, .. } => *task_id,
+            AuxiliaryRegistryEntry::Running(t) => t.task_id,
+        }
+    }
+
+    /// Returns the task kind.
+    pub fn kind(&self) -> AuxiliaryTaskKind {
+        match self {
+            AuxiliaryRegistryEntry::Reserved { kind, .. } => *kind,
+            AuxiliaryRegistryEntry::Running(t) => t.kind,
+        }
+    }
+
+    /// Returns a reference to the dedup key.
+    pub fn dedup_key(&self) -> Option<&str> {
+        match self {
+            AuxiliaryRegistryEntry::Reserved { dedup_key, .. } => dedup_key.as_deref(),
+            AuxiliaryRegistryEntry::Running(t) => t.dedup_key.as_deref(),
+        }
+    }
+
+    /// Returns a reference to the session ID.
+    pub fn session_id(&self) -> Option<&str> {
+        match self {
+            AuxiliaryRegistryEntry::Reserved { session_id, .. } => session_id.as_deref(),
+            AuxiliaryRegistryEntry::Running(t) => t.session_id.as_deref(),
+        }
+    }
+}
+
 /// An auxiliary (preflight/best-effort) task owned by the transport (Iteration 73, Phase 13-14).
 ///
 /// Auxiliary tasks are one-shot operations associated with peer connections
