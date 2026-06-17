@@ -6158,4 +6158,111 @@ mod tests {
         );
         assert!(handlers.is_empty(), "JoinSet should be empty after drain");
     }
+
+    // ── Iteration 80, Part D: Chunked encoding transforms-skip invariant ──
+
+    /// Verify the body_encoding detection pipeline for all encoding types.
+    ///
+    /// The proxy code at `handle_http_proxy_stream` derives:
+    ///     `skip_transforms = resp_head.body_encoding == HttpResponseBodyEncoding::Chunked`
+    ///
+    /// This test proves the detection step is correct for every encoding variant,
+    /// ensuring chunked responses are marked "do not transform" and all other
+    /// encodings are eligible for transforms.
+    #[tokio::test]
+    async fn body_encoding_detection_matches_transform_skip_invariant() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // Helper: parse a response and return its body_encoding.
+        async fn detect_encoding(response: &[u8]) -> HttpResponseBodyEncoding {
+            let (mut client, mut server) = tokio::io::duplex(response.len());
+            client.write_all(response).await.unwrap();
+            client.shutdown().await.unwrap();
+            let head = read_http_response_head(
+                &mut server,
+                Duration::from_secs(5),
+                Duration::from_secs(10),
+                8192,
+            )
+            .await
+            .unwrap();
+            head.body_encoding
+        }
+
+        // Chunked → skip transforms
+        let enc = detect_encoding(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n").await;
+        assert_eq!(
+            enc,
+            HttpResponseBodyEncoding::Chunked,
+            "chunked must be detected"
+        );
+
+        // Fixed-length → apply transforms
+        let enc = detect_encoding(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello").await;
+        assert_eq!(
+            enc,
+            HttpResponseBodyEncoding::FixedLength,
+            "fixed-length must be detected"
+        );
+
+        // Close-delimited HTTP/1.0 → apply transforms
+        let enc = detect_encoding(b"HTTP/1.0 200 OK\r\n\r\nhello").await;
+        assert_eq!(
+            enc,
+            HttpResponseBodyEncoding::CloseDelimited,
+            "HTTP/1.0 close-delimited must be detected"
+        );
+
+        // Close-delimited HTTP/1.1 with Connection: close → apply transforms
+        let enc = detect_encoding(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhello").await;
+        assert_eq!(
+            enc,
+            HttpResponseBodyEncoding::CloseDelimited,
+            "HTTP/1.1 Connection: close must be detected"
+        );
+
+        // No body (204) → no transforms needed
+        let enc = detect_encoding(b"HTTP/1.1 204 No Content\r\n\r\n").await;
+        assert_eq!(
+            enc,
+            HttpResponseBodyEncoding::None,
+            "204 must be None encoding"
+        );
+
+        // HTTP/1.1 ambiguous (no CL, no TE, no Connection: close) → None (caller rejects)
+        let enc = detect_encoding(b"HTTP/1.1 200 OK\r\n\r\n").await;
+        assert_eq!(
+            enc,
+            HttpResponseBodyEncoding::None,
+            "ambiguous must be None"
+        );
+    }
+
+    /// Verify that the chunked wire body is returned verbatim (no decoding,
+    /// no truncation, no modification) — proving the raw bytes are preserved
+    /// for the transform-skip path.
+    #[tokio::test]
+    async fn chunked_body_preserved_verbatim_through_parser() {
+        // Build a complete chunked wire body: "hello world" in two chunks.
+        let mut wire_body = Vec::new();
+        wire_body.extend_from_slice(b"5\r\nhello\r\n");
+        wire_body.extend_from_slice(b"6\r\n world\r\n");
+        wire_body.extend_from_slice(b"0\r\n\r\n");
+
+        let result = read_chunked_http_response_body(
+            &wire_body[..],
+            Vec::new(),
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+            65536,
+            65536,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            result, wire_body,
+            "chunked parser must return the complete wire body unchanged"
+        );
+    }
 }

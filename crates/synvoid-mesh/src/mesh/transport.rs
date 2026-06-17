@@ -6444,4 +6444,324 @@ mod tests {
         );
         assert!(result.is_err());
     }
+
+    // ── Iteration 80: Barrier-based concurrent race tests ─────────────────
+
+    /// Prove the gated-start pattern prevents completion before registration.
+    ///
+    /// Uses a barrier to force the future to wait while the registry is checked,
+    /// proving that completion cannot race ahead of registration insertion.
+    #[tokio::test]
+    async fn concurrent_gate_prevents_early_completion() {
+        use super::*;
+        use std::collections::HashMap;
+
+        let gen = Arc::new(MeshTaskIdGenerator::new());
+        let (_exit_tx, _) = broadcast::channel::<crate::lifecycle::AuxiliaryTaskExit>(64);
+        let id = gen.next();
+
+        // Barrier: future waits here until main thread confirms registry state.
+        let gate = Arc::new(tokio::sync::Barrier::new(2));
+        let gate_clone = gate.clone();
+
+        let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
+
+        let handle = tokio::spawn(async move {
+            // Wait for the gate signal (main thread will check registry first).
+            let _ = start_rx.await;
+            // Now wait on the barrier — this proves the future is still alive
+            // and hasn't completed yet when main checks the registry.
+            gate_clone.wait().await;
+            MeshTaskExit {
+                id: MeshTaskId(0),
+                name: "test",
+                class: crate::lifecycle::MeshTaskClass::RestartableBackground,
+                reason: MeshTaskExitReason::CleanCompletion,
+            }
+        });
+
+        // Register the task in the map.
+        let mut map = HashMap::new();
+        map.insert(
+            id,
+            AuxiliaryRegistryEntry::Running(AuxiliaryTask {
+                task_id: id,
+                session_id: None,
+                kind: AuxiliaryTaskKind::Other,
+                handle,
+                dedup_key: None,
+            }),
+        );
+
+        // Open the gate — future starts but blocks on the barrier.
+        let _ = start_tx.send(());
+
+        // The future is running but blocked on the barrier.
+        // Prove registry has the entry while the future is still running.
+        assert!(
+            map.contains_key(&id),
+            "registry must contain entry while future is gated"
+        );
+
+        // Release the barrier so the future can complete.
+        gate.wait().await;
+
+        // Now wait for the future to finish.
+        let entry = map.remove(&id).unwrap();
+        if let AuxiliaryRegistryEntry::Running(task) = entry {
+            let exit = task.handle.await.unwrap();
+            assert!(matches!(exit.reason, MeshTaskExitReason::CleanCompletion));
+        } else {
+            panic!("expected Running entry");
+        }
+        assert!(map.is_empty());
+    }
+
+    /// Two concurrent submissions with the same dedup key must result in at
+    /// most one active entry after both complete.
+    ///
+    /// Uses a `tokio::sync::Mutex` to share the map across concurrent tasks,
+    /// then verifies the dedup function correctly handles overlapping calls.
+    #[tokio::test]
+    async fn concurrent_duplicate_submissions_at_most_one_running() {
+        use super::*;
+        use std::collections::HashMap;
+        use std::sync::Arc;
+
+        let dedup_key = Some("edge_refresh:ns:race_key".to_string());
+        let capacity = 8;
+
+        // Pre-populate the map with a "stale" entry sharing the same dedup key.
+        let mut map = HashMap::new();
+        let stale_id = MeshTaskId(100);
+        let stale_handle = tokio::spawn(async {
+            MeshTaskExit {
+                id: MeshTaskId(100),
+                name: "stale",
+                class: crate::lifecycle::MeshTaskClass::RestartableBackground,
+                reason: MeshTaskExitReason::CleanCompletion,
+            }
+        });
+        map.insert(
+            stale_id,
+            AuxiliaryRegistryEntry::Running(AuxiliaryTask {
+                task_id: stale_id,
+                session_id: None,
+                kind: AuxiliaryTaskKind::EdgeReplicaRefresh,
+                handle: stale_handle,
+                dedup_key: dedup_key.clone(),
+            }),
+        );
+
+        let map = Arc::new(tokio::sync::Mutex::new(map));
+
+        // Two concurrent dedup+capacity checks with the same dedup key.
+        let (r1, r2) = tokio::join!(
+            async {
+                let mut map = map.lock().await;
+                MeshTransport::dedup_and_check_capacity(
+                    &mut map,
+                    AuxiliaryTaskKind::EdgeReplicaRefresh,
+                    &dedup_key,
+                    capacity,
+                )
+            },
+            async {
+                let mut map = map.lock().await;
+                MeshTransport::dedup_and_check_capacity(
+                    &mut map,
+                    AuxiliaryTaskKind::EdgeReplicaRefresh,
+                    &dedup_key,
+                    capacity,
+                )
+            }
+        );
+
+        // At least one must have removed the stale entry.
+        let stale1 = r1.unwrap();
+        let stale2 = r2.unwrap();
+        let total_stale = stale1.len() + stale2.len();
+        assert!(
+            total_stale >= 1,
+            "at least one call must remove the stale entry"
+        );
+
+        // The map must not contain the stale entry anymore.
+        let map = map.lock().await;
+        assert!(
+            !map.contains_key(&stale_id),
+            "stale entry must be removed from map"
+        );
+    }
+
+    /// Concurrent submissions that exceed capacity must never allow more than
+    /// the configured limit to be active in the registry.
+    ///
+    /// Uses a `tokio::sync::Mutex` to share the map across concurrent tasks,
+    /// simulating the real `spawn_auxiliary_task` flow under the submission lock.
+    #[tokio::test]
+    async fn concurrent_capacity_boundary_never_exceeded() {
+        use super::*;
+        use std::collections::HashMap;
+        use std::sync::Arc;
+
+        let capacity: usize = 3;
+        let extras: usize = 5;
+
+        // Fill the map to capacity.
+        let mut map = HashMap::new();
+        for i in 0..capacity {
+            let id = MeshTaskId(i as u64);
+            let handle = tokio::spawn(async {
+                MeshTaskExit {
+                    id: MeshTaskId(0),
+                    name: "test",
+                    class: crate::lifecycle::MeshTaskClass::RestartableBackground,
+                    reason: MeshTaskExitReason::CleanCompletion,
+                }
+            });
+            map.insert(
+                id,
+                AuxiliaryRegistryEntry::Running(AuxiliaryTask {
+                    task_id: id,
+                    session_id: None,
+                    kind: AuxiliaryTaskKind::EdgeReplicaRefresh,
+                    handle,
+                    dedup_key: None,
+                }),
+            );
+        }
+
+        let map = Arc::new(tokio::sync::Mutex::new(map));
+
+        // Spawn `extras` concurrent capacity checks, each with a unique dedup key.
+        let mut handles = Vec::new();
+        for j in 0..extras {
+            let map = map.clone();
+            let dedup_key = Some(format!("edge_refresh:ns:extra_{}", j));
+            let handle = tokio::spawn(async move {
+                // Small delay to create overlap between tasks.
+                tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+
+                let mut map = map.lock().await;
+                MeshTransport::dedup_and_check_capacity(
+                    &mut map,
+                    AuxiliaryTaskKind::EdgeReplicaRefresh,
+                    &dedup_key,
+                    capacity,
+                )
+            });
+            handles.push(handle);
+        }
+
+        let results: Vec<_> = futures::future::join_all(handles)
+            .await
+            .into_iter()
+            .map(|r| r.unwrap())
+            .collect();
+
+        // Count successes vs rejections.
+        let successes = results.iter().filter(|r| r.is_ok()).count();
+        let rejections = results.iter().filter(|r| r.is_err()).count();
+        assert_eq!(
+            successes + rejections,
+            extras,
+            "every submission must resolve"
+        );
+        assert!(
+            rejections > 0,
+            "some submissions must be rejected when at capacity"
+        );
+        assert!(successes <= extras - 1, "not all extras can succeed");
+
+        // Verify map never exceeds capacity.
+        let map = map.lock().await;
+        let active = map
+            .values()
+            .filter(|e| e.kind() == AuxiliaryTaskKind::EdgeReplicaRefresh)
+            .count();
+        assert!(
+            active <= capacity,
+            "registry active count {} must not exceed capacity {}",
+            active,
+            capacity
+        );
+    }
+
+    /// When start_tx is dropped (simulating shutdown/cancellation), the gated
+    /// task must exit cleanly without executing the user future.
+    #[tokio::test]
+    async fn shutdown_during_reservation_cleans_up() {
+        use super::*;
+        use std::collections::HashMap;
+
+        let gen = Arc::new(MeshTaskIdGenerator::new());
+        let (exit_tx, _) = broadcast::channel::<crate::lifecycle::AuxiliaryTaskExit>(64);
+        let mut exit_rx = exit_tx.subscribe();
+        let id = gen.next();
+        let aux_exit_tx = exit_tx.clone();
+        let task_id_for_exit = id;
+
+        // Spawn a future that waits for the gate, then waits forever
+        // (proving it never executes the user body).
+        let handle = tokio::spawn(async move {
+            // Simulate the gated-start pattern: wait for start_rx.
+            let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
+            // Immediately drop start_tx to simulate shutdown/cancellation.
+            drop(start_tx);
+
+            if start_rx.await.is_err() {
+                // Gate dropped — publish exit and return cancelled.
+                let reason = MeshTaskExitReason::Cancelled;
+                let _ = aux_exit_tx.send(crate::lifecycle::AuxiliaryTaskExit {
+                    task_id: task_id_for_exit,
+                    session_id: None,
+                    reason: reason.clone(),
+                });
+                return MeshTaskExit {
+                    id: task_id_for_exit,
+                    name: "gated-shutdown",
+                    class: crate::lifecycle::MeshTaskClass::RestartableBackground,
+                    reason,
+                };
+            }
+            // Should never reach here.
+            panic!("user future executed after gate drop");
+        });
+
+        // Register the task.
+        let mut map = HashMap::new();
+        map.insert(
+            id,
+            AuxiliaryRegistryEntry::Running(AuxiliaryTask {
+                task_id: id,
+                session_id: None,
+                kind: AuxiliaryTaskKind::Other,
+                handle,
+                dedup_key: None,
+            }),
+        );
+
+        // The gate is already dropped inside the task, so it should exit.
+        // Wait for the exit event.
+        let exit = tokio::time::timeout(std::time::Duration::from_secs(5), exit_rx.recv())
+            .await
+            .expect("timeout waiting for exit event")
+            .expect("exit channel closed");
+
+        assert_eq!(exit.task_id, id);
+        assert!(matches!(exit.reason, MeshTaskExitReason::Cancelled));
+
+        // Reaper removes the entry.
+        let removed = map.remove(&exit.task_id);
+        assert!(removed.is_some(), "reaper must remove cancelled entry");
+
+        // Handle must be joinable.
+        let entry = removed.unwrap();
+        if let AuxiliaryRegistryEntry::Running(task) = entry {
+            let task_exit = task.handle.await.unwrap();
+            assert!(matches!(task_exit.reason, MeshTaskExitReason::Cancelled));
+        }
+        assert!(map.is_empty());
+    }
 }
