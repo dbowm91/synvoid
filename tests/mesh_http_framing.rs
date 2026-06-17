@@ -993,3 +993,90 @@ async fn response_conflicting_content_length_rejected() {
         other => panic!("expected InvalidContentLength, got: {other:?}"),
     }
 }
+
+// ── Phase 37: Persistent Backend Fixed-Length Response Test ───────────────
+//
+// The most important regression test in the pass: a real TCP backend sends
+// a complete HTTP/1.1 response with Content-Length and keeps the connection
+// open. Synvoid must return the complete response immediately after the
+// declared body WITHOUT waiting for TCP EOF.
+
+#[tokio::test]
+async fn persistent_backend_returns_without_waiting_for_eof() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    // Server task: accept one request, send Content-Length response, keep open.
+    let server_handle = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+
+        // Read the incoming request (read until we see the header terminator).
+        let mut req_buf = vec![0u8; 4096];
+        let mut req_len = 0;
+        loop {
+            let n = stream.read(&mut req_buf[req_len..]).await.unwrap();
+            req_len += n;
+            if req_buf[..req_len].windows(4).any(|w| w == b"\r\n\r\n") {
+                break;
+            }
+        }
+
+        // Send a complete HTTP/1.1 response with Content-Length.
+        // Keep the TCP connection open — do NOT close it.
+        let response =
+            b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: keep-alive\r\n\r\nhello";
+        stream.write_all(response).await.unwrap();
+        stream.flush().await.unwrap();
+
+        // Keep the connection alive for 60 seconds (longer than any timeout).
+        tokio::time::sleep(Duration::from_secs(60)).await;
+    });
+
+    // Client: connect and send a request.
+    let mut stream = tokio::net::TcpStream::connect(&addr).await.unwrap();
+    let request = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
+    stream.write_all(request).await.unwrap();
+
+    // Read response using the framing helpers.
+    let mut read_buf = [0u8; 1];
+    stream.read_exact(&mut read_buf).await.unwrap();
+
+    let start = std::time::Instant::now();
+    let head = read_http_response_head(
+        &mut stream,
+        Duration::from_secs(5),
+        Duration::from_secs(10),
+        MAX_HEADER_BYTES,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(head.status_code, 200);
+    assert_eq!(head.content_length, Some(5));
+
+    let body = read_fixed_http_response_body(
+        &mut stream,
+        head.body_prefix,
+        5,
+        Duration::from_secs(5),
+        Duration::from_secs(10),
+        65536,
+    )
+    .await
+    .unwrap();
+
+    let elapsed = start.elapsed();
+
+    assert_eq!(body, b"hello");
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "response should return immediately after Content-Length body, not wait for EOF (took {elapsed:?})"
+    );
+
+    // Clean up.
+    drop(stream);
+    server_handle.abort();
+}

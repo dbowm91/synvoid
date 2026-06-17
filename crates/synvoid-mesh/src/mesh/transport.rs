@@ -2834,8 +2834,21 @@ impl MeshTransport {
         let task_id_for_exit = task_id;
         let session_id_for_exit = session_id.clone();
 
+        metrics::counter!("edge_refresh_submitted").increment(1);
+
         let handle = tokio::spawn(async move {
             let reason = future.await;
+            match &reason {
+                MeshTaskExitReason::CleanCompletion => {
+                    metrics::counter!("edge_refresh_succeeded").increment(1);
+                }
+                MeshTaskExitReason::Error(_) => {
+                    metrics::counter!("edge_refresh_failed").increment(1);
+                }
+                _ => {
+                    metrics::counter!("edge_refresh_failed").increment(1);
+                }
+            }
             let _ = aux_exit_tx.send(AuxiliaryTaskExit {
                 task_id: task_id_for_exit,
                 session_id: session_id_for_exit,
@@ -2850,42 +2863,39 @@ impl MeshTransport {
         });
 
         // Phase 22: Deduplication — abort and await stale matching tasks.
-        {
+        // Phase 26: Capacity check — reject if at limit.
+        const MAX_CONCURRENT_EDGE_REPLICA_REFRESH: usize = 8;
+        let stale_tasks = {
             let mut aux = self.auxiliary_tasks.lock().await;
-
-            if let Some(ref dk) = dedup_key {
-                let stale_ids: Vec<_> = aux
-                    .iter()
-                    .filter(|(_id, t)| t.dedup_key.as_ref() == Some(dk))
-                    .map(|(id, _)| *id)
-                    .collect();
-                for id in stale_ids {
-                    if let Some(old_task) = aux.remove(&id) {
-                        old_task.handle.abort();
-                        let _ = old_task.handle.await;
-                        tracing::debug!(
-                            "Aborted stale auxiliary task {} for dedup key {:?}",
-                            id,
-                            dk
-                        );
+            match Self::dedup_and_check_capacity(
+                &mut aux,
+                kind,
+                &dedup_key,
+                MAX_CONCURRENT_EDGE_REPLICA_REFRESH,
+            ) {
+                Ok(stale) => {
+                    if !stale.is_empty() {
+                        metrics::counter!("edge_refresh_deduplicated")
+                            .increment(stale.len() as u64);
                     }
+                    stale
+                }
+                Err(()) => {
+                    metrics::counter!("edge_refresh_capacity_dropped").increment(1);
+                    handle.abort();
+                    let _ = handle.await;
+                    return Err(());
                 }
             }
+        };
+        // Abort and await stale tasks outside the lock.
+        for old_task in stale_tasks {
+            old_task.handle.abort();
+            let _ = old_task.handle.await;
+            tracing::debug!("Aborted stale auxiliary task {} (dedup)", old_task.task_id);
         }
-
-        // Capacity check — reject new task if at limit.
-        const MAX_CONCURRENT_EDGE_REPLICA_REFRESH: usize = 8;
         {
             let mut aux = self.auxiliary_tasks.lock().await;
-            let active_refreshes = aux
-                .values()
-                .filter(|t| matches!(t.kind, AuxiliaryTaskKind::EdgeReplicaRefresh))
-                .count();
-            if active_refreshes >= MAX_CONCURRENT_EDGE_REPLICA_REFRESH {
-                handle.abort();
-                let _ = handle.await;
-                return Err(());
-            }
             aux.insert(
                 task_id,
                 AuxiliaryTask {
@@ -2899,6 +2909,45 @@ impl MeshTransport {
         }
 
         Ok(task_id)
+    }
+
+    /// Apply deduplication and capacity checks to the auxiliary task registry.
+    ///
+    /// Returns `Ok(stale_tasks_removed)` on success (caller should insert the
+    /// new task). Returns `Err(())` when capacity is exhausted (caller should
+    /// abort the new handle).
+    ///
+    /// Stale tasks matching `dedup_key` are removed from the map. The caller
+    /// is responsible for aborting and awaiting the returned handles outside
+    /// the registry lock.
+    pub(crate) fn dedup_and_check_capacity(
+        aux: &mut std::collections::HashMap<MeshTaskId, AuxiliaryTask>,
+        kind: AuxiliaryTaskKind,
+        dedup_key: &Option<String>,
+        capacity: usize,
+    ) -> Result<Vec<AuxiliaryTask>, ()> {
+        // Deduplication: remove stale tasks matching the dedup key.
+        let mut stale = Vec::new();
+        if let Some(ref dk) = dedup_key {
+            let stale_ids: Vec<_> = aux
+                .iter()
+                .filter(|(_id, t)| t.dedup_key.as_ref() == Some(dk))
+                .map(|(id, _)| *id)
+                .collect();
+            for id in stale_ids {
+                if let Some(task) = aux.remove(&id) {
+                    stale.push(task);
+                }
+            }
+        }
+
+        // Capacity check: count active tasks of the matching kind.
+        let active = aux.values().filter(|t| t.kind == kind).count();
+        if active >= capacity {
+            return Err(());
+        }
+
+        Ok(stale)
     }
 
     /// Spawn the auxiliary task reaper that watches for completed auxiliary tasks
@@ -5986,6 +6035,164 @@ mod tests {
             matches!(outcome, super::PeerSessionStopOutcome::Failed(_)),
             "panic should produce Failed, got: {:?}",
             outcome
+        );
+    }
+
+    // ── Iteration 79, Phase 42: Edge refresh dedup behavioral test ────────
+
+    #[tokio::test]
+    async fn dedup_removes_stale_before_capacity_check() {
+        use super::*;
+        use std::collections::HashMap;
+
+        let mut aux: HashMap<MeshTaskId, AuxiliaryTask> = HashMap::new();
+        let dedup_key = Some("edge_refresh:ns:key1".to_string());
+
+        // Insert task A with the dedup key.
+        let task_id_a = MeshTaskId(1);
+        let handle_a = tokio::spawn(async move {
+            MeshTaskExit {
+                id: MeshTaskId(0),
+                name: "test",
+                class: crate::lifecycle::MeshTaskClass::BoundedChild,
+                reason: MeshTaskExitReason::CleanCompletion,
+            }
+        });
+        aux.insert(
+            task_id_a,
+            AuxiliaryTask {
+                task_id: task_id_a,
+                session_id: None,
+                kind: AuxiliaryTaskKind::EdgeReplicaRefresh,
+                handle: handle_a,
+                dedup_key: dedup_key.clone(),
+            },
+        );
+        assert_eq!(aux.len(), 1);
+
+        // Call dedup_and_check_capacity with the same dedup key.
+        let stale = MeshTransport::dedup_and_check_capacity(
+            &mut aux,
+            AuxiliaryTaskKind::EdgeReplicaRefresh,
+            &dedup_key,
+            8,
+        )
+        .unwrap();
+
+        // Stale task A should have been removed.
+        assert_eq!(stale.len(), 1, "should have removed 1 stale task");
+        assert_eq!(stale[0].task_id, task_id_a);
+        assert!(!aux.contains_key(&task_id_a), "A must be removed from map");
+        assert_eq!(aux.len(), 0, "map should be empty after dedup");
+
+        // Clean up: abort the stale handle.
+        for t in stale {
+            t.handle.abort();
+            let _ = t.handle.await;
+        }
+    }
+
+    // ── Iteration 79, Phase 43: Edge refresh capacity behavioral test ──────
+
+    #[tokio::test]
+    async fn capacity_rejection_at_limit() {
+        use super::*;
+        use std::collections::HashMap;
+
+        let mut aux: HashMap<MeshTaskId, AuxiliaryTask> = HashMap::new();
+        let capacity = 3; // use small capacity for test
+
+        // Fill capacity with 3 distinct tasks (no dedup key).
+        for i in 0..capacity {
+            let task_id = MeshTaskId(i as u64);
+            let handle = tokio::spawn(async {
+                MeshTaskExit {
+                    id: MeshTaskId(0),
+                    name: "test",
+                    class: crate::lifecycle::MeshTaskClass::BoundedChild,
+                    reason: MeshTaskExitReason::CleanCompletion,
+                }
+            });
+            aux.insert(
+                task_id,
+                AuxiliaryTask {
+                    task_id,
+                    session_id: None,
+                    kind: AuxiliaryTaskKind::EdgeReplicaRefresh,
+                    handle,
+                    dedup_key: None,
+                },
+            );
+        }
+        assert_eq!(aux.len(), capacity);
+
+        // Attempt to insert a 4th task with a distinct dedup key.
+        let dedup_key = Some("edge_refresh:ns:new_key".to_string());
+        let result = MeshTransport::dedup_and_check_capacity(
+            &mut aux,
+            AuxiliaryTaskKind::EdgeReplicaRefresh,
+            &dedup_key,
+            capacity,
+        );
+
+        assert!(result.is_err(), "should reject when at capacity");
+        assert_eq!(
+            aux.len(),
+            capacity,
+            "map size should not change on rejection"
+        );
+
+        // Clean up: abort all handles.
+        let tasks: Vec<_> = aux.drain().collect();
+        for t in tasks {
+            t.handle.abort();
+            let _ = t.handle.await;
+        }
+    }
+
+    // ── Iteration 79, Phase 44: Auxiliary failure reason test ──────────────
+
+    #[tokio::test]
+    async fn auxiliary_task_failure_carries_error_reason() {
+        use super::*;
+
+        let (exit_tx, _) = tokio::sync::broadcast::channel(16);
+        let mut exit_rx = exit_tx.subscribe();
+
+        let task_id = MeshTaskId(42);
+        let task_id_for_exit = task_id;
+        let aux_exit_tx = exit_tx.clone();
+
+        let handle = tokio::spawn(async move {
+            let reason = MeshTaskExitReason::Error("leader query failed".to_string());
+            let _ = aux_exit_tx.send(AuxiliaryTaskExit {
+                task_id: task_id_for_exit,
+                session_id: None,
+                reason: reason.clone(),
+            });
+            MeshTaskExit {
+                id: task_id_for_exit,
+                name: "edge-replica-refresh",
+                class: crate::lifecycle::MeshTaskClass::RestartableBackground,
+                reason,
+            }
+        });
+
+        // Wait for the task to complete and send its exit event.
+        let exit = exit_rx.recv().await.unwrap();
+        assert_eq!(exit.task_id, task_id);
+        assert!(
+            matches!(&exit.reason, MeshTaskExitReason::Error(msg) if msg.contains("leader query failed")),
+            "exit reason must carry error, got: {:?}",
+            exit.reason
+        );
+
+        // The JoinHandle should also carry the error.
+        let task_exit = handle.await.unwrap();
+        assert!(
+            matches!(&task_exit.reason, MeshTaskExitReason::Error(msg) if msg.contains("leader query failed")),
+            "task exit must carry error, got: {:?}",
+            task_exit.reason
         );
     }
 }
