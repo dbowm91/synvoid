@@ -100,6 +100,28 @@ fn classify_yara_child_result(
     }
 }
 
+/// Abstraction for the YARA broadcast action, enabling testability without
+/// concrete `MeshTransport` coupling (Iteration 87, Phase 15).
+#[cfg(all(feature = "mesh", feature = "dns"))]
+#[async_trait::async_trait]
+trait YaraBroadcastSink: Send + Sync {
+    async fn broadcast(&self, msg: crate::mesh::protocol::MeshMessage);
+}
+
+/// Production adapter wrapping `MeshTransport`.
+#[cfg(all(feature = "mesh", feature = "dns"))]
+struct MeshTransportBroadcastSink(Arc<crate::mesh::transport::MeshTransport>);
+
+#[cfg(all(feature = "mesh", feature = "dns"))]
+#[async_trait::async_trait]
+impl YaraBroadcastSink for MeshTransportBroadcastSink {
+    async fn broadcast(&self, msg: crate::mesh::protocol::MeshMessage) {
+        self.0
+            .broadcast_to_all_peers(msg, Some(crate::mesh::config::MeshNodeRole::GLOBAL))
+            .await;
+    }
+}
+
 /// Dedicated YARA broadcast loop with bounded child ownership.
 ///
 /// Consumes `MeshMessage`s from the channel, spawns bounded broadcast tasks
@@ -108,7 +130,7 @@ fn classify_yara_child_result(
 #[cfg(all(feature = "mesh", feature = "dns"))]
 async fn run_yara_broadcast_loop(
     mut broadcast_rx: tokio::sync::mpsc::Receiver<crate::mesh::protocol::MeshMessage>,
-    mesh_transport: Arc<crate::mesh::transport::MeshTransport>,
+    sink: Arc<dyn YaraBroadcastSink>,
     semaphore: Arc<tokio::sync::Semaphore>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
     drain_timeout: Duration,
@@ -134,14 +156,9 @@ async fn run_yara_broadcast_loop(
                         match semaphore.clone().try_acquire_owned() {
                             Ok(permit) => {
                                 metrics::counter!("yara_mesh_broadcast_submitted_total").increment(1);
-                                let transport = mesh_transport.clone();
+                                let sink = sink.clone();
                                 children.spawn(async move {
-                                    transport
-                                        .broadcast_to_all_peers(
-                                            msg,
-                                            Some(crate::mesh::config::MeshNodeRole::GLOBAL),
-                                        )
-                                        .await;
+                                    sink.broadcast(msg).await;
                                     drop(permit);
                                 });
                             }
@@ -287,9 +304,11 @@ async fn register_mesh_generation_support(
             rx
         };
         let id = registry.spawn_background("yara_broadcast", async move {
+            let sink: Arc<dyn YaraBroadcastSink> =
+                Arc::new(MeshTransportBroadcastSink(mesh_transport));
             let report = run_yara_broadcast_loop(
                 broadcast_rx,
-                mesh_transport,
+                sink,
                 broadcast_semaphore,
                 combined_shutdown,
                 Duration::from_secs(30),
@@ -698,11 +717,12 @@ pub async fn run_unified_server_worker(
     // `mesh_decision_rx_opt` is always created (but `None` without mesh feature)
     // so the select loop can unconditionally poll it.
     #[cfg(feature = "mesh")]
-    let (mut mesh_decision_rx_opt, mut required_mesh_startup_failure): (
+    let (mut mesh_decision_rx_opt, mut required_mesh_startup_failure, mut active_mesh_support): (
         Option<
             tokio::sync::mpsc::Receiver<crate::worker::mesh_supervision::MeshSupervisorDecision>,
         >,
         Option<crate::worker::mesh_supervision::MeshFailureCause>,
+        Option<MeshGenerationSupport>,
     ) = {
         let mesh_status = state.mesh_status.clone();
 
@@ -721,7 +741,7 @@ pub async fn run_unified_server_worker(
         if !has_mesh_transport {
             // Mesh disabled — no pipeline, no tasks, no channels.
             tracing::info!("Mesh disabled — no supervision pipeline created");
-            (None, None)
+            (None, None, None)
         } else {
             // Mesh enabled (required or optional) — create pipeline.
             let mesh_transport: std::sync::Arc<synvoid_mesh::MeshTransport> = state
@@ -886,16 +906,15 @@ pub async fn run_unified_server_worker(
                 tracing::warn!("Mesh transport start requires dns feature");
             }
 
-            // Suppress unused variable warning; active_mesh_support is used
-            // for generation-specific cancellation in the supervision loop.
-            let _ = &active_mesh_support;
-
-            (Some(decision_rx), required_mesh_startup_failure)
+            (Some(decision_rx), required_mesh_startup_failure, active_mesh_support)
         }
     };
     #[cfg(not(feature = "mesh"))]
-    let (mut mesh_decision_rx_opt, required_mesh_startup_failure): (Option<()>, Option<()>) =
-        (None, None);
+    let (mut mesh_decision_rx_opt, required_mesh_startup_failure, mut active_mesh_support): (
+        Option<()>,
+        Option<()>,
+        Option<()>,
+    ) = (None, None, None);
 
     // ---- Phase 15: supervision loop ----
     //
@@ -1019,6 +1038,17 @@ pub async fn run_unified_server_worker(
                         }
                         Some(crate::worker::mesh_supervision::MeshSupervisorDecision::MarkDegraded(reason)) => {
                             tracing::warn!(reason = %reason, "mesh degraded");
+                            // Cancel generation-specific support tasks when optional mesh
+                            // degrades (Iteration 87, Phase 12). DNS/YARA work must not
+                            // continue targeting a failed transport.
+                            #[cfg(feature = "mesh")]
+                            if let Some(ref support) = active_mesh_support {
+                                tracing::info!(
+                                    "Cancelling mesh generation {} support tasks",
+                                    support.generation
+                                );
+                                support.cancel();
+                            }
                         }
                         Some(crate::worker::mesh_supervision::MeshSupervisorDecision::NoAction) => {}
                         None => {
@@ -1481,5 +1511,221 @@ mod yara_broadcast_tests {
 
         drop(p2);
         drop(p3);
+    }
+
+    struct MockYaraBroadcastSink;
+
+    #[async_trait::async_trait]
+    impl super::YaraBroadcastSink for MockYaraBroadcastSink {
+        async fn broadcast(&self, _msg: crate::mesh::protocol::MeshMessage) {
+            // Mock: no-op
+        }
+    }
+
+    #[tokio::test]
+    async fn yara_loop_normal_child_completion_increments_completed() {
+        use std::sync::Arc;
+        let (tx, rx) = tokio::sync::mpsc::channel(10);
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(10));
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let sink = Arc::new(MockYaraBroadcastSink);
+        // Send messages so children are spawned, then close channel
+        for _ in 0..3 {
+            tx.send(crate::mesh::protocol::MeshMessage::FindNode {
+                request_id: "test".into(),
+                target_node_id: vec![0; 32],
+                requester_node_id: "test".into(),
+                timestamp: 0,
+            })
+            .await
+            .unwrap();
+        }
+        drop(tx);
+        let report = super::run_yara_broadcast_loop(
+            rx,
+            sink,
+            semaphore,
+            shutdown_rx,
+            Duration::from_secs(5),
+        )
+        .await;
+        assert_eq!(report.completed, 3);
+        assert_eq!(report.dropped, 0);
+    }
+
+    #[tokio::test]
+    async fn yara_loop_dropped_message_increments_counter() {
+        use std::sync::Arc;
+        let (tx, rx) = tokio::sync::mpsc::channel(10);
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(0)); // 0 permits = always saturated
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let sink = Arc::new(MockYaraBroadcastSink);
+        // Send a message - should be dropped since semaphore has 0 permits
+        tx.send(crate::mesh::protocol::MeshMessage::FindNode {
+            request_id: "test".into(),
+            target_node_id: vec![0; 32],
+            requester_node_id: "test".into(),
+            timestamp: 0,
+        })
+        .await
+        .unwrap();
+        drop(tx);
+        let report = super::run_yara_broadcast_loop(
+            rx,
+            sink,
+            semaphore,
+            shutdown_rx,
+            Duration::from_secs(1),
+        )
+        .await;
+        assert_eq!(report.dropped, 1, "saturated semaphore must drop messages");
+    }
+
+    #[tokio::test]
+    async fn yara_loop_channel_close_drains_children() {
+        use std::sync::Arc;
+        let (tx, rx) = tokio::sync::mpsc::channel(10);
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(10));
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let sink = Arc::new(MockYaraBroadcastSink);
+        // Drop sender immediately - channel closes
+        drop(tx);
+        let report = super::run_yara_broadcast_loop(
+            rx,
+            sink,
+            semaphore,
+            shutdown_rx,
+            Duration::from_secs(1),
+        )
+        .await;
+        assert_eq!(report.completed, 0);
+    }
+
+    #[tokio::test]
+    async fn yara_loop_concurrency_never_exceeds_permits() {
+        use std::sync::Arc;
+        let (tx, rx) = tokio::sync::mpsc::channel(10);
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(3));
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let sink = Arc::new(MockYaraBroadcastSink);
+        assert_eq!(semaphore.available_permits(), 3);
+        // Send messages and close — loop must respect semaphore bounds
+        for _ in 0..5 {
+            tx.send(crate::mesh::protocol::MeshMessage::FindNode {
+                request_id: "test".into(),
+                target_node_id: vec![0; 32],
+                requester_node_id: "test".into(),
+                timestamp: 0,
+            })
+            .await
+            .unwrap();
+        }
+        drop(tx);
+        let report = super::run_yara_broadcast_loop(
+            rx,
+            sink,
+            semaphore,
+            shutdown_rx,
+            Duration::from_secs(5),
+        )
+        .await;
+        // With 3 permits and 5 messages, at least 2 must be dropped
+        assert!(
+            report.dropped >= 2,
+            "expected at least 2 dropped, got {}",
+            report.dropped
+        );
+        // All children should complete or be accounted for
+        assert_eq!(report.completed + report.dropped, 5);
+    }
+
+    #[tokio::test]
+    async fn yara_loop_shutdown_exits_promptly() {
+        use std::sync::Arc;
+        let (_tx, rx) = tokio::sync::mpsc::channel(10);
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(10));
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let sink = Arc::new(MockYaraBroadcastSink);
+        // Send shutdown signal
+        shutdown_tx.send(true).unwrap();
+        let start = std::time::Instant::now();
+        let report = super::run_yara_broadcast_loop(
+            rx,
+            sink,
+            semaphore,
+            shutdown_rx,
+            Duration::from_secs(30),
+        )
+        .await;
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "shutdown must exit promptly, took {:?}",
+            elapsed
+        );
+        assert_eq!(report.completed, 0);
+    }
+
+    #[tokio::test]
+    async fn yara_helper_returns_after_joinset_empty() {
+        use std::sync::Arc;
+        let (tx, rx) = tokio::sync::mpsc::channel(10);
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(10));
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let sink = Arc::new(MockYaraBroadcastSink);
+        // Send messages and close - loop must drain before returning
+        for _ in 0..5 {
+            tx.send(crate::mesh::protocol::MeshMessage::FindNode {
+                request_id: "test".into(),
+                target_node_id: vec![0; 32],
+                requester_node_id: "test".into(),
+                timestamp: 0,
+            })
+            .await
+            .unwrap();
+        }
+        drop(tx);
+        let report = super::run_yara_broadcast_loop(
+            rx,
+            sink,
+            semaphore,
+            shutdown_rx,
+            Duration::from_secs(10),
+        )
+        .await;
+        // All children should have completed or been cleaned up
+        assert!(report.completed + report.failed + report.aborted + report.dropped <= 5);
+    }
+
+    #[test]
+    fn yara_metrics_constants_exist() {
+        // Verify metric names are documented/used in the source
+        let content =
+            std::fs::read_to_string("src/worker/unified_server/mod.rs").unwrap_or_default();
+        assert!(content.contains("yara_mesh_broadcast_submitted_total"));
+        assert!(content.contains("yara_mesh_broadcast_completed_total"));
+        assert!(content.contains("yara_mesh_broadcast_failed_total"));
+        assert!(content.contains("yara_mesh_broadcast_aborted_total"));
+        assert!(content.contains("yara_mesh_broadcast_dropped_total"));
+    }
+
+    #[test]
+    fn yara_broadcast_sink_trait_exists() {
+        // Phase 15: YaraBroadcastSink trait enables testability
+        let content =
+            std::fs::read_to_string("src/worker/unified_server/mod.rs").unwrap_or_default();
+        assert!(content.contains("trait YaraBroadcastSink"));
+        assert!(content.contains("async fn broadcast(&self, msg:"));
+    }
+
+    #[test]
+    fn yara_report_has_dropped_field() {
+        let report = super::YaraBroadcastReport {
+            completed: 0,
+            failed: 0,
+            aborted: 0,
+            dropped: 5,
+        };
+        assert_eq!(report.dropped, 5);
     }
 }

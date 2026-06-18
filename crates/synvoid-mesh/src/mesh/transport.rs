@@ -2344,13 +2344,30 @@ impl MeshTransport {
         // operation can mutate or inspect it (Iteration 87, Phase 2).
         if let Some(ref rm) = self.routing_manager {
             if rm.is_enabled() {
-                if !rm.is_initialized().await {
+                let was_initialized = rm.is_initialized().await;
+                if !was_initialized {
                     rm.init().await;
-                    tracing::info!("DHT routing table initialized during startup");
+                    // Verify init actually created the table.
+                    if !rm.is_initialized().await {
+                        if policy.require_dht_initialization {
+                            return Err(MeshTransportError::StartupFailed(
+                                "DHT routing initialization required but failed to create table"
+                                    .into(),
+                            ));
+                        }
+                        report
+                            .degraded_reasons
+                            .push("DHT routing initialization failed to create table".into());
+                    } else {
+                        tracing::info!("DHT routing table initialized during startup");
+                    }
                 } else {
                     tracing::debug!("DHT routing table already initialized, skipping");
                 }
                 report.dht_routing_initialized = true;
+                stage.record_dht_init(crate::lifecycle::DhtInitializationSnapshot {
+                    was_initialized_this_attempt: !was_initialized,
+                });
             }
         }
 
@@ -3430,6 +3447,20 @@ impl MeshTransport {
                 runtime.stop_server().await;
                 report.runtime_stopped = true;
                 tracing::debug!("QUIC runtime stopped during rollback");
+            }
+        }
+
+        // Phase 8.5: Rollback DHT routing initialization if it was newly
+        // created during this startup attempt (Iteration 87, Phase 4).
+        // If the table was already initialized before this attempt, preserve it.
+        if let Some(ref snapshot) = stage.dht_init_snapshot {
+            if snapshot.was_initialized_this_attempt {
+                if let Some(ref rm) = self.routing_manager {
+                    rm.clear_routing_table().await;
+                    tracing::info!(
+                        "DHT routing table cleared during rollback (was newly initialized)"
+                    );
+                }
             }
         }
 

@@ -726,6 +726,75 @@ impl WorkerTaskRegistry {
         exits
     }
 
+    /// Cancel and join a specific subset of tasks by their IDs (Iteration 87, Phase 13).
+    ///
+    /// Aborts each matching task and awaits completion up to `timeout`.
+    /// Returns a report of exits for the matched tasks. Tasks not found
+    /// in the registry are silently skipped.
+    ///
+    /// This does NOT remove unrelated tasks from registry ownership.
+    pub async fn cancel_and_join_tasks(
+        &mut self,
+        task_ids: &[TaskId],
+        timeout: Duration,
+    ) -> Vec<NamedTaskExit> {
+        let id_set: std::collections::HashSet<TaskId> = task_ids.iter().copied().collect();
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut exits = Vec::new();
+
+        // Drain matching tasks from both lists.
+        let mut matched: Vec<RegisteredTask> = Vec::new();
+        self.critical.retain(|t| {
+            if id_set.contains(&t.id) {
+                // Can't move out of a &mut reference in retain. Use a different approach.
+                true
+            } else {
+                true
+            }
+        });
+
+        // Since we can't partially move from Vec in retain, use index-based removal.
+        // Collect indices to remove (in reverse order to preserve indices).
+        for vec in [&mut self.critical, &mut self.background] {
+            let mut i = 0;
+            while i < vec.len() {
+                if id_set.contains(&vec[i].id) {
+                    let task = vec.swap_remove(i);
+                    matched.push(task);
+                    // Don't increment i — swap_remove shifts the last element here.
+                } else {
+                    i += 1;
+                }
+            }
+        }
+
+        // Abort and join each matched task.
+        for task in matched {
+            task.handle.abort();
+            let join_result = tokio::time::timeout_at(deadline, task.handle).await;
+            let reason = match join_result {
+                Ok(Ok(())) => TaskExitReason::CleanCompletion,
+                Ok(Err(e)) => classify_join_error(e),
+                Err(_) => {
+                    tracing::error!("Task '{}' subset join timeout, already aborted", task.name);
+                    TaskExitReason::Aborted
+                }
+            };
+            let already_reported = self.reported_exits.lock().unwrap().remove(&task.id);
+            let final_reason = already_reported.unwrap_or(reason);
+            exits.push(NamedTaskExit {
+                id: task.id,
+                name: task.name,
+                class: task.class,
+                reason: final_reason,
+                expected_during_shutdown: true,
+            });
+        }
+
+        tracing::debug!("Subset join complete: {} tasks joined", exits.len());
+        exits
+    }
+
     pub fn active_count(&self) -> usize {
         self.critical.len() + self.background.len()
     }

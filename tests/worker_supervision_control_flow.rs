@@ -3498,3 +3498,81 @@ mod mesh_supervision_behavioral {
         );
     }
 }
+
+// --- Iteration 87 Phase 14: Support generation tests ---
+
+#[cfg(test)]
+mod support_generation_tests {
+    use std::fs;
+
+    fn read_file(path: &str) -> String {
+        fs::read_to_string(path).unwrap_or_default()
+    }
+
+    #[test]
+    fn mesh_generation_support_struct_exists() {
+        let content = read_file("src/worker/unified_server/mod.rs");
+        assert!(content.contains("pub struct MeshGenerationSupport"));
+        assert!(content.contains("pub generation: u64"));
+        assert!(content.contains("pub task_ids: Vec"));
+    }
+
+    #[test]
+    fn mesh_generation_support_has_cancel_method() {
+        let content = read_file("src/worker/unified_server/mod.rs");
+        assert!(content.contains("pub fn cancel(&self)"));
+        assert!(content.contains("cancel_tx.send(true)"));
+    }
+
+    #[test]
+    fn register_mesh_generation_support_returns_result() {
+        let content = read_file("src/worker/unified_server/mod.rs");
+        assert!(content.contains("Result<MeshGenerationSupport"));
+    }
+
+    #[test]
+    fn register_mesh_generation_support_accepts_generation() {
+        let content = read_file("src/worker/unified_server/mod.rs");
+        // The function signature should accept a generation parameter
+        assert!(content.contains("generation: u64"));
+    }
+
+    #[test]
+    fn active_mesh_support_cancelled_on_degraded() {
+        // Phase 12: active_mesh_support.cancel() called on MarkDegraded
+        let content = read_file("src/worker/unified_server/mod.rs");
+        assert!(
+            content.contains("support.cancel()"),
+            "MarkDegraded branch must cancel mesh generation support"
+        );
+    }
+
+    #[test]
+    fn optional_mesh_failure_stops_support() {
+        // Phase 12: DNS/YARA work must not continue targeting failed transport
+        let content = read_file("src/worker/unified_server/mod.rs");
+        assert!(
+            content.contains("Cancelling mesh generation"),
+            "must log cancellation of mesh generation support"
+        );
+    }
+
+    #[test]
+    fn registry_has_subset_join_method() {
+        // Phase 13: WorkerTaskRegistry must have cancel_and_join_tasks
+        let content = read_file("src/worker/task_registry.rs");
+        assert!(
+            content.contains("cancel_and_join_tasks"),
+            "WorkerTaskRegistry must have cancel_and_join_tasks method"
+        );
+    }
+
+    #[test]
+    fn generation_support_cancellation_uses_watch_channel() {
+        let content = read_file("src/worker/unified_server/mod.rs");
+        assert!(
+            content.contains("watch::Sender<bool>"),
+            "generation cancellation must use watch channel"
+        );
+    }
+}

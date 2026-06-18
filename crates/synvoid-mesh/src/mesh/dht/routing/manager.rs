@@ -115,6 +115,15 @@ impl DhtRoutingManager {
         self.routing_table.read().await.is_some()
     }
 
+    /// Clear the routing table, returning it to the uninitialized state.
+    /// Used during startup rollback when the table was newly created during
+    /// a failed startup attempt (Iteration 87, Phase 4).
+    pub async fn clear_routing_table(&self) {
+        let mut rt = self.routing_table.write().await;
+        *rt = None;
+        tracing::debug!("DHT routing table cleared");
+    }
+
     pub fn wants_full_network_view(&self) -> bool {
         self.full_network_view
     }

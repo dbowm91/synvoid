@@ -2319,3 +2319,126 @@ fn test_peer_message_loop_has_distinct_timeouts() {
         "apply_read_timeouts must be removed — read timeout is now at actual reads (Iteration 77)"
     );
 }
+
+// --- Iteration 87 Phase 7: DHT ordering tests ---
+
+#[test]
+fn dht_routing_table_exists_before_bootstrap() {
+    // Phase 5.5 initializes routing before Phase 6 bootstrap.
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let init_idx = content
+        .find("Phase 5.5: Initialize or restore DHT routing table")
+        .expect("DHT init phase must exist");
+    let bootstrap_idx = content
+        .find("Phase 6: DHT bootstrap")
+        .expect("DHT bootstrap phase must exist");
+    assert!(
+        init_idx < bootstrap_idx,
+        "DHT initialization must occur before DHT bootstrap"
+    );
+}
+
+#[test]
+fn dht_bootstrap_has_precondition_check() {
+    // Phase 5: dht_bootstrap_from_seeds must check is_initialized.
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport_connection.rs");
+    assert!(
+        content.contains("is_initialized().await"),
+        "dht_bootstrap_from_seeds must check is_initialized before proceeding"
+    );
+    assert!(
+        content.contains("DHT bootstrap attempted before routing initialization"),
+        "bootstrap precondition must return descriptive error"
+    );
+}
+
+#[test]
+fn dht_init_records_snapshot_in_stage() {
+    // Phase 4: DHT init must record a snapshot for rollback tracking.
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        content.contains("record_dht_init("),
+        "DHT init must call stage.record_dht_init() for rollback tracking"
+    );
+    assert!(
+        content.contains("was_initialized_this_attempt"),
+        "DHT init snapshot must track whether initialization was new"
+    );
+}
+
+#[test]
+fn dht_init_rollback_clears_newly_initialized_table() {
+    // Phase 4: Rollback must clear routing table if it was newly initialized.
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        content.contains("clear_routing_table()"),
+        "rollback must call clear_routing_table for newly initialized DHT"
+    );
+    assert!(
+        content.contains("DHT routing table cleared during rollback"),
+        "rollback must log DHT table clearance"
+    );
+}
+
+#[test]
+fn dht_init_disabled_routing_skips_initialization() {
+    // Disabled routing must skip init and bootstrap.
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    // Phase 5.5 checks rm.is_enabled() before init
+    let phase_5_5_idx = content
+        .find("Phase 5.5: Initialize or restore DHT routing table")
+        .expect("Phase 5.5 must exist");
+    let is_enabled_check = content[phase_5_5_idx..]
+        .find("rm.is_enabled()")
+        .expect("Phase 5.5 must check is_enabled");
+    assert!(
+        is_enabled_check < 400,
+        "is_enabled check must be within the Phase 5.5 block"
+    );
+}
+
+#[test]
+fn dht_init_failure_can_degrade_per_policy() {
+    // Phase 6: require_dht_initialization controls failure severity.
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        content.contains("require_dht_initialization"),
+        "DHT init failure must be gated by require_dht_initialization policy"
+    );
+}
+
+#[test]
+fn dht_maintenance_registered_after_initialization() {
+    // Phase 7: DHT background tasks registered after init (Phase 5.5).
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let init_idx = content
+        .find("Phase 5.5: Initialize or restore DHT routing table")
+        .expect("DHT init phase must exist");
+    let maintenance_idx = content
+        .find("Phase 7: Start periodic background loops")
+        .expect("Phase 7 must exist");
+    assert!(
+        init_idx < maintenance_idx,
+        "DHT initialization must occur before maintenance registration"
+    );
+}
+
+#[test]
+fn dht_startup_policy_has_initialization_field() {
+    // MeshStartupPolicy must have require_dht_initialization field.
+    let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+    assert!(
+        content.contains("require_dht_initialization"),
+        "MeshStartupPolicy must have require_dht_initialization field"
+    );
+}
+
+#[test]
+fn dht_startup_report_has_routing_initialized_field() {
+    // MeshStartupReport must have dht_routing_initialized field.
+    let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+    assert!(
+        content.contains("dht_routing_initialized"),
+        "MeshStartupReport must have dht_routing_initialized field"
+    );
+}

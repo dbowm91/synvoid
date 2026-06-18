@@ -513,6 +513,19 @@ pub struct MeshStartupStage {
     pub(crate) committed: bool,
     /// Session generation counter, incremented for each peer session created.
     pub(crate) session_generation_counter: u64,
+    /// Snapshot of DHT routing initialization state before this startup attempt.
+    /// Used by rollback to restore prior state if initialization was new.
+    pub(crate) dht_init_snapshot: Option<DhtInitializationSnapshot>,
+}
+
+/// Snapshot of DHT routing initialization state captured before a startup
+/// attempt (Iteration 87, Phase 4). Enables rollback to restore prior state
+/// when initialization created a new routing table during a failed startup.
+#[derive(Debug, Clone)]
+pub struct DhtInitializationSnapshot {
+    /// Whether the routing table was initialized during this startup attempt
+    /// (false if it was already initialized before).
+    pub was_initialized_this_attempt: bool,
 }
 
 impl MeshStartupStage {
@@ -524,7 +537,13 @@ impl MeshStartupStage {
             runtime_started: false,
             committed: false,
             session_generation_counter: 0,
+            dht_init_snapshot: None,
         }
+    }
+
+    /// Record a DHT initialization snapshot for this startup attempt.
+    pub fn record_dht_init(&mut self, snapshot: DhtInitializationSnapshot) {
+        self.dht_init_snapshot = Some(snapshot);
     }
 
     /// Record a peer resource created during this attempt.

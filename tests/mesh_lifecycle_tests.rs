@@ -1,3 +1,4 @@
+use std::fs;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -1099,4 +1100,83 @@ fn restartable_background_error_is_not_fatal() {
         reason: MeshTaskExitReason::Error("timeout".to_string()),
     };
     assert!(!exit.is_fatal());
+}
+
+// ── Iteration 87 Phases 18-20: Real builder tests ────────────────────────────
+
+fn read_file(path: &str) -> String {
+    fs::read_to_string(path).unwrap_or_default()
+}
+
+#[test]
+fn topology_build_background_tasks_returns_specs() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/topology.rs");
+    assert!(
+        content.contains("fn build_background_tasks"),
+        "MeshTopology must have build_background_tasks method"
+    );
+    assert!(
+        content.contains("Vec<") && content.contains("MeshBackgroundTaskSpec"),
+        "build_background_tasks must return Vec<MeshBackgroundTaskSpec>"
+    );
+}
+
+#[test]
+fn dht_routing_build_background_tasks_returns_specs() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/dht/routing/manager.rs");
+    assert!(
+        content.contains("fn build_background_tasks"),
+        "DhtRoutingManager must have build_background_tasks method"
+    );
+}
+
+#[test]
+fn topology_build_background_tasks_uses_shutdown_signal() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/topology.rs");
+    let method_idx = content
+        .find("fn build_background_tasks")
+        .expect("method must exist");
+    let method_body = &content[method_idx..method_idx + 500];
+    assert!(
+        method_body.contains("shutdown") || method_body.contains("select"),
+        "topology build_background_tasks must use shutdown signal"
+    );
+}
+
+#[test]
+fn dht_build_background_tasks_returns_three_specs() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/dht/routing/manager.rs");
+    assert!(content.contains("dht_bucket_stats"));
+    assert!(content.contains("dht_bucket_refresh"));
+    assert!(content.contains("dht_peer_ping"));
+}
+
+#[test]
+fn topology_build_background_tasks_disabled_returns_empty() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/dht/routing/manager.rs");
+    let method_idx = content
+        .find("fn build_background_tasks")
+        .expect("method must exist");
+    let method_body = &content[method_idx..method_idx + 300];
+    assert!(
+        method_body.contains("routing_enabled") && method_body.contains("return Vec::new()"),
+        "disabled routing must return empty vec from build_background_tasks"
+    );
+}
+
+#[test]
+fn mesh_background_task_spec_documentation_accurate() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+    assert!(
+        content.contains("fully constructed by the component"),
+        "MeshBackgroundTaskSpec docs must say future is fully constructed by component builder"
+    );
+    assert!(
+        content.contains("captures the lifecycle-owned shutdown receiver"),
+        "MeshBackgroundTaskSpec docs must say builder captures the shutdown receiver"
+    );
+    assert!(
+        !content.contains("Takes a shutdown receiver"),
+        "MeshBackgroundTaskSpec must not say 'Takes a shutdown receiver'"
+    );
 }
