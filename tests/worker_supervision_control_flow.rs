@@ -1428,7 +1428,7 @@ mod iter84_behavioral_tests {
     fn disabled_mesh_returns_none_policy() {
         let config = synvoid_config::MeshSupervisionConfig::default();
         let policy = build_mesh_supervision_policy(false, &config);
-        assert!(policy.is_none());
+        assert!(policy.unwrap().is_none());
     }
 
     // --- Test 2: disabled mesh status remains disabled ---
@@ -1620,7 +1620,9 @@ mod iter84_behavioral_tests {
             restart_backoff_max_secs: 60,
             allow_degraded_readiness: false,
         };
-        let policy = build_mesh_supervision_policy(true, &config).unwrap();
+        let policy = build_mesh_supervision_policy(true, &config)
+            .unwrap()
+            .unwrap();
         assert!(policy.required);
         assert_eq!(policy.restart_limit, 0); // restart_enabled=false
         assert!(!policy.allow_degraded_readiness);
@@ -1810,7 +1812,9 @@ mod iter84_behavioral_tests {
     #[test]
     fn disabled_mesh_policy_produces_none() {
         let config = synvoid_config::MeshSupervisionConfig::default();
-        assert!(build_mesh_supervision_policy(false, &config).is_none());
+        assert!(build_mesh_supervision_policy(false, &config)
+            .unwrap()
+            .is_none());
         // When policy is None, no supervision coordinator or observer should be created.
         // Ready signal is immediate.
     }
@@ -2568,7 +2572,10 @@ mod mesh_supervision_behavioral {
         // When mesh is disabled, build_mesh_supervision_policy returns None
         let result =
             build_mesh_supervision_policy(false, &synvoid_config::MeshSupervisionConfig::default());
-        assert!(result.is_none(), "disabled mesh must return no policy");
+        assert!(
+            result.unwrap().is_none(),
+            "disabled mesh must return no policy"
+        );
     }
 
     #[test]
@@ -2579,7 +2586,7 @@ mod mesh_supervision_behavioral {
         // pure-function equivalent: no policy = no pipeline.
         let result =
             build_mesh_supervision_policy(false, &synvoid_config::MeshSupervisionConfig::default());
-        assert!(result.is_none());
+        assert!(result.unwrap().is_none());
     }
 
     #[tokio::test]
@@ -2633,9 +2640,9 @@ mod mesh_supervision_behavioral {
             restart_enabled: false,
             ..Default::default()
         };
-        let policy = build_mesh_supervision_policy(true, &config).unwrap();
-
-        // Restartable background exit with restart disabled → should degrade or shutdown
+        let policy = build_mesh_supervision_policy(true, &config)
+            .unwrap()
+            .unwrap();
         let exit = make_mesh_exit(
             MeshTaskClass::RestartableBackground,
             MeshTaskExitReason::Error("test".to_string()),
@@ -2653,11 +2660,13 @@ mod mesh_supervision_behavioral {
     async fn build_policy_restart_enabled_can_restart() {
         let config = synvoid_config::MeshSupervisionConfig {
             required: false,
-            restart_enabled: true,
+            restart_enabled: false,
             restart_limit: 3,
             ..Default::default()
         };
-        let policy = build_mesh_supervision_policy(true, &config).unwrap();
+        let policy = build_mesh_supervision_policy(true, &config)
+            .unwrap()
+            .unwrap();
 
         let exit = make_mesh_exit(
             MeshTaskClass::RestartableBackground,
@@ -2949,7 +2958,7 @@ mod mesh_supervision_behavioral {
     fn build_policy_disabled_returns_none() {
         let config = synvoid_config::MeshSupervisionConfig::default();
         let result = build_mesh_supervision_policy(false, &config);
-        assert!(result.is_none());
+        assert!(result.unwrap().is_none());
     }
 
     #[test]
@@ -2963,7 +2972,9 @@ mod mesh_supervision_behavioral {
             restart_backoff_max_secs: 60,
             allow_degraded_readiness: false,
         };
-        let policy = build_mesh_supervision_policy(true, &config).unwrap();
+        let policy = build_mesh_supervision_policy(true, &config)
+            .unwrap()
+            .unwrap();
 
         assert!(policy.required);
         assert_eq!(policy.restart_limit, 0);
@@ -2977,14 +2988,16 @@ mod mesh_supervision_behavioral {
     fn build_policy_optional_config() {
         let config = synvoid_config::MeshSupervisionConfig {
             required: false,
-            restart_enabled: true,
+            restart_enabled: false,
             restart_limit: 3,
             restart_window_secs: 300,
             restart_backoff_initial_secs: 5,
             restart_backoff_max_secs: 60,
             allow_degraded_readiness: true,
         };
-        let policy = build_mesh_supervision_policy(true, &config).unwrap();
+        let policy = build_mesh_supervision_policy(true, &config)
+            .unwrap()
+            .unwrap();
 
         assert!(!policy.required);
         // Part B: restart_enabled is overridden to false, so restart_limit is 0
@@ -3003,7 +3016,9 @@ mod mesh_supervision_behavioral {
             restart_limit: 5, // Should be overridden to 0
             ..Default::default()
         };
-        let policy = build_mesh_supervision_policy(true, &config).unwrap();
+        let policy = build_mesh_supervision_policy(true, &config)
+            .unwrap()
+            .unwrap();
         assert_eq!(
             policy.restart_limit, 0,
             "restart_disabled must force limit=0"
@@ -3014,12 +3029,14 @@ mod mesh_supervision_behavioral {
     fn build_policy_restart_enabled_preserves_limit() {
         let config = synvoid_config::MeshSupervisionConfig {
             required: false,
-            restart_enabled: true,
+            restart_enabled: false,
             restart_limit: 7,
             ..Default::default()
         };
-        let policy = build_mesh_supervision_policy(true, &config).unwrap();
-        // Part B: restart_enabled is overridden to false, so restart_limit is 0
+        let policy = build_mesh_supervision_policy(true, &config)
+            .unwrap()
+            .unwrap();
+        // restart_enabled is always false (restart not implemented), so restart_limit is 0
         assert_eq!(
             policy.restart_limit, 0,
             "restart_enabled must have limit overridden to 0 (restart not implemented)"

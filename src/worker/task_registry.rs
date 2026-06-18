@@ -104,6 +104,9 @@ pub enum WorkerShutdownCause {
     /// Mesh shutdown did not complete cleanly.
     #[cfg(feature = "mesh")]
     MeshShutdownIncomplete(String),
+    /// Mesh policy/transport invariant violated at startup.
+    #[cfg(feature = "mesh")]
+    MeshConfigurationInvariant(String),
     SupervisorShutdown,
     SupervisorDisconnected,
     RegistryExitChannelClosed,
@@ -144,6 +147,8 @@ impl WorkerShutdownCause {
             Self::MeshRestartExhausted { .. } => true,
             #[cfg(feature = "mesh")]
             Self::MeshShutdownIncomplete(_) => true,
+            #[cfg(feature = "mesh")]
+            Self::MeshConfigurationInvariant(_) => true,
             Self::SupervisorShutdown => false,
             Self::SupervisorDisconnected => true,
             Self::RegistryExitChannelClosed => true,
@@ -176,6 +181,7 @@ impl WorkerShutdownCause {
                         | Self::MeshStartupFailed(_)
                         | Self::MeshRestartExhausted { .. }
                         | Self::MeshShutdownIncomplete(_)
+                        | Self::MeshConfigurationInvariant(_)
                 )
             }
             #[cfg(not(feature = "mesh"))]
@@ -233,6 +239,10 @@ impl fmt::Display for WorkerShutdownCause {
             #[cfg(feature = "mesh")]
             Self::MeshShutdownIncomplete(reason) => {
                 write!(f, "mesh_shutdown_incomplete: {}", reason)
+            }
+            #[cfg(feature = "mesh")]
+            Self::MeshConfigurationInvariant(msg) => {
+                write!(f, "mesh_configuration_invariant: {}", msg)
             }
             Self::SupervisorShutdown => write!(f, "supervisor_shutdown"),
             Self::SupervisorDisconnected => write!(f, "supervisor_disconnected"),

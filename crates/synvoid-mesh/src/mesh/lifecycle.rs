@@ -16,6 +16,7 @@
 //! - Shutdown reports distinguish drained/aborted/failed sessions (Phase 17)
 
 use std::fmt;
+use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -170,6 +171,25 @@ impl MeshTaskExit {
             !matches!(self.reason, MeshTaskExitReason::Cancelled)
         }
     }
+}
+
+/// A descriptor for a background task that can be registered with a
+/// `MeshTaskGroup` during transactional mesh startup.
+///
+/// Builders on `MeshTopology` and `DhtRoutingManager` produce these
+/// descriptors without spawning — the caller registers them with the
+/// staged task group so they participate in startup rollback and
+/// unified shutdown.
+pub struct MeshBackgroundTaskSpec {
+    /// Static name identifying the task.
+    pub name: &'static str,
+    /// Classification of the task criticality.
+    pub class: MeshTaskClass,
+    /// The future to spawn. Takes a shutdown receiver; the task must
+    /// exit when the receiver signals `true`.
+    pub future: std::pin::Pin<
+        Box<dyn Future<Output = Result<(), crate::transport_core::MeshTransportError>> + Send>,
+    >,
 }
 
 /// Lifecycle state machine for the mesh transport.

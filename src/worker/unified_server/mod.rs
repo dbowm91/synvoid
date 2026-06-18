@@ -23,6 +23,7 @@ pub mod state;
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::RwLock;
@@ -36,6 +37,222 @@ use synvoid_ipc::WorkerId;
 pub use state::{
     setup_unified_server_panic_handler, UnifiedServerWorkerArgs, UnifiedServerWorkerState,
 };
+
+/// Report from the YARA broadcast loop summarizing child task outcomes.
+#[cfg(all(feature = "mesh", feature = "dns"))]
+pub struct YaraBroadcastReport {
+    pub completed: usize,
+    pub failed: usize,
+    pub aborted: usize,
+}
+
+/// Classify a single child task result and update the report.
+#[cfg(all(feature = "mesh", feature = "dns"))]
+fn classify_yara_child_result(
+    result: Result<(), tokio::task::JoinError>,
+    report: &mut YaraBroadcastReport,
+) {
+    match result {
+        Ok(()) => report.completed += 1,
+        Err(e) if e.is_cancelled() => report.aborted += 1,
+        Err(e) => {
+            tracing::warn!("YARA broadcast child failed: {}", e);
+            report.failed += 1;
+        }
+    }
+}
+
+/// Dedicated YARA broadcast loop with bounded child ownership.
+///
+/// Consumes `MeshMessage`s from the channel, spawns bounded broadcast tasks
+/// (semaphore-gated), and reaps children inline. On shutdown or channel
+/// closure, performs a deadline-bounded drain and aborts stragglers.
+#[cfg(all(feature = "mesh", feature = "dns"))]
+async fn run_yara_broadcast_loop(
+    mut broadcast_rx: tokio::sync::mpsc::Receiver<crate::mesh::protocol::MeshMessage>,
+    mesh_transport: Arc<crate::mesh::transport::MeshTransport>,
+    semaphore: Arc<tokio::sync::Semaphore>,
+    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
+    drain_timeout: Duration,
+) -> YaraBroadcastReport {
+    let mut report = YaraBroadcastReport {
+        completed: 0,
+        failed: 0,
+        aborted: 0,
+    };
+    let mut children: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
+
+    loop {
+        tokio::select! {
+            biased;
+            _ = shutdown_rx.changed() => {
+                tracing::debug!("YARA broadcast loop received shutdown signal");
+                break;
+            }
+            msg = broadcast_rx.recv() => {
+                match msg {
+                    Some(msg) => {
+                        match semaphore.clone().try_acquire_owned() {
+                            Ok(permit) => {
+                                let transport = mesh_transport.clone();
+                                children.spawn(async move {
+                                    transport
+                                        .broadcast_to_all_peers(
+                                            msg,
+                                            Some(crate::mesh::config::MeshNodeRole::GLOBAL),
+                                        )
+                                        .await;
+                                    drop(permit);
+                                });
+                            }
+                            Err(_) => {
+                                tracing::debug!(
+                                    "YARA broadcast semaphore saturated, dropping message"
+                                );
+                            }
+                        }
+                    }
+                    None => {
+                        tracing::debug!(
+                            "YARA broadcast mpsc channel closed, exiting loop"
+                        );
+                        break;
+                    }
+                }
+            }
+            Some(result) = children.join_next(), if !children.is_empty() => {
+                classify_yara_child_result(result, &mut report);
+            }
+        }
+    }
+
+    // Deadline-bounded drain: reap remaining children within the timeout.
+    let drain_deadline = tokio::time::Instant::now() + drain_timeout;
+    while let Some(result) = tokio::time::timeout(
+        drain_deadline.saturating_duration_since(tokio::time::Instant::now()),
+        children.join_next(),
+    )
+    .await
+    .unwrap_or(None)
+    {
+        classify_yara_child_result(result, &mut report);
+    }
+
+    // Abort any children that did not finish within the drain deadline.
+    if !children.is_empty() {
+        tracing::warn!(
+            "YARA broadcast: aborting {} remaining children after drain timeout",
+            children.len()
+        );
+        children.abort_all();
+        while let Some(result) = children.join_next().await {
+            classify_yara_child_result(result, &mut report);
+        }
+    }
+
+    report
+}
+
+/// Mesh support task descriptors extracted from `MeshInit` but registered
+/// only AFTER mesh startup succeeds (Iteration 86 Part A).
+///
+/// DNS verification loops, YARA broadcast loop, and DHT routing init are
+/// support infrastructure that should only run when the mesh transport is
+/// actually active. Registering them before startup would create orphaned
+/// tasks if mesh startup fails.
+pub struct MeshSupportTasks {
+    #[cfg(all(feature = "mesh", feature = "dns"))]
+    pub dns_verification_registries: Vec<(Arc<crate::dns::mesh_sync::MeshDnsRegistry>, bool)>,
+    #[cfg(all(feature = "mesh", feature = "dns"))]
+    pub yara_broadcast: Option<(
+        tokio::sync::mpsc::Receiver<crate::mesh::protocol::MeshMessage>,
+        Arc<crate::mesh::transport::MeshTransport>,
+        Arc<tokio::sync::Semaphore>,
+    )>,
+    #[cfg(feature = "mesh")]
+    pub dht_routing_manager: Option<Arc<crate::mesh::dht::routing::DhtRoutingManager>>,
+}
+
+impl MeshSupportTasks {
+    /// Create an empty instance (no mesh feature).
+    pub fn empty() -> Self {
+        Self {
+            #[cfg(all(feature = "mesh", feature = "dns"))]
+            dns_verification_registries: Vec::new(),
+            #[cfg(all(feature = "mesh", feature = "dns"))]
+            yara_broadcast: None,
+            #[cfg(feature = "mesh")]
+            dht_routing_manager: None,
+        }
+    }
+}
+
+/// Register mesh generation support tasks (DNS verification, YARA broadcast,
+/// DHT routing init) in the worker task registry.
+///
+/// Called ONLY after successful mesh startup — required mesh: after
+/// `start_mesh_generation()` returns Ok; optional mesh: inside the
+/// one-shot's Ok branch. This ensures mesh support infrastructure is
+/// only active when the mesh transport is actually running (Iteration 86 Part A).
+#[cfg(all(feature = "mesh", feature = "dns"))]
+async fn register_mesh_generation_support(
+    state: &UnifiedServerWorkerState,
+    support: MeshSupportTasks,
+) {
+    let yara_shutdown_rx = state.task_registry.lock().await.child_token();
+    let mut registry = state.task_registry.lock().await;
+
+    // Spawn DNS verification loops.
+    for (dns_registry, is_global) in support.dns_verification_registries {
+        let role = if is_global { "global" } else { "edge" };
+        if let Some(loop_fut) = dns_registry.build_verification_loop(None) {
+            registry.spawn_background(
+                Box::leak(format!("dns_verification_{}", role).into_boxed_str()),
+                loop_fut,
+            );
+            tracing::info!("DNS verification loop registered ({})", role);
+        }
+    }
+
+    // Spawn YARA broadcast loop with deadline-bounded drain.
+    if let Some((broadcast_rx, mesh_transport, broadcast_semaphore)) = support.yara_broadcast {
+        registry.spawn_background("yara_broadcast", async move {
+            let report = run_yara_broadcast_loop(
+                broadcast_rx,
+                mesh_transport,
+                broadcast_semaphore,
+                yara_shutdown_rx,
+                Duration::from_secs(30),
+            )
+            .await;
+            tracing::info!(
+                "YARA broadcast loop exiting: completed={}, failed={}, aborted={}",
+                report.completed,
+                report.failed,
+                report.aborted,
+            );
+        });
+        tracing::info!("YARA broadcast loop registered");
+    }
+
+    // Spawn DHT routing init as a one-shot task.
+    if let Some(routing_manager) = support.dht_routing_manager {
+        let manager = routing_manager.clone();
+        registry.spawn_one_shot("dht_routing_init", async move {
+            manager.init().await;
+        });
+        tracing::info!("DHT routing init registered (one-shot)");
+    }
+}
+
+/// No-op stub when dns feature is disabled (mesh only).
+#[cfg(all(feature = "mesh", not(feature = "dns")))]
+async fn register_mesh_generation_support(
+    _state: &UnifiedServerWorkerState,
+    _support: MeshSupportTasks,
+) {
+    tracing::debug!("Mesh support tasks skipped (dns feature disabled)");
+}
 
 pub async fn run_unified_server_worker(
     args: UnifiedServerWorkerArgs,
@@ -161,6 +378,37 @@ pub async fn run_unified_server_worker(
         }
     }
 
+    // ---- Phase 8.7: validate mesh runtime inputs before consumption ----
+    #[cfg(feature = "mesh")]
+    let mesh_policy = {
+        let config_guard = shared_config.read().await;
+        let mesh_enabled = config_guard
+            .main
+            .tunnel
+            .mesh
+            .as_ref()
+            .map(|m| m.enabled)
+            .unwrap_or(false);
+        let supervision_config = config_guard
+            .main
+            .tunnel
+            .mesh
+            .as_ref()
+            .map(|m| m.supervision.clone())
+            .unwrap_or_default();
+        let policy = crate::worker::mesh_supervision::build_mesh_supervision_policy(
+            mesh_enabled,
+            &supervision_config,
+        )
+        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })?;
+        crate::worker::unified_server::init_mesh::validate_mesh_runtime_inputs(
+            &mesh_init,
+            policy.as_ref(),
+        )
+        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.to_string().into() })?;
+        policy
+    };
+
     // ---- Phase 9: cross-wire serverless + port-honeypot to mesh ----
     // Now handled by DataPlaneServicesBuilder below.
 
@@ -226,6 +474,27 @@ pub async fn run_unified_server_worker(
         let _ = mesh_init;
     }
 
+    // ---- Phase 11.5: extract mesh support tasks ----
+    //
+    // DNS verification loops, YARA broadcast loop, and DHT routing init
+    // are extracted here but registered AFTER mesh startup succeeds.
+    // This ensures mesh support infrastructure is only active when the
+    // mesh transport is actually running (Iteration 86 Part A).
+    #[cfg(feature = "mesh")]
+    let support_tasks = MeshSupportTasks {
+        #[cfg(all(feature = "mesh", feature = "dns"))]
+        dns_verification_registries: mesh_init.dns_verification_registries,
+        #[cfg(all(feature = "mesh", feature = "dns"))]
+        yara_broadcast: mesh_init.yara_broadcast,
+        dht_routing_manager: mesh_init.dht_routing_manager,
+    };
+    #[cfg(not(feature = "mesh"))]
+    let support_tasks = MeshSupportTasks::empty();
+
+    // Wrap in Option so it can be .take()-moved into mesh startup paths.
+    #[cfg(feature = "mesh")]
+    let mut support_tasks = Some(support_tasks);
+
     let data_plane = builder.build();
 
     #[cfg(feature = "mesh")]
@@ -239,30 +508,6 @@ pub async fn run_unified_server_worker(
         .set_request_services(data_plane.request_services.clone());
 
     let data_plane = std::sync::Arc::new(data_plane);
-
-    // ---- Phase 11.5: derive mesh supervision policy from config ----
-    #[cfg(feature = "mesh")]
-    let mesh_policy = {
-        let config_guard = shared_config.read().await;
-        let mesh_enabled = config_guard
-            .main
-            .tunnel
-            .mesh
-            .as_ref()
-            .map(|m| m.enabled)
-            .unwrap_or(false);
-        let supervision_config = config_guard
-            .main
-            .tunnel
-            .mesh
-            .as_ref()
-            .map(|m| m.supervision.clone())
-            .unwrap_or_default();
-        crate::worker::mesh_supervision::build_mesh_supervision_policy(
-            mesh_enabled,
-            &supervision_config,
-        )
-    };
 
     let state = UnifiedServerWorkerState {
         worker_id,
@@ -293,32 +538,6 @@ pub async fn run_unified_server_worker(
             crate::worker::task_registry::WorkerTaskRegistry::new(),
         )),
     };
-
-    // ---- Phase 11.5: invariant check ----
-    // Verify transport/policy alignment after state construction.
-    #[cfg(feature = "mesh")]
-    {
-        let has_transport = state
-            .data_plane
-            .mesh_transport_manager
-            .as_ref()
-            .and_then(|tm| tm.get_quic_transport())
-            .is_some();
-        let has_policy = state.mesh_policy.is_some();
-        match (has_transport, has_policy) {
-            (false, false) | (true, true) => {}
-            (true, false) => {
-                tracing::error!(
-                    "Invariant violation: mesh transport present but no supervision policy"
-                );
-            }
-            (false, true) => {
-                tracing::error!(
-                    "Invariant violation: mesh supervision policy present but no transport"
-                );
-            }
-        }
-    }
 
     // ---- Phase 11.5: send ready message ----
     // Required mesh defers ready until mesh startup completes.
@@ -358,90 +577,16 @@ pub async fn run_unified_server_worker(
         lifecycle_rx
     };
 
-    // ---- Phase 13.5: spawn mesh support tasks via registry ----
+    // ---- Phase 13.5: mesh support task registration ----
     //
-    // DNS verification loops, YARA broadcast loop, and DHT routing init
-    // are spawned here and registered in the WorkerTaskRegistry for
-    // structured ownership (Iteration 84 Part F).
-    #[cfg(all(feature = "mesh", feature = "dns"))]
-    {
-        let mut registry = state.task_registry.lock().await;
-
-        // Spawn DNS verification loops.
-        for (dns_registry, is_global) in mesh_init.dns_verification_registries {
-            let role = if is_global { "global" } else { "edge" };
-            if let Some(loop_fut) = dns_registry.build_verification_loop(None) {
-                registry.spawn_background(
-                    Box::leak(format!("dns_verification_{}", role).into_boxed_str()),
-                    loop_fut,
-                );
-                tracing::info!("DNS verification loop registered ({})", role);
-            }
-        }
-
-        // Spawn YARA broadcast loop.
-        if let Some((mut broadcast_rx, mesh_transport, broadcast_semaphore)) =
-            mesh_init.yara_broadcast
-        {
-            registry.spawn_background("yara_broadcast", async move {
-                let mut children: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
-                loop {
-                    tokio::select! {
-                        biased;
-                        msg = broadcast_rx.recv() => {
-                            match msg {
-                                Some(msg) => {
-                                    let transport = mesh_transport.clone();
-                                    let permit = broadcast_semaphore.clone().acquire_owned().await.ok();
-                                    children.spawn(async move {
-                                        transport
-                                            .broadcast_to_all_peers(
-                                                msg,
-                                                Some(crate::mesh::config::MeshNodeRole::GLOBAL),
-                                            )
-                                            .await;
-                                        drop(permit);
-                                    });
-                                }
-                                None => {
-                                    tracing::debug!("YARA broadcast mpsc channel closed, exiting loop");
-                                    break;
-                                }
-                            }
-                        }
-                        Some(result) = children.join_next(), if !children.is_empty() => {
-                            match result {
-                                Ok(()) => {}
-                                Err(e) if e.is_cancelled() => {}
-                                Err(e) => {
-                                    tracing::warn!("YARA broadcast child failed: {}", e);
-                                }
-                            }
-                        }
-                    }
-                }
-                while let Some(result) = children.join_next().await {
-                    match result {
-                        Ok(()) => {}
-                        Err(e) if e.is_cancelled() => {}
-                        Err(e) => {
-                            tracing::warn!("YARA broadcast child failed during drain: {}", e);
-                        }
-                    }
-                }
-            });
-            tracing::info!("YARA broadcast loop registered");
-        }
-
-        // Spawn DHT routing init as a one-shot task.
-        if let Some(routing_manager) = mesh_init.dht_routing_manager {
-            let manager = routing_manager.clone();
-            registry.spawn_one_shot("dht_routing_init", async move {
-                manager.init().await;
-            });
-            tracing::info!("DHT routing init registered (one-shot)");
-        }
-    }
+    // Support tasks (DNS verification, YARA broadcast, DHT routing init)
+    // are NOT registered here — they are registered AFTER mesh startup
+    // succeeds (Iteration 86 Part A). The support descriptors were
+    // extracted into `support_tasks` in Phase 11.5.
+    //
+    // The helper function `register_mesh_generation_support()` is called
+    // from the mesh startup success paths (required: after Ok branch;
+    // optional: inside the one-shot's Ok branch).
 
     // ---- Phase 14: register server run task under registry ownership ----
     {
@@ -544,15 +689,14 @@ pub async fn run_unified_server_worker(
                 tracing::info!("Mesh exit observer started (critical)");
             }
 
-            // Start mesh transport — gated behind dns feature.
-            #[cfg(feature = "dns")]
+            // Start mesh transport — gated behind mesh feature.
+            #[cfg(feature = "mesh")]
             if state.mesh_policy.as_ref().is_some_and(|p| p.required) {
                 // Required mesh: await startup inline before ready.
                 {
                     let mut s = mesh_status.write().await;
                     s.transition_starting();
                 }
-                let event_tx_for_start = event_tx.clone();
                 match crate::worker::mesh_supervision::start_mesh_generation(&mesh_transport, 0)
                     .await
                 {
@@ -561,9 +705,10 @@ pub async fn run_unified_server_worker(
                             let mut s = mesh_status.write().await;
                             s.transition_running();
                         }
-                        let _ = event_tx_for_start
-                            .send(crate::worker::mesh_supervision::MeshSupervisionEvent::Started)
-                            .await;
+                        // Register mesh support tasks after successful startup.
+                        if let Some(support) = support_tasks.take() {
+                            register_mesh_generation_support(&state, support).await;
+                        }
                         // Send ready after successful required mesh startup.
                         if ready_deferred {
                             let mut ipc_guard = state.ipc.lock().await;
@@ -590,7 +735,13 @@ pub async fn run_unified_server_worker(
             } else {
                 // Optional mesh: start as one-shot background task.
                 // Clean completion is expected (not fatal).
+                {
+                    let mut s = mesh_status.write().await;
+                    s.transition_starting();
+                }
                 let event_tx_for_start = event_tx.clone();
+                let support_for_startup = support_tasks.take();
+                let state_for_startup = state.clone();
                 let mut registry = state.task_registry.lock().await;
                 registry.spawn_one_shot("mesh_startup", async move {
                     let result = mesh_transport
@@ -599,6 +750,10 @@ pub async fn run_unified_server_worker(
                     match result {
                         Ok(report) => {
                             tracing::info!(?report, "Mesh transport started");
+                            // Register mesh support tasks after successful startup.
+                            if let Some(support) = support_for_startup {
+                                register_mesh_generation_support(&state_for_startup, support).await;
+                            }
                             let _ = event_tx_for_start
                                 .send(crate::worker::mesh_supervision::MeshSupervisionEvent::Started)
                                 .await;
@@ -626,12 +781,8 @@ pub async fn run_unified_server_worker(
         }
     };
     #[cfg(not(feature = "mesh"))]
-    let (mut mesh_decision_rx_opt, required_mesh_startup_failure): (
-        Option<
-            tokio::sync::mpsc::Receiver<crate::worker::mesh_supervision::MeshSupervisorDecision>,
-        >,
-        Option<crate::worker::mesh_supervision::MeshFailureCause>,
-    ) = (None, None);
+    let (mut mesh_decision_rx_opt, required_mesh_startup_failure): (Option<()>, Option<()>) =
+        (None, None);
 
     // ---- Phase 15: supervision loop ----
     //
@@ -642,13 +793,25 @@ pub async fn run_unified_server_worker(
     // Returns a `SupervisionOutcome` that preserves direct shutdown causes
     // without converting them to fake lifecycle events.
     let outcome: crate::worker::task_registry::SupervisionOutcome = 'supervision: {
-        #[cfg(feature = "dns")]
+        #[cfg(feature = "mesh")]
         if let Some(cause) = required_mesh_startup_failure {
             break 'supervision crate::worker::task_registry::SupervisionOutcome::DirectCause(
                 crate::worker::mesh_supervision::mesh_failure_to_worker_cause(cause),
             );
         }
         loop {
+            // Mesh supervision decisions future. Defined outside select to
+            // avoid #[cfg] on select branches (not valid proc-macro syntax).
+            #[cfg(feature = "mesh")]
+            let mut mesh_decision_future = async {
+                match &mut mesh_decision_rx_opt {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            };
+            #[cfg(not(feature = "mesh"))]
+            let mesh_decision_future: std::future::Pending<Option<()>> = std::future::pending();
+
             tokio::select! {
                 // Lifecycle events from IPC task (MasterShutdown, WorkerResize, SupervisorDisconnected).
                 request = lifecycle_rx.recv() => {
@@ -717,14 +880,9 @@ pub async fn run_unified_server_worker(
                         }
                     }
                 }
-                // Mesh supervision decisions. Inlined async block avoids
-                // moving a captured future across loop iterations.
-                mesh_decision = async {
-                    match &mut mesh_decision_rx_opt {
-                        Some(rx) => rx.recv().await,
-                        None => std::future::pending().await,
-                    }
-                } => {
+                // Mesh supervision decisions.
+                mesh_decision = mesh_decision_future => {
+                    #[cfg(feature = "mesh")]
                     match mesh_decision {
                         Some(crate::worker::mesh_supervision::MeshSupervisorDecision::ShutdownWorker(cause)) => {
                             tracing::error!(
@@ -737,22 +895,14 @@ pub async fn run_unified_server_worker(
                             );
                         }
                         Some(crate::worker::mesh_supervision::MeshSupervisorDecision::RestartMesh) => {
-                            tracing::error!("BUG: RestartMesh decision received but restart is not implemented");
-                            #[cfg(feature = "mesh")]
-                            {
-                                break crate::worker::task_registry::SupervisionOutcome::DirectCause(
-                                    crate::worker::task_registry::WorkerShutdownCause::MeshRestartExhausted {
-                                        attempts: 0,
-                                        last_error: "restart not implemented".to_string(),
-                                    }
-                                );
-                            }
-                            #[cfg(not(feature = "mesh"))]
-                            {
-                                break crate::worker::task_registry::SupervisionOutcome::DirectCause(
-                                    crate::worker::task_registry::WorkerShutdownCause::ServerStoppedForShutdown,
-                                );
-                            }
+                            // RestartMesh is unreachable when restart_enabled is rejected at
+                            // config validation time. This branch is defense-in-depth only.
+                            tracing::error!("Invariant violation: RestartMesh reached while restart is disabled");
+                            break crate::worker::task_registry::SupervisionOutcome::DirectCause(
+                                crate::worker::task_registry::WorkerShutdownCause::MeshStartupFailed(
+                                    "RestartMesh reached while restart is disabled".to_string(),
+                                )
+                            );
                         }
                         Some(crate::worker::mesh_supervision::MeshSupervisorDecision::MarkDegraded(reason)) => {
                             tracing::warn!(reason = %reason, "mesh degraded");
@@ -804,17 +954,25 @@ pub async fn run_unified_server_worker(
             (cause, Some(accepted), graceful, drain_timeout)
         }
         crate::worker::task_registry::SupervisionOutcome::DirectCause(cause) => {
-            let graceful = !matches!(
-                cause,
+            let graceful = match &cause {
                 crate::worker::task_registry::WorkerShutdownCause::ServerExitedUnexpectedly(_)
-                    | crate::worker::task_registry::WorkerShutdownCause::CriticalTaskExit(_)
-                    | crate::worker::task_registry::WorkerShutdownCause::RegistryExitChannelClosed
-                    | crate::worker::task_registry::WorkerShutdownCause::SupervisorDisconnected
-                    | crate::worker::task_registry::WorkerShutdownCause::MeshStartupFailed(_)
-                    | crate::worker::task_registry::WorkerShutdownCause::MeshShutdownIncomplete(_)
-                    | crate::worker::task_registry::WorkerShutdownCause::MeshServiceExit(_)
-                    | crate::worker::task_registry::WorkerShutdownCause::MeshRestartExhausted { .. }
-            );
+                | crate::worker::task_registry::WorkerShutdownCause::CriticalTaskExit(_)
+                | crate::worker::task_registry::WorkerShutdownCause::RegistryExitChannelClosed
+                | crate::worker::task_registry::WorkerShutdownCause::SupervisorDisconnected => {
+                    false
+                }
+                #[cfg(feature = "mesh")]
+                crate::worker::task_registry::WorkerShutdownCause::MeshStartupFailed(_)
+                | crate::worker::task_registry::WorkerShutdownCause::MeshShutdownIncomplete(_)
+                | crate::worker::task_registry::WorkerShutdownCause::MeshServiceExit(_)
+                | crate::worker::task_registry::WorkerShutdownCause::MeshRestartExhausted {
+                    ..
+                }
+                | crate::worker::task_registry::WorkerShutdownCause::MeshConfigurationInvariant(
+                    _,
+                ) => false,
+                _ => true,
+            };
             let drain_timeout = if graceful {
                 std::time::Duration::from_secs(30)
             } else {
@@ -875,7 +1033,7 @@ pub async fn run_unified_server_worker(
 
     // Step 4.5: Shutdown mesh transport (if running).
     // Record final mesh status and use real shutdown budget (Phases 19-22).
-    #[cfg(feature = "dns")]
+    #[cfg(feature = "mesh")]
     {
         // Phase 22: Mark mesh as stopping before shutdown
         {

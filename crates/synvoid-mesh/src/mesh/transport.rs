@@ -2364,6 +2364,18 @@ impl MeshTransport {
         }
 
         // Phase 7: Start periodic background loops
+        // Register topology and DHT routing maintenance tasks under the task group.
+        {
+            let topo_shutdown = shutdown_rx.clone();
+            let topo_specs = self.topology.build_background_tasks(topo_shutdown);
+            stage.task_group.register_background_specs(topo_specs);
+        }
+        if let Some(ref rm) = self.routing_manager {
+            let dht_shutdown = shutdown_rx.clone();
+            let dht_specs = rm.build_background_tasks(dht_shutdown);
+            stage.task_group.register_background_specs(dht_specs);
+        }
+
         let connection_config = self.config.connection.clone();
         let transport_for_maintenance = Arc::new(self.clone_for_maintenance());
 

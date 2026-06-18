@@ -111,7 +111,16 @@ pub async fn init_mesh_control_plane(
     let mesh_config_arc = Arc::new(mesh_config.clone());
 
     let topology = Arc::new(MeshTopology::new(mesh_config_arc.clone()));
-    topology.start_background_tasks();
+
+    // Standalone path: build topology background tasks and spawn directly
+    // (no MeshTaskGroup available outside the mesh lifecycle).
+    {
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let specs = topology.build_background_tasks(shutdown_rx);
+        for spec in specs {
+            tokio::spawn(spec.future);
+        }
+    }
 
     let routing_manager = if mesh_config
         .dht
@@ -121,7 +130,16 @@ pub async fn init_mesh_control_plane(
     {
         let manager = Arc::new(DhtRoutingManager::new(mesh_config_arc.clone()));
         let manager_clone = manager.clone();
-        manager.start_background_tasks();
+
+        // Standalone path: build DHT routing background tasks and spawn directly
+        {
+            let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+            let specs = manager.build_background_tasks(shutdown_rx);
+            for spec in specs {
+                tokio::spawn(spec.future);
+            }
+        }
+
         tokio::spawn(async move {
             manager_clone.init().await;
         });

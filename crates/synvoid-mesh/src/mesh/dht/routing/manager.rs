@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use lru_time_cache::LruCache;
-use tokio::sync::{watch, RwLock};
+use tokio::sync::RwLock;
 
 use crate::config::{MeshConfig, MeshNodeRole};
 use crate::dht::routing::contact::{GeoInfo, PeerContact};
@@ -39,8 +39,6 @@ pub struct DhtRoutingManager {
     find_node_transport: Arc<parking_lot::RwLock<Option<Arc<dyn FindNodeTransport>>>>,
     ping_transport: Arc<parking_lot::RwLock<Option<Arc<dyn PingTransport>>>>,
     pending_pings: Arc<parking_lot::RwLock<HashMap<String, Instant>>>,
-    join_handles: Arc<parking_lot::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
-    shutdown_tx: Arc<watch::Sender<()>>,
 }
 
 impl Clone for DhtRoutingManager {
@@ -59,8 +57,6 @@ impl Clone for DhtRoutingManager {
             find_node_transport: self.find_node_transport.clone(),
             ping_transport: self.ping_transport.clone(),
             pending_pings: self.pending_pings.clone(),
-            join_handles: self.join_handles.clone(),
-            shutdown_tx: self.shutdown_tx.clone(),
         }
     }
 }
@@ -100,8 +96,6 @@ impl DhtRoutingManager {
             find_node_transport: Arc::new(parking_lot::RwLock::new(None)),
             ping_transport: Arc::new(parking_lot::RwLock::new(None)),
             pending_pings: Arc::new(parking_lot::RwLock::new(HashMap::new())),
-            join_handles: Arc::new(parking_lot::Mutex::new(Vec::new())),
-            shutdown_tx: Arc::new(watch::channel::<()>(()).0),
         }
     }
 
@@ -173,97 +167,105 @@ impl DhtRoutingManager {
         );
     }
 
-    #[allow(unused_must_use)]
-    pub fn start_background_tasks(&self) {
+    /// Build descriptors for the DHT routing maintenance background tasks.
+    ///
+    /// Returns an empty vec if routing is disabled. The returned specs do
+    /// not spawn — the caller registers them with a `MeshTaskGroup` during
+    /// transactional startup so they participate in rollback and unified
+    /// shutdown.
+    pub fn build_background_tasks(
+        &self,
+        mut shutdown: tokio::sync::watch::Receiver<bool>,
+    ) -> Vec<crate::lifecycle::MeshBackgroundTaskSpec> {
         if !self.routing_enabled {
-            return;
+            return Vec::new();
         }
+
+        let mut specs = Vec::new();
 
         let self_arc = Arc::new(self.clone());
-        let shutdown_rx = self.shutdown_tx.subscribe();
+        let mut shutdown1 = shutdown.clone();
+        specs.push(crate::lifecycle::MeshBackgroundTaskSpec {
+            name: "dht_bucket_stats",
+            class: crate::lifecycle::MeshTaskClass::RestartableBackground,
+            future: Box::pin(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+                loop {
+                    tokio::select! {
+                        _ = shutdown1.changed() => {
+                            tracing::debug!("Bucket stats loop shutdown");
+                            break;
+                        }
+                        _ = interval.tick() => {
+                            let peer_count = self_arc.total_peers().await;
+                            tracing::debug!("DHT routing table: {} peers", peer_count);
 
-        let handle = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
-            let mut shutdown = shutdown_rx;
-            loop {
-                tokio::select! {
-                    _ = shutdown.changed() => {
-                        tracing::debug!("Bucket stats loop shutdown");
-                        break;
-                    }
-                    _ = interval.tick() => {
-                        let peer_count = self_arc.total_peers().await;
-                        tracing::debug!("DHT routing table: {} peers", peer_count);
+                            let stats = self_arc.bucket_stats().await;
+                            if !stats.is_empty() {
+                                let non_empty: usize = stats.iter().filter(|(_, c)| *c > 0).count();
+                                tracing::debug!("DHT bucket stats: {} non-empty buckets", non_empty);
 
-                        let stats = self_arc.bucket_stats().await;
-                        if !stats.is_empty() {
-                            let non_empty: usize = stats.iter().filter(|(_, c)| *c > 0).count();
-                            tracing::debug!("DHT bucket stats: {} non-empty buckets", non_empty);
+                                for (bucket_idx, count) in &stats {
+                                    crate::stubs::metrics::record_dht_bucket_peers(*bucket_idx, *count as u64);
+                                }
+                            }
 
-                            for (bucket_idx, count) in &stats {
-                                crate::stubs::metrics::record_dht_bucket_peers(*bucket_idx, *count as u64);
+                            if self_arc.hub_config.enabled {
+                                self_arc.sync_regional_hub().await;
+                                let hubs = self_arc.get_regional_hubs().await;
+                                tracing::debug!("Regional hubs refreshed: {} total hubs", hubs.len());
                             }
                         }
+                    }
+                }
+                Ok(())
+            }),
+        });
 
-                        if self_arc.hub_config.enabled {
-                            self_arc.sync_regional_hub().await;
-                            let hubs = self_arc.get_regional_hubs().await;
-                            tracing::debug!("Regional hubs refreshed: {} total hubs", hubs.len());
+        let self_refresh = Arc::new(self.clone());
+        let mut shutdown2 = shutdown.clone();
+        specs.push(crate::lifecycle::MeshBackgroundTaskSpec {
+            name: "dht_bucket_refresh",
+            class: crate::lifecycle::MeshTaskClass::RestartableBackground,
+            future: Box::pin(async move {
+                let mut interval = tokio::time::interval(BUCKET_REFRESH_INTERVAL);
+                loop {
+                    tokio::select! {
+                        _ = shutdown2.changed() => {
+                            tracing::debug!("Bucket refresh loop shutdown");
+                            break;
+                        }
+                        _ = interval.tick() => {
+                            self_refresh.refresh_sparse_buckets().await;
                         }
                     }
                 }
-            }
+                Ok(())
+            }),
         });
-        self.join_handles.lock().push(handle);
-
-        let self_refresh = Arc::new(self.clone());
-        let shutdown_rx = self.shutdown_tx.subscribe();
-        let handle = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(BUCKET_REFRESH_INTERVAL);
-            let mut shutdown = shutdown_rx;
-            loop {
-                tokio::select! {
-                    _ = shutdown.changed() => {
-                        tracing::debug!("Bucket refresh loop shutdown");
-                        break;
-                    }
-                    _ = interval.tick() => {
-                        self_refresh.refresh_sparse_buckets().await;
-                    }
-                }
-            }
-        });
-        self.join_handles.lock().push(handle);
 
         let self_ping = Arc::new(self.clone());
-        let shutdown_rx = self.shutdown_tx.subscribe();
-        let handle = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
-            let mut shutdown = shutdown_rx;
-            loop {
-                tokio::select! {
-                    _ = shutdown.changed() => {
-                        tracing::debug!("Ping loop shutdown");
-                        break;
-                    }
-                    _ = interval.tick() => {
-                        self_ping.ping_peers().await;
+        specs.push(crate::lifecycle::MeshBackgroundTaskSpec {
+            name: "dht_peer_ping",
+            class: crate::lifecycle::MeshTaskClass::RestartableBackground,
+            future: Box::pin(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+                loop {
+                    tokio::select! {
+                        _ = shutdown.changed() => {
+                            tracing::debug!("Ping loop shutdown");
+                            break;
+                        }
+                        _ = interval.tick() => {
+                            self_ping.ping_peers().await;
+                        }
                     }
                 }
-            }
+                Ok(())
+            }),
         });
-        self.join_handles.lock().push(handle);
 
-        tracing::info!("DHT routing background tasks started");
-    }
-
-    pub async fn shutdown(&self) {
-        let _ = self.shutdown_tx.send(());
-        let handles: Vec<_> = self.join_handles.lock().drain(..).collect();
-        for handle in handles {
-            let _ = handle.await;
-        }
-        tracing::info!("DHT routing background tasks shut down");
+        specs
     }
 
     pub fn set_find_node_transport(&self, transport: Arc<dyn FindNodeTransport>) {

@@ -116,6 +116,75 @@ impl MeshInit {
     }
 }
 
+/// Validate that MeshInit contents are consistent with the supervision policy.
+///
+/// Returns `Ok(())` when invariants hold, or `Err(WorkerShutdownCause)` describing
+/// the specific violation. This should be called early during worker startup
+/// before any resources are consumed.
+#[cfg(feature = "mesh")]
+pub fn validate_mesh_runtime_inputs(
+    mesh_init: &MeshInit,
+    policy: Option<&crate::worker::mesh_supervision::MeshSupervisionPolicy>,
+) -> Result<(), crate::worker::task_registry::WorkerShutdownCause> {
+    use crate::worker::task_registry::WorkerShutdownCause;
+
+    #[cfg(feature = "mesh")]
+    {
+        let has_transport = mesh_init
+            .transport_manager
+            .as_ref()
+            .and_then(|tm| tm.get_quic_transport())
+            .is_some();
+        let has_policy = policy.is_some();
+        let has_topology = mesh_init.topology.is_some();
+        let has_routing = mesh_init.dht_routing_manager.is_some();
+        #[cfg(all(feature = "mesh", feature = "dns"))]
+        let has_dns = !mesh_init.dns_verification_registries.is_empty();
+        #[cfg(all(feature = "mesh", feature = "dns"))]
+        let has_yara = mesh_init.yara_broadcast.is_some();
+
+        match (has_transport, has_policy) {
+            (true, false) => {
+                return Err(WorkerShutdownCause::MeshConfigurationInvariant(
+                    "mesh transport present but no supervision policy".into(),
+                ));
+            }
+            (false, true) => {
+                return Err(WorkerShutdownCause::MeshConfigurationInvariant(
+                    "mesh supervision policy present but no transport".into(),
+                ));
+            }
+            _ => {}
+        }
+
+        if !has_transport && !has_policy {
+            let mut violations = Vec::new();
+            if has_topology {
+                violations.push("topology");
+            }
+            if has_routing {
+                violations.push("dht_routing_manager");
+            }
+            #[cfg(all(feature = "mesh", feature = "dns"))]
+            if has_dns {
+                violations.push("dns_verification_registries");
+            }
+            #[cfg(all(feature = "mesh", feature = "dns"))]
+            if has_yara {
+                violations.push("yara_broadcast");
+            }
+            if !violations.is_empty() {
+                return Err(WorkerShutdownCause::MeshConfigurationInvariant(format!(
+                    "disabled mesh has unexpected resources: {}",
+                    violations.join(", ")
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Initialize the mesh + threat-intel subsystem. Returns
 /// `(Option<Arc<MeshTransportManager>>, Option<Arc<ThreatIntelligenceManager>>,
 /// Option<Arc<MeshMessageSigner>>)`. When the `mesh` feature is disabled, all
@@ -735,7 +804,7 @@ mod tests {
     fn disabled_mesh_never_creates_required_fallback_policy() {
         let config = synvoid_config::MeshSupervisionConfig::default();
         let policy = crate::worker::mesh_supervision::build_mesh_supervision_policy(false, &config);
-        assert!(policy.is_none());
+        assert!(policy.unwrap().is_none());
     }
 
     #[test]

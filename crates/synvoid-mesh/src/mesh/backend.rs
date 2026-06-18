@@ -317,7 +317,16 @@ pub fn create_mesh_backend_from_config(
 
     let config = Arc::new(config.clone());
     let topology = Arc::new(MeshTopology::new(config.clone()));
-    topology.start_background_tasks();
+
+    // Standalone path: build topology background tasks and spawn directly
+    // (no MeshTaskGroup available outside the mesh lifecycle).
+    {
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let specs = topology.build_background_tasks(shutdown_rx);
+        for spec in specs {
+            tokio::spawn(spec.future);
+        }
+    }
     let _cert_manager = Arc::new(RwLock::new(MeshCertManager::new(&config)));
 
     let cache_settings = config.proxy_cache.as_ref().map(|cc| {
@@ -380,7 +389,16 @@ pub async fn initialize_mesh_transports(
     {
         let manager = Arc::new(crate::dht::routing::DhtRoutingManager::new(config.clone()));
         let manager_clone = manager.clone();
-        manager.start_background_tasks();
+
+        // Standalone path: build DHT routing background tasks and spawn directly
+        {
+            let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+            let specs = manager.build_background_tasks(shutdown_rx);
+            for spec in specs {
+                tokio::spawn(spec.future);
+            }
+        }
+
         tokio::spawn(async move {
             manager_clone.init().await;
         });

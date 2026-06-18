@@ -14,7 +14,8 @@ use futures::FutureExt;
 use tokio::sync::{broadcast, watch};
 
 use crate::lifecycle::{
-    MeshTaskClass, MeshTaskExit, MeshTaskExitReason, MeshTaskId, MeshTaskIdGenerator,
+    MeshBackgroundTaskSpec, MeshTaskClass, MeshTaskExit, MeshTaskExitReason, MeshTaskId,
+    MeshTaskIdGenerator,
 };
 
 /// A named mesh task with its join handle.
@@ -192,6 +193,53 @@ impl MeshTaskGroup {
             id,
             handle,
         });
+    }
+
+    /// Registers a batch of background task specs produced by a builder.
+    ///
+    /// Each spec is spawned according to its declared class and added to
+    /// the appropriate task list for unified shutdown and exit reporting.
+    pub fn register_background_specs(&mut self, specs: Vec<MeshBackgroundTaskSpec>) {
+        for spec in specs {
+            match spec.class {
+                MeshTaskClass::CriticalService => {
+                    self.spawn_critical_result(spec.name, spec.future);
+                }
+                MeshTaskClass::RestartableBackground => {
+                    self.spawn_background_result(spec.name, spec.future);
+                }
+                MeshTaskClass::BoundedChild => {
+                    let id = self.next_task_id();
+                    let handle = self.spawn_wrapped_result(
+                        spec.name,
+                        MeshTaskClass::BoundedChild,
+                        id,
+                        spec.future,
+                    );
+                    self.children.push(NamedMeshTask {
+                        name: spec.name,
+                        class: MeshTaskClass::BoundedChild,
+                        id,
+                        handle,
+                    });
+                }
+                MeshTaskClass::OneShotStartup => {
+                    let id = self.next_task_id();
+                    let handle = self.spawn_wrapped_result(
+                        spec.name,
+                        MeshTaskClass::OneShotStartup,
+                        id,
+                        spec.future,
+                    );
+                    self.children.push(NamedMeshTask {
+                        name: spec.name,
+                        class: MeshTaskClass::OneShotStartup,
+                        id,
+                        handle,
+                    });
+                }
+            }
+        }
     }
 
     /// Spawns a bounded child task.

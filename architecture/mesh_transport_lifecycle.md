@@ -1,4 +1,4 @@
-# Mesh Transport Lifecycle Inventory — Iteration 81
+# Mesh Transport Lifecycle Inventory — Iteration 86
 
 ## Purpose
 
@@ -423,8 +423,9 @@ The following startup phases execute sequentially. Each phase must complete befo
 | 7 | Start periodic background loops: `connection_maintenance`, `peer_health_check`, `proactive_cache_warming`, `dht_cache_resync`, `load_reporter`, `global_node_heartbeat`, `discovery_maintenance`, `dht_bucket_stats`, `dht_bucket_refresh`, `dht_peer_ping`. | No |
 | 8 | Start `mesh_accept_loop` with QUIC runtime. | Yes |
 | 9 | Transfer staged task group into transport ownership. Transition lifecycle state to `Running`. Set `running_projection = true`. Mark stage as committed. | Yes |
+| 10 | **(Iteration 86)** Register topology/DHT maintenance background tasks via `build_background_tasks()` + `register_background_specs()`. | No |
 
-**Note:** Tasks gated on `min_peer_connections > 0` are skipped during startup if no peer connections are configured.
+**Note:** Tasks gated on `min_peer_connections > 0` are skipped during startup if no peer connections are configured. **Iteration 86**: Topology and DHT maintenance tasks are now registered AFTER mesh startup succeeds (Phase 10) via `build_background_tasks()` + `register_background_specs()`, not during Phase 7 construction.
 
 ### Lifecycle Operation Lock
 
@@ -1270,6 +1271,65 @@ Both `mesh_exit_observer` and `mesh_supervision_coordinator` are registered as `
 
 - **`tests/worker_supervision_control_flow.rs`**: 27 new behavioral tests covering config-driven policy, critical observer/coordinator, disabled mesh (no pipeline), OneShot task class, required vs optional startup gating, and `start_mesh_generation()`.
 
+## Iteration 86 — Background Task Registration, Config Validation, and YARA Extraction
+
+### Background Task Registration After Mesh Startup
+
+Topology and DHT maintenance tasks are no longer spawned during component construction. Instead, components return `Vec<MeshBackgroundTaskSpec>` via `build_background_tasks()`, and the composition root registers them with `MeshTaskGroup::register_background_specs()` after mesh startup succeeds.
+
+**`MeshBackgroundTaskSpec`** (`lifecycle.rs`): Declarative specification for mesh background tasks. Each spec describes a task class, name, and the async future to run.
+
+```rust
+pub struct MeshBackgroundTaskSpec {
+    pub class: MeshTaskClass,
+    pub name: String,
+    pub future: Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>,
+}
+```
+
+**`build_background_tasks()`**: Implemented on both `MeshTopology` and `DhtRoutingManager`. Returns `Vec<MeshBackgroundTaskSpec>` describing tasks to be registered after mesh startup. Replaces `start_background_tasks()` which previously spawned tasks during construction.
+
+**`register_background_specs()`**: Added to `MeshTaskGroup`. Accepts a `Vec<MeshBackgroundTaskSpec>` and registers each as a background task in the task group.
+
+This change ensures background tasks are owned by the task group from the moment they are registered, preventing detached tasks during startup rollback. The composition root in `init_mesh.rs` calls `build_background_tasks()` on topology and DHT routing manager after mesh startup succeeds, then registers them with the task group.
+
+### Configuration Validation
+
+`validate_mesh_runtime_inputs()` is called during mesh init to validate configuration before constructing transport/topology/DHT objects. This catches configuration invariant violations early, before any runtime objects are created. On validation failure, a `MeshConfigurationInvariant(String)` cause is returned.
+
+**`MeshConfigurationInvariant(String)`**: New variant on `WorkerShutdownCause` for transport/policy configuration mismatches detected during init validation.
+
+### YARA Broadcast Loop Extraction
+
+`run_yara_broadcast_loop()` is extracted from inline logic in `init_mesh.rs`. The function:
+
+- Takes ownership of YARA broadcast components (receiver, shutdown signal)
+- Uses deadline-bounded drain to ensure no hung YARA operations block worker shutdown
+- Returns a `YaraBroadcastReport` with drain statistics
+- Is registered as a `RestartableBackground` task in `WorkerTaskRegistry`
+
+### MeshStartupPolicy Config Rejection
+
+`build_mesh_supervision_policy()` now returns `Result<Option<MeshSupervisionPolicy>, String>` instead of `Option<MeshSupervisionPolicy>`. The function rejects `restart_enabled = true` with an error, since restart is not implemented and must not be configured.
+
+### Support Task Registration Ordering
+
+Support tasks (DNS verification, YARA broadcast, DHT routing init) are now registered AFTER mesh startup succeeds, not before. This prevents support tasks from starting before the mesh transport is ready.
+
+| Task | Registry Class | Start Phase | Stop Signal |
+|------|---------------|-------------|-------------|
+| DNS verification loops | `RestartableBackground` | after mesh startup | registry shutdown |
+| YARA broadcast loop | `RestartableBackground` | after mesh startup | channel close + `JoinSet` drain |
+| DHT routing init | `OneShot` | after mesh startup | completes immediately |
+
+### Optional Mesh Startup State Transition
+
+Optional mesh startup now transitions to `Starting` before spawning the startup task. This ensures the worker mesh phase accurately reflects the startup attempt.
+
+### Required Mesh Startup Event
+
+Required mesh startup no longer emits `MeshSupervisionEvent::Started`. The composition root handles the result directly — status transitions once, `DirectCause` set, no ready message, no coordinator round-trip.
+
 ## Changelog
 
 | Iteration | Changes |
@@ -1288,3 +1348,4 @@ Both `mesh_exit_observer` and `mesh_supervision_coordinator` are registered as `
 | 82 | **Mesh transport polish and worker-level supervision**. **Part A — Transport polish**: `parse_http_response_framing()` rejects malformed header lines (no colon) with `MalformedHeaderLine` instead of silent skip; `read_http_response_sequence()` rejects non-empty `body_prefix` for 204/304 (`UnexpectedBodyBytesForNoBodyResponse`); `try_parse_http_response_head()` enforces `max_header_bytes` internally; saturating deadline arithmetic; `spawn_auxiliary_task()` reordered (admission before spawn); auxiliary metrics renamed `edge_refresh_*` → `mesh_auxiliary_*`; `AuxiliarySubmissionTestHooks` for deterministic race testing. **Parts B-H — Worker mesh supervision**: `src/worker/mesh_supervision.rs` — policy types (`MeshSupervisionPolicy`, `MeshFailureAction`), status tracking (`WorkerMeshPhase`, `WorkerMeshStatus`), event/decision types, pure `decide_mesh_action()` classifier, `RestartBudget`, `compute_backoff()`, `MeshShutdownDisposition`, observer + coordinator pipeline. `WorkerShutdownCause` extended with `MeshStartupFailed`/`MeshShutdownInactive`. Composition root: subscribe-before-start, observer + coordinator registered in `WorkerTaskRegistry`, supervision `tokio::select!` includes mesh decisions. Mesh transport/lifecycle marked as closed; worker supervision is the active ownership layer. |
 | 84 | **Config-driven mesh supervision policy**. `MeshSupervisionConfig` in config crate (`crates/synvoid-config/src/mesh.rs`) provides TOML-deserializable supervision settings. `build_mesh_supervision_policy()` derives `MeshSupervisionPolicy` from config + `mesh_enabled` flag; returns `None` when mesh disabled (no pipeline created). Restart disabled by default (`restart_enabled=false`). `start_mesh_generation()` async helper composes `transport.start()` with `WorkerMeshStatus` transitions. Required mesh startup awaited inline before worker ready; optional mesh starts async. `mesh_exit_observer` and `mesh_supervision_coordinator` registered as `spawn_critical`. `TaskClass::OneShot` added for initialization-only tasks. 27 new behavioral tests in `tests/worker_supervision_control_flow.rs`. **Part F — Structured ownership**: All bare `tokio::spawn()` calls eliminated from `init_mesh.rs`. `MeshInit` returns DNS registries, YARA broadcast components, and DHT routing manager for composition root to spawn. `WorkerTaskRegistry` spawns DNS verification loops (`spawn_background`), YARA broadcast loop (`spawn_background`), and DHT routing init (`spawn_one_shot`) in Phase 13.5. Optional mesh startup uses `spawn_one_shot` (clean completion always expected). Dedicated `dns_shutdown_tx`/`yara_broadcast_shutdown_tx` watch channels removed — tasks owned by registry shutdown. `MeshDnsRegistry::build_verification_loop()` extracts the loop future for external spawning. 4 new one-shot classification tests in `tests/worker_supervision_control_flow.rs`. Architecture doc updated with mesh readiness/restart/exit-policy sole-ownership invariant. **Part G — Behavioral proof**: 58 behavioral tests proving the mesh supervision runtime: pure decision logic (`decide_mesh_action` — required/optional startup, task exit, stream closure, restart-disabled invariant), status transitions (`apply_mesh_event_to_status` — all event types), coordinator pipeline creation, event→decision composition via pure functions (Started→NoAction→Running, StartupFailed→ShutdownWorker/MarkDegraded, ExitStreamClosed→ShutdownWorker/MarkDegraded), observer shutdown, policy builder (config→policy for all variants), mesh readiness gating (required/optional/degraded/disabled), MeshShutdownReport disposition, MeshFailureCause→WorkerShutdownCause mapping, structural proof (MeshInit ownership fields, no bare spawns, registry-owned background tasks). All 270 tests pass (146 supervision + 58 behavioral + 37 boundary + 22 composition + 39 lifecycle + 26 mesh supervision unit). |
 | 85 | **Worker mesh supervision corrective pass**. **Part A — Disabled mesh construction-free**: `MeshInit::disabled()` returns no runtime resources (all `None`/empty). `init_mesh_and_threat_intel()` returns early for absent config or `enabled=false` without constructing topology, routing, transport, DNS, YARA, or DHT objects. Policy is `Option<MeshSupervisionPolicy>` — `None` for disabled, no required fallback. **Part B — Restart disabled**: `restart_enabled` overridden to `false` at policy-build time with warning; `RestartMesh` unreachable in production policy; fake `MeshRestartExhausted { attempts: 0 }` removed. **Part C — Topology/DHT construction-only**: `topology.start_background_tasks()` and `routing_manager.start_background_tasks()` removed from construction; topology and DHT returned in `MeshInit` for composition root to start after mesh startup. **Part D — YARA broadcast JoinSet**: Per-message detached `tokio::spawn()` replaced with local `JoinSet<()>` for child ownership; bounded drain on shutdown. **Part E — Generation-specific support after startup**: DNS verification, YARA broadcast, and DHT init start only after mesh startup succeeds. **Part F — Required startup failure direct**: Composition root handles `Result<(), MeshFailureCause>` directly — status transitions once, `DirectCause` set, no ready message, no coordinator round-trip. **Part G — Singular status ownership**: `start_mesh_generation()` returns facts only; caller transitions status; coordinator handles runtime events. **Guardrails**: `tests/worker_mesh_supervision_boundary_guard.rs` (new disabled-config, restart-disabled, construction-no-start, YARA-joinset, direct-failure, and status-ownership tests). |
+| 86 | **Background task registration, config validation, and YARA extraction**. **Part A — Background task specs**: `MeshBackgroundTaskSpec` (lifecycle.rs) declarative spec replaces imperative `start_background_tasks()`. `build_background_tasks()` on `MeshTopology` and `DhtRoutingManager` returns `Vec<MeshBackgroundTaskSpec>`; composition root registers via `MeshTaskGroup::register_background_specs()` after mesh startup. **Part B — Config validation**: `validate_mesh_runtime_inputs()` validates mesh runtime config before construction; `MeshConfigurationInvariant(String)` variant on `WorkerShutdownCause` for transport/policy mismatches. **Part C — YARA broadcast extraction**: `run_yara_broadcast_loop()` extracted with deadline-bounded drain and `YaraBroadcastReport`. **Part D — Config rejection**: `build_mesh_supervision_policy()` returns `Result<Option<MeshSupervisionPolicy>, String>` — rejects `restart_enabled = true`. **Part E — Support task ordering**: DNS, YARA, DHT init registered after mesh startup succeeds. **Part F — Optional mesh state**: Optional mesh transitions to `Starting` before spawning. **Part G — Required mesh event**: Required mesh startup no longer emits `MeshSupervisionEvent::Started`. |

@@ -355,7 +355,7 @@ revoke_genesis_key(public_key: &str)
 - Non-empty list = genesis key must be in the list
 - Key rotation tracked via `rotation_sequence` and `GenesisKeyTransition` DHT records
 
-## Mesh Transport Lifecycle (Iterations 68–76)
+## Mesh Transport Lifecycle (Iterations 68–76, updated 86)
 
 ### Adding a New Background Task
 
@@ -363,8 +363,9 @@ revoke_genesis_key(public_key: &str)
    - `CriticalService` — core mesh functionality
    - `RestartableBackground` — periodic maintenance
    - `BoundedChild` — per-connection work
+   - `OneShotStartup` — initialization-only tasks (Iteration 84)
 
-2. In `MeshTransport::start_with_policy()`, spawn via the task group:
+2. For transport-owned tasks, spawn via the task group in `MeshTransport::start_with_policy()`:
 ```rust
 let mut shutdown_rx = group.shutdown_receiver();
 group.spawn_background("task_name", async move {
@@ -380,7 +381,16 @@ group.spawn_background("task_name", async move {
 });
 ```
 
-3. NEVER use bare `tokio::spawn` for long-lived tasks in transport code.
+3. For topology/DHT maintenance tasks (Iteration 86), use `build_background_tasks()` + `register_background_specs()`:
+```rust
+// After mesh startup succeeds
+let specs = topology.build_background_tasks();
+group.register_background_specs(specs);
+let dht_specs = dht_routing_manager.build_background_tasks();
+group.register_background_specs(dht_specs);
+```
+
+4. NEVER use bare `tokio::spawn` for long-lived tasks in transport code.
 
 ### Lifecycle API
 
@@ -429,6 +439,8 @@ Controls required vs optional bootstrap:
 - `require_dht_bootstrap` (default: false)
 
 Default is all-optional (degraded startup allowed). A required failure triggers rollback.
+
+**Iteration 86**: `build_mesh_supervision_policy()` returns `Result<Option<MeshSupervisionPolicy>, String>` — rejects `restart_enabled = true` with an error. This is a hard error, not a warning override.
 
 ### MeshStartupReport
 
@@ -914,15 +926,15 @@ lifecycle_op -> auxiliary_submission_lock -> auxiliary_tasks
 
 Worker-level mesh supervision is implemented in `src/worker/mesh_supervision.rs`. The mesh service reports facts (start result, task exit, lifecycle state, shutdown report); the worker decides policy (ready, degraded, restart, shutdown, exit code).
 
-### Config-Driven Policy (Iteration 84)
+### Config-Driven Policy (Iteration 84, updated Iteration 86)
 
-`MeshSupervisionPolicy` is now derived from `MeshSupervisionConfig` (TOML-deserializable in `crates/synvoid-config/src/mesh.rs`) via `build_mesh_supervision_policy()`. Returns `None` when mesh is disabled — no observer, coordinator, startup task, or decision channel is created.
+`MeshSupervisionPolicy` is now derived from `MeshSupervisionConfig` (TOML-deserializable in `crates/synvoid-config/src/mesh.rs`) via `build_mesh_supervision_policy()`. Returns `None` when mesh is disabled — no observer, coordinator, startup task, or decision channel is created. **Iteration 86**: Returns `Result<Option<MeshSupervisionPolicy>, String>` — rejects `restart_enabled = true` with an error (restart is not implemented and must not be configured).
 
 ```rust
 pub fn build_mesh_supervision_policy(
     mesh_enabled: bool,
     config: &MeshSupervisionConfig,
-) -> Option<MeshSupervisionPolicy>
+) -> Result<Option<MeshSupervisionPolicy>, String>
 ```
 
 Restart is disabled by default: `restart_enabled=false` → `restart_limit=0`. `MeshFailureAction::RestartMesh` is treated as `ShutdownWorker` when restart is not enabled.
@@ -992,7 +1004,7 @@ Converts `MeshFailureCause` into `WorkerShutdownCause` preserving the specific m
 
 ### `MeshRestartExhausted`
 
-The coordinator gates `RestartMesh` decisions against the `RestartBudget`. When the budget is exhausted, the coordinator downgrades to `ShutdownWorker(MeshFailureCause::StartupFailed("restart budget exhausted"))`. The composition root converts this to `WorkerShutdownCause::MeshRestartExhausted { attempts, last_error }` which is classified as fatal (`is_fatal_exit()` returns true).
+The coordinator gates `RestartMesh` decisions against the `RestartBudget`. When the budget is exhausted, the coordinator downgrades to `ShutdownWorker(MeshFailureCause::StartupFailed("restart budget exhausted"))`. The composition root converts this to `WorkerShutdownCause::MeshRestartExhausted { attempts, last_error }` which is classified as fatal (`is_fatal_exit()` returns true). **Iteration 86**: `MeshRestartExhausted` is replaced by `MeshStartupFailed` in the RestartMesh handler since restart is disabled and `restart_enabled = true` is now rejected at config validation time.
 
 ### No Outer Timeout on Mesh Startup
 
@@ -1032,6 +1044,43 @@ When multiple shutdown causes arise during a single shutdown sequence, the highe
 | `crates/synvoid-config/src/mesh.rs` | `MeshSupervisionConfig` TOML-deserializable config |
 | `src/worker/unified_server/mod.rs` | Composition root integration, decision processing, `remaining_budget()` |
 | `src/worker/task_registry.rs` | `WorkerShutdownCause`, `SupervisionOutcome`, exit code derivation, `TaskClass::OneShot` |
+
+## Iteration 86 — Background Task Registration and Config Validation
+
+### Background Task Specs
+
+`MeshBackgroundTaskSpec` (`lifecycle.rs`) is a declarative specification for mesh background tasks. Replaces imperative `start_background_tasks()` methods with a data-driven approach.
+
+```rust
+pub struct MeshBackgroundTaskSpec {
+    pub class: MeshTaskClass,
+    pub name: String,
+    pub future: Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>,
+}
+```
+
+**`build_background_tasks()`**: Implemented on both `MeshTopology` and `DhtRoutingManager`. Returns `Vec<MeshBackgroundTaskSpec>` describing tasks to be registered after mesh startup. Replaces `start_background_tasks()` which previously spawned tasks during construction.
+
+**`register_background_specs()`**: Added to `MeshTaskGroup`. Accepts a `Vec<MeshBackgroundTaskSpec>` and registers each as a background task in the task group.
+
+This ensures background tasks are owned by the task group from the moment they are registered, preventing detached tasks during startup rollback.
+
+### YARA Broadcast Loop Extraction
+
+`run_yara_broadcast_loop()` is extracted from inline logic in `init_mesh.rs`. The function:
+
+- Takes ownership of YARA broadcast components (receiver, shutdown signal)
+- Uses deadline-bounded drain to ensure no hung YARA operations block worker shutdown
+- Returns a `YaraBroadcastReport` with drain statistics
+- Is registered as a `RestartableBackground` task in `WorkerTaskRegistry`
+
+### Configuration Validation
+
+`validate_mesh_runtime_inputs()` is called during mesh init to validate configuration before constructing transport/topology/DHT objects. On validation failure, a `MeshConfigurationInvariant(String)` cause is returned on `WorkerShutdownCause`. This catches configuration invariant violations early, before any runtime objects are created.
+
+### Config Rejection
+
+`build_mesh_supervision_policy()` now returns `Result<Option<MeshSupervisionPolicy>, String>` — rejects `restart_enabled = true` with an error. This is a hard error, not a warning override, since restart is not implemented and must not be configured.
 
 ## Testing Commands
 

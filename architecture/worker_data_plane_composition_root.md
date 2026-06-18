@@ -1,7 +1,7 @@
 # Worker/Data-Plane Composition Root Ownership
 
 **Established**: Iteration 58
-**Updated**: Iteration 61
+**Updated**: Iteration 86
 **Guardrail**: `tests/data_plane_composition_boundary_guard.rs`
 
 ## Invariant
@@ -159,7 +159,7 @@ The worker composition root (`src/worker/unified_server/mod.rs`) is the **sole o
 - IPC notification routing (Step 10) is determined by the cause variant.
 - No other module may call `std::process::exit()` or send worker-error IPC messages.
 
-### Background Task Ownership (Iteration 84 Part F, updated Iteration 85)
+### Background Task Ownership (Iteration 84 Part F, updated Iteration 85, Iteration 86)
 
 All mesh-adjacent background tasks are owned by the `WorkerTaskRegistry`:
 
@@ -172,6 +172,16 @@ All mesh-adjacent background tasks are owned by the `WorkerTaskRegistry`:
 | Mesh exit observer | `CriticalService` | Phase 14.5 | registry shutdown |
 | Mesh supervision coordinator | `CriticalService` | Phase 14.5 | registry shutdown |
 
-Topology and DHT routing background tasks are returned in `MeshInit` as component handles (`topology`, `dht_routing_manager`). The composition root starts them after mesh startup succeeds and registers them in `WorkerTaskRegistry`. They use internal shutdown signals (not construction-time `start_background_tasks()`). YARA broadcast uses a local `JoinSet` for per-message child ownership (Iteration 85).
+Topology and DHT routing background tasks are returned in `MeshInit` as component handles (`topology`, `dht_routing_manager`). The composition root calls `build_background_tasks()` on each component after mesh startup succeeds, then registers them in `WorkerTaskRegistry` via `MeshTaskGroup::register_background_specs()`. Support tasks (DNS, YARA, DHT) are registered AFTER mesh startup succeeds (Iteration 86), not before. YARA broadcast uses a local `JoinSet` for per-message child ownership (Iteration 85), with deadline-bounded drain via `run_yara_broadcast_loop()` (Iteration 86).
 
 No bare `tokio::spawn()` calls remain in `init_mesh.rs`. The `MeshInit` struct returns components (registries, broadcast receivers, routing managers) for the composition root to spawn and register.
+
+### Configuration Validation (Iteration 86)
+
+`validate_mesh_runtime_inputs()` is called during mesh init to validate configuration before constructing transport/topology/DHT objects. On validation failure, a `MeshConfigurationInvariant(String)` cause is returned on `WorkerShutdownCause`. This catches configuration invariant violations early, before any runtime objects are created.
+
+### Mesh Restart (updated Iteration 86)
+
+- Restart is **disabled** (`restart_enabled = true` is now rejected with an error by `build_mesh_supervision_policy()`, not just overridden).
+- `MeshSupervisorDecision::RestartMesh` is unreachable in production policy. If it somehow arrives, the composition root maps it to `MeshRestartExhausted` and shuts down the worker.
+- Restart execution (`execute_mesh_restart`) is not implemented. No restart metrics increment in supported configurations.

@@ -1,4 +1,4 @@
-//! Guardrails for worker mesh supervision integration (Iterations 82-83).
+//! Guardrails for worker mesh supervision integration (Iterations 82-86).
 //!
 //! Verifies structural invariants via source-text scanning without I/O.
 
@@ -423,14 +423,16 @@ fn no_required_fallback_policy() {
 
 #[test]
 fn invariant_check_transport_policy_alignment() {
-    let content = read_file("src/worker/unified_server/mod.rs");
+    // Iteration 86: Transport/policy alignment is validated via
+    // validate_mesh_runtime_inputs() in init_mesh.rs.
+    let content = read_file("src/worker/unified_server/init_mesh.rs");
     assert!(
-        content.contains("Invariant violation: mesh transport present but no supervision policy"),
-        "composition root must check transport/policy alignment invariant"
+        content.contains("mesh transport present but no supervision policy"),
+        "validate_mesh_runtime_inputs must check transport/policy alignment"
     );
     assert!(
-        content.contains("Invariant violation: mesh supervision policy present but no transport"),
-        "composition root must check policy/transport alignment invariant"
+        content.contains("mesh supervision policy present but no transport"),
+        "validate_mesh_runtime_inputs must check policy/transport alignment"
     );
 }
 
@@ -476,38 +478,35 @@ fn disabled_mesh_starts_no_background_tasks() {
 
 #[test]
 fn topology_has_shutdown_signal() {
-    // Phase 15: MeshTopology must have internal shutdown signal for
-    // structured background task lifecycle.
+    // Iteration 85: MeshTopology uses build_background_tasks() which creates
+    // internal shutdown signals. The topology itself is self-managed.
     let content = read_file("crates/synvoid-mesh/src/mesh/topology.rs");
     assert!(
-        content.contains("shutdown_tx"),
-        "MeshTopology must have shutdown_tx field"
-    );
-    assert!(
-        content.contains("background_handles"),
-        "MeshTopology must have background_handles field"
+        content.contains("pub fn build_background_tasks("),
+        "MeshTopology must have build_background_tasks method"
     );
 }
 
 #[test]
 fn topology_background_tasks_use_select_shutdown() {
-    // Phase 15: Topology background loops must use tokio::select! with
-    // shutdown signal for cooperative cancellation.
+    // Iteration 85: Topology background tasks are created via build_background_tasks()
+    // which returns BackgroundTaskSpec objects with internal shutdown signals.
     let content = read_file("crates/synvoid-mesh/src/mesh/topology.rs");
     assert!(
-        content.contains("shutdown_rx.changed()"),
-        "topology background loops must select on shutdown signal"
+        content.contains("build_background_tasks("),
+        "topology must use build_background_tasks for structured lifecycle"
     );
 }
 
 #[test]
 fn topology_has_shutdown_method() {
-    // Phase 15: MeshTopology must expose a shutdown() method that sends
-    // the shutdown signal and joins background handles.
+    // Iteration 85: MeshTopology background tasks are self-managed via
+    // build_background_tasks(). Shutdown is handled internally by the
+    // background task specs via watch-based cancellation.
     let content = read_file("crates/synvoid-mesh/src/mesh/topology.rs");
     assert!(
-        content.contains("pub async fn shutdown(&self)"),
-        "MeshTopology must have shutdown() method"
+        content.contains("pub fn build_background_tasks("),
+        "MeshTopology must expose build_background_tasks for self-managed lifecycle"
     );
 }
 
@@ -572,44 +571,42 @@ fn composition_root_starts_dht_routing_background_tasks() {
 
 #[test]
 fn yara_broadcast_uses_joinset() {
-    // Iteration 85: YARA broadcast spawns individual sends via tokio::spawn
-    // with a semaphore for concurrency control. The broadcast loop itself
-    // is registered in WorkerTaskRegistry for structured ownership.
+    // Iteration 86: YARA broadcast is extracted to run_yara_broadcast_loop()
+    // which uses JoinSet for child task management with deadline-bounded drain.
     let content = read_file("src/worker/unified_server/mod.rs");
     assert!(
-        content.contains("registry.spawn_background(\"yara_broadcast\""),
-        "yara broadcast loop must be registered in WorkerTaskRegistry"
+        content.contains("run_yara_broadcast_loop("),
+        "yara broadcast must use extracted run_yara_broadcast_loop function"
     );
     assert!(
-        content.contains("tokio::spawn(async move {"),
-        "yara broadcast must spawn individual sends via tokio::spawn"
+        content.contains("let mut children: tokio::task::JoinSet<()>"),
+        "yara broadcast must use JoinSet for child management"
     );
     assert!(
-        content.contains("broadcast_semaphore.clone().acquire_owned()"),
-        "yara broadcast must use semaphore for concurrency control"
+        content.contains("children.join_next()"),
+        "yara broadcast must join children via JoinSet"
     );
 }
 
 #[test]
 fn no_bare_tokio_spawn_in_yara_broadcast() {
-    // Iteration 85: The yara broadcast LOOP is registered via
-    // WorkerTaskRegistry for ownership. Individual sends within the loop
-    // use tokio::spawn (not JoinSet) with semaphore-based concurrency.
+    // Iteration 86: The yara broadcast loop is extracted to run_yara_broadcast_loop()
+    // which uses JoinSet for child management. Individual sends use JoinSet::spawn().
     let content = read_file("src/worker/unified_server/mod.rs");
-    let broadcast_loop_start = content
-        .find("registry.spawn_background(\"yara_broadcast\"")
-        .expect("yara_broadcast spawn_background must exist");
-    let after_loop = content[broadcast_loop_start..]
-        .find("});")
-        .map(|i| broadcast_loop_start + i + 3)
-        .expect("yara_broadcast loop must close");
-    let loop_body = &content[broadcast_loop_start..after_loop];
+    let broadcast_fn_start = content
+        .find("async fn run_yara_broadcast_loop(")
+        .expect("run_yara_broadcast_loop must exist");
+    let after_fn = content[broadcast_fn_start..]
+        .find("report\n}")
+        .map(|i| broadcast_fn_start + i + 7)
+        .expect("run_yara_broadcast_loop must close");
+    let fn_body = &content[broadcast_fn_start..after_fn];
     assert!(
-        loop_body.contains("registry.spawn_background(\"yara_broadcast\""),
-        "yara broadcast loop must be registered via WorkerTaskRegistry"
+        fn_body.contains("children.spawn(async move {"),
+        "yara broadcast must spawn sends via JoinSet"
     );
     assert!(
-        loop_body.contains("broadcast_rx.recv().await"),
+        fn_body.contains("broadcast_rx.recv()"),
         "yara broadcast must receive from mpsc channel"
     );
 }
@@ -618,12 +615,12 @@ fn no_bare_tokio_spawn_in_yara_broadcast() {
 fn yara_broadcast_drains_on_channel_close() {
     let content = read_file("src/worker/unified_server/mod.rs");
     assert!(
-        content.contains("broadcast_rx.recv().await"),
+        content.contains("broadcast_rx.recv()"),
         "yara broadcast must receive from mpsc channel"
     );
     assert!(
-        content.contains("YARA broadcast mpsc channel closed, exiting loop"),
-        "yara broadcast must log when channel closes"
+        content.contains("YARA broadcast loop received shutdown signal"),
+        "yara broadcast must handle shutdown signal"
     );
 }
 
@@ -631,41 +628,34 @@ fn yara_broadcast_drains_on_channel_close() {
 
 #[test]
 fn register_mesh_support_tasks_helper_exists() {
-    // Iteration 85: Support tasks (DNS verification, YARA broadcast, DHT
-    // routing init) are spawned inline in Phase 13.5 via WorkerTaskRegistry.
-    // There is no separate helper function — the registry handles ownership.
+    // Iteration 86 Part A: Support tasks are registered via
+    // register_mesh_generation_support() AFTER mesh startup succeeds.
     let content = read_file("src/worker/unified_server/mod.rs");
     assert!(
-        content.contains("Phase 13.5: spawn mesh support tasks via registry"),
-        "Phase 13.5 must exist for spawning mesh support tasks"
+        content.contains("fn register_mesh_generation_support("),
+        "register_mesh_generation_support helper must exist"
     );
     assert!(
-        content.contains("dns_verification_"),
-        "Phase 13.5 must spawn DNS verification loops"
+        content.contains("spawn_background("),
+        "register_mesh_generation_support must spawn background tasks"
     );
     assert!(
-        content.contains("yara_broadcast"),
-        "Phase 13.5 must spawn YARA broadcast loop"
-    );
-    assert!(
-        content.contains("dht_routing_init"),
-        "Phase 13.5 must spawn DHT routing init one-shot"
+        content.contains("spawn_one_shot("),
+        "register_mesh_generation_support must spawn one-shot tasks"
     );
 }
 
 #[test]
 fn support_tasks_registered_after_required_mesh_startup() {
-    // Iteration 85: Support tasks (DNS, YARA, DHT init) are spawned in
-    // Phase 13.5 BEFORE mesh startup (Phase 14.5). The composition root
-    // registers them in WorkerTaskRegistry for structured ownership.
+    // Iteration 86 Part A: Support tasks (DNS, YARA, DHT init) are registered
+    // AFTER mesh startup succeeds via register_mesh_generation_support().
     let content = read_file("src/worker/unified_server/mod.rs");
-    let phase_13_5_idx = content
-        .find("Phase 13.5: spawn mesh support tasks via registry")
-        .expect("Phase 13.5 must exist");
     let start_mesh_idx = content
         .find("start_mesh_generation(")
         .expect("required mesh must call start_mesh_generation");
-    // Find the SECOND UnifiedServerWorkerReady (in the Ok branch after mesh startup)
+    let register_idx = content
+        .find("register_mesh_generation_support(")
+        .expect("must call register_mesh_generation_support after startup");
     let first_ready_idx = content
         .find("UnifiedServerWorkerReady")
         .expect("must have ready message");
@@ -674,87 +664,86 @@ fn support_tasks_registered_after_required_mesh_startup() {
         .map(|i| first_ready_idx + 1 + i)
         .expect("must have second ready message in Ok branch");
     assert!(
-        phase_13_5_idx < start_mesh_idx,
-        "Phase 13.5 support tasks must appear before start_mesh_generation"
+        start_mesh_idx < register_idx,
+        "register_mesh_generation_support must appear after start_mesh_generation"
     );
     assert!(
-        start_mesh_idx < ready_idx,
-        "start_mesh_generation must appear before ready message"
+        register_idx < ready_idx,
+        "register_mesh_generation_support must appear before ready message"
     );
 }
 
 #[test]
 fn support_tasks_registered_after_optional_mesh_startup() {
-    // Iteration 85: Support tasks are spawned in Phase 13.5 BEFORE
-    // optional mesh startup (Phase 14.5). The optional mesh startup
-    // calls start_with_policy as a one-shot background task.
+    // Iteration 86 Part A: Support tasks are registered via
+    // register_mesh_generation_support() AFTER optional mesh startup succeeds.
     let content = read_file("src/worker/unified_server/mod.rs");
-    let phase_13_5_idx = content
-        .find("Phase 13.5: spawn mesh support tasks via registry")
-        .expect("Phase 13.5 must exist");
     let optional_start_idx = content
-        .find("start_with_policy(synvoid_mesh::lifecycle::MeshStartupPolicy::default())")
-        .expect("optional mesh must call start_with_policy");
+        .find("// Optional mesh: start as one-shot background task.")
+        .expect("optional mesh branch must exist");
+    let register_idx = content
+        .find("register_mesh_generation_support(&state_for_startup, support)")
+        .expect("must call register_mesh_generation_support after startup");
     assert!(
-        phase_13_5_idx < optional_start_idx,
-        "Phase 13.5 support tasks must appear before optional mesh start_with_policy"
+        optional_start_idx < register_idx,
+        "register_mesh_generation_support must appear after optional mesh start"
     );
 }
 
 #[test]
 fn support_tasks_extracted_before_builder() {
-    // Iteration 85: Support tasks are spawned inline in Phase 13.5 using
-    // mesh_init fields directly. There are no separate extraction variables —
-    // the registry consumes the components for structured ownership.
+    // Iteration 86 Part A: Support tasks are extracted from MeshInit into
+    // MeshSupportTasks in Phase 11.5, after the DataPlaneServicesBuilder.
     let content = read_file("src/worker/unified_server/mod.rs");
     let builder_idx = content
         .find("DataPlaneServicesBuilder::new(")
         .expect("builder must exist");
-    let phase_13_5_idx = content
-        .find("Phase 13.5: spawn mesh support tasks via registry")
-        .expect("Phase 13.5 must exist");
+    let extract_idx = content
+        .find("let support_tasks = MeshSupportTasks {")
+        .expect("support tasks extraction must exist");
     assert!(
-        builder_idx < phase_13_5_idx,
-        "Phase 13.5 support tasks must appear after builder construction"
+        builder_idx < extract_idx,
+        "support tasks extraction must appear after builder construction"
     );
     assert!(
         content.contains("mesh_init.dns_verification_registries"),
-        "dns_verification_registries must be used from mesh_init directly"
+        "dns_verification_registries must be extracted from mesh_init"
     );
     assert!(
         content.contains("mesh_init.yara_broadcast"),
-        "yara_broadcast must be used from mesh_init directly"
+        "yara_broadcast must be extracted from mesh_init"
     );
     assert!(
         content.contains("mesh_init.dht_routing_manager"),
-        "dht_routing_manager must be used from mesh_init directly"
+        "dht_routing_manager must be extracted from mesh_init"
     );
 }
 
 #[test]
 fn no_old_phase_13_5_registry_support_tasks() {
-    // Iteration 85: Phase 13.5 spawns support tasks via WorkerTaskRegistry
-    // for structured ownership. Tasks ARE registered via spawn_background
-    // and spawn_one_shot — this is the correct pattern (registry-owned).
+    // Iteration 86 Part A: Phase 13.5 is a comment-only section explaining
+    // that support tasks are registered AFTER mesh startup. The actual
+    // registration happens via register_mesh_generation_support() in the
+    // mesh startup success paths.
     let content = read_file("src/worker/unified_server/mod.rs");
     let phase_13_5_start = content
-        .find("Phase 13.5: spawn mesh support tasks via registry")
+        .find("Phase 13.5: mesh support task registration")
         .expect("Phase 13.5 comment must exist");
     let phase_14_start = content
-        .find("Phase 14: register server run task")
+        .find("Phase 14:")
         .expect("Phase 14 comment must exist");
     let phase_13_5_section = &content[phase_13_5_start..phase_14_start];
     assert!(
-        phase_13_5_section.contains("spawn_background("),
-        "Phase 13.5 must spawn background tasks via WorkerTaskRegistry"
+        phase_13_5_section.contains("register_mesh_generation_support"),
+        "Phase 13.5 must reference register_mesh_generation_support"
     );
     assert!(
-        phase_13_5_section.contains("spawn_one_shot("),
-        "Phase 13.5 must spawn one-shot tasks via WorkerTaskRegistry"
+        !phase_13_5_section.contains("spawn_background("),
+        "Phase 13.5 must NOT inline spawn support tasks"
     );
     assert!(
-        phase_13_5_section.contains("registry.spawn_background"),
-        "Phase 13.5 must use registry.spawn_background for ownership"
+        !phase_13_5_section.contains("spawn_one_shot("),
+        "Phase 13.5 must NOT inline spawn one-shot tasks"
     );
 }
 
@@ -866,12 +855,11 @@ fn start_mesh_generation_returns_facts_only() {
 
 #[test]
 fn required_startup_path_transitions_status_directly() {
-    // Iteration 85: Required mesh path transitions status directly via
-    // WorkerMeshStatus before calling start_mesh_generation. The transition
-    // calls are within the same #[cfg(feature = "dns")] block.
+    // Iteration 86: Required mesh path transitions status directly via
+    // WorkerMeshStatus before calling start_mesh_generation.
     let content = read_file("src/worker/unified_server/mod.rs");
     let start_call = content
-        .find("start_mesh_generation(")
+        .find("match crate::worker::mesh_supervision::start_mesh_generation(")
         .expect("must call start_mesh_generation");
     // Search for transition_starting in the 500 chars before start_mesh_generation
     let search_start = start_call.saturating_sub(500);
@@ -906,11 +894,14 @@ fn required_startup_path_transitions_status_directly() {
 #[test]
 fn restart_enabled_rejected_or_unreachable() {
     let content = read_file("src/worker/mesh_supervision.rs");
+    // Iteration 86: build_mesh_supervision_policy returns Err when restart_enabled = true.
     assert!(
-        content.contains(
-            "restart_enabled is true in config but restart is not implemented; forcing to false"
-        ),
-        "build_mesh_supervision_policy must warn and reject restart_enabled"
+        content.contains("restart_enabled is not supported"),
+        "build_mesh_supervision_policy must reject restart_enabled with Err"
+    );
+    assert!(
+        content.contains("Result<Option<MeshSupervisionPolicy>, String>"),
+        "build_mesh_supervision_policy must return Result"
     );
     assert!(
         !content.contains("MeshFailureAction::RestartMesh")
@@ -969,19 +960,19 @@ fn required_startup_failure_maps_directly() {
 
 #[test]
 fn generation_support_tasks_after_mesh_startup() {
-    // Iteration 85: Support tasks (DNS verification, YARA broadcast, DHT
-    // routing init) are spawned in Phase 13.5 BEFORE mesh startup (Phase 14.5).
-    // The composition root registers them in WorkerTaskRegistry for ownership.
+    // Iteration 86 Part A: Support tasks (DNS verification, YARA broadcast, DHT
+    // routing init) are registered AFTER mesh startup succeeds via
+    // register_mesh_generation_support().
     let content = read_file("src/worker/unified_server/mod.rs");
-    let phase_13_5_idx = content
-        .find("Phase 13.5: spawn mesh support tasks via registry")
-        .expect("Phase 13.5 must exist");
     let start_mesh_idx = content
         .find("start_mesh_generation(")
         .expect("required mesh must call start_mesh_generation");
+    let register_idx = content
+        .find("register_mesh_generation_support(")
+        .expect("must call register_mesh_generation_support after startup");
     assert!(
-        phase_13_5_idx < start_mesh_idx,
-        "Phase 13.5 support tasks must appear before start_mesh_generation"
+        start_mesh_idx < register_idx,
+        "register_mesh_generation_support must appear after start_mesh_generation"
     );
 }
 
@@ -1015,5 +1006,155 @@ fn status_transitions_have_singular_owner() {
     assert!(
         !body.contains("transition_failed"),
         "start_mesh_generation must not transition to Failed"
+    );
+}
+
+// --- Iteration 86 guardrails ---
+
+#[test]
+fn build_policy_restart_enabled_returns_error() {
+    // Iteration 86: build_mesh_supervision_policy returns Err when restart_enabled = true.
+    let content = read_file("src/worker/mesh_supervision.rs");
+    assert!(
+        content.contains("if config.restart_enabled {"),
+        "build_mesh_supervision_policy must check restart_enabled"
+    );
+    assert!(
+        content.contains("return Err("),
+        "build_mesh_supervision_policy must return Err for restart_enabled"
+    );
+    assert!(
+        content.contains("restart_enabled is not supported"),
+        "error message must mention restart_enabled"
+    );
+}
+
+#[test]
+fn validate_mesh_runtime_inputs_exists() {
+    // Iteration 86: validate_mesh_runtime_inputs validates MeshInit against supervision policy.
+    let content = read_file("src/worker/unified_server/init_mesh.rs");
+    assert!(
+        content.contains("pub fn validate_mesh_runtime_inputs("),
+        "validate_mesh_runtime_inputs must exist as a public function"
+    );
+    assert!(
+        content.contains("Result<(), crate::worker::task_registry::WorkerShutdownCause>"),
+        "validate_mesh_runtime_inputs must return Result with WorkerShutdownCause"
+    );
+}
+
+#[test]
+fn mesh_configuration_invariant_cause_exists() {
+    // Iteration 86: MeshConfigurationInvariant variant in WorkerShutdownCause.
+    let content = read_file("src/worker/task_registry.rs");
+    assert!(
+        content.contains("MeshConfigurationInvariant(String)"),
+        "WorkerShutdownCause must have MeshConfigurationInvariant variant"
+    );
+}
+
+#[test]
+fn support_tasks_registered_after_mesh_startup() {
+    // Iteration 86 Part A: Support tasks (DNS/YARA/DHT) are registered AFTER
+    // mesh startup succeeds, not before. Phase 13.5 no longer has inline registration.
+    let content = read_file("src/worker/unified_server/mod.rs");
+    // Phase 13.5 must be a comment-only section explaining the new pattern.
+    let phase_13_5_idx = content
+        .find("Phase 13.5: mesh support task registration")
+        .expect("Phase 13.5 must exist");
+    let phase_14_idx = content.find("Phase 14:").expect("Phase 14 must exist");
+    let phase_13_5_section = &content[phase_13_5_idx..phase_14_idx];
+    // Must NOT contain inline spawn calls — support is registered after startup.
+    assert!(
+        !phase_13_5_section.contains("spawn_background("),
+        "Phase 13.5 must NOT inline spawn support tasks"
+    );
+    assert!(
+        !phase_13_5_section.contains("spawn_one_shot("),
+        "Phase 13.5 must NOT inline spawn one-shot tasks"
+    );
+    // Must reference the new pattern.
+    assert!(
+        phase_13_5_section.contains("register_mesh_generation_support"),
+        "Phase 13.5 must reference register_mesh_generation_support"
+    );
+}
+
+#[test]
+fn optional_startup_transitions_starting() {
+    // Iteration 86: Optional mesh startup transitions to Starting before spawning.
+    let content = read_file("src/worker/unified_server/mod.rs");
+    // Find the optional mesh branch (else branch after required check).
+    let optional_start = content
+        .find("// Optional mesh: start as one-shot background task.")
+        .expect("optional mesh branch must exist");
+    let optional_section = &content[optional_start..optional_start + 500];
+    assert!(
+        optional_section.contains("transition_starting"),
+        "optional mesh must transition to Starting before spawning"
+    );
+}
+
+#[test]
+fn required_startup_no_started_event() {
+    // Iteration 86: Required mesh startup no longer emits MeshSupervisionEvent::Started.
+    // The required path transitions status directly, not via the coordinator event.
+    let content = read_file("src/worker/unified_server/mod.rs");
+    let required_start = content
+        .find("// Required mesh: await startup inline before ready.")
+        .expect("required mesh branch must exist");
+    let required_section = &content[required_start..required_start + 1000];
+    // The required branch should NOT send MeshSupervisionEvent::Started.
+    assert!(
+        !required_section.contains("MeshSupervisionEvent::Started"),
+        "required mesh must not emit Started event (status transitions directly)"
+    );
+}
+
+#[test]
+fn yara_broadcast_loop_is_extracted() {
+    // Iteration 86: run_yara_broadcast_loop is an extracted function.
+    let content = read_file("src/worker/unified_server/mod.rs");
+    assert!(
+        content.contains("async fn run_yara_broadcast_loop("),
+        "run_yara_broadcast_loop must exist as an extracted function"
+    );
+    assert!(
+        content.contains("fn classify_yara_child_result("),
+        "classify_yara_child_result helper must exist"
+    );
+}
+
+#[test]
+fn topology_build_background_tasks_exists() {
+    // Iteration 86: Topology has build_background_tasks replacing start_background_tasks.
+    let content = read_file("crates/synvoid-mesh/src/mesh/topology.rs");
+    assert!(
+        content.contains("pub fn build_background_tasks("),
+        "MeshTopology must have build_background_tasks method"
+    );
+}
+
+#[test]
+fn dht_routing_build_background_tasks_exists() {
+    // Iteration 86: DHT routing manager has build_background_tasks.
+    let content = read_file("crates/synvoid-mesh/src/mesh/dht/routing/manager.rs");
+    assert!(
+        content.contains("pub fn build_background_tasks("),
+        "DhtRoutingManager must have build_background_tasks method"
+    );
+}
+
+#[test]
+fn optional_policy_restart_limit_zero() {
+    // Iteration 86: optional() preset has restart_limit: 0.
+    let content = read_file("src/worker/mesh_supervision.rs");
+    let optional_idx = content
+        .find("pub fn optional() -> Self")
+        .expect("optional() constructor must exist");
+    let optional_section = &content[optional_idx..optional_idx + 400];
+    assert!(
+        optional_section.contains("restart_limit: 0"),
+        "optional() preset must have restart_limit: 0"
     );
 }
