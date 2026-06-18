@@ -13,27 +13,25 @@
 // `CanonicalTrustReader` and is carried in `MeshInit` so the
 // composition root can use it to build the policy context.
 //
-// Task Ownership Inventory (Iteration 84 Part F, Iteration 85):
+// Task Ownership Inventory (Iteration 84 Part F, Iteration 85, Iteration 86 Part A):
 //
 // Task                                     | Correct Owner              | Start Phase              | Stop Signal              | Join Path                      | Restart Generation
 // -----------------------------------------|----------------------------|--------------------------|--------------------------|--------------------------------|--------------------
-// topology background loops                | Mesh topology (self-mgmt)  | Phase 13.5               | internal shutdown signal | topology.shutdown()            | per-generation
-// DHT routing background loops             | DhtRoutingManager (self-mgmt) | Phase 13.5            | internal shutdown signal | routing_manager.shutdown()     | per-generation
+// topology maintenance loops               | MeshTaskGroup              | Phase 7 (post-startup)   | mesh shutdown channel    | mesh task group                | per-generation
+// DHT routing maintenance loops            | MeshTaskGroup              | Phase 7 (post-startup)   | mesh shutdown channel    | mesh task group                | per-generation
 // routing_manager.init()                   | WorkerTaskRegistry         | after mesh startup       | registry shutdown        | registry join                  | N/A (one-shot)
 // DnsRegistry verification loops           | WorkerTaskRegistry         | after mesh startup       | registry shutdown        | registry join                  | per-generation
 // threat_intel.start_background_tasks()    | Threat intel               | transport init           | mesh shutdown            | mesh task group                | per-generation
 // YARA broadcast loop                      | WorkerTaskRegistry         | after mesh startup       | mpsc sender drop         | registry join                  | per-generation
 //
-// Iteration 85: topology and DHT routing background tasks use internal
-// shutdown signals (watch::Receiver<bool>) and track their own JoinHandles.
-// They are started during Phase 13.5 but are self-managed — the
-// composition root calls their shutdown() methods during worker teardown.
-// Registry-owned support tasks (DNS verification, YARA broadcast, DHT
-// routing init) are started after successful mesh startup in Phase 14.5.
-// All bare spawns have been eliminated from this file.
-// Components are returned in MeshInit for the composition root
-// (mod.rs Phase 8.5) to extract and register in WorkerTaskRegistry
-// after mesh startup succeeds.
+// Iteration 86 Part A: Support tasks (DNS verification, YARA broadcast,
+// DHT routing init) are registered AFTER mesh startup succeeds via
+// register_mesh_generation_support(). No support task starts before the
+// mesh generation commits. Topology and DHT maintenance are built by
+// build_background_tasks() and registered with MeshTaskGroup in Phase 7
+// (inside run_startup_phases). Components are returned in MeshInit for
+// the composition root (mod.rs Phase 8.5) to extract and register in
+// WorkerTaskRegistry after mesh startup succeeds.
 
 use std::sync::Arc;
 
@@ -56,14 +54,15 @@ use synvoid_config::ConfigManager;
 /// directly to build the threat-intel policy context. The ownership
 /// boundary is documented in `mod.rs`.
 ///
-/// # Task Ownership (Iteration 84 Part F, Iteration 85)
+/// # Task Ownership (Iteration 84 Part F, Iteration 85, Iteration 86 Part A)
 ///
 /// Background tasks (topology loops, DHT routing loops, DNS verification,
 /// YARA broadcast) are NOT spawned in this function. Instead, the components
 /// needed to spawn them are returned here so the composition root in `mod.rs`
 /// can extract them and register them in the `WorkerTaskRegistry` after mesh
-/// startup succeeds. Topology and DHT routing background tasks use internal
-/// shutdown signals.
+/// startup succeeds. Topology and DHT routing background tasks are built via
+/// `build_background_tasks()` and registered with `MeshTaskGroup` during
+/// transactional mesh startup (Phase 7).
 pub struct MeshInit {
     #[cfg(feature = "mesh")]
     pub transport_manager: Option<Arc<MeshTransportManager>>,

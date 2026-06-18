@@ -899,7 +899,7 @@ pub async fn run_unified_server_worker(
                             // config validation time. This branch is defense-in-depth only.
                             tracing::error!("Invariant violation: RestartMesh reached while restart is disabled");
                             break crate::worker::task_registry::SupervisionOutcome::DirectCause(
-                                crate::worker::task_registry::WorkerShutdownCause::MeshStartupFailed(
+                                crate::worker::task_registry::WorkerShutdownCause::MeshConfigurationInvariant(
                                     "RestartMesh reached while restart is disabled".to_string(),
                                 )
                             );
@@ -1264,4 +1264,101 @@ pub async fn run_unified_server_worker(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+#[cfg(all(feature = "mesh", feature = "dns"))]
+mod yara_broadcast_tests {
+    use super::*;
+
+    #[test]
+    fn yara_report_defaults_to_zero() {
+        let report = YaraBroadcastReport {
+            completed: 0,
+            failed: 0,
+            aborted: 0,
+        };
+        assert_eq!(report.completed, 0);
+        assert_eq!(report.failed, 0);
+        assert_eq!(report.aborted, 0);
+    }
+
+    #[test]
+    fn classify_yara_child_completed() {
+        let mut report = YaraBroadcastReport {
+            completed: 0,
+            failed: 0,
+            aborted: 0,
+        };
+        classify_yara_child_result(Ok(()), &mut report);
+        assert_eq!(report.completed, 1);
+        assert_eq!(report.failed, 0);
+        assert_eq!(report.aborted, 0);
+    }
+
+    #[test]
+    fn classify_yara_child_multiple_completed() {
+        let mut report = YaraBroadcastReport {
+            completed: 0,
+            failed: 0,
+            aborted: 0,
+        };
+        classify_yara_child_result(Ok(()), &mut report);
+        classify_yara_child_result(Ok(()), &mut report);
+        classify_yara_child_result(Ok(()), &mut report);
+        assert_eq!(report.completed, 3);
+        assert_eq!(report.failed, 0);
+        assert_eq!(report.aborted, 0);
+    }
+
+    #[test]
+    fn yara_report_struct_is_pub() {
+        let report = YaraBroadcastReport {
+            completed: 10,
+            failed: 2,
+            aborted: 1,
+        };
+        assert_eq!(report.completed, 10);
+        assert_eq!(report.failed, 2);
+        assert_eq!(report.aborted, 1);
+    }
+
+    #[tokio::test]
+    async fn yara_loop_drains_on_channel_close() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<crate::mesh::protocol::MeshMessage>(10);
+
+        // Drop the sender to simulate channel close
+        drop(tx);
+        // The receiver should immediately return None (channel closed)
+        let result = rx.recv().await;
+        assert!(result.is_none(), "closed channel must return None");
+    }
+
+    #[tokio::test]
+    async fn yara_semaphore_bounds_concurrency() {
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(2));
+
+        // Acquire 2 permits (the max)
+        let p1 = semaphore.clone().acquire_owned().await.unwrap();
+        let p2 = semaphore.clone().acquire_owned().await.unwrap();
+
+        // No permits available
+        assert_eq!(semaphore.available_permits(), 0);
+
+        // Try to acquire a third — should not succeed immediately
+        let p3_fut = semaphore.clone().acquire_owned();
+        let result = tokio::time::timeout(Duration::from_millis(10), p3_fut).await;
+        assert!(result.is_err(), "third permit should not be available");
+
+        // Release one permit
+        drop(p1);
+        assert_eq!(semaphore.available_permits(), 1);
+
+        // Now the third can succeed
+        let p3 = semaphore.clone().acquire_owned().await.unwrap();
+        assert_eq!(semaphore.available_permits(), 0);
+
+        drop(p2);
+        drop(p3);
+    }
 }

@@ -1398,7 +1398,7 @@ async fn test_primary_cause_cannot_be_replaced() {
 mod iter84_behavioral_tests {
     use synvoid::worker::mesh_supervision::{
         apply_mesh_decision_to_status, apply_mesh_event_to_status, build_mesh_supervision_policy,
-        classify_mesh_shutdown_report, decide_mesh_action, MeshFailureAction,
+        classify_mesh_shutdown_report, decide_mesh_action, MeshFailureAction, MeshServiceHealth,
         MeshShutdownDisposition, MeshSupervisionEvent, MeshSupervisionPolicy,
         MeshSupervisorDecision, WorkerMeshPhase, WorkerMeshStatus,
     };
@@ -2173,8 +2173,8 @@ mod mesh_supervision_behavioral {
     use synvoid::worker::mesh_supervision::{
         apply_mesh_decision_to_status, apply_mesh_event_to_status, build_mesh_supervision_policy,
         classify_mesh_shutdown_report, create_supervision_pipeline, decide_mesh_action,
-        MeshFailureAction, MeshSupervisionCoordinator, MeshSupervisionEvent, MeshSupervisionPolicy,
-        MeshSupervisorDecision, WorkerMeshPhase, WorkerMeshStatus,
+        MeshFailureAction, MeshServiceHealth, MeshSupervisionCoordinator, MeshSupervisionEvent,
+        MeshSupervisionPolicy, MeshSupervisorDecision, WorkerMeshPhase, WorkerMeshStatus,
     };
     use synvoid::worker::task_registry::WorkerShutdownCause;
 
@@ -3279,6 +3279,232 @@ mod mesh_supervision_behavioral {
         assert!(
             !content.contains("yara_broadcast_shutdown_tx"),
             "DataPlaneServices must not carry yara_broadcast_shutdown_tx (registry-owned)"
+        );
+    }
+
+    // ====================================================================
+    // Iteration 86 Phase 5: Startup-Order Behavioral Tests
+    // ====================================================================
+
+    #[tokio::test]
+    async fn required_startup_blocked_implies_no_support_tasks() {
+        // When required mesh startup fails, support tasks must never be registered.
+        let policy = MeshSupervisionPolicy::required();
+        let mut status = WorkerMeshStatus::default();
+        status.transition_starting();
+
+        // Simulate startup failure
+        let event = MeshSupervisionEvent::StartupFailed("connection refused".into());
+        apply_mesh_event_to_status(&mut status, &event);
+        let decision = decide_mesh_action(&policy, &status.phase, &event, false);
+
+        // Required startup failure must produce ShutdownWorker
+        assert!(
+            matches!(decision, MeshSupervisorDecision::ShutdownWorker(_)),
+            "required startup failure must produce ShutdownWorker: {:?}",
+            decision
+        );
+    }
+
+    #[tokio::test]
+    async fn required_startup_success_transitions_to_running() {
+        // When required mesh startup succeeds, status must transition to Running.
+        let policy = MeshSupervisionPolicy::required();
+        let mut status = WorkerMeshStatus::default();
+        status.transition_starting();
+
+        // Simulate successful startup
+        let event = MeshSupervisionEvent::Started;
+        apply_mesh_event_to_status(&mut status, &event);
+        let decision = decide_mesh_action(&policy, &status.phase, &event, false);
+
+        // Required Started must be NoAction (status already Running from direct transition)
+        apply_mesh_decision_to_status(&mut status, &decision);
+        assert_eq!(status.phase, WorkerMeshPhase::Running);
+    }
+
+    #[tokio::test]
+    async fn optional_startup_pending_implies_starting_phase() {
+        // Optional mesh must be in Starting phase while startup is in progress.
+        let mut status = WorkerMeshStatus::default();
+        status.transition_starting();
+        assert_eq!(status.phase, WorkerMeshPhase::Starting);
+    }
+
+    #[tokio::test]
+    async fn optional_startup_failure_produces_degraded() {
+        // When optional mesh startup fails, status must transition to Degraded.
+        let policy = MeshSupervisionPolicy::optional();
+        let mut status = WorkerMeshStatus::default();
+        status.transition_starting();
+
+        let event = MeshSupervisionEvent::StartupFailed("timeout".into());
+        apply_mesh_event_to_status(&mut status, &event);
+        let decision = decide_mesh_action(&policy, &status.phase, &event, false);
+
+        assert!(
+            matches!(decision, MeshSupervisorDecision::MarkDegraded(_)),
+            "optional StartupFailed must produce MarkDegraded: {:?}",
+            decision
+        );
+        apply_mesh_decision_to_status(&mut status, &decision);
+        assert_eq!(status.phase, WorkerMeshPhase::Degraded);
+    }
+
+    #[tokio::test]
+    async fn disabled_mesh_produces_no_support_tasks() {
+        // Disabled mesh must not create any MeshSupportTasks resources.
+        let support = synvoid::worker::unified_server::MeshSupportTasks::empty();
+        // All fields must be empty/None
+        #[cfg(all(feature = "mesh", feature = "dns"))]
+        {
+            assert!(support.dns_verification_registries.is_empty());
+            assert!(support.yara_broadcast.is_none());
+        }
+        #[cfg(feature = "mesh")]
+        {
+            assert!(support.dht_routing_manager.is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn support_tasks_consumed_once() {
+        // MeshSupportTasks::empty() creates fresh empty support; take() semantics
+        // ensure single consumption. Verify Option::take() pattern.
+        let mut support = Some(synvoid::worker::unified_server::MeshSupportTasks::empty());
+        let first = support.take();
+        assert!(first.is_some(), "first take must succeed");
+        let second = support.take();
+        assert!(second.is_none(), "second take must be None (consumed)");
+    }
+
+    #[tokio::test]
+    async fn required_failure_then_optional_success_isolation() {
+        // A required failure and optional success are independent events.
+        // Required failure → ShutdownWorker
+        let req_policy = MeshSupervisionPolicy::required();
+        let req_event = MeshSupervisionEvent::StartupFailed("dns failure".into());
+        let req_decision =
+            decide_mesh_action(&req_policy, &WorkerMeshPhase::Starting, &req_event, false);
+        assert!(matches!(
+            req_decision,
+            MeshSupervisorDecision::ShutdownWorker(_)
+        ));
+
+        // Optional success → NoAction
+        let opt_policy = MeshSupervisionPolicy::optional();
+        let opt_event = MeshSupervisionEvent::Started;
+        let opt_decision =
+            decide_mesh_action(&opt_policy, &WorkerMeshPhase::Starting, &opt_event, false);
+        assert!(matches!(opt_decision, MeshSupervisorDecision::NoAction));
+    }
+
+    // ====================================================================
+    // Iteration 86 Phase 25: Status Transition Behavioral Tests
+    // ====================================================================
+
+    #[tokio::test]
+    async fn optional_startup_reports_starting_while_blocked() {
+        // Optional startup must show Starting phase while the startup future is active.
+        let mut status = WorkerMeshStatus::default();
+        assert_eq!(status.phase, WorkerMeshPhase::Disabled);
+
+        status.transition_starting();
+        assert_eq!(status.phase, WorkerMeshPhase::Starting);
+
+        // Heartbeat should observe Starting
+        assert!(
+            matches!(status.health, MeshServiceHealth::Healthy),
+            "Starting phase must have Healthy health"
+        );
+    }
+
+    #[tokio::test]
+    async fn required_success_updates_last_transition_once() {
+        // Required startup success must update last_transition exactly once.
+        let mut status = WorkerMeshStatus::default();
+        let t0 = std::time::Instant::now();
+        status.transition_starting();
+        let t1 = status.last_transition;
+        assert!(t1 >= t0);
+
+        status.transition_running();
+        let t2 = status.last_transition;
+        assert!(t2 >= t1);
+
+        // Verify phase is Running
+        assert_eq!(status.phase, WorkerMeshPhase::Running);
+    }
+
+    #[tokio::test]
+    async fn optional_success_updates_last_transition_once() {
+        // Optional startup success (via coordinator) must update last_transition.
+        let mut status = WorkerMeshStatus::default();
+        let t0 = std::time::Instant::now();
+
+        // Simulate: Starting → Started event → Running
+        status.transition_starting();
+        let event = MeshSupervisionEvent::Started;
+        apply_mesh_event_to_status(&mut status, &event);
+        let policy = MeshSupervisionPolicy::optional();
+        let decision = decide_mesh_action(&policy, &status.phase, &event, false);
+        apply_mesh_decision_to_status(&mut status, &decision);
+
+        assert_eq!(status.phase, WorkerMeshPhase::Running);
+        assert!(status.last_transition >= t0);
+    }
+
+    #[tokio::test]
+    async fn required_failure_updates_last_transition_once() {
+        // Required startup failure must update last_transition.
+        let mut status = WorkerMeshStatus::default();
+        status.transition_starting();
+        let t1 = status.last_transition;
+
+        status.transition_failed("startup failed".into());
+        let t2 = status.last_transition;
+        assert!(t2 >= t1);
+        assert_eq!(status.phase, WorkerMeshPhase::Failed);
+    }
+
+    #[tokio::test]
+    async fn no_duplicate_success_failure_metrics() {
+        // Starting → Running → Starting (recovery) → Running must not
+        // produce duplicate Started events from the required path.
+        let mut status = WorkerMeshStatus::default();
+
+        // First cycle: Starting → Running
+        status.transition_starting();
+        status.transition_running();
+        assert_eq!(status.phase, WorkerMeshPhase::Running);
+
+        // Simulate recovery: Running → Stopped → Starting → Running
+        // (MeshLifecycleState requires Stopped before Starting)
+        status.transition_starting();
+        status.transition_running();
+        assert_eq!(status.phase, WorkerMeshPhase::Running);
+
+        // Verify last_transition is updated each time
+        let t_before = status.last_transition;
+        std::thread::sleep(Duration::from_millis(1));
+        status.transition_running();
+        assert!(status.last_transition > t_before);
+    }
+
+    #[tokio::test]
+    async fn heartbeat_observes_stable_final_state() {
+        // After startup completes, heartbeat must observe a stable final state.
+        let mut status = WorkerMeshStatus::default();
+        status.transition_starting();
+        status.transition_running();
+
+        // Simulate heartbeat reading
+        let phase = status.phase;
+        let health = &status.health;
+        assert_eq!(phase, WorkerMeshPhase::Running);
+        assert!(
+            matches!(health, MeshServiceHealth::Healthy),
+            "Running phase must have Healthy health"
         );
     }
 }

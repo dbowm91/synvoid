@@ -1158,3 +1158,22 @@ fn optional_policy_restart_limit_zero() {
         "optional() preset must have restart_limit: 0"
     );
 }
+
+#[test]
+fn restart_mesh_uses_mesh_configuration_invariant() {
+    // Iteration 86: RestartMesh defense-in-depth branch uses MeshConfigurationInvariant,
+    // not MeshStartupFailed.
+    let content = read_file("src/worker/unified_server/mod.rs");
+    let restart_mesh_idx = content
+        .find("MeshSupervisorDecision::RestartMesh")
+        .expect("RestartMesh branch must exist");
+    let section = &content[restart_mesh_idx..restart_mesh_idx + 700];
+    assert!(
+        section.contains("MeshConfigurationInvariant("),
+        "RestartMesh branch must use MeshConfigurationInvariant cause"
+    );
+    assert!(
+        !section.contains("MeshStartupFailed("),
+        "RestartMesh branch must not use MeshStartupFailed cause"
+    );
+}

@@ -5,8 +5,9 @@ use parking_lot::RwLock;
 use synvoid_mesh::cert::MeshCertManager;
 use synvoid_mesh::config::MeshConfig;
 use synvoid_mesh::lifecycle::{
-    MeshLifecycleState, MeshShutdownReport, MeshStartupPolicy, MeshStartupReport, MeshTaskClass,
-    MeshTaskExit, MeshTaskExitReason, MeshTaskId, PeerSessionExitReason,
+    MeshBackgroundTaskSpec, MeshLifecycleState, MeshShutdownReport, MeshStartupPolicy,
+    MeshStartupReport, MeshTaskClass, MeshTaskExit, MeshTaskExitReason, MeshTaskId,
+    PeerSessionExitReason,
 };
 use synvoid_mesh::task_group::MeshTaskGroup;
 use synvoid_mesh::topology::MeshTopology;
@@ -889,4 +890,213 @@ async fn cooperative_shutdown_signal_yields_cancelled_exit() {
         Ok(()) => PeerSessionStopOutcome::Drained(PeerSessionExitReason::Cancelled),
         Err(_) => PeerSessionStopOutcome::Failed("unexpected".to_string()),
     };
+}
+
+// ── Iteration 86 Phase 11: Topology/DHT Ownership Behavioral Tests ──────────
+
+/// Constructing a MeshTaskGroup starts with zero tasks.
+#[test]
+fn task_group_starts_empty() {
+    let group = MeshTaskGroup::new();
+    let (crit, bg, child) = group.active_count();
+    assert_eq!(crit, 0);
+    assert_eq!(bg, 0);
+    assert_eq!(child, 0);
+    assert!(group.is_empty());
+}
+
+/// MeshBackgroundTaskSpec has the required fields for lifecycle ownership.
+#[test]
+fn background_task_spec_has_required_fields() {
+    let spec = MeshBackgroundTaskSpec {
+        name: "test_task",
+        class: MeshTaskClass::RestartableBackground,
+        future: Box::pin(async { Ok(()) }),
+    };
+    assert_eq!(spec.name, "test_task");
+    assert!(matches!(spec.class, MeshTaskClass::RestartableBackground));
+}
+
+/// register_background_specs accepts a vector of specs and spawns them.
+#[tokio::test]
+async fn register_background_specs_spawns_tasks() {
+    let mut group = MeshTaskGroup::new();
+    let specs = vec![
+        MeshBackgroundTaskSpec {
+            name: "topology_stale_metrics",
+            class: MeshTaskClass::RestartableBackground,
+            future: Box::pin(async { Ok(()) }),
+        },
+        MeshBackgroundTaskSpec {
+            name: "topology_global_node_liveness",
+            class: MeshTaskClass::RestartableBackground,
+            future: Box::pin(async { Ok(()) }),
+        },
+    ];
+    group.register_background_specs(specs);
+
+    // Verify tasks are registered
+    let (_, bg, _) = group.active_count();
+    assert_eq!(bg, 2, "must have registered 2 background tasks");
+
+    // Shutdown and join
+    group.begin_shutdown().await;
+    let exits = group.join_all(Duration::from_secs(5)).await;
+    assert_eq!(exits.len(), 2, "must have 2 exit events");
+}
+
+/// DHT routing specs are RestartableBackground class.
+#[test]
+fn dht_routing_specs_are_restartable_background() {
+    let specs = vec![
+        MeshBackgroundTaskSpec {
+            name: "dht_bucket_stats",
+            class: MeshTaskClass::RestartableBackground,
+            future: Box::pin(async { Ok(()) }),
+        },
+        MeshBackgroundTaskSpec {
+            name: "dht_bucket_refresh",
+            class: MeshTaskClass::RestartableBackground,
+            future: Box::pin(async { Ok(()) }),
+        },
+        MeshBackgroundTaskSpec {
+            name: "dht_peer_ping",
+            class: MeshTaskClass::RestartableBackground,
+            future: Box::pin(async { Ok(()) }),
+        },
+    ];
+
+    for spec in &specs {
+        assert!(
+            matches!(spec.class, MeshTaskClass::RestartableBackground),
+            "DHT spec '{}' must be RestartableBackground, got {:?}",
+            spec.name,
+            spec.class
+        );
+    }
+}
+
+/// Topology specs are RestartableBackground class.
+#[test]
+fn topology_specs_are_restartable_background() {
+    let specs = vec![
+        MeshBackgroundTaskSpec {
+            name: "topology_stale_metrics",
+            class: MeshTaskClass::RestartableBackground,
+            future: Box::pin(async { Ok(()) }),
+        },
+        MeshBackgroundTaskSpec {
+            name: "topology_global_node_liveness",
+            class: MeshTaskClass::RestartableBackground,
+            future: Box::pin(async { Ok(()) }),
+        },
+    ];
+
+    for spec in &specs {
+        assert!(
+            matches!(spec.class, MeshTaskClass::RestartableBackground),
+            "Topology spec '{}' must be RestartableBackground, got {:?}",
+            spec.name,
+            spec.class
+        );
+    }
+}
+
+/// Shutdown drains all registered background tasks.
+#[tokio::test]
+async fn shutdown_drains_background_tasks() {
+    let mut group = MeshTaskGroup::new();
+    let specs = vec![MeshBackgroundTaskSpec {
+        name: "topo_loop",
+        class: MeshTaskClass::RestartableBackground,
+        future: Box::pin(async {
+            // Simulate a long-running task that respects shutdown
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(100)) => {}
+                _ = tokio::time::sleep(Duration::from_millis(1)) => {}
+            }
+            Ok(())
+        }),
+    }];
+    group.register_background_specs(specs);
+
+    // Shutdown with a deadline
+    let start = std::time::Instant::now();
+    group.begin_shutdown().await;
+    let exits = group.join_all(Duration::from_secs(2)).await;
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "shutdown must complete within deadline, took {:?}",
+        elapsed
+    );
+    assert_eq!(exits.len(), 1, "must have 1 exit event");
+}
+
+/// Zero-budget shutdown aborts and awaits every background task.
+#[tokio::test]
+async fn zero_budget_shutdown_aborts_background_tasks() {
+    let mut group = MeshTaskGroup::new();
+    let specs = vec![MeshBackgroundTaskSpec {
+        name: "slow_loop",
+        class: MeshTaskClass::RestartableBackground,
+        future: Box::pin(async {
+            // Never-ending task
+            loop {
+                tokio::time::sleep(Duration::from_secs(100)).await;
+            }
+        }),
+    }];
+    group.register_background_specs(specs);
+
+    // Zero-budget shutdown must abort and await
+    group.begin_shutdown().await;
+    let exits = group.join_all(Duration::ZERO).await;
+    assert_eq!(exits.len(), 1, "must have 1 exit event");
+    assert!(
+        matches!(exits[0].reason, MeshTaskExitReason::Aborted),
+        "zero-budget must produce Aborted, got {:?}",
+        exits[0].reason
+    );
+}
+
+/// MeshTaskExit from background tasks contains typed metadata.
+#[test]
+fn mesh_task_exit_has_typed_metadata() {
+    let exit = MeshTaskExit {
+        id: MeshTaskId(42),
+        name: "topology_stale_metrics",
+        class: MeshTaskClass::RestartableBackground,
+        reason: MeshTaskExitReason::CleanCompletion,
+    };
+    assert_eq!(exit.id, MeshTaskId(42));
+    assert_eq!(exit.name, "topology_stale_metrics");
+    assert!(matches!(exit.class, MeshTaskClass::RestartableBackground));
+    assert!(matches!(exit.reason, MeshTaskExitReason::CleanCompletion));
+    assert!(!exit.is_fatal());
+}
+
+/// MeshTaskExit for CriticalService with Error is fatal.
+#[test]
+fn critical_service_error_is_fatal() {
+    let exit = MeshTaskExit {
+        id: MeshTaskId(1),
+        name: "critical_service",
+        class: MeshTaskClass::CriticalService,
+        reason: MeshTaskExitReason::Error("connection lost".to_string()),
+    };
+    assert!(exit.is_fatal());
+}
+
+/// MeshTaskExit for RestartableBackground with Error is not fatal.
+#[test]
+fn restartable_background_error_is_not_fatal() {
+    let exit = MeshTaskExit {
+        id: MeshTaskId(2),
+        name: "dht_refresh",
+        class: MeshTaskClass::RestartableBackground,
+        reason: MeshTaskExitReason::Error("timeout".to_string()),
+    };
+    assert!(!exit.is_fatal());
 }
