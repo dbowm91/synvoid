@@ -334,6 +334,30 @@ The supervision loop returns `SupervisionOutcome` (Lifecycle | DirectCause) inst
 
 **`allow_degraded_readiness` field**: `MeshSupervisionPolicy::allow_degraded_readiness` (bool). When `required()` preset: `false` (mesh must be fully running for readiness). When `optional()` preset: `true` (degraded mesh still satisfies readiness). Gated by readiness check in `UnifiedServerWorkerState::is_ready()`.
 
+### Iteration 84 — Config-Driven Mesh Supervision
+
+**Config-driven policy**: `MeshSupervisionConfig` in `crates/synvoid-config/src/mesh.rs` provides TOML-deserializable supervision settings. `build_mesh_supervision_policy()` derives `MeshSupervisionPolicy` from config + `mesh_enabled` flag; returns `None` when mesh disabled (no pipeline created).
+
+**OneShot task class**: `TaskClass::OneShot` added to `TaskClass` enum for tasks that run once during initialization and complete (not restarted, dropped after completion).
+
+**Structured ownership**: All bare `tokio::spawn()` calls eliminated from `init_mesh.rs`. `MeshInit` returns DNS registries, YARA broadcast components, and DHT routing manager for composition root to spawn. Background tasks registered in `WorkerTaskRegistry` after mesh startup.
+
+### Iteration 85 — Worker Mesh Supervision Corrective Pass
+
+**Disabled mesh construction-free**: `MeshInit::disabled()` returns no runtime resources (all `None`/empty). `init_mesh_and_threat_intel()` returns early for absent config or `enabled=false` without constructing topology, routing, transport, DNS, YARA, or DHT objects. Policy is `Option<MeshSupervisionPolicy>` — `None` for disabled, no required fallback.
+
+**Restart disabled**: `restart_enabled` overridden to `false` at policy-build time with warning. `RestartMesh` unreachable in production policy. No restart metrics increment.
+
+**Topology/DHT construction-only**: `topology.start_background_tasks()` and `routing_manager.start_background_tasks()` removed from construction. Topology and DHT returned in `MeshInit` for composition root to start after mesh startup. They use internal shutdown signals.
+
+**YARA broadcast JoinSet**: Per-message detached `tokio::spawn()` replaced with local `JoinSet<()>` for child ownership. Bounded concurrency via semaphore, drain-or-abort on shutdown.
+
+**Required startup failure direct**: Composition root handles `Result<(), MeshFailureCause>` directly — status transitions once, `DirectCause` set, no ready message, no coordinator round-trip.
+
+**Singular status ownership**: `start_mesh_generation()` returns facts only (`Result<(), MeshFailureCause>`); caller transitions `WorkerMeshStatus`. Coordinator handles runtime event transitions.
+
+**Guard test**: `tests/worker_mesh_supervision_boundary_guard.rs` — disabled-config, restart-disabled, construction-no-start, YARA-joinset, direct-failure, and status-ownership tests.
+
 ### How to add a new long-lived task
 1. Determine task class (CriticalService, RestartableBackground, BoundedChild, CpuOffload, Detached)
 2. For CriticalService/RestartableBackground: use WorkerTaskRegistry.spawn_critical() or spawn_background()

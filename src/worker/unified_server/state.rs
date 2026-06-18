@@ -317,8 +317,9 @@ pub struct UnifiedServerWorkerState {
     #[cfg(feature = "mesh")]
     pub mesh_status: std::sync::Arc<tokio::sync::RwLock<WorkerMeshStatus>>,
     /// Policy controlling how the worker responds to mesh conditions.
+    /// `None` when mesh is disabled (no transport, no policy).
     #[cfg(feature = "mesh")]
-    pub mesh_policy: MeshSupervisionPolicy,
+    pub mesh_policy: Option<MeshSupervisionPolicy>,
     /// Task registry for structured concurrency (Iteration 62).
     pub task_registry: Arc<tokio::sync::Mutex<crate::worker::task_registry::WorkerTaskRegistry>>,
 }
@@ -341,13 +342,16 @@ impl UnifiedServerWorkerState {
     #[cfg(feature = "mesh")]
     pub async fn is_mesh_ready(&self) -> bool {
         let status = self.mesh_status.read().await;
-        if !self.mesh_policy.required {
+        let Some(ref policy) = self.mesh_policy else {
+            return true;
+        };
+        if !policy.required {
             return true;
         }
         match status.phase {
             crate::worker::mesh_supervision::WorkerMeshPhase::Running => true,
             crate::worker::mesh_supervision::WorkerMeshPhase::Degraded => {
-                self.mesh_policy.allow_degraded_readiness
+                policy.allow_degraded_readiness
             }
             _ => false,
         }

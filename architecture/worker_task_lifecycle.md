@@ -736,4 +736,30 @@ Mesh is drained before worker persistence/finalization:
 2. Worker stops CPU offload
 3. Worker drains request children
 4. Worker flushes persistent state
+
+## Iteration 85: Worker Mesh Supervision Corrective Pass
+
+### Disabled Mesh is Construction-Free
+
+When `mesh.enabled = false` or mesh config is absent, `MeshInit::disabled()` returns no runtime resources. No topology, routing, transport, DNS, YARA, or DHT objects are created. No supervision pipeline exists.
+
+### Restart is Disabled
+
+`restart_enabled` is overridden to `false` at policy-build time regardless of config. `RestartMesh` is unreachable in production policy. No restart metrics increment.
+
+### Topology and DHT Background Tasks
+
+Topology and DHT routing background tasks are returned in `MeshInit` as component handles. The composition root starts them after mesh startup succeeds and registers them in `WorkerTaskRegistry`. They use internal shutdown signals — construction functions construct only, never start background tasks.
+
+### YARA Broadcast Uses JoinSet
+
+The YARA broadcast loop owns per-message children in a local `tokio::task::JoinSet<()>`. Children are spawned into the set with semaphore-bounded concurrency. On shutdown, the loop drains or aborts-and-awaits the `JoinSet` before returning. No bare `tokio::spawn()` remains.
+
+### Required Startup Failure is Handled Directly
+
+For required mesh startup, the composition root already has `Result<(), MeshFailureCause>`. On failure: status transitions once, `SupervisionOutcome::DirectCause` is set immediately, no ready message is sent, the normal supervision loop is not entered, and coordinated shutdown begins. No coordinator round-trip is needed.
+
+### Status Transitions Have Singular Ownership
+
+`start_mesh_generation()` returns facts only (`Result<(), MeshFailureCause>`) without mutating status. The caller transitions `WorkerMeshStatus`. The coordinator handles runtime event transitions. Required startup failure transitions status directly.
 5. Worker awaits critical services

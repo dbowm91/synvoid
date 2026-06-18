@@ -736,7 +736,7 @@ impl MeshSupervisionCoordinator {
                             "restart budget exhausted, escalating to shutdown"
                         );
                         MeshSupervisorDecision::ShutdownWorker(MeshFailureCause::StartupFailed(
-                            "restart budget exhausted".to_string(),
+                            "restart not implemented".to_string(),
                         ))
                     }
                 }
@@ -820,11 +820,13 @@ pub fn build_mesh_supervision_policy(
         return None;
     }
 
-    let restart_limit = if config.restart_enabled {
-        config.restart_limit
-    } else {
-        0
-    };
+    if config.restart_enabled {
+        tracing::warn!(
+            "restart_enabled is true in config but restart is not implemented; forcing to false"
+        );
+    }
+
+    let restart_limit = 0;
 
     let startup_failure = if config.required {
         MeshFailureAction::ShutdownWorker
@@ -838,9 +840,7 @@ pub fn build_mesh_supervision_policy(
         MeshFailureAction::Degrade
     };
 
-    let restartable_exit = if config.restart_enabled && restart_limit > 0 {
-        MeshFailureAction::RestartMesh
-    } else if config.required {
+    let restartable_exit = if config.required {
         MeshFailureAction::ShutdownWorker
     } else {
         MeshFailureAction::Degrade
@@ -862,37 +862,22 @@ pub fn build_mesh_supervision_policy(
 
 /// Start mesh transport for a given generation.
 ///
-/// Transitions status to Starting, awaits managed startup, and
-/// transitions to Running/Failed according to the result.
 /// Returns Ok(()) on success, Err(MeshFailureCause) on failure.
+/// Caller is responsible for transitioning `WorkerMeshStatus` before/after
+/// this call.
 #[cfg(feature = "mesh")]
 pub async fn start_mesh_generation(
     transport: &std::sync::Arc<synvoid_mesh::MeshTransport>,
-    status: &Arc<RwLock<WorkerMeshStatus>>,
     generation: u64,
 ) -> Result<(), MeshFailureCause> {
-    {
-        let mut s = status.write().await;
-        s.transition_starting();
-    }
-
     let result = transport.start().await;
-
     match result {
         Ok(()) => {
-            {
-                let mut s = status.write().await;
-                s.transition_running();
-            }
             tracing::info!(generation, "Mesh transport started successfully");
             Ok(())
         }
         Err(e) => {
             let reason = e.to_string();
-            {
-                let mut s = status.write().await;
-                s.transition_failed(format!("startup failed: {reason}"));
-            }
             tracing::error!(generation, "Mesh startup failed: {}", e);
             Err(MeshFailureCause::StartupFailed(reason))
         }
@@ -902,6 +887,7 @@ pub async fn start_mesh_generation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use synvoid_config::MeshSupervisionConfig;
 
     #[test]
     fn default_policy_is_required() {
@@ -1327,7 +1313,8 @@ mod tests {
         let policy = build_mesh_supervision_policy(true, &config).unwrap();
         assert!(!policy.required);
         assert_eq!(policy.startup_failure, MeshFailureAction::Degrade);
-        assert_eq!(policy.restart_limit, 5);
+        // restart_enabled is overridden to false (Part B), so restart_limit is 0
+        assert_eq!(policy.restart_limit, 0);
         assert_eq!(policy.restart_window, Duration::from_secs(600));
         assert_eq!(policy.restart_backoff_initial, Duration::from_secs(10));
         assert_eq!(policy.restart_backoff_max, Duration::from_secs(120));
@@ -1361,8 +1348,130 @@ mod tests {
         };
         let policy = build_mesh_supervision_policy(true, &config).unwrap();
         assert!(policy.required);
-        assert_eq!(policy.restart_limit, 2);
-        // With restart enabled and required, restartable_exit should be RestartMesh
-        assert_eq!(policy.restartable_exit, MeshFailureAction::RestartMesh);
+        assert_eq!(policy.restart_limit, 0);
+        // restart_enabled is forced to false, so restartable_exit falls back to required -> ShutdownWorker
+        assert_eq!(policy.restartable_exit, MeshFailureAction::ShutdownWorker);
+    }
+
+    #[test]
+    fn restart_enabled_config_overridden_to_false() {
+        let config = synvoid_config::MeshSupervisionConfig {
+            required: false,
+            restart_enabled: true,
+            restart_limit: 5,
+            restart_window_secs: 300,
+            restart_backoff_initial_secs: 5,
+            restart_backoff_max_secs: 60,
+            allow_degraded_readiness: true,
+        };
+        let policy = build_mesh_supervision_policy(true, &config).unwrap();
+        assert_eq!(policy.restart_limit, 0);
+        assert_eq!(policy.restartable_exit, MeshFailureAction::Degrade);
+    }
+
+    #[test]
+    fn policy_never_emits_restart_mesh() {
+        let required_config = synvoid_config::MeshSupervisionConfig {
+            required: true,
+            restart_enabled: true,
+            restart_limit: 10,
+            ..Default::default()
+        };
+        let policy = build_mesh_supervision_policy(true, &required_config).unwrap();
+        assert_ne!(policy.restartable_exit, MeshFailureAction::RestartMesh);
+        assert_ne!(policy.startup_failure, MeshFailureAction::RestartMesh);
+        assert_ne!(policy.critical_exit, MeshFailureAction::RestartMesh);
+
+        let optional_config = synvoid_config::MeshSupervisionConfig {
+            required: false,
+            restart_enabled: true,
+            restart_limit: 10,
+            ..Default::default()
+        };
+        let policy = build_mesh_supervision_policy(true, &optional_config).unwrap();
+        assert_ne!(policy.restartable_exit, MeshFailureAction::RestartMesh);
+        assert_ne!(policy.startup_failure, MeshFailureAction::RestartMesh);
+        assert_ne!(policy.critical_exit, MeshFailureAction::RestartMesh);
+    }
+
+    #[tokio::test]
+    async fn coordinator_never_transitions_to_restarting() {
+        let status = Arc::new(RwLock::new(WorkerMeshStatus::default()));
+        let policy = MeshSupervisionPolicy::required();
+        let (event_tx, event_rx) = mpsc::channel(8);
+        let (decision_tx, mut decision_rx) = mpsc::channel(8);
+
+        let mut coordinator =
+            MeshSupervisionCoordinator::new(policy, status.clone(), event_rx, decision_tx);
+
+        let (_, shutdown_rx) = watch::channel(false);
+
+        event_tx
+            .send(MeshSupervisionEvent::StartupFailed("test".into()))
+            .await
+            .unwrap();
+        drop(event_tx);
+
+        coordinator.run(shutdown_rx).await;
+
+        let decision = decision_rx.recv().await.unwrap();
+        assert!(
+            !matches!(decision, MeshSupervisorDecision::RestartMesh),
+            "policy builder never produces RestartMesh"
+        );
+
+        let snapshot = status.read().await;
+        assert_ne!(snapshot.phase, WorkerMeshPhase::Restarting);
+    }
+
+    #[test]
+    fn disabled_config_never_creates_required_fallback() {
+        let config = MeshSupervisionConfig::default();
+        let result = build_mesh_supervision_policy(false, &config);
+        assert!(
+            result.is_none(),
+            "disabled mesh must produce None, not a fallback policy"
+        );
+    }
+
+    #[test]
+    fn disabled_config_status_remains_disabled() {
+        let status = WorkerMeshStatus::default();
+        assert_eq!(status.phase, WorkerMeshPhase::Disabled);
+        assert!(matches!(status.health, MeshServiceHealth::Healthy));
+        assert!(status.last_exit.is_none());
+        assert_eq!(status.restart_attempts, 0);
+    }
+
+    #[test]
+    fn optional_mesh_ready_without_transport() {
+        let policy = MeshSupervisionPolicy::optional();
+        assert!(!policy.required);
+        let ready = !policy.required;
+        assert!(ready);
+    }
+
+    #[test]
+    fn required_mesh_not_ready_when_starting() {
+        let policy = MeshSupervisionPolicy::required();
+        let phase = WorkerMeshPhase::Starting;
+        let ready = match phase {
+            WorkerMeshPhase::Running => true,
+            WorkerMeshPhase::Degraded if policy.allow_degraded_readiness => true,
+            _ => false,
+        };
+        assert!(!ready);
+    }
+
+    #[test]
+    fn required_mesh_ready_when_running() {
+        let policy = MeshSupervisionPolicy::required();
+        let phase = WorkerMeshPhase::Running;
+        let ready = match phase {
+            WorkerMeshPhase::Running => true,
+            WorkerMeshPhase::Degraded if policy.allow_degraded_readiness => true,
+            _ => false,
+        };
+        assert!(ready);
     }
 }

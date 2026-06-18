@@ -689,23 +689,6 @@ impl DhtRoutingManager {
             .collect()
     }
 
-    pub async fn start_ping_loop(&self) {
-        if !self.routing_enabled {
-            return;
-        }
-
-        let self_arc = Arc::new(self.clone());
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
-            loop {
-                interval.tick().await;
-                self_arc.ping_peers().await;
-            }
-        });
-
-        tracing::info!("DHT ping loop started");
-    }
-
     pub async fn ping_peers(&self) {
         let transport = {
             let t = self.ping_transport.read();

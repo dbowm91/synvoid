@@ -2666,9 +2666,10 @@ mod mesh_supervision_behavioral {
         let event = MeshSupervisionEvent::TaskExit(exit);
         let decision = decide_mesh_action(&policy, &WorkerMeshPhase::Running, &event, false);
 
+        // Part B: restart_enabled is overridden to false, so restartable_exit is Degrade
         assert!(
-            matches!(decision, MeshSupervisorDecision::RestartMesh),
-            "restart-enabled policy must produce RestartMesh for restartable exit: {:?}",
+            matches!(decision, MeshSupervisorDecision::MarkDegraded(_)),
+            "restart-enabled policy with restart disabled must produce MarkDegraded for restartable exit: {:?}",
             decision
         );
     }
@@ -2986,7 +2987,8 @@ mod mesh_supervision_behavioral {
         let policy = build_mesh_supervision_policy(true, &config).unwrap();
 
         assert!(!policy.required);
-        assert_eq!(policy.restart_limit, 3);
+        // Part B: restart_enabled is overridden to false, so restart_limit is 0
+        assert_eq!(policy.restart_limit, 0);
         assert!(!policy.readiness_requires_mesh);
         assert!(policy.allow_degraded_readiness);
         assert_eq!(policy.startup_failure, MeshFailureAction::Degrade);
@@ -3017,9 +3019,10 @@ mod mesh_supervision_behavioral {
             ..Default::default()
         };
         let policy = build_mesh_supervision_policy(true, &config).unwrap();
+        // Part B: restart_enabled is overridden to false, so restart_limit is 0
         assert_eq!(
-            policy.restart_limit, 7,
-            "restart_enabled must preserve limit"
+            policy.restart_limit, 0,
+            "restart_enabled must have limit overridden to 0 (restart not implemented)"
         );
     }
 
@@ -3202,10 +3205,10 @@ mod mesh_supervision_behavioral {
             "MeshInit must carry yara_broadcast"
         );
 
-        // DHT routing init
+        // DHT routing manager
         assert!(
-            content.contains("dht_routing_init"),
-            "MeshInit must carry dht_routing_init"
+            content.contains("dht_routing_manager"),
+            "MeshInit must carry dht_routing_manager"
         );
 
         // No bare tokio::spawn for long-lived tasks (strip comments before checking)

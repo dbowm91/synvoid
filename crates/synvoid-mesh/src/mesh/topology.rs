@@ -47,6 +47,10 @@ pub struct MeshTopology {
     record_store: ParkingLotRwLock<Option<Arc<RecordStoreManager>>>,
     inflight_dht_queries:
         Arc<DashMap<String, Vec<tokio::sync::oneshot::Sender<Vec<crate::dht::VerifiedUpstream>>>>>,
+    /// Shutdown signal for background tasks. Sending `true` signals all loops to exit.
+    shutdown_tx: Arc<tokio::sync::watch::Sender<bool>>,
+    /// Join handles for background tasks started by `start_background_tasks()`.
+    background_handles: Arc<parking_lot::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
 }
 
 impl MeshTopology {
@@ -119,6 +123,8 @@ impl MeshTopology {
             peer_scores_compat: RwLock::new(HashMap::new()),
             record_store: ParkingLotRwLock::new(None),
             inflight_dht_queries: Arc::new(DashMap::new()),
+            shutdown_tx: Arc::new(tokio::sync::watch::channel(false).0),
+            background_handles: Arc::new(parking_lot::Mutex::new(Vec::new())),
         }
     }
 
@@ -1820,23 +1826,53 @@ impl MeshTopology {
     }
 
     pub fn start_background_tasks(self: &Arc<Self>) {
+        let mut handles = self.background_handles.lock();
+
         let topology = self.clone();
-        tokio::spawn(async move {
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
+        let handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(300));
             loop {
-                interval.tick().await;
-                topology.cleanup_stale_metrics(10000).await;
+                tokio::select! {
+                    _ = shutdown_rx.changed() => {
+                        tracing::debug!("Topology stale-metrics loop shutdown");
+                        break;
+                    }
+                    _ = interval.tick() => {
+                        topology.cleanup_stale_metrics(10000).await;
+                    }
+                }
             }
         });
+        handles.push(handle);
 
         let topology = Arc::clone(self);
-        tokio::spawn(async move {
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
+        let handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(60));
             loop {
-                interval.tick().await;
-                topology.check_global_node_liveness().await;
+                tokio::select! {
+                    _ = shutdown_rx.changed() => {
+                        tracing::debug!("Topology global-node-liveness loop shutdown");
+                        break;
+                    }
+                    _ = interval.tick() => {
+                        topology.check_global_node_liveness().await;
+                    }
+                }
             }
         });
+        handles.push(handle);
+    }
+
+    /// Signal all background tasks to stop and wait for them to complete.
+    pub async fn shutdown(&self) {
+        let _ = self.shutdown_tx.send(true);
+        let handles: Vec<_> = self.background_handles.lock().drain(..).collect();
+        for handle in handles {
+            let _ = handle.await;
+        }
+        tracing::info!("Topology background tasks shut down");
     }
 
     pub async fn check_global_node_liveness(&self) {
