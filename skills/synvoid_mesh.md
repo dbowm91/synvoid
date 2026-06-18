@@ -1084,7 +1084,7 @@ This ensures background tasks are owned by the task group from the moment they a
 
 ## Iteration 87 — DHT Routing Init in Startup, Generation-Support Bundles, YARA Metrics
 
-### Part A: DHT Routing Initialization Moved Into Transactional Startup (Phase 5.5)
+### Part A: DHT Routing Initialization Moved Into Transactional Startup (Phase 3.5)
 
 `DhtRoutingManager` initialization (routing table creation and seeding) is now part of the transactional `MeshStartupStage` rather than a separate worker-owned one-shot task. This ensures the routing table exists before any bootstrap phase that depends on it.
 
@@ -1145,13 +1145,25 @@ New field on `MeshStartupPolicy`:
 
 The `future` field in `MeshBackgroundTaskSpec` is now documented as **fully constructed by the builder** — the `FnOnce` closure is expected to produce a complete, ready-to-run `Pin<Box<dyn Future>>`. No further setup or wrapping is applied by `register_background_specs()`. This clarifies that the builder is responsible for all future configuration, not just the body.
 
-### Part K: Removed `dht_routing_init` One-Shot Worker Task
+### Part K: Removed `dht_routing_init` One-Shot Worker Task (Phase 3.5)
 
-The worker-owned `dht_routing_init` one-shot task has been removed. DHT routing initialization now occurs within `MeshStartupStage::start()` as Phase 5.5, before seed/peer/DHT bootstrap phases. This eliminates the ordering dependency between the one-shot task and the bootstrap phases.
+The worker-owned `dht_routing_init` one-shot task has been removed. DHT routing initialization now occurs within `MeshStartupStage::start()` as Phase 3.5, before seed/peer/DHT bootstrap phases. This eliminates the ordering dependency between the one-shot task and the bootstrap phases.
 
 ### Part L: Removed `dht_routing_manager` from `MeshInit` and `MeshSupportTasks`
 
 `dht_routing_manager` is no longer a field on `MeshInit` or `MeshSupportTasks`. The routing manager is now owned exclusively by `MeshTransport` and initialized during the transactional startup stage. Worker composition roots no longer hold a reference to the routing manager — all DHT routing operations go through the transport.
+
+## Iteration 88 — Worker Mesh Final Corrective Pass
+
+**Part A — DHT initialization ordering**: DHT routing table initialization moved from Phase 5.5 (after peer connections) to Phase 3.5 (before any peer connections). This ensures the routing table exists before any seed or configured-peer connection callback can mutate it via `dht_on_peer_connected()`. The `dht_ready` flag gates DHT bootstrap (Phase 6) and DHT background maintenance (Phase 7) on actual initialization state. Startup peer insertion now uses `add_peer_checked()` which returns an error instead of silently no-oping.
+
+**Part B — Cooperative support teardown**: Optional mesh degradation now performs cooperative cancellation followed by bounded join with abort fallback via `stop_mesh_generation_support()`. The `cancel_then_join_tasks()` registry method replaces `cancel_and_join_tasks()`, accepting cooperative and forced timeouts plus `expected_during_shutdown` context. `MeshSupportStopReport` tracks cooperative/aborted/failed counts. Dead `retain()` block removed from registry.
+
+**Part C — YARA bridge task removal**: The detached `tokio::spawn` bridge that combined worker shutdown and generation cancel signals into a single watch channel has been removed. `run_yara_broadcast_loop()` now accepts `worker_shutdown_rx` and `generation_shutdown_rx` directly, selecting on both. Already-true receivers are checked at loop entry to prevent missed signals.
+
+**Part D — DHT degraded reporting**: `report.dht_routing_initialized` now reflects actual `is_initialized()` state instead of unconditional `true`. `DhtInitializationSnapshot.was_initialized_this_attempt` correctly captures `!was_initialized && initialized`. DHT maintenance is skipped with a warning when initialization failed.
+
+**Part E — Documentation**: MeshSupportTasks doc comments no longer reference DHT routing init. Final ownership model documented.
 
 ## Testing Commands
 
@@ -1165,6 +1177,7 @@ cargo test --test mesh_task_ownership_guard --features mesh,dns
 cargo test --test mesh_forced_cleanup --features mesh,dns
 cargo test --test mesh_http_framing --features mesh,dns
 cargo test --test worker_supervision_control_flow --features mesh,dns
+cargo test --test worker_mesh_supervision_boundary_guard --features mesh,dns  # includes iter88_* guardrails
 
 # Unit tests
 cargo test -p synvoid-mesh --features mesh lifecycle

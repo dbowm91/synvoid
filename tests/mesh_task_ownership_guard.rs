@@ -2954,3 +2954,226 @@ fn iter79_stop_peer_session_task_for_test_not_public() {
         "stop_peer_session_task_for_test must not exist — tests call private fn directly"
     );
 }
+
+// ── Iteration 88: Final Corrective Pass Guardrails ─────────────────────────
+
+#[test]
+fn iter88_dht_init_before_peer_connect() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    // DHT initialization (Phase 3.5) must appear before seed bootstrap (Phase 4)
+    let dht_init_pos = content
+        .find("Phase 3.5: Initialize or restore DHT routing table")
+        .expect("DHT init phase must exist");
+    let seed_pos = content
+        .find("Phase 4: Bootstrap from seeds")
+        .expect("Seed bootstrap phase must exist");
+    assert!(
+        dht_init_pos < seed_pos,
+        "DHT initialization must occur before seed bootstrap: dht_init at {}, seed at {}",
+        dht_init_pos,
+        seed_pos
+    );
+}
+
+#[test]
+fn iter88_dht_init_before_peer_connect_phase5() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    let dht_init_pos = content
+        .find("Phase 3.5: Initialize or restore DHT routing table")
+        .expect("DHT init phase must exist");
+    let peer_pos = content
+        .find("Phase 5: Connect configured peers")
+        .expect("Peer connect phase must exist");
+    assert!(
+        dht_init_pos < peer_pos,
+        "DHT initialization must occur before peer connection: dht_init at {}, peer at {}",
+        dht_init_pos,
+        peer_pos
+    );
+}
+
+#[test]
+fn iter88_dht_bootstrap_gated_on_dht_ready() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        content.contains("if dht_ready {"),
+        "DHT bootstrap must be gated on dht_ready flag"
+    );
+}
+
+#[test]
+fn iter88_dht_maintenance_skipped_when_not_ready() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        content.contains("DHT routing unavailable; skipping DHT maintenance tasks"),
+        "Must log warning when DHT maintenance is skipped"
+    );
+}
+
+#[test]
+fn iter88_startup_peer_uses_checked_dht_insertion() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        content.contains("dht_on_peer_connected_checked"),
+        "Startup peer connection must use checked DHT insertion"
+    );
+}
+
+#[test]
+fn iter88_runtime_peer_uses_unchecked_dht_insertion() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport_connection.rs");
+    // Runtime path should still use the non-checked variant
+    assert!(
+        content.contains("pub(crate) async fn dht_on_peer_connected("),
+        "Runtime dht_on_peer_connected must still exist"
+    );
+}
+
+#[test]
+fn iter88_checked_dht_insertion_returns_result() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport_connection.rs");
+    assert!(
+        content.contains("async fn dht_on_peer_connected_checked"),
+        "Checked DHT insertion method must exist"
+    );
+    assert!(
+        content.contains("Result<(), MeshTransportError>"),
+        "Checked DHT insertion must return Result"
+    );
+}
+
+#[test]
+fn iter88_no_yara_bridge_task() {
+    let content = read_file("src/worker/unified_server/mod.rs");
+    // The bridge task that combined two receivers into one should be removed
+    assert!(
+        !content.contains("let combined_shutdown = {"),
+        "YARA bridge task must be removed"
+    );
+}
+
+#[test]
+fn iter88_yara_loop_accepts_two_receivers() {
+    let content = read_file("src/worker/unified_server/mod.rs");
+    assert!(
+        content.contains("worker_shutdown_rx: tokio::sync::watch::Receiver<bool>"),
+        "YARA loop must accept worker shutdown receiver"
+    );
+    assert!(
+        content.contains("generation_shutdown_rx: tokio::sync::watch::Receiver<bool>"),
+        "YARA loop must accept generation shutdown receiver"
+    );
+}
+
+#[test]
+fn iter88_yara_checks_already_true_signals() {
+    let content = read_file("src/worker/unified_server/mod.rs");
+    assert!(
+        content.contains("*worker_shutdown_rx.borrow()")
+            || content.contains("worker_shutdown_rx.borrow()"),
+        "YARA loop must check already-true worker shutdown signal"
+    );
+    assert!(
+        content.contains("*generation_shutdown_rx.borrow()")
+            || content.contains("generation_shutdown_rx.borrow()"),
+        "YARA loop must check already-true generation shutdown signal"
+    );
+}
+
+#[test]
+fn iter88_cancel_then_join_tasks_exists() {
+    let content = read_file("src/worker/task_registry.rs");
+    assert!(
+        content.contains("pub async fn cancel_then_join_tasks"),
+        "cancel_then_join_tasks method must exist"
+    );
+    assert!(
+        !content.contains("pub async fn cancel_and_join_tasks"),
+        "cancel_and_join_tasks must be replaced by cancel_then_join_tasks"
+    );
+}
+
+#[test]
+fn iter88_no_dead_retain_block() {
+    let content = read_file("src/worker/task_registry.rs");
+    // The dead retain block always returned true regardless of condition
+    assert!(
+        !content.contains("retain(|t| {")
+            || !content.contains("if id_set.contains(&t.id) { true } else { true }"),
+        "Dead retain block must be removed"
+    );
+}
+
+#[test]
+fn iter88_stop_mesh_generation_support_exists() {
+    let content = read_file("src/worker/unified_server/mod.rs");
+    assert!(
+        content.contains("async fn stop_mesh_generation_support"),
+        "stop_mesh_generation_support function must exist"
+    );
+}
+
+#[test]
+fn iter88_support_stop_context_exists() {
+    let content = read_file("src/worker/unified_server/mod.rs");
+    assert!(
+        content.contains("pub enum SupportStopContext"),
+        "SupportStopContext enum must exist"
+    );
+}
+
+#[test]
+fn iter88_mesh_support_stop_report_exists() {
+    let content = read_file("src/worker/unified_server/mod.rs");
+    assert!(
+        content.contains("pub struct MeshSupportStopReport"),
+        "MeshSupportStopReport struct must exist"
+    );
+}
+
+#[test]
+fn iter88_report_reflects_actual_init_state() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    // report.dht_routing_initialized should be set from initialized, not unconditional true
+    assert!(
+        content.contains("report.dht_routing_initialized = initialized;"),
+        "report.dht_routing_initialized must reflect actual state, not unconditional true"
+    );
+}
+
+#[test]
+fn iter88_before_peer_connect_hook_exists() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+    assert!(
+        content.contains("StartupFailurePoint::BeforePeerConnect"),
+        "BeforePeerConnect hook must exist for test injection"
+    );
+}
+
+#[test]
+fn iter88_mesh_support_tasks_no_dht_init() {
+    let content = read_file("src/worker/unified_server/mod.rs");
+    // The summary line of the doc comment should not list DHT init as a support task.
+    // (The comment correctly notes DHT init belongs to MeshTransport, but the summary
+    // line should only list DNS verification and YARA broadcast.)
+    let summary_start = content
+        .find("/// Register mesh generation support tasks")
+        .expect("MeshSupportTasks doc comment must exist");
+    // Find the end of the summary line (first non-doc line or next doc line)
+    let summary_end = content[summary_start..].find('\n').unwrap_or(200);
+    let summary_line = &content[summary_start..summary_start + summary_end];
+    assert!(
+        !summary_line.contains("DHT routing init"),
+        "MeshSupportTasks doc summary must not list DHT routing init as a support task: {}",
+        summary_line
+    );
+}
+
+#[test]
+fn iter88_dht_add_peer_logs_warning_when_uninitialized() {
+    let content = read_file("crates/synvoid-mesh/src/mesh/dht/routing/manager.rs");
+    assert!(
+        content.contains("DHT add_peer skipped: routing table not initialized"),
+        "add_peer must log warning when routing table is uninitialized"
+    );
+}

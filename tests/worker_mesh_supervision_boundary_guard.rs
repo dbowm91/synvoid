@@ -598,8 +598,9 @@ fn yara_broadcast_drains_on_channel_close() {
         "yara broadcast must receive from mpsc channel"
     );
     assert!(
-        content.contains("YARA broadcast loop received shutdown signal"),
-        "yara broadcast must handle shutdown signal"
+        content.contains("YARA broadcast loop received worker shutdown")
+            || content.contains("YARA broadcast loop received generation shutdown"),
+        "yara broadcast must handle worker or generation shutdown signal"
     );
 }
 
@@ -1375,9 +1376,146 @@ mod iter87_behavioral_guardrails {
     fn transport_calls_dht_init_before_bootstrap() {
         let content = std::fs::read_to_string("crates/synvoid-mesh/src/mesh/transport.rs")
             .expect("failed to read transport.rs");
+        // Iteration 88: DHT init moved from Phase 5.5 to Phase 3.5 (before peers)
         assert!(
-            content.contains("Phase 5.5") || content.contains("phase 5.5"),
-            "transport.rs must reference Phase 5.5 for DHT routing initialization ordering"
+            content.contains("Phase 3.5"),
+            "transport.rs must reference Phase 3.5 for DHT routing initialization ordering"
+        );
+    }
+}
+
+// --- Iteration 88: Final Corrective Pass Guardrails ---
+
+mod iter88_behavioral_guardrails {
+    use std::sync::Arc;
+    use synvoid_mesh::config::MeshConfig;
+    use synvoid_mesh::dht::routing::DhtRoutingManager;
+
+    /// Construct a MeshConfig with DHT routing enabled or disabled.
+    /// Uses serde deserialization since `cached_pow` is a private field.
+    fn test_config_with_dht(routing_enabled: bool) -> Arc<MeshConfig> {
+        let json = format!(
+            r#"{{"node_id": "iter88-test-node", "dht": {{"routing_enabled": {}}}}}"#,
+            routing_enabled
+        );
+        let config: MeshConfig = serde_json::from_str(&json).expect("valid MeshConfig JSON");
+        Arc::new(config)
+    }
+
+    #[tokio::test]
+    async fn dht_checked_insertion_fails_before_init() {
+        let config = test_config_with_dht(true);
+        let rm = DhtRoutingManager::new(config);
+        let result = rm
+            .add_peer_checked(
+                "peer1".to_string(),
+                "127.0.0.1:443".to_string(),
+                443,
+                synvoid_mesh::config::MeshNodeRole::EDGE,
+                None,
+                false,
+                None,
+                None,
+                None,
+            )
+            .await;
+        assert!(result.is_err(), "add_peer_checked must fail before init");
+    }
+
+    #[tokio::test]
+    async fn dht_checked_insertion_succeeds_after_init() {
+        let config = test_config_with_dht(true);
+        let rm = DhtRoutingManager::new(config);
+        rm.init().await;
+        let result = rm
+            .add_peer_checked(
+                "peer1".to_string(),
+                "127.0.0.1:443".to_string(),
+                443,
+                synvoid_mesh::config::MeshNodeRole::EDGE,
+                None,
+                false,
+                None,
+                None,
+                None,
+            )
+            .await;
+        assert!(result.is_ok(), "add_peer_checked must succeed after init");
+    }
+
+    #[tokio::test]
+    async fn dht_unchecked_insertion_succeeds_after_init() {
+        let config = test_config_with_dht(true);
+        let rm = DhtRoutingManager::new(config);
+        rm.init().await;
+        rm.add_peer(
+            "peer1".to_string(),
+            "127.0.0.1:443".to_string(),
+            443,
+            synvoid_mesh::config::MeshNodeRole::EDGE,
+            None,
+            false,
+            None,
+            None,
+            None,
+        )
+        .await;
+        assert!(
+            rm.is_initialized().await,
+            "Routing table must be initialized"
+        );
+    }
+
+    #[test]
+    fn yara_broadcast_loop_accepts_two_receivers() {
+        // Source-text check that the YARA loop function signature accepts both
+        let content = std::fs::read_to_string("src/worker/unified_server/mod.rs")
+            .expect("failed to read mod.rs");
+        assert!(
+            content.contains("worker_shutdown_rx: tokio::sync::watch::Receiver<bool>"),
+            "YARA loop must accept worker_shutdown_rx"
+        );
+        assert!(
+            content.contains("generation_shutdown_rx: tokio::sync::watch::Receiver<bool>"),
+            "YARA loop must accept generation_shutdown_rx"
+        );
+    }
+
+    #[test]
+    fn stop_mesh_generation_support_exists() {
+        let content = std::fs::read_to_string("src/worker/unified_server/mod.rs")
+            .expect("failed to read mod.rs");
+        assert!(
+            content.contains("async fn stop_mesh_generation_support("),
+            "stop_mesh_generation_support must exist"
+        );
+        assert!(
+            content.contains("SupportStopContext"),
+            "SupportStopContext must be used"
+        );
+    }
+
+    #[test]
+    fn cancel_then_join_tasks_replaces_old_method() {
+        let content = std::fs::read_to_string("src/worker/task_registry.rs")
+            .expect("failed to read task_registry.rs");
+        assert!(
+            content.contains("cancel_then_join_tasks"),
+            "cancel_then_join_tasks must exist"
+        );
+        assert!(
+            !content.contains("fn cancel_and_join_tasks("),
+            "cancel_and_join_tasks must not exist"
+        );
+    }
+
+    #[test]
+    fn task_subset_cleanup_report_exists() {
+        let content = std::fs::read_to_string("src/worker/task_registry.rs")
+            .expect("failed to read task_registry.rs");
+        assert!(
+            content.contains("pub struct TaskSubsetCleanupReport"),
+            "TaskSubsetCleanupReport must exist"
         );
     }
 }

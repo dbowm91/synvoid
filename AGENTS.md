@@ -184,6 +184,10 @@ cargo check --no-default-features --features mesh,dns
 | `build_background_tasks()` | `crates/synvoid-mesh/src/mesh/topology.rs` and `crates/synvoid-mesh/src/mesh/dht/routing/manager.rs` (Iteration 86 — replaces `start_background_tasks()`) |
 | `register_background_specs()` | `crates/synvoid-mesh/src/mesh/task_group.rs` (Iteration 86 — registers background task specs after mesh startup) |
 | `MeshGenerationSupport` | `src/worker/unified_server/mod.rs` (Iteration 87 — worker-owned support-generation type) |
+| `TaskSubsetCleanupReport` | `src/worker/task_registry.rs` (Iteration 88 — task cleanup report with exits and not-found IDs) |
+| `SupportStopContext` | `src/worker/unified_server/mod.rs` (Iteration 88 — context enum for stopping mesh support tasks) |
+| `MeshSupportStopReport` | `src/worker/unified_server/mod.rs` (Iteration 88 — report from `stop_mesh_generation_support()`) |
+| `stop_mesh_generation_support()` | `src/worker/unified_server/mod.rs` (Iteration 88 — cooperative then forced cleanup helper) |
 
 ## Data-Plane Composition Root Boundary
 
@@ -427,7 +431,11 @@ Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.overrid
 - **start_mesh_generation()**: `src/worker/mesh_supervision.rs` — async helper for awaiting mesh startup. Composes `transport.start()`; returns `Result<(), MeshFailureCause>`. Caller is responsible for transitioning `WorkerMeshStatus` before/after this call (facts only, no status mutation). Required mesh startup is awaited inline before worker ready signal; optional mesh starts async (Iteration 84). **Iteration 85**: No status transitions — runtime helper returns facts only
 - **OneShot task class**: `src/worker/task_registry.rs` — `TaskClass::OneShot` variant added for tasks that run once during initialization and complete. Not restarted, dropped after completion (Iteration 84)
 - **MeshGenerationSupport**: `src/worker/unified_server/mod.rs` — worker-owned support-generation type with `generation`, `task_ids`, and `cancel_tx`. `register_mesh_generation_support()` returns `Result<MeshGenerationSupport, WorkerShutdownCause>`. Generation-specific cancellation via watch channel (Iteration 87). When optional mesh degrades via `MarkDegraded`, the supervision loop calls `active_mesh_support.take()` to cancel and clear the generation's DNS/YARA support tasks without stopping unrelated worker tasks. Cancel is idempotent via watch channel (Iteration 87, Phase 12)
-- **MeshSupportTasks**: `src/worker/unified_server/mod.rs` — support infrastructure for mesh (DNS verification, YARA broadcast). **Iteration 87**: No longer carries `dht_routing_manager` — routing manager is now owned exclusively by `MeshTransport` and initialized during the transactional startup stage
+- **MeshSupportTasks**: `src/worker/unified_server/mod.rs` — support infrastructure for mesh (DNS verification, YARA broadcast). **Iteration 87**: No longer carries `dht_routing_manager` — routing manager is now owned exclusively by `MeshTransport` and initialized during the transactional startup stage. **Iteration 88**: YARA bridge task removed — `run_yara_broadcast_loop()` accepts worker and generation shutdown receivers directly.
+- **TaskSubsetCleanupReport**: `src/worker/task_registry.rs` — report returned by `shutdown_and_join_tasks()` with exit metadata for all matched tasks and IDs not found. Contains `exits: Vec<NamedTaskExit>` and `not_found_ids: Vec<String>` (Iteration 88).
+- **SupportStopContext**: `src/worker/unified_server/mod.rs` — enum classifying the context for stopping mesh support tasks. Variants: `SupervisorShutdown`, `OptionalMeshDegraded`, `MeshGenerationReplaced` (Iteration 88).
+- **MeshSupportStopReport**: `src/worker/unified_server/mod.rs` — report returned by `stop_mesh_generation_support()` with DNS and YARA cancellation results, task join outcomes, and elapsed duration (Iteration 88).
+- **stop_mesh_generation_support()**: `src/worker/unified_server/mod.rs` — async helper performing cooperative then forced cleanup of mesh support tasks (DNS verification, YARA broadcast). Accepts `SupportStopContext`, returns `MeshSupportStopReport` (Iteration 88).
 - **MeshInit::disabled()**: `src/worker/unified_server/init_mesh.rs` — canonical constructor returning no runtime resources (all fields `None`/empty). Used when mesh config is absent or `enabled = false`. No topology, routing, transport, DNS, YARA, or DHT runtime objects are created. (Iteration 85)
 - **validate_mesh_runtime_inputs()**: `src/worker/unified_server/init_mesh.rs` — validates mesh runtime configuration before constructing transport/topology/DHT objects. Called during mesh init to catch configuration invariant violations early (Iteration 86)
 - **MeshConfigurationInvariant(String)**: `src/worker/task_registry.rs` — variant on `WorkerShutdownCause` for transport/policy configuration mismatches detected during init validation (Iteration 86)
@@ -548,7 +556,7 @@ The `skills/` directory contains detailed documentation for various subsystems:
 | `static_files.md` | Static file serving patterns |
 | `streaming_waf.md` | Streaming WAF engine patterns |
 | `supply_chain_hashes.md` | Supply chain security with pip --require-hashes |
-| `synvoid_mesh.md` | Mesh networking patterns (Iterations 68–87) |
+| `synvoid_mesh.md` | Mesh networking patterns (Iterations 68–88) |
 | `threat_feed_production.md` | Production and signing of threat intel feeds |
 | `topology_visualizer.md` | Topology visualizer API |
 | `waf_bot_detection.md` | WAF bot detection patterns |

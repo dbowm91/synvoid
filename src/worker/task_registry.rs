@@ -348,6 +348,35 @@ impl TaskRegistryMetrics {
     }
 }
 
+/// Report from subset task cleanup (Iteration 88, Part B).
+#[derive(Debug)]
+pub struct TaskSubsetCleanupReport {
+    /// Exits for all matched tasks (cooperative + forced).
+    pub exits: Vec<NamedTaskExit>,
+    /// IDs that were not found in the registry.
+    pub not_found_ids: Vec<TaskId>,
+}
+
+impl TaskSubsetCleanupReport {
+    /// Returns true if all tasks exited cleanly (no aborts, no failures).
+    pub fn clean(&self) -> bool {
+        self.exits.iter().all(|e| {
+            matches!(
+                e.reason,
+                TaskExitReason::CleanCompletion | TaskExitReason::Cancelled
+            )
+        })
+    }
+
+    /// Number of tasks that required forced abort.
+    pub fn aborted_count(&self) -> usize {
+        self.exits
+            .iter()
+            .filter(|e| matches!(e.reason, TaskExitReason::Aborted))
+            .count()
+    }
+}
+
 /// Entry for a registered task.
 struct RegisteredTask {
     id: TaskId,
@@ -726,73 +755,157 @@ impl WorkerTaskRegistry {
         exits
     }
 
-    /// Cancel and join a specific subset of tasks by their IDs (Iteration 87, Phase 13).
+    /// Cancel then join a specific subset of tasks by their IDs (Iteration 88, Part B).
     ///
-    /// Aborts each matching task and awaits completion up to `timeout`.
-    /// Returns a report of exits for the matched tasks. Tasks not found
-    /// in the registry are silently skipped.
+    /// Performs cooperative cancellation first (waits up to `cooperative_timeout`),
+    /// then aborts remaining tasks and waits up to `forced_timeout`.
+    /// Returns a `TaskSubsetCleanupReport` with exit metadata for all matched tasks.
+    /// Tasks not found in the registry are recorded in `not_found_ids`.
     ///
-    /// This does NOT remove unrelated tasks from registry ownership.
-    pub async fn cancel_and_join_tasks(
+    /// `expected_during_shutdown` controls whether exits are classified as expected
+    /// (true for whole-worker shutdown) or unexpected (false for live degradation).
+    pub async fn cancel_then_join_tasks(
         &mut self,
         task_ids: &[TaskId],
-        timeout: Duration,
-    ) -> Vec<NamedTaskExit> {
+        cooperative_timeout: Duration,
+        forced_timeout: Duration,
+        expected_during_shutdown: bool,
+    ) -> TaskSubsetCleanupReport {
         let id_set: std::collections::HashSet<TaskId> = task_ids.iter().copied().collect();
-        let deadline = tokio::time::Instant::now() + timeout;
         let mut exits = Vec::new();
+        let mut not_found_ids = Vec::new();
 
-        // Drain matching tasks from both lists.
+        // Phase 1: Collect matched tasks and remove from registry.
         let mut matched: Vec<RegisteredTask> = Vec::new();
-        self.critical.retain(|t| {
-            if id_set.contains(&t.id) {
-                // Can't move out of a &mut reference in retain. Use a different approach.
-                true
-            } else {
-                true
-            }
-        });
-
-        // Since we can't partially move from Vec in retain, use index-based removal.
-        // Collect indices to remove (in reverse order to preserve indices).
         for vec in [&mut self.critical, &mut self.background] {
             let mut i = 0;
             while i < vec.len() {
                 if id_set.contains(&vec[i].id) {
                     let task = vec.swap_remove(i);
                     matched.push(task);
-                    // Don't increment i — swap_remove shifts the last element here.
                 } else {
                     i += 1;
                 }
             }
         }
 
-        // Abort and join each matched task.
-        for task in matched {
-            task.handle.abort();
-            let join_result = tokio::time::timeout_at(deadline, task.handle).await;
-            let reason = match join_result {
-                Ok(Ok(())) => TaskExitReason::CleanCompletion,
-                Ok(Err(e)) => classify_join_error(e),
-                Err(_) => {
-                    tracing::error!("Task '{}' subset join timeout, already aborted", task.name);
-                    TaskExitReason::Aborted
-                }
-            };
-            let already_reported = self.reported_exits.lock().unwrap().remove(&task.id);
-            let final_reason = already_reported.unwrap_or(reason);
-            exits.push(NamedTaskExit {
-                id: task.id,
-                name: task.name,
-                class: task.class,
-                reason: final_reason,
-                expected_during_shutdown: true,
-            });
+        // Record IDs that were not found.
+        for &id in &id_set {
+            if !matched.iter().any(|t| t.id == id) {
+                not_found_ids.push(id);
+            }
         }
 
-        tracing::debug!("Subset join complete: {} tasks joined", exits.len());
-        exits
+        // Phase 2: Cooperative wait — let tasks finish naturally.
+        if !matched.is_empty() {
+            let cooperative_deadline = tokio::time::Instant::now() + cooperative_timeout;
+            let mut still_pending: Vec<RegisteredTask> = Vec::new();
+
+            for mut task in matched {
+                // Check if task is already finished (non-blocking).
+                if task.handle.is_finished() {
+                    // Task already completed — join without timeout.
+                    let join_result = task.handle.await;
+                    let reason = match join_result {
+                        Ok(()) => {
+                            let already_reported =
+                                self.reported_exits.lock().unwrap().remove(&task.id);
+                            already_reported.unwrap_or(TaskExitReason::CleanCompletion)
+                        }
+                        Err(e) => {
+                            let already_reported =
+                                self.reported_exits.lock().unwrap().remove(&task.id);
+                            already_reported.unwrap_or(classify_join_error(e))
+                        }
+                    };
+                    exits.push(NamedTaskExit {
+                        id: task.id,
+                        name: task.name,
+                        class: task.class,
+                        reason,
+                        expected_during_shutdown,
+                    });
+                } else {
+                    // Wait with timeout.
+                    let join_result =
+                        tokio::time::timeout_at(cooperative_deadline, &mut task.handle).await;
+                    match join_result {
+                        Ok(Ok(())) => {
+                            let already_reported =
+                                self.reported_exits.lock().unwrap().remove(&task.id);
+                            let reason =
+                                already_reported.unwrap_or(TaskExitReason::CleanCompletion);
+                            exits.push(NamedTaskExit {
+                                id: task.id,
+                                name: task.name,
+                                class: task.class,
+                                reason,
+                                expected_during_shutdown,
+                            });
+                        }
+                        Ok(Err(e)) => {
+                            let already_reported =
+                                self.reported_exits.lock().unwrap().remove(&task.id);
+                            let reason = already_reported.unwrap_or(classify_join_error(e));
+                            exits.push(NamedTaskExit {
+                                id: task.id,
+                                name: task.name,
+                                class: task.class,
+                                reason,
+                                expected_during_shutdown,
+                            });
+                        }
+                        Err(_timeout) => {
+                            still_pending.push(task);
+                        }
+                    }
+                }
+            }
+
+            // Phase 3: Force abort remaining tasks.
+            if !still_pending.is_empty() {
+                let forced_deadline = tokio::time::Instant::now() + forced_timeout;
+                for task in still_pending {
+                    task.handle.abort();
+                    let join_result = tokio::time::timeout_at(forced_deadline, task.handle).await;
+                    let reason = match join_result {
+                        Ok(Ok(())) => TaskExitReason::CleanCompletion,
+                        Ok(Err(e)) => classify_join_error(e),
+                        Err(_) => {
+                            tracing::error!(
+                                "Task '{}' subset force-join timeout after abort",
+                                task.name
+                            );
+                            TaskExitReason::Aborted
+                        }
+                    };
+                    let already_reported = self.reported_exits.lock().unwrap().remove(&task.id);
+                    let final_reason = already_reported.unwrap_or(reason);
+                    exits.push(NamedTaskExit {
+                        id: task.id,
+                        name: task.name,
+                        class: task.class,
+                        reason: final_reason,
+                        expected_during_shutdown,
+                    });
+                }
+            }
+        }
+
+        tracing::debug!(
+            "Subset join complete: {} tasks joined, {} not found",
+            exits.len(),
+            not_found_ids.len()
+        );
+        TaskSubsetCleanupReport {
+            exits,
+            not_found_ids,
+        }
+    }
+
+    /// Returns true if the given task ID is registered in critical or background lists.
+    pub fn contains_task(&self, id: TaskId) -> bool {
+        self.critical.iter().any(|t| t.id == id) || self.background.iter().any(|t| t.id == id)
     }
 
     pub fn active_count(&self) -> usize {

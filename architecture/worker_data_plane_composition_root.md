@@ -1,7 +1,7 @@
 # Worker/Data-Plane Composition Root Ownership
 
 **Established**: Iteration 58
-**Updated**: Iteration 86
+**Updated**: Iteration 88
 **Guardrail**: `tests/data_plane_composition_boundary_guard.rs`
 
 ## Invariant
@@ -159,7 +159,7 @@ The worker composition root (`src/worker/unified_server/mod.rs`) is the **sole o
 - IPC notification routing (Step 10) is determined by the cause variant.
 - No other module may call `std::process::exit()` or send worker-error IPC messages.
 
-### Background Task Ownership (Iteration 84 Part F, updated Iteration 85, Iteration 86)
+### Background Task Ownership (Iteration 84 Part F, updated Iteration 85, Iteration 86, Iteration 87, Iteration 88)
 
 All mesh-adjacent background tasks are owned by the `WorkerTaskRegistry`:
 
@@ -167,14 +167,13 @@ All mesh-adjacent background tasks are owned by the `WorkerTaskRegistry`:
 |------|---------------|-------------|-------------|
 | DNS verification loops | `RestartableBackground` | after mesh startup | registry shutdown |
 | YARA broadcast loop | `RestartableBackground` | after mesh startup | channel close + `JoinSet` drain |
-| DHT routing init | `OneShot` | after mesh startup | completes immediately |
 | Optional mesh startup | `OneShot` | Phase 14.5 | completes on startup |
 | Mesh exit observer | `CriticalService` | Phase 14.5 | registry shutdown |
 | Mesh supervision coordinator | `CriticalService` | Phase 14.5 | registry shutdown |
 
-Topology and DHT routing background tasks are returned in `MeshInit` as component handles (`topology`, `dht_routing_manager`). The composition root calls `build_background_tasks()` on each component after mesh startup succeeds, then registers them in `WorkerTaskRegistry` via `MeshTaskGroup::register_background_specs()`. Support tasks (DNS, YARA, DHT) are registered AFTER mesh startup succeeds (Iteration 86), not before. YARA broadcast uses a local `JoinSet` for per-message child ownership (Iteration 85), with deadline-bounded drain via `run_yara_broadcast_loop()` (Iteration 86).
+Topology background tasks are returned in `MeshInit` as component handles (`topology`). The composition root calls `build_background_tasks()` on each component after mesh startup succeeds, then registers them in `WorkerTaskRegistry` via `MeshTaskGroup::register_background_specs()`. DHT routing initialization is now part of the MeshTransport transactional startup (Iteration 87) and no longer returned in `MeshInit`. Support tasks (DNS, YARA) are registered AFTER mesh startup succeeds (Iteration 86), not before. YARA broadcast uses a local `JoinSet` for per-message child ownership (Iteration 85), with deadline-bounded drain via `run_yara_broadcast_loop()` (Iteration 86).
 
-No bare `tokio::spawn()` calls remain in `init_mesh.rs`. The `MeshInit` struct returns components (registries, broadcast receivers, routing managers) for the composition root to spawn and register.
+No bare `tokio::spawn()` calls remain in `init_mesh.rs`. The `MeshInit` struct returns components (registries, broadcast receivers) for the composition root to spawn and register.
 
 ### Configuration Validation (Iteration 86)
 

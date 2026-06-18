@@ -78,6 +78,44 @@ impl MeshGenerationSupport {
     }
 }
 
+/// Context for support teardown (Iteration 88, Part B).
+#[derive(Debug, Clone, Copy)]
+pub enum SupportStopContext {
+    /// Optional mesh degraded — worker remains active.
+    OptionalMeshDegraded,
+    /// Whole worker is shutting down.
+    WorkerShutdown,
+    /// Startup rollback in progress.
+    StartupRollback,
+}
+
+impl SupportStopContext {
+    /// Whether exits during this context are expected (worker shutting down).
+    pub fn expected_during_shutdown(&self) -> bool {
+        matches!(self, Self::WorkerShutdown | Self::StartupRollback)
+    }
+}
+
+/// Report from generation support teardown (Iteration 88, Part B).
+#[derive(Debug)]
+pub struct MeshSupportStopReport {
+    /// The generation that was stopped.
+    pub generation: u64,
+    /// Number of tasks that exited cooperatively.
+    pub cooperative: usize,
+    /// Number of tasks that required forced abort.
+    pub aborted: usize,
+    /// Number of tasks that failed to exit.
+    pub failed: usize,
+}
+
+impl MeshSupportStopReport {
+    /// Returns true if all tasks exited cleanly.
+    pub fn clean(&self) -> bool {
+        self.aborted == 0 && self.failed == 0
+    }
+}
+
 /// Classify a single child task result and update the report.
 #[cfg(all(feature = "mesh", feature = "dns"))]
 fn classify_yara_child_result(
@@ -133,7 +171,8 @@ async fn run_yara_broadcast_loop(
     mut broadcast_rx: tokio::sync::mpsc::Receiver<crate::mesh::protocol::MeshMessage>,
     sink: Arc<dyn YaraBroadcastSink>,
     semaphore: Arc<tokio::sync::Semaphore>,
-    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
+    mut worker_shutdown_rx: tokio::sync::watch::Receiver<bool>,
+    mut generation_shutdown_rx: tokio::sync::watch::Receiver<bool>,
     drain_timeout: Duration,
 ) -> YaraBroadcastReport {
     let mut report = YaraBroadcastReport {
@@ -144,44 +183,56 @@ async fn run_yara_broadcast_loop(
     };
     let mut children: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
 
-    loop {
-        tokio::select! {
-            biased;
-            _ = shutdown_rx.changed() => {
-                tracing::debug!("YARA broadcast loop received shutdown signal");
-                break;
-            }
-            msg = broadcast_rx.recv() => {
-                match msg {
-                    Some(msg) => {
-                        match semaphore.clone().try_acquire_owned() {
-                            Ok(permit) => {
-                                metrics::counter!("yara_mesh_broadcast_submitted_total").increment(1);
-                                let sink = sink.clone();
-                                children.spawn(async move {
-                                    sink.broadcast(msg).await;
-                                    drop(permit);
-                                });
-                            }
-                            Err(_) => {
-                                report.dropped += 1;
-                                metrics::counter!("yara_mesh_broadcast_dropped_total").increment(1);
-                                tracing::debug!(
-                                    "YARA broadcast semaphore saturated, dropping message"
-                                );
+    // Check if either receiver is already true before entering the loop.
+    // A watch receiver initialized to `true` will never fire `changed()` again,
+    // so we must check the current value (Iteration 88, Part C — Phase 14).
+    if *worker_shutdown_rx.borrow() || *generation_shutdown_rx.borrow() {
+        tracing::debug!("YARA broadcast loop: shutdown signal already set at entry");
+        // Fall through to drain.
+    } else {
+        loop {
+            tokio::select! {
+                biased;
+                _ = worker_shutdown_rx.changed() => {
+                    tracing::debug!("YARA broadcast loop received worker shutdown");
+                    break;
+                }
+                _ = generation_shutdown_rx.changed() => {
+                    tracing::debug!("YARA broadcast loop received generation shutdown");
+                    break;
+                }
+                msg = broadcast_rx.recv() => {
+                    match msg {
+                        Some(msg) => {
+                            match semaphore.clone().try_acquire_owned() {
+                                Ok(permit) => {
+                                    metrics::counter!("yara_mesh_broadcast_submitted_total").increment(1);
+                                    let sink = sink.clone();
+                                    children.spawn(async move {
+                                        sink.broadcast(msg).await;
+                                        drop(permit);
+                                    });
+                                }
+                                Err(_) => {
+                                    report.dropped += 1;
+                                    metrics::counter!("yara_mesh_broadcast_dropped_total").increment(1);
+                                    tracing::debug!(
+                                        "YARA broadcast semaphore saturated, dropping message"
+                                    );
+                                }
                             }
                         }
-                    }
-                    None => {
-                        tracing::debug!(
-                            "YARA broadcast mpsc channel closed, exiting loop"
-                        );
-                        break;
+                        None => {
+                            tracing::debug!(
+                                "YARA broadcast mpsc channel closed, exiting loop"
+                            );
+                            break;
+                        }
                     }
                 }
-            }
-            Some(result) = children.join_next(), if !children.is_empty() => {
-                classify_yara_child_result(result, &mut report);
+                Some(result) = children.join_next(), if !children.is_empty() => {
+                    classify_yara_child_result(result, &mut report);
+                }
             }
         }
     }
@@ -216,10 +267,10 @@ async fn run_yara_broadcast_loop(
 /// Mesh support task descriptors extracted from `MeshInit` but registered
 /// only AFTER mesh startup succeeds (Iteration 86 Part A).
 ///
-/// DNS verification loops, YARA broadcast loop, and DHT routing init are
-/// support infrastructure that should only run when the mesh transport is
-/// actually active. Registering them before startup would create orphaned
-/// tasks if mesh startup fails.
+/// DNS verification loops and YARA broadcast loop are support infrastructure
+/// that should only run when the mesh transport is actually active. DHT routing
+/// initialization belongs to MeshTransport transactional startup (Iteration 87).
+/// Registering them before startup would create orphaned tasks if mesh startup fails.
 pub struct MeshSupportTasks {
     #[cfg(all(feature = "mesh", feature = "dns"))]
     pub dns_verification_registries: Vec<(Arc<crate::dns::mesh_sync::MeshDnsRegistry>, bool)>,
@@ -243,8 +294,11 @@ impl MeshSupportTasks {
     }
 }
 
-/// Register mesh generation support tasks (DNS verification, YARA broadcast,
-/// DHT routing init) in the worker task registry.
+/// Register mesh generation support tasks (DNS verification, YARA broadcast)
+/// in the worker task registry.
+///
+/// DHT routing initialization belongs to MeshTransport transactional startup
+/// (Iteration 87, Phase 1).
 ///
 /// Called ONLY after successful mesh startup — required mesh: after
 /// `start_mesh_generation()` returns Ok; optional mesh: inside the
@@ -291,19 +345,7 @@ async fn register_mesh_generation_support(
 
     // Spawn YARA broadcast loop with deadline-bounded drain.
     if let Some((broadcast_rx, mesh_transport, broadcast_semaphore)) = support.yara_broadcast {
-        // Create a combined shutdown signal from worker shutdown and generation cancel.
-        let combined_shutdown = {
-            let mut ws = worker_shutdown_rx.clone();
-            let mut gc = cancel_rx.clone();
-            let (tx, rx) = tokio::sync::watch::channel(false);
-            tokio::spawn(async move {
-                tokio::select! {
-                    _ = ws.changed() => { let _ = tx.send(true); }
-                    _ = gc.changed() => { let _ = tx.send(true); }
-                }
-            });
-            rx
-        };
+        let gen_shutdown = cancel_rx.clone();
         let id = registry.spawn_background("yara_broadcast", async move {
             let sink: Arc<dyn YaraBroadcastSink> =
                 Arc::new(MeshTransportBroadcastSink(mesh_transport));
@@ -311,7 +353,8 @@ async fn register_mesh_generation_support(
                 broadcast_rx,
                 sink,
                 broadcast_semaphore,
-                combined_shutdown,
+                worker_shutdown_rx,
+                gen_shutdown,
                 Duration::from_secs(30),
             )
             .await;
@@ -358,6 +401,52 @@ async fn register_mesh_generation_support(
         task_ids: Vec::new(),
         cancel_tx: tokio::sync::watch::channel(false).0,
     })
+}
+
+/// Stop a mesh generation support bundle with cooperative-then-forced cleanup
+/// (Iteration 88, Part B — Phase 7).
+///
+/// Sends a cooperative cancellation signal, waits up to half the timeout for
+/// natural completion, then force-aborts and joins remaining tasks.
+#[cfg(all(feature = "mesh", feature = "dns"))]
+async fn stop_mesh_generation_support(
+    task_registry: &tokio::sync::Mutex<crate::worker::task_registry::WorkerTaskRegistry>,
+    support: MeshGenerationSupport,
+    timeout: Duration,
+    context: SupportStopContext,
+) -> MeshSupportStopReport {
+    support.cancel();
+
+    let cooperative_budget = timeout / 2;
+    let forced_budget = timeout.saturating_sub(cooperative_budget);
+
+    let mut registry = task_registry.lock().await;
+
+    let report = registry
+        .cancel_then_join_tasks(
+            &support.task_ids,
+            cooperative_budget,
+            forced_budget,
+            context.expected_during_shutdown(),
+        )
+        .await;
+
+    MeshSupportStopReport {
+        generation: support.generation,
+        cooperative: report.exits.len() - report.aborted_count(),
+        aborted: report.aborted_count(),
+        failed: report
+            .exits
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e.reason,
+                    crate::worker::task_registry::TaskExitReason::Error(_)
+                        | crate::worker::task_registry::TaskExitReason::Panic(_)
+                )
+            })
+            .count(),
+    }
 }
 
 pub async fn run_unified_server_worker(
@@ -1039,16 +1128,18 @@ pub async fn run_unified_server_worker(
                         }
                         Some(crate::worker::mesh_supervision::MeshSupervisorDecision::MarkDegraded(reason)) => {
                             tracing::warn!(reason = %reason, "mesh degraded");
-                            // Cancel generation-specific support tasks when optional mesh
-                            // degrades (Iteration 87, Phase 12). DNS/YARA work must not
-                            // continue targeting a failed transport.
-                            #[cfg(feature = "mesh")]
+                            #[cfg(all(feature = "mesh", feature = "dns"))]
                             if let Some(support) = active_mesh_support.take() {
-                                tracing::info!(
-                                    "Cancelling mesh generation {} support tasks",
-                                    support.generation
-                                );
-                                support.cancel();
+                                let stop_report = stop_mesh_generation_support(
+                                    &state.task_registry,
+                                    support,
+                                    Duration::from_secs(5),
+                                    SupportStopContext::OptionalMeshDegraded,
+                                )
+                                .await;
+                                if !stop_report.clean() {
+                                    tracing::warn!(?stop_report, "mesh support generation required forced cleanup");
+                                }
                             }
                         }
                         Some(crate::worker::mesh_supervision::MeshSupervisorDecision::NoAction) => {}

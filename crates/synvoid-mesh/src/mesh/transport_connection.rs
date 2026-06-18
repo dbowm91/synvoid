@@ -258,30 +258,37 @@ impl MeshTransport {
     ) {
         if let Some(ref rm) = self.routing_manager {
             if rm.is_enabled() {
-                rm.add_peer(
-                    peer_node_id.to_string(),
-                    peer_address.to_string(),
-                    443,
-                    peer_role,
-                    None,
-                    false,
-                    None,
-                    None,
-                    None,
-                )
-                .await;
+                if !rm.is_initialized().await {
+                    tracing::warn!(
+                        peer = %peer_node_id,
+                        "DHT peer insert skipped at runtime: routing table not initialized"
+                    );
+                } else {
+                    rm.add_peer(
+                        peer_node_id.to_string(),
+                        peer_address.to_string(),
+                        443,
+                        peer_role,
+                        None,
+                        false,
+                        None,
+                        None,
+                        None,
+                    )
+                    .await;
 
-                let _local_id = *rm.local_node_id_hash();
-                let request_id = format!("dht-ping-{}", uuid::Uuid::new_v4());
+                    let _local_id = *rm.local_node_id_hash();
+                    let request_id = format!("dht-ping-{}", uuid::Uuid::new_v4());
 
-                let ping = MeshMessage::Ping {
-                    request_id: request_id.into(),
-                    node_id: rm.local_node_id().into(),
-                    timestamp: synvoid_utils::safe_unix_timestamp(),
-                };
+                    let ping = MeshMessage::Ping {
+                        request_id: request_id.into(),
+                        node_id: rm.local_node_id().into(),
+                        timestamp: synvoid_utils::safe_unix_timestamp(),
+                    };
 
-                if let Err(e) = self.send_datagram_to_peer(peer_node_id, &ping).await {
-                    tracing::debug!("Failed to send DHT Ping to {}: {}", peer_node_id, e);
+                    if let Err(e) = self.send_datagram_to_peer(peer_node_id, &ping).await {
+                        tracing::debug!("Failed to send DHT Ping to {}: {}", peer_node_id, e);
+                    }
                 }
             }
         }
@@ -338,6 +345,51 @@ impl MeshTransport {
                 );
             }
         }
+    }
+
+    /// Checked variant of `dht_on_peer_connected` for startup paths.
+    /// Returns an error if the DHT routing table is not initialized,
+    /// preventing silent loss of configured-peer routing inserts
+    /// (Iteration 88, Part A — Phase 2).
+    pub(crate) async fn dht_on_peer_connected_checked(
+        &self,
+        peer_node_id: &str,
+        peer_address: &str,
+        peer_role: crate::config::MeshNodeRole,
+    ) -> Result<(), MeshTransportError> {
+        if let Some(ref rm) = self.routing_manager {
+            if rm.is_enabled() {
+                rm.add_peer_checked(
+                    peer_node_id.to_string(),
+                    peer_address.to_string(),
+                    443,
+                    peer_role,
+                    None,
+                    false,
+                    None,
+                    None,
+                    None,
+                )
+                .await
+                .map_err(|e| {
+                    MeshTransportError::StartupFailed(format!(
+                        "failed to add connected peer {peer_node_id} to DHT: {e}"
+                    ))
+                })?;
+
+                let _local_id = *rm.local_node_id_hash();
+                let request_id = format!("dht-ping-{}", uuid::Uuid::new_v4());
+                let ping = MeshMessage::Ping {
+                    request_id: request_id.into(),
+                    node_id: rm.local_node_id().into(),
+                    timestamp: synvoid_utils::safe_unix_timestamp(),
+                };
+                if let Err(e) = self.send_datagram_to_peer(peer_node_id, &ping).await {
+                    tracing::debug!("Failed to send DHT Ping to {}: {}", peer_node_id, e);
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(crate) async fn request_seed_list(

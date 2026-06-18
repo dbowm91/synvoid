@@ -3532,10 +3532,10 @@ mod support_generation_tests {
         assert!(*rx.borrow_and_update());
     }
 
-    /// cancel_and_join_tasks aborts matched tasks and removes them from the
+    /// cancel_then_join_tasks aborts matched tasks and removes them from the
     /// registry.
     #[tokio::test]
-    async fn registry_cancel_and_join_tasks_removes_matched() {
+    async fn registry_cancel_then_join_tasks_removes_matched() {
         let mut registry = WorkerTaskRegistry::new();
 
         // Spawn two long-sleeping background tasks.
@@ -3550,12 +3550,17 @@ mod support_generation_tests {
         assert!(before >= 2, "expected at least 2 active tasks");
 
         let task_ids = vec![TaskId(id1 as u64), TaskId(id2 as u64)];
-        let exits = registry
-            .cancel_and_join_tasks(&task_ids, Duration::from_secs(2))
+        let report = registry
+            .cancel_then_join_tasks(
+                &task_ids,
+                Duration::from_secs(1),
+                Duration::from_secs(1),
+                true,
+            )
             .await;
 
-        assert_eq!(exits.len(), 2, "should return exits for both tasks");
-        for exit in &exits {
+        assert_eq!(report.exits.len(), 2, "should return exits for both tasks");
+        for exit in &report.exits {
             assert!(
                 matches!(
                     exit.reason,
@@ -3573,18 +3578,18 @@ mod support_generation_tests {
 
     /// Empty task-id list returns immediately with no exits.
     #[tokio::test]
-    async fn registry_cancel_and_join_tasks_empty_ids() {
+    async fn registry_cancel_then_join_tasks_empty_ids() {
         let mut registry = WorkerTaskRegistry::new();
-        let exits = registry
-            .cancel_and_join_tasks(&[], Duration::from_secs(1))
+        let report = registry
+            .cancel_then_join_tasks(&[], Duration::from_secs(1), Duration::from_secs(1), true)
             .await;
-        assert!(exits.is_empty());
+        assert!(report.exits.is_empty());
     }
 
     /// A critical task that sleeps forever is aborted and removed within the
     /// timeout.
     #[tokio::test]
-    async fn registry_cancel_and_join_tasks_timeout() {
+    async fn registry_cancel_then_join_tasks_timeout() {
         let mut registry = WorkerTaskRegistry::new();
 
         let id = registry.spawn_cancellable_background("forever_sleep", async {
@@ -3592,20 +3597,25 @@ mod support_generation_tests {
         });
 
         let task_ids = vec![TaskId(id as u64)];
-        let exits = registry
-            .cancel_and_join_tasks(&task_ids, Duration::from_millis(100))
+        let report = registry
+            .cancel_then_join_tasks(
+                &task_ids,
+                Duration::from_millis(50),
+                Duration::from_millis(50),
+                true,
+            )
             .await;
 
-        assert_eq!(exits.len(), 1);
+        assert_eq!(report.exits.len(), 1);
         assert!(
             matches!(
-                exits[0].reason,
+                report.exits[0].reason,
                 TaskExitReason::Aborted
                     | TaskExitReason::Cancelled
                     | TaskExitReason::CleanCompletion
             ),
             "task should be aborted or clean, got {:?}",
-            exits[0].reason
+            report.exits[0].reason
         );
     }
 

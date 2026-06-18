@@ -707,6 +707,7 @@ Controls required vs optional bootstrap:
 - `require_seed_connectivity` (default false)
 - `require_configured_peers` (default false)
 - `require_dht_bootstrap` (default false)
+- `require_dht_initialization` (default false) — When true, DHT routing initialization failure is fatal.
 
 Default is all-optional (degraded startup allowed). A required bootstrap failure triggers rollback.
 

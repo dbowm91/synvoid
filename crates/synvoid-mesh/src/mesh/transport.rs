@@ -237,6 +237,8 @@ pub enum StartupFailurePoint {
     DuringSeedBootstrap,
     /// During configured peer connection phase.
     DuringPeerConnect,
+    /// Before any peer connection (seed or configured) is attempted.
+    BeforePeerConnect,
     /// During DHT bootstrap phase.
     DuringDhtBootstrap,
     /// During QUIC runtime server start.
@@ -2295,6 +2297,40 @@ impl MeshTransport {
         self.check_startup_failure_hook(StartupFailurePoint::AfterCriticalTasks)
             .await?;
 
+        // Phase 3.5: Initialize or restore DHT routing table BEFORE any peer
+        // connection. The routing table must exist before any seed or configured
+        // peer connection callback can mutate it via dht_on_peer_connected()
+        // (Iteration 88, Part A — Phase 1).
+        let mut dht_ready = false;
+        #[cfg(test)]
+        self.check_startup_failure_hook(StartupFailurePoint::BeforePeerConnect)
+            .await?;
+        if let Some(ref rm) = self.routing_manager {
+            if rm.is_enabled() {
+                let was_initialized = rm.is_initialized().await;
+                if !was_initialized {
+                    rm.init().await;
+                }
+                let initialized = rm.is_initialized().await;
+                report.dht_routing_initialized = initialized;
+                stage.record_dht_init(crate::lifecycle::DhtInitializationSnapshot {
+                    was_initialized_this_attempt: !was_initialized && initialized,
+                });
+                if !initialized {
+                    let reason = "DHT routing initialization did not create a routing table";
+                    if policy.require_dht_initialization {
+                        return Err(MeshTransportError::StartupFailed(reason.into()));
+                    }
+                    report.degraded_reasons.push(reason.into());
+                } else if !was_initialized {
+                    tracing::info!("DHT routing table initialized during startup");
+                } else {
+                    tracing::debug!("DHT routing table already initialized, skipping");
+                }
+                dht_ready = initialized;
+            }
+        }
+
         // Phase 4: Bootstrap from seeds
         #[cfg(test)]
         self.check_startup_failure_hook(StartupFailurePoint::DuringSeedBootstrap)
@@ -2339,44 +2375,12 @@ impl MeshTransport {
             }
         }
 
-        // Phase 5.5: Initialize or restore DHT routing table.
-        // The routing table must exist before any bootstrap or maintenance
-        // operation can mutate or inspect it (Iteration 87, Phase 2).
-        if let Some(ref rm) = self.routing_manager {
-            if rm.is_enabled() {
-                let was_initialized = rm.is_initialized().await;
-                if !was_initialized {
-                    rm.init().await;
-                    // Verify init actually created the table.
-                    if !rm.is_initialized().await {
-                        if policy.require_dht_initialization {
-                            return Err(MeshTransportError::StartupFailed(
-                                "DHT routing initialization required but failed to create table"
-                                    .into(),
-                            ));
-                        }
-                        report
-                            .degraded_reasons
-                            .push("DHT routing initialization failed to create table".into());
-                    } else {
-                        tracing::info!("DHT routing table initialized during startup");
-                    }
-                } else {
-                    tracing::debug!("DHT routing table already initialized, skipping");
-                }
-                report.dht_routing_initialized = true;
-                stage.record_dht_init(crate::lifecycle::DhtInitializationSnapshot {
-                    was_initialized_this_attempt: !was_initialized,
-                });
-            }
-        }
-
-        // Phase 6: DHT bootstrap
+        // Phase 6: DHT bootstrap — only if routing table was initialized.
         #[cfg(test)]
         self.check_startup_failure_hook(StartupFailurePoint::DuringDhtBootstrap)
             .await?;
-        if let Some(ref rm) = self.routing_manager {
-            if rm.is_enabled() {
+        if dht_ready {
+            if let Some(ref rm) = self.routing_manager {
                 match self.dht_bootstrap_from_seeds(rm.clone()).await {
                     Ok(()) => {
                         report.dht_bootstrapped = true;
@@ -2402,10 +2406,14 @@ impl MeshTransport {
             let topo_specs = self.topology.build_background_tasks(topo_shutdown);
             stage.task_group.register_background_specs(topo_specs);
         }
-        if let Some(ref rm) = self.routing_manager {
-            let dht_shutdown = shutdown_rx.clone();
-            let dht_specs = rm.build_background_tasks(dht_shutdown);
-            stage.task_group.register_background_specs(dht_specs);
+        if dht_ready {
+            if let Some(ref rm) = self.routing_manager {
+                let dht_shutdown = shutdown_rx.clone();
+                let dht_specs = rm.build_background_tasks(dht_shutdown);
+                stage.task_group.register_background_specs(dht_specs);
+            }
+        } else if self.routing_manager.is_some() {
+            tracing::warn!("DHT routing unavailable; skipping DHT maintenance tasks");
         }
 
         let connection_config = self.config.connection.clone();
@@ -5146,8 +5154,13 @@ impl MeshTransport {
 
         if let Some(ref rm) = self.routing_manager {
             if rm.is_enabled() {
-                self.dht_on_peer_connected(&peer_node_id, &peer_address, peer_role)
-                    .await;
+                if stage.is_some() {
+                    self.dht_on_peer_connected_checked(&peer_node_id, &peer_address, peer_role)
+                        .await?;
+                } else {
+                    self.dht_on_peer_connected(&peer_node_id, &peer_address, peer_role)
+                        .await;
+                }
             }
         }
 

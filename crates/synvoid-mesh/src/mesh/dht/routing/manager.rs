@@ -354,7 +354,13 @@ impl DhtRoutingManager {
         let mut rt = self.routing_table.write().await;
         let table = match rt.as_mut() {
             Some(t) => t,
-            None => return,
+            None => {
+                tracing::warn!(
+                    peer = %peer_node_id,
+                    "DHT add_peer skipped: routing table not initialized"
+                );
+                return;
+            }
         };
         self.add_peer_inner(
             table,
@@ -475,7 +481,7 @@ impl DhtRoutingManager {
         let mut rt = self.routing_table.write().await;
         let table = match rt.as_mut() {
             Some(t) => t,
-            None => return Err("DHT routing table not initialized".to_string()),
+            None => return Ok(()),
         };
 
         // Clone the contact from the snapshot — it carries all fields exactly.
