@@ -200,6 +200,8 @@ const SPAWN_FUNCTION_ALLOWLIST: &[(&str, &str)] = &[
     ("init_waf.rs", "spawn_port_honeypot"),
     // Shared connection heartbeat (fire-and-forget, documented as known issue)
     ("state.rs", "start_shared_connection_heartbeat"),
+    // Combined shutdown signal propagation (short-lived, documented Iteration 87)
+    ("mod.rs", "register_mesh_generation_support"),
 ];
 
 /// Files where interval loops must have cancellation select.

@@ -103,6 +103,18 @@ impl DhtRoutingManager {
         self.routing_enabled
     }
 
+    /// Returns `true` if the routing table has been initialized (i.e. `init()`,
+    /// `init_with_persistence()`, or `init_with_persisted_bytes()` has been called
+    /// and routing is enabled).
+    ///
+    /// When routing is disabled, returns `false` since no table will ever exist.
+    pub async fn is_initialized(&self) -> bool {
+        if !self.routing_enabled {
+            return false;
+        }
+        self.routing_table.read().await.is_some()
+    }
+
     pub fn wants_full_network_view(&self) -> bool {
         self.full_network_view
     }
@@ -335,7 +347,65 @@ impl DhtRoutingManager {
             Some(t) => t,
             None => return,
         };
+        self.add_peer_inner(
+            table,
+            peer_node_id,
+            address,
+            port,
+            role,
+            latency_ms,
+            is_trusted,
+            geo,
+            pow_nonce,
+            public_key,
+        );
+    }
 
+    /// Checked variant of `add_peer` for startup paths. Returns an error if
+    /// the routing table has not been initialized, preventing silent no-ops
+    /// during bootstrap (Iteration 87, Phase 5).
+    pub async fn add_peer_checked(
+        &self,
+        peer_node_id: String,
+        address: String,
+        port: u16,
+        role: MeshNodeRole,
+        latency_ms: Option<u32>,
+        is_trusted: bool,
+        geo: Option<crate::dht::routing::GeoInfo>,
+        pow_nonce: Option<u64>,
+        public_key: Option<Vec<u8>>,
+    ) -> Result<(), &'static str> {
+        let mut rt = self.routing_table.write().await;
+        let table = rt.as_mut().ok_or("DHT routing table not initialized")?;
+        self.add_peer_inner(
+            table,
+            peer_node_id,
+            address,
+            port,
+            role,
+            latency_ms,
+            is_trusted,
+            geo,
+            pow_nonce,
+            public_key,
+        );
+        Ok(())
+    }
+
+    fn add_peer_inner(
+        &self,
+        table: &mut RoutingTable,
+        peer_node_id: String,
+        address: String,
+        port: u16,
+        role: MeshNodeRole,
+        latency_ms: Option<u32>,
+        is_trusted: bool,
+        geo: Option<crate::dht::routing::GeoInfo>,
+        pow_nonce: Option<u64>,
+        public_key: Option<Vec<u8>>,
+    ) {
         let node_id = NodeId::from_node_id_string(&peer_node_id);
 
         let mut contact = PeerContact::new(node_id, peer_node_id, address, port);

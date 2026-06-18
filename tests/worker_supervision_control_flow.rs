@@ -3222,12 +3222,6 @@ mod mesh_supervision_behavioral {
             "MeshInit must carry yara_broadcast"
         );
 
-        // DHT routing manager
-        assert!(
-            content.contains("dht_routing_manager"),
-            "MeshInit must carry dht_routing_manager"
-        );
-
         // No bare tokio::spawn for long-lived tasks (strip comments before checking)
         let stripped: String = content
             .lines()
@@ -3360,10 +3354,6 @@ mod mesh_supervision_behavioral {
         {
             assert!(support.dns_verification_registries.is_empty());
             assert!(support.yara_broadcast.is_none());
-        }
-        #[cfg(feature = "mesh")]
-        {
-            assert!(support.dht_routing_manager.is_none());
         }
     }
 

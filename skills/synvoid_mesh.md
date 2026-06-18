@@ -1082,6 +1082,75 @@ This ensures background tasks are owned by the task group from the moment they a
 
 `build_mesh_supervision_policy()` now returns `Result<Option<MeshSupervisionPolicy>, String>` — rejects `restart_enabled = true` with an error. This is a hard error, not a warning override, since restart is not implemented and must not be configured.
 
+## Iteration 87 — DHT Routing Init in Startup, Generation-Support Bundles, YARA Metrics
+
+### Part A: DHT Routing Initialization Moved Into Transactional Startup (Phase 5.5)
+
+`DhtRoutingManager` initialization (routing table creation and seeding) is now part of the transactional `MeshStartupStage` rather than a separate worker-owned one-shot task. This ensures the routing table exists before any bootstrap phase that depends on it.
+
+**New lifecycle integration**: `MeshStartupStage` now includes a `dht_routing_initialized: bool` field set to `true` after the routing manager is initialized. `MeshStartupReport` exposes this field for diagnostic consumption.
+
+**`MeshStartupPolicy.require_dht_initialization`** (new field, default `false`): When `true`, a failure during DHT routing initialization is treated as a fatal startup failure (triggers rollback). When `false`, initialization failure is logged as a warning and recorded in `degraded_reasons`.
+
+### Part B: Bootstrap Precondition Check
+
+`dht_bootstrap_from_seeds()` now requires the routing table to exist before executing. If the routing manager has not been initialized, the bootstrap call is rejected with a clear error rather than silently panicking on a missing table. This is enforced by a precondition check at the top of the bootstrap path.
+
+### Part C: Worker-Owned `MeshGenerationSupport` Bundles
+
+The worker now constructs `MeshGenerationSupport` bundles that group generation-specific resources for lifecycle management. Each bundle captures:
+- The generation counter value
+- A generation-scoped cancellation token
+- The mesh startup report (if available)
+
+This ensures that generation-specific resources (e.g., background tasks, observer handles) are cleanly scoped and can be cancelled when a new generation starts.
+
+### Part D: `register_mesh_generation_support()` Return Type
+
+`register_mesh_generation_support()` now returns `Result<MeshGenerationSupport, WorkerShutdownCause>` instead of `()`. The `MeshGenerationSupport` value contains the registered generation's cancellation token and metadata. Callers that need per-generation cleanup can hold the returned bundle.
+
+### Part E: YARA Broadcast Metrics
+
+New atomic counters for YARA broadcast operations:
+
+| Counter | Meaning |
+|---------|---------|
+| `yara_mesh_broadcast_sent_total` | YARA rules broadcast to mesh peers |
+| `yara_mesh_broadcast_received_total` | YARA rule broadcasts received from peers |
+| `yara_mesh_broadcast_applied_total` | Received broadcasts successfully applied to local store |
+| `yara_mesh_broadcast_dropped_total` | Received broadcasts dropped (dedup, parse error, capacity) |
+
+### Part F: `YaraBroadcastReport.dropped` Field
+
+`YaraBroadcastReport` now includes a `dropped: u64` field counting broadcasts that were received but not applied (due to dedup, parse failure, or capacity limits). This complements the existing `applied` and `failed` fields.
+
+### Part G: `MeshStartupReport.dht_routing_initialized` Field
+
+New field on `MeshStartupReport`:
+- `dht_routing_initialized: bool` — set to `true` when `DhtRoutingManager` initialization completes successfully within the transactional startup stage
+
+### Part H: `MeshStartupPolicy.require_dht_initialization` Field
+
+New field on `MeshStartupPolicy`:
+- `require_dht_initialization: bool` — when `true`, DHT routing initialization failure is fatal (triggers rollback); when `false` (default), failure is non-fatal (degraded mode)
+
+### Part I: `DhtRoutingManager` New Methods
+
+- `is_initialized() -> bool`: Returns whether the routing table has been created and seeded. Used by the bootstrap precondition check.
+- `add_peer_checked(node_id, contact)`: Adds a peer to the routing table only if initialization is complete. Returns `false` without panicking if called before initialization.
+
+### Part J: `MeshBackgroundTaskSpec` Documentation Correction
+
+The `future` field in `MeshBackgroundTaskSpec` is now documented as **fully constructed by the builder** — the `FnOnce` closure is expected to produce a complete, ready-to-run `Pin<Box<dyn Future>>`. No further setup or wrapping is applied by `register_background_specs()`. This clarifies that the builder is responsible for all future configuration, not just the body.
+
+### Part K: Removed `dht_routing_init` One-Shot Worker Task
+
+The worker-owned `dht_routing_init` one-shot task has been removed. DHT routing initialization now occurs within `MeshStartupStage::start()` as Phase 5.5, before seed/peer/DHT bootstrap phases. This eliminates the ordering dependency between the one-shot task and the bootstrap phases.
+
+### Part L: Removed `dht_routing_manager` from `MeshInit` and `MeshSupportTasks`
+
+`dht_routing_manager` is no longer a field on `MeshInit` or `MeshSupportTasks`. The routing manager is now owned exclusively by `MeshTransport` and initialized during the transactional startup stage. Worker composition roots no longer hold a reference to the routing manager — all DHT routing operations go through the transport.
+
 ## Testing Commands
 
 > **Note**: The mesh transport and lifecycle subsystem is closed as of Iteration 81. Worker mesh supervision is config-driven as of Iteration 84. All HTTP response framing, auxiliary task ownership, and lock ordering invariants are complete. Guardrail tests enforce the boundaries below.

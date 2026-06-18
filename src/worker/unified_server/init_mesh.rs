@@ -84,9 +84,6 @@ pub struct MeshInit {
         Arc<crate::mesh::transport::MeshTransport>,
         Arc<tokio::sync::Semaphore>,
     )>,
-    /// DHT routing manager for background tasks (if routing is enabled).
-    #[cfg(feature = "mesh")]
-    pub dht_routing_manager: Option<Arc<crate::mesh::dht::routing::DhtRoutingManager>>,
     /// Topology for background tasks.
     #[cfg(feature = "mesh")]
     pub topology: Option<Arc<crate::mesh::topology::MeshTopology>>,
@@ -107,8 +104,6 @@ impl MeshInit {
             dns_verification_registries: Vec::new(),
             #[cfg(all(feature = "mesh", feature = "dns"))]
             yara_broadcast: None,
-            #[cfg(feature = "mesh")]
-            dht_routing_manager: None,
             #[cfg(feature = "mesh")]
             topology: None,
         }
@@ -136,7 +131,6 @@ pub fn validate_mesh_runtime_inputs(
             .is_some();
         let has_policy = policy.is_some();
         let has_topology = mesh_init.topology.is_some();
-        let has_routing = mesh_init.dht_routing_manager.is_some();
         #[cfg(all(feature = "mesh", feature = "dns"))]
         let has_dns = !mesh_init.dns_verification_registries.is_empty();
         #[cfg(all(feature = "mesh", feature = "dns"))]
@@ -160,9 +154,6 @@ pub fn validate_mesh_runtime_inputs(
             let mut violations = Vec::new();
             if has_topology {
                 violations.push("topology");
-            }
-            if has_routing {
-                violations.push("dht_routing_manager");
             }
             #[cfg(all(feature = "mesh", feature = "dns"))]
             if has_dns {
@@ -256,10 +247,6 @@ pub async fn init_mesh_and_threat_intel(
         let verification_pool =
             Arc::new(crate::mesh::crypto_verification::CryptoVerificationPool::default());
 
-        // Clone routing_manager before it's moved into create_record_store.
-        #[cfg(feature = "mesh")]
-        let dht_routing_manager_for_spawn = routing_manager.clone();
-
         let record_store = crate::mesh::backend::create_record_store(
             mesh_config,
             routing_manager,
@@ -308,8 +295,6 @@ pub async fn init_mesh_and_threat_intel(
                 dns_verification_registries: Vec::new(),
                 #[cfg(all(feature = "mesh", feature = "dns"))]
                 yara_broadcast: None,
-                #[cfg(feature = "mesh")]
-                dht_routing_manager: None,
                 #[cfg(feature = "mesh")]
                 topology: None,
             };
@@ -364,10 +349,6 @@ pub async fn init_mesh_and_threat_intel(
             Arc<crate::mesh::transport::MeshTransport>,
             Arc<tokio::sync::Semaphore>,
         )> = None;
-        #[cfg(feature = "mesh")]
-        let mut dht_routing_manager: Option<
-            Arc<crate::mesh::dht::routing::DhtRoutingManager>,
-        > = None;
 
         #[cfg(feature = "dns")]
         {
@@ -585,12 +566,6 @@ pub async fn init_mesh_and_threat_intel(
             } else {
                 tracing::warn!("Mesh DHT provider not registered — no record store available");
             }
-
-            // Store dht_routing_manager for composition root to start background tasks.
-            #[cfg(feature = "mesh")]
-            {
-                dht_routing_manager = dht_routing_manager_for_spawn;
-            }
         }
 
         tracing::info!("Mesh and threat intelligence initialized in UnifiedServer Worker");
@@ -620,8 +595,6 @@ pub async fn init_mesh_and_threat_intel(
             dns_verification_registries,
             #[cfg(all(feature = "mesh", feature = "dns"))]
             yara_broadcast,
-            #[cfg(feature = "mesh")]
-            dht_routing_manager,
             #[cfg(feature = "mesh")]
             topology: Some(topology),
         };
@@ -784,10 +757,10 @@ mod tests {
     }
 
     #[test]
-    fn disabled_mesh_init_has_no_dht_routing_manager() {
+    fn disabled_mesh_init_has_no_topology() {
         let init = MeshInit::disabled();
         #[cfg(feature = "mesh")]
-        assert!(init.dht_routing_manager.is_none());
+        assert!(init.topology.is_none());
     }
 
     #[test]

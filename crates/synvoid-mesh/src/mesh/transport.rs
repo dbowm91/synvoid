@@ -2339,6 +2339,21 @@ impl MeshTransport {
             }
         }
 
+        // Phase 5.5: Initialize or restore DHT routing table.
+        // The routing table must exist before any bootstrap or maintenance
+        // operation can mutate or inspect it (Iteration 87, Phase 2).
+        if let Some(ref rm) = self.routing_manager {
+            if rm.is_enabled() {
+                if !rm.is_initialized().await {
+                    rm.init().await;
+                    tracing::info!("DHT routing table initialized during startup");
+                } else {
+                    tracing::debug!("DHT routing table already initialized, skipping");
+                }
+                report.dht_routing_initialized = true;
+            }
+        }
+
         // Phase 6: DHT bootstrap
         #[cfg(test)]
         self.check_startup_failure_hook(StartupFailurePoint::DuringDhtBootstrap)

@@ -179,14 +179,15 @@ impl MeshTaskExit {
 /// Builders on `MeshTopology` and `DhtRoutingManager` produce these
 /// descriptors without spawning — the caller registers them with the
 /// staged task group so they participate in startup rollback and
-/// unified shutdown.
+/// unified shutdown. The future is fully constructed by the component
+/// builder and captures the lifecycle-owned shutdown receiver.
 pub struct MeshBackgroundTaskSpec {
     /// Static name identifying the task.
     pub name: &'static str,
     /// Classification of the task criticality.
     pub class: MeshTaskClass,
-    /// The future to spawn. Takes a shutdown receiver; the task must
-    /// exit when the receiver signals `true`.
+    /// The fully-constructed future. The lifecycle-owned shutdown receiver
+    /// is already captured by the builder; callers do not pass it in.
     pub future: std::pin::Pin<
         Box<dyn Future<Output = Result<(), crate::transport_core::MeshTransportError>> + Send>,
     >,
@@ -325,6 +326,9 @@ pub struct MeshStartupPolicy {
     pub require_configured_peers: bool,
     /// If true, DHT bootstrap failure is fatal (required for node role).
     pub require_dht_bootstrap: bool,
+    /// If true, DHT routing initialization failure is fatal (required when
+    /// DHT routing is enabled and the node depends on DHT for operation).
+    pub require_dht_initialization: bool,
 }
 
 impl Default for MeshStartupPolicy {
@@ -333,6 +337,7 @@ impl Default for MeshStartupPolicy {
             require_seed_connectivity: false,
             require_configured_peers: false,
             require_dht_bootstrap: false,
+            require_dht_initialization: false,
         }
     }
 }
@@ -346,6 +351,8 @@ pub struct MeshStartupReport {
     pub connected_seed_count: usize,
     /// Number of configured peers successfully connected.
     pub connected_configured_peer_count: usize,
+    /// Whether DHT routing table was initialized or restored.
+    pub dht_routing_initialized: bool,
     /// Whether DHT bootstrap succeeded.
     pub dht_bootstrapped: bool,
 }

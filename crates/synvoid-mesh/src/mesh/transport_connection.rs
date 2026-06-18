@@ -180,6 +180,13 @@ impl MeshTransport {
         &self,
         routing_manager: Arc<crate::dht::routing::DhtRoutingManager>,
     ) -> Result<(), MeshTransportError> {
+        // Precondition: routing table must be initialized before bootstrap.
+        if !routing_manager.is_initialized().await {
+            return Err(MeshTransportError::StartupFailed(
+                "DHT bootstrap attempted before routing initialization".into(),
+            ));
+        }
+
         let seeds = routing_manager.get_seeds_from_config();
 
         if seeds.is_empty() {
