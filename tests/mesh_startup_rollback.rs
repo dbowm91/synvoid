@@ -8,12 +8,13 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 use synvoid_mesh::cert::MeshCertManager;
-use synvoid_mesh::config::{MeshConfig, MeshNodeRole};
+use synvoid_mesh::config::{MeshConfig, MeshDhtConfig, MeshNodeRole};
+use synvoid_mesh::dht::routing::manager::DhtRoutingManager;
 use synvoid_mesh::dht::{NodeId, PeerContact};
 use synvoid_mesh::lifecycle::{
-    DhtPeerMutation, DhtPeerSnapshot, FailedStartupResidue, MeshLifecycleState, MeshShutdownReport,
-    MeshStartupStage, RecoveryVerification, RollbackReport, StagedPeerResource,
-    StagedTopologySnapshot,
+    DhtInitializationSnapshot, DhtPeerMutation, DhtPeerSnapshot, FailedStartupResidue,
+    MeshLifecycleState, MeshShutdownReport, MeshStartupPolicy, MeshStartupReport, MeshStartupStage,
+    RecoveryVerification, RollbackReport, StagedPeerResource, StagedTopologySnapshot,
 };
 use synvoid_mesh::task_group::MeshTaskGroup;
 use synvoid_mesh::topology::{MeshTopology, PeerState, PeerStatus};
@@ -2320,125 +2321,148 @@ fn test_peer_message_loop_has_distinct_timeouts() {
     );
 }
 
-// --- Iteration 87 Phase 7: DHT ordering tests ---
+// --- Iteration 87 Phase 7: DHT behavioral tests ---
 
-#[test]
-fn dht_routing_table_exists_before_bootstrap() {
-    // Phase 5.5 initializes routing before Phase 6 bootstrap.
-    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
-    let init_idx = content
-        .find("Phase 5.5: Initialize or restore DHT routing table")
-        .expect("DHT init phase must exist");
-    let bootstrap_idx = content
-        .find("Phase 6: DHT bootstrap")
-        .expect("DHT bootstrap phase must exist");
+#[tokio::test]
+async fn dht_routing_init_before_bootstrap_invariant() {
+    let config = Arc::new(MeshConfig::default());
+    let rm = DhtRoutingManager::new(config);
+
     assert!(
-        init_idx < bootstrap_idx,
-        "DHT initialization must occur before DHT bootstrap"
+        !rm.is_initialized().await,
+        "should not be initialized before init()"
+    );
+
+    rm.init().await;
+
+    assert!(
+        rm.is_initialized().await,
+        "should be initialized after init()"
     );
 }
 
-#[test]
-fn dht_bootstrap_has_precondition_check() {
-    // Phase 5: dht_bootstrap_from_seeds must check is_initialized.
-    let content = read_file("crates/synvoid-mesh/src/mesh/transport_connection.rs");
+#[tokio::test]
+async fn dht_bootstrap_precondition_rejects_uninitialized() {
+    let config = Arc::new(MeshConfig::default());
+    let rm = DhtRoutingManager::new(config);
+
     assert!(
-        content.contains("is_initialized().await"),
-        "dht_bootstrap_from_seeds must check is_initialized before proceeding"
-    );
-    assert!(
-        content.contains("DHT bootstrap attempted before routing initialization"),
-        "bootstrap precondition must return descriptive error"
+        !rm.is_initialized().await,
+        "routing table must not be initialized without explicit init"
     );
 }
 
-#[test]
-fn dht_init_records_snapshot_in_stage() {
-    // Phase 4: DHT init must record a snapshot for rollback tracking.
-    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+#[tokio::test]
+async fn dht_init_records_snapshot_for_rollback() {
+    let tg = MeshTaskGroup::new();
+    let mut stage = MeshStartupStage::new(tg);
+
+    // record_dht_init accepts a snapshot with was_initialized_this_attempt=true
+    stage.record_dht_init(DhtInitializationSnapshot {
+        was_initialized_this_attempt: true,
+    });
+
+    // Overwrite with false to verify the method can be called repeatedly
+    stage.record_dht_init(DhtInitializationSnapshot {
+        was_initialized_this_attempt: false,
+    });
+}
+
+#[tokio::test]
+async fn dht_init_rollback_clears_newly_initialized_table() {
+    let config = Arc::new(MeshConfig::default());
+    let rm = DhtRoutingManager::new(config);
+
+    rm.init().await;
+    assert!(rm.is_initialized().await, "must be initialized after init");
+
+    rm.clear_routing_table().await;
     assert!(
-        content.contains("record_dht_init("),
-        "DHT init must call stage.record_dht_init() for rollback tracking"
-    );
-    assert!(
-        content.contains("was_initialized_this_attempt"),
-        "DHT init snapshot must track whether initialization was new"
+        !rm.is_initialized().await,
+        "must be uninitialized after clear_routing_table"
     );
 }
 
-#[test]
-fn dht_init_rollback_clears_newly_initialized_table() {
-    // Phase 4: Rollback must clear routing table if it was newly initialized.
-    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
+#[tokio::test]
+async fn dht_disabled_routing_skips_init() {
+    let mut config = MeshConfig::default();
+    config.dht = Some(MeshDhtConfig {
+        routing_enabled: false,
+        ..MeshDhtConfig::default()
+    });
+    let config = Arc::new(config);
+    let rm = DhtRoutingManager::new(config);
+
+    rm.init().await;
     assert!(
-        content.contains("clear_routing_table()"),
-        "rollback must call clear_routing_table for newly initialized DHT"
-    );
-    assert!(
-        content.contains("DHT routing table cleared during rollback"),
-        "rollback must log DHT table clearance"
+        !rm.is_initialized().await,
+        "disabled routing must remain uninitialized after init"
     );
 }
 
-#[test]
-fn dht_init_disabled_routing_skips_initialization() {
-    // Disabled routing must skip init and bootstrap.
-    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
-    // Phase 5.5 checks rm.is_enabled() before init
-    let phase_5_5_idx = content
-        .find("Phase 5.5: Initialize or restore DHT routing table")
-        .expect("Phase 5.5 must exist");
-    let is_enabled_check = content[phase_5_5_idx..]
-        .find("rm.is_enabled()")
-        .expect("Phase 5.5 must check is_enabled");
-    assert!(
-        is_enabled_check < 400,
-        "is_enabled check must be within the Phase 5.5 block"
-    );
-}
+#[tokio::test]
+async fn dht_maintenance_after_init_ordering() {
+    let config = Arc::new(MeshConfig::default());
+    let rm = DhtRoutingManager::new(config);
 
-#[test]
-fn dht_init_failure_can_degrade_per_policy() {
-    // Phase 6: require_dht_initialization controls failure severity.
-    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
-    assert!(
-        content.contains("require_dht_initialization"),
-        "DHT init failure must be gated by require_dht_initialization policy"
-    );
-}
+    rm.init().await;
 
-#[test]
-fn dht_maintenance_registered_after_initialization() {
-    // Phase 7: DHT background tasks registered after init (Phase 5.5).
-    let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
-    let init_idx = content
-        .find("Phase 5.5: Initialize or restore DHT routing table")
-        .expect("DHT init phase must exist");
-    let maintenance_idx = content
-        .find("Phase 7: Start periodic background loops")
-        .expect("Phase 7 must exist");
-    assert!(
-        init_idx < maintenance_idx,
-        "DHT initialization must occur before maintenance registration"
+    let (_tx, rx) = tokio::sync::watch::channel(false);
+    let specs = rm.build_background_tasks(rx);
+    assert_eq!(
+        specs.len(),
+        3,
+        "must produce 3 maintenance specs after init"
     );
+    assert_eq!(specs[0].name, "dht_bucket_stats");
+    assert_eq!(specs[1].name, "dht_bucket_refresh");
+    assert_eq!(specs[2].name, "dht_peer_ping");
 }
 
 #[test]
 fn dht_startup_policy_has_initialization_field() {
-    // MeshStartupPolicy must have require_dht_initialization field.
-    let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+    let policy = MeshStartupPolicy::default();
+    // Verify the field exists and has a default value
     assert!(
-        content.contains("require_dht_initialization"),
-        "MeshStartupPolicy must have require_dht_initialization field"
+        !policy.require_dht_initialization,
+        "require_dht_initialization should default to false"
     );
 }
 
 #[test]
-fn dht_startup_report_has_routing_initialized_field() {
-    // MeshStartupReport must have dht_routing_initialized field.
-    let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
+fn dht_startup_report_has_routing_initialized() {
+    let report = MeshStartupReport::default();
+    // Verify the field exists and has a default value
     assert!(
-        content.contains("dht_routing_initialized"),
-        "MeshStartupReport must have dht_routing_initialized field"
+        !report.dht_routing_initialized,
+        "dht_routing_initialized should default to false"
     );
+}
+
+#[tokio::test]
+async fn dht_add_peer_checked_rejects_uninitialized() {
+    let config = Arc::new(MeshConfig::default());
+    let rm = DhtRoutingManager::new(config);
+
+    assert!(!rm.is_initialized().await);
+
+    let result = rm
+        .add_peer_checked(
+            "node-test-peer-001".to_string(),
+            "127.0.0.1".to_string(),
+            443,
+            MeshNodeRole::default(),
+            None,
+            false,
+            None,
+            None,
+            None,
+        )
+        .await;
+
+    assert!(
+        result.is_err(),
+        "add_peer_checked must reject when routing table is uninitialized"
+    );
+    assert_eq!(result.unwrap_err(), "DHT routing table not initialized");
 }

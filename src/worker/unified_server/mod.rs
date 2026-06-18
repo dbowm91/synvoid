@@ -40,6 +40,7 @@ pub use state::{
 
 /// Report from the YARA broadcast loop summarizing child task outcomes.
 #[cfg(all(feature = "mesh", feature = "dns"))]
+#[derive(Debug)]
 pub struct YaraBroadcastReport {
     pub completed: usize,
     pub failed: usize,
@@ -1042,7 +1043,7 @@ pub async fn run_unified_server_worker(
                             // degrades (Iteration 87, Phase 12). DNS/YARA work must not
                             // continue targeting a failed transport.
                             #[cfg(feature = "mesh")]
-                            if let Some(ref support) = active_mesh_support {
+                            if let Some(support) = active_mesh_support.take() {
                                 tracing::info!(
                                     "Cancelling mesh generation {} support tasks",
                                     support.generation
@@ -1727,5 +1728,171 @@ mod yara_broadcast_tests {
             dropped: 5,
         };
         assert_eq!(report.dropped, 5);
+    }
+
+    struct PanickingSink;
+
+    #[async_trait::async_trait]
+    impl super::YaraBroadcastSink for PanickingSink {
+        async fn broadcast(&self, _msg: crate::mesh::protocol::MeshMessage) {
+            panic!("test panic");
+        }
+    }
+
+    #[tokio::test]
+    async fn yara_loop_child_panic_increments_failed() {
+        use std::sync::Arc;
+        let (tx, rx) = tokio::sync::mpsc::channel(10);
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(10));
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let sink = Arc::new(PanickingSink);
+        for _ in 0..2 {
+            tx.send(crate::mesh::protocol::MeshMessage::FindNode {
+                request_id: "test".into(),
+                target_node_id: vec![0; 32],
+                requester_node_id: "test".into(),
+                timestamp: 0,
+            })
+            .await
+            .unwrap();
+        }
+        drop(tx);
+        let report = super::run_yara_broadcast_loop(
+            rx,
+            sink,
+            semaphore,
+            shutdown_rx,
+            Duration::from_secs(5),
+        )
+        .await;
+        assert_eq!(
+            report.failed, 2,
+            "panicking children must be counted as failed"
+        );
+        assert_eq!(report.completed, 0, "panicking children must not complete");
+    }
+
+    struct HangSink;
+
+    #[async_trait::async_trait]
+    impl super::YaraBroadcastSink for HangSink {
+        async fn broadcast(&self, _msg: crate::mesh::protocol::MeshMessage) {
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn yara_loop_hung_child_is_aborted_after_drain() {
+        use std::sync::Arc;
+        let (tx, rx) = tokio::sync::mpsc::channel(10);
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(10));
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let sink = Arc::new(HangSink);
+        tx.send(crate::mesh::protocol::MeshMessage::FindNode {
+            request_id: "test".into(),
+            target_node_id: vec![0; 32],
+            requester_node_id: "test".into(),
+            timestamp: 0,
+        })
+        .await
+        .unwrap();
+        drop(tx);
+        let start = std::time::Instant::now();
+        let report = super::run_yara_broadcast_loop(
+            rx,
+            sink,
+            semaphore,
+            shutdown_rx,
+            Duration::from_millis(50),
+        )
+        .await;
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "loop must complete quickly after drain, took {:?}",
+            elapsed
+        );
+        assert!(
+            report.aborted + report.failed >= 1,
+            "hung child must be aborted or failed, got {:?}",
+            report
+        );
+    }
+
+    #[tokio::test]
+    async fn yara_loop_shutdown_aborts_running_children() {
+        use std::sync::Arc;
+        let (tx, rx) = tokio::sync::mpsc::channel(10);
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(10));
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let sink = Arc::new(HangSink);
+        // Spawn the loop so it can process messages concurrently
+        let handle = tokio::spawn(super::run_yara_broadcast_loop(
+            rx,
+            sink,
+            semaphore,
+            shutdown_rx,
+            Duration::from_millis(100),
+        ));
+        // Send a message — the loop will spawn a child that hangs
+        tx.send(crate::mesh::protocol::MeshMessage::FindNode {
+            request_id: "test".into(),
+            target_node_id: vec![0; 32],
+            requester_node_id: "test".into(),
+            timestamp: 0,
+        })
+        .await
+        .unwrap();
+        // Yield to let the loop receive and spawn the child
+        tokio::task::yield_now().await;
+        tokio::task::yield_now().await;
+        // Now send shutdown — the loop must abort the running child
+        shutdown_tx.send(true).unwrap();
+        drop(tx);
+        let start = std::time::Instant::now();
+        let report = handle.await.unwrap();
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "shutdown must exit promptly, took {:?}",
+            elapsed
+        );
+        assert!(
+            report.aborted + report.failed >= 1,
+            "running child must be aborted or failed, got {:?}",
+            report
+        );
+    }
+
+    #[tokio::test]
+    async fn yara_loop_zero_drain_timeout_aborts_immediately() {
+        use std::sync::Arc;
+        let (tx, rx) = tokio::sync::mpsc::channel(10);
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(10));
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let sink = Arc::new(HangSink);
+        tx.send(crate::mesh::protocol::MeshMessage::FindNode {
+            request_id: "test".into(),
+            target_node_id: vec![0; 32],
+            requester_node_id: "test".into(),
+            timestamp: 0,
+        })
+        .await
+        .unwrap();
+        drop(tx);
+        let start = std::time::Instant::now();
+        let report =
+            super::run_yara_broadcast_loop(rx, sink, semaphore, shutdown_rx, Duration::ZERO).await;
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "zero drain timeout must abort immediately, took {:?}",
+            elapsed
+        );
+        assert!(
+            report.aborted + report.failed >= 1,
+            "all children must be accounted for, got {:?}",
+            report
+        );
     }
 }

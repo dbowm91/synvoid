@@ -1,10 +1,10 @@
-use std::fs;
 use std::sync::Arc;
 use std::time::Duration;
 
 use parking_lot::RwLock;
 use synvoid_mesh::cert::MeshCertManager;
 use synvoid_mesh::config::MeshConfig;
+use synvoid_mesh::dht::routing::DhtRoutingManager;
 use synvoid_mesh::lifecycle::{
     MeshBackgroundTaskSpec, MeshLifecycleState, MeshShutdownReport, MeshStartupPolicy,
     MeshStartupReport, MeshTaskClass, MeshTaskExit, MeshTaskExitReason, MeshTaskId,
@@ -1104,79 +1104,108 @@ fn restartable_background_error_is_not_fatal() {
 
 // ── Iteration 87 Phases 18-20: Real builder tests ────────────────────────────
 
-fn read_file(path: &str) -> String {
-    fs::read_to_string(path).unwrap_or_default()
-}
-
+#[cfg(feature = "mesh")]
 #[test]
 fn topology_build_background_tasks_returns_specs() {
-    let content = read_file("crates/synvoid-mesh/src/mesh/topology.rs");
+    let config = Arc::new(MeshConfig::default());
+    let topology = Arc::new(MeshTopology::new(config));
+    let (_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let specs = topology.build_background_tasks(shutdown_rx);
+    assert!(!specs.is_empty(), "topology must return non-empty specs");
     assert!(
-        content.contains("fn build_background_tasks"),
-        "MeshTopology must have build_background_tasks method"
-    );
-    assert!(
-        content.contains("Vec<") && content.contains("MeshBackgroundTaskSpec"),
-        "build_background_tasks must return Vec<MeshBackgroundTaskSpec>"
-    );
-}
-
-#[test]
-fn dht_routing_build_background_tasks_returns_specs() {
-    let content = read_file("crates/synvoid-mesh/src/mesh/dht/routing/manager.rs");
-    assert!(
-        content.contains("fn build_background_tasks"),
-        "DhtRoutingManager must have build_background_tasks method"
+        specs.iter().any(|s| s.name.contains("topology")),
+        "at least one spec name must contain 'topology'"
     );
 }
 
+#[cfg(feature = "mesh")]
+#[tokio::test]
+async fn dht_routing_build_background_tasks_returns_specs() {
+    let config = Arc::new(MeshConfig::default());
+    let manager = DhtRoutingManager::new(config);
+    manager.init().await;
+    let (_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let specs = manager.build_background_tasks(shutdown_rx);
+    assert!(!specs.is_empty(), "DHT routing must return non-empty specs");
+    let names: Vec<&str> = specs.iter().map(|s| s.name).collect();
+    assert!(
+        names.contains(&"dht_bucket_stats"),
+        "must include dht_bucket_stats, got: {:?}",
+        names
+    );
+    assert!(
+        names.contains(&"dht_bucket_refresh"),
+        "must include dht_bucket_refresh, got: {:?}",
+        names
+    );
+    assert!(
+        names.contains(&"dht_peer_ping"),
+        "must include dht_peer_ping, got: {:?}",
+        names
+    );
+}
+
+#[cfg(feature = "mesh")]
 #[test]
 fn topology_build_background_tasks_uses_shutdown_signal() {
-    let content = read_file("crates/synvoid-mesh/src/mesh/topology.rs");
-    let method_idx = content
-        .find("fn build_background_tasks")
-        .expect("method must exist");
-    let method_body = &content[method_idx..method_idx + 500];
+    let config = Arc::new(MeshConfig::default());
+    let topology = Arc::new(MeshTopology::new(config));
+    let (_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let specs = topology.build_background_tasks(shutdown_rx);
     assert!(
-        method_body.contains("shutdown") || method_body.contains("select"),
-        "topology build_background_tasks must use shutdown signal"
+        specs
+            .iter()
+            .all(|s| s.class == MeshTaskClass::RestartableBackground),
+        "topology specs must all be RestartableBackground"
     );
 }
 
-#[test]
-fn dht_build_background_tasks_returns_three_specs() {
-    let content = read_file("crates/synvoid-mesh/src/mesh/dht/routing/manager.rs");
-    assert!(content.contains("dht_bucket_stats"));
-    assert!(content.contains("dht_bucket_refresh"));
-    assert!(content.contains("dht_peer_ping"));
+#[cfg(feature = "mesh")]
+#[tokio::test]
+async fn dht_build_background_tasks_returns_three_specs() {
+    let config = Arc::new(MeshConfig::default());
+    let manager = DhtRoutingManager::new(config);
+    manager.init().await;
+    let (_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let specs = manager.build_background_tasks(shutdown_rx);
+    assert_eq!(specs.len(), 3, "DHT routing must return exactly 3 specs");
 }
 
+#[cfg(feature = "mesh")]
 #[test]
 fn topology_build_background_tasks_disabled_returns_empty() {
-    let content = read_file("crates/synvoid-mesh/src/mesh/dht/routing/manager.rs");
-    let method_idx = content
-        .find("fn build_background_tasks")
-        .expect("method must exist");
-    let method_body = &content[method_idx..method_idx + 300];
+    let config: MeshConfig = serde_json::from_value(serde_json::json!({
+        "dht": {
+            "routing_enabled": false
+        }
+    }))
+    .unwrap();
+    let manager = DhtRoutingManager::new(Arc::new(config));
+    let (_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let specs = manager.build_background_tasks(shutdown_rx);
     assert!(
-        method_body.contains("routing_enabled") && method_body.contains("return Vec::new()"),
-        "disabled routing must return empty vec from build_background_tasks"
+        specs.is_empty(),
+        "disabled DHT routing must return empty vec, got {}",
+        specs.len()
     );
 }
 
+#[cfg(feature = "mesh")]
 #[test]
-fn mesh_background_task_spec_documentation_accurate() {
-    let content = read_file("crates/synvoid-mesh/src/mesh/lifecycle.rs");
-    assert!(
-        content.contains("fully constructed by the component"),
-        "MeshBackgroundTaskSpec docs must say future is fully constructed by component builder"
-    );
-    assert!(
-        content.contains("captures the lifecycle-owned shutdown receiver"),
-        "MeshBackgroundTaskSpec docs must say builder captures the shutdown receiver"
-    );
-    assert!(
-        !content.contains("Takes a shutdown receiver"),
-        "MeshBackgroundTaskSpec must not say 'Takes a shutdown receiver'"
-    );
+fn mesh_background_task_spec_has_name_and_class_fields() {
+    let config = Arc::new(MeshConfig::default());
+    let topology = Arc::new(MeshTopology::new(config));
+    let (_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let specs = topology.build_background_tasks(shutdown_rx);
+    for spec in &specs {
+        assert!(!spec.name.is_empty(), "spec name must be non-empty");
+        assert!(
+            matches!(
+                spec.class,
+                MeshTaskClass::RestartableBackground | MeshTaskClass::CriticalService
+            ),
+            "spec class must be RestartableBackground or CriticalService, got {:?}",
+            spec.class
+        );
+    }
 }

@@ -1105,6 +1105,8 @@ The worker now constructs `MeshGenerationSupport` bundles that group generation-
 
 This ensures that generation-specific resources (e.g., background tasks, observer handles) are cleanly scoped and can be cancelled when a new generation starts.
 
+When optional mesh degrades, the supervision loop calls `active_mesh_support.take()` to atomically cancel the generation's DNS/YARA support tasks and clear the bundle. This prevents generation-specific support work from continuing against a failed transport while leaving unrelated worker tasks running.
+
 ### Part D: `register_mesh_generation_support()` Return Type
 
 `register_mesh_generation_support()` now returns `Result<MeshGenerationSupport, WorkerShutdownCause>` instead of `()`. The `MeshGenerationSupport` value contains the registered generation's cancellation token and metadata. Callers that need per-generation cleanup can hold the returned bundle.

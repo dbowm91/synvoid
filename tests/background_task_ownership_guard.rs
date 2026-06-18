@@ -125,6 +125,21 @@ fn strip_cfg_test_modules(content: &str) -> String {
                         skip.push(chars.next().unwrap_or('\0'));
                     }
                     result.push_str(&skip[1..]);
+                    // Skip any additional #[...] attributes before mod
+                    loop {
+                        let remaining: String = chars.clone().take(20).collect();
+                        let trimmed = remaining.trim_start();
+                        if trimmed.starts_with("#[") {
+                            // Consume the attribute without adding to result
+                            while let Some(c) = chars.next() {
+                                if c == ']' {
+                                    break;
+                                }
+                            }
+                        } else {
+                            break;
+                        }
+                    }
                     let remaining: String = chars.clone().take(10).collect();
                     if remaining.trim_start().starts_with("mod ")
                         || remaining.trim_start().starts_with("mod{")
@@ -222,9 +237,9 @@ fn has_cancel_select(content: &str) -> bool {
 
 fn is_in_test_or_dead_code(content: &str, line_num: usize) -> bool {
     let lines: Vec<&str> = content.lines().take(line_num).collect();
-    let mut cfg_test_depth = 0;
-    let mut cfg_any_depth = 0;
-    let mut brace_depth = 0;
+    let mut cfg_test_depth: i32 = -1;
+    let mut cfg_any_depth: i32 = -1;
+    let mut brace_depth: i32 = 0;
 
     for line in &lines {
         if line.contains("#[cfg(test)]") {
@@ -238,11 +253,11 @@ fn is_in_test_or_dead_code(content: &str, line_num: usize) -> bool {
                 '{' => brace_depth += 1,
                 '}' => {
                     brace_depth -= 1;
-                    if cfg_test_depth > 0 && brace_depth < cfg_test_depth {
-                        cfg_test_depth = 0;
+                    if cfg_test_depth >= 0 && brace_depth <= cfg_test_depth {
+                        cfg_test_depth = -1;
                     }
-                    if cfg_any_depth > 0 && brace_depth < cfg_any_depth {
-                        cfg_any_depth = 0;
+                    if cfg_any_depth >= 0 && brace_depth <= cfg_any_depth {
+                        cfg_any_depth = -1;
                     }
                 }
                 _ => {}
@@ -250,7 +265,7 @@ fn is_in_test_or_dead_code(content: &str, line_num: usize) -> bool {
         }
     }
 
-    cfg_test_depth > 0 || cfg_any_depth > 0
+    cfg_test_depth >= 0 || cfg_any_depth >= 0
 }
 
 // ---------------------------------------------------------------------------
