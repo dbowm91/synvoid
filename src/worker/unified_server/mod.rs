@@ -188,9 +188,7 @@ pub async fn run_unified_server_worker(
                     canonical_reader,
                     advisory_source,
                 ),
-            )
-            .with_dns_shutdown_tx(mesh_init.dns_shutdown_tx)
-            .with_yara_broadcast_shutdown_tx(mesh_init.yara_broadcast_shutdown_tx);
+            );
     }
     #[cfg(not(feature = "mesh"))]
     {
@@ -303,6 +301,68 @@ pub async fn run_unified_server_worker(
             lifecycle::spawn_ipc_loop(state.clone(), shared_config.clone(), &mut registry);
         lifecycle_rx
     };
+
+    // ---- Phase 13.5: spawn mesh support tasks via registry ----
+    //
+    // DNS verification loops, YARA broadcast loop, and DHT routing init
+    // are spawned here and registered in the WorkerTaskRegistry for
+    // structured ownership (Iteration 84 Part F).
+    #[cfg(all(feature = "mesh", feature = "dns"))]
+    {
+        use crate::worker::task_registry::TaskClass;
+        let mut registry = state.task_registry.lock().await;
+
+        // Spawn DNS verification loops.
+        for (dns_registry, is_global) in mesh_init.dns_verification_registries {
+            let role = if is_global { "global" } else { "edge" };
+            if let Some(loop_fut) = dns_registry.build_verification_loop(None) {
+                registry.spawn_background(
+                    Box::leak(format!("dns_verification_{}", role).into_boxed_str()),
+                    loop_fut,
+                );
+                tracing::info!("DNS verification loop registered ({})", role);
+            }
+        }
+
+        // Spawn YARA broadcast loop.
+        if let Some((mut broadcast_rx, mesh_transport, broadcast_semaphore)) =
+            mesh_init.yara_broadcast
+        {
+            registry.spawn_background("yara_broadcast", async move {
+                loop {
+                    match broadcast_rx.recv().await {
+                        Some(msg) => {
+                            let transport = mesh_transport.clone();
+                            let permit = broadcast_semaphore.clone().acquire_owned().await.ok();
+                            tokio::spawn(async move {
+                                transport
+                                    .broadcast_to_all_peers(
+                                        msg,
+                                        Some(crate::mesh::config::MeshNodeRole::GLOBAL),
+                                    )
+                                    .await;
+                                drop(permit);
+                            });
+                        }
+                        None => {
+                            tracing::debug!("YARA broadcast mpsc channel closed, exiting loop");
+                            break;
+                        }
+                    }
+                }
+            });
+            tracing::info!("YARA broadcast loop registered");
+        }
+
+        // Spawn DHT routing init as a one-shot task.
+        if let Some(routing_manager) = mesh_init.dht_routing_init {
+            let manager = routing_manager.clone();
+            registry.spawn_one_shot("dht_routing_init", async move {
+                manager.init().await;
+            });
+            tracing::info!("DHT routing init registered (one-shot)");
+        }
+    }
 
     // ---- Phase 14: register server run task under registry ownership ----
     {
@@ -438,10 +498,11 @@ pub async fn run_unified_server_worker(
                     }
                 }
             } else {
-                // Optional mesh: start as background task.
+                // Optional mesh: start as one-shot background task.
+                // Clean completion is expected (not fatal).
                 let event_tx_for_start = event_tx.clone();
                 let mut registry = state.task_registry.lock().await;
-                registry.spawn_critical("mesh_startup", async move {
+                registry.spawn_one_shot("mesh_startup", async move {
                     let result = mesh_transport
                         .start_with_policy(synvoid_mesh::lifecycle::MeshStartupPolicy::default())
                         .await;
@@ -665,12 +726,6 @@ pub async fn run_unified_server_worker(
     // Step 1: Record coordinated shutdown intent before any teardown,
     // and acknowledge the lifecycle event so the IPC task can return.
     lifecycle::begin_coordinated_shutdown(&state.task_registry, lifecycle_ack).await;
-
-    // Step 1.2: Signal mesh background tasks (DNS verification loops,
-    // YARA broadcast) to shut down early so they drain during the
-    // connection-drain window rather than running until process exit.
-    #[cfg(feature = "mesh")]
-    state.data_plane.shutdown_mesh_background_tasks();
 
     // Step 1.5: Establish real shutdown deadline (Phase 19).
     // All subsequent timeout calculations derive from this deadline,

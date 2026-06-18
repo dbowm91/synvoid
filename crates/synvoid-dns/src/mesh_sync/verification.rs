@@ -528,20 +528,20 @@ impl MeshDnsRegistry {
         })
     }
 
-    /// Start the DNS verification loop.
+    /// Build the DNS verification loop future without spawning it.
     ///
-    /// When `shutdown_rx` is provided, the loop exits when the signal is
-    /// received. Without a receiver the loop runs until the process exits
-    /// (backwards-compatible behavior).
-    pub async fn start_verification_loop(
+    /// Returns `None` when no DNS resolver is configured. The caller is
+    /// responsible for spawning and registering the returned future (e.g.,
+    /// in a [`WorkerTaskRegistry`]).
+    pub fn build_verification_loop(
         &self,
         shutdown_rx: Option<tokio::sync::watch::Receiver<bool>>,
-    ) {
+    ) -> Option<impl std::future::Future<Output = ()> + Send + 'static> {
         let resolver = match &self.dns_resolver {
             Some(r) => Arc::clone(r),
             None => {
                 tracing::warn!("No DNS resolver configured, verification loop not starting");
-                return;
+                return None;
             }
         };
 
@@ -560,7 +560,7 @@ impl MeshDnsRegistry {
             self.config.verification_timeout_secs
         );
 
-        tokio::spawn(async move {
+        Some(async move {
             let mut shutdown = shutdown_rx;
             loop {
                 // When a shutdown receiver is present, use select! so we
@@ -755,6 +755,24 @@ impl MeshDnsRegistry {
                     }
                 }
             }
-        });
+        })
+    }
+
+    /// Start the DNS verification loop.
+    ///
+    /// When `shutdown_rx` is provided, the loop exits when the signal is
+    /// received. Without a receiver the loop runs until the process exits
+    /// (backwards-compatible behavior).
+    ///
+    /// The loop is spawned as an independent tokio task. For structured
+    /// ownership, use [`build_verification_loop`] and register the future
+    /// in a [`WorkerTaskRegistry`](synvoid_worker::task_registry::WorkerTaskRegistry).
+    pub async fn start_verification_loop(
+        &self,
+        shutdown_rx: Option<tokio::sync::watch::Receiver<bool>>,
+    ) {
+        if let Some(fut) = self.build_verification_loop(shutdown_rx) {
+            tokio::spawn(fut);
+        }
     }
 }

@@ -2048,3 +2048,100 @@ mod shutdown_coordination_tests {
         assert!(*rx.borrow());
     }
 }
+
+/// Tests for TaskClass::OneShot and one-shot task classification.
+mod one_shot_task_tests {
+    use synvoid::worker::task_registry::{TaskClass, WorkerTaskRegistry};
+
+    #[tokio::test]
+    async fn one_shot_clean_completion_is_not_fatal() {
+        let mut registry = WorkerTaskRegistry::new();
+
+        // Subscribe BEFORE spawning to avoid missing the exit event.
+        let mut exit_rx = registry.subscribe_exits();
+
+        registry.spawn_one_shot("test_oneshot", async {
+            // Clean completion — expected for one-shot tasks.
+        });
+
+        let exit = exit_rx.recv().await.expect("exit event should arrive");
+        assert_eq!(exit.name, "test_oneshot");
+        assert_eq!(exit.class, TaskClass::OneShot);
+        assert_eq!(
+            exit.reason,
+            synvoid::worker::task_registry::TaskExitReason::CleanCompletion
+        );
+        assert!(exit.expected_during_shutdown);
+    }
+
+    #[tokio::test]
+    async fn one_shot_panic_is_fatal() {
+        let mut registry = WorkerTaskRegistry::new();
+
+        let mut exit_rx = registry.subscribe_exits();
+
+        registry.spawn_one_shot("test_oneshot_panic", async {
+            panic!("test panic");
+        });
+
+        let exit = exit_rx.recv().await.expect("exit event should arrive");
+        assert_eq!(exit.name, "test_oneshot_panic");
+        assert_eq!(exit.class, TaskClass::OneShot);
+        assert!(matches!(
+            exit.reason,
+            synvoid::worker::task_registry::TaskExitReason::Panic(_)
+        ));
+        assert!(!exit.expected_during_shutdown);
+    }
+
+    #[tokio::test]
+    async fn one_shot_clean_during_shutdown_is_expected() {
+        let mut registry = WorkerTaskRegistry::new();
+
+        let mut exit_rx = registry.subscribe_exits();
+
+        registry.spawn_one_shot("test_oneshot_shutdown", async {
+            // Clean completion during shutdown.
+        });
+
+        // Mark shutdown started before the task completes.
+        registry.begin_shutdown();
+        registry.broadcast_shutdown();
+
+        let exit = exit_rx.recv().await.expect("exit event should arrive");
+        assert_eq!(exit.name, "test_oneshot_shutdown");
+        assert_eq!(exit.class, TaskClass::OneShot);
+        assert_eq!(
+            exit.reason,
+            synvoid::worker::task_registry::TaskExitReason::CleanCompletion
+        );
+        assert!(exit.expected_during_shutdown);
+    }
+
+    #[tokio::test]
+    async fn one_shot_task_not_fatal_for_worker() {
+        use synvoid::worker::task_registry::is_fatal_exit;
+
+        // A one-shot clean completion should never be fatal.
+        let exit = synvoid::worker::task_registry::NamedTaskExit {
+            id: synvoid::worker::task_registry::TaskId(1),
+            name: "test",
+            class: TaskClass::OneShot,
+            reason: synvoid::worker::task_registry::TaskExitReason::CleanCompletion,
+            expected_during_shutdown: true,
+        };
+        assert!(!is_fatal_exit(&exit, false));
+        assert!(!is_fatal_exit(&exit, true));
+
+        // A one-shot panic is not fatal via is_fatal_exit (OneShot class
+        // falls through to `_ => false`), but it IS abnormal and reported.
+        let panic_exit = synvoid::worker::task_registry::NamedTaskExit {
+            id: synvoid::worker::task_registry::TaskId(2),
+            name: "test",
+            class: TaskClass::OneShot,
+            reason: synvoid::worker::task_registry::TaskExitReason::Panic("test".into()),
+            expected_during_shutdown: false,
+        };
+        assert!(!is_fatal_exit(&panic_exit, false));
+    }
+}

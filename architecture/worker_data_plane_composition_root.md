@@ -136,3 +136,40 @@ Pass-through types in HTTP dispatch (`MeshTransportManager`, `MeshBackendPool`) 
 **Exception liveness**: Every `BoundaryException` must correspond to a current, audited source occurrence. A liveness test verifies each exception token is present in at least one matching file, preventing stale exceptions from silently authorizing regressions.
 
 **Fail-closed classification**: New files added under mixed-role directories (e.g., `src/worker/unified_server/`) must receive an explicit `BoundaryRole` classification. The default for unknown unified-server files is `Unclassified`, which causes the guardrail test to fail with instructions to classify the file explicitly.
+
+## Mesh Readiness, Restart, and Process-Exit Policy (Iteration 84)
+
+The worker composition root (`src/worker/unified_server/mod.rs`) is the **sole owner** of three policy domains:
+
+### 1. Mesh Readiness
+
+- **Required mesh**: Startup is awaited inline before the worker ready message is sent. The composition root controls the exact sequencing: construct → subscribe → register observer/coordinator → await startup → send ready.
+- **Optional mesh**: Startup is registered as a one-shot task in `WorkerTaskRegistry`. The worker ready message is sent immediately; mesh startup completion is non-fatal.
+- **Disabled mesh**: No supervision pipeline is created. No observer, coordinator, startup task, or decision channel exists.
+
+### 2. Mesh Restart
+
+- Restart is **disabled by default** (`restart_enabled=false` in `MeshSupervisionConfig`).
+- When disabled, `MeshSupervisorDecision::RestartMesh` is impossible by policy. If it somehow arrives, the composition root maps it to `MeshRestartExhausted` and shuts down the worker.
+- Restart execution (`execute_mesh_restart`) is not implemented — the coordinator produces decisions with budget gating, but the composition root does not execute them. This is the documented Alternative Outcome.
+
+### 3. Process-Exit Policy
+
+- The composition root derives the exit code from the authoritative `WorkerShutdownCause` via `shutdown_cause.exit_code()`.
+- IPC notification routing (Step 10) is determined by the cause variant.
+- No other module may call `std::process::exit()` or send worker-error IPC messages.
+
+### Background Task Ownership (Iteration 84 Part F)
+
+All mesh-adjacent background tasks are owned by the `WorkerTaskRegistry`:
+
+| Task | Registry Class | Start Phase | Stop Signal |
+|------|---------------|-------------|-------------|
+| DNS verification loops | `RestartableBackground` | Phase 13.5 | registry shutdown |
+| YARA broadcast loop | `RestartableBackground` | Phase 13.5 | mpsc sender drop |
+| DHT routing init | `OneShot` | Phase 13.5 | completes immediately |
+| Optional mesh startup | `OneShot` | Phase 14.5 | completes on startup |
+| Mesh exit observer | `CriticalService` | Phase 14.5 | registry shutdown |
+| Mesh supervision coordinator | `CriticalService` | Phase 14.5 | registry shutdown |
+
+No bare `tokio::spawn()` calls remain in `init_mesh.rs`. The `MeshInit` struct returns components (registries, broadcast receivers, routing managers) for the composition root to spawn and register.

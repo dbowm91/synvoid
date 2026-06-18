@@ -515,6 +515,40 @@ impl WorkerTaskRegistry {
         id_val as usize
     }
 
+    /// Spawn a one-shot task that runs once and completes.
+    ///
+    /// Clean completion is always expected (not fatal) regardless of
+    /// whether shutdown has started. Panics and errors are still fatal
+    /// for critical one-shot tasks.
+    pub fn spawn_one_shot<F>(&mut self, name: &'static str, future: F) -> usize
+    where
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let id_val = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let id = TaskId(id_val);
+        let exit_tx = self.exit_tx.clone();
+        let metrics = Arc::clone(&self.metrics);
+        let reported_exits = Arc::clone(&self.reported_exits);
+        let shutdown_started = Arc::clone(&self.shutdown_started_arc);
+
+        let handle = tokio::task::spawn(async move {
+            let result = AssertUnwindSafe(future).catch_unwind().await;
+            let shutdown = shutdown_started.load(Ordering::Acquire);
+            let exit = classify_unit_result_one_shot(id, name, result, shutdown);
+            record_exit_metrics(&exit, &metrics, &reported_exits);
+            let _ = exit_tx.send(exit);
+        });
+
+        self.metrics.record_started();
+        self.critical.push(RegisteredTask {
+            id,
+            name,
+            class: TaskClass::OneShot,
+            handle,
+        });
+        id_val as usize
+    }
+
     pub fn begin_shutdown(&self) {
         self.shutdown_started.store(true, Ordering::Release);
         self.shutdown_started_arc.store(true, Ordering::Release);
@@ -761,6 +795,36 @@ fn classify_unit_result(
                 id,
                 name,
                 class,
+                reason: TaskExitReason::Panic(msg),
+                expected_during_shutdown: false,
+            }
+        }
+    }
+}
+
+/// Classify a one-shot task result. Clean completion is always expected
+/// regardless of shutdown state (unlike `classify_unit_result` which
+/// treats clean completion before shutdown as `UnexpectedCompletion`).
+fn classify_unit_result_one_shot(
+    id: TaskId,
+    name: &'static str,
+    result: Result<(), Box<dyn std::any::Any + Send>>,
+    _shutdown_started: bool,
+) -> NamedTaskExit {
+    match result {
+        Ok(()) => NamedTaskExit {
+            id,
+            name,
+            class: TaskClass::OneShot,
+            reason: TaskExitReason::CleanCompletion,
+            expected_during_shutdown: true,
+        },
+        Err(panic) => {
+            let msg = extract_panic_message(panic);
+            NamedTaskExit {
+                id,
+                name,
+                class: TaskClass::OneShot,
                 reason: TaskExitReason::Panic(msg),
                 expected_during_shutdown: false,
             }

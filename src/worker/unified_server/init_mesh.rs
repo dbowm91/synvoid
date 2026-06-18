@@ -13,62 +13,19 @@
 // `CanonicalTrustReader` and is carried in `MeshInit` so the
 // composition root can use it to build the policy context.
 //
-// Task Ownership Inventory (Iteration 84):
+// Task Ownership Inventory (Iteration 84 Part F):
 //
-// Task                                     | Correct Owner              | Start Phase   | Stop Signal              | Join Path                      | Restart Generation
-// -----------------------------------------|----------------------------|---------------|--------------------------|--------------------------------|--------------------
-// topology.start_background_tasks()        | Mesh topology              | transport init| mesh shutdown            | mesh task group                | per-generation
-// routing_manager.init()                   | DHT routing                | transport init| mesh shutdown            | mesh task group                | per-generation
-// DnsRegistry.start_verification_loop()    | DNS verification           | transport init| watch::channel shutdown   | mesh task group                | per-generation
-// threat_intel.start_background_tasks()    | Threat intel               | transport init| mesh shutdown            | mesh task group                | per-generation
-// YARA broadcast loop                      | Threat intel broadcast     | transport init| watch::channel shutdown   | mesh task group                | per-generation
+// Task                                     | Correct Owner              | Start Phase       | Stop Signal              | Join Path                      | Restart Generation
+// -----------------------------------------|----------------------------|-------------------|--------------------------|--------------------------------|--------------------
+// topology.start_background_tasks()        | Mesh topology              | transport init    | mesh shutdown            | mesh task group                | per-generation
+// routing_manager.init()                   | WorkerTaskRegistry         | Phase 13.5        | registry shutdown        | registry join                  | N/A (one-shot)
+// DnsRegistry verification loops           | WorkerTaskRegistry         | Phase 13.5        | registry shutdown        | registry join                  | per-generation
+// threat_intel.start_background_tasks()    | Threat intel               | transport init    | mesh shutdown            | mesh task group                | per-generation
+// YARA broadcast loop                      | WorkerTaskRegistry         | Phase 13.5        | mpsc sender drop         | registry join                  | per-generation
 //
-// Classification of bare spawns in this file:
-//
-// 1. routing_manager.init() spawn (line ~100):
-//    - What: Calls DhtRoutingManager::init() which populates the DHT routing table
-//    - Correct owner: MeshTransport startup (MeshTaskGroup)
-//    - Start phase: After transport init, before transport starts serving
-//    - Restart: Per-generation (re-initialized on each mesh restart)
-//    - Move: YES — should be part of MeshTransport::start_with_policy() staged startup
-//
-// 2. Edge DnsRegistry.start_verification_loop() spawn (line ~236):
-//    - What: Runs DNS zone verification loop for edge nodes
-//    - Correct owner: MeshTransport startup (MeshTaskGroup)
-//    - Start phase: After transport init
-//    - Restart: Per-generation
-//    - Shutdown: watch::channel receiver — exits on mesh transport shutdown
-//
-// 3. Global DnsRegistry.start_verification_loop() spawn (line ~284):
-//    - What: Runs DNS zone verification loop for global nodes
-//    - Correct owner: MeshTransport startup (MeshTaskGroup)
-//    - Start phase: After transport init
-//    - Restart: Per-generation
-//    - Shutdown: watch::channel receiver — exits on mesh transport shutdown
-//
-// 4. YARA broadcast loop (outer recv, line ~348):
-//    - What: Receives threat-intel messages from mpsc and dispatches to peers
-//    - Correct owner: MeshTransport startup (MeshTaskGroup)
-//    - Start phase: After transport init, after threat_intel.start_background_tasks()
-//    - Restart: Per-generation
-//    - Shutdown: watch::channel receiver — exits on mesh transport shutdown
-//
-// 5. broadcast_to_all_peers dispatch (inner spawn, line ~352):
-//    - What: Fire-and-forget broadcast per message, bounded by semaphore
-//    - Correct owner: Fire-and-forget (bounded by owned semaphore)
-//    - Move: NO — this is a bounded fire-and-forget dispatch, not a long-lived task
-//
-// Concerns about moving spawns:
-// - The routing_manager.init() spawn runs once and completes — it should be an
-//   await in the startup sequence, not a bare spawn. Moving it into
-//   MeshTransport::start_with_policy() is straightforward.
-// - DNS verification loops are long-lived and need shutdown coordination — moving
-//   them into MeshTaskGroup gives proper cancellation and join semantics.
-// - The YARA broadcast loop needs the mpsc channel sender wired into threat_intel
-//   before it starts, so it must be spawned after threat_intel.init(). The current
-//   ordering is correct; it just needs ownership transfer.
-// - The inner broadcast dispatch (line ~352) is already bounded by a semaphore and
-//   fire-and-forget — it is correct as-is.
+// All bare spawns have been eliminated from this file.
+// Components are returned in MeshInit for the composition root
+// (mod.rs Phase 13.5) to spawn and register in WorkerTaskRegistry.
 
 use std::sync::Arc;
 
@@ -90,6 +47,13 @@ use synvoid_config::ConfigManager;
 /// The snapshot itself implements `CanonicalTrustReader` and can be used
 /// directly to build the threat-intel policy context. The ownership
 /// boundary is documented in `mod.rs`.
+///
+/// # Task Ownership (Iteration 84 Part F)
+///
+/// Background tasks (DNS verification loops, YARA broadcast, DHT routing
+/// init) are NOT spawned in this function. Instead, the components needed
+/// to spawn them are returned here so the composition root in `mod.rs`
+/// can register them in the `WorkerTaskRegistry`.
 pub struct MeshInit {
     #[cfg(feature = "mesh")]
     pub transport_manager: Option<Arc<MeshTransportManager>>,
@@ -100,13 +64,20 @@ pub struct MeshInit {
     /// Canonical trust snapshot from Supervisor, if available.
     #[cfg(feature = "mesh")]
     pub canonical_snapshot: Option<synvoid_mesh::canonical::CanonicalTrustSnapshot>,
-    /// Sender that signals DNS verification loops to shut down.
-    /// The receiver is passed to each verification loop spawned during init.
+    /// DNS verification registries that need verification loops spawned.
+    /// Each entry is a (registry, is_global) pair.
+    #[cfg(all(feature = "mesh", feature = "dns"))]
+    pub dns_verification_registries: Vec<(Arc<crate::dns::mesh_sync::MeshDnsRegistry>, bool)>,
+    /// Components for the YARA broadcast loop: (mpsc_receiver, mesh_transport, semaphore).
+    #[cfg(all(feature = "mesh", feature = "dns"))]
+    pub yara_broadcast: Option<(
+        tokio::sync::mpsc::Receiver<crate::mesh::protocol::MeshMessage>,
+        Arc<crate::mesh::transport::MeshTransport>,
+        Arc<tokio::sync::Semaphore>,
+    )>,
+    /// DHT routing manager for one-shot init task (if routing is enabled).
     #[cfg(feature = "mesh")]
-    pub dns_shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
-    /// Sender that signals the YARA broadcast loop to shut down.
-    #[cfg(feature = "mesh")]
-    pub yara_broadcast_shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
+    pub dht_routing_init: Option<Arc<crate::mesh::dht::routing::DhtRoutingManager>>,
 }
 
 /// Initialize the mesh + threat-intel subsystem. Returns
@@ -159,13 +130,7 @@ pub async fn init_mesh_and_threat_intel(
                 let manager = Arc::new(crate::mesh::dht::routing::DhtRoutingManager::new(
                     mesh_config_arc.clone(),
                 ));
-                let manager_clone = manager.clone();
                 manager.start_background_tasks();
-                // Iteration 84: documented ownership — see inventory comment above
-                // Correct owner: MeshTransport startup (MeshTaskGroup)
-                tokio::spawn(async move {
-                    manager_clone.init().await;
-                });
                 Some(manager)
             } else {
                 None
@@ -173,6 +138,10 @@ pub async fn init_mesh_and_threat_intel(
 
             let verification_pool =
                 Arc::new(crate::mesh::crypto_verification::CryptoVerificationPool::default());
+
+            // Clone routing_manager before it's moved into create_record_store.
+            #[cfg(feature = "mesh")]
+            let dht_routing_init_for_spawn = routing_manager.clone();
 
             let record_store = crate::mesh::backend::create_record_store(
                 mesh_config,
@@ -218,8 +187,12 @@ pub async fn init_mesh_and_threat_intel(
                     threat_intel: None,
                     mesh_signer: None,
                     canonical_snapshot: None,
-                    dns_shutdown_tx: None,
-                    yara_broadcast_shutdown_tx: None,
+                    #[cfg(all(feature = "mesh", feature = "dns"))]
+                    dns_verification_registries: Vec::new(),
+                    #[cfg(all(feature = "mesh", feature = "dns"))]
+                    yara_broadcast: None,
+                    #[cfg(feature = "mesh")]
+                    dht_routing_init: None,
                 };
             };
 
@@ -257,13 +230,25 @@ pub async fn init_mesh_and_threat_intel(
                 Some(Arc::new(signer_for_threat)),
             ));
 
-            // Iteration 84: Watch channels for long-lived task shutdown.
-            // DNS verification loops and YARA broadcast loop receive these
-            // receivers and exit when the signal is set, ensuring clean
-            // termination during mesh transport shutdown.
-            let (dns_shutdown_tx, dns_shutdown_rx) = tokio::sync::watch::channel(false);
-            let (yara_broadcast_shutdown_tx, mut yara_broadcast_shutdown_rx) =
-                tokio::sync::watch::channel(false);
+            // Iteration 84 Part F: Background task components are returned for
+            // the composition root to spawn and register in WorkerTaskRegistry.
+            // No bare tokio::spawn() calls remain in this function.
+            #[cfg(all(feature = "mesh", feature = "dns"))]
+            let mut dns_verification_registries: Vec<(
+                Arc<crate::dns::mesh_sync::MeshDnsRegistry>,
+                bool,
+            )> = Vec::new();
+            // Default values for components populated inside #[cfg(feature = "dns")].
+            #[cfg(all(feature = "mesh", feature = "dns"))]
+            let mut yara_broadcast: Option<(
+                tokio::sync::mpsc::Receiver<crate::mesh::protocol::MeshMessage>,
+                Arc<crate::mesh::transport::MeshTransport>,
+                Arc<tokio::sync::Semaphore>,
+            )> = None;
+            #[cfg(feature = "mesh")]
+            let mut dht_routing_init: Option<
+                Arc<crate::mesh::dht::routing::DhtRoutingManager>,
+            > = None;
 
             #[cfg(feature = "dns")]
             {
@@ -308,15 +293,9 @@ pub async fn init_mesh_and_threat_intel(
                             false,
                             registry_config,
                         );
-                        let registry_clone = Arc::new(registry);
-                        // Iteration 84: DNS verification loop with shutdown coordination.
-                        // The receiver is cloned per-loop so each can exit independently.
-                        let shutdown_rx = dns_shutdown_rx.clone();
-                        tokio::spawn(async move {
-                            registry_clone
-                                .start_verification_loop(Some(shutdown_rx))
-                                .await;
-                        });
+                        // Iteration 84 Part F: Return registry for composition
+                        // root to spawn and register in WorkerTaskRegistry.
+                        dns_verification_registries.push((Arc::new(registry), false));
                     } else {
                         let upstream_servers: Vec<std::net::IpAddr> = dns_cfg
                             .mesh
@@ -361,14 +340,9 @@ pub async fn init_mesh_and_threat_intel(
                                         )
                                         .with_dns_resolver(resolver);
 
-                                    let registry_clone = Arc::new(registry);
-                                    // Iteration 84: DNS verification loop with shutdown coordination.
-                                    let shutdown_rx = dns_shutdown_rx.clone();
-                                    tokio::spawn(async move {
-                                        registry_clone
-                                            .start_verification_loop(Some(shutdown_rx))
-                                            .await;
-                                    });
+                                    // Iteration 84 Part F: Return registry for composition
+                                    // root to spawn and register in WorkerTaskRegistry.
+                                    dns_verification_registries.push((Arc::new(registry), true));
                                 }
                                 Err(e) => {
                                     tracing::error!("Failed to create DNS resolver: {}", e);
@@ -421,8 +395,8 @@ pub async fn init_mesh_and_threat_intel(
 
             #[cfg(feature = "dns")]
             {
-                let mesh_broadcast_tx_for_yara = {
-                    let (mesh_broadcast_tx, mut mesh_broadcast_rx) =
+                yara_broadcast = {
+                    let (mesh_broadcast_tx, mesh_broadcast_rx) =
                         tokio::sync::mpsc::channel::<crate::mesh::protocol::MeshMessage>(128);
 
                     threat_intel.set_mesh_sender(mesh_broadcast_tx.clone());
@@ -430,46 +404,12 @@ pub async fn init_mesh_and_threat_intel(
                     if let Some(quic_transport) = transport_manager.get_quic_transport() {
                         let mesh_transport = quic_transport.get_inner();
                         let broadcast_semaphore = Arc::new(tokio::sync::Semaphore::new(10));
-                        // Iteration 84: YARA broadcast loop with shutdown coordination.
-                        // Exits when either the mpsc sender is dropped (normal) or
-                        // the shutdown signal is received (mesh transport shutdown).
-                        tokio::spawn(async move {
-                            loop {
-                                tokio::select! {
-                                    biased;
-                                    result = yara_broadcast_shutdown_rx.changed() => {
-                                        if result.is_ok() && *yara_broadcast_shutdown_rx.borrow() {
-                                            tracing::debug!("YARA broadcast loop received shutdown signal");
-                                            break;
-                                        }
-                                    }
-                                    msg = mesh_broadcast_rx.recv() => {
-                                        match msg {
-                                            Some(msg) => {
-                                                let transport = mesh_transport.clone();
-                                                let permit = broadcast_semaphore.clone().acquire_owned().await.ok();
-                                                tokio::spawn(async move {
-                                                    transport
-                                                        .broadcast_to_all_peers(
-                                                            msg,
-                                                            Some(crate::mesh::config::MeshNodeRole::GLOBAL),
-                                                        )
-                                                        .await;
-                                                    drop(permit);
-                                                });
-                                            }
-                                            None => {
-                                                tracing::debug!("YARA broadcast mpsc channel closed, exiting loop");
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        });
+                        // Iteration 84 Part F: Return broadcast components for composition
+                        // root to spawn and register in WorkerTaskRegistry.
+                        Some((mesh_broadcast_rx, mesh_transport, broadcast_semaphore))
+                    } else {
+                        None
                     }
-
-                    mesh_broadcast_tx
                 };
 
                 if mesh_config.role.is_global()
@@ -531,6 +471,12 @@ pub async fn init_mesh_and_threat_intel(
                 } else {
                     tracing::warn!("Mesh DHT provider not registered — no record store available");
                 }
+
+                // Store dht_routing_init for composition root to spawn.
+                #[cfg(feature = "mesh")]
+                {
+                    dht_routing_init = dht_routing_init_for_spawn;
+                }
             }
 
             tracing::info!("Mesh and threat intelligence initialized in UnifiedServer Worker");
@@ -556,8 +502,12 @@ pub async fn init_mesh_and_threat_intel(
                     signer_key_clone,
                 ))),
                 canonical_snapshot: None,
-                dns_shutdown_tx: Some(dns_shutdown_tx),
-                yara_broadcast_shutdown_tx: Some(yara_broadcast_shutdown_tx),
+                #[cfg(all(feature = "mesh", feature = "dns"))]
+                dns_verification_registries,
+                #[cfg(all(feature = "mesh", feature = "dns"))]
+                yara_broadcast,
+                #[cfg(feature = "mesh")]
+                dht_routing_init,
             };
         }
 
@@ -571,8 +521,12 @@ pub async fn init_mesh_and_threat_intel(
             threat_intel: Some(dummy_threat),
             mesh_signer: None,
             canonical_snapshot: None,
-            dns_shutdown_tx: None,
-            yara_broadcast_shutdown_tx: None,
+            #[cfg(all(feature = "mesh", feature = "dns"))]
+            dns_verification_registries: Vec::new(),
+            #[cfg(all(feature = "mesh", feature = "dns"))]
+            yara_broadcast: None,
+            #[cfg(feature = "mesh")]
+            dht_routing_init: None,
         }
     }
 

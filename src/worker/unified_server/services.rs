@@ -39,12 +39,6 @@ pub struct DataPlaneServices {
     /// fallback for code that cannot easily receive an explicit handle.
     #[cfg(feature = "mesh")]
     pub record_store: Option<Arc<RecordStoreManager>>,
-    /// Signals DNS verification loops to shut down during mesh transport teardown.
-    #[cfg(feature = "mesh")]
-    pub dns_shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
-    /// Signals the YARA broadcast loop to shut down during mesh transport teardown.
-    #[cfg(feature = "mesh")]
-    pub yara_broadcast_shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
 }
 
 /// Builder for [`DataPlaneServices`].
@@ -65,10 +59,6 @@ pub struct DataPlaneServicesBuilder {
     yara_rules: Option<Arc<YaraRulesManager>>,
     #[cfg(feature = "mesh")]
     record_store: Option<Arc<RecordStoreManager>>,
-    #[cfg(feature = "mesh")]
-    dns_shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
-    #[cfg(feature = "mesh")]
-    yara_broadcast_shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
 }
 
 impl DataPlaneServicesBuilder {
@@ -86,10 +76,6 @@ impl DataPlaneServicesBuilder {
             yara_rules: None,
             #[cfg(feature = "mesh")]
             record_store: None,
-            #[cfg(feature = "mesh")]
-            dns_shutdown_tx: None,
-            #[cfg(feature = "mesh")]
-            yara_broadcast_shutdown_tx: None,
         }
     }
 
@@ -125,21 +111,6 @@ impl DataPlaneServicesBuilder {
     #[cfg(feature = "mesh")]
     pub fn with_record_store(mut self, rs: Option<Arc<RecordStoreManager>>) -> Self {
         self.record_store = rs;
-        self
-    }
-
-    #[cfg(feature = "mesh")]
-    pub fn with_dns_shutdown_tx(mut self, tx: Option<tokio::sync::watch::Sender<bool>>) -> Self {
-        self.dns_shutdown_tx = tx;
-        self
-    }
-
-    #[cfg(feature = "mesh")]
-    pub fn with_yara_broadcast_shutdown_tx(
-        mut self,
-        tx: Option<tokio::sync::watch::Sender<bool>>,
-    ) -> Self {
-        self.yara_broadcast_shutdown_tx = tx;
         self
     }
 
@@ -193,10 +164,6 @@ impl DataPlaneServicesBuilder {
             threat_intel_policy: self.threat_intel_policy,
             #[cfg(feature = "mesh")]
             record_store: self.record_store,
-            #[cfg(feature = "mesh")]
-            dns_shutdown_tx: self.dns_shutdown_tx,
-            #[cfg(feature = "mesh")]
-            yara_broadcast_shutdown_tx: self.yara_broadcast_shutdown_tx,
         }
     }
 }
@@ -225,17 +192,6 @@ impl DataPlaneServices {
             threat_intel.set_policy_context(ctx.clone());
         }
         ctx
-    }
-
-    /// Signal all mesh background tasks (DNS verification loops, YARA broadcast)
-    /// to shut down. Call this during worker teardown before dropping services.
-    pub fn shutdown_mesh_background_tasks(&self) {
-        if let Some(tx) = &self.dns_shutdown_tx {
-            let _ = tx.send(true);
-        }
-        if let Some(tx) = &self.yara_broadcast_shutdown_tx {
-            let _ = tx.send(true);
-        }
     }
 }
 
