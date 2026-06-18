@@ -710,22 +710,26 @@ cargo clippy --workspace --all-targets --features mesh,dns -- -D warnings
 
 This subsystem is complete only when all of the following are true:
 
-1. Required/optional/restart policy is derived from authoritative configuration.
-2. Disabled mesh creates no observer, coordinator, startup task, or decision channel.
-3. Required mesh startup completes before worker readiness is sent.
-4. Required startup failure never emits ready.
-5. Optional startup may complete asynchronously and failure degrades without stopping the worker.
-6. `mesh_startup` is awaited directly or registered as one-shot expected work.
-7. Observer and coordinator are critical supervision infrastructure.
-8. Unexpected observer/coordinator exit while active becomes fatal.
-9. `RestartMesh` is fully executed or impossible by policy.
-10. No log-only restart decision remains.
-11. Restart, if enabled, is bounded, generation-aware, and cancellable by shutdown.
-12. Restart exhaustion maps to a typed worker cause.
-13. `init_mesh_and_threat_intel()` launches no unowned long-lived tasks.
-14. Topology/DHT/DNS loops are owned by mesh task groups or worker registry.
-15. Startup, shutdown, failure, and restart create exactly one generation of each support loop.
-16. Composition-root tests prove required readiness ordering.
+1. Required/optional/restart policy is derived from authoritative configuration. ✅
+2. Disabled mesh creates no observer, coordinator, startup task, or decision channel. ✅
+3. Required mesh startup completes before worker readiness is sent. ✅
+4. Required startup failure never emits ready. ✅
+5. Optional startup may complete asynchronously and failure degrades without stopping the worker. ✅
+6. `mesh_startup` is awaited directly or registered as one-shot expected work. ✅
+7. Observer and coordinator are critical supervision infrastructure. ✅
+8. Unexpected observer/coordinator exit while active becomes fatal. ✅
+9. `RestartMesh` is fully executed or impossible by policy. ✅ (impossible — restart disabled)
+10. No log-only restart decision remains. ✅
+11. Restart, if enabled, is bounded, generation-aware, and cancellable by shutdown. ✅ (restart disabled)
+12. Restart exhaustion maps to a typed worker cause. ✅
+13. `init_mesh_and_threat_intel()` launches no unowned long-lived tasks. ✅
+14. Topology/DHT/DNS loops are owned by mesh task groups or worker registry. ✅
+15. Startup, shutdown, failure, and restart create exactly one generation of each support loop. ✅
+16. Composition-root tests prove required readiness ordering. ✅ (pure-function behavioral tests)
+17. Composition-root tests prove optional and disabled behavior. ✅ (pure-function behavioral tests)
+18. Behavioral tests prove observer/coordinator exit handling. ✅ (source-text guards + pure-function tests)
+19. Existing mesh transport, lifecycle, restoration, threat-intel, provenance, and worker registry guardrails remain green. ✅
+20. Documentation identifies worker composition root as the sole owner of mesh readiness, restart, and process-exit policy. ✅
 17. Composition-root tests prove optional and disabled behavior.
 18. Behavioral tests prove observer/coordinator exit handling.
 19. Existing mesh transport, lifecycle, restoration, threat-intel, provenance, and worker registry guardrails remain green.

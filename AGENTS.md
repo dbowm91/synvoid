@@ -72,7 +72,7 @@ cargo test --test mesh_http_framing --features mesh,dns
 cargo test -p synvoid-mesh --features mesh auxiliary  # mesh auxiliary task unit tests
 cargo test --test mesh_lifecycle_tests         # Mesh lifecycle state machine and task group tests
 cargo test --test mesh_startup_rollback        # Mesh startup rollback behavioral tests
-cargo test --test worker_supervision_control_flow --features mesh,dns  # Worker supervision + mesh exit tests (88 tests: 84 original + 4 one-shot)
+cargo test --test worker_supervision_control_flow --features mesh,dns  # Worker supervision + mesh exit tests (146 tests: 84 original + 7 shutdown coordination + 58 behavioral)
 cargo test -p synvoid --lib worker::mesh_supervision --features mesh
 cargo test -p synvoid-mesh --features mesh lifecycle  # Mesh lifecycle unit tests
 cargo test -p synvoid-mesh --features mesh task_group  # Mesh task group unit tests
