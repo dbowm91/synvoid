@@ -363,3 +363,21 @@ The supervision loop returns `SupervisionOutcome` (Lifecycle | DirectCause) inst
 2. For CriticalService/RestartableBackground: use WorkerTaskRegistry.spawn_critical() or spawn_background()
 3. Use child_token() with tokio::select! for cooperative cancellation
 4. For Detached: add explicit allowlist entry in tests/background_task_ownership_guard.rs
+
+### Iteration 89 — Worker Mesh Composition-Root Final Closure
+
+**`MeshGenerationSupport::empty(generation)`**: Constructor for empty support bundles with no tasks. Used for degraded-mode fallback where optional mesh support must not block readiness.
+
+**`stop_mesh_generation_support()`**: Now `pub` (was `pub(crate)`). Accepts `SupportStopContext`, returns `MeshSupportStopReport`. Public for integration testing of composition-root dataflow.
+
+**`MeshConfigurationInvariant(String)`**: New `MeshFailureCause` variant for transport/policy configuration mismatches during init. Maps to `WorkerShutdownCause::MeshConfigurationInvariant(String)` in `mesh_failure_to_worker_cause()`. Fatal exit.
+
+**Optional startup race**: `pending_optional_failure` flag prevents stale degradation signals from being dropped if mesh support failure arrives before optional startup completes. Mesh decisions polled alongside `optional_startup_rx` via `tokio::select!`.
+
+**Stop report accounting**: `cooperative` count now correctly includes `CleanCompletion + Cancelled` only (not `total - aborted`). `failed` counts `Panic + Error + UnexpectedCompletion`.
+
+**Public re-exports**: `MeshGenerationSupport`, `MeshSupportStopReport`, `SupportStopContext`, `stop_mesh_generation_support` are re-exported from `worker/mod.rs`.
+
+**Composition root tests**: 12 integration tests in `tests/composition_root_behavioral.rs` (Phases 21-23) covering support failure, cleanup, classification, and readiness. 17 unit tests in `composition_root_tests` module in `mod.rs`.
+
+**`#[cfg(test)]` gate bug**: Library crates compiled as dependencies do NOT have `cfg(test)` set during integration test builds. `check_startup_failure_hook` call sites were gated with `#[cfg(test)]` in mesh crate — hook calls were compiled out during integration tests. Fix: removed all `#[cfg(test)]` gates from call sites in `transport.rs`.

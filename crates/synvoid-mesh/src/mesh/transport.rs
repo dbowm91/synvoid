@@ -237,8 +237,9 @@ pub enum StartupFailurePoint {
     DuringSeedBootstrap,
     /// During configured peer connection phase.
     DuringPeerConnect,
-    /// Before any peer connection (seed or configured) is attempted.
-    BeforePeerConnect,
+    /// Before any peer connection (seed or configured) is attempted (after DHT init).
+    /// Replaces BeforePeerConnect which fired before DHT initialization.
+    AfterDhtInitialization,
     /// During DHT bootstrap phase.
     DuringDhtBootstrap,
     /// During QUIC runtime server start.
@@ -2243,7 +2244,6 @@ impl MeshTransport {
 
     /// Check and invoke the startup failure hook at the given point.
     /// Returns `Err` if the hook triggers a failure.
-    #[allow(dead_code)]
     async fn check_startup_failure_hook(
         &self,
         point: StartupFailurePoint,
@@ -2293,7 +2293,6 @@ impl MeshTransport {
                 Self::datagram_listener_loop(peer_connections_dg, datagram_shutdown).await;
             });
 
-        #[cfg(test)]
         self.check_startup_failure_hook(StartupFailurePoint::AfterCriticalTasks)
             .await?;
 
@@ -2302,9 +2301,6 @@ impl MeshTransport {
         // peer connection callback can mutate it via dht_on_peer_connected()
         // (Iteration 88, Part A — Phase 1).
         let mut dht_ready = false;
-        #[cfg(test)]
-        self.check_startup_failure_hook(StartupFailurePoint::BeforePeerConnect)
-            .await?;
         if let Some(ref rm) = self.routing_manager {
             if rm.is_enabled() {
                 let was_initialized = rm.is_initialized().await;
@@ -2331,8 +2327,13 @@ impl MeshTransport {
             }
         }
 
+        // Phase 3.75: Hook fires after DHT initialization but BEFORE any peer
+        // connection. This proves the "initialized-before-connect" invariant
+        // (Iteration 88, Part E).
+        self.check_startup_failure_hook(StartupFailurePoint::AfterDhtInitialization)
+            .await?;
+
         // Phase 4: Bootstrap from seeds
-        #[cfg(test)]
         self.check_startup_failure_hook(StartupFailurePoint::DuringSeedBootstrap)
             .await?;
         if !self.config.seeds.is_empty() {
@@ -2354,7 +2355,6 @@ impl MeshTransport {
         }
 
         // Phase 5: Connect configured peers
-        #[cfg(test)]
         self.check_startup_failure_hook(StartupFailurePoint::DuringPeerConnect)
             .await?;
         if !self.config.peers.is_empty() {
@@ -2376,7 +2376,6 @@ impl MeshTransport {
         }
 
         // Phase 6: DHT bootstrap — only if routing table was initialized.
-        #[cfg(test)]
         self.check_startup_failure_hook(StartupFailurePoint::DuringDhtBootstrap)
             .await?;
         if dht_ready {
@@ -2648,7 +2647,6 @@ impl MeshTransport {
         }
 
         // Phase 9: Start QUIC accept loop
-        #[cfg(test)]
         self.check_startup_failure_hook(StartupFailurePoint::DuringRuntimeStart)
             .await?;
         if let Some(ref runtime) = self.runtime {
@@ -2699,8 +2697,7 @@ impl MeshTransport {
             }
         }
 
-        // 2. Pre-commit failure injection (test only)
-        #[cfg(test)]
+        // 2. Pre-commit failure injection
         self.check_startup_failure_hook(StartupFailurePoint::BeforeLifecycleCommit)
             .await?;
 

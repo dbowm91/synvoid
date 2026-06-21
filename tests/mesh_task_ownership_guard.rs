@@ -3142,11 +3142,11 @@ fn iter88_report_reflects_actual_init_state() {
 }
 
 #[test]
-fn iter88_before_peer_connect_hook_exists() {
+fn iter88_after_dht_initialization_hook_exists() {
     let content = read_file("crates/synvoid-mesh/src/mesh/transport.rs");
     assert!(
-        content.contains("StartupFailurePoint::BeforePeerConnect"),
-        "BeforePeerConnect hook must exist for test injection"
+        content.contains("StartupFailurePoint::AfterDhtInitialization"),
+        "AfterDhtInitialization hook must exist for test injection (after DHT init, before peer connect)"
     );
 }
 

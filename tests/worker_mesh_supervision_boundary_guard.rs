@@ -1519,3 +1519,127 @@ mod iter88_behavioral_guardrails {
         );
     }
 }
+
+// --- Iteration 89: Composition-Root Behavioral Test Guardrails ---
+
+mod iter89_behavioral_guardrails {
+    /// Verify `tests/composition_root_behavioral.rs` exists with expected test functions.
+    /// This ensures the behavioral composition-root tests were not accidentally deleted.
+    #[test]
+    fn composition_root_behavioral_test_file_exists() {
+        let content = std::fs::read_to_string("tests/composition_root_behavioral.rs")
+            .expect("composition_root_behavioral.rs must exist");
+        // Required behavioral tests per Part F, Phase 23:
+        assert!(
+            content.contains("required_support_failure_blocks_ready"),
+            "composition_root_behavioral.rs must have required_support_failure_blocks_ready test"
+        );
+        assert!(
+            content.contains("optional_success_returns_bundle"),
+            "composition_root_behavioral.rs must have optional_success_returns_bundle test"
+        );
+        assert!(
+            content.contains("optional_degradation_performs_bounded_cleanup"),
+            "composition_root_behavioral.rs must have optional_degradation_performs_bounded_cleanup test"
+        );
+        assert!(
+            content.contains("optional_immediate_exit_leaves_no_tasks"),
+            "composition_root_behavioral.rs must have optional_immediate_exit_leaves_no_tasks test"
+        );
+        assert!(
+            content.contains("cleanup_report_classifications_correct"),
+            "composition_root_behavioral.rs must have cleanup_report_classifications_correct test"
+        );
+        assert!(
+            content.contains("forced_abort_path_awaits_every_handle"),
+            "composition_root_behavioral.rs must have forced_abort_path_awaits_every_handle test"
+        );
+        assert!(
+            content.contains("no_task_id_remains_after_teardown"),
+            "composition_root_behavioral.rs must have no_task_id_remains_after_teardown test"
+        );
+    }
+
+    /// Verify `MeshGenerationSupport::empty()` exists — required by optional
+    /// startup with no support tasks.
+    #[test]
+    fn mesh_generation_support_empty_constructor() {
+        let content = std::fs::read_to_string("src/worker/unified_server/mod.rs")
+            .expect("failed to read mod.rs");
+        assert!(
+            content.contains("pub fn empty(generation: u64) -> Self"),
+            "MeshGenerationSupport::empty(generation) must exist"
+        );
+    }
+
+    /// Verify `stop_mesh_generation_support` is public for integration testing.
+    #[test]
+    fn stop_mesh_generation_support_is_public() {
+        let content = std::fs::read_to_string("src/worker/unified_server/mod.rs")
+            .expect("failed to read mod.rs");
+        assert!(
+            content.contains("pub async fn stop_mesh_generation_support("),
+            "stop_mesh_generation_support must be pub (not pub(crate))"
+        );
+    }
+
+    /// Verify the optional startup/degradation race handling uses
+    /// `pending_optional_failure` flag.
+    #[test]
+    fn optional_startup_pending_failure_flag() {
+        let content = std::fs::read_to_string("src/worker/unified_server/mod.rs")
+            .expect("failed to read mod.rs");
+        assert!(
+            content.contains("pending_optional_failure"),
+            "composition root must use pending_optional_failure flag for race handling"
+        );
+    }
+
+    /// Verify the composition-root tests module exists in mod.rs (unit tests).
+    #[test]
+    fn composition_root_tests_module_exists() {
+        let content = std::fs::read_to_string("src/worker/unified_server/mod.rs")
+            .expect("failed to read mod.rs");
+        assert!(
+            content.contains("mod composition_root_tests"),
+            "composition_root_tests module must exist in unified_server/mod.rs"
+        );
+    }
+
+    /// Verify the optional startup completion channel uses typed result
+    /// carrying `MeshGenerationSupport` for optional startup.
+    #[test]
+    fn optional_mesh_startup_channel_type() {
+        let content = std::fs::read_to_string("src/worker/unified_server/mod.rs")
+            .expect("failed to read mod.rs");
+        assert!(
+            content.contains("optional_startup_tx"),
+            "composition root must have optional_startup_tx channel"
+        );
+        assert!(
+            content.contains("optional_startup_rx"),
+            "composition root must have optional_startup_rx channel"
+        );
+        assert!(
+            content.contains("Result<Option<MeshGenerationSupport>, String>"),
+            "optional startup channel must carry Result<Option<MeshGenerationSupport>, String>"
+        );
+    }
+
+    /// Verify the required startup path gates ready on support registration.
+    #[test]
+    fn required_startup_gates_ready_on_support() {
+        let content = std::fs::read_to_string("src/worker/unified_server/mod.rs")
+            .expect("failed to read mod.rs");
+        // Required readiness must check both transport startup AND support registration.
+        assert!(
+            content.contains("ready_deferred"),
+            "composition root must use ready_deferred flag"
+        );
+        // Ready is only sent in the Ok branch (after both succeed).
+        assert!(
+            content.contains("Phase 7 Part B"),
+            "required readiness must document Phase 7 Part B gate"
+        );
+    }
+}

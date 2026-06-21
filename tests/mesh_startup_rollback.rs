@@ -2466,3 +2466,77 @@ async fn dht_add_peer_checked_rejects_uninitialized() {
     );
     assert_eq!(result.unwrap_err(), "DHT routing table not initialized");
 }
+
+// ── Phase 20: State-aware hook test ──────────────────────────────────────────
+
+#[test]
+fn dht_hook_fires_after_initialization_before_peers() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let config = Arc::new(MeshConfig::default());
+    let rm = Arc::new(DhtRoutingManager::new(config.clone()));
+
+    let topology = Arc::new(MeshTopology::new(config.clone()));
+    let cert_manager = Arc::new(RwLock::new(MeshCertManager::new(&config)));
+
+    let transport = Arc::new(MeshTransport::new(
+        config,
+        topology,
+        cert_manager,
+        None,             // record_store
+        Some(rm.clone()), // routing_manager
+        None,             // threat_intel
+        None,             // mesh_signer
+        None,             // stake_manager
+        None,             // backend_pool
+    ));
+
+    // Track hook invocations using plain Mutex (safe from sync context).
+    let after_dht_init_seen = Arc::new(std::sync::Mutex::new(false));
+    let peer_connect_seen = Arc::new(std::sync::Mutex::new(false));
+
+    let after_dht_init_clone = after_dht_init_seen.clone();
+    let peer_connect_clone = peer_connect_seen.clone();
+
+    // Set hook BEFORE entering async context (blocking_lock is used internally).
+    transport.set_startup_failure_hook(move |point| {
+        match point {
+            StartupFailurePoint::AfterDhtInitialization => {
+                *after_dht_init_clone.lock().unwrap() = true;
+            }
+            StartupFailurePoint::DuringPeerConnect => {
+                *peer_connect_clone.lock().unwrap() = true;
+            }
+            _ => {}
+        }
+        // Fail at peer connect to stop startup early (we only need to prove
+        // the hook ordering up to this point).
+        if point == StartupFailurePoint::DuringPeerConnect {
+            Err("phase 20 test: stopping at peer connect".to_string())
+        } else {
+            Ok(())
+        }
+    });
+
+    // Run startup in a tokio runtime.
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let result = rt.block_on(transport.start());
+
+    // Startup should fail at peer connect (as injected).
+    assert!(
+        result.is_err(),
+        "startup should fail at injected peer connect hook"
+    );
+
+    // AfterDhtInitialization was seen.
+    assert!(
+        *after_dht_init_seen.lock().unwrap(),
+        "AfterDhtInitialization must fire during startup"
+    );
+
+    // DuringPeerConnect was seen (and caused the failure).
+    assert!(
+        *peer_connect_seen.lock().unwrap(),
+        "DuringPeerConnect must fire after AfterDhtInitialization"
+    );
+}

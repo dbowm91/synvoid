@@ -764,6 +764,13 @@ impl WorkerTaskRegistry {
     ///
     /// `expected_during_shutdown` controls whether exits are classified as expected
     /// (true for whole-worker shutdown) or unexpected (false for live degradation).
+    ///
+    /// # Ownership Invariant (Phase 13)
+    ///
+    /// Once extracted from the registry, `cancel_then_join_tasks()` is the sole
+    /// owner of every matched handle and must return only after each handle is
+    /// joined or returned as explicit residue. No handle may be dropped without
+    /// being awaited or explicitly documented in `not_found_ids`.
     pub async fn cancel_then_join_tasks(
         &mut self,
         task_ids: &[TaskId],
@@ -897,6 +904,13 @@ impl WorkerTaskRegistry {
             exits.len(),
             not_found_ids.len()
         );
+        if !not_found_ids.is_empty() {
+            tracing::warn!(
+                "Subset cleanup: {} task IDs not found in registry (may have completed or been removed elsewhere): {:?}",
+                not_found_ids.len(),
+                not_found_ids.iter().map(|id| id.0).collect::<Vec<_>>()
+            );
+        }
         TaskSubsetCleanupReport {
             exits,
             not_found_ids,
@@ -1845,5 +1859,461 @@ mod tests {
         assert_eq!(cause.exit_code(), 1);
         assert!(cause.nonzero_exit_code());
         assert!(!cause.is_expected());
+    }
+
+    // ========================================================================
+    // Phase 15: Forced cleanup tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn subset_hung_cooperative_task_is_aborted_and_awaited() {
+        let mut registry = WorkerTaskRegistry::new();
+        let id = TaskId(registry.spawn_background("hung_task", async {
+            loop {
+                tokio::time::sleep(Duration::from_secs(100)).await;
+            }
+        }) as u64);
+
+        let report = registry
+            .cancel_then_join_tasks(
+                &[id],
+                Duration::from_millis(10),
+                Duration::from_secs(5),
+                false,
+            )
+            .await;
+
+        assert_eq!(report.exits.len(), 1);
+        assert_eq!(report.exits[0].name, "hung_task");
+        // After abort, Tokio tasks exit with Cancelled (not Aborted).
+        // Aborted is reserved for when the forced timeout fires.
+        assert!(
+            matches!(
+                report.exits[0].reason,
+                TaskExitReason::Cancelled | TaskExitReason::Aborted
+            ),
+            "expected Cancelled or Aborted, got {:?}",
+            report.exits[0].reason
+        );
+    }
+
+    #[tokio::test]
+    async fn subset_registry_removes_task_only_after_join_completes() {
+        let mut registry = WorkerTaskRegistry::new();
+        let id = TaskId(registry.spawn_background("tracked_task", async {
+            loop {
+                tokio::time::sleep(Duration::from_secs(100)).await;
+            }
+        }) as u64);
+
+        assert!(registry.contains_task(id), "task must exist before cleanup");
+
+        let report = registry
+            .cancel_then_join_tasks(
+                &[id],
+                Duration::from_millis(10),
+                Duration::from_secs(5),
+                false,
+            )
+            .await;
+
+        assert_eq!(report.exits.len(), 1);
+        assert!(
+            !registry.contains_task(id),
+            "task must be removed after join completes"
+        );
+    }
+
+    #[tokio::test]
+    async fn subset_no_handle_dropped_after_cooperative_timeout() {
+        let mut registry = WorkerTaskRegistry::new();
+        static DROPPED: AtomicBool = AtomicBool::new(false);
+        DROPPED.store(false, Ordering::SeqCst);
+
+        struct DropGuard;
+        impl Drop for DropGuard {
+            fn drop(&mut self) {
+                DROPPED.store(true, Ordering::SeqCst);
+            }
+        }
+
+        let id = TaskId(registry.spawn_background("guard_task", async {
+            let _guard = DropGuard;
+            loop {
+                tokio::time::sleep(Duration::from_secs(100)).await;
+            }
+        }) as u64);
+
+        let report = registry
+            .cancel_then_join_tasks(
+                &[id],
+                Duration::from_millis(10),
+                Duration::from_secs(5),
+                false,
+            )
+            .await;
+
+        assert_eq!(report.exits.len(), 1);
+        // After the subset join, the drop guard should have been dropped
+        // (meaning the task was actually terminated and joined).
+        assert!(
+            DROPPED.load(Ordering::SeqCst),
+            "task must be terminated after subset join"
+        );
+    }
+
+    #[tokio::test]
+    async fn subset_panicking_task_preserves_panic_classification() {
+        let mut registry = WorkerTaskRegistry::new();
+        let id = TaskId(registry.spawn_background("panic_task", async {
+            panic!("subset panic test");
+        }) as u64);
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let report = registry
+            .cancel_then_join_tasks(
+                &[id],
+                Duration::from_millis(50),
+                Duration::from_secs(5),
+                false,
+            )
+            .await;
+
+        assert_eq!(report.exits.len(), 1);
+        assert!(matches!(report.exits[0].reason, TaskExitReason::Panic(_)));
+    }
+
+    #[tokio::test]
+    async fn subset_already_finished_task_joins_cleanly() {
+        let mut registry = WorkerTaskRegistry::new();
+        let id = TaskId(registry.spawn_background("finished_task", async {}) as u64);
+
+        // Wait for the task to complete.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let report = registry
+            .cancel_then_join_tasks(
+                &[id],
+                Duration::from_millis(50),
+                Duration::from_secs(5),
+                false,
+            )
+            .await;
+
+        assert_eq!(report.exits.len(), 1);
+        assert!(matches!(
+            report.exits[0].reason,
+            TaskExitReason::CleanCompletion | TaskExitReason::UnexpectedCompletion
+        ));
+    }
+
+    #[tokio::test]
+    async fn subset_unrelated_task_remains_in_registry() {
+        let mut registry = WorkerTaskRegistry::new();
+        let target_id = TaskId(registry.spawn_background("target", async {
+            loop {
+                tokio::time::sleep(Duration::from_secs(100)).await;
+            }
+        }) as u64);
+        let other_id = TaskId(registry.spawn_background("other", async {
+            loop {
+                tokio::time::sleep(Duration::from_secs(100)).await;
+            }
+        }) as u64);
+
+        let _ = registry
+            .cancel_then_join_tasks(
+                &[target_id],
+                Duration::from_millis(10),
+                Duration::from_secs(5),
+                false,
+            )
+            .await;
+
+        assert!(
+            registry.contains_task(other_id),
+            "unrelated task must remain in registry"
+        );
+    }
+
+    #[tokio::test]
+    async fn subset_zero_cooperative_timeout_aborts_and_awaits() {
+        let mut registry = WorkerTaskRegistry::new();
+        let id = TaskId(registry.spawn_background("zero_timeout_task", async {
+            loop {
+                tokio::time::sleep(Duration::from_secs(100)).await;
+            }
+        }) as u64);
+
+        let report = registry
+            .cancel_then_join_tasks(&[id], Duration::ZERO, Duration::from_secs(5), false)
+            .await;
+
+        assert_eq!(report.exits.len(), 1);
+        assert!(
+            matches!(
+                report.exits[0].reason,
+                TaskExitReason::Cancelled | TaskExitReason::Aborted
+            ),
+            "expected Cancelled or Aborted, got {:?}",
+            report.exits[0].reason
+        );
+    }
+
+    #[tokio::test]
+    async fn subset_cleanup_report_no_unjoined_residue() {
+        let mut registry = WorkerTaskRegistry::new();
+        let ids: Vec<TaskId> = (0..3)
+            .map(|i| {
+                TaskId(registry.spawn_background(
+                    Box::leak(format!("task_{}", i).into_boxed_str()),
+                    async {
+                        loop {
+                            tokio::time::sleep(Duration::from_secs(100)).await;
+                        }
+                    },
+                ) as u64)
+            })
+            .collect();
+
+        let report = registry
+            .cancel_then_join_tasks(
+                &ids,
+                Duration::from_millis(10),
+                Duration::from_secs(5),
+                false,
+            )
+            .await;
+
+        // All tasks should be accounted for in exits.
+        assert_eq!(report.exits.len(), 3);
+        assert!(report.not_found_ids.is_empty());
+        for exit in &report.exits {
+            assert!(
+                matches!(
+                    exit.reason,
+                    TaskExitReason::Cancelled | TaskExitReason::Aborted
+                ),
+                "expected Cancelled or Aborted, got {:?}",
+                exit.reason
+            );
+        }
+    }
+
+    // ========================================================================
+    // Phase 18: Accounting tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn subset_clean_exit_counted_as_clean() {
+        let mut registry = WorkerTaskRegistry::new();
+        // Spawn a task that waits for shutdown signal — this ensures it exits
+        // with CleanCompletion (not UnexpectedCompletion) during shutdown.
+        let token = registry.child_token();
+        let id = TaskId(registry.spawn_background("clean_task", async move {
+            let mut shutdown = token;
+            loop {
+                if *shutdown.borrow() {
+                    break;
+                }
+                if shutdown.changed().await.is_err() {
+                    break;
+                }
+            }
+        }) as u64);
+
+        let report = registry
+            .cancel_then_join_tasks(&[id], Duration::from_secs(5), Duration::from_secs(5), true)
+            .await;
+
+        assert_eq!(report.exits.len(), 1);
+        assert!(
+            report.clean(),
+            "clean exit must result in clean report, got {:?}",
+            report.exits[0].reason
+        );
+        assert_eq!(report.aborted_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn subset_cooperative_cancellation_counted() {
+        let mut registry = WorkerTaskRegistry::new();
+        let token = registry.child_token();
+        let id = TaskId(registry.spawn_background("cooperative_task", async move {
+            let mut shutdown = token;
+            loop {
+                if *shutdown.borrow() {
+                    break;
+                }
+                if shutdown.changed().await.is_err() {
+                    break;
+                }
+            }
+        }) as u64);
+
+        let report = registry
+            .cancel_then_join_tasks(&[id], Duration::from_secs(5), Duration::from_secs(5), true)
+            .await;
+
+        assert_eq!(report.exits.len(), 1);
+        assert!(matches!(
+            report.exits[0].reason,
+            TaskExitReason::Cancelled | TaskExitReason::CleanCompletion
+        ));
+        assert!(report.clean());
+    }
+
+    #[tokio::test]
+    async fn subset_forced_abort_counted() {
+        let mut registry = WorkerTaskRegistry::new();
+        let id = TaskId(registry.spawn_background("abort_task", async {
+            loop {
+                tokio::time::sleep(Duration::from_secs(100)).await;
+            }
+        }) as u64);
+
+        let report = registry
+            .cancel_then_join_tasks(
+                &[id],
+                Duration::from_millis(10),
+                Duration::from_secs(5),
+                false,
+            )
+            .await;
+
+        assert_eq!(report.exits.len(), 1);
+        // After abort+join, Tokio tasks exit with Cancelled.
+        // Cancelled IS classified as "clean" by clean() because it's a
+        // cooperative cancellation — the task responded to the abort signal.
+        // Aborted (non-clean) is only when the forced timeout fires after abort.
+        assert!(
+            matches!(
+                report.exits[0].reason,
+                TaskExitReason::Cancelled | TaskExitReason::Aborted
+            ),
+            "expected Cancelled or Aborted, got {:?}",
+            report.exits[0].reason
+        );
+    }
+
+    #[tokio::test]
+    async fn subset_panic_and_error_counted_as_failed() {
+        let mut registry = WorkerTaskRegistry::new();
+        let panic_id = TaskId(registry.spawn_background("panic_task", async {
+            panic!("accounting panic");
+        }) as u64);
+        let error_id = TaskId(registry.spawn_background("error_task", async {
+            panic!("accounting error");
+        }) as u64);
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let report = registry
+            .cancel_then_join_tasks(
+                &[panic_id, error_id],
+                Duration::from_millis(50),
+                Duration::from_secs(5),
+                false,
+            )
+            .await;
+
+        assert_eq!(report.exits.len(), 2);
+        // Both should be counted as non-clean (panics).
+        assert!(!report.clean());
+    }
+
+    #[tokio::test]
+    async fn subset_no_double_counting() {
+        let mut registry = WorkerTaskRegistry::new();
+        let mut exit_rx = registry.subscribe_exits();
+
+        let id = TaskId(registry.spawn_background("count_task", async {
+            panic!("double count test");
+        }) as u64);
+
+        // Observe the immediate exit event.
+        let _ = tokio::time::timeout(Duration::from_secs(2), exit_rx.recv()).await;
+
+        let report = registry
+            .cancel_then_join_tasks(
+                &[id],
+                Duration::from_millis(50),
+                Duration::from_secs(5),
+                false,
+            )
+            .await;
+
+        assert_eq!(report.exits.len(), 1);
+        // The panic should not be counted twice in metrics.
+        assert_eq!(
+            registry.metrics.tasks_panicked.load(Ordering::Relaxed),
+            1,
+            "Panic was double-counted in subset cleanup"
+        );
+    }
+
+    #[tokio::test]
+    async fn subset_not_found_ids_surfaced() {
+        let mut registry = WorkerTaskRegistry::new();
+        let missing_id = TaskId(99999);
+
+        let report = registry
+            .cancel_then_join_tasks(
+                &[missing_id],
+                Duration::from_millis(10),
+                Duration::from_secs(5),
+                false,
+            )
+            .await;
+
+        assert!(report.exits.is_empty());
+        assert_eq!(report.not_found_ids.len(), 1);
+        assert_eq!(report.not_found_ids[0], missing_id);
+    }
+
+    #[tokio::test]
+    async fn subset_clean_semantics_match_ownership_guarantee() {
+        let mut registry = WorkerTaskRegistry::new();
+        let token1 = registry.child_token();
+        let token2 = registry.child_token();
+        let id1 = TaskId(registry.spawn_background("clean1", async move {
+            let mut shutdown = token1;
+            loop {
+                if *shutdown.borrow() {
+                    break;
+                }
+                if shutdown.changed().await.is_err() {
+                    break;
+                }
+            }
+        }) as u64);
+        let id2 = TaskId(registry.spawn_background("clean2", async move {
+            let mut shutdown = token2;
+            loop {
+                if *shutdown.borrow() {
+                    break;
+                }
+                if shutdown.changed().await.is_err() {
+                    break;
+                }
+            }
+        }) as u64);
+
+        let report = registry
+            .cancel_then_join_tasks(
+                &[id1, id2],
+                Duration::from_secs(5),
+                Duration::from_secs(5),
+                true,
+            )
+            .await;
+
+        assert!(report.clean(), "all clean exits must produce clean report");
+        assert_eq!(report.aborted_count(), 0);
+        assert!(report.not_found_ids.is_empty());
+        // No task should remain in registry after subset join.
+        assert!(!registry.contains_task(id1));
+        assert!(!registry.contains_task(id2));
     }
 }

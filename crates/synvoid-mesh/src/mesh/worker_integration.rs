@@ -79,6 +79,8 @@ pub enum MeshFailureCause {
         /// Number of peers still connected when shutdown timed out.
         remaining_peers: usize,
     },
+    /// Defense-in-depth invariant violation (e.g., unreachable decision branch).
+    MeshConfigurationInvariant(String),
 }
 
 impl MeshFailureCause {
@@ -90,6 +92,7 @@ impl MeshFailureCause {
             MeshFailureCause::CriticalServiceExit(exit) => exit.name,
             MeshFailureCause::StartupFailed(_) => "mesh_startup",
             MeshFailureCause::ShutdownTimeout { .. } => "mesh_shutdown",
+            MeshFailureCause::MeshConfigurationInvariant(_) => "mesh_invariant",
         }
     }
 
@@ -108,6 +111,9 @@ impl MeshFailureCause {
                     remaining_peers
                 )
             }
+            MeshFailureCause::MeshConfigurationInvariant(msg) => {
+                format!("configuration invariant: {msg}")
+            }
         }
     }
 
@@ -121,6 +127,7 @@ impl MeshFailureCause {
             MeshFailureCause::CriticalServiceExit(exit) => exit.is_fatal(),
             MeshFailureCause::StartupFailed(_) => true,
             MeshFailureCause::ShutdownTimeout { .. } => true,
+            MeshFailureCause::MeshConfigurationInvariant(_) => true,
         }
     }
 }

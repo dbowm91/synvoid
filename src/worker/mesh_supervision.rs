@@ -337,6 +337,9 @@ pub fn mesh_failure_to_worker_cause(
             aborted_tasks.len(),
             remaining_peers
         )),
+        MeshFailureCause::MeshConfigurationInvariant(msg) => {
+            crate::worker::task_registry::WorkerShutdownCause::MeshConfigurationInvariant(msg)
+        }
     }
 }
 

@@ -36,6 +36,7 @@ pub use traits::{BaseWorkerState, WorkerLifecycle};
 pub use cpu_task::{run_cpu_worker, CpuWorkerArgs};
 pub use unified_server::{
     run_unified_server_worker, setup_unified_server_panic_handler, UnifiedServerWorkerArgs,
+    MeshGenerationSupport, MeshSupportStopReport, SupportStopContext, stop_mesh_generation_support,
 };
 
 pub fn setup_worker_panic_handler() {
