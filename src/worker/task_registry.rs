@@ -758,19 +758,21 @@ impl WorkerTaskRegistry {
     /// Cancel then join a specific subset of tasks by their IDs (Iteration 88, Part B).
     ///
     /// Performs cooperative cancellation first (waits up to `cooperative_timeout`),
-    /// then aborts remaining tasks and waits up to `forced_timeout`.
-    /// Returns a `TaskSubsetCleanupReport` with exit metadata for all matched tasks.
-    /// Tasks not found in the registry are recorded in `not_found_ids`.
+    /// then aborts remaining tasks and awaits every handle without a second
+    /// timeout. Returns a `TaskSubsetCleanupReport` with exit metadata for all
+    /// matched tasks. Tasks not found in the registry are recorded in
+    /// `not_found_ids`.
     ///
     /// `expected_during_shutdown` controls whether exits are classified as expected
     /// (true for whole-worker shutdown) or unexpected (false for live degradation).
     ///
-    /// # Ownership Invariant (Phase 13)
+    /// # Ownership Invariant (Iteration 90)
     ///
     /// Once extracted from the registry, `cancel_then_join_tasks()` is the sole
     /// owner of every matched handle and must return only after each handle is
-    /// joined or returned as explicit residue. No handle may be dropped without
-    /// being awaited or explicitly documented in `not_found_ids`.
+    /// joined or returned as explicit residue. After `abort()`, the handle is
+    /// awaited directly — no timeout is applied, because a timeout that drops the
+    /// handle would lose ownership without proof the task ended.
     pub async fn cancel_then_join_tasks(
         &mut self,
         task_ids: &[TaskId],
@@ -869,33 +871,31 @@ impl WorkerTaskRegistry {
                 }
             }
 
-            // Phase 3: Force abort remaining tasks.
-            if !still_pending.is_empty() {
-                let forced_deadline = tokio::time::Instant::now() + forced_timeout;
-                for task in still_pending {
-                    task.handle.abort();
-                    let join_result = tokio::time::timeout_at(forced_deadline, task.handle).await;
-                    let reason = match join_result {
-                        Ok(Ok(())) => TaskExitReason::CleanCompletion,
-                        Ok(Err(e)) => classify_join_error(e),
-                        Err(_) => {
-                            tracing::error!(
-                                "Task '{}' subset force-join timeout after abort",
-                                task.name
-                            );
-                            TaskExitReason::Aborted
-                        }
-                    };
-                    let already_reported = self.reported_exits.lock().unwrap().remove(&task.id);
-                    let final_reason = already_reported.unwrap_or(reason);
-                    exits.push(NamedTaskExit {
-                        id: task.id,
-                        name: task.name,
-                        class: task.class,
-                        reason: final_reason,
-                        expected_during_shutdown,
-                    });
-                }
+            // Phase 3: Force abort remaining tasks and await every handle.
+            //
+            // `forced_timeout` is retained for API compatibility. Once a task is
+            // aborted, this function awaits the handle to preserve ownership. Do
+            // not wrap the aborted handle in timeout unless unjoined ownership
+            // residue is returned.
+            for task in still_pending {
+                task.handle.abort();
+
+                let join_result = task.handle.await;
+                let reason = match join_result {
+                    Ok(()) => TaskExitReason::CleanCompletion,
+                    Err(error) => classify_join_error(error),
+                };
+
+                let already_reported = self.reported_exits.lock().unwrap().remove(&task.id);
+                let final_reason = already_reported.unwrap_or(reason);
+
+                exits.push(NamedTaskExit {
+                    id: task.id,
+                    name: task.name,
+                    class: task.class,
+                    reason: final_reason,
+                    expected_during_shutdown,
+                });
             }
         }
 
@@ -1197,6 +1197,7 @@ pub async fn cancellation_loop<F, Fut>(
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicBool;
+    use tokio::sync::Notify;
 
     #[tokio::test]
     async fn test_registry_new_has_no_tasks() {
@@ -2315,5 +2316,77 @@ mod tests {
         // No task should remain in registry after subset join.
         assert!(!registry.contains_task(id1));
         assert!(!registry.contains_task(id2));
+    }
+
+    // ========================================================================
+    // Phase 90: Forced abort-join ownership tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn cancel_then_join_tasks_aborts_and_awaits_pending_handle() {
+        let mut registry = WorkerTaskRegistry::new();
+        let started = Arc::new(Notify::new());
+        let never = Arc::new(Notify::new());
+        let started_clone = started.clone();
+        let never_clone = never.clone();
+
+        let id = TaskId(registry.spawn_background("hung_support", async move {
+            started_clone.notify_one();
+            never_clone.notified().await;
+        }) as u64);
+
+        started.notified().await;
+
+        let report = registry
+            .cancel_then_join_tasks(
+                &[id],
+                Duration::from_millis(0),
+                Duration::from_millis(1),
+                false,
+            )
+            .await;
+
+        assert_eq!(report.not_found_ids.len(), 0);
+        assert_eq!(report.exits.len(), 1);
+        assert!(
+            matches!(
+                report.exits[0].reason,
+                TaskExitReason::Cancelled | TaskExitReason::Aborted
+            ),
+            "expected Cancelled or Aborted, got {:?}",
+            report.exits[0].reason
+        );
+        assert!(
+            !registry.contains_task(id),
+            "task must be removed from registry after abort-join"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_then_join_tasks_preserves_panic_classification() {
+        let mut registry = WorkerTaskRegistry::new();
+        let id = TaskId(registry.spawn_background("panic_support", async {
+            panic!("boom");
+        }) as u64);
+
+        tokio::task::yield_now().await;
+
+        let report = registry
+            .cancel_then_join_tasks(
+                &[id],
+                Duration::from_millis(10),
+                Duration::from_millis(10),
+                false,
+            )
+            .await;
+
+        assert!(
+            report
+                .exits
+                .iter()
+                .any(|e| matches!(e.reason, TaskExitReason::Panic(_))),
+            "panic classification must be preserved, got {:?}",
+            report.exits
+        );
     }
 }

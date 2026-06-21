@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use synvoid::worker::task_registry::{TaskId, WorkerTaskRegistry};
 use synvoid::worker::unified_server::{
-    MeshGenerationSupport, SupportStopContext, stop_mesh_generation_support,
+    stop_mesh_generation_support, MeshGenerationSupport, SupportStopContext,
 };
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -259,10 +259,7 @@ async fn completion_channel_closure_returns_none() {
     let (tx, mut rx) =
         tokio::sync::mpsc::channel::<Result<Option<MeshGenerationSupport>, String>>(1);
     drop(tx);
-    assert!(
-        rx.recv().await.is_none(),
-        "closed channel must return None"
-    );
+    assert!(rx.recv().await.is_none(), "closed channel must return None");
 }
 
 // ── Phase 10: Ready not emitted before support assignment ───────────────────

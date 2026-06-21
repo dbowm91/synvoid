@@ -3094,6 +3094,34 @@ fn iter88_cancel_then_join_tasks_exists() {
 }
 
 #[test]
+fn iter90_no_timeout_around_aborted_handle() {
+    let content = read_file("src/worker/task_registry.rs");
+    // Find the cancel_then_join_tasks function body
+    let fn_start = content
+        .find("pub async fn cancel_then_join_tasks")
+        .expect("cancel_then_join_tasks must exist");
+    let fn_body = &content[fn_start..];
+    // Find the forced abort phase (Phase 3)
+    let abort_marker = "Phase 3: Force abort";
+    let phase3_start = fn_body
+        .find(abort_marker)
+        .expect("Phase 3 comment must exist");
+    let phase3_body = &fn_body[phase3_start..];
+    // After abort(), there must be no timeout_at wrapping the handle
+    assert!(
+        !phase3_body.contains("timeout_at"),
+        "Phase 3 must not wrap aborted handles in timeout_at — \
+         ownership is preserved by awaiting the handle directly"
+    );
+    // The forced_deadline variable must not be created in Phase 3
+    assert!(
+        !phase3_body.contains("forced_deadline"),
+        "forced_deadline must not be created in Phase 3 — \
+         no timeout is applied after abort"
+    );
+}
+
+#[test]
 fn iter88_no_dead_retain_block() {
     let content = read_file("src/worker/task_registry.rs");
     // The dead retain block always returned true regardless of condition

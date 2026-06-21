@@ -381,3 +381,12 @@ The supervision loop returns `SupervisionOutcome` (Lifecycle | DirectCause) inst
 **Composition root tests**: 12 integration tests in `tests/composition_root_behavioral.rs` (Phases 21-23) covering support failure, cleanup, classification, and readiness. 17 unit tests in `composition_root_tests` module in `mod.rs`.
 
 **`#[cfg(test)]` gate bug**: Library crates compiled as dependencies do NOT have `cfg(test)` set during integration test builds. `check_startup_failure_hook` call sites were gated with `#[cfg(test)]` in mesh crate — hook calls were compiled out during integration tests. Fix: removed all `#[cfg(test)]` gates from call sites in `transport.rs`.
+
+### Iteration 90 — Forced Abort-Join Ownership Cleanup
+
+**`cancel_then_join_tasks()` no longer wraps aborted handles in timeout** (Part A): After `abort()`, the handle is awaited directly without a second timeout. The `forced_timeout` parameter is retained for API compatibility but not applied after abort. A handle that is dropped after timeout would lose ownership without proof the task ended — the new code preserves the ownership invariant: every extracted handle is joined before the function returns.
+
+**`MeshSupportStopReport` gains `not_found` field** (Part B): The report now includes `not_found: usize` for task IDs not found in the registry. `MeshSupportStopReport::clean()` returns `false` when `not_found > 0`, because missing IDs during first teardown can indicate lost ownership bookkeeping.
+
+**Ownership invariant (final)**:
+> `cancel_then_join_tasks` performs cooperative waiting to a deadline. Remaining tasks are then aborted and awaited without a second timeout, preserving handle ownership. A future hard-deadline variant must return explicit unjoined residue rather than dropping handles.

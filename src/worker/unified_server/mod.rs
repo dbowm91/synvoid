@@ -118,12 +118,14 @@ pub struct MeshSupportStopReport {
     pub aborted: usize,
     /// Number of tasks that failed to exit.
     pub failed: usize,
+    /// Number of task IDs not found in the registry.
+    pub not_found: usize,
 }
 
 impl MeshSupportStopReport {
-    /// Returns true if all tasks exited cleanly.
+    /// Returns true if all tasks exited cleanly and no IDs were missing.
     pub fn clean(&self) -> bool {
-        self.aborted == 0 && self.failed == 0
+        self.aborted == 0 && self.failed == 0 && self.not_found == 0
     }
 }
 
@@ -468,6 +470,7 @@ pub async fn stop_mesh_generation_support(
                 )
             })
             .count(),
+        not_found: report.not_found_ids.len(),
     }
 }
 
@@ -2244,6 +2247,7 @@ mod composition_root_tests {
             cooperative: 3,
             aborted: 0,
             failed: 0,
+            not_found: 0,
         };
         assert!(report.clean());
     }
@@ -2255,6 +2259,7 @@ mod composition_root_tests {
             cooperative: 2,
             aborted: 1,
             failed: 0,
+            not_found: 0,
         };
         assert!(!report.clean());
     }
@@ -2266,6 +2271,7 @@ mod composition_root_tests {
             cooperative: 1,
             aborted: 0,
             failed: 2,
+            not_found: 0,
         };
         assert!(!report.clean());
     }
@@ -2277,6 +2283,7 @@ mod composition_root_tests {
             cooperative: 0,
             aborted: 0,
             failed: 0,
+            not_found: 0,
         };
         assert!(report.clean());
     }
@@ -2288,9 +2295,7 @@ mod composition_root_tests {
         let (tx, mut rx) =
             tokio::sync::mpsc::channel::<Result<Option<MeshGenerationSupport>, String>>(1);
         let support = MeshGenerationSupport::empty(1);
-        let _ = tx
-            .send(Ok(Some(support)))
-            .await;
+        let _ = tx.send(Ok(Some(support))).await;
         let result = rx.recv().await.unwrap();
         assert!(result.is_ok());
         let bundle = result.unwrap().unwrap();
@@ -2313,7 +2318,8 @@ mod composition_root_tests {
 
     #[tokio::test]
     async fn optional_degradation_stops_support_bundle() {
-        let registry = tokio::sync::Mutex::new(crate::worker::task_registry::WorkerTaskRegistry::new());
+        let registry =
+            tokio::sync::Mutex::new(crate::worker::task_registry::WorkerTaskRegistry::new());
         let support = MeshGenerationSupport::empty(1);
         let task_ids = support.task_ids.clone();
         let generation = support.generation;
@@ -2349,6 +2355,7 @@ mod composition_root_tests {
             cooperative: 0,
             aborted: 0,
             failed: 0,
+            not_found: 0,
         };
         assert!(report.clean());
         assert!(support.task_ids.is_empty());
@@ -2363,6 +2370,7 @@ mod composition_root_tests {
             cooperative: 2,
             aborted: 0,
             failed: 0,
+            not_found: 0,
         };
         assert!(report.clean(), "clean support stop must allow ready");
     }
@@ -2374,6 +2382,7 @@ mod composition_root_tests {
             cooperative: 0,
             aborted: 1,
             failed: 1,
+            not_found: 0,
         };
         assert!(!report.clean(), "failed support stop must block ready");
     }
@@ -2382,15 +2391,14 @@ mod composition_root_tests {
 
     #[tokio::test]
     async fn stop_report_classifies_cooperative_cancellation() {
-        let registry = tokio::sync::Mutex::new(crate::worker::task_registry::WorkerTaskRegistry::new());
+        let registry =
+            tokio::sync::Mutex::new(crate::worker::task_registry::WorkerTaskRegistry::new());
         let mut reg = registry.lock().await;
         // Spawn a task that cooperatively exits when the watch signal fires.
         let (_gen_shutdown_tx, mut gen_shutdown_rx) = tokio::sync::watch::channel(false);
         let task_id = reg.spawn_background("test_coop", async move {
             // Cooperatively exit when shutdown signal fires.
-            let _ = gen_shutdown_rx
-                .changed()
-                .await;
+            let _ = gen_shutdown_rx.changed().await;
         });
         let cancel_tx = {
             let (tx, _) = tokio::sync::watch::channel(false);
@@ -2428,6 +2436,7 @@ mod composition_root_tests {
             cooperative: 0,
             aborted: 0,
             failed: 2,
+            not_found: 0,
         };
         assert!(!report.clean());
     }
@@ -2439,7 +2448,23 @@ mod composition_root_tests {
             cooperative: 0,
             aborted: 0,
             failed: 1,
+            not_found: 0,
         };
         assert!(!report.clean());
+    }
+
+    #[test]
+    fn stop_report_not_found_blocks_clean() {
+        let report = MeshSupportStopReport {
+            generation: 1,
+            cooperative: 1,
+            aborted: 0,
+            failed: 0,
+            not_found: 1,
+        };
+        assert!(
+            !report.clean(),
+            "not_found > 0 must produce non-clean report"
+        );
     }
 }
