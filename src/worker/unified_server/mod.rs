@@ -1109,7 +1109,12 @@ pub async fn run_unified_server_worker(
                                         )
                                         .await;
                                         if !stop_report.clean() {
-                                            tracing::warn!(?stop_report, "support bundle required forced cleanup during degradation");
+                                            tracing::warn!(
+                                                context = ?SupportStopContext::OptionalMeshDegraded,
+                                                generation = stop_report.generation,
+                                                not_found = stop_report.not_found,
+                                                "support bundle required forced cleanup during degradation"
+                                            );
                                         }
                                     }
                                     {
@@ -1321,7 +1326,12 @@ pub async fn run_unified_server_worker(
                                 )
                                 .await;
                                 if !stop_report.clean() {
-                                    tracing::warn!(?stop_report, "mesh support generation required forced cleanup");
+                                    tracing::warn!(
+                                        context = ?SupportStopContext::OptionalMeshDegraded,
+                                        generation = stop_report.generation,
+                                        not_found = stop_report.not_found,
+                                        "mesh support generation required forced cleanup"
+                                    );
                                 }
                             }
                         }
