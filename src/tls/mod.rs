@@ -1,3 +1,10 @@
+//! Transitional compatibility surface for `synvoid_tls`.
+//!
+//! Core TLS/ACME implementation lives in the `synvoid_tls` crate. This root
+//! module still exposes a local `server` submodule (`HttpsServer`) that depends
+//! on root HTTP infrastructure. See `architecture/root_module_ledger.md` before
+//! adding new implementation here.
+
 pub mod server;
 
 // Re-export from extracted crate for backwards compatibility

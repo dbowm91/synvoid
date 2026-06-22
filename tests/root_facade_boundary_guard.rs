@@ -45,7 +45,10 @@ fn domain_crates_do_not_import_root_synvoid_crate() {
     walk_rs_files(&crates_dir, &mut files);
 
     // Allowlist: (path_substring, reason)
-    // Add entries here only when a root import is unavoidable in this pass.
+    // Keep this allowlist empty unless a crate cannot avoid a root `synvoid::` path
+    // during a staged migration. Every allowlist entry must include a matching
+    // blocker in `architecture/root_module_ledger.md` and should be removed by the
+    // next targeted extraction pass.
     let allowlist: &[(&str, &str)] = &[];
 
     let allowset: std::collections::HashSet<&str> = allowlist.iter().map(|(p, _)| *p).collect();
@@ -66,9 +69,12 @@ fn domain_crates_do_not_import_root_synvoid_crate() {
             }
             // Reject `use synvoid::` imports and bare `synvoid::` path references
             // in non-comment, non-string-literal code.
+            //
+            // The string-literal check below is intentionally heuristic. It avoids obvious
+            // false positives in diagnostics/doc examples, but this guard is primarily a
+            // source-level architectural tripwire, not a Rust parser.
             if line.contains("use synvoid::") || line.contains("synvoid::") {
-                // Skip lines that are inside string literals (rough heuristic:
-                // if the synvoid:: appears inside quotes, treat as string literal).
+                // Heuristic: skip lines where `synvoid::` appears inside a string literal.
                 let before = line.split("synvoid::").next().unwrap_or("");
                 let open_quotes = before.matches('"').count();
                 if open_quotes % 2 == 1 {

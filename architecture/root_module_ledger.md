@@ -9,6 +9,14 @@ Classification values:
 - `split_required`: mixed module that needs a targeted extraction plan;
 - `legacy_or_stale`: candidate for deletion or collapse after verification.
 
+Status vocabulary:
+
+- **pure re-export facade**: the root module only re-exports a dedicated crate or crate submodule;
+- **facade with local adapter/submodule**: the root module mostly re-exports a crate but still contains root-specific adapters, aliases, or submodules;
+- **mixed implementation**: the root module contains real implementation that needs a targeted extraction plan;
+- **root runtime owner**: the root module remains the current owner of process/runtime composition behavior;
+- **stale candidate**: the module appears removable or collapsible after verification.
+
 ## Module Ledger
 
 | Root module | Current responsibility | Classification | Target owner | Current status | Blocker / next step |
@@ -30,8 +38,8 @@ Classification values:
 | geoip | GeoIP lookups | facade_existing_crate | synvoid-geoip | root re-export (`pub use`) | Prefer `synvoid_geoip` in domain crates |
 | honeypot_port | Honeypot port detection | facade_existing_crate | synvoid-honeypot | pure re-export facade | Prefer `synvoid_honeypot` in domain crates |
 | http | HTTP server modules (43 submodules) | split_required | root app crate (composition) + synvoid-http (shared) | mixed — submodule hub with real root-owned code | Large module; inventory submodules for domain types that could move |
-| http3 | HTTP/3 QUIC server | facade_existing_crate | synvoid-http3 | selective re-export facade | Prefer `synvoid_http3` in domain crates |
-| http_client | HTTP client + QUIC tunnel dispatch | split_required | synvoid-http-client (pool/client) + root (QUIC dispatch) | hybrid — re-exports crate + root-owned sub-modules | QUIC tunnel dispatch depends on root tunnel/QUIC infra; cannot fully extract yet |
+| http3 | HTTP/3 QUIC server | facade_existing_crate | synvoid-http3 | pure re-export facade — only `Http3Server` and `Http3WafBackend` re-exported | Prefer `synvoid_http3` in domain crates |
+| http_client | HTTP client + QUIC tunnel dispatch | split_required | synvoid-http-client (pool/client) + root (QUIC dispatch) | facade with local adapter — re-exports crate + root-owned `quic_tunnel_dispatch` and `streaming_waf_body` submodules | QUIC tunnel dispatch depends on root tunnel/QUIC infra; cannot fully extract yet |
 | icmp_filter | ICMP filtering (feature-gated) | keep_app_root | root app crate | feature-gated | Network-level filtering; root-owned |
 | integrity | Integrity checking | facade_existing_crate | synvoid-integrity | root re-export (`pub use`) | Prefer `synvoid_integrity` in domain crates |
 | listener | Connection listener | facade_existing_crate | synvoid-http | pure re-export facade | Prefer `synvoid_http::listener` in domain crates |
@@ -39,14 +47,14 @@ Classification values:
 | log_controller | Log controller | keep_app_root | root app crate | log management | Process-level logging; root-owned |
 | logging | Syslog configuration | split_required | potential config/syslog module or root | real implementation (205 lines) | Self-contained syslog types; could merge into synvoid-config |
 | mesh | Mesh networking | facade_existing_crate | synvoid-mesh | pure re-export facade | Prefer `synvoid_mesh` in domain crates; feature-gated `mesh` |
-| metrics | Metrics re-exports | facade_existing_crate | synvoid-metrics | glob re-export with tests | Prefer `synvoid_metrics` in domain crates |
+| metrics | Metrics re-exports | facade_existing_crate | synvoid-metrics | facade with local tests — glob re-export plus root-level test module | Prefer `synvoid_metrics` in domain crates |
 | mime | MIME type handling | facade_existing_crate | synvoid-app-handlers | pure re-export facade | Prefer `synvoid_app_handlers::mime` in domain crates |
 | php | PHP handler | facade_existing_crate | synvoid-app-handlers | pure re-export facade | Prefer `synvoid_app_handlers::php` in domain crates |
 | platform | Platform abstraction (OS detection, IPC, sandbox) | split_required | synvoid-platform (core) + root (app-level integration) | mixed — re-exports from 6 submodules + real platform detection code | Platform enum and detection methods are root-owned; could extract to synvoid-platform |
 | plugin | WASM plugin runtime | split_required | root app crate (composition) + synvoid-plugin-runtime | mixed | Plugin lifecycle management is root-owned; runtime in dedicated crate |
 | process | IPC/process-mode integration | facade_existing_crate | synvoid-ipc | pure re-export facade | Prefer `synvoid_ipc` in domain crates |
 | protocol | Protocol detection types | facade_existing_crate | synvoid-proxy | pure re-export facade | Prefer `synvoid_proxy::protocol` in domain crates |
-| proxy | Reverse proxy and routing | facade_existing_crate | synvoid-proxy | glob re-export with type alias | Prefer `synvoid_proxy` in domain crates; type alias `ProxyServer` has root trait bound |
+| proxy | Reverse proxy and routing | facade_existing_crate | synvoid-proxy | facade with local adapter — glob re-export + root trait-bound `ProxyServer` type alias | Prefer `synvoid_proxy` in domain crates; type alias `ProxyServer` has root trait bound |
 | proxy_cache | Proxy caching | facade_existing_crate | synvoid-proxy-cache | root re-export (`pub use`) | Prefer `synvoid_proxy_cache` in domain crates |
 | router | URL routing | facade_existing_crate | synvoid-proxy | pure re-export facade | Prefer `synvoid_proxy::router` in domain crates |
 | router_adapter | Router adapter | facade_existing_crate | synvoid-proxy | pure re-export facade | Prefer `synvoid_proxy::router_adapter` in domain crates |
@@ -57,7 +65,7 @@ Classification values:
 | serverless | Serverless runtime | facade_existing_crate | synvoid-serverless | pure re-export facade | Prefer `synvoid_serverless` in domain crates |
 | spin | Spin WASM runtime | facade_existing_crate | synvoid-plugin-runtime | pure re-export facade | Prefer `synvoid_plugin_runtime::spin` in domain crates |
 | startup | Process startup and bootstrap | keep_app_root | root app crate | real implementation | Supervisor-level startup orchestration |
-| static_files | Static file handling | facade_existing_crate | synvoid-static-files | facade with local `file_manager` submodule | Prefer `synvoid_static_files` in domain crates; local `file_manager` needs investigation |
+| static_files | Static file handling | facade_existing_crate | synvoid-static-files | facade with local adapter — re-exports crate + root-owned `file_manager` submodule | Prefer `synvoid_static_files` in domain crates; local `file_manager` needs investigation |
 | streaming | Bidirectional streaming proxy | facade_existing_crate | synvoid-proxy | pure re-export facade | Prefer `synvoid_proxy::bidirectional` in domain crates |
 | supervisor | Supervisor process lifecycle | keep_app_root | root app crate | facade over submodules | Process-level supervision; root-owned |
 | tarpit | Tarpit response generation | split_required | root app crate (handler) + synvoid-tarpit (Markov chain) | hybrid — re-exports Markov chain + local handler | Handler depends on root request infra; Markov chain already extracted |

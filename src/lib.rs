@@ -38,32 +38,35 @@
     clippy::unnecessary_cast
 )]
 
-// Root application/runtime composition modules. These remain root-owned because
-// they coordinate processes, workers, supervisor state, sockets, startup, or
-// app-level integration. See architecture/root_module_ledger.md.
-pub mod admin;
-pub mod auth;
-pub mod captcha;
-pub mod challenge;
+// Root-owned application/runtime composition modules. These coordinate
+// processes, workers, supervisor state, sockets, startup, or app-level
+// integration. See architecture/root_module_ledger.md.
 pub mod common;
 pub mod drain;
-pub mod filter;
-pub mod http;
-pub mod http_client;
-pub mod listener;
 pub mod log_controller;
-pub mod logging;
-pub mod platform;
-pub mod plugin;
 pub mod sandbox;
 pub mod server;
 pub mod startup;
 pub mod supervisor;
-pub mod tarpit;
 pub mod tcp;
 pub mod udp;
-pub mod utils;
 pub mod worker;
+
+// Mixed application/domain modules. These still expose root-side implementation
+// or adapters and need targeted extraction plans before becoming pure facades.
+pub mod admin;
+pub mod auth;
+pub mod captcha;
+pub mod challenge;
+pub mod filter;
+pub mod http;
+pub mod http_client;
+pub mod listener;
+pub mod logging;
+pub mod platform;
+pub mod plugin;
+pub mod tarpit;
+pub mod utils;
 
 // Compatibility facades over dedicated crates. New domain code should import
 // the dedicated crate directly; these root paths remain for transitional API

@@ -1,3 +1,10 @@
+//! Transitional compatibility surface for `synvoid_metrics`.
+//!
+//! Most metrics implementation belongs in `synvoid_metrics`. This root module
+//! still re-exports the crate and contains a local test module during the
+//! modularization transition. See `architecture/root_module_ledger.md` before
+//! adding new implementation here.
+
 pub use synvoid_metrics::*;
 
 #[cfg(test)]

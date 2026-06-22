@@ -118,6 +118,12 @@ The root facade boundary guard test prevents domain crates under `crates/` from 
 cargo test --test root_facade_boundary_guard
 ```
 
+The root module ledger guard test ensures every public root module in `src/lib.rs` is recorded in the ownership ledger:
+
+```bash
+cargo test --test root_module_ledger_guard
+```
+
 ## Known File Path Corrections
 
 | Wrong Path | Correct Path |

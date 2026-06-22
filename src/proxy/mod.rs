@@ -1,7 +1,9 @@
-//! Root compatibility shim for the extracted `synvoid-proxy` crate.
+//! Transitional compatibility surface for `synvoid-proxy`.
 //!
-//! Keep the root API surface stable while the implementation lives in the
-//! dedicated proxy crate.
+//! Most proxy implementation lives in the dedicated `synvoid-proxy` crate. This
+//! root module still exposes a root trait-bound `ProxyServer` type alias and
+//! compatibility re-exports during the modularization transition. See
+//! `architecture/root_module_ledger.md` before adding new implementation here.
 
 use synvoid_proxy as proxy_crate;
 
