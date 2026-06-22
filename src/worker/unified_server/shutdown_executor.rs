@@ -2,12 +2,12 @@
 //
 // Executes the composition-root shutdown procedure after the supervision
 // loop exits. Extracted from run_unified_server_worker() in Iteration 93.
+//
+// Iteration 94: Moved supervision-outcome-to-shutdown-cause mapping here
+// from mod.rs, restoring explicit active mesh support shutdown.
 
-use std::sync::Arc;
-
-use tokio::sync::Mutex as TokioMutex;
-
-use crate::worker::task_registry::WorkerShutdownCause;
+use crate::worker::task_registry::{SupervisionOutcome, WorkerShutdownCause};
+use crate::worker::unified_server::lifecycle::WorkerLifecycleEvent;
 use crate::worker::unified_server::state::UnifiedServerWorkerState;
 use crate::worker::unified_server::supervisor_notify;
 
@@ -17,6 +17,87 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 pub struct WorkerShutdownReport {
     pub final_cause: WorkerShutdownCause,
     pub exit_code: i32,
+}
+
+/// Shutdown plan produced from a supervision outcome.
+///
+/// Encapsulates the mapping from `SupervisionOutcome` to the individual
+/// shutdown parameters (cause, lifecycle ack, graceful flag, drain timeout).
+/// This keeps the composition root thin and makes the mapping unit-testable.
+pub struct WorkerShutdownPlan {
+    pub shutdown_cause: WorkerShutdownCause,
+    pub lifecycle_ack: Option<tokio::sync::oneshot::Sender<()>>,
+    pub graceful: bool,
+    pub drain_timeout: std::time::Duration,
+}
+
+impl WorkerShutdownPlan {
+    /// Map a supervision outcome to a shutdown plan.
+    ///
+    /// Preserves the exact mapping semantics from the original inline
+    /// implementation in `run_unified_server_worker()`.
+    pub fn from_supervision_outcome(outcome: SupervisionOutcome) -> Self {
+        match outcome {
+            SupervisionOutcome::Lifecycle { event, accepted } => {
+                let (graceful, drain_timeout) = match &event {
+                    WorkerLifecycleEvent::MasterShutdown { graceful, timeout } => {
+                        (*graceful, *timeout)
+                    }
+                    WorkerLifecycleEvent::WorkerResize { .. } => {
+                        (true, std::time::Duration::from_secs(30))
+                    }
+                    WorkerLifecycleEvent::SupervisorDisconnected => {
+                        (false, std::time::Duration::ZERO)
+                    }
+                };
+                let cause = match &event {
+                    WorkerLifecycleEvent::MasterShutdown { .. } => {
+                        WorkerShutdownCause::SupervisorShutdown
+                    }
+                    WorkerLifecycleEvent::WorkerResize { worker_threads } => {
+                        WorkerShutdownCause::WorkerResize {
+                            worker_threads: *worker_threads,
+                        }
+                    }
+                    WorkerLifecycleEvent::SupervisorDisconnected => {
+                        WorkerShutdownCause::SupervisorDisconnected
+                    }
+                };
+                Self {
+                    shutdown_cause: cause,
+                    lifecycle_ack: Some(accepted),
+                    graceful,
+                    drain_timeout,
+                }
+            }
+            SupervisionOutcome::DirectCause(cause) => {
+                let graceful = match &cause {
+                    WorkerShutdownCause::ServerExitedUnexpectedly(_)
+                    | WorkerShutdownCause::CriticalTaskExit(_)
+                    | WorkerShutdownCause::RegistryExitChannelClosed
+                    | WorkerShutdownCause::SupervisorDisconnected => false,
+                    #[cfg(feature = "mesh")]
+                    WorkerShutdownCause::MeshStartupFailed(_)
+                    | WorkerShutdownCause::MeshShutdownIncomplete(_)
+                    | WorkerShutdownCause::MeshServiceExit(_)
+                    | WorkerShutdownCause::MeshRestartExhausted { .. }
+                    | WorkerShutdownCause::MeshConfigurationInvariant(_) => false,
+                    _ => true,
+                };
+                let drain_timeout = if graceful {
+                    std::time::Duration::from_secs(30)
+                } else {
+                    std::time::Duration::ZERO
+                };
+                Self {
+                    shutdown_cause: cause,
+                    lifecycle_ack: None,
+                    graceful,
+                    drain_timeout,
+                }
+            }
+        }
+    }
 }
 
 /// Context for the shutdown executor. Holds all state needed for ordered teardown.
@@ -30,6 +111,30 @@ pub struct WorkerShutdownContext {
     pub active_mesh_support: Option<crate::worker::unified_server::MeshGenerationSupport>,
 }
 
+impl WorkerShutdownContext {
+    /// Build a shutdown context from startup state and supervision result.
+    ///
+    /// Consumes the `WorkerSupervisionResult` (via its outcome and active
+    /// mesh support) along with the startup state to produce a fully-formed
+    /// shutdown context. This keeps the composition root thin.
+    pub fn from_supervision_result(
+        worker_id: synvoid_ipc::WorkerId,
+        state: UnifiedServerWorkerState,
+        supervision_result: crate::worker::unified_server::supervision_loop::WorkerSupervisionResult,
+    ) -> Self {
+        let plan = WorkerShutdownPlan::from_supervision_outcome(supervision_result.outcome);
+        Self {
+            worker_id,
+            state,
+            shutdown_cause: plan.shutdown_cause,
+            lifecycle_ack: plan.lifecycle_ack,
+            graceful: plan.graceful,
+            drain_timeout: plan.drain_timeout,
+            active_mesh_support: supervision_result.active_mesh_support,
+        }
+    }
+}
+
 /// Execute the ordered shutdown procedure.
 ///
 /// Shutdown order (preserved exactly from the original inline implementation):
@@ -38,6 +143,7 @@ pub struct WorkerShutdownContext {
 /// 3. Graceful drain (if requested and nonzero timeout)
 /// 4. Stop app servers (Granian supervisors)
 /// 4.5. Shutdown mesh transport (if running)
+/// 4.6. Stop active mesh support bundle explicitly (Iteration 94)
 /// 5. Clear running flag
 /// 6. Broadcast registry cancellation
 /// 7. Bandwidth persist (handled by background task)
@@ -55,7 +161,7 @@ pub async fn execute_worker_shutdown(
         lifecycle_ack,
         graceful,
         drain_timeout,
-        active_mesh_support: _,
+        mut active_mesh_support,
     } = ctx;
 
     // Step 1: Record coordinated shutdown intent before any teardown,
@@ -152,6 +258,49 @@ pub async fn execute_worker_shutdown(
         }
     }
 
+    // Step 4.6: Stop active mesh support bundle explicitly (Iteration 94).
+    // If optional mesh degradation already took the support bundle,
+    // active_mesh_support is None and this is a no-op.
+    // Gated on both mesh+dns because stop_mesh_generation_support is only
+    // available when DNS support is compiled in (YARA broadcast, DNS verification).
+    #[cfg(all(feature = "mesh", feature = "dns"))]
+    if let Some(support) = active_mesh_support.take() {
+        let remaining = remaining_budget();
+        let timeout = if remaining.is_zero() {
+            std::time::Duration::from_secs(5)
+        } else {
+            remaining.min(std::time::Duration::from_secs(5))
+        };
+
+        let stop_report = crate::worker::unified_server::stop_mesh_generation_support(
+            &state.task_registry,
+            support,
+            timeout,
+            crate::worker::unified_server::SupportStopContext::WorkerShutdown,
+        )
+        .await;
+
+        if stop_report.clean() {
+            tracing::info!(
+                generation = stop_report.generation,
+                cooperative = stop_report.cooperative,
+                "mesh support generation stopped cleanly during worker shutdown"
+            );
+        } else {
+            tracing::warn!(
+                generation = stop_report.generation,
+                cooperative = stop_report.cooperative,
+                aborted = stop_report.aborted,
+                failed = stop_report.failed,
+                not_found = stop_report.not_found,
+                "mesh support generation required cleanup during worker shutdown"
+            );
+        }
+    }
+    // Suppress unused variable when mesh+dns is not compiled in.
+    #[cfg(not(all(feature = "mesh", feature = "dns")))]
+    let _ = active_mesh_support;
+
     // Step 5: Clear running flag.
     state.running.stop();
 
@@ -217,4 +366,155 @@ pub async fn execute_worker_shutdown(
         final_cause: shutdown_cause,
         exit_code,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::worker::task_registry::SupervisionOutcome;
+    use crate::worker::unified_server::lifecycle::WorkerLifecycleEvent;
+
+    #[test]
+    fn lifecycle_master_shutdown_preserves_graceful_and_timeout() {
+        let (tx, _) = tokio::sync::oneshot::channel();
+        let event = WorkerLifecycleEvent::MasterShutdown {
+            graceful: true,
+            timeout: std::time::Duration::from_secs(45),
+        };
+        let outcome = SupervisionOutcome::Lifecycle {
+            event,
+            accepted: tx,
+        };
+
+        let plan = WorkerShutdownPlan::from_supervision_outcome(outcome);
+        assert_eq!(plan.shutdown_cause, WorkerShutdownCause::SupervisorShutdown);
+        assert!(plan.graceful);
+        assert_eq!(plan.drain_timeout, std::time::Duration::from_secs(45));
+        assert!(plan.lifecycle_ack.is_some());
+    }
+
+    #[test]
+    fn lifecycle_resize_is_graceful_with_default_timeout() {
+        let (tx, _) = tokio::sync::oneshot::channel();
+        let event = WorkerLifecycleEvent::WorkerResize { worker_threads: 8 };
+        let outcome = SupervisionOutcome::Lifecycle {
+            event,
+            accepted: tx,
+        };
+
+        let plan = WorkerShutdownPlan::from_supervision_outcome(outcome);
+        assert!(matches!(
+            plan.shutdown_cause,
+            WorkerShutdownCause::WorkerResize { worker_threads: 8 }
+        ));
+        assert!(plan.graceful);
+        assert_eq!(plan.drain_timeout, std::time::Duration::from_secs(30));
+        assert!(plan.lifecycle_ack.is_some());
+    }
+
+    #[test]
+    fn lifecycle_supervisor_disconnected_is_immediate() {
+        let (tx, _) = tokio::sync::oneshot::channel();
+        let event = WorkerLifecycleEvent::SupervisorDisconnected;
+        let outcome = SupervisionOutcome::Lifecycle {
+            event,
+            accepted: tx,
+        };
+
+        let plan = WorkerShutdownPlan::from_supervision_outcome(outcome);
+        assert_eq!(
+            plan.shutdown_cause,
+            WorkerShutdownCause::SupervisorDisconnected
+        );
+        assert!(!plan.graceful);
+        assert_eq!(plan.drain_timeout, std::time::Duration::ZERO);
+        assert!(plan.lifecycle_ack.is_some());
+    }
+
+    #[test]
+    fn direct_critical_task_exit_is_immediate() {
+        let cause =
+            WorkerShutdownCause::CriticalTaskExit(crate::worker::task_registry::NamedTaskExit {
+                name: "test_task",
+                id: crate::worker::task_registry::TaskId(1),
+                reason: crate::worker::task_registry::TaskExitReason::Panic(
+                    "test panic".to_string(),
+                ),
+                class: crate::worker::task_registry::TaskClass::CriticalService,
+                expected_during_shutdown: false,
+            });
+        let outcome = SupervisionOutcome::DirectCause(cause);
+
+        let plan = WorkerShutdownPlan::from_supervision_outcome(outcome);
+        assert!(matches!(
+            plan.shutdown_cause,
+            WorkerShutdownCause::CriticalTaskExit(_)
+        ));
+        assert!(!plan.graceful);
+        assert_eq!(plan.drain_timeout, std::time::Duration::ZERO);
+        assert!(plan.lifecycle_ack.is_none());
+    }
+
+    #[test]
+    fn direct_external_stop_is_graceful() {
+        let cause = WorkerShutdownCause::ExternalStop;
+        let outcome = SupervisionOutcome::DirectCause(cause);
+
+        let plan = WorkerShutdownPlan::from_supervision_outcome(outcome);
+        assert!(matches!(
+            plan.shutdown_cause,
+            WorkerShutdownCause::ExternalStop
+        ));
+        assert!(plan.graceful);
+        assert_eq!(plan.drain_timeout, std::time::Duration::from_secs(30));
+        assert!(plan.lifecycle_ack.is_none());
+    }
+
+    #[test]
+    fn direct_server_exited_unexpectedly_is_immediate() {
+        let cause = WorkerShutdownCause::ServerExitedUnexpectedly(
+            crate::worker::task_registry::NamedTaskExit {
+                name: "server_run",
+                id: crate::worker::task_registry::TaskId(1),
+                reason: crate::worker::task_registry::TaskExitReason::CleanCompletion,
+                class: crate::worker::task_registry::TaskClass::CriticalService,
+                expected_during_shutdown: false,
+            },
+        );
+        let outcome = SupervisionOutcome::DirectCause(cause);
+
+        let plan = WorkerShutdownPlan::from_supervision_outcome(outcome);
+        assert!(!plan.graceful);
+        assert_eq!(plan.drain_timeout, std::time::Duration::ZERO);
+    }
+
+    #[test]
+    fn direct_registry_exit_channel_closed_is_immediate() {
+        let cause = WorkerShutdownCause::RegistryExitChannelClosed;
+        let outcome = SupervisionOutcome::DirectCause(cause);
+
+        let plan = WorkerShutdownPlan::from_supervision_outcome(outcome);
+        assert!(!plan.graceful);
+        assert_eq!(plan.drain_timeout, std::time::Duration::ZERO);
+    }
+
+    #[test]
+    fn direct_supervisor_disconnected_is_immediate() {
+        let cause = WorkerShutdownCause::SupervisorDisconnected;
+        let outcome = SupervisionOutcome::DirectCause(cause);
+
+        let plan = WorkerShutdownPlan::from_supervision_outcome(outcome);
+        assert!(!plan.graceful);
+        assert_eq!(plan.drain_timeout, std::time::Duration::ZERO);
+    }
+
+    #[test]
+    fn direct_server_stopped_for_shutdown_is_graceful() {
+        let cause = WorkerShutdownCause::ServerStoppedForShutdown;
+        let outcome = SupervisionOutcome::DirectCause(cause);
+
+        let plan = WorkerShutdownPlan::from_supervision_outcome(outcome);
+        assert!(plan.graceful);
+        assert_eq!(plan.drain_timeout, std::time::Duration::from_secs(30));
+    }
 }

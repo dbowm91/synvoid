@@ -87,7 +87,11 @@ UnifiedServer worker (`run_unified_server_worker`).
                        in Iteration 93
 - `shutdown_executor.rs` - Ordered shutdown procedure (shutdown-and-join, IPC
                        notification, exit-code mapping); extracted from
-                       `run_unified_server_worker()` in Iteration 93
+                       `run_unified_server_worker()` in Iteration 93.
+                       Iteration 94: Added `WorkerShutdownPlan` and
+                       `from_supervision_outcome()` mapping helper, restored
+                       explicit active mesh support shutdown via
+                       `stop_mesh_generation_support(..., WorkerShutdown)`.
 - `supervisor_notify.rs` - Supervisor IPC notification and exit-code mapping;
                        extracted from `run_unified_server_worker()` in Iteration 93
 

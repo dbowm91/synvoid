@@ -1,7 +1,7 @@
 # Worker/Data-Plane Composition Root Ownership
 
 **Established**: Iteration 58
-**Updated**: Iteration 88
+**Updated**: Iteration 94
 **Guardrail**: `tests/data_plane_composition_boundary_guard.rs`
 
 ## Invariant
@@ -25,7 +25,7 @@ These files construct and wire concrete infrastructure:
 | `src/worker/unified_server/init_config.rs` | Re-exports of state.rs config helpers |
 | `src/worker/unified_server/startup_plan.rs` | Worker startup orchestration (identity through mesh pipeline) |
 | `src/worker/unified_server/supervision_loop.rs` | Supervision select loop (lifecycle events, task exits, mesh decisions) |
-| `src/worker/unified_server/shutdown_executor.rs` | Ordered shutdown procedure |
+| `src/worker/unified_server/shutdown_executor.rs` | Ordered shutdown procedure + `WorkerShutdownPlan` outcome mapping (Iteration 94) |
 | `src/worker/unified_server/supervisor_notify.rs` | Supervisor IPC notification and exit-code mapping |
 | `src/worker/connection.rs` | Legacy worker WAF init |
 | `src/worker/task_registry.rs` | Task lifecycle management (CriticalService, RestartableBackground, etc.) |

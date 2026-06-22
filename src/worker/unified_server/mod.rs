@@ -515,75 +515,12 @@ pub async fn run_unified_server_worker(
     )
     .await;
 
-    // ---- Phase 16: map supervision outcome to shutdown cause ----
-    let (shutdown_cause, lifecycle_ack, graceful, drain_timeout) = match supervision_result.outcome
-    {
-        crate::worker::task_registry::SupervisionOutcome::Lifecycle { event, accepted } => {
-            let (graceful, drain_timeout) = match &event {
-                lifecycle::WorkerLifecycleEvent::MasterShutdown { graceful, timeout } => {
-                    (*graceful, *timeout)
-                }
-                lifecycle::WorkerLifecycleEvent::WorkerResize { .. } => {
-                    (true, std::time::Duration::from_secs(30))
-                }
-                lifecycle::WorkerLifecycleEvent::SupervisorDisconnected => {
-                    (false, std::time::Duration::ZERO)
-                }
-            };
-            let cause = match &event {
-                lifecycle::WorkerLifecycleEvent::MasterShutdown { .. } => {
-                    crate::worker::task_registry::WorkerShutdownCause::SupervisorShutdown
-                }
-                lifecycle::WorkerLifecycleEvent::WorkerResize { worker_threads } => {
-                    crate::worker::task_registry::WorkerShutdownCause::WorkerResize {
-                        worker_threads: *worker_threads,
-                    }
-                }
-                lifecycle::WorkerLifecycleEvent::SupervisorDisconnected => {
-                    crate::worker::task_registry::WorkerShutdownCause::SupervisorDisconnected
-                }
-            };
-            (cause, Some(accepted), graceful, drain_timeout)
-        }
-        crate::worker::task_registry::SupervisionOutcome::DirectCause(cause) => {
-            let graceful = match &cause {
-                crate::worker::task_registry::WorkerShutdownCause::ServerExitedUnexpectedly(_)
-                | crate::worker::task_registry::WorkerShutdownCause::CriticalTaskExit(_)
-                | crate::worker::task_registry::WorkerShutdownCause::RegistryExitChannelClosed
-                | crate::worker::task_registry::WorkerShutdownCause::SupervisorDisconnected => {
-                    false
-                }
-                #[cfg(feature = "mesh")]
-                crate::worker::task_registry::WorkerShutdownCause::MeshStartupFailed(_)
-                | crate::worker::task_registry::WorkerShutdownCause::MeshShutdownIncomplete(_)
-                | crate::worker::task_registry::WorkerShutdownCause::MeshServiceExit(_)
-                | crate::worker::task_registry::WorkerShutdownCause::MeshRestartExhausted {
-                    ..
-                }
-                | crate::worker::task_registry::WorkerShutdownCause::MeshConfigurationInvariant(
-                    _,
-                ) => false,
-                _ => true,
-            };
-            let drain_timeout = if graceful {
-                std::time::Duration::from_secs(30)
-            } else {
-                std::time::Duration::ZERO
-            };
-            (cause, None, graceful, drain_timeout)
-        }
-    };
-
-    // ---- Phase 16: ordered shutdown execution ----
-    let shutdown_ctx = shutdown_executor::WorkerShutdownContext {
+    // ---- Phase 16: map supervision outcome + execute ordered shutdown ----
+    let shutdown_ctx = shutdown_executor::WorkerShutdownContext::from_supervision_result(
         worker_id,
-        state: startup.state,
-        shutdown_cause,
-        lifecycle_ack,
-        graceful,
-        drain_timeout,
-        active_mesh_support: supervision_result.active_mesh_support,
-    };
+        startup.state,
+        supervision_result,
+    );
     let _report = shutdown_executor::execute_worker_shutdown(shutdown_ctx).await?;
 
     Ok(())
