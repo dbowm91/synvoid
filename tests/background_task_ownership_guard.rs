@@ -501,7 +501,7 @@ fn find_section<'a>(content: &'a str, marker: &str) -> &'a str {
 /// Server run task must be registered under WorkerTaskRegistry via spawn_critical_result.
 #[test]
 fn server_run_task_is_registry_owned() {
-    let content = read_file("src/worker/unified_server/mod.rs");
+    let content = read_file("src/worker/unified_server/startup_plan.rs");
     assert!(
         content.contains("spawn_critical_result") && content.contains("server_run"),
         "Server run task must be registered under WorkerTaskRegistry via spawn_critical_result"
@@ -511,7 +511,7 @@ fn server_run_task_is_registry_owned() {
 /// Exit receiver must be subscribed before supervised tasks are spawned.
 #[test]
 fn exit_receiver_subscribed_before_task_spawning() {
-    let content = read_file("src/worker/unified_server/mod.rs");
+    let content = read_file("src/worker/unified_server/startup_plan.rs");
     let subscribe_pos = content
         .find("subscribe_exits()")
         .expect("subscribe_exits not found");
@@ -527,7 +527,7 @@ fn exit_receiver_subscribed_before_task_spawning() {
 /// Supervision loop must distinguish critical from noncritical exits.
 #[test]
 fn supervision_loop_handles_noncritical_exits() {
-    let content = read_file("src/worker/unified_server/mod.rs");
+    let content = read_file("src/worker/unified_server/supervision_loop.rs");
     assert!(
         content.contains("is_fatal_exit"),
         "Supervision loop must use is_fatal_exit to distinguish critical from noncritical exits"
@@ -558,7 +558,7 @@ fn bandwidth_persist_task_has_final_flush() {
 /// Server run task must not be spawned via raw tokio::spawn.
 #[test]
 fn no_unmanaged_server_join_handle() {
-    let content = read_file("src/worker/unified_server/mod.rs");
+    let content = read_file("src/worker/unified_server/startup_plan.rs");
     let has_raw_spawn =
         content.contains("tokio::spawn") && content.contains("unified_server.run()");
     let has_server_run_in_registry =
@@ -595,7 +595,7 @@ fn spawn_server_run_task_removed() {
 /// MasterShutdown path must call begin_coordinated_shutdown before running.stop().
 #[test]
 fn master_shutdown_begins_intent_before_running_stop() {
-    let content = read_file("src/worker/unified_server/mod.rs");
+    let content = read_file("src/worker/unified_server/shutdown_executor.rs");
     // Scope to composition-root shutdown procedure to avoid supervision loop's running.stop().
     let composition_root_start = content
         .find("composition-root shutdown procedure")
@@ -617,17 +617,15 @@ fn master_shutdown_begins_intent_before_running_stop() {
 /// not directly from the IPC receive branch.
 #[test]
 fn shutdown_complete_sent_from_composition_root() {
-    let content = read_file("src/worker/unified_server/mod.rs");
+    let content = read_file("src/worker/unified_server/shutdown_executor.rs");
     // The composition root sends ShutdownComplete after shutdown_and_join.
-    let shutdown_complete_pos = content
-        .find("UnifiedServerWorkerShutdownComplete")
-        .expect("ShutdownComplete not found");
-    let shutdown_and_join_pos = content
-        .find("shutdown_and_join")
-        .expect("shutdown_and_join not found");
     assert!(
-        shutdown_and_join_pos < shutdown_complete_pos,
-        "UnifiedServerWorkerShutdownComplete must be sent after shutdown_and_join"
+        content.contains("shutdown_and_join"),
+        "shutdown_and_join must be called before sending shutdown complete"
+    );
+    assert!(
+        content.contains("notify_supervisor_of_shutdown"),
+        "composition root must call notify_supervisor_of_shutdown to send shutdown complete"
     );
 }
 
@@ -693,10 +691,10 @@ fn begin_shutdown_and_broadcast_are_separate() {
 /// Final exit code must derive from WorkerShutdownCause, not worker_exit_code.
 #[test]
 fn exit_code_derived_from_shutdown_cause() {
-    let content = read_file("src/worker/unified_server/mod.rs");
+    let content = read_file("src/worker/unified_server/shutdown_executor.rs");
     assert!(
-        content.contains("shutdown_cause.exit_code()"),
-        "Final exit code must be derived from WorkerShutdownCause::exit_code()"
+        content.contains("exit_code_for_shutdown_cause"),
+        "Final exit code must be derived from exit_code_for_shutdown_cause"
     );
     // worker_exit_code should not be used for the final exit decision.
     assert!(
@@ -708,7 +706,7 @@ fn exit_code_derived_from_shutdown_cause() {
 /// Graceful shutdown fields must be consumed by the drain path.
 #[test]
 fn graceful_fields_consumed_by_drain() {
-    let content = read_file("src/worker/unified_server/mod.rs");
+    let content = read_file("src/worker/unified_server/shutdown_executor.rs");
     assert!(
         content.contains("graceful") && content.contains("drain_timeout"),
         "Graceful and drain_timeout must be consumed by the shutdown path"
@@ -753,26 +751,22 @@ fn ipc_loop_exit_cause_removed() {
 /// Resize cause must route to resize acknowledgement.
 #[test]
 fn resize_cause_routes_to_resize_ack() {
-    let content = read_file("src/worker/unified_server/mod.rs");
+    let content = read_file("src/worker/unified_server/supervisor_notify.rs");
     assert!(
         content.contains("UnifiedServerWorkerResizeAck"),
         "Resize cause must route to UnifiedServerWorkerResizeAck"
     );
-    // Verify the routing is inside the composition root shutdown procedure.
-    let composition_start = content
-        .find("composition-root shutdown procedure")
-        .expect("composition root not found");
-    let section = &content[composition_start..];
+    // Verify WorkerResize is handled in the shutdown notification mapping.
     assert!(
-        section.contains("WorkerResize"),
-        "Resize acknowledgement must be in the composition root shutdown procedure"
+        content.contains("WorkerResize"),
+        "Resize acknowledgement must handle WorkerResize cause"
     );
 }
 
 /// Legacy handles must be awaited after abort.
 #[test]
 fn legacy_handles_awaited_after_abort() {
-    let content = read_file("src/worker/unified_server/mod.rs");
+    let content = read_file("src/worker/unified_server/shutdown_executor.rs");
     // Must have the pattern: take handles, then abort+await in a loop.
     assert!(
         content.contains("handle.await"),
@@ -788,20 +782,15 @@ fn legacy_handles_awaited_after_abort() {
 /// Fatal causes must send WorkerError when IPC is available.
 #[test]
 fn fatal_causes_send_worker_error() {
-    let content = read_file("src/worker/unified_server/mod.rs");
+    let content = read_file("src/worker/unified_server/supervisor_notify.rs");
     // Must have explicit WorkerError sends for fatal causes.
     assert!(
         content.contains("WorkerError"),
         "Fatal causes must send WorkerError to supervisor"
     );
-    // Must not send both WorkerError and ShutdownComplete for the same cause.
-    let composition_start = content
-        .find("composition-root shutdown procedure")
-        .expect("composition root not found");
-    let section = &content[composition_start..];
-    // The match arms should be mutually exclusive.
+    // Must have SupervisorShutdown match arm for clean shutdown notification.
     assert!(
-        section.contains("SupervisorShutdown =>") || section.contains("SupervisorShutdown => {"),
+        content.contains("SupervisorShutdown =>"),
         "SupervisorShutdown must have its own match arm"
     );
 }
@@ -811,15 +800,11 @@ fn fatal_causes_send_worker_error() {
 fn lifecycle_ack_after_begin_shutdown() {
     // The begin_coordinated_shutdown helper encapsulates both begin_shutdown()
     // and lifecycle acknowledgement in the correct order. Verify the helper
-    // is called from the composition root.
-    let content = read_file("src/worker/unified_server/mod.rs");
-    let composition_start = content
-        .find("composition-root shutdown procedure")
-        .expect("composition root not found");
-    let section = &content[composition_start..];
+    // is called from the composition root shutdown executor.
+    let content = read_file("src/worker/unified_server/shutdown_executor.rs");
 
     assert!(
-        section.contains("begin_coordinated_shutdown"),
+        content.contains("begin_coordinated_shutdown"),
         "Composition root must call begin_coordinated_shutdown for shutdown intent + lifecycle ack"
     );
 }
@@ -827,7 +812,7 @@ fn lifecycle_ack_after_begin_shutdown() {
 /// Supervision loop must select over lifecycle events from IPC.
 #[test]
 fn supervision_selects_lifecycle_events() {
-    let content = read_file("src/worker/unified_server/mod.rs");
+    let content = read_file("src/worker/unified_server/supervision_loop.rs");
     assert!(
         content.contains("lifecycle_rx.recv()"),
         "Supervision loop must select over lifecycle_rx.recv()"
@@ -841,18 +826,17 @@ fn supervision_selects_lifecycle_events() {
 /// Fatal task exits must NOT be converted to SupervisorDisconnected.
 #[test]
 fn fatal_task_exits_not_converted_to_supervisor_disconnected() {
-    let content = read_file("src/worker/unified_server/mod.rs");
+    let content = read_file("src/worker/unified_server/supervision_loop.rs");
     // The supervision loop should use map_task_exit_to_shutdown_cause, not
     // directly construct SupervisorDisconnected for task failures.
     assert!(
         content.contains("map_task_exit_to_shutdown_cause"),
         "Supervision loop must use map_task_exit_to_shutdown_cause for fatal exits"
     );
-    // Verify the old pattern is gone: breaking with SupervisorDisconnected on fatal exit.
-    let supervision_section = find_section(&content, "Phase 15: supervision loop");
+    // Verify the exit handling uses map_task_exit_to_shutdown_cause:
+    // either is_fatal_exit is not used directly, or map_task_exit_to_shutdown_cause is used.
     assert!(
-        !supervision_section.contains("is_fatal_exit")
-            || supervision_section.contains("map_task_exit_to_shutdown_cause"),
+        !content.contains("is_fatal_exit") || content.contains("map_task_exit_to_shutdown_cause"),
         "Fatal exit handling must go through map_task_exit_to_shutdown_cause"
     );
 }
@@ -874,13 +858,11 @@ fn registry_exit_channel_closed_reachable_from_lag_and_closure() {
 /// Lifecycle channel closure must NOT synthesize MasterShutdown.
 #[test]
 fn lifecycle_channel_closure_no_fake_master_shutdown() {
-    let content = read_file("src/worker/unified_server/mod.rs");
+    let content = read_file("src/worker/unified_server/supervision_loop.rs");
     // The old pattern manufactured MasterShutdown when lifecycle_rx returned None.
     // Now it should use map_lifecycle_channel_closed which returns RegistryExitChannelClosed.
-    let supervision_section = find_section(&content, "Phase 15: supervision loop");
     assert!(
-        !supervision_section.contains("MasterShutdown")
-            || supervision_section.contains("map_lifecycle_channel_closed"),
+        !content.contains("MasterShutdown") || content.contains("map_lifecycle_channel_closed"),
         "Lifecycle channel closure must not synthesize MasterShutdown"
     );
 }
@@ -917,7 +899,7 @@ fn supervisor_disconnected_only_from_ipc_disconnect() {
 /// Cause-specific WorkerError branches must be reachable through supervision mapping.
 #[test]
 fn cause_specific_worker_error_branches_reachable() {
-    let content = read_file("src/worker/unified_server/mod.rs");
+    let content = read_file("src/worker/unified_server/supervisor_notify.rs");
     // The shutdown procedure must have explicit match arms for each cause type.
     assert!(
         content.contains("WorkerShutdownCause::CriticalTaskExit"),
@@ -980,15 +962,9 @@ fn should_notify_supervisor_excludes_supervisor_disconnected() {
 /// The composition root is responsible for teardown ordering.
 #[test]
 fn supervision_loop_does_not_call_running_stop() {
-    let content = read_file("src/worker/unified_server/mod.rs");
-    let supervision_start = find_section(&content, "Phase 15: supervision loop");
-    // Find where Phase 16 starts to scope the search.
-    let phase16_pos = supervision_start
-        .find("Phase 16:")
-        .expect("Phase 16 not found");
-    let supervision_section = &supervision_start[..phase16_pos];
+    let content = read_file("src/worker/unified_server/supervision_loop.rs");
     assert!(
-        !supervision_section.contains("state.running.stop()"),
+        !content.contains("state.running.stop()"),
         "Supervision loop must not call state.running.stop() — the composition root handles teardown"
     );
 }

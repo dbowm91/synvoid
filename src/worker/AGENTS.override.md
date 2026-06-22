@@ -80,6 +80,16 @@ UnifiedServer worker (`run_unified_server_worker`).
 - `lifecycle.rs`   - heartbeat task, bandwidth-persist task, IPC message
                        handling loop, initial blocklist request;
                        `LifecycleRequest` handshake for composition-root coordination
+- `startup_plan.rs` - Worker startup orchestration (identity through mesh pipeline);
+                       extracted from `run_unified_server_worker()` in Iteration 93
+- `supervision_loop.rs` - Supervision select loop (lifecycle events, task exits,
+                       mesh decisions); extracted from `run_unified_server_worker()`
+                       in Iteration 93
+- `shutdown_executor.rs` - Ordered shutdown procedure (shutdown-and-join, IPC
+                       notification, exit-code mapping); extracted from
+                       `run_unified_server_worker()` in Iteration 93
+- `supervisor_notify.rs` - Supervisor IPC notification and exit-code mapping;
+                       extracted from `run_unified_server_worker()` in Iteration 93
 
 ### Helper files outside the subdirectories
 

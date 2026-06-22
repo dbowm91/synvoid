@@ -23,6 +23,10 @@ These files construct and wire concrete infrastructure:
 | `src/worker/unified_server/state.rs` | IPC connection, config loading |
 | `src/worker/unified_server/init_runtime.rs` | Re-exports of state.rs runtime helpers |
 | `src/worker/unified_server/init_config.rs` | Re-exports of state.rs config helpers |
+| `src/worker/unified_server/startup_plan.rs` | Worker startup orchestration (identity through mesh pipeline) |
+| `src/worker/unified_server/supervision_loop.rs` | Supervision select loop (lifecycle events, task exits, mesh decisions) |
+| `src/worker/unified_server/shutdown_executor.rs` | Ordered shutdown procedure |
+| `src/worker/unified_server/supervisor_notify.rs` | Supervisor IPC notification and exit-code mapping |
 | `src/worker/connection.rs` | Legacy worker WAF init |
 | `src/worker/task_registry.rs` | Task lifecycle management (CriticalService, RestartableBackground, etc.) |
 | `src/worker/cpu_task/mod.rs` | CPU offload worker composition |

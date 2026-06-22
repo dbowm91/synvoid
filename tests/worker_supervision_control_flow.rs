@@ -581,7 +581,8 @@ async fn test_legacy_handle_abort_and_await_completes() {
 async fn test_shutdown_ordering_begin_before_stop_accepting() {
     // This is a structural test verifying the source code ordering.
     let content = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/worker/unified_server/mod.rs"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/worker/unified_server/shutdown_executor.rs"),
     )
     .unwrap();
 
@@ -3249,8 +3250,8 @@ mod mesh_supervision_behavioral {
 
     #[test]
     fn composition_root_uses_one_shot_for_optional_mesh() {
-        let content = std::fs::read_to_string("src/worker/unified_server/mod.rs")
-            .expect("failed to read mod.rs");
+        let content = std::fs::read_to_string("src/worker/unified_server/startup_plan.rs")
+            .expect("failed to read startup_plan.rs");
 
         // Optional mesh startup must use spawn_one_shot
         assert!(

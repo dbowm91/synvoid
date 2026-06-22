@@ -247,6 +247,10 @@ fn classify_unified_server_file(path: &str) -> BoundaryRole {
         || path.ends_with("init_mesh.rs")
         || path.ends_with("init_waf.rs")
         || path.ends_with("init_apps.rs")
+        || path.ends_with("startup_plan.rs")
+        || path.ends_with("supervision_loop.rs")
+        || path.ends_with("shutdown_executor.rs")
+        || path.ends_with("supervisor_notify.rs")
     {
         return BoundaryRole::CompositionRoot;
     }
