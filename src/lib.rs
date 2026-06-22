@@ -38,67 +38,75 @@
     clippy::unnecessary_cast
 )]
 
+// Root application/runtime composition modules. These remain root-owned because
+// they coordinate processes, workers, supervisor state, sockets, startup, or
+// app-level integration. See architecture/root_module_ledger.md.
 pub mod admin;
-pub mod app_server;
 pub mod auth;
+pub mod captcha;
+pub mod challenge;
+pub mod common;
+pub mod drain;
+pub mod filter;
+pub mod http;
+pub mod http_client;
+pub mod listener;
+pub mod log_controller;
+pub mod logging;
+pub mod platform;
+pub mod plugin;
+pub mod sandbox;
+pub mod server;
+pub mod startup;
+pub mod supervisor;
+pub mod tarpit;
+pub mod tcp;
+pub mod udp;
+pub mod utils;
+pub mod worker;
+
+// Compatibility facades over dedicated crates. New domain code should import
+// the dedicated crate directly; these root paths remain for transitional API
+// compatibility while root coupling is reduced.
+// See architecture/root_module_ledger.md.
+pub mod app_server;
 pub mod block_store;
 pub mod buffer {
     pub use synvoid_utils::buffer::pool;
     pub use synvoid_utils::buffer::pool::{BufferPool, PooledBuf};
 }
-pub mod captcha;
 pub mod cgi;
-pub mod challenge;
-pub mod common;
 pub mod config;
-pub mod drain;
 pub mod fastcgi;
-pub mod filter;
 pub use synvoid_geoip as geoip;
 pub mod honeypot_port;
-pub mod http;
 pub mod http3;
-pub mod http_client;
 pub use synvoid_integrity as integrity;
-pub mod listener;
 pub mod location_matcher;
-pub mod log_controller;
-pub mod logging;
 #[cfg(feature = "mesh")]
 pub mod mesh;
 pub mod metrics;
 pub mod mime;
 pub mod php;
-pub mod platform;
-pub mod plugin;
 pub mod process;
 pub mod protocol;
 pub mod proxy;
 pub use synvoid_proxy_cache as proxy_cache;
 pub mod router;
 pub mod router_adapter;
-pub mod sandbox;
 pub mod serder;
 pub use synvoid_utils::serialization;
-pub mod server;
 pub mod serverless;
 pub mod spin;
-pub mod startup;
 pub mod static_files;
 pub mod streaming;
-pub mod supervisor;
-pub mod tarpit;
-pub mod tcp;
 pub mod theme;
 pub mod tls;
 pub mod tunnel;
-pub mod udp;
 pub mod upload;
 pub use synvoid_upstream as upstream;
-pub mod utils;
 pub mod vpn_client;
 pub mod waf;
-pub mod worker;
 
 #[cfg(feature = "icmp-filter")]
 pub mod icmp_filter;

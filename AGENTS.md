@@ -108,6 +108,16 @@ cargo check --no-default-features --features mesh,dns
 - DNS profile (`--no-default-features --features dns`) ✅
 - Full profile (`--no-default-features --features mesh,dns`) ✅
 
+## Root Crate Ownership
+
+Root crate ownership is tracked in `architecture/root_module_ledger.md`. New domain code should prefer dedicated `synvoid-*` crates over root `synvoid::` compatibility paths unless the ledger marks the root module as `keep_app_root`.
+
+The root facade boundary guard test prevents domain crates under `crates/` from importing the root `synvoid` crate:
+
+```bash
+cargo test --test root_facade_boundary_guard
+```
+
 ## Known File Path Corrections
 
 | Wrong Path | Correct Path |

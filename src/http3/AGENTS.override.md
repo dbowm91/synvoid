@@ -1,5 +1,7 @@
 # HTTP/3 Server Module - AGENTS.override.md
 
+> **Note**: `src/http3` is a compatibility facade. The canonical HTTP/3 implementation lives in `crates/synvoid-http3`. Do not add new HTTP/3 server implementation here.
+
 Specialized guidance for HTTP/3 QUIC request handling and proxying.
 
 ## Hot Path
