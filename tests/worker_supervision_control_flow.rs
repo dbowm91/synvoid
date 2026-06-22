@@ -3250,8 +3250,8 @@ mod mesh_supervision_behavioral {
 
     #[test]
     fn composition_root_uses_one_shot_for_optional_mesh() {
-        let content = std::fs::read_to_string("src/worker/unified_server/startup_plan.rs")
-            .expect("failed to read startup_plan.rs");
+        let content = std::fs::read_to_string("src/worker/unified_server/mesh_attachment.rs")
+            .expect("failed to read mesh_attachment.rs");
 
         // Optional mesh startup must use spawn_one_shot
         assert!(

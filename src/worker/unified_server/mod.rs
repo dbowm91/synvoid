@@ -17,6 +17,7 @@ pub mod init_mesh;
 pub mod init_runtime;
 pub mod init_waf;
 pub mod lifecycle;
+pub mod mesh_attachment;
 pub mod passthrough_validation;
 pub mod services;
 pub mod shutdown_executor;

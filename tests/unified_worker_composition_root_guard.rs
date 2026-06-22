@@ -237,3 +237,109 @@ fn startup_plan_does_not_perform_shutdown() {
         "startup_plan.rs must not call begin_coordinated_shutdown"
     );
 }
+
+// ── Iteration 95: mesh attachment extraction ────────────────────────────────
+
+#[test]
+fn startup_plan_delegates_mesh_attachment() {
+    let repo = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source =
+        std::fs::read_to_string(repo.join("src/worker/unified_server/startup_plan.rs")).unwrap();
+    assert!(
+        source.contains("mesh_attachment"),
+        "startup_plan.rs must reference mesh_attachment module"
+    );
+    assert!(
+        source.contains("attach_mesh"),
+        "startup_plan.rs must call attach_mesh"
+    );
+}
+
+#[test]
+fn startup_plan_no_longer_owns_mesh_select_loop() {
+    let repo = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source =
+        std::fs::read_to_string(repo.join("src/worker/unified_server/startup_plan.rs")).unwrap();
+    let non_comment_lines: Vec<&str> = source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect();
+    let non_comment_source = non_comment_lines.join("\n");
+    assert!(
+        !non_comment_source.contains("mesh_support_registration"),
+        "startup_plan.rs must not contain mesh_support_registration one-shot"
+    );
+    assert!(
+        !non_comment_source.contains("pending_optional_failure"),
+        "startup_plan.rs must not contain pending_optional_failure tracking"
+    );
+    assert!(
+        !non_comment_source.contains("MeshSupervisorDecision::RestartMesh"),
+        "startup_plan.rs must not handle RestartMesh decisions inline"
+    );
+}
+
+#[test]
+fn mesh_attachment_module_exists() {
+    let repo = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    assert!(
+        repo.join("src/worker/unified_server/mesh_attachment.rs")
+            .exists(),
+        "mesh_attachment.rs module must exist"
+    );
+}
+
+#[test]
+fn mesh_attachment_owns_optional_degradation_cleanup() {
+    let repo = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source =
+        std::fs::read_to_string(repo.join("src/worker/unified_server/mesh_attachment.rs")).unwrap();
+    assert!(
+        source.contains("SupportStopContext::OptionalMeshDegraded"),
+        "mesh_attachment.rs must handle optional degradation cleanup"
+    );
+    assert!(
+        source.contains("stop_mesh_generation_support"),
+        "mesh_attachment.rs must call stop_mesh_generation_support"
+    );
+}
+
+#[test]
+fn mesh_attachment_handles_required_mesh_startup() {
+    let repo = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source =
+        std::fs::read_to_string(repo.join("src/worker/unified_server/mesh_attachment.rs")).unwrap();
+    assert!(
+        source.contains("start_mesh_generation"),
+        "mesh_attachment.rs must call start_mesh_generation for required mesh"
+    );
+    assert!(
+        source.contains("register_mesh_generation_support"),
+        "mesh_attachment.rs must register mesh generation support"
+    );
+}
+
+#[test]
+fn mesh_attachment_handles_optional_mesh_startup() {
+    let repo = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source =
+        std::fs::read_to_string(repo.join("src/worker/unified_server/mesh_attachment.rs")).unwrap();
+    assert!(
+        source.contains("mesh_startup"),
+        "mesh_attachment.rs must spawn mesh_startup one-shot"
+    );
+    assert!(
+        source.contains("mesh_support_registration"),
+        "mesh_attachment.rs must spawn mesh_support_registration one-shot"
+    );
+}
+
+#[test]
+fn mod_rs_declares_mesh_attachment() {
+    let repo = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source = std::fs::read_to_string(repo.join("src/worker/unified_server/mod.rs")).unwrap();
+    assert!(
+        source.contains("pub mod mesh_attachment"),
+        "mod.rs must declare mesh_attachment module"
+    );
+}

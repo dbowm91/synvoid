@@ -251,6 +251,7 @@ fn classify_unified_server_file(path: &str) -> BoundaryRole {
         || path.ends_with("supervision_loop.rs")
         || path.ends_with("shutdown_executor.rs")
         || path.ends_with("supervisor_notify.rs")
+        || path.ends_with("mesh_attachment.rs")
     {
         return BoundaryRole::CompositionRoot;
     }

@@ -480,6 +480,7 @@ Returned after startup:
 - `is_running()` reads `running_projection: Arc<AtomicBool>` — lock-free, no Tokio contention
 - `MeshServiceExit(MeshTaskExit)` variant on `WorkerShutdownCause` for mesh task failures
 - **Worker mesh supervision pipeline** (Iteration 82–84): fully implemented in `src/worker/mesh_supervision.rs`. See [Worker Mesh Supervision](#worker-mesh-supervision-iterations-82-84) below.
+- **Mesh attachment orchestration** (Iteration 95): `src/worker/unified_server/mesh_attachment.rs` — extracted from `startup_plan.rs`. The `attach_mesh()` function creates the supervision pipeline, handles required/optional mesh startup, registers support tasks after mesh succeeds, and returns a typed `MeshStartupState` for startup/supervision/shutdown coordination.
 
 ### Iteration 73 Lifecycle Semantics
 

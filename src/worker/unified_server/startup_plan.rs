@@ -17,7 +17,7 @@ use super::init_mesh::MeshInit;
 use super::passthrough_validation;
 use super::services::DataPlaneServicesBuilder;
 use super::state::{self, UnifiedServerWorkerArgs, UnifiedServerWorkerState};
-use super::{MeshGenerationSupport, SupportStopContext};
+use super::MeshGenerationSupport;
 use crate::server::UnifiedServer;
 use crate::worker::drain_state::WorkerDrainState;
 use crate::worker::metrics::WorkerMetrics;
@@ -305,7 +305,7 @@ pub async fn build_worker_startup(
     let support_tasks = super::MeshSupportTasks::empty();
 
     #[cfg(feature = "mesh")]
-    let mut support_tasks = Some(support_tasks);
+    let support_tasks = Some(support_tasks);
 
     let data_plane = builder.build();
 
@@ -401,339 +401,28 @@ pub async fn build_worker_startup(
         });
     }
 
-    // ---- Phase 14.5: mesh supervision pipeline ----
+    // ---- Phase 14.5: mesh supervision pipeline (delegated) ----
     #[cfg(feature = "mesh")]
     let mesh_startup = {
-        let mesh_status = state.mesh_status.clone();
-
-        let has_mesh_transport = state
+        let mesh_transport = state
             .data_plane
             .mesh_transport_manager
             .as_ref()
             .and_then(|tm| tm.get_quic_transport())
-            .is_some();
+            .map(|t| t.get_inner());
 
-        let mut required_mesh_startup_failure: Option<
-            crate::worker::task_registry::WorkerShutdownCause,
-        > = None;
+        let has_mesh_transport = mesh_transport.is_some();
 
-        let (optional_startup_tx, mut optional_startup_rx): (
-            tokio::sync::oneshot::Sender<Result<Option<MeshGenerationSupport>, String>>,
-            tokio::sync::oneshot::Receiver<Result<Option<MeshGenerationSupport>, String>>,
-        ) = tokio::sync::oneshot::channel();
-
-        if !has_mesh_transport {
-            tracing::info!("Mesh disabled — no supervision pipeline created");
-            None
-        } else {
-            let mesh_transport: std::sync::Arc<synvoid_mesh::MeshTransport> = state
-                .data_plane
-                .mesh_transport_manager
-                .as_ref()
-                .and_then(|tm| tm.get_quic_transport())
-                .expect("mesh transport verified above")
-                .get_inner();
-
-            let (event_tx, coordinator, mut decision_rx) =
-                crate::worker::mesh_supervision::create_supervision_pipeline(
-                    mesh_status.clone(),
-                    state
-                        .mesh_policy
-                        .clone()
-                        .expect("mesh policy present when transport exists"),
-                );
-
-            // Register coordinator as critical supervision infrastructure.
-            {
-                let shutdown_rx = state.task_registry.lock().await.child_token();
-                let mut registry = state.task_registry.lock().await;
-                let mut coord = coordinator;
-                registry.spawn_critical("mesh_supervision_coordinator", async move {
-                    coord.run(shutdown_rx).await;
-                });
-                tracing::info!("Mesh supervision coordinator started (critical)");
-            }
-
-            // Subscribe to mesh exit events and register observer as critical.
-            {
-                let exits = mesh_transport.subscribe_exits();
-                let shutdown_rx = state.task_registry.lock().await.child_token();
-                let status = mesh_status.clone();
-                let mut registry = state.task_registry.lock().await;
-                registry.spawn_critical(
-                    "mesh_exit_observer",
-                    crate::worker::mesh_supervision::run_mesh_exit_observer(
-                        exits,
-                        status,
-                        event_tx.clone(),
-                        shutdown_rx,
-                    ),
-                );
-                tracing::info!("Mesh exit observer started (critical)");
-            }
-
-            // Start mesh transport — gated behind mesh feature.
-            #[cfg(feature = "mesh")]
-            let mut mesh_generation_counter: u64 = 0;
-            #[cfg(feature = "mesh")]
-            let mut active_mesh_support: Option<MeshGenerationSupport> = None;
-
-            #[cfg(feature = "mesh")]
-            if state.mesh_policy.as_ref().is_some_and(|p| p.required) {
-                // Required mesh: await startup inline before ready.
-                {
-                    let mut s = mesh_status.write().await;
-                    s.transition_starting();
-                }
-                match crate::worker::mesh_supervision::start_mesh_generation(&mesh_transport, 0)
-                    .await
-                {
-                    Ok(()) => {
-                        mesh_generation_counter += 1;
-                        if let Some(support) = support_tasks.take() {
-                            match super::register_mesh_generation_support(
-                                &state,
-                                support,
-                                mesh_generation_counter,
-                            )
-                            .await
-                            {
-                                Ok(bundle) => {
-                                    {
-                                        let mut s = mesh_status.write().await;
-                                        s.transition_running();
-                                    }
-                                    active_mesh_support = Some(bundle);
-                                    if let WorkerReadinessPlan::DeferUntilRequiredMeshReady =
-                                        &readiness
-                                    {
-                                        let mut ipc_guard = state.ipc.lock().await;
-                                        ipc_guard
-                                            .send(
-                                                &crate::process::Message::UnifiedServerWorkerReady {
-                                                    id: worker_id,
-                                                },
-                                            )
-                                            .await?;
-                                        tracing::info!(
-                                            "Unified Server Worker {} ready (mesh started)",
-                                            worker_id
-                                        );
-                                    }
-                                }
-                                Err(cause) => {
-                                    tracing::error!("Failed to register mesh support: {}", cause);
-                                    required_mesh_startup_failure = Some(
-                                        crate::worker::mesh_supervision::mesh_failure_to_worker_cause(
-                                            crate::worker::mesh_supervision::MeshFailureCause::StartupFailed(
-                                                format!("support registration failed: {}", cause),
-                                            ),
-                                        ),
-                                    );
-                                    {
-                                        let mut s = mesh_status.write().await;
-                                        s.transition_failed(format!(
-                                            "support registration failed: {}",
-                                            cause
-                                        ));
-                                    }
-                                }
-                            }
-                        } else {
-                            {
-                                let mut s = mesh_status.write().await;
-                                s.transition_running();
-                            }
-                            if let WorkerReadinessPlan::DeferUntilRequiredMeshReady = &readiness {
-                                let mut ipc_guard = state.ipc.lock().await;
-                                ipc_guard
-                                    .send(&crate::process::Message::UnifiedServerWorkerReady {
-                                        id: worker_id,
-                                    })
-                                    .await?;
-                                tracing::info!(
-                                    "Unified Server Worker {} ready (mesh started)",
-                                    worker_id
-                                );
-                            }
-                        }
-                    }
-                    Err(cause) => {
-                        {
-                            let mut s = mesh_status.write().await;
-                            s.transition_failed(format!("startup failed: {}", cause.exit_reason()));
-                        }
-                        tracing::error!("Required mesh startup failed: {}", cause.exit_reason());
-                        required_mesh_startup_failure = Some(
-                            crate::worker::mesh_supervision::mesh_failure_to_worker_cause(cause),
-                        );
-                    }
-                }
-            } else {
-                // Optional mesh: start as one-shot background task.
-                {
-                    let mut s = mesh_status.write().await;
-                    s.transition_starting();
-                }
-                let event_tx_for_start = event_tx.clone();
-                let startup_complete_tx = optional_startup_tx;
-                let state_for_startup = state.clone();
-
-                let (helper_tx, helper_rx) = tokio::sync::oneshot::channel();
-                let support_for_helper = support_tasks.take();
-                let mut registry = state.task_registry.lock().await;
-                registry.spawn_one_shot("mesh_support_registration", async move {
-                    let result = if let Some(support) = support_for_helper {
-                        super::register_mesh_generation_support(&state_for_startup, support, 1)
-                            .await
-                            .map(Some)
-                    } else {
-                        Ok(None)
-                    };
-                    let _ = helper_tx.send(result);
-                });
-
-                registry.spawn_one_shot("mesh_startup", async move {
-                    let result = mesh_transport
-                        .start_with_policy(synvoid_mesh::lifecycle::MeshStartupPolicy::default())
-                        .await;
-                    match result {
-                        Ok(report) => {
-                            tracing::info!(?report, "Mesh transport started");
-                            let bundle = match helper_rx.await {
-                                Ok(Ok(b)) => b,
-                                Ok(Err(e)) => {
-                                    tracing::error!(
-                                        "Optional mesh support registration failed: {}",
-                                        e
-                                    );
-                                    None
-                                }
-                                Err(_) => {
-                                    tracing::error!("Helper task dropped without sending result");
-                                    None
-                                }
-                            };
-                            let _ = startup_complete_tx.send(Ok(bundle));
-                            let _ = event_tx_for_start
-                                .send(crate::worker::mesh_supervision::MeshSupervisionEvent::Started)
-                                .await;
-                        }
-                        Err(e) => {
-                            tracing::error!("Mesh startup failed: {}", e);
-                            let _ = startup_complete_tx.send(Err(e.to_string()));
-                            let _ = event_tx_for_start
-                                .send(
-                                    crate::worker::mesh_supervision::MeshSupervisionEvent::StartupFailed(
-                                        e.to_string(),
-                                    ),
-                                )
-                                .await;
-                        }
-                    }
-                });
-            }
-
-            // Select to receive optional startup result before returning.
-            let mut pending_optional_failure = false;
-            loop {
-                #[cfg(feature = "mesh")]
-                let mut mesh_decision_future = async { decision_rx.recv().await };
-                #[cfg(not(feature = "mesh"))]
-                let mesh_decision_future: std::future::Pending<Option<()>> = std::future::pending();
-
-                tokio::select! {
-                    optional_result = &mut optional_startup_rx => {
-                        match optional_result {
-                            Ok(Ok(bundle)) => {
-                                if pending_optional_failure {
-                                    #[cfg(all(feature = "mesh", feature = "dns"))]
-                                    if let Some(support) = bundle {
-                                        tracing::warn!(
-                                            "Optional mesh startup completed but degradation pending — stopping support bundle"
-                                        );
-                                        let stop_report = super::stop_mesh_generation_support(
-                                            &state.task_registry,
-                                            support,
-                                            std::time::Duration::from_secs(5),
-                                            SupportStopContext::OptionalMeshDegraded,
-                                        )
-                                        .await;
-                                        if !stop_report.clean() {
-                                            tracing::warn!(
-                                                context = ?SupportStopContext::OptionalMeshDegraded,
-                                                generation = stop_report.generation,
-                                                not_found = stop_report.not_found,
-                                                "support bundle required forced cleanup during degradation"
-                                            );
-                                        }
-                                    }
-                                    {
-                                        let mut s = mesh_status.write().await;
-                                        s.transition_degraded("degradation arrived during startup".to_string());
-                                    }
-                                } else {
-                                    {
-                                        let mut s = mesh_status.write().await;
-                                        s.transition_running();
-                                    }
-                                    active_mesh_support = bundle;
-                                }
-                            }
-                            Ok(Err(e)) => {
-                                tracing::error!("Optional mesh startup failed: {}", e);
-                                {
-                                    let mut s = mesh_status.write().await;
-                                    s.transition_failed(format!("startup failed: {}", e));
-                                }
-                            }
-                            Err(_) => {
-                                tracing::error!("Optional startup channel closed unexpectedly");
-                            }
-                        }
-                        break;
-                    }
-                    mesh_decision = mesh_decision_future => {
-                        match mesh_decision {
-                            Some(crate::worker::mesh_supervision::MeshSupervisorDecision::MarkDegraded(reason)) => {
-                                tracing::warn!(reason = %reason, "mesh degraded during optional startup");
-                                pending_optional_failure = true;
-                            }
-                            Some(crate::worker::mesh_supervision::MeshSupervisorDecision::ShutdownWorker(cause)) => {
-                                tracing::error!(
-                                    "Mesh supervision shutting down worker during startup: {}",
-                                    cause.exit_reason()
-                                );
-                                required_mesh_startup_failure = Some(
-                                    crate::worker::mesh_supervision::mesh_failure_to_worker_cause(cause),
-                                );
-                                break;
-                            }
-                            Some(crate::worker::mesh_supervision::MeshSupervisorDecision::RestartMesh) => {
-                                tracing::error!("Invariant violation: RestartMesh during startup");
-                                required_mesh_startup_failure = Some(
-                                    crate::worker::mesh_supervision::mesh_failure_to_worker_cause(
-                                        crate::worker::mesh_supervision::MeshFailureCause::MeshConfigurationInvariant(
-                                            "RestartMesh during startup".to_string(),
-                                        ),
-                                    ),
-                                );
-                                break;
-                            }
-                            Some(crate::worker::mesh_supervision::MeshSupervisorDecision::NoAction) => {}
-                            None => {}
-                        }
-                    }
-                }
-            }
-
-            Some(MeshStartupState {
-                policy: state.mesh_policy.clone().expect("mesh policy present"),
-                decision_rx,
-                startup_failure: required_mesh_startup_failure,
-                active_mesh_support,
-            })
-        }
+        super::mesh_attachment::attach_mesh(super::mesh_attachment::WorkerMeshAttachmentInput {
+            worker_id,
+            state: &state,
+            shared_config: shared_config.clone(),
+            has_mesh_transport,
+            mesh_transport,
+            support_tasks,
+            readiness: &readiness,
+        })
+        .await?
     };
     #[cfg(not(feature = "mesh"))]
     let mesh_startup: Option<MeshStartupState> = None;

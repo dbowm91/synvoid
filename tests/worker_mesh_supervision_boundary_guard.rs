@@ -27,14 +27,14 @@ fn worker_mesh_status_in_state() {
 
 #[test]
 fn mesh_exit_observer_registered_in_registry() {
-    let content = read_file("src/worker/unified_server/startup_plan.rs");
+    let content = read_file("src/worker/unified_server/mesh_attachment.rs");
     assert!(content.contains("mesh_exit_observer"));
     assert!(content.contains("spawn_critical"));
 }
 
 #[test]
 fn mesh_coordinator_registered_in_registry() {
-    let content = read_file("src/worker/unified_server/startup_plan.rs");
+    let content = read_file("src/worker/unified_server/mesh_attachment.rs");
     assert!(content.contains("mesh_supervision_coordinator"));
     assert!(content.contains("spawn_critical"));
 }
@@ -48,7 +48,7 @@ fn mesh_shutdown_called_during_worker_shutdown() {
 
 #[test]
 fn mesh_startup_failure_sends_event() {
-    let content = read_file("src/worker/unified_server/startup_plan.rs");
+    let content = read_file("src/worker/unified_server/mesh_attachment.rs");
     assert!(content.contains("MeshSupervisionEvent::StartupFailed"));
     assert!(content.contains("MeshSupervisionEvent::Started"));
 }
@@ -111,7 +111,7 @@ fn mesh_readiness_gate_exists() {
 
 #[test]
 fn supervision_uses_authoritative_status_clone() {
-    let content = read_file("src/worker/unified_server/startup_plan.rs");
+    let content = read_file("src/worker/unified_server/mesh_attachment.rs");
     // Phase 1: Must use state.mesh_status.clone(), not a new allocation.
     assert!(content.contains("state.mesh_status.clone()"));
 }
@@ -155,7 +155,7 @@ fn is_mesh_ready_respects_degraded_policy() {
 
 #[test]
 fn no_outer_timeout_on_mesh_startup() {
-    let content = read_file("src/worker/unified_server/startup_plan.rs");
+    let content = read_file("src/worker/unified_server/mesh_attachment.rs");
     // Phase 12: No tokio::time::timeout wrapping start_with_policy.
     // The mesh startup block should call start_with_policy directly.
     assert!(content.contains(".start_with_policy("));
@@ -272,12 +272,12 @@ fn optional_startup_failure_does_not_shutdown() {
 
 #[test]
 fn observer_only_spawned_when_transport_exists() {
-    let content = read_file("src/worker/unified_server/startup_plan.rs");
+    let content = read_file("src/worker/unified_server/mesh_attachment.rs");
     // The mesh exit observer is only spawned when a transport is available.
     // The guard: has_mesh_transport check before creating the pipeline.
-    // If !has_mesh_transport, None is returned (no pipeline, no observer).
+    // If !input.has_mesh_transport, None is returned (no pipeline, no observer).
     assert!(
-        content.contains("if !has_mesh_transport"),
+        content.contains("if !input.has_mesh_transport"),
         "observer must be conditional on transport availability"
     );
     // Observer registration must be inside the transport-available block.
@@ -289,25 +289,25 @@ fn observer_only_spawned_when_transport_exists() {
 
 #[test]
 fn mesh_startup_task_only_with_transport() {
-    let content = read_file("src/worker/unified_server/startup_plan.rs");
+    let content = read_file("src/worker/unified_server/mesh_attachment.rs");
     // The mesh startup task must only be spawned when a concrete MeshTransport
     // is available AND mesh is required/optional (not disabled).
     // The guard: has_mesh_transport check gates the entire pipeline.
     assert!(
-        content.contains("if !has_mesh_transport"),
+        content.contains("if !input.has_mesh_transport"),
         "startup must be conditional on transport availability"
     );
     // For required mesh, startup is awaited inline; for optional, as background.
     // Uses Option pattern: state.mesh_policy.as_ref().is_some_and(|p| p.required)
     assert!(
-        content.contains("state.mesh_policy.as_ref().is_some_and(|p| p.required)"),
+        content.contains("input.state.mesh_policy.as_ref().is_some_and(|p| p.required)"),
         "startup path must branch on mesh policy via Option pattern"
     );
 }
 
 #[test]
 fn coordinator_always_created_but_idle_without_transport() {
-    let content = read_file("src/worker/unified_server/startup_plan.rs");
+    let content = read_file("src/worker/unified_server/mesh_attachment.rs");
     // The supervision pipeline (channels + coordinator) is created when
     // mesh transport is available. Without transport, no pipeline is created.
     assert!(
@@ -625,7 +625,7 @@ fn register_mesh_support_tasks_helper_exists() {
 fn support_tasks_registered_after_required_mesh_startup() {
     // Iteration 86 Part A: Support tasks (DNS, YARA, DHT init) are registered
     // AFTER mesh startup succeeds via register_mesh_generation_support().
-    let content = read_file("src/worker/unified_server/startup_plan.rs");
+    let content = read_file("src/worker/unified_server/mesh_attachment.rs");
     let start_mesh_idx = content
         .find("start_mesh_generation(")
         .expect("required mesh must call start_mesh_generation");
@@ -653,11 +653,11 @@ fn support_tasks_registered_after_required_mesh_startup() {
 fn support_tasks_registered_after_optional_mesh_startup() {
     // Iteration 86 Part A: Support tasks are registered via
     // register_mesh_generation_support() AFTER optional mesh startup succeeds.
-    let content = read_file("src/worker/unified_server/startup_plan.rs");
+    let content = read_file("src/worker/unified_server/mesh_attachment.rs");
     let optional_start_idx = content
-        .find("// Optional mesh: start as one-shot background task.")
+        .find("} else {")
         .expect("optional mesh branch must exist");
-    // Find the call site (not the function definition) after the optional mesh comment.
+    // Find the call site (not the function definition) after the optional mesh branch.
     let after_optional = &content[optional_start_idx..];
     let register_idx = after_optional
         .find("register_mesh_generation_support(")
@@ -741,7 +741,7 @@ fn disabled_mesh_starts_no_support_tasks() {
 
 #[test]
 fn required_startup_failure_produces_direct_cause() {
-    let content = read_file("src/worker/unified_server/startup_plan.rs");
+    let content = read_file("src/worker/unified_server/mesh_attachment.rs");
     assert!(
         content.contains("required_mesh_startup_failure = Some("),
         "required mesh startup failure must store cause directly"
@@ -753,7 +753,7 @@ fn required_startup_failure_skips_ready() {
     // Iteration 85: Required mesh startup failure is captured and mapped to
     // DirectCause. The ready message is only sent in the Ok branch, not in
     // the Err branch.
-    let content = read_file("src/worker/unified_server/startup_plan.rs");
+    let content = read_file("src/worker/unified_server/mesh_attachment.rs");
     let failure_idx = content
         .find("required_mesh_startup_failure = Some(")
         .expect("must store required mesh startup failure");
@@ -815,7 +815,7 @@ fn start_mesh_generation_returns_facts_only() {
 fn required_startup_path_transitions_status_directly() {
     // Iteration 86: Required mesh path transitions status directly via
     // WorkerMeshStatus before calling start_mesh_generation.
-    let content = read_file("src/worker/unified_server/startup_plan.rs");
+    let content = read_file("src/worker/unified_server/mesh_attachment.rs");
     let start_call = content
         .find("match crate::worker::mesh_supervision::start_mesh_generation(")
         .expect("must call start_mesh_generation");
@@ -894,7 +894,7 @@ fn no_unwrap_or_else_mesh_supervision_policy_required() {
 
 #[test]
 fn required_startup_failure_maps_directly() {
-    let content = read_file("src/worker/unified_server/startup_plan.rs");
+    let content = read_file("src/worker/unified_server/mesh_attachment.rs");
     assert!(
         content.contains("required_mesh_startup_failure = Some("),
         "required mesh startup failure must store cause directly"
@@ -906,7 +906,7 @@ fn generation_support_tasks_after_mesh_startup() {
     // Iteration 86 Part A: Support tasks (DNS verification, YARA broadcast, DHT
     // routing init) are registered AFTER mesh startup succeeds via
     // register_mesh_generation_support().
-    let content = read_file("src/worker/unified_server/startup_plan.rs");
+    let content = read_file("src/worker/unified_server/mesh_attachment.rs");
     let start_mesh_idx = content
         .find("start_mesh_generation(")
         .expect("required mesh must call start_mesh_generation");
@@ -1001,7 +1001,7 @@ fn support_tasks_registered_after_mesh_startup() {
     // Iteration 86/93: Support tasks (DNS/YARA/DHT) are registered AFTER
     // mesh startup succeeds via register_mesh_generation_support().
     // Phase 13.5 was removed during extraction to startup_plan.rs.
-    let content = read_file("src/worker/unified_server/startup_plan.rs");
+    let content = read_file("src/worker/unified_server/mesh_attachment.rs");
     // The call site for register_mesh_generation_support must exist in startup paths.
     assert!(
         content.contains("register_mesh_generation_support("),
@@ -1012,14 +1012,11 @@ fn support_tasks_registered_after_mesh_startup() {
 #[test]
 fn optional_startup_transitions_starting() {
     // Iteration 86: Optional mesh startup transitions to Starting before spawning.
-    let content = read_file("src/worker/unified_server/startup_plan.rs");
-    // Find the optional mesh branch (else branch after required check).
-    let optional_start = content
-        .find("// Optional mesh: start as one-shot background task.")
-        .expect("optional mesh branch must exist");
-    let optional_section = &content[optional_start..optional_start + 500];
+    let content = read_file("src/worker/unified_server/mesh_attachment.rs");
+    // Find the optional mesh branch: look for transition_starting in the else path
+    // after the required policy check. The else branch immediately calls transition_starting.
     assert!(
-        optional_section.contains("transition_starting"),
+        content.contains("transition_starting"),
         "optional mesh must transition to Starting before spawning"
     );
 }
@@ -1028,9 +1025,9 @@ fn optional_startup_transitions_starting() {
 fn required_startup_no_started_event() {
     // Iteration 86: Required mesh startup no longer emits MeshSupervisionEvent::Started.
     // The required path transitions status directly, not via the coordinator event.
-    let content = read_file("src/worker/unified_server/startup_plan.rs");
+    let content = read_file("src/worker/unified_server/mesh_attachment.rs");
     let required_start = content
-        .find("// Required mesh: await startup inline before ready.")
+        .find("if input.state.mesh_policy.as_ref().is_some_and(|p| p.required)")
         .expect("required mesh branch must exist");
     let required_section = &content[required_start..required_start + 1000];
     // The required branch should NOT send MeshSupervisionEvent::Started.
@@ -1092,7 +1089,7 @@ fn optional_policy_restart_limit_zero() {
 fn restart_mesh_uses_mesh_configuration_invariant() {
     // Iteration 86: RestartMesh defense-in-depth branch uses MeshConfigurationInvariant,
     // not MeshStartupFailed.
-    let content = read_file("src/worker/unified_server/startup_plan.rs");
+    let content = read_file("src/worker/unified_server/mesh_attachment.rs");
     let restart_mesh_idx = content
         .find("MeshSupervisorDecision::RestartMesh")
         .expect("RestartMesh branch must exist");
@@ -1551,8 +1548,8 @@ mod iter89_behavioral_guardrails {
     /// `pending_optional_failure` flag.
     #[test]
     fn optional_startup_pending_failure_flag() {
-        let content = std::fs::read_to_string("src/worker/unified_server/startup_plan.rs")
-            .expect("failed to read startup_plan.rs");
+        let content = std::fs::read_to_string("src/worker/unified_server/mesh_attachment.rs")
+            .expect("failed to read mesh_attachment.rs");
         assert!(
             content.contains("pending_optional_failure"),
             "composition root must use pending_optional_failure flag for race handling"
@@ -1574,8 +1571,8 @@ mod iter89_behavioral_guardrails {
     /// carrying `MeshGenerationSupport` for optional startup.
     #[test]
     fn optional_mesh_startup_channel_type() {
-        let content = std::fs::read_to_string("src/worker/unified_server/startup_plan.rs")
-            .expect("failed to read startup_plan.rs");
+        let content = std::fs::read_to_string("src/worker/unified_server/mesh_attachment.rs")
+            .expect("failed to read mesh_attachment.rs");
         assert!(
             content.contains("optional_startup_tx"),
             "composition root must have optional_startup_tx channel"

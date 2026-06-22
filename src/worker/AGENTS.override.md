@@ -82,6 +82,11 @@ UnifiedServer worker (`run_unified_server_worker`).
                        `LifecycleRequest` handshake for composition-root coordination
 - `startup_plan.rs` - Worker startup orchestration (identity through mesh pipeline);
                        extracted from `run_unified_server_worker()` in Iteration 93
+- `mesh_attachment.rs` - Worker-side mesh attachment orchestration
+                       (Iteration 95): supervision pipeline creation,
+                       required/optional mesh startup, support-task
+                       registration after mesh transport startup succeeds;
+                       extracted from `startup_plan.rs`
 - `supervision_loop.rs` - Supervision select loop (lifecycle events, task exits,
                        mesh decisions); extracted from `run_unified_server_worker()`
                        in Iteration 93
