@@ -10,6 +10,38 @@ fn read_file(path: &str) -> String {
     fs::read_to_string(path).unwrap_or_else(|e| panic!("failed to read {}: {}", path, e))
 }
 
+/// Extract the body of a named async function from source.
+/// Finds `fn <name>` and counts until the closing `}` at column 0.
+fn extract_function_body(source: &str, name: &str) -> String {
+    let needle = format!("fn {}", name);
+    let start = source
+        .find(&needle)
+        .unwrap_or_else(|| panic!("function '{}' not found in source", name));
+    let body = &source[start..];
+
+    let mut depth = 0;
+    let mut found_open = false;
+    let mut end = body.len();
+    for (i, ch) in body.char_indices() {
+        match ch {
+            '{' => {
+                depth += 1;
+                found_open = true;
+            }
+            '}' => {
+                depth -= 1;
+                if found_open && depth == 0 {
+                    end = i + 1;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    body[..end].to_string()
+}
+
 #[test]
 fn mesh_supervision_module_exists() {
     let content = read_file("src/worker/mesh_supervision.rs");
@@ -625,20 +657,18 @@ fn register_mesh_support_tasks_helper_exists() {
 fn support_tasks_registered_after_required_mesh_startup() {
     // Iteration 86 Part A: Support tasks (DNS, YARA, DHT init) are registered
     // AFTER mesh startup succeeds via register_mesh_generation_support().
+    // Iteration 96: Ready send is deduplicated into send_ready_if_deferred helper.
     let content = read_file("src/worker/unified_server/mesh_attachment.rs");
-    let start_mesh_idx = content
+    let helper = extract_function_body(&content, "start_required_mesh");
+    let start_mesh_idx = helper
         .find("start_mesh_generation(")
         .expect("required mesh must call start_mesh_generation");
-    let register_idx = content
+    let register_idx = helper
         .find("register_mesh_generation_support(")
         .expect("must call register_mesh_generation_support after startup");
-    let first_ready_idx = content
-        .find("UnifiedServerWorkerReady")
-        .expect("must have ready message");
-    let ready_idx = content[first_ready_idx + 1..]
-        .find("UnifiedServerWorkerReady")
-        .map(|i| first_ready_idx + 1 + i)
-        .expect("must have second ready message in Ok branch");
+    let ready_idx = helper
+        .find("send_ready_if_deferred")
+        .expect("must have send_ready_if_deferred helper call");
     assert!(
         start_mesh_idx < register_idx,
         "register_mesh_generation_support must appear after start_mesh_generation"
@@ -742,9 +772,16 @@ fn disabled_mesh_starts_no_support_tasks() {
 #[test]
 fn required_startup_failure_produces_direct_cause() {
     let content = read_file("src/worker/unified_server/mesh_attachment.rs");
+    // After Iteration 96, failure is returned from start_required_mesh helper
+    // and stored via output.startup_failure. The mesh_failure_to_worker_cause
+    // call must still exist for structured cause conversion.
     assert!(
-        content.contains("required_mesh_startup_failure = Some("),
-        "required mesh startup failure must store cause directly"
+        content.contains("mesh_failure_to_worker_cause"),
+        "required mesh startup failure must convert via mesh_failure_to_worker_cause"
+    );
+    assert!(
+        content.contains("startup_failure"),
+        "required mesh startup failure must be stored in startup_failure field"
     );
 }
 
@@ -753,23 +790,24 @@ fn required_startup_failure_skips_ready() {
     // Iteration 85: Required mesh startup failure is captured and mapped to
     // DirectCause. The ready message is only sent in the Ok branch, not in
     // the Err branch.
+    // Iteration 96: Ready is deduplicated via send_ready_if_deferred helper.
+    // The helper must be called only in success paths, not failure paths.
     let content = read_file("src/worker/unified_server/mesh_attachment.rs");
-    let failure_idx = content
-        .find("required_mesh_startup_failure = Some(")
-        .expect("must store required mesh startup failure");
-    // The failure capture and DirectCause break should exist
-    let direct_cause_idx = content
-        .find("mesh_failure_to_worker_cause(cause)")
-        .expect("must have DirectCause via mesh_failure_to_worker_cause");
+    let helper = extract_function_body(&content, "start_required_mesh");
+    // The success path must call send_ready_if_deferred.
     assert!(
-        direct_cause_idx > failure_idx,
-        "DirectCause break must follow failure capture"
+        helper.contains("send_ready_if_deferred"),
+        "success path must call send_ready_if_deferred"
     );
-    // The failure path should NOT contain UnifiedServerWorkerReady
-    let failure_section = &content[failure_idx..failure_idx + 500];
+    // The top-level Err(cause) (start_mesh_generation failure) must NOT
+    // call send_ready_if_deferred. Check the last Err branch.
+    let last_err = helper
+        .rfind("Err(cause)")
+        .expect("must have Err(cause) for startup failure");
+    let failure_section = &helper[last_err..];
     assert!(
-        !failure_section.contains("UnifiedServerWorkerReady"),
-        "failure path must not send ready message"
+        !failure_section.contains("send_ready_if_deferred"),
+        "startup failure path must not send ready message"
     );
 }
 
@@ -895,9 +933,12 @@ fn no_unwrap_or_else_mesh_supervision_policy_required() {
 #[test]
 fn required_startup_failure_maps_directly() {
     let content = read_file("src/worker/unified_server/mesh_attachment.rs");
+    // After Iteration 96, failure is returned from start_required_mesh helper.
+    // The mesh_failure_to_worker_cause conversion must still exist for
+    // structured cause mapping.
     assert!(
-        content.contains("required_mesh_startup_failure = Some("),
-        "required mesh startup failure must store cause directly"
+        content.contains("mesh_failure_to_worker_cause"),
+        "required mesh startup failure must convert via mesh_failure_to_worker_cause"
     );
 }
 
@@ -1574,12 +1615,12 @@ mod iter89_behavioral_guardrails {
         let content = std::fs::read_to_string("src/worker/unified_server/mesh_attachment.rs")
             .expect("failed to read mesh_attachment.rs");
         assert!(
-            content.contains("optional_startup_tx"),
-            "composition root must have optional_startup_tx channel"
+            content.contains("startup_complete_tx"),
+            "composition root must have startup_complete_tx channel"
         );
         assert!(
-            content.contains("optional_startup_rx"),
-            "composition root must have optional_startup_rx channel"
+            content.contains("startup_complete_rx"),
+            "composition root must have startup_complete_rx channel"
         );
         assert!(
             content.contains("Result<Option<MeshGenerationSupport>, String>"),

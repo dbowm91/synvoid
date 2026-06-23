@@ -24,7 +24,7 @@ These files construct and wire concrete infrastructure:
 | `src/worker/unified_server/init_runtime.rs` | Re-exports of state.rs runtime helpers |
 | `src/worker/unified_server/init_config.rs` | Re-exports of state.rs config helpers |
 | `src/worker/unified_server/startup_plan.rs` | Worker startup orchestration (identity through mesh pipeline) |
-| `src/worker/unified_server/mesh_attachment.rs` | Worker-side mesh attachment orchestration (Iteration 95) |
+| `src/worker/unified_server/mesh_attachment.rs` | Worker-side mesh attachment orchestration (Iteration 95, polished Iteration 96) |
 | `src/worker/unified_server/supervision_loop.rs` | Supervision select loop (lifecycle events, task exits, mesh decisions) |
 | `src/worker/unified_server/shutdown_executor.rs` | Ordered shutdown procedure + `WorkerShutdownPlan` outcome mapping (Iteration 94) |
 | `src/worker/unified_server/supervisor_notify.rs` | Supervisor IPC notification and exit-code mapping |

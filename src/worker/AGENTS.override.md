@@ -83,10 +83,11 @@ UnifiedServer worker (`run_unified_server_worker`).
 - `startup_plan.rs` - Worker startup orchestration (identity through mesh pipeline);
                        extracted from `run_unified_server_worker()` in Iteration 93
 - `mesh_attachment.rs` - Worker-side mesh attachment orchestration
-                       (Iteration 95): supervision pipeline creation,
-                       required/optional mesh startup, support-task
-                       registration after mesh transport startup succeeds;
-                       extracted from `startup_plan.rs`
+                       (Iteration 95, polished Iteration 96): thin
+                       `attach_mesh()` wrapper delegates to `create_mesh_pipeline()`,
+                       `start_required_mesh()`, and `await_optional_mesh_startup()`.
+                       Ready-send deduplicated via `send_ready_if_deferred()`.
+                       Internal helper structs avoid giant function signatures.
 - `supervision_loop.rs` - Supervision select loop (lifecycle events, task exits,
                        mesh decisions); extracted from `run_unified_server_worker()`
                        in Iteration 93

@@ -343,3 +343,163 @@ fn mod_rs_declares_mesh_attachment() {
         "mod.rs must declare mesh_attachment module"
     );
 }
+
+// ── Iteration 96: attach_mesh polish guards ────────────────────────────────
+
+/// Extract the body of a named async function from source.
+/// Finds `pub async fn <name>` and counts until the closing `}` at column 0.
+fn extract_function_body(source: &str, name: &str) -> String {
+    let needle = format!("pub async fn {}", name);
+    let start = source
+        .find(&needle)
+        .unwrap_or_else(|| panic!("function '{}' not found in source", name));
+    let body = &source[start..];
+
+    let mut depth = 0;
+    let mut found_open = false;
+    let mut end = body.len();
+    for (i, ch) in body.char_indices() {
+        match ch {
+            '{' => {
+                depth += 1;
+                found_open = true;
+            }
+            '}' => {
+                depth -= 1;
+                if found_open && depth == 0 {
+                    end = i + 1;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    body[..end].to_string()
+}
+
+#[test]
+fn attach_mesh_remains_a_thin_orchestration_wrapper() {
+    let repo = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source =
+        std::fs::read_to_string(repo.join("src/worker/unified_server/mesh_attachment.rs")).unwrap();
+    let function = extract_function_body(&source, "attach_mesh");
+    let line_count = function.lines().count();
+
+    assert!(
+        line_count <= 80,
+        "attach_mesh should stay a thin orchestration wrapper; found {} lines (threshold: 80). \
+         If the function grew, consider extracting more logic into helper functions.",
+        line_count
+    );
+}
+
+#[test]
+fn attach_mesh_delegates_required_and_optional_paths() {
+    let repo = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source =
+        std::fs::read_to_string(repo.join("src/worker/unified_server/mesh_attachment.rs")).unwrap();
+    let function = extract_function_body(&source, "attach_mesh");
+
+    assert!(
+        function.contains("start_required_mesh"),
+        "attach_mesh must delegate required path to start_required_mesh"
+    );
+    assert!(
+        function.contains("start_optional_mesh")
+            || function.contains("await_optional_mesh_startup"),
+        "attach_mesh must delegate optional path to a startup helper"
+    );
+    assert!(
+        !function.contains("tokio::select!"),
+        "attach_mesh must not contain tokio::select! inline"
+    );
+    assert!(
+        !function.contains("pending_optional_failure"),
+        "attach_mesh must not track pending_optional_failure inline"
+    );
+}
+
+#[test]
+fn mesh_attachment_owns_critical_patterns() {
+    let repo = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source =
+        std::fs::read_to_string(repo.join("src/worker/unified_server/mesh_attachment.rs")).unwrap();
+
+    assert!(
+        source.contains("mesh_support_registration"),
+        "mesh_attachment.rs must own mesh_support_registration pattern"
+    );
+    assert!(
+        source.contains("mesh_startup"),
+        "mesh_attachment.rs must own mesh_startup pattern"
+    );
+    assert!(
+        source.contains("SupportStopContext::OptionalMeshDegraded"),
+        "mesh_attachment.rs must own OptionalMeshDegraded cleanup"
+    );
+    assert!(
+        !source.contains("SupportStopContext::WorkerShutdown"),
+        "mesh_attachment.rs must not own WorkerShutdown cleanup (belongs in shutdown_executor.rs)"
+    );
+}
+
+#[test]
+fn mesh_attachment_has_helper_structs() {
+    let repo = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source =
+        std::fs::read_to_string(repo.join("src/worker/unified_server/mesh_attachment.rs")).unwrap();
+
+    assert!(
+        source.contains("struct MeshPipelineRuntime"),
+        "mesh_attachment.rs must define MeshPipelineRuntime"
+    );
+    assert!(
+        source.contains("struct RequiredMeshStartInput"),
+        "mesh_attachment.rs must define RequiredMeshStartInput"
+    );
+    assert!(
+        source.contains("struct RequiredMeshStartOutput"),
+        "mesh_attachment.rs must define RequiredMeshStartOutput"
+    );
+    assert!(
+        source.contains("struct OptionalMeshStartInput"),
+        "mesh_attachment.rs must define OptionalMeshStartInput"
+    );
+    assert!(
+        source.contains("struct OptionalMeshStartOutput"),
+        "mesh_attachment.rs must define OptionalMeshStartOutput"
+    );
+}
+
+#[test]
+fn mesh_attachment_has_extracted_helpers() {
+    let repo = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source =
+        std::fs::read_to_string(repo.join("src/worker/unified_server/mesh_attachment.rs")).unwrap();
+
+    assert!(
+        source.contains("fn create_mesh_pipeline"),
+        "mesh_attachment.rs must define create_mesh_pipeline helper"
+    );
+    assert!(
+        source.contains("fn send_ready_if_deferred"),
+        "mesh_attachment.rs must define send_ready_if_deferred helper"
+    );
+    assert!(
+        source.contains("fn start_required_mesh"),
+        "mesh_attachment.rs must define start_required_mesh helper"
+    );
+    assert!(
+        source.contains("fn spawn_optional_support_registration"),
+        "mesh_attachment.rs must define spawn_optional_support_registration helper"
+    );
+    assert!(
+        source.contains("fn spawn_optional_mesh_startup"),
+        "mesh_attachment.rs must define spawn_optional_mesh_startup helper"
+    );
+    assert!(
+        source.contains("fn await_optional_mesh_startup"),
+        "mesh_attachment.rs must define await_optional_mesh_startup helper"
+    );
+}
