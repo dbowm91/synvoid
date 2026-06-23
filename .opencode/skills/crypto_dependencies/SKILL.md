@@ -42,7 +42,7 @@ SynVoid uses a multi-layered approach to cryptography:
 
 | Crate | Algorithm | Location | Status |
 |-------|-----------|----------|--------|
-| `pqc_kyber` | ML-KEM-768 | src/wasm_pow | ⚠️ RUSTSEC-2023-0079 |
+| `pqc_kyber_edit` | ML-KEM-768 | crates/synvoid-wasm-pow | ⚠️ RUSTSEC-2023-0079 |
 | `libcrux-ml-dsa` | ML-DSA-65/87 | pqc/workspace | ✅ Pure Rust |
 | `aws-lc-rs` | ML-KEM + ML-DSA | Cargo.toml | ✅ Via feature |
 
@@ -144,7 +144,7 @@ These crates use C compilers at build time but don't add runtime C dependencies:
 rustls = { version = "0.23", features = ["prefer-post-quantum", "aws-lc-rs"] }
 
 # For wasm-pow (ml-kem + x25519 hybrid)
-pqc_kyber = { version = "0.7", features = ["wasm", "kyber768", "zeroize"] }
+pqc_kyber_edit = { version = "0.7", features = ["kyber768", "zeroize"] }
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 ```
 
@@ -154,7 +154,7 @@ x25519-dalek = { version = "2", features = ["static_secrets"] }
 |------|---------|
 | `Cargo.toml` | Main workspace |
 | `pqc/Cargo.toml` | ML-DSA workspace |
-| `src/wasm_pow/Cargo.toml` | WASM PoW module |
+| `crates/synvoid-wasm-pow/Cargo.toml` | WASM PoW module |
 
 ## Monitoring
 

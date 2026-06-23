@@ -22,7 +22,7 @@ Linux offers the best support for CPU affinity and kernel networking primitives.
 
 - **Advanced Attack Detection**: Native support for SQLi, XSS, SSRF, and command injection detection using `libinjection` and high-speed regex engines.
 - **Bot Mitigation**: Challenges automated traffic with CSS honeypots, JavaScript execution tests, and behavioral analysis.
-- **Distributed WAF Mesh**: Coordinate threat intelligence across geographic regions and build a private, collaborative DDoS defense network. DHT ingress validation uses a centralized key policy table, signed Raft attestations, and mandatory signature enforcement for remote writes. See `architecture/mesh_trust_domains.md` for trust domain boundaries (advisory DHT vs. canonical Raft). See `CanonicalTrustReader` in `crates/synvoid-mesh/src/mesh/canonical.rs` (Iteration 8) and `validate_peer_canonical_status` helper in peer_auth (Iteration 9-10) + DHT ingress canonical reader context (see `architecture/mesh_trust_domains.md` for current state). Threat-intel policy-composed lookup paths are staged and stable after the iteration 23 reassessment; the shared helper remains in place and focused mesh checks passed. Raw lookup APIs remain compatibility paths. Iterations 25-26 add worker-root ownership plus an explicit root-side helper for constructing `ThreatIntelPolicyContext`. Iteration 28: Supervisor exports `CanonicalTrustSnapshot` via IPC to workers, completing the export path. `CanonicalTrustSnapshot` implements `CanonicalTrustReader`.
+- **Distributed WAF Mesh**: Coordinate threat intelligence across geographic regions and build a private, collaborative DDoS defense network. DHT ingress validation uses a centralized key policy table, signed Raft attestations, and mandatory signature enforcement for remote writes. See `architecture/mesh_trust_domains.md` for trust domain boundaries.
 - **Modern Protocol Stack**: First-class support for **HTTP/3 (QUIC)**, HTTP/2, and TLS 1.3.
 - **Capacity Scaling**: Tune `worker_threads`, `tcp.worker_pool_size`, and CPU offload capacity to match the workload mix.
 - **Silent Security**: Features like "Silent Stalling" and "Tarpitting" waste attacker resources without revealing server information.
@@ -51,14 +51,61 @@ The system initializes:
 
 Explore our documentation for deeper technical insights:
 
+### Core
+
 | Guide | Description |
 |-------|-------------|
+| [GETTING_STARTED.md](docs/GETTING_STARTED.md) | Installation and first run |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Current data-plane architecture |
-| [PROCESS_MANAGEMENT.md](docs/PROCESS_MANAGEMENT.md) | Supervisor and worker lifecycle |
 | [CONFIGURATION.md](docs/CONFIGURATION.md) | Complete main.toml reference |
-| [WAF_MESH.md](docs/WAF_MESH.md) | Setting up distributed DDoS defense |
+| [DEVELOPER.md](docs/DEVELOPER.md) | Developer guide and codebase orientation |
+
+### Operations
+
+| Guide | Description |
+|-------|-------------|
+| [PROCESS_MANAGEMENT.md](docs/PROCESS_MANAGEMENT.md) | Supervisor and worker lifecycle |
+| [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Deployment patterns and Docker |
 | [PERFORMANCE.md](docs/PERFORMANCE.md) | Tuning `worker_threads`, `tcp.worker_pool_size`, and CPU offload workers |
 | [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Logs, IPC, and common issues |
+| [UPGRADE.md](docs/UPGRADE.md) | Upgrade procedures |
+
+### Security
+
+| Guide | Description |
+|-------|-------------|
+| [SECURITY.md](docs/SECURITY.md) | Security model and hardening |
+| [SANDBOXING.md](docs/SANDBOXING.md) | OS sandboxing (Windows/macOS/Linux/BSD) |
+| [ATTACK_DETECTION.md](docs/ATTACK_DETECTION.md) | SQLi, XSS, SSRF, command injection |
+| [BOT_PROTECTION.md](docs/BOT_PROTECTION.md) | Bot detection and mitigation |
+| [RATE_LIMITING.md](docs/RATE_LIMITING.md) | Rate limiting configuration |
+| [REQUEST_SANITIZATION.md](docs/REQUEST_SANITIZATION.md) | Input sanitization |
+| [FLOOD_PROTECTION.md](docs/FLOOD_PROTECTION.md) | Flood/DDoS protection |
+
+### Features
+
+| Guide | Description |
+|-------|-------------|
+| [WAF_MESH.md](docs/WAF_MESH.md) | Distributed WAF mesh setup |
+| [THREAT_INTEL.md](docs/THREAT_INTEL.md) | Threat intelligence integration |
+| [HTTP3.md](docs/HTTP3.md) | HTTP/3 (QUIC) configuration |
+| [STATIC_FILES.md](docs/STATIC_FILES.md) | Static file serving |
+| [UPLOADS.md](docs/UPLOADS.md) | File upload handling |
+| [SERVERLESS.md](docs/SERVERLESS.md) | Serverless WASM functions |
+| [PLUGINS.md](docs/PLUGINS.md) | Plugin system |
+| [TUNNELS.md](docs/TUNNELS.md) | Tunnel backend routing |
+| [FASTCGI.md](docs/FASTCGI.md) | FastCGI handler |
+| [TRAFFIC_SHAPING.md](docs/TRAFFIC_SHAPING.md) | Traffic shaping and throttling |
+| [UPSTREAM_HEALTH.md](docs/UPSTREAM_HEALTH.md) | Upstream health checks |
+
+### Reference
+
+| Guide | Description |
+|-------|-------------|
+| [API_REFERENCE.md](docs/API_REFERENCE.md) | REST API reference |
+| [ADMIN_UI.md](docs/ADMIN_UI.md) | Admin UI guide |
+| [FAQ.md](docs/FAQ.md) | Frequently asked questions |
+| [RFC5011_TRUST_ANCHOR.md](docs/RFC5011_TRUST_ANCHOR.md) | RFC5011 trust anchor management |
 
 ## Why Linux?
 

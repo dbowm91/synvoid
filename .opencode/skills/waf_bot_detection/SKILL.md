@@ -63,7 +63,15 @@ bot_detector.check_with_fingerprints(user_agent, site_block_ai_crawlers, None, j
 JA4 is computed during TLS handshake in `HttpsConnection`:
 
 ```rust
-// src/tls/server.rs:56-63
+// src/tls/server.rs:57-97
+use synvoid_tls::sni_peek::compute_ja4;
+
+struct HttpsConnection {
+    io: Mutex<Option<TokioIo<tokio_rustls::server::TlsStream<tokio::net::TcpStream>>>>,
+    drop_requested: RunningFlag,
+    ja4_hash: Mutex<Option<String>>,
+}
+
 impl HttpsConnection {
     fn new(stream: TlsStream<TcpStream>) -> Self {
         let client_hello_bytes = extract_client_hello_bytes_from_stream(&stream);
@@ -83,17 +91,20 @@ impl HttpsConnection {
 The JA4 is passed through `check_request_full()`:
 
 ```rust
-// src/waf/mod.rs:872-881
+// src/waf/mod.rs:398-411
 pub async fn check_request_full(
     &self,
-    client_ip: IpAddr,
+    site_id: Option<&str>,
+    ip: IpAddr,
     method: &str,
     path: &str,
-    query_string: Option<&str>,
+    query: Option<&str>,
     headers: &http::HeaderMap,
     body: Option<&[u8]>,
-    user_agent: Option<&str>,
-    ja4_hash: Option<&str>,  // NEW: W3.1
+    ua: Option<&str>,
+    ja4_hash: Option<&str>,
+    site_bot_config: Option<&crate::config::site::SiteBotConfig>,
+    _ctx: Option<&RequestServices>,
 ) -> WafDecision
 ```
 
@@ -142,8 +153,8 @@ pub struct BotDetector {
 | File | Purpose |
 |------|---------|
 | `crates/synvoid-waf/src/bot.rs` | BotDetector implementation (re-exported via `src/waf/mod.rs`) |
-| `src/tls/server.rs:56-84` | JA4 computation in HttpsConnection |
-| `src/waf/mod.rs` | check_bot_protection() — verify current line numbers |
+| `src/tls/server.rs:84-97` | JA4 computation in HttpsConnection |
+| `src/waf/mod.rs:398-411` | check_request_full() signature |
 | `src/http/server.rs` | Plain HTTP (no JA4 available) |
 | `src/proxy.rs` | Proxy path (no JA4 available) |
 

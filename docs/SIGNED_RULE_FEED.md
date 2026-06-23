@@ -96,12 +96,12 @@ allow_downgrade = false
 
 ## Components
 
-### 1. Rule Feed Client (`src/waf/rule_feed/`)
+### 1. Rule Feed Client (`src/waf/rule_feed.rs`)
 
-- `mod.rs` - Main client, fetch/verify/apply logic
-- `types.rs` - Rule feed JSON structures  
-- `signature.rs` - Ed25519 verification
-- `storage.rs` - Local rule persistence
+- `RuleFeedClient` - Main client, fetch/verify/apply logic
+- Rule feed JSON structures (types module)
+- Ed25519 signature verification
+- Local rule persistence
 
 ### 2. Configuration (`crates/synvoid-config/src/`)
 

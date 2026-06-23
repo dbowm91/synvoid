@@ -27,7 +27,7 @@ SynVoid generates NSEC3 records for authoritative zones it serves. Supported has
 | 1 (SHA-1) | 20 bytes | Fully supported |
 | 2 (SHA-256) | 32 bytes | Implemented but base32 encoding is non-standard for non-20-byte outputs |
 
-The custom `base32_encode` function in `src/dns/dnssec.rs:1478` produces RFC 4648 output without padding. For SHA-1 (20 bytes) this matches the expected NSEC3 owner name format per RFC 5155. For SHA-256 the encoding works in practice but is not rigorously tested against RFC 5155 test vectors. SHA-1 is the default (`Nsec3Config::default()` uses algorithm 1).
+The custom `base32_encode` function in `src/dns/dnssec_signing.rs:266` produces RFC 4648 output without padding. For SHA-1 (20 bytes) this matches the expected NSEC3 owner name format per RFC 5155. For SHA-256 the encoding works in practice but is not rigorously tested against RFC 5155 test vectors. SHA-1 is the default (`Nsec3Config::default()` uses algorithm 1).
 
 ### NSEC3 Parameters
 

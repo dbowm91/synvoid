@@ -14,9 +14,9 @@ The ErasedHttpClient was implemented to provide true streaming via a type-erased
 - `Http1PooledConnection` - Wraps TcpStream in TokioIo with handshake
 - `ErasedHttpClient` - Primary interface using the pool
 
-## Current Status (2026-05-28)
+## Current Status (2026-06-23)
 
-Erased client primitives exist, but the HTTP request path currently uses `StreamingHttpClient` for streaming forwards. `ErasedHttpClient` is carried through worker wiring but is not the active streaming send path for proxy requests.
+Erased client primitives exist, but the HTTP request path currently uses `StreamingHttpClient` for streaming forwards. `ErasedHttpClient` is carried through worker wiring (`src/http/server.rs`) but is not the active streaming send path for proxy requests. The `StreamingHttpClient` type alias is defined in `crates/synvoid-http-client/src/client.rs:17` and used in `crates/synvoid-http/src/upstream_proxy_dispatch_plan.rs`.
 
 ### Implemented
 
@@ -42,9 +42,10 @@ To fully switch the streaming path to erased pooling:
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `crates/synvoid-http-client/src/client.rs` | - | Moka cache for HTTP clients |
+| `crates/synvoid-http-client/src/client.rs` | :17 | `StreamingHttpClient` type alias definition |
 | `crates/synvoid-http-client/src/erased_pool.rs` | - | `checkout()` with error handling, erased-body + pool primitives |
-| `src/http/server.rs` | body-forwarding branch | Uses `StreamingHttpClient` for active streaming send path |
+| `crates/synvoid-http/src/upstream_proxy_dispatch_plan.rs` | :24 | `StreamingHttpClient` used for upstream proxy dispatch |
+| `src/http/server.rs` | :98, :146 | `ErasedHttpClient` wired into HttpServer (not the active streaming path) |
 
 ## Verification Commands
 

@@ -262,6 +262,11 @@ Agent guidance is **modularized** to reduce context pollution. Each module has i
 | Auth | [`src/auth/AGENTS.override.md`](src/auth/AGENTS.override.md) | Authentication patterns |
 | Platform/Systems | [`src/platform/AGENTS.override.md`](src/platform/AGENTS.override.md) | Platform abstraction, IPC, sandboxing |
 | Worker | [`src/worker/AGENTS.override.md`](src/worker/AGENTS.override.md) | UnifiedServerWorker, CpuWorker, CPU offload |
+| Tunnel | [`src/tunnel/AGENTS.override.md`](src/tunnel/AGENTS.override.md) | Tunnel compatibility facade (canonical in `synvoid-tunnel`) |
+| App Server | [`src/app_server/AGENTS.override.md`](src/app_server/AGENTS.override.md) | App Server compatibility facade (canonical in `synvoid-app-server`) |
+| Theme | [`src/theme/AGENTS.override.md`](src/theme/AGENTS.override.md) | Theme compatibility facade (canonical in `synvoid-theme`) |
+| Static Files | [`src/static_files/AGENTS.override.md`](src/static_files/AGENTS.override.md) | Static Files compatibility facade (canonical in `synvoid-static-files`) |
+| Serverless | [`src/serverless/AGENTS.override.md`](src/serverless/AGENTS.override.md) | Serverless compatibility facade (canonical in `synvoid-serverless`) |
 | Skills | [`skills/AGENTS.override.md`](skills/AGENTS.override.md) | Skill file documentation |
 
 > **Note**: `crates/synvoid-mesh/src/mesh/transport_peer.rs` now contains the `PrefixReader` internal adapter (Iteration 80) for prefix-aware chunked parsing, used by `read_chunked_http_response_body()`. It also houses `HttpVersion`, `HttpResponseBodyEncoding`, `read_http_response_sequence()`, and `header_contains_token()`.
@@ -538,7 +543,7 @@ The `architecture/` directory contains detailed design documents. Key canonical 
 | Threat-intel audit | `threat_intel_request_waf_audit.md` | — |
 | HTTP/3 WAF boundary | `http3_request_waf_boundary.md` | — |
 | Blocklist reconciliation | `blocklist_reconciliation.md` | `blocklist_remove_consistency.md` |
-| Blocklist provenance | `blocklist_reconciliation.md` | `blocklist_provenance_preservation.md` |
+| Blocklist provenance | `blocklist_provenance_preservation.md` | — |
 | Data-plane composition root | `worker_data_plane_composition_root.md` | — |
 | Worker task lifecycle | `worker_task_lifecycle.md` | — |
 | Mesh transport lifecycle | `mesh_transport_lifecycle.md` | — |
