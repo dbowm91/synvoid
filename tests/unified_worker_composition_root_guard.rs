@@ -349,7 +349,7 @@ fn mod_rs_declares_mesh_attachment() {
 /// Extract the body of a named async function from source.
 /// Finds `pub async fn <name>` and counts until the closing `}` at column 0.
 fn extract_function_body(source: &str, name: &str) -> String {
-    let needle = format!("pub async fn {}", name);
+    let needle = format!("async fn {}", name);
     let start = source
         .find(&needle)
         .unwrap_or_else(|| panic!("function '{}' not found in source", name));
@@ -501,5 +501,57 @@ fn mesh_attachment_has_extracted_helpers() {
     assert!(
         source.contains("fn await_optional_mesh_startup"),
         "mesh_attachment.rs must define await_optional_mesh_startup helper"
+    );
+}
+
+// ── Iteration 97: ordering and input-shape guards ──────────────────────────
+
+#[test]
+fn optional_mesh_marks_starting_before_spawning_one_shots() {
+    let repo = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source =
+        std::fs::read_to_string(repo.join("src/worker/unified_server/mesh_attachment.rs")).unwrap();
+
+    // Find the optional support registration call and the optional mesh startup call.
+    let support_idx = source
+        .find("let support_rx = spawn_optional_support_registration")
+        .expect("optional support registration call exists");
+    // Search for the call site (not the fn definition) by looking after support_idx.
+    let startup_idx = source[support_idx..]
+        .find("spawn_optional_mesh_startup(")
+        .map(|i| i + support_idx)
+        .expect("optional mesh startup call exists");
+
+    // Find the last transition_starting() that appears before the support registration.
+    // This must be in the optional branch (the required branch calls start_required_mesh
+    // which has its own transition_starting inside the helper, not inline in attach_mesh).
+    let prefix = &source[..support_idx];
+    let starting_idx = prefix
+        .rfind("s.transition_starting();")
+        .expect("optional branch has a transition_starting before support registration");
+
+    assert!(
+        starting_idx < support_idx,
+        "optional mesh must transition to starting before spawning support registration"
+    );
+    assert!(
+        starting_idx < startup_idx,
+        "optional mesh must transition to starting before spawning mesh startup"
+    );
+}
+
+#[test]
+fn required_mesh_start_uses_explicit_mesh_status_field() {
+    let repo = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source =
+        std::fs::read_to_string(repo.join("src/worker/unified_server/mesh_attachment.rs")).unwrap();
+    let helper = extract_function_body(&source, "start_required_mesh");
+    assert!(
+        helper.contains("input.mesh_status.clone()"),
+        "start_required_mesh must use the explicit mesh_status field from RequiredMeshStartInput"
+    );
+    assert!(
+        !helper.contains("input.state.mesh_status.clone()"),
+        "start_required_mesh must not bypass RequiredMeshStartInput by cloning from input.state"
     );
 }

@@ -158,7 +158,7 @@ async fn send_ready_if_deferred(
 async fn start_required_mesh(
     input: RequiredMeshStartInput<'_>,
 ) -> Result<RequiredMeshStartOutput, BoxError> {
-    let mesh_status = input.state.mesh_status.clone();
+    let mesh_status = input.mesh_status.clone();
 
     {
         let mut s = mesh_status.write().await;
@@ -455,6 +455,11 @@ pub async fn attach_mesh(
                 decision_rx,
             )
         } else {
+            {
+                let mut s = mesh_status.write().await;
+                s.transition_starting();
+            }
+
             let mut registry = input.state.task_registry.lock().await;
             let support_rx = spawn_optional_support_registration(
                 input.state,
@@ -471,11 +476,6 @@ pub async fn attach_mesh(
                 startup_complete_tx,
             );
             drop(registry);
-
-            {
-                let mut s = mesh_status.write().await;
-                s.transition_starting();
-            }
 
             let (output, decision_rx) = await_optional_mesh_startup(
                 input.state,
