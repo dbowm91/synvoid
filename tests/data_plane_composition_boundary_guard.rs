@@ -10,6 +10,7 @@
 //! Phase 4: Mixed-role scan roots include unified_server with file-by-file classification
 //! Phase 5: Fail-closed unknown file classification
 //! Phase 6: Additional assertion tests for focused boundary checks
+//! Iteration 98: Data-plane service boundary guards
 
 use std::path::{Path, PathBuf};
 
@@ -920,4 +921,125 @@ fn classification_admin_control_plane_files() {
         classify_path(Path::new("/crates/synvoid-mesh/src/mesh/mod.rs")),
         BoundaryRole::ControlPlane
     );
+}
+
+// ---------------------------------------------------------------------------
+// Iteration 98: Data-plane service boundary guards
+// ---------------------------------------------------------------------------
+
+/// RequestServices (context.rs) must not import worker startup, supervision,
+/// or shutdown modules. It is the narrow request-path handle and must remain
+/// free of lifecycle dependencies.
+#[test]
+fn request_services_must_not_import_worker_lifecycle_modules() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("src/worker/context.rs"))
+        .expect("failed to read context.rs");
+
+    let forbidden = [
+        "unified_server::startup_plan",
+        "unified_server::supervision_loop",
+        "unified_server::shutdown_executor",
+        "unified_server::lifecycle",
+        "UnifiedServerWorkerState",
+        "WorkerShutdownCause",
+        "WorkerShutdownPlan",
+        "WorkerTaskRegistry",
+    ];
+
+    let mut violations = Vec::new();
+    for token in &forbidden {
+        if source.contains(token) {
+            violations.push(token.to_string());
+        }
+    }
+
+    if !violations.is_empty() {
+        let mut msg =
+            String::from("RequestServices (context.rs) imports worker lifecycle modules:\n\n");
+        for token in &violations {
+            msg.push_str(&format!("  {}\n", token));
+        }
+        msg.push_str(
+            "\nRequestServices is the narrow request-path handle and must not depend on \
+             worker startup, supervision, or shutdown modules.",
+        );
+        panic!("{}", msg);
+    }
+}
+
+/// Startup plan must delegate data-plane cross-wiring through the builder's
+/// `build_and_cross_wire` method rather than manually calling
+/// `apply_threat_intel_policy_context` and `cross_wire_mesh_services` inline.
+#[test]
+fn startup_plan_delegates_data_plane_cross_wiring() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("src/worker/unified_server/startup_plan.rs"))
+        .expect("failed to read startup_plan.rs");
+
+    // Strip comments to avoid false positives from comment text
+    let stripped = strip_comments(&source);
+
+    // Must use the centralized builder method
+    let has_build_and_cross_wire = stripped.contains("build_and_cross_wire");
+    assert!(
+        has_build_and_cross_wire,
+        "startup_plan.rs must use build_and_cross_wire() for centralized cross-wiring"
+    );
+
+    // Must not manually call the individual cross-wiring methods inline
+    let has_inline_apply = stripped.contains("apply_threat_intel_policy_context");
+    let has_inline_cross_wire = stripped.contains("cross_wire_mesh_services");
+
+    // These methods may appear in comments or in the builder module, but
+    // startup_plan.rs should not call them directly on the data_plane instance.
+    // Check that they don't appear as method calls on `data_plane` or `services`.
+    let has_manual_data_plane_wiring = stripped.contains("data_plane.apply_threat_intel_policy")
+        || stripped.contains("data_plane.apply_threat_intel")
+        || stripped.contains("services::cross_wire_mesh_services(&");
+
+    if has_manual_data_plane_wiring {
+        panic!(
+            "startup_plan.rs manually calls cross-wiring methods on data_plane/services. \
+             Use build_and_cross_wire() on the builder instead."
+        );
+    }
+}
+
+/// Mesh attachment must not import RequestServices or DataPlaneServices.
+/// It owns startup attachment only and must not have knowledge of request services.
+#[test]
+fn mesh_attachment_does_not_own_request_services() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("src/worker/unified_server/mesh_attachment.rs"))
+        .expect("failed to read mesh_attachment.rs");
+
+    // Strip comments to avoid false positives
+    let stripped = strip_comments(&source);
+
+    let forbidden = [
+        "RequestServices",
+        "DataPlaneServices",
+        "DataPlaneServicesBuilder",
+    ];
+
+    let mut violations = Vec::new();
+    for token in &forbidden {
+        if stripped.contains(token) {
+            violations.push(token.to_string());
+        }
+    }
+
+    if !violations.is_empty() {
+        let mut msg =
+            String::from("mesh_attachment.rs imports request/data-plane service types:\n\n");
+        for token in &violations {
+            msg.push_str(&format!("  {}\n", token));
+        }
+        msg.push_str(
+            "\nMesh attachment owns startup attachment only and must not import \
+             RequestServices or DataPlaneServices.",
+        );
+        panic!("{}", msg);
+    }
 }

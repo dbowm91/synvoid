@@ -411,3 +411,23 @@ The supervision loop returns `SupervisionOutcome` (Lifecycle | DirectCause) inst
 
 **Ownership invariant (final)**:
 > `cancel_then_join_tasks` performs cooperative waiting to a deadline. Remaining tasks are then aborted and awaited without a second timeout, preserving handle ownership. A future hard-deadline variant must return explicit unjoined residue rather than dropping handles.
+
+### Iteration 98 — Data-Plane Service Boundary Finalization
+
+**Service assembly boundary**: `services.rs` is the single owner of `DataPlaneServices` construction, cross-wiring, and `RequestServices` building. The `DataPlaneServicesBuilder::build_and_cross_wire()` method centralizes all post-build cross-wiring (threat-intel policy application, mesh service wiring) that was previously scattered in `startup_plan.rs`.
+
+**Field ownership model**: `DataPlaneServices` fields are grouped by ownership:
+- Request-path handle: `request_services` → installed into WAF/request dispatch
+- Runtime services: `serverless_manager`, `port_honeypot_runner` → cross-wired at startup
+- Mesh/threat-intel: `mesh_transport_manager`, `threat_intel`, `threat_intel_policy`, `record_store` → consumed by composition root for IPC updates
+
+**Narrow request-path handle**: `RequestServices` (`context.rs`) is the narrow request-path handle. It must not import worker startup, supervision, or shutdown modules. It must not carry mesh transport, IPC, or task registry handles.
+
+**Startup delegation**: `startup_plan.rs` delegates service assembly to `DataPlaneServicesBuilder::build_and_cross_wire()` and does not manually call `apply_threat_intel_policy_context()` or `cross_wire_mesh_services()` inline.
+
+**Mesh attachment boundary**: `mesh_attachment.rs` owns startup attachment only and must not import `RequestServices` or `DataPlaneServices`.
+
+**Boundary guards**: Three new assertions in `tests/data_plane_composition_boundary_guard.rs`:
+- `request_services_must_not_import_worker_lifecycle_modules`
+- `startup_plan_delegates_data_plane_cross_wiring`
+- `mesh_attachment_does_not_own_request_services`

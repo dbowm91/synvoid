@@ -307,6 +307,7 @@ pub struct UnifiedServerWorkerState {
     pub task_handles: Arc<TokioMutex<Vec<JoinHandle<()>>>>,
     pub request_services: Arc<RequestServices>,
     /// Bundled data-plane services for live policy context refresh.
+    /// Owned by the composition root; request-path code uses `request_services`.
     pub data_plane: std::sync::Arc<super::services::DataPlaneServices>,
     /// Latest canonical trust snapshot received from Supervisor.
     #[cfg(feature = "mesh")]

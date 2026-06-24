@@ -1,6 +1,14 @@
-// DataPlaneServices: groups data-plane service handles produced during
-// worker bootstrap. The builder centralizes cross-wiring that was
-// previously scattered across the run_unified_server_worker phases.
+// Data-plane service assembly boundary.
+//
+// Owns construction and cross-wiring of request-path service handles used by
+// the unified worker. Startup code may provide concrete runtime components,
+// but request-path modules should consume the narrow RequestServices handle
+// rather than UnifiedServerWorkerState or startup modules.
+//
+// Field ownership is documented on DataPlaneServices to distinguish:
+//   - Request-path handles (installed into WAF/request dispatch)
+//   - Optional runtime/application services (cross-wired at startup)
+//   - Mesh/threat-intel data-plane inputs (consumed by composition root only)
 
 use std::sync::Arc;
 
@@ -20,18 +28,40 @@ use synvoid_mesh::yara_rules::YaraRulesManager;
 
 /// Bundled data-plane services constructed during worker bootstrap.
 ///
-/// This struct replaces the scattered cross-wiring that previously lived
-/// inline in `run_unified_server_worker`. Each field is an already-existing
-/// service or policy handle; no new abstractions are introduced.
+/// # Ownership contract
+///
+/// - **Request-path handle**: `request_services` — installed into WAF/request
+///   dispatch and consumed by request-path modules.
+/// - **Runtime/application services**: `serverless_manager`, `port_honeypot_runner`
+///   — cross-wired at startup, consumed by composition root and request path.
+/// - **Mesh/threat-intel inputs**: `mesh_transport_manager`, `threat_intel`,
+///   `threat_intel_policy`, `record_store` — consumed by composition root
+///   for cross-wiring and IPC updates; not directly used by request-path code.
+///
+/// Request-path modules must consume `RequestServices` (or a narrow trait
+/// derived from it), not `DataPlaneServices` or `UnifiedServerWorkerState`.
 pub struct DataPlaneServices {
+    // -- Request-path handle installed into WAF/request dispatch --
+    /// Narrow service handle for request execution. Installed into WAF via
+    /// `set_request_services()` during bootstrap.
     pub request_services: Arc<RequestServices>,
+
+    // -- Optional runtime/application services cross-wired at startup --
+    /// Serverless function execution manager.
     pub serverless_manager: Arc<ServerlessManager>,
+    /// Port honeypot runner for detecting port scans (optional).
     pub port_honeypot_runner: Option<Arc<PortHoneypotRunner>>,
+
+    // -- Mesh/threat-intel data-plane inputs --
+    /// Mesh transport manager, provides mesh routing capabilities.
     #[cfg(feature = "mesh")]
     pub mesh_transport_manager: Option<Arc<MeshTransportManager>>,
+    /// Threat intelligence manager for indicator evaluation.
     #[cfg(feature = "mesh")]
     pub threat_intel: Option<Arc<ThreatIntelligenceManager>>,
-    /// Optional policy context owned by the worker composition root.
+    /// Optional policy context for threat-intel actionability decisions.
+    /// Built from canonical trust reader + advisory source; owned by the
+    /// worker composition root and refreshed via IPC snapshot updates.
     #[cfg(feature = "mesh")]
     pub threat_intel_policy: Option<ThreatIntelPolicyContext>,
     /// Explicit handle to the DHT record store, preferred over the global
@@ -46,6 +76,13 @@ pub struct DataPlaneServices {
 /// Collects the outputs of the various init phases and produces a single
 /// bundled handle. The builder is intentionally narrow: it does not replace
 /// the individual init functions, it only gathers their outputs.
+///
+/// # Cross-wiring
+///
+/// Use [`build_and_cross_wire`](Self::build_and_cross_wire) to construct
+/// services and perform all post-build cross-wiring in one step. This
+/// replaces the inline Phase 9 cross-wiring that was previously scattered
+/// across `run_unified_server_worker`.
 pub struct DataPlaneServicesBuilder {
     serverless_manager: Arc<ServerlessManager>,
     port_honeypot_runner: Option<Arc<PortHoneypotRunner>>,
@@ -166,6 +203,27 @@ impl DataPlaneServicesBuilder {
             record_store: self.record_store,
         }
     }
+
+    /// Build [`DataPlaneServices`] and perform all post-build cross-wiring.
+    ///
+    /// This is the primary entry point for startup code. It:
+    /// 1. Builds the service bundle and embedded `RequestServices`
+    /// 2. Applies the threat-intel policy context to the manager (if present)
+    /// 3. Cross-wires mesh-dependent services (serverless ↔ mesh, honeypot ↔ mesh)
+    ///
+    /// After this call, the returned `DataPlaneServices` is ready for
+    /// installation into `UnifiedServerWorkerState`.
+    pub fn build_and_cross_wire(self, unified_server: &Arc<UnifiedServer>) -> DataPlaneServices {
+        let services = self.build();
+
+        #[cfg(feature = "mesh")]
+        {
+            services.apply_threat_intel_policy_context();
+            cross_wire_mesh_services(unified_server, &services);
+        }
+
+        services
+    }
 }
 
 #[cfg(feature = "mesh")]
@@ -195,8 +253,12 @@ impl DataPlaneServices {
     }
 }
 
-/// Cross-wire mesh-dependent services. This replaces the inline Phase 9
-/// cross-wiring that was previously in `run_unified_server_worker`.
+/// Cross-wire mesh-dependent services. Called internally by
+/// [`DataPlaneServicesBuilder::build_and_cross_wire`].
+///
+/// Wires serverless-to-mesh and port-honeypot-to-mesh. This replaces
+/// the inline Phase 9 cross-wiring that was previously in
+/// `run_unified_server_worker`.
 #[cfg(feature = "mesh")]
 pub fn cross_wire_mesh_services(unified_server: &Arc<UnifiedServer>, services: &DataPlaneServices) {
     crate::worker::unified_server::init_mesh::wire_serverless_to_mesh(

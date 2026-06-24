@@ -1,7 +1,7 @@
 # Worker/Data-Plane Composition Root Ownership
 
 **Established**: Iteration 58
-**Updated**: Iteration 94
+**Updated**: Iteration 98
 **Guardrail**: `tests/data_plane_composition_boundary_guard.rs`
 
 ## Invariant
@@ -18,7 +18,7 @@ These files construct and wire concrete infrastructure:
 | `src/worker/unified_server/init_mesh.rs` | Mesh transport, threat intelligence, YARA init |
 | `src/worker/unified_server/init_waf.rs` | WAF background tasks, upload validation |
 | `src/worker/unified_server/init_apps.rs` | Granian app servers, serverless manager |
-| `src/worker/unified_server/services.rs` | DataPlaneServicesBuilder |
+| `src/worker/unified_server/services.rs` | Data-plane service assembly boundary: builds `DataPlaneServices`, cross-wires mesh services, owns `RequestServices` construction |
 | `src/worker/unified_server/lifecycle.rs` | IPC message loop, canonical trust snapshot |
 | `src/worker/unified_server/state.rs` | IPC connection, config loading |
 | `src/worker/unified_server/init_runtime.rs` | Re-exports of state.rs runtime helpers |
@@ -189,3 +189,49 @@ No bare `tokio::spawn()` calls remain in `init_mesh.rs`. The `MeshInit` struct r
 - Restart is **disabled** (`restart_enabled = true` is now rejected with an error by `build_mesh_supervision_policy()`, not just overridden).
 - `MeshSupervisorDecision::RestartMesh` is unreachable in production policy. If it somehow arrives, the composition root maps it to `MeshRestartExhausted` and shuts down the worker.
 - Restart execution (`execute_mesh_restart`) is not implemented. No restart metrics increment in supported configurations.
+
+## Data-Plane Service Boundary (Iteration 98)
+
+### Service Assembly Boundary
+
+`services.rs` is the **data-plane assembly boundary**. It owns:
+
+- Construction of `DataPlaneServices` and embedded `RequestServices`
+- Cross-wiring of mesh-dependent services (serverless ↔ mesh, honeypot ↔ mesh)
+- Threat-intel policy context build/apply/update path
+
+### Field Ownership
+
+`DataPlaneServices` fields are grouped by ownership:
+
+| Group | Fields | Consumed By |
+|-------|--------|-------------|
+| Request-path handle | `request_services` | WAF/request dispatch |
+| Runtime services | `serverless_manager`, `port_honeypot_runner` | Composition root, request path |
+| Mesh/threat-intel | `mesh_transport_manager`, `threat_intel`, `threat_intel_policy`, `record_store` | Composition root (IPC updates) |
+
+### Narrow Request-Path Handle
+
+`RequestServices` (`src/worker/context.rs`) is the narrow request-path handle. It must:
+
+- Not import worker startup, supervision, or shutdown modules
+- Not carry mesh transport, IPC, or task registry handles
+- Contain only request-execution services
+
+### Centralized Cross-Wiring
+
+`DataPlaneServicesBuilder::build_and_cross_wire()` is the single entry point for startup code. It:
+
+1. Builds `DataPlaneServices` and embedded `RequestServices`
+2. Applies threat-intel policy context to the manager
+3. Cross-wires mesh-dependent services
+
+Startup plan delegates service assembly through this narrow API. Manual inline cross-wiring is forbidden.
+
+### Boundary Guards (Iteration 98)
+
+The guard test file adds three new assertions:
+
+- `request_services_must_not_import_worker_lifecycle_modules`: `context.rs` must not import startup/supervision/shutdown modules
+- `startup_plan_delegates_data_plane_cross_wiring`: `startup_plan.rs` must use `build_and_cross_wire()` not manual inline cross-wiring
+- `mesh_attachment_does_not_own_request_services`: `mesh_attachment.rs` must not import `RequestServices` or `DataPlaneServices`

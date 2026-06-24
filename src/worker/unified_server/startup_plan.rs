@@ -307,13 +307,7 @@ pub async fn build_worker_startup(
     #[cfg(feature = "mesh")]
     let support_tasks = Some(support_tasks);
 
-    let data_plane = builder.build();
-
-    #[cfg(feature = "mesh")]
-    {
-        data_plane.apply_threat_intel_policy_context();
-        super::services::cross_wire_mesh_services(&unified_server, &data_plane);
-    }
+    let data_plane = builder.build_and_cross_wire(&unified_server);
 
     unified_server
         .get_waf()
