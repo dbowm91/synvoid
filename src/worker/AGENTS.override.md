@@ -431,3 +431,28 @@ The supervision loop returns `SupervisionOutcome` (Lifecycle | DirectCause) inst
 - `request_services_must_not_import_worker_lifecycle_modules`
 - `startup_plan_delegates_data_plane_cross_wiring`
 - `mesh_attachment_does_not_own_request_services`
+
+## HTTP Request Pipeline Normalization (Iteration 99)
+
+Both HTTP/1 and HTTP/3 request pipelines now use shared stage vocabulary documented in `architecture/http_request_pipeline.md`.
+
+### HTTP/3 Context Structs
+
+HTTP/3 dispatch was reduced from 21 discrete parameters to 5 via two new context structs in `crates/synvoid-http/src/http3_request_dispatch.rs`:
+
+- `Http3RequestMetadata` — per-request fields: `start`, `route_result`, `path`, `method`, `headers`, `host`, `query_string`, `user_agent`, `client_ip`. Implements `From<&Http3RequestPrelude>`.
+- `Http3DispatchDeps` — service handles: `max_request_size`, `streaming_waf_for_body`, `streaming_waf_for_upstream`, `connection_limiter`, `main_config`, `client`, `upstream_client_registry`, `bandwidth`, `metrics`.
+
+### HTTP/1 Pipeline
+
+HTTP/1 pipeline stages are already well-decomposed in `crates/synvoid-http/src/`. No new context struct was introduced — the existing `PreparedRequest`, `RequestFrontdoorContext`, and `RequestMetricsAdapter` serve equivalent roles. Module-level doc comments in `http_request_flow.rs` map each stage to the shared vocabulary.
+
+### Boundary Invariant
+
+Request dispatch consumes `RequestServices` or narrower handles. Neither protocol imports `UnifiedServerWorkerState` or worker lifecycle modules. Guard tests in `tests/http_request_pipeline_boundary_guard.rs` enforce this with 6 assertions:
+- `http3_dispatch_must_not_import_worker_lifecycle_modules`
+- `http1_request_flow_must_not_import_worker_lifecycle_modules`
+- `http3_dispatch_uses_context_structs`
+- `request_pipeline_stage_vocabulary_is_documented`
+- `http3_dispatch_does_not_import_unified_server_worker_state`
+- `http_request_flow_does_not_import_unified_server_worker_state`
