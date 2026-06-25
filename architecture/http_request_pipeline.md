@@ -42,20 +42,39 @@ pub struct PreparedRequest {
 
 ### HTTP/3
 
+`Http3RequestPrelude` is the output of `prepare_http3_request_prelude()` after metadata extraction and route resolution. Iteration 99 adapts that prelude into `Http3RequestMetadata`, which is passed to `handle_http3_request_dispatch()`.
+
 ```rust
-// http3_request_prelude.rs
-pub struct Http3RequestPrelude {
-    pub parts: http::request::Parts,
+pub struct Http3RequestMetadata {
+    pub start: Instant,
     pub route_result: RouteResult,
-    pub client_ip: IpAddr,
     pub path: String,
+    pub method: Method,
+    pub headers: HeaderMap,
     pub host: String,
     pub query_string: Option<String>,
     pub user_agent: Option<String>,
+    pub client_ip: IpAddr,
 }
 ```
 
-`Http3RequestPrelude` is the output of `prepare_http3_request_prelude()` after metadata extraction and route resolution. It is consumed by `handle_http3_request_dispatch()` which collects the body, runs WAF, and dispatches to the backend. There is no separate "deps" struct — all dependencies are passed as function parameters to `handle_http3_request_dispatch()`.
+HTTP/3 service dependencies are grouped in `Http3DispatchDeps`:
+
+```rust
+pub struct Http3DispatchDeps {
+    pub max_request_size: usize,
+    pub streaming_waf_for_body: Option<Box<dyn StreamingWafScanner>>,
+    pub streaming_waf_for_upstream: Option<Box<dyn StreamingWafScanner>>,
+    pub connection_limiter: Option<Arc<ConnectionLimiter>>,
+    pub main_config: Arc<MainConfig>,
+    pub client: HttpClient,
+    pub upstream_client_registry: Arc<UpstreamClientRegistry>,
+    pub bandwidth: Option<Arc<BandwidthTracker>>,
+    pub metrics: Option<Arc<WorkerMetrics>>,
+}
+```
+
+`handle_http3_request_dispatch()` receives `Http3RequestMetadata`, `Http3DispatchDeps`, the request stream, the optional connection guard, and the WAF backend. This keeps QUIC/server ownership in `synvoid-http3` while the protocol-independent dispatch stages remain in `synvoid-http`.
 
 ### RequestServices (worker-level narrow handle)
 
@@ -104,6 +123,7 @@ Request-path files (`src/waf/`, `src/proxy/`, `crates/synvoid-http/`, `crates/sy
 | `tests/mesh_id_boundary_guard.rs` | Mesh-ID enforcement never called from WAF/request/proxy/HTTP/3 code |
 | `tests/threat_intel_boundary_guard.rs` | Enforcement consumers use strict lookup wrappers, not raw lookups |
 | `tests/http3_waf_boundary_guard.rs` | HTTP/3 WAF code doesn't leak concrete types into the request path |
+| `tests/http_request_pipeline_boundary_guard.rs` | HTTP request dispatch doesn't import worker lifecycle; architecture doc documents `Http3DispatchDeps` and `Http3RequestMetadata`; no stale "no deps struct" wording; dispatch signature uses context structs |
 
 Run all boundary guards:
 
@@ -112,4 +132,5 @@ cargo test --test data_plane_composition_boundary_guard
 cargo test --test mesh_id_boundary_guard
 cargo test --test threat_intel_boundary_guard
 cargo test --test http3_waf_boundary_guard
+cargo test --test http_request_pipeline_boundary_guard
 ```

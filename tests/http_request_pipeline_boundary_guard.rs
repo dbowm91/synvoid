@@ -213,3 +213,57 @@ fn http_request_flow_does_not_import_unified_server_worker_state() {
         "http_request_flow.rs must not import UnifiedServerWorkerState"
     );
 }
+
+#[test]
+fn http_request_pipeline_doc_mentions_http3_dispatch_deps() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("architecture/http_request_pipeline.md"))
+        .expect("failed to read http_request_pipeline.md");
+
+    assert!(
+        source.contains("Http3DispatchDeps"),
+        "architecture/http_request_pipeline.md must document Http3DispatchDeps"
+    );
+    assert!(
+        source.contains("Http3RequestMetadata"),
+        "architecture/http_request_pipeline.md must document Http3RequestMetadata"
+    );
+}
+
+#[test]
+fn http_request_pipeline_doc_does_not_claim_http3_has_no_deps_struct() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("architecture/http_request_pipeline.md"))
+        .expect("failed to read http_request_pipeline.md");
+
+    let forbidden = [
+        "There is no separate \"deps\" struct",
+        "There is no separate 'deps' struct",
+        "all dependencies are passed as function parameters to `handle_http3_request_dispatch()`",
+    ];
+
+    for phrase in forbidden {
+        assert!(
+            !source.contains(phrase),
+            "architecture/http_request_pipeline.md contains stale HTTP/3 deps wording: {}",
+            phrase
+        );
+    }
+}
+
+#[test]
+fn http3_dispatch_signature_uses_context_structs() {
+    let root = workspace_root();
+    let source =
+        std::fs::read_to_string(root.join("crates/synvoid-http/src/http3_request_dispatch.rs"))
+            .expect("failed to read http3_request_dispatch.rs");
+    let stripped = strip_comments(&source);
+
+    let fn_start = stripped
+        .find("pub async fn handle_http3_request_dispatch")
+        .expect("handle_http3_request_dispatch should exist");
+    let fn_prefix = &stripped[fn_start..stripped.len().min(fn_start + 600)];
+
+    assert!(fn_prefix.contains("metadata: Http3RequestMetadata"));
+    assert!(fn_prefix.contains("deps: Http3DispatchDeps"));
+}
