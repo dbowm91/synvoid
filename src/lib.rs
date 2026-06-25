@@ -41,6 +41,7 @@
 // Root-owned application/runtime composition modules. These coordinate
 // processes, workers, supervisor state, sockets, startup, or app-level
 // integration. See architecture/root_module_ledger.md.
+pub mod commands;
 pub mod common;
 pub mod drain;
 pub mod log_controller;

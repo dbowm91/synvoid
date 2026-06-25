@@ -82,6 +82,8 @@ cargo test -p synvoid-mesh --features mesh shutdown  # Mesh truthful shutdown re
 cargo test -p synvoid-mesh --features mesh worker_integration  # Mesh worker integration tests
 cargo test -p synvoid-mesh --features mesh dht_routing_initialization  # DHT routing initialization tests
 cargo test --test http_request_pipeline_boundary_guard  # HTTP request pipeline boundary guard
+cargo test --test cli_command_dispatch_guard
+cargo test -p synvoid --lib commands::plan
 cargo fmt && cargo clippy --lib -- -D warnings
 ```
 
@@ -112,6 +114,8 @@ cargo check --no-default-features --features mesh,dns
 ## Root Crate Ownership
 
 Root crate ownership is tracked in `architecture/root_module_ledger.md`. New domain code should prefer dedicated `synvoid-*` crates over root `synvoid::` compatibility paths unless the ledger marks the root module as `keep_app_root`.
+
+`src/commands/` is a `keep_app_root` module for CLI/supervisor command dispatch with typed planning and execution.
 
 The root facade boundary guard test prevents domain crates under `crates/` from importing the root `synvoid` crate:
 
@@ -208,6 +212,7 @@ cargo test --test root_module_ledger_guard
 | `stop_mesh_generation_support()` | `src/worker/unified_server/mod.rs` (Iteration 88 — cooperative then forced cleanup helper) |
 | `src/worker/unified_server/startup_plan.rs` (mesh block) | `src/worker/unified_server/mesh_attachment.rs` (Iteration 95) |
 | `handle_http3_request_dispatch()` (21 params) | `crates/synvoid-http/src/http3_request_dispatch.rs` (Iteration 99: now takes `Http3RequestMetadata` + `Http3DispatchDeps` context structs) |
+| `src/main.rs` (command dispatch) | `src/commands/plan.rs` + `src/commands/execute.rs` (Iteration 101: extracted typed command planning and execution) |
 
 ## Data-Plane Composition Root Boundary
 
@@ -355,6 +360,7 @@ Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.overrid
 - **Session ID comparison**: Not constant-time, but acceptable (high-entropy random 32-byte values)
 
 ### Module Key Facts
+- **Command Dispatch**: `src/commands/mod.rs` — typed command classification (`SynvoidCommandPlan`) and execution; `src/commands/plan.rs` for planning, `src/commands/execute.rs` for execution. `src/main.rs` is a thin entrypoint that delegates here.
 - **HTTP Client**: ownership details live in `src/http_client/AGENTS.override.md` and `architecture/http_shared.md`
 - **MeshProxy**: `crates/synvoid-mesh/src/mesh/proxy.rs` - key routing component not in overview
 - **BackendType**: `crates/synvoid-proxy/src/router.rs:66-78` has 11 variants
