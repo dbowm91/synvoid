@@ -246,27 +246,36 @@ impl Http3Server {
         tracing::trace!("HTTP/3 {} {} from {}", method, parts.uri, remote_addr);
 
         let bandwidth = get_global_bandwidth_tracker_or_log();
-        synvoid_http::handle_http3_request_dispatch(
+
+        let metadata = synvoid_http::Http3RequestMetadata {
             start,
-            &route_result,
-            &path,
-            &method,
-            &parts.headers,
-            &host,
-            query_string.as_deref(),
-            user_agent.as_deref(),
+            route_result,
+            path,
+            method,
+            headers: parts.headers,
+            host,
+            query_string,
+            user_agent,
             client_ip,
-            &mut request_stream,
+        };
+
+        let deps = synvoid_http::Http3DispatchDeps {
             max_request_size,
-            self.waf.streaming(),
-            self.waf.streaming(),
+            streaming_waf_for_body: self.waf.streaming(),
+            streaming_waf_for_upstream: self.waf.streaming(),
+            connection_limiter: self.waf.connection_limiter(),
+            main_config: self.main_config.clone(),
+            client: self.client.clone(),
+            upstream_client_registry: self.upstream_client_registry.clone(),
+            bandwidth,
+            metrics: self.metrics.clone(),
+        };
+
+        synvoid_http::handle_http3_request_dispatch(
+            metadata,
+            deps,
+            &mut request_stream,
             connection_guard.as_ref(),
-            self.waf.connection_limiter().as_ref(),
-            &self.main_config,
-            &self.client,
-            &self.upstream_client_registry,
-            bandwidth.as_ref(),
-            self.metrics.as_ref(),
             self.waf.as_ref(),
         )
         .await?;

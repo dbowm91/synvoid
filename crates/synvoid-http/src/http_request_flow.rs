@@ -1,3 +1,16 @@
+//! # HTTP/1 Request Pipeline Stages
+//!
+//! This module implements the HTTP/1 request dispatch pipeline.
+//! Each stage maps to the shared vocabulary in `architecture/http_request_pipeline.md`:
+//!
+//! 1. **Metadata Normalization** — `request_frontdoor::prepare_request_frontdoor()` + `request_parse::extract_request_metadata()`
+//! 2. **Route Resolution** — `request_preparation::prepare_request_preflight()` → `router.route_with_local_addr()`
+//! 3. **Body Policy** — `body_policy::collect_and_scan_request_body()`
+//! 4. **WAF Evaluation** — `early_waf_decision()` + `buffered_request_waf_dispatch::maybe_handle_buffered_request_waf()`
+//! 5. **Terminal Response** — `request_frontdoor::dispatch_internal_endpoint()`
+//! 6. **Backend Dispatch** — `backend_dispatch::handle_pass_backend_dispatch()`
+//! 7. **Accounting** — `http_request_postlude::RequestMetricsAdapter`
+
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Instant;

@@ -71,7 +71,9 @@ pub use http3_body::{
     collect_http3_request_body, Http3BodyCollectionOutcome, Http3CollectedBody, Http3RequestStream,
 };
 pub use http3_buffered_upstream_dispatch::handle_http3_buffered_upstream_pass;
-pub use http3_request_dispatch::{handle_http3_request_dispatch, Http3RequestWaf};
+pub use http3_request_dispatch::{
+    handle_http3_request_dispatch, Http3DispatchDeps, Http3RequestMetadata, Http3RequestWaf,
+};
 pub use http3_request_flow::{
     prepare_http3_request_dispatch, Http3RequestDispatchContext, Http3RequestDispatchOutcome,
     Http3RequestResolver,

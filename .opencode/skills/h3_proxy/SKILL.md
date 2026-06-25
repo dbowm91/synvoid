@@ -84,4 +84,11 @@ Metrics are exposed via the global registry:
 
 ---
 
+## Request Pipeline Normalization (Iteration 99)
+
+The HTTP/3 dispatch function `handle_http3_request_dispatch` now takes `Http3RequestMetadata` (grouped request fields)
+and `Http3DispatchDeps` (grouped service handles) instead of 21 discrete parameters. The pipeline stages are:
+metadata normalization → route resolution → body policy → WAF evaluation → terminal response → upstream dispatch → accounting.
+See `architecture/http_request_pipeline.md` for the full stage map.
+
 Last updated: 2026-04-26

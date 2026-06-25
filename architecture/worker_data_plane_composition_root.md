@@ -235,3 +235,35 @@ The guard test file adds three new assertions:
 - `request_services_must_not_import_worker_lifecycle_modules`: `context.rs` must not import startup/supervision/shutdown modules
 - `startup_plan_delegates_data_plane_cross_wiring`: `startup_plan.rs` must use `build_and_cross_wire()` not manual inline cross-wiring
 - `mesh_attachment_does_not_own_request_services`: `mesh_attachment.rs` must not import `RequestServices` or `DataPlaneServices`
+
+## HTTP Request Pipeline Normalization (Iteration 99)
+
+Both HTTP/1 and HTTP/3 request pipelines now use shared stage vocabulary documented in
+`architecture/http_request_pipeline.md`. The stages are:
+
+1. Request metadata normalization
+2. Route resolution
+3. Body policy (collect, stream, reject, tarpit)
+4. WAF evaluation (early, streaming, buffered)
+5. Terminal response handling
+6. Upstream/app dispatch
+7. Accounting (bandwidth, metrics, logs)
+
+### Context Structs
+
+HTTP/3 dispatch uses two context groups:
+- `Http3RequestMetadata` — per-request fields (start, route_result, path, method, headers, host, query, user_agent, client_ip)
+- `Http3DispatchDeps` — service handles (max_request_size, streaming_waf scanners, connection_limiter, main_config, client, upstream_client_registry, bandwidth, metrics)
+
+HTTP/1 has equivalent stage mapping via `RequestFrontdoorContext`, `PreparedRequest`, and `RequestMetricsAdapter`.
+
+### Boundary Invariant
+
+Request dispatch consumes `RequestServices` or narrower handles. Neither protocol imports
+`UnifiedServerWorkerState` or worker lifecycle modules. Guard tests in
+`tests/http_request_pipeline_boundary_guard.rs` enforce this.
+
+### Body/Streaming Semantics
+
+Body and streaming behavior is intentionally NOT unified between HTTP/1 and HTTP/3. Different stream types,
+flow-control, and backpressure semantics require protocol-specific implementations.

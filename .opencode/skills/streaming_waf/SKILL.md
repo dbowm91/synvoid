@@ -202,3 +202,10 @@ pub type BoxErasedBody = Box<dyn ErasedBody>;
 **Key insight**: `ErasedBodyImpl` can wrap any `HttpBody<Data = Bytes>` including `StreamingWafBody`, enabling type-erased body handling at the connection pool level.
 
 **Current status**: Core infrastructure complete. Full connection pooling (Phases 2-5 of Option D) deferred due to hyper type system complexity.
+
+## Request Pipeline Normalization (Iteration 99)
+
+Streaming WAF scanners are now passed as part of `Http3DispatchDeps` in the HTTP/3 pipeline.
+Body/streaming semantics are intentionally NOT unified between HTTP/1 and HTTP/3 — different stream types,
+flow-control, and backpressure semantics require protocol-specific implementations.
+See `architecture/http_request_pipeline.md` for the body policy stage.

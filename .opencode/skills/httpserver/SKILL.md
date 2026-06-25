@@ -192,3 +192,10 @@ JA4 is computed during TLS handshake in `HttpsConnection::new()`. If unavailable
 1. Check that TLS handshake completed successfully
 2. Verify `extract_client_hello_bytes_from_stream()` returns `Some`
 3. Check that `compute_ja4()` doesn't return `None`
+
+## Request Pipeline Normalization (Iteration 99)
+
+HTTP/1 and HTTP/3 pipelines now share the same stage vocabulary documented in `architecture/http_request_pipeline.md`.
+HTTP/3 dispatch uses `Http3RequestMetadata` (request fields) and `Http3DispatchDeps` (service handles) context structs
+instead of 21 discrete parameters. Both pipelines consume `RequestServices` or narrower handles, never
+`UnifiedServerWorkerState`. Guard tests in `tests/http_request_pipeline_boundary_guard.rs` enforce this boundary.
