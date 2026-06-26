@@ -775,4 +775,263 @@ mod tests {
             assert_eq!(e.exit_code(), 1);
         }
     }
+
+    // --- Output contract tests (Iteration 109) ---
+
+    #[test]
+    fn openapi_outcome_stdout_is_json_only() {
+        let json = r#"{"$schema":"http://json-schema.org/draft-07/schema#","type":"object"}"#;
+        let outcome = OneShotOutcome::OpenApiJson(json.to_string());
+        let display = outcome.display().unwrap();
+        // Must start with JSON structural character
+        assert!(
+            display.starts_with('{') || display.starts_with('['),
+            "OpenAPI output must start with JSON, got: {:?}",
+            &display[..20.min(display.len())]
+        );
+        // Must parse as valid JSON
+        assert!(
+            serde_json::from_str::<serde_json::Value>(&display).is_ok(),
+            "OpenAPI output must be valid JSON"
+        );
+        // Must not contain human preamble
+        assert!(
+            !display.contains("OpenAPI schema"),
+            "OpenAPI output must not contain human preamble 'OpenAPI schema'"
+        );
+        assert!(
+            !display.contains("Exported"),
+            "OpenAPI output must not contain human preamble 'Exported'"
+        );
+    }
+
+    #[test]
+    fn api_spec_outcome_stdout_is_json_only() {
+        let json = r#"{"openapi":"3.0.0","info":{"title":"SynVoid","version":"1.0"}}"#;
+        let outcome = OneShotOutcome::ApiSpecJson(json.to_string());
+        let display = outcome.display().unwrap();
+        assert!(
+            display.starts_with('{') || display.starts_with('['),
+            "API spec output must start with JSON, got: {:?}",
+            &display[..20.min(display.len())]
+        );
+        assert!(
+            serde_json::from_str::<serde_json::Value>(&display).is_ok(),
+            "API spec output must be valid JSON"
+        );
+        assert!(
+            !display.contains("Schema"),
+            "API spec output must not contain human preamble 'Schema'"
+        );
+    }
+
+    #[test]
+    fn hash_token_outcome_stdout_is_hash_only() {
+        let hash = "$2b$12$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ12";
+        let outcome = OneShotOutcome::TokenHash {
+            hash: hash.to_string(),
+        };
+        let display = outcome.display().unwrap();
+        // Exactly one line, no labels
+        assert_eq!(display, hash);
+        assert!(
+            !display.contains("Hash:"),
+            "hash output must not be labeled"
+        );
+        assert!(
+            !display.contains("Token:"),
+            "hash output must not contain 'Token:'"
+        );
+        assert!(!display.contains('\n'), "hash output must be a single line");
+    }
+
+    #[test]
+    fn generated_token_outcome_stdout_is_token_only() {
+        let token = "abcdef0123456789abcdef0123456789";
+        let outcome = OneShotOutcome::TokenGenerated {
+            token: token.to_string(),
+        };
+        let display = outcome.display().unwrap();
+        assert_eq!(display, token);
+        assert!(
+            !display.contains("Token:"),
+            "token output must not be labeled"
+        );
+        assert!(
+            !display.contains('\n'),
+            "token output must be a single line"
+        );
+    }
+
+    #[test]
+    fn new_token_generated_first_line_is_token() {
+        let token = "abcdef0123456789abcdef0123456789";
+        let outcome = OneShotOutcome::NewTokenGenerated {
+            token: token.to_string(),
+            config_path: "config/main.toml".to_string(),
+        };
+        let display = outcome.display().unwrap();
+        let first_line = display.lines().next().unwrap();
+        assert_eq!(
+            first_line, token,
+            "first line of generatenewtoken output must be the token"
+        );
+    }
+
+    #[test]
+    fn new_token_generated_mentions_config_path() {
+        let outcome = OneShotOutcome::NewTokenGenerated {
+            token: "abcdef0123456789abcdef0123456789".to_string(),
+            config_path: "config/main.toml".to_string(),
+        };
+        let display = outcome.display().unwrap();
+        assert!(
+            display.contains("config/main.toml"),
+            "generatenewtoken output must mention config path"
+        );
+    }
+
+    #[test]
+    fn new_token_generated_exit_code_zero() {
+        let outcome = OneShotOutcome::NewTokenGenerated {
+            token: "abcdef0123456789abcdef0123456789".to_string(),
+            config_path: "config/main.toml".to_string(),
+        };
+        assert_eq!(outcome.exit_code(), 0);
+    }
+
+    #[test]
+    fn config_valid_exit_code_is_zero_and_no_contamination() {
+        let outcome = OneShotOutcome::ConfigValid;
+        assert_eq!(outcome.exit_code(), 0);
+        let display = outcome.display().unwrap();
+        assert!(
+            !display.contains("Token"),
+            "configtest output must not contain token text"
+        );
+        assert!(
+            !display.contains("Hash"),
+            "configtest output must not contain hash text"
+        );
+        assert!(
+            !display.starts_with('{'),
+            "configtest output must not be JSON"
+        );
+    }
+
+    #[test]
+    fn regex_safe_display_contains_safe_label() {
+        let outcome = OneShotOutcome::RegexCheck {
+            safe: true,
+            pattern: r"\d+".to_string(),
+            reason: None,
+        };
+        let display = outcome.display().unwrap();
+        assert!(display.contains("Pattern is safe"));
+        assert!(display.contains(r"\d+"));
+    }
+
+    #[test]
+    fn regex_unsafe_display_contains_unsafe_label() {
+        let outcome = OneShotOutcome::RegexCheck {
+            safe: false,
+            pattern: r"(.*+)+".to_string(),
+            reason: Some("nested quantifiers".to_string()),
+        };
+        let display = outcome.display().unwrap();
+        assert!(display.contains("Pattern is UNSAFE"));
+        assert!(display.contains("(.*+)+"));
+    }
+
+    #[test]
+    fn regex_unsafe_with_reason_includes_reason() {
+        let outcome = OneShotOutcome::RegexCheck {
+            safe: false,
+            pattern: r"(.*+)+".to_string(),
+            reason: Some("ReDoS risk: nested quantifiers".to_string()),
+        };
+        let display = outcome.display().unwrap();
+        assert!(display.contains("ReDoS risk: nested quantifiers"));
+    }
+
+    #[test]
+    fn regex_unsafe_without_reason_omits_reason_line() {
+        let outcome = OneShotOutcome::RegexCheck {
+            safe: false,
+            pattern: r"(.*+)+".to_string(),
+            reason: None,
+        };
+        let display = outcome.display().unwrap();
+        assert!(display.contains("Pattern is UNSAFE"));
+        assert!(
+            !display.contains("Reason:"),
+            "regex without reason must not print 'Reason:' line"
+        );
+    }
+
+    #[test]
+    fn regex_exit_codes_are_correct() {
+        let safe = OneShotOutcome::RegexCheck {
+            safe: true,
+            pattern: r"\d+".to_string(),
+            reason: None,
+        };
+        let unsafe_outcome = OneShotOutcome::RegexCheck {
+            safe: false,
+            pattern: r"(.*+)+".to_string(),
+            reason: None,
+        };
+        assert_eq!(safe.exit_code(), 0);
+        assert_eq!(unsafe_outcome.exit_code(), 1);
+    }
+
+    #[test]
+    fn genesis_key_generated_shape() {
+        let outcome = OneShotOutcome::GenesisKeyGenerated {
+            display: "Genesis key generated successfully.\n\
+                      \n\
+                      IMPORTANT: This genesis key is the root of trust for your mesh network.\n\
+                      \t  Store it securely.\n\
+                      \n\
+                      Genesis key (base64): abc123def456\n\
+                      \n\
+                      To use this genesis key, add the following to your config/main.toml:\n\
+                      \n\
+                      \t[mesh.node_identity]\n\
+                      \tgenesis_key_base64 = \"abc123def456\"\n"
+                .to_string(),
+        };
+        let display = outcome.display().unwrap();
+        assert!(display.contains("Genesis key generated successfully"));
+        assert!(display.contains("genesis_key_base64"));
+        assert!(display.contains("abc123def456"));
+    }
+
+    #[test]
+    fn node_info_shape() {
+        let outcome = OneShotOutcome::NodeInfo {
+            display: "Node Information:\n\
+                      \n\
+                      Mesh: NOT enabled"
+                .to_string(),
+        };
+        let display = outcome.display().unwrap();
+        assert!(display.contains("Node Information:"));
+        assert!(display.contains("Mesh: NOT enabled"));
+    }
+
+    #[test]
+    fn node_info_with_mesh_enabled_shape() {
+        let outcome = OneShotOutcome::NodeInfo {
+            display: "Node Information:\n\
+                      \n\
+                      Mesh Role: Global\n\
+                      Node ID: node-1\n\
+                      Router ID: router-1"
+                .to_string(),
+        };
+        let display = outcome.display().unwrap();
+        assert!(display.contains("Node Information:"));
+        assert!(display.contains("Mesh Role:"));
+    }
 }

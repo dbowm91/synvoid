@@ -1,6 +1,6 @@
 # CLI and Supervisor Command Dispatch
 
-This document describes the typed command dispatch architecture introduced in Iteration 101, refined in Iteration 102, extended with a typed result boundary in Iteration 103, separated from handler output in Iteration 104, hardened with a typed error taxonomy in Iteration 105, cleaned up with a runtime-launch boundary in Iteration 106, given a typed one-shot result boundary in Iteration 107, and audited for completeness in Iteration 108.
+This document describes the typed command dispatch architecture introduced in Iteration 101, refined in Iteration 102, extended with a typed result boundary in Iteration 103, separated from handler output in Iteration 104, hardened with a typed error taxonomy in Iteration 105, cleaned up with a runtime-launch boundary in Iteration 106, given a typed one-shot result boundary in Iteration 107, audited for completeness in Iteration 108, and locked down for output compatibility in Iteration 109.
 
 ## Overview
 
@@ -315,6 +315,48 @@ These combinations have dedicated tests to ensure correct behavior:
 
 All `SupervisorControlError` variants currently return exit code 1 for backwards compatibility. Variant-specific exit codes (e.g., connection unavailable → 2, timeout → 3) are intentionally deferred until a compatibility review confirms no downstream tooling depends on the current exit code values.
 
+## Output Compatibility Contracts
+
+Iteration 109 locks down stdout contracts for script-facing commands. Tests in `src/commands/one_shot.rs` enforce these invariants; guard tests in `tests/cli_command_dispatch_guard.rs` prevent regressions.
+
+### Script-Facing Stdout Contracts
+
+| Command | Stdout on Success | Stderr | Machine Contract |
+|---------|------------------|--------|-----------------|
+| `--export-openapi` | JSON only (no preamble) | errors | stdout is parseable JSON |
+| `--export-api-spec` | JSON only (no preamble) | errors | stdout is parseable JSON |
+| `--hash-token` | bcrypt hash only (single line, no label) | errors | stdout is the hash string |
+| `--generatetoken` | hex token only (single line, no label) | errors | stdout is the token string |
+| `--generatenewtoken` | token on first line, then config path and notes | errors + warnings | first line is the token |
+| `--checkregex` | human-readable safe/unsafe text | errors | exit code 0 = safe, 1 = unsafe |
+| `--configtest` | human-readable validation result | errors | exit code 0 = valid, 1 = invalid |
+
+### Human-Facing Commands
+
+| Command | Stdout on Success | Notes |
+|---------|------------------|-------|
+| `--genesis` | Multi-line text with genesis key and config instructions | Contains `genesis_key_base64` |
+| `--show-node-info` | Multi-line text with node information | Contains `Node Information:` |
+| `--export-threat-feed` | Binary/JSON feed data | Requires running supervisor |
+
+### Stderr Policy
+
+Stderr is reserved for errors and warnings. Successful command output goes to stdout only. Logging output (via `tracing`) goes to stderr and is not part of the stdout contract.
+
+### Shape Tests
+
+Output contract tests are in `src/commands/one_shot.rs` under the `#[cfg(test)]` module:
+
+- `openapi_outcome_stdout_is_json_only` — validates JSON-only output for `--export-openapi`
+- `api_spec_outcome_stdout_is_json_only` — validates JSON-only output for `--export-api-spec`
+- `hash_token_outcome_stdout_is_hash_only` — validates hash-only output, no labels
+- `generated_token_outcome_stdout_is_token_only` — validates token-only output, no labels
+- `new_token_generated_first_line_is_token` — validates token-first-line for `--generatenewtoken`
+- `regex_safe_display_contains_safe_label` / `regex_unsafe_display_contains_unsafe_label` — shape tests for regex output
+- `regex_exit_codes_are_correct` — validates exit code contract for `--checkregex`
+- `config_valid_exit_code_is_zero_and_no_contamination` — validates configtest output is not JSON/token/hash
+- `genesis_key_generated_shape` / `node_info_shape` — shape tests for mesh-gated human commands
+
 ## Manual Compatibility Checklist
 
 Commands that can be run without a running supervisor or config:
@@ -358,6 +400,7 @@ synvoid --mesh-agent                              # Expected: mesh agent launch 
 
 ## Guards
 
-- `tests/cli_command_dispatch_guard.rs`: Ensures `src/main.rs` remains thin (<=30 lines), uses `plan_command()`/`execute_command()`, does not contain command implementations, uses typed `CommandPreAction` for restart, does not force TLS=false during restart pre-stop, uses typed supervisor-control exit mapping, restart pre-stop uses the typed adapter, `SupervisorControlOutcome` uses data-bearing variants, `execute.rs` delegates formatting through `outcome.display()`, `supervisor_control.rs` does not use placeholder `ThreatFeedExported { bytes: 0 }`, `SupervisorControlError` has `ConnectionUnavailable` and `Timeout` variants, `supervisor_control.rs` uses `classify_control_error` (not the old `boxed_error_to_control_error`), `execute.rs` does not build runtimes or worker args, `execute.rs` delegates to the runtime-launch boundary, `runtime_launch.rs` exists with planner and executor, planner is pure (no Tokio builder/PID/logging), `commands/mod.rs` exports the runtime-launch types, `one_shot.rs` exists with `execute_one_shot_command`, `OneShotOutcome` and `OneShotError` are exported, `execute.rs` delegates to the one-shot adapter, `execute.rs` does not contain one-shot implementation details (`schema_for!`, `synvoidOpenApi::openapi_json`, `hash_admin_token_with_cost`, `check_regex_complexity`, `GenesisKeyConfig::generate`), `OneShotOutcome` has `exit_code()` and `display()` methods, `OneShotError` implements `Display` and has `exit_code()`.
+- `tests/cli_command_dispatch_guard.rs`: Ensures `src/main.rs` remains thin (<=30 lines), uses `plan_command()`/`execute_command()`, does not contain command implementations, uses typed `CommandPreAction` for restart, does not force TLS=false during restart pre-stop, uses typed supervisor-control exit mapping, restart pre-stop uses the typed adapter, `SupervisorControlOutcome` uses data-bearing variants, `execute.rs` delegates formatting through `outcome.display()`, `supervisor_control.rs` does not use placeholder `ThreatFeedExported { bytes: 0 }`, `SupervisorControlError` has `ConnectionUnavailable` and `Timeout` variants, `supervisor_control.rs` uses `classify_control_error` (not the old `boxed_error_to_control_error`), `execute.rs` does not build runtimes or worker args, `execute.rs` delegates to the runtime-launch boundary, `runtime_launch.rs` exists with planner and executor, planner is pure (no Tokio builder/PID/logging), `commands/mod.rs` exports the runtime-launch types, `one_shot.rs` exists with `execute_one_shot_command`, `OneShotOutcome` and `OneShotError` are exported, `execute.rs` delegates to the one-shot adapter, `execute.rs` does not contain one-shot implementation details (`schema_for!`, `synvoidOpenApi::openapi_json`, `hash_admin_token_with_cost`, `check_regex_complexity`, `GenesisKeyConfig::generate`), `OneShotOutcome` has `exit_code()` and `display()` methods, `OneShotError` implements `Display` and has `exit_code()`. **Iteration 109**: source guards prevent human-preamble text (`OpenAPI schema:`, `Exported OpenAPI`, `API Schema`) in JSON display outputs, prevent labeled token/hash output (`"Hash:"`, `"Token:"`), and verify output contract documentation exists.
 - `tests/root_module_ledger_guard.rs`: Ensures `commands` is recorded in `architecture/root_module_ledger.md`.
 - Iteration 108 added precedence, combination, feature-gate, and cost-clamping tests to `src/commands/plan.rs` unit tests.
+- Iteration 109 added output contract tests to `src/commands/one_shot.rs` (JSON-only, token-only, hash-only, regex shape, configtest contamination, genesis/node-info shape, generatenewtoken first-line).

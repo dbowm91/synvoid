@@ -630,3 +630,94 @@ fn architecture_doc_mentions_precedence_rules() {
         "architecture doc must document precedence rules"
     );
 }
+
+// --- Iteration 109: Output contract guards ---
+
+#[test]
+fn one_shot_json_outputs_are_not_prefixed_with_human_text() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("src/commands/one_shot.rs")).unwrap();
+
+    // JSON outcomes must not produce human-preamble display text
+    assert!(
+        !source.contains("OpenAPI schema:"),
+        "one_shot.rs must not contain 'OpenAPI schema:' preamble in display"
+    );
+    assert!(
+        !source.contains("Exported OpenAPI"),
+        "one_shot.rs must not contain 'Exported OpenAPI' in display"
+    );
+    assert!(
+        !source.contains("API Schema"),
+        "one_shot.rs must not contain 'API Schema' in display"
+    );
+}
+
+#[test]
+fn token_hash_outputs_are_not_labeled() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("src/commands/one_shot.rs")).unwrap();
+
+    // Extract the display() function body to avoid false positives from test assertions
+    let display_start = source
+        .find("pub fn display(")
+        .expect("display function must exist");
+    let display_body = &source[display_start..];
+
+    // Token/hash display must not produce labeled output like "Hash: <value>" or "Token: <value>"
+    assert!(
+        !display_body.contains("Hash: {}"),
+        "display() must not format output as 'Hash: {{}}' — hash must be bare"
+    );
+    assert!(
+        !display_body.contains("Token: {}"),
+        "display() must not format output as 'Token: {{}}' — token must be bare"
+    );
+}
+
+#[test]
+fn output_contract_section_exists_in_architecture_doc() {
+    let root = workspace_root();
+    let source =
+        std::fs::read_to_string(root.join("architecture/cli_supervisor_command_dispatch.md"))
+            .unwrap();
+
+    assert!(
+        source.contains("Output Compatibility Contracts") || source.contains("Output Contract"),
+        "architecture doc must document output compatibility contracts"
+    );
+}
+
+#[test]
+fn output_contract_documents_script_facing_commands() {
+    let root = workspace_root();
+    let source =
+        std::fs::read_to_string(root.join("architecture/cli_supervisor_command_dispatch.md"))
+            .unwrap();
+
+    // Must document each script-facing command's output contract
+    assert!(
+        source.contains("--export-openapi"),
+        "output contract must document --export-openapi"
+    );
+    assert!(
+        source.contains("--export-api-spec"),
+        "output contract must document --export-api-spec"
+    );
+    assert!(
+        source.contains("--hash-token"),
+        "output contract must document --hash-token"
+    );
+    assert!(
+        source.contains("--generatetoken"),
+        "output contract must document --generatetoken"
+    );
+    assert!(
+        source.contains("--generatenewtoken"),
+        "output contract must document --generatenewtoken"
+    );
+    assert!(
+        source.contains("--checkregex"),
+        "output contract must document --checkregex"
+    );
+}
