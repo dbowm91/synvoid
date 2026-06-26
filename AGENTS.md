@@ -62,6 +62,7 @@ cargo test --test background_task_ownership_guard
 cargo test --test worker_mesh_supervision_boundary_guard --features mesh,dns
 cargo test --test cli_command_dispatch_guard
 cargo test --test manual_enforcement_provenance_guard
+cargo test --test unified_server_lifecycle_ownership_guard  # No mem::forget in server/plugin
 ```
 
 ## Critical Security Rules
@@ -69,6 +70,7 @@ cargo test --test manual_enforcement_provenance_guard
 - **Constant-time comparison**: Always use `subtle::ConstantTimeEq` for secrets, keys, MACs, auth tokens.
 - **File permissions**: Set `0o600` on private key files.
 - **Exception**: Simple `!=` is correct in `security_challenge.rs:196` — the expected solution is public, not a secret.
+- **Plugin lifecycle**: Use `PluginRuntimeOwner` to own plugin hot-reload watchers. Never use `std::mem::forget`.
 
 ## Threat-Intel Enforcement Rules
 
@@ -84,7 +86,7 @@ Request-path modules must consume **narrow traits**, not concrete infrastructure
 
 | Layer | May Own/Import |
 |-------|---------------|
-| Composition roots (`src/worker/unified_server/`, `src/supervisor/`) | Concrete `BlockStore`, `ThreatIntelligenceManager`, mesh/DHT/Raft handles, IPC, config |
+| Composition roots (`src/worker/unified_server/`, `src/supervisor/`, `src/server/`) | Concrete `BlockStore`, `ThreatIntelligenceManager`, mesh/DHT/Raft handles, IPC, config |
 | Request path (`src/waf/`, `src/proxy/`, `src/http/`, `crates/synvoid-waf/`, `crates/synvoid-proxy/`) | Narrow traits (`BlockListStore`, `WafProcessor`), config snapshots, request context |
 | Control-plane (`crates/synvoid-mesh/`, `crates/synvoid-block-store/`) | Full infrastructure internals |
 
@@ -123,6 +125,7 @@ Request-path modules must consume **narrow traits**, not concrete infrastructure
 | `src/plugin/instance_pool.rs` | `crates/synvoid-plugin-runtime/src/instance_pool.rs` |
 | `src/config/admin.rs` | `crates/synvoid-config/src/admin.rs` |
 | `src/wasm_pow/` | `crates/synvoid-wasm-pow/` |
+| `src/server/mod.rs` (monolithic) | `src/server/` (split: `startup_plan.rs`, `resources.rs`, `runtime_handles.rs`, `plugin_runtime.rs`) |
 
 ## Module Overrides
 
@@ -179,6 +182,7 @@ The `architecture/` directory (73 docs) and `.opencode/skills/` directory contai
 | `architecture/mesh_transport_lifecycle.md` | 20-task mesh lifecycle state machine |
 | `architecture/worker_task_lifecycle.md` | 40+ background tasks, shutdown ordering |
 | `architecture/supervisor.md` | Process lifecycle, drain, gRPC control plane |
+| `architecture/unified_server_startup.md` | UnifiedServer startup/resources/runtimeHandles split |
 
 ## Known Issues
 

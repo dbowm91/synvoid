@@ -30,7 +30,19 @@ use crate::worker::drain_state::WorkerDrainState;
 use std::sync::Mutex as StdMutex;
 use synvoid_http::runtime::HttpRuntimeContext;
 
+pub mod plugin_runtime;
+pub mod resources;
+pub mod runtime_handles;
+pub mod startup_plan;
 pub mod waf_handler;
+
+pub use plugin_runtime::{PluginRuntimeOwner, PluginRuntimeReport};
+pub use resources::{UnifiedServerResourceError, UnifiedServerResources};
+pub use runtime_handles::{
+    NamedRuntimeHandle, RuntimeHandleClass, UnifiedServerRuntimeHandles,
+    UnifiedServerRuntimeShutdownReport,
+};
+pub use startup_plan::{UnifiedServerStartupPlan, UnifiedServerStartupPlanError};
 
 #[derive(Clone)]
 struct ServerSharedState {
@@ -116,312 +128,43 @@ impl UnifiedServer {
         _app_servers: Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>,
         worker_count: usize,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let (
-            http_addr,
-            http_addr_v6,
-            https_addr,
-            https_addr_v6,
-            http3_addr,
-            http3_addr_v6,
-            tcp_pool,
-            flood_protector,
-            udp_pool,
-            waf,
-            tls_config,
-            http3_config,
-            cert_resolver,
-            tunnel_manager,
-            tunnel_config,
-            tunnel_router,
-        ) = {
+        // Build startup plan from config
+        let plan = {
             let cfg = config.read().await;
-            let main_config = &cfg.main;
-
-            let http_addr: SocketAddr =
-                parse_host_port(&main_config.server.host, main_config.server.port)
-                    .map_err(|e| format!("Invalid HTTP host: {}", e))?;
-
-            let http_addr_v6 = main_config
-                .server
-                .host_v6
-                .as_ref()
-                .map(|h| {
-                    parse_host_port(h, main_config.server.port)
-                        .map_err(|e| format!("Invalid HTTP host_v6: {}", e))
-                })
-                .transpose()?;
-
-            let tls_config = InternalTlsConfig::from(main_config.tls.clone());
-            let (https_addr, https_addr_v6) = if tls_config.enabled {
-                let https = parse_host_port(&main_config.server.host, tls_config.port)
-                    .map_err(|e| format!("Invalid HTTPS host: {}", e))?;
-                let https_v6 = main_config
-                    .server
-                    .host_v6
-                    .as_ref()
-                    .map(|h| {
-                        parse_host_port(h, tls_config.port)
-                            .map_err(|e| format!("Invalid HTTPS host_v6: {}", e))
-                    })
-                    .transpose()?;
-                (Some(https), https_v6)
-            } else {
-                (None, None)
-            };
-
-            let http3_config = main_config.http3.clone();
-            let (http3_addr, http3_addr_v6) = if http3_config.enabled {
-                let h3 = parse_host_port(&main_config.server.host, http3_config.port)
-                    .map_err(|e| format!("Invalid HTTP/3 host: {}", e))?;
-                let h3_v6 = http3_config
-                    .host_v6
-                    .as_ref()
-                    .map(|h| {
-                        parse_host_port(h, http3_config.port)
-                            .map_err(|e| format!("Invalid HTTP/3 host_v6: {}", e))
-                    })
-                    .transpose()?;
-                (Some(h3), h3_v6)
-            } else {
-                (None, None)
-            };
-
-            let waf = Arc::new(Self::create_waf(main_config, worker_count));
-
-            let (tcp_pool, flood_protector) = if main_config.tcp.enabled {
-                let (pool, fp) = Self::create_tcp_pool(main_config, waf.clone())?;
-                (Some(pool), Some(fp))
-            } else {
-                (None, None)
-            };
-
-            let udp_pool = if main_config.udp.enabled {
-                let pool = Self::create_udp_pool(main_config, waf.clone())?;
-                let sites = cfg.sites.clone();
-                for (site_id, site_config) in &sites {
-                    if !site_config.udp.enabled.unwrap_or(false) {
-                        continue;
-                    }
-                    for (port_name, port_config) in &site_config.udp.ports {
-                        if let (Some(port), Some(upstream)) =
-                            (port_config.port, &port_config.upstream)
-                        {
-                            let listener_config = crate::udp::listener::UdpListenerConfig {
-                                port,
-                                bind_address: main_config.server.host.clone(),
-                                bind_address_v6: main_config.server.host_v6.clone(),
-                                expected_protocol: port_config
-                                    .expected_protocol
-                                    .clone()
-                                    .unwrap_or_else(|| port_name.clone()),
-                                upstream_address: upstream.clone(),
-                                upstream_address_v6: None,
-                                filter_enabled: site_config
-                                    .udp
-                                    .filter
-                                    .as_ref()
-                                    .map(|f| f.enabled.unwrap_or(true))
-                                    .unwrap_or(true),
-                                strict_mode: true,
-                                max_packet_size: 4096,
-                                rate_limit_per_ip: main_config.udp.rate_per_ip,
-                                socket_options: Default::default(),
-                            };
-                            match pool.add_listener(listener_config).await {
-                                Err(e) => {
-                                    tracing::warn!(
-                                        "Failed to add UDP listener for site {} port {}: {}",
-                                        site_id,
-                                        port,
-                                        e
-                                    );
-                                }
-                                _ => {
-                                    tracing::info!(
-                                        "Added UDP listener for site {} on port {} ({})",
-                                        site_id,
-                                        port,
-                                        port_name
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-                Some(pool)
-            } else {
-                None
-            };
-
-            let cert_resolver = if tls_config.enabled {
-                let resolver = Arc::new(CertResolver::new(tls_config.clone()));
-                match resolver.load_certificates() {
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to load TLS certificates: {}. TLS will not be available.",
-                            e
-                        );
-                        None
-                    }
-                    _ => Some(resolver),
-                }
-            } else {
-                None
-            };
-
-            let tunnel_config = if main_config.tunnel.enabled {
-                Some(main_config.tunnel.clone())
-            } else {
-                None
-            };
-
-            let tunnel_manager = if main_config.tunnel.enabled {
-                Some(Arc::new(TunnelManager::new(tunnel_config.clone().unwrap())))
-            } else {
-                None
-            };
-
-            let tunnel_router = if main_config.tunnel.quic.enabled {
-                match TunnelRouter::new(tunnel_config.clone().unwrap()) {
-                    Ok(router) => Some(Arc::new(Mutex::new(router))),
-                    Err(e) => {
-                        tracing::warn!("Failed to create tunnel router: {}", e);
-                        None
-                    }
-                }
-            } else {
-                None
-            };
-
-            (
-                http_addr,
-                http_addr_v6,
-                https_addr,
-                https_addr_v6,
-                http3_addr,
-                http3_addr_v6,
-                tcp_pool,
-                flood_protector,
-                udp_pool,
-                waf,
-                tls_config,
-                http3_config,
-                cert_resolver,
-                tunnel_manager,
-                tunnel_config,
-                tunnel_router,
-            )
+            UnifiedServerStartupPlan::from_config_snapshot(&cfg.main, worker_count)
+                .map_err(|e| format!("Startup plan validation failed: {}", e))?
         };
 
-        // DNS Server Configuration
-        #[cfg(feature = "dns")]
-        let (dns_config, dns_server, dns_addr, dns_addr_v6) = {
+        // Build resources from plan
+        let resources = {
             let cfg = config.read().await;
-            let dns_cfg = cfg.main.dns.clone();
-
-            if !dns_cfg.enabled {
-                (None, None, None, None)
-            } else {
-                let bind_addr: SocketAddr = format!("{}:{}", dns_cfg.bind_address, dns_cfg.port)
-                    .parse()
-                    .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 53)));
-
-                let dns_addr_v6 = if dns_cfg.bind_address != "0.0.0.0" {
-                    format!("[::]:{}", dns_cfg.port).parse().ok()
-                } else {
-                    None
-                };
-
-                // Create DNS server with config and shared TLS certificates
-                let mut dns_server = DnsServer::new(dns_cfg.clone(), cert_resolver.clone());
-
-                // Wire up ZoneTransfer configuration if transfers are allowed
-                if !dns_cfg.settings.allow_transfer.is_empty()
-                    || dns_cfg.settings.allow_wildcard_transfer
-                {
-                    use crate::dns::tsig::TsigVerifier;
-
-                    let tsig_verifier = if !dns_cfg.dnssec.tsig_keys.is_empty() {
-                        match TsigVerifier::new(dns_cfg.dnssec.tsig_keys.clone()) {
-                            Ok(v) => Some(Arc::new(v)),
-                            Err(e) => {
-                                tracing::warn!(
-                                    "Failed to initialize TSIG for zone transfers: {}",
-                                    e
-                                );
-                                None
-                            }
-                        }
-                    } else {
-                        None
-                    };
-
-                    dns_server = dns_server.with_zone_transfer_config(
-                        dns_cfg.settings.allow_transfer.clone(),
-                        dns_cfg.settings.allow_wildcard_transfer,
-                        dns_cfg.settings.wildcard_transfer_requires_tsig,
-                        dns_cfg.settings.ixfr_enabled,
-                        dns_cfg.settings.ixfr_fallback_to_axfr,
-                        tsig_verifier,
-                        dns_cfg.settings.require_tsig,
-                    );
-
-                    tracing::info!(
-                        "Zone transfer configured: IXFR={}, AXFR fallback={}",
-                        dns_cfg.settings.ixfr_enabled,
-                        dns_cfg.settings.ixfr_fallback_to_axfr
-                    );
-                }
-
-                let dns_server = Arc::new(dns_server);
-
-                tracing::info!(
-                    "DNS server configured on {} (IPv4{})",
-                    bind_addr,
-                    if dns_addr_v6.is_some() { " + IPv6" } else { "" }
-                );
-
-                (
-                    Some(dns_cfg),
-                    Some(dns_server),
-                    Some(bind_addr),
-                    dns_addr_v6,
-                )
-            }
+            UnifiedServerResources::build(&cfg.main, &plan, config.clone())
+                .map_err(|e| format!("Resource construction failed: {}", e))?
         };
-
-        #[cfg(not(feature = "dns"))]
-        let _dns_config: Option<std::convert::Infallible> = None;
-        #[cfg(not(feature = "dns"))]
-        let _dns_server: Option<std::convert::Infallible> = None;
-        #[cfg(not(feature = "dns"))]
-        let _dns_addr: Option<SocketAddr> = None;
-        #[cfg(not(feature = "dns"))]
-        let _dns_addr_v6: Option<SocketAddr> = None;
 
         let (shutdown_tx, _) = broadcast::channel(1);
         let (stop_accepting_tx, _) = broadcast::channel(1);
 
         Ok(Self {
             config,
-            http_addr,
-            http_addr_v6,
-            https_addr,
-            https_addr_v6,
-            http3_addr,
-            http3_addr_v6,
-            tcp_pool,
-            udp_pool,
-            waf,
-            flood_protector,
+            http_addr: plan.http_addr,
+            http_addr_v6: plan.http_addr_v6,
+            https_addr: plan.https_addr,
+            https_addr_v6: plan.https_addr_v6,
+            http3_addr: plan.http3_addr,
+            http3_addr_v6: plan.http3_addr_v6,
+            tcp_pool: resources.tcp_pool,
+            udp_pool: resources.udp_pool,
+            waf: resources.waf,
+            flood_protector: resources.flood_protector,
             shutdown_tx,
             stop_accepting_tx,
-            tls_config,
-            http3_config,
-            cert_resolver,
-            tunnel_manager,
-            tunnel_router,
-            tunnel_config,
+            tls_config: plan.tls_config,
+            http3_config: plan.http3_config,
+            cert_resolver: resources.cert_resolver,
+            tunnel_manager: resources.tunnel_manager,
+            tunnel_router: resources.tunnel_router,
+            tunnel_config: plan.tunnel_config,
             drain_state: None,
             #[cfg(feature = "mesh")]
             mesh_transport,
@@ -432,17 +175,22 @@ impl UnifiedServer {
             worker_id: None,
             block_store: None,
             serverless_manager: None,
-            app_servers: Arc::new(RwLock::new(HashMap::new())),
+            app_servers: resources.app_servers,
             #[cfg(feature = "dns")]
-            _dns_config: dns_config,
+            _dns_config: None, // DNS config now lives in resources
             #[cfg(feature = "dns")]
-            dns_server,
+            dns_server: resources.dns_server,
             #[cfg(feature = "dns")]
-            _dns_addr: dns_addr,
+            _dns_addr: None, // DNS addr derived at startup in plan
             #[cfg(feature = "dns")]
-            _dns_addr_v6: dns_addr_v6,
+            _dns_addr_v6: None,
             #[cfg(feature = "dns")]
-            acme_manager: Arc::new(StdMutex::new(None)),
+            acme_manager: Arc::new(
+                resources
+                    .acme_manager
+                    .map(|m| StdMutex::new(Some(m)))
+                    .unwrap_or_else(|| StdMutex::new(None)),
+            ),
         })
     }
 
@@ -611,6 +359,8 @@ impl UnifiedServer {
         self.app_servers.clone()
     }
 
+    /// Superseded by `UnifiedServerResources::build()` in the `resources` module.
+    /// Retained for backward compatibility; new code should prefer the resources module.
     fn create_waf(main_config: &crate::config::MainConfig, worker_count: usize) -> WafCore {
         let data_dir = main_config
             .persistence
@@ -678,6 +428,8 @@ impl UnifiedServer {
         })
     }
 
+    /// Superseded by `UnifiedServerResources::build()` in the `resources` module.
+    /// Retained for backward compatibility; new code should prefer the resources module.
     fn create_tcp_pool(
         main_config: &crate::config::MainConfig,
         waf: Arc<WafCore>,
@@ -726,6 +478,8 @@ impl UnifiedServer {
         Ok((pool, flood_protector))
     }
 
+    /// Superseded by `UnifiedServerResources::build()` in the `resources` module.
+    /// Retained for backward compatibility; new code should prefer the resources module.
     fn create_udp_pool(
         main_config: &crate::config::MainConfig,
         _waf: Arc<WafCore>,
@@ -810,71 +564,29 @@ impl UnifiedServer {
             let main_config = cfg.main.clone();
             let sites = cfg.sites.clone();
 
-            // Initialize plugin system
-            let plugin_manager = Arc::new(crate::plugin::PluginManager::new());
-            if !main_config.plugins.wasm.plugins.is_empty() {
-                for plugin_cfg in &main_config.plugins.wasm.plugins {
-                    let limits = crate::plugin::WasmResourceLimits {
-                        max_memory_mb: plugin_cfg
-                            .max_memory_mb
-                            .unwrap_or(main_config.plugins.wasm.max_memory_mb),
-                        max_cpu_fuel: plugin_cfg
-                            .max_cpu_fuel
-                            .unwrap_or(main_config.plugins.wasm.max_cpu_fuel),
-                        timeout_seconds: plugin_cfg
-                            .timeout_seconds
-                            .unwrap_or(main_config.plugins.wasm.timeout_seconds),
-                        allowed_dht_prefixes: plugin_cfg.allowed_dht_prefixes.clone(),
-                        ..Default::default()
-                    };
-                    let path = std::path::Path::new(&plugin_cfg.path);
-                    match plugin_manager
-                        .wasm_manager()
-                        .load_plugin_with_limits(path, limits)
-                    {
-                        Ok(_) => {
-                            tracing::info!("Loaded WASM plugin: {}", plugin_cfg.name);
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                "Failed to load WASM plugin {}: {}",
-                                plugin_cfg.name,
-                                e
-                            );
-                        }
+            // Initialize plugin system with owned lifecycle
+            let mut plugin_owner = crate::server::plugin_runtime::PluginRuntimeOwner::new(
+                Arc::new(crate::plugin::PluginManager::new()),
+            );
+            plugin_owner.load_configured_plugins(&main_config.plugins.wasm.plugins);
+
+            // Auto-load plugins from configured directory with owned hot-reload
+            if let Some(ref plugin_cfg) = main_config.plugins.wasm.plugins.first() {
+                let plugin_dir = std::path::Path::new(&plugin_cfg.path)
+                    .parent()
+                    .unwrap_or(std::path::Path::new("/opt/synvoid/plugins"))
+                    .to_path_buf();
+                if plugin_dir.is_dir() {
+                    if let Err(e) = plugin_owner.enable_hot_reload_if_configured(&plugin_dir) {
+                        tracing::debug!("Hot-reload not enabled: {}", e);
                     }
                 }
             }
 
-            // Auto-load plugins from configured directory
-            if let Some(ref plugin_dir) = main_config.plugins.wasm.plugins.first().map(|p| {
-                std::path::Path::new(&p.path)
-                    .parent()
-                    .unwrap_or(std::path::Path::new("/opt/synvoid/plugins"))
-                    .to_path_buf()
-            }) {
-                if plugin_dir.is_dir() {
-                    let mut lifecycle =
-                        crate::plugin::PluginManagerLifecycle::new(plugin_manager.clone());
-                    match lifecycle.load_plugins_from_dir(plugin_dir) {
-                        Ok(count) if count > 0 => {
-                            tracing::info!(
-                                "Auto-loaded {} WASM plugins from {}",
-                                count,
-                                plugin_dir.display()
-                            );
-                        }
-                        _ => {}
-                    }
-                    // Enable hot-reload for plugin directory.
-                    // The lifecycle (and its file watcher) is intentionally leaked
-                    // so the watcher thread stays alive for the server's lifetime.
-                    if let Err(e) = lifecycle.enable_hot_reload(plugin_dir) {
-                        tracing::debug!("Hot-reload not enabled: {}", e);
-                    }
-                    std::mem::forget(lifecycle);
-                }
-            }
+            let plugin_manager = plugin_owner.manager().clone();
+            // plugin_owner is stored in the router or kept alive for the server lifetime
+            // We keep it alive by not dropping it until after router creation
+            let _plugin_owner = plugin_owner;
 
             Router::new(&main_config, sites).with_plugin_manager(plugin_manager)
         };

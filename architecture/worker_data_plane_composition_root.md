@@ -267,3 +267,18 @@ Request dispatch consumes `RequestServices` or narrower handles. Neither protoco
 
 Body and streaming behavior is intentionally NOT unified between HTTP/1 and HTTP/3. Different stream types,
 flow-control, and backpressure semantics require protocol-specific implementations.
+
+## UnifiedServer Startup Split (Phase 2)
+
+The `src/server/` module was split into focused submodules to separate validation,
+resource construction, and runtime handle ownership:
+
+| Submodule | Role |
+|-----------|------|
+| `startup_plan.rs` | Pure address parsing, rate-limit scaling, feature validation |
+| `resources.rs` | Constructed WAF, TCP/UDP pools, TLS, tunnels, DNS |
+| `runtime_handles.rs` | Named task handles with class-based shutdown |
+| `plugin_runtime.rs` | Owned plugin lifecycle (replaces `mem::forget`) |
+
+Rule: No long-lived task or file-watcher handle may exist without an owner.
+The lifecycle guard test enforces no `std::mem::forget` in server/plugin code.
