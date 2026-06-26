@@ -61,7 +61,7 @@ impl UdpProtocol {
     }
 }
 
-impl crate::filter::Protocol for UdpProtocol {
+impl synvoid_filter::Protocol for UdpProtocol {
     fn as_str(&self) -> &str {
         UdpProtocol::as_str(self)
     }

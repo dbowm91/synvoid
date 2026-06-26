@@ -1,6 +1,6 @@
 use crate::config::site::ProxyUpstreamConfig;
-use crate::filter::{BaseFilterConfig, ProtocolFilterCore};
 use crate::tcp::protocol::Protocol;
+use synvoid_filter::{BaseFilterConfig, ProtocolFilterCore};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FilterAction {
@@ -9,7 +9,7 @@ pub enum FilterAction {
     Stall,
 }
 
-impl crate::filter::FilterAction for FilterAction {
+impl synvoid_filter::FilterAction for FilterAction {
     fn is_allow(&self) -> bool {
         matches!(self, FilterAction::Allow)
     }

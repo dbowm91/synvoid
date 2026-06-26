@@ -52,6 +52,7 @@ These enforce architectural invariants. Run them after touching relevant areas:
 cargo test --test data_plane_composition_boundary_guard  # Request-path vs composition-root
 cargo test --test root_facade_boundary_guard             # Domain crates can't import root
 cargo test --test root_module_ledger_guard               # Root modules must be in ledger
+cargo test --test root_dependency_ownership_guard         # Root deps must have ownership entries
 cargo test --test mesh_id_boundary_guard                 # Mesh-ID blocks: admin only, not WAF
 cargo test --test threat_intel_boundary_guard            # Threat-intel consumer enforcement
 cargo test --test threat_intel_consumer_actionability_guard

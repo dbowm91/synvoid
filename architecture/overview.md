@@ -162,7 +162,7 @@ Client ──► TLS Termination ──► HTTP Server ──► WAF Pipeline �
 | [WAF](./waf.md) | Core WAF engine, attack detection, rate limiting | [`waf.md`](./waf.md) | [`waf_deep_dive.md`](./waf_deep_dive.md) |
 | [Auth](./auth.md) | User authentication, sessions, brute-force protection | [`auth.md`](./auth.md) | — |
 | [Challenge](./challenge.md) | Browser verification (PoW, CSS challenges, honeypot) | [`challenge.md`](./challenge.md) | — |
-| [CAPTCHA](./captcha.md) | Text-based CAPTCHA generation/verification | [`captcha.md`](./captcha.md) | — |
+| ~~[CAPTCHA](./captcha.md)~~ | ~~Text-based CAPTCHA generation/verification~~ — **Removed** (dead code, zero consumers) | — | — |
 | [Block Store](./block_store.md) | Persistent IP blocklist with LRU eviction | [`block_store.md`](./block_store.md) | — |
 | [Tarpit](./tarpit.md) | Anti-scraping tarpit (Markov chain HTML) | [`tarpit.md`](./tarpit.md) | — |
 | [Honeypot](./honeypot.md) | Port-based + URL honeypots, threat intel extraction | [`honeypot.md`](./honeypot.md) | — |

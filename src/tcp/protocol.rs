@@ -175,7 +175,7 @@ impl Protocol {
     }
 }
 
-impl crate::filter::Protocol for Protocol {
+impl synvoid_filter::Protocol for Protocol {
     fn as_str(&self) -> &str {
         Protocol::as_str(self)
     }

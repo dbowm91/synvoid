@@ -1,0 +1,7 @@
+[package]
+name = "synvoid-filter"
+version = "0.1.0"
+edition = "2021"
+description = "Protocol filtering traits and generic filter engine for TCP/UDP proxy"
+
+[dependencies]

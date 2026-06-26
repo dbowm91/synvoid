@@ -46,7 +46,7 @@ fastcgi_streaming = []  # Enable streaming FastCGI response handling
 wasmtime = { git = "https://github.com/bytecodealliance/wasmtime", tag = "v42.0.2" }
 
 [workspace]
-members = [".", "pqc", "crates/synvoid-wasm-pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example", "fuzz", "crates/synvoid-utils", "crates/synvoid-config", "crates/synvoid-core", "crates/synvoid-challenge", "crates/synvoid-testkit", "crates/synvoid-tarpit", "crates/synvoid-waf", "crates/synvoid-proxy-cache", "crates/synvoid-tls", "crates/synvoid-plugin-runtime", "crates/synvoid-http-client", "crates/synvoid-serverless", "crates/synvoid-geoip", "crates/synvoid-integrity", "crates/synvoid-upstream", "crates/synvoid-tunnel", "crates/synvoid-proxy", "crates/synvoid-http", "crates/synvoid-http3", "crates/synvoid-dns", "crates/synvoid-admin", "crates/synvoid-mesh", "crates/synvoid-app-handlers", "crates/synvoid-platform", "crates/synvoid-cli", "crates/synvoid-metrics", "crates/synvoid-theme", "crates/synvoid-icmp-filter", "crates/synvoid-honeypot", "crates/synvoid-upload", "crates/synvoid-ipc", "crates/synvoid-block-store", "crates/synvoid-app-server", "crates/synvoid-vpn-client", "crates/synvoid-static-files"]
+members = [".", "pqc", "crates/synvoid-wasm-pow", "admin-ui", "examples/dynamic-plugin-example", "examples/embedded-app-example", "fuzz", "crates/synvoid-utils", "crates/synvoid-config", "crates/synvoid-core", "crates/synvoid-challenge", "crates/synvoid-testkit", "crates/synvoid-tarpit", "crates/synvoid-waf", "crates/synvoid-proxy-cache", "crates/synvoid-tls", "crates/synvoid-plugin-runtime", "crates/synvoid-http-client", "crates/synvoid-serverless", "crates/synvoid-geoip", "crates/synvoid-integrity", "crates/synvoid-upstream", "crates/synvoid-tunnel", "crates/synvoid-proxy", "crates/synvoid-http", "crates/synvoid-http3", "crates/synvoid-dns", "crates/synvoid-admin", "crates/synvoid-mesh", "crates/synvoid-app-handlers", "crates/synvoid-platform", "crates/synvoid-cli", "crates/synvoid-metrics", "crates/synvoid-theme", "crates/synvoid-icmp-filter", "crates/synvoid-honeypot", "crates/synvoid-upload", "crates/synvoid-ipc", "crates/synvoid-block-store", "crates/synvoid-app-server", "crates/synvoid-vpn-client", "crates/synvoid-static-files", "crates/synvoid-filter"]
 
 [workspace.dependencies]
 tracing-subscriber = "0.3"
@@ -57,6 +57,7 @@ tokio = { version = "1", features = ["full"] }
 tower = { version = "0.5", features = ["util"] }
 axum = "0.8"
 sha2 = "0.10"
+synvoid-filter = { path = "crates/synvoid-filter" }
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
@@ -205,6 +206,7 @@ synvoid-block-store = { path = "crates/synvoid-block-store" }
 synvoid-app-server = { path = "crates/synvoid-app-server" }
 synvoid-vpn-client = { path = "crates/synvoid-vpn-client" }
 synvoid-static-files = { path = "crates/synvoid-static-files" }
+synvoid-filter = { path = "crates/synvoid-filter" }
 
 # WASM support for plugins
 # wasmtime: moved to synvoid-plugin-runtime (see plans/root_dependency_ownership.md)
@@ -218,8 +220,6 @@ url = "2"
 # Unix domain socket support for HTTP client
 # hyperlocal: moved to synvoid-http-client (see plans/root_dependency_ownership.md)
 
-# Syslog support
-syslog = "6"
 
 # systemd readiness notification
 # sd-notify: removed (see plans/root_dependency_ownership.md)

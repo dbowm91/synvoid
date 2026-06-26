@@ -2,7 +2,7 @@
 
 ## 1. Purpose and Responsibility
 
-The Filter module (`src/filter/`) provides a **generic, type-parameterized protocol filtering framework** with allowlist/denylist support and strict mode. Used for ICMP filtering and HTTP listener protocol enforcement.
+The Filter module is now the `synvoid-filter` crate (`crates/synvoid-filter/`). The root `src/filter/` path is a thin facade; the canonical implementation lives in the dedicated crate. It provides a **generic, type-parameterized protocol filtering framework** with allowlist/denylist support and strict mode. Used for ICMP filtering and HTTP listener protocol enforcement.
 
 **Core Responsibilities:**
 - Generic protocol matching with type parameters

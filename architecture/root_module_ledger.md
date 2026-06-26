@@ -27,7 +27,7 @@ Status vocabulary:
 | auth | Authentication, session management, CSRF, brute-force lockout | split_required | potential synvoid-auth crate | real implementation (1135 lines) | Only depends on `DrainFlag`; good extraction candidate. Verify no circular deps before moving |
 | block_store | Block-store re-exports | facade_existing_crate | synvoid-block-store / synvoid-core | pure re-export facade | Prefer `synvoid_block_store` in domain crates |
 | buffer | Buffer pool re-export from synvoid-utils | facade_existing_crate | synvoid-utils | inline re-export | Prefer `synvoid_utils::buffer` in domain crates |
-| captcha | SVG captcha generation and verification | split_required | potential synvoid-captcha or root | real implementation (197 lines) | Self-contained; depends on synvoid-theme. Good extraction candidate |
+| captcha | SVG captcha generation and verification | legacy_or_stale | none | removed (dead code, zero consumers) | Module removed; CaptchaPageTemplate in synvoid-theme is independent |
 | cgi | CGI handler | facade_existing_crate | synvoid-app-handlers | pure re-export facade | Prefer `synvoid_app_handlers::cgi` in domain crates |
 | challenge | Challenge orchestration (PoW, CSS, honeypot, mesh-PoW) | split_required | root app crate (orchestration) + synvoid-challenge (primitives) | hybrid — re-exports from synvoid-challenge + local ChallengeManager | Local orchestration depends on root infra; primitives already extracted |
 | common | Panic handler setup | keep_app_root | root app crate | small utility (53 lines) | Process-level panic hook; root-owned |
@@ -35,7 +35,7 @@ Status vocabulary:
 | dns | DNS server with DNSSEC (feature-gated) | facade_existing_crate | synvoid-dns | feature-gated re-export | Prefer `synvoid_dns` in domain crates |
 | drain | Connection drain state for graceful shutdown | keep_app_root | root app crate | real implementation (94 lines) | Process-level shutdown coordination; root-owned |
 | fastcgi | FastCGI handler | facade_existing_crate | synvoid-app-handlers | pure re-export facade | Prefer `synvoid_app_handlers::fastcgi` in domain crates |
-| filter | Protocol filtering traits and config | split_required | root app crate or potential synvoid-filter | real implementation (159 lines) | Generic protocol filtering used by TCP/UDP proxy; investigate if shared with synvoid-proxy |
+| filter | Protocol filtering traits and config | facade_existing_crate | synvoid-filter | pure re-export facade | Prefer `synvoid_filter` in domain crates |
 | geoip | GeoIP lookups | facade_existing_crate | synvoid-geoip | root re-export (`pub use`) | Prefer `synvoid_geoip` in domain crates |
 | honeypot_port | Honeypot port detection | facade_existing_crate | synvoid-honeypot | pure re-export facade | Prefer `synvoid_honeypot` in domain crates |
 | http | HTTP server modules (43 submodules) | split_required | root app crate (composition) + synvoid-http (shared) | mixed — submodule hub with real root-owned code | Large module; inventory submodules for domain types that could move |
@@ -46,7 +46,7 @@ Status vocabulary:
 | listener | Connection listener | facade_existing_crate | synvoid-http | pure re-export facade | Prefer `synvoid_http::listener` in domain crates |
 | location_matcher | URL location matching | facade_existing_crate | synvoid-proxy | pure re-export facade | Prefer `synvoid_proxy::location_matcher` in domain crates |
 | log_controller | Log controller | keep_app_root | root app crate | log management | Process-level logging; root-owned |
-| logging | Syslog configuration | split_required | potential config/syslog module or root | real implementation (205 lines) | Self-contained syslog types; could merge into synvoid-config |
+| logging | Syslog configuration | legacy_or_stale | none | removed (dead code, zero consumers) | Module removed; config::logging in synvoid-config is the active logging config |
 | mesh | Mesh networking | facade_existing_crate | synvoid-mesh | pure re-export facade | Prefer `synvoid_mesh` in domain crates; feature-gated `mesh` |
 | metrics | Metrics re-exports | facade_existing_crate | synvoid-metrics | facade with local tests — glob re-export plus root-level test module | Prefer `synvoid_metrics` in domain crates |
 | mime | MIME type handling | facade_existing_crate | synvoid-app-handlers | pure re-export facade | Prefer `synvoid_app_handlers::mime` in domain crates |

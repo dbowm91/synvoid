@@ -1,8 +1,10 @@
 # Logging Architecture
 
+> **Note:** This module has been removed. It was dead code with zero consumers. The contents below are kept for historical reference only.
+
 ## 1. Purpose and Responsibility
 
-The Logging module (`src/logging/`) provides **syslog integration** with configurable facility, level filtering, and platform-specific initialization (Unix syslog, non-Unix tracing fallback).
+The Logging module (`src/logging/`) provided **syslog integration** with configurable facility, level filtering, and platform-specific initialization (Unix syslog, non-Unix tracing fallback).
 
 **Core Responsibilities:**
 - Syslog integration for system-level logging

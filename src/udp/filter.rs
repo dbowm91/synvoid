@@ -1,6 +1,6 @@
-use crate::filter::{BaseFilterConfig, ProtocolFilterCore};
 use crate::udp::protocol::UdpProtocol;
 use std::collections::HashMap;
+use synvoid_filter::{BaseFilterConfig, ProtocolFilterCore};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UdpFilterAction {
@@ -10,7 +10,7 @@ pub enum UdpFilterAction {
     Challenge,
 }
 
-impl crate::filter::FilterAction for UdpFilterAction {
+impl synvoid_filter::FilterAction for UdpFilterAction {
     fn is_allow(&self) -> bool {
         matches!(self, UdpFilterAction::Allow)
     }

@@ -57,13 +57,11 @@ pub mod worker;
 // or adapters and need targeted extraction plans before becoming pure facades.
 pub mod admin;
 pub mod auth;
-pub mod captcha;
 pub mod challenge;
 pub mod filter;
 pub mod http;
 pub mod http_client;
 pub mod listener;
-pub mod logging;
 pub mod platform;
 pub mod plugin;
 pub mod tarpit;
