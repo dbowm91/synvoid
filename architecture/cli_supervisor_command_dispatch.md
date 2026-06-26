@@ -1,6 +1,6 @@
 # CLI and Supervisor Command Dispatch
 
-This document describes the typed command dispatch architecture introduced in Iteration 101, refined in Iteration 102, and extended with a typed result boundary in Iteration 103.
+This document describes the typed command dispatch architecture introduced in Iteration 101, refined in Iteration 102, extended with a typed result boundary in Iteration 103, and separated from handler output in Iteration 104.
 
 ## Overview
 
@@ -36,12 +36,29 @@ The `plan_command()` function is pure — it validates mutual exclusivity of wor
 
 Owned by: `src/commands/supervisor_control.rs`
 
-Converts typed `SupervisorControlCommand` variants into existing handler calls and returns structured outcomes:
+Converts typed `SupervisorControlCommand` variants into data-returning handler calls and returns structured outcomes:
 
-- `execute_supervisor_control_command()`: Dispatches to `handle_status`, `handle_stop`, `handle_rehash`, or `handle_export_threat_feed` and wraps results in `SupervisorControlOutcome` / `SupervisorControlError`.
+- `execute_supervisor_control_command()`: Dispatches to `handle_status_data`, `handle_stop_data`, `handle_rehash_data`, or `handle_export_threat_feed_data` and wraps results in `SupervisorControlOutcome` / `SupervisorControlError`.
 - `execute_restart_pre_stop()`: Reuses the same stop adapter for restart pre-actions, ensuring no duplicated logic.
-- `SupervisorControlOutcome`: Typed success variants (`StatusDisplayed`, `StopRequested`, `RehashRequested`, `ThreatFeedExported`, `RestartPreStopRequested`) with centralized `exit_code()` mapping.
+- `SupervisorControlOutcome`: Data-bearing success variants with centralized `exit_code()` and `display()` mapping:
+  - `Status(SupervisorStatusDisplay)` — carries formatted status text
+  - `Stop(StopOutcome)` — carries acknowledged/shutdown_confirmed/timed_out flags
+  - `Rehash(RehashOutcome)` — carries acknowledged flag
+  - `ThreatFeedExported(ThreatFeedExportSummary)` — carries byte count and optional record count
+  - `RestartPreStopRequested` — silent pre-action
 - `SupervisorControlError`: Typed error variants (`ConnectionFailed`, `RequestFailed`, `UnsupportedFeature`, `Io`) with centralized `exit_code()` mapping.
+
+### Handler Data Layer
+
+Owned by: `src/supervisor/cli_commands.rs`
+
+Handlers expose data-returning `_data` variants alongside print-based compatibility wrappers:
+
+- `handle_status_data()` → `SupervisorStatusDisplay` — formats status into a string
+- `handle_stop_data()` → `StopOutcome` — returns structured stop result
+- `handle_rehash_data()` → `RehashOutcome` — returns structured rehash result
+- `handle_export_threat_feed_data()` → `ThreatFeedExportSummary` — returns real byte metadata
+- `handle_export_threat_feed()` — legacy print-based wrapper (preserved for backward compatibility)
 
 ### Execution Layer
 
@@ -50,7 +67,7 @@ Owned by: `src/commands/execute.rs`
 Executes the planned command by calling into existing runtime/supervisor modules:
 
 - `execute_one_shot()`: Config validation, OpenAPI export, genesis key generation, token operations, regex check.
-- `execute_supervisor_control()`: Delegates to the typed adapter, maps outcomes/errors to exit codes.
+- `execute_supervisor_control()`: Delegates to the typed adapter, maps outcomes/errors to exit codes, prints `outcome.display()` when non-None.
 - `execute_runtime()`: Runtime launch via existing `run_supervisor_mode()`, `run_cpu_worker()`, etc.
 
 Pre-actions (e.g., restart pre-stop) are executed before the main plan dispatch using the same typed adapter as normal stop.
@@ -68,11 +85,11 @@ Pre-actions (e.g., restart pre-stop) are executed before the main plan dispatch 
 | `--generatenewtoken` | OneShot | `handle_generatenewtoken()` |
 | `--hash-token` | OneShot | `hash_admin_token_with_cost()` |
 | `--checkregex` | OneShot | `check_regex_complexity()` |
-| `--status` | SupervisorControl | `handle_status()` via typed adapter |
-| `--stop` | SupervisorControl | `handle_stop()` via typed adapter |
+| `--status` | SupervisorControl | `handle_status_data()` via typed adapter |
+| `--stop` | SupervisorControl | `handle_stop_data()` via typed adapter |
 | `--restart` | Pre-action | `execute_restart_pre_stop()` + sleep → Runtime |
-| `--rehash` | SupervisorControl | `handle_rehash()` via typed adapter |
-| `--export-threat-feed` | SupervisorControl | `handle_export_threat_feed()` via typed adapter |
+| `--rehash` | SupervisorControl | `handle_rehash_data()` via typed adapter |
+| `--export-threat-feed` | SupervisorControl | `handle_export_threat_feed_data()` via typed adapter |
 | `--cpu-worker` | Runtime | `run_cpu_worker()` |
 | `--unified-server-worker` | Runtime | `run_unified_server_worker()` |
 | `--mesh-agent` | Runtime | `run_mesh_agent_mode()` |
@@ -99,5 +116,5 @@ pub enum CommandPreAction {
 
 ## Guards
 
-- `tests/cli_command_dispatch_guard.rs`: Ensures `src/main.rs` remains thin (<=30 lines), uses `plan_command()`/`execute_command()`, does not contain command implementations, uses typed `CommandPreAction` for restart, does not force TLS=false during restart pre-stop, uses typed supervisor-control exit mapping, and restart pre-stop uses the typed adapter.
+- `tests/cli_command_dispatch_guard.rs`: Ensures `src/main.rs` remains thin (<=30 lines), uses `plan_command()`/`execute_command()`, does not contain command implementations, uses typed `CommandPreAction` for restart, does not force TLS=false during restart pre-stop, uses typed supervisor-control exit mapping, restart pre-stop uses the typed adapter, `SupervisorControlOutcome` uses data-bearing variants, `execute.rs` delegates formatting through `outcome.display()`, and `supervisor_control.rs` does not use placeholder `ThreatFeedExported { bytes: 0 }`.
 - `tests/root_module_ledger_guard.rs`: Ensures `commands` is recorded in `architecture/root_module_ledger.md`.

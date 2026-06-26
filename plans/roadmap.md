@@ -9,6 +9,7 @@ Recent iterations moved SynVoid out of the old `src/main.rs` command bucket shap
 - Iteration 101 extracted typed command planning and execution into `src/commands/{plan,execute}.rs`.
 - Iteration 102 corrected restart planning and hash-token error semantics.
 - Iteration 103 introduced `src/commands/supervisor_control.rs` with typed `SupervisorControlOutcome` / `SupervisorControlError` and centralized supervisor-control exit-code mapping.
+- Iteration 104 separated handler output from data — handlers now expose `_data` variants returning structured data, `SupervisorControlOutcome` carries data-bearing variants, formatting is centralized in `display()`, and threat-feed export uses real byte metadata instead of a placeholder.
 
 The command line is now structurally cleaner, but this line is not fully finished. The remaining work is to remove the last ad-hoc output/error/runtime seams while preserving CLI compatibility and supervisor IPC semantics.
 
@@ -20,13 +21,14 @@ Good state:
 - command classification is typed and mostly pure.
 - restart is a typed pre-action preserving control address and TLS.
 - missing `--hash-token` values have a dedicated planner error.
-- supervisor-control commands flow through a typed adapter.
-- guards prevent command implementation logic from returning to `main.rs`.
+- supervisor-control commands flow through a typed adapter with data-bearing outcomes.
+- handlers expose `_data` variants returning structured data.
+- formatting is centralized in `SupervisorControlOutcome::display()`.
+- threat-feed export returns real byte metadata via `ThreatFeedExportSummary`.
+- guards prevent command implementation logic from returning to `main.rs` and protect against placeholder metadata.
 
 Remaining weak spots:
 
-- supervisor handlers still mostly print internally and return generic errors;
-- `SupervisorControlOutcome::ThreatFeedExported { bytes }` uses a placeholder byte count;
 - the typed error taxonomy still collapses most failures into `RequestFailed(String)`;
 - runtime launch still builds Tokio runtimes, worker args, panic handlers, PID handling, and runtime calls directly inside `execute.rs`;
 - one-shot commands still print and return `i32` directly;
@@ -36,18 +38,19 @@ Remaining weak spots:
 
 The order below is deliberate. First separate supervisor handler data from printing, then harden errors, then move runtime launch and one-shot command paths behind typed result boundaries, and finally audit the complete command-line surface.
 
-## Phase 104 — Supervisor Handler Output/Data Separation
+## Phase 104 — Supervisor Handler Output/Data Separation ✅
 
 Make supervisor-control handlers return structured data where practical, with formatting owned by `src/commands/supervisor_control.rs` or a small display helper.
 
 Primary goal: stop the typed supervisor-control boundary from being only a shell around internally-printing handlers.
 
-Expected outcomes:
+**Completed (Iteration 104):**
 
-- status, stop, rehash, and threat-feed export have typed data-bearing outcomes where practical;
-- threat-feed export returns a real byte count or explicit metadata instead of `bytes: 0`;
-- existing user-facing text remains compatible unless explicitly improved and tested;
-- no supervisor IPC wire semantics change.
+- status, stop, rehash, and threat-feed export have typed data-bearing outcomes (`SupervisorStatusDisplay`, `StopOutcome`, `RehashOutcome`, `ThreatFeedExportSummary`);
+- threat-feed export returns a real byte count via `ThreatFeedExportSummary::Written { bytes, records }` instead of `bytes: 0`;
+- existing user-facing text remains compatible — output is unchanged, just produced via `outcome.display()` instead of handler-internal `println!`;
+- no supervisor IPC wire semantics changed;
+- guards protect against placeholder metadata and `main.rs` regressions.
 
 ## Phase 105 — Control-Plane Error Taxonomy Hardening
 

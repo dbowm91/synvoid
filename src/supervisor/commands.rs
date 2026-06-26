@@ -69,10 +69,12 @@ pub async fn handle_supervisor_command(
 }
 
 pub use crate::supervisor::cli_commands::{
-    handle_configtest, handle_generatenewtoken, handle_generatetoken, handle_rehash, handle_status,
-    handle_stop,
+    handle_configtest, handle_generatenewtoken, handle_generatetoken, handle_rehash,
+    handle_rehash_data, handle_status, handle_status_data, handle_stop, handle_stop_data,
 };
 pub use crate::supervisor::ipc::handle_worker_connection_single;
 
 #[cfg(feature = "mesh")]
-pub use crate::supervisor::cli_commands::handle_export_threat_feed;
+pub use crate::supervisor::cli_commands::{
+    handle_export_threat_feed, handle_export_threat_feed_data,
+};

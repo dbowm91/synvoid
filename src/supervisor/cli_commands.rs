@@ -9,10 +9,14 @@ use synvoid_mesh::protocol::MeshMessageSigner;
 #[cfg(feature = "mesh")]
 use synvoid_mesh::threat_intel::ThreatIntelligenceManager;
 
-pub fn handle_status(
+#[cfg(feature = "mesh")]
+use crate::commands::supervisor_control::ThreatFeedExportSummary;
+use crate::commands::supervisor_control::{RehashOutcome, StopOutcome, SupervisorStatusDisplay};
+
+pub fn handle_status_data(
     control_addr: Option<String>,
     use_tls: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<SupervisorStatusDisplay, Box<dyn std::error::Error>> {
     let pid_manager = PidFileManager::new();
 
     if let Some(content) = pid_manager.read_pid() {
@@ -22,34 +26,38 @@ pub fn handle_status(
 
             match client.get_status() {
                 Ok(status) => {
-                    println!("synvoid Status");
-                    println!("==============");
-                    println!("Supervisor PID: {}", status.supervisor_pid);
-                    println!("Version: {}", status.version);
-                    println!("Uptime: {} seconds", status.uptime_secs);
-                    println!();
-                    println!("Workers:");
-                    println!(
-                        "  {:<4} {:<8} {:<6} {:<10} {:<12} {:<10}",
+                    let mut text = String::new();
+                    text.push_str("synvoid Status\n");
+                    text.push_str("==============\n");
+                    text.push_str(&format!("Supervisor PID: {}\n", status.supervisor_pid));
+                    text.push_str(&format!("Version: {}\n", status.version));
+                    text.push_str(&format!("Uptime: {} seconds\n", status.uptime_secs));
+                    text.push('\n');
+                    text.push_str("Workers:\n");
+                    text.push_str(&format!(
+                        "  {:<4} {:<8} {:<6} {:<10} {:<12} {:<10}\n",
                         "ID", "PID", "Port", "Status", "Requests", "Blocked"
-                    );
-                    println!("  {}", "-".repeat(60));
+                    ));
+                    text.push_str(&format!("  {}\n", "-".repeat(60)));
                     for worker in &status.workers {
-                        println!(
-                            "  {:<4} {:<8} {:<6} {:<10} {:<12} {:<10}",
+                        text.push_str(&format!(
+                            "  {:<4} {:<8} {:<6} {:<10} {:<12} {:<10}\n",
                             worker.id,
                             worker.pid,
                             worker.port,
                             worker.status,
                             worker.requests,
                             worker.blocked
-                        );
+                        ));
                     }
-                    println!();
-                    println!("Stats (last hour):");
-                    println!("  Total Requests:    {}", status.stats.total_requests);
-                    println!(
-                        "  Blocked:           {} ({:.1}%)",
+                    text.push('\n');
+                    text.push_str("Stats (last hour):\n");
+                    text.push_str(&format!(
+                        "  Total Requests:    {}\n",
+                        status.stats.total_requests
+                    ));
+                    text.push_str(&format!(
+                        "  Blocked:           {} ({:.1}%)\n",
                         status.stats.blocked_last_hour,
                         if status.stats.total_requests > 0 {
                             (status.stats.blocked_last_hour as f64
@@ -58,40 +66,61 @@ pub fn handle_status(
                         } else {
                             0.0
                         }
-                    );
-                    println!("  Challenged:        {}", status.stats.challenged_last_hour);
-                    println!("  Proxied:           {}", status.stats.proxied_last_hour);
-                    println!();
-                    println!("Threat Summary:");
-                    println!("  Active Blocks:     {}", status.stats.active_blocks);
-                    println!(
-                        "  Critical IPs:      {}",
+                    ));
+                    text.push_str(&format!(
+                        "  Challenged:        {}\n",
+                        status.stats.challenged_last_hour
+                    ));
+                    text.push_str(&format!(
+                        "  Proxied:           {}\n",
+                        status.stats.proxied_last_hour
+                    ));
+                    text.push('\n');
+                    text.push_str("Threat Summary:\n");
+                    text.push_str(&format!(
+                        "  Active Blocks:     {}\n",
+                        status.stats.active_blocks
+                    ));
+                    text.push_str(&format!(
+                        "  Critical IPs:      {}\n",
                         status.threat_summary.critical_ips
-                    );
-                    println!("  Elevated IPs:     {}", status.threat_summary.elevated_ips);
+                    ));
+                    text.push_str(&format!(
+                        "  Elevated IPs:     {}\n",
+                        status.threat_summary.elevated_ips
+                    ));
 
-                    return Ok(());
+                    return Ok(SupervisorStatusDisplay { text });
                 }
                 Err(e) => {
-                    println!(
-                        "synvoid appears to be running but status is unavailable: {}",
-                        e
+                    let text = format!(
+                        "synvoid appears to be running but status is unavailable: {}\nPID: {}",
+                        e, content.pid
                     );
-                    println!("PID: {}", content.pid);
-                    return Ok(());
+                    return Ok(SupervisorStatusDisplay { text });
                 }
             }
         }
     }
 
-    println!("synvoid is not running");
-    Ok(())
+    Ok(SupervisorStatusDisplay {
+        text: "synvoid is not running".to_string(),
+    })
 }
 
-pub fn handle_stop(
+pub fn handle_status(
     control_addr: Option<String>,
     use_tls: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let status = handle_status_data(control_addr, use_tls)?;
+    println!("{}", status.text);
+    Ok(())
+}
+
+pub fn handle_stop_data(
+    control_addr: Option<String>,
+    use_tls: bool,
+) -> Result<StopOutcome, Box<dyn std::error::Error>> {
     let pid_manager = PidFileManager::new();
 
     if let Some(_content) = pid_manager.read_pid() {
@@ -100,10 +129,7 @@ pub fn handle_stop(
                 CommandClient::new(Some(pid_manager.socket_file_path()), control_addr, use_tls);
 
             match client.send_command(SupervisorCommand::Stop { graceful: true }) {
-                Ok(msg) => {
-                    println!("Stop signal sent: {}", msg);
-                    println!("Waiting for shutdown...");
-
+                Ok(_msg) => {
                     let mut count = 0;
                     while pid_manager.is_running() && count < 30 {
                         std::thread::sleep(std::time::Duration::from_secs(1));
@@ -111,29 +137,52 @@ pub fn handle_stop(
                     }
 
                     if pid_manager.is_running() {
-                        println!("Warning: Process did not shut down cleanly");
+                        return Ok(StopOutcome {
+                            acknowledged: true,
+                            shutdown_confirmed: false,
+                            timed_out: true,
+                        });
                     } else {
-                        println!("synvoid stopped");
                         pid_manager.remove_pid()?;
                         pid_manager.remove_socket()?;
+                        return Ok(StopOutcome {
+                            acknowledged: true,
+                            shutdown_confirmed: true,
+                            timed_out: false,
+                        });
                     }
                 }
                 Err(e) => {
-                    println!("Failed to send stop command: {}", e);
+                    return Err(format!("Failed to send stop command: {}", e).into());
                 }
             }
-            return Ok(());
         }
     }
 
-    println!("synvoid is not running");
-    Ok(())
+    Ok(StopOutcome {
+        acknowledged: false,
+        shutdown_confirmed: false,
+        timed_out: false,
+    })
 }
 
-pub fn handle_rehash(
+pub fn handle_stop(
     control_addr: Option<String>,
     use_tls: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let outcome = handle_stop_data(control_addr, use_tls)?;
+    if let Some(text) =
+        (crate::commands::supervisor_control::SupervisorControlOutcome::Stop(outcome)).display()
+    {
+        println!("{}", text);
+    }
+    Ok(())
+}
+
+pub fn handle_rehash_data(
+    control_addr: Option<String>,
+    use_tls: bool,
+) -> Result<RehashOutcome, Box<dyn std::error::Error>> {
     let pid_manager = PidFileManager::new();
 
     if let Some(_content) = pid_manager.read_pid() {
@@ -142,18 +191,31 @@ pub fn handle_rehash(
                 CommandClient::new(Some(pid_manager.socket_file_path()), control_addr, use_tls);
 
             match client.send_command(SupervisorCommand::ReloadConfig) {
-                Ok(msg) => {
-                    println!("Reload signal sent: {}", msg);
+                Ok(_msg) => {
+                    return Ok(RehashOutcome { acknowledged: true });
                 }
                 Err(e) => {
-                    println!("Failed to send reload command: {}", e);
+                    return Err(format!("Failed to send reload command: {}", e).into());
                 }
             }
-            return Ok(());
         }
     }
 
-    println!("synvoid is not running");
+    Ok(RehashOutcome {
+        acknowledged: false,
+    })
+}
+
+pub fn handle_rehash(
+    control_addr: Option<String>,
+    use_tls: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let outcome = handle_rehash_data(control_addr, use_tls)?;
+    if let Some(text) =
+        (crate::commands::supervisor_control::SupervisorControlOutcome::Rehash(outcome)).display()
+    {
+        println!("{}", text);
+    }
     Ok(())
 }
 
@@ -377,6 +439,96 @@ auto_scale = true
 
     println!("Config file updated: {:?}", main_config_path);
     println!("Admin token has been set in [admin] section");
+}
+
+#[cfg(feature = "mesh")]
+pub fn handle_export_threat_feed_data(
+    sign_with: &Option<PathBuf>,
+    site_id: Option<&str>,
+) -> Result<ThreatFeedExportSummary, Box<dyn std::error::Error>> {
+    let config_dir = PathBuf::from("config");
+    let main_config_path = config_dir.join("main.toml");
+
+    if !main_config_path.exists() {
+        return Err(format!("Config not found at {:?}", main_config_path).into());
+    }
+
+    let main_config = match MainConfig::from_file(&main_config_path) {
+        Ok(c) => c,
+        Err(e) => return Err(format!("Failed to load config: {}", e).into()),
+    };
+
+    let mesh_config = match main_config.tunnel.mesh {
+        Some(m) => m,
+        None => return Err("Mesh is not enabled - cannot export threat feed".into()),
+    };
+
+    let node_id = mesh_config.node_id();
+    let node_role = mesh_config.role;
+
+    let (_signing_key, signer) = if let Some(ref key_path) = sign_with {
+        let key_data = std::fs::read(key_path)?;
+        if key_data.len() != 32 {
+            return Err("Signing key must be 32 bytes (Ed25519)".into());
+        }
+        let mut key_array = [0u8; 32];
+        key_array.copy_from_slice(&key_data);
+        let signer = MeshMessageSigner::new(key_array);
+        (Some(key_array), Some(signer))
+    } else if let Some(ref genesis) = mesh_config.genesis_key {
+        if let Some(private_key) = &genesis.private_key {
+            let signer = MeshMessageSigner::new(*private_key);
+            (Some(*private_key), Some(signer))
+        } else {
+            return Err("No signing key available. Use --sign-with to provide a key file.".into());
+        }
+    } else if let Some(signing_key_bytes) = mesh_config.signing_key() {
+        let mut key_array = [0u8; 32];
+        key_array.copy_from_slice(signing_key_bytes);
+        let signer = MeshMessageSigner::new(key_array);
+        (Some(key_array), Some(signer))
+    } else {
+        return Err("No signing key available. Use --sign-with to provide a key file.".into());
+    };
+
+    let threat_intel_config = mesh_config.threat_intel.clone();
+
+    let block_store = Arc::new(crate::block_store::BlockStore::new(
+        false,
+        None,
+        Default::default(),
+    ));
+    let internal_config: crate::mesh::threat_intel::ThreatIntelligenceConfigInternal =
+        serde_json::from_str(&serde_json::to_string(&threat_intel_config).unwrap()).unwrap();
+
+    let node_role_internal: crate::mesh::config::MeshNodeRole =
+        serde_json::from_str(&serde_json::to_string(&node_role).unwrap()).unwrap();
+
+    let threat_manager = ThreatIntelligenceManager::new(
+        internal_config,
+        block_store,
+        node_id.clone(),
+        node_role_internal,
+        signer.as_ref().map(|s| Arc::new(s.clone())),
+    );
+
+    let signer = signer.as_ref().expect("Signer was validated above");
+    let signer_pk_bytes: [u8; 32] = signer
+        .get_public_key_bytes()
+        .as_slice()
+        .try_into()
+        .map_err(|_| "Invalid public key length")?;
+    let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&signer_pk_bytes)
+        .map_err(|_| "Invalid Ed25519 public key")?;
+    let payload = threat_manager.create_signed_feed(site_id, &verifying_key);
+
+    let json = serde_json::to_string_pretty(&payload)?;
+    let bytes = json.len();
+
+    Ok(ThreatFeedExportSummary::Written {
+        bytes,
+        records: None,
+    })
 }
 
 #[cfg(feature = "mesh")]

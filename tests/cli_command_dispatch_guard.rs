@@ -174,3 +174,43 @@ fn supervisor_control_outcome_type_is_exported() {
         "src/commands/mod.rs must export SupervisorControlError"
     );
 }
+
+#[test]
+fn supervisor_control_does_not_use_placeholder_threat_feed_bytes() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("src/commands/supervisor_control.rs")).unwrap();
+
+    assert!(
+        !source.contains("ThreatFeedExported { bytes: 0 }"),
+        "supervisor_control.rs must not use placeholder ThreatFeedExported {{ bytes: 0 }} — use ThreatFeedExportSummary instead"
+    );
+}
+
+#[test]
+fn execute_delegates_formatting_through_outcomes() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("src/commands/execute.rs")).unwrap();
+    let non_comment = strip_comments(&source);
+
+    assert!(
+        non_comment.contains("outcome.display()"),
+        "execute.rs must delegate formatting through outcome.display() — handlers should not print directly"
+    );
+}
+
+#[test]
+fn supervisor_control_outcome_has_data_bearing_variants() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("src/commands/supervisor_control.rs")).unwrap();
+
+    // Must have Status(SupervisorStatusDisplay) instead of StatusDisplayed
+    assert!(
+        source.contains("Status(SupervisorStatusDisplay)"),
+        "SupervisorControlOutcome must have Status(SupervisorStatusDisplay) variant"
+    );
+    // Must have ThreatFeedExported(ThreatFeedExportSummary) instead of ThreatFeedExported { bytes }
+    assert!(
+        source.contains("ThreatFeedExported(ThreatFeedExportSummary)"),
+        "SupervisorControlOutcome must have ThreatFeedExported(ThreatFeedExportSummary) variant"
+    );
+}

@@ -97,9 +97,8 @@ fn execute_one_shot(command: OneShotCommand) -> i32 {
 fn execute_supervisor_control(command: super::plan::SupervisorControlCommand) -> i32 {
     match execute_supervisor_control_command(command) {
         Ok(outcome) => {
-            let display = outcome.display();
-            if !display.is_empty() {
-                println!("{}", display);
+            if let Some(text) = outcome.display() {
+                println!("{}", text);
             }
             outcome.exit_code()
         }

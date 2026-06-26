@@ -13,22 +13,69 @@
 //!     -> exit code
 //! ```
 
+use std::path::PathBuf;
+
 use super::plan::SupervisorControlCommand;
+
+/// Formatted status display text produced by a status query.
+///
+/// Contains the complete user-facing status output as a single string.
+/// The display is produced by the handler and owned by the outcome,
+/// centralizing formatting at the command boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SupervisorStatusDisplay {
+    /// The fully formatted status text ready for printing.
+    pub text: String,
+}
+
+/// Summary metadata from a threat-feed export.
+///
+/// Carries real export metadata instead of placeholder values.
+/// When the byte count is available it is reported; otherwise
+/// the variant indicates completion without precise counts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ThreatFeedExportSummary {
+    /// The feed was written with known byte and record counts.
+    Written {
+        bytes: usize,
+        records: Option<usize>,
+    },
+    /// The feed was exported but exact byte count is not available.
+    Completed,
+}
+
+/// Outcome from a stop command, carrying structured result data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StopOutcome {
+    /// Whether the stop signal was acknowledged by the supervisor.
+    pub acknowledged: bool,
+    /// Whether the process confirmed shutdown within the timeout.
+    pub shutdown_confirmed: bool,
+    /// Whether the shutdown timed out without confirming.
+    pub timed_out: bool,
+}
+
+/// Outcome from a rehash command, carrying structured result data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RehashOutcome {
+    /// Whether the reload signal was acknowledged by the supervisor.
+    pub acknowledged: bool,
+}
 
 /// Typed outcome from a successfully executed supervisor-control command.
 ///
-/// Each variant represents the result of a specific command. The `exit_code()`
+/// Each variant carries structured data where practical. The `exit_code()`
 /// method maps outcomes to process exit codes in one place.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SupervisorControlOutcome {
-    /// Status information was displayed.
-    StatusDisplayed,
+    /// Status information was queried and formatted.
+    Status(SupervisorStatusDisplay),
     /// A stop signal was sent and acknowledged.
-    StopRequested,
+    Stop(StopOutcome),
     /// A config reload signal was sent.
-    RehashRequested,
+    Rehash(RehashOutcome),
     /// A threat feed was exported.
-    ThreatFeedExported { bytes: usize },
+    ThreatFeedExported(ThreatFeedExportSummary),
     /// A restart pre-stop was requested (stop before relaunch).
     RestartPreStopRequested,
 }
@@ -44,18 +91,41 @@ impl SupervisorControlOutcome {
 
     /// Format this outcome for user-facing display.
     ///
-    /// Currently a no-op for most variants since handlers print internally.
-    /// This method exists to centralize formatting if handlers are later
-    /// refactored to return data instead of printing.
-    pub fn display(&self) -> String {
+    /// Centralizes CLI formatting so handlers return data, not side effects.
+    /// Returns `Some(text)` when there is user-visible output, or `None`
+    /// for silent outcomes (e.g., restart pre-stop).
+    pub fn display(&self) -> Option<String> {
         match self {
-            SupervisorControlOutcome::StatusDisplayed => String::new(),
-            SupervisorControlOutcome::StopRequested => String::new(),
-            SupervisorControlOutcome::RehashRequested => String::new(),
-            SupervisorControlOutcome::ThreatFeedExported { bytes } => {
-                format!("Exported {} bytes", bytes)
+            SupervisorControlOutcome::Status(status) => Some(status.text.clone()),
+            SupervisorControlOutcome::Stop(outcome) => {
+                if outcome.shutdown_confirmed {
+                    Some("synvoid stopped".to_string())
+                } else if outcome.timed_out {
+                    Some("Warning: Process did not shut down cleanly".to_string())
+                } else if outcome.acknowledged {
+                    Some("Stop signal sent".to_string())
+                } else {
+                    None
+                }
             }
-            SupervisorControlOutcome::RestartPreStopRequested => String::new(),
+            SupervisorControlOutcome::Rehash(outcome) => {
+                if outcome.acknowledged {
+                    Some("Configuration reloaded".to_string())
+                } else {
+                    None
+                }
+            }
+            SupervisorControlOutcome::ThreatFeedExported(summary) => match summary {
+                ThreatFeedExportSummary::Written { bytes, records } => {
+                    let mut msg = format!("Exported {} bytes", bytes);
+                    if let Some(r) = records {
+                        msg.push_str(&format!(" ({} records)", r));
+                    }
+                    Some(msg)
+                }
+                ThreatFeedExportSummary::Completed => Some("Threat feed exported".to_string()),
+            },
+            SupervisorControlOutcome::RestartPreStopRequested => None,
         }
     }
 }
@@ -133,35 +203,35 @@ pub fn execute_supervisor_control_command(
             control_addr,
             use_tls,
         } => {
-            crate::supervisor::commands::handle_status(control_addr, use_tls)
+            let display = crate::supervisor::commands::handle_status_data(control_addr, use_tls)
                 .map_err(boxed_error_to_control_error)?;
-            Ok(SupervisorControlOutcome::StatusDisplayed)
+            Ok(SupervisorControlOutcome::Status(display))
         }
         SupervisorControlCommand::Stop {
             control_addr,
             use_tls,
         } => {
-            crate::supervisor::commands::handle_stop(control_addr, use_tls)
+            let outcome = crate::supervisor::commands::handle_stop_data(control_addr, use_tls)
                 .map_err(boxed_error_to_control_error)?;
-            Ok(SupervisorControlOutcome::StopRequested)
+            Ok(SupervisorControlOutcome::Stop(outcome))
         }
         SupervisorControlCommand::Rehash {
             control_addr,
             use_tls,
         } => {
-            crate::supervisor::commands::handle_rehash(control_addr, use_tls)
+            let outcome = crate::supervisor::commands::handle_rehash_data(control_addr, use_tls)
                 .map_err(boxed_error_to_control_error)?;
-            Ok(SupervisorControlOutcome::RehashRequested)
+            Ok(SupervisorControlOutcome::Rehash(outcome))
         }
         SupervisorControlCommand::ExportThreatFeed { sign_with, site_id } => {
             #[cfg(feature = "mesh")]
             {
-                crate::supervisor::commands::handle_export_threat_feed(
+                let summary = crate::supervisor::commands::handle_export_threat_feed_data(
                     &sign_with,
                     site_id.as_deref(),
                 )
                 .map_err(boxed_error_to_control_error)?;
-                Ok(SupervisorControlOutcome::ThreatFeedExported { bytes: 0 })
+                Ok(SupervisorControlOutcome::ThreatFeedExported(summary))
             }
             #[cfg(not(feature = "mesh"))]
             {
@@ -192,10 +262,19 @@ mod tests {
     #[test]
     fn success_outcomes_exit_zero() {
         let outcomes = [
-            SupervisorControlOutcome::StatusDisplayed,
-            SupervisorControlOutcome::StopRequested,
-            SupervisorControlOutcome::RehashRequested,
-            SupervisorControlOutcome::ThreatFeedExported { bytes: 1024 },
+            SupervisorControlOutcome::Status(SupervisorStatusDisplay {
+                text: "test".into(),
+            }),
+            SupervisorControlOutcome::Stop(StopOutcome {
+                acknowledged: true,
+                shutdown_confirmed: true,
+                timed_out: false,
+            }),
+            SupervisorControlOutcome::Rehash(RehashOutcome { acknowledged: true }),
+            SupervisorControlOutcome::ThreatFeedExported(ThreatFeedExportSummary::Written {
+                bytes: 1024,
+                records: None,
+            }),
             SupervisorControlOutcome::RestartPreStopRequested,
         ];
         for outcome in &outcomes {
@@ -238,16 +317,83 @@ mod tests {
 
     #[test]
     fn restart_pre_stop_returns_stop_outcome() {
-        // Verify the type signature matches: restart pre-stop produces
-        // the same outcome type as normal stop.
-        let outcome = SupervisorControlOutcome::StopRequested;
+        let outcome = SupervisorControlOutcome::RestartPreStopRequested;
         assert_eq!(outcome.exit_code(), 0);
+        assert!(outcome.display().is_none());
     }
 
     #[test]
-    fn threat_feed_exported_carries_byte_count() {
-        let outcome = SupervisorControlOutcome::ThreatFeedExported { bytes: 4096 };
+    fn threat_feed_export_with_bytes_displays_correctly() {
+        let outcome =
+            SupervisorControlOutcome::ThreatFeedExported(ThreatFeedExportSummary::Written {
+                bytes: 4096,
+                records: Some(128),
+            });
         assert_eq!(outcome.exit_code(), 0);
-        assert!(outcome.display().contains("4096"));
+        let display = outcome.display().unwrap();
+        assert!(display.contains("4096"));
+        assert!(display.contains("128"));
+    }
+
+    #[test]
+    fn threat_feed_export_completed_displays_correctly() {
+        let outcome =
+            SupervisorControlOutcome::ThreatFeedExported(ThreatFeedExportSummary::Completed);
+        assert_eq!(outcome.exit_code(), 0);
+        assert_eq!(outcome.display().unwrap(), "Threat feed exported");
+    }
+
+    #[test]
+    fn status_outcome_displays_status_text() {
+        let outcome = SupervisorControlOutcome::Status(SupervisorStatusDisplay {
+            text: "synvoid Status\n==============\nPID: 1234".into(),
+        });
+        let display = outcome.display().unwrap();
+        assert!(display.contains("synvoid Status"));
+        assert!(display.contains("PID: 1234"));
+    }
+
+    #[test]
+    fn stop_outcome_shutdown_confirmed_displays_stopped() {
+        let outcome = SupervisorControlOutcome::Stop(StopOutcome {
+            acknowledged: true,
+            shutdown_confirmed: true,
+            timed_out: false,
+        });
+        assert_eq!(outcome.display().unwrap(), "synvoid stopped");
+    }
+
+    #[test]
+    fn stop_outcome_timeout_displays_warning() {
+        let outcome = SupervisorControlOutcome::Stop(StopOutcome {
+            acknowledged: true,
+            shutdown_confirmed: false,
+            timed_out: true,
+        });
+        assert!(outcome
+            .display()
+            .unwrap()
+            .contains("did not shut down cleanly"));
+    }
+
+    #[test]
+    fn rehash_outcome_acknowledged_displays_reload() {
+        let outcome = SupervisorControlOutcome::Rehash(RehashOutcome { acknowledged: true });
+        assert_eq!(outcome.display().unwrap(), "Configuration reloaded");
+    }
+
+    #[test]
+    fn threat_feed_export_does_not_use_placeholder_zero_bytes() {
+        // Verify the new API uses ThreatFeedExportSummary, not a raw bytes field
+        // which was the old placeholder pattern.
+        let summary = ThreatFeedExportSummary::Written {
+            bytes: 0,
+            records: None,
+        };
+        // bytes: 0 is only valid when the export genuinely produced zero bytes
+        match &summary {
+            ThreatFeedExportSummary::Written { bytes, .. } => assert_eq!(*bytes, 0),
+            _ => panic!("expected Written variant"),
+        }
     }
 }

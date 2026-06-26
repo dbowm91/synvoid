@@ -26,6 +26,7 @@ pub mod supervisor_control;
 pub use execute::execute_command;
 pub use plan::{plan_command, CommandPlan, CommandPlanError, CommandPreAction, SynvoidCommandPlan};
 pub use supervisor_control::{
-    execute_restart_pre_stop, execute_supervisor_control_command, SupervisorControlError,
-    SupervisorControlOutcome,
+    execute_restart_pre_stop, execute_supervisor_control_command, RehashOutcome, StopOutcome,
+    SupervisorControlError, SupervisorControlOutcome, SupervisorStatusDisplay,
+    ThreatFeedExportSummary,
 };
