@@ -150,7 +150,7 @@ Client ──► TLS Termination ──► HTTP Server ──► WAF Pipeline �
 | [Config](./config.md) | Configuration types, validation, site-based config | [`config.md`](./config.md) | [`config_deep_dive.md`](./config_deep_dive.md) |
 | [Platform](./platform.md) | OS abstraction, sandboxing, filesystem, IPC | [`platform.md`](./platform.md) | [`platform_deep_dive.md`](./platform_deep_dive.md) |
 | [Process & IPC](./ipc_process.md) | IPC communication, process lifecycle, FD passing | [`ipc_process.md`](./ipc_process.md) | [`process_lifecycle.md`](./process_lifecycle.md) |
-| [Supervisor](./supervisor.md) | Process supervision, drain protocol, gRPC API | [`supervisor.md`](./supervisor.md) | — |
+| [Supervisor](./supervisor.md) | Process supervision, drain protocol, gRPC API | [`supervisor.md`](./supervisor.md) | [`supervisor_lifecycle.md`](./supervisor_lifecycle.md) |
 | [Worker](./worker_architecture.md) | Worker process architecture, Tokio runtime | [`worker_architecture.md`](./worker_architecture.md) | — |
 | [Startup](./platform_deep_dive.md) | Bootstrap, daemonization, PID management | [`platform_deep_dive.md`](./platform_deep_dive.md) | — |
 | [Drain](./drain.md) | Connection drain state for graceful shutdown | [`drain.md`](./drain.md) | — |
@@ -310,6 +310,7 @@ Client ──► TLS Termination ──► HTTP Server ──► WAF Pipeline �
 | [`mesh_transport_lifecycle.md`](./mesh_transport_lifecycle.md) | 20-task mesh lifecycle |
 | [`worker_task_lifecycle.md`](./worker_task_lifecycle.md) | 40+ background tasks |
 | [`supervisor.md`](./supervisor.md) | Process lifecycle, drain, gRPC |
+| [`supervisor_lifecycle.md`](./supervisor_lifecycle.md) | Task classes, shutdown cause taxonomy, drain report |
 | [`deep_dive_review.md`](./deep_dive_review.md) | Layered architectural review |
 | [`review_plan.md`](./review_plan.md) | Review methodology and status |
 | [`process_lifecycle.md`](./process_lifecycle.md) | Process execution model |

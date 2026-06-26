@@ -31,6 +31,11 @@ cargo test --test mesh_task_ownership_guard --features mesh,dns
 cargo test --test worker_supervision_control_flow --features mesh,dns
 cargo test --test composition_root_behavioral --features mesh,dns
 cargo test --test mesh_http_framing --features mesh,dns
+
+# Supervisor lifecycle (Phase 3)
+cargo test --test supervisor_task_ownership_guard
+cargo test -p synvoid supervisor::task_registry
+cargo test -p synvoid supervisor::shutdown
 ```
 
 ## Feature Profiles
@@ -182,6 +187,7 @@ The `architecture/` directory (73 docs) and `.opencode/skills/` directory contai
 | `architecture/mesh_transport_lifecycle.md` | 20-task mesh lifecycle state machine |
 | `architecture/worker_task_lifecycle.md` | 40+ background tasks, shutdown ordering |
 | `architecture/supervisor.md` | Process lifecycle, drain, gRPC control plane |
+| `architecture/supervisor_lifecycle.md` | Task classes, shutdown cause taxonomy, drain report, Phase 3 hardening |
 | `architecture/unified_server_startup.md` | UnifiedServer startup/resources/runtimeHandles split |
 
 ## Known Issues

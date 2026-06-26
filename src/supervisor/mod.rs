@@ -10,8 +10,11 @@ pub mod drain_manager;
 pub mod ipc;
 pub mod mesh;
 pub mod process;
+pub mod shutdown;
 pub mod state;
+pub mod task_registry;
 
 pub use mesh::run_mesh_agent_mode;
 pub use process::{run_supervisor_mode, SupervisorProcess};
+pub use shutdown::{SupervisorDrainReport, SupervisorShutdownCause};
 pub use state::{SupervisorState, SupervisorStateTrackers};

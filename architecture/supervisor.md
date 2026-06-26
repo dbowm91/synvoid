@@ -817,3 +817,59 @@ The design prioritizes:
 - **Scalability** via shared-memory communication and O(1) domain-based routing
 - **Observability** via gRPC status endpoints and comprehensive logging
 - **Security** via IPC signing and constant-time comparisons where appropriate
+
+## 14. Task Lifecycle Management
+
+All long-lived supervisor tasks are registered in `SupervisorTaskRegistry` (`src/supervisor/task_registry.rs`) with a defined class and bounded shutdown path.
+
+**Task Classes:**
+| Class | Policy |
+|-------|--------|
+| `CriticalControlPlane` | Fatal if exits unexpectedly; shutdown awaits with timeout |
+| `RestartableControlPlane` | Logged and optionally restarted with bounded backoff |
+| `BestEffortMaintenance` | Drained during shutdown, best-effort join |
+| `ShutdownOnly` | Only joined during shutdown, not monitored live |
+
+**Registered tasks:**
+- `supervisor_ipc_accept` — IPC accept loop (`CriticalControlPlane`)
+- `supervisor_grpc_control_api` — gRPC control server (`CriticalControlPlane`)
+
+**Registration rule:** All long-lived supervisor tasks must be registered. Per-connection IPC handlers, mesh agent mode spawns, and `ProcessManager` internal tasks are documented exceptions.
+
+**Enforcement:** `cargo test --test supervisor_task_ownership_guard`
+
+See `architecture/supervisor_lifecycle.md` for the full deep-dive document.
+
+## 15. Shutdown Cause Taxonomy
+
+`SupervisorShutdownCause` (`src/supervisor/shutdown.rs`) classifies every reason the supervisor may shut down, used for structured logging, metric labeling, and exit-code determination.
+
+| Variant | Fatal? | Metric Label |
+|---------|--------|--------------|
+| `Requested` | No | `requested` |
+| `IpcListenerFailed(String)` | Yes | `ipc_listener_failed` |
+| `ControlApiFailed(String)` | Yes | `control_api_failed` |
+| `WorkerHealthFatal(String)` | Yes | `worker_health_fatal` |
+| `ProcessManagerFailed(String)` | Yes | `process_manager_failed` |
+| `DrainTimeout` | No | `drain_timeout` |
+| `TaskFailed { task, reason }` | Yes | `task_failed` |
+| `InternalInvariant(String)` | Yes | `internal_invariant` |
+
+Fatal causes (`is_fatal() == true`) require restart or operator alerting. The main event loop tracks the current cause and transitions to a fatal variant if any registered task fails.
+
+## 16. Drain Reporting
+
+`SupervisorDrainReport` (`src/supervisor/shutdown.rs`) summarizes a drain cycle outcome:
+
+```rust
+pub struct SupervisorDrainReport {
+    pub drain_id: u64,
+    pub worker_count: usize,
+    pub drained: usize,
+    pub timed_out: usize,
+    pub errored: usize,
+    pub forced_shutdown: bool,
+}
+```
+
+**Semantics:** `drained + timed_out + errored == worker_count`. `forced_shutdown == true` when any worker exceeded the timeout. The report is emitted at `info` level after shutdown and available for structured logging and metric emission.

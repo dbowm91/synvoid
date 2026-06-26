@@ -6,6 +6,10 @@ use tokio::sync::{mpsc, RwLock};
 
 use crate::platform::fs::PlatformPaths;
 use crate::supervisor::drain_manager::{DrainManager, DrainProtocol};
+use crate::supervisor::shutdown::{SupervisorDrainReport, SupervisorShutdownCause};
+use crate::supervisor::task_registry::{
+    SupervisorTaskClass, SupervisorTaskOutcome, SupervisorTaskRegistry,
+};
 use crate::waf::RuleFeedManagerForWaf;
 use crate::RunningFlag;
 use synvoid_block_store::BlockStore;
@@ -28,6 +32,12 @@ const DEFAULT_DRAIN_TIMEOUT_SECS: u64 = 30;
 /// The Supervisor uses [`DrainManager`] for drain-aware worker shutdown, providing
 /// per-worker connection tracking during drain (active/idle connections, drain states, etc.).
 /// Uses the shared drain manager for drain-aware worker shutdown.
+///
+/// # Task Lifecycle
+///
+/// Long-lived supervisor tasks (IPC accept loop, gRPC control server) are registered
+/// in [`SupervisorTaskRegistry`] for structured lifecycle management. Critical task
+/// failures map to [`SupervisorShutdownCause::TaskFailed`] and trigger supervisor shutdown.
 pub struct SupervisorProcess {
     state: SupervisorState,
     process_manager: Arc<ProcessManager>,
@@ -36,6 +46,7 @@ pub struct SupervisorProcess {
     event_rx: mpsc::Receiver<ProcessEvent>,
     running: RunningFlag,
     ipc_listener: Option<IpcListener>,
+    supervisor_tasks: SupervisorTaskRegistry,
 }
 
 impl SupervisorProcess {
@@ -61,6 +72,7 @@ impl SupervisorProcess {
             event_rx,
             running: RunningFlag::new(),
             ipc_listener: Some(ipc_listener),
+            supervisor_tasks: SupervisorTaskRegistry::new(),
         })
     }
 
@@ -107,30 +119,20 @@ impl SupervisorProcess {
             tracing::error!("Failed to spawn unified server workers: {}", e);
         }
 
-        // Start IPC accept loop
+        // Register IPC accept loop as a managed task
         if let Some(listener) = self.ipc_listener.take() {
             let pm = self.process_manager.clone();
             let state = self.state.clone();
-            tokio::spawn(async move {
-                loop {
-                    match listener.accept().await {
-                        Ok(ipc) => {
-                            let pm_clone = pm.clone();
-                            let state_clone = state.clone();
-                            tokio::spawn(async move {
-                                Self::handle_connection(ipc, pm_clone, state_clone).await;
-                            });
-                        }
-                        Err(e) => {
-                            tracing::debug!("Supervisor IPC accept error: {}", e);
-                            tokio::time::sleep(Duration::from_millis(100)).await;
-                        }
-                    }
-                }
-            });
+            let handle = tokio::spawn(run_supervisor_ipc_accept_loop(listener, pm, state));
+            self.supervisor_tasks.register(
+                "supervisor_ipc_accept",
+                SupervisorTaskClass::CriticalControlPlane,
+                handle,
+            );
+            tracing::info!("Registered IPC accept loop as critical control-plane task");
         }
 
-        // Start gRPC control server
+        // Register gRPC control server as a managed task
         let grpc_addr = self
             .state
             .config
@@ -153,50 +155,115 @@ impl SupervisorProcess {
         if let Ok(addr) = grpc_addr {
             let pm = self.process_manager.clone();
             let state = self.state.clone();
-            tokio::spawn(async move {
-                if let Err(e) =
-                    super::api::start_grpc_server(addr, pm, state, control_api_tls).await
-                {
-                    tracing::error!("Failed to start gRPC control server: {}", e);
-                }
-            });
+            let handle = tokio::spawn(run_supervisor_control_api_task(
+                addr,
+                pm,
+                state,
+                control_api_tls,
+            ));
+            self.supervisor_tasks.register(
+                "supervisor_grpc_control_api",
+                SupervisorTaskClass::CriticalControlPlane,
+                handle,
+            );
+            tracing::info!("Registered gRPC control API as critical control-plane task");
         } else {
             tracing::error!("Invalid gRPC control API address configured");
         }
 
         let mut shutdown_rx = self.state.subscribe_shutdown();
+        let mut shutdown_cause = SupervisorShutdownCause::Requested;
 
         // Main event loop
         loop {
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_secs(5)) => {
                     if !self.running.is_running() {
+                        shutdown_cause = SupervisorShutdownCause::Requested;
                         break;
                     }
                     self.process_manager.reap_zombies().await;
                     self.process_manager.check_workers_health().await;
+
+                    // Check for finished supervisor tasks
+                    let finished = self.supervisor_tasks.join_finished().await;
+                    for (task_id, outcome) in finished {
+                        match outcome {
+                            SupervisorTaskOutcome::Failed(reason) => {
+                                tracing::error!(
+                                    "Supervisor task failed: {:?} — triggering shutdown",
+                                    reason
+                                );
+                                shutdown_cause = SupervisorShutdownCause::TaskFailed {
+                                    task: "supervisor_task",
+                                    reason,
+                                };
+                                break;
+                            }
+                            SupervisorTaskOutcome::Cancelled => {
+                                tracing::warn!("Supervisor task was cancelled");
+                            }
+                            SupervisorTaskOutcome::Completed => {
+                                tracing::debug!("Supervisor task completed normally");
+                            }
+                        }
+                    }
+                    if matches!(shutdown_cause, SupervisorShutdownCause::TaskFailed { .. }) {
+                        break;
+                    }
                 }
                 event = self.event_rx.recv() => {
                     if let Some(evt) = event {
                         self.handle_process_event(evt).await;
                     } else {
+                        shutdown_cause = SupervisorShutdownCause::ProcessManagerFailed(
+                            "event channel closed".to_string(),
+                        );
                         break;
                     }
                 }
                 _ = shutdown_rx.recv() => {
                     tracing::info!("Supervisor received shutdown signal");
+                    shutdown_cause = SupervisorShutdownCause::Requested;
                     break;
                 }
             }
         }
 
-        tracing::info!("Supervisor shutting down...");
-        self.drain_aware_shutdown().await;
+        tracing::info!("Supervisor shutting down (cause: {})", shutdown_cause);
+
+        // Shutdown order: stop control-plane tasks first, then drain workers
+        let task_report = self
+            .supervisor_tasks
+            .shutdown_and_join(Duration::from_secs(10))
+            .await;
+        tracing::info!(
+            "Supervisor task shutdown report: completed={}, failed={}, aborted={}, timed_out={}",
+            task_report.completed,
+            task_report.failed,
+            task_report.aborted,
+            task_report.timed_out
+        );
+
+        let drain_report = self.drain_aware_shutdown().await;
+        tracing::info!(
+            "Drain report: id={}, workers={}, drained={}, timed_out={}, errored={}, forced={}",
+            drain_report.drain_id,
+            drain_report.worker_count,
+            drain_report.drained,
+            drain_report.timed_out,
+            drain_report.errored,
+            drain_report.forced_shutdown
+        );
+
+        if shutdown_cause.is_fatal() {
+            tracing::error!("Supervisor exiting with fatal cause: {}", shutdown_cause);
+        }
 
         Ok(())
     }
 
-    async fn drain_aware_shutdown(&self) {
+    async fn drain_aware_shutdown(&self) -> SupervisorDrainReport {
         tracing::info!("Starting drain-aware shutdown");
 
         let timeout_secs = self
@@ -220,6 +287,10 @@ impl SupervisorProcess {
             worker_ids.len()
         );
 
+        let mut drained = 0usize;
+        let mut timed_out = 0usize;
+        let mut errored = 0usize;
+
         for worker_id in &worker_ids {
             if let Some(ipc) = self
                 .process_manager
@@ -238,12 +309,15 @@ impl SupervisorProcess {
                 {
                     Ok(true) => {
                         tracing::info!("Worker {} drained successfully", worker_id);
+                        drained += 1;
                     }
                     Ok(false) => {
                         tracing::warn!("Worker {} drain timeout, forcing shutdown", worker_id);
+                        timed_out += 1;
                     }
                     Err(e) => {
                         tracing::error!("Worker {} drain error: {}", worker_id, e);
+                        errored += 1;
                     }
                 }
             }
@@ -270,6 +344,15 @@ impl SupervisorProcess {
         self.drain_manager.clear();
 
         tracing::info!("Drain-aware shutdown complete");
+
+        SupervisorDrainReport {
+            drain_id,
+            worker_count: worker_ids.len(),
+            drained,
+            timed_out,
+            errored,
+            forced_shutdown: !drain_complete,
+        }
     }
 
     async fn handle_connection(
@@ -311,6 +394,48 @@ impl SupervisorProcess {
 
     async fn handle_process_event(&mut self, event: ProcessEvent) {
         tracing::debug!("Supervisor received event: {:?}", event);
+    }
+}
+
+/// Long-lived IPC accept loop for supervisor connections.
+///
+/// Registered as a critical control-plane task in `SupervisorTaskRegistry`.
+/// Per-connection spawns are short-lived and do not require registry ownership.
+async fn run_supervisor_ipc_accept_loop(
+    listener: IpcListener,
+    pm: Arc<ProcessManager>,
+    state: SupervisorState,
+) -> SupervisorTaskOutcome {
+    loop {
+        match listener.accept().await {
+            Ok(ipc) => {
+                let pm_clone = pm.clone();
+                let state_clone = state.clone();
+                // reason: Per-connection IPC handler — short-lived, not a background task
+                tokio::spawn(async move {
+                    SupervisorProcess::handle_connection(ipc, pm_clone, state_clone).await;
+                });
+            }
+            Err(e) => {
+                tracing::debug!("Supervisor IPC accept error: {}", e);
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+    }
+}
+
+/// Long-lived gRPC control API server task.
+///
+/// Registered as a critical control-plane task in `SupervisorTaskRegistry`.
+async fn run_supervisor_control_api_task(
+    addr: std::net::SocketAddr,
+    pm: Arc<ProcessManager>,
+    state: SupervisorState,
+    tls: Option<crate::tls::config::InternalTlsConfig>,
+) -> SupervisorTaskOutcome {
+    match super::api::start_grpc_server(addr, pm, state, tls).await {
+        Ok(()) => SupervisorTaskOutcome::Completed,
+        Err(e) => SupervisorTaskOutcome::Failed(e.to_string()),
     }
 }
 
