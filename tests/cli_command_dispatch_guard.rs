@@ -377,3 +377,126 @@ fn runtime_launch_mod_exports_types() {
         "commands/mod.rs must export execute_runtime_launch"
     );
 }
+
+// --- One-shot command boundary guards (Iteration 107) ---
+
+#[test]
+fn one_shot_module_exists() {
+    let root = workspace_root();
+    let path = root.join("src/commands/one_shot.rs");
+    assert!(
+        path.exists(),
+        "src/commands/one_shot.rs must exist for typed one-shot boundary"
+    );
+}
+
+#[test]
+fn one_shot_outcome_type_is_exported() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("src/commands/mod.rs")).unwrap();
+    let non_comment = strip_comments(&source);
+
+    assert!(
+        non_comment.contains("OneShotOutcome"),
+        "src/commands/mod.rs must export OneShotOutcome"
+    );
+    assert!(
+        non_comment.contains("OneShotError"),
+        "src/commands/mod.rs must export OneShotError"
+    );
+}
+
+#[test]
+fn one_shot_has_execute_one_shot_command() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("src/commands/one_shot.rs")).unwrap();
+
+    assert!(
+        source.contains("pub fn execute_one_shot_command"),
+        "one_shot.rs must export execute_one_shot_command()"
+    );
+}
+
+#[test]
+fn execute_rs_delegates_to_one_shot_adapter() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("src/commands/execute.rs")).unwrap();
+    let non_comment = strip_comments(&source);
+
+    assert!(
+        non_comment.contains("execute_one_shot_command"),
+        "execute.rs must delegate to execute_one_shot_command for one-shot commands"
+    );
+}
+
+#[test]
+fn execute_rs_does_not_contain_one_shot_implementation_details() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("src/commands/execute.rs")).unwrap();
+    let non_comment = strip_comments(&source);
+
+    let forbidden = [
+        "schema_for!",
+        "synvoidOpenApi::openapi_json",
+        "hash_admin_token_with_cost",
+        "check_regex_complexity",
+        "GenesisKeyConfig::generate",
+    ];
+
+    let mut violations = Vec::new();
+    for token in &forbidden {
+        if non_comment.contains(token) {
+            violations.push(*token);
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "src/commands/execute.rs contains one-shot implementation details that should live in one_shot.rs: {:?}",
+        violations
+    );
+}
+
+#[test]
+fn one_shot_outcome_has_exit_code() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("src/commands/one_shot.rs")).unwrap();
+
+    assert!(
+        source.contains("pub fn exit_code"),
+        "OneShotOutcome must have exit_code() method"
+    );
+}
+
+#[test]
+fn one_shot_outcome_has_display() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("src/commands/one_shot.rs")).unwrap();
+
+    assert!(
+        source.contains("pub fn display"),
+        "OneShotOutcome must have display() method"
+    );
+}
+
+#[test]
+fn one_shot_error_has_display_impl() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("src/commands/one_shot.rs")).unwrap();
+
+    assert!(
+        source.contains("impl std::fmt::Display for OneShotError"),
+        "OneShotError must implement Display"
+    );
+}
+
+#[test]
+fn one_shot_error_has_exit_code() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("src/commands/one_shot.rs")).unwrap();
+
+    assert!(
+        source.contains("pub fn exit_code"),
+        "OneShotError must have exit_code() method"
+    );
+}

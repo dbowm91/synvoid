@@ -1,6 +1,6 @@
 # CLI and Supervisor Command Dispatch
 
-This document describes the typed command dispatch architecture introduced in Iteration 101, refined in Iteration 102, extended with a typed result boundary in Iteration 103, separated from handler output in Iteration 104, hardened with a typed error taxonomy in Iteration 105, and cleaned up with a runtime-launch boundary in Iteration 106.
+This document describes the typed command dispatch architecture introduced in Iteration 101, refined in Iteration 102, extended with a typed result boundary in Iteration 103, separated from handler output in Iteration 104, hardened with a typed error taxonomy in Iteration 105, cleaned up with a runtime-launch boundary in Iteration 106, and given a typed one-shot result boundary in Iteration 107.
 
 ## Overview
 
@@ -77,13 +77,43 @@ Owned by: `src/commands/execute.rs`
 
 Executes the planned command by calling into existing runtime/supervisor modules:
 
-- `execute_one_shot()`: Config validation, OpenAPI export, genesis key generation, token operations, regex check.
+- `execute_one_shot()`: Delegates to the one-shot adapter, maps outcomes/errors to exit codes, prints `outcome.display()` when non-None.
 - `execute_supervisor_control()`: Delegates to the typed adapter, maps outcomes/errors to exit codes, prints `outcome.display()` when non-None.
 - `execute_runtime()`: Delegates to the runtime-launch boundary for all runtime mode handling.
 
 `execute.rs` no longer directly builds Tokio runtimes, constructs worker args, acquires PID files, or initializes logging. These responsibilities are owned by the runtime-launch boundary.
 
+`execute.rs` no longer owns one-shot command implementation details. These are owned by the one-shot adapter layer.
+
 Pre-actions (e.g., restart pre-stop) are executed before the main plan dispatch using the same typed adapter as normal stop.
+
+### One-Shot Adapter Layer
+
+Owned by: `src/commands/one_shot.rs`
+
+Introduced in Iteration 107 to provide a typed result/error boundary for one-shot commands:
+
+- `execute_one_shot_command()`: Dispatches to existing one-shot handlers and wraps results in `OneShotOutcome` / `OneShotError`.
+- `OneShotOutcome`: Data-bearing success variants with centralized `exit_code()` and `display()` mapping:
+  - `ConfigValid` — config validation passed
+  - `OpenApiJson(String)` — OpenAPI schema exported as JSON
+  - `ApiSpecJson(String)` — API specification exported as JSON
+  - `GenesisKeyGenerated { display }` — genesis key generated
+  - `NodeInfo { display }` — node information queried
+  - `TokenGenerated { token }` — admin token generated
+  - `NewTokenGenerated { token, config_path }` — admin token generated and saved to config
+  - `TokenHash { hash }` — token hashed with bcrypt
+  - `RegexCheck { safe, pattern, reason }` — regex checked for ReDoS safety
+- `OneShotError`: Typed error variants with centralized `exit_code()` and `Display` mapping:
+  - `ConfigInvalid(String)` — config validation failed
+  - `Serialization(String)` — JSON serialization failed
+  - `UnsupportedFeature(&'static str)` — missing feature gate
+  - `Io(String)` — an I/O error occurred
+  - `TokenHash(String)` — bcrypt hashing failed
+  - `RegexUnsafe(String)` — regex check error
+  - `Unknown(String)` — unclassified error
+
+The guard test `execute_rs_does_not_contain_one_shot_implementation_details` ensures `execute.rs` does not contain one-shot implementation details (`schema_for!`, `synvoidOpenApi::openapi_json`, `hash_admin_token_with_cost`, `check_regex_complexity`, `GenesisKeyConfig::generate`).
 
 ### Runtime-Launch Boundary
 
@@ -111,15 +141,15 @@ The guard test `execute_rs_does_not_build_runtimes_or_worker_args` ensures `exec
 
 | Command | Plan Category | Handler |
 |---------|--------------|---------|
-| `--configtest` | OneShot | `handle_configtest()` |
-| `--export-openapi` | OneShot | schema export |
-| `--export-api-spec` | OneShot | OpenAPI export |
-| `--genesis` | OneShot | `GenesisKeyConfig::generate()` |
-| `--show-node-info` | OneShot | config reader |
-| `--generatetoken` | OneShot | `handle_generatetoken()` |
-| `--generatenewtoken` | OneShot | `handle_generatenewtoken()` |
-| `--hash-token` | OneShot | `hash_admin_token_with_cost()` |
-| `--checkregex` | OneShot | `check_regex_complexity()` |
+| `--configtest` | OneShot | `execute_one_shot_command()` via typed adapter |
+| `--export-openapi` | OneShot | `execute_one_shot_command()` via typed adapter |
+| `--export-api-spec` | OneShot | `execute_one_shot_command()` via typed adapter |
+| `--genesis` | OneShot | `execute_one_shot_command()` via typed adapter |
+| `--show-node-info` | OneShot | `execute_one_shot_command()` via typed adapter |
+| `--generatetoken` | OneShot | `execute_one_shot_command()` via typed adapter |
+| `--generatenewtoken` | OneShot | `execute_one_shot_command()` via typed adapter |
+| `--hash-token` | OneShot | `execute_one_shot_command()` via typed adapter |
+| `--checkregex` | OneShot | `execute_one_shot_command()` via typed adapter |
 | `--status` | SupervisorControl | `handle_status_data()` via typed adapter |
 | `--stop` | SupervisorControl | `handle_stop_data()` via typed adapter |
 | `--restart` | Pre-action | `execute_restart_pre_stop()` + sleep → Runtime |
@@ -151,5 +181,5 @@ pub enum CommandPreAction {
 
 ## Guards
 
-- `tests/cli_command_dispatch_guard.rs`: Ensures `src/main.rs` remains thin (<=30 lines), uses `plan_command()`/`execute_command()`, does not contain command implementations, uses typed `CommandPreAction` for restart, does not force TLS=false during restart pre-stop, uses typed supervisor-control exit mapping, restart pre-stop uses the typed adapter, `SupervisorControlOutcome` uses data-bearing variants, `execute.rs` delegates formatting through `outcome.display()`, `supervisor_control.rs` does not use placeholder `ThreatFeedExported { bytes: 0 }`, `SupervisorControlError` has `ConnectionUnavailable` and `Timeout` variants, `supervisor_control.rs` uses `classify_control_error` (not the old `boxed_error_to_control_error`), `execute.rs` does not build runtimes or worker args, `execute.rs` delegates to the runtime-launch boundary, `runtime_launch.rs` exists with planner and executor, planner is pure (no Tokio builder/PID/logging), and `commands/mod.rs` exports the runtime-launch types.
+- `tests/cli_command_dispatch_guard.rs`: Ensures `src/main.rs` remains thin (<=30 lines), uses `plan_command()`/`execute_command()`, does not contain command implementations, uses typed `CommandPreAction` for restart, does not force TLS=false during restart pre-stop, uses typed supervisor-control exit mapping, restart pre-stop uses the typed adapter, `SupervisorControlOutcome` uses data-bearing variants, `execute.rs` delegates formatting through `outcome.display()`, `supervisor_control.rs` does not use placeholder `ThreatFeedExported { bytes: 0 }`, `SupervisorControlError` has `ConnectionUnavailable` and `Timeout` variants, `supervisor_control.rs` uses `classify_control_error` (not the old `boxed_error_to_control_error`), `execute.rs` does not build runtimes or worker args, `execute.rs` delegates to the runtime-launch boundary, `runtime_launch.rs` exists with planner and executor, planner is pure (no Tokio builder/PID/logging), `commands/mod.rs` exports the runtime-launch types, `one_shot.rs` exists with `execute_one_shot_command`, `OneShotOutcome` and `OneShotError` are exported, `execute.rs` delegates to the one-shot adapter, `execute.rs` does not contain one-shot implementation details (`schema_for!`, `synvoidOpenApi::openapi_json`, `hash_admin_token_with_cost`, `check_regex_complexity`, `GenesisKeyConfig::generate`), `OneShotOutcome` has `exit_code()` and `display()` methods, `OneShotError` implements `Display` and has `exit_code()`.
 - `tests/root_module_ledger_guard.rs`: Ensures `commands` is recorded in `architecture/root_module_ledger.md`.

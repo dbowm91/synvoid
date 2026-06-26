@@ -20,11 +20,13 @@
 //!    existing runtime/supervisor modules for the actual work.
 
 pub mod execute;
+pub mod one_shot;
 pub mod plan;
 pub mod runtime_launch;
 pub mod supervisor_control;
 
 pub use execute::execute_command;
+pub use one_shot::{OneShotError, OneShotOutcome};
 pub use plan::{
     plan_command, CommandPlan, CommandPlanError, CommandPreAction, RuntimeCommand,
     SynvoidCommandPlan,
