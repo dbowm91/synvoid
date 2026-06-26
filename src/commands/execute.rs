@@ -4,11 +4,7 @@ use crate::startup::bootstrap::{init_logging_simple, print_test_mode_warning};
 use crate::startup::daemon::acquire_pid_file;
 use crate::startup::worker::{build_cpu_worker_args, build_unified_server_worker_args};
 use crate::supervisor::commands::handle_configtest;
-#[cfg(feature = "mesh")]
-use crate::supervisor::commands::handle_export_threat_feed;
-use crate::supervisor::commands::{
-    handle_generatenewtoken, handle_generatetoken, handle_rehash, handle_status, handle_stop,
-};
+use crate::supervisor::commands::{handle_generatenewtoken, handle_generatetoken};
 use crate::supervisor::run_supervisor_mode;
 use crate::worker::{
     run_cpu_worker, run_unified_server_worker, setup_unified_server_panic_handler,
@@ -16,23 +12,24 @@ use crate::worker::{
 };
 
 use super::plan::{
-    CommandPlan, CommandPreAction, OneShotCommand, RuntimeCommand, SupervisorControlCommand,
-    SynvoidCommandPlan,
+    CommandPlan, CommandPreAction, OneShotCommand, RuntimeCommand, SynvoidCommandPlan,
 };
+use super::supervisor_control::{execute_restart_pre_stop, execute_supervisor_control_command};
 
 /// Execute a command plan. This is the main entry point after command planning.
 ///
 /// Returns a process exit code.
 pub fn execute_command(mut plan: CommandPlan) -> i32 {
-    // Handle restart pre-action before executing the main plan
+    // Handle restart pre-action before executing the main plan.
+    // Uses the same typed supervisor-control adapter as normal stop.
     if let Some(CommandPreAction::RestartSupervisor {
         control_addr,
         use_tls,
     }) = plan.pre_action.take()
     {
-        if let Err(e) = handle_stop(control_addr, use_tls) {
+        if let Err(e) = execute_restart_pre_stop(control_addr, use_tls) {
             eprintln!("Restart pre-stop failed: {}", e);
-            return 1;
+            return e.exit_code();
         }
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
@@ -94,52 +91,21 @@ fn execute_one_shot(command: OneShotCommand) -> i32 {
 }
 
 /// Execute a supervisor-control command sent via IPC to a running instance.
-fn execute_supervisor_control(command: SupervisorControlCommand) -> i32 {
-    match command {
-        SupervisorControlCommand::Status {
-            control_addr,
-            use_tls,
-        } => {
-            if let Err(e) = handle_status(control_addr, use_tls) {
-                eprintln!("Status check failed: {}", e);
-                return 1;
+///
+/// Delegates to the typed adapter which maps commands to outcomes/errors.
+/// Exit codes are derived from the typed result, not ad-hoc branching.
+fn execute_supervisor_control(command: super::plan::SupervisorControlCommand) -> i32 {
+    match execute_supervisor_control_command(command) {
+        Ok(outcome) => {
+            let display = outcome.display();
+            if !display.is_empty() {
+                println!("{}", display);
             }
-            0
+            outcome.exit_code()
         }
-        SupervisorControlCommand::Stop {
-            control_addr,
-            use_tls,
-        } => {
-            if let Err(e) = handle_stop(control_addr, use_tls) {
-                eprintln!("Stop failed: {}", e);
-                return 1;
-            }
-            0
-        }
-        SupervisorControlCommand::Rehash {
-            control_addr,
-            use_tls,
-        } => {
-            if let Err(e) = handle_rehash(control_addr, use_tls) {
-                eprintln!("Reload failed: {}", e);
-                return 1;
-            }
-            0
-        }
-        SupervisorControlCommand::ExportThreatFeed { sign_with, site_id } => {
-            #[cfg(feature = "mesh")]
-            {
-                if let Err(e) = handle_export_threat_feed(&sign_with, site_id.as_deref()) {
-                    eprintln!("Export threat feed failed: {}", e);
-                    return 1;
-                }
-                0
-            }
-            #[cfg(not(feature = "mesh"))]
-            {
-                eprintln!("Export threat feed requires the mesh feature to be enabled.");
-                1
-            }
+        Err(e) => {
+            eprintln!("{}", e);
+            e.exit_code()
         }
     }
 }

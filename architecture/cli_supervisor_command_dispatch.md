@@ -1,6 +1,6 @@
 # CLI and Supervisor Command Dispatch
 
-This document describes the typed command dispatch architecture introduced in Iteration 101 and refined in Iteration 102.
+This document describes the typed command dispatch architecture introduced in Iteration 101, refined in Iteration 102, and extended with a typed result boundary in Iteration 103.
 
 ## Overview
 
@@ -32,6 +32,17 @@ The `plan_command()` function is pure — it validates mutual exclusivity of wor
 
 `--restart` is a typed pre-action (`CommandPreAction::RestartSupervisor`), not a standalone supervisor-control command. It preserves the control address and TLS setting from CLI args, executing a stop before the normal runtime launch.
 
+### Supervisor Control Adapter Layer
+
+Owned by: `src/commands/supervisor_control.rs`
+
+Converts typed `SupervisorControlCommand` variants into existing handler calls and returns structured outcomes:
+
+- `execute_supervisor_control_command()`: Dispatches to `handle_status`, `handle_stop`, `handle_rehash`, or `handle_export_threat_feed` and wraps results in `SupervisorControlOutcome` / `SupervisorControlError`.
+- `execute_restart_pre_stop()`: Reuses the same stop adapter for restart pre-actions, ensuring no duplicated logic.
+- `SupervisorControlOutcome`: Typed success variants (`StatusDisplayed`, `StopRequested`, `RehashRequested`, `ThreatFeedExported`, `RestartPreStopRequested`) with centralized `exit_code()` mapping.
+- `SupervisorControlError`: Typed error variants (`ConnectionFailed`, `RequestFailed`, `UnsupportedFeature`, `Io`) with centralized `exit_code()` mapping.
+
 ### Execution Layer
 
 Owned by: `src/commands/execute.rs`
@@ -39,10 +50,10 @@ Owned by: `src/commands/execute.rs`
 Executes the planned command by calling into existing runtime/supervisor modules:
 
 - `execute_one_shot()`: Config validation, OpenAPI export, genesis key generation, token operations, regex check.
-- `execute_supervisor_control()`: IPC commands via existing `handle_status()`, `handle_stop()`, etc.
+- `execute_supervisor_control()`: Delegates to the typed adapter, maps outcomes/errors to exit codes.
 - `execute_runtime()`: Runtime launch via existing `run_supervisor_mode()`, `run_cpu_worker()`, etc.
 
-Pre-actions (e.g., restart pre-stop) are executed before the main plan dispatch.
+Pre-actions (e.g., restart pre-stop) are executed before the main plan dispatch using the same typed adapter as normal stop.
 
 ## Command Classification
 
@@ -57,11 +68,11 @@ Pre-actions (e.g., restart pre-stop) are executed before the main plan dispatch.
 | `--generatenewtoken` | OneShot | `handle_generatenewtoken()` |
 | `--hash-token` | OneShot | `hash_admin_token_with_cost()` |
 | `--checkregex` | OneShot | `check_regex_complexity()` |
-| `--status` | SupervisorControl | `handle_status()` via IPC |
-| `--stop` | SupervisorControl | `handle_stop()` via IPC |
-| `--restart` | Pre-action | `handle_stop()` + sleep → Runtime |
-| `--rehash` | SupervisorControl | `handle_rehash()` via IPC |
-| `--export-threat-feed` | SupervisorControl | `handle_export_threat_feed()` |
+| `--status` | SupervisorControl | `handle_status()` via typed adapter |
+| `--stop` | SupervisorControl | `handle_stop()` via typed adapter |
+| `--restart` | Pre-action | `execute_restart_pre_stop()` + sleep → Runtime |
+| `--rehash` | SupervisorControl | `handle_rehash()` via typed adapter |
+| `--export-threat-feed` | SupervisorControl | `handle_export_threat_feed()` via typed adapter |
 | `--cpu-worker` | Runtime | `run_cpu_worker()` |
 | `--unified-server-worker` | Runtime | `run_unified_server_worker()` |
 | `--mesh-agent` | Runtime | `run_mesh_agent_mode()` |
@@ -73,7 +84,7 @@ Pre-actions (e.g., restart pre-stop) are executed before the main plan dispatch.
 
 Pre-actions are operations executed before the main command plan. Currently the only pre-action is `RestartSupervisor`, which:
 
-1. Sends a stop command to the existing supervisor (preserving `control_addr` and `control_api_tls` from CLI args).
+1. Sends a stop command to the existing supervisor via the typed adapter (preserving `control_addr` and `control_api_tls` from CLI args).
 2. Waits 1 second for the process to exit.
 3. Proceeds with the normal runtime launch (typically `RuntimeCommand::Supervisor`).
 
@@ -88,5 +99,5 @@ pub enum CommandPreAction {
 
 ## Guards
 
-- `tests/cli_command_dispatch_guard.rs`: Ensures `src/main.rs` remains thin (<=30 lines), uses `plan_command()`/`execute_command()`, does not contain command implementations, uses typed `CommandPreAction` for restart, and does not force TLS=false during restart pre-stop.
+- `tests/cli_command_dispatch_guard.rs`: Ensures `src/main.rs` remains thin (<=30 lines), uses `plan_command()`/`execute_command()`, does not contain command implementations, uses typed `CommandPreAction` for restart, does not force TLS=false during restart pre-stop, uses typed supervisor-control exit mapping, and restart pre-stop uses the typed adapter.
 - `tests/root_module_ledger_guard.rs`: Ensures `commands` is recorded in `architecture/root_module_ledger.md`.

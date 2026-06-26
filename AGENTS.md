@@ -212,7 +212,7 @@ cargo test --test root_module_ledger_guard
 | `stop_mesh_generation_support()` | `src/worker/unified_server/mod.rs` (Iteration 88 — cooperative then forced cleanup helper) |
 | `src/worker/unified_server/startup_plan.rs` (mesh block) | `src/worker/unified_server/mesh_attachment.rs` (Iteration 95) |
 | `handle_http3_request_dispatch()` (21 params) | `crates/synvoid-http/src/http3_request_dispatch.rs` (Iteration 99: now takes `Http3RequestMetadata` + `Http3DispatchDeps` context structs) |
-| `src/main.rs` (command dispatch) | `src/commands/plan.rs` + `src/commands/execute.rs` (Iteration 101: extracted typed command planning and execution; Iteration 102: typed restart pre-action, distinct hash-token error) |
+| `src/main.rs` (command dispatch) | `src/commands/plan.rs` + `src/commands/execute.rs` (Iteration 101: extracted typed command planning and execution; Iteration 102: typed restart pre-action, distinct hash-token error; Iteration 103: typed supervisor-control result boundary in `src/commands/supervisor_control.rs`) |
 
 ## Data-Plane Composition Root Boundary
 

@@ -122,3 +122,55 @@ fn execute_uses_typed_pre_action_for_restart() {
         "restart must use typed CommandPreAction::RestartSupervisor"
     );
 }
+
+#[test]
+fn supervisor_control_exit_mapping_is_typed() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("src/commands/execute.rs")).unwrap();
+    let non_comment = strip_comments(&source);
+
+    assert!(
+        non_comment.contains("SupervisorControlOutcome")
+            || non_comment.contains("execute_supervisor_control_command"),
+        "execute.rs must use typed SupervisorControlOutcome or execute_supervisor_control_command for supervisor-control exit mapping"
+    );
+}
+
+#[test]
+fn restart_pre_action_uses_supervisor_control_adapter() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("src/commands/execute.rs")).unwrap();
+    let non_comment = strip_comments(&source);
+
+    // Restart pre-stop must go through the typed adapter, not call handle_stop directly
+    assert!(
+        non_comment.contains("execute_restart_pre_stop"),
+        "restart pre-stop must use execute_restart_pre_stop adapter"
+    );
+}
+
+#[test]
+fn supervisor_control_module_exists() {
+    let root = workspace_root();
+    let path = root.join("src/commands/supervisor_control.rs");
+    assert!(
+        path.exists(),
+        "src/commands/supervisor_control.rs must exist for typed supervisor-control boundary"
+    );
+}
+
+#[test]
+fn supervisor_control_outcome_type_is_exported() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("src/commands/mod.rs")).unwrap();
+    let non_comment = strip_comments(&source);
+
+    assert!(
+        non_comment.contains("SupervisorControlOutcome"),
+        "src/commands/mod.rs must export SupervisorControlOutcome"
+    );
+    assert!(
+        non_comment.contains("SupervisorControlError"),
+        "src/commands/mod.rs must export SupervisorControlError"
+    );
+}
