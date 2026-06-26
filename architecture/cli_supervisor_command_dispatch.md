@@ -1,6 +1,6 @@
 # CLI and Supervisor Command Dispatch
 
-This document describes the typed command dispatch architecture introduced in Iteration 101, refined in Iteration 102, extended with a typed result boundary in Iteration 103, and separated from handler output in Iteration 104.
+This document describes the typed command dispatch architecture introduced in Iteration 101, refined in Iteration 102, extended with a typed result boundary in Iteration 103, separated from handler output in Iteration 104, and hardened with a typed error taxonomy in Iteration 105.
 
 ## Overview
 
@@ -46,7 +46,18 @@ Converts typed `SupervisorControlCommand` variants into data-returning handler c
   - `Rehash(RehashOutcome)` — carries acknowledged flag
   - `ThreatFeedExported(ThreatFeedExportSummary)` — carries byte count and optional record count
   - `RestartPreStopRequested` — silent pre-action
-- `SupervisorControlError`: Typed error variants (`ConnectionFailed`, `RequestFailed`, `UnsupportedFeature`, `Io`) with centralized `exit_code()` mapping.
+- `SupervisorControlError`: Typed error variants with centralized `exit_code()` mapping:
+  - `ConnectionUnavailable(String)` — could not connect to the supervisor (no socket, no running instance, connection refused)
+  - `Timeout(String)` — the control request timed out
+  - `Protocol(String)` — protocol-level error (send failed, serialization error)
+  - `RequestRejected(String)` — the supervisor rejected the request or returned an unexpected error
+  - `Authentication(String)` — authentication or authorization failure
+  - `UnsupportedFeature(&'static str)` — feature not available (e.g., missing feature gate)
+  - `Io(String)` — an I/O error occurred
+  - `InvalidResponse(String)` — supervisor returned an uninterpretable response
+  - `Unknown(String)` — unclassified error (transitional; new errors should use a more specific variant)
+
+  Error classification uses `classify_control_error()` which maps erased `Box<dyn Error>` messages to typed variants via pattern matching on the lowercased message text. All variants currently return exit code 1 for backwards compatibility; variant-specific exit codes are deferred until a compatibility review.
 
 ### Handler Data Layer
 
@@ -116,5 +127,5 @@ pub enum CommandPreAction {
 
 ## Guards
 
-- `tests/cli_command_dispatch_guard.rs`: Ensures `src/main.rs` remains thin (<=30 lines), uses `plan_command()`/`execute_command()`, does not contain command implementations, uses typed `CommandPreAction` for restart, does not force TLS=false during restart pre-stop, uses typed supervisor-control exit mapping, restart pre-stop uses the typed adapter, `SupervisorControlOutcome` uses data-bearing variants, `execute.rs` delegates formatting through `outcome.display()`, and `supervisor_control.rs` does not use placeholder `ThreatFeedExported { bytes: 0 }`.
+- `tests/cli_command_dispatch_guard.rs`: Ensures `src/main.rs` remains thin (<=30 lines), uses `plan_command()`/`execute_command()`, does not contain command implementations, uses typed `CommandPreAction` for restart, does not force TLS=false during restart pre-stop, uses typed supervisor-control exit mapping, restart pre-stop uses the typed adapter, `SupervisorControlOutcome` uses data-bearing variants, `execute.rs` delegates formatting through `outcome.display()`, `supervisor_control.rs` does not use placeholder `ThreatFeedExported { bytes: 0 }`, `SupervisorControlError` has `ConnectionUnavailable` and `Timeout` variants, and `supervisor_control.rs` uses `classify_control_error` (not the old `boxed_error_to_control_error`).
 - `tests/root_module_ledger_guard.rs`: Ensures `commands` is recorded in `architecture/root_module_ledger.md`.

@@ -214,3 +214,37 @@ fn supervisor_control_outcome_has_data_bearing_variants() {
         "SupervisorControlOutcome must have ThreatFeedExported(ThreatFeedExportSummary) variant"
     );
 }
+
+#[test]
+fn supervisor_control_error_has_actionable_variants() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("src/commands/supervisor_control.rs")).unwrap();
+
+    // Must have Connection variant for connection failures
+    assert!(
+        source.contains("ConnectionUnavailable"),
+        "SupervisorControlError must have ConnectionUnavailable variant"
+    );
+    // Must have Timeout variant for timeout failures
+    assert!(
+        source.contains("Timeout"),
+        "SupervisorControlError must have Timeout variant"
+    );
+}
+
+#[test]
+fn supervisor_control_uses_classified_error_conversion() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("src/commands/supervisor_control.rs")).unwrap();
+
+    // Must use the classifier, not the old broad converter
+    assert!(
+        source.contains("classify_control_error"),
+        "supervisor_control.rs must use classify_control_error for error conversion"
+    );
+    // The old broad converter must not exist
+    assert!(
+        !source.contains("boxed_error_to_control_error"),
+        "supervisor_control.rs must not contain boxed_error_to_control_error — replaced by classify_control_error"
+    );
+}
