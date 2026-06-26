@@ -10,6 +10,7 @@ Recent iterations moved SynVoid out of the old `src/main.rs` command bucket shap
 - Iteration 102 corrected restart planning and hash-token error semantics.
 - Iteration 103 introduced `src/commands/supervisor_control.rs` with typed `SupervisorControlOutcome` / `SupervisorControlError` and centralized supervisor-control exit-code mapping.
 - Iteration 104 separated handler output from data — handlers now expose `_data` variants returning structured data, `SupervisorControlOutcome` carries data-bearing variants, formatting is centralized in `display()`, and threat-feed export uses real byte metadata instead of a placeholder.
+- Iteration 105 hardened the error taxonomy — `SupervisorControlError` has 9 actionable typed variants (`ConnectionUnavailable`, `Timeout`, `Protocol`, `RequestRejected`, `Authentication`, `UnsupportedFeature`, `Io`, `InvalidResponse`, `Unknown`), `classify_control_error` replaces the old `boxed_error_to_control_error` catch-all, and exit-code mapping is centralized with all variants returning 1 for backwards compatibility.
 
 The command line is now structurally cleaner, but this line is not fully finished. The remaining work is to remove the last ad-hoc output/error/runtime seams while preserving CLI compatibility and supervisor IPC semantics.
 
@@ -25,11 +26,11 @@ Good state:
 - handlers expose `_data` variants returning structured data.
 - formatting is centralized in `SupervisorControlOutcome::display()`.
 - threat-feed export returns real byte metadata via `ThreatFeedExportSummary`.
+- supervisor-control errors have actionable typed categories with centralized exit-code mapping.
 - guards prevent command implementation logic from returning to `main.rs` and protect against placeholder metadata.
 
 Remaining weak spots:
 
-- the typed error taxonomy still collapses most failures into `RequestFailed(String)`;
 - runtime launch still builds Tokio runtimes, worker args, panic handlers, PID handling, and runtime calls directly inside `execute.rs`;
 - one-shot commands still print and return `i32` directly;
 - the final CLI flag precedence/compatibility surface has not been audited as a whole.
@@ -52,21 +53,18 @@ Primary goal: stop the typed supervisor-control boundary from being only a shell
 - no supervisor IPC wire semantics changed;
 - guards protect against placeholder metadata and `main.rs` regressions.
 
-## Phase 105 — Control-Plane Error Taxonomy Hardening
+## Phase 105 — Control-Plane Error Taxonomy Hardening ✅
 
 Replace the broad `RequestFailed(String)` catch-all behavior with a more useful internal error taxonomy.
 
-Expected categories:
+**Completed (Iteration 105):**
 
-- connection refused/unavailable;
-- timeout;
-- protocol/request failure;
-- authentication/authorization failure if present;
-- unsupported feature;
-- filesystem/I/O;
-- invalid response/unexpected state.
-
-Primary goal: improve diagnostics and exit-code ownership without changing command names or wire protocol.
+- `SupervisorControlError` expanded from 4 variants to 9 actionable typed variants;
+- `boxed_error_to_control_error` replaced by `classify_control_error` using string-based pattern matching on lowercased messages;
+- exit-code mapping centralized — all variants return 1 for backwards compatibility, variant-specific codes documented for future iteration;
+- 20+ unit tests cover classification, display, case insensitivity, and exhaustiveness;
+- 3 guard tests prevent regression to the old broad converter;
+- architecture docs and AGENTS.md updated.
 
 ## Phase 106 — Runtime Launch Boundary Cleanup
 
