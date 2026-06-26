@@ -248,3 +248,132 @@ fn supervisor_control_uses_classified_error_conversion() {
         "supervisor_control.rs must not contain boxed_error_to_control_error — replaced by classify_control_error"
     );
 }
+
+#[test]
+fn execute_rs_does_not_build_runtimes_or_worker_args() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("src/commands/execute.rs")).unwrap();
+    let non_comment = strip_comments(&source);
+
+    let forbidden = [
+        "tokio::runtime::Builder",
+        "build_cpu_worker_args",
+        "build_unified_server_worker_args",
+        "run_cpu_worker",
+        "run_unified_server_worker",
+        "acquire_pid_file",
+        "setup_worker_panic_handler",
+        "setup_unified_server_panic_handler",
+        "init_logging_simple",
+    ];
+
+    let mut violations = Vec::new();
+    for token in &forbidden {
+        if non_comment.contains(token) {
+            violations.push(*token);
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "src/commands/execute.rs contains runtime-launch details that should live in runtime_launch.rs: {:?}",
+        violations
+    );
+}
+
+#[test]
+fn execute_rs_delegates_to_runtime_launch_boundary() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("src/commands/execute.rs")).unwrap();
+    let non_comment = strip_comments(&source);
+
+    assert!(
+        non_comment.contains("plan_runtime_launch") || non_comment.contains("runtime_launch"),
+        "execute.rs must reference the runtime-launch boundary (plan_runtime_launch or runtime_launch module)"
+    );
+}
+
+#[test]
+fn runtime_launch_module_exists() {
+    let root = workspace_root();
+    let path = root.join("src/commands/runtime_launch.rs");
+    assert!(
+        path.exists(),
+        "src/commands/runtime_launch.rs must exist for typed runtime-launch boundary"
+    );
+}
+
+#[test]
+fn runtime_launch_has_planner_and_executor() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("src/commands/runtime_launch.rs")).unwrap();
+
+    assert!(
+        source.contains("pub fn plan_runtime_launch"),
+        "runtime_launch.rs must export plan_runtime_launch()"
+    );
+    assert!(
+        source.contains("pub fn execute_runtime_launch"),
+        "runtime_launch.rs must export execute_runtime_launch()"
+    );
+    assert!(
+        source.contains("RuntimeLaunchContext"),
+        "runtime_launch.rs must define RuntimeLaunchContext"
+    );
+    assert!(
+        source.contains("RuntimeLaunchPlan"),
+        "runtime_launch.rs must define RuntimeLaunchPlan"
+    );
+}
+
+#[test]
+fn runtime_launch_plan_pure_no_tokio_builder() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("src/commands/runtime_launch.rs")).unwrap();
+
+    // The planner function should not contain Tokio runtime building
+    let planner_start = source.find("pub fn plan_runtime_launch").unwrap();
+    let planner_end = source.find("pub fn execute_runtime_launch").unwrap();
+    let planner_body = &source[planner_start..planner_end];
+
+    assert!(
+        !planner_body.contains("tokio::runtime::Builder"),
+        "plan_runtime_launch() must not build Tokio runtimes — it should be pure"
+    );
+    assert!(
+        !planner_body.contains("acquire_pid_file"),
+        "plan_runtime_launch() must not acquire PID files — it should be pure"
+    );
+    assert!(
+        !planner_body.contains("init_logging"),
+        "plan_runtime_launch() must not initialize logging — it should be pure"
+    );
+}
+
+#[test]
+fn runtime_launch_mod_exports_types() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("src/commands/mod.rs")).unwrap();
+    let non_comment = strip_comments(&source);
+
+    assert!(
+        non_comment.contains("RuntimeLaunchContext"),
+        "commands/mod.rs must export RuntimeLaunchContext"
+    );
+    assert!(
+        non_comment.contains("RuntimeLaunchPlan"),
+        "commands/mod.rs must export RuntimeLaunchPlan"
+    );
+    assert!(
+        non_comment.contains("RuntimeLaunchOutcome"),
+        "commands/mod.rs must export RuntimeLaunchOutcome"
+    );
+    assert!(
+        non_comment.contains("plan_runtime_launch"),
+        "commands/mod.rs must export plan_runtime_launch"
+    );
+    assert!(
+        non_comment.contains("execute_runtime_launch"),
+        "commands/mod.rs must export execute_runtime_launch"
+    );
+}

@@ -21,10 +21,18 @@
 
 pub mod execute;
 pub mod plan;
+pub mod runtime_launch;
 pub mod supervisor_control;
 
 pub use execute::execute_command;
-pub use plan::{plan_command, CommandPlan, CommandPlanError, CommandPreAction, SynvoidCommandPlan};
+pub use plan::{
+    plan_command, CommandPlan, CommandPlanError, CommandPreAction, RuntimeCommand,
+    SynvoidCommandPlan,
+};
+pub use runtime_launch::{
+    execute_runtime_launch, plan_runtime_launch, RuntimeLaunchContext, RuntimeLaunchOutcome,
+    RuntimeLaunchPlan,
+};
 pub use supervisor_control::{
     execute_restart_pre_stop, execute_supervisor_control_command, RehashOutcome, StopOutcome,
     SupervisorControlError, SupervisorControlOutcome, SupervisorStatusDisplay,

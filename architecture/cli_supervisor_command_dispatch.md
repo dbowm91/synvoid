@@ -1,6 +1,6 @@
 # CLI and Supervisor Command Dispatch
 
-This document describes the typed command dispatch architecture introduced in Iteration 101, refined in Iteration 102, extended with a typed result boundary in Iteration 103, separated from handler output in Iteration 104, and hardened with a typed error taxonomy in Iteration 105.
+This document describes the typed command dispatch architecture introduced in Iteration 101, refined in Iteration 102, extended with a typed result boundary in Iteration 103, separated from handler output in Iteration 104, hardened with a typed error taxonomy in Iteration 105, and cleaned up with a runtime-launch boundary in Iteration 106.
 
 ## Overview
 
@@ -79,9 +79,33 @@ Executes the planned command by calling into existing runtime/supervisor modules
 
 - `execute_one_shot()`: Config validation, OpenAPI export, genesis key generation, token operations, regex check.
 - `execute_supervisor_control()`: Delegates to the typed adapter, maps outcomes/errors to exit codes, prints `outcome.display()` when non-None.
-- `execute_runtime()`: Runtime launch via existing `run_supervisor_mode()`, `run_cpu_worker()`, etc.
+- `execute_runtime()`: Delegates to the runtime-launch boundary for all runtime mode handling.
+
+`execute.rs` no longer directly builds Tokio runtimes, constructs worker args, acquires PID files, or initializes logging. These responsibilities are owned by the runtime-launch boundary.
 
 Pre-actions (e.g., restart pre-stop) are executed before the main plan dispatch using the same typed adapter as normal stop.
+
+### Runtime-Launch Boundary
+
+Owned by: `src/commands/runtime_launch.rs`
+
+Introduced in Iteration 106 to separate runtime-launch planning (pure, testable) from runtime-launch execution (side-effecting):
+
+- `RuntimeLaunchContext`: Structured launch inputs derived from `CommandPlan`. Carries only the fields needed for runtime launch decisions.
+- `RuntimeLaunchPlan`: Pure description of what to launch, one variant per runtime mode. Each variant carries the exact inputs needed to start that mode.
+- `RuntimeLaunchOutcome`: Typed result of a launch attempt (`Completed` / `Failed(String)`).
+- `plan_runtime_launch()`: Converts `RuntimeCommand + RuntimeLaunchContext` into a `RuntimeLaunchPlan`. **Pure** — no Tokio runtime construction, no PID files, no logging, no I/O.
+- `execute_runtime_launch()`: Performs all side effects (runtime build, PID file, logging, panic handlers). Returns `RuntimeLaunchOutcome`.
+- `execute_runtime()`: Thin bridge called by `execute.rs` that handles test-mode warnings, then delegates to the planner and launcher.
+
+```text
+execute.rs::execute_runtime(cmd, plan)
+  -> runtime_launch::execute_runtime(cmd, plan)
+    -> plan_runtime_launch(cmd, &ctx)  // pure
+    -> execute_runtime_launch(plan)    // side-effecting
+```
+
+The guard test `execute_rs_does_not_build_runtimes_or_worker_args` ensures `execute.rs` does not contain runtime-building details (`tokio::runtime::Builder`, `build_cpu_worker_args`, etc.).
 
 ## Command Classification
 
@@ -127,5 +151,5 @@ pub enum CommandPreAction {
 
 ## Guards
 
-- `tests/cli_command_dispatch_guard.rs`: Ensures `src/main.rs` remains thin (<=30 lines), uses `plan_command()`/`execute_command()`, does not contain command implementations, uses typed `CommandPreAction` for restart, does not force TLS=false during restart pre-stop, uses typed supervisor-control exit mapping, restart pre-stop uses the typed adapter, `SupervisorControlOutcome` uses data-bearing variants, `execute.rs` delegates formatting through `outcome.display()`, `supervisor_control.rs` does not use placeholder `ThreatFeedExported { bytes: 0 }`, `SupervisorControlError` has `ConnectionUnavailable` and `Timeout` variants, and `supervisor_control.rs` uses `classify_control_error` (not the old `boxed_error_to_control_error`).
+- `tests/cli_command_dispatch_guard.rs`: Ensures `src/main.rs` remains thin (<=30 lines), uses `plan_command()`/`execute_command()`, does not contain command implementations, uses typed `CommandPreAction` for restart, does not force TLS=false during restart pre-stop, uses typed supervisor-control exit mapping, restart pre-stop uses the typed adapter, `SupervisorControlOutcome` uses data-bearing variants, `execute.rs` delegates formatting through `outcome.display()`, `supervisor_control.rs` does not use placeholder `ThreatFeedExported { bytes: 0 }`, `SupervisorControlError` has `ConnectionUnavailable` and `Timeout` variants, `supervisor_control.rs` uses `classify_control_error` (not the old `boxed_error_to_control_error`), `execute.rs` does not build runtimes or worker args, `execute.rs` delegates to the runtime-launch boundary, `runtime_launch.rs` exists with planner and executor, planner is pure (no Tokio builder/PID/logging), and `commands/mod.rs` exports the runtime-launch types.
 - `tests/root_module_ledger_guard.rs`: Ensures `commands` is recorded in `architecture/root_module_ledger.md`.

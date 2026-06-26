@@ -1,19 +1,10 @@
-use std::path::PathBuf;
-
-use crate::startup::bootstrap::{init_logging_simple, print_test_mode_warning};
-use crate::startup::daemon::acquire_pid_file;
-use crate::startup::worker::{build_cpu_worker_args, build_unified_server_worker_args};
 use crate::supervisor::commands::handle_configtest;
 use crate::supervisor::commands::{handle_generatenewtoken, handle_generatetoken};
-use crate::supervisor::run_supervisor_mode;
-use crate::worker::{
-    run_cpu_worker, run_unified_server_worker, setup_unified_server_panic_handler,
-    setup_worker_panic_handler,
-};
 
 use super::plan::{
     CommandPlan, CommandPreAction, OneShotCommand, RuntimeCommand, SynvoidCommandPlan,
 };
+use super::runtime_launch::execute_runtime as runtime_launch_execute;
 use super::supervisor_control::{execute_restart_pre_stop, execute_supervisor_control_command};
 
 /// Execute a command plan. This is the main entry point after command planning.
@@ -110,90 +101,10 @@ fn execute_supervisor_control(command: super::plan::SupervisorControlCommand) ->
 }
 
 /// Execute a runtime launch command that starts a long-running process.
-fn execute_runtime(command: RuntimeCommand, plan: &CommandPlan) -> i32 {
-    // Print test mode warning if test flags are set
-    if let Some(ref test_flags) = plan.test_flags {
-        print_test_mode_warning(test_flags);
-    }
-
-    let config_path = plan.config_path.clone();
-
-    match command {
-        RuntimeCommand::CpuWorker => {
-            setup_worker_panic_handler();
-            init_logging_simple();
-
-            let cpu_worker_args =
-                build_cpu_worker_args(plan.cpu_worker_id, config_path, None, None, None);
-
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .enable_all()
-                .build()
-                .expect("Failed to build Tokio runtime");
-
-            if let Err(e) = rt.block_on(run_cpu_worker(cpu_worker_args)) {
-                tracing::error!("CPU worker error: {}", e);
-                return 1;
-            }
-            0
-        }
-        RuntimeCommand::UnifiedServerWorker => {
-            setup_unified_server_panic_handler();
-            init_logging_simple();
-
-            let worker_threads = plan.worker_threads.unwrap_or(2);
-
-            let unified_worker_args = build_unified_server_worker_args(
-                plan.unified_worker_id,
-                config_path,
-                None,
-                None,
-                worker_threads,
-                plan.cpu_affinity,
-                plan.total_workers.unwrap_or(1),
-                plan.reuse_port,
-            );
-
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(worker_threads)
-                .enable_all()
-                .build()
-                .expect("Failed to build Tokio runtime");
-
-            if let Err(e) = rt.block_on(run_unified_server_worker(unified_worker_args)) {
-                tracing::error!("Unified server worker error: {}", e);
-                return 1;
-            }
-            0
-        }
-        RuntimeCommand::MeshAgent => {
-            init_logging_simple();
-            let config_path = config_path.unwrap_or_else(|| PathBuf::from("config"));
-            crate::supervisor::run_mesh_agent_mode(Some(config_path), plan.foreground);
-            0
-        }
-        RuntimeCommand::WasmJail => {
-            init_logging_simple();
-            crate::sandbox::run_wasm_jail_mode();
-            0
-        }
-        RuntimeCommand::YaraJail => {
-            init_logging_simple();
-            crate::sandbox::run_yara_jail_mode();
-            0
-        }
-        RuntimeCommand::Supervisor => {
-            let pid_manager = acquire_pid_file();
-            run_supervisor_mode(
-                config_path,
-                plan.foreground,
-                plan.test_flags.as_deref(),
-                &pid_manager,
-            );
-            0
-        }
-    }
+///
+/// Delegates to the runtime-launch boundary in `runtime_launch.rs`.
+fn execute_runtime(command: super::plan::RuntimeCommand, plan: &CommandPlan) -> i32 {
+    runtime_launch_execute(command, plan)
 }
 
 // --- Private one-shot command helpers ---
