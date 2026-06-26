@@ -36,7 +36,7 @@ GranianConfig (granian.rs) - has require_hashes: bool  ← WAS MISSING
 - `crates/synvoid-config/src/site/app_server.rs` — Added `require_hashes: Option<bool>` to `SiteAppServerConfig`
 - `crates/synvoid-config/src/site/mod.rs` — Added `require_hashes` field mapping in `app_server_config()`
 - `src/app_server/mod.rs` — Already had `require_hashes: bool`
-- `src/app_server/granian.rs` — Added `require_hashes: bool` to `GranianConfig` and `From<&AppServerConfig>` impl
+- `crates/synvoid-app-server/src/granian.rs` — Added `require_hashes: bool` to `GranianConfig` and `From<&AppServerConfig>` impl
 
 ### Usage in granian.rs
 

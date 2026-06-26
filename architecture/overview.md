@@ -279,14 +279,14 @@ Client ──► TLS Termination ──► HTTP Server ──► WAF Pipeline �
 |------|-------|---------|
 | `src/http/server.rs` | ~4848 | HTTP request handling pipeline |
 | `src/waf/mod.rs` | ~936 | WAF core orchestrator |
-| `src/mesh/` | ~72400 | Mesh networking (100 files, 100+ types) |
+| `crates/synvoid-mesh/src/mesh/` | ~72400 | Mesh networking (DHT, transport, Raft, peer auth) |
 | `src/proxy/mod.rs` | ~1405 | Reverse proxy dispatch |
 | `src/supervisor/mod.rs` | ~17 | Process supervision (re-exports) |
 | `src/admin/mod.rs` | ~972 | Admin API handlers |
 | `src/tls/server.rs` | ~2252 | TLS termination + ACME |
-| `src/http_client/mod.rs` | ~1307 | HTTP client pool |
+| `src/http_client/mod.rs` | ~1307 | HTTP client pool (compat shim, canonical: `crates/synvoid-http-client/`) |
 | `src/upstream/pool.rs` | ~1540 | Upstream connection pool |
-| `src/plugin/mod.rs` | ~424 | WASM plugin runtime |
+| `src/plugin/mod.rs` | ~424 | WASM plugin runtime (compat shim, canonical: `crates/synvoid-plugin-runtime/`) |
 | `crates/synvoid-config/src/lib.rs` | ~447 | Configuration types |
 | `src/static_files/mod.rs` | ~1126 | Static file serving, `StaticResponseBody` defined at line 96 |
 
@@ -299,6 +299,17 @@ Client ──► TLS Termination ──► HTTP Server ──► WAF Pipeline �
 | File | Description |
 |------|-------------|
 | [`overview.md`](./overview.md) | This file — bird's eye view |
+| [`root_module_ledger.md`](./root_module_ledger.md) | Root module ownership classification |
+| [`worker_data_plane_composition_root.md`](./worker_data_plane_composition_root.md) | Composition boundary rules |
+| [`http_request_pipeline.md`](./http_request_pipeline.md) | 7-stage HTTP pipeline |
+| [`http3_request_waf_boundary.md`](./http3_request_waf_boundary.md) | HTTP/3 WAF boundary |
+| [`mesh_trust_domains.md`](./mesh_trust_domains.md) | 7 trust domains, CanonicalTrustReader |
+| [`threat_intel_consumer_actionability.md`](./threat_intel_consumer_actionability.md) | 46 consumers classified by enforcement |
+| [`block_store.md`](./block_store.md) | BlockStore architecture |
+| [`cli_supervisor_command_dispatch.md`](./cli_supervisor_command_dispatch.md) | Typed command dispatch |
+| [`mesh_transport_lifecycle.md`](./mesh_transport_lifecycle.md) | 20-task mesh lifecycle |
+| [`worker_task_lifecycle.md`](./worker_task_lifecycle.md) | 40+ background tasks |
+| [`supervisor.md`](./supervisor.md) | Process lifecycle, drain, gRPC |
 | [`deep_dive_review.md`](./deep_dive_review.md) | Layered architectural review |
 | [`review_plan.md`](./review_plan.md) | Review methodology and status |
 | [`process_lifecycle.md`](./process_lifecycle.md) | Process execution model |
@@ -310,7 +321,6 @@ Client ──► TLS Termination ──► HTTP Server ──► WAF Pipeline �
 | Path | Description |
 |------|-------------|
 | [`AGENTS.md`](../AGENTS.md) | Developer guide for AI agents |
-| [`skills/`](../skills/) | Detailed subsystem patterns (30+ files) |
+| [`.opencode/skills/`](../.opencode/skills/) | Detailed subsystem patterns (30 skills) |
 | [`docs/adr/`](../docs/adr/) | Architecture decision records |
-| [`plans/plan.md`](../plans/plan.md) | Consolidated implementation plan |
 | [`SECURITY.md`](../SECURITY.md) | Security policy |

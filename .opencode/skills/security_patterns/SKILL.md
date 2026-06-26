@@ -123,7 +123,7 @@ if !self.node_role.is_global() && !self.config.trusted_signers.is_empty() {
 
 ### WASM Table Growing Unbounded (P0.1)
 
-**Location**: `src/plugin/wasm_runtime.rs:319-326`
+**Location**: `crates/synvoid-plugin-runtime/src/wasm_runtime.rs`
 
 **Issue**: `table_growing()` returned `Ok(true)` unconditionally. Tables could grow without bound.
 
@@ -143,7 +143,7 @@ fn table_growing(
 
 ### WASM Pool DHT Prefix Leakage (P0.2)
 
-**Location**: `src/plugin/instance_pool.rs:148-163`
+**Location**: `crates/synvoid-plugin-runtime/src/instance_pool.rs`
 
 **Issue**: `prepare_for_request()` reset `start`, `timeout`, and `env` but NOT `allowed_dht_prefixes`. Previous tenant's DHT prefixes persisted across pool reuse.
 
@@ -181,7 +181,7 @@ return self.runtime
 
 ### KyberSlash Vulnerability (P0.A)
 
-**Location**: `src/wasm_pow/Cargo.toml:30`, `src/wasm_pow/src/pqc.rs:6`
+**Location**: `crates/synvoid-wasm-pow/Cargo.toml`, `crates/synvoid-wasm-pow/src/pqc.rs`
 
 **Issue**: `pqc_kyber` 0.7.1 has timing side-channel in ML-KEM-768 division operations (CVSS 7.4).
 
@@ -547,7 +547,7 @@ pub fn generate_global_node_auth(
 
 ### Overseer-Worker Communication
 
-**Location**: `src/process/ipc.rs`, `src/supervisor/ipc_client.rs`, `src/process/ipc_signed.rs`
+**Location**: `src/process/ipc.rs`, `src/supervisor/ipc.rs`, `src/process/ipc_signed.rs`
 
 **Issue**: IPC messages between overseer and workers were unsigned.
 
@@ -580,7 +580,7 @@ stream.send_signed(&msg, &signer).await?;
 
 ### Unix Permission Pattern
 
-**Location**: `crates/synvoid-mesh/src/mesh/config_identity.rs`, `src/tls/acme.rs`
+**Location**: `crates/synvoid-mesh/src/mesh/config_identity.rs`, `crates/synvoid-tls/src/acme.rs`
 
 **Issue**: Private key files created with default permissions (readable by others).
 
@@ -651,7 +651,7 @@ fn evict_oldest() {
 
 ### bcrypt Cost Validation (W2.1)
 
-**Location**: `src/config/admin.rs:validate()`
+**Location**: `crates/synvoid-config/src/admin.rs`
 
 **Pattern**: Minimum cost enforcement:
 ```rust
@@ -863,7 +863,7 @@ if let Ok(header_json) = serde_json::from_str::<Value>(&header_lower) {
 
 ### Unicode Normalization (S2.10)
 
-**Location**: `src/proxy.rs:138-236`
+**Location**: `src/proxy/mod.rs`
 
 **Pattern**: NFKC normalization for path sanitization:
 ```rust
@@ -934,20 +934,31 @@ fn refresh_sparse_buckets(&self) {
 
 ---
 
-### Revocation Bypass Edge/Origin | `crates/synvoid-mesh/src/mesh/peer_auth.rs:116-132,223-240` | Revocation checks added to edge/origin validation |
+### Revocation Bypass Edge/Origin
+
+**Location**: `crates/synvoid-mesh/src/mesh/peer_auth.rs:116-132,223-240`
+
+**Pattern**: Revocation checks added to edge/origin validation.
+
+---
+
+### Summary of Security Fix Locations
+
+| File | Fix |
+|------|-----|
 | `src/auth/mod.rs` | Constant-time CSRF comparison |
 | `src/admin/state.rs` | Constant-time session ID comparison |
 | `src/dns/crypto_rng.rs` | Result-based RNG with error propagation |
 | `crates/synvoid-mesh/src/mesh/peer_auth.rs` | Role-based Ed25519 + PoW authentication |
 | `src/process/ipc.rs` | IPC signing with HMAC |
 | `src/process/ipc_signed.rs` | Signed message deserialization |
-| `src/supervisor/ipc_client.rs` | Signed overseer IPC |
+| `src/supervisor/ipc.rs` | Signed supervisor IPC |
 | `crates/synvoid-mesh/src/mesh/config_identity.rs` | 0o600 key permissions, multi-genesis keys |
 | `crates/synvoid-mesh/src/mesh/threat_intel.rs` | Composite DHT keys |
 | `crates/synvoid-mesh/src/mesh/transport_global.rs` | Distributed revocation |
 | `crates/synvoid-mesh/src/mesh/dht/capability_attestation.rs` | Capability attestation |
 | `src/challenge/mod.rs` | Reduced PoW timeout (12s) |
-| `src/config/admin.rs` | bcrypt cost minimum 12 |
+| `crates/synvoid-config/src/admin.rs` | bcrypt cost minimum 12 |
 
 ---
 
@@ -1003,10 +1014,10 @@ rg "Result.*CryptoRngError" src/dns/
 rg "validate_peer_role" crates/synvoid-mesh/src/mesh/
 
 # Check file permissions
-rg "set_permissions.*0o600" crates/synvoid-mesh/src/mesh/config_identity.rs src/tls/acme.rs
+rg "set_permissions.*0o600" crates/synvoid-mesh/src/mesh/config_identity.rs crates/synvoid-tls/src/acme.rs
 
 # Check bcrypt cost validation
-rg "bcrypt_cost < 12" src/config/
+rg "bcrypt_cost < 12" crates/synvoid-config/src/
 
 # Check PoW authentication
 rg "validate_edge_node_pow" crates/synvoid-mesh/src/mesh/

@@ -32,7 +32,7 @@ Features are additive - DNS, ICMP-filter, and Mesh modules compile only when res
 | `main_config.rs` | Root configuration container for the entire SynVoid server |
 | `site/mod.rs` | Site-level configuration (per-domain routing, upstream, listen) |
 | `site/app_server.rs` | SiteAppServerConfig for Python ASGI/RSGI/WSGI site config |
-| `app_server.rs` | Resolved AppServerConfig for worker processes; `GranianConfig` lives in `src/app_server/granian.rs` (the runtime type, not synvoid-config) |
+| `app_server.rs` | Resolved AppServerConfig for worker processes; `GranianConfig` lives in `crates/synvoid-app-server/src/granian.rs` (the runtime type, not synvoid-config) |
 | `server.rs` | Server socket binding and trusted proxy config |
 | `defaults.rs` | Global default values for rate limits, bot challenges, honeypots, etc. |
 | `dns/mod.rs` | DNS server configuration (recursive, zones, DNSSEC, mesh) |

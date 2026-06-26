@@ -19,7 +19,7 @@ Use this skill when:
 - `src/admin/handlers/mesh_topology.rs` - Handler implementation
 - `src/admin/mod.rs` - Route registration (line ~626)
 - `src/admin/handlers/mod.rs` - Module declaration
-- `src/mesh/topology.rs` - `MeshTopology::get_all_peers()`
+- `crates/synvoid-mesh/src/mesh/topology.rs` - `MeshTopology::get_all_peers()`
 
 ## Implementation Pattern
 

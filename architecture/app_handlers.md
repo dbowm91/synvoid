@@ -22,10 +22,10 @@ SynVoid handles dynamic PHP applications by interfacing directly with PHP-FPM (o
 
 ## 3. Python (Granian)
 
-SynVoid includes built-in support for Python ASGI/WSGI applications using the **Granian** application server (`src/app_server/granian.rs` - 1047 lines).
+SynVoid includes built-in support for Python ASGI/WSGI applications using the **Granian** application server (`crates/synvoid-app-server/src/granian.rs`).
 
 - **GranianSupervisor:** Full process management struct that spawns and monitors Granian instances as child processes (`GranianSupervisor`).
-- **GranianConfig:** Runtime configuration struct for Granian deployment settings (defined at `src/app_server/granian.rs:165`). Note: This is distinct from `AppServerConfig` in `crates/synvoid-config/src/app_server.rs` which is the TOML-parsed configuration; GranianConfig is the resolved runtime type.
+- **GranianConfig:** Runtime configuration struct for Granian deployment settings (defined at `crates/synvoid-app-server/src/granian.rs`). Note: This is distinct from `AppServerConfig` in `crates/synvoid-config/src/app_server.rs` which is the TOML-parsed configuration; GranianConfig is the resolved runtime type.
 - **Auto-install Support:** Granian can be automatically installed if not present.
 - **Admin API Endpoints:** Granian instances are manageable via the Admin API.
 - **Unix Socket IPC:** Communication between the Worker and Granian happens over local Unix sockets, bypassing the overhead of the network stack.

@@ -135,5 +135,4 @@ At 1M RPS with 10% blocked IPs:
 
 ## Related Skills
 
-- `skills/ipc_hardening.md` - IPC security patterns
-- `skills/performance_patterns.md` - Performance optimization patterns
+- `ipc_hardening` - IPC security patterns
