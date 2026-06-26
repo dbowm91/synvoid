@@ -98,3 +98,27 @@ fn main_rs_does_not_contain_command_implementations() {
         violations
     );
 }
+
+#[test]
+fn command_dispatch_does_not_drop_restart_control_tls() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("src/commands/execute.rs")).unwrap();
+    let non_comment = strip_comments(&source);
+
+    assert!(
+        !non_comment.contains("handle_stop(ca, false)"),
+        "restart pre-stop must not force TLS=false or drop control address"
+    );
+}
+
+#[test]
+fn execute_uses_typed_pre_action_for_restart() {
+    let root = workspace_root();
+    let source = std::fs::read_to_string(root.join("src/commands/execute.rs")).unwrap();
+    let non_comment = strip_comments(&source);
+
+    assert!(
+        non_comment.contains("CommandPreAction::RestartSupervisor"),
+        "restart must use typed CommandPreAction::RestartSupervisor"
+    );
+}

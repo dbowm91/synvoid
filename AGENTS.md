@@ -212,7 +212,7 @@ cargo test --test root_module_ledger_guard
 | `stop_mesh_generation_support()` | `src/worker/unified_server/mod.rs` (Iteration 88 — cooperative then forced cleanup helper) |
 | `src/worker/unified_server/startup_plan.rs` (mesh block) | `src/worker/unified_server/mesh_attachment.rs` (Iteration 95) |
 | `handle_http3_request_dispatch()` (21 params) | `crates/synvoid-http/src/http3_request_dispatch.rs` (Iteration 99: now takes `Http3RequestMetadata` + `Http3DispatchDeps` context structs) |
-| `src/main.rs` (command dispatch) | `src/commands/plan.rs` + `src/commands/execute.rs` (Iteration 101: extracted typed command planning and execution) |
+| `src/main.rs` (command dispatch) | `src/commands/plan.rs` + `src/commands/execute.rs` (Iteration 101: extracted typed command planning and execution; Iteration 102: typed restart pre-action, distinct hash-token error) |
 
 ## Data-Plane Composition Root Boundary
 
@@ -360,7 +360,7 @@ Detailed documentation lives in `skills/` directory. See [`skills/AGENTS.overrid
 - **Session ID comparison**: Not constant-time, but acceptable (high-entropy random 32-byte values)
 
 ### Module Key Facts
-- **Command Dispatch**: `src/commands/mod.rs` — typed command classification (`SynvoidCommandPlan`) and execution; `src/commands/plan.rs` for planning, `src/commands/execute.rs` for execution. `src/main.rs` is a thin entrypoint that delegates here.
+- **Command Dispatch**: `src/commands/mod.rs` — typed command classification (`SynvoidCommandPlan`) and execution; `src/commands/plan.rs` for planning, `src/commands/execute.rs` for execution. `src/main.rs` is a thin entrypoint that delegates here. `--restart` is a typed `CommandPreAction::RestartSupervisor` that preserves control address and TLS; not a dead `SupervisorControlCommand` variant.
 - **HTTP Client**: ownership details live in `src/http_client/AGENTS.override.md` and `architecture/http_shared.md`
 - **MeshProxy**: `crates/synvoid-mesh/src/mesh/proxy.rs` - key routing component not in overview
 - **BackendType**: `crates/synvoid-proxy/src/router.rs:66-78` has 11 variants

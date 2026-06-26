@@ -16,7 +16,8 @@ use crate::worker::{
 };
 
 use super::plan::{
-    CommandPlan, OneShotCommand, RuntimeCommand, SupervisorControlCommand, SynvoidCommandPlan,
+    CommandPlan, CommandPreAction, OneShotCommand, RuntimeCommand, SupervisorControlCommand,
+    SynvoidCommandPlan,
 };
 
 /// Execute a command plan. This is the main entry point after command planning.
@@ -24,9 +25,15 @@ use super::plan::{
 /// Returns a process exit code.
 pub fn execute_command(mut plan: CommandPlan) -> i32 {
     // Handle restart pre-action before executing the main plan
-    if plan.restart {
-        let ca = plan.plan.control_addr_for_restart().map(|s| s.to_string());
-        let _ = handle_stop(ca, false);
+    if let Some(CommandPreAction::RestartSupervisor {
+        control_addr,
+        use_tls,
+    }) = plan.pre_action.take()
+    {
+        if let Err(e) = handle_stop(control_addr, use_tls) {
+            eprintln!("Restart pre-stop failed: {}", e);
+            return 1;
+        }
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
 
@@ -107,15 +114,6 @@ fn execute_supervisor_control(command: SupervisorControlCommand) -> i32 {
                 eprintln!("Stop failed: {}", e);
                 return 1;
             }
-            0
-        }
-        SupervisorControlCommand::Restart {
-            control_addr,
-            use_tls,
-        } => {
-            // restart is handled as stop + sleep in execute_command before dispatch.
-            // If we reach here, the stop already happened; just return success.
-            let _ = (control_addr, use_tls);
             0
         }
         SupervisorControlCommand::Rehash {

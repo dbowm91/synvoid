@@ -11,6 +11,8 @@ pub enum CommandPlanError {
     MeshFeatureRequired,
     /// Test mode requires --force flag.
     TestModeRequiresForce,
+    /// --hash-token was provided without a token value.
+    MissingHashToken,
 }
 
 impl std::fmt::Display for CommandPlanError {
@@ -26,6 +28,9 @@ impl std::fmt::Display for CommandPlanError {
             }
             CommandPlanError::TestModeRequiresForce => {
                 write!(f, "--test requires --force flag")
+            }
+            CommandPlanError::MissingHashToken => {
+                write!(f, "--hash-token requires a token value")
             }
         }
     }
@@ -69,11 +74,6 @@ pub enum SupervisorControlCommand {
         control_addr: Option<String>,
         use_tls: bool,
     },
-    /// Stop then start the instance.
-    Restart {
-        control_addr: Option<String>,
-        use_tls: bool,
-    },
     /// Reload configuration and propagate to workers.
     Rehash {
         control_addr: Option<String>,
@@ -103,6 +103,16 @@ pub enum RuntimeCommand {
     YaraJail,
 }
 
+/// A pre-action executed before the main command plan (e.g., restart pre-stop).
+#[derive(Debug, Clone)]
+pub enum CommandPreAction {
+    /// Stop the running supervisor before launching a new runtime instance.
+    RestartSupervisor {
+        control_addr: Option<String>,
+        use_tls: bool,
+    },
+}
+
 /// The top-level command plan produced from parsed CLI args.
 #[derive(Debug, Clone)]
 pub enum SynvoidCommandPlan {
@@ -114,21 +124,6 @@ pub enum SynvoidCommandPlan {
     Runtime(RuntimeCommand),
 }
 
-impl SynvoidCommandPlan {
-    /// Extract control_addr if this is a restart plan (used for pre-stop).
-    pub fn control_addr_for_restart(&self) -> Option<&str> {
-        if let SynvoidCommandPlan::SupervisorControl(SupervisorControlCommand::Restart {
-            control_addr,
-            ..
-        }) = self
-        {
-            control_addr.as_deref()
-        } else {
-            None
-        }
-    }
-}
-
 /// Complete command plan carrying the full CLI args for execution.
 #[derive(Debug)]
 pub struct CommandPlan {
@@ -137,8 +132,8 @@ pub struct CommandPlan {
     pub test_flags: Option<Vec<String>>,
     /// Config path from CLI args.
     pub config_path: Option<PathBuf>,
-    /// Whether the restart flag was set (triggers stop + sleep before runtime launch).
-    pub restart: bool,
+    /// Pre-action to execute before the main plan (e.g., restart pre-stop).
+    pub pre_action: Option<CommandPreAction>,
     /// Foreground mode flag.
     pub foreground: bool,
     /// CPU worker args from CLI.
@@ -208,7 +203,7 @@ pub fn plan_command(args: &Args) -> Result<CommandPlan, CommandPlanError> {
         let token = match args.hash_token.clone().flatten() {
             Some(t) => t,
             None => {
-                return Err(CommandPlanError::TestModeRequiresForce); // reuse error for "missing token"
+                return Err(CommandPlanError::MissingHashToken);
             }
         };
         let cost = args.hash_cost.unwrap_or(12).clamp(4, 31);
@@ -263,11 +258,20 @@ pub fn plan_command(args: &Args) -> Result<CommandPlan, CommandPlanError> {
         SynvoidCommandPlan::Runtime(RuntimeCommand::Supervisor)
     };
 
+    let pre_action = if args.restart {
+        Some(CommandPreAction::RestartSupervisor {
+            control_addr: args.control_addr.clone(),
+            use_tls: args.control_api_tls,
+        })
+    } else {
+        None
+    };
+
     Ok(CommandPlan {
         plan,
         test_flags: args.test.clone(),
         config_path: args.config_path.clone(),
-        restart: args.restart,
+        pre_action,
         foreground: args.foreground,
         cpu_worker_id: args.cpu_worker_id,
         unified_worker_id: args.unified_worker_id,
@@ -550,5 +554,64 @@ mod tests {
         args.config_path = Some(PathBuf::from("/custom/config"));
         let plan = plan_command(&args).unwrap();
         assert_eq!(plan.config_path, Some(PathBuf::from("/custom/config")));
+    }
+
+    #[test]
+    fn restart_preserves_control_addr_and_tls() {
+        let mut args = default_args();
+        args.restart = true;
+        args.control_addr = Some("127.0.0.1:9443".to_string());
+        args.control_api_tls = true;
+
+        let plan = plan_command(&args).unwrap();
+
+        assert!(matches!(
+            plan.pre_action,
+            Some(CommandPreAction::RestartSupervisor { ref control_addr, use_tls: true })
+                if control_addr.as_deref() == Some("127.0.0.1:9443")
+        ));
+    }
+
+    #[test]
+    fn restart_defaults_to_supervisor_runtime_after_pre_stop() {
+        let mut args = default_args();
+        args.restart = true;
+
+        let plan = plan_command(&args).unwrap();
+        assert!(matches!(
+            plan.plan,
+            SynvoidCommandPlan::Runtime(RuntimeCommand::Supervisor)
+        ));
+        assert!(matches!(
+            plan.pre_action,
+            Some(CommandPreAction::RestartSupervisor { .. })
+        ));
+    }
+
+    #[test]
+    fn restart_without_control_addr_uses_default() {
+        let mut args = default_args();
+        args.restart = true;
+
+        let plan = plan_command(&args).unwrap();
+        assert!(matches!(
+            plan.pre_action,
+            Some(CommandPreAction::RestartSupervisor {
+                control_addr: None,
+                use_tls: false
+            })
+        ));
+    }
+
+    #[test]
+    fn hash_token_without_value_reports_missing_hash_token() {
+        let mut args = default_args();
+        args.hash_token = Some(None);
+
+        let result = plan_command(&args);
+        assert!(matches!(
+            result.unwrap_err(),
+            CommandPlanError::MissingHashToken
+        ));
     }
 }

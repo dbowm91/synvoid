@@ -23,4 +23,4 @@ pub mod execute;
 pub mod plan;
 
 pub use execute::execute_command;
-pub use plan::{plan_command, CommandPlan, CommandPlanError, SynvoidCommandPlan};
+pub use plan::{plan_command, CommandPlan, CommandPlanError, CommandPreAction, SynvoidCommandPlan};
