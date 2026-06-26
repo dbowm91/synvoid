@@ -8,7 +8,7 @@ use crate::config::{Http3Config, TunnelConfig};
 use crate::http::HttpServer;
 use crate::router::Router;
 use crate::tcp::listener::TcpListenerPool;
-use crate::udp::listener::{UdpListenerPool, UdpListenerPoolConfig};
+use crate::udp::listener::UdpListenerPool;
 
 #[cfg(feature = "dns")]
 use crate::dns::DnsServer;
@@ -21,9 +21,8 @@ use crate::tls::acme::AcmeManager;
 use crate::tls::cert_resolver::CertResolver;
 use crate::tls::config::InternalTlsConfig;
 use crate::tunnel::{TunnelManager, TunnelRouter};
-use crate::utils::parse_host_port;
 use crate::waf::adapter::RootWafProcessor;
-use crate::waf::{AttackDetectionConfig, FloodProtector, RateLimitConfigStore, WafCore};
+use crate::waf::{FloodProtector, WafCore};
 use crate::worker::drain_adapter::WorkerDrainStateAdapter;
 use crate::worker::drain_state::WorkerDrainState;
 #[cfg(feature = "dns")]
@@ -269,6 +268,7 @@ impl UnifiedServer {
             );
             let ipc = ipc_clone.clone();
             let domains = domains.clone();
+            // reason: ACME cert reload IPC notification — owned by ACME lifecycle
             tokio::spawn(async move {
                 let msg = crate::process::Message::WorkerCertReload {
                     id: worker_id,
@@ -283,6 +283,7 @@ impl UnifiedServer {
         acme_manager.set_renew_callback(renew_callback);
 
         let acme_clone = acme_manager.clone();
+        // reason: ACME init + renewal task — owned by AcmeManager lifecycle
         tokio::spawn(async move {
             if let Err(e) = acme_clone.init().await {
                 tracing::error!("Failed to initialize ACME manager: {}", e);
@@ -359,163 +360,7 @@ impl UnifiedServer {
         self.app_servers.clone()
     }
 
-    /// Superseded by `UnifiedServerResources::build()` in the `resources` module.
-    /// Retained for backward compatibility; new code should prefer the resources module.
-    fn create_waf(main_config: &crate::config::MainConfig, worker_count: usize) -> WafCore {
-        let data_dir = main_config
-            .persistence
-            .data_dir
-            .as_ref()
-            .map(std::path::PathBuf::from);
-
-        // Scale rate limits by worker count to maintain global semantics
-        // (Approximation: total_limit / worker_count)
-        let worker_count = worker_count.max(1);
-        let mut ip_limit = main_config.defaults.ratelimit.ip.clone();
-        let mut global_limit = main_config.defaults.ratelimit.global.clone();
-
-        if worker_count > 1 {
-            ip_limit.per_second = (ip_limit.per_second as f64 / worker_count as f64).ceil() as u32;
-            ip_limit.per_minute = (ip_limit.per_minute as f64 / worker_count as f64).ceil() as u32;
-            global_limit.per_second =
-                (global_limit.per_second as f64 / worker_count as f64).ceil() as u32;
-            global_limit.per_minute =
-                (global_limit.per_minute as f64 / worker_count as f64).ceil() as u32;
-
-            tracing::info!(
-                "Scaling worker rate limits by 1/{} (IP: {} RPS, Global: {} RPS)",
-                worker_count,
-                ip_limit.per_second,
-                global_limit.per_second
-            );
-        }
-
-        WafCore::new(crate::waf::WafCoreConfig {
-            rate_config: RateLimitConfigStore {
-                ip: ip_limit,
-                global: global_limit,
-                cleanup_interval_secs: main_config.rate_limit_memory.cleanup_interval_secs,
-            },
-            memory_config: main_config.rate_limit_memory.clone(),
-            bot_config: main_config.defaults.bot.clone(),
-            endpoint_config: main_config.defaults.blocked.clone(),
-            waf_config: crate::waf::WafConfig {
-                enable_css_honeypot: main_config.defaults.css_challenge.enabled,
-                enable_pow_challenge: main_config.defaults.pow_challenge.enabled,
-                enable_auth_challenge: main_config.defaults.auth.enabled,
-                auth_login_path: main_config.defaults.auth.login_path.clone(),
-                block_ai_crawlers: main_config.defaults.bot.block_ai_crawlers,
-                drop_blocked_requests: false,
-                test_mode: crate::waf::TestModeConfig::default(),
-                honeypot_ban_duration_secs: 86400,
-                css_exempt_paths: main_config.defaults.css_challenge.exempt_paths.clone(),
-            },
-            whitelist: Vec::new(),
-            attack_detection_config: Some(AttackDetectionConfig::default()),
-            auth_manager: None,
-            threat_level_config: Some(main_config.threat_level.clone()),
-            ip_feed_config: Some(main_config.ip_feeds.clone()),
-            probe_config: Some(main_config.defaults.honeypot_probe.clone()),
-            suspicious_words_config: Some(main_config.defaults.suspicious_words.clone()),
-            upstream_errors_config: Some(main_config.defaults.upstream_errors.clone()),
-            traffic_shaping_config: Some(main_config.traffic_shaping.clone()),
-            bandwidth_config: main_config.traffic_shaping.bandwidth.clone(),
-            asn_scraping_config: Some(main_config.defaults.asn_scraping.clone()),
-            geoip: None,
-            data_dir,
-            test_mode: crate::waf::TestModeConfig::default(),
-            tarpit_defaults: Some(main_config.tarpit.clone()),
-        })
-    }
-
-    /// Superseded by `UnifiedServerResources::build()` in the `resources` module.
-    /// Retained for backward compatibility; new code should prefer the resources module.
-    fn create_tcp_pool(
-        main_config: &crate::config::MainConfig,
-        waf: Arc<WafCore>,
-    ) -> Result<(TcpListenerPool, Arc<FloodProtector>), Box<dyn std::error::Error + Send + Sync>>
-    {
-        use crate::tcp::listener::TcpListenerPoolConfig;
-        use crate::tcp::listener::TcpSocketOptions;
-        use crate::waf::flood::{FloodConfig, FloodProtector};
-
-        let socket_options = TcpSocketOptions {
-            nodelay: main_config.tcp.socket.nodelay,
-            send_buffer_size: main_config.tcp.socket.send_buffer_size,
-            recv_buffer_size: main_config.tcp.socket.recv_buffer_size,
-            reuse_port: true,
-            reuse_port_ebpf: false,
-            quickack: true,
-            keepalive_secs: Some(60),
-            keepalive_interval_secs: Some(10),
-            keepalive_retries: Some(3),
-        };
-
-        let pool_config = TcpListenerPoolConfig {
-            worker_pool_size: main_config.tcp.worker_pool_size,
-            connection_timeout_secs: 5,
-            max_connections: 10000,
-            socket_options,
-            buffer_size: 64 * 1024,
-            enable_concurrency_limit: true,
-        };
-
-        let flood_config = FloodConfig {
-            syn_rate_per_ip: main_config.tcp.syn_rate_per_ip,
-            syn_rate_global: main_config.tcp.syn_rate_global,
-            connection_rate_per_ip: main_config.tcp.connection_rate_per_ip,
-            connection_rate_global: main_config.tcp.connection_rate_global,
-            half_open_max: main_config.tcp.half_open_max,
-            half_open_per_ip_max: main_config.tcp.half_open_per_ip_max,
-            ..Default::default()
-        };
-        let flood_protector = Arc::new(FloodProtector::new(flood_config));
-
-        let pool = TcpListenerPool::new(pool_config, Default::default())
-            .with_rate_limiter(Arc::new(waf.rate_limiter.clone()))
-            .with_flood_protector(flood_protector.clone());
-
-        Ok((pool, flood_protector))
-    }
-
-    /// Superseded by `UnifiedServerResources::build()` in the `resources` module.
-    /// Retained for backward compatibility; new code should prefer the resources module.
-    fn create_udp_pool(
-        main_config: &crate::config::MainConfig,
-        _waf: Arc<WafCore>,
-    ) -> Result<UdpListenerPool, Box<dyn std::error::Error + Send + Sync>> {
-        use crate::udp::listener::UdpSocketOptions;
-        use crate::waf::flood::{FloodConfig, FloodProtector};
-
-        let socket_options = UdpSocketOptions {
-            reuse_port: true,
-            recv_buffer_size: main_config.udp.socket.recv_buffer_size,
-            send_buffer_size: main_config.udp.socket.send_buffer_size,
-        };
-
-        let pool_config = UdpListenerPoolConfig {
-            worker_pool_size: main_config.udp.worker_pool_size,
-            buffer_size: 8192,
-            max_packets_per_second: 10000,
-            socket_options,
-            workers_per_listener: 1,
-        };
-
-        let flood_config = FloodConfig {
-            udp_rate_per_ip: main_config.udp.rate_per_ip,
-            udp_rate_global: main_config.udp.rate_global,
-            ..Default::default()
-        };
-        let flood_protector = Arc::new(FloodProtector::new(flood_config));
-
-        let pool = UdpListenerPool::new(pool_config, Default::default())
-            .with_flood_protector(flood_protector);
-
-        Ok(pool)
-    }
-
     pub async fn run(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let _shutdown_rx = self.shutdown_tx.subscribe();
         let http_addr = self.http_addr;
         let https_addr = self.https_addr;
         let http3_addr = self.http3_addr;
@@ -524,9 +369,6 @@ impl UnifiedServer {
         let tls_config = self.tls_config.clone();
         let http3_config = self.http3_config.clone();
         let cert_resolver = self.cert_resolver.clone();
-
-        let _tls_config_for_v6 = tls_config.clone();
-        let _http3_config_for_v6 = http3_config.clone();
 
         if let Some(ref tunnel_router) = self.tunnel_router {
             if let Some(ref tunnel_config) = self.tunnel_config {
@@ -550,6 +392,7 @@ impl UnifiedServer {
             let config = tl.get_legacy_config();
             if config.auto_scale {
                 let tl_clone = tl.clone();
+                // reason: Threat-level auto-scale background task — Maintenance
                 tokio::spawn(async move {
                     loop {
                         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
@@ -628,6 +471,7 @@ impl UnifiedServer {
             _http_runtime_context: http_runtime_context,
         });
 
+        // reason: HTTP/1 server — registered in handles as CriticalServer
         let http_jh = {
             let shutdown_rx = self.shutdown_tx.subscribe();
             let state = shared_state.clone();
@@ -639,6 +483,7 @@ impl UnifiedServer {
         let http_v6_jh = if let Some(addr_v6) = self.http_addr_v6 {
             let shutdown_rx = self.shutdown_tx.subscribe();
             let state = shared_state.clone();
+            // reason: HTTP/1 IPv6 server — registered in handles as ProtocolListener
             Some(tokio::spawn(async move {
                 tracing::info!("Starting HTTP server on IPv6 {}", addr_v6);
                 Self::run_http_server_inner(state, addr_v6, shutdown_rx).await
@@ -656,6 +501,7 @@ impl UnifiedServer {
             };
             let http_config = main_config.http.clone();
             let tls_cfg = tls_config.clone();
+            // reason: HTTPS server — CriticalServer
             Some(tokio::spawn(async move {
                 Self::run_https_server_inner(
                     state,
@@ -682,6 +528,7 @@ impl UnifiedServer {
                 };
                 let http_config = main_config.http.clone();
                 let tls_cfg = tls_config.clone();
+                // reason: HTTPS IPv6 server — ProtocolListener
                 Some(tokio::spawn(async move {
                     tracing::info!("Starting HTTPS server on IPv6 {}", addr_v6);
                     Self::run_https_server_inner(
@@ -703,6 +550,7 @@ impl UnifiedServer {
             let shutdown_rx = self.shutdown_tx.subscribe();
             let state = shared_state.clone();
             let h3_cfg = http3_config.clone();
+            // reason: HTTP/3 server — ProtocolListener
             Some(tokio::spawn(async move {
                 Self::run_http3_server_inner(state, addr, resolver, h3_cfg, shutdown_rx).await
             }))
@@ -716,6 +564,7 @@ impl UnifiedServer {
             let shutdown_rx = self.shutdown_tx.subscribe();
             let state = shared_state.clone();
             let h3_cfg = http3_config.clone();
+            // reason: HTTP/3 IPv6 server — ProtocolListener
             Some(tokio::spawn(async move {
                 tracing::info!("Starting HTTP/3 server on IPv6 {}", addr_v6);
                 Self::run_http3_server_inner(state, addr_v6, resolver, h3_cfg, shutdown_rx).await
@@ -727,6 +576,7 @@ impl UnifiedServer {
         let tcp_jh = match &self.tcp_pool {
             Some(pool) => {
                 let pool = pool.clone();
+                // reason: TCP listener pool — ProtocolListener
                 Some(tokio::spawn(async move {
                     pool.start().await;
                 }))
@@ -737,6 +587,7 @@ impl UnifiedServer {
         let udp_jh = match &self.udp_pool {
             Some(pool) => {
                 let pool = pool.clone();
+                // reason: UDP listener pool — ProtocolListener
                 Some(tokio::spawn(async move {
                     pool.start().await;
                 }))
@@ -776,6 +627,7 @@ impl UnifiedServer {
 
                     if can_start {
                         let dns_server = dns_server.clone();
+                        // reason: DNS server — ProtocolListener
                         Some(tokio::spawn(async move {
                             let mut server = (*dns_server).clone();
                             if let Err(e) = server.start().await {
@@ -848,6 +700,9 @@ impl UnifiedServer {
         }
 
         self.shutdown().await;
+
+        tracing::info!("Unified server shutdown complete");
+
         Ok(())
     }
 

@@ -329,4 +329,49 @@ mod tests {
             err
         );
     }
+
+    #[test]
+    fn tls_enabled_populates_tls_config() {
+        let mut cfg = make_test_main_config();
+        cfg.tls.enabled = true;
+        cfg.tls.port = 8443;
+
+        let plan =
+            UnifiedServerStartupPlan::from_config_snapshot(&cfg, 1).expect("plan should build");
+        assert!(plan.tls_enabled);
+        assert!(plan.https_addr.is_some());
+        assert_eq!(plan.https_addr.unwrap().port(), 8443);
+    }
+
+    #[test]
+    fn http3_enabled_invalid_v6_addr_returns_typed_error() {
+        let mut cfg = make_test_main_config();
+        cfg.http3.enabled = true;
+        cfg.http3.host_v6 = Some("not-a-valid-ipv6".to_string());
+
+        let err = UnifiedServerStartupPlan::from_config_snapshot(&cfg, 1)
+            .expect_err("should fail on bad HTTP/3 IPv6 host");
+        assert!(
+            matches!(err, UnifiedServerStartupPlanError::InvalidHttp3Address(_)),
+            "expected InvalidHttp3Address, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn listener_conflict_detected_for_h3_and_https_same_port() {
+        let mut cfg = make_test_main_config();
+        cfg.tls.enabled = true;
+        cfg.tls.port = 8443;
+        cfg.http3.enabled = true;
+        cfg.http3.port = 8443;
+
+        let err = UnifiedServerStartupPlan::from_config_snapshot(&cfg, 1)
+            .expect_err("should fail on H3/HTTPS conflict");
+        assert!(
+            matches!(err, UnifiedServerStartupPlanError::ListenerConflict(_)),
+            "expected ListenerConflict, got: {:?}",
+            err
+        );
+    }
 }

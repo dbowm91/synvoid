@@ -7,7 +7,7 @@ pub struct UnifiedServerRuntimeHandles {
 pub struct NamedRuntimeHandle {
     pub name: &'static str,
     pub class: RuntimeHandleClass,
-    join: tokio::task::JoinHandle<()>,
+    pub join: tokio::task::JoinHandle<()>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +46,22 @@ impl UnifiedServerRuntimeHandles {
 
     pub fn len(&self) -> usize {
         self.handles.len()
+    }
+
+    /// Extract all handles, leaving the collection empty.
+    /// Used to pull JoinHandles out for `tokio::select!` while preserving
+    /// name/class metadata for drain reporting.
+    pub fn drain(
+        &mut self,
+    ) -> Vec<(
+        &'static str,
+        RuntimeHandleClass,
+        tokio::task::JoinHandle<()>,
+    )> {
+        self.handles
+            .drain(..)
+            .map(|h| (h.name, h.class, h.join))
+            .collect()
     }
 
     pub async fn shutdown_and_join(

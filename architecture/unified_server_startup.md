@@ -18,22 +18,33 @@ and runtime handle ownership in the UnifiedServer composition root.
 1. `UnifiedServer::new()` builds a `UnifiedServerStartupPlan` from config.
 2. `UnifiedServerResources::build()` constructs all runtime resources from the plan.
 3. `UnifiedServer` stores the plan-derived addresses and resource handles.
-4. `run()` spawns protocol listeners and stores handles in `UnifiedServerRuntimeHandles`.
+4. `run()` spawns protocol listeners with documented ownership.
+
+## Spawn Ownership
+
+Every `tokio::spawn` in `src/server/` must have a `// reason:` comment documenting
+its purpose and class. The lifecycle guard test enforces this requirement.
+
+Spawn classes:
+- **CriticalServer**: HTTP/1, HTTPS — primary protocol listeners
+- **ProtocolListener**: HTTP/3, TCP/UDP pools, DNS — secondary listeners
+- **Maintenance**: Background tasks (threat-level auto-scale, ACME renewal)
+- **HotReloadWatcher**: Plugin hot-reload file watchers (owned by `PluginRuntimeOwner`)
 
 ## Lifecycle Rules
 
 - **No `std::mem::forget`** in server or plugin code — enforced by `unified_server_lifecycle_ownership_guard.rs`.
+- **Every `tokio::spawn` must have a `// reason:` comment** — enforced by `tokio_spawns_require_reason_comments`.
 - Plugin hot-reload watcher is owned by `PluginRuntimeOwner` and dropped on server shutdown.
-- `UnifiedServerRuntimeHandles` tracks spawned tasks by name and class for graceful shutdown.
 
 ## Guardrail Tests
 
 ```bash
-cargo test --test unified_server_lifecycle_ownership_guard  # No mem::forget in server/plugin
-cargo test --lib server::startup_plan                       # Startup validation unit tests
-cargo test --lib server::plugin_runtime                     # Plugin lifecycle tests
-cargo test --lib server::resources                          # Resource construction tests
-cargo test --lib server::runtime_handles                    # Runtime handle tests
+cargo test --test unified_server_lifecycle_ownership_guard  # No mem::forget + reason comments
+cargo test -p synvoid --lib server::startup_plan           # Startup validation unit tests (9 tests)
+cargo test -p synvoid --lib server::plugin_runtime         # Plugin lifecycle tests
+cargo test -p synvoid --lib server::resources              # Resource construction tests (5 tests)
+cargo test -p synvoid --lib server::runtime_handles        # Runtime handle tests
 ```
 
 ## Composition Boundary

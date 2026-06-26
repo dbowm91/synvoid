@@ -280,5 +280,7 @@ resource construction, and runtime handle ownership:
 | `runtime_handles.rs` | Named task handles with class-based shutdown |
 | `plugin_runtime.rs` | Owned plugin lifecycle (replaces `mem::forget`) |
 
-Rule: No long-lived task or file-watcher handle may exist without an owner.
-The lifecycle guard test enforces no `std::mem::forget` in server/plugin code.
+Rules:
+- No long-lived task or file-watcher handle may exist without an owner.
+- The lifecycle guard test enforces no `std::mem::forget` in server/plugin code.
+- Every `tokio::spawn` must have a `// reason:` comment documenting ownership.
