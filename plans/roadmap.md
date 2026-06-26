@@ -106,6 +106,8 @@ Expected outcomes:
 - exit codes are documented and guarded;
 - `src/main.rs`, planning, supervisor-control, runtime-launch, and one-shot boundaries are all protected by source guards.
 
+**Status: Complete** — CLI surface audited, precedence and feature-gate behavior tested, exit semantics documented, all command-boundary guards pass, no command implementation logic in `src/main.rs`. Command/supervisor cleanup line closed.
+
 ## Exit Criteria For This Line Of Work
 
 This cleanup line is complete when:
@@ -116,3 +118,15 @@ This cleanup line is complete when:
 - CLI formatting and exit-code mapping are centralized and testable;
 - command behavior and supervisor IPC compatibility are preserved;
 - guards prevent regression to ad-hoc command implementation in `main.rs` or broad untyped branches in `execute.rs`.
+
+## Command/Supervisor Cleanup Line — Closed
+
+The command/supervisor cleanup line (Iterations 101–108) is now complete:
+
+- `src/main.rs` is a thin entrypoint
+- Command planning is typed (`SynvoidCommandPlan`)
+- Supervisor-control commands have typed outcomes/errors (`SupervisorControlOutcome`, `SupervisorControlError`)
+- Runtime launch has a typed boundary (`RuntimeLaunchPlan`, `RuntimeLaunchOutcome`)
+- One-shot commands have typed outcomes/errors (`OneShotOutcome`, `OneShotError`)
+- Source guards protect all major boundaries
+- Precedence, feature gates, and exit codes are documented and tested

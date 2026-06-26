@@ -614,4 +614,329 @@ mod tests {
             CommandPlanError::MissingHashToken
         ));
     }
+
+    // --- Iteration 108: Precedence and combination tests ---
+
+    #[test]
+    fn configtest_takes_precedence_over_runtime_flags() {
+        let mut args = default_args();
+        args.configtest = true;
+        args.cpu_worker = true;
+        let plan = plan_command(&args).unwrap();
+        assert!(matches!(
+            plan.plan,
+            SynvoidCommandPlan::OneShot(OneShotCommand::ConfigTest)
+        ));
+    }
+
+    #[test]
+    fn configtest_takes_precedence_over_worker_mode() {
+        let mut args = default_args();
+        args.configtest = true;
+        args.unified_server_worker = true;
+        let plan = plan_command(&args).unwrap();
+        assert!(matches!(
+            plan.plan,
+            SynvoidCommandPlan::OneShot(OneShotCommand::ConfigTest)
+        ));
+    }
+
+    #[test]
+    fn export_openapi_takes_precedence_over_runtime_flags() {
+        let mut args = default_args();
+        args.export_openapi = true;
+        args.mesh_agent = true;
+        let plan = plan_command(&args).unwrap();
+        assert!(matches!(
+            plan.plan,
+            SynvoidCommandPlan::OneShot(OneShotCommand::ExportOpenApi)
+        ));
+    }
+
+    #[test]
+    fn status_with_control_addr_and_tls_preserved() {
+        let mut args = default_args();
+        args.status = true;
+        args.control_addr = Some("10.0.0.1:9443".to_string());
+        args.control_api_tls = true;
+        let plan = plan_command(&args).unwrap();
+        match plan.plan {
+            SynvoidCommandPlan::SupervisorControl(SupervisorControlCommand::Status {
+                control_addr,
+                use_tls,
+            }) => {
+                assert_eq!(control_addr.as_deref(), Some("10.0.0.1:9443"));
+                assert!(use_tls);
+            }
+            _ => panic!("expected Status supervisor control"),
+        }
+    }
+
+    #[test]
+    fn stop_with_control_addr_and_tls_preserved() {
+        let mut args = default_args();
+        args.stop = true;
+        args.control_addr = Some("10.0.0.2:9443".to_string());
+        args.control_api_tls = true;
+        let plan = plan_command(&args).unwrap();
+        match plan.plan {
+            SynvoidCommandPlan::SupervisorControl(SupervisorControlCommand::Stop {
+                control_addr,
+                use_tls,
+            }) => {
+                assert_eq!(control_addr.as_deref(), Some("10.0.0.2:9443"));
+                assert!(use_tls);
+            }
+            _ => panic!("expected Stop supervisor control"),
+        }
+    }
+
+    #[test]
+    fn rehash_with_control_addr_and_tls_preserved() {
+        let mut args = default_args();
+        args.rehash = true;
+        args.control_addr = Some("10.0.0.3:9443".to_string());
+        args.control_api_tls = true;
+        let plan = plan_command(&args).unwrap();
+        match plan.plan {
+            SynvoidCommandPlan::SupervisorControl(SupervisorControlCommand::Rehash {
+                control_addr,
+                use_tls,
+            }) => {
+                assert_eq!(control_addr.as_deref(), Some("10.0.0.3:9443"));
+                assert!(use_tls);
+            }
+            _ => panic!("expected Rehash supervisor control"),
+        }
+    }
+
+    #[test]
+    fn restart_with_status_flag_combines_pre_action_and_status() {
+        let mut args = default_args();
+        args.restart = true;
+        args.status = true;
+        args.control_addr = Some("127.0.0.1:9443".to_string());
+        args.control_api_tls = true;
+        let plan = plan_command(&args).unwrap();
+        // restart is a pre-action; status is the main plan
+        assert!(matches!(
+            plan.pre_action,
+            Some(CommandPreAction::RestartSupervisor { .. })
+        ));
+        assert!(matches!(
+            plan.plan,
+            SynvoidCommandPlan::SupervisorControl(SupervisorControlCommand::Status { .. })
+        ));
+    }
+
+    #[test]
+    fn restart_with_stop_flag_combines_pre_action_and_stop() {
+        let mut args = default_args();
+        args.restart = true;
+        args.stop = true;
+        let plan = plan_command(&args).unwrap();
+        assert!(matches!(
+            plan.pre_action,
+            Some(CommandPreAction::RestartSupervisor { .. })
+        ));
+        assert!(matches!(
+            plan.plan,
+            SynvoidCommandPlan::SupervisorControl(SupervisorControlCommand::Stop { .. })
+        ));
+    }
+
+    #[test]
+    fn hash_token_cost_is_clamped() {
+        let mut args = default_args();
+        args.hash_token = Some(Some("mytoken".to_string()));
+        args.hash_cost = Some(2); // below min of 4
+        let plan = plan_command(&args).unwrap();
+        match plan.plan {
+            SynvoidCommandPlan::OneShot(OneShotCommand::HashToken { token, cost }) => {
+                assert_eq!(token, "mytoken");
+                assert_eq!(cost, 4); // clamped to minimum
+            }
+            _ => panic!("expected HashToken one-shot"),
+        }
+    }
+
+    #[test]
+    fn hash_token_cost_clamped_to_max() {
+        let mut args = default_args();
+        args.hash_token = Some(Some("mytoken".to_string()));
+        args.hash_cost = Some(100); // above max of 31
+        let plan = plan_command(&args).unwrap();
+        match plan.plan {
+            SynvoidCommandPlan::OneShot(OneShotCommand::HashToken { cost, .. }) => {
+                assert_eq!(cost, 31); // clamped to maximum
+            }
+            _ => panic!("expected HashToken one-shot"),
+        }
+    }
+
+    #[test]
+    fn export_threat_feed_mesh_gate() {
+        #[cfg(not(feature = "mesh"))]
+        {
+            let mut args = default_args();
+            args.export_threat_feed = true;
+            let result = plan_command(&args);
+            assert!(result.is_err());
+            assert!(matches!(
+                result.unwrap_err(),
+                CommandPlanError::MeshFeatureRequired
+            ));
+        }
+        #[cfg(feature = "mesh")]
+        {
+            let mut args = default_args();
+            args.export_threat_feed = true;
+            let plan = plan_command(&args).unwrap();
+            assert!(matches!(
+                plan.plan,
+                SynvoidCommandPlan::SupervisorControl(
+                    SupervisorControlCommand::ExportThreatFeed { .. }
+                )
+            ));
+        }
+    }
+
+    #[test]
+    fn show_node_info_mesh_gate() {
+        #[cfg(not(feature = "mesh"))]
+        {
+            let mut args = default_args();
+            args.show_node_info = true;
+            let result = plan_command(&args);
+            assert!(result.is_err());
+            assert!(matches!(
+                result.unwrap_err(),
+                CommandPlanError::MeshFeatureRequired
+            ));
+        }
+        #[cfg(feature = "mesh")]
+        {
+            let mut args = default_args();
+            args.show_node_info = true;
+            let plan = plan_command(&args).unwrap();
+            assert!(matches!(
+                plan.plan,
+                SynvoidCommandPlan::OneShot(OneShotCommand::ShowNodeInfo)
+            ));
+        }
+    }
+
+    // Table-driven worker mode mutual exclusion test
+    #[test]
+    fn worker_mode_mutual_exclusion_all_pairs() {
+        let modes = [
+            "worker",
+            "cpu_worker",
+            "unified_server_worker",
+            "mesh_agent",
+            "wasm_jail",
+            "yara_jail",
+        ];
+        for i in 0..modes.len() {
+            for j in (i + 1)..modes.len() {
+                let mut args = default_args();
+                match modes[i] {
+                    "worker" => args.worker = true,
+                    "cpu_worker" => args.cpu_worker = true,
+                    "unified_server_worker" => args.unified_server_worker = true,
+                    "mesh_agent" => args.mesh_agent = true,
+                    "wasm_jail" => args.wasm_jail = true,
+                    "yara_jail" => args.yara_jail = true,
+                    _ => unreachable!(),
+                }
+                match modes[j] {
+                    "worker" => args.worker = true,
+                    "cpu_worker" => args.cpu_worker = true,
+                    "unified_server_worker" => args.unified_server_worker = true,
+                    "mesh_agent" => args.mesh_agent = true,
+                    "wasm_jail" => args.wasm_jail = true,
+                    "yara_jail" => args.yara_jail = true,
+                    _ => unreachable!(),
+                }
+                let result = plan_command(&args);
+                assert!(
+                    result.is_err(),
+                    "Expected error for combination {} + {}",
+                    modes[i],
+                    modes[j]
+                );
+                assert!(
+                    matches!(result.unwrap_err(), CommandPlanError::MultipleWorkerModes),
+                    "Expected MultipleWorkerModes for {} + {}",
+                    modes[i],
+                    modes[j]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn configtest_with_restart_is_one_shot_with_pre_action() {
+        let mut args = default_args();
+        args.configtest = true;
+        args.restart = true;
+        args.control_addr = Some("127.0.0.1:9443".to_string());
+        let plan = plan_command(&args).unwrap();
+        assert!(matches!(
+            plan.plan,
+            SynvoidCommandPlan::OneShot(OneShotCommand::ConfigTest)
+        ));
+        assert!(matches!(
+            plan.pre_action,
+            Some(CommandPreAction::RestartSupervisor { .. })
+        ));
+    }
+
+    #[test]
+    fn generatenewtoken_preserves_config_path() {
+        let mut args = default_args();
+        args.generatenewtoken = true;
+        args.config_path = Some(PathBuf::from("/etc/synvoid/main.toml"));
+        let plan = plan_command(&args).unwrap();
+        match plan.plan {
+            SynvoidCommandPlan::OneShot(OneShotCommand::GenerateNewToken { config_path }) => {
+                assert_eq!(config_path, Some(PathBuf::from("/etc/synvoid/main.toml")));
+            }
+            _ => panic!("expected GenerateNewToken one-shot"),
+        }
+    }
+
+    #[test]
+    fn export_threat_feed_preserves_sign_with_and_site_id() {
+        #[cfg(feature = "mesh")]
+        {
+            let mut args = default_args();
+            args.export_threat_feed = true;
+            args.sign_with = Some(PathBuf::from("/path/to/key.pem"));
+            args.site_id = Some("site-42".to_string());
+            let plan = plan_command(&args).unwrap();
+            match plan.plan {
+                SynvoidCommandPlan::SupervisorControl(
+                    SupervisorControlCommand::ExportThreatFeed { sign_with, site_id },
+                ) => {
+                    assert_eq!(sign_with, Some(PathBuf::from("/path/to/key.pem")));
+                    assert_eq!(site_id, Some("site-42".to_string()));
+                }
+                _ => panic!("expected ExportThreatFeed supervisor control"),
+            }
+        }
+    }
+
+    #[test]
+    fn checkregex_with_special_characters() {
+        let mut args = default_args();
+        args.checkregex = Some(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$".to_string());
+        let plan = plan_command(&args).unwrap();
+        match plan.plan {
+            SynvoidCommandPlan::OneShot(OneShotCommand::CheckRegex { pattern }) => {
+                assert!(pattern.contains("@"));
+            }
+            _ => panic!("expected CheckRegex one-shot"),
+        }
+    }
 }

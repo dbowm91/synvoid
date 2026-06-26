@@ -500,3 +500,133 @@ fn one_shot_error_has_exit_code() {
         "OneShotError must have exit_code() method"
     );
 }
+
+// --- Iteration 108: Documentation synchronization guards ---
+
+#[test]
+fn architecture_doc_lists_all_command_categories() {
+    let root = workspace_root();
+    let source =
+        std::fs::read_to_string(root.join("architecture/cli_supervisor_command_dispatch.md"))
+            .unwrap();
+
+    // Must document all three command categories
+    assert!(
+        source.contains("OneShot"),
+        "architecture doc must mention OneShot command category"
+    );
+    assert!(
+        source.contains("SupervisorControl"),
+        "architecture doc must mention SupervisorControl command category"
+    );
+    assert!(
+        source.contains("Runtime"),
+        "architecture doc must mention Runtime command category"
+    );
+}
+
+#[test]
+fn architecture_doc_mentions_restart_pre_action() {
+    let root = workspace_root();
+    let source =
+        std::fs::read_to_string(root.join("architecture/cli_supervisor_command_dispatch.md"))
+            .unwrap();
+
+    assert!(
+        source.contains("RestartSupervisor"),
+        "architecture doc must mention RestartSupervisor pre-action"
+    );
+    assert!(
+        source.contains("pre-action") || source.contains("Pre-Action"),
+        "architecture doc must document pre-actions"
+    );
+}
+
+#[test]
+fn architecture_doc_mentions_runtime_launch_boundary() {
+    let root = workspace_root();
+    let source =
+        std::fs::read_to_string(root.join("architecture/cli_supervisor_command_dispatch.md"))
+            .unwrap();
+
+    assert!(
+        source.contains("RuntimeLaunchPlan"),
+        "architecture doc must mention RuntimeLaunchPlan"
+    );
+    assert!(
+        source.contains("plan_runtime_launch"),
+        "architecture doc must mention plan_runtime_launch"
+    );
+    assert!(
+        source.contains("execute_runtime_launch"),
+        "architecture doc must mention execute_runtime_launch"
+    );
+}
+
+#[test]
+fn architecture_doc_mentions_one_shot_boundary() {
+    let root = workspace_root();
+    let source =
+        std::fs::read_to_string(root.join("architecture/cli_supervisor_command_dispatch.md"))
+            .unwrap();
+
+    assert!(
+        source.contains("OneShotOutcome"),
+        "architecture doc must mention OneShotOutcome"
+    );
+    assert!(
+        source.contains("OneShotError"),
+        "architecture doc must mention OneShotError"
+    );
+    assert!(
+        source.contains("execute_one_shot_command"),
+        "architecture doc must mention execute_one_shot_command"
+    );
+}
+
+#[test]
+fn architecture_doc_mentions_supervisor_control_boundary() {
+    let root = workspace_root();
+    let source =
+        std::fs::read_to_string(root.join("architecture/cli_supervisor_command_dispatch.md"))
+            .unwrap();
+
+    assert!(
+        source.contains("SupervisorControlOutcome"),
+        "architecture doc must mention SupervisorControlOutcome"
+    );
+    assert!(
+        source.contains("SupervisorControlError"),
+        "architecture doc must mention SupervisorControlError"
+    );
+    assert!(
+        source.contains("classify_control_error"),
+        "architecture doc must mention classify_control_error"
+    );
+}
+
+#[test]
+fn architecture_doc_mentions_exit_code_model() {
+    let root = workspace_root();
+    let source =
+        std::fs::read_to_string(root.join("architecture/cli_supervisor_command_dispatch.md"))
+            .unwrap();
+
+    assert!(
+        source.contains("Exit Code") || source.contains("exit code"),
+        "architecture doc must document exit code model"
+    );
+}
+
+#[test]
+fn architecture_doc_mentions_precedence_rules() {
+    let root = workspace_root();
+    let source =
+        std::fs::read_to_string(root.join("architecture/cli_supervisor_command_dispatch.md"))
+            .unwrap();
+
+    assert!(
+        source.contains("Precedence") || source.contains("precedence"),
+        "architecture doc must document precedence rules"
+    );
+}

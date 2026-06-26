@@ -1,6 +1,6 @@
 # CLI and Supervisor Command Dispatch
 
-This document describes the typed command dispatch architecture introduced in Iteration 101, refined in Iteration 102, extended with a typed result boundary in Iteration 103, separated from handler output in Iteration 104, hardened with a typed error taxonomy in Iteration 105, cleaned up with a runtime-launch boundary in Iteration 106, and given a typed one-shot result boundary in Iteration 107.
+This document describes the typed command dispatch architecture introduced in Iteration 101, refined in Iteration 102, extended with a typed result boundary in Iteration 103, separated from handler output in Iteration 104, hardened with a typed error taxonomy in Iteration 105, cleaned up with a runtime-launch boundary in Iteration 106, given a typed one-shot result boundary in Iteration 107, and audited for completeness in Iteration 108.
 
 ## Overview
 
@@ -162,6 +162,66 @@ The guard test `execute_rs_does_not_build_runtimes_or_worker_args` ensures `exec
 | `--yara-jail` | Runtime | `run_yara_jail_mode()` |
 | (default) | Runtime | `run_supervisor_mode()` |
 
+## CLI Flag Inventory
+
+Complete mapping of all CLI flags to their plan categories and behavior.
+
+### One-Shot Flags
+
+| Flag | Plan Category | Required Args | Feature Gate | Expected Exit Code |
+|------|--------------|---------------|-------------|-------------------|
+| `--configtest` | OneShot(ConfigTest) | none | none | 0 (valid) / 1 (invalid) |
+| `--export-openapi` | OneShot(ExportOpenApi) | none | none | 0 |
+| `--export-api-spec` | OneShot(ExportApiSpec) | none | none | 0 |
+| `--genesis` | OneShot(Genesis) | none | mesh | 0 / 1 (no mesh) |
+| `--show-node-info` | OneShot(ShowNodeInfo) | none | mesh | 0 / 1 (no mesh) |
+| `--generatetoken` | OneShot(GenerateToken) | none | none | 0 |
+| `--generatenewtoken` | OneShot(GenerateNewToken) | none | none | 0 |
+| `--hash-token <token>` | OneShot(HashToken) | token value | none | 0 / 1 (missing token) |
+| `--checkregex '<pattern>'` | OneShot(CheckRegex) | pattern string | none | 0 (safe) / 1 (unsafe) |
+
+### Supervisor Control Flags
+
+| Flag | Plan Category | Required Args | Feature Gate | Expected Exit Code |
+|------|--------------|---------------|-------------|-------------------|
+| `--status` | SupervisorControl(Status) | none | none | 0 (success) / 1 (error) |
+| `--stop` | SupervisorControl(Stop) | none | none | 0 (success) / 1 (error) |
+| `--rehash` | SupervisorControl(Rehash) | none | none | 0 (success) / 1 (error) |
+| `--export-threat-feed` | SupervisorControl(ExportThreatFeed) | none | mesh | 0 (success) / 1 (error/no mesh) |
+
+### Runtime Flags
+
+| Flag | Plan Category | Required Args | Feature Gate | Expected Exit Code |
+|------|--------------|---------------|-------------|-------------------|
+| (default, no flags) | Runtime(Supervisor) | none | none | 0 (clean exit) |
+| `--cpu-worker` | Runtime(CpuWorker) | none | none | 0 |
+| `--unified-server-worker` | Runtime(UnifiedServerWorker) | none | none | 0 |
+| `--mesh-agent` | Runtime(MeshAgent) | none | mesh | 0 |
+| `--wasm-jail` | Runtime(WasmJail) | none | none | 0 |
+| `--yara-jail` | Runtime(YaraJail) | none | none | 0 |
+
+### Modifier Flags
+
+| Flag | Effect | Compatible With | Incompatible With |
+|------|--------|----------------|-------------------|
+| `--restart` | Adds RestartSupervisor pre-action before main plan | All command categories | none (combines with any) |
+| `--foreground` / `-f` | Runtime: run in foreground | Runtime commands | Supervisor control commands |
+| `--test <flags>` | Runtime: test mode (requires --force) | Runtime commands | One-shot commands |
+| `--force` | Required with --test | --test | none |
+| `--control-addr <addr>` | Supervisor control: target address | Supervisor control, --restart | none |
+| `--control-api-tls` | Supervisor control: use TLS | Supervisor control, --restart | none |
+| `--config-path <path>` | Config: custom config directory | All | none |
+| `--log-level <level>` | Runtime: log level override | Runtime commands | none |
+| `--sign-with <path>` | Export threat feed: signing key | --export-threat-feed | none |
+| `--site-id <id>` | Export threat feed: site filter | --export-threat-feed | none |
+| `--hash-cost <n>` | Hash token: bcrypt cost (4-31, default 12) | --hash-token | none |
+| `--cpu-worker-id <id>` | CPU worker: worker ID | --cpu-worker | none |
+| `--unified-worker-id <id>` | Unified worker: worker ID | --unified-server-worker | none |
+| `--worker-threads <n>` | Unified worker: Tokio threads | --unified-server-worker | none |
+| `--cpu-affinity <core>` | Unified worker: pin to CPU core | --unified-server-worker | none |
+| `--total-workers <n>` | Unified worker: pool size | --unified-server-worker | none |
+| `--reuse-port` | Unified worker: shared port (hidden) | --unified-server-worker | none |
+
 ## Pre-Actions
 
 Pre-actions are operations executed before the main command plan. Currently the only pre-action is `RestartSupervisor`, which:
@@ -179,7 +239,125 @@ pub enum CommandPreAction {
 }
 ```
 
+## Precedence Rules
+
+The planner evaluates flags in a fixed priority order. When multiple flags are present, the first match in the if-else chain wins for the main plan. `--restart` is always processed as a pre-action regardless of the main plan.
+
+### Evaluation Order
+
+1. `--configtest` → OneShot(ConfigTest) — takes precedence over all other flags
+2. `--export-openapi` → OneShot(ExportOpenApi)
+3. `--export-api-spec` → OneShot(ExportApiSpec)
+4. `--genesis` → OneShot(Genesis) [mesh gate]
+5. `--show-node-info` → OneShot(ShowNodeInfo) [mesh gate]
+6. `--generatetoken` → OneShot(GenerateToken)
+7. `--hash-token` → OneShot(HashToken) — requires token value, cost clamped to 4-31
+8. `--checkregex` → OneShot(CheckRegex)
+9. `--generatenewtoken` → OneShot(GenerateNewToken)
+10. `--status` → SupervisorControl(Status)
+11. `--stop` → SupervisorControl(Stop)
+12. `--rehash` → SupervisorControl(Rehash)
+13. `--export-threat-feed` → SupervisorControl(ExportThreatFeed) [mesh gate]
+14. `--cpu-worker` → Runtime(CpuWorker)
+15. `--unified-server-worker` → Runtime(UnifiedServerWorker)
+16. `--mesh-agent` → Runtime(MeshAgent)
+17. `--wasm-jail` → Runtime(WasmJail)
+18. `--yara-jail` → Runtime(YaraJail)
+19. (default) → Runtime(Supervisor)
+
+### Pre-Action Processing
+
+`--restart` is processed after the main plan classification. It adds a `CommandPreAction::RestartSupervisor` pre-action that executes before the main plan dispatch. The pre-action preserves `control_addr` and `control_api_tls` from CLI args.
+
+### Invalid Combinations
+
+| Combination | Behavior |
+|-------------|----------|
+| Multiple worker modes (e.g., `--cpu-worker --unified-server-worker`) | Error: `MultipleWorkerModes` |
+| `--test` without `--force` | Error: `TestModeRequiresForce` |
+| `--hash-token` without token value | Error: `MissingHashToken` |
+| `--genesis` without mesh feature | Error: `MeshFeatureRequired` |
+| `--show-node-info` without mesh feature | Error: `MeshFeatureRequired` |
+| `--export-threat-feed` without mesh feature | Error: `MeshFeatureRequired` |
+
+### Explicitly Tested Combinations
+
+These combinations have dedicated tests to ensure correct behavior:
+
+- `--configtest` with `--cpu-worker` → configtest wins (OneShot)
+- `--configtest` with `--restart` → one-shot with pre-action
+- `--status` with `--control-addr` and `--control-api-tls` → values preserved
+- `--stop` with `--control-addr` and `--control-api-tls` → values preserved
+- `--rehash` with `--control-addr` and `--control-api-tls` → values preserved
+- `--restart` with `--status` → pre-action + status plan
+- `--restart` with `--stop` → pre-action + stop plan
+- `--hash-token` with `--hash-cost 2` → cost clamped to 4
+- `--hash-token` with `--hash-cost 100` → cost clamped to 31
+
+## Exit Code Model
+
+| Exit Code | Meaning |
+|-----------|---------|
+| 0 | Success — command completed as expected |
+| 1 | Generic failure — validation error, command error, or runtime error |
+
+### Exit Code Classes
+
+- **OneShotOutcome::exit_code()**: Returns 0 for all success variants except `RegexCheck { safe: false }` which returns 1.
+- **OneShotError::exit_code()**: Returns 1 for all error variants.
+- **SupervisorControlOutcome::exit_code()**: Returns 0 for all success variants.
+- **SupervisorControlError::exit_code()**: Returns 1 for all error variants. Variant-specific exit codes are deferred until a compatibility review.
+- **RuntimeLaunchOutcome::exit_code()**: Returns 0 for `Completed`, 1 for `Failed`.
+- **CommandPlanError**: Mapped to exit code 1 at the process entrypoint (`src/main.rs`).
+- **Process exit**: `src/main.rs` calls `std::process::exit(exit_code)` with the code returned by `execute_command()`.
+
+### Design Note
+
+All `SupervisorControlError` variants currently return exit code 1 for backwards compatibility. Variant-specific exit codes (e.g., connection unavailable → 2, timeout → 3) are intentionally deferred until a compatibility review confirms no downstream tooling depends on the current exit code values.
+
+## Manual Compatibility Checklist
+
+Commands that can be run without a running supervisor or config:
+
+```bash
+synvoid --help                                    # Expected: help text
+synvoid --configtest                              # Expected: config validation
+synvoid --export-openapi                          # Expected: OpenAPI JSON
+synvoid --export-api-spec                         # Expected: API spec JSON
+synvoid --hash-token "test123"                    # Expected: bcrypt hash
+synvoid --checkregex '^[a-z]+$'                   # Expected: safe regex
+synvoid --generatetoken                           # Expected: hex token
+```
+
+Commands requiring mesh feature:
+
+```bash
+synvoid --genesis                                 # Expected: genesis key (mesh feature required)
+synvoid --show-node-info                          # Expected: node info (mesh feature required)
+synvoid --export-threat-feed                      # Expected: threat feed (mesh feature required)
+```
+
+Commands requiring a running supervisor:
+
+```bash
+synvoid --status                                  # Expected: status display
+synvoid --stop                                    # Expected: shutdown confirmation
+synvoid --rehash                                  # Expected: rehash confirmation
+synvoid --restart                                 # Expected: stop + restart
+```
+
+Runtime modes (require appropriate setup):
+
+```bash
+synvoid --cpu-worker --cpu-worker-id 0            # Expected: CPU worker launch
+synvoid --unified-server-worker --unified-worker-id 0  # Expected: unified worker launch
+synvoid --mesh-agent                              # Expected: mesh agent launch (mesh feature)
+```
+
+**Note**: Commands requiring a running supervisor or specific config were not run during this audit. The planner tests verify correct classification without requiring a live environment.
+
 ## Guards
 
 - `tests/cli_command_dispatch_guard.rs`: Ensures `src/main.rs` remains thin (<=30 lines), uses `plan_command()`/`execute_command()`, does not contain command implementations, uses typed `CommandPreAction` for restart, does not force TLS=false during restart pre-stop, uses typed supervisor-control exit mapping, restart pre-stop uses the typed adapter, `SupervisorControlOutcome` uses data-bearing variants, `execute.rs` delegates formatting through `outcome.display()`, `supervisor_control.rs` does not use placeholder `ThreatFeedExported { bytes: 0 }`, `SupervisorControlError` has `ConnectionUnavailable` and `Timeout` variants, `supervisor_control.rs` uses `classify_control_error` (not the old `boxed_error_to_control_error`), `execute.rs` does not build runtimes or worker args, `execute.rs` delegates to the runtime-launch boundary, `runtime_launch.rs` exists with planner and executor, planner is pure (no Tokio builder/PID/logging), `commands/mod.rs` exports the runtime-launch types, `one_shot.rs` exists with `execute_one_shot_command`, `OneShotOutcome` and `OneShotError` are exported, `execute.rs` delegates to the one-shot adapter, `execute.rs` does not contain one-shot implementation details (`schema_for!`, `synvoidOpenApi::openapi_json`, `hash_admin_token_with_cost`, `check_regex_complexity`, `GenesisKeyConfig::generate`), `OneShotOutcome` has `exit_code()` and `display()` methods, `OneShotError` implements `Display` and has `exit_code()`.
 - `tests/root_module_ledger_guard.rs`: Ensures `commands` is recorded in `architecture/root_module_ledger.md`.
+- Iteration 108 added precedence, combination, feature-gate, and cost-clamping tests to `src/commands/plan.rs` unit tests.
