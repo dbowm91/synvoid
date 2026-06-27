@@ -20,6 +20,60 @@ fn rust_files_under(dirs: &[PathBuf]) -> Vec<PathBuf> {
     files
 }
 
+/// Strip string literals, line comments (`//`), and block comments (`/* */`).
+/// This prevents false positives from tokens inside comments or strings.
+fn strip_comments_and_strings(content: &str) -> String {
+    let mut result = String::with_capacity(content.len());
+    let mut chars = content.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '/' if chars.peek() == Some(&'/') => {
+                // Line comment — skip to end of line
+                while let Some(&next) = chars.peek() {
+                    if next == '\n' {
+                        break;
+                    }
+                    chars.next();
+                }
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                // Block comment — skip to matching close
+                chars.next();
+                let mut depth = 1;
+                while depth > 0 {
+                    match chars.next() {
+                        Some('/') if chars.peek() == Some(&'*') => {
+                            chars.next();
+                            depth += 1;
+                        }
+                        Some('*') if chars.peek() == Some(&'/') => {
+                            chars.next();
+                            depth -= 1;
+                        }
+                        Some(_) => {}
+                        None => break,
+                    }
+                }
+            }
+            '"' => {
+                // String literal — skip to closing quote
+                loop {
+                    match chars.next() {
+                        Some('\\') => {
+                            chars.next(); // skip escaped char
+                        }
+                        Some('"') => break,
+                        Some(_) => {}
+                        None => break,
+                    }
+                }
+            }
+            _ => result.push(ch),
+        }
+    }
+    result
+}
+
 #[test]
 fn server_runtime_does_not_leak_lifecycle_handles() {
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -28,12 +82,9 @@ fn server_runtime_does_not_leak_lifecycle_handles() {
 
     for file in rust_files_under(&roots) {
         let text = std::fs::read_to_string(&file).unwrap();
-        for (idx, line) in text.lines().enumerate() {
+        let cleaned = strip_comments_and_strings(&text);
+        for (idx, line) in cleaned.lines().enumerate() {
             let trimmed = line.trim();
-            // Skip comments and attributes
-            if trimmed.starts_with("//") || trimmed.starts_with("#[") {
-                continue;
-            }
             if trimmed.contains("std::mem::forget") || trimmed.contains("mem::forget") {
                 offenders.push(format!("{}:{}: {}", file.display(), idx + 1, trimmed));
             }
@@ -42,7 +93,9 @@ fn server_runtime_does_not_leak_lifecycle_handles() {
 
     assert!(
         offenders.is_empty(),
-        "server/plugin lifecycle handles must be owned, not leaked:\n{}",
+        "server/plugin lifecycle handles must be owned, not leaked.\n\
+         Found mem::forget in production code — replace with explicit Drop or RAII ownership.\n\n\
+         Offenders:\n{}",
         offenders.join("\n")
     );
 }
@@ -93,7 +146,7 @@ fn tokio_spawns_require_reason_comments() {
                 continue;
             }
 
-            // Skip comments and attributes
+            // Skip comments and attributes (but NOT string content — those are real code)
             if trimmed.starts_with("//") || trimmed.starts_with("#[") {
                 continue;
             }
@@ -113,7 +166,10 @@ fn tokio_spawns_require_reason_comments() {
 
     assert!(
         unreasoned.is_empty(),
-        "Every tokio::spawn in server/plugin must have a `// reason:` comment:\n{}",
+        "Every tokio::spawn in server/plugin must have a `// reason:` comment.\n\
+         Add `// reason: <owner or rationale>` on the spawn line or within 5 lines above it.\n\
+         This prevents untracked fire-and-forget tasks that cannot be cleanly shut down.\n\n\
+         Unreasoned spawns:\n{}",
         unreasoned.join("\n")
     );
 }

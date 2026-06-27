@@ -327,6 +327,64 @@ fn supervisor_tokio_spawns_are_allowlisted() {
     }
 }
 
+/// Verify that every file+function pair in `SPAWN_FUNCTION_ALLOWLIST` actually
+/// exists in the codebase. Stale entries silently permit regressions.
+#[test]
+fn spawn_allowlist_entries_are_live() {
+    let root = workspace_root();
+    let supervisor_dir = root.join("src/supervisor");
+
+    for (file_suffix, func_name) in SPAWN_FUNCTION_ALLOWLIST {
+        // Find the file
+        let matching_files: Vec<PathBuf> = collect_rs_files(&supervisor_dir)
+            .iter()
+            .filter(|p| p.to_string_lossy().ends_with(file_suffix))
+            .cloned()
+            .collect();
+
+        assert!(
+            !matching_files.is_empty(),
+            "SPAWN_FUNCTION_ALLOWLIST file suffix '{}' matches no files under src/supervisor/ — \
+             entry is stale",
+            file_suffix
+        );
+
+        // If a function name is specified, verify it exists in the file
+        if !func_name.is_empty() {
+            let content = fs::read_to_string(&matching_files[0]).unwrap_or_default();
+            let cleaned = strip_comments(&content);
+            let func_pattern = format!("fn {}(", func_name);
+            assert!(
+                cleaned.contains(&func_pattern),
+                "SPAWN_FUNCTION_ALLOWLIST function '{}' not found in '{}' — \
+                 entry is stale or function was renamed",
+                func_name,
+                file_suffix
+            );
+        }
+    }
+}
+
+/// Verify that every file in `FULLY_ALLOWLISTED_FILES` actually exists.
+#[test]
+fn fully_allowlisted_files_are_live() {
+    let root = workspace_root();
+    let supervisor_dir = root.join("src/supervisor");
+    let all_files = collect_rs_files(&supervisor_dir);
+
+    for file_suffix in FULLY_ALLOWLISTED_FILES {
+        let exists = all_files
+            .iter()
+            .any(|p| p.to_string_lossy().ends_with(file_suffix));
+        assert!(
+            exists,
+            "FULLY_ALLOWLISTED_FILES entry '{}' matches no files under src/supervisor/ — \
+             entry is stale",
+            file_suffix
+        );
+    }
+}
+
 /// Verify that `process.rs` does NOT bare-spawn tasks inside the main `run()` body.
 /// Tasks should be registered, not spawned ad-hoc.
 #[test]

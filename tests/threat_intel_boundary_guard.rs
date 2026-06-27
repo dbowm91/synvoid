@@ -29,6 +29,7 @@ fn is_allowlisted(relative: &str) -> bool {
         "crates/synvoid-mesh/src/mesh/threat_intel.rs",
         "tests/threat_intel_boundary_guard.rs",
         "tests/dht_integration_test.rs",
+        "tests/request_path_capability_boundary_guard.rs",
         "src/waf/threat_intel/feed_client.rs",
         // Composition root adapters: ThreatIntelLookupAdapter delegates raw
         // lookup to the concrete manager. This is the correct location for
@@ -72,17 +73,133 @@ fn collect_rs_files(dir: &Path) -> Vec<PathBuf> {
     results
 }
 
-/// Strip everything from the first `#[cfg(test)]` attribute onward.
+/// Strip `#[cfg(test)]` modules (brace-depth-aware).
 ///
 /// This avoids scanning test code within implementation files — tests live
 /// in their own `#[cfg(test)] mod tests { ... }` blocks and are not part
 /// of the production surface we are guarding.
-fn strip_test_modules(content: &str) -> &str {
-    if let Some(idx) = content.find("#[cfg(test)]") {
-        &content[..idx]
-    } else {
-        content
+fn strip_cfg_test_modules(content: &str) -> String {
+    let mut result = String::with_capacity(content.len());
+    let mut depth: i32 = 0;
+    let mut in_test_module = false;
+    let mut chars = content.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if !in_test_module {
+            result.push(ch);
+            if ch == '#' {
+                let rest: String = chars.clone().take(20).collect();
+                if rest.starts_with("[cfg(test)]") {
+                    let mut skip = String::new();
+                    skip.push(ch);
+                    for _ in 0..11 {
+                        skip.push(chars.next().unwrap_or('\0'));
+                    }
+                    result.push_str(&skip[1..]);
+                    loop {
+                        let remaining: String = chars.clone().take(20).collect();
+                        let trimmed = remaining.trim_start();
+                        if trimmed.starts_with("#[") {
+                            while let Some(c) = chars.next() {
+                                if c == ']' {
+                                    break;
+                                }
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                    // Skip whitespace and look for `mod` keyword
+                    let peek_chars: Vec<char> = chars.clone().take(20).collect();
+                    let mut ws_count = 0;
+                    while ws_count < peek_chars.len()
+                        && (peek_chars[ws_count] == ' '
+                            || peek_chars[ws_count] == '\t'
+                            || peek_chars[ws_count] == '\n'
+                            || peek_chars[ws_count] == '\r')
+                    {
+                        ws_count += 1;
+                    }
+                    let after_ws: String = peek_chars[ws_count..].iter().take(10).collect();
+                    if after_ws.starts_with("mod ") || after_ws.starts_with("mod{") {
+                        in_test_module = true;
+                        depth = 0;
+                        loop {
+                            let c = chars.next().unwrap_or('\0');
+                            if c == '{' {
+                                depth = 1;
+                                break;
+                            }
+                            if c == ';' {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth <= 0 {
+                        in_test_module = false;
+                    }
+                }
+                _ => {}
+            }
+        }
     }
+    result
+}
+
+/// Strip string literals, line comments (`//`), and block comments (`/* */`).
+/// Prevents false positives from raw lookup tokens inside comments or strings.
+fn strip_comments_and_strings(content: &str) -> String {
+    let mut result = String::with_capacity(content.len());
+    let mut chars = content.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '/' if chars.peek() == Some(&'/') => {
+                while let Some(&next) = chars.peek() {
+                    if next == '\n' {
+                        break;
+                    }
+                    chars.next();
+                }
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                let mut depth = 1;
+                while depth > 0 {
+                    match chars.next() {
+                        Some('/') if chars.peek() == Some(&'*') => {
+                            chars.next();
+                            depth += 1;
+                        }
+                        Some('*') if chars.peek() == Some(&'/') => {
+                            chars.next();
+                            depth -= 1;
+                        }
+                        Some(_) => {}
+                        None => break,
+                    }
+                }
+            }
+            '"' => loop {
+                match chars.next() {
+                    Some('\\') => {
+                        chars.next();
+                    }
+                    Some('"') => break,
+                    Some(_) => {}
+                    None => break,
+                }
+            },
+            _ => result.push(ch),
+        }
+    }
+    result
 }
 
 /// Phase 1 test: scan source files and reject raw lookup APIs outside the
@@ -116,7 +233,10 @@ fn raw_lookup_boundary_check() {
             Err(_) => continue,
         };
 
-        let production = strip_test_modules(&content);
+        let production = {
+            let no_tests = strip_cfg_test_modules(&content);
+            strip_comments_and_strings(&no_tests)
+        };
 
         for token in RAW_LOOKUP_TOKENS {
             if production.contains(token) {
@@ -153,6 +273,7 @@ fn allowlisted_files_exist() {
         "crates/synvoid-mesh/src/mesh/threat_intel.rs",
         "tests/threat_intel_boundary_guard.rs",
         "tests/dht_integration_test.rs",
+        "tests/request_path_capability_boundary_guard.rs",
         "src/waf/threat_intel/feed_client.rs",
         "src/worker/unified_server/services.rs",
         "src/worker/unified_server/init_mesh.rs",
@@ -207,14 +328,19 @@ fn denylist_directories_cover_enforcement_surfaces() {
     }
 }
 
-/// Verify that the scan correctly strips `#[cfg(test)]` modules so that test
-/// code within implementation files does not trigger false positives.
+/// Verify that the scan correctly strips `#[cfg(test)]` modules and comments
+/// so that test code and comments within implementation files do not trigger
+/// false positives.
 #[test]
 fn strip_test_modules_removes_cfg_test_content() {
     let content = r#"
         use crate::foo;
 
         fn real_function() {}
+
+        // lookup_threat_indicator_in_dht should not trigger here
+        /// lookup_local_indicator("doc comment") should not trigger here
+        "lookup_local_indicator(\"in string\") should not trigger here"
 
         #[cfg(test)]
         mod tests {
@@ -226,11 +352,12 @@ fn strip_test_modules_removes_cfg_test_content() {
         }
     "#;
 
-    let stripped = strip_test_modules(content);
+    let no_tests = strip_cfg_test_modules(content);
+    let stripped = strip_comments_and_strings(&no_tests);
 
     assert!(
-        !stripped.contains("#[cfg(test)]"),
-        "Test module marker should be stripped"
+        !no_tests.contains("fn it_works()"),
+        "Test module body should be stripped"
     );
     assert!(
         !stripped.contains("lookup_threat_indicator_in_dht"),
@@ -239,6 +366,14 @@ fn strip_test_modules_removes_cfg_test_content() {
     assert!(
         stripped.contains("fn real_function()"),
         "Production code before #[cfg(test)] must be retained"
+    );
+    assert!(
+        !stripped.contains("lookup_local_indicator"),
+        "Raw lookup tokens in comments and strings should be stripped"
+    );
+    assert!(
+        no_tests.contains("fn real_function()"),
+        "Production code before #[cfg(test)] must be retained in intermediate step"
     );
 }
 
@@ -262,7 +397,8 @@ fn simulated_violation_in_waf_path_is_detected() {
         "Imaginary enforcement file should not be allowlisted"
     );
 
-    let stripped = strip_test_modules(fake_content);
+    let no_tests = strip_cfg_test_modules(fake_content);
+    let stripped = strip_comments_and_strings(&no_tests);
 
     let has_violation = RAW_LOOKUP_TOKENS.iter().any(|t| stripped.contains(t));
     assert!(
