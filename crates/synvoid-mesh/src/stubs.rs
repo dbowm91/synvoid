@@ -226,7 +226,9 @@ pub mod block_store {
     use std::sync::Arc;
 
     use synvoid_config::DenyListLimitsConfig;
-    pub use synvoid_core::block_store::{BlockProvenance, BlockProvenanceKind};
+    pub use synvoid_core::block_store::{
+        BlockProvenance, BlockProvenanceKind, BlocklistPeerCursorRecord,
+    };
 
     /// Cursor for replaying events from the log (stub for mesh crate independence).
     ///
@@ -422,6 +424,17 @@ pub mod block_store {
             &self,
             snapshot: &BlocklistSnapshotChunk,
         ) -> BlocklistSnapshotApplyResult;
+        fn get_blocklist_peer_cursor(
+            &self,
+            peer_id: &str,
+            source_node: &str,
+        ) -> Option<synvoid_core::block_store::BlocklistPeerCursorRecord>;
+        fn update_blocklist_peer_cursor(
+            &self,
+            record: synvoid_core::block_store::BlocklistPeerCursorRecord,
+        );
+        fn persist_peer_cursors(&self);
+        fn peer_cursor_count(&self) -> usize;
     }
 
     impl BlockStore {
@@ -567,6 +580,26 @@ pub mod block_store {
         ) -> BlocklistSnapshotApplyResult {
             BlocklistSnapshotApplyResult::default()
         }
+
+        pub fn get_blocklist_peer_cursor(
+            &self,
+            _peer_id: &str,
+            _source_node: &str,
+        ) -> Option<synvoid_core::block_store::BlocklistPeerCursorRecord> {
+            None
+        }
+
+        pub fn update_blocklist_peer_cursor(
+            &self,
+            _record: synvoid_core::block_store::BlocklistPeerCursorRecord,
+        ) {
+        }
+
+        pub fn persist_peer_cursors(&self) {}
+
+        pub fn peer_cursor_count(&self) -> usize {
+            0
+        }
     }
 
     impl BlockStoreApi for BlockStore {
@@ -659,6 +692,29 @@ pub mod block_store {
             snapshot: &BlocklistSnapshotChunk,
         ) -> BlocklistSnapshotApplyResult {
             self.apply_blocklist_snapshot(snapshot)
+        }
+
+        fn get_blocklist_peer_cursor(
+            &self,
+            peer_id: &str,
+            source_node: &str,
+        ) -> Option<synvoid_core::block_store::BlocklistPeerCursorRecord> {
+            self.get_blocklist_peer_cursor(peer_id, source_node)
+        }
+
+        fn update_blocklist_peer_cursor(
+            &self,
+            record: synvoid_core::block_store::BlocklistPeerCursorRecord,
+        ) {
+            self.update_blocklist_peer_cursor(record)
+        }
+
+        fn persist_peer_cursors(&self) {
+            self.persist_peer_cursors()
+        }
+
+        fn peer_cursor_count(&self) -> usize {
+            self.peer_cursor_count()
         }
     }
 }

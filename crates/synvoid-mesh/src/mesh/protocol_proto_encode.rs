@@ -2848,6 +2848,8 @@ impl From<&MeshMessage> for proto::MeshMessage {
                 provenance_source,
                 ttl_secs,
                 version,
+                source_sequence,
+                logical_time,
                 signature,
                 signer_public_key,
             } => proto::MeshMessage {
@@ -2867,6 +2869,8 @@ impl From<&MeshMessage> for proto::MeshMessage {
                             provenance_source: provenance_source.as_ref().map(|s| s.to_string()),
                             ttl_secs: *ttl_secs,
                             version: *version,
+                            source_sequence: *source_sequence,
+                            logical_time: *logical_time,
                         }),
                         signature: signature.clone(),
                         signer_public_key: signer_public_key.as_ref().map(|k| k.to_string()),
@@ -2914,6 +2918,8 @@ impl From<&MeshMessage> for proto::MeshMessage {
                                 provenance_source: e.provenance_source.clone(),
                                 ttl_secs: e.ttl_secs,
                                 version: e.version,
+                                source_sequence: e.source_sequence,
+                                logical_time: e.logical_time,
                             })
                             .collect(),
                         history_complete: *history_complete,
@@ -3009,6 +3015,8 @@ impl From<&MeshMessage> for proto::MeshMessage {
                                 provenance_source: r.provenance_source.clone(),
                                 recorded_at: r.recorded_at,
                                 expires_at: r.expires_at,
+                                source_sequence: r.source_sequence,
+                                logical_time: r.logical_time,
                             })
                             .collect(),
                         next_page_token: next_page_token.as_ref().map(|s| s.to_string()),

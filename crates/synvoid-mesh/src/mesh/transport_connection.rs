@@ -323,12 +323,27 @@ impl MeshTransport {
         }
 
         {
+            // Phase 5: Look up persisted cursor for incremental catchup.
+            let since_sequence = if let Some(ref ti) = self.threat_intel {
+                let bs = ti.get_block_store();
+                let cursor = bs.get_blocklist_peer_cursor(peer_node_id, &self.config.node_id());
+                cursor.and_then(|c| c.last_sequence)
+            } else {
+                None
+            };
             let catchup_request = MeshMessage::BlocklistCatchupRequest {
                 requesting_node: self.config.node_id().into(),
-                since_sequence: None, // From start: replay all retained events
+                since_sequence,
                 since_timestamp: None,
                 max_events: 500,
             };
+            if since_sequence.is_some() {
+                tracing::debug!(
+                    "Using persisted peer cursor for blocklist catchup with {}: since_seq={:?}",
+                    peer_node_id,
+                    since_sequence
+                );
+            }
             if let Err(e) = self
                 .send_datagram_to_peer(peer_node_id, &catchup_request)
                 .await

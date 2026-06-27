@@ -752,6 +752,8 @@ impl ThreatIntelligenceManager {
             provenance_source: event.provenance.source.clone().map(|s| s.into()),
             ttl_secs: None,
             version: None,
+            source_sequence: event.source_sequence,
+            logical_time: event.logical_time,
             signature: Vec::new(),
             signer_public_key: None,
         };

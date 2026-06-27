@@ -1031,6 +1031,7 @@ pub struct BlocklistCatchupStatsResponse {
     pub ipc_oldest_timestamp: Option<u64>,
     pub ipc_newest_timestamp: Option<u64>,
     pub ipc_next_sequence: u64,
+    pub peer_cursor_count: usize,
 }
 
 #[utoipa::path(
@@ -1051,6 +1052,7 @@ pub async fn get_blocklist_catchup_stats(
     let mut oldest_timestamp = None;
     let mut newest_timestamp = None;
     let mut next_sequence = 0u64;
+    let mut peer_cursor_count = 0usize;
 
     if let Some(transport) = &state.mesh.mesh_transport {
         if let Some(threat_intel) = transport.get_threat_intel() {
@@ -1060,6 +1062,7 @@ pub async fn get_blocklist_catchup_stats(
             oldest_timestamp = oldest;
             newest_timestamp = newest;
             next_sequence = seq;
+            peer_cursor_count = block_store.peer_cursor_count();
         }
     }
 
@@ -1085,6 +1088,7 @@ pub async fn get_blocklist_catchup_stats(
         ipc_oldest_timestamp,
         ipc_newest_timestamp,
         ipc_next_sequence,
+        peer_cursor_count,
     }))
 }
 

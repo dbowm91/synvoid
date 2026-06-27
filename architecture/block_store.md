@@ -193,6 +193,25 @@ pub struct BlocklistTargetStateRecord {
 3. **Startup**: `BlockStore::new()` loads `blocklist_target_state.json` if it exists, filters expired records, and hydrates the `TargetStateCache` including `source_node` and `provenance` fields. Legacy records without these fields deserialize with defaults via `#[serde(default)]`. Malformed files are logged and skipped.
 4. **In-memory capacity**: The in-memory `TargetStateCache` remains capped at 10,000 entries with FIFO eviction. Persistence provides a restart-safe warm start, not a full durable store.
 
+## Peer Cursor Persistence (Iteration 60)
+
+`BlockStore` now maintains per-peer catchup cursors persisted to `blocklist_peer_cursors.json`:
+
+- **Fields**: `peer_id`, `source_node`, `last_sequence`, `last_timestamp`, `last_event_id`, `updated_at`, `expires_at`
+- **Key**: `(peer_id, source_node)` tuple
+- **Hydration**: On `BlockStore::new()`, expired records filtered
+- **Persistence**: Async on update, sync on shutdown
+- **Use case**: Incremental mesh catchup after restart
+
+## Source-Scoped Ordering (Iteration 60)
+
+`BlocklistEvent` now carries optional `source_sequence: Option<u64>` and `logical_time: Option<u64>` fields. `LastAppliedBlocklistEvent.is_newer_than()` uses a 4-tier comparison:
+
+1. Version (if present)
+2. Source-scoped sequence (same source only)
+3. Logical time / HLC
+4. Timestamp (backward-compatible fallback)
+
 ## Snapshot Export (Iteration 56, Pagination Cleanup Iteration 57)
 
 ### Overview

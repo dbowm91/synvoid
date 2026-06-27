@@ -18,7 +18,7 @@ Each node maintains a bounded in-memory `BlocklistEventLog` (default 10,000 even
 - **Capacity**: Configurable, default 10,000 for mesh, 1,000 for IPC
 - **Eviction**: FIFO — oldest events evicted one-by-one when at capacity
 - **Dedup**: Events with duplicate `event_id` are not inserted twice
-- **Persistence**: In-memory only; restart loses retained events
+- **Persistence**: Event log is in-memory only; restart loses retained events. Per-peer catchup cursors are now persisted to `blocklist_peer_cursors.json` (Iteration 60).
 
 ### Cursor / Watermark
 
@@ -74,16 +74,20 @@ The supervisor retains a separate bounded event log (1,000 events) for IPC repla
 | Request/WAF paths remain local-only | ✅ Invariant |
 | Mesh-ID blocks are control-plane only | ✅ Invariant (Iteration 51) |
 | Raft remains out of operational blocklist | ✅ Invariant |
+| Per-peer catchup cursors persist across restarts | ✅ Iteration 60 |
+| Source-scoped sequence ordering under clock skew | ✅ Iteration 60 |
+| Legacy timestamp-only events remain supported | ✅ Iteration 60 |
 
 ## What Is NOT Guaranteed
 
 - No guaranteed delivery while offline (best-effort gossip)
-- No permanent event log (in-memory only, restart loses)
+- No durable event log (in-memory only, restart loses events; cursors persist)
 - No request-path remote checks
 - No mesh-ID enforcement on the request path (control-plane only; Iteration 51)
 - No acknowledged delivery for individual events
 - Snapshot is not globally linearizable (convergence, not consensus)
 - Snapshot is not Raft-backed
+- Ordering without source_sequence or version still relies on timestamps
 
 **Note (Iteration 52):** Per-target stale suppression (`TargetStateCache`) is now persisted to `blocklist_target_state.json` and survives restarts. Persisted records preserve origin `source_node` and `provenance` metadata (Iteration 53). However, the *event log* (`BlocklistEventLog`) remains in-memory only — catchup gaps can still occur if a peer misses events during an extended offline period. **Iteration 56 adds paged snapshot fallback** to handle gaps beyond event-log retention.
 
@@ -93,6 +97,7 @@ The supervisor retains a separate bounded event log (1,000 events) for IPC repla
 - IPC event log: 1,000 events
 - At typical event rates, this covers hours to days of operation
 - Events beyond the retention window require snapshot/admin retry
+- Peer cursors: persisted to disk, 7-day default expiry
 
 ## History Gap Detection
 
@@ -168,6 +173,27 @@ Two mesh message variants (proto fields 181/182):
 - Uses numeric page tokens (offset-based pagination)
 - `max_items` bounds the total count of all item types in each page
 - Target-state records are paginated alongside block entries (not duplicated across pages)
+
+## Peer Cursor Persistence (Iteration 60)
+
+Per-peer catchup cursors track the last-applied event sequence from each mesh peer, enabling incremental catchup after restarts without replaying all retained events.
+
+- **Storage**: `blocklist_peer_cursors.json` (same data directory as blocks.json)
+- **Key**: `(peer_id, source_node)` tuple
+- **Expiry**: 7-day default TTL, filtered on load
+- **Hydration**: Loaded in `BlockStore::new()`, expired records dropped
+- **Persistence**: Opportunistic after catchup; synchronous on shutdown
+- **Fallback**: If cursor points before retained history, snapshot fallback is used
+
+### Source-Scoped Ordering (Iteration 60)
+
+Events now carry optional `source_sequence` and `logical_time` metadata for stronger ordering under clock skew:
+
+1. Explicit `version` wins over all other fields
+2. Same-source `source_sequence` breaks ties within same version
+3. `logical_time` (HLC) breaks ties across sources
+4. Timestamp remains backward-compatible fallback
+5. Equal timestamps with no other differentiator are rejected as stale
 
 ## Diagnostics
 

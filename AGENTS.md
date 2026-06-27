@@ -183,7 +183,9 @@ The `architecture/` directory (73 docs) and `.opencode/skills/` directory contai
 | `architecture/http3_request_waf_boundary.md` | HTTP/3 WAF composition boundary and guardrails |
 | `architecture/mesh_trust_domains.md` | 7 trust domains, CanonicalTrustReader, trust invariants |
 | `architecture/threat_intel_consumer_actionability.md` | 46 consumers classified by enforcement capability |
-| `architecture/block_store.md` | BlockStore architecture, persistence, snapshot export |
+| `architecture/block_store.md` | BlockStore architecture, persistence, snapshot export, peer cursors, source-scoped ordering |
+| `architecture/blocklist_reconciliation.md` | Offline-peer catchup, event log, peer cursors, snapshot fallback |
+| `architecture/blocklist_remove_consistency.md` | LWW ordering, stale suppression, source-scoped ordering enhancements |
 | `architecture/cli_supervisor_command_dispatch.md` | Typed command plan/execute/runtime-launch boundary |
 | `architecture/mesh_transport_lifecycle.md` | 20-task mesh lifecycle state machine |
 | `architecture/worker_task_lifecycle.md` | 40+ background tasks, shutdown ordering |

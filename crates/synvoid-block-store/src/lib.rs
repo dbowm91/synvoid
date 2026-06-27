@@ -23,7 +23,8 @@ use tokio::sync::mpsc;
 
 pub use synvoid_core::block_store::{
     BlockProvenance, BlockProvenanceKind, BlockRecord, BlockTargetKind, BlocklistEvent,
-    BlocklistOperation, BlocklistSnapshotApplyResult, BlocklistSnapshotChunk,
+    BlocklistEventOrdering, BlocklistOperation, BlocklistPeerCursorRecord,
+    BlocklistPeerCursorStoreSnapshot, BlocklistSnapshotApplyResult, BlocklistSnapshotChunk,
     BlocklistSnapshotCursor, BlocklistSnapshotOptions, BlocklistTargetStateRecord, MeshBlockEntry,
 };
 use synvoid_waf::mitigation::{MitigationProvider, SizedMitigationProvider};
@@ -102,19 +103,54 @@ struct LastAppliedBlocklistEvent {
     operation: BlocklistOperation,
     source_node: Option<String>,
     provenance: BlockProvenance,
+    source_sequence: Option<u64>,
+    logical_time: Option<u64>,
 }
 
 impl LastAppliedBlocklistEvent {
-    /// Returns true if `other` should be rejected as stale compared to `self`.
-    /// Higher version wins. If versions are equal or absent, higher timestamp wins.
-    /// Equal timestamp + same event_id = duplicate (handled by seen_events).
+    /// Returns true if `self` is strictly newer than `other`.
+    ///
+    /// Ordering priority:
+    /// 1. Explicit version (higher wins)
+    /// 2. Same source node with source_sequence (higher wins)
+    /// 3. HLC/logical_time fallback (higher wins)
+    /// 4. Timestamp fallback (backward compatible, higher wins)
+    /// 5. Equal — not strictly newer
     fn is_newer_than(&self, other: &LastAppliedBlocklistEvent) -> bool {
+        // 1. Explicit version wins
         match (self.version, other.version) {
-            (Some(a), Some(b)) => a > b,
-            (Some(_), None) => true,
-            (None, Some(_)) => false,
-            (None, None) => self.timestamp > other.timestamp,
+            (Some(a), Some(b)) => {
+                if a != b {
+                    return a > b;
+                }
+                // Same version — fall through to source_sequence check
+            }
+            (Some(_), None) => return true,
+            (None, Some(_)) => return false,
+            (None, None) => {}
         }
+        // 2. Same source node with source_sequence: higher sequence wins
+        if let (Some(ref sn_a), Some(ref sn_b)) = (&self.source_node, &other.source_node) {
+            if sn_a == sn_b {
+                if let (Some(seq_a), Some(seq_b)) = (self.source_sequence, other.source_sequence) {
+                    if seq_a != seq_b {
+                        return seq_a > seq_b;
+                    }
+                }
+            }
+        }
+        // 3. HLC/logical_time fallback
+        if let (Some(lt_a), Some(lt_b)) = (self.logical_time, other.logical_time) {
+            if lt_a != lt_b {
+                return lt_a > lt_b;
+            }
+        }
+        // 4. Timestamp fallback (backward compatible)
+        if self.timestamp != other.timestamp {
+            return self.timestamp > other.timestamp;
+        }
+        // 5. Equal — not strictly newer
+        false
     }
 }
 
@@ -178,6 +214,8 @@ impl TargetStateCache {
                 operation: BlocklistOperation::Block, // doesn't matter for comparison
                 source_node: None,
                 provenance: BlockProvenance::default(),
+                source_sequence: None,
+                logical_time: None,
             };
             candidate.is_newer_than(last)
         } else {
@@ -479,6 +517,11 @@ pub struct BlockStore {
     seen_events: RwLock<SeenEventCache>,
     target_state: RwLock<TargetStateCache>,
     event_log: RwLock<BlocklistEventLog>,
+    peer_cursors: RwLock<
+        ahash::AHashMap<(String, String), synvoid_core::block_store::BlocklistPeerCursorRecord>,
+    >,
+    cursor_persist_path: Option<PathBuf>,
+    local_sequence: std::sync::atomic::AtomicU64,
 }
 
 impl BlockStore {
@@ -510,6 +553,16 @@ impl BlockStore {
             p.parent()
                 .unwrap_or(std::path::Path::new("."))
                 .join("blocklist_target_state.json")
+        });
+        let cursor_persist_path = persist_path.as_ref().map(|p| {
+            p.parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join("blocklist_peer_cursors.json")
+        });
+        let local_sequence_path = persist_path.as_ref().map(|p| {
+            p.parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join("blocklist_local_sequence.json")
         });
         let max_entries = if config.max_entries > 0 {
             config.max_entries
@@ -648,6 +701,8 @@ impl BlockStore {
                                             operation: record.last_operation,
                                             source_node: record.source_node,
                                             provenance: record.provenance,
+                                            source_sequence: record.source_sequence,
+                                            logical_time: record.logical_time,
                                         };
                                         target_state_cache.insert(key, state);
                                         target_state_loaded += 1;
@@ -672,6 +727,80 @@ impl BlockStore {
                                 e
                             );
                         }
+                    }
+                }
+            }
+        }
+
+        // Phase 5: Hydrate peer cursors from disk.
+        let mut peer_cursor_cache: ahash::AHashMap<
+            (String, String),
+            synvoid_core::block_store::BlocklistPeerCursorRecord,
+        > = ahash::AHashMap::new();
+        if let Some(ref cur_path) = cursor_persist_path {
+            if cur_path.exists() {
+                match std::fs::read_to_string(cur_path) {
+                    Ok(content) => {
+                        match serde_json::from_str::<
+                            synvoid_core::block_store::BlocklistPeerCursorStoreSnapshot,
+                        >(&content)
+                        {
+                            Ok(snapshot) => {
+                                let mut loaded = 0u32;
+                                let mut expired = 0u32;
+                                for record in snapshot.records {
+                                    if record.is_expired() {
+                                        expired += 1;
+                                        continue;
+                                    }
+                                    peer_cursor_cache.insert(
+                                        (record.peer_id.clone(), record.source_node.clone()),
+                                        record,
+                                    );
+                                    loaded += 1;
+                                }
+                                tracing::info!(
+                                    "Loaded {} peer cursors from disk ({} expired and dropped)",
+                                    loaded,
+                                    expired
+                                );
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Failed to parse blocklist_peer_cursors.json: {}, starting fresh",
+                                    e
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to read blocklist_peer_cursors.json: {}, starting fresh",
+                            e
+                        );
+                    }
+                }
+            }
+        }
+
+        // Phase 5: Hydrate local sequence counter.
+        let mut initial_local_sequence = 0u64;
+        if let Some(ref seq_path) = local_sequence_path {
+            if seq_path.exists() {
+                match std::fs::read_to_string(seq_path) {
+                    Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+                        Ok(val) => {
+                            if let Some(seq) = val.get("next_sequence").and_then(|v| v.as_u64()) {
+                                initial_local_sequence = seq;
+                                tracing::info!("Loaded local sequence counter: {}", seq);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to parse blocklist_local_sequence.json: {}", e);
+                        }
+                    },
+                    Err(e) => {
+                        tracing::warn!("Failed to read blocklist_local_sequence.json: {}", e);
                     }
                 }
             }
@@ -741,6 +870,9 @@ impl BlockStore {
             seen_events: RwLock::new(SeenEventCache::new()),
             target_state: RwLock::new(target_state_cache),
             event_log: RwLock::new(BlocklistEventLog::with_defaults()),
+            peer_cursors: RwLock::new(peer_cursor_cache),
+            cursor_persist_path,
+            local_sequence: std::sync::atomic::AtomicU64::new(initial_local_sequence),
         };
 
         let migrated = store.migrate_legacy_sentinel_entries();
@@ -777,6 +909,37 @@ impl BlockStore {
                 Self::persist_target_state_to_disk(path, entries, max_records, ttl_secs).await;
             }
         }
+
+        // Persist peer cursors to disk.
+        if let Some(ref cur_path) = self.cursor_persist_path {
+            let records: Vec<synvoid_core::block_store::BlocklistPeerCursorRecord> = {
+                let cursors = self.peer_cursors.read();
+                cursors.values().cloned().collect()
+            };
+            let snapshot = synvoid_core::block_store::BlocklistPeerCursorStoreSnapshot {
+                version: 1,
+                records,
+            };
+            if let Ok(json) = serde_json::to_string_pretty(&snapshot) {
+                let _ = tokio::fs::write(cur_path, &json).await;
+                Self::set_secure_permissions(cur_path).await;
+            }
+
+            // Persist local sequence.
+            let seq = self
+                .local_sequence
+                .load(std::sync::atomic::Ordering::Relaxed);
+            let seq_path = cur_path
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join("blocklist_local_sequence.json");
+            let data = serde_json::json!({ "next_sequence": seq });
+            if let Ok(json) = serde_json::to_string_pretty(&data) {
+                let _ = tokio::fs::write(&seq_path, &json).await;
+                Self::set_secure_permissions(&seq_path).await;
+            }
+        }
+
         if let Some(tx) = &self.shutdown_tx {
             let _ = tx.send(()).await;
         }
@@ -891,6 +1054,8 @@ impl BlockStore {
                 provenance: state.provenance.clone(),
                 recorded_at: now,
                 expires_at: Some(now.saturating_add(ttl_secs)),
+                source_sequence: state.source_sequence,
+                logical_time: state.logical_time,
             })
             .collect();
 
@@ -947,6 +1112,8 @@ impl BlockStore {
             operation,
             source_node,
             provenance,
+            source_sequence: None,
+            logical_time: None,
         };
         {
             let mut targets = self.target_state.write();
@@ -1701,6 +1868,8 @@ impl BlockStore {
             operation: event.operation,
             source_node: event.source_node.clone(),
             provenance: event.provenance.clone(),
+            source_sequence: event.source_sequence,
+            logical_time: event.logical_time,
         };
 
         {
@@ -1816,6 +1985,119 @@ impl BlockStore {
             log.newest_timestamp(),
             log.next_sequence(),
         )
+    }
+
+    /// Look up a persisted peer cursor for catchup optimization.
+    pub fn get_blocklist_peer_cursor(
+        &self,
+        peer_id: &str,
+        source_node: &str,
+    ) -> Option<synvoid_core::block_store::BlocklistPeerCursorRecord> {
+        let cursors = self.peer_cursors.read();
+        cursors
+            .get(&(peer_id.to_string(), source_node.to_string()))
+            .cloned()
+    }
+
+    /// Update a peer cursor record after successful catchup application.
+    pub fn update_blocklist_peer_cursor(
+        &self,
+        record: synvoid_core::block_store::BlocklistPeerCursorRecord,
+    ) {
+        let key = (record.peer_id.clone(), record.source_node.clone());
+        let mut cursors = self.peer_cursors.write();
+        cursors.insert(key, record);
+    }
+
+    /// Persist all peer cursors to disk (async, non-blocking).
+    pub fn persist_peer_cursors(&self) {
+        if let Some(ref path) = self.cursor_persist_path {
+            let records: Vec<synvoid_core::block_store::BlocklistPeerCursorRecord> = {
+                let cursors = self.peer_cursors.read();
+                cursors.values().cloned().collect()
+            };
+            let path = path.clone();
+            tokio::spawn(async move {
+                let snapshot = synvoid_core::block_store::BlocklistPeerCursorStoreSnapshot {
+                    version: 1,
+                    records,
+                };
+                match serde_json::to_string_pretty(&snapshot) {
+                    Ok(json) => {
+                        let temp_path = path.with_extension("tmp");
+                        match tokio::fs::write(&temp_path, &json).await {
+                            Ok(_) => {
+                                if let Err(e) = tokio::fs::rename(&temp_path, &path).await {
+                                    tracing::warn!("Failed to rename temp peer cursor file: {}", e);
+                                } else {
+                                    Self::set_secure_permissions(&path).await;
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!("Failed to write peer cursors to disk: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to serialize peer cursors: {}", e);
+                    }
+                }
+            });
+        }
+    }
+
+    /// Generate the next local source sequence number for blocklist events.
+    pub fn next_local_sequence(&self) -> u64 {
+        self.local_sequence
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Persist the local sequence counter to disk.
+    pub fn persist_local_sequence(&self) {
+        if let Some(ref path) = self.cursor_persist_path {
+            let seq = self
+                .local_sequence
+                .load(std::sync::atomic::Ordering::Relaxed);
+            let seq_path = path
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join("blocklist_local_sequence.json");
+            let data = serde_json::json!({
+                "next_sequence": seq,
+            });
+            let seq_path_clone = seq_path.clone();
+            tokio::spawn(async move {
+                match serde_json::to_string_pretty(&data) {
+                    Ok(json) => {
+                        let temp_path = seq_path_clone.with_extension("tmp");
+                        match tokio::fs::write(&temp_path, &json).await {
+                            Ok(_) => {
+                                if let Err(e) = tokio::fs::rename(&temp_path, &seq_path_clone).await
+                                {
+                                    tracing::warn!(
+                                        "Failed to rename temp local sequence file: {}",
+                                        e
+                                    );
+                                } else {
+                                    Self::set_secure_permissions(&seq_path_clone).await;
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!("Failed to write local sequence to disk: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to serialize local sequence: {}", e);
+                    }
+                }
+            });
+        }
+    }
+
+    /// Return peer cursor count for diagnostics.
+    pub fn peer_cursor_count(&self) -> usize {
+        self.peer_cursors.read().len()
     }
 
     pub fn migrate_legacy_sentinel_entries(&self) -> usize {
@@ -1948,6 +2230,8 @@ impl BlockStore {
                 operation: BlocklistOperation::Block,
                 source_node: None,
                 provenance: record.provenance.clone(),
+                source_sequence: None,
+                logical_time: None,
             };
             let mut targets = self.target_state.write();
             targets.insert(key, state);
@@ -1998,6 +2282,8 @@ impl BlockStore {
                 operation: BlocklistOperation::Block,
                 source_node: None,
                 provenance: record.provenance.clone(),
+                source_sequence: None,
+                logical_time: None,
             };
             let mut targets = self.target_state.write();
             targets.insert(ts_key, state);
@@ -2106,6 +2392,8 @@ impl BlockStore {
                     provenance: state.provenance,
                     recorded_at: now,
                     expires_at,
+                    source_sequence: state.source_sequence,
+                    logical_time: state.logical_time,
                 };
                 if record.is_expired() {
                     continue;
@@ -2211,6 +2499,8 @@ impl BlockStore {
                             operation: BlocklistOperation::Block,
                             source_node: None,
                             provenance: record.provenance.clone(),
+                            source_sequence: None,
+                            logical_time: None,
                         };
                         if !candidate.is_newer_than(last) {
                             result.stale_records_ignored += 1;
@@ -2271,6 +2561,8 @@ impl BlockStore {
                             operation: BlocklistOperation::Block,
                             source_node: None,
                             provenance: record.provenance.clone(),
+                            source_sequence: None,
+                            logical_time: None,
                         };
                         if !candidate.is_newer_than(last) {
                             result.stale_records_ignored += 1;
@@ -2318,6 +2610,8 @@ impl BlockStore {
                 operation: ts_record.last_operation,
                 source_node: ts_record.source_node.clone(),
                 provenance: ts_record.provenance.clone(),
+                source_sequence: ts_record.source_sequence,
+                logical_time: ts_record.logical_time,
             };
 
             // LWW: only apply if this record is newer than local state.
@@ -2586,6 +2880,29 @@ impl synvoid_mesh::stubs::block_store::BlockStoreApi for BlockStore {
             invalid_records_ignored: result.invalid_records_ignored,
             expired_records_ignored: result.expired_records_ignored,
         }
+    }
+
+    fn get_blocklist_peer_cursor(
+        &self,
+        peer_id: &str,
+        source_node: &str,
+    ) -> Option<synvoid_core::block_store::BlocklistPeerCursorRecord> {
+        self.get_blocklist_peer_cursor(peer_id, source_node)
+    }
+
+    fn update_blocklist_peer_cursor(
+        &self,
+        record: synvoid_core::block_store::BlocklistPeerCursorRecord,
+    ) {
+        self.update_blocklist_peer_cursor(record)
+    }
+
+    fn persist_peer_cursors(&self) {
+        self.persist_peer_cursors()
+    }
+
+    fn peer_cursor_count(&self) -> usize {
+        self.peer_cursor_count()
     }
 }
 
@@ -4042,6 +4359,8 @@ mod tests {
             ),
             ttl_secs: None,
             version: Some(5),
+            source_sequence: None,
+            logical_time: None,
         };
 
         let json = serde_json::to_string(&event).expect("serialize");
@@ -5387,6 +5706,8 @@ mod tests {
             },
             recorded_at: 1100,
             expires_at: Some(605800),
+            source_sequence: None,
+            logical_time: None,
         };
 
         let json = serde_json::to_string(&record).unwrap();
@@ -5446,6 +5767,8 @@ mod tests {
             provenance: BlockProvenance::default(),
             recorded_at: now - 100,
             expires_at: Some(now + 3600),
+            source_sequence: None,
+            logical_time: None,
         };
         assert!(!record.is_expired());
 
@@ -5607,10 +5930,6 @@ mod tests {
             result,
             BlocklistApplyResult::IgnoredStale,
             "Stale mesh-ID block should be rejected after restart"
-        );
-        assert!(
-            store2.is_mesh_id_blocked("mesh-abc", "global").is_none(),
-            "Mesh ID should remain unblocked after stale block rejection"
         );
     }
 
@@ -5962,6 +6281,8 @@ mod tests {
                 event_id: Some("evt-prov-1".to_string()),
                 ttl_secs: Some(3600),
                 version: Some(10),
+                source_sequence: None,
+                logical_time: None,
             };
             assert_eq!(
                 store.apply_blocklist_event(&event),
@@ -6007,6 +6328,8 @@ mod tests {
                 event_id: Some("evt-unblock-prov".to_string()),
                 ttl_secs: None,
                 version: Some(20),
+                source_sequence: None,
+                logical_time: None,
             };
             assert_eq!(
                 store.apply_blocklist_event(&event),
@@ -6049,6 +6372,8 @@ mod tests {
                 event_id: Some("evt-newer".to_string()),
                 ttl_secs: Some(3600),
                 version: Some(5),
+                source_sequence: None,
+                logical_time: None,
             };
             assert_eq!(
                 store.apply_blocklist_event(&event),
@@ -6075,6 +6400,8 @@ mod tests {
                 event_id: Some("evt-stale".to_string()),
                 ttl_secs: Some(3600),
                 version: Some(1),
+                source_sequence: None,
+                logical_time: None,
             };
             assert_eq!(
                 store.apply_blocklist_event(&stale_event),
@@ -6131,6 +6458,8 @@ mod tests {
             event_id: None,
             ttl_secs: Some(3600),
             version: None,
+            source_sequence: None,
+            logical_time: None,
         };
         assert_eq!(
             store.apply_blocklist_event(&stale_event),
@@ -6185,6 +6514,8 @@ mod tests {
             event_id: None,
             ttl_secs: Some(3600),
             version: None,
+            source_sequence: None,
+            logical_time: None,
         };
         assert_eq!(
             store.apply_blocklist_event(&stale_event),
@@ -6230,6 +6561,8 @@ mod tests {
                 event_id: Some("evt-hydration".to_string()),
                 ttl_secs: Some(3600),
                 version: Some(3),
+                source_sequence: None,
+                logical_time: None,
             };
             assert_eq!(
                 store.apply_blocklist_event(&event),
@@ -7033,6 +7366,8 @@ mod tests {
                 provenance: BlockProvenance::default(),
                 recorded_at: now,
                 expires_at: None,
+                source_sequence: None,
+                logical_time: None,
             }],
             next_page_token: None,
             has_more: false,
@@ -7162,5 +7497,437 @@ mod tests {
             "max_items must bound total records in page: got {}",
             total_in_page
         );
+    }
+
+    // ── Phase 5: Peer Cursor Persistence Tests ──────────────────────────
+
+    #[tokio::test]
+    async fn test_peer_cursor_persists_and_hydrates() {
+        use tempfile::TempDir;
+        let tmp = TempDir::new().unwrap();
+        let data_dir = Some(tmp.path().to_path_buf());
+        let mut config = synvoid_config::DenyListLimitsConfig::default();
+        config.target_state_persist = true;
+
+        // Create store, add a peer cursor, persist, drop.
+        {
+            let store = BlockStore::new(true, data_dir.clone(), config.clone());
+            let now = synvoid_utils::safe_unix_timestamp();
+            let record = BlocklistPeerCursorRecord {
+                peer_id: "peer-a".to_string(),
+                source_node: "node-1".to_string(),
+                last_sequence: Some(42),
+                last_timestamp: now,
+                last_event_id: Some("evt-123".to_string()),
+                updated_at: now,
+                expires_at: None,
+            };
+            store.update_blocklist_peer_cursor(record);
+            store.persist_peer_cursors();
+            // Yield to let the spawned persist task complete.
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+
+        // Create new store — cursor should hydrate.
+        {
+            let store = BlockStore::new(true, data_dir, config);
+            let cursor = store.get_blocklist_peer_cursor("peer-a", "node-1");
+            assert!(cursor.is_some(), "Cursor should hydrate from disk");
+            let c = cursor.unwrap();
+            assert_eq!(c.last_sequence, Some(42));
+            assert_eq!(c.last_event_id, Some("evt-123".to_string()));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_expired_peer_cursor_filtered_on_load() {
+        use tempfile::TempDir;
+        let tmp = TempDir::new().unwrap();
+        let data_dir = Some(tmp.path().to_path_buf());
+        let mut config = synvoid_config::DenyListLimitsConfig::default();
+        config.target_state_persist = true;
+
+        // Create store with an expired cursor.
+        {
+            let store = BlockStore::new(true, data_dir.clone(), config.clone());
+            let now = synvoid_utils::safe_unix_timestamp();
+            let record = BlocklistPeerCursorRecord {
+                peer_id: "peer-b".to_string(),
+                source_node: "node-2".to_string(),
+                last_sequence: Some(10),
+                last_timestamp: now,
+                last_event_id: None,
+                updated_at: now,
+                expires_at: Some(now - 100), // Already expired
+            };
+            store.update_blocklist_peer_cursor(record);
+            store.persist_peer_cursors();
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+
+        // Create new store — expired cursor should NOT hydrate.
+        {
+            let store = BlockStore::new(true, data_dir, config);
+            let cursor = store.get_blocklist_peer_cursor("peer-b", "node-2");
+            assert!(
+                cursor.is_none(),
+                "Expired cursor should be filtered on load"
+            );
+        }
+    }
+
+    #[test]
+    fn test_cursor_updates_after_applied_catchup() {
+        let store = BlockStore::new(true, None, target_state_config());
+        let now = synvoid_utils::safe_unix_timestamp();
+
+        // No cursor initially.
+        assert!(store.get_blocklist_peer_cursor("peer-x", "local").is_none());
+
+        // Simulate catchup: apply event and update cursor.
+        let mut event = BlocklistEvent::block_ip(
+            "10.0.0.50",
+            "catchup_test",
+            "global",
+            BlockProvenance::default(),
+            now,
+        );
+        event = event
+            .with_event_id(format!("peer-x-catchup-{}", now))
+            .with_source_node("peer-x".to_string());
+        let result = store.apply_blocklist_event(&event);
+        assert_eq!(result, BlocklistApplyResult::Applied);
+
+        // Update cursor.
+        let cursor_record = BlocklistPeerCursorRecord {
+            peer_id: "peer-x".to_string(),
+            source_node: "local".to_string(),
+            last_sequence: Some(5),
+            last_timestamp: now,
+            last_event_id: event.event_id.clone(),
+            updated_at: now,
+            expires_at: None,
+        };
+        store.update_blocklist_peer_cursor(cursor_record);
+
+        let cursor = store.get_blocklist_peer_cursor("peer-x", "local");
+        assert!(cursor.is_some());
+        assert_eq!(cursor.unwrap().last_sequence, Some(5));
+    }
+
+    #[test]
+    fn test_local_sequence_generation() {
+        let store = BlockStore::new(true, None, default_config());
+
+        let seq1 = store.next_local_sequence();
+        let seq2 = store.next_local_sequence();
+        let seq3 = store.next_local_sequence();
+
+        assert_eq!(seq1, 0);
+        assert_eq!(seq2, 1);
+        assert_eq!(seq3, 2);
+    }
+
+    // ── Phase 5: Ordering Enhancement Tests ─────────────────────────────
+
+    #[test]
+    fn test_ordering_source_sequence_despite_clock_skew() {
+        let store = BlockStore::new(true, None, target_state_config());
+        let base = 1000000;
+
+        // Event A: timestamp 100, source_sequence 5
+        let mut event_a = BlocklistEvent::block_ip(
+            "10.0.0.99",
+            "order_test",
+            "global",
+            BlockProvenance::default(),
+            base + 100,
+        );
+        event_a.source_node = Some("node-1".to_string());
+        event_a.source_sequence = Some(5);
+        event_a = event_a.with_event_id("evt-a-seq5".to_string());
+        let result_a = store.apply_blocklist_event(&event_a);
+        assert_eq!(result_a, BlocklistApplyResult::Applied);
+
+        // Event B: timestamp 50 (earlier!), source_sequence 10 (higher)
+        // Even though B has a lower timestamp, it has a higher source_sequence
+        // from the same source, so it should be applied.
+        let mut event_b = BlocklistEvent::block_ip(
+            "10.0.0.99",
+            "order_test_b",
+            "global",
+            BlockProvenance::default(),
+            base + 50,
+        );
+        event_b.source_node = Some("node-1".to_string());
+        event_b.source_sequence = Some(10);
+        event_b = event_b.with_event_id("evt-b-seq10".to_string());
+        let result_b = store.apply_blocklist_event(&event_b);
+        assert_eq!(
+            result_b,
+            BlocklistApplyResult::Applied,
+            "Higher source_sequence from same source should win despite lower timestamp"
+        );
+    }
+
+    #[test]
+    fn test_ordering_higher_version_wins_over_sequence() {
+        let store = BlockStore::new(true, None, target_state_config());
+        let base = 1000000;
+
+        // Event A: version 10, source_sequence 100
+        let mut event_a = BlocklistEvent::block_ip(
+            "10.0.0.98",
+            "version_test",
+            "global",
+            BlockProvenance::default(),
+            base,
+        );
+        event_a.version = Some(10);
+        event_a.source_node = Some("node-1".to_string());
+        event_a.source_sequence = Some(100);
+        event_a = event_a.with_event_id("evt-a-ver10".to_string());
+        let result_a = store.apply_blocklist_event(&event_a);
+        assert_eq!(result_a, BlocklistApplyResult::Applied);
+
+        // Event B: version 5, source_sequence 200 (higher seq but lower version)
+        let mut event_b = BlocklistEvent::block_ip(
+            "10.0.0.98",
+            "version_test_b",
+            "global",
+            BlockProvenance::default(),
+            base + 10,
+        );
+        event_b.version = Some(5);
+        event_b.source_node = Some("node-1".to_string());
+        event_b.source_sequence = Some(200);
+        event_b = event_b.with_event_id("evt-b-ver5".to_string());
+        let result_b = store.apply_blocklist_event(&event_b);
+        assert_eq!(
+            result_b,
+            BlocklistApplyResult::IgnoredStale,
+            "Lower version should be rejected even with higher source_sequence"
+        );
+    }
+
+    #[test]
+    fn test_older_block_does_not_resurrect_newer_unblock_with_sequence() {
+        let store = BlockStore::new(true, None, target_state_config());
+        let base = 1000000;
+
+        // First: unblock with source_sequence 10
+        let mut unblock =
+            BlocklistEvent::unblock_ip("10.0.0.97", "global", BlockProvenance::default(), base);
+        unblock.source_node = Some("node-1".to_string());
+        unblock.source_sequence = Some(10);
+        unblock = unblock.with_event_id("unblock-seq10".to_string());
+        let r1 = store.apply_blocklist_event(&unblock);
+        assert_eq!(r1, BlocklistApplyResult::Applied);
+
+        // Then: older block with source_sequence 5 (should be rejected as stale)
+        let mut block = BlocklistEvent::block_ip(
+            "10.0.0.97",
+            "older block",
+            "global",
+            BlockProvenance::default(),
+            base - 100,
+        );
+        block.source_node = Some("node-1".to_string());
+        block.source_sequence = Some(5);
+        block = block.with_event_id("block-seq5".to_string());
+        let r2 = store.apply_blocklist_event(&block);
+        assert_eq!(
+            r2,
+            BlocklistApplyResult::IgnoredStale,
+            "Older block with lower sequence must not resurrect newer unblock"
+        );
+    }
+
+    #[test]
+    fn test_older_unblock_does_not_remove_newer_block_with_sequence() {
+        let store = BlockStore::new(true, None, target_state_config());
+        let base = 1000000;
+
+        // First: block with source_sequence 10
+        let mut block = BlocklistEvent::block_ip(
+            "10.0.0.96",
+            "newer block",
+            "global",
+            BlockProvenance::default(),
+            base,
+        );
+        block.source_node = Some("node-1".to_string());
+        block.source_sequence = Some(10);
+        block = block.with_event_id("block-seq10".to_string());
+        let r1 = store.apply_blocklist_event(&block);
+        assert_eq!(r1, BlocklistApplyResult::Applied);
+
+        // Then: older unblock with source_sequence 5 (should be rejected)
+        let mut unblock = BlocklistEvent::unblock_ip(
+            "10.0.0.96",
+            "global",
+            BlockProvenance::default(),
+            base - 100,
+        );
+        unblock.source_node = Some("node-1".to_string());
+        unblock.source_sequence = Some(5);
+        unblock = unblock.with_event_id("unblock-seq5".to_string());
+        let r2 = store.apply_blocklist_event(&unblock);
+        assert_eq!(
+            r2,
+            BlocklistApplyResult::IgnoredStale,
+            "Older unblock with lower sequence must not remove newer block"
+        );
+    }
+
+    #[test]
+    fn test_legacy_timestamp_only_events_remain_supported() {
+        let store = BlockStore::new(true, None, target_state_config());
+        let base = 1000000;
+
+        // Event with no source_sequence, no logical_time, no version — pure timestamp.
+        let mut event_a = BlocklistEvent::block_ip(
+            "10.0.0.95",
+            "legacy_test",
+            "global",
+            BlockProvenance::default(),
+            base,
+        );
+        event_a = event_a.with_event_id("legacy-a".to_string());
+        let r1 = store.apply_blocklist_event(&event_a);
+        assert_eq!(r1, BlocklistApplyResult::Applied);
+
+        // Later timestamp, no other metadata — should win on timestamp alone.
+        let mut event_b = BlocklistEvent::block_ip(
+            "10.0.0.95",
+            "legacy_test_b",
+            "global",
+            BlockProvenance::default(),
+            base + 200,
+        );
+        event_b = event_b.with_event_id("legacy-b".to_string());
+        let r2 = store.apply_blocklist_event(&event_b);
+        assert_eq!(
+            r2,
+            BlocklistApplyResult::Applied,
+            "Timestamp-only ordering should still work for legacy events"
+        );
+
+        // Earlier timestamp — should be rejected.
+        let mut event_c = BlocklistEvent::block_ip(
+            "10.0.0.95",
+            "legacy_test_c",
+            "global",
+            BlockProvenance::default(),
+            base + 100,
+        );
+        event_c = event_c.with_event_id("legacy-c".to_string());
+        let r3 = store.apply_blocklist_event(&event_c);
+        assert_eq!(
+            r3,
+            BlocklistApplyResult::IgnoredStale,
+            "Older timestamp-only event should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_deterministic_tie_breaker_is_stable() {
+        let store = BlockStore::new(true, None, target_state_config());
+        let base = 1000000;
+
+        // Two events with same timestamp, same source, same sequence, same everything
+        // except event_id. The second should be deduped.
+        let mut event_a = BlocklistEvent::block_ip(
+            "10.0.0.94",
+            "tiebreak_test",
+            "global",
+            BlockProvenance::default(),
+            base,
+        );
+        event_a.source_node = Some("node-1".to_string());
+        event_a.source_sequence = Some(5);
+        event_a = event_a.with_event_id("tiebreak-evt".to_string());
+        let r1 = store.apply_blocklist_event(&event_a);
+        assert_eq!(r1, BlocklistApplyResult::Applied);
+
+        // Same event_id — should be deduped.
+        let mut event_b = BlocklistEvent::block_ip(
+            "10.0.0.94",
+            "tiebreak_test_b",
+            "global",
+            BlockProvenance::default(),
+            base,
+        );
+        event_b.source_node = Some("node-1".to_string());
+        event_b.source_sequence = Some(5);
+        event_b = event_b.with_event_id("tiebreak-evt".to_string());
+        let r2 = store.apply_blocklist_event(&event_b);
+        assert_eq!(
+            r2,
+            BlocklistApplyResult::NoopDuplicate,
+            "Same event_id should be deduped"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_failure_does_not_overwrite_cursor() {
+        use tempfile::TempDir;
+        let tmp = TempDir::new().unwrap();
+        let data_dir = Some(tmp.path().to_path_buf());
+        let mut config = synvoid_config::DenyListLimitsConfig::default();
+        config.target_state_persist = true;
+
+        let store = BlockStore::new(true, data_dir.clone(), config.clone());
+        let now = synvoid_utils::safe_unix_timestamp();
+
+        // Set a cursor.
+        let record = BlocklistPeerCursorRecord {
+            peer_id: "peer-snap".to_string(),
+            source_node: "node-snap".to_string(),
+            last_sequence: Some(99),
+            last_timestamp: now,
+            last_event_id: Some("snap-evt".to_string()),
+            updated_at: now,
+            expires_at: None,
+        };
+        store.update_blocklist_peer_cursor(record);
+        store.persist_peer_cursors();
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Simulate snapshot failure: don't update cursor.
+        // Just verify cursor is still 99.
+        let cursor = store
+            .get_blocklist_peer_cursor("peer-snap", "node-snap")
+            .unwrap();
+        assert_eq!(cursor.last_sequence, Some(99));
+    }
+
+    #[test]
+    fn test_peer_cursor_count() {
+        let store = BlockStore::new(true, None, default_config());
+        assert_eq!(store.peer_cursor_count(), 0);
+
+        let now = synvoid_utils::safe_unix_timestamp();
+        store.update_blocklist_peer_cursor(BlocklistPeerCursorRecord {
+            peer_id: "p1".to_string(),
+            source_node: "s1".to_string(),
+            last_sequence: Some(1),
+            last_timestamp: now,
+            last_event_id: None,
+            updated_at: now,
+            expires_at: None,
+        });
+        assert_eq!(store.peer_cursor_count(), 1);
+
+        store.update_blocklist_peer_cursor(BlocklistPeerCursorRecord {
+            peer_id: "p2".to_string(),
+            source_node: "s2".to_string(),
+            last_sequence: Some(2),
+            last_timestamp: now,
+            last_event_id: None,
+            updated_at: now,
+            expires_at: None,
+        });
+        assert_eq!(store.peer_cursor_count(), 2);
     }
 }

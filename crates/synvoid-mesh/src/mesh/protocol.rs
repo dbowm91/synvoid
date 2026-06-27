@@ -587,6 +587,8 @@ pub enum MeshMessage {
         provenance_source: Option<ArcStr>,
         ttl_secs: Option<u64>,
         version: Option<u64>,
+        source_sequence: Option<u64>,
+        logical_time: Option<u64>,
         signature: Vec<u8>,
         signer_public_key: Option<ArcStr>,
     },

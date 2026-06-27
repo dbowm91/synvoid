@@ -86,6 +86,8 @@ Last-writer-wins per-target ordering (Iteration 47):
 - Older unblock must not remove a newer block.
 - `IgnoredStale` is returned when a per-target event is rejected.
 
+**Iteration 60 Enhancement**: Ordering now supports source-scoped sequence numbers and hybrid logical clock metadata. When `source_sequence` is present on events from the same source, it provides stronger ordering than timestamps alone. When `logical_time` (HLC) is present, it provides cross-source ordering. Legacy timestamp-only events remain fully supported.
+
 Clock skew between nodes is a known caveat — nodes with significantly skewed clocks may produce out-of-order application. This is acceptable for operational blocklist removes where approximate consistency is sufficient.
 
 **Iteration 52**: Per-target state is now persisted to `blocklist_target_state.json` and survives restarts. On `BlockStore::new()`, expired records are filtered out and `TargetStateCache` is hydrated from the persisted file. `shutdown()` persists synchronously before signaling the background task. `BlocklistTargetStateRecord` stores `target_kind`, `site_scope`, `identifier`, `last_operation`, `timestamp`, `version`, `event_id`, `source_node`, `provenance`, `recorded_at`, and `expires_at` (set to `now + ttl_secs` at persist time). The in-memory `TargetStateCache` (10k capacity, FIFO eviction) is still the primary source during runtime; persistence provides restart-safe warm start only.

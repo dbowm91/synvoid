@@ -17,6 +17,8 @@ pub struct BlocklistEventData {
     pub provenance_source: Option<String>,
     pub ttl_secs: Option<u64>,
     pub version: Option<u64>,
+    pub source_sequence: Option<u64>,
+    pub logical_time: Option<u64>,
 }
 
 impl BlocklistEventData {
@@ -34,6 +36,8 @@ impl BlocklistEventData {
             provenance_source: event.provenance.source.clone(),
             ttl_secs: event.ttl_secs,
             version: event.version,
+            source_sequence: event.source_sequence,
+            logical_time: event.logical_time,
         }
     }
 
@@ -61,6 +65,8 @@ impl BlocklistEventData {
             },
             ttl_secs: self.ttl_secs,
             version: self.version,
+            source_sequence: self.source_sequence,
+            logical_time: self.logical_time,
         }
     }
 }
@@ -168,6 +174,8 @@ pub struct SnapshotTargetStateData {
     pub provenance_source: Option<String>,
     pub recorded_at: u64,
     pub expires_at: Option<u64>,
+    pub source_sequence: Option<u64>,
+    pub logical_time: Option<u64>,
 }
 
 impl SnapshotIpBlockData {
@@ -217,6 +225,8 @@ impl SnapshotTargetStateData {
             provenance_source: record.provenance.source.clone(),
             recorded_at: record.recorded_at,
             expires_at: record.expires_at,
+            source_sequence: record.source_sequence,
+            logical_time: record.logical_time,
         }
     }
 }

@@ -153,6 +153,10 @@ pub struct BlocklistTargetStateRecord {
     pub recorded_at: u64,
     #[serde(default)]
     pub expires_at: Option<u64>,
+    #[serde(default)]
+    pub source_sequence: Option<u64>,
+    #[serde(default)]
+    pub logical_time: Option<u64>,
 }
 
 impl BlocklistTargetStateRecord {
@@ -234,12 +238,18 @@ pub struct BlocklistEvent {
     pub reason: Option<String>,
     pub provenance: BlockProvenance,
     pub timestamp: u64,
+    #[serde(default)]
     pub source_node: Option<String>,
+    #[serde(default)]
     pub event_id: Option<String>,
     #[serde(default)]
     pub ttl_secs: Option<u64>,
     #[serde(default)]
     pub version: Option<u64>,
+    #[serde(default)]
+    pub source_sequence: Option<u64>,
+    #[serde(default)]
+    pub logical_time: Option<u64>,
 }
 
 impl BlocklistEvent {
@@ -263,6 +273,8 @@ impl BlocklistEvent {
             event_id: None,
             ttl_secs: None,
             version: None,
+            source_sequence: None,
+            logical_time: None,
         }
     }
 
@@ -286,6 +298,8 @@ impl BlocklistEvent {
             event_id: None,
             ttl_secs: None,
             version: None,
+            source_sequence: None,
+            logical_time: None,
         }
     }
 
@@ -308,6 +322,8 @@ impl BlocklistEvent {
             event_id: None,
             ttl_secs: None,
             version: None,
+            source_sequence: None,
+            logical_time: None,
         }
     }
 
@@ -330,6 +346,8 @@ impl BlocklistEvent {
             event_id: None,
             ttl_secs: None,
             version: None,
+            source_sequence: None,
+            logical_time: None,
         }
     }
 
@@ -366,6 +384,71 @@ impl BlocklistEvent {
         self.source_node = Some(source_node);
         self
     }
+}
+
+/// Per-peer cursor record for persistent blocklist catchup state.
+///
+/// Tracks the last-applied sequence from a specific peer/source combination,
+/// enabling restart-safe incremental catchup without replaying all retained events.
+///
+/// # Design Notes
+///
+/// - `peer_id`: local identity for the remote peer connection
+/// - `source_node`: event source node whose sequence this cursor tracks
+/// - `last_sequence`: last applied source-local sequence from that peer/source
+/// - `last_timestamp`: wall-clock timestamp for diagnostics and fallback
+/// - `last_event_id`: optional tie-back for debugging and duplicate repair
+/// - Cursor is convergence metadata, not delivery acknowledgement
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlocklistPeerCursorRecord {
+    pub peer_id: String,
+    pub source_node: String,
+    #[serde(default)]
+    pub last_sequence: Option<u64>,
+    pub last_timestamp: u64,
+    #[serde(default)]
+    pub last_event_id: Option<String>,
+    pub updated_at: u64,
+    #[serde(default)]
+    pub expires_at: Option<u64>,
+}
+
+impl BlocklistPeerCursorRecord {
+    /// Returns `true` if this cursor has passed its retention TTL.
+    pub fn is_expired(&self) -> bool {
+        if let Some(expires_at) = self.expires_at {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            now > expires_at
+        } else {
+            false
+        }
+    }
+}
+
+/// Snapshot of all persisted peer cursors for disk serialization.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BlocklistPeerCursorStoreSnapshot {
+    pub version: u32,
+    pub records: Vec<BlocklistPeerCursorRecord>,
+}
+
+/// Source-scoped ordering metadata for blocklist events.
+///
+/// Provides stronger ordering guarantees than timestamp-only LWW by
+/// incorporating source-local sequence numbers and optional hybrid logical
+/// clock metadata. Backward compatible: missing fields deserialize as `None`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BlocklistEventOrdering {
+    #[serde(default)]
+    pub source_node: Option<String>,
+    #[serde(default)]
+    pub source_sequence: Option<u64>,
+    #[serde(default)]
+    pub hybrid_logical_time: Option<u64>,
+    pub wall_time: u64,
 }
 
 #[cfg(test)]

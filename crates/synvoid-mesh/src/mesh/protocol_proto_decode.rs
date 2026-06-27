@@ -1898,6 +1898,8 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     provenance_source: None,
                     ttl_secs: None,
                     version: None,
+                    source_sequence: None,
+                    logical_time: None,
                 });
                 Ok(MeshMessage::BlocklistEventGossip {
                     event_id: event.event_id.into(),
@@ -1912,6 +1914,8 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                     provenance_source: event.provenance_source.map(|s| s.into()),
                     ttl_secs: event.ttl_secs,
                     version: event.version,
+                    source_sequence: event.source_sequence,
+                    logical_time: event.logical_time,
                     signature: g.signature,
                     signer_public_key: g.signer_public_key.map(|k| k.into()),
                 })
@@ -1942,6 +1946,8 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                             provenance_source: e.provenance_source,
                             ttl_secs: e.ttl_secs,
                             version: e.version,
+                            source_sequence: e.source_sequence,
+                            logical_time: e.logical_time,
                         })
                         .collect(),
                     history_complete: r.history_complete,
@@ -2013,6 +2019,8 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                             provenance_source: ts.provenance_source,
                             recorded_at: ts.recorded_at,
                             expires_at: ts.expires_at,
+                            source_sequence: ts.source_sequence,
+                            logical_time: ts.logical_time,
                         })
                         .collect(),
                     next_page_token: r.next_page_token.map(|s| s.into()),

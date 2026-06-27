@@ -785,6 +785,8 @@ message BlocklistEventData {
     optional string provenance_source = 10;
     optional uint64 ttl_secs = 11;
     optional uint64 version = 12;
+    optional uint64 source_sequence = 13;
+    optional uint64 logical_time = 14;
 }
 
 // Iteration 46: Blocklist event gossip for mesh-wide remove consistency
@@ -877,6 +879,8 @@ message BlocklistSnapshotTargetState {
     optional string provenance_source = 10;
     uint64 recorded_at = 11;
     optional uint64 expires_at = 12;
+    optional uint64 source_sequence = 13;
+    optional uint64 logical_time = 14;
 }
 
 message YaraRuleAnnounce {

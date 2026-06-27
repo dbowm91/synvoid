@@ -1518,6 +1518,8 @@ impl MeshTransport {
                         ref provenance_source,
                         ttl_secs,
                         version,
+                        source_sequence,
+                        logical_time,
                         ..
                     } = msg
                     {
@@ -1539,6 +1541,8 @@ impl MeshTransport {
                             event_id: Some(event_id.to_string()),
                             ttl_secs,
                             version,
+                            source_sequence,
+                            logical_time,
                         };
                         let result = bs.apply_blocklist_event(&event);
                         tracing::info!(
@@ -1662,6 +1666,31 @@ impl MeshTransport {
                         stale,
                         latest_sequence
                     );
+                    // Phase 5: Update persisted peer cursor after successful catchup.
+                    if applied > 0 || noop > 0 {
+                        if let Some(latest_seq) = latest_sequence {
+                            if let Some(latest_ts) = latest_timestamp {
+                                let now = synvoid_utils::safe_unix_timestamp();
+                                let record = crate::stubs::block_store::BlocklistPeerCursorRecord {
+                                    peer_id: peer_id.to_string(),
+                                    source_node: self.config.node_id().to_string(),
+                                    last_sequence: Some(latest_seq),
+                                    last_timestamp: latest_ts,
+                                    last_event_id: None,
+                                    updated_at: now,
+                                    expires_at: Some(now.saturating_add(86400 * 7)),
+                                };
+                                bs.update_blocklist_peer_cursor(record);
+                                bs.persist_peer_cursors();
+                                tracing::debug!(
+                                    "Updated blocklist peer cursor for {}: seq={}, ts={}",
+                                    peer_id,
+                                    latest_seq,
+                                    latest_ts
+                                );
+                            }
+                        }
+                    }
                 } else {
                     tracing::trace!(
                         "Blocklist catchup response received but threat intel not enabled"
@@ -1843,6 +1872,8 @@ impl MeshTransport {
                             },
                             recorded_at: r.recorded_at,
                             expires_at: r.expires_at,
+                            source_sequence: r.source_sequence,
+                            logical_time: r.logical_time,
                         })
                         .collect();
 
