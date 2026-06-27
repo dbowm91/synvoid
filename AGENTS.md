@@ -67,7 +67,7 @@ cargo test --test background_task_ownership_guard
 cargo test --test worker_mesh_supervision_boundary_guard --features mesh,dns
 cargo test --test cli_command_dispatch_guard
 cargo test --test manual_enforcement_provenance_guard
-cargo test --test unified_server_lifecycle_ownership_guard  # No mem::forget in server/plugin
+cargo test --test unified_server_lifecycle_ownership_guard  # 5 tests: mem::forget, reason comments, handles integrated, spawns registered, plugin owner lifetime
 cargo test --test request_path_capability_boundary_guard  # Request-path capability boundary
 ```
 

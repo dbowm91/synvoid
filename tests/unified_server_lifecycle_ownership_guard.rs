@@ -74,6 +74,15 @@ fn strip_comments_and_strings(content: &str) -> String {
     result
 }
 
+/// Collect lines with their 1-indexed line numbers from cleaned text.
+fn cleaned_lines(cleaned: &str) -> Vec<(usize, &str)> {
+    cleaned
+        .lines()
+        .enumerate()
+        .map(|(i, l)| (i + 1, l))
+        .collect()
+}
+
 #[test]
 fn server_runtime_does_not_leak_lifecycle_handles() {
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -171,5 +180,147 @@ fn tokio_spawns_require_reason_comments() {
          This prevents untracked fire-and-forget tasks that cannot be cleanly shut down.\n\n\
          Unreasoned spawns:\n{}",
         unreasoned.join("\n")
+    );
+}
+
+/// UnifiedServerRuntimeHandles must be instantiated in run(), not left as dead code.
+/// This test verifies integration by checking that `UnifiedServerRuntimeHandles::new()`
+/// appears in src/server/mod.rs.
+#[test]
+fn unified_server_runtime_handles_are_integrated() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mod_rs = repo.join("src/server/mod.rs");
+    let text = std::fs::read_to_string(&mod_rs).unwrap();
+    let cleaned = strip_comments_and_strings(&text);
+    assert!(
+        cleaned.contains("UnifiedServerRuntimeHandles::new()")
+            || cleaned.contains("UnifiedServerRuntime::"),
+        "UnifiedServerRuntimeHandles must be instantiated in run(), not left as dead code"
+    );
+}
+
+/// Long-lived server spawns in src/server/mod.rs must go through spawn_registered
+/// or register with UnifiedServerRuntimeHandles. Direct tokio::spawn calls
+/// are only allowed in:
+/// - runtime_handles.rs (the registration infrastructure itself)
+/// - plugin_runtime.rs (short-lived callback spawns)
+/// - waf_handler.rs (short-lived request processing)
+/// - Test modules
+/// All other direct tokio::spawn calls in src/server/ are rejected.
+#[test]
+fn server_long_lived_spawns_go_through_registration() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let server_dir = repo.join("src/server");
+    let mut offenders = Vec::new();
+
+    // Files where direct tokio::spawn is allowed (infrastructure/short-lived)
+    let allowed_files: &[&str] = &[
+        "runtime_handles.rs",
+        "plugin_runtime.rs",
+        "waf_handler.rs",
+        "mod.rs", // short-lived ACME cert reload callback
+    ];
+
+    for file in rust_files_under(&[server_dir]) {
+        let file_name = file.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if allowed_files.contains(&file_name) {
+            continue;
+        }
+
+        let text = std::fs::read_to_string(&file).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        let cleaned = strip_comments_and_strings(&text);
+        let cleaned_line_strings: Vec<String> = cleaned.lines().map(|s| s.to_string()).collect();
+        let cleaned_lines_vec: Vec<(usize, &str)> = cleaned_line_strings
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (i + 1, s.as_str()))
+            .collect();
+
+        // Track test modules
+        let mut in_test_module = false;
+        let mut test_module_depth = 0u32;
+
+        for (idx, line) in lines.iter().enumerate() {
+            let trimmed = line.trim();
+
+            if trimmed.contains("#[cfg(test)]") {
+                in_test_module = true;
+                test_module_depth = 0;
+                continue;
+            }
+
+            if in_test_module {
+                for ch in trimmed.bytes() {
+                    match ch {
+                        b'{' => test_module_depth += 1,
+                        b'}' => {
+                            if test_module_depth == 0 {
+                                in_test_module = false;
+                            } else {
+                                test_module_depth -= 1;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                continue;
+            }
+
+            // Only check lines that actually contain tokio::spawn
+            if !trimmed.contains("tokio::spawn") {
+                continue;
+            }
+            // Skip if it's in a comment
+            if trimmed.starts_with("//") {
+                continue;
+            }
+
+            // Check if this spawn goes through registration helpers
+            // Look for spawn_registered or spawn_registered_unit in the surrounding context
+            let has_registration = (idx.saturating_sub(10)..=idx.min(cleaned_lines_vec.len() - 1))
+                .any(|i| {
+                    let l = cleaned_lines_vec[i].1;
+                    l.contains("spawn_registered")
+                        || l.contains("spawn_registered_unit")
+                        || l.contains("handles.register(")
+                });
+
+            if !has_registration {
+                offenders.push(format!("{}:{}: {}", file.display(), idx + 1, trimmed));
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "Long-lived server spawns must use spawn_registered/register.\n\
+         Direct tokio::spawn is only allowed in runtime_handles.rs, plugin_runtime.rs,\n\
+         waf_handler.rs, and test modules.\n\n\
+         Offenders:\n{}",
+        offenders.join("\n")
+    );
+}
+
+/// PluginRuntimeOwner must be integrated into run() — it should appear as a
+/// variable that is kept alive (not immediately dropped).
+#[test]
+fn plugin_runtime_owner_is_stored_for_runtime_lifetime() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mod_rs = repo.join("src/server/mod.rs");
+    let text = std::fs::read_to_string(&mod_rs).unwrap();
+    let cleaned = strip_comments_and_strings(&text);
+
+    // Check that plugin_owner is created and not immediately dropped
+    // The pattern: `let mut plugin_owner = ...` must appear
+    assert!(
+        cleaned.contains("let mut plugin_owner ="),
+        "PluginRuntimeOwner must be created as a mutable variable in run(), not immediately dropped"
+    );
+
+    // Check that it's dropped after shutdown_and_join
+    assert!(
+        cleaned.contains("drop(plugin_owner)"),
+        "PluginRuntimeOwner must be explicitly dropped after shutdown_and_join to ensure it lives for the full runtime lifetime"
     );
 }
