@@ -1,6 +1,6 @@
 # AGENTS.md
 
-SynVoid is a high-performance WAF & reverse proxy in Rust with a mesh networking layer, multi-process architecture (Supervisor + UnifiedServerWorker + CPU offload), and 38 workspace members (31 dedicated `synvoid-*` library crates plus root, pqc, admin-ui, examples, and fuzz).
+SynVoid is a high-performance WAF & reverse proxy in Rust with a mesh networking layer, multi-process architecture (Supervisor + UnifiedServerWorker + CPU offload), and 43 workspace members (37 dedicated `synvoid-*` library crates plus root, pqc, admin-ui, examples, and fuzz).
 
 ## Quick Commands
 
@@ -159,7 +159,7 @@ Each subsystem has specialized `AGENTS.override.md` files. Load the relevant one
 
 ## Architecture Quick Reference
 
-The `architecture/` directory (73 docs) and `.opencode/skills/` directory contain detailed subsystem docs. Key entrypoints:
+The `architecture/` directory (77 docs) and `.opencode/skills/` directory contain detailed subsystem docs. Key entrypoints:
 
 - **Entry point**: `src/main.rs` → delegates to `src/commands/` (plan/execute/runtime_launch)
 - **Supervisor**: `src/supervisor/` — lifecycle, IPC, control-plane

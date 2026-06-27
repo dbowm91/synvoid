@@ -108,6 +108,7 @@ pub struct WorkerShutdownContext {
     pub lifecycle_ack: Option<tokio::sync::oneshot::Sender<()>>,
     pub graceful: bool,
     pub drain_timeout: std::time::Duration,
+    #[cfg(feature = "mesh")]
     pub active_mesh_support: Option<crate::worker::unified_server::MeshGenerationSupport>,
 }
 
@@ -130,6 +131,7 @@ impl WorkerShutdownContext {
             lifecycle_ack: plan.lifecycle_ack,
             graceful: plan.graceful,
             drain_timeout: plan.drain_timeout,
+            #[cfg(feature = "mesh")]
             active_mesh_support: supervision_result.active_mesh_support,
         }
     }
@@ -161,6 +163,7 @@ pub async fn execute_worker_shutdown(
         lifecycle_ack,
         graceful,
         drain_timeout,
+        #[cfg(feature = "mesh")]
         mut active_mesh_support,
     } = ctx;
 
@@ -297,8 +300,8 @@ pub async fn execute_worker_shutdown(
             );
         }
     }
-    // Suppress unused variable when mesh+dns is not compiled in.
-    #[cfg(not(all(feature = "mesh", feature = "dns")))]
+    // Suppress unused variable when mesh is enabled but dns is not compiled in.
+    #[cfg(all(feature = "mesh", not(feature = "dns")))]
     let _ = active_mesh_support;
 
     // Step 5: Clear running flag.

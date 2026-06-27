@@ -12,7 +12,20 @@ use std::time::Duration;
 use crate::worker::task_registry::SupervisionOutcome;
 use crate::worker::task_registry::WorkerShutdownCause;
 use crate::worker::unified_server::state::UnifiedServerWorkerState;
-use crate::worker::unified_server::{MeshGenerationSupport, SupportStopContext};
+#[cfg(feature = "mesh")]
+use crate::worker::unified_server::MeshGenerationSupport;
+use crate::worker::unified_server::SupportStopContext;
+
+#[cfg(feature = "mesh")]
+type MeshDecisionReceiver =
+    tokio::sync::mpsc::Receiver<crate::worker::mesh_supervision::MeshSupervisorDecision>;
+#[cfg(not(feature = "mesh"))]
+type MeshDecisionReceiver = ();
+
+#[cfg(feature = "mesh")]
+type OptionalMeshSupport = Option<MeshGenerationSupport>;
+#[cfg(not(feature = "mesh"))]
+type OptionalMeshSupport = Option<()>;
 
 /// Result of the supervision loop.
 pub struct WorkerSupervisionResult {
@@ -35,11 +48,9 @@ pub async fn run_worker_supervision(
         crate::worker::unified_server::lifecycle::LifecycleRequest,
     >,
     mut exit_rx: tokio::sync::broadcast::Receiver<crate::worker::task_registry::NamedTaskExit>,
-    mut mesh_decision_rx_opt: Option<
-        tokio::sync::mpsc::Receiver<crate::worker::mesh_supervision::MeshSupervisorDecision>,
-    >,
+    mut mesh_decision_rx_opt: Option<MeshDecisionReceiver>,
     required_mesh_startup_failure: Option<WorkerShutdownCause>,
-    mut active_mesh_support: Option<MeshGenerationSupport>,
+    mut active_mesh_support: OptionalMeshSupport,
 ) -> WorkerSupervisionResult {
     let shutdown_flag = {
         let registry = state.task_registry.lock().await;

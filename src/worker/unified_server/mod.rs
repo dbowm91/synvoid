@@ -501,7 +501,7 @@ pub async fn run_unified_server_worker(
     #[cfg(not(feature = "mesh"))]
     let (mesh_decision_rx_opt, required_mesh_startup_failure, active_mesh_support): (
         Option<()>,
-        Option<()>,
+        Option<crate::worker::task_registry::WorkerShutdownCause>,
         Option<()>,
     ) = (None, None, None);
 

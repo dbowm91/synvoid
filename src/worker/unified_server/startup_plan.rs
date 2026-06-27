@@ -17,6 +17,7 @@ use super::init_mesh::MeshInit;
 use super::passthrough_validation;
 use super::services::DataPlaneServicesBuilder;
 use super::state::{self, UnifiedServerWorkerArgs, UnifiedServerWorkerState};
+#[cfg(feature = "mesh")]
 use super::MeshGenerationSupport;
 use crate::server::UnifiedServer;
 use crate::worker::drain_state::WorkerDrainState;
@@ -45,6 +46,7 @@ pub enum WorkerReadinessPlan {
 }
 
 /// Mesh-specific startup state produced by the startup plan.
+#[cfg(feature = "mesh")]
 pub struct MeshStartupState {
     /// Mesh supervision policy (required/optional).
     pub policy: crate::worker::mesh_supervision::MeshSupervisionPolicy,
@@ -419,7 +421,7 @@ pub async fn build_worker_startup(
         .await?
     };
     #[cfg(not(feature = "mesh"))]
-    let mesh_startup: Option<MeshStartupState> = None;
+    let mesh_startup: Option<()> = None;
 
     Ok(WorkerStartupArtifacts {
         worker_id,

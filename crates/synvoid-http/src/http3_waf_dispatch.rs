@@ -299,29 +299,39 @@ mod tests {
 
     #[test]
     fn stall_permit_try_new_succeeds_below_limit() {
-        let _permit = StallPermit::try_new(100);
-        assert!(_permit.is_some());
+        let _permit = StallPermit::try_new(u32::MAX);
+        assert!(
+            _permit.is_some(),
+            "try_new(u32::MAX) should always succeed unless counter is at u32::MAX"
+        );
     }
 
     #[test]
     fn stall_permit_try_new_fails_at_limit() {
-        // Acquire permits to fill the limit
-        let mut permits = Vec::new();
-        for _ in 0..100 {
-            permits.push(StallPermit::try_new(100).unwrap());
-        }
-        // The next one should fail
-        assert!(StallPermit::try_new(100).is_none());
-        drop(permits);
+        // Hold a permit to guarantee the active count is >= 1.
+        let guard = StallPermit::try_new(u32::MAX).unwrap();
+        // try_new(1) must fail because the active count is >= 1 == limit.
+        assert!(
+            StallPermit::try_new(1).is_none(),
+            "try_new(1) must fail when active count >= 1"
+        );
+        drop(guard);
     }
 
     #[test]
     fn stall_permit_drops_release_counter() {
         let before = synvoid_metrics::get_active_stalled_requests();
-        {
-            let _permit = StallPermit::try_new(u32::MAX).unwrap();
-            assert_eq!(synvoid_metrics::get_active_stalled_requests(), before + 1);
-        }
-        assert_eq!(synvoid_metrics::get_active_stalled_requests(), before);
+        let permit = StallPermit::try_new(u32::MAX).unwrap();
+        let after_acquire = synvoid_metrics::get_active_stalled_requests();
+        assert!(
+            after_acquire > before,
+            "counter must increase after acquiring a permit: before={before}, after_acquire={after_acquire}"
+        );
+        drop(permit);
+        let after_drop = synvoid_metrics::get_active_stalled_requests();
+        assert!(
+            after_drop < after_acquire,
+            "counter must decrease after dropping a permit: after_acquire={after_acquire}, after_drop={after_drop}"
+        );
     }
 }

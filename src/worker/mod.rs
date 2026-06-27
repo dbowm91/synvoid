@@ -35,9 +35,12 @@ pub use traits::{BaseWorkerState, WorkerLifecycle};
 
 pub use cpu_task::{run_cpu_worker, CpuWorkerArgs};
 pub use unified_server::{
-    run_unified_server_worker, setup_unified_server_panic_handler, stop_mesh_generation_support,
-    MeshGenerationSupport, MeshSupportStopReport, SupportStopContext, UnifiedServerWorkerArgs,
+    run_unified_server_worker, setup_unified_server_panic_handler, MeshSupportStopReport,
+    SupportStopContext, UnifiedServerWorkerArgs,
 };
+
+#[cfg(all(feature = "mesh", feature = "dns"))]
+pub use unified_server::{stop_mesh_generation_support, MeshGenerationSupport};
 
 pub fn setup_worker_panic_handler() {
     let worker_panic_log = format!(

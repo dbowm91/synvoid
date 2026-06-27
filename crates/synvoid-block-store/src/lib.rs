@@ -230,31 +230,6 @@ impl TargetStateCache {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect()
     }
-
-    /// Check if a target state entry exists and whether the given event is newer.
-    fn is_event_newer(
-        &self,
-        key: &BlocklistTargetKey,
-        timestamp: u64,
-        version: Option<u64>,
-    ) -> bool {
-        if let Some(last) = self.get(key) {
-            let candidate = LastAppliedBlocklistEvent {
-                timestamp,
-                version,
-                event_id: None,
-                operation: BlocklistOperation::Block, // doesn't matter for comparison
-                source_node: None,
-                provenance: BlockProvenance::default(),
-                source_sequence: None,
-                logical_time: None,
-            };
-            candidate.is_newer_than(last)
-        } else {
-            // No previous state — event is newer by default.
-            true
-        }
-    }
 }
 
 /// Default maximum number of events retained in the event log.

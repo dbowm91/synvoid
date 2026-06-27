@@ -502,7 +502,7 @@ fn classified_paths_exist() {
         "tests/",
         "architecture/",
         "plans/",
-        "skills/",
+        ".opencode/skills/",
         "docs/",
         "src/server/mod.rs",
         "src/worker/unified_server/",
