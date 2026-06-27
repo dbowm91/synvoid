@@ -98,6 +98,42 @@ pub struct DataPlaneServicesBuilder {
     record_store: Option<Arc<RecordStoreManager>>,
 }
 
+/// Adapter that wraps `ThreatIntelligenceManager` behind the narrow
+/// `ThreatIntelLookup` trait for use in `RequestServices`.
+#[cfg(feature = "mesh")]
+struct ThreatIntelLookupAdapter {
+    inner: Arc<ThreatIntelligenceManager>,
+}
+
+#[cfg(feature = "mesh")]
+impl ThreatIntelLookupAdapter {
+    fn severity_to_level(severity: synvoid_mesh::mesh::protocol::ThreatSeverity) -> u8 {
+        use synvoid_mesh::mesh::protocol::ThreatSeverity;
+        match severity {
+            ThreatSeverity::Low => 1,
+            ThreatSeverity::Medium => 2,
+            ThreatSeverity::High => 3,
+            ThreatSeverity::Critical => 4,
+            ThreatSeverity::Unspecified => 0,
+        }
+    }
+}
+
+#[cfg(feature = "mesh")]
+impl crate::worker::context::ThreatIntelLookup for ThreatIntelLookupAdapter {
+    fn is_known_threat_ip(&self, ip: std::net::IpAddr) -> bool {
+        self.inner
+            .lookup_local_indicator_by_ip(&ip.to_string())
+            .is_some()
+    }
+
+    fn threat_level_for_ip(&self, ip: std::net::IpAddr) -> Option<u8> {
+        self.inner
+            .lookup_local_indicator_by_ip(&ip.to_string())
+            .map(|indicator| Self::severity_to_level(indicator.severity))
+    }
+}
+
 impl DataPlaneServicesBuilder {
     pub fn new(serverless_manager: Arc<ServerlessManager>) -> Self {
         Self {
@@ -176,7 +212,10 @@ impl DataPlaneServicesBuilder {
             #[cfg(feature = "mesh")]
             {
                 Arc::new(RequestServices::new(
-                    self.threat_intel.clone(),
+                    self.threat_intel.clone().map(|ti| {
+                        Arc::new(ThreatIntelLookupAdapter { inner: ti })
+                            as Arc<dyn crate::worker::context::ThreatIntelLookup>
+                    }),
                     None,
                     self.yara_rules,
                     None,

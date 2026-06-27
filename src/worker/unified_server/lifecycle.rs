@@ -675,7 +675,7 @@ pub fn spawn_ipc_loop(
                         "Received threat feed update with {} indicators from Supervisor",
                         indicators.len()
                     );
-                    if let Some(threat_intel) = &state.request_services.threat_intel {
+                    if let Some(threat_intel) = &state.data_plane.threat_intel {
                         for indicator_data in &indicators {
                             let threat_type = match indicator_data.threat_type {
                                 crate::process::ipc::ThreatIndicatorType::IpBlock => {

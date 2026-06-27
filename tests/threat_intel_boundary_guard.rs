@@ -30,6 +30,10 @@ fn is_allowlisted(relative: &str) -> bool {
         "tests/threat_intel_boundary_guard.rs",
         "tests/dht_integration_test.rs",
         "src/waf/threat_intel/feed_client.rs",
+        // Composition root adapter: ThreatIntelLookupAdapter delegates raw
+        // lookup to the concrete manager. This is the correct location for
+        // the raw-to-narrow bridge — not on the request path.
+        "src/worker/unified_server/services.rs",
     ];
 
     for entry in allowlist {
@@ -149,6 +153,7 @@ fn allowlisted_files_exist() {
         "tests/threat_intel_boundary_guard.rs",
         "tests/dht_integration_test.rs",
         "src/waf/threat_intel/feed_client.rs",
+        "src/worker/unified_server/services.rs",
     ];
 
     let mut missing = Vec::new();

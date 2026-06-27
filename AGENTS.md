@@ -68,6 +68,7 @@ cargo test --test worker_mesh_supervision_boundary_guard --features mesh,dns
 cargo test --test cli_command_dispatch_guard
 cargo test --test manual_enforcement_provenance_guard
 cargo test --test unified_server_lifecycle_ownership_guard  # No mem::forget in server/plugin
+cargo test --test request_path_capability_boundary_guard  # Request-path capability boundary
 ```
 
 ## Critical Security Rules
@@ -189,6 +190,7 @@ The `architecture/` directory (73 docs) and `.opencode/skills/` directory contai
 | `architecture/supervisor.md` | Process lifecycle, drain, gRPC control plane |
 | `architecture/supervisor_lifecycle.md` | Task classes, shutdown cause taxonomy, drain report, Phase 3 hardening |
 | `architecture/unified_server_startup.md` | UnifiedServer startup/resources/runtimeHandles split |
+| `architecture/request_path_capability_boundary.md` | Request-path capability boundary, narrow traits, forbidden imports |
 
 ## Known Issues
 
