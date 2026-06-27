@@ -435,6 +435,9 @@ pub mod block_store {
         );
         fn persist_peer_cursors(&self);
         fn peer_cursor_count(&self) -> usize;
+        fn peer_cursor_timestamp_range(&self) -> (Option<u64>, Option<u64>);
+        fn has_cursor_persistence(&self) -> bool;
+        fn event_log_capacity(&self) -> usize;
     }
 
     impl BlockStore {
@@ -600,6 +603,18 @@ pub mod block_store {
         pub fn peer_cursor_count(&self) -> usize {
             0
         }
+
+        pub fn peer_cursor_timestamp_range(&self) -> (Option<u64>, Option<u64>) {
+            (None, None)
+        }
+
+        pub fn has_cursor_persistence(&self) -> bool {
+            false
+        }
+
+        pub fn event_log_capacity(&self) -> usize {
+            0
+        }
     }
 
     impl BlockStoreApi for BlockStore {
@@ -715,6 +730,18 @@ pub mod block_store {
 
         fn peer_cursor_count(&self) -> usize {
             self.peer_cursor_count()
+        }
+
+        fn peer_cursor_timestamp_range(&self) -> (Option<u64>, Option<u64>) {
+            self.peer_cursor_timestamp_range()
+        }
+
+        fn has_cursor_persistence(&self) -> bool {
+            self.has_cursor_persistence()
+        }
+
+        fn event_log_capacity(&self) -> usize {
+            self.event_log_capacity()
         }
     }
 }

@@ -1032,6 +1032,10 @@ pub struct BlocklistCatchupStatsResponse {
     pub ipc_newest_timestamp: Option<u64>,
     pub ipc_next_sequence: u64,
     pub peer_cursor_count: usize,
+    pub peer_cursor_oldest_update: Option<u64>,
+    pub peer_cursor_newest_update: Option<u64>,
+    pub cursor_persistence_enabled: bool,
+    pub event_log_capacity: usize,
 }
 
 #[utoipa::path(
@@ -1053,6 +1057,10 @@ pub async fn get_blocklist_catchup_stats(
     let mut newest_timestamp = None;
     let mut next_sequence = 0u64;
     let mut peer_cursor_count = 0usize;
+    let mut peer_cursor_oldest_update = None;
+    let mut peer_cursor_newest_update = None;
+    let mut cursor_persistence_enabled = false;
+    let mut event_log_capacity = 0usize;
 
     if let Some(transport) = &state.mesh.mesh_transport {
         if let Some(threat_intel) = transport.get_threat_intel() {
@@ -1063,6 +1071,11 @@ pub async fn get_blocklist_catchup_stats(
             newest_timestamp = newest;
             next_sequence = seq;
             peer_cursor_count = block_store.peer_cursor_count();
+            let (pc_oldest, pc_newest) = block_store.peer_cursor_timestamp_range();
+            peer_cursor_oldest_update = pc_oldest;
+            peer_cursor_newest_update = pc_newest;
+            cursor_persistence_enabled = block_store.has_cursor_persistence();
+            event_log_capacity = block_store.event_log_capacity();
         }
     }
 
@@ -1089,6 +1102,10 @@ pub async fn get_blocklist_catchup_stats(
         ipc_newest_timestamp,
         ipc_next_sequence,
         peer_cursor_count,
+        peer_cursor_oldest_update,
+        peer_cursor_newest_update,
+        cursor_persistence_enabled,
+        event_log_capacity,
     }))
 }
 

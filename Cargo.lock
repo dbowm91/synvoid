@@ -8103,6 +8103,7 @@ version = "0.1.0"
 dependencies = [
  "ahash 0.8.12",
  "arc-swap",
+ "metrics 0.22.4",
  "parking_lot",
  "proptest",
  "serde",

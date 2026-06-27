@@ -10,6 +10,7 @@
 //! - Graceful shutdown with data flush
 
 use ahash::AHashMap;
+use metrics::counter;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashSet, VecDeque};
@@ -151,6 +152,37 @@ impl LastAppliedBlocklistEvent {
         }
         // 5. Equal — not strictly newer
         false
+    }
+
+    /// Determine which ordering tier would be used to compare this event against `other`.
+    /// Returns a label indicating the deciding factor.
+    fn ordering_tier_used(&self, other: &LastAppliedBlocklistEvent) -> &'static str {
+        // 1. Version
+        match (self.version, other.version) {
+            (Some(a), Some(b)) => {
+                if a != b {
+                    return "version";
+                }
+            }
+            (Some(_), None) | (None, Some(_)) => return "version",
+            (None, None) => {}
+        }
+        // 2. Same source + source_sequence
+        if let (Some(ref sn_a), Some(ref sn_b)) = (&self.source_node, &other.source_node) {
+            if sn_a == sn_b {
+                if let (Some(_), Some(_)) = (self.source_sequence, other.source_sequence) {
+                    return "source_sequence";
+                }
+            }
+        }
+        // 3. HLC/logical_time
+        if self.logical_time.is_some() && other.logical_time.is_some() {
+            if self.logical_time != other.logical_time {
+                return "logical_time";
+            }
+        }
+        // 4. Timestamp fallback
+        "timestamp"
     }
 }
 
@@ -413,6 +445,11 @@ impl BlocklistEventLog {
     /// Return `true` if the log contains no events.
     pub fn is_empty(&self) -> bool {
         self.events.is_empty()
+    }
+
+    /// Return the maximum number of events the log can retain.
+    pub fn capacity(&self) -> usize {
+        self.max_events
     }
 
     /// Return the oldest timestamp in the log, or `None` if empty.
@@ -758,6 +795,8 @@ impl BlockStore {
                                         record,
                                     );
                                     loaded += 1;
+                                    counter!("synvoid.blockstore.peer_cursor_loaded_total")
+                                        .increment(1);
                                 }
                                 tracing::info!(
                                     "Loaded {} peer cursors from disk ({} expired and dropped)",
@@ -1876,9 +1915,22 @@ impl BlockStore {
             let targets = self.target_state.read();
             if let Some(last) = targets.get(&target_key) {
                 if this_event.is_newer_than(last) {
-                    // This event is newer — proceed with application.
+                    // This event is newer — record which ordering tier decided it.
+                    let tier = this_event.ordering_tier_used(last);
+                    match tier {
+                        "source_sequence" => {
+                            counter!("synvoid.blockstore.event_ordering_source_sequence_total")
+                                .increment(1);
+                        }
+                        "timestamp" => {
+                            counter!("synvoid.blockstore.event_ordering_timestamp_fallback_total")
+                                .increment(1);
+                        }
+                        _ => {}
+                    }
                 } else {
                     // This event is stale or equal — reject.
+                    counter!("synvoid.blockstore.event_stale_replay_ignored_total").increment(1);
                     return BlocklistApplyResult::IgnoredStale;
                 }
             }
@@ -2007,6 +2059,7 @@ impl BlockStore {
         let key = (record.peer_id.clone(), record.source_node.clone());
         let mut cursors = self.peer_cursors.write();
         cursors.insert(key, record);
+        counter!("synvoid.blockstore.peer_cursor_updated_total").increment(1);
     }
 
     /// Persist all peer cursors to disk (async, non-blocking).
@@ -2035,11 +2088,15 @@ impl BlockStore {
                             }
                             Err(e) => {
                                 tracing::warn!("Failed to write peer cursors to disk: {}", e);
+                                counter!("synvoid.blockstore.peer_cursor_persist_failed_total")
+                                    .increment(1);
                             }
                         }
                     }
                     Err(e) => {
                         tracing::warn!("Failed to serialize peer cursors: {}", e);
+                        counter!("synvoid.blockstore.peer_cursor_persist_failed_total")
+                            .increment(1);
                     }
                 }
             });
@@ -2098,6 +2155,34 @@ impl BlockStore {
     /// Return peer cursor count for diagnostics.
     pub fn peer_cursor_count(&self) -> usize {
         self.peer_cursors.read().len()
+    }
+
+    /// Return the oldest and newest `updated_at` timestamps across all peer cursors.
+    pub fn peer_cursor_timestamp_range(&self) -> (Option<u64>, Option<u64>) {
+        let cursors = self.peer_cursors.read();
+        let mut oldest: Option<u64> = None;
+        let mut newest: Option<u64> = None;
+        for record in cursors.values() {
+            oldest = match oldest {
+                Some(v) => Some(v.min(record.updated_at)),
+                None => Some(record.updated_at),
+            };
+            newest = match newest {
+                Some(v) => Some(v.max(record.updated_at)),
+                None => Some(record.updated_at),
+            };
+        }
+        (oldest, newest)
+    }
+
+    /// Return whether peer cursor persistence is configured.
+    pub fn has_cursor_persistence(&self) -> bool {
+        self.cursor_persist_path.is_some()
+    }
+
+    /// Return the maximum event log capacity.
+    pub fn event_log_capacity(&self) -> usize {
+        self.event_log.read().capacity()
     }
 
     pub fn migrate_legacy_sentinel_entries(&self) -> usize {
@@ -2903,6 +2988,18 @@ impl synvoid_mesh::stubs::block_store::BlockStoreApi for BlockStore {
 
     fn peer_cursor_count(&self) -> usize {
         self.peer_cursor_count()
+    }
+
+    fn peer_cursor_timestamp_range(&self) -> (Option<u64>, Option<u64>) {
+        self.peer_cursor_timestamp_range()
+    }
+
+    fn has_cursor_persistence(&self) -> bool {
+        self.has_cursor_persistence()
+    }
+
+    fn event_log_capacity(&self) -> usize {
+        self.event_log_capacity()
     }
 }
 
@@ -7929,5 +8026,151 @@ mod tests {
             expires_at: None,
         });
         assert_eq!(store.peer_cursor_count(), 2);
+    }
+
+    // ── Phase 5: Cursor Behavior Tests ─────────────────────────────────
+
+    #[test]
+    fn test_cursor_does_not_advance_on_failed_event() {
+        let store = BlockStore::new(true, None, target_state_config());
+        let now = synvoid_utils::safe_unix_timestamp();
+
+        // Set cursor to seq=5.
+        store.update_blocklist_peer_cursor(BlocklistPeerCursorRecord {
+            peer_id: "peer-fail".to_string(),
+            source_node: "node-fail".to_string(),
+            last_sequence: Some(5),
+            last_timestamp: now,
+            last_event_id: Some("cursor-init".to_string()),
+            updated_at: now,
+            expires_at: None,
+        });
+
+        // Apply an InvalidTarget event (empty IP string).
+        let mut event =
+            BlocklistEvent::block_ip("", "fail_test", "global", BlockProvenance::default(), now);
+        event = event.with_event_id("invalid-evt".to_string());
+        let result = store.apply_blocklist_event(&event);
+        assert_eq!(result, BlocklistApplyResult::InvalidTarget);
+
+        // Cursor must remain at seq=5.
+        let cursor = store
+            .get_blocklist_peer_cursor("peer-fail", "node-fail")
+            .unwrap();
+        assert_eq!(
+            cursor.last_sequence,
+            Some(5),
+            "Cursor must not advance past a failed (InvalidTarget) event"
+        );
+    }
+
+    #[test]
+    fn test_duplicate_event_can_advance_cursor() {
+        let store = BlockStore::new(true, None, target_state_config());
+        let now = synvoid_utils::safe_unix_timestamp();
+
+        // Set cursor to seq=5.
+        store.update_blocklist_peer_cursor(BlocklistPeerCursorRecord {
+            peer_id: "peer-dup".to_string(),
+            source_node: "node-dup".to_string(),
+            last_sequence: Some(5),
+            last_timestamp: now,
+            last_event_id: Some("cursor-init".to_string()),
+            updated_at: now,
+            expires_at: None,
+        });
+
+        // Apply a valid event.
+        let mut event = BlocklistEvent::block_ip(
+            "10.0.0.51",
+            "dup_test",
+            "global",
+            BlockProvenance::default(),
+            now,
+        );
+        event = event.with_event_id("dup-evt-1".to_string());
+        let result = store.apply_blocklist_event(&event);
+        assert_eq!(result, BlocklistApplyResult::Applied);
+
+        // Apply the same event again — should be NoopDuplicate.
+        let result2 = store.apply_blocklist_event(&event);
+        assert_eq!(result2, BlocklistApplyResult::NoopDuplicate);
+
+        // Simulate catchup guard: noop > 0 means cursor can advance.
+        // Update cursor to seq=10 (as the mesh catchup handler would).
+        store.update_blocklist_peer_cursor(BlocklistPeerCursorRecord {
+            peer_id: "peer-dup".to_string(),
+            source_node: "node-dup".to_string(),
+            last_sequence: Some(10),
+            last_timestamp: now,
+            last_event_id: Some("dup-evt-1".to_string()),
+            updated_at: now,
+            expires_at: None,
+        });
+
+        let cursor = store
+            .get_blocklist_peer_cursor("peer-dup", "node-dup")
+            .unwrap();
+        assert_eq!(
+            cursor.last_sequence,
+            Some(10),
+            "Cursor should advance past duplicate events"
+        );
+    }
+
+    #[test]
+    fn test_stale_event_does_not_advance_cursor() {
+        let store = BlockStore::new(true, None, target_state_config());
+        let now = synvoid_utils::safe_unix_timestamp();
+        let base = 1000000;
+
+        // Set cursor to seq=5.
+        store.update_blocklist_peer_cursor(BlocklistPeerCursorRecord {
+            peer_id: "peer-stale".to_string(),
+            source_node: "node-stale".to_string(),
+            last_sequence: Some(5),
+            last_timestamp: now,
+            last_event_id: Some("cursor-init".to_string()),
+            updated_at: now,
+            expires_at: None,
+        });
+
+        // Apply event A (newer): block IP at seq=10, higher timestamp.
+        let mut event_a = BlocklistEvent::block_ip(
+            "10.0.0.52",
+            "stale_test_a",
+            "global",
+            BlockProvenance::default(),
+            base + 200,
+        );
+        event_a.source_node = Some("node-stale".to_string());
+        event_a.source_sequence = Some(10);
+        event_a = event_a.with_event_id("stale-evt-a".to_string());
+        let r1 = store.apply_blocklist_event(&event_a);
+        assert_eq!(r1, BlocklistApplyResult::Applied);
+
+        // Apply event B (older): same IP, lower timestamp, seq=3 → IgnoredStale.
+        let mut event_b = BlocklistEvent::block_ip(
+            "10.0.0.52",
+            "stale_test_b",
+            "global",
+            BlockProvenance::default(),
+            base + 50,
+        );
+        event_b.source_node = Some("node-stale".to_string());
+        event_b.source_sequence = Some(3);
+        event_b = event_b.with_event_id("stale-evt-b".to_string());
+        let r2 = store.apply_blocklist_event(&event_b);
+        assert_eq!(r2, BlocklistApplyResult::IgnoredStale);
+
+        // Cursor must remain at seq=5 (stale event should not advance it).
+        let cursor = store
+            .get_blocklist_peer_cursor("peer-stale", "node-stale")
+            .unwrap();
+        assert_eq!(
+            cursor.last_sequence,
+            Some(5),
+            "Cursor must not advance past a stale event"
+        );
     }
 }
