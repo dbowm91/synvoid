@@ -10,6 +10,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use synvoid_core::admin_mutation::{AdminMutationResult, AdminMutationStatus, PropagationStatus};
 use utoipa::ToSchema;
 
 use crate::mesh::yara_rules::{YaraRuleSubmission, YaraRuleSubmissionStatus};
@@ -477,7 +478,7 @@ pub async fn submit_rules(
     path = "/yara/apply",
     request_body = YaraApplyRequest,
     responses(
-        (status = 200, description = "Rules applied directly", body = YaraApplyResponse),
+        (status = 200, description = "Rules applied directly"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden - not a global node"),
         (status = 404, description = "YARA manager not found"),
@@ -490,7 +491,7 @@ pub async fn apply_rules_direct(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<YaraApplyRequest>,
-) -> Result<Json<YaraApplyResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let yara_manager = state
         .waf_tracking
         .yara_rules
@@ -506,10 +507,14 @@ pub async fn apply_rules_direct(
             if let Err(e) = yara_manager.broadcast_approved_rules(&version) {
                 tracing::warn!("Failed to broadcast applied rules: {}", e);
             }
-            Ok(Json(YaraApplyResponse {
-                success: true,
-                version,
-                message: "Rules applied directly".to_string(),
+            Ok(Json(AdminMutationResult {
+                status: AdminMutationStatus::Applied,
+                target: version.clone(),
+                local_store_mutated: true,
+                propagation: PropagationStatus::NotApplicable,
+                event_id: None,
+                audit_id: None,
+                message: format!("Rules applied directly, version {}", version),
             }))
         }
         Err(e) => {
@@ -526,7 +531,7 @@ pub async fn apply_rules_direct(
         ("submission_id" = String, Path, description = "Submission ID to delete")
     ),
     responses(
-        (status = 200, description = "Submission deleted", body = YaraDeleteResponse),
+        (status = 200, description = "Submission deleted"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Submission not found"),
         (status = 400, description = "Invalid request"),
@@ -538,7 +543,7 @@ pub async fn delete_submission(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Path(submission_id): Path<String>,
-) -> Result<Json<YaraDeleteResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let yara_manager = state
         .waf_tracking
         .yara_rules
@@ -546,8 +551,13 @@ pub async fn delete_submission(
         .ok_or(StatusCode::NOT_FOUND)?;
 
     match yara_manager.delete_submission(&submission_id) {
-        Ok(()) => Ok(Json(YaraDeleteResponse {
-            success: true,
+        Ok(()) => Ok(Json(AdminMutationResult {
+            status: AdminMutationStatus::Applied,
+            target: submission_id.clone(),
+            local_store_mutated: true,
+            propagation: PropagationStatus::NotApplicable,
+            event_id: None,
+            audit_id: None,
             message: format!("Submission {} deleted", submission_id),
         })),
         Err(e) => {

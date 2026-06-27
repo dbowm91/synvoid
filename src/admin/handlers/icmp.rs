@@ -2,6 +2,7 @@ use super::super::state::AdminState;
 use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use synvoid_core::admin_mutation::{AdminMutationResult, AdminMutationStatus, PropagationStatus};
 use utoipa::ToSchema;
 
 use super::common::OptionalAuth;
@@ -167,7 +168,7 @@ pub async fn get_config(
     path = "/icmp/config",
     request_body = UpdateIcmpConfigRequest,
     responses(
-        (status = 200, description = "ICMP filter config updated", body = IcmpEnableResponse),
+        (status = 200, description = "ICMP filter config updated"),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -178,30 +179,45 @@ pub async fn update_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateIcmpConfigRequest>,
-) -> Result<Json<IcmpEnableResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     #[cfg(feature = "icmp-filter")]
     {
         let new_config: crate::icmp_filter::IcmpFilterConfig =
             match serde_json::from_value(req.config) {
                 Ok(c) => c,
                 Err(e) => {
-                    return Ok(Json(IcmpEnableResponse {
-                        success: false,
+                    return Ok(Json(AdminMutationResult {
+                        status: AdminMutationStatus::InvalidRejected,
+                        target: "icmp_config".to_string(),
+                        local_store_mutated: false,
+                        propagation: PropagationStatus::NotApplicable,
+                        event_id: None,
+                        audit_id: None,
                         message: format!("Invalid config: {}", e),
                     }));
                 }
             };
 
         if let Err(e) = new_config.validate() {
-            return Ok(Json(IcmpEnableResponse {
-                success: false,
+            return Ok(Json(AdminMutationResult {
+                status: AdminMutationStatus::InvalidRejected,
+                target: "icmp_config".to_string(),
+                local_store_mutated: false,
+                propagation: PropagationStatus::NotApplicable,
+                event_id: None,
+                audit_id: None,
                 message: format!("Config validation error: {}", e),
             }));
         }
 
         let Some(icmp_filter) = state.icmp_filter() else {
-            return Ok(Json(IcmpEnableResponse {
-                success: false,
+            return Ok(Json(AdminMutationResult {
+                status: AdminMutationStatus::Failed,
+                target: "icmp_config".to_string(),
+                local_store_mutated: false,
+                propagation: PropagationStatus::NotApplicable,
+                event_id: None,
+                audit_id: None,
                 message: "ICMP filter not initialized".to_string(),
             }));
         };
@@ -209,8 +225,13 @@ pub async fn update_config(
         {
             let mut filter = icmp_filter.write().await;
             if let Err(e) = filter.update_config(new_config) {
-                return Ok(Json(IcmpEnableResponse {
-                    success: false,
+                return Ok(Json(AdminMutationResult {
+                    status: AdminMutationStatus::Failed,
+                    target: "icmp_config".to_string(),
+                    local_store_mutated: false,
+                    propagation: PropagationStatus::NotApplicable,
+                    event_id: None,
+                    audit_id: None,
                     message: format!("Failed to update config: {}", e),
                 }));
             }
@@ -224,8 +245,13 @@ pub async fn update_config(
             }
         }
 
-        return Ok(Json(IcmpEnableResponse {
-            success: true,
+        return Ok(Json(AdminMutationResult {
+            status: AdminMutationStatus::Applied,
+            target: "icmp_config".to_string(),
+            local_store_mutated: true,
+            propagation: PropagationStatus::NotApplicable,
+            event_id: None,
+            audit_id: None,
             message: "Configuration updated".to_string(),
         }));
     }
@@ -233,8 +259,13 @@ pub async fn update_config(
     #[cfg(not(feature = "icmp-filter"))]
     {
         let _ = (state, req);
-        Ok(Json(IcmpEnableResponse {
-            success: false,
+        Ok(Json(AdminMutationResult {
+            status: AdminMutationStatus::Failed,
+            target: "icmp_config".to_string(),
+            local_store_mutated: false,
+            propagation: PropagationStatus::NotApplicable,
+            event_id: None,
+            audit_id: None,
             message: "ICMP filter not enabled (compile with icmp-filter feature)".to_string(),
         }))
     }

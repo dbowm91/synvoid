@@ -6,6 +6,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use synvoid_core::admin_mutation::{AdminMutationResult, AdminMutationStatus, PropagationStatus};
 use utoipa::ToSchema;
 
 use crate::admin::state::AdminState;
@@ -128,7 +129,7 @@ pub async fn get_spin_app_manifest(
     path = "/spin/apps",
     request_body = CreateSpinAppRequest,
     responses(
-        (status = 200, description = "Spin app created", body = SpinAppResponse),
+        (status = 200, description = "Spin app created"),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid request"),
         (status = 409, description = "Spin app already exists"),
@@ -140,7 +141,7 @@ pub async fn create_spin_app(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<CreateSpinAppRequest>,
-) -> Result<Json<SpinAppResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let manager = get_global_spin_apps_manager();
 
     if manager.get(&req.name).is_some() {
@@ -173,9 +174,13 @@ pub async fn create_spin_app(
         req.manifest_path
     );
 
-    Ok(Json(SpinAppResponse {
-        success: true,
-        name: req.name,
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target: req.name,
+        local_store_mutated: true,
+        propagation: PropagationStatus::NotApplicable,
+        event_id: None,
+        audit_id: None,
         message: "Spin app created".to_string(),
     }))
 }

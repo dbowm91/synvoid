@@ -3,6 +3,7 @@ use super::common::{OptionalAuth, StatusResponse};
 use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use synvoid_core::admin_mutation::{AdminMutationResult, AdminMutationStatus, PropagationStatus};
 use utoipa::ToSchema;
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -116,7 +117,7 @@ pub async fn check_for_updates(
     post,
     path = "/rule-feed/apply",
     responses(
-        (status = 200, description = "Apply pending rules", body = RuleFeedApplyResponse),
+        (status = 200, description = "Apply pending rules"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Rule feed manager not found"),
         (status = 500, description = "Internal server error")
@@ -126,7 +127,7 @@ pub async fn check_for_updates(
 pub async fn apply_pending(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
-) -> Result<Json<RuleFeedApplyResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let rule_feed_manager = state
         .waf_tracking
         .rule_feed_manager
@@ -134,9 +135,13 @@ pub async fn apply_pending(
         .ok_or(StatusCode::NOT_FOUND)?;
 
     if !rule_feed_manager.has_pending_update() {
-        return Ok(Json(RuleFeedApplyResponse {
-            success: false,
-            version: String::new(),
+        return Ok(Json(AdminMutationResult {
+            status: AdminMutationStatus::NoOpAlreadyAbsent,
+            target: "rule_feed".to_string(),
+            local_store_mutated: false,
+            propagation: PropagationStatus::NotApplicable,
+            event_id: None,
+            audit_id: None,
             message: "No pending update to apply".to_string(),
         }));
     }
@@ -144,9 +149,13 @@ pub async fn apply_pending(
     match rule_feed_manager.apply_pending(None) {
         Ok(()) => {
             let version = rule_feed_manager.get_current_version().unwrap_or_default();
-            Ok(Json(RuleFeedApplyResponse {
-                success: true,
-                version: version.clone(),
+            Ok(Json(AdminMutationResult {
+                status: AdminMutationStatus::Applied,
+                target: version.clone(),
+                local_store_mutated: true,
+                propagation: PropagationStatus::NotApplicable,
+                event_id: None,
+                audit_id: None,
                 message: format!("Successfully applied rules version {}", version),
             }))
         }

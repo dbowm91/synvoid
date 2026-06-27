@@ -176,6 +176,26 @@ impl AuditState {
     }
 }
 
+impl AuditState {
+    pub fn log_audit_event(&self, event: &synvoid_core::admin_mutation::AdminAuditEvent) {
+        let log = AuditLog {
+            id: event.audit_id.clone(),
+            timestamp: chrono::DateTime::from_timestamp(event.timestamp as i64, 0)
+                .unwrap_or_default(),
+            user_id: event.actor.actor_id.clone(),
+            username: event.actor.actor_id.clone(),
+            action: event.action.clone(),
+            target_resource: format!("{}:{}", event.target_kind, event.target_id),
+            client_ip: event.actor.source_ip.clone().unwrap_or_default(),
+            user_agent: event.actor.user_agent.clone(),
+            details: event.resulting_state.as_ref().map(|s| s.to_string()),
+            success: event.mutation_status
+                == synvoid_core::admin_mutation::AdminMutationStatus::Applied,
+        };
+        self.log(log);
+    }
+}
+
 impl Default for AuditState {
     fn default() -> Self {
         Self::new()

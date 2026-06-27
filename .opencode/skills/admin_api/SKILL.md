@@ -321,3 +321,55 @@ Site/backend health is reported as enum values (`healthy`, `unhealthy`, `unknown
 ## Request Log Redaction
 
 Request logs redact sensitive query parameters: `token`, `secret`, `password`, `key`, `authorization`, `session`, `csrf`, etc.
+
+## Typed Mutation Results (Phase 6)
+
+All mutating admin endpoints must return `AdminMutationResult<T>` from `synvoid_core::admin_mutation`.
+
+### Required pattern for mutating handlers:
+
+```rust
+use synvoid_core::admin_mutation::{
+    AdminActor, AdminAuditEvent, AdminMutationAuthority, AdminMutationResult,
+    AdminMutationStatus, BlockMutationTarget, PropagationStatus,
+};
+
+// In handler:
+let audit_id = uuid::Uuid::new_v4().to_string();
+let audit_event = AdminAuditEvent {
+    audit_id: audit_id.clone(),
+    timestamp: synvoid_utils::safe_unix_timestamp(),
+    actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+    action: "block_ip".to_string(),
+    target_kind: "ip".to_string(),
+    target_id: ip.to_string(),
+    prior_state: None,
+    requested_state: Some(serde_json::json!({...})),
+    resulting_state: Some(serde_json::json!({...})),
+    mutation_status: AdminMutationStatus::Applied,
+    propagation_status: PropagationStatus::QueuedBestEffort,
+    event_id: Some(event_id.clone()),
+};
+state.audit.log_audit_event(&audit_event);
+
+return Ok(Json(AdminMutationResult {
+    status: AdminMutationStatus::Applied,
+    target: BlockMutationTarget { kind: "ip".to_string(), value: ip.to_string(), site_scope: Some(scope) },
+    local_store_mutated: true,
+    propagation: PropagationStatus::QueuedBestEffort,
+    event_id: Some(event_id),
+    audit_id: Some(audit_id),
+    message: "IP blocked successfully".to_string(),
+}));
+```
+
+### Forbidden patterns:
+- `Json(json!({"success": true, ...}))` — use `AdminMutationResult` instead
+- `StatusCode::OK` with ad-hoc JSON — use typed responses
+- Raw session tokens in `AdminActor` — hash them first
+- Defaulting to `AdminManual` authority for compatibility paths — use `CompatibilityLegacy`
+
+### Audit logging:
+- Use `state.audit.log_audit_event(&event)` for typed audit events
+- Block/unblock operations must emit audit events
+- Config mutations should emit audit events (deferred to future phase)

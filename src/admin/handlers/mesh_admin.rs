@@ -14,6 +14,10 @@ use sha2::Sha256;
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 pub use synvoid_block_store::{BlockProvenance, BlockProvenanceKind, BlocklistEvent};
+use synvoid_core::admin_mutation::{
+    AdminActor, AdminAuditEvent, AdminMutationAuthority, AdminMutationResult, AdminMutationStatus,
+    BlockMutationTarget, PropagationStatus,
+};
 use utoipa::ToSchema;
 
 #[allow(dead_code)]
@@ -421,7 +425,7 @@ pub async fn ban_ip(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(payload): Json<BanIpRequest>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
+) -> Result<Json<AdminMutationResult<BlockMutationTarget>>, StatusCode> {
     let ip: IpAddr = payload.ip.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
     let reason = if payload.reason.is_empty() {
         "manual_admin_ban".to_string()
@@ -466,37 +470,79 @@ pub async fn ban_ip(
                 event = event.with_event_id(event_id.clone());
                 tracing::debug!(target: "blocklist_event", ?event, "Block event emitted");
 
+                let audit_id = uuid::Uuid::new_v4().to_string();
+
+                let audit_event = AdminAuditEvent {
+                    audit_id: audit_id.clone(),
+                    timestamp: synvoid_utils::safe_unix_timestamp(),
+                    actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+                    action: "block_ip".to_string(),
+                    target_kind: "ip".to_string(),
+                    target_id: ip.to_string(),
+                    prior_state: None,
+                    requested_state: Some(serde_json::json!({
+                        "ip": ip.to_string(),
+                        "reason": reason,
+                        "duration_seconds": duration,
+                        "site_scope": site_scope,
+                    })),
+                    resulting_state: Some(serde_json::json!({
+                        "ip": ip.to_string(),
+                        "reason": reason,
+                        "duration_seconds": duration,
+                        "site_scope": site_scope,
+                        "is_permanent": duration == 0,
+                    })),
+                    mutation_status: AdminMutationStatus::Applied,
+                    propagation_status: PropagationStatus::QueuedBestEffort,
+                    event_id: Some(event_id.clone()),
+                };
+                state.audit.log_audit_event(&audit_event);
+
                 threat_intel.announce_local_block(ip, reason.clone(), duration, site_scope.clone());
 
                 // Iteration 50: Broadcast block event to workers so they preserve original provenance
                 if let Some(ref pm) = state.process.process_manager {
                     let event_json = serde_json::to_string(&event).unwrap_or_default();
                     let pm = pm.clone();
+                    let event_id_clone = event_id.clone();
                     tokio::spawn(async move {
                         pm.broadcast_blocklist_event(
                             event_json,
                             "admin_ban_ip".to_string(),
-                            event_id,
+                            event_id_clone,
                         )
                         .await;
                     });
                 }
 
-                return Ok(Json(serde_json::json!({
-                    "success": true,
-                    "message": format!("IP {} banned successfully", ip),
-                    "ban": {
-                        "ip": ip.to_string(),
-                        "reason": reason,
-                        "duration_seconds": duration,
-                        "site_scope": site_scope,
-                        "is_permanent": duration == 0,
-                        "provenance": "AdminManual",
-                        "provenance_source": "admin_ban_ip",
-                    }
-                })));
+                return Ok(Json(AdminMutationResult {
+                    status: AdminMutationStatus::Applied,
+                    target: BlockMutationTarget {
+                        kind: "ip".to_string(),
+                        value: ip.to_string(),
+                        site_scope: Some(site_scope),
+                    },
+                    local_store_mutated: true,
+                    propagation: PropagationStatus::QueuedBestEffort,
+                    event_id: Some(event_id),
+                    audit_id: Some(audit_id),
+                    message: format!("IP {} banned successfully", ip),
+                }));
             } else {
-                return Err(StatusCode::SERVICE_UNAVAILABLE);
+                return Ok(Json(AdminMutationResult {
+                    status: AdminMutationStatus::Failed,
+                    target: BlockMutationTarget {
+                        kind: "ip".to_string(),
+                        value: ip.to_string(),
+                        site_scope: Some(site_scope),
+                    },
+                    local_store_mutated: false,
+                    propagation: PropagationStatus::NotApplicable,
+                    event_id: None,
+                    audit_id: None,
+                    message: "Failed to apply block".to_string(),
+                }));
             }
         }
     }
@@ -519,7 +565,7 @@ pub async fn ban_mesh_id(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(payload): Json<BanMeshIdRequest>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
+) -> Result<Json<AdminMutationResult<BlockMutationTarget>>, StatusCode> {
     let mesh_id = payload.mesh_id;
     let reason = if payload.reason.is_empty() {
         "manual_admin_ban".to_string()
@@ -565,36 +611,78 @@ pub async fn ban_mesh_id(
                 event = event.with_event_id(event_id.clone());
                 tracing::debug!(target: "blocklist_event", ?event, "Block event emitted");
 
-                // Iteration 50: Broadcast block event to workers so they preserve original provenance
-                if let Some(ref pm) = state.process.process_manager {
-                    let event_json = serde_json::to_string(&event).unwrap_or_default();
-                    let pm = pm.clone();
-                    tokio::spawn(async move {
-                        pm.broadcast_blocklist_event(
-                            event_json,
-                            "admin_ban_mesh_id".to_string(),
-                            event_id,
-                        )
-                        .await;
-                    });
-                }
+                let audit_id = uuid::Uuid::new_v4().to_string();
 
-                return Ok(Json(serde_json::json!({
-                    "success": true,
-                    "message": format!("Mesh ID {} banned successfully", mesh_id),
-                    "ban": {
+                let audit_event = AdminAuditEvent {
+                    audit_id: audit_id.clone(),
+                    timestamp: synvoid_utils::safe_unix_timestamp(),
+                    actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+                    action: "block_mesh_id".to_string(),
+                    target_kind: "mesh_id".to_string(),
+                    target_id: mesh_id.to_string(),
+                    prior_state: None,
+                    requested_state: Some(serde_json::json!({
+                        "mesh_id": mesh_id,
+                        "reason": reason,
+                        "duration_seconds": duration,
+                        "site_scope": "global",
+                    })),
+                    resulting_state: Some(serde_json::json!({
                         "mesh_id": mesh_id,
                         "reason": reason,
                         "duration_seconds": duration,
                         "site_scope": "global",
                         "is_permanent": duration == 0,
-                        "provenance": "AdminManual",
-                        "provenance_source": "admin_ban_mesh_id",
-                    }
-                })));
+                    })),
+                    mutation_status: AdminMutationStatus::Applied,
+                    propagation_status: PropagationStatus::QueuedBestEffort,
+                    event_id: Some(event_id.clone()),
+                };
+                state.audit.log_audit_event(&audit_event);
+
+                // Iteration 50: Broadcast block event to workers so they preserve original provenance
+                if let Some(ref pm) = state.process.process_manager {
+                    let event_json = serde_json::to_string(&event).unwrap_or_default();
+                    let pm = pm.clone();
+                    let event_id_clone = event_id.clone();
+                    tokio::spawn(async move {
+                        pm.broadcast_blocklist_event(
+                            event_json,
+                            "admin_ban_mesh_id".to_string(),
+                            event_id_clone,
+                        )
+                        .await;
+                    });
+                }
+
+                return Ok(Json(AdminMutationResult {
+                    status: AdminMutationStatus::Applied,
+                    target: BlockMutationTarget {
+                        kind: "mesh_id".to_string(),
+                        value: mesh_id.clone(),
+                        site_scope: Some("global".to_string()),
+                    },
+                    local_store_mutated: true,
+                    propagation: PropagationStatus::QueuedBestEffort,
+                    event_id: Some(event_id),
+                    audit_id: Some(audit_id),
+                    message: format!("Mesh ID {} banned successfully", mesh_id),
+                }));
             }
 
-            return Err(StatusCode::SERVICE_UNAVAILABLE);
+            return Ok(Json(AdminMutationResult {
+                status: AdminMutationStatus::Failed,
+                target: BlockMutationTarget {
+                    kind: "mesh_id".to_string(),
+                    value: mesh_id,
+                    site_scope: Some("global".to_string()),
+                },
+                local_store_mutated: false,
+                propagation: PropagationStatus::NotApplicable,
+                event_id: None,
+                audit_id: None,
+                message: "Failed to apply mesh ID block".to_string(),
+            }));
         }
     }
 
@@ -619,7 +707,7 @@ pub async fn unban(
     State(state): State<Arc<AdminState>>,
     Query(params): Query<UnbanRequest>,
     _auth: OptionalAuth,
-) -> Result<Json<serde_json::Value>, StatusCode> {
+) -> Result<Json<AdminMutationResult<BlockMutationTarget>>, StatusCode> {
     let identifier = params.identifier;
     let ban_type = params.ban_type;
 
@@ -644,6 +732,29 @@ pub async fn unban(
                             let event_id = event.generate_event_id();
                             event = event.with_event_id(event_id.clone());
                             tracing::debug!(target: "blocklist_event", ?event, "Unblock event emitted");
+
+                            let audit_id = uuid::Uuid::new_v4().to_string();
+
+                            let audit_event = AdminAuditEvent {
+                                audit_id: audit_id.clone(),
+                                timestamp: synvoid_utils::safe_unix_timestamp(),
+                                actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+                                action: "unblock_ip".to_string(),
+                                target_kind: "ip".to_string(),
+                                target_id: ip.to_string(),
+                                prior_state: None,
+                                requested_state: None,
+                                resulting_state: Some(serde_json::json!({
+                                    "ip": ip.to_string(),
+                                    "site_scope": "global",
+                                    "removed": true,
+                                })),
+                                mutation_status: AdminMutationStatus::Applied,
+                                propagation_status: PropagationStatus::QueuedBestEffort,
+                                event_id: Some(event_id.clone()),
+                            };
+                            state.audit.log_audit_event(&audit_event);
+
                             threat_intel.announce_local_unblock(
                                 synvoid_core::block_store::BlockTargetKind::Ip,
                                 &ip.to_string(),
@@ -656,26 +767,44 @@ pub async fn unban(
                             if let Some(ref pm) = state.process.process_manager {
                                 let event_json = serde_json::to_string(&event).unwrap_or_default();
                                 let pm = pm.clone();
+                                let event_id_clone = event_id.clone();
                                 tokio::spawn(async move {
                                     pm.broadcast_blocklist_event(
                                         event_json,
                                         "admin_unban_ip".to_string(),
-                                        event_id,
+                                        event_id_clone,
                                     )
                                     .await;
                                 });
                             }
-                            return Ok(Json(serde_json::json!({
-                                "success": true,
-                                "message": format!("IP {} unbanned successfully", ip),
-                                "identifier": ip.to_string(),
-                                "ban_type": "ip",
-                                "removed": true,
-                                "propagation": "queued"
-                            })));
+                            return Ok(Json(AdminMutationResult {
+                                status: AdminMutationStatus::Applied,
+                                target: BlockMutationTarget {
+                                    kind: "ip".to_string(),
+                                    value: ip.to_string(),
+                                    site_scope: Some("global".to_string()),
+                                },
+                                local_store_mutated: true,
+                                propagation: PropagationStatus::QueuedBestEffort,
+                                event_id: Some(event_id),
+                                audit_id: Some(audit_id),
+                                message: format!("IP {} unbanned successfully", ip),
+                            }));
                         }
                     }
-                    return Err(StatusCode::NOT_FOUND);
+                    return Ok(Json(AdminMutationResult {
+                        status: AdminMutationStatus::NoOpAlreadyAbsent,
+                        target: BlockMutationTarget {
+                            kind: "ip".to_string(),
+                            value: identifier.clone(),
+                            site_scope: Some("global".to_string()),
+                        },
+                        local_store_mutated: false,
+                        propagation: PropagationStatus::NotApplicable,
+                        event_id: None,
+                        audit_id: None,
+                        message: format!("IP {} was not blocked", identifier),
+                    }));
                 }
                 "mesh_id" => {
                     if block_store.unblock_mesh_id(&identifier, "global") {
@@ -692,6 +821,29 @@ pub async fn unban(
                         let event_id = event.generate_event_id();
                         event = event.with_event_id(event_id.clone());
                         tracing::debug!(target: "blocklist_event", ?event, "Unblock event emitted");
+
+                        let audit_id = uuid::Uuid::new_v4().to_string();
+
+                        let audit_event = AdminAuditEvent {
+                            audit_id: audit_id.clone(),
+                            timestamp: synvoid_utils::safe_unix_timestamp(),
+                            actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+                            action: "unblock_mesh_id".to_string(),
+                            target_kind: "mesh_id".to_string(),
+                            target_id: identifier.clone(),
+                            prior_state: None,
+                            requested_state: None,
+                            resulting_state: Some(serde_json::json!({
+                                "mesh_id": identifier,
+                                "site_scope": "global",
+                                "removed": true,
+                            })),
+                            mutation_status: AdminMutationStatus::Applied,
+                            propagation_status: PropagationStatus::QueuedBestEffort,
+                            event_id: Some(event_id.clone()),
+                        };
+                        state.audit.log_audit_event(&audit_event);
+
                         threat_intel.announce_local_unblock(
                             synvoid_core::block_store::BlockTargetKind::MeshId,
                             &identifier,
@@ -704,34 +856,76 @@ pub async fn unban(
                         if let Some(ref pm) = state.process.process_manager {
                             let event_json = serde_json::to_string(&event).unwrap_or_default();
                             let pm = pm.clone();
+                            let event_id_clone = event_id.clone();
                             tokio::spawn(async move {
                                 pm.broadcast_blocklist_event(
                                     event_json,
                                     "admin_unban_mesh_id".to_string(),
-                                    event_id,
+                                    event_id_clone,
                                 )
                                 .await;
                             });
                         }
-                        return Ok(Json(serde_json::json!({
-                            "success": true,
-                            "message": format!("Mesh ID {} unbanned successfully", identifier),
-                            "identifier": identifier,
-                            "ban_type": "mesh_id",
-                            "removed": true,
-                            "propagation": "queued"
-                        })));
+                        return Ok(Json(AdminMutationResult {
+                            status: AdminMutationStatus::Applied,
+                            target: BlockMutationTarget {
+                                kind: "mesh_id".to_string(),
+                                value: identifier.clone(),
+                                site_scope: Some("global".to_string()),
+                            },
+                            local_store_mutated: true,
+                            propagation: PropagationStatus::QueuedBestEffort,
+                            event_id: Some(event_id),
+                            audit_id: Some(audit_id),
+                            message: format!("Mesh ID {} unbanned successfully", identifier),
+                        }));
                     }
-                    return Err(StatusCode::NOT_FOUND);
+                    return Ok(Json(AdminMutationResult {
+                        status: AdminMutationStatus::NoOpAlreadyAbsent,
+                        target: BlockMutationTarget {
+                            kind: "mesh_id".to_string(),
+                            value: identifier.clone(),
+                            site_scope: Some("global".to_string()),
+                        },
+                        local_store_mutated: false,
+                        propagation: PropagationStatus::NotApplicable,
+                        event_id: None,
+                        audit_id: None,
+                        message: format!("Mesh ID {} was not blocked", identifier),
+                    }));
                 }
                 _ => {
-                    return Err(StatusCode::BAD_REQUEST);
+                    return Ok(Json(AdminMutationResult {
+                        status: AdminMutationStatus::InvalidRejected,
+                        target: BlockMutationTarget {
+                            kind: "unknown".to_string(),
+                            value: identifier,
+                            site_scope: None,
+                        },
+                        local_store_mutated: false,
+                        propagation: PropagationStatus::NotApplicable,
+                        event_id: None,
+                        audit_id: None,
+                        message: format!("Invalid ban_type: {}", ban_type),
+                    }));
                 }
             }
         }
     }
 
-    Err(StatusCode::NOT_FOUND)
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Failed,
+        target: BlockMutationTarget {
+            kind: "unknown".to_string(),
+            value: identifier,
+            site_scope: None,
+        },
+        local_store_mutated: false,
+        propagation: PropagationStatus::NotApplicable,
+        event_id: None,
+        audit_id: None,
+        message: "Block store not available".to_string(),
+    }))
 }
 
 #[utoipa::path(

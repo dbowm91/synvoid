@@ -69,6 +69,7 @@ cargo test --test cli_command_dispatch_guard
 cargo test --test manual_enforcement_provenance_guard
 cargo test --test unified_server_lifecycle_ownership_guard  # 5 tests: mem::forget, reason comments, handles integrated, spawns registered, plugin owner lifetime
 cargo test --test request_path_capability_boundary_guard  # Request-path capability boundary
+cargo test --test admin_mutation_response_guard  # Mutating admin endpoints must return AdminMutationResult
 ```
 
 ## Critical Security Rules
@@ -77,6 +78,15 @@ cargo test --test request_path_capability_boundary_guard  # Request-path capabil
 - **File permissions**: Set `0o600` on private key files.
 - **Exception**: Simple `!=` is correct in `security_challenge.rs:196` — the expected solution is public, not a secret.
 - **Plugin lifecycle**: Use `PluginRuntimeOwner` to own plugin hot-reload watchers. Never use `std::mem::forget`.
+
+## Admin Control-Plane Authority
+
+- **Typed mutation results**: Mutating admin endpoints must return `AdminMutationResult` (from `synvoid_core::admin_mutation`), not generic `{"success": true}` JSON.
+- **Authority classification**: Every mutation must be attributed to an `AdminMutationAuthority` variant. Compatibility paths must use `CompatibilityLegacy`, not silently default to admin authority.
+- **Audit events**: Block/unblock operations emit `AdminAuditEvent` via `state.audit.log_audit_event()`.
+- **Propagation semantics**: Mesh propagation is best-effort (`QueuedBestEffort`). Never promise delivery to all peers.
+- **No raw session tokens**: `AdminActor.session_id_hash` must be hashed; never store raw tokens in audit logs.
+- **Architecture doc**: `architecture/admin_control_plane_authority.md`
 
 ## Threat-Intel Enforcement Rules
 
@@ -130,6 +140,7 @@ Request-path modules must consume **narrow traits**, not concrete infrastructure
 | `src/plugin/wasm_runtime.rs` | `crates/synvoid-plugin-runtime/src/wasm_runtime.rs` |
 | `src/plugin/instance_pool.rs` | `crates/synvoid-plugin-runtime/src/instance_pool.rs` |
 | `src/config/admin.rs` | `crates/synvoid-config/src/admin.rs` |
+| `src/admin/authority.rs` | `crates/synvoid-core/src/admin_mutation.rs` |
 | `src/wasm_pow/` | `crates/synvoid-wasm-pow/` |
 | `src/server/mod.rs` (monolithic) | `src/server/` (split: `startup_plan.rs`, `resources.rs`, `runtime_handles.rs`, `plugin_runtime.rs`) |
 

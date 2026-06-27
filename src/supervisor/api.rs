@@ -3,6 +3,9 @@ use tonic::{Request, Response, Status};
 
 use crate::supervisor::state::SupervisorState;
 use synvoid_block_store::{BlockProvenance, BlockProvenanceKind};
+use synvoid_core::admin_mutation::{
+    AdminMutationResult, AdminMutationStatus, BlockMutationTarget, PropagationStatus,
+};
 use synvoid_ipc::ProcessManager;
 use synvoid_tls::config::InternalTlsConfig;
 use tonic::transport::{Identity, ServerTlsConfig};
@@ -75,6 +78,17 @@ impl ControlPlane for ControlPlaneService {
         let mut config = self.state.config.write().await;
         config.reload_all();
 
+        let result = AdminMutationResult::<String> {
+            status: AdminMutationStatus::Applied,
+            target: "config".to_string(),
+            local_store_mutated: true,
+            propagation: PropagationStatus::NotApplicable,
+            event_id: None,
+            audit_id: None,
+            message: "Configuration reloaded successfully".to_string(),
+        };
+        tracing::info!(?result, "Config reload mutation result");
+
         Ok(Response::new(ReloadResponse {
             success: true,
             message: "Configuration reloaded".to_string(),
@@ -90,6 +104,17 @@ impl ControlPlane for ControlPlaneService {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             state_clone.shutdown().await;
         });
+
+        let result = AdminMutationResult::<String> {
+            status: AdminMutationStatus::Applied,
+            target: "supervisor".to_string(),
+            local_store_mutated: false,
+            propagation: PropagationStatus::NotApplicable,
+            event_id: None,
+            audit_id: None,
+            message: "Shutdown initiated".to_string(),
+        };
+        tracing::info!(?result, "Supervisor stop mutation result");
 
         Ok(Response::new(StopResponse { success: true }))
     }
@@ -116,6 +141,23 @@ impl ControlPlane for ControlPlaneService {
             },
         );
 
+        let ip_str = req.ip.clone();
+        let site_scope = Some(req.scope.clone());
+        let result = AdminMutationResult {
+            status: AdminMutationStatus::Applied,
+            target: BlockMutationTarget {
+                kind: "ip".to_string(),
+                value: ip_str,
+                site_scope,
+            },
+            local_store_mutated: true,
+            propagation: PropagationStatus::QueuedBestEffort,
+            event_id: None,
+            audit_id: None,
+            message: "IP blocked successfully".to_string(),
+        };
+        tracing::info!(?result, "Block IP mutation result");
+
         Ok(Response::new(BlockResponse { success: true }))
     }
 
@@ -131,6 +173,32 @@ impl ControlPlane for ControlPlaneService {
 
         tracing::info!("gRPC: Manually unblocking IP {}", ip);
         self.state.block_store.unblock_ip(&ip, &req.scope);
+
+        let removed = self.state.block_store.is_blocked(&ip, &req.scope).is_none();
+        let ip_str = req.ip.clone();
+        let site_scope = Some(req.scope.clone());
+        let result = AdminMutationResult {
+            status: if removed {
+                AdminMutationStatus::Applied
+            } else {
+                AdminMutationStatus::NoOpAlreadyAbsent
+            },
+            target: BlockMutationTarget {
+                kind: "ip".to_string(),
+                value: ip_str,
+                site_scope,
+            },
+            local_store_mutated: removed,
+            propagation: PropagationStatus::QueuedBestEffort,
+            event_id: None,
+            audit_id: None,
+            message: if removed {
+                "IP unblocked successfully".to_string()
+            } else {
+                "IP was not blocked".to_string()
+            },
+        };
+        tracing::info!(?result, "Unblock IP mutation result");
 
         Ok(Response::new(UnblockResponse { success: true }))
     }

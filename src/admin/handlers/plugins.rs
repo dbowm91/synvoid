@@ -8,6 +8,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use synvoid_core::admin_mutation::{AdminMutationResult, AdminMutationStatus, PropagationStatus};
 use utoipa::ToSchema;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -178,7 +179,7 @@ pub async fn reload_plugin(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Path(plugin_name): Path<String>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     if let Some(ref pm) = state.process.plugin_manager {
         let result = pm.wasm_manager().reload_plugin_by_name(&plugin_name);
 
@@ -199,11 +200,15 @@ pub async fn reload_plugin(
 
         if success {
             tracing::info!("Plugin '{}' reloaded successfully", plugin_name);
-            Ok(Json(serde_json::json!({
-                "success": true,
-                "message": format!("Plugin '{}' reloaded successfully", plugin_name),
-                "timestamp": timestamp,
-            })))
+            Ok(Json(AdminMutationResult {
+                status: AdminMutationStatus::Applied,
+                target: plugin_name.clone(),
+                local_store_mutated: true,
+                propagation: PropagationStatus::NotApplicable,
+                event_id: None,
+                audit_id: None,
+                message: format!("Plugin '{}' reloaded successfully", plugin_name),
+            }))
         } else {
             tracing::error!("Failed to reload plugin '{}': {:?}", plugin_name, error_msg);
             Err(StatusCode::INTERNAL_SERVER_ERROR)

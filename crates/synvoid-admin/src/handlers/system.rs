@@ -6,6 +6,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use synvoid_core::admin_mutation::{AdminMutationResult, AdminMutationStatus, PropagationStatus};
 use utoipa::ToSchema;
 
 use super::common::{OptionalAuth, StatusResponse};
@@ -458,7 +459,7 @@ pub async fn get_worker_count<S: AdminStateProvider>(
     path = "/system/workers/scale",
     request_body = ScaleWorkersRequest,
     responses(
-        (status = 200, description = "Worker scaling result", body = ScaleWorkersResponse),
+        (status = 200, description = "Worker scaling result"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Process manager not found"),
         (status = 400, description = "Invalid request"),
@@ -470,7 +471,7 @@ pub async fn scale_workers<S: AdminStateProvider>(
     State(state): State<Arc<S>>,
     _auth: OptionalAuth,
     Json(req): Json<ScaleWorkersRequest>,
-) -> Result<Json<ScaleWorkersResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let pm = state.process_manager().ok_or(StatusCode::NOT_FOUND)?;
 
     let current = pm.get_running_worker_count();
@@ -482,11 +483,14 @@ pub async fn scale_workers<S: AdminStateProvider>(
     let target = req.target_count.max(min_workers).min(max_workers);
 
     if target == current {
-        return Ok(Json(ScaleWorkersResponse {
-            success: true,
+        return Ok(Json(AdminMutationResult {
+            status: AdminMutationStatus::NoOpAlreadyPresent,
+            target: "worker_scale".to_string(),
+            local_store_mutated: false,
+            propagation: PropagationStatus::NotApplicable,
+            event_id: None,
+            audit_id: None,
             message: "Already at target worker count".to_string(),
-            current_count: current,
-            target_count: target,
         }));
     }
 
@@ -508,11 +512,14 @@ pub async fn scale_workers<S: AdminStateProvider>(
 
     let new_current = pm.get_running_worker_count();
 
-    Ok(Json(ScaleWorkersResponse {
-        success: true,
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target: "worker_scale".to_string(),
+        local_store_mutated: true,
+        propagation: PropagationStatus::NotApplicable,
+        event_id: None,
+        audit_id: None,
         message: diff,
-        current_count: new_current,
-        target_count: target,
     }))
 }
 
