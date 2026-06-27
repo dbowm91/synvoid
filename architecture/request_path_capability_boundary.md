@@ -45,8 +45,8 @@ Request-path code consumes narrow traits instead of concrete types:
 | `BlockListStore` | `crates/synvoid-waf/src/traits.rs` | IP blocking/checking (decouples from `BlockStore`) |
 | `WafProcessor` | `crates/synvoid-waf/src/traits.rs` | Core WAF evaluation |
 | `GeoIpLookup` | `crates/synvoid-waf/src/traits.rs` | IP-to-country/ASN |
-| `ThreatIntelLookup` | `src/worker/context.rs` | Request-time threat intel lookups (decouples from `ThreatIntelligenceManager`) |
-| `BehavioralIntelLookup` | `src/worker/context.rs` | Request-time behavioral analysis (decouples from `BehavioralIntelligenceManager`) |
+| `ThreatIntelLookup` | `src/worker/context.rs` | Request-time threat intel lookups — decouples from `ThreatIntelligenceManager` (adapter in `services.rs` and `init_mesh.rs`) |
+| `BehavioralIntelLookup` | `src/worker/context.rs` | Request-time behavioral analysis — decouples from `BehavioralIntelligenceManager` (adapter in `services.rs`) |
 | `WafAccess` | `crates/synvoid-waf/src/access.rs` | WAF service adapter for HTTP/3 |
 | `Http3RequestWaf` | `crates/synvoid-http/src/http3_request_dispatch.rs` | HTTP/3 WAF evaluation |
 

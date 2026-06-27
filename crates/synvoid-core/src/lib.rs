@@ -13,6 +13,5 @@ pub mod request;
 pub mod routing;
 pub mod streaming_waf;
 pub mod time;
-pub mod traits;
 pub mod url;
 pub mod verdict;
