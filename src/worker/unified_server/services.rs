@@ -26,6 +26,9 @@ use synvoid_mesh::transports::MeshTransportManager;
 #[cfg(feature = "mesh")]
 use synvoid_mesh::yara_rules::YaraRulesManager;
 
+#[cfg(feature = "mesh")]
+use synvoid_mesh::mesh::behavioral_intel::BehavioralIntelligenceManager;
+
 /// Bundled data-plane services constructed during worker bootstrap.
 ///
 /// # Ownership contract
@@ -96,6 +99,8 @@ pub struct DataPlaneServicesBuilder {
     yara_rules: Option<Arc<YaraRulesManager>>,
     #[cfg(feature = "mesh")]
     record_store: Option<Arc<RecordStoreManager>>,
+    #[cfg(feature = "mesh")]
+    behavioral_intel: Option<Arc<BehavioralIntelligenceManager>>,
 }
 
 /// Adapter that wraps `ThreatIntelligenceManager` behind the narrow
@@ -134,6 +139,31 @@ impl crate::worker::context::ThreatIntelLookup for ThreatIntelLookupAdapter {
     }
 }
 
+/// Adapter that wraps `BehavioralIntelligenceManager` behind the narrow
+/// `BehavioralIntelLookup` trait for use in `RequestServices`.
+#[cfg(feature = "mesh")]
+struct BehavioralIntelLookupAdapter {
+    inner: Arc<BehavioralIntelligenceManager>,
+}
+
+#[cfg(feature = "mesh")]
+impl crate::worker::context::BehavioralIntelLookup for BehavioralIntelLookupAdapter {
+    fn analyze_request(
+        &self,
+        features: &synvoid_mesh::mesh::behavioral_intel::RequestFeatures,
+    ) -> Option<synvoid_mesh::mesh::behavioral::BehavioralFingerprint> {
+        self.inner.analyze_request(features)
+    }
+
+    fn adjust_paranoia_level(
+        &self,
+        features: &synvoid_mesh::mesh::behavioral_intel::RequestFeatures,
+        base_paranoia: u8,
+    ) -> u8 {
+        self.inner.adjust_paranoia_level(features, base_paranoia)
+    }
+}
+
 impl DataPlaneServicesBuilder {
     pub fn new(serverless_manager: Arc<ServerlessManager>) -> Self {
         Self {
@@ -149,6 +179,8 @@ impl DataPlaneServicesBuilder {
             yara_rules: None,
             #[cfg(feature = "mesh")]
             record_store: None,
+            #[cfg(feature = "mesh")]
+            behavioral_intel: None,
         }
     }
 
@@ -187,6 +219,12 @@ impl DataPlaneServicesBuilder {
         self
     }
 
+    #[cfg(feature = "mesh")]
+    pub fn with_behavioral_intel(mut self, bi: Option<Arc<BehavioralIntelligenceManager>>) -> Self {
+        self.behavioral_intel = bi;
+        self
+    }
+
     /// Build a threat-intel policy context only when both root-owned handles exist.
     ///
     /// This helper is intentionally side-effect free. When the Supervisor exports
@@ -215,6 +253,10 @@ impl DataPlaneServicesBuilder {
                     self.threat_intel.clone().map(|ti| {
                         Arc::new(ThreatIntelLookupAdapter { inner: ti })
                             as Arc<dyn crate::worker::context::ThreatIntelLookup>
+                    }),
+                    self.behavioral_intel.clone().map(|bi| {
+                        Arc::new(BehavioralIntelLookupAdapter { inner: bi })
+                            as Arc<dyn crate::worker::context::BehavioralIntelLookup>
                     }),
                     None,
                     self.yara_rules,

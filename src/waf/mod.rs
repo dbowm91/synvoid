@@ -1026,7 +1026,7 @@ pub fn set_upload_validator(validator: Arc<synvoid_upload::UploadValidator>) {
 }
 
 #[cfg(feature = "mesh")]
-pub fn set_threat_intel(_intel: Arc<crate::mesh::threat_intel::ThreatIntelligenceManager>) {
+pub fn set_threat_intel(_intel: Arc<dyn crate::worker::context::ThreatIntelLookup>) {
     // Relegated to Control Plane (Supervisor)
 }
 

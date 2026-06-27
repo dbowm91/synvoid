@@ -29,7 +29,7 @@ Request-path code must not import:
 
 | Category | Forbidden Tokens |
 |----------|-----------------|
-| Concrete control-plane types | `MeshTransportManager`, `MeshBackendPool`, `ThreatIntelligenceManager`, `BlockStore` (concrete) |
+| Concrete control-plane types | `MeshTransportManager`, `MeshBackendPool`, `ThreatIntelligenceManager` (concrete), `BlockStore` (concrete) |
 | Mesh/DHT/Raft | `crate::mesh::transport`, `crate::raft::`, `openraft::`, `crate::dht::` |
 | Supervisor/admin | `crate::supervisor::`, `verify_admin_token`, `crate::admin::handlers` |
 | Worker lifecycle | `UnifiedServerWorkerState`, `WorkerTaskRegistry`, `WorkerShutdownCause` |
@@ -46,6 +46,7 @@ Request-path code consumes narrow traits instead of concrete types:
 | `WafProcessor` | `crates/synvoid-waf/src/traits.rs` | Core WAF evaluation |
 | `GeoIpLookup` | `crates/synvoid-waf/src/traits.rs` | IP-to-country/ASN |
 | `ThreatIntelLookup` | `src/worker/context.rs` | Request-time threat intel lookups (decouples from `ThreatIntelligenceManager`) |
+| `BehavioralIntelLookup` | `src/worker/context.rs` | Request-time behavioral analysis (decouples from `BehavioralIntelligenceManager`) |
 | `WafAccess` | `crates/synvoid-waf/src/access.rs` | WAF service adapter for HTTP/3 |
 | `Http3RequestWaf` | `crates/synvoid-http/src/http3_request_dispatch.rs` | HTTP/3 WAF evaluation |
 
@@ -57,6 +58,8 @@ Request-path code consumes narrow traits instead of concrete types:
 pub struct RequestServices {
     #[cfg(feature = "mesh")]
     pub threat_intel: Option<Arc<dyn ThreatIntelLookup>>,
+    #[cfg(feature = "mesh")]
+    pub behavioral_intel: Option<Arc<dyn BehavioralIntelLookup>>,
     pub upload_validator: Option<Arc<UploadValidator>>,
     #[cfg(feature = "mesh")]
     pub yara_rules: Option<Arc<YaraRulesManager>>,
@@ -78,12 +81,12 @@ Some concrete types are threaded through request-path dispatch as pass-through d
 
 | Type | Origin | Usage | Risk |
 |------|--------|-------|------|
-| `MeshTransportManager` | Mesh init | Serverless routing | Low — received, not constructed |
+| `MeshTransportManager` | Mesh init | Serverless routing, response transforms | Low — received, not constructed |
 | `MeshBackendPool` | Mesh init | Backend routing | Low — received, not constructed |
 | `ServerlessManager` | App init | WASM dispatch | Low — received, not constructed |
 | `GranianSupervisor` | App init | App-server dispatch | Low — received, not constructed |
-| `AsyncIpcStream` | IPC init | Request logging | Low — received, not constructed |
-| `WorkerId` | IPC init | Request logging | Low — received, not constructed |
+| `AsyncIpcStream` | IPC init | Request logging pass-through | Low — received, not constructed |
+| `WorkerId` | IPC init | Request logging pass-through | Low — received, not constructed |
 
 ## Composition Root Adapter Pattern
 
@@ -97,10 +100,23 @@ struct ThreatIntelLookupAdapter {
 
 impl ThreatIntelLookup for ThreatIntelLookupAdapter {
     fn is_known_threat_ip(&self, ip: IpAddr) -> bool {
-        self.inner.lookup_local_indicator_by_ip(ip)
+        self.inner.lookup_local_indicator_by_ip(&ip.to_string()).is_some()
     }
     fn threat_level_for_ip(&self, ip: IpAddr) -> Option<u8> {
         // delegate to inner
+    }
+}
+
+struct BehavioralIntelLookupAdapter {
+    inner: Arc<BehavioralIntelligenceManager>,
+}
+
+impl BehavioralIntelLookup for BehavioralIntelLookupAdapter {
+    fn analyze_request(&self, features: &RequestFeatures) -> Option<BehavioralFingerprint> {
+        self.inner.analyze_request(features)
+    }
+    fn adjust_paranoia_level(&self, features: &RequestFeatures, base_paranoia: u8) -> u8 {
+        self.inner.adjust_paranoia_level(features, base_paranoia)
     }
 }
 ```

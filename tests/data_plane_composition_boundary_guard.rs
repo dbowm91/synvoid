@@ -373,17 +373,11 @@ const BOUNDARY_EXCEPTIONS: &[BoundaryException] = &[
         token: "MeshMessageSigner",
         reason: "Crypto verification only: used for feed signature check, not infrastructure ownership",
     },
-    // ThreatIntelligenceManager in WAF modules is used as a trait object for delegation,
-    // not for infrastructure construction/ownership
-    BoundaryException {
-        path_suffix: "src/waf/mod.rs",
-        token: "crate::mesh::threat_intel::ThreatIntelligenceManager",
-        reason: "Trait-object delegation: WAF imports TIM for threat-intel trait dispatch, not ownership",
-    },
+    // ThreatIntelligenceManager in WAF feed_client is used for feed management, not request-path
     BoundaryException {
         path_suffix: "src/waf/threat_intel/feed_client.rs",
         token: "crate::mesh::threat_intel::ThreatIntelligenceManager",
-        reason: "Trait-object delegation: feed client uses TIM for signature verification, not ownership",
+        reason: "Feed client uses TIM for signature verification and indicator management, not ownership",
     },
     // lookup_local_indicator in WAF feed client is a diagnostic call, not enforcement
     BoundaryException {

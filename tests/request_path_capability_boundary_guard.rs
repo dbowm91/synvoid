@@ -271,19 +271,9 @@ const BOUNDARY_EXCEPTIONS: &[BoundaryException] = &[
     },
     // --- WAF pass-throughs / planned removals ---
     BoundaryException {
-        path_suffix: "src/waf/",
-        token: "BehavioralIntelligenceManager",
-        reason: "Concrete type in WAF attack detection — planned trait extraction",
-    },
-    BoundaryException {
         path_suffix: "src/waf/threat_intel/",
         token: "ThreatIntelligenceManager",
         reason: "Feed client is infrastructure, not request-path — planned removal",
-    },
-    BoundaryException {
-        path_suffix: "src/waf/mod.rs",
-        token: "ThreatIntelligenceManager",
-        reason: "Wiring function receives TIM from composition root for trait dispatch",
     },
     BoundaryException {
         path_suffix: "src/waf/threat_intel/",

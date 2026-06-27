@@ -80,7 +80,7 @@ pub struct AttackDetector {
     open_redirect_detector: Arc<OpenRedirectDetector>,
     fast_path_detector: Option<regex::RegexSet>,
     #[cfg(feature = "mesh")]
-    behavioral_intel: Option<Arc<crate::mesh::behavioral_intel::BehavioralIntelligenceManager>>,
+    behavioral_intel: Option<Arc<dyn crate::worker::context::BehavioralIntelLookup>>,
     behavioral_engine: Arc<BehavioralEngine>,
 }
 
@@ -229,7 +229,7 @@ impl AttackDetector {
     #[cfg(feature = "mesh")]
     pub fn new_with_behavioral_intel(
         config: AttackDetectionConfig,
-        behavioral_intel: Arc<crate::mesh::behavioral_intel::BehavioralIntelligenceManager>,
+        behavioral_intel: Arc<dyn crate::worker::context::BehavioralIntelLookup>,
     ) -> Self {
         let detector = Self::new(config);
         Self {

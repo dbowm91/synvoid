@@ -2,6 +2,10 @@ use std::sync::Arc;
 
 use crate::plugin::GlobalPluginManager;
 #[cfg(feature = "mesh")]
+use synvoid_mesh::mesh::behavioral::BehavioralFingerprint;
+#[cfg(feature = "mesh")]
+use synvoid_mesh::mesh::behavioral_intel::RequestFeatures;
+#[cfg(feature = "mesh")]
 use synvoid_mesh::yara_rules::YaraRulesManager;
 use synvoid_serverless::registry::ServerlessRegistry;
 use synvoid_upload::UploadValidator;
@@ -20,6 +24,21 @@ pub trait ThreatIntelLookup: Send + Sync + 'static {
     fn threat_level_for_ip(&self, ip: std::net::IpAddr) -> Option<u8>;
 }
 
+/// Narrow trait for request-time behavioral intelligence analysis.
+///
+/// Request-path code consumes `Arc<dyn BehavioralIntelLookup>` instead of the
+/// concrete `BehavioralIntelligenceManager`. This decouples WAF attack detection
+/// from mesh behavioral intelligence infrastructure.
+#[cfg(feature = "mesh")]
+pub trait BehavioralIntelLookup: Send + Sync + 'static {
+    /// Analyze request features and return a behavioral fingerprint if a
+    /// known pattern matches.
+    fn analyze_request(&self, features: &RequestFeatures) -> Option<BehavioralFingerprint>;
+
+    /// Adjust the paranoia level based on behavioral analysis.
+    fn adjust_paranoia_level(&self, features: &RequestFeatures, base_paranoia: u8) -> u8;
+}
+
 /// Narrow service handle for request execution.
 ///
 /// This type is intentionally smaller than `DataPlaneServices` and must not
@@ -36,6 +55,9 @@ pub struct RequestServices {
     /// Threat intelligence lookup for request-time indicator evaluation.
     #[cfg(feature = "mesh")]
     pub threat_intel: Option<Arc<dyn ThreatIntelLookup>>,
+    /// Behavioral intelligence analysis for request-time bot detection.
+    #[cfg(feature = "mesh")]
+    pub behavioral_intel: Option<Arc<dyn BehavioralIntelLookup>>,
     /// Upload validator for request body size/type checks.
     pub upload_validator: Option<Arc<UploadValidator>>,
     /// YARA rules manager for content scanning.
@@ -51,6 +73,7 @@ impl RequestServices {
     #[cfg(feature = "mesh")]
     pub fn new(
         threat_intel: Option<Arc<dyn ThreatIntelLookup>>,
+        behavioral_intel: Option<Arc<dyn BehavioralIntelLookup>>,
         upload_validator: Option<Arc<UploadValidator>>,
         yara_rules: Option<Arc<YaraRulesManager>>,
         plugin_manager: Option<Arc<GlobalPluginManager>>,
@@ -58,6 +81,7 @@ impl RequestServices {
     ) -> Self {
         Self {
             threat_intel,
+            behavioral_intel,
             upload_validator,
             yara_rules,
             plugin_manager,
