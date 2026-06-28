@@ -282,7 +282,7 @@ mod tests {
         let pool = WasmInstancePool::new(Arc::new(Engine::default()), 4, vec![]);
         let engine = pool.engine.clone();
 
-        let module_result = Module::from_file(&*engine, std::path::Path::new("/nonexistent.wasm"));
+        let module_result = Module::from_file(&engine, std::path::Path::new("/nonexistent.wasm"));
         assert!(module_result.is_err());
     }
 }

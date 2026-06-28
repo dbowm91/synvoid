@@ -785,7 +785,7 @@ impl WasmRuntime {
                     }
 
                     unsafe {
-                        let mem_ptr = mem.data_ptr(&caller) as *mut u8;
+                        let mem_ptr = mem.data_ptr(&caller);
                         let slice = std::slice::from_raw_parts_mut(
                             mem_ptr.add(out_start),
                             out_end - out_start,
@@ -825,7 +825,9 @@ impl WasmRuntime {
                                 Some(wasmtime::Extern::Memory(m)) => m,
                                 _ => return -3, // No memory export
                             };
-                            if let Err(_) = mem.write(&mut caller, out_ptr as usize, &chunk[..len])
+                            if mem
+                                .write(&mut caller, out_ptr as usize, &chunk[..len])
+                                .is_err()
                             {
                                 return -4; // Memory write error
                             }
@@ -900,7 +902,7 @@ impl WasmRuntime {
                             let out_end = out_start.saturating_add(value_len);
                             if out_end <= mem_data.len() {
                                 unsafe {
-                                    let mem_ptr = mem.data_ptr(&caller) as *mut u8;
+                                    let mem_ptr = mem.data_ptr(&caller);
                                     std::slice::from_raw_parts_mut(
                                         mem_ptr.add(out_start),
                                         out_end - out_start,

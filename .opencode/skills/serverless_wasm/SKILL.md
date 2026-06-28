@@ -275,3 +275,119 @@ cargo test --lib plugin::wasm_runtime
 **Cause**: `body(axum::body::Body::empty())` discards request body.
 
 **Solution**: Use `axum::body::Body::from(body)` instead.
+
+## Plugin Sandbox (Phase 7)
+
+The plugin runtime sandbox hardening (Phase 7) adds a default-deny capability manifest, trust tiers, resource limits, and failure isolation to WASM plugins. All types live in `crates/synvoid-plugin-runtime/src/sandbox/types.rs`.
+
+### Types Module
+
+```rust
+use synvoid_plugin_runtime::sandbox::types::{
+    PluginManifest, PluginCapabilities, PluginCapability, PluginLimits,
+    PluginTrustTier, PluginRuntimeState, PluginInvocationGuard,
+    SigningPolicy, PluginSignatureConfig,
+};
+```
+
+### PluginManifest
+
+Loaded from `synvoid-plugin.toml` next to the WASM binary. Use `PluginManifest::from_file()` or `PluginManifest::parse_toml()`:
+
+```rust
+let manifest = PluginManifest::from_file(Path::new("plugin_dir/synvoid-plugin.toml"))?;
+// or from a string
+let manifest = PluginManifest::parse_toml(toml_content, Path::new("synvoid-plugin.toml"))?;
+```
+
+Manifest parse errors return `ManifestError` (Io, Parse, Validation) and fail plugin load, not server startup.
+
+### PluginCapabilities (Default-Deny)
+
+All capabilities default to `false` / empty. A plugin must explicitly declare every capability it needs:
+
+```rust
+let mut caps = PluginCapabilities::default(); // everything denied
+caps.request_inspect = true;                  // grant read-only inspection
+caps.filesystem_read = vec!["/tmp/cache/*".to_string()]; // grant path-scoped read
+
+// Check at call sites
+caps.require(PluginCapability::RequestInspect)?; // Ok
+caps.require(PluginCapability::RequestMutate)?;  // Err(CapabilityViolation)
+```
+
+`permits()` returns `bool`. `require()` returns `Result<(), CapabilityViolation>`. `iter_flags()` returns all 11 capabilities and their enabled state.
+
+### PluginInvocationGuard
+
+Wraps capability checks, resource limits, concurrency, and state into a single per-plugin guard:
+
+```rust
+let guard = PluginInvocationGuard::new(caps, limits, max_concurrency);
+assert!(guard.is_invocable()); // Loaded by default
+
+// On failure
+guard.record_failure(threshold);
+// At threshold → state becomes DisabledByRuntimeFailure, is_invocable() → false
+
+// On capability violation
+guard.disable_for_violation();
+
+// Manual recovery
+guard.reset_failures();
+```
+
+### Signing Policy
+
+```rust
+use synvoid_plugin_runtime::sandbox::types::{SigningPolicy, verify_signing_policy};
+
+// In production
+verify_signing_policy(
+    SigningPolicy::RequireSigned,
+    PluginTrustTier::LocalSandboxed,
+    None,       // no signature
+    true,       // is_production
+)?; // → Err(SigningViolation::UnsignedInProduction)
+
+// In development — signing is never enforced
+verify_signing_policy(
+    SigningPolicy::RequireSigned,
+    PluginTrustTier::LocalSandboxed,
+    None,
+    false,      // is_production = false
+)?; // → Ok(())
+```
+
+### Trust Tier Semantics
+
+| Tier | Use Case |
+|------|----------|
+| `Disabled` | Safest default for unknown configs; plugin cannot load. |
+| `LocalTrusted` | Operator explicitly trusts; still bounded by declared capabilities. |
+| `LocalSandboxed` | **Default.** Unsigned local, sandbox enforced. |
+| `SignedSandboxed` | Signature present, full sandbox. |
+| `DevelopmentHotReload` | Dev-only; production requires explicit override. |
+
+### Resource Limits
+
+```rust
+let limits = PluginLimits {
+    timeout_ms: 50,
+    max_input_bytes: 262_144,   // 256 KB
+    max_output_bytes: 262_144,
+    max_concurrency: 4,
+    memory_pages: Some(64),     // optional
+    fuel: Some(1_000_000),      // optional
+};
+
+limits.check_input(100)?;   // Ok
+limits.check_output(300_000)?; // Err(ResourceLimitError::OutputTooLarge)
+```
+
+### Related Tests
+
+```bash
+cargo test --test plugin_capability_boundary_guard
+cargo test -p synvoid-plugin-runtime
+```

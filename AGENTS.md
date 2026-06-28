@@ -70,6 +70,10 @@ cargo test --test manual_enforcement_provenance_guard
 cargo test --test unified_server_lifecycle_ownership_guard  # 5 tests: mem::forget, reason comments, handles integrated, spawns registered, plugin owner lifetime
 cargo test --test request_path_capability_boundary_guard  # Request-path capability boundary
 cargo test --test admin_mutation_response_guard  # Mutating admin endpoints must return AdminMutationResult
+cargo test --test admin_mutation_blocklist       # Blocklist mutation behavior tests
+cargo test --test admin_auth_boundary            # Auth authority boundary tests
+cargo test --test mesh_admin_edge_cases          # Mesh admin edge case tests
+cargo test --test plugin_capability_boundary_guard  # Plugin sandbox capability gates, manifest parsing, mem::forget
 ```
 
 ## Critical Security Rules
@@ -188,6 +192,7 @@ The `architecture/` directory (77 docs) and `.opencode/skills/` directory contai
 | Document | Description |
 |----------|-------------|
 | `architecture/overview.md` | Bird's eye view, process model, feature gates, module index |
+| `architecture/plugin_runtime_sandbox.md` | Plugin trust tiers, manifest schema, default-deny capabilities, resource limits, signing policy, failure isolation |
 | `architecture/root_module_ledger.md` | Root module ownership (keep_app_root / split_required / legacy) |
 | `architecture/worker_data_plane_composition_root.md` | Composition boundary rules for request-path vs root |
 | `architecture/http_request_pipeline.md` | 7-stage HTTP pipeline shared by HTTP/1 and HTTP/3 |
