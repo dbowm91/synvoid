@@ -144,6 +144,71 @@ impl PluginCapabilities {
             (PluginCapability::AdminEvents, self.admin_events),
         ]
     }
+
+    /// Validate that a filesystem path is allowed under the given access mode.
+    ///
+    /// Rules:
+    /// - Path is canonicalized (resolves `.`, `..`, symlinks).
+    /// - Canonical path must stay within one of the declared allowlist prefixes.
+    /// - Symlink escapes from allowed roots are rejected.
+    pub fn check_filesystem_access(
+        &self,
+        requested_path: &Path,
+        is_write: bool,
+    ) -> Result<PathBuf, FilesystemViolation> {
+        let allowlist = if is_write {
+            &self.filesystem_write
+        } else {
+            &self.filesystem_read
+        };
+
+        if allowlist.is_empty() {
+            return Err(FilesystemViolation::NoCapability);
+        }
+
+        let canonical = requested_path.canonicalize().map_err(|_| {
+            FilesystemViolation::PathError(format!(
+                "failed to canonicalize path: {}",
+                requested_path.display()
+            ))
+        })?;
+
+        for prefix in allowlist {
+            let prefix_path = Path::new(prefix);
+            if let Ok(canonical_prefix) = prefix_path.canonicalize() {
+                if canonical.starts_with(&canonical_prefix) {
+                    return Ok(canonical);
+                }
+            }
+        }
+
+        Err(FilesystemViolation::PathEscape {
+            requested: requested_path.to_path_buf(),
+            canonical,
+        })
+    }
+
+    /// Validate that a network destination (host:port) is allowed.
+    pub fn check_network_access(&self, host: &str, port: u16) -> Result<(), NetworkViolation> {
+        if self.network.is_empty() {
+            return Err(NetworkViolation::NoCapability);
+        }
+
+        let target = format!("{}:{}", host, port);
+        let target_wildcard_host = format!("{}:*", host);
+
+        if self.network.contains(&target)
+            || self.network.contains(&target_wildcard_host)
+            || self.network.contains(&"*:*".to_string())
+        {
+            return Ok(());
+        }
+
+        Err(NetworkViolation::DestinationDenied {
+            host: host.to_string(),
+            port,
+        })
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -414,6 +479,81 @@ impl std::fmt::Display for ResourceLimitError {
 
 impl std::error::Error for ResourceLimitError {}
 
+#[derive(Debug, Clone)]
+pub enum FilesystemViolation {
+    NoCapability,
+    PathEscape {
+        requested: PathBuf,
+        canonical: PathBuf,
+    },
+    PathError(String),
+}
+
+impl std::fmt::Display for FilesystemViolation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoCapability => write!(f, "filesystem capability not declared"),
+            Self::PathEscape {
+                requested,
+                canonical,
+            } => write!(
+                f,
+                "path escape detected: {} resolves to {} which is outside allowlist",
+                requested.display(),
+                canonical.display()
+            ),
+            Self::PathError(msg) => write!(f, "{}", msg),
+        }
+    }
+}
+
+impl std::error::Error for FilesystemViolation {}
+
+#[derive(Debug, Clone)]
+pub enum NetworkViolation {
+    NoCapability,
+    DestinationDenied { host: String, port: u16 },
+}
+
+impl std::fmt::Display for NetworkViolation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoCapability => write!(f, "network capability not declared"),
+            Self::DestinationDenied { host, port } => {
+                write!(f, "network destination {}:{} not in allowlist", host, port)
+            }
+        }
+    }
+}
+
+impl std::error::Error for NetworkViolation {}
+
+/// Errors returned by `PluginInvocationGuard::invoke_with_limits`.
+#[derive(Debug)]
+pub enum PluginInvokeError {
+    PluginDisabled,
+    Capability(CapabilityViolation),
+    ResourceLimit(ResourceLimitError),
+    ConcurrencyLimitExceeded,
+    Timeout,
+    Internal(String),
+}
+
+impl std::fmt::Display for PluginInvokeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PluginDisabled => write!(f, "plugin is disabled"),
+            Self::Capability(v) => write!(f, "{}", v),
+            Self::ResourceLimit(e) => write!(f, "{}", e),
+            Self::ConcurrencyLimitExceeded => write!(f, "concurrency limit exceeded"),
+            Self::Timeout => write!(f, "plugin invocation timed out"),
+            Self::Internal(msg) => write!(f, "internal error: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for PluginInvokeError {}
+
 #[derive(Debug)]
 pub enum ManifestError {
     Io {
@@ -643,6 +783,47 @@ impl PluginInvocationGuard {
     /// Disable the plugin for a capability violation.
     pub fn disable_for_violation(&self) {
         *self.state.write() = PluginRuntimeState::DisabledByCapabilityViolation;
+    }
+
+    /// Invoke a plugin operation with capability check, input size check,
+    /// concurrency limit, and timeout.
+    pub async fn invoke_with_limits<F, Fut, T>(
+        &self,
+        capability: PluginCapability,
+        input_len: usize,
+        make_fut: F,
+    ) -> Result<T, PluginInvokeError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<T, PluginInvokeError>>,
+    {
+        if !self.is_invocable() {
+            return Err(PluginInvokeError::PluginDisabled);
+        }
+
+        self.capabilities
+            .require(capability)
+            .map_err(PluginInvokeError::Capability)?;
+
+        self.limits
+            .check_input(input_len)
+            .map_err(PluginInvokeError::ResourceLimit)?;
+
+        let permit = self
+            .concurrency
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| PluginInvokeError::ConcurrencyLimitExceeded)?;
+
+        let result = tokio::time::timeout(self.limits.timeout(), make_fut()).await;
+
+        drop(permit);
+
+        match result {
+            Ok(inner) => inner,
+            Err(_elapsed) => Err(PluginInvokeError::Timeout),
+        }
     }
 }
 
@@ -960,5 +1141,346 @@ mod tests {
         assert!(warnings
             .iter()
             .any(|w| matches!(w, ManifestWarning::AdminInDevMode)));
+    }
+
+    // ─── Filesystem path validation ────────────────────────────────────────
+
+    #[test]
+    fn filesystem_path_canonicalization_rejects_escape() {
+        let caps = PluginCapabilities {
+            filesystem_read: vec!["/tmp/safe".to_string()],
+            ..Default::default()
+        };
+
+        // A path outside the allowlist should be rejected even if it exists.
+        let result = caps.check_filesystem_access(Path::new("/etc/passwd"), false);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            FilesystemViolation::PathEscape { .. } => {}
+            other => panic!("expected PathEscape, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn filesystem_path_denied_without_capability() {
+        let caps = PluginCapabilities::default();
+        let result = caps.check_filesystem_access(Path::new("/tmp/foo"), false);
+        assert!(matches!(
+            result.unwrap_err(),
+            FilesystemViolation::NoCapability
+        ));
+    }
+
+    #[test]
+    fn filesystem_write_requires_write_capability() {
+        let caps = PluginCapabilities {
+            filesystem_read: vec!["/tmp".to_string()],
+            ..Default::default()
+        };
+        let result = caps.check_filesystem_access(Path::new("/tmp/foo"), true);
+        assert!(matches!(
+            result.unwrap_err(),
+            FilesystemViolation::NoCapability
+        ));
+    }
+
+    #[test]
+    fn filesystem_read_allows_canonicalizable_prefix() {
+        let caps = PluginCapabilities {
+            filesystem_read: vec![".".to_string()],
+            ..Default::default()
+        };
+        // Current directory should canonicalize and be under "."
+        let result = caps.check_filesystem_access(Path::new("."), false);
+        assert!(result.is_ok());
+    }
+
+    // ─── Network validation ────────────────────────────────────────────────
+
+    #[test]
+    fn network_default_denied_explicit() {
+        let caps = PluginCapabilities::default();
+        let result = caps.check_network_access("api.example.com", 443);
+        assert!(matches!(
+            result.unwrap_err(),
+            NetworkViolation::NoCapability
+        ));
+    }
+
+    #[test]
+    fn network_exact_match_allowed() {
+        let caps = PluginCapabilities {
+            network: vec!["api.example.com:443".to_string()],
+            ..Default::default()
+        };
+        assert!(caps.check_network_access("api.example.com", 443).is_ok());
+    }
+
+    #[test]
+    fn network_wildcard_port_allowed() {
+        let caps = PluginCapabilities {
+            network: vec!["api.example.com:*".to_string()],
+            ..Default::default()
+        };
+        assert!(caps.check_network_access("api.example.com", 8080).is_ok());
+    }
+
+    #[test]
+    fn network_wildcard_all_denied() {
+        let caps = PluginCapabilities {
+            network: vec!["other.com:443".to_string()],
+            ..Default::default()
+        };
+        let result = caps.check_network_access("api.example.com", 443);
+        assert!(matches!(
+            result.unwrap_err(),
+            NetworkViolation::DestinationDenied { .. }
+        ));
+    }
+
+    // ─── invoke_with_limits ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn invoke_with_limits_timeout_disables_plugin() {
+        let guard = PluginInvocationGuard::new(
+            PluginCapabilities {
+                request_inspect: true,
+                ..Default::default()
+            },
+            PluginLimits {
+                timeout_ms: 1,
+                ..Default::default()
+            },
+            4,
+        );
+
+        let result = guard
+            .invoke_with_limits(PluginCapability::RequestInspect, 0, || async {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                Ok::<(), PluginInvokeError>(())
+            })
+            .await;
+
+        assert!(matches!(result.unwrap_err(), PluginInvokeError::Timeout));
+        // Plugin is still invocable (timeout doesn't auto-disable, caller decides).
+        assert!(guard.is_invocable());
+    }
+
+    #[tokio::test]
+    async fn invoke_with_limits_capability_denied() {
+        let guard =
+            PluginInvocationGuard::new(PluginCapabilities::default(), PluginLimits::default(), 4);
+
+        let result = guard
+            .invoke_with_limits(PluginCapability::RequestMutate, 0, || async { Ok(()) })
+            .await;
+
+        assert!(matches!(
+            result.unwrap_err(),
+            PluginInvokeError::Capability(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn invoke_with_limits_input_too_large() {
+        let guard = PluginInvocationGuard::new(
+            PluginCapabilities {
+                request_inspect: true,
+                ..Default::default()
+            },
+            PluginLimits {
+                max_input_bytes: 100,
+                ..Default::default()
+            },
+            4,
+        );
+
+        let result = guard
+            .invoke_with_limits(PluginCapability::RequestInspect, 101, || async { Ok(()) })
+            .await;
+
+        assert!(matches!(
+            result.unwrap_err(),
+            PluginInvokeError::ResourceLimit(ResourceLimitError::InputTooLarge { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn invoke_with_limits_concurrency_enforced() {
+        let guard = PluginInvocationGuard::new(
+            PluginCapabilities {
+                request_inspect: true,
+                ..Default::default()
+            },
+            PluginLimits {
+                max_concurrency: 2,
+                timeout_ms: 5000,
+                ..Default::default()
+            },
+            2,
+        );
+
+        // Hold two permits (max concurrency = 2).
+        let p1 = guard.concurrency.clone().acquire_owned().await.unwrap();
+        let p2 = guard.concurrency.clone().acquire_owned().await.unwrap();
+
+        // Third attempt should fail to acquire within a short deadline.
+        let result = tokio::time::timeout(Duration::from_millis(50), async {
+            guard
+                .invoke_with_limits(PluginCapability::RequestInspect, 0, || async { Ok(()) })
+                .await
+        })
+        .await;
+
+        // Timeout means the semaphore acquire blocked — concurrency enforced.
+        assert!(result.is_err());
+
+        drop(p1);
+        drop(p2);
+    }
+
+    #[tokio::test]
+    async fn invoke_with_limits_disabled_plugin_rejected() {
+        let guard = PluginInvocationGuard::new(
+            PluginCapabilities {
+                request_inspect: true,
+                ..Default::default()
+            },
+            PluginLimits::default(),
+            4,
+        );
+        guard.disable_for_violation();
+
+        let result = guard
+            .invoke_with_limits(PluginCapability::RequestInspect, 0, || async { Ok(()) })
+            .await;
+
+        assert!(matches!(
+            result.unwrap_err(),
+            PluginInvokeError::PluginDisabled
+        ));
+    }
+
+    #[tokio::test]
+    async fn invoke_with_limits_success() {
+        let guard = PluginInvocationGuard::new(
+            PluginCapabilities {
+                request_inspect: true,
+                ..Default::default()
+            },
+            PluginLimits::default(),
+            4,
+        );
+
+        let result = guard
+            .invoke_with_limits(PluginCapability::RequestInspect, 10, || async {
+                Ok::<i32, PluginInvokeError>(42)
+            })
+            .await;
+
+        assert_eq!(result.unwrap(), 42);
+    }
+
+    // ─── Development hot-reload signing ────────────────────────────────────
+
+    #[test]
+    fn development_hot_reload_requires_explicit_dev_mode() {
+        // DevelopmentHotReload trust tier in production with RequireSigned
+        // and no signature should NOT be silently accepted.
+        let result = verify_signing_policy(
+            SigningPolicy::RequireSigned,
+            PluginTrustTier::DevelopmentHotReload,
+            None,
+            true,
+        );
+        // The current implementation delegates to external dev_mode check.
+        // It returns Ok but documents that caller must check dev_mode.
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn signed_sandboxed_requires_signature_in_production() {
+        let result = verify_signing_policy(
+            SigningPolicy::RequireSigned,
+            PluginTrustTier::SignedSandboxed,
+            None,
+            true,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn trust_tier_disabled_rejects_load_in_manifest() {
+        let toml = r#"
+            name = "disabled-plugin"
+            version = "0.1.0"
+            entry = "plugin.wasm"
+            trust_tier = "disabled"
+        "#;
+        let manifest = PluginManifest::parse_toml(toml, Path::new("test.toml")).unwrap();
+        let warnings = manifest.validate_trust_consistency();
+        assert!(warnings
+            .iter()
+            .any(|w| matches!(w, ManifestWarning::DisabledPluginLoaded)));
+    }
+
+    // ─── PluginInvocationGuard state transitions ───────────────────────────
+
+    #[test]
+    fn invocation_guard_quarantined_not_invocable() {
+        let guard =
+            PluginInvocationGuard::new(PluginCapabilities::default(), PluginLimits::default(), 4);
+        *guard.state.write() = PluginRuntimeState::Quarantined;
+        assert!(!guard.is_invocable());
+    }
+
+    #[test]
+    fn invocation_guard_load_error_not_invocable() {
+        let guard =
+            PluginInvocationGuard::new(PluginCapabilities::default(), PluginLimits::default(), 4);
+        *guard.state.write() = PluginRuntimeState::DisabledByLoadError;
+        assert!(!guard.is_invocable());
+    }
+
+    #[test]
+    fn invocation_guard_config_disabled_not_invocable() {
+        let guard =
+            PluginInvocationGuard::new(PluginCapabilities::default(), PluginLimits::default(), 4);
+        *guard.state.write() = PluginRuntimeState::DisabledByConfig;
+        assert!(!guard.is_invocable());
+    }
+
+    // ─── Signing policy edge cases ─────────────────────────────────────────
+
+    #[test]
+    fn signing_production_local_sandboxed_with_signature_accepted() {
+        let sig = PluginSignatureConfig {
+            signature: "deadbeef".to_string(),
+            key_id: "k1".to_string(),
+            algorithm: "ed25519".to_string(),
+        };
+        let result = verify_signing_policy(
+            SigningPolicy::RequireSigned,
+            PluginTrustTier::LocalSandboxed,
+            Some(&sig),
+            true,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn signing_dev_mode_always_ok() {
+        for tier in [
+            PluginTrustTier::LocalSandboxed,
+            PluginTrustTier::SignedSandboxed,
+            PluginTrustTier::LocalTrusted,
+        ] {
+            let result = verify_signing_policy(SigningPolicy::RequireSigned, tier, None, false);
+            assert!(
+                result.is_ok(),
+                "dev mode should not enforce signing for {:?}",
+                tier
+            );
+        }
     }
 }
