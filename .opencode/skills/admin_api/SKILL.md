@@ -322,9 +322,9 @@ Site/backend health is reported as enum values (`healthy`, `unhealthy`, `unknown
 
 Request logs redact sensitive query parameters: `token`, `secret`, `password`, `key`, `authorization`, `session`, `csrf`, etc.
 
-## Typed Mutation Results (Phase 6)
+## Typed Mutation Results (Phase 6, Phase 12 Complete)
 
-All mutating admin endpoints must return `AdminMutationResult<T>` from `synvoid_core::admin_mutation`.
+All mutating admin endpoints must return `AdminMutationResult<T>` from `synvoid_core::admin_mutation`. Phase 12 completed the conversion of all legacy mutating endpoints (mesh, ICMP, honeypot, YARA, alerting, threat-level, serverless, spin, rule-feed, plugin, PHP). Only config PUT endpoints remain deferred.
 
 ### Required pattern for mutating handlers:
 
@@ -364,7 +364,7 @@ return Ok(Json(AdminMutationResult {
 ```
 
 ### Forbidden patterns:
-- `Json(json!({"success": true, ...}))` — use `AdminMutationResult` instead
+- `Json(json!({"success": true, ...}))` — use `AdminMutationResult` instead (config PUT endpoints remain deferred)
 - `StatusCode::OK` with ad-hoc JSON — use typed responses
 - Raw session tokens in `AdminActor` — hash them first
 - Defaulting to `AdminManual` authority for compatibility paths — use `CompatibilityLegacy`

@@ -184,7 +184,7 @@ libloading = "0.8"
 aya = { version = "0.13", optional = true }
 
 synvoid-utils = { path = "crates/synvoid-utils", features = ["buffer"] }
-synvoid-core = { path = "crates/synvoid-core" }
+synvoid-core = { path = "crates/synvoid-core", features = ["utoipa"] }
 synvoid-tarpit = { path = "crates/synvoid-tarpit" }
 synvoid-challenge = { path = "crates/synvoid-challenge" }
 synvoid-waf = { path = "crates/synvoid-waf" }

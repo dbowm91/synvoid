@@ -68,7 +68,7 @@ All 26 guard tests pass. 543 individual assertions pass.
 
 ### Security
 
-- [x] Admin mutation audit model implemented (`AdminMutationResult`)
+- [x] Admin mutation audit model implemented (`AdminMutationResult`) — Phase 12: all mutating endpoints converted
 - [x] Plugin capability model implemented (`plugin_capability_boundary_guard`)
 - [x] Threat-intel consumer actionability enforced (7 rules, `threat_intel_consumer_actionability_guard`)
 - [x] Mesh-ID blocks are admin-only (`mesh_id_boundary_guard`)

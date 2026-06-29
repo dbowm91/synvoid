@@ -2,6 +2,8 @@ use super::super::state::AdminState;
 use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+#[cfg(feature = "icmp-filter")]
+use synvoid_core::admin_mutation::{AdminActor, AdminAuditEvent, AdminMutationAuthority};
 use synvoid_core::admin_mutation::{AdminMutationResult, AdminMutationStatus, PropagationStatus};
 use utoipa::ToSchema;
 
@@ -33,12 +35,6 @@ pub struct IcmpConfigResponse {
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateIcmpConfigRequest {
     pub _config: serde_json::Value,
-}
-
-#[derive(Debug, Serialize, ToSchema)]
-pub struct IcmpEnableResponse {
-    pub success: bool,
-    pub message: String,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -275,7 +271,7 @@ pub async fn update_config(
     post,
     path = "/icmp/enable",
     responses(
-        (status = 200, description = "ICMP filter enabled", body = IcmpEnableResponse),
+        (status = 200, description = "ICMP filter enabled", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 500, description = "Internal server error")
     ),
@@ -284,12 +280,17 @@ pub async fn update_config(
 pub async fn enable(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
-) -> Result<Json<IcmpEnableResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     #[cfg(feature = "icmp-filter")]
     {
         let Some(icmp_filter) = state.icmp_filter() else {
-            return Ok(Json(IcmpEnableResponse {
-                success: false,
+            return Ok(Json(AdminMutationResult {
+                status: AdminMutationStatus::Failed,
+                target: "icmp_filter".to_string(),
+                local_store_mutated: false,
+                propagation: PropagationStatus::NotApplicable,
+                event_id: None,
+                audit_id: None,
                 message: "ICMP filter not initialized".to_string(),
             }));
         };
@@ -303,16 +304,43 @@ pub async fn enable(
                 }
                 Err(e) => {
                     crate::icmp_filter::metrics::icmp_filter_status("error");
-                    return Ok(Json(IcmpEnableResponse {
-                        success: false,
+                    return Ok(Json(AdminMutationResult {
+                        status: AdminMutationStatus::Failed,
+                        target: "icmp_filter".to_string(),
+                        local_store_mutated: false,
+                        propagation: PropagationStatus::NotApplicable,
+                        event_id: None,
+                        audit_id: None,
                         message: format!("Failed to enable: {}", e),
                     }));
                 }
             }
         }
 
-        Ok(Json(IcmpEnableResponse {
-            success: true,
+        let audit_id = uuid::Uuid::new_v4().to_string();
+        let audit_event = AdminAuditEvent {
+            audit_id: audit_id.clone(),
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+            action: "icmp_enable".to_string(),
+            target_kind: "icmp_filter".to_string(),
+            target_id: "icmp_filter".to_string(),
+            prior_state: None,
+            requested_state: Some(serde_json::json!({"enabled": true})),
+            resulting_state: Some(serde_json::json!({"enabled": true})),
+            mutation_status: AdminMutationStatus::Applied,
+            propagation_status: PropagationStatus::NotApplicable,
+            event_id: None,
+        };
+        state.audit.log_audit_event(&audit_event);
+
+        Ok(Json(AdminMutationResult {
+            status: AdminMutationStatus::Applied,
+            target: "icmp_filter".to_string(),
+            local_store_mutated: true,
+            propagation: PropagationStatus::NotApplicable,
+            event_id: None,
+            audit_id: Some(audit_id),
             message: "ICMP filter enabled".to_string(),
         }))
     }
@@ -320,8 +348,13 @@ pub async fn enable(
     #[cfg(not(feature = "icmp-filter"))]
     {
         let _ = state;
-        Ok(Json(IcmpEnableResponse {
-            success: false,
+        Ok(Json(AdminMutationResult {
+            status: AdminMutationStatus::Failed,
+            target: "icmp_filter".to_string(),
+            local_store_mutated: false,
+            propagation: PropagationStatus::NotApplicable,
+            event_id: None,
+            audit_id: None,
             message: "ICMP filter not enabled (compile with icmp-filter feature)".to_string(),
         }))
     }
@@ -331,7 +364,7 @@ pub async fn enable(
     post,
     path = "/icmp/disable",
     responses(
-        (status = 200, description = "ICMP filter disabled", body = IcmpEnableResponse),
+        (status = 200, description = "ICMP filter disabled", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 500, description = "Internal server error")
     ),
@@ -340,12 +373,17 @@ pub async fn enable(
 pub async fn disable(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
-) -> Result<Json<IcmpEnableResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     #[cfg(feature = "icmp-filter")]
     {
         let Some(icmp_filter) = state.icmp_filter() else {
-            return Ok(Json(IcmpEnableResponse {
-                success: false,
+            return Ok(Json(AdminMutationResult {
+                status: AdminMutationStatus::Failed,
+                target: "icmp_filter".to_string(),
+                local_store_mutated: false,
+                propagation: PropagationStatus::NotApplicable,
+                event_id: None,
+                audit_id: None,
                 message: "ICMP filter not initialized".to_string(),
             }));
         };
@@ -358,16 +396,43 @@ pub async fn disable(
                     crate::icmp_filter::metrics::icmp_filter_status("disabled");
                 }
                 Err(e) => {
-                    return Ok(Json(IcmpEnableResponse {
-                        success: false,
+                    return Ok(Json(AdminMutationResult {
+                        status: AdminMutationStatus::Failed,
+                        target: "icmp_filter".to_string(),
+                        local_store_mutated: false,
+                        propagation: PropagationStatus::NotApplicable,
+                        event_id: None,
+                        audit_id: None,
                         message: format!("Failed to disable: {}", e),
                     }));
                 }
             }
         }
 
-        Ok(Json(IcmpEnableResponse {
-            success: true,
+        let audit_id = uuid::Uuid::new_v4().to_string();
+        let audit_event = AdminAuditEvent {
+            audit_id: audit_id.clone(),
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+            action: "icmp_disable".to_string(),
+            target_kind: "icmp_filter".to_string(),
+            target_id: "icmp_filter".to_string(),
+            prior_state: None,
+            requested_state: Some(serde_json::json!({"enabled": false})),
+            resulting_state: Some(serde_json::json!({"enabled": false})),
+            mutation_status: AdminMutationStatus::Applied,
+            propagation_status: PropagationStatus::NotApplicable,
+            event_id: None,
+        };
+        state.audit.log_audit_event(&audit_event);
+
+        Ok(Json(AdminMutationResult {
+            status: AdminMutationStatus::Applied,
+            target: "icmp_filter".to_string(),
+            local_store_mutated: true,
+            propagation: PropagationStatus::NotApplicable,
+            event_id: None,
+            audit_id: Some(audit_id),
             message: "ICMP filter disabled".to_string(),
         }))
     }
@@ -375,8 +440,13 @@ pub async fn disable(
     #[cfg(not(feature = "icmp-filter"))]
     {
         let _ = state;
-        Ok(Json(IcmpEnableResponse {
-            success: false,
+        Ok(Json(AdminMutationResult {
+            status: AdminMutationStatus::Failed,
+            target: "icmp_filter".to_string(),
+            local_store_mutated: false,
+            propagation: PropagationStatus::NotApplicable,
+            event_id: None,
+            audit_id: None,
             message: "ICMP filter not enabled (compile with icmp-filter feature)".to_string(),
         }))
     }

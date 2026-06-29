@@ -1,6 +1,5 @@
 #![cfg(feature = "mesh")]
 
-use super::super::audit::AuditLog;
 use super::super::state::AdminState;
 use super::common::OptionalAuth;
 use axum::{
@@ -10,7 +9,10 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use synvoid_core::admin_mutation::{AdminMutationResult, AdminMutationStatus, PropagationStatus};
+use synvoid_core::admin_mutation::{
+    AdminActor, AdminAuditEvent, AdminMutationAuthority, AdminMutationResult, AdminMutationStatus,
+    PropagationStatus,
+};
 use utoipa::ToSchema;
 
 use crate::mesh::yara_rules::{YaraRuleSubmission, YaraRuleSubmissionStatus};
@@ -106,60 +108,15 @@ pub struct YaraRejectionRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct YaraApproveResponse {
-    pub success: bool,
-    pub version: String,
-    pub message: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct YaraRejectResponse {
-    pub success: bool,
-    pub message: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct YaraBroadcastResponse {
-    pub success: bool,
-    pub message: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct YaraSyncResponse {
-    pub success: bool,
-    pub message: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct YaraSubmitRequest {
     pub rules: String,
     pub description: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct YaraSubmitResponse {
-    pub success: bool,
-    pub submission_id: String,
-    pub message: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct YaraApplyRequest {
     pub rules: String,
     pub version: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct YaraApplyResponse {
-    pub success: bool,
-    pub version: String,
-    pub message: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct YaraDeleteResponse {
-    pub success: bool,
-    pub message: String,
 }
 
 #[utoipa::path(
@@ -276,7 +233,7 @@ pub async fn get_submission(
     ),
     request_body = YaraApprovalRequest,
     responses(
-        (status = 200, description = "Submission approved", body = YaraApproveResponse),
+        (status = 200, description = "Submission approved"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Submission not found"),
         (status = 400, description = "Invalid request"),
@@ -289,7 +246,7 @@ pub async fn approve_submission(
     _auth: OptionalAuth,
     Path(submission_id): Path<String>,
     Json(req): Json<YaraApprovalRequest>,
-) -> Result<Json<YaraApproveResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let yara_manager = state
         .waf_tracking
         .yara_rules
@@ -297,11 +254,34 @@ pub async fn approve_submission(
         .ok_or(StatusCode::NOT_FOUND)?;
 
     match yara_manager.approve_submission(&submission_id, req.review_notes) {
-        Ok(version) => Ok(Json(YaraApproveResponse {
-            success: true,
-            version,
-            message: format!("Submission {} approved and rules applied", submission_id),
-        })),
+        Ok(version) => {
+            let audit_id = uuid::Uuid::new_v4().to_string();
+            let audit_event = AdminAuditEvent {
+                audit_id: audit_id.clone(),
+                timestamp: synvoid_utils::safe_unix_timestamp(),
+                actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+                action: "yara.approve".to_string(),
+                target_kind: "yara_submission".to_string(),
+                target_id: submission_id.clone(),
+                prior_state: None,
+                requested_state: None,
+                resulting_state: None,
+                mutation_status: AdminMutationStatus::Applied,
+                propagation_status: PropagationStatus::QueuedBestEffort,
+                event_id: None,
+            };
+            state.audit.log_audit_event(&audit_event);
+
+            Ok(Json(AdminMutationResult {
+                status: AdminMutationStatus::Applied,
+                target: version,
+                local_store_mutated: true,
+                propagation: PropagationStatus::QueuedBestEffort,
+                event_id: None,
+                audit_id: Some(audit_id),
+                message: format!("Submission {} approved and rules applied", submission_id),
+            }))
+        }
         Err(e) => {
             tracing::error!("Failed to approve submission {}: {}", submission_id, e);
             Err(StatusCode::BAD_REQUEST)
@@ -317,7 +297,7 @@ pub async fn approve_submission(
     ),
     request_body = YaraRejectionRequest,
     responses(
-        (status = 200, description = "Submission rejected", body = YaraRejectResponse),
+        (status = 200, description = "Submission rejected"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Submission not found"),
         (status = 400, description = "Invalid request"),
@@ -330,7 +310,7 @@ pub async fn reject_submission(
     _auth: OptionalAuth,
     Path(submission_id): Path<String>,
     Json(req): Json<YaraRejectionRequest>,
-) -> Result<Json<YaraRejectResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let yara_manager = state
         .waf_tracking
         .yara_rules
@@ -338,10 +318,34 @@ pub async fn reject_submission(
         .ok_or(StatusCode::NOT_FOUND)?;
 
     match yara_manager.reject_submission(&submission_id, req.review_notes) {
-        Ok(()) => Ok(Json(YaraRejectResponse {
-            success: true,
-            message: format!("Submission {} rejected", submission_id),
-        })),
+        Ok(()) => {
+            let audit_id = uuid::Uuid::new_v4().to_string();
+            let audit_event = AdminAuditEvent {
+                audit_id: audit_id.clone(),
+                timestamp: synvoid_utils::safe_unix_timestamp(),
+                actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+                action: "yara.reject".to_string(),
+                target_kind: "yara_submission".to_string(),
+                target_id: submission_id.clone(),
+                prior_state: None,
+                requested_state: None,
+                resulting_state: None,
+                mutation_status: AdminMutationStatus::Applied,
+                propagation_status: PropagationStatus::NotApplicable,
+                event_id: None,
+            };
+            state.audit.log_audit_event(&audit_event);
+
+            Ok(Json(AdminMutationResult {
+                status: AdminMutationStatus::Applied,
+                target: submission_id.clone(),
+                local_store_mutated: true,
+                propagation: PropagationStatus::NotApplicable,
+                event_id: None,
+                audit_id: Some(audit_id),
+                message: format!("Submission {} rejected", submission_id),
+            }))
+        }
         Err(e) => {
             tracing::error!("Failed to reject submission {}: {}", submission_id, e);
             Err(StatusCode::BAD_REQUEST)
@@ -353,7 +357,7 @@ pub async fn reject_submission(
     post,
     path = "/yara/broadcast",
     responses(
-        (status = 200, description = "Rules broadcast to mesh", body = YaraBroadcastResponse),
+        (status = 200, description = "Rules broadcast to mesh"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "YARA manager not found or no current version"),
         (status = 500, description = "Internal server error")
@@ -363,7 +367,7 @@ pub async fn reject_submission(
 pub async fn broadcast_rules(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
-) -> Result<Json<YaraBroadcastResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let yara_manager = state
         .waf_tracking
         .yara_rules
@@ -379,8 +383,30 @@ pub async fn broadcast_rules(
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
-    Ok(Json(YaraBroadcastResponse {
-        success: true,
+    let audit_id = uuid::Uuid::new_v4().to_string();
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_utils::safe_unix_timestamp(),
+        actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+        action: "yara.broadcast".to_string(),
+        target_kind: "yara_rules".to_string(),
+        target_id: version.clone(),
+        prior_state: None,
+        requested_state: None,
+        resulting_state: None,
+        mutation_status: AdminMutationStatus::Applied,
+        propagation_status: PropagationStatus::QueuedBestEffort,
+        event_id: None,
+    };
+    state.audit.log_audit_event(&audit_event);
+
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target: version.clone(),
+        local_store_mutated: false,
+        propagation: PropagationStatus::QueuedBestEffort,
+        event_id: None,
+        audit_id: Some(audit_id),
         message: format!("Rules version {} broadcast to mesh", version),
     }))
 }
@@ -389,7 +415,7 @@ pub async fn broadcast_rules(
     post,
     path = "/yara/sync",
     responses(
-        (status = 200, description = "Sync request sent", body = YaraSyncResponse),
+        (status = 200, description = "Sync request sent"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "YARA manager not found"),
         (status = 500, description = "Internal server error")
@@ -399,7 +425,7 @@ pub async fn broadcast_rules(
 pub async fn sync_from_global(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
-) -> Result<Json<YaraSyncResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let yara_manager = state
         .waf_tracking
         .yara_rules
@@ -408,8 +434,30 @@ pub async fn sync_from_global(
 
     yara_manager.send_sync_request_to_global();
 
-    Ok(Json(YaraSyncResponse {
-        success: true,
+    let audit_id = uuid::Uuid::new_v4().to_string();
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_utils::safe_unix_timestamp(),
+        actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+        action: "yara.sync".to_string(),
+        target_kind: "yara_rules".to_string(),
+        target_id: "global".to_string(),
+        prior_state: None,
+        requested_state: None,
+        resulting_state: None,
+        mutation_status: AdminMutationStatus::Applied,
+        propagation_status: PropagationStatus::QueuedBestEffort,
+        event_id: None,
+    };
+    state.audit.log_audit_event(&audit_event);
+
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target: "global".to_string(),
+        local_store_mutated: false,
+        propagation: PropagationStatus::QueuedBestEffort,
+        event_id: None,
+        audit_id: Some(audit_id),
         message: "Sync request sent to global nodes".to_string(),
     }))
 }
@@ -419,7 +467,7 @@ pub async fn sync_from_global(
     path = "/yara/submit",
     request_body = YaraSubmitRequest,
     responses(
-        (status = 200, description = "Rules submitted for approval", body = YaraSubmitResponse),
+        (status = 200, description = "Rules submitted for approval"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "YARA manager not found"),
         (status = 400, description = "Invalid rules"),
@@ -431,7 +479,7 @@ pub async fn submit_rules(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<YaraSubmitRequest>,
-) -> Result<Json<YaraSubmitResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let yara_manager = state
         .waf_tracking
         .yara_rules
@@ -440,34 +488,35 @@ pub async fn submit_rules(
 
     match yara_manager.submit_rule_for_approval(req.rules, req.description) {
         Ok(submission_id) => {
-            state.audit.log(AuditLog::new(
-                None,
-                Some("admin".to_string()),
-                "submit_yara_rules".to_string(),
-                "yara/rules".to_string(),
-                "unknown".to_string(),
-                None,
-                Some(format!("Rules submitted for approval: {}", submission_id)),
-                true,
-            ));
-            Ok(Json(YaraSubmitResponse {
-                success: true,
-                submission_id,
+            let audit_id = uuid::Uuid::new_v4().to_string();
+            let audit_event = AdminAuditEvent {
+                audit_id: audit_id.clone(),
+                timestamp: synvoid_utils::safe_unix_timestamp(),
+                actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+                action: "yara.submit".to_string(),
+                target_kind: "yara_submission".to_string(),
+                target_id: submission_id.clone(),
+                prior_state: None,
+                requested_state: None,
+                resulting_state: None,
+                mutation_status: AdminMutationStatus::Applied,
+                propagation_status: PropagationStatus::NotApplicable,
+                event_id: None,
+            };
+            state.audit.log_audit_event(&audit_event);
+
+            Ok(Json(AdminMutationResult {
+                status: AdminMutationStatus::Applied,
+                target: submission_id,
+                local_store_mutated: true,
+                propagation: PropagationStatus::NotApplicable,
+                event_id: None,
+                audit_id: Some(audit_id),
                 message: "Rules submitted for approval".to_string(),
             }))
         }
         Err(e) => {
             tracing::error!("Failed to submit rules: {}", e);
-            state.audit.log(AuditLog::new(
-                None,
-                Some("admin".to_string()),
-                "submit_yara_rules".to_string(),
-                "yara/rules".to_string(),
-                "unknown".to_string(),
-                None,
-                Some(format!("Failed to submit rules: {}", e)),
-                false,
-            ));
             Err(StatusCode::BAD_REQUEST)
         }
     }
@@ -507,13 +556,31 @@ pub async fn apply_rules_direct(
             if let Err(e) = yara_manager.broadcast_approved_rules(&version) {
                 tracing::warn!("Failed to broadcast applied rules: {}", e);
             }
+
+            let audit_id = uuid::Uuid::new_v4().to_string();
+            let audit_event = AdminAuditEvent {
+                audit_id: audit_id.clone(),
+                timestamp: synvoid_utils::safe_unix_timestamp(),
+                actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+                action: "yara.apply".to_string(),
+                target_kind: "yara_rules".to_string(),
+                target_id: version.clone(),
+                prior_state: None,
+                requested_state: None,
+                resulting_state: None,
+                mutation_status: AdminMutationStatus::Applied,
+                propagation_status: PropagationStatus::NotApplicable,
+                event_id: None,
+            };
+            state.audit.log_audit_event(&audit_event);
+
             Ok(Json(AdminMutationResult {
                 status: AdminMutationStatus::Applied,
                 target: version.clone(),
                 local_store_mutated: true,
                 propagation: PropagationStatus::NotApplicable,
                 event_id: None,
-                audit_id: None,
+                audit_id: Some(audit_id),
                 message: format!("Rules applied directly, version {}", version),
             }))
         }
@@ -551,15 +618,34 @@ pub async fn delete_submission(
         .ok_or(StatusCode::NOT_FOUND)?;
 
     match yara_manager.delete_submission(&submission_id) {
-        Ok(()) => Ok(Json(AdminMutationResult {
-            status: AdminMutationStatus::Applied,
-            target: submission_id.clone(),
-            local_store_mutated: true,
-            propagation: PropagationStatus::NotApplicable,
-            event_id: None,
-            audit_id: None,
-            message: format!("Submission {} deleted", submission_id),
-        })),
+        Ok(()) => {
+            let audit_id = uuid::Uuid::new_v4().to_string();
+            let audit_event = AdminAuditEvent {
+                audit_id: audit_id.clone(),
+                timestamp: synvoid_utils::safe_unix_timestamp(),
+                actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+                action: "yara.delete_submission".to_string(),
+                target_kind: "yara_submission".to_string(),
+                target_id: submission_id.clone(),
+                prior_state: None,
+                requested_state: None,
+                resulting_state: None,
+                mutation_status: AdminMutationStatus::Applied,
+                propagation_status: PropagationStatus::NotApplicable,
+                event_id: None,
+            };
+            state.audit.log_audit_event(&audit_event);
+
+            Ok(Json(AdminMutationResult {
+                status: AdminMutationStatus::Applied,
+                target: submission_id.clone(),
+                local_store_mutated: true,
+                propagation: PropagationStatus::NotApplicable,
+                event_id: None,
+                audit_id: Some(audit_id),
+                message: format!("Submission {} deleted", submission_id),
+            }))
+        }
         Err(e) => {
             tracing::error!("Failed to delete submission {}: {}", submission_id, e);
             Err(StatusCode::BAD_REQUEST)

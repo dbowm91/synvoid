@@ -72,18 +72,17 @@ After the fix, CI triggers correctly on push to `main`/`master`/`develop` and PR
 
 **Remaining gap**: `DevelopmentHotReload` trust tier gating is delegated to the caller (plugin loader), not enforced inside the WASM runtime. This is by design — the loader is the enforcement point.
 
-## Admin Authority Audit
+## Admin Authority Audit (Phase 12 Closure)
 
 | Category | Count |
 |----------|-------|
-| Fully converted (AdminMutationResult + audit) | 9 endpoints |
-| Legacy `success: bool` pattern (no audit) | 8 endpoints |
-| Legacy `StatusResponse` pattern (documented deferred) | 6 endpoints |
-| Raw token logging fixed | 1 (SignatureFailureReport) |
+| Fully converted (AdminMutationResult + audit) | 30+ endpoints |
+| Legacy `success: bool` pattern (no audit) | 0 endpoints |
+| Legacy `StatusResponse` pattern (documented deferred) | ~40 config PUT endpoints |
+| Raw token logging fixed | 0 (was 1, now resolved) |
 
-**Residual admin gaps**: ICMP enable/disable, YARA approve/reject/broadcast/sync/submit,
-honeypot control, and alerting test_webhook still use ad-hoc response types.
-Documented as deferred in `architecture/admin_control_plane_authority.md`.
+Phase 12 completed the conversion of all legacy mutating endpoints across mesh_admin, ICMP, honeypot, YARA, alerting, threat-level, serverless, spin, rule-feed, plugin, and PHP handler files. Only config PUT endpoints remain deferred (local-only mutations without mesh propagation).
+Documented in `architecture/admin_control_plane_authority.md`.
 
 ## Observability Audit
 
@@ -115,8 +114,7 @@ Documented as deferred in `architecture/admin_control_plane_authority.md`.
 
 ## Residual Risks
 
-1. **Admin legacy endpoints**: 14 endpoints still use ad-hoc response types without audit events.
-   Documented as deferred.
+1. **Config PUT endpoints (deferred)**: ~40 config PUT endpoints still use `StatusResponse`. These are local-only mutations without mesh propagation. Documented as deferred.
 2. **Full signature verification**: Crypto verification of plugin signatures against binary
    hash is not implemented. Documented as deferred.
 3. **DevelopmentHotReload gating**: Trust tier enforcement is at the loader level, not inside

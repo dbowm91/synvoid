@@ -118,31 +118,101 @@ Durable audit storage is future work.
 
 ## Endpoint Inventory
 
-### Block/Unblock Endpoints (Priority)
+Phase 12 completed the conversion of all legacy mutating endpoints. All mutating endpoints now return typed `AdminMutationResult` and emit `AdminAuditEvent`. Config and site management endpoints are deferred.
 
-| Endpoint | File | Authority | Current Response | Target Result |
-|----------|------|-----------|------------------|---------------|
-| POST `/mesh/ban/ip` | `src/admin/handlers/mesh_admin.rs:420` | `AdminManual` | `Json(json!({"success": true}))` | `AdminMutationResult<BlockMutationTarget>` |
-| POST `/mesh/ban/mesh-id` | `src/admin/handlers/mesh_admin.rs:518` | `AdminManual` | `Json(json!({"success": true}))` | `AdminMutationResult<BlockMutationTarget>` |
-| DELETE `/mesh/ban` | `src/admin/handlers/mesh_admin.rs:618` | `AdminManual` | `Json(json!({"success": true}))` | `AdminMutationResult<BlockMutationTarget>` |
-| POST `/probes/block` | `crates/synvoid-admin/src/handlers/probes.rs:315` | `SupervisorManual` | `Json(json!({"blocked": [...]}))` | `AdminMutationResult` |
+### Block/Unblock Endpoints (Priority) — ALL CONVERTED
 
-### Supervisor gRPC Commands
+| Endpoint | File | Authority | Response |
+|----------|------|-----------|----------|
+| POST `/mesh/ban/ip` | mesh_admin.rs | AdminManual | AdminMutationResult<BlockMutationTarget> |
+| POST `/mesh/ban/mesh-id` | mesh_admin.rs | AdminManual | AdminMutationResult<BlockMutationTarget> |
+| DELETE `/mesh/ban` | mesh_admin.rs | AdminManual | AdminMutationResult<BlockMutationTarget> |
+| POST `/mesh/attest-capability` | mesh_admin.rs | AdminManual | AdminMutationResult<String> |
+| POST `/probes/block` | probes.rs | SupervisorManual | AdminMutationResult<String> |
 
-| Command | File | Authority | Current Response | Target Result |
-|---------|------|-----------|------------------|---------------|
-| `ReloadConfig` | `src/supervisor/api.rs:70` | `SupervisorManual` | `ReloadResponse { success: true }` | `AdminMutationResult` |
-| `Stop` | `src/supervisor/api.rs:84` | `SupervisorManual` | `StopResponse { success: true }` | `AdminMutationResult` |
-| `BlockIp` | `src/supervisor/api.rs:97` | `SupervisorManual` | `BlockResponse { success: true }` | `AdminMutationResult` |
-| `UnblockIp` | `src/supervisor/api.rs:122` | `SupervisorManual` | `UnblockResponse { success: true }` | `AdminMutationResult` |
+### ICMP Endpoints — ALL CONVERTED
+
+| Endpoint | File | Authority | Response |
+|----------|------|-----------|----------|
+| POST `/icmp/enable` | icmp.rs | AdminManual | AdminMutationResult<String> |
+| POST `/icmp/disable` | icmp.rs | AdminManual | AdminMutationResult<String> |
+| PUT `/icmp/config` | icmp.rs | AdminManual | AdminMutationResult<String> |
+
+### Honeypot Endpoints — ALL CONVERTED
+
+| Endpoint | File | Authority | Response |
+|----------|------|-----------|----------|
+| POST `/honeypot/control` | honeypot.rs | AdminManual | AdminMutationResult<String> |
+| PUT `/honeypot/config` | honeypot.rs | AdminManual | AdminMutationResult<String> |
+
+### YARA Endpoints — ALL CONVERTED
+
+| Endpoint | File | Authority | Response |
+|----------|------|-----------|----------|
+| POST `/yara/submissions/{id}/approve` | yara_rules.rs | AdminManual | AdminMutationResult<String> |
+| POST `/yara/submissions/{id}/reject` | yara_rules.rs | AdminManual | AdminMutationResult<String> |
+| POST `/yara/broadcast` | yara_rules.rs | AdminManual | AdminMutationResult<String> |
+| POST `/yara/sync` | yara_rules.rs | AdminManual | AdminMutationResult<String> |
+| POST `/yara/submit` | yara_rules.rs | AdminManual | AdminMutationResult<String> |
+| POST `/yara/apply` | yara_rules.rs | AdminManual | AdminMutationResult<String> |
+| DELETE `/yara/submissions/{id}` | yara_rules.rs | AdminManual | AdminMutationResult<String> |
+
+### Alerting Endpoints — CONVERTED
+
+| Endpoint | File | Authority | Response |
+|----------|------|-----------|----------|
+| POST `/alerting/test-webhook` | alerting.rs | AdminManual | AdminMutationResult<String> |
+
+### Threat Level Endpoints — ALL CONVERTED
+
+| Endpoint | File | Authority | Response |
+|----------|------|-----------|----------|
+| PUT `/threat-level/level/{level}` | threat_level.rs | AdminManual | AdminMutationResult<String> |
+| POST `/threat-level/auto` | threat_level.rs | AdminManual | AdminMutationResult<String> |
+| POST `/threat-level/baseline/reset` | threat_level.rs | AdminManual | AdminMutationResult<String> |
+| POST `/threat-level/backup` | threat_level.rs | AdminManual | AdminMutationResult<String> |
+| DELETE `/threat-level/backup` | threat_level.rs | AdminManual | AdminMutationResult<String> |
+| POST `/threat-level/history/prune` | threat_level.rs | AdminManual | AdminMutationResult<String> |
+
+### Serverless Endpoints — CONVERTED
+
+| Endpoint | File | Authority | Response |
+|----------|------|-----------|----------|
+| PUT `/serverless/config` | serverless.rs | AdminManual | AdminMutationResult<String> |
+
+### Spin Endpoints — ALL CONVERTED
+
+| Endpoint | File | Authority | Response |
+|----------|------|-----------|----------|
+| POST `/spin/apps` | spin.rs | AdminManual | AdminMutationResult<String> |
+| DELETE `/spin/apps/{name}` | spin.rs | AdminManual | AdminMutationResult<String> |
+
+### Rule Feed Endpoints — ALL CONVERTED
+
+| Endpoint | File | Authority | Response |
+|----------|------|-----------|----------|
+| POST `/rule-feed/apply` | rule_feed.rs | AdminManual | AdminMutationResult<String> |
+| POST `/rule-feed/discard` | rule_feed.rs | AdminManual | AdminMutationResult<String> |
+
+### Plugin Endpoints — ALL CONVERTED
+
+| Endpoint | File | Authority | Response |
+|----------|------|-----------|----------|
+| POST `/plugins/{name}/reload` | plugins.rs | AdminManual | AdminMutationResult<String> |
+
+### PHP Endpoints — CONVERTED
+
+| Endpoint | File | Authority | Response |
+|----------|------|-----------|----------|
+| POST `/system/php-pools/reload` | php.rs | AdminManual | AdminMutationResult<String> |
 
 ### Config Endpoints (Deferred)
 
-All `PUT /config/*` endpoints currently return `StatusResponse::success(...)`. These are lower priority for conversion since they are local-only mutations without mesh propagation. They will be converted in a future phase.
+All `PUT /config/*` endpoints still use `StatusResponse::success(...)`. These are local-only mutations without mesh propagation. Conversion is deferred to a future phase.
 
 ### Site Management Endpoints (Deferred)
 
-All `POST/PUT/DELETE /sites/*` endpoints currently return typed DTOs. These are lower priority and will be converted in a future phase.
+All `POST/PUT/DELETE /sites/*` endpoints use typed DTOs. Conversion is deferred to a future phase.
 
 ## Propagation Semantics
 

@@ -1,9 +1,13 @@
 use super::super::state::AdminState;
-use super::common::{OptionalAuth, StatusResponse};
+use super::common::OptionalAuth;
 use crate::serverless::registry::get_global_serverless_registry;
 use axum::{extract::Path, extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use synvoid_core::admin_mutation::{
+    AdminActor, AdminAuditEvent, AdminMutationAuthority, AdminMutationResult, AdminMutationStatus,
+    PropagationStatus,
+};
 use utoipa::ToSchema;
 
 use crate::config::ServerlessConfig;
@@ -75,7 +79,7 @@ pub async fn get_serverless_config(
     path = "/serverless/config",
     request_body = UpdateServerlessConfigRequest,
     responses(
-        (status = 200, description = "Serverless config updated", body = StatusResponse),
+        (status = 200, description = "Serverless config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -86,13 +90,39 @@ pub async fn update_serverless_config(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateServerlessConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     {
         let mut config = state.process.config.write().await;
         config.main.serverless = req.config;
     }
     persist_main_config_and_notify(&state).await?;
-    Ok(Json(StatusResponse::success("Serverless config updated.")))
+
+    let audit_id = uuid::Uuid::new_v4().to_string();
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_utils::safe_unix_timestamp(),
+        actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+        action: "serverless.config.update".to_string(),
+        target_kind: "config".to_string(),
+        target_id: "serverless_config".to_string(),
+        prior_state: None,
+        requested_state: None,
+        resulting_state: None,
+        mutation_status: AdminMutationStatus::Applied,
+        propagation_status: PropagationStatus::NotApplicable,
+        event_id: None,
+    };
+    state.audit.log_audit_event(&audit_event);
+
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target: "serverless_config".to_string(),
+        local_store_mutated: true,
+        propagation: PropagationStatus::NotApplicable,
+        event_id: None,
+        audit_id: Some(audit_id),
+        message: "Serverless config updated".to_string(),
+    }))
 }
 
 #[derive(Clone, Serialize, ToSchema)]

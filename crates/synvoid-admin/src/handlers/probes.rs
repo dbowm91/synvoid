@@ -7,8 +7,10 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::sync::Arc;
+use synvoid_core::admin_mutation::{AdminMutationResult, AdminMutationStatus, PropagationStatus};
 use synvoid_ipc::current_timestamp;
 use utoipa::ToSchema;
+use uuid::Uuid;
 
 use super::common::{
     parse_ip, OptionalAuth, PaginatedResponse, PaginationQuery, PAGINATION_LIMITS_DEFAULT,
@@ -316,7 +318,7 @@ pub async fn block_probes<S: AdminStateProvider>(
     State(state): State<Arc<S>>,
     _auth: OptionalAuth,
     Json(req): Json<BlockProbesRequest>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let ban_duration_secs = parse_duration(&req.duration);
 
     let mut blocked = Vec::new();
@@ -352,11 +354,19 @@ pub async fn block_probes<S: AdminStateProvider>(
         pm.trigger_blocklist_persist();
     }
 
-    Ok(Json(serde_json::json!({
-        "blocked": blocked,
-        "failed": failed,
-        "message": format!("Blocked {} IPs, {} failed", blocked.len(), failed.len())
-    })))
+    let audit_id = Uuid::new_v4().to_string();
+    let target = format!("{} IPs blocked", blocked.len());
+    let message = format!("Blocked {} IPs, {} failed", blocked.len(), failed.len());
+
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target,
+        local_store_mutated: true,
+        propagation: PropagationStatus::QueuedBestEffort,
+        event_id: None,
+        audit_id: Some(audit_id),
+        message,
+    }))
 }
 
 #[derive(Debug, Serialize, ToSchema)]

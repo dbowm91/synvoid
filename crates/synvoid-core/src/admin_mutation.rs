@@ -109,6 +109,7 @@ impl AdminActor {
 
 /// Classifies the outcome of a mutation attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum AdminMutationStatus {
     /// The mutation was applied to the local store.
@@ -146,6 +147,7 @@ impl std::fmt::Display for AdminMutationStatus {
 
 /// Status of mesh propagation after a local mutation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum PropagationStatus {
     /// Propagation is not applicable (e.g., local-only operation).
@@ -181,6 +183,7 @@ impl std::fmt::Display for PropagationStatus {
 /// This type is returned by mutating admin endpoints to provide structured,
 /// auditable outcome information. It replaces ad-hoc `{"success": true}` responses.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub struct AdminMutationResult<T = serde_json::Value> {
     /// The outcome status of the mutation.
     pub status: AdminMutationStatus,

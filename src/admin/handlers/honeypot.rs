@@ -1,12 +1,15 @@
-use super::super::audit::AuditLog;
 use super::super::middleware::ClientIp;
 use super::super::state::AdminState;
-use super::common::{OptionalAuth, StatusResponse};
+use super::common::OptionalAuth;
 use axum::extract::{Extension, State};
 use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use synvoid_core::admin_mutation::{
+    AdminActor, AdminAuditEvent, AdminMutationAuthority, AdminMutationResult, AdminMutationStatus,
+    PropagationStatus,
+};
 use utoipa::ToSchema;
 
 use crate::config::honeypot_port::HoneypotPortConfig;
@@ -78,7 +81,7 @@ pub async fn get_honeypot_port_config(
     path = "/honeypot/config",
     request_body = UpdateHoneypotPortConfigRequest,
     responses(
-        (status = 200, description = "Honeypot port config updated", body = StatusResponse),
+        (status = 200, description = "Honeypot port config updated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 400, description = "Invalid configuration"),
         (status = 500, description = "Internal server error")
@@ -89,35 +92,53 @@ pub async fn update_honeypot_port_config(
     State(state): State<Arc<AdminState>>,
     Extension(client_ip): Extension<ClientIp>,
     Json(req): Json<UpdateHoneypotPortConfigRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let mut config = state.process.config.write().await;
     config.main.honeypot_port = req.config.clone();
     drop(config);
 
     if let Some(ref controller) = state.honeypot.port_honeypot_controller {
         if let Err(e) = controller.update_config(req.config.clone()) {
-            return Ok(Json(StatusResponse::error(format!(
-                "Failed to update honeypot config: {}",
-                e
-            ))));
+            return Ok(Json(AdminMutationResult {
+                status: AdminMutationStatus::Failed,
+                target: "honeypot_port".to_string(),
+                local_store_mutated: false,
+                propagation: PropagationStatus::NotApplicable,
+                event_id: None,
+                audit_id: None,
+                message: format!("Failed to update honeypot config: {}", e),
+            }));
         }
     }
 
-    state.audit.log(AuditLog::new(
-        None,
-        None,
-        "honeypot.config.update".to_string(),
-        "honeypot/config".to_string(),
-        client_ip.0.clone(),
-        None,
-        None,
-        true,
-    ));
+    let audit_id = uuid::Uuid::new_v4().to_string();
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_utils::safe_unix_timestamp(),
+        actor: AdminActor::new(AdminMutationAuthority::AdminManual)
+            .with_source_ip(client_ip.0.clone()),
+        action: "honeypot.config.update".to_string(),
+        target_kind: "honeypot_port".to_string(),
+        target_id: "honeypot_port".to_string(),
+        prior_state: None,
+        requested_state: Some(serde_json::to_value(&req.config).unwrap_or(serde_json::Value::Null)),
+        resulting_state: Some(serde_json::to_value(&req.config).unwrap_or(serde_json::Value::Null)),
+        mutation_status: AdminMutationStatus::Applied,
+        propagation_status: PropagationStatus::NotApplicable,
+        event_id: None,
+    };
+    state.audit.log_audit_event(&audit_event);
 
     persist_main_config_and_notify(&state).await?;
-    Ok(Json(StatusResponse::success(
-        "Honeypot port config updated.",
-    )))
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target: "honeypot_port".to_string(),
+        local_store_mutated: true,
+        propagation: PropagationStatus::NotApplicable,
+        event_id: None,
+        audit_id: Some(audit_id),
+        message: "Honeypot port config updated".to_string(),
+    }))
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -135,13 +156,6 @@ pub struct HoneypotControlRequest {
     pub command: String,
     pub reason: Option<String>,
     pub duration_secs: Option<u32>,
-}
-
-#[derive(Debug, Serialize, ToSchema)]
-pub struct HoneypotControlResponse {
-    pub success: bool,
-    pub message: String,
-    pub status: Option<HoneypotStatusResponse>,
 }
 
 #[utoipa::path(
@@ -190,7 +204,7 @@ pub async fn get_honeypot_status(
     path = "/honeypot/control",
     request_body = HoneypotControlRequest,
     responses(
-        (status = 200, description = "Honeypot control result", body = HoneypotControlResponse),
+        (status = 200, description = "Honeypot control result", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Honeypot controller not found"),
         (status = 400, description = "Invalid command"),
@@ -202,7 +216,7 @@ pub async fn control_honeypot(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<HoneypotControlRequest>,
-) -> Result<Json<HoneypotControlResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let controller = state
         .honeypot
         .port_honeypot_controller
@@ -217,29 +231,42 @@ pub async fn control_honeypot(
         }
         "enable" | "pause" | "resume" => {}
         _ => {
-            return Ok(Json(HoneypotControlResponse {
-                success: false,
+            return Ok(Json(AdminMutationResult {
+                status: AdminMutationStatus::InvalidRejected,
+                target: "honeypot".to_string(),
+                local_store_mutated: false,
+                propagation: PropagationStatus::NotApplicable,
+                event_id: None,
+                audit_id: None,
                 message: format!("Unknown command: {}", req.command),
-                status: None,
             }));
         }
     };
 
-    let status = controller.get_status();
-    let total_connections = controller
-        .get_runner()
-        .and_then(|r| r.storage().get_connection_count().ok())
-        .unwrap_or(0) as u64;
+    let audit_id = uuid::Uuid::new_v4().to_string();
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_utils::safe_unix_timestamp(),
+        actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+        action: "honeypot.control".to_string(),
+        target_kind: "honeypot".to_string(),
+        target_id: "honeypot".to_string(),
+        prior_state: None,
+        requested_state: Some(serde_json::json!({"command": req.command})),
+        resulting_state: None,
+        mutation_status: AdminMutationStatus::Applied,
+        propagation_status: PropagationStatus::NotApplicable,
+        event_id: None,
+    };
+    state.audit.log_audit_event(&audit_event);
 
-    Ok(Json(HoneypotControlResponse {
-        success: true,
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target: "honeypot".to_string(),
+        local_store_mutated: true,
+        propagation: PropagationStatus::NotApplicable,
+        event_id: None,
+        audit_id: Some(audit_id),
         message: format!("Command {} executed successfully", req.command),
-        status: Some(HoneypotStatusResponse {
-            enabled: controller.is_running(),
-            paused: status.paused,
-            pause_reason: status.pause_reason,
-            active_ports: status.active_ports,
-            total_connections,
-        }),
     }))
 }

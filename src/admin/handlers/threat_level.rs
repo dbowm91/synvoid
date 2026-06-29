@@ -9,9 +9,13 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
+use synvoid_core::admin_mutation::{
+    AdminActor, AdminAuditEvent, AdminMutationAuthority, AdminMutationResult, AdminMutationStatus,
+    PropagationStatus,
+};
 use utoipa::ToSchema;
 
-use super::common::{OptionalAuth, StatusResponse};
+use super::common::OptionalAuth;
 
 const DEFAULT_THREAT_LEVEL_DB_PATH: &str = "/var/lib/synvoid/threat_level/history.db";
 const DEFAULT_THREAT_LEVEL_BACKUP_DIR: &str = "/var/lib/synvoid/threat_level/backups";
@@ -217,7 +221,7 @@ pub async fn get_baseline(
     post,
     path = "/threat-level/baseline/reset",
     responses(
-        (status = 200, description = "Baseline reset", body = StatusResponse),
+        (status = 200, description = "Baseline reset", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Threat level manager not found"),
         (status = 500, description = "Internal server error")
@@ -227,14 +231,37 @@ pub async fn get_baseline(
 pub async fn reset_baseline(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?;
 
     threat_level.reset_baseline();
 
-    Ok(Json(StatusResponse::ok(
-        "Baseline reset and learning restarted",
-    )))
+    let audit_id = uuid::Uuid::new_v4().to_string();
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_utils::safe_unix_timestamp(),
+        actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+        action: "threat_level.reset_baseline".to_string(),
+        target_kind: "threat_level".to_string(),
+        target_id: "baseline".to_string(),
+        prior_state: None,
+        requested_state: None,
+        resulting_state: None,
+        mutation_status: AdminMutationStatus::Applied,
+        propagation_status: PropagationStatus::NotApplicable,
+        event_id: None,
+    };
+    state.audit.log_audit_event(&audit_event);
+
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target: "baseline".to_string(),
+        local_store_mutated: true,
+        propagation: PropagationStatus::NotApplicable,
+        event_id: None,
+        audit_id: Some(audit_id),
+        message: "Baseline reset and learning restarted".to_string(),
+    }))
 }
 
 #[utoipa::path(
@@ -244,7 +271,7 @@ pub async fn reset_baseline(
         ("level" = u8, Path, description = "Threat level (1-5)")
     ),
     responses(
-        (status = 200, description = "Threat level set"),
+        (status = 200, description = "Threat level set", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Threat level manager not found"),
         (status = 500, description = "Internal server error")
@@ -255,23 +282,45 @@ pub async fn set_level(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Path(level): Path<u8>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?;
 
     let level = level.clamp(1, 5);
     threat_level.set_level(level);
 
-    Ok(Json(serde_json::json!({
-        "status": "ok",
-        "level": level
-    })))
+    let audit_id = uuid::Uuid::new_v4().to_string();
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_utils::safe_unix_timestamp(),
+        actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+        action: "threat_level.set".to_string(),
+        target_kind: "threat_level".to_string(),
+        target_id: level.to_string(),
+        prior_state: None,
+        requested_state: None,
+        resulting_state: None,
+        mutation_status: AdminMutationStatus::Applied,
+        propagation_status: PropagationStatus::NotApplicable,
+        event_id: None,
+    };
+    state.audit.log_audit_event(&audit_event);
+
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target: format!("threat_level_{}", level),
+        local_store_mutated: true,
+        propagation: PropagationStatus::NotApplicable,
+        event_id: None,
+        audit_id: Some(audit_id),
+        message: format!("Threat level set to {}", level),
+    }))
 }
 
 #[utoipa::path(
     post,
     path = "/threat-level/auto",
     responses(
-        (status = 200, description = "Threat level set to auto", body = StatusResponse),
+        (status = 200, description = "Threat level set to auto", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Threat level manager not found"),
         (status = 500, description = "Internal server error")
@@ -281,18 +330,37 @@ pub async fn set_level(
 pub async fn set_auto(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?;
 
     threat_level.reset_to_auto();
 
-    Ok(Json(StatusResponse::ok("Threat level set to auto mode")))
-}
+    let audit_id = uuid::Uuid::new_v4().to_string();
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_utils::safe_unix_timestamp(),
+        actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+        action: "threat_level.auto".to_string(),
+        target_kind: "threat_level".to_string(),
+        target_id: "auto".to_string(),
+        prior_state: None,
+        requested_state: None,
+        resulting_state: None,
+        mutation_status: AdminMutationStatus::Applied,
+        propagation_status: PropagationStatus::NotApplicable,
+        event_id: None,
+    };
+    state.audit.log_audit_event(&audit_event);
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct BackupResponse {
-    pub status: String,
-    pub backup: serde_json::Value,
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target: "auto".to_string(),
+        local_store_mutated: true,
+        propagation: PropagationStatus::NotApplicable,
+        event_id: None,
+        audit_id: Some(audit_id),
+        message: "Threat level set to auto mode".to_string(),
+    }))
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -300,17 +368,11 @@ pub struct BackupsListResponse {
     pub backups: Vec<serde_json::Value>,
 }
 
-#[derive(Debug, Serialize, ToSchema)]
-pub struct PruneResponse {
-    pub status: String,
-    pub deleted_count: u64,
-}
-
 #[utoipa::path(
     post,
     path = "/threat-level/backup",
     responses(
-        (status = 200, description = "Backup created", body = BackupResponse),
+        (status = 200, description = "Backup created", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Threat level manager not found"),
         (status = 500, description = "Internal server error")
@@ -320,7 +382,7 @@ pub struct PruneResponse {
 pub async fn create_backup(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
-) -> Result<Json<BackupResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let _threat_level = state.threat_level_manager().ok_or(StatusCode::NOT_FOUND)?;
 
     let db_path = PathBuf::from(DEFAULT_THREAT_LEVEL_DB_PATH);
@@ -328,7 +390,7 @@ pub async fn create_backup(
 
     let site_id = "global".to_string();
 
-    let backup = tokio::task::spawn_blocking(move || {
+    let _backup = tokio::task::spawn_blocking(move || {
         SqliteBackup::create_backup(&db_path, &backup_dir, &site_id)
     })
     .await
@@ -341,9 +403,31 @@ pub async fn create_backup(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    Ok(Json(BackupResponse {
-        status: "ok".to_string(),
-        backup: serde_json::to_value(backup).unwrap_or(serde_json::Value::Null),
+    let audit_id = uuid::Uuid::new_v4().to_string();
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_utils::safe_unix_timestamp(),
+        actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+        action: "threat_level.backup.create".to_string(),
+        target_kind: "backup".to_string(),
+        target_id: "backup".to_string(),
+        prior_state: None,
+        requested_state: None,
+        resulting_state: None,
+        mutation_status: AdminMutationStatus::Applied,
+        propagation_status: PropagationStatus::NotApplicable,
+        event_id: None,
+    };
+    state.audit.log_audit_event(&audit_event);
+
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target: "backup".to_string(),
+        local_store_mutated: true,
+        propagation: PropagationStatus::NotApplicable,
+        event_id: None,
+        audit_id: Some(audit_id),
+        message: "Backup created".to_string(),
     }))
 }
 
@@ -391,17 +475,17 @@ pub struct DeleteBackupQuery {
         ("path" = String, Query, description = "Backup path to delete")
     ),
     responses(
-        (status = 200, description = "Backup deleted", body = StatusResponse),
+        (status = 200, description = "Backup deleted", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 500, description = "Internal server error")
     ),
     tag = "threat_level"
 )]
 pub async fn delete_backup(
-    State(_state): State<Arc<AdminState>>,
+    State(state): State<Arc<AdminState>>,
     Query(query): Query<DeleteBackupQuery>,
     _auth: OptionalAuth,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let path = query.path.clone();
 
     tokio::task::spawn_blocking(move || SqliteBackup::delete_backup(&path))
@@ -415,14 +499,39 @@ pub async fn delete_backup(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    Ok(Json(StatusResponse::ok("Backup deleted")))
+    let audit_id = uuid::Uuid::new_v4().to_string();
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_utils::safe_unix_timestamp(),
+        actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+        action: "threat_level.backup.delete".to_string(),
+        target_kind: "backup".to_string(),
+        target_id: "backup".to_string(),
+        prior_state: None,
+        requested_state: None,
+        resulting_state: None,
+        mutation_status: AdminMutationStatus::Applied,
+        propagation_status: PropagationStatus::NotApplicable,
+        event_id: None,
+    };
+    state.audit.log_audit_event(&audit_event);
+
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target: "backup".to_string(),
+        local_store_mutated: true,
+        propagation: PropagationStatus::NotApplicable,
+        event_id: None,
+        audit_id: Some(audit_id),
+        message: "Backup deleted".to_string(),
+    }))
 }
 
 #[utoipa::path(
     post,
     path = "/threat-level/history/prune",
     responses(
-        (status = 200, description = "History pruned", body = PruneResponse),
+        (status = 200, description = "History pruned", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Threat level manager not found"),
         (status = 500, description = "Internal server error")
@@ -432,7 +541,7 @@ pub async fn delete_backup(
 pub async fn prune_history(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
-) -> Result<Json<PruneResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let threat_level = state
         .threat_level_manager()
         .ok_or(StatusCode::NOT_FOUND)?
@@ -449,9 +558,31 @@ pub async fn prune_history(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    Ok(Json(PruneResponse {
-        status: "ok".to_string(),
-        deleted_count: deleted as u64,
+    let audit_id = uuid::Uuid::new_v4().to_string();
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_utils::safe_unix_timestamp(),
+        actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+        action: "threat_level.history.prune".to_string(),
+        target_kind: "history".to_string(),
+        target_id: "history".to_string(),
+        prior_state: None,
+        requested_state: None,
+        resulting_state: None,
+        mutation_status: AdminMutationStatus::Applied,
+        propagation_status: PropagationStatus::NotApplicable,
+        event_id: None,
+    };
+    state.audit.log_audit_event(&audit_event);
+
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target: "history".to_string(),
+        local_store_mutated: true,
+        propagation: PropagationStatus::NotApplicable,
+        event_id: None,
+        audit_id: Some(audit_id),
+        message: format!("Pruned {} history records", deleted),
     }))
 }
 

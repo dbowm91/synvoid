@@ -1,4 +1,4 @@
-use super::common::{OptionalAuth, StatusResponse};
+use super::common::OptionalAuth;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -6,7 +6,10 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use synvoid_core::admin_mutation::{AdminMutationResult, AdminMutationStatus, PropagationStatus};
+use synvoid_core::admin_mutation::{
+    AdminActor, AdminAuditEvent, AdminMutationAuthority, AdminMutationResult, AdminMutationStatus,
+    PropagationStatus,
+};
 use utoipa::ToSchema;
 
 use crate::admin::state::AdminState;
@@ -192,7 +195,7 @@ pub async fn create_spin_app(
         ("name" = String, Path, description = "Spin app name")
     ),
     responses(
-        (status = 200, description = "Spin app deleted", body = StatusResponse),
+        (status = 200, description = "Spin app deleted", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Spin app not found"),
         (status = 500, description = "Internal server error")
@@ -200,9 +203,10 @@ pub async fn create_spin_app(
     tag = "spin"
 )]
 pub async fn delete_spin_app(
+    State(state): State<Arc<AdminState>>,
     Path(name): Path<String>,
     _auth: OptionalAuth,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let manager = get_global_spin_apps_manager();
 
     if manager.get(&name).is_none() {
@@ -211,12 +215,35 @@ pub async fn delete_spin_app(
 
     manager.unregister(&name);
 
+    let audit_id = uuid::Uuid::new_v4().to_string();
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_utils::safe_unix_timestamp(),
+        actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+        action: "spin.app.delete".to_string(),
+        target_kind: "spin_app".to_string(),
+        target_id: name.clone(),
+        prior_state: None,
+        requested_state: None,
+        resulting_state: None,
+        mutation_status: AdminMutationStatus::Applied,
+        propagation_status: PropagationStatus::NotApplicable,
+        event_id: None,
+    };
+    state.audit.log_audit_event(&audit_event);
+
+    let result_message = format!("Spin app '{}' deleted", name);
     tracing::info!("Deleted Spin app '{}'", name);
 
-    Ok(Json(StatusResponse::success(format!(
-        "Spin app '{}' deleted",
-        name
-    ))))
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target: name,
+        local_store_mutated: true,
+        propagation: PropagationStatus::NotApplicable,
+        event_id: None,
+        audit_id: Some(audit_id),
+        message: result_message,
+    }))
 }
 
 #[utoipa::path(

@@ -7,6 +7,10 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use synvoid_core::admin_mutation::{
+    AdminActor, AdminAuditEvent, AdminMutationAuthority, AdminMutationResult, AdminMutationStatus,
+    PropagationStatus,
+};
 use utoipa::ToSchema;
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -94,20 +98,13 @@ pub async fn update_alert_config(
     Ok(Json(AlertConfigResponse { config: json }))
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct TestAlertResponse {
-    pub success: bool,
-    pub message: String,
-}
-
 #[utoipa::path(
     post,
     path = "/alerting/test-webhook",
     responses(
-        (status = 200, description = "Test webhook result", body = TestAlertResponse),
+        (status = 200, description = "Test webhook result", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Alert manager not found"),
-        (status = 400, description = "Webhook not configured"),
         (status = 500, description = "Internal server error")
     ),
     tag = "alerting"
@@ -115,7 +112,7 @@ pub struct TestAlertResponse {
 pub async fn test_webhook(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
-) -> Result<Json<TestAlertResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let alert_manager = state
         .process
         .alert_manager
@@ -124,8 +121,13 @@ pub async fn test_webhook(
     let config = alert_manager.get_config().await;
 
     if !config.webhook_enabled || config.webhook_urls.is_empty() {
-        return Ok(Json(TestAlertResponse {
-            success: false,
+        return Ok(Json(AdminMutationResult {
+            status: AdminMutationStatus::NoOpAlreadyAbsent,
+            target: "webhook_test".to_string(),
+            local_store_mutated: false,
+            propagation: PropagationStatus::NotApplicable,
+            event_id: None,
+            audit_id: None,
             message: "Webhook not configured".to_string(),
         }));
     }
@@ -144,8 +146,30 @@ pub async fn test_webhook(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Ok(Json(TestAlertResponse {
-        success: true,
+    let audit_id = uuid::Uuid::new_v4().to_string();
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_utils::safe_unix_timestamp(),
+        actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+        action: "alerting.test_webhook".to_string(),
+        target_kind: "webhook".to_string(),
+        target_id: "test".to_string(),
+        prior_state: None,
+        requested_state: None,
+        resulting_state: None,
+        mutation_status: AdminMutationStatus::Applied,
+        propagation_status: PropagationStatus::NotApplicable,
+        event_id: None,
+    };
+    state.audit.log_audit_event(&audit_event);
+
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target: "webhook_test".to_string(),
+        local_store_mutated: false,
+        propagation: PropagationStatus::NotApplicable,
+        event_id: None,
+        audit_id: Some(audit_id),
         message: "Test webhook sent".to_string(),
     }))
 }

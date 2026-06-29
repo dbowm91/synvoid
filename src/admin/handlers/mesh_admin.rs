@@ -1370,19 +1370,13 @@ pub struct AttestCapabilityRequest {
     pub capability: String,
 }
 
-#[derive(Debug, Serialize, ToSchema)]
-pub struct AttestCapabilityResponse {
-    pub success: bool,
-    pub error: Option<String>,
-}
-
 #[utoipa::path(
     post,
     path = "/mesh/attest-capability",
     request_body = AttestCapabilityRequest,
     responses(
-        (status = 200, description = "Capability attested successfully", body = AttestCapabilityResponse),
-        (status = 400, description = "Failed to attest capability", body = AttestCapabilityResponse),
+        (status = 200, description = "Capability attested successfully"),
+        (status = 400, description = "Failed to attest capability"),
         (status = 500, description = "Internal error")
     ),
     tag = "mesh",
@@ -1394,7 +1388,7 @@ pub async fn attest_capability(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(payload): Json<AttestCapabilityRequest>,
-) -> Result<Json<AttestCapabilityResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let config = state.process.config.read().await;
     let is_global = config
         .main
@@ -1403,30 +1397,73 @@ pub async fn attest_capability(
         .map(|m| m.role.is_global())
         .unwrap_or(false);
     if !is_global {
-        return Ok(Json(AttestCapabilityResponse {
-            success: false,
-            error: Some("Only global nodes can attest capabilities".to_string()),
+        return Ok(Json(AdminMutationResult {
+            status: AdminMutationStatus::UnauthorizedRejected,
+            target: payload.node_id.clone(),
+            local_store_mutated: false,
+            propagation: PropagationStatus::NotApplicable,
+            event_id: None,
+            audit_id: None,
+            message: "Only global nodes can attest capabilities".to_string(),
         }));
     }
 
     if let Some(transport) = &state.mesh.mesh_transport {
+        let audit_id = uuid::Uuid::new_v4().to_string();
         match transport
             .attest_capability(&payload.node_id, &payload.capability)
             .await
         {
-            Some(_) => Ok(Json(AttestCapabilityResponse {
-                success: true,
-                error: None,
-            })),
-            None => Ok(Json(AttestCapabilityResponse {
-                success: false,
-                error: Some("Attestation failed (check logs for reason)".to_string()),
+            Some(_) => {
+                let audit_event = AdminAuditEvent {
+                    audit_id: audit_id.clone(),
+                    timestamp: synvoid_utils::safe_unix_timestamp(),
+                    actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+                    action: "mesh.attest_capability".to_string(),
+                    target_kind: "node".to_string(),
+                    target_id: payload.node_id.clone(),
+                    prior_state: None,
+                    requested_state: Some(serde_json::json!({
+                        "node_id": payload.node_id,
+                        "capability": payload.capability,
+                    })),
+                    resulting_state: Some(serde_json::json!({
+                        "attested": true,
+                    })),
+                    mutation_status: AdminMutationStatus::Applied,
+                    propagation_status: PropagationStatus::QueuedBestEffort,
+                    event_id: None,
+                };
+                state.audit.log_audit_event(&audit_event);
+                Ok(Json(AdminMutationResult {
+                    status: AdminMutationStatus::Applied,
+                    target: payload.node_id,
+                    local_store_mutated: true,
+                    propagation: PropagationStatus::QueuedBestEffort,
+                    event_id: None,
+                    audit_id: Some(audit_id),
+                    message: "Capability attested successfully".to_string(),
+                }))
+            }
+            None => Ok(Json(AdminMutationResult {
+                status: AdminMutationStatus::Failed,
+                target: payload.node_id,
+                local_store_mutated: false,
+                propagation: PropagationStatus::NotApplicable,
+                event_id: None,
+                audit_id: None,
+                message: "Attestation failed (check logs for reason)".to_string(),
             })),
         }
     } else {
-        Ok(Json(AttestCapabilityResponse {
-            success: false,
-            error: Some("Mesh transport not initialized".to_string()),
+        Ok(Json(AdminMutationResult {
+            status: AdminMutationStatus::Failed,
+            target: payload.node_id,
+            local_store_mutated: false,
+            propagation: PropagationStatus::NotApplicable,
+            event_id: None,
+            audit_id: None,
+            message: "Mesh transport not initialized".to_string(),
         }))
     }
 }

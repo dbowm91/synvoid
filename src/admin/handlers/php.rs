@@ -3,9 +3,13 @@ use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
+use synvoid_core::admin_mutation::{
+    AdminActor, AdminAuditEvent, AdminMutationAuthority, AdminMutationResult, AdminMutationStatus,
+    PropagationStatus,
+};
 use utoipa::ToSchema;
 
-use super::common::{OptionalAuth, StatusResponse};
+use super::common::OptionalAuth;
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct PhpPoolStatus {
@@ -60,7 +64,7 @@ pub async fn list_php_pools(
     path = "/system/php-pools/reload",
     request_body = PhpPoolReloadRequest,
     responses(
-        (status = 200, description = "PHP-FPM pool reload initiated", body = StatusResponse),
+        (status = 200, description = "PHP-FPM pool reload initiated", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Pool not found"),
         (status = 500, description = "Internal server error")
@@ -72,7 +76,7 @@ pub async fn reload_php_pool(
     State(_state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<PhpPoolReloadRequest>,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let timeout = Duration::from_secs(req.drain_timeout_secs);
 
     if let Err(e) = crate::fastcgi::drain_and_reload_pool(&req.socket, timeout).await {
@@ -80,8 +84,30 @@ pub async fn reload_php_pool(
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
 
-    Ok(Json(StatusResponse::success(format!(
-        "PHP-FPM pool reload initiated for {}",
-        req.socket
-    ))))
+    let audit_id = uuid::Uuid::new_v4().to_string();
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_utils::safe_unix_timestamp(),
+        actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+        action: "php.pool.reload".to_string(),
+        target_kind: "php_pool".to_string(),
+        target_id: req.socket.clone(),
+        prior_state: None,
+        requested_state: None,
+        resulting_state: None,
+        mutation_status: AdminMutationStatus::Applied,
+        propagation_status: PropagationStatus::NotApplicable,
+        event_id: None,
+    };
+    _state.audit.log_audit_event(&audit_event);
+
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target: req.socket.clone(),
+        local_store_mutated: true,
+        propagation: PropagationStatus::NotApplicable,
+        event_id: None,
+        audit_id: Some(audit_id),
+        message: format!("PHP-FPM pool reload initiated for {}", req.socket),
+    }))
 }

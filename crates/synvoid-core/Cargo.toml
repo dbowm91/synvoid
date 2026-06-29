@@ -8,5 +8,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tracing = "0.1"
+utoipa = { version = "5", optional = true }
+
+[features]
+utoipa = ["dep:utoipa"]
 
 [dev-dependencies]

@@ -128,7 +128,15 @@ fn admin_mutation_response_guard() {
                         || trimmed.contains("restart_")
                         || trimmed.contains("scale_")
                         || trimmed.contains("stop_")
-                        || trimmed.contains("drain_"))
+                        || trimmed.contains("drain_")
+                        || trimmed.contains("enable")
+                        || trimmed.contains("disable")
+                        || trimmed.contains("test_")
+                        || trimmed.contains("set_")
+                        || trimmed.contains("reset_")
+                        || trimmed.contains("prune_")
+                        || trimmed.contains("discard_")
+                        || trimmed.contains("control_"))
                 {
                     in_mutation_handler = true;
                     brace_depth = 0;
@@ -226,5 +234,47 @@ fn allowlisted_handler_files_exist() {
             "ALLOWLIST entry '{}' does not exist in any handler directory — remove stale entry",
             name
         );
+    }
+}
+
+#[test]
+fn read_only_diagnostics_do_not_require_mutation_result() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+    for dir in HANDLER_DIRS {
+        let dir_path = repo.join(dir);
+        if !dir_path.exists() {
+            continue;
+        }
+
+        let entries = fs::read_dir(&dir_path).expect("read handler directory");
+        for entry in entries {
+            let entry = entry.expect("read entry");
+            let path = entry.path();
+            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+
+            if !ALLOWLIST.contains(&file_name) {
+                continue;
+            }
+
+            if !path.extension().map_or(false, |e| e == "rs") {
+                continue;
+            }
+
+            let raw = fs::read_to_string(&path).expect("read file");
+            let content = strip_comments_and_strings(&raw);
+
+            if content.contains("AdminMutationResult") {
+                let rel_path = path
+                    .strip_prefix("src/")
+                    .or_else(|_| path.strip_prefix("crates/"))
+                    .unwrap_or(&path);
+                panic!(
+                    "ALLOWLISTed read-only file '{}' contains AdminMutationResult — \
+                     read-only diagnostics should use simple response types",
+                    rel_path.display()
+                );
+            }
+        }
     }
 }

@@ -1,9 +1,12 @@
 use super::super::state::AdminState;
-use super::common::{OptionalAuth, StatusResponse};
+use super::common::OptionalAuth;
 use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use synvoid_core::admin_mutation::{AdminMutationResult, AdminMutationStatus, PropagationStatus};
+use synvoid_core::admin_mutation::{
+    AdminActor, AdminAuditEvent, AdminMutationAuthority, AdminMutationResult, AdminMutationStatus,
+    PropagationStatus,
+};
 use utoipa::ToSchema;
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -170,7 +173,7 @@ pub async fn apply_pending(
     post,
     path = "/rule-feed/discard",
     responses(
-        (status = 200, description = "Discard pending rules", body = StatusResponse),
+        (status = 200, description = "Discard pending rules", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Rule feed manager not found"),
         (status = 500, description = "Internal server error")
@@ -180,7 +183,7 @@ pub async fn apply_pending(
 pub async fn discard_pending(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let rule_feed_manager = state
         .waf_tracking
         .rule_feed_manager
@@ -189,8 +192,30 @@ pub async fn discard_pending(
 
     rule_feed_manager.discard_pending();
 
-    Ok(Json(StatusResponse {
-        status: "success".to_string(),
+    let audit_id = uuid::Uuid::new_v4().to_string();
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_utils::safe_unix_timestamp(),
+        actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+        action: "rule_feed.discard".to_string(),
+        target_kind: "rule_feed".to_string(),
+        target_id: "rule_feed".to_string(),
+        prior_state: None,
+        requested_state: None,
+        resulting_state: None,
+        mutation_status: AdminMutationStatus::Applied,
+        propagation_status: PropagationStatus::NotApplicable,
+        event_id: None,
+    };
+    state.audit.log_audit_event(&audit_event);
+
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target: "rule_feed".to_string(),
+        local_store_mutated: true,
+        propagation: PropagationStatus::NotApplicable,
+        event_id: None,
+        audit_id: Some(audit_id),
         message: "Pending update discarded".to_string(),
     }))
 }

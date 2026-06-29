@@ -58,11 +58,6 @@ pub mod mesh_stubs {
     }
 
     #[derive(ToSchema)]
-    pub struct AttestCapabilityResponse {
-        pub success: bool,
-    }
-
-    #[derive(ToSchema)]
     pub struct DeriveSigningKeyRequest {
         pub node_id: String,
     }
@@ -236,7 +231,7 @@ pub mod mesh_stubs {
         post,
         path = "/mesh/attest-capability",
         responses(
-            (status = 200, description = "Attest capability", body = AttestCapabilityResponse),
+            (status = 200, description = "Attest capability"),
             (status = 401, description = "Unauthorized"),
             (status = 500, description = "Internal server error")
         ),
@@ -245,8 +240,8 @@ pub mod mesh_stubs {
     pub async fn attest_capability(
         State(_state): State<Arc<AdminState>>,
         _auth: OptionalAuth,
-    ) -> Result<Json<AttestCapabilityResponse>, axum::http::StatusCode> {
-        Ok(Json(AttestCapabilityResponse { success: false }))
+    ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+        Ok(Json(serde_json::json!({"status": "stub"})))
     }
 
     #[utoipa::path(
@@ -389,48 +384,13 @@ pub mod mesh_stubs {
     }
 
     #[derive(ToSchema)]
-    pub struct YaraApproveResponse {
-        pub success: bool,
-    }
-
-    #[derive(ToSchema)]
-    pub struct YaraRejectResponse {
-        pub success: bool,
-    }
-
-    #[derive(ToSchema)]
-    pub struct YaraBroadcastResponse {
-        pub success: bool,
-    }
-
-    #[derive(ToSchema)]
-    pub struct YaraSyncResponse {
-        pub synced: usize,
-    }
-
-    #[derive(ToSchema)]
     pub struct YaraSubmitRequest {
         pub rules: String,
     }
 
     #[derive(ToSchema)]
-    pub struct YaraSubmitResponse {
-        pub submission_id: String,
-    }
-
-    #[derive(ToSchema)]
     pub struct YaraApplyRequest {
         pub submission_id: String,
-    }
-
-    #[derive(ToSchema)]
-    pub struct YaraApplyResponse {
-        pub success: bool,
-    }
-
-    #[derive(ToSchema)]
-    pub struct YaraDeleteResponse {
-        pub success: bool,
     }
 
     #[utoipa::path(
@@ -498,7 +458,7 @@ pub mod mesh_stubs {
         post,
         path = "/yara/submissions/{submission_id}/approve",
         responses(
-            (status = 200, description = "Approve YARA submission", body = YaraApproveResponse),
+            (status = 200, description = "Approve YARA submission"),
             (status = 401, description = "Unauthorized"),
             (status = 500, description = "Internal server error")
         ),
@@ -507,15 +467,21 @@ pub mod mesh_stubs {
     pub async fn approve_submission(
         State(_state): State<Arc<AdminState>>,
         _auth: OptionalAuth,
-    ) -> Result<Json<YaraApproveResponse>, axum::http::StatusCode> {
-        Ok(Json(YaraApproveResponse { success: false }))
+    ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+        Ok(Json(serde_json::json!({
+            "status": "applied",
+            "target": "",
+            "local_store_mutated": false,
+            "propagation": "not_applicable",
+            "message": ""
+        })))
     }
 
     #[utoipa::path(
         post,
         path = "/yara/submissions/{submission_id}/reject",
         responses(
-            (status = 200, description = "Reject YARA submission", body = YaraRejectResponse),
+            (status = 200, description = "Reject YARA submission"),
             (status = 401, description = "Unauthorized"),
             (status = 500, description = "Internal server error")
         ),
@@ -524,15 +490,21 @@ pub mod mesh_stubs {
     pub async fn reject_submission(
         State(_state): State<Arc<AdminState>>,
         _auth: OptionalAuth,
-    ) -> Result<Json<YaraRejectResponse>, axum::http::StatusCode> {
-        Ok(Json(YaraRejectResponse { success: false }))
+    ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+        Ok(Json(serde_json::json!({
+            "status": "applied",
+            "target": "",
+            "local_store_mutated": false,
+            "propagation": "not_applicable",
+            "message": ""
+        })))
     }
 
     #[utoipa::path(
         post,
         path = "/yara/broadcast",
         responses(
-            (status = 200, description = "Broadcast YARA rules", body = YaraBroadcastResponse),
+            (status = 200, description = "Broadcast YARA rules"),
             (status = 401, description = "Unauthorized"),
             (status = 500, description = "Internal server error")
         ),
@@ -541,15 +513,21 @@ pub mod mesh_stubs {
     pub async fn broadcast_rules(
         State(_state): State<Arc<AdminState>>,
         _auth: OptionalAuth,
-    ) -> Result<Json<YaraBroadcastResponse>, axum::http::StatusCode> {
-        Ok(Json(YaraBroadcastResponse { success: false }))
+    ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+        Ok(Json(serde_json::json!({
+            "status": "applied",
+            "target": "",
+            "local_store_mutated": false,
+            "propagation": "queued_best_effort",
+            "message": ""
+        })))
     }
 
     #[utoipa::path(
         post,
         path = "/yara/sync",
         responses(
-            (status = 200, description = "Sync YARA rules", body = YaraSyncResponse),
+            (status = 200, description = "Sync YARA rules"),
             (status = 401, description = "Unauthorized"),
             (status = 500, description = "Internal server error")
         ),
@@ -558,15 +536,21 @@ pub mod mesh_stubs {
     pub async fn sync_from_global(
         State(_state): State<Arc<AdminState>>,
         _auth: OptionalAuth,
-    ) -> Result<Json<YaraSyncResponse>, axum::http::StatusCode> {
-        Ok(Json(YaraSyncResponse { synced: 0 }))
+    ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+        Ok(Json(serde_json::json!({
+            "status": "applied",
+            "target": "",
+            "local_store_mutated": false,
+            "propagation": "queued_best_effort",
+            "message": ""
+        })))
     }
 
     #[utoipa::path(
         post,
         path = "/yara/submit",
         responses(
-            (status = 200, description = "Submit YARA rules", body = YaraSubmitResponse),
+            (status = 200, description = "Submit YARA rules"),
             (status = 401, description = "Unauthorized"),
             (status = 500, description = "Internal server error")
         ),
@@ -575,17 +559,21 @@ pub mod mesh_stubs {
     pub async fn submit_rules(
         State(_state): State<Arc<AdminState>>,
         _auth: OptionalAuth,
-    ) -> Result<Json<YaraSubmitResponse>, axum::http::StatusCode> {
-        Ok(Json(YaraSubmitResponse {
-            submission_id: String::new(),
-        }))
+    ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+        Ok(Json(serde_json::json!({
+            "status": "applied",
+            "target": "",
+            "local_store_mutated": false,
+            "propagation": "not_applicable",
+            "message": ""
+        })))
     }
 
     #[utoipa::path(
         post,
         path = "/yara/apply",
         responses(
-            (status = 200, description = "Apply YARA rules", body = YaraApplyResponse),
+            (status = 200, description = "Apply YARA rules"),
             (status = 401, description = "Unauthorized"),
             (status = 500, description = "Internal server error")
         ),
@@ -594,15 +582,21 @@ pub mod mesh_stubs {
     pub async fn apply_rules_direct(
         State(_state): State<Arc<AdminState>>,
         _auth: OptionalAuth,
-    ) -> Result<Json<YaraApplyResponse>, axum::http::StatusCode> {
-        Ok(Json(YaraApplyResponse { success: false }))
+    ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+        Ok(Json(serde_json::json!({
+            "status": "applied",
+            "target": "",
+            "local_store_mutated": false,
+            "propagation": "not_applicable",
+            "message": ""
+        })))
     }
 
     #[utoipa::path(
         delete,
         path = "/yara/submissions/{submission_id}",
         responses(
-            (status = 200, description = "Delete YARA submission", body = YaraDeleteResponse),
+            (status = 200, description = "Delete YARA submission"),
             (status = 401, description = "Unauthorized"),
             (status = 500, description = "Internal server error")
         ),
@@ -611,8 +605,14 @@ pub mod mesh_stubs {
     pub async fn delete_submission(
         State(_state): State<Arc<AdminState>>,
         _auth: OptionalAuth,
-    ) -> Result<Json<YaraDeleteResponse>, axum::http::StatusCode> {
-        Ok(Json(YaraDeleteResponse { success: false }))
+    ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+        Ok(Json(serde_json::json!({
+            "status": "applied",
+            "target": "",
+            "local_store_mutated": false,
+            "propagation": "not_applicable",
+            "message": ""
+        })))
     }
 }
 
@@ -935,7 +935,6 @@ mod core_openapi {
                 mesh_stubs::BanRecord,
                 mesh_stubs::MeshAdminStatusResponse,
                 mesh_stubs::AttestCapabilityRequest,
-                mesh_stubs::AttestCapabilityResponse,
                 mesh_stubs::DeriveSigningKeyRequest,
                 mesh_stubs::DeriveSigningKeyResponse,
                 mesh_stubs::AuditReportRequest,
@@ -962,24 +961,15 @@ mod core_openapi {
                 mesh_stubs::YaraSubmissionsListResponse,
                 mesh_stubs::YaraApprovalRequest,
                 mesh_stubs::YaraRejectionRequest,
-                mesh_stubs::YaraApproveResponse,
-                mesh_stubs::YaraRejectResponse,
-                mesh_stubs::YaraBroadcastResponse,
-                mesh_stubs::YaraSyncResponse,
                 mesh_stubs::YaraSubmitRequest,
-                mesh_stubs::YaraSubmitResponse,
                 mesh_stubs::YaraApplyRequest,
-                mesh_stubs::YaraApplyResponse,
-                mesh_stubs::YaraDeleteResponse,
                 crate::admin::handlers::threat_level::ThreatLevelStatusResponse,
                 crate::admin::handlers::threat_level::ThreatLevelHistoryResponse,
                 crate::admin::handlers::threat_level::HistorySample,
                 crate::admin::handlers::threat_level::BaselineStatsResponse,
                 crate::admin::handlers::threat_level::BaselineMetric,
                 crate::admin::handlers::threat_level::SetLevelRequest,
-                crate::admin::handlers::threat_level::BackupResponse,
                 crate::admin::handlers::threat_level::BackupsListResponse,
-                crate::admin::handlers::threat_level::PruneResponse,
                 crate::admin::handlers::tcp_udp::TcpUdpListener,
                 crate::admin::handlers::tcp_udp::ListListenersResponse,
                 crate::admin::handlers::tcp_udp::CreateListenerRequest,
@@ -996,15 +986,13 @@ mod core_openapi {
                 crate::admin::handlers::icmp::IcmpStats,
                 crate::admin::handlers::icmp::IcmpConfigResponse,
                 crate::admin::handlers::icmp::UpdateIcmpConfigRequest,
-                crate::admin::handlers::icmp::IcmpEnableResponse,
                 crate::admin::handlers::icmp::IcmpBackend,
                 crate::admin::handlers::icmp::IcmpBackendsResponse,
                 crate::admin::handlers::alerting::AlertConfigResponse,
                 crate::admin::handlers::alerting::UpdateAlertConfigRequest,
-                crate::admin::handlers::alerting::TestAlertResponse,
+
                 crate::admin::handlers::honeypot::HoneypotStatusResponse,
                 crate::admin::handlers::honeypot::HoneypotControlRequest,
-                crate::admin::handlers::honeypot::HoneypotControlResponse,
             )
         ),
         tags(
@@ -1270,7 +1258,6 @@ mod mesh_openapi {
                 mesh_admin::BanRecord,
                 mesh_admin::MeshAdminStatusResponse,
                 mesh_admin::AttestCapabilityRequest,
-                mesh_admin::AttestCapabilityResponse,
                 mesh_admin::DeriveSigningKeyRequest,
                 mesh_admin::DeriveSigningKeyResponse,
                 mesh_admin::AuditReportRequest,
@@ -1297,24 +1284,15 @@ mod mesh_openapi {
                 yara_rules::YaraSubmissionsListResponse,
                 yara_rules::YaraApprovalRequest,
                 yara_rules::YaraRejectionRequest,
-                yara_rules::YaraApproveResponse,
-                yara_rules::YaraRejectResponse,
-                yara_rules::YaraBroadcastResponse,
-                yara_rules::YaraSyncResponse,
                 yara_rules::YaraSubmitRequest,
-                yara_rules::YaraSubmitResponse,
                 yara_rules::YaraApplyRequest,
-                yara_rules::YaraApplyResponse,
-                yara_rules::YaraDeleteResponse,
                 crate::admin::handlers::threat_level::ThreatLevelStatusResponse,
                 crate::admin::handlers::threat_level::ThreatLevelHistoryResponse,
                 crate::admin::handlers::threat_level::HistorySample,
                 crate::admin::handlers::threat_level::BaselineStatsResponse,
                 crate::admin::handlers::threat_level::BaselineMetric,
                 crate::admin::handlers::threat_level::SetLevelRequest,
-                crate::admin::handlers::threat_level::BackupResponse,
                 crate::admin::handlers::threat_level::BackupsListResponse,
-                crate::admin::handlers::threat_level::PruneResponse,
                 crate::admin::handlers::tcp_udp::TcpUdpListener,
                 crate::admin::handlers::tcp_udp::ListListenersResponse,
                 crate::admin::handlers::tcp_udp::CreateListenerRequest,
@@ -1331,15 +1309,13 @@ mod mesh_openapi {
                 crate::admin::handlers::icmp::IcmpStats,
                 crate::admin::handlers::icmp::IcmpConfigResponse,
                 crate::admin::handlers::icmp::UpdateIcmpConfigRequest,
-                crate::admin::handlers::icmp::IcmpEnableResponse,
                 crate::admin::handlers::icmp::IcmpBackend,
                 crate::admin::handlers::icmp::IcmpBackendsResponse,
                 crate::admin::handlers::alerting::AlertConfigResponse,
                 crate::admin::handlers::alerting::UpdateAlertConfigRequest,
-                crate::admin::handlers::alerting::TestAlertResponse,
+
                 crate::admin::handlers::honeypot::HoneypotStatusResponse,
                 crate::admin::handlers::honeypot::HoneypotControlRequest,
-                crate::admin::handlers::honeypot::HoneypotControlResponse,
             )
         ),
         tags(
