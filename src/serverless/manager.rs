@@ -412,6 +412,7 @@ impl ServerlessManager {
                                     memory_budget_mb: None,
                                     wasi_enabled: false,
                                     allowed_dht_prefixes: Vec::new(),
+                                    ..Default::default()
                                 };
                                 return runtime.load_plugin_from_memory(
                                     &func_def.name,
@@ -437,6 +438,7 @@ impl ServerlessManager {
                             memory_budget_mb: None,
                             wasi_enabled: false,
                             allowed_dht_prefixes: Vec::new(),
+                            ..Default::default()
                         };
                         runtime.load_plugin_with_limits(&wasm_path, limits)
                     }
@@ -614,6 +616,7 @@ impl ServerlessManager {
                     memory_budget_mb: None,
                     wasi_enabled: false,
                     allowed_dht_prefixes: Vec::new(),
+                    ..Default::default()
                 };
                 return self
                     .runtime
@@ -642,6 +645,7 @@ impl ServerlessManager {
             memory_budget_mb: None,
             wasi_enabled: false,
             allowed_dht_prefixes: Vec::new(),
+            ..Default::default()
         };
 
         self.runtime
@@ -678,6 +682,7 @@ impl ServerlessManager {
                         memory_budget_mb: None,
                         wasi_enabled: false,
                         allowed_dht_prefixes: Vec::new(),
+                        ..Default::default()
                     };
                     return runtime
                         .load_plugin_from_memory(&func_def.name, &data, limits)
@@ -704,6 +709,7 @@ impl ServerlessManager {
                 memory_budget_mb: None,
                 wasi_enabled: false,
                 allowed_dht_prefixes: Vec::new(),
+                ..Default::default()
             };
 
             runtime

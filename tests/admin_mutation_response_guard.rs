@@ -6,7 +6,7 @@
 //! Read-only diagnostics endpoints are allowed to return simple responses.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Strip string literals, line comments (`//`), and block comments (`/* */`).
 /// Prevents false positives from tokens inside comments or strings.
@@ -204,6 +204,27 @@ fn admin_mutation_authority_variants_documented() {
         panic!(
             "architecture/admin_control_plane_authority.md is missing documentation for AdminMutationAuthority variants: {:?}",
             missing
+        );
+    }
+}
+
+#[test]
+fn allowlisted_handler_files_exist() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let handler_dirs = &["src/admin/handlers", "crates/synvoid-admin/src/handlers"];
+    for name in ALLOWLIST {
+        let mut found = false;
+        for dir in handler_dirs {
+            let path = repo.join(dir).join(name);
+            if path.exists() {
+                found = true;
+                break;
+            }
+        }
+        assert!(
+            found,
+            "ALLOWLIST entry '{}' does not exist in any handler directory — remove stale entry",
+            name
         );
     }
 }

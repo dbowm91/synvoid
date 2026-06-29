@@ -862,3 +862,25 @@ mod tests {
         );
     }
 }
+
+#[test]
+fn runtime_registry_files_exist() {
+    for file_path in RUNTIME_REGISTRY_FILES {
+        let path = Path::new(file_path);
+        assert!(
+            path.exists(),
+            "RUNTIME_REGISTRY_FILES entry '{}' does not exist — remove stale entry or update the constant",
+            file_path
+        );
+    }
+}
+
+#[test]
+fn observability_doc_exists() {
+    let path = Path::new(OBSERVABILITY_DOC);
+    assert!(
+        path.exists(),
+        "OBSERVABILITY_DOC '{}' does not exist — the architecture doc must be present for metric coverage checks",
+        OBSERVABILITY_DOC
+    );
+}

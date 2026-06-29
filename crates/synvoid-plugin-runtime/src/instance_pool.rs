@@ -6,6 +6,7 @@ use parking_lot::Mutex;
 use wasmtime::{Engine, Instance, Linker, Module, Store};
 
 use crate::pool::{PooledInstance, WasmPool};
+use crate::sandbox::types::PluginCapabilities;
 use crate::wasm_runtime::{GuestExports, RequestContext};
 
 pub struct WasmInstancePool {
@@ -13,6 +14,7 @@ pub struct WasmInstancePool {
     engine: Arc<Engine>,
     max_size: usize,
     default_allowed_dht_prefixes: Vec<String>,
+    default_capabilities: Arc<PluginCapabilities>,
 }
 
 pub(crate) struct WasmPooledInstance {
@@ -21,6 +23,7 @@ pub(crate) struct WasmPooledInstance {
     pub(crate) filter_name: String,
     pub(crate) max_cpu_fuel: u64,
     pub(crate) default_allowed_dht_prefixes: Vec<String>,
+    pub(crate) capabilities: Arc<PluginCapabilities>,
 }
 
 impl WasmInstancePool {
@@ -28,12 +31,14 @@ impl WasmInstancePool {
         engine: Arc<Engine>,
         max_size: usize,
         default_allowed_dht_prefixes: Vec<String>,
+        default_capabilities: Arc<PluginCapabilities>,
     ) -> Self {
         Self {
             pool: Arc::new(Mutex::new(VecDeque::new())),
             engine,
             max_size,
             default_allowed_dht_prefixes,
+            default_capabilities,
         }
     }
 
@@ -96,6 +101,7 @@ impl WasmInstancePool {
                     max_memory: 64 * 1024 * 1024,
                     max_table_elements: 1024 * 1024,
                     body_receiver: None,
+                    capabilities: self.default_capabilities.clone(),
                 },
             );
 
@@ -190,6 +196,7 @@ impl WasmInstancePool {
                         filter_name: filter_name.clone(),
                         max_cpu_fuel: 0,
                         default_allowed_dht_prefixes: self.default_allowed_dht_prefixes.clone(),
+                        capabilities: self.default_capabilities.clone(),
                     });
                 }
                 Err(e) => {
@@ -221,12 +228,14 @@ impl WasmPooledInstance {
         env: std::collections::HashMap<String, String>,
         timeout_seconds: u64,
         allowed_dht_prefixes: Vec<String>,
+        capabilities: Arc<PluginCapabilities>,
     ) {
         self.store.data_mut().start = Instant::now();
         self.store.data_mut().timeout = Duration::from_secs(timeout_seconds);
         self.store.data_mut().env = env;
         self.store.data_mut().body_receiver = None;
         self.store.data_mut().allowed_dht_prefixes = allowed_dht_prefixes;
+        self.store.data_mut().capabilities = capabilities;
         if self.max_cpu_fuel > 0 {
             self.store.set_fuel(self.max_cpu_fuel).ok();
         }
@@ -241,6 +250,7 @@ impl WasmPool for WasmInstancePool {
             filter_name: inst.filter_name,
             max_cpu_fuel: inst.max_cpu_fuel,
             allowed_dht_prefixes: inst.default_allowed_dht_prefixes.clone(),
+            capabilities: inst.capabilities,
         })
     }
 
@@ -251,6 +261,7 @@ impl WasmPool for WasmInstancePool {
             filter_name: instance.filter_name,
             max_cpu_fuel: instance.max_cpu_fuel,
             default_allowed_dht_prefixes: instance.allowed_dht_prefixes,
+            capabilities: instance.capabilities,
         })
     }
 
@@ -265,21 +276,32 @@ mod tests {
 
     #[test]
     fn test_pool_creation() {
-        let pool = WasmInstancePool::new(Arc::new(Engine::default()), 4, vec![]);
+        let pool = WasmInstancePool::new(
+            Arc::new(Engine::default()),
+            4,
+            vec![],
+            Arc::new(PluginCapabilities::default()),
+        );
         assert_eq!(pool.max_size, 4);
     }
 
     #[tokio::test]
     async fn test_pool_warmup_empty() {
         let engine = Arc::new(Engine::default());
-        let pool = WasmInstancePool::new(engine, 4, vec![]);
+        let pool =
+            WasmInstancePool::new(engine, 4, vec![], Arc::new(PluginCapabilities::default()));
 
         pool.warmup(&[]).await;
     }
 
     #[test]
     fn test_pool_get_empty() {
-        let pool = WasmInstancePool::new(Arc::new(Engine::default()), 4, vec![]);
+        let pool = WasmInstancePool::new(
+            Arc::new(Engine::default()),
+            4,
+            vec![],
+            Arc::new(PluginCapabilities::default()),
+        );
         let engine = pool.engine.clone();
 
         let module_result = Module::from_file(&engine, std::path::Path::new("/nonexistent.wasm"));

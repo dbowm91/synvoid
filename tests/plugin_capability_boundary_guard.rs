@@ -126,12 +126,17 @@ fn plugin_runtime_host_functions_have_capability_gates() {
         "mesh_emit_event",
     ];
 
+    for file in &linker_files {
+        assert!(
+            file.exists(),
+            "linker_files entry '{}' does not exist — remove stale entry or update the list",
+            file.display()
+        );
+    }
+
     let mut violations = Vec::new();
 
     for file in &linker_files {
-        if !file.exists() {
-            continue;
-        }
         let text = match std::fs::read_to_string(file) {
             Ok(t) => t,
             Err(_) => continue,

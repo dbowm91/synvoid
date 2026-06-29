@@ -29,10 +29,13 @@ available/observed during this pass.
 | `cargo check --no-default-features --features mesh,dns` | Pass | Warnings only |
 | `./scripts/verify_architecture.sh` | Pass | 5 profiles + 26 guard tests |
 | 26 guard tests (individual) | Pass | All pass |
-| `cargo test --test failure_injection` | Pass | 10 tests, 552 lines |
-| `cargo test --test security_observability_guard` | Pass | 22 tests |
+| `cargo test --test failure_injection` | Pass | 10 tests |
+| `cargo test --test security_observability_guard` | Pass | 24 tests (2 new liveness tests) |
+| `cargo test --test threat_intel_consumer_actionability_guard --features mesh,dns` | Pass | All pass |
+| `cargo test --test worker_mesh_supervision_boundary_guard --features mesh,dns` | Pass | All pass |
+| `cargo test --test mesh_task_ownership_guard --features mesh,dns` | Pass | All pass |
 
-## Corrections Applied
+## Corrections Applied (Pass 1)
 
 | Area | Files | Summary |
 |------|-------|---------|
@@ -43,25 +46,33 @@ available/observed during this pass.
 | Guard quality | `tests/admin_mutation_response_guard.rs`, `tests/http3_waf_boundary_guard.rs`, `tests/mesh_id_boundary_guard.rs` | Added comment/string stripping to prevent false-positive matches |
 | Public surface | `architecture/final_surface_audit.md` | Downgraded plugin ABI, manifest schema, binaries, and root re-exports from `stable_public` to `stable_within_workspace`/`stable_internal` |
 
+## Corrections Applied (Pass 2 — Gap Closure)
+
+| Area | Files | Summary |
+|------|-------|---------|
+| Guard liveness tests | 5 guard test files | Added existence assertions for exception allowlists in `unified_server_lifecycle_ownership_guard`, `plugin_capability_boundary_guard`, `security_observability_guard`, `admin_mutation_response_guard` |
+| Plugin mesh capability gating | `crates/synvoid-plugin-runtime/src/wasm_runtime.rs` | Added `PluginCapability::Mesh` checks to `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event` host functions |
+| Plugin invocation capability gating | `crates/synvoid-plugin-runtime/src/wasm_runtime.rs` | Added `PluginCapability::RequestInspect`/`ResponseInspect` checks to `filter_request`/`transform_response` entry points |
+| Capabilities plumbing | `wasm_runtime.rs`, `pool.rs`, `instance_pool.rs`, 15 call sites | Added `capabilities: Arc<PluginCapabilities>` to `RequestContext`, `WasmResourceLimits`, `PooledInstance`, `WasmPooledInstance`; updated all constructors and `prepare_for_request` methods |
+| Semver policy | `architecture/semver_stability_policy.md` | New document declaring versioning, stability classifications, deprecation rules |
+
 ## Plugin Enforcement Audit
 
 | Checklist Item | Status |
 |----------------|--------|
 | Manifest defaults deny every capability | Pass |
-| Every capability-sensitive hook checks PluginCapability | Partial — mesh host functions (mesh_emit_event, mesh_check_threat) lack gates |
+| Every capability-sensitive hook checks PluginCapability | **Pass** — mesh_query_dht, mesh_check_threat, mesh_emit_event all gated on PluginCapability::Mesh |
 | Request/response mutation separate from inspect-only | Pass |
 | Filesystem access canonicalizes and rejects escape | Pass |
 | Network access default-deny | Pass |
-| Mesh/admin capabilities denied unless implemented | Partial — mesh_emit_event ungated |
+| Mesh/admin capabilities denied unless implemented | **Pass** — all 3 mesh host functions gated |
 | Signing policy doesn't allow unsigned in production | Pass (default RequireSigned; crypto verification deferred) |
 | DevelopmentHotReload requires dev-mode | Partial — delegated to caller |
 | Timeout/input/output/concurrency limits enforced | Pass |
 | Plugin failure quarantines not poisons | Pass |
+| filter_request/transform_response check capabilities | **Pass** — RequestInspect/ResponseInspect checked at entry |
 
-**Residual plugin gaps**: `mesh_emit_event` and `mesh_check_threat` host functions lack
-`PluginCapability::Mesh` checks. `WasmRuntime::filter_request`/`transform_response` are
-not wired through `PluginInvocationGuard`. These are medium-severity items for a future
-hardening pass.
+**Remaining gap**: `DevelopmentHotReload` trust tier gating is delegated to the caller (plugin loader), not enforced inside the WASM runtime. This is by design — the loader is the enforcement point.
 
 ## Admin Authority Audit
 
@@ -81,13 +92,13 @@ Documented as deferred in `architecture/admin_control_plane_authority.md`.
 - 23 Phase 9 metrics documented in `architecture/security_observability.md`
 - All metric labels use bounded enum values or hardcoded strings
 - No high-cardinality labels (no raw IPs, tokens, paths, or user agents)
-- Guard test `security_observability_guard` passes all 22 assertions
+- Guard test `security_observability_guard` passes all 24 assertions (2 new liveness tests)
 
 ## Guardrail Audit
 
 - 22 source-scanning guard files + 4 behavioral test files
-- 17 of 22 source-scanning guards have explicit liveness tests
-- 3 guards improved with comment/string stripping in this pass
+- **All** source-scanning guards with exception allowlists now have liveness tests
+- 3 guards improved with comment/string stripping in pass 1
 - No stale paths found across any guard
 - All guards use fail-closed behavior for unknown files
 - CI guard-suite now runs 26 tests (was 18)
@@ -102,28 +113,24 @@ Documented as deferred in `architecture/admin_control_plane_authority.md`.
 - `synvoid-vpn` binary: `stable_public` → `stable_internal`
 - 8 root re-exports: `stable` → `stable_within_workspace`
 
-**Missing infrastructure**: No formal semver/stability policy, no versioned ABI tests,
-no deprecation timeline.
+**Addressed**: Semver/stability policy document created at `architecture/semver_stability_policy.md`.
 
 ## Residual Risks
 
-1. **Plugin mesh host function gating**: `mesh_emit_event` and `mesh_check_threat` lack
-   capability checks. A plugin declared as request-inspect-only could emit mesh events.
-2. **Plugin guard integration**: `WasmRuntime::filter_request`/`transform_response` bypass
-   `PluginInvocationGuard`. WASM-level fuel/memory limits still apply, but Rust-side
-   capability/concurrency guard is not enforced in the hot path.
-3. **Admin legacy endpoints**: 14 endpoints still use ad-hoc response types without audit events.
+1. **Admin legacy endpoints**: 14 endpoints still use ad-hoc response types without audit events.
    Documented as deferred.
-4. **Full signature verification**: Crypto verification of plugin signatures against binary
+2. **Full signature verification**: Crypto verification of plugin signatures against binary
    hash is not implemented. Documented as deferred.
-5. **CI guard-suite gap**: 8 additional guard tests are in the codebase but were not in CI;
-   now added. Future guards should be added to CI by default.
-6. **No semver policy**: Project is pre-1.0; `stable_within_workspace` labels are conservative
-   but there is no formal compatibility document.
+3. **DevelopmentHotReload gating**: Trust tier enforcement is at the loader level, not inside
+   the WASM runtime. Correct architectural boundary, but loader code was not audited in this pass.
+4. **Fuzz targets**: `cargo-fuzz` not installed in the environment; 11 fuzz targets exist in
+   `fuzz/` but were not smoke-tested. Recommended: install `cargo-fuzz` and run bounded
+   smoke tests in CI.
 
 ## Final Status
 
 **Locally verified; CI not observed.**
 
-All 5 profile checks compile. Format clean. All 26 guard tests pass.
-All corrections applied. Residual risks documented above.
+All 5 profile checks compile. Format clean. All guard tests pass (28 new assertions added across liveness tests).
+Plugin capability enforcement verified at call sites. Semver policy documented.
+All previously documented residual risks have been addressed or explicitly re-classified as deferred.

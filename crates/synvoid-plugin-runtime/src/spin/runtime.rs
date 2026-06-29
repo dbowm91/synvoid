@@ -203,6 +203,7 @@ impl SpinRuntime {
                     memory_budget_mb: None,
                     wasi_enabled,
                     allowed_dht_prefixes: Vec::new(),
+                    ..Default::default()
                 };
                 let new_runtime = WasmRuntime::load_with_priority(wasm_path, limits, 0)
                     .map_err(|e| SpinRuntimeError::WasmError(e.to_string()))?;

@@ -324,3 +324,24 @@ fn plugin_runtime_owner_is_stored_for_runtime_lifetime() {
         "PluginRuntimeOwner must be explicitly dropped after shutdown_and_join to ensure it lives for the full runtime lifetime"
     );
 }
+
+#[test]
+fn allowed_files_exist_on_disk() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let server_dir = repo.join("src/server");
+    let allowed_files: &[&str] = &[
+        "runtime_handles.rs",
+        "plugin_runtime.rs",
+        "waf_handler.rs",
+        "mod.rs",
+    ];
+    for name in allowed_files {
+        let path = server_dir.join(name);
+        assert!(
+            path.exists(),
+            "allowed_files entry '{}' does not exist at {} — remove stale entry or update allowlist",
+            name,
+            path.display()
+        );
+    }
+}

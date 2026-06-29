@@ -14,6 +14,7 @@ use wasmtime::{
 };
 
 use crate::instance_pool::WasmInstancePool;
+use crate::sandbox::types::{PluginCapabilities, PluginCapability};
 use crate::streaming_body::StreamingBody;
 use crate::wasm_metrics::{
     record_wasm_decision_block, record_wasm_decision_challenge, record_wasm_decision_pass,
@@ -56,6 +57,7 @@ pub struct WasmResourceLimits {
     pub memory_budget_mb: Option<usize>,
     pub wasi_enabled: bool,
     pub allowed_dht_prefixes: Vec<String>,
+    pub capabilities: Arc<PluginCapabilities>,
 }
 
 impl Default for WasmResourceLimits {
@@ -69,6 +71,7 @@ impl Default for WasmResourceLimits {
             memory_budget_mb: None,
             wasi_enabled: false,
             allowed_dht_prefixes: Vec::new(),
+            capabilities: Arc::new(PluginCapabilities::default()),
         }
     }
 }
@@ -119,6 +122,7 @@ impl WasmPluginManager {
                 Arc::new(Engine::default()),
                 100,
                 Vec::new(),
+                Arc::new(PluginCapabilities::default()),
             )),
             plugin_paths: RwLock::new(HashMap::new()),
         }
@@ -207,6 +211,7 @@ impl WasmPluginManager {
                 max_memory,
                 max_table_elements,
                 body_receiver: None,
+                capabilities: limits.capabilities.clone(),
             },
         );
         store.limiter(|state| state);
@@ -541,6 +546,7 @@ pub(crate) struct RequestContext {
     pub(crate) max_memory: usize,
     pub(crate) max_table_elements: usize,
     pub(crate) body_receiver: Option<tokio::sync::mpsc::Receiver<Result<Bytes, std::io::Error>>>,
+    pub(crate) capabilities: Arc<PluginCapabilities>,
 }
 
 impl ResourceLimiter for RequestContext {
@@ -625,6 +631,7 @@ impl WasmRuntime {
             Arc::new(engine.clone()),
             max_instances,
             limits.allowed_dht_prefixes.clone(),
+            limits.capabilities.clone(),
         ));
 
         let linker = Self::create_linker(&engine, &limits)?;
@@ -695,6 +702,7 @@ impl WasmRuntime {
             Arc::new(engine.clone()),
             max_instances,
             limits.allowed_dht_prefixes.clone(),
+            limits.capabilities.clone(),
         ));
 
         let linker = Self::create_linker(&engine, &limits)?;
@@ -855,6 +863,14 @@ impl WasmRuntime {
                  out_ptr: i32,
                  out_max: i32|
                  -> i32 {
+                    if !caller.data().capabilities.permits(PluginCapability::Mesh) {
+                        tracing::error!(
+                            "WASM plugin attempted mesh_query_dht without PluginCapability::Mesh"
+                        );
+                        crate::wasm_metrics::record_plugin_capability_violation("Mesh");
+                        return -1;
+                    }
+
                     let mem = match caller.get_export("memory").and_then(|e| e.into_memory()) {
                         Some(m) => m,
                         None => return -1,
@@ -938,6 +954,12 @@ impl WasmRuntime {
                  ip_ptr: i32,
                  ip_len: i32|
                  -> i32 {
+                    if !caller.data().capabilities.permits(PluginCapability::Mesh) {
+                        tracing::error!("WASM plugin attempted mesh_check_threat without PluginCapability::Mesh");
+                        crate::wasm_metrics::record_plugin_capability_violation("Mesh");
+                        return -1;
+                    }
+
                     let mem = match caller.get_export("memory").and_then(|e| e.into_memory()) {
                         Some(m) => m,
                         None => return -1,
@@ -987,6 +1009,14 @@ impl WasmRuntime {
                  data_ptr: i32,
                  data_len: i32|
                  -> i32 {
+                    if !caller.data().capabilities.permits(PluginCapability::Mesh) {
+                        tracing::error!(
+                            "WASM plugin attempted mesh_emit_event without PluginCapability::Mesh"
+                        );
+                        crate::wasm_metrics::record_plugin_capability_violation("Mesh");
+                        return -1;
+                    }
+
                     let mem = match caller.get_export("memory").and_then(|e| e.into_memory()) {
                         Some(m) => m,
                         None => return -1,
@@ -1043,6 +1073,7 @@ impl WasmRuntime {
                 max_memory,
                 max_table_elements,
                 body_receiver: None,
+                capabilities: self.limits.capabilities.clone(),
             },
         );
 
@@ -1296,6 +1327,25 @@ impl WasmRuntime {
     ) -> Result<WasmFilterResult, WasmPluginError> {
         let plugin_name = &self.name;
 
+        if !self
+            .limits
+            .capabilities
+            .permits(PluginCapability::RequestInspect)
+            && !self
+                .limits
+                .capabilities
+                .permits(PluginCapability::RequestMutate)
+        {
+            tracing::error!(
+                "WASM plugin '{}' lacks RequestInspect/RequestMutate capability — rejecting invocation",
+                plugin_name
+            );
+            crate::wasm_metrics::record_plugin_capability_violation("RequestInspect");
+            return Err(WasmPluginError::ExecutionFailed(
+                "plugin lacks required capability".to_string(),
+            ));
+        }
+
         record_wasm_invocation(plugin_name);
         metrics::counter!("synvoid_plugin_invoke_total", "capability" => "filter_request", "status" => "invoked").increment(1);
 
@@ -1315,6 +1365,7 @@ impl WasmRuntime {
                 (*env).clone(),
                 self.limits.timeout_seconds,
                 self.limits.allowed_dht_prefixes.clone(),
+                self.limits.capabilities.clone(),
             );
             let exports =
                 WasmInstancePool::resolve_exports_from_instance(&inst.instance, &mut inst.store);
@@ -1463,6 +1514,25 @@ impl WasmRuntime {
     ) -> Result<Response<Bytes>, WasmPluginError> {
         let plugin_name = &self.name;
 
+        if !self
+            .limits
+            .capabilities
+            .permits(PluginCapability::ResponseInspect)
+            && !self
+                .limits
+                .capabilities
+                .permits(PluginCapability::ResponseMutate)
+        {
+            tracing::error!(
+                "WASM plugin '{}' lacks ResponseInspect/ResponseMutate capability — rejecting invocation",
+                plugin_name
+            );
+            crate::wasm_metrics::record_plugin_capability_violation("ResponseInspect");
+            return Err(WasmPluginError::ExecutionFailed(
+                "plugin lacks required capability".to_string(),
+            ));
+        }
+
         record_wasm_invocation(plugin_name);
         metrics::counter!("synvoid_plugin_invoke_total", "capability" => "transform_response", "status" => "invoked").increment(1);
 
@@ -1481,6 +1551,7 @@ impl WasmRuntime {
                 (*env).clone(),
                 self.limits.timeout_seconds,
                 self.limits.allowed_dht_prefixes.clone(),
+                self.limits.capabilities.clone(),
             );
             let exports =
                 WasmInstancePool::resolve_exports_from_instance(&inst.instance, &mut inst.store);

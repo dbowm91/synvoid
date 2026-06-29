@@ -188,6 +188,7 @@ impl InstancePool {
                 memory_budget_mb: None,
                 wasi_enabled: false,
                 allowed_dht_prefixes: function_definition.allowed_dht_prefixes.clone(),
+                ..Default::default()
             },
         )?;
 

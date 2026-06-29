@@ -237,6 +237,7 @@ The `architecture/` directory (87 docs) and `.opencode/skills/` directory contai
 | `architecture/request_path_capability_boundary.md` | Request-path capability boundary, narrow traits, forbidden imports |
 | `architecture/final_surface_audit.md` | Public surface classification, stability audit, CLI/admin/protocol inventory (Phase 10) |
 | `architecture/release_hardening_report.md` | Release hardening checklist, guard results, profile checks, fuzz inventory (Phase 10) |
+| `architecture/semver_stability_policy.md` | Semver versioning, stability classifications, deprecation rules |
 
 ## Known Issues
 
