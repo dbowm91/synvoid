@@ -164,3 +164,38 @@ pub fn get_all_wasm_metrics() -> HashMap<String, WasmPluginMetrics> {
     }
     result
 }
+
+pub fn record_plugin_state_transition(from: &str, to: &str, reason: &str) {
+    metrics::counter!(
+        "synvoid_plugin_state_transition_total",
+        "from" => from.to_string(),
+        "to" => to.to_string(),
+        "reason" => reason.to_string()
+    )
+    .increment(1);
+}
+
+pub fn record_plugin_load(tier: &str, status: &str) {
+    metrics::counter!(
+        "synvoid_plugin_load_total",
+        "tier" => tier.to_string(),
+        "status" => status.to_string()
+    )
+    .increment(1);
+}
+
+pub fn record_plugin_hot_reload(status: &str) {
+    metrics::counter!(
+        "synvoid_plugin_hot_reload_total",
+        "status" => status.to_string()
+    )
+    .increment(1);
+}
+
+pub fn record_plugin_capability_violation(capability: &str) {
+    metrics::counter!(
+        "synvoid_plugin_capability_violation_total",
+        "capability" => capability.to_string()
+    )
+    .increment(1);
+}

@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use metrics::counter;
+
 pub type ServerTaskResult = Result<(), String>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,37 +78,44 @@ impl UnifiedServerRuntimeHandles {
             match result {
                 Ok(Ok(Ok(()))) => {
                     report.completed += 1;
+                    counter!("synvoid_runtime_task_exit_total", "owner" => "unified_server", "class" => format!("{:?}", class), "status" => "completed").increment(1);
                 }
                 Ok(Ok(Err(e))) => {
                     tracing::error!(task = name, "task failed: {}", e);
                     report.failed += 1;
+                    counter!("synvoid_runtime_task_exit_total", "owner" => "unified_server", "class" => format!("{:?}", class), "status" => "failed").increment(1);
                     if class == RuntimeHandleClass::CriticalServer {
                         report.critical_failures += 1;
+                        counter!("synvoid_runtime_task_critical_failures_total", "owner" => "unified_server").increment(1);
                     }
                 }
                 Ok(Err(e)) => {
                     if e.is_cancelled() {
                         report.aborted += 1;
+                        counter!("synvoid_runtime_task_exit_total", "owner" => "unified_server", "class" => format!("{:?}", class), "status" => "aborted").increment(1);
                     } else {
                         tracing::error!(task = name, "task panicked: {}", e);
                         report.join_errors += 1;
+                        counter!("synvoid_runtime_task_exit_total", "owner" => "unified_server", "class" => format!("{:?}", class), "status" => "failed").increment(1);
                         if class == RuntimeHandleClass::CriticalServer {
                             report.critical_failures += 1;
+                            counter!("synvoid_runtime_task_critical_failures_total", "owner" => "unified_server").increment(1);
                         }
                     }
                 }
                 Err(_) => {
                     tracing::warn!(task = name, "task timed out, aborting");
-                    // Note: the JoinHandle was moved into timeout and dropped.
-                    // The task will be cancelled when dropped. We record it as timed_out.
                     report.timed_out += 1;
+                    counter!("synvoid_runtime_task_exit_total", "owner" => "unified_server", "class" => format!("{:?}", class), "status" => "timed_out").increment(1);
                     if class == RuntimeHandleClass::CriticalServer {
                         report.critical_failures += 1;
+                        counter!("synvoid_runtime_task_critical_failures_total", "owner" => "unified_server").increment(1);
                     }
                 }
             }
         }
 
+        counter!("synvoid_runtime_shutdown_total", "owner" => "unified_server", "status" => "completed").increment(1);
         report
     }
 }
@@ -133,6 +142,7 @@ pub fn spawn_registered<F, E>(
 {
     // reason: Registration infrastructure — all server spawns go through this helper
     let join = tokio::spawn(async move { fut.await.map_err(|e| e.to_string()) });
+    counter!("synvoid_runtime_task_registered_total", "owner" => "unified_server", "class" => format!("{:?}", class)).increment(1);
     handles.register(NamedRuntimeHandle::new(name, class, join));
 }
 
@@ -150,6 +160,7 @@ pub fn spawn_registered_unit<F>(
         fut.await;
         Ok(())
     });
+    counter!("synvoid_runtime_task_registered_total", "owner" => "unified_server", "class" => format!("{:?}", class)).increment(1);
     handles.register(NamedRuntimeHandle::new(name, class, join));
 }
 

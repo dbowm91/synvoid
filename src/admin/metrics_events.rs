@@ -23,6 +23,7 @@ static ADMIN_ALERT_DELIVERY_FAILURE: LazyLock<AtomicU64> = LazyLock::new(|| Atom
 pub fn record_auth_failure() {
     ADMIN_AUTH_FAILURES.fetch_add(1, Ordering::Relaxed);
     counter!("synvoid.admin.auth.failures").increment(1);
+    counter!("synvoid_admin_unauthorized_total", "action" => "auth", "reason" => "invalid_credentials").increment(1);
 }
 
 pub fn record_auth_lockout() {

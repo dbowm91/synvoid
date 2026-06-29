@@ -1982,6 +1982,40 @@ impl BlockStore {
             log.append(event.clone());
         }
 
+        // Phase 9: Record blocklist apply metrics.
+        let source_label = match &event.provenance.kind {
+            BlockProvenanceKind::AdminManual => "admin",
+            BlockProvenanceKind::SupervisorManual | BlockProvenanceKind::SupervisorSync => {
+                "supervisor"
+            }
+            BlockProvenanceKind::MeshThreatIntelPolicyGated
+            | BlockProvenanceKind::LocalWaf
+            | BlockProvenanceKind::LocalHoneypot
+            | BlockProvenanceKind::LocalAsnTracker => "mesh",
+            _ => "other",
+        };
+        let status_label = match &result {
+            BlocklistApplyResult::Applied => "applied",
+            BlocklistApplyResult::NoopDuplicate => "duplicate",
+            BlocklistApplyResult::IgnoredStale => "stale",
+            BlocklistApplyResult::InvalidTarget => "invalid",
+            BlocklistApplyResult::StoreDisabled => "disabled",
+        };
+        counter!(
+            "synvoid_blocklist_event_apply_total",
+            "operation" => format!("{:?}", event.operation),
+            "status" => status_label,
+            "source" => source_label
+        )
+        .increment(1);
+        tracing::debug!(
+            operation = ?event.operation,
+            status = status_label,
+            source = source_label,
+            has_source_sequence = event.source_sequence.is_some(),
+            "blocklist event apply"
+        );
+
         result
     }
 

@@ -77,6 +77,7 @@ cargo test --test plugin_capability_boundary_guard  # Plugin sandbox capability 
 cargo test --test plugin_failure_does_not_poison_manager  # Plugin failure isolation: one plugin's failure doesn't poison others
 cargo test --test docs_path_reference_guard  # Stale markdown link detection
 cargo test --test failure_injection  # Failure-injection tests for lifecycle, convergence, plugin, startup
+cargo test --test security_observability_guard  # Security observability invariants: metric labels, doc coverage, registry signals
 ```
 
 ## Critical Security Rules
@@ -188,6 +189,9 @@ cargo test --test docs_path_reference_guard
 
 # Failure-injection tests
 cargo test --test failure_injection
+
+# Security observability guard (metric labels, doc coverage, registry signals)
+cargo test --test security_observability_guard
 ```
 
 ## Architecture Quick Reference
@@ -216,6 +220,7 @@ The `architecture/` directory (82 docs) and `.opencode/skills/` directory contai
 | `architecture/http_request_pipeline.md` | 7-stage HTTP pipeline shared by HTTP/1 and HTTP/3 |
 | `architecture/http3_request_waf_boundary.md` | HTTP/3 WAF composition boundary and guardrails |
 | `architecture/mesh_trust_domains.md` | 7 trust domains, CanonicalTrustReader, trust invariants |
+| `architecture/security_observability.md` | Security observability inventory, metric naming, structured logs, redaction rules, diagnostic-only vs enforcement | |
 | `architecture/threat_intel_consumer_actionability.md` | 46 consumers classified by enforcement capability |
 | `architecture/block_store.md` | BlockStore architecture, persistence, snapshot export, peer cursors, source-scoped ordering |
 | `architecture/blocklist_reconciliation.md` | Offline-peer catchup, event log, peer cursors, snapshot fallback |

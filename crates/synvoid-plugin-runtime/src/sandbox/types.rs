@@ -115,6 +115,7 @@ impl PluginCapabilities {
         if self.permits(capability) {
             Ok(())
         } else {
+            crate::wasm_metrics::record_plugin_capability_violation(&format!("{:?}", capability));
             Err(CapabilityViolation {
                 capability,
                 plugin_name: String::new(),

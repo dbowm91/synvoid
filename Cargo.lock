@@ -8253,6 +8253,7 @@ dependencies = [
  "libfuzzer-sys",
  "postcard",
  "synvoid",
+ "synvoid-plugin-runtime",
 ]
 
 [[package]]
@@ -8581,6 +8582,7 @@ dependencies = [
  "http-body",
  "http-body-util",
  "libloading",
+ "metrics 0.22.4",
  "notify",
  "parking_lot",
  "serde",

@@ -212,9 +212,11 @@ impl PluginManagerLifecycle {
                     match self.plugin_manager.load_wasm_plugin(&path) {
                         Ok(()) => {
                             loaded += 1;
+                            crate::wasm_metrics::record_plugin_load("unknown", "loaded");
                             tracing::info!("Loaded plugin: {}", path.display());
                         }
                         Err(e) => {
+                            crate::wasm_metrics::record_plugin_load("unknown", "failed");
                             tracing::error!("Failed to load plugin {}: {}", path.display(), e);
                         }
                     }
@@ -361,13 +363,16 @@ impl PluginManagerLifecycle {
             match ext.to_str() {
                 Some("wasm") | Some("wat") => {
                     self.plugin_manager.wasm_manager().reload_plugin(path)?;
+                    crate::wasm_metrics::record_plugin_hot_reload("success");
                 }
                 Some("so") | Some("dylib") | Some("dll") => {
                     self.plugin_manager
                         .load_axum_plugin(path)
                         .map_err(|e| WasmPluginError::LoadFailed(e.to_string()))?;
+                    crate::wasm_metrics::record_plugin_hot_reload("success");
                 }
                 _ => {
+                    crate::wasm_metrics::record_plugin_hot_reload("failed");
                     return Err(WasmPluginError::LoadFailed(format!(
                         "unsupported plugin extension: {}",
                         path.display()

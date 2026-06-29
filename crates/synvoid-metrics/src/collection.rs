@@ -89,6 +89,40 @@ pub(crate) static BEHAVIORAL_FINGERPRINT_RECEIVED: LazyLock<AtomicU64> =
 pub(crate) static BEHAVIORAL_FINGERPRINT_MATCH: LazyLock<AtomicU64> =
     LazyLock::new(|| AtomicU64::new(0));
 
+// Phase 9: Security observability counters
+pub(crate) static RUNTIME_TASK_REGISTERED: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static RUNTIME_TASK_EXIT_COMPLETED: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static RUNTIME_TASK_EXIT_FAILED: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static RUNTIME_TASK_EXIT_ABORTED: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static RUNTIME_TASK_EXIT_TIMED_OUT: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static RUNTIME_TASK_CRITICAL_FAILURES: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static RUNTIME_SHUTDOWN_TOTAL: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+
+pub(crate) static ADMIN_MUTATION_TOTAL: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static ADMIN_MUTATION_APPLIED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static ADMIN_MUTATION_NOOP: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static ADMIN_MUTATION_FAILED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static ADMIN_MUTATION_STALE: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static ADMIN_UNAUTHORIZED_TOTAL: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+
+pub(crate) static BLOCKLIST_EVENT_APPLY_APPLIED: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static BLOCKLIST_EVENT_APPLY_DUPLICATE: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static BLOCKLIST_EVENT_APPLY_STALE: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static BLOCKLIST_EVENT_APPLY_INVALID: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static BLOCKLIST_SNAPSHOT_FALLBACK_TOTAL: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+
 pub(crate) static DHT_RECORD_COUNT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 pub(crate) static DHT_REPLICA_COUNT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 pub(crate) static DHT_QUORUM_ACHIEVED_COUNT: LazyLock<AtomicU64> =
@@ -801,6 +835,121 @@ pub fn get_attack_type_counts() -> HashMap<String, u64> {
 
 pub fn reset_attack_type_counts() {
     ATTACK_TYPE_COUNTER.clear();
+}
+
+pub fn record_runtime_task_exit(status: &str) {
+    match status {
+        "completed" => RUNTIME_TASK_EXIT_COMPLETED.fetch_add(1, Ordering::Relaxed),
+        "failed" => RUNTIME_TASK_EXIT_FAILED.fetch_add(1, Ordering::Relaxed),
+        "aborted" => RUNTIME_TASK_EXIT_ABORTED.fetch_add(1, Ordering::Relaxed),
+        "timed_out" => RUNTIME_TASK_EXIT_TIMED_OUT.fetch_add(1, Ordering::Relaxed),
+        _ => 0,
+    };
+}
+
+pub fn record_runtime_task_critical_failure() {
+    RUNTIME_TASK_CRITICAL_FAILURES.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_runtime_task_registered() -> u64 {
+    RUNTIME_TASK_REGISTERED.load(Ordering::Relaxed)
+}
+
+pub fn get_runtime_task_exit_completed() -> u64 {
+    RUNTIME_TASK_EXIT_COMPLETED.load(Ordering::Relaxed)
+}
+
+pub fn get_runtime_task_exit_failed() -> u64 {
+    RUNTIME_TASK_EXIT_FAILED.load(Ordering::Relaxed)
+}
+
+pub fn get_runtime_task_exit_aborted() -> u64 {
+    RUNTIME_TASK_EXIT_ABORTED.load(Ordering::Relaxed)
+}
+
+pub fn get_runtime_task_exit_timed_out() -> u64 {
+    RUNTIME_TASK_EXIT_TIMED_OUT.load(Ordering::Relaxed)
+}
+
+pub fn get_runtime_task_critical_failures() -> u64 {
+    RUNTIME_TASK_CRITICAL_FAILURES.load(Ordering::Relaxed)
+}
+
+pub fn get_runtime_shutdown_total() -> u64 {
+    RUNTIME_SHUTDOWN_TOTAL.load(Ordering::Relaxed)
+}
+
+pub fn record_admin_mutation(status: &str) {
+    ADMIN_MUTATION_TOTAL.fetch_add(1, Ordering::Relaxed);
+    match status {
+        "applied" => ADMIN_MUTATION_APPLIED.fetch_add(1, Ordering::Relaxed),
+        "noop" => ADMIN_MUTATION_NOOP.fetch_add(1, Ordering::Relaxed),
+        "failed" => ADMIN_MUTATION_FAILED.fetch_add(1, Ordering::Relaxed),
+        "stale" => ADMIN_MUTATION_STALE.fetch_add(1, Ordering::Relaxed),
+        _ => 0,
+    };
+}
+
+pub fn record_admin_unauthorized() {
+    ADMIN_UNAUTHORIZED_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_admin_mutation_total() -> u64 {
+    ADMIN_MUTATION_TOTAL.load(Ordering::Relaxed)
+}
+
+pub fn get_admin_mutation_applied() -> u64 {
+    ADMIN_MUTATION_APPLIED.load(Ordering::Relaxed)
+}
+
+pub fn get_admin_mutation_noop() -> u64 {
+    ADMIN_MUTATION_NOOP.load(Ordering::Relaxed)
+}
+
+pub fn get_admin_mutation_failed() -> u64 {
+    ADMIN_MUTATION_FAILED.load(Ordering::Relaxed)
+}
+
+pub fn get_admin_mutation_stale() -> u64 {
+    ADMIN_MUTATION_STALE.load(Ordering::Relaxed)
+}
+
+pub fn get_admin_unauthorized_total() -> u64 {
+    ADMIN_UNAUTHORIZED_TOTAL.load(Ordering::Relaxed)
+}
+
+pub fn record_blocklist_event_apply(status: &str) {
+    match status {
+        "applied" => BLOCKLIST_EVENT_APPLY_APPLIED.fetch_add(1, Ordering::Relaxed),
+        "duplicate" => BLOCKLIST_EVENT_APPLY_DUPLICATE.fetch_add(1, Ordering::Relaxed),
+        "stale" => BLOCKLIST_EVENT_APPLY_STALE.fetch_add(1, Ordering::Relaxed),
+        "invalid" => BLOCKLIST_EVENT_APPLY_INVALID.fetch_add(1, Ordering::Relaxed),
+        _ => 0,
+    };
+}
+
+pub fn record_blocklist_snapshot_fallback() {
+    BLOCKLIST_SNAPSHOT_FALLBACK_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_blocklist_event_apply_applied() -> u64 {
+    BLOCKLIST_EVENT_APPLY_APPLIED.load(Ordering::Relaxed)
+}
+
+pub fn get_blocklist_event_apply_duplicate() -> u64 {
+    BLOCKLIST_EVENT_APPLY_DUPLICATE.load(Ordering::Relaxed)
+}
+
+pub fn get_blocklist_event_apply_stale() -> u64 {
+    BLOCKLIST_EVENT_APPLY_STALE.load(Ordering::Relaxed)
+}
+
+pub fn get_blocklist_event_apply_invalid() -> u64 {
+    BLOCKLIST_EVENT_APPLY_INVALID.load(Ordering::Relaxed)
+}
+
+pub fn get_blocklist_snapshot_fallback_total() -> u64 {
+    BLOCKLIST_SNAPSHOT_FALLBACK_TOTAL.load(Ordering::Relaxed)
 }
 
 pub fn record_serverless_invocation(function: &str, status: &str) {

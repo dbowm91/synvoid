@@ -22,6 +22,7 @@ pub mod icmp;
 pub mod mesh_admin;
 #[cfg(feature = "mesh")]
 pub mod mesh_topology;
+pub mod observability;
 #[allow(dead_code)]
 pub mod php;
 #[allow(dead_code)]

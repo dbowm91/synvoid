@@ -192,6 +192,21 @@ impl AuditState {
             success: event.mutation_status
                 == synvoid_core::admin_mutation::AdminMutationStatus::Applied,
         };
+        tracing::info!(
+            audit_id = %event.audit_id,
+            action = %event.action,
+            status = ?event.mutation_status,
+            propagation = ?event.propagation_status,
+            "admin mutation result"
+        );
+        metrics::counter!(
+            "synvoid_admin_mutation_total",
+            "action" => event.action.clone(),
+            "status" => format!("{:?}", event.mutation_status),
+            "authority" => format!("{:?}", event.actor.authority),
+            "propagation" => format!("{:?}", event.propagation_status)
+        )
+        .increment(1);
         self.log(log);
     }
 }

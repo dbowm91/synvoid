@@ -179,6 +179,10 @@ fn build_router_from_state(
 ) -> Router {
     let api_routes = Router::new()
         .route("/health", get(health_check))
+        .route(
+            "/observability/security-summary",
+            get(handlers::observability::security_observability_summary),
+        )
         .route("/stats/summary", get(handlers::stats::get_summary))
         .route("/stats/sites", get(handlers::stats::get_sites_stats))
         .route("/stats/history", get(handlers::stats::get_metrics_history))

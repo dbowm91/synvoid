@@ -8,6 +8,7 @@ default = []
 mesh = []
 
 [dependencies]
+metrics = "0.22"
 wasmtime = { version = "42.0.2", features = ["component-model"] }
 axum = "0.8"
 bytes = "1"
