@@ -74,6 +74,7 @@ cargo test --test admin_mutation_blocklist       # Blocklist mutation behavior t
 cargo test --test admin_auth_boundary            # Auth authority boundary tests
 cargo test --test mesh_admin_edge_cases          # Mesh admin edge case tests
 cargo test --test plugin_capability_boundary_guard  # Plugin sandbox capability gates, manifest parsing, mem::forget
+cargo test --test plugin_failure_does_not_poison_manager  # Plugin failure isolation: one plugin's failure doesn't poison others
 ```
 
 ## Critical Security Rules

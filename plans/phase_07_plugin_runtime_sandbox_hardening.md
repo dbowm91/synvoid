@@ -1,6 +1,6 @@
 # Phase 7 Plan: Plugin Runtime, Sandbox, and Capability Manifest Hardening
 
-Status: detailed handoff plan.
+Status: **COMPLETE** (committed as `b52cb891` + `a68a408c`).
 
 Roadmap position: Phase 7 of `plans/roadmap.md`.
 
