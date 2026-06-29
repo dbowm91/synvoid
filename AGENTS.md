@@ -75,6 +75,8 @@ cargo test --test admin_auth_boundary            # Auth authority boundary tests
 cargo test --test mesh_admin_edge_cases          # Mesh admin edge case tests
 cargo test --test plugin_capability_boundary_guard  # Plugin sandbox capability gates, manifest parsing, mem::forget
 cargo test --test plugin_failure_does_not_poison_manager  # Plugin failure isolation: one plugin's failure doesn't poison others
+cargo test --test docs_path_reference_guard  # Stale markdown link detection
+cargo test --test failure_injection  # Failure-injection tests for lifecycle, convergence, plugin, startup
 ```
 
 ## Critical Security Rules
@@ -173,9 +175,24 @@ Each subsystem has specialized `AGENTS.override.md` files. Load the relevant one
 | Static Files | `src/static_files/AGENTS.override.md` |
 | Serverless | `src/serverless/AGENTS.override.md` |
 
+## CI, Fuzzing & Failure Injection
+
+Phase 8 added profile CI, fuzz targets, failure-injection tests, and a docs link guard. See `architecture/ci_fuzz_failure_injection.md` for the full profile matrix and fuzz target inventory.
+
+```bash
+# Local verification script (profile checks + guard suite)
+./scripts/verify_architecture.sh
+
+# Docs path reference guard (catches stale markdown links)
+cargo test --test docs_path_reference_guard
+
+# Failure-injection tests
+cargo test --test failure_injection
+```
+
 ## Architecture Quick Reference
 
-The `architecture/` directory (77 docs) and `.opencode/skills/` directory contain detailed subsystem docs. Key entrypoints:
+The `architecture/` directory (82 docs) and `.opencode/skills/` directory contain detailed subsystem docs. Key entrypoints:
 
 - **Entry point**: `src/main.rs` → delegates to `src/commands/` (plan/execute/runtime_launch)
 - **Supervisor**: `src/supervisor/` — lifecycle, IPC, control-plane

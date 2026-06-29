@@ -9,7 +9,8 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-synvoid = { path = ".." }
+synvoid = { path = "..", features = ["dns"] }
+synvoid-plugin-runtime = { path = "../crates/synvoid-plugin-runtime" }
 http = "1"
 postcard = "1"
 
@@ -44,3 +45,15 @@ path = "fuzz_raft_response.rs"
 [[bin]]
 name = "fuzz_raft_commit_notification"
 path = "fuzz_raft_commit_notification.rs"
+
+[[bin]]
+name = "dns_message_decode"
+path = "dns_message_decode.rs"
+
+[[bin]]
+name = "plugin_manifest"
+path = "plugin_manifest.rs"
+
+[[bin]]
+name = "http_path_normalization"
+path = "http_path_normalization.rs"
