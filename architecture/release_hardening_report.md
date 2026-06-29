@@ -22,7 +22,7 @@ All profile checks pass with zero errors.
 
 ## 3. Guard Test Results
 
-All 22 guard tests pass. 476 individual assertions pass.
+All 26 guard tests pass. 508 individual assertions pass.
 
 | Guard | Tests | Status |
 |-------|-------|--------|
@@ -48,13 +48,17 @@ All 22 guard tests pass. 476 individual assertions pass.
 | `unified_worker_composition_root_guard` | 28/28 | PASS |
 | `worker_mesh_supervision_boundary_guard` | 106/106 | PASS |
 | `mesh_task_ownership_guard` | 164/164 | PASS |
+| `admin_mutation_blocklist` | 10/10 | PASS |
+| `admin_auth_boundary` | 8/8 | PASS |
+| `mesh_admin_edge_cases` | 8/8 | PASS |
+| `plugin_failure_does_not_poison_manager` | 6/6 | PASS |
 
 ## 4. Release Checklist
 
 ### Infrastructure
 
 - [x] All supported profile checks pass
-- [x] All release-required guards pass
+- [x] All release-required guards pass (26/26)
 - [x] Format check passes
 - [x] No `mem::forget` lifecycle leaks (guard: `unified_server_lifecycle_ownership_guard`)
 - [x] No domain crate root imports (guard: `root_facade_boundary_guard`)
@@ -113,7 +117,7 @@ All 22 guard tests pass. 476 individual assertions pass.
 **Release status: READY for hardening closure.**
 
 - 5 profile checks: all pass
-- 22 guard tests: all pass (476 assertions)
+- 22 guard tests: all pass (508 assertions)
 - 10 fuzz targets: all exist
 - No known release-blocking defects
 - All architectural invariants enforced by automated guards
@@ -150,6 +154,10 @@ cargo test --test admin_mutation_response_guard
 cargo test --test plugin_capability_boundary_guard
 cargo test --test docs_path_reference_guard
 cargo test --test security_observability_guard
+cargo test --test admin_mutation_blocklist
+cargo test --test admin_auth_boundary
+cargo test --test mesh_admin_edge_cases
+cargo test --test plugin_failure_does_not_poison_manager
 cargo test --test background_task_ownership_guard
 cargo test --test cli_command_dispatch_guard
 cargo test --test manual_enforcement_provenance_guard

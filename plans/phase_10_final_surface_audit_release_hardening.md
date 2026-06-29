@@ -1,6 +1,6 @@
 # Phase 10 Plan: Final Public Surface Audit and Release Hardening
 
-Status: detailed handoff plan.
+Status: completed.
 
 Roadmap position: Phase 10 of `plans/roadmap.md`.
 

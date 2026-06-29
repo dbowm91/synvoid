@@ -223,8 +223,136 @@ Phase 10 closure audit. Classifies every public surface of the SynVoid codebase 
 | `unified_worker_composition_root_guard` | Composition root ≤80 lines | Strong (fail-closed) | None | Yes |
 | `worker_mesh_supervision_boundary_guard` | Mesh supervision structural invariants | Strong (fail-closed) | None | Yes |
 | `mesh_task_ownership_guard` | Mesh tasks registered/cancelled | Strong (fail-closed) | None | Yes |
+| `admin_mutation_blocklist` | Blocklist mutation consistency | Strong (fail-closed) | None | Yes |
+| `admin_auth_boundary` | Auth authority boundary | Strong (fail-closed) | None | Yes |
+| `mesh_admin_edge_cases` | Mesh admin edge cases | Strong (fail-closed) | None | Yes |
+| `plugin_failure_does_not_poison_manager` | Plugin failure isolation | Strong (fail-closed) | None | Yes |
 
-## 7. Protocol and Serialization Surface
+## 7. Plugin API Surface
+
+### Manifest Schema (declared in `synvoid-plugin.toml`)
+
+| Item | File | Classification | Stability | Notes |
+|------|------|---------------|-----------|-------|
+| `PluginManifest` | `crates/synvoid-plugin-runtime/src/sandbox/types.rs:318` | stable_public | stable | Top-level manifest: name, version, entry, trust_tier, capabilities, limits, signature |
+| `PluginTrustTier` | `crates/synvoid-plugin-runtime/src/sandbox/types.rs:16` | stable_public | stable | 5 variants: Disabled, LocalTrusted, LocalSandboxed (default), SignedSandboxed, DevelopmentHotReload |
+| `PluginCapabilities` | `crates/synvoid-plugin-runtime/src/sandbox/types.rs:79` | stable_public | stable | Default-deny capability set; 11 fields |
+| `PluginCapability` | `crates/synvoid-plugin-runtime/src/sandbox/types.rs:52` | stable_public | stable | 11 fine-grained capability tokens |
+| `PluginLimits` | `crates/synvoid-plugin-runtime/src/sandbox/types.rs:220` | stable_public | stable | Per-plugin resource limits: timeout_ms, max_input/output_bytes, max_concurrency, memory_pages, fuel |
+| `SigningPolicy` | `crates/synvoid-plugin-runtime/src/sandbox/types.rs:636` | stable_public | stable | RequireSigned (default), AllowUnsignedWithWarning, Disabled |
+
+### Runtime Types (host-side, used by composition roots)
+
+| Item | File | Classification | Stability | Notes |
+|------|------|---------------|-----------|-------|
+| `WasmRuntime` | `crates/synvoid-plugin-runtime/src/wasm_runtime.rs:86` | internal_public_for_crate_boundary | stable | Core WASM runtime wrapping wasmtime Engine/Module/Linker |
+| `WasmPluginManager` | `crates/synvoid-plugin-runtime/src/wasm_runtime.rs:102` | internal_public_for_crate_boundary | stable | Multi-plugin manager: load, unload, reload, filter, transform |
+| `WasmResourceLimits` | `crates/synvoid-plugin-runtime/src/wasm_runtime.rs:50` | internal_public_for_crate_boundary | stable | Resource limits: max_memory_mb, max_cpu_fuel, timeout_seconds |
+| `WasmFilterResult` | `crates/synvoid-plugin-runtime/src/wasm_runtime.rs:1925` | internal_public_for_crate_boundary | stable | Filter decision: Pass, Block, Challenge |
+| `PluginInvocationGuard` | `crates/synvoid-plugin-runtime/src/sandbox/types.rs:741` | internal_public_for_crate_boundary | stable | Per-plugin invocation guard: capability checks, input size, concurrency, timeout |
+| `GlobalPluginManager` | `crates/synvoid-plugin-runtime/src/global.rs:117` | internal_public_for_crate_boundary | stable | Singleton wrapping WasmPluginManager + GlobalWasmMemoryBudget |
+| `PluginManager` | `crates/synvoid-plugin-runtime/src/plugin_manager.rs:16` | internal_public_for_crate_boundary | stable | Unified manager for WASM + Axum plugins |
+| `PluginManagerLifecycle` | `crates/synvoid-plugin-runtime/src/plugin_manager.rs:169` | internal_public_for_crate_boundary | stable | Lifecycle manager with file watching and hot reload |
+
+### WASM Guest ABI (provided to WASM plugins)
+
+| Item | File | Classification | Stability | Notes |
+|------|------|---------------|-----------|-------|
+| `filter_request` (export) | `crates/synvoid-plugin-runtime/src/wasm_runtime.rs:31` | stable_public | stable | filter_request(method, uri, headers, body) -> i32 |
+| `transform_response` (export) | `crates/synvoid-plugin-runtime/src/wasm_runtime.rs:35` | stable_public | stable | transform_response(status, body, out, max) -> i32 |
+| `handle_request` (export) | `crates/synvoid-plugin-runtime/src/wasm_runtime.rs:41` | stable_public | stable | Serverless handler |
+| Host functions | `crates/synvoid-plugin-runtime/src/wasm_runtime.rs:726+` | stable_public | stable | abort, check_timeout, get_env, mesh_query_dht, mesh_check_threat, mesh_emit_event, synvoid_read_body_chunk |
+
+### Axum Native Plugin ABI (libloading)
+
+| Item | File | Classification | Stability | Notes |
+|------|------|---------------|-----------|-------|
+| `synvoid_abi_version` | `crates/synvoid-plugin-runtime/src/axum_loader.rs:109` | stable_public | stable | ABI version check; plugin .so must export matching CARGO_PKG_VERSION |
+| `create_router` | `crates/synvoid-plugin-runtime/src/axum_loader.rs:126` | stable_public | stable | Factory function returning *mut Router<()> |
+
+### Spin Compatibility Layer
+
+| Item | File | Classification | Stability | Notes |
+|------|------|---------------|-----------|-------|
+| `SpinManifest` | `crates/synvoid-plugin-runtime/src/spin/manifest.rs:7` | internal_public_for_crate_boundary | stable | Spin v2 manifest parser |
+| `SpinAppsManager` | `crates/synvoid-plugin-runtime/src/spin/handler.rs:177` | internal_public_for_crate_boundary | stable | Registry for Spin app runtimes |
+
+## 8. Config Keys (Top-Level TOML Sections)
+
+### Core Server
+
+| Key/Section | Type | File | Feature Gate | Notes |
+|-------------|------|------|-------------|-------|
+| `[server]` | `ServerConfig` | `crates/synvoid-config/src/server.rs:8` | None | host, port, host_v6, trusted_proxies. Default: 0.0.0.0:8080 |
+| `[fallback]` | `FallbackConfig` | `crates/synvoid-config/src/server.rs:63` | None | mode ("return_404" or "proxy"), upstream |
+| `[http]` | `HttpConfig` | `crates/synvoid-config/src/http.rs:8` | None | header_read_timeout, keep_alive, max_headers, max_request_size, pipeline_limit, waf_stall_timeout, max_connections |
+| `[http3]` | `Http3Config` | `crates/synvoid-config/src/http.rs:133` | None | enabled, port, host_v6, alt_svc_max_age |
+| `tokio` | `TokioConfig` | `crates/synvoid-config/src/http.rs:158` | None | Worker thread count; integer or "auto" |
+| `[tls]` | `TlsConfig` | `crates/synvoid-config/src/tls.rs:12` | None | cert/key paths, ACME, post-quantum, OCSP, client_auth |
+
+### Admin & Auth
+
+| Key/Section | Type | File | Feature Gate | Notes |
+|-------------|------|------|-------------|-------|
+| `[admin]` | `AdminConfig` | `crates/synvoid-config/src/admin.rs:36` | None | enabled, port, bind_address, token, bcrypt_cost, trusted_proxies |
+| `[admin.cors]` | `AdminCorsConfig` | `crates/synvoid-config/src/admin.rs:26` | None | allow_origin, allow_methods, allow_headers |
+| `[admin.rate_limit]` | `AdminRateLimitConfig` | `crates/synvoid-config/src/admin.rs:57` | None | requests_per_minute (60), burst (10) |
+
+### Security & Defaults
+
+| Key/Section | Type | File | Feature Gate | Notes |
+|-------------|------|------|-------------|-------|
+| `[security]` | `MainSecurityConfig` | `crates/synvoid-config/src/security.rs:14` | None | sanitize_forwarded_headers, ipc_enforce_signing, strict_tls_passthrough_policy |
+| `[defaults]` | `DefaultsConfig` | `crates/synvoid-config/src/defaults.rs:15` | None | Nested: ratelimit, blocked, honeypot, bot, challenge, auth, worker_pool, persistence, proxy_limits, blocklist_limits, tcp, udp, tarpit, upload, theme, traffic_shaping |
+| `[threat_level]` | `ThreatLevelConfig` | `crates/synvoid-config/src/protection.rs:8` | None | initial, auto_scale, ban_durations, escalation |
+| `[ip_feeds]` | `IpFeedConfig` | `crates/synvoid-config/src/protection.rs:230` | None | enabled, update_interval_hours, url |
+| `[rule_feed]` | `RuleFeedConfig` | `crates/synvoid-config/src/protection.rs` | None | Rule feed configuration |
+| `[yara_feed]` | `YaraRuleFeedConfig` | `crates/synvoid-config/src/protection.rs` | None | YARA rule feed configuration |
+
+### Limits
+
+| Key/Section | Type | File | Feature Gate | Notes |
+|-------------|------|------|-------------|-------|
+| `[rate_limit_memory]` | `RateLimitMemoryConfig` | `crates/synvoid-config/src/limits.rs:6` | None | max_ip_entries (100K), num_shards (256) |
+| `[proxy_limits]` | `ProxyLimitsConfig` | `crates/synvoid-config/src/limits.rs:36` | None | max_response_size (10MB), connection_pool_size (100) |
+| `[blocklist_limits]` | `BlocklistLimitsConfig` | `crates/synvoid-config/src/limits.rs:60` | None | max_entries (500K), persist_interval, target_state_ttl |
+
+### Network
+
+| Key/Section | Type | File | Feature Gate | Notes |
+|-------------|------|------|-------------|-------|
+| `[tcp]` | `TcpDefaults` | `crates/synvoid-config/src/network.rs:7` | None | enabled, worker_pool_size, protocols, syn_rate, connection_rate |
+| `[udp]` | `UdpDefaults` | `crates/synvoid-config/src/network.rs` | None | UDP protocol configuration |
+| `[tarpit]` | `TarpitDefaults` | `crates/synvoid-config/src/network.rs` | None | Tarpit configuration |
+| `[traffic_shaping]` | `TrafficShapingConfig` | `crates/synvoid-config/src/traffic.rs` | None | Connection limits, bandwidth config |
+| `[icmp_filter]` | `IcmpFilterConfig` | `crates/synvoid-config/src/icmp_filter.rs` | `icmp-filter` | ICMP filter configuration |
+| `[honeypot_port]` | `HoneypotPortConfig` | `crates/synvoid-config/src/honeypot_port.rs:7` | None | enabled, ports, protocols, site_scope |
+
+### Plugins & Serverless
+
+| Key/Section | Type | File | Feature Gate | Notes |
+|-------------|------|------|-------------|-------|
+| `[plugins]` | `PluginConfig` | `crates/synvoid-config/src/plugins.rs:6` | None | wasm section: max_memory_mb, max_cpu_fuel, timeout_seconds, per-plugin instances |
+| `[serverless]` | `ServerlessConfig` | `crates/synvoid-config/src/serverless.rs:6` | None | enabled, functions, default_memory_mb, default_cpu_fuel, waf_mode |
+
+### Mesh & Tunnel (feature-gated)
+
+| Key/Section | Type | File | Feature Gate | Notes |
+|-------------|------|------|-------------|-------|
+| `mesh` | `MeshConfig` | `crates/synvoid-config/src/mesh.rs:663` | `mesh` | node_id, role, seeds, peers, tls, threat_intel, yara_rules, supervision |
+| `[tunnel]` | `TunnelConfig` | `crates/synvoid-config/src/tunnel.rs:8` | None | enabled, vpn (WireGuard), quic, mesh |
+| `[dns]` | `DnsConfig` | `crates/synvoid-config/src/dns/mod.rs` | `dns` | enabled, mode, listen, zones, dnssec, rate_limit |
+
+### Process & Logging
+
+| Key/Section | Type | File | Feature Gate | Notes |
+|-------------|------|------|-------------|-------|
+| `[process_manager]` | `ProcessManagerConfig` | `crates/synvoid-config/src/process.rs:161` | None | min/max_workers, unified_server_workers, restart_cooldown, control_api_addr |
+| `[logging]` | `LoggingConfig` | `crates/synvoid-config/src/logging.rs:10` | None | level, access_log, retention_days, exporter |
+| `[metrics]` | `MetricsConfig` | `crates/synvoid-config/src/admin.rs:212` | None | enabled, port. Default: true:9090 |
+| `persistence` | `PersistenceConfig` | `crates/synvoid-config/src/defaults.rs:1011` | None | enabled, data_dir, persist_interval_secs |
+
+## 9. Protocol and Serialization Surface
 
 ### IPC Protocol
 
@@ -264,7 +392,7 @@ Phase 10 closure audit. Classifies every public surface of the SynVoid codebase 
 | Path normalization | URL-encoded | Network | `http_path_normalization` | Low |
 | WAF attack detection | synthetic HTTP | Network | `fuzz_attack_detection` | Low |
 
-## 8. Stability Posture
+## 10. Stability Posture
 
 ### Semver Status
 
