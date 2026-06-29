@@ -13,7 +13,7 @@ GitHub Actions status was not observed during this pass; local verification is t
 
 CI workflow (`.github/workflows/ci.yml`) was fixed in Phase 11. The `summary` job had broken dynamic expressions that caused a workflow parse error, preventing all 16 jobs from running. The fix replaced `${{ needs.${{ job }}.result }}` with static `${{ needs.<job>.result }}` references.
 
-After the fix, CI triggers correctly on push to `main`/`master`/`develop` and PRs to `main`/`master`. The guard-suite now includes `docs_path_reference_guard` (27 tests total). Profile-matrix covers all 5 feature combinations. Local verification confirms all tests pass.
+After the fix, CI triggers correctly on push to `main`/`master`/`develop` and PRs to `main`/`master`. All 30 jobs are created and scheduled. However, GitHub Actions execution is blocked by a billing issue on the repository owner's account ("recent account payments have failed or your spending limit needs to be increased"). The guard-suite now includes `docs_path_reference_guard` (27 tests total). Profile-matrix covers all 5 feature combinations. Local verification confirms all tests pass.
 
 ## Commands Run
 
@@ -127,8 +127,9 @@ Documented as deferred in `architecture/admin_control_plane_authority.md`.
 
 ## Final Status
 
-**Locally verified; CI workflow fixed and operational.**
+**Locally verified; CI workflow fixed but blocked by billing.**
 
 All 5 profile checks compile. Format clean. All guard tests pass (27 tests including `docs_path_reference_guard`).
 Plugin capability enforcement verified at call sites. Semver policy documented.
 CI workflow summary job parse error fixed (Phase 11). `scripts/verify_architecture.sh` aligned with CI guard-suite.
+CI execution blocked by GitHub billing issue — local verification is the source of truth.

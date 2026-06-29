@@ -23,6 +23,14 @@ This caused a GitHub Actions workflow parse error because:
 
 **Fix**: Replaced with static `${{ needs.<job>.result }}` references for each job.
 
+### CI Execution Blocker (Billing)
+
+After the fix, all 30 CI jobs are created and scheduled correctly. However, GitHub Actions execution is blocked by a billing issue on the repository owner's account:
+
+> "The job was not started because recent account payments have failed or your spending limit needs to be increased."
+
+The workflow is structurally correct and triggers properly. Local verification is the source of truth until billing is resolved.
+
 ### Script Alignment (Fixed)
 
 `scripts/verify_architecture.sh` was missing `docs_path_reference_guard` which IS included in the CI guard-suite. Added the missing test to align local verification with CI.
@@ -87,8 +95,9 @@ This caused a GitHub Actions workflow parse error because:
 ## Acceptance Criteria
 
 - [x] `scripts/verify_architecture.sh` is executable and current (27 guard tests)
-- [x] CI workflow trigger behavior is verified
-- [x] Release-required profile/guard matrix is visible in CI (16 jobs)
+- [x] CI workflow trigger behavior is verified (jobs are created and scheduled)
+- [x] Release-required profile/guard matrix is visible in CI (30 jobs)
 - [x] Release reports and README wording match observed evidence
 - [x] CI summary job parse error has been corrected
 - [x] No release artifact claims "CI green" without evidence
+- [x] Billing blocker documented; local verification authoritative
