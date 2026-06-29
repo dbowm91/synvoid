@@ -8,7 +8,7 @@ SynVoid is a high-speed, multi-process Web Application Firewall (WAF) and revers
 
 ### Development Status
 
-The 10-phase architecture-hardening roadmap is **complete**. All 26 guard tests pass (543 assertions), all feature profile checks are green, and the release-hardening report is at `architecture/release_hardening_report.md`. See `plans/roadmap.md` for the full roadmap and `architecture/final_surface_audit.md` for the public surface inventory.
+The 10-phase architecture-hardening roadmap is **complete** and locally verified. All 26 guard tests pass (543 assertions), all feature profile checks are green, and the release-hardening report is at `architecture/release_hardening_report.md`. CI workflow (`.github/workflows/ci.yml`) was fixed in Phase 11 (summary job had broken dynamic expressions that prevented all jobs from running). See `plans/roadmap.md` for the full roadmap and `architecture/final_surface_audit.md` for the public surface inventory.
 
 ### 1. Unified Data Plane
 The `UnifiedServerWorker` keeps socket accept, TLS, HTTP parsing, routing, WAF checks, and streaming proxying inline.

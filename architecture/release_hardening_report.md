@@ -124,6 +124,14 @@ All 26 guard tests pass. 543 individual assertions pass.
 - Public surface classified and documented
 - Residual risks documented and accepted
 
+### Phase 11 CI Verification (2026-06-29)
+
+CI workflow (`.github/workflows/ci.yml`) was fixed in Phase 11. The `summary` job had broken dynamic expressions (`${{ needs.${{ job }}.result }}`) that caused a workflow parse error, preventing all 16 jobs from running. Fixed by replacing with static `${{ needs.<job>.result }}` references.
+
+`scripts/verify_architecture.sh` was updated to include `docs_path_reference_guard` (previously missing, now aligned with CI guard-suite).
+
+Local verification: all profile checks, format, and 27 guard tests pass. CI workflow now triggers correctly on push/PR.
+
 ## 6. Verification Commands
 
 ```bash

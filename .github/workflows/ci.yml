@@ -442,14 +442,18 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
-          
-          for job in build clippy unsafe-dns fmt docs security-audit dependency-audit outdated-deps core-profile import-check miri-test security-regression profile-matrix guard-suite docs-link-guard; do
-            status="${{ needs.${{ job }}.result }}"
-            if [ "$status" = "success" ]; then
-              echo "| $job | ✅ |" >> $GITHUB_STEP_SUMMARY
-            elif [ "$status" = "skipped" ]; then
-              echo "| $job | ⏭️ |" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "| $job | ❌ ($status) |" >> $GITHUB_STEP_SUMMARY
-            fi
-          done
+          echo "| build | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| clippy | ${{ needs.clippy.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| unsafe-dns | ${{ needs.unsafe-dns.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| fmt | ${{ needs.fmt.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| docs | ${{ needs.docs.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| security-audit | ${{ needs.security-audit.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| dependency-audit | ${{ needs.dependency-audit.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| outdated-deps | ${{ needs.outdated-deps.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| core-profile | ${{ needs.core-profile.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| import-check | ${{ needs.import-check.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| miri-test | ${{ needs.miri-test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| security-regression | ${{ needs.security-regression.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| profile-matrix | ${{ needs.profile-matrix.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| guard-suite | ${{ needs.guard-suite.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| docs-link-guard | ${{ needs.docs-link-guard.result }} |" >> $GITHUB_STEP_SUMMARY

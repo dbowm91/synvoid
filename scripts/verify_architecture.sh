@@ -48,6 +48,7 @@ cargo test --test cli_command_dispatch_guard
 cargo test --test manual_enforcement_provenance_guard
 cargo test --test background_task_ownership_guard
 cargo test --test unified_worker_composition_root_guard
+cargo test --test docs_path_reference_guard
 
 echo ""
 echo "=== All architecture checks passed ==="

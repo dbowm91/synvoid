@@ -181,7 +181,7 @@ Each subsystem has specialized `AGENTS.override.md` files. Load the relevant one
 
 ## CI, Fuzzing & Failure Injection
 
-Phase 8 added profile CI, fuzz targets, failure-injection tests, and a docs link guard. See `architecture/ci_fuzz_failure_injection.md` for the full profile matrix and fuzz target inventory.
+Phase 8 added profile CI, fuzz targets, failure-injection tests, and a docs link guard. Phase 11 fixed the CI workflow summary job (broken dynamic expressions prevented all jobs from running) and aligned `scripts/verify_architecture.sh` with the CI guard-suite (added missing `docs_path_reference_guard`). See `architecture/ci_fuzz_failure_injection.md` for the full profile matrix and fuzz target inventory.
 
 ```bash
 # Local verification script (profile checks + guard suite)
