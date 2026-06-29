@@ -1337,18 +1337,23 @@ pub async fn report_signature_failure(
     State(state): State<Arc<AdminState>>,
     Json(report): Json<SignatureFailureReport>,
 ) -> Result<Json<SignatureFailureResponse>, StatusCode> {
+    let session_id_hash = report.session_id.as_deref().map(|sid| {
+        format!(
+            "sha256:{}",
+            &hex::encode(Sha256::digest(sid.as_bytes()))[..16]
+        )
+    });
+
     tracing::warn!(
         "Signature failure reported: session_id={}, path={}, mesh_id={}",
-        report.session_id.as_deref().unwrap_or("unknown"),
+        session_id_hash.as_deref().unwrap_or("unknown"),
         report.path.as_deref().unwrap_or("unknown"),
         report.mesh_id.as_deref().unwrap_or("unknown")
     );
 
     if let Some(ref _manager) = state.mesh.client_audit_manager {
-        let session_id = report.session_id.clone();
-
-        if let Some(ref sid) = session_id {
-            tracing::info!("Recording signature failure for session: {}", sid);
+        if let Some(ref hash) = session_id_hash {
+            tracing::info!("Recording signature failure for session: {}", hash);
         }
     }
 

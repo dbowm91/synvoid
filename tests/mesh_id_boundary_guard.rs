@@ -85,6 +85,55 @@ fn strip_test_modules(content: &str) -> &str {
     }
 }
 
+/// Strip string literals, line comments (`//`), and block comments (`/* */`).
+/// Prevents false positives from tokens inside comments or strings.
+fn strip_comments_and_strings(content: &str) -> String {
+    let mut result = String::with_capacity(content.len());
+    let mut chars = content.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '/' if chars.peek() == Some(&'/') => {
+                while let Some(&next) = chars.peek() {
+                    if next == '\n' {
+                        break;
+                    }
+                    chars.next();
+                }
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                let mut depth = 1;
+                while depth > 0 {
+                    match chars.next() {
+                        Some('/') if chars.peek() == Some(&'*') => {
+                            chars.next();
+                            depth += 1;
+                        }
+                        Some('*') if chars.peek() == Some(&'/') => {
+                            chars.next();
+                            depth -= 1;
+                        }
+                        Some(_) => {}
+                        None => break,
+                    }
+                }
+            }
+            '"' => loop {
+                match chars.next() {
+                    Some('\\') => {
+                        chars.next();
+                    }
+                    Some('"') => break,
+                    Some(_) => {}
+                    None => break,
+                }
+            },
+            _ => result.push(ch),
+        }
+    }
+    result
+}
+
 /// Phase 1: Scan request/WAF/proxy/HTTP/3 source files and reject
 /// `is_mesh_id_blocked` calls outside the allowlist.
 #[test]
@@ -131,7 +180,8 @@ fn mesh_id_lookup_boundary_check() {
                 Err(_) => continue,
             };
 
-            let production = strip_test_modules(&content);
+            let no_tests = strip_test_modules(&content);
+            let production = strip_comments_and_strings(no_tests);
 
             for token in MESH_ID_LOOKUP_TOKENS {
                 if production.contains(token) {

@@ -22,7 +22,7 @@ All profile checks pass with zero errors.
 
 ## 3. Guard Test Results
 
-All 26 guard tests pass. 508 individual assertions pass.
+All 26 guard tests pass. 543 individual assertions pass.
 
 | Guard | Tests | Status |
 |-------|-------|--------|
@@ -117,8 +117,8 @@ All 26 guard tests pass. 508 individual assertions pass.
 **Release status: READY for hardening closure.**
 
 - 5 profile checks: all pass
-- 22 guard tests: all pass (508 assertions)
-- 10 fuzz targets: all exist
+- 26 guard tests: all pass (543 assertions)
+- 11 fuzz targets: all exist
 - No known release-blocking defects
 - All architectural invariants enforced by automated guards
 - Public surface classified and documented

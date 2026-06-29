@@ -21,7 +21,7 @@ SynVoid is a high-performance, multi-process Web Application Firewall (WAF) and 
 ```
 synvoid/
 ├── src/                    # Main application source
-├── crates/                 # Workspace crates (37+ crates)
+├── crates/                 # Workspace crates (43 workspace members, 34 synvoid-* library crates)
 │   ├── synvoid-config/     # Configuration types and defaults
 │   ├── synvoid-utils/      # Shared utilities (buffer pool, serialization)
 │   ├── synvoid-mesh/       # Mesh networking (DHT, Raft, PQ crypto)

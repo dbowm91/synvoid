@@ -87,22 +87,22 @@ Phase 10 closure audit. Classifies every public surface of the SynVoid codebase 
 | Re-export | Source | Classification | Stability | Notes |
 |-----------|--------|---------------|-----------|-------|
 | `ConfigManager` | `config::ConfigManager` | `compat_facade` | transitional | Compatibility path |
-| `errors` | `utils::errors` | `internal_public_for_crate_boundary` | stable | Shared error types |
-| `urlencoding_decode` | `utils::urlencoding_decode` | `internal_public_for_crate_boundary` | stable | Utility function |
-| `DrainFlag` | `utils::DrainFlag` | `internal_public_for_crate_boundary` | stable | Shared drain flag |
-| `OptionExt` | `utils::OptionExt` | `internal_public_for_crate_boundary` | stable | Extension trait |
-| `ResultExt` | `utils::ResultExt` | `internal_public_for_crate_boundary` | stable | Extension trait |
-| `RunningFlag` | `utils::RunningFlag` | `internal_public_for_crate_boundary` | stable | Shared running flag |
-| `WafCore` | `waf::WafCore` | `internal_public_for_crate_boundary` | stable | Root-owned WAF core |
-| `WafCoreConfig` | `waf::WafCoreConfig` | `internal_public_for_crate_boundary` | stable | Root-owned WAF config |
+| `errors` | `utils::errors` | `internal_public_for_crate_boundary` | stable_within_workspace | Shared error types |
+| `urlencoding_decode` | `utils::urlencoding_decode` | `internal_public_for_crate_boundary` | stable_within_workspace | Utility function |
+| `DrainFlag` | `utils::DrainFlag` | `internal_public_for_crate_boundary` | stable_within_workspace | Shared drain flag |
+| `OptionExt` | `utils::OptionExt` | `internal_public_for_crate_boundary` | stable_within_workspace | Extension trait |
+| `ResultExt` | `utils::ResultExt` | `internal_public_for_crate_boundary` | stable_within_workspace | Extension trait |
+| `RunningFlag` | `utils::RunningFlag` | `internal_public_for_crate_boundary` | stable_within_workspace | Shared running flag |
+| `WafCore` | `waf::WafCore` | `internal_public_for_crate_boundary` | stable_within_workspace | Root-owned WAF core |
+| `WafCoreConfig` | `waf::WafCoreConfig` | `internal_public_for_crate_boundary` | stable_within_workspace | Root-owned WAF config |
 
 ## 2. Binary Targets
 
 | Binary | Path | Classification | Stability | Notes |
 |--------|------|---------------|-----------|-------|
 | `synvoid` | `src/main.rs` | `stable_public` | stable | Main CLI entrypoint |
-| `synvoid-vpn` | `src/bin/synvoid-vpn.rs` | `stable_public` | stable | VPN client binary |
-| `server` | `src/bin/server.rs` | `stable_public` | stable | Server binary |
+| `synvoid-vpn` | `src/bin/synvoid-vpn.rs` | `stable_internal` | stable | VPN client binary |
+| `server` | `src/bin/server.rs` | `stable_internal` | stable | Server binary |
 
 ## 3. CLI Commands
 
@@ -234,12 +234,12 @@ Phase 10 closure audit. Classifies every public surface of the SynVoid codebase 
 
 | Item | File | Classification | Stability | Notes |
 |------|------|---------------|-----------|-------|
-| `PluginManifest` | `crates/synvoid-plugin-runtime/src/sandbox/types.rs:318` | stable_public | stable | Top-level manifest: name, version, entry, trust_tier, capabilities, limits, signature |
-| `PluginTrustTier` | `crates/synvoid-plugin-runtime/src/sandbox/types.rs:16` | stable_public | stable | 5 variants: Disabled, LocalTrusted, LocalSandboxed (default), SignedSandboxed, DevelopmentHotReload |
-| `PluginCapabilities` | `crates/synvoid-plugin-runtime/src/sandbox/types.rs:79` | stable_public | stable | Default-deny capability set; 11 fields |
-| `PluginCapability` | `crates/synvoid-plugin-runtime/src/sandbox/types.rs:52` | stable_public | stable | 11 fine-grained capability tokens |
-| `PluginLimits` | `crates/synvoid-plugin-runtime/src/sandbox/types.rs:220` | stable_public | stable | Per-plugin resource limits: timeout_ms, max_input/output_bytes, max_concurrency, memory_pages, fuel |
-| `SigningPolicy` | `crates/synvoid-plugin-runtime/src/sandbox/types.rs:636` | stable_public | stable | RequireSigned (default), AllowUnsignedWithWarning, Disabled |
+| `PluginManifest` | `crates/synvoid-plugin-runtime/src/sandbox/types.rs:318` | stable_within_workspace | stable | Top-level manifest: name, version, entry, trust_tier, capabilities, limits, signature |
+| `PluginTrustTier` | `crates/synvoid-plugin-runtime/src/sandbox/types.rs:16` | stable_within_workspace | stable | 5 variants: Disabled, LocalTrusted, LocalSandboxed (default), SignedSandboxed, DevelopmentHotReload |
+| `PluginCapabilities` | `crates/synvoid-plugin-runtime/src/sandbox/types.rs:79` | stable_within_workspace | stable | Default-deny capability set; 11 fields |
+| `PluginCapability` | `crates/synvoid-plugin-runtime/src/sandbox/types.rs:52` | stable_within_workspace | stable | 11 fine-grained capability tokens |
+| `PluginLimits` | `crates/synvoid-plugin-runtime/src/sandbox/types.rs:220` | stable_within_workspace | stable | Per-plugin resource limits: timeout_ms, max_input/output_bytes, max_concurrency, memory_pages, fuel |
+| `SigningPolicy` | `crates/synvoid-plugin-runtime/src/sandbox/types.rs:636` | stable_within_workspace | stable | RequireSigned (default), AllowUnsignedWithWarning, Disabled |
 
 ### Runtime Types (host-side, used by composition roots)
 
@@ -258,17 +258,17 @@ Phase 10 closure audit. Classifies every public surface of the SynVoid codebase 
 
 | Item | File | Classification | Stability | Notes |
 |------|------|---------------|-----------|-------|
-| `filter_request` (export) | `crates/synvoid-plugin-runtime/src/wasm_runtime.rs:31` | stable_public | stable | filter_request(method, uri, headers, body) -> i32 |
-| `transform_response` (export) | `crates/synvoid-plugin-runtime/src/wasm_runtime.rs:35` | stable_public | stable | transform_response(status, body, out, max) -> i32 |
-| `handle_request` (export) | `crates/synvoid-plugin-runtime/src/wasm_runtime.rs:41` | stable_public | stable | Serverless handler |
-| Host functions | `crates/synvoid-plugin-runtime/src/wasm_runtime.rs:726+` | stable_public | stable | abort, check_timeout, get_env, mesh_query_dht, mesh_check_threat, mesh_emit_event, synvoid_read_body_chunk |
+| `filter_request` (export) | `crates/synvoid-plugin-runtime/src/wasm_runtime.rs:31` | stable_within_workspace | stable | filter_request(method, uri, headers, body) -> i32 |
+| `transform_response` (export) | `crates/synvoid-plugin-runtime/src/wasm_runtime.rs:35` | stable_within_workspace | stable | transform_response(status, body, out, max) -> i32 |
+| `handle_request` (export) | `crates/synvoid-plugin-runtime/src/wasm_runtime.rs:41` | stable_within_workspace | stable | Serverless handler |
+| Host functions | `crates/synvoid-plugin-runtime/src/wasm_runtime.rs:726+` | stable_within_workspace | stable | abort, check_timeout, get_env, mesh_query_dht, mesh_check_threat, mesh_emit_event, synvoid_read_body_chunk |
 
 ### Axum Native Plugin ABI (libloading)
 
 | Item | File | Classification | Stability | Notes |
 |------|------|---------------|-----------|-------|
-| `synvoid_abi_version` | `crates/synvoid-plugin-runtime/src/axum_loader.rs:109` | stable_public | stable | ABI version check; plugin .so must export matching CARGO_PKG_VERSION |
-| `create_router` | `crates/synvoid-plugin-runtime/src/axum_loader.rs:126` | stable_public | stable | Factory function returning *mut Router<()> |
+| `synvoid_abi_version` | `crates/synvoid-plugin-runtime/src/axum_loader.rs:109` | stable_within_workspace | stable | ABI version check; plugin .so must export matching CARGO_PKG_VERSION |
+| `create_router` | `crates/synvoid-plugin-runtime/src/axum_loader.rs:126` | stable_within_workspace | stable | Factory function returning *mut Router<()> |
 
 ### Spin Compatibility Layer
 

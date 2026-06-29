@@ -408,6 +408,14 @@ jobs:
           cargo test --test admin_mutation_blocklist
           cargo test --test admin_auth_boundary
           cargo test --test mesh_admin_edge_cases
+          cargo test --test security_observability_guard
+          cargo test --test failure_injection
+          cargo test --test worker_mesh_supervision_boundary_guard --features mesh,dns
+          cargo test --test mesh_task_ownership_guard --features mesh,dns
+          cargo test --test cli_command_dispatch_guard
+          cargo test --test manual_enforcement_provenance_guard
+          cargo test --test background_task_ownership_guard
+          cargo test --test unified_worker_composition_root_guard
 
   docs-link-guard:
     name: Docs Path Reference Guard
