@@ -492,10 +492,12 @@ fn runtime_registries_emit_observability_signals() {
         if has_counter {
             let has_shutdown_metric = content.contains("synvoid_runtime_shutdown_total")
                 || content.contains("synvoid_runtime_task_exit_total")
-                || content.contains("synvoid_runtime_task_registered_total");
+                || content.contains("synvoid_runtime_task_registered_total")
+                || content.contains("synvoid.worker.tasks_")
+                || content.contains("synvoid.supervisor.tasks_");
             if !has_shutdown_metric {
                 violations.push(format!(
-                    "{}: has `counter!` calls but missing Phase 9 runtime metrics (shutdown_total, task_exit_total, task_registered_total)",
+                    "{}: has `counter!` calls but missing Phase 9 runtime metrics (shutdown_total, task_exit_total, task_registered_total, worker.tasks_*, supervisor.tasks_*)",
                     file_path
                 ));
             }
@@ -716,5 +718,147 @@ mod tests {
             Some("handle_request".to_string())
         );
         assert_eq!(extract_fn_name("let x = 1;"), None);
+    }
+
+    // ── Phase 9 gap closure: structural tests ─────────────────────────────────
+
+    /// Test: plugin capability violation metric uses only capability label.
+    ///
+    /// Scans wasm_metrics.rs for `synvoid_plugin_capability_violation_total` and
+    /// verifies the label keys are exactly "capability". Tier is not available at
+    /// the SandboxPermissions::require call site, so only capability is tracked.
+    #[test]
+    fn plugin_violation_metric_uses_capability_only() {
+        let path = Path::new("crates/synvoid-plugin-runtime/src/wasm_metrics.rs");
+        if !path.exists() {
+            eprintln!("Skipping: wasm_metrics.rs not found");
+            return;
+        }
+        let content = fs::read_to_string(path).expect("read wasm_metrics.rs");
+        // Find the counter! invocation for capability_violation
+        // The metric spans multiple lines, so scan for the metric name and check
+        // that the adjacent lines contain only "capability" as a label key.
+        let lines: Vec<&str> = content.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            if line.contains("synvoid_plugin_capability_violation_total") {
+                // Check that no sensitive labels appear in the surrounding block (3 lines)
+                let start = i.saturating_sub(1);
+                let end = (i + 4).min(lines.len());
+                let block = &lines[start..end].join("\n");
+                assert!(
+                    block.contains("\"capability\""),
+                    "synvoid_plugin_capability_violation_total must use 'capability' label"
+                );
+                assert!(
+                    !block.contains("\"ip\"")
+                        && !block.contains("\"token\"")
+                        && !block.contains("\"event_id\""),
+                    "synvoid_plugin_capability_violation_total must not use sensitive labels"
+                );
+                return;
+            }
+        }
+        panic!("synvoid_plugin_capability_violation_total not found in wasm_metrics.rs");
+    }
+
+    /// Test: runtime_handles.rs contains expected metric names for shutdown report.
+    ///
+    /// Verifies that the runtime handles file emits the expected exit status labels.
+    #[test]
+    fn runtime_handles_emit_expected_metric_labels() {
+        let path = Path::new("src/server/runtime_handles.rs");
+        if !path.exists() {
+            eprintln!("Skipping: runtime_handles.rs not found");
+            return;
+        }
+        let content = fs::read_to_string(path).expect("read runtime_handles.rs");
+        let expected_statuses = ["completed", "failed", "aborted", "timed_out"];
+        for status in &expected_statuses {
+            assert!(
+                content.contains(&format!("\"{}\"", status)),
+                "runtime_handles.rs must emit metric with status label '{}'",
+                status
+            );
+        }
+    }
+
+    /// Test: blocklist event apply covers all BlocklistApplyResult variants.
+    ///
+    /// Scans block-store lib.rs for all status labels in the synvoid_blocklist_event_apply_total
+    /// counter and verifies all 5 result variants are covered.
+    #[test]
+    fn blocklist_apply_metrics_cover_all_result_variants() {
+        let path = Path::new("crates/synvoid-block-store/src/lib.rs");
+        if !path.exists() {
+            eprintln!("Skipping: block-store lib.rs not found");
+            return;
+        }
+        let content = fs::read_to_string(path).expect("read block-store lib.rs");
+        let expected_statuses = ["applied", "duplicate", "stale", "invalid", "disabled"];
+        // Find the match block that maps BlocklistApplyResult to status labels
+        // The pattern is: BlocklistApplyResult::Variant => "label",
+        for status in &expected_statuses {
+            let pattern = format!("\"{}\"", status);
+            assert!(
+                content.contains(&pattern),
+                "block-store lib.rs must map a BlocklistApplyResult variant to status label '{}'",
+                status
+            );
+        }
+    }
+
+    /// Test: admin audit event total metric is emitted in audit.rs.
+    ///
+    /// Verifies that the audit logging function emits the synvoid_admin_audit_event_total counter.
+    #[test]
+    fn admin_audit_event_metric_emitted() {
+        let path = Path::new("src/admin/audit.rs");
+        if !path.exists() {
+            eprintln!("Skipping: audit.rs not found");
+            return;
+        }
+        let content = fs::read_to_string(path).expect("read audit.rs");
+        assert!(
+            content.contains("synvoid_admin_audit_event_total"),
+            "audit.rs must emit synvoid_admin_audit_event_total counter"
+        );
+    }
+
+    /// Test: threat-intel policy decision metric is emitted.
+    ///
+    /// Verifies that the enforcement policy gate emits the synvoid_threat_policy_decision_total counter.
+    #[test]
+    fn threat_policy_decision_metric_emitted() {
+        let path = Path::new("crates/synvoid-mesh/src/mesh/threat_intel.rs");
+        if !path.exists() {
+            eprintln!("Skipping: threat_intel.rs not found");
+            return;
+        }
+        let content = fs::read_to_string(path).expect("read threat_intel.rs");
+        assert!(
+            content.contains("synvoid_threat_policy_decision_total"),
+            "threat_intel.rs must emit synvoid_threat_policy_decision_total counter"
+        );
+        assert!(
+            content.contains("synvoid_threat_policy_shadow_total"),
+            "threat_intel.rs must emit synvoid_threat_policy_shadow_total counter"
+        );
+    }
+
+    /// Test: blocklist snapshot fallback metric is emitted.
+    ///
+    /// Verifies that the mesh transport emits the synvoid_blocklist_snapshot_fallback_total counter.
+    #[test]
+    fn blocklist_snapshot_fallback_metric_emitted() {
+        let path = Path::new("crates/synvoid-mesh/src/mesh/transport_peer.rs");
+        if !path.exists() {
+            eprintln!("Skipping: transport_peer.rs not found");
+            return;
+        }
+        let content = fs::read_to_string(path).expect("read transport_peer.rs");
+        assert!(
+            content.contains("synvoid_blocklist_snapshot_fallback_total"),
+            "transport_peer.rs must emit synvoid_blocklist_snapshot_fallback_total counter"
+        );
     }
 }

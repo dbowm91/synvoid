@@ -326,25 +326,38 @@ pub struct TaskRegistryMetrics {
 impl TaskRegistryMetrics {
     pub fn record_started(&self) {
         self.tasks_started.fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("synvoid.worker.tasks_started_total").increment(1);
+        synvoid_metrics::collection::record_worker_task_started();
     }
     pub fn record_completed_cleanly(&self) {
         self.tasks_completed_cleanly.fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("synvoid.worker.tasks_completed_cleanly_total").increment(1);
+        synvoid_metrics::collection::record_worker_task_completed_cleanly();
     }
     pub fn record_cancelled(&self) {
         self.tasks_cancelled.fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("synvoid.worker.tasks_cancelled_total").increment(1);
+        synvoid_metrics::collection::record_worker_task_cancelled();
     }
     pub fn record_panicked(&self) {
         self.tasks_panicked.fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("synvoid.worker.tasks_panicked_total").increment(1);
+        synvoid_metrics::collection::record_worker_task_panicked();
     }
     pub fn record_aborted(&self) {
         self.tasks_aborted.fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("synvoid.worker.tasks_aborted_total").increment(1);
+        synvoid_metrics::collection::record_worker_task_aborted();
     }
     pub fn record_errored(&self) {
         self.tasks_errored.fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("synvoid.worker.tasks_errored_total").increment(1);
+        synvoid_metrics::collection::record_worker_task_errored();
     }
     pub fn record_unexpectedly_completed(&self) {
         self.tasks_unexpectedly_completed
             .fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("synvoid.worker.tasks_unexpectedly_completed_total").increment(1);
     }
 }
 

@@ -772,6 +772,8 @@ impl BlockStore {
                                     loaded += 1;
                                     counter!("synvoid.blockstore.peer_cursor_loaded_total")
                                         .increment(1);
+                                    counter!("synvoid_blocklist_cursor_load_total", "status" => "ok")
+                                        .increment(1);
                                 }
                                 tracing::info!(
                                     "Loaded {} peer cursors from disk ({} expired and dropped)",
@@ -1896,9 +1898,13 @@ impl BlockStore {
                         "source_sequence" => {
                             counter!("synvoid.blockstore.event_ordering_source_sequence_total")
                                 .increment(1);
+                            counter!("synvoid_blocklist_ordering_path_total", "path" => "source_sequence")
+                                .increment(1);
                         }
                         "timestamp" => {
                             counter!("synvoid.blockstore.event_ordering_timestamp_fallback_total")
+                                .increment(1);
+                            counter!("synvoid_blocklist_ordering_path_total", "path" => "timestamp")
                                 .increment(1);
                         }
                         _ => {}
@@ -1906,6 +1912,11 @@ impl BlockStore {
                 } else {
                     // This event is stale or equal — reject.
                     counter!("synvoid.blockstore.event_stale_replay_ignored_total").increment(1);
+                    counter!("synvoid_blocklist_stale_replay_ignored_total",
+                        "operation" => format!("{:?}", event.operation),
+                        "source" => "mesh"
+                    )
+                    .increment(1);
                     return BlocklistApplyResult::IgnoredStale;
                 }
             }
@@ -2069,6 +2080,7 @@ impl BlockStore {
         let mut cursors = self.peer_cursors.write();
         cursors.insert(key, record);
         counter!("synvoid.blockstore.peer_cursor_updated_total").increment(1);
+        counter!("synvoid_blocklist_cursor_update_total", "status" => "ok").increment(1);
     }
 
     /// Persist all peer cursors to disk (async, non-blocking).
@@ -2736,6 +2748,21 @@ impl BlockStore {
             result.invalid_records_ignored,
             result.expired_records_ignored,
         );
+        let snapshot_status = if !self.enabled {
+            "disabled"
+        } else if result.ip_blocks_applied
+            + result.ip_blocks_updated
+            + result.mesh_blocks_applied
+            + result.mesh_blocks_updated
+            + result.target_state_records_applied
+            > 0
+        {
+            "ok"
+        } else {
+            "noop"
+        };
+        counter!("synvoid_blocklist_snapshot_apply_total", "status" => snapshot_status)
+            .increment(1);
 
         result
     }

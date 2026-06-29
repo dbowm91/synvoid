@@ -113,6 +113,25 @@ Observability makes security-relevant state transitions visible for diagnostics 
 | `synvoid_threat_policy_decision_total` | `decision`, `actionable`, `source` | Policy decision |
 | `synvoid_threat_policy_shadow_total` | `decision` | Shadow mode decision |
 | `synvoid_request_enforcement_source_total` | `source` | Enforcement source on request path |
+| `synvoid_blocklist_snapshot_fallback_total` | (none) | Snapshot fallback triggered |
+| `synvoid_blocklist_stale_replay_ignored_total` | `operation`, `source` | Stale replay suppressed |
+| `synvoid_blocklist_cursor_update_total` | `status` | Peer cursor update |
+| `synvoid_blocklist_cursor_load_total` | `status` | Peer cursor load |
+| `synvoid_blocklist_snapshot_apply_total` | `status` | Snapshot fallback applied (`ok`/`noop`/`disabled`) |
+| `synvoid_blocklist_catchup_event_total` | `status` | Individual event processed during mesh catchup (`applied`/`noop`/`stale`) |
+| `synvoid_blocklist_ordering_path_total` | `path` | Event ordering path taken |
+| `synvoid.worker.tasks_started_total` | (none) | Worker task started |
+| `synvoid.worker.tasks_completed_cleanly_total` | (none) | Worker task completed cleanly |
+| `synvoid.worker.tasks_cancelled_total` | (none) | Worker task cancelled |
+| `synvoid.worker.tasks_panicked_total` | (none) | Worker task panicked |
+| `synvoid.worker.tasks_aborted_total` | (none) | Worker task aborted |
+| `synvoid.worker.tasks_errored_total` | (none) | Worker task errored |
+| `synvoid.worker.tasks_unexpectedly_completed_total` | (none) | Worker task unexpectedly completed |
+| `synvoid.supervisor.tasks_registered_total` | (none) | Supervisor task registered |
+| `synvoid.supervisor.tasks_completed_total` | (none) | Supervisor task completed |
+| `synvoid.supervisor.tasks_failed_total` | (none) | Supervisor task failed |
+| `synvoid.supervisor.tasks_aborted_total` | (none) | Supervisor task aborted |
+| `synvoid.supervisor.tasks_timed_out_total` | (none) | Supervisor task timed out |
 
 ---
 
@@ -226,11 +245,11 @@ Diagnostics endpoints return summary-oriented, bounded JSON responses. They are 
 
 | Endpoint | Returns | Bound |
 |----------|---------|-------|
-| `GET /system/tasks` | Runtime task registry state: task name, class, owner, status, uptime | 100 entries max |
-| `GET /system/blocklist-health` | Blocklist convergence: total events, stale suppressions, snapshot fallbacks, per-peer cursor lag | Summary counters |
-| `GET /system/plugins` | Plugin runtime state: tier, status, failure count, last transition | Per-plugin summary |
-| `GET /system/features` | Active feature flags and profile | Single JSON object |
-| `GET /system/threat-intel` | Policy config, actionability summary, shadow mode state | Summary counters |
+| `GET /admin/observability/tasks` | UnifiedServer + Worker + Supervisor task registry state | Summary counters |
+| `GET /admin/observability/blocklist-health` | Blocklist convergence: event apply, stale suppressions, snapshot fallbacks, cursor stats | Summary counters |
+| `GET /admin/observability/plugins` | Plugin runtime state: loaded count, per-plugin invocation/error/duration | Per-plugin summary |
+| `GET /admin/observability/features` | Active feature flags and compile-time profile | Single JSON object |
+| `GET /admin/observability/threat-intel` | Policy config, actionability summary, shadow mode state | Summary counters |
 
 ---
 

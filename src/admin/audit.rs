@@ -207,6 +207,12 @@ impl AuditState {
             "propagation" => format!("{:?}", event.propagation_status)
         )
         .increment(1);
+        metrics::counter!(
+            "synvoid_admin_audit_event_total",
+            "action" => event.action.clone(),
+            "status" => format!("{:?}", event.mutation_status)
+        )
+        .increment(1);
         self.log(log);
     }
 }

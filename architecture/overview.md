@@ -314,6 +314,8 @@ Client ──► TLS Termination ──► HTTP Server ──► WAF Pipeline �
 | [`deep_dive_review.md`](./deep_dive_review.md) | Layered architectural review |
 | [`review_plan.md`](./review_plan.md) | Review methodology and status |
 | [`process_lifecycle.md`](./process_lifecycle.md) | Process execution model |
+| [`final_surface_audit.md`](./final_surface_audit.md) | Public surface classification and stability audit (Phase 10) |
+| [`release_hardening_report.md`](./release_hardening_report.md) | Release hardening checklist and verification results (Phase 10) |
 
 > **Note:** There is no separate `tunnel.md` or `admin.md`. Tunnel documentation is in [`networking_deep_dive.md`](./networking_deep_dive.md). Admin API documentation is in [`admin_deep_dive.md`](./admin_deep_dive.md).
 

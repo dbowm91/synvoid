@@ -410,31 +410,41 @@ impl WafCore {
         _ctx: Option<&RequestServices>,
     ) -> WafDecision {
         if let Some(decision) = self.check_block_store(ip, site_id) {
+            metrics::counter!("synvoid_request_enforcement_source_total", "source" => "block_store").increment(1);
             return decision;
         }
 
         if let Some(decision) = self.check_rate_limits(ip, site_id).await {
+            metrics::counter!("synvoid_request_enforcement_source_total", "source" => "rate_limit")
+                .increment(1);
             return decision;
         }
 
         if let Some(decision) = self.check_endpoint_block(path, method) {
+            metrics::counter!("synvoid_request_enforcement_source_total", "source" => "endpoint_block").increment(1);
             return decision;
         }
 
         if let Some(decision) = self.check_honeypot(ip, path, method, ua) {
+            metrics::counter!("synvoid_request_enforcement_source_total", "source" => "honeypot_hit").increment(1);
             return decision;
         }
 
         if let Some(decision) = self.check_bot_protection(ip, path, ua, ja4_hash, site_bot_config) {
+            metrics::counter!("synvoid_request_enforcement_source_total", "source" => "bot_protection").increment(1);
             return decision;
         }
 
         if let Some(ref protector) = self.flood_protector {
             match protector.check_tcp_connection(ip) {
                 FloodDecision::RateLimited => {
-                    return WafDecision::Block(429, "Rate Limited".to_string())
+                    metrics::counter!("synvoid_request_enforcement_source_total", "source" => "flood_protection").increment(1);
+                    return WafDecision::Block(429, "Rate Limited".to_string());
                 }
-                FloodDecision::Blackholed => return WafDecision::Drop,
+                FloodDecision::Blackholed => {
+                    metrics::counter!("synvoid_request_enforcement_source_total", "source" => "flood_protection").increment(1);
+                    return WafDecision::Drop;
+                }
                 FloodDecision::Allowed => {}
             }
         }
@@ -465,6 +475,7 @@ impl WafCore {
                     violation_tracker.record_violation(ip, "attack_detected", 3);
                 }
 
+                metrics::counter!("synvoid_request_enforcement_source_total", "source" => "attack_detection").increment(1);
                 return WafDecision::Block(403, "Attack Detected".to_string());
             }
         }

@@ -1618,6 +1618,8 @@ impl MeshTransport {
                         "Peer {} indicates blocklist snapshot required (history incomplete), requesting snapshot",
                         peer_id
                     );
+                    crate::stubs::metrics::record_blocklist_snapshot_fallback();
+                    metrics::counter!("synvoid_blocklist_snapshot_fallback_total").increment(1);
                     let request_id =
                         format!("snap-{}-{}", peer_id, synvoid_utils::safe_unix_timestamp());
                     let snapshot_request = MeshMessage::BlocklistSnapshotRequest {
@@ -1666,6 +1668,18 @@ impl MeshTransport {
                         stale,
                         latest_sequence
                     );
+                    if applied > 0 {
+                        metrics::counter!("synvoid_blocklist_catchup_event_total", "status" => "applied").increment(applied as u64);
+                        crate::stubs::metrics::record_blocklist_catchup_event_applied();
+                    }
+                    if noop > 0 {
+                        metrics::counter!("synvoid_blocklist_catchup_event_total", "status" => "noop").increment(noop as u64);
+                        crate::stubs::metrics::record_blocklist_catchup_event_noop();
+                    }
+                    if stale > 0 {
+                        metrics::counter!("synvoid_blocklist_catchup_event_total", "status" => "stale").increment(stale as u64);
+                        crate::stubs::metrics::record_blocklist_catchup_event_stale();
+                    }
                     // Phase 5: Update persisted peer cursor after successful catchup.
                     if applied > 0 || noop > 0 {
                         if let Some(latest_seq) = latest_sequence {

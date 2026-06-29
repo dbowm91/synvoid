@@ -90,6 +90,27 @@ pub(crate) static BEHAVIORAL_FINGERPRINT_MATCH: LazyLock<AtomicU64> =
     LazyLock::new(|| AtomicU64::new(0));
 
 // Phase 9: Security observability counters
+// Worker task registry metrics
+pub(crate) static WORKER_TASKS_STARTED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static WORKER_TASKS_COMPLETED_CLEANLY: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static WORKER_TASKS_CANCELLED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static WORKER_TASKS_PANICKED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static WORKER_TASKS_ABORTED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static WORKER_TASKS_ERRORED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+
+// Supervisor task registry metrics
+pub(crate) static SUPERVISOR_TASKS_REGISTERED: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static SUPERVISOR_TASKS_COMPLETED: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static SUPERVISOR_TASKS_FAILED: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static SUPERVISOR_TASKS_ABORTED: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static SUPERVISOR_TASKS_TIMED_OUT: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+
 pub(crate) static RUNTIME_TASK_REGISTERED: LazyLock<AtomicU64> =
     LazyLock::new(|| AtomicU64::new(0));
 pub(crate) static RUNTIME_TASK_EXIT_COMPLETED: LazyLock<AtomicU64> =
@@ -121,6 +142,24 @@ pub(crate) static BLOCKLIST_EVENT_APPLY_STALE: LazyLock<AtomicU64> =
 pub(crate) static BLOCKLIST_EVENT_APPLY_INVALID: LazyLock<AtomicU64> =
     LazyLock::new(|| AtomicU64::new(0));
 pub(crate) static BLOCKLIST_SNAPSHOT_FALLBACK_TOTAL: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static BLOCKLIST_STALE_REPLAY_IGNORED_TOTAL: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static BLOCKLIST_CURSOR_UPDATE_TOTAL: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static BLOCKLIST_CURSOR_LOAD_TOTAL: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static BLOCKLIST_SNAPSHOT_APPLY_TOTAL: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static BLOCKLIST_ORDERING_PATH_SOURCE_SEQUENCE_TOTAL: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static BLOCKLIST_ORDERING_PATH_TIMESTAMP_TOTAL: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static BLOCKLIST_CATCHUP_EVENT_APPLIED: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static BLOCKLIST_CATCHUP_EVENT_NOOP: LazyLock<AtomicU64> =
+    LazyLock::new(|| AtomicU64::new(0));
+pub(crate) static BLOCKLIST_CATCHUP_EVENT_STALE: LazyLock<AtomicU64> =
     LazyLock::new(|| AtomicU64::new(0));
 
 pub(crate) static DHT_RECORD_COUNT: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
@@ -932,6 +971,42 @@ pub fn record_blocklist_snapshot_fallback() {
     BLOCKLIST_SNAPSHOT_FALLBACK_TOTAL.fetch_add(1, Ordering::Relaxed);
 }
 
+pub fn record_blocklist_stale_replay_ignored() {
+    BLOCKLIST_STALE_REPLAY_IGNORED_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_blocklist_cursor_update() {
+    BLOCKLIST_CURSOR_UPDATE_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_blocklist_cursor_load() {
+    BLOCKLIST_CURSOR_LOAD_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_blocklist_snapshot_apply() {
+    BLOCKLIST_SNAPSHOT_APPLY_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_blocklist_ordering_path_source_sequence() {
+    BLOCKLIST_ORDERING_PATH_SOURCE_SEQUENCE_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_blocklist_ordering_path_timestamp() {
+    BLOCKLIST_ORDERING_PATH_TIMESTAMP_TOTAL.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_blocklist_catchup_event_applied() {
+    BLOCKLIST_CATCHUP_EVENT_APPLIED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_blocklist_catchup_event_noop() {
+    BLOCKLIST_CATCHUP_EVENT_NOOP.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_blocklist_catchup_event_stale() {
+    BLOCKLIST_CATCHUP_EVENT_STALE.fetch_add(1, Ordering::Relaxed);
+}
+
 pub fn get_blocklist_event_apply_applied() -> u64 {
     BLOCKLIST_EVENT_APPLY_APPLIED.load(Ordering::Relaxed)
 }
@@ -950,6 +1025,134 @@ pub fn get_blocklist_event_apply_invalid() -> u64 {
 
 pub fn get_blocklist_snapshot_fallback_total() -> u64 {
     BLOCKLIST_SNAPSHOT_FALLBACK_TOTAL.load(Ordering::Relaxed)
+}
+
+pub fn get_blocklist_stale_replay_ignored_total() -> u64 {
+    BLOCKLIST_STALE_REPLAY_IGNORED_TOTAL.load(Ordering::Relaxed)
+}
+
+pub fn get_blocklist_cursor_update_total() -> u64 {
+    BLOCKLIST_CURSOR_UPDATE_TOTAL.load(Ordering::Relaxed)
+}
+
+pub fn get_blocklist_cursor_load_total() -> u64 {
+    BLOCKLIST_CURSOR_LOAD_TOTAL.load(Ordering::Relaxed)
+}
+
+pub fn get_blocklist_snapshot_apply_total() -> u64 {
+    BLOCKLIST_SNAPSHOT_APPLY_TOTAL.load(Ordering::Relaxed)
+}
+
+pub fn get_blocklist_ordering_path_source_sequence_total() -> u64 {
+    BLOCKLIST_ORDERING_PATH_SOURCE_SEQUENCE_TOTAL.load(Ordering::Relaxed)
+}
+
+pub fn get_blocklist_ordering_path_timestamp_total() -> u64 {
+    BLOCKLIST_ORDERING_PATH_TIMESTAMP_TOTAL.load(Ordering::Relaxed)
+}
+
+pub fn get_blocklist_catchup_event_applied() -> u64 {
+    BLOCKLIST_CATCHUP_EVENT_APPLIED.load(Ordering::Relaxed)
+}
+
+pub fn get_blocklist_catchup_event_noop() -> u64 {
+    BLOCKLIST_CATCHUP_EVENT_NOOP.load(Ordering::Relaxed)
+}
+
+pub fn get_blocklist_catchup_event_stale() -> u64 {
+    BLOCKLIST_CATCHUP_EVENT_STALE.load(Ordering::Relaxed)
+}
+
+// Worker task registry metrics
+
+pub fn record_worker_task_started() {
+    WORKER_TASKS_STARTED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_worker_task_completed_cleanly() {
+    WORKER_TASKS_COMPLETED_CLEANLY.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_worker_task_cancelled() {
+    WORKER_TASKS_CANCELLED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_worker_task_panicked() {
+    WORKER_TASKS_PANICKED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_worker_task_aborted() {
+    WORKER_TASKS_ABORTED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_worker_task_errored() {
+    WORKER_TASKS_ERRORED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_worker_tasks_started() -> u64 {
+    WORKER_TASKS_STARTED.load(Ordering::Relaxed)
+}
+
+pub fn get_worker_tasks_completed_cleanly() -> u64 {
+    WORKER_TASKS_COMPLETED_CLEANLY.load(Ordering::Relaxed)
+}
+
+pub fn get_worker_tasks_cancelled() -> u64 {
+    WORKER_TASKS_CANCELLED.load(Ordering::Relaxed)
+}
+
+pub fn get_worker_tasks_panicked() -> u64 {
+    WORKER_TASKS_PANICKED.load(Ordering::Relaxed)
+}
+
+pub fn get_worker_tasks_aborted() -> u64 {
+    WORKER_TASKS_ABORTED.load(Ordering::Relaxed)
+}
+
+pub fn get_worker_tasks_errored() -> u64 {
+    WORKER_TASKS_ERRORED.load(Ordering::Relaxed)
+}
+
+// Supervisor task registry metrics
+
+pub fn record_supervisor_task_registered() {
+    SUPERVISOR_TASKS_REGISTERED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_supervisor_task_completed() {
+    SUPERVISOR_TASKS_COMPLETED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_supervisor_task_failed() {
+    SUPERVISOR_TASKS_FAILED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_supervisor_task_aborted() {
+    SUPERVISOR_TASKS_ABORTED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_supervisor_task_timed_out() {
+    SUPERVISOR_TASKS_TIMED_OUT.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_supervisor_tasks_registered() -> u64 {
+    SUPERVISOR_TASKS_REGISTERED.load(Ordering::Relaxed)
+}
+
+pub fn get_supervisor_tasks_completed() -> u64 {
+    SUPERVISOR_TASKS_COMPLETED.load(Ordering::Relaxed)
+}
+
+pub fn get_supervisor_tasks_failed() -> u64 {
+    SUPERVISOR_TASKS_FAILED.load(Ordering::Relaxed)
+}
+
+pub fn get_supervisor_tasks_aborted() -> u64 {
+    SUPERVISOR_TASKS_ABORTED.load(Ordering::Relaxed)
+}
+
+pub fn get_supervisor_tasks_timed_out() -> u64 {
+    SUPERVISOR_TASKS_TIMED_OUT.load(Ordering::Relaxed)
 }
 
 pub fn record_serverless_invocation(function: &str, status: &str) {
@@ -1190,6 +1393,227 @@ mod tests {
         assert_eq!(
             ACTIVE_STALLED_REQUESTS.load(Ordering::Relaxed),
             active_before
+        );
+    }
+
+    // ── Phase 9 blocklist convergence metrics ─────────────────────────────────
+
+    #[test]
+    fn blocklist_stale_replay_ignored_increments() {
+        let before = BLOCKLIST_STALE_REPLAY_IGNORED_TOTAL.load(Ordering::Relaxed);
+        record_blocklist_stale_replay_ignored();
+        assert_eq!(
+            BLOCKLIST_STALE_REPLAY_IGNORED_TOTAL.load(Ordering::Relaxed),
+            before + 1
+        );
+    }
+
+    #[test]
+    fn blocklist_cursor_update_increments() {
+        let before = BLOCKLIST_CURSOR_UPDATE_TOTAL.load(Ordering::Relaxed);
+        record_blocklist_cursor_update();
+        assert_eq!(
+            BLOCKLIST_CURSOR_UPDATE_TOTAL.load(Ordering::Relaxed),
+            before + 1
+        );
+    }
+
+    #[test]
+    fn blocklist_cursor_load_increments() {
+        let before = BLOCKLIST_CURSOR_LOAD_TOTAL.load(Ordering::Relaxed);
+        record_blocklist_cursor_load();
+        assert_eq!(
+            BLOCKLIST_CURSOR_LOAD_TOTAL.load(Ordering::Relaxed),
+            before + 1
+        );
+    }
+
+    #[test]
+    fn blocklist_snapshot_apply_increments() {
+        let before = BLOCKLIST_SNAPSHOT_APPLY_TOTAL.load(Ordering::Relaxed);
+        record_blocklist_snapshot_apply();
+        assert_eq!(
+            BLOCKLIST_SNAPSHOT_APPLY_TOTAL.load(Ordering::Relaxed),
+            before + 1
+        );
+    }
+
+    #[test]
+    fn blocklist_ordering_path_source_sequence_increments() {
+        let before = BLOCKLIST_ORDERING_PATH_SOURCE_SEQUENCE_TOTAL.load(Ordering::Relaxed);
+        record_blocklist_ordering_path_source_sequence();
+        assert_eq!(
+            BLOCKLIST_ORDERING_PATH_SOURCE_SEQUENCE_TOTAL.load(Ordering::Relaxed),
+            before + 1
+        );
+    }
+
+    #[test]
+    fn blocklist_ordering_path_timestamp_increments() {
+        let before = BLOCKLIST_ORDERING_PATH_TIMESTAMP_TOTAL.load(Ordering::Relaxed);
+        record_blocklist_ordering_path_timestamp();
+        assert_eq!(
+            BLOCKLIST_ORDERING_PATH_TIMESTAMP_TOTAL.load(Ordering::Relaxed),
+            before + 1
+        );
+    }
+
+    // ── Phase 9 worker task registry metrics ──────────────────────────────────
+
+    #[test]
+    fn worker_task_started_increments() {
+        let before = WORKER_TASKS_STARTED.load(Ordering::Relaxed);
+        record_worker_task_started();
+        assert_eq!(WORKER_TASKS_STARTED.load(Ordering::Relaxed), before + 1);
+    }
+
+    #[test]
+    fn worker_task_completed_cleanly_increments() {
+        let before = WORKER_TASKS_COMPLETED_CLEANLY.load(Ordering::Relaxed);
+        record_worker_task_completed_cleanly();
+        assert_eq!(
+            WORKER_TASKS_COMPLETED_CLEANLY.load(Ordering::Relaxed),
+            before + 1
+        );
+    }
+
+    #[test]
+    fn worker_task_panicked_increments() {
+        let before = WORKER_TASKS_PANICKED.load(Ordering::Relaxed);
+        record_worker_task_panicked();
+        assert_eq!(WORKER_TASKS_PANICKED.load(Ordering::Relaxed), before + 1);
+    }
+
+    // ── Phase 9 supervisor task registry metrics ──────────────────────────────
+
+    #[test]
+    fn supervisor_task_registered_increments() {
+        let before = SUPERVISOR_TASKS_REGISTERED.load(Ordering::Relaxed);
+        record_supervisor_task_registered();
+        assert_eq!(
+            SUPERVISOR_TASKS_REGISTERED.load(Ordering::Relaxed),
+            before + 1
+        );
+    }
+
+    #[test]
+    fn supervisor_task_completed_increments() {
+        let before = SUPERVISOR_TASKS_COMPLETED.load(Ordering::Relaxed);
+        record_supervisor_task_completed();
+        assert_eq!(
+            SUPERVISOR_TASKS_COMPLETED.load(Ordering::Relaxed),
+            before + 1
+        );
+    }
+
+    #[test]
+    fn supervisor_task_timed_out_increments() {
+        let before = SUPERVISOR_TASKS_TIMED_OUT.load(Ordering::Relaxed);
+        record_supervisor_task_timed_out();
+        assert_eq!(
+            SUPERVISOR_TASKS_TIMED_OUT.load(Ordering::Relaxed),
+            before + 1
+        );
+    }
+
+    // ── Phase 9 gap closure: behavioral tests ─────────────────────────────────
+
+    #[test]
+    fn admin_mutation_all_statuses_mapped() {
+        let applied_before = ADMIN_MUTATION_APPLIED.load(Ordering::Relaxed);
+        let noop_before = ADMIN_MUTATION_NOOP.load(Ordering::Relaxed);
+        let failed_before = ADMIN_MUTATION_FAILED.load(Ordering::Relaxed);
+        let stale_before = ADMIN_MUTATION_STALE.load(Ordering::Relaxed);
+        let total_before = ADMIN_MUTATION_TOTAL.load(Ordering::Relaxed);
+
+        record_admin_mutation("applied");
+        record_admin_mutation("noop");
+        record_admin_mutation("failed");
+        record_admin_mutation("stale");
+        record_admin_mutation("unknown"); // should not increment any sub-counter
+
+        assert_eq!(
+            ADMIN_MUTATION_TOTAL.load(Ordering::Relaxed),
+            total_before + 5
+        );
+        assert_eq!(
+            ADMIN_MUTATION_APPLIED.load(Ordering::Relaxed),
+            applied_before + 1
+        );
+        assert_eq!(ADMIN_MUTATION_NOOP.load(Ordering::Relaxed), noop_before + 1);
+        assert_eq!(
+            ADMIN_MUTATION_FAILED.load(Ordering::Relaxed),
+            failed_before + 1
+        );
+        assert_eq!(
+            ADMIN_MUTATION_STALE.load(Ordering::Relaxed),
+            stale_before + 1
+        );
+    }
+
+    #[test]
+    fn blocklist_apply_all_statuses_mapped() {
+        let applied_before = BLOCKLIST_EVENT_APPLY_APPLIED.load(Ordering::Relaxed);
+        let dup_before = BLOCKLIST_EVENT_APPLY_DUPLICATE.load(Ordering::Relaxed);
+        let stale_before = BLOCKLIST_EVENT_APPLY_STALE.load(Ordering::Relaxed);
+        let invalid_before = BLOCKLIST_EVENT_APPLY_INVALID.load(Ordering::Relaxed);
+
+        record_blocklist_event_apply("applied");
+        record_blocklist_event_apply("duplicate");
+        record_blocklist_event_apply("stale");
+        record_blocklist_event_apply("invalid");
+        record_blocklist_event_apply("unknown"); // should not increment any sub-counter
+
+        assert_eq!(
+            BLOCKLIST_EVENT_APPLY_APPLIED.load(Ordering::Relaxed),
+            applied_before + 1
+        );
+        assert_eq!(
+            BLOCKLIST_EVENT_APPLY_DUPLICATE.load(Ordering::Relaxed),
+            dup_before + 1
+        );
+        assert_eq!(
+            BLOCKLIST_EVENT_APPLY_STALE.load(Ordering::Relaxed),
+            stale_before + 1
+        );
+        assert_eq!(
+            BLOCKLIST_EVENT_APPLY_INVALID.load(Ordering::Relaxed),
+            invalid_before + 1
+        );
+    }
+
+    #[test]
+    fn blocklist_snapshot_fallback_increments() {
+        let before = BLOCKLIST_SNAPSHOT_FALLBACK_TOTAL.load(Ordering::Relaxed);
+        record_blocklist_snapshot_fallback();
+        assert_eq!(
+            BLOCKLIST_SNAPSHOT_FALLBACK_TOTAL.load(Ordering::Relaxed),
+            before + 1
+        );
+    }
+
+    #[test]
+    fn blocklist_catchup_event_counts_mapped() {
+        let applied_before = BLOCKLIST_CATCHUP_EVENT_APPLIED.load(Ordering::Relaxed);
+        let noop_before = BLOCKLIST_CATCHUP_EVENT_NOOP.load(Ordering::Relaxed);
+        let stale_before = BLOCKLIST_CATCHUP_EVENT_STALE.load(Ordering::Relaxed);
+
+        record_blocklist_catchup_event_applied();
+        record_blocklist_catchup_event_noop();
+        record_blocklist_catchup_event_stale();
+        record_blocklist_catchup_event_applied();
+
+        assert_eq!(
+            BLOCKLIST_CATCHUP_EVENT_APPLIED.load(Ordering::Relaxed),
+            applied_before + 2
+        );
+        assert_eq!(
+            BLOCKLIST_CATCHUP_EVENT_NOOP.load(Ordering::Relaxed),
+            noop_before + 1
+        );
+        assert_eq!(
+            BLOCKLIST_CATCHUP_EVENT_STALE.load(Ordering::Relaxed),
+            stale_before + 1
         );
     }
 }

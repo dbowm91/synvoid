@@ -48,6 +48,10 @@ pub mod metrics {
     pub fn record_threat_intel_enforcement_suppressed_not_actionable() {}
     pub fn record_threat_intel_enforcement_suppressed_deferred() {}
     pub fn record_threat_intel_enforcement_suppressed_not_configured() {}
+    pub fn record_blocklist_snapshot_fallback() {}
+    pub fn record_blocklist_catchup_event_applied() {}
+    pub fn record_blocklist_catchup_event_noop() {}
+    pub fn record_blocklist_catchup_event_stale() {}
 
     pub mod bandwidth {
         use parking_lot::RwLock;

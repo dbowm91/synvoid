@@ -1916,6 +1916,34 @@ impl ThreatIntelligenceManager {
             ThreatIntelConsumerKind::Enforcement,
             ThreatIntelDeferredMode::FailOpenNoAction,
         );
+        let decision_label = match &decision {
+            Some(crate::threat_intel_policy::ThreatIntelPolicyDecision::Actionable(_)) => {
+                "actionable"
+            }
+            Some(crate::threat_intel_policy::ThreatIntelPolicyDecision::AdvisoryOnly(_)) => {
+                "advisory_only"
+            }
+            Some(crate::threat_intel_policy::ThreatIntelPolicyDecision::NotActionable(_)) => {
+                "not_actionable"
+            }
+            Some(crate::threat_intel_policy::ThreatIntelPolicyDecision::Deferred(_)) => "deferred",
+            None => "not_configured",
+        };
+        let actionable_label = if matches!(
+            decision,
+            Some(crate::threat_intel_policy::ThreatIntelPolicyDecision::Actionable(_))
+        ) {
+            "true"
+        } else {
+            "false"
+        };
+        ::metrics::counter!(
+            "synvoid_threat_policy_decision_total",
+            "decision" => decision_label,
+            "actionable" => actionable_label,
+            "source" => "enforcement"
+        )
+        .increment(1);
         IncomingThreatPolicyGate { action, decision }
     }
 
@@ -1951,24 +1979,34 @@ impl ThreatIntelligenceManager {
 
         // Increment metrics by decision class
         use crate::threat_intel_policy::ThreatIntelPolicyDecisionClass;
-        match shadow.decision_class {
+        let shadow_decision_label = match shadow.decision_class {
             ThreatIntelPolicyDecisionClass::Actionable => {
                 crate::stubs::metrics::record_threat_intel_policy_shadow_actionable();
+                "actionable"
             }
             ThreatIntelPolicyDecisionClass::AdvisoryOnly => {
                 crate::stubs::metrics::record_threat_intel_policy_shadow_advisory_only();
+                "advisory_only"
             }
             ThreatIntelPolicyDecisionClass::NotActionable => {
                 crate::stubs::metrics::record_threat_intel_policy_shadow_not_actionable();
+                "not_actionable"
             }
             ThreatIntelPolicyDecisionClass::Deferred => {
                 crate::stubs::metrics::record_threat_intel_policy_shadow_deferred();
+                "deferred"
             }
             ThreatIntelPolicyDecisionClass::NotConfigured => {
                 crate::stubs::metrics::record_threat_intel_policy_shadow_not_configured();
+                "not_configured"
             }
-            ThreatIntelPolicyDecisionClass::Error => {}
-        }
+            ThreatIntelPolicyDecisionClass::Error => "error",
+        };
+        ::metrics::counter!(
+            "synvoid_threat_policy_shadow_total",
+            "decision" => shadow_decision_label
+        )
+        .increment(1);
 
         // Track canonical unavailability specifically
         if matches!(

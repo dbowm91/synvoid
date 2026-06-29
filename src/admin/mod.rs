@@ -183,6 +183,26 @@ fn build_router_from_state(
             "/observability/security-summary",
             get(handlers::observability::security_observability_summary),
         )
+        .route(
+            "/observability/tasks",
+            get(handlers::observability::runtime_tasks_diagnostics),
+        )
+        .route(
+            "/observability/blocklist-health",
+            get(handlers::observability::blocklist_health_diagnostics),
+        )
+        .route(
+            "/observability/plugins",
+            get(handlers::observability::plugin_diagnostics),
+        )
+        .route(
+            "/observability/features",
+            get(handlers::observability::features_diagnostics),
+        )
+        .route(
+            "/observability/threat-intel",
+            get(handlers::observability::threat_intel_diagnostics),
+        )
         .route("/stats/summary", get(handlers::stats::get_summary))
         .route("/stats/sites", get(handlers::stats::get_sites_stats))
         .route("/stats/history", get(handlers::stats::get_metrics_history))

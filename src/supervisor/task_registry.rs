@@ -104,6 +104,8 @@ impl SupervisorTaskRegistry {
                 handle,
             },
         );
+        metrics::counter!("synvoid.supervisor.tasks_registered_total").increment(1);
+        synvoid_metrics::collection::record_supervisor_task_registered();
         id
     }
 
@@ -132,6 +134,20 @@ impl SupervisorTaskRegistry {
                     }
                 };
                 self.tasks.remove(&id);
+                match &outcome {
+                    SupervisorTaskOutcome::Completed => {
+                        metrics::counter!("synvoid.supervisor.tasks_completed_total").increment(1);
+                        synvoid_metrics::collection::record_supervisor_task_completed();
+                    }
+                    SupervisorTaskOutcome::Failed(_) => {
+                        metrics::counter!("synvoid.supervisor.tasks_failed_total").increment(1);
+                        synvoid_metrics::collection::record_supervisor_task_failed();
+                    }
+                    SupervisorTaskOutcome::Cancelled => {
+                        metrics::counter!("synvoid.supervisor.tasks_aborted_total").increment(1);
+                        synvoid_metrics::collection::record_supervisor_task_aborted();
+                    }
+                }
                 results.push((id, outcome));
             }
         }
@@ -170,17 +186,39 @@ impl SupervisorTaskRegistry {
 
             match tokio::time::timeout(remaining, &mut handle).await {
                 Ok(Ok(outcome)) => match outcome {
-                    SupervisorTaskOutcome::Completed => report.completed += 1,
-                    SupervisorTaskOutcome::Failed(_) => report.failed += 1,
-                    SupervisorTaskOutcome::Cancelled => report.failed += 1,
+                    SupervisorTaskOutcome::Completed => {
+                        report.completed += 1;
+                        metrics::counter!("synvoid.supervisor.tasks_completed_total").increment(1);
+                        synvoid_metrics::collection::record_supervisor_task_completed();
+                    }
+                    SupervisorTaskOutcome::Failed(_) => {
+                        report.failed += 1;
+                        metrics::counter!("synvoid.supervisor.tasks_failed_total").increment(1);
+                        synvoid_metrics::collection::record_supervisor_task_failed();
+                    }
+                    SupervisorTaskOutcome::Cancelled => {
+                        report.failed += 1;
+                        metrics::counter!("synvoid.supervisor.tasks_aborted_total").increment(1);
+                        synvoid_metrics::collection::record_supervisor_task_aborted();
+                    }
                 },
-                Ok(Err(e)) if e.is_cancelled() => report.failed += 1,
-                Ok(Err(_)) => report.failed += 1,
+                Ok(Err(e)) if e.is_cancelled() => {
+                    report.failed += 1;
+                    metrics::counter!("synvoid.supervisor.tasks_aborted_total").increment(1);
+                    synvoid_metrics::collection::record_supervisor_task_aborted();
+                }
+                Ok(Err(_)) => {
+                    report.failed += 1;
+                    metrics::counter!("synvoid.supervisor.tasks_failed_total").increment(1);
+                    synvoid_metrics::collection::record_supervisor_task_failed();
+                }
                 Err(_timeout) => {
                     // Timed out — abort and await to prove termination.
                     handle.abort();
                     let _ = handle.await;
                     report.timed_out += 1;
+                    metrics::counter!("synvoid.supervisor.tasks_timed_out_total").increment(1);
+                    synvoid_metrics::collection::record_supervisor_task_timed_out();
                 }
             }
         }
@@ -191,6 +229,8 @@ impl SupervisorTaskRegistry {
             task.handle.abort();
             let _ = task.handle.await;
             report.aborted += 1;
+            metrics::counter!("synvoid.supervisor.tasks_aborted_total").increment(1);
+            synvoid_metrics::collection::record_supervisor_task_aborted();
         }
 
         report

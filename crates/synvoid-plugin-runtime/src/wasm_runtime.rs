@@ -1267,6 +1267,16 @@ impl WasmRuntime {
         buf
     }
 
+    /// Record a plugin invocation failure on the metrics counter.
+    fn record_invoke_failure(capability: &'static str) {
+        metrics::counter!(
+            "synvoid_plugin_invoke_total",
+            "capability" => capability,
+            "status" => "failed"
+        )
+        .increment(1);
+    }
+
     /// Check if the request timed out
     fn check_timeout(store: &Store<RequestContext>) -> Result<(), WasmPluginError> {
         let elapsed = store.data().start.elapsed();
@@ -1287,6 +1297,7 @@ impl WasmRuntime {
         let plugin_name = &self.name;
 
         record_wasm_invocation(plugin_name);
+        metrics::counter!("synvoid_plugin_invoke_total", "capability" => "filter_request", "status" => "invoked").increment(1);
 
         let (parts, body) = request.into_parts();
 
@@ -1309,12 +1320,22 @@ impl WasmRuntime {
                 WasmInstancePool::resolve_exports_from_instance(&inst.instance, &mut inst.store);
             let result = self.do_filter_request_with_exports(parts, body, &mut inst.store, exports);
             self.pool.return_instance(inst);
+            if result.is_err() {
+                Self::record_invoke_failure("filter_request");
+            }
             return result;
         }
 
         let mut store = self.create_store((*env).clone());
-        let exports = self.instantiate(&mut store)?;
-        self.do_filter_request_with_exports(parts, body, &mut store, exports)
+        let exports = self.instantiate(&mut store).map_err(|e| {
+            Self::record_invoke_failure("filter_request");
+            e
+        })?;
+        let result = self.do_filter_request_with_exports(parts, body, &mut store, exports);
+        if result.is_err() {
+            Self::record_invoke_failure("filter_request");
+        }
+        result
     }
 
     fn do_filter_request_with_exports(
@@ -1443,6 +1464,7 @@ impl WasmRuntime {
         let plugin_name = &self.name;
 
         record_wasm_invocation(plugin_name);
+        metrics::counter!("synvoid_plugin_invoke_total", "capability" => "transform_response", "status" => "invoked").increment(1);
 
         let (parts, body) = response.into_parts();
 
@@ -1465,12 +1487,22 @@ impl WasmRuntime {
             let result =
                 self.do_transform_response_with_exports(parts, body, &mut inst.store, exports);
             self.pool.return_instance(inst);
+            if result.is_err() {
+                Self::record_invoke_failure("transform_response");
+            }
             return result;
         }
 
         let mut store = self.create_store((*env).clone());
-        let exports = self.instantiate(&mut store)?;
-        self.do_transform_response_with_exports(parts, body, &mut store, exports)
+        let exports = self.instantiate(&mut store).map_err(|e| {
+            Self::record_invoke_failure("transform_response");
+            e
+        })?;
+        let result = self.do_transform_response_with_exports(parts, body, &mut store, exports);
+        if result.is_err() {
+            Self::record_invoke_failure("transform_response");
+        }
+        result
     }
 
     fn do_transform_response_with_exports(
@@ -1565,6 +1597,7 @@ impl WasmRuntime {
         let plugin_name = &self.name;
 
         record_wasm_invocation(plugin_name);
+        metrics::counter!("synvoid_plugin_invoke_total", "capability" => "serverless_streaming", "status" => "invoked").increment(1);
 
         tracing::debug!(
             "WASM serverless function '{}' handling {} {} (streaming)",
@@ -1600,7 +1633,10 @@ impl WasmRuntime {
         let mut store = self.create_store(env);
         store.data_mut().body_receiver = Some(rx);
 
-        let exports = self.instantiate(&mut store)?;
+        let exports = self.instantiate(&mut store).map_err(|e| {
+            Self::record_invoke_failure("serverless_streaming");
+            e
+        })?;
 
         let handle_fn = match exports.handle_request.as_ref() {
             Some(f) => f,
@@ -1608,13 +1644,17 @@ impl WasmRuntime {
                 let duration_ms = start.elapsed().as_millis() as u64;
                 record_wasm_duration(plugin_name, duration_ms);
                 record_wasm_error(plugin_name);
+                Self::record_invoke_failure("serverless_streaming");
                 return Err(WasmPluginError::ExecutionFailed(
                     "handle_request function not exported".into(),
                 ));
             }
         };
 
-        Self::check_timeout(&store)?;
+        Self::check_timeout(&store).map_err(|e| {
+            Self::record_invoke_failure("serverless_streaming");
+            e
+        })?;
 
         let method_bytes = method.as_bytes();
         let uri_bytes = uri.as_bytes();
@@ -1664,6 +1704,7 @@ impl WasmRuntime {
 
         let code = result.map_err(|e| {
             record_wasm_error(plugin_name);
+            Self::record_invoke_failure("serverless_streaming");
             WasmPluginError::ExecutionFailed(format!(
                 "handle_request failed in '{}': {}",
                 self.name, e
@@ -1675,6 +1716,7 @@ impl WasmRuntime {
 
         if code != 0 {
             record_wasm_error(plugin_name);
+            Self::record_invoke_failure("serverless_streaming");
             return Err(WasmPluginError::ExecutionFailed(format!(
                 "handle_request in '{}' returned error code {}",
                 self.name, code
@@ -1741,6 +1783,7 @@ impl WasmRuntime {
         let plugin_name = &self.name;
 
         record_wasm_invocation(plugin_name);
+        metrics::counter!("synvoid_plugin_invoke_total", "capability" => "serverless", "status" => "invoked").increment(1);
 
         tracing::debug!(
             "WASM serverless function '{}' handling {} {}",
@@ -1750,7 +1793,10 @@ impl WasmRuntime {
         );
 
         let mut store = self.create_store(env);
-        let exports = self.instantiate(&mut store)?;
+        let exports = self.instantiate(&mut store).map_err(|e| {
+            Self::record_invoke_failure("serverless");
+            e
+        })?;
 
         let handle_fn = match exports.handle_request.as_ref() {
             Some(f) => f,
@@ -1758,13 +1804,17 @@ impl WasmRuntime {
                 let duration_ms = start.elapsed().as_millis() as u64;
                 record_wasm_duration(plugin_name, duration_ms);
                 record_wasm_error(plugin_name);
+                Self::record_invoke_failure("serverless");
                 return Err(WasmPluginError::ExecutionFailed(
                     "handle_request function not exported".into(),
                 ));
             }
         };
 
-        Self::check_timeout(&store)?;
+        Self::check_timeout(&store).map_err(|e| {
+            Self::record_invoke_failure("serverless");
+            e
+        })?;
 
         let method_bytes = method.as_bytes();
         let uri_bytes = uri.as_bytes();
@@ -1812,6 +1862,7 @@ impl WasmRuntime {
 
         let code = result.map_err(|e| {
             record_wasm_error(plugin_name);
+            Self::record_invoke_failure("serverless");
             WasmPluginError::ExecutionFailed(format!(
                 "handle_request failed in '{}': {}",
                 self.name, e
@@ -1823,6 +1874,7 @@ impl WasmRuntime {
 
         if code < 0 {
             record_wasm_error(plugin_name);
+            Self::record_invoke_failure("serverless");
             return Err(WasmPluginError::ExecutionFailed(format!(
                 "Serverless function '{}' returned error",
                 self.name

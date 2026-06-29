@@ -78,6 +78,9 @@ cargo test --test plugin_failure_does_not_poison_manager  # Plugin failure isola
 cargo test --test docs_path_reference_guard  # Stale markdown link detection
 cargo test --test failure_injection  # Failure-injection tests for lifecycle, convergence, plugin, startup
 cargo test --test security_observability_guard  # Security observability invariants: metric labels, doc coverage, registry signals
+cargo test --test unified_worker_composition_root_guard  # Composition root ≤80 lines
+cargo test --test worker_mesh_supervision_boundary_guard --features mesh,dns  # Mesh supervision structural invariants
+cargo test --test mesh_task_ownership_guard --features mesh,dns  # Mesh task ownership and lifecycle invariants
 ```
 
 ## Critical Security Rules
@@ -196,7 +199,7 @@ cargo test --test security_observability_guard
 
 ## Architecture Quick Reference
 
-The `architecture/` directory (82 docs) and `.opencode/skills/` directory contain detailed subsystem docs. Key entrypoints:
+The `architecture/` directory (84 docs) and `.opencode/skills/` directory contain detailed subsystem docs. Key entrypoints:
 
 - **Entry point**: `src/main.rs` → delegates to `src/commands/` (plan/execute/runtime_launch)
 - **Supervisor**: `src/supervisor/` — lifecycle, IPC, control-plane
@@ -232,6 +235,8 @@ The `architecture/` directory (82 docs) and `.opencode/skills/` directory contai
 | `architecture/supervisor_lifecycle.md` | Task classes, shutdown cause taxonomy, drain report, Phase 3 hardening |
 | `architecture/unified_server_startup.md` | UnifiedServer startup/resources/runtimeHandles split |
 | `architecture/request_path_capability_boundary.md` | Request-path capability boundary, narrow traits, forbidden imports |
+| `architecture/final_surface_audit.md` | Public surface classification, stability audit, CLI/admin/protocol inventory (Phase 10) |
+| `architecture/release_hardening_report.md` | Release hardening checklist, guard results, profile checks, fuzz inventory (Phase 10) |
 
 ## Known Issues
 

@@ -194,7 +194,13 @@ Defense-in-depth value:
 - Prevents diagnostic data from being mistaken for enforced policy.
 - Improves operator trust in distributed state convergence.
 
-### Phase 10: Final Public Surface Audit and Release Hardening
+### Phase 10: Final Public Surface Audit and Release Hardening ✅
+
+**Status: Completed.**
+
+Deliverables:
+- `architecture/final_surface_audit.md` — CLI classification, admin endpoint audit, public root export audit, facade documentation, request-path boundary verification, profile matrix validation.
+- `architecture/release_hardening_report.md` — release-hardening checklist, guard results, profile checks, fuzz inventory, residual risks and intentional tradeoffs.
 
 Goal: close the roadmap by auditing public API, CLI, admin endpoints, root exports, feature profiles, and guardrail completeness.
 
@@ -250,3 +256,7 @@ The roadmap is complete when:
 - Admin mutations are audited, provenance-carrying, and explicit about no-op/stale/duplicate outcomes.
 - Plugin runtime has trust tiers, manifests, lifecycle ownership, and failure isolation.
 - Profile matrix, boundary guards, fuzz targets, and failure-injection tests are CI-visible.
+
+## Roadmap Status: Complete
+
+All ten phases are now delivered. The architecture hardening roadmap is closed. Any future work — new features, expanded fuzzing, additional subsystem extractions — should be tracked in a new roadmap rather than appended here.

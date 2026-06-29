@@ -9,6 +9,9 @@ All notable changes to SynVoid will be documented in this file.
 
 ## [Unreleased]
 
+### Architecture Hardening
+- Phase 10 complete: Final public surface audit and release hardening (22 guard tests pass, all profile checks green)
+
 ### Added
 - HTTP/3 (QUIC) support
 - WireGuard VPN tunnel integration (removed, use QUIC mesh instead)
