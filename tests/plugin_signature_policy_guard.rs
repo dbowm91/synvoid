@@ -94,10 +94,12 @@ fn enforce_plugin_load_policy_exists() {
 /// Test 2: All plugin loader files must reference enforcement.
 ///
 /// Every file that loads plugins must either call `enforce_plugin_load_policy`
-/// directly or reference `PluginLoadConfig`. This is a soft guard — the
-/// enforcement function exists but is not yet wired into all loader paths.
-/// When a loader path is wired, it must reference `PluginLoadConfig`.
-// TODO(Phase 13): Change to hard guard once all loader paths call enforce_plugin_load_policy.
+/// directly or reference `PluginLoadConfig`. This ensures loader paths are
+/// aware of trust-tier enforcement.
+///
+/// Exception allowlist:
+/// - `axum_loader.rs`: Native `.so` loader — no WASM manifest concept.
+///   Trust validation is file-permission-based (no symlinks, size, ABI version).
 #[test]
 fn all_load_paths_call_enforcement() {
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -105,6 +107,16 @@ fn all_load_paths_call_enforcement() {
         .join("crates")
         .join("synvoid-plugin-runtime")
         .join("src");
+
+    // Files exempted from enforcement reference requirement with reasons
+    let exempt_files: Vec<PathBuf> = vec![
+        // Native .so loader: no WASM manifest/signing concept. Validates via
+        // file permissions, no symlinks, size checks, and ABI version.
+        plugin_runtime_src.join("axum_loader.rs"),
+        // Composition root that delegates to WasmPluginManager. Trust-tier
+        // enforcement happens inside WasmPluginManager::load_plugin_with_limits.
+        repo.join("src").join("server").join("plugin_runtime.rs"),
+    ];
 
     let loader_files = [
         plugin_runtime_src.join("plugin_manager.rs"),
@@ -114,7 +126,7 @@ fn all_load_paths_call_enforcement() {
         repo.join("src").join("server").join("plugin_runtime.rs"),
     ];
 
-    let mut soft_violations = Vec::new();
+    let mut hard_violations = Vec::new();
 
     for file in &loader_files {
         if !file.exists() {
@@ -134,17 +146,16 @@ fn all_load_paths_call_enforcement() {
         let has_enforcement =
             cleaned.contains("enforce_plugin_load_policy") || cleaned.contains("PluginLoadConfig");
 
-        if !has_enforcement {
-            soft_violations.push(relative);
+        if !has_enforcement && !exempt_files.contains(file) {
+            hard_violations.push(relative);
         }
     }
 
-    if !soft_violations.is_empty() {
-        // Soft guard — report but don't fail. Loader paths must reference
-        // PluginLoadConfig or enforce_plugin_load_policy once enforcement is wired.
-        eprintln!(
-            "[soft] plugin loader files that don't reference enforce_plugin_load_policy or PluginLoadConfig:\n  {}",
-            soft_violations.join("\n  ")
+    if !hard_violations.is_empty() {
+        panic!(
+            "Plugin loader files must reference enforce_plugin_load_policy or PluginLoadConfig. \
+             New loader paths must be classified before merging.\nViolations:\n  {}",
+            hard_violations.join("\n  ")
         );
     }
 }

@@ -7,6 +7,7 @@ use http::{Request, Response};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
 
+use crate::sandbox::types::PluginLoadConfig;
 use crate::wasm_runtime::{
     WasmFilterResult, WasmPluginError, WasmPluginManager, WasmResourceLimits,
 };
@@ -36,6 +37,17 @@ impl PluginManager {
             wasm_manager: Arc::new(WasmPluginManager::new().with_limits(limits)),
             axum_plugins: RwLock::new(Vec::new()),
         }
+    }
+
+    pub fn with_load_config(config: PluginLoadConfig) -> Self {
+        PluginManager {
+            wasm_manager: Arc::new(WasmPluginManager::new().with_load_config(config)),
+            axum_plugins: RwLock::new(Vec::new()),
+        }
+    }
+
+    pub fn set_load_config(&self, config: PluginLoadConfig) {
+        self.wasm_manager.set_load_config(config);
     }
 
     /// Load a WASM plugin from a file path (no mesh dependency).

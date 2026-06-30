@@ -14,7 +14,10 @@ use wasmtime::{
 };
 
 use crate::instance_pool::WasmInstancePool;
-use crate::sandbox::types::{PluginCapabilities, PluginCapability};
+use crate::sandbox::types::{
+    enforce_plugin_load_policy, PluginCapabilities, PluginCapability, PluginLoadConfig,
+    PluginManifest, PluginTrustTier,
+};
 use crate::streaming_body::StreamingBody;
 use crate::wasm_metrics::{
     record_wasm_decision_block, record_wasm_decision_challenge, record_wasm_decision_pass,
@@ -106,6 +109,7 @@ pub struct WasmPluginManager {
     runtimes: RwLock<Vec<Arc<WasmRuntime>>>,
     sorted_runtimes_cache: RwLock<Option<Vec<Arc<WasmRuntime>>>>,
     default_limits: WasmResourceLimits,
+    load_config: RwLock<PluginLoadConfig>,
     // SAFETY_REASON: Debugging - stored for introspection
     #[allow(dead_code)]
     pool: Arc<WasmInstancePool>,
@@ -118,6 +122,7 @@ impl WasmPluginManager {
             runtimes: RwLock::new(Vec::new()),
             sorted_runtimes_cache: RwLock::new(None),
             default_limits: WasmResourceLimits::default(),
+            load_config: RwLock::new(PluginLoadConfig::default()),
             pool: Arc::new(WasmInstancePool::new(
                 Arc::new(Engine::default()),
                 100,
@@ -131,6 +136,15 @@ impl WasmPluginManager {
     pub fn with_limits(mut self, limits: WasmResourceLimits) -> Self {
         self.default_limits = limits;
         self
+    }
+
+    pub fn with_load_config(self, config: PluginLoadConfig) -> Self {
+        *self.load_config.write() = config;
+        self
+    }
+
+    pub fn set_load_config(&self, config: PluginLoadConfig) {
+        *self.load_config.write() = config;
     }
 
     pub fn get_default_limits(&self) -> WasmResourceLimits {
@@ -148,7 +162,75 @@ impl WasmPluginManager {
         result
     }
 
+    /// Discover a `synvoid-plugin.toml` manifest alongside a `.wasm` file.
+    ///
+    /// Looks for a TOML file with the same stem as the WASM file in the same
+    /// directory. Returns a default `LocalSandboxed` manifest if not found.
+    fn discover_manifest(wasm_path: &Path) -> PluginManifest {
+        let toml_path = wasm_path.with_extension("toml");
+        if let Ok(content) = std::fs::read_to_string(&toml_path) {
+            match PluginManifest::parse_toml(&content, &toml_path) {
+                Ok(manifest) => return manifest,
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to parse manifest {}: {}, using default LocalSandboxed",
+                        toml_path.display(),
+                        e
+                    );
+                }
+            }
+        }
+        // Default: LocalSandboxed with the filename stem as name
+        let name = wasm_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        PluginManifest {
+            name,
+            version: "0.0.0".to_string(),
+            entry: wasm_path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("plugin.wasm")
+                .to_string(),
+            trust_tier: PluginTrustTier::LocalSandboxed,
+            capabilities: PluginCapabilities::default(),
+            limits: crate::sandbox::types::PluginLimits::default(),
+            signature: None,
+        }
+    }
+
+    /// Enforce plugin load policy before instantiating a WASM module.
+    ///
+    /// For file-based loads, discovers the manifest alongside the WASM file.
+    /// For memory loads, uses the provided manifest or a default.
+    fn enforce_before_load(
+        &self,
+        wasm_path: Option<&Path>,
+        manifest: Option<&PluginManifest>,
+        binary_bytes: Option<&[u8]>,
+    ) -> Result<(), WasmPluginError> {
+        let config = self.load_config.read().clone();
+        let owned_manifest;
+        let m = match manifest {
+            Some(m) => m,
+            None => {
+                owned_manifest =
+                    Self::discover_manifest(wasm_path.unwrap_or_else(|| Path::new("unknown.wasm")));
+                &owned_manifest
+            }
+        };
+        enforce_plugin_load_policy(m, binary_bytes, &config).map_err(|e| {
+            WasmPluginError::LoadFailed(format!(
+                "Plugin '{}' (tier: {}): {}",
+                m.name, m.trust_tier, e
+            ))
+        })
+    }
+
     pub fn load_plugin(&self, path: &Path) -> Result<Arc<WasmRuntime>, WasmPluginError> {
+        self.enforce_before_load(Some(path), None, None)?;
         let runtime = WasmRuntime::load(path, self.default_limits.clone())?;
         let arc = Arc::new(runtime);
         let name = arc.name().to_string();
@@ -182,6 +264,10 @@ impl WasmPluginManager {
         limits: WasmResourceLimits,
         priority: i32,
     ) -> Result<Arc<WasmRuntime>, WasmPluginError> {
+        // For memory loads, enforce with binary bytes and a default manifest.
+        // The manifest is discovered from the default (LocalSandboxed) since
+        // memory-loaded plugins don't have a file path to look up a TOML.
+        self.enforce_before_load(None, None, Some(data))?;
         let runtime = WasmRuntime::load_from_bytes_with_priority(name, data, limits, priority)?;
         let arc = Arc::new(runtime);
         let runtime_name = arc.name().to_string();
@@ -360,6 +446,7 @@ impl WasmPluginManager {
         path: &Path,
         limits: WasmResourceLimits,
     ) -> Result<Arc<WasmRuntime>, WasmPluginError> {
+        self.enforce_before_load(Some(path), None, None)?;
         let runtime = WasmRuntime::load(path, limits)?;
         let arc = Arc::new(runtime);
         let name = arc.name().to_string();
@@ -396,6 +483,8 @@ impl WasmPluginManager {
             .map(|r| r.priority())
             .unwrap_or(0);
 
+        // Hot reload uses the same trust policy as initial load
+        self.enforce_before_load(Some(path), None, None)?;
         let new_runtime =
             WasmRuntime::load_with_priority(path, self.default_limits.clone(), priority)?;
         let new_arc = Arc::new(new_runtime);

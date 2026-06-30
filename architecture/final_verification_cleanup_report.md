@@ -65,12 +65,13 @@ After the fix, CI triggers correctly on push to `main`/`master`/`develop` and PR
 | Network access default-deny | Pass |
 | Mesh/admin capabilities denied unless implemented | **Pass** — all 3 mesh host functions gated |
 | Signing policy doesn't allow unsigned in production | Pass (default RequireSigned; crypto verification deferred) |
-| DevelopmentHotReload requires dev-mode | Partial — delegated to caller |
+| DevelopmentHotReload requires dev-mode | **Pass** — enforced via `enforce_plugin_load_policy` in `WasmPluginManager` |
 | Timeout/input/output/concurrency limits enforced | Pass |
 | Plugin failure quarantines not poisons | Pass |
 | filter_request/transform_response check capabilities | **Pass** — RequestInspect/ResponseInspect checked at entry |
+| Loader trust-tier enforcement wired | **Pass** — `enforce_plugin_load_policy` called in `load_plugin`, `load_plugin_from_memory_with_priority`, `load_plugin_with_limits`, `reload_plugin` |
 
-**Remaining gap**: `DevelopmentHotReload` trust tier gating is delegated to the caller (plugin loader), not enforced inside the WASM runtime. This is by design — the loader is the enforcement point.
+**No remaining gaps**. All WASM loader paths in `WasmPluginManager` call `enforce_plugin_load_policy` before instantiating the WASM module. The `axum_loader.rs` (native `.so` loader) is exempted — it has no manifest/signing concept and validates via file permissions and ABI version checks.
 
 ## Admin Authority Audit (Phase 12 Closure)
 
