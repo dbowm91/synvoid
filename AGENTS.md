@@ -182,7 +182,7 @@ Each subsystem has specialized `AGENTS.override.md` files. Load the relevant one
 
 ## CI, Fuzzing & Failure Injection
 
-Phase 8 added profile CI, fuzz targets, failure-injection tests, and a docs link guard. Phase 11 fixed the CI workflow summary job (broken dynamic expressions prevented all jobs from running) and aligned `scripts/verify_architecture.sh` with the CI guard-suite (added missing `docs_path_reference_guard`). See `architecture/ci_fuzz_failure_injection.md` for the full profile matrix and fuzz target inventory.
+Phase 8 added profile CI, fuzz targets, failure-injection tests, and a docs link guard. Phase 11 fixed the CI workflow summary job (broken dynamic expressions prevented all jobs from running) and aligned `scripts/verify_architecture.sh` with the CI guard-suite (added missing `docs_path_reference_guard`). Phase 14 added 5 new parser boundary fuzz targets (16 total). See `architecture/ci_fuzz_failure_injection.md` for the full profile matrix and fuzz target inventory.
 
 ```bash
 # Local verification script (profile checks + guard suite)
@@ -196,6 +196,19 @@ cargo test --test failure_injection
 
 # Security observability guard (metric labels, doc coverage, registry signals)
 cargo test --test security_observability_guard
+
+# Fuzz smoke tests (requires nightly toolchain + cargo-fuzz)
+cargo +nightly fuzz run dns_message_decode -- -runs=1000
+cargo +nightly fuzz run plugin_manifest -- -runs=1000
+cargo +nightly fuzz run http_path_normalization -- -runs=1000
+cargo +nightly fuzz run fuzz_attack_detection -- -runs=1000
+cargo +nightly fuzz run fuzz_early_parse -- -runs=1000
+cargo +nightly fuzz run fuzz_ipc -- -runs=1000
+cargo +nightly fuzz run blocklist_event_decode -- -runs=1000
+cargo +nightly fuzz run blocklist_snapshot_decode -- -runs=1000
+cargo +nightly fuzz run admin_mutation_result_decode -- -runs=1000
+cargo +nightly fuzz run http_header_normalization -- -runs=1000
+cargo +nightly fuzz run mesh_protocol_compressed_decode -- -runs=1000
 ```
 
 ## Architecture Quick Reference

@@ -14,27 +14,48 @@ Architecture doc for Phase 8: profile CI matrix, fuzz target inventory, and fail
 | `fuzz_protocol_proto_decode` | `&[u8]` → protobuf mesh bytes | Existing | 1s smoke / manual long | `synvoid` (mesh) | High |
 | `fuzz_raft_commit_notification` | `&[u8]` → protobuf MeshMessage | Existing | 1s smoke / manual long | `synvoid` (mesh) | High |
 | `fuzz_raft_response` | `&[u8]` → protobuf MeshMessage | Existing | 1s smoke / manual long | `synvoid` (mesh) | High |
-| `dns_message_decode` | `&[u8]` → DNS wire-format bytes | **New** | 1s smoke / manual long | `synvoid` (dns) | High |
-| `plugin_manifest` | `&[u8]` → TOML manifest bytes | **New** | 1s smoke / manual long | `synvoid-plugin-runtime` | High |
-| `http_path_normalization` | `&[u8]` → URL-encoded path bytes | **New** | 1s smoke / manual long | `synvoid` (utils) | High |
+| `dns_message_decode` | `&[u8]` → DNS wire-format bytes | Existing | 1s smoke / manual long | `synvoid` (dns) | High |
+| `plugin_manifest` | `&[u8]` → TOML manifest bytes | Existing | 1s smoke / manual long | `synvoid-plugin-runtime` | High |
+| `http_path_normalization` | `&[u8]` → URL-encoded path bytes | Existing | 1s smoke / manual long | `synvoid` (utils) | High |
+| `blocklist_event_decode` | `&[u8]` → JSON BlocklistEvent | **New** | 1s smoke / manual long | `synvoid-core` | High |
+| `blocklist_snapshot_decode` | `&[u8]` → JSON BlocklistSnapshotChunk | **New** | 1s smoke / manual long | `synvoid-core` | High |
+| `admin_mutation_result_decode` | `&[u8]` → JSON AdminMutationResult | **New** | 1s smoke / manual long | `synvoid-core` | Medium |
+| `http_header_normalization` | `&[u8]` → WAF input normalizer | **New** | 1s smoke / manual long | `synvoid-waf` | High |
+| `mesh_protocol_compressed_decode` | `&[u8]` → gzip+protobuf MeshMessage | **New** | 1s smoke / manual long | `synvoid-mesh` | High |
+
+### Tooling Status
+
+- **cargo-fuzz**: Installed (v0.13.2) via `cargo install cargo-fuzz`.
+- **Nightly toolchain**: Required for ASAN instrumentation; `nightly-x86_64-unknown-linux-gnu` installed.
+- **Compilation**: Fuzz targets require nightly + ASAN; initial compilation is slow for large workspace.
+- **CI integration**: Not yet integrated; smoke runs are manual/nightly.
+- **Smoke command**: `cargo +nightly fuzz run <target> -- -runs=1000` for bounded smoke.
 
 ### High-Value Targets Not Yet Implemented
 
 | Target | Input type | Priority | Notes |
 |--------|------------|----------|-------|
-| Mesh protocol full decode | `&[u8]` → protobuf | High | Broader than raft-specific targets |
-| Blocklist event decode | `&[u8]` → postcard | High | Critical for block store integrity |
-| Blocklist snapshot cursor | `&[u8]` → postcard | High | Cursor corruption could cause infinite catchup |
-| Config parse & validate | `&[u8]` → TOML/JSON | Medium | Malformed config should fail closed |
+| Config parse & validate | `&[u8]` → TOML | Medium | Malformed config should fail closed |
 | HTTP chunked body framing | `&[u8]` → chunked transfer | High | Request smuggling vector |
 | URL/path routing matcher | `&[u8]` → route table input | High | Routing correctness under adversarial paths |
 
 ### CI Smoke Commands
 
 ```bash
-cargo fuzz run dns_message_decode -- -runs=1000
-cargo fuzz run plugin_manifest -- -runs=1000
-cargo fuzz run http_path_normalization -- -runs=1000
+# Existing targets
+cargo +nightly fuzz run dns_message_decode -- -runs=1000
+cargo +nightly fuzz run plugin_manifest -- -runs=1000
+cargo +nightly fuzz run http_path_normalization -- -runs=1000
+cargo +nightly fuzz run fuzz_attack_detection -- -runs=1000
+cargo +nightly fuzz run fuzz_early_parse -- -runs=1000
+cargo +nightly fuzz run fuzz_ipc -- -runs=1000
+
+# New targets (Phase 14)
+cargo +nightly fuzz run blocklist_event_decode -- -runs=1000
+cargo +nightly fuzz run blocklist_snapshot_decode -- -runs=1000
+cargo +nightly fuzz run admin_mutation_result_decode -- -runs=1000
+cargo +nightly fuzz run http_header_normalization -- -runs=1000
+cargo +nightly fuzz run mesh_protocol_compressed_decode -- -runs=1000
 ```
 
 Long fuzz runs are manual/nightly only.

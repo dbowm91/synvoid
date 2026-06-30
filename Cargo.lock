@@ -8253,8 +8253,13 @@ dependencies = [
  "http 1.4.1",
  "libfuzzer-sys",
  "postcard",
+ "serde_json",
  "synvoid",
+ "synvoid-core",
+ "synvoid-dns",
+ "synvoid-mesh",
  "synvoid-plugin-runtime",
+ "synvoid-waf",
 ]
 
 [[package]]

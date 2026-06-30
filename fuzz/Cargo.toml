@@ -11,8 +11,13 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 synvoid = { path = "..", features = ["dns"] }
 synvoid-plugin-runtime = { path = "../crates/synvoid-plugin-runtime" }
+synvoid-core = { path = "../crates/synvoid-core" }
+synvoid-waf = { path = "../crates/synvoid-waf" }
+synvoid-mesh = { path = "../crates/synvoid-mesh" }
+synvoid-dns = { path = "../crates/synvoid-dns" }
 http = "1"
 postcard = "1"
+serde_json = "1"
 
 [[bin]]
 name = "fuzz_attack_detection"
@@ -57,3 +62,23 @@ path = "plugin_manifest.rs"
 [[bin]]
 name = "http_path_normalization"
 path = "http_path_normalization.rs"
+
+[[bin]]
+name = "blocklist_event_decode"
+path = "blocklist_event_decode.rs"
+
+[[bin]]
+name = "blocklist_snapshot_decode"
+path = "blocklist_snapshot_decode.rs"
+
+[[bin]]
+name = "admin_mutation_result_decode"
+path = "admin_mutation_result_decode.rs"
+
+[[bin]]
+name = "http_header_normalization"
+path = "http_header_normalization.rs"
+
+[[bin]]
+name = "mesh_protocol_compressed_decode"
+path = "mesh_protocol_compressed_decode.rs"

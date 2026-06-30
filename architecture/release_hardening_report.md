@@ -103,12 +103,17 @@ All 26 guard tests pass. 543 individual assertions pass.
 - [x] DNS message decode fuzz target exists (`dns_message_decode`)
 - [x] Plugin manifest fuzz target exists (`plugin_manifest`)
 - [x] HTTP path normalization fuzz target exists (`http_path_normalization`)
+- [x] Blocklist event decode fuzz target exists (`blocklist_event_decode`) — Phase 14
+- [x] Blocklist snapshot decode fuzz target exists (`blocklist_snapshot_decode`) — Phase 14
+- [x] Admin mutation result decode fuzz target exists (`admin_mutation_result_decode`) — Phase 14
+- [x] HTTP header normalization fuzz target exists (`http_header_normalization`) — Phase 14
+- [x] Mesh protocol compressed decode fuzz target exists (`mesh_protocol_compressed_decode`) — Phase 14
 
 ### Known Deferrals (Not Release-Blocking)
 
 - [ ] Config parse fuzz target: listed in `ci_fuzz_failure_injection.md`, not yet implemented
-- [ ] Blocklist event/snapshot decode fuzz: listed as high-value target, not yet implemented
 - [ ] HTTP chunked body framing fuzz: listed as high-value target, not yet implemented
+- [ ] URL/path routing matcher fuzz: listed as high-value target, not yet implemented
 - [ ] `split_required` module extraction: 11 modules tracked in root_module_ledger.md
 - [ ] `serder` module removal: stale legacy module, candidate for deletion
 
@@ -118,7 +123,7 @@ All 26 guard tests pass. 543 individual assertions pass.
 
 - 5 profile checks: all pass
 - 26 guard tests: all pass (543 assertions)
-- 11 fuzz targets: all exist
+- 16 fuzz targets: all exist (11 existing + 5 new in Phase 14)
 - No known release-blocking defects
 - All architectural invariants enforced by automated guards
 - Public surface classified and documented
