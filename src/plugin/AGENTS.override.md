@@ -46,6 +46,34 @@ enabled = true  # or false to disable
 
 Defaults to `true` if not specified (backward compatible).
 
+### Manifest Authority Wiring (M1 Phase 01)
+
+Every plugin's `synvoid-plugin.toml` manifest is the single source of truth for
+that plugin's runtime authority. The conversion pipeline is:
+
+1. `prepare_plugin_load()` loads/parses the manifest once
+2. Calls `enforce_plugin_load_policy()` for admission checks
+3. Calls `limits_from_manifest(manifest, defaults)` to derive `WasmResourceLimits`
+4. Returns `PreparedPluginLoad { manifest, effective_limits, source }`
+
+**Critical rules:**
+- All load paths (`load_plugin`, `load_plugin_with_limits`, `reload_plugin`,
+  `load_plugin_from_memory`) MUST use `PreparedPluginLoad.effective_limits`
+  — never `self.default_limits.clone()` directly.
+- Capabilities ALWAYS come from the manifest, never from defaults.
+- `mesh = true` does NOT inherit global DHT prefix access.
+- `PluginInfo` now includes `version`, `trust_tier`, `timeout_seconds`,
+  `max_memory_mb`, `max_cpu_fuel`, `max_instances`, `capabilities_summary`.
+
+**Types:**
+- `EffectivePluginPolicy` — immutable per-plugin runtime policy
+- `PreparedPluginLoad` — validated manifest + effective limits
+- `PluginSourceIdentity` — provenance (path, hashes, key_id)
+
+**Guardrail tests:**
+- `cargo test --test manifest_authority_wiring` — two-plugin differentiation
+- `cargo test --test manifest_authority_load_path_guard` — static load path enforcement
+
 ## Known Bugs (Fixed)
 
 ### Spin Cold-Start Bug (FIXED 2026-05-26)

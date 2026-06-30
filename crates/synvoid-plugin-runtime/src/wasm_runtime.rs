@@ -14,6 +14,9 @@ use wasmtime::{
 };
 
 use crate::instance_pool::WasmInstancePool;
+use crate::sandbox::policy::{
+    limits_from_manifest, EffectivePluginPolicy, PluginSourceIdentity, PreparedPluginLoad,
+};
 use crate::sandbox::types::{
     enforce_plugin_load_policy, PluginCapabilities, PluginCapability, PluginLoadConfig,
     PluginManifest, PluginTrustTier,
@@ -50,7 +53,7 @@ type GuestAllocFn = TypedFunc<i32, i32>;
 /// guest_free(ptr, size)
 type GuestFreeFn = TypedFunc<(i32, i32), ()>;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct WasmResourceLimits {
     pub max_memory_mb: usize,
     pub max_table_elements: Option<usize>,
@@ -97,12 +100,20 @@ pub struct WasmRuntime {
     priority: i32,
     pool: Arc<WasmInstancePool>,
     linker: Linker<RequestContext>,
+    effective_policy: Option<EffectivePluginPolicy>,
 }
 
 #[derive(Debug, Clone)]
 pub struct PluginInfo {
     pub name: String,
     pub path: Option<PathBuf>,
+    pub version: String,
+    pub trust_tier: PluginTrustTier,
+    pub timeout_seconds: u64,
+    pub max_memory_mb: usize,
+    pub max_cpu_fuel: u64,
+    pub max_instances: usize,
+    pub capabilities_summary: Vec<(PluginCapability, bool)>,
 }
 
 pub struct WasmPluginManager {
@@ -114,6 +125,7 @@ pub struct WasmPluginManager {
     #[allow(dead_code)]
     pool: Arc<WasmInstancePool>,
     plugin_paths: RwLock<HashMap<String, PathBuf>>,
+    plugin_policies: RwLock<HashMap<String, EffectivePluginPolicy>>,
 }
 
 impl WasmPluginManager {
@@ -130,6 +142,7 @@ impl WasmPluginManager {
                 Arc::new(PluginCapabilities::default()),
             )),
             plugin_paths: RwLock::new(HashMap::new()),
+            plugin_policies: RwLock::new(HashMap::new()),
         }
     }
 
@@ -201,16 +214,18 @@ impl WasmPluginManager {
         }
     }
 
-    /// Enforce plugin load policy before instantiating a WASM module.
+    /// Prepare a plugin load by enforcing policy and computing effective limits.
     ///
-    /// For file-based loads, discovers the manifest alongside the WASM file.
-    /// For memory loads, uses the provided manifest or a default.
-    fn enforce_before_load(
+    /// This is the preferred entry point for all load paths. It returns a
+    /// `PreparedPluginLoad` containing the validated manifest and the effective
+    /// `WasmResourceLimits` derived from that manifest. Every load path MUST
+    /// use the returned `effective_limits` — never `self.default_limits` directly.
+    fn prepare_plugin_load(
         &self,
         wasm_path: Option<&Path>,
         manifest: Option<&PluginManifest>,
         binary_bytes: Option<&[u8]>,
-    ) -> Result<(), WasmPluginError> {
+    ) -> Result<PreparedPluginLoad, WasmPluginError> {
         let config = self.load_config.read().clone();
         let owned_manifest;
         let m = match manifest {
@@ -226,12 +241,23 @@ impl WasmPluginManager {
                 "Plugin '{}' (tier: {}): {}",
                 m.name, m.trust_tier, e
             ))
+        })?;
+        let effective_limits = limits_from_manifest(m, &self.default_limits);
+        let source = PluginSourceIdentity {
+            path: wasm_path.map(|p| p.to_path_buf()),
+            ..Default::default()
+        };
+        Ok(PreparedPluginLoad {
+            manifest: m.clone(),
+            effective_limits,
+            source,
         })
     }
 
     pub fn load_plugin(&self, path: &Path) -> Result<Arc<WasmRuntime>, WasmPluginError> {
-        self.enforce_before_load(Some(path), None, None)?;
-        let runtime = WasmRuntime::load(path, self.default_limits.clone())?;
+        let prepared = self.prepare_plugin_load(Some(path), None, None)?;
+        let limits = prepared.effective_limits.clone();
+        let runtime = WasmRuntime::load_with_policy(path, limits, 0, Some(prepared))?;
         let arc = Arc::new(runtime);
         let name = arc.name().to_string();
 
@@ -244,7 +270,12 @@ impl WasmPluginManager {
 
         self.runtimes.write().push(arc.clone());
         *self.sorted_runtimes_cache.write() = None;
-        self.plugin_paths.write().insert(name, path.to_path_buf());
+        self.plugin_paths
+            .write()
+            .insert(name.clone(), path.to_path_buf());
+        if let Some(policy) = arc.effective_policy() {
+            self.plugin_policies.write().insert(name, policy.clone());
+        }
         Ok(arc)
     }
 
@@ -267,15 +298,36 @@ impl WasmPluginManager {
         // For memory loads, enforce with binary bytes and a default manifest.
         // The manifest is discovered from the default (LocalSandboxed) since
         // memory-loaded plugins don't have a file path to look up a TOML.
-        self.enforce_before_load(None, None, Some(data))?;
-        let runtime = WasmRuntime::load_from_bytes_with_priority(name, data, limits, priority)?;
+        let prepared = self.prepare_plugin_load(None, None, Some(data))?;
+        // Merge caller-supplied limits with manifest-derived limits.
+        // Manifest capabilities are authoritative; resource limits use manifest
+        // values where declared, falling back to caller-supplied then defaults.
+        let effective = WasmResourceLimits {
+            capabilities: prepared.effective_limits.capabilities.clone(),
+            ..limits
+        };
+        let runtime = WasmRuntime::load_from_bytes_with_priority(name, data, effective, priority)?;
         let arc = Arc::new(runtime);
         let runtime_name = arc.name().to_string();
         self.runtimes.write().push(arc.clone());
         *self.sorted_runtimes_cache.write() = None;
-        self.plugin_paths
-            .write()
-            .insert(runtime_name, PathBuf::from(format!("mesh://{}", name)));
+        self.plugin_paths.write().insert(
+            runtime_name.clone(),
+            PathBuf::from(format!("mesh://{}", name)),
+        );
+        let policy = EffectivePluginPolicy {
+            name: prepared.manifest.name.clone(),
+            version: prepared.manifest.version.clone(),
+            trust_tier: prepared.manifest.trust_tier,
+            capabilities: prepared.effective_limits.capabilities.clone(),
+            limits: prepared.effective_limits.clone(),
+            manifest_limits: prepared.manifest.limits.clone(),
+            source: PluginSourceIdentity {
+                path: Some(PathBuf::from(format!("mesh://{}", name))),
+                ..prepared.source
+            },
+        };
+        self.plugin_policies.write().insert(runtime_name, policy);
         Ok(arc)
     }
 
@@ -446,14 +498,29 @@ impl WasmPluginManager {
         path: &Path,
         limits: WasmResourceLimits,
     ) -> Result<Arc<WasmRuntime>, WasmPluginError> {
-        self.enforce_before_load(Some(path), None, None)?;
-        let runtime = WasmRuntime::load(path, limits)?;
+        let prepared = self.prepare_plugin_load(Some(path), None, None)?;
+        // Merge: manifest capabilities are authoritative, caller-supplied
+        // resource limits override manifest values where declared.
+        let effective = WasmResourceLimits {
+            capabilities: prepared.effective_limits.capabilities.clone(),
+            ..limits
+        };
+        let runtime = WasmRuntime::load_with_policy(path, effective, 0, Some(prepared))?;
         let arc = Arc::new(runtime);
         let name = arc.name().to_string();
         self.runtimes.write().push(arc.clone());
         *self.sorted_runtimes_cache.write() = None;
-        self.plugin_paths.write().insert(name, path.to_path_buf());
+        self.plugin_paths
+            .write()
+            .insert(name.clone(), path.to_path_buf());
+        if let Some(policy) = arc.effective_policy() {
+            self.plugin_policies.write().insert(name, policy.clone());
+        }
         Ok(arc)
+    }
+
+    pub fn get_plugin_policy_info(&self, name: &str) -> Option<EffectivePluginPolicy> {
+        self.plugin_policies.read().get(name).cloned()
     }
 
     pub fn unload_plugin(&self, name: &str) -> bool {
@@ -463,6 +530,7 @@ impl WasmPluginManager {
         if runtimes.len() < before {
             *self.sorted_runtimes_cache.write() = None;
             self.plugin_paths.write().remove(name);
+            self.plugin_policies.write().remove(name);
             return true;
         }
         false
@@ -484,9 +552,9 @@ impl WasmPluginManager {
             .unwrap_or(0);
 
         // Hot reload uses the same trust policy as initial load
-        self.enforce_before_load(Some(path), None, None)?;
-        let new_runtime =
-            WasmRuntime::load_with_priority(path, self.default_limits.clone(), priority)?;
+        let prepared = self.prepare_plugin_load(Some(path), None, None)?;
+        let limits = prepared.effective_limits.clone();
+        let new_runtime = WasmRuntime::load_with_policy(path, limits, priority, Some(prepared))?;
         let new_arc = Arc::new(new_runtime);
 
         {
@@ -496,7 +564,12 @@ impl WasmPluginManager {
         }
         *self.sorted_runtimes_cache.write() = None;
 
-        self.plugin_paths.write().insert(name, path.to_path_buf());
+        self.plugin_paths
+            .write()
+            .insert(name.clone(), path.to_path_buf());
+        if let Some(policy) = new_arc.effective_policy() {
+            self.plugin_policies.write().insert(name, policy.clone());
+        }
 
         Ok(new_arc)
     }
@@ -512,13 +585,25 @@ impl WasmPluginManager {
     pub fn get_plugin_info(&self) -> Vec<PluginInfo> {
         let runtimes = self.runtimes.read();
         let paths = self.plugin_paths.read();
+        let policies = self.plugin_policies.read();
         runtimes
             .iter()
             .map(|r| {
                 let name = r.name();
+                let path = paths.get(name).cloned();
+                let policy = policies.get(name);
                 PluginInfo {
                     name: name.to_string(),
-                    path: paths.get(name).cloned(),
+                    path: path.clone(),
+                    version: policy
+                        .map(|p| p.version.clone())
+                        .unwrap_or_else(|| "0.0.0".into()),
+                    trust_tier: policy.map(|p| p.trust_tier).unwrap_or_default(),
+                    timeout_seconds: r.limits.timeout_seconds,
+                    max_memory_mb: r.limits.max_memory_mb,
+                    max_cpu_fuel: r.limits.max_cpu_fuel,
+                    max_instances: r.limits.max_instances,
+                    capabilities_summary: r.limits.capabilities.iter_flags(),
                 }
             })
             .collect()
@@ -663,6 +748,93 @@ impl WasmRuntime {
         Self::load_with_priority(path, limits, 0)
     }
 
+    /// Load a WASM plugin with an effective policy derived from its manifest.
+    ///
+    /// This is the preferred constructor for all load paths that have completed
+    /// `prepare_plugin_load()`. The policy is stored for runtime introspection.
+    pub fn load_with_policy(
+        path: &Path,
+        limits: WasmResourceLimits,
+        priority: i32,
+        prepared: Option<PreparedPluginLoad>,
+    ) -> Result<Self, WasmPluginError> {
+        let mut config = Config::new();
+        config
+            .cranelift_opt_level(OptLevel::SpeedAndSize)
+            .max_wasm_stack(1 << 20)
+            .memory_init_cow(true);
+
+        if limits.max_cpu_fuel > 0 {
+            config.consume_fuel(true);
+        }
+
+        let engine =
+            Engine::new(&config).map_err(|e| WasmPluginError::LoadFailed(e.to_string()))?;
+
+        let module = Module::from_file(&engine, path)
+            .map_err(|e| WasmPluginError::LoadFailed(e.to_string()))?;
+
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        let has_filter = module.get_export("filter_request").is_some();
+        let has_transform = module.get_export("transform_response").is_some();
+        let has_handle = module.get_export("handle_request").is_some();
+        if !has_filter && !has_transform && !has_handle {
+            tracing::warn!(
+                "WASM plugin '{}' does not export filter_request, transform_response, or handle_request; will be a pass-through",
+                name
+            );
+        }
+
+        tracing::info!(
+            "Loaded WASM plugin '{}' with limits: {}MB memory, {} fuel, {}s timeout, priority {} (filter={}, transform={}, handle={})",
+            name,
+            limits.max_memory_mb,
+            limits.max_cpu_fuel,
+            limits.timeout_seconds,
+            priority,
+            has_filter,
+            has_transform,
+            has_handle,
+        );
+
+        let max_instances = limits.max_instances.max(1);
+        let pool = Arc::new(WasmInstancePool::new(
+            Arc::new(engine.clone()),
+            max_instances,
+            limits.allowed_dht_prefixes.clone(),
+            limits.capabilities.clone(),
+        ));
+
+        let linker = Self::create_linker(&engine, &limits)?;
+
+        // Build effective policy if a prepared load was provided
+        let effective_policy = prepared.map(|p| EffectivePluginPolicy {
+            name: p.manifest.name.clone(),
+            version: p.manifest.version.clone(),
+            trust_tier: p.manifest.trust_tier,
+            capabilities: p.effective_limits.capabilities.clone(),
+            limits: p.effective_limits,
+            manifest_limits: p.manifest.limits.clone(),
+            source: p.source,
+        });
+
+        Ok(Self {
+            engine,
+            module,
+            limits,
+            name,
+            priority,
+            pool,
+            linker,
+            effective_policy,
+        })
+    }
+
     pub fn load_from_bytes(
         name: &str,
         bytes: &[u8],
@@ -733,6 +905,7 @@ impl WasmRuntime {
             priority,
             pool,
             linker,
+            effective_policy: None,
         })
     }
 
@@ -804,6 +977,7 @@ impl WasmRuntime {
             priority,
             pool,
             linker,
+            effective_policy: None,
         })
     }
 
@@ -1917,6 +2091,10 @@ impl WasmRuntime {
 
     pub fn priority(&self) -> i32 {
         self.priority
+    }
+
+    pub fn effective_policy(&self) -> Option<&EffectivePluginPolicy> {
+        self.effective_policy.as_ref()
     }
 
     pub fn engine(&self) -> &Engine {

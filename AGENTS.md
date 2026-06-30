@@ -76,6 +76,8 @@ cargo test --test mesh_admin_edge_cases          # Mesh admin edge case tests
 cargo test --test plugin_capability_boundary_guard  # Plugin sandbox capability gates, manifest parsing, mem::forget
 cargo test --test plugin_failure_does_not_poison_manager  # Plugin failure isolation: one plugin's failure doesn't poison others
 cargo test --test plugin_signature_policy_guard  # Plugin signature policy enforcement
+cargo test --test manifest_authority_wiring        # Manifest-to-runtime authority differentiation (M1 Phase 01)
+cargo test --test manifest_authority_load_path_guard  # All load paths use PreparedPluginLoad, not raw default_limits
 cargo test --test docs_path_reference_guard  # Stale markdown link detection
 cargo test --test failure_injection  # Failure-injection tests for lifecycle, convergence, plugin, startup
 cargo test --test security_observability_guard  # Security observability invariants: metric labels, doc coverage, registry signals

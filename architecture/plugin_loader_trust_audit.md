@@ -32,7 +32,14 @@ Scope: Every code path that loads, reloads, or hot-reloads a plugin. Verifies tr
 
 ## Enforcement Architecture
 
-All loader paths converge on `enforce_plugin_load_policy()` which enforces:
+All loader paths converge on `prepare_plugin_load()` as the canonical entry point, which:
+
+1. Loads and parses the plugin manifest once.
+2. Calls `enforce_plugin_load_policy()` to enforce trust-tier, signature, and dev-mode rules.
+3. Calls `limits_from_manifest()` to derive effective runtime limits (fuel, memory, timeout, capabilities) from the manifest, rather than using global defaults.
+4. Returns a `PreparedPluginLoad` so the caller constructs the `WasmRuntime` from manifest-derived limits.
+
+The enforcement policy applied is:
 
 ```
 match trust_tier {
@@ -105,3 +112,4 @@ Before Phase 13, the trust-tier and signing infrastructure existed but was never
 - All WASM files were loaded regardless of declared trust tier.
 - `PluginManifest::from_file()` was never called from runtime code.
 - Mesh-distributed WASM was loaded without signature verification.
+- All WASM load paths used `self.default_limits.clone()` for `WasmRuntime` construction, meaning per-plugin manifest values (fuel, memory, timeout, capabilities) were not applied at runtime. Closed in M1 Phase 01 by introducing `PreparedPluginLoad`, `EffectivePluginPolicy`, and `limits_from_manifest()`.

@@ -189,6 +189,53 @@ pub(crate) struct WasmPooledInstance {
 }
 ```
 
+### EffectivePluginPolicy
+
+Resolved policy for a plugin after merging manifest defaults, site overrides, and platform constraints (`wasm_runtime.rs`):
+
+```rust
+pub struct EffectivePluginPolicy {
+    pub name: String,                    // Plugin name
+    pub version: String,                 // Manifest version string
+    pub trust_tier: TrustTier,           // Trust level (e.g., Local, Remote, Federated)
+    pub capabilities: Vec<String>,       // Declared capabilities (e.g., "dht:read", "http:outbound")
+    pub limits: WasmResourceLimits,      // Effective runtime resource limits
+    pub manifest_limits: WasmResourceLimits, // Raw limits from the manifest (before overrides)
+    pub source: PluginSourceIdentity,    // Provenance of the loaded binary
+}
+```
+
+The effective policy is the **single source of truth** for how a plugin is sandboxed at runtime. All runtime limits (memory, fuel, timeout, pool size, DHT prefixes) are derived from this struct, not from raw config or manifest values directly.
+
+### PreparedPluginLoad
+
+Canonical input to `WasmPluginManager::load_plugin()` — the only load path that applies manifest authority wiring:
+
+```rust
+pub struct PreparedPluginLoad {
+    pub manifest: PluginManifest,         // Parsed and validated plugin manifest
+    pub effective_limits: WasmResourceLimits, // Merged limits (manifest + site + platform)
+    pub source: PluginSourceIdentity,     // Provenance metadata for the binary
+}
+```
+
+All load paths (`load_plugin`, `load_plugin_from_memory`, etc.) must route through a `PreparedPluginLoad` to ensure manifest-derived limits and provenance are applied consistently. Raw `WasmResourceLimits` should never bypass this struct on the primary load path.
+
+### PluginSourceIdentity
+
+Cryptographic provenance of a loaded plugin binary:
+
+```rust
+pub struct PluginSourceIdentity {
+    pub path: Option<PathBuf>,            // File path (None if loaded from memory/mesh)
+    pub binary_sha256: [u8; 32],         // SHA-256 of the WASM binary
+    pub manifest_sha256: [u8; 32],       // SHA-256 of the manifest file
+    pub key_id: Option<String>,           // Signing key ID (if signature verified)
+}
+```
+
+Used by `EffectivePluginPolicy.source` to record where a plugin came from and its integrity hashes. The `key_id` is populated only when the plugin was loaded from a signed distribution (e.g., mesh WASM dist or a verified filesystem path with a co-located `.sig` file).
+
 ### WasmRuntime
 
 A single WASM module with its engine, module, pool, and linker (`wasm_runtime.rs:88-96`):
@@ -317,6 +364,23 @@ impl WasmPluginManager {
     
     pub fn list_plugins(&self) -> Vec<String>
     pub fn get_plugin_info(&self) -> Vec<PluginInfo>
+    
+    // M1 Phase 01: Manifest authority wiring
+    pub fn prepare_plugin_load(&self, path: &Path, site_overrides: Option<&SitePluginConfig>) -> Result<PreparedPluginLoad, WasmPluginError>
+    // Canonical load path entry point. Parses the manifest, merges limits (manifest defaults → site overrides → platform constraints),
+    // computes binary/manifest SHA-256, and returns a PreparedPluginLoad ready for load_plugin().
+    
+    pub fn get_plugin_policy_info(&self, name: &str) -> Option<EffectivePluginPolicy>
+    // Returns the EffectivePluginPolicy for a loaded plugin, including resolved limits, capabilities, trust tier, and provenance.
+    
+    // PluginInfo now includes manifest-derived metadata:
+    // - version: String (from manifest)
+    // - trust_tier: TrustTier (from manifest / site config)
+    // - timeout_seconds: u64 (effective value after merge)
+    // - max_memory_mb: usize (effective value after merge)
+    // - max_cpu_fuel: u64 (effective value after merge)
+    // - max_instances: usize (effective pool size after merge)
+    // - capabilities_summary: Vec<String> (declared capabilities from manifest)
     
     // Filter/transform with priority ordering
     pub fn filter_request(&self, request: Request<Bytes>, env: HashMap<String, String>) -> Result<WasmFilterResult, WasmPluginError>
@@ -586,6 +650,18 @@ pub async fn warmup(&self, modules: &[(String, Module)]) {
     // These stubs are replaced with real implementations on first actual request
 }
 ```
+
+### Manifest-Derived Limits (M1 Phase 01)
+
+Pooled instances are initialized with limits derived from `EffectivePluginPolicy`, not raw config defaults. The flow is:
+
+1. `prepare_plugin_load()` resolves the effective policy (manifest + site + platform)
+2. `WasmInstancePool` receives the `WasmResourceLimits` from `effective_limits`
+3. Pool warmup and instance creation use these manifest-authoritative values
+4. `max_instances` from the effective policy controls the pool's `max_size`
+5. `max_cpu_fuel` from the effective policy is set on each instance via `set_fuel()`
+
+This ensures that plugin sandboxing is always governed by the manifest authority chain, not by ad-hoc runtime overrides.
 
 ### Request Flow with Pooling
 

@@ -118,7 +118,11 @@ impl PidFileManager {
 
         let path = self.pid_file_path();
 
-        let mut file = OpenOptions::new().write(true).create(true).truncate(true).open(&path)?;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)?;
 
         let fd = file.as_raw_fd();
 

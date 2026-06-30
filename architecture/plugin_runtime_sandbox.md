@@ -120,6 +120,18 @@ The `PluginCapability` enum defines 11 fine-grained capability tokens. `PluginCa
 
 Enforcement uses `check_input()`, `check_output()`, `timeout()`, and a semaphore permit acquired before each invocation.
 
+### Manifest-to-Runtime Conversion (M1 Phase 01)
+
+`limits_from_manifest(manifest, defaults) -> WasmResourceLimits` is the single conversion path from a plugin manifest to runtime resource limits. All load paths use this function; no load path bypasses it to apply raw default limits.
+
+- **Capabilities** always come from the manifest's `[capabilities]` section, never from server defaults. The manifest is the authoritative source for what a plugin can do.
+- **Timeout** is converted from milliseconds to seconds with a minimum of 1 second (`max(1, timeout_ms / 1000)`). Sub-second timeouts are rounded up.
+- **Fuel** maps directly from `manifest.limits.fuel` if present; otherwise falls back to the provided default.
+- **Memory pages** maps directly from `manifest.limits.memory_pages` if present; otherwise falls back to the provided default.
+- **Max concurrency** maps directly from `manifest.limits.max_concurrency`; defaults apply only when the manifest omits the field.
+
+The mesh capability declared in the manifest does **not** inherit global DHT prefix access. Mesh permission is scoped strictly to what the manifest declares; no ambient authority leaks from the server's own DHT configuration.
+
 ## Signing Policy
 
 `SigningPolicy` controls production signing enforcement:
@@ -190,6 +202,29 @@ The `enforce_plugin_load_policy()` function enforces trust-tier rules at every p
 | `DevelopmentHotReload` | Requires `dev_mode = true` in `PluginLoadConfig` |
 | `LocalTrusted` | Requires `allow_local_trusted = true` in `PluginLoadConfig` |
 | `LocalSandboxed` | Permitted (unsigned, sandboxed) |
+
+### Prepared Plugin Load (M1 Phase 01)
+
+`prepare_plugin_load()` is the canonical entry point that wraps load-policy enforcement and manifest-to-runtime conversion into a single atomic step. It returns a `PreparedPluginLoad` struct:
+
+```rust
+pub struct PreparedPluginLoad {
+    pub manifest: PluginManifest,
+    pub effective_limits: WasmResourceLimits,
+    pub source: PluginLoadSource,
+}
+```
+
+All load paths must use `prepare_plugin_load()`:
+
+| Load Path | Responsibility |
+|-----------|---------------|
+| `load_plugin()` | Standard filesystem load; calls `prepare_plugin_load()` |
+| `load_plugin_with_limits()` | Load with overridden defaults; calls `prepare_plugin_load()` with custom defaults |
+| `reload_plugin()` | Hot-reload path; calls `prepare_plugin_load()` to re-validate manifest and recompute limits |
+| `load_plugin_from_memory()` | In-memory load (tests/embedded); calls `prepare_plugin_load()` with no filesystem source |
+
+Bypassing `prepare_plugin_load()` to apply raw `default_limits` is a guardrail violation enforced by the `manifest_authority_load_path_guard` test.
 
 ### Trusted Key Configuration
 
@@ -274,16 +309,16 @@ Key methods:
 
 | Surface | File | Current Authority | Target Capability | Notes |
 |---------|------|-------------------|-------------------|-------|
-| Request inspection | `src/plugin/`, `src/worker/unified_server/` | implicit | `request_inspect` | |
-| Request mutation | `src/plugin/`, `src/worker/unified_server/` | implicit | `request_mutate` | |
-| Response inspection | `src/plugin/`, `src/worker/unified_server/` | implicit | `response_inspect` | |
-| Response mutation | `src/plugin/`, `src/worker/unified_server/` | implicit | `response_mutate` | |
-| Metrics emission | `src/plugin/` | implicit | `metrics` | |
-| Persistence | `src/plugin/` | implicit | `persistence` | |
-| Filesystem | `crates/synvoid-plugin-runtime/` | unknown | `filesystem_read` / `filesystem_write` | default denied, path allowlisted |
-| Network | `crates/synvoid-plugin-runtime/` | unknown | `network` | default denied, host/port allowlisted |
-| Mesh/DHT | `crates/synvoid-plugin-runtime/` | unknown | `mesh` | default denied |
-| Admin/control-plane events | `crates/synvoid-plugin-runtime/` | unknown | `admin_events` | default denied |
+| Request inspection | `src/plugin/`, `src/worker/unified_server/` | manifest-derived via `EffectivePluginPolicy` | `request_inspect` | |
+| Request mutation | `src/plugin/`, `src/worker/unified_server/` | manifest-derived via `EffectivePluginPolicy` | `request_mutate` | |
+| Response inspection | `src/plugin/`, `src/worker/unified_server/` | manifest-derived via `EffectivePluginPolicy` | `response_inspect` | |
+| Response mutation | `src/plugin/`, `src/worker/unified_server/` | manifest-derived via `EffectivePluginPolicy` | `response_mutate` | |
+| Metrics emission | `src/plugin/` | manifest-derived via `EffectivePluginPolicy` | `metrics` | |
+| Persistence | `src/plugin/` | manifest-derived via `EffectivePluginPolicy` | `persistence` | |
+| Filesystem | `crates/synvoid-plugin-runtime/` | manifest-derived via `EffectivePluginPolicy` | `filesystem_read` / `filesystem_write` | default denied, path allowlisted |
+| Network | `crates/synvoid-plugin-runtime/` | manifest-derived via `EffectivePluginPolicy` | `network` | default denied, host/port allowlisted |
+| Mesh/DHT | `crates/synvoid-plugin-runtime/` | manifest-derived via `EffectivePluginPolicy` | `mesh` | default denied, no ambient DHT prefix |
+| Admin/control-plane events | `crates/synvoid-plugin-runtime/` | manifest-derived via `EffectivePluginPolicy` | `admin_events` | default denied |
 | Hot-reload | `src/plugin/`, `src/server/` | lifecycle-owned | development-only | guarded by `PluginRuntimeOwner` |
 
 ## Guardrails
@@ -301,4 +336,6 @@ The `plugin_capability_boundary_guard` test suite (`tests/plugin_capability_boun
 ```bash
 cargo test --test plugin_capability_boundary_guard
 cargo test --test plugin_signature_policy_guard
+cargo test --test manifest_authority_wiring
+cargo test --test manifest_authority_load_path_guard
 ```

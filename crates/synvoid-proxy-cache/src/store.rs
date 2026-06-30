@@ -471,9 +471,7 @@ impl ProxyCache {
         let (tx, rx) = oneshot::channel();
 
         {
-            let mut entry = inflight_requests
-                .entry(key_clone.clone())
-                .or_default();
+            let mut entry = inflight_requests.entry(key_clone.clone()).or_default();
             if entry.is_empty() {
                 entry.push(tx);
                 drop(entry);

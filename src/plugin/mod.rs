@@ -16,6 +16,9 @@ pub use synvoid_plugin_runtime::{
     WasmFilterResult, WasmInstancePool, WasmPluginError, WasmPluginManager, WasmPluginMetrics,
     WasmPool, WasmResourceLimits, WasmRuntime,
 };
+pub use synvoid_plugin_runtime::{
+    limits_from_manifest, EffectivePluginPolicy, PluginSourceIdentity, PreparedPluginLoad,
+};
 
 // ─── PluginManager (public API) ──────────────────────────────────────────────
 

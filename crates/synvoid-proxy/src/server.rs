@@ -589,13 +589,7 @@ impl<W: WafProcessor> ProxyServer<W> {
             return self
                 .handle_cache_purge(path, host, purge_token, client_ip)
                 .await
-                .map(|r| {
-                    r.map(|b| {
-                        Full::new(b)
-                            .map_err(std::io::Error::other)
-                            .boxed()
-                    })
-                });
+                .map(|r| r.map(|b| Full::new(b).map_err(std::io::Error::other).boxed()));
         }
 
         if !self.is_cacheable_method(&method) {
@@ -680,11 +674,8 @@ impl<W: WafProcessor> ProxyServer<W> {
                             }
 
                             let response = self.build_cached_response(&cached);
-                            return Ok(response.map(|b| {
-                                Full::new(b)
-                                    .map_err(std::io::Error::other)
-                                    .boxed()
-                            }));
+                            return Ok(response
+                                .map(|b| Full::new(b).map_err(std::io::Error::other).boxed()));
                         }
 
                         tracing::debug!("Cache MISS for {}", path);
@@ -1178,8 +1169,7 @@ impl<W: WafProcessor> ProxyServer<W> {
             }
         }
 
-        let streamed_body = incoming_body
-            .map_err(|e| std::io::Error::other(format!("{:?}", e)));
+        let streamed_body = incoming_body.map_err(|e| std::io::Error::other(format!("{:?}", e)));
 
         Ok(builder.body(streamed_body.boxed())?)
     }

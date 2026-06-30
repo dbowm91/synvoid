@@ -17,6 +17,9 @@ pub use global::{
 };
 pub use instance_pool::WasmInstancePool;
 pub use pool::{PooledInstance, WasmPool};
+pub use sandbox::policy::{
+    limits_from_manifest, EffectivePluginPolicy, PluginSourceIdentity, PreparedPluginLoad,
+};
 pub use sandbox::types::{
     compute_binary_hash, compute_manifest_hash, compute_manifest_signing_payload,
     enforce_plugin_load_policy, verify_plugin_signature, CapabilityViolation, FilesystemViolation,

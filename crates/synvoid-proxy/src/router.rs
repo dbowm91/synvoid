@@ -374,9 +374,7 @@ impl Router {
                         }
 
                         let reversed = Self::reverse_domain_for_router(&pattern);
-                        let router = ip_wildcard_routers
-                            .entry(bind_addr)
-                            .or_default();
+                        let router = ip_wildcard_routers.entry(bind_addr).or_default();
                         let _ = router.insert(reversed.clone(), config_arc.clone());
                         let _ = router.insert(format!("{}/{{*sub}}", reversed), config_arc.clone());
                     } else {
@@ -1342,9 +1340,7 @@ impl Router {
                                 }
 
                                 let reversed = Self::reverse_domain_for_router(&pattern);
-                                let router = ip_wildcard_routers_raw
-                                    .entry(bind_addr)
-                                    .or_default();
+                                let router = ip_wildcard_routers_raw.entry(bind_addr).or_default();
                                 let _ = router.insert(reversed.clone(), config_arc.clone());
                                 let _ = router
                                     .insert(format!("{}/{{*sub}}", reversed), config_arc.clone());

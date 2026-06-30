@@ -321,7 +321,7 @@ pub struct PluginSignatureConfig {
 
 /// A `synvoid-plugin.toml` manifest describing a plugin's identity, trust
 /// tier, declared capabilities, and resource limits.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PluginManifest {
     pub name: String,
     pub version: String,
