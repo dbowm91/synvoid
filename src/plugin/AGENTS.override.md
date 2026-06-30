@@ -95,6 +95,30 @@ and failure counting.
 **Guardrail tests:**
 - `cargo test -p synvoid-plugin-runtime` — unit tests for guard, failure classes, state transitions
 
+## ABI Memory Boundary Hardening (M1 Phase 04)
+
+### Fixed-Offset Fallback Removed
+
+`write_to_guest_memory()` now requires `guest_alloc` export. Plugins without allocator exports fail with `WasmPluginError::LoadFailed("plugin missing required guest_alloc export")`. The old `1024i32` fallback is gone.
+
+### Checked Memory Operations
+
+All guest pointer/length handling uses `checked_guest_range(ptr, len, mem_len)`. Host functions (`get_env`, `synvoid_read_body_chunk`, `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event`) validate ranges before access.
+
+### Allocation Tracking
+
+`GuestAllocation { ptr, len }` tracks each allocation. `free_guest_memory(&alloc)` logs failures and returns `bool`. Trapped free operations indicate instance poisoning.
+
+### Header Serialization Bounds
+
+`serialize_headers(headers, max_encoded_bytes)` rejects oversized counts, names, values, and total encoded size.
+
+### Test Fixtures
+
+Test WASM modules now export `guest_alloc`/`guest_free` bump allocators. The `minimal_filter_pass_no_alloc()` fixture tests rejection of plugins without allocator exports.
+
+**Guardrail test:** `cargo test --test abi_memory_boundary_guard`
+
 ## Known Bugs (Fixed)
 
 ### Spin Cold-Start Bug (FIXED 2026-05-26)

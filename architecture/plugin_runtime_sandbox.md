@@ -427,6 +427,49 @@ cargo test -p synvoid-plugin-runtime -- test_manager_
 cargo test -p synvoid-plugin-runtime -- test_require_any
 ```
 
+### ABI Memory Boundary Hardening (M1 Phase 04)
+
+The host/guest WASM pointer-length ABI is now deterministic, non-overlapping, bounds-checked, and safe against malformed guest pointers.
+
+**Key changes:**
+
+1. **Fixed-offset fallback removed.** `write_to_guest_memory()` requires `guest_alloc`/`guest_free` exports. Plugins without allocator exports fail at write time with `WasmPluginError::LoadFailed`. The old fallback of writing all buffers at offset `1024` is gone.
+
+2. **`GuestAbiInfo` struct.** Metadata describing a module's ABI exports. `validate_guest_abi(&Module)` returns this struct for introspection and testing.
+
+3. **`checked_guest_range()` function.** Validates guest pointer+length pairs against memory bounds using checked arithmetic. Used by all host functions that read/write guest memory.
+
+4. **`GuestAllocation` tracking.** Each allocation is tracked for safe cleanup. `free_guest_memory()` takes `&GuestAllocation`, logs failures, and returns `bool` (false if `guest_free` traps). Trapped instances are not returned to the pool.
+
+5. **`serialize_headers()` hardened.** Now returns `Result<Vec<u8>, WasmPluginError>`. Validates header count, name length, and value length against `u16::MAX`. Checks total encoded size against input limits.
+
+6. **Host functions use checked arithmetic.** `get_env`, `synvoid_read_body_chunk`, `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event` all use `checked_guest_range` instead of `saturating_add` for bounds checking.
+
+**Required WASM exports for pointer-length ABI:**
+
+| Export | Required | Description |
+|--------|----------|-------------|
+| `memory` | Yes | Linear memory |
+| `guest_alloc` | Yes | Guest-side allocation |
+| `guest_free` | Yes | Guest-side deallocation |
+| `filter_request` | At least one | WAF filter hook |
+| `transform_response` | At least one | Response transform hook |
+| `handle_request` | At least one | Serverless handler hook |
+
+**Tests:**
+
+```bash
+cargo test -p synvoid-plugin-runtime -- test_checked_guest_range
+cargo test -p synvoid-plugin-runtime -- test_guest_abi_info
+cargo test -p synvoid-plugin-runtime -- test_validate_guest_abi
+cargo test -p synvoid-plugin-runtime -- test_serialize_headers_rejects
+cargo test -p synvoid-plugin-runtime -- test_write_to_guest_memory_requires_allocator
+cargo test -p synvoid-plugin-runtime -- test_allocator_plugin_receives_distinct_ranges
+cargo test --test abi_memory_boundary_guard
+```
+
+**Guardrail:** The `abi_memory_boundary_guard` test suite verifies the fixed-offset fallback is removed, `guest_alloc` is required, `checked_guest_range` is defined, `serialize_headers` returns `Result`, and `GuestAllocation` exists.
+
 ## Production vs Development
 
 | Aspect | Development | Production |

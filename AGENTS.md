@@ -78,6 +78,7 @@ cargo test --test plugin_failure_does_not_poison_manager  # Plugin failure isola
 cargo test --test plugin_signature_policy_guard  # Plugin signature policy enforcement (includes Phase 2 strict verification)
 cargo test --test manifest_authority_wiring        # Manifest-to-runtime authority differentiation (M1 Phase 01)
 cargo test --test manifest_authority_load_path_guard  # All load paths use PreparedPluginLoad, not raw default_limits
+cargo test --test abi_memory_boundary_guard  # ABI memory boundary hardening: fixed-offset fallback removed, guest_alloc required, checked arithmetic
 cargo test -p synvoid-plugin-runtime -- test_plugin_failure       # Failure policy defaults and failure class classification
 cargo test -p synvoid-plugin-runtime -- test_classify_failure     # Error-to-failure-class mapping
 cargo test -p synvoid-plugin-runtime -- test_guard_               # Guard state, quarantine, blocking invoke
@@ -99,6 +100,7 @@ cargo test --test mesh_task_ownership_guard --features mesh,dns  # Mesh task own
 - **Plugin lifecycle**: Use `PluginRuntimeOwner` to own plugin hot-reload watchers. Never use `std::mem::forget`.
 - **Signed byte loading**: File-based plugin loading reads WASM bytes once and instantiates from those verified bytes (TOCTOU closure). `PreparedPluginLoad.wasm_bytes` owns the verified bytes.
 - **Strict SignedSandboxed**: Empty `binary_sha256` or `manifest_sha256` fields are rejected for `SignedSandboxed` in production.
+- **Plugin ABI memory boundary**: `write_to_guest_memory` requires `guest_alloc`/`guest_free`. Fixed-offset 1024 fallback is removed. All guest pointer/length operations use `checked_guest_range`.
 
 ## Admin Control-Plane Authority
 

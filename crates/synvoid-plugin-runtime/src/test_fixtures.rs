@@ -4,12 +4,24 @@
 //! and failure scenarios.
 
 /// Minimal WASM module that exports `filter_request` returning 0 (Pass).
+/// Includes a bump allocator (guest_alloc/guest_free) for pointer-length ABI.
 /// Signature: (method_ptr, method_len, uri_ptr, uri_len, hdr_ptr, hdr_len, body_ptr, body_len) -> i32
 pub fn minimal_filter_pass() -> Vec<u8> {
     wat::parse_str(
         r#"
         (module
             (memory (export "memory") 1)
+            (global $heap (mut i32) (i32.const 0))
+
+            (func (export "guest_alloc") (param $size i32) (result i32)
+                (local $ptr i32)
+                (local.set $ptr (global.get $heap))
+                (global.set $heap (i32.add (global.get $heap) (local.get $size)))
+                (local.get $ptr)
+            )
+
+            (func (export "guest_free") (param $ptr i32) (param $size i32))
+
             (func (export "filter_request") (param i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
                 i32.const 0  ;; Return 0 = Pass
             )
@@ -20,12 +32,24 @@ pub fn minimal_filter_pass() -> Vec<u8> {
 }
 
 /// Minimal WASM module that exports `filter_request` returning 1 (Block with 403).
+/// Includes a bump allocator (guest_alloc/guest_free) for pointer-length ABI.
 /// Signature: (method_ptr, method_len, uri_ptr, uri_len, hdr_ptr, hdr_len, body_ptr, body_len) -> i32
 pub fn minimal_filter_block() -> Vec<u8> {
     wat::parse_str(
         r#"
         (module
             (memory (export "memory") 1)
+            (global $heap (mut i32) (i32.const 0))
+
+            (func (export "guest_alloc") (param $size i32) (result i32)
+                (local $ptr i32)
+                (local.set $ptr (global.get $heap))
+                (global.set $heap (i32.add (global.get $heap) (local.get $size)))
+                (local.get $ptr)
+            )
+
+            (func (export "guest_free") (param $ptr i32) (param $size i32))
+
             (func (export "filter_request") (param i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
                 i32.const 1  ;; Return 1 = Block
             )
@@ -51,11 +75,22 @@ pub fn minimal_transform_pass() -> Vec<u8> {
 }
 
 /// Minimal WASM module that exports `handle_request` returning a minimal response.
+/// Includes a bump allocator (guest_alloc/guest_free) for pointer-length ABI.
 pub fn minimal_handler() -> Vec<u8> {
     wat::parse_str(
         r#"
         (module
-            (memory (export "memory") 1)
+            (memory (export "memory") 2)
+            (global $heap (mut i32) (i32.const 0))
+
+            (func (export "guest_alloc") (param $size i32) (result i32)
+                (local $ptr i32)
+                (local.set $ptr (global.get $heap))
+                (global.set $heap (i32.add (global.get $heap) (local.get $size)))
+                (local.get $ptr)
+            )
+
+            (func (export "guest_free") (param $ptr i32) (param $size i32))
 
             ;; Static response body "OK"
             (data (i32.const 0) "OK")
@@ -86,12 +121,24 @@ pub fn minimal_handler() -> Vec<u8> {
 }
 
 /// WASM module that traps immediately (unreachable).
+/// Includes a bump allocator (guest_alloc/guest_free) for pointer-length ABI.
 /// Signature: (method_ptr, method_len, uri_ptr, uri_len, hdr_ptr, hdr_len, body_ptr, body_len) -> i32
 pub fn trapping_module() -> Vec<u8> {
     wat::parse_str(
         r#"
         (module
             (memory (export "memory") 1)
+            (global $heap (mut i32) (i32.const 0))
+
+            (func (export "guest_alloc") (param $size i32) (result i32)
+                (local $ptr i32)
+                (local.set $ptr (global.get $heap))
+                (global.set $heap (i32.add (global.get $heap) (local.get $size)))
+                (local.get $ptr)
+            )
+
+            (func (export "guest_free") (param $ptr i32) (param $size i32))
+
             (func (export "filter_request") (param i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
                 unreachable  ;; Trap immediately
             )
@@ -102,12 +149,24 @@ pub fn trapping_module() -> Vec<u8> {
 }
 
 /// WASM module that loops forever (fuel exhaustion scenario).
+/// Includes a bump allocator (guest_alloc/guest_free) for pointer-length ABI.
 /// Signature: (method_ptr, method_len, uri_ptr, uri_len, hdr_ptr, hdr_len, body_ptr, body_len) -> i32
 pub fn infinite_loop_module() -> Vec<u8> {
     wat::parse_str(
         r#"
         (module
             (memory (export "memory") 1)
+            (global $heap (mut i32) (i32.const 0))
+
+            (func (export "guest_alloc") (param $size i32) (result i32)
+                (local $ptr i32)
+                (local.set $ptr (global.get $heap))
+                (global.set $heap (i32.add (global.get $heap) (local.get $size)))
+                (local.get $ptr)
+            )
+
+            (func (export "guest_free") (param $ptr i32) (param $size i32))
+
             (func (export "filter_request") (param i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
                 (block $break
                     (loop $loop
@@ -177,6 +236,7 @@ pub fn oversized_memory_module() -> Vec<u8> {
 }
 
 /// WASM module that calls host function without capability (mesh_query_dht).
+/// Includes a bump allocator (guest_alloc/guest_free) for pointer-length ABI.
 /// Signature: (method_ptr, method_len, uri_ptr, uri_len, hdr_ptr, hdr_len, body_ptr, body_len) -> i32
 pub fn mesh_call_without_capability() -> Vec<u8> {
     wat::parse_str(
@@ -184,9 +244,109 @@ pub fn mesh_call_without_capability() -> Vec<u8> {
         (module
             (import "env" "mesh_query_dht" (func $mesh_query (param i32 i32 i32 i32) (result i32)))
             (memory (export "memory") 1)
+            (global $heap (mut i32) (i32.const 0))
+
+            (func (export "guest_alloc") (param $size i32) (result i32)
+                (local $ptr i32)
+                (local.set $ptr (global.get $heap))
+                (global.set $heap (i32.add (global.get $heap) (local.get $size)))
+                (local.get $ptr)
+            )
+
+            (func (export "guest_free") (param $ptr i32) (param $size i32))
+
             (func (export "filter_request") (param i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
                 ;; Try to call mesh_query_dht - should fail if no mesh capability
                 (drop (call $mesh_query (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
+                i32.const 0
+            )
+        )
+        "#,
+    )
+    .expect("valid WAT")
+}
+
+/// WASM module with a simple bump allocator (guest_alloc + guest_free).
+/// Exports filter_request that returns 0 (Pass).
+pub fn filter_with_allocator() -> Vec<u8> {
+    wat::parse_str(
+        r#"
+        (module
+            (memory (export "memory") 1)
+            (global $heap (mut i32) (i32.const 0))
+
+            (func (export "guest_alloc") (param $size i32) (result i32)
+                (local $ptr i32)
+                (local.set $ptr (global.get $heap))
+                (global.set $heap (i32.add (global.get $heap) (local.get $size)))
+                (local.get $ptr)
+            )
+
+            (func (export "guest_free") (param $ptr i32) (param $size i32)
+                ;; No-op bump allocator
+            )
+
+            (func (export "filter_request")
+                (param i32 i32 i32 i32 i32 i32 i32 i32)
+                (result i32)
+                i32.const 0  ;; Return 0 = Pass
+            )
+        )
+        "#,
+    )
+    .expect("valid WAT")
+}
+
+/// Minimal WASM module that exports filter_request but NO guest_alloc/guest_free.
+/// Used to test that the ABI validation rejects missing allocator.
+pub fn minimal_filter_pass_no_alloc() -> Vec<u8> {
+    wat::parse_str(
+        r#"
+        (module
+            (memory (export "memory") 1)
+            (func (export "filter_request") (param i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
+                i32.const 0  ;; Return 0 = Pass
+            )
+        )
+        "#,
+    )
+    .expect("valid WAT")
+}
+
+/// WASM module that allocates all request data into non-overlapping regions
+/// and verifies the ranges are disjoint by writing magic bytes.
+pub fn filter_verifies_distinct_ranges() -> Vec<u8> {
+    wat::parse_str(
+        r#"
+        (module
+            (memory (export "memory") 2)
+            (global $heap (mut i32) (i32.const 0))
+
+            (func (export "guest_alloc") (param $size i32) (result i32)
+                (local $ptr i32)
+                (local.set $ptr (global.get $heap))
+                (global.set $heap (i32.add (global.get $heap) (local.get $size)))
+                (local.get $ptr)
+            )
+
+            (func (export "guest_free") (param $ptr i32) (param $size i32)
+                ;; No-op bump allocator
+            )
+
+            ;; filter_request that stores magic byte at each allocation base
+            ;; to prove allocations don't overlap.
+            ;; method_ptr -> write 0xAA, uri_ptr -> write 0xBB,
+            ;; headers_ptr -> 0xCC, body_ptr -> 0xDD
+            (func (export "filter_request")
+                (param $method_ptr i32) (param $method_len i32)
+                (param $uri_ptr i32) (param $uri_len i32)
+                (param $hdr_ptr i32) (param $hdr_len i32)
+                (param $body_ptr i32) (param $body_len i32)
+                (result i32)
+                (i32.store8 (local.get $method_ptr) (i32.const 0xAA))
+                (i32.store8 (local.get $uri_ptr) (i32.const 0xBB))
+                (i32.store8 (local.get $hdr_ptr) (i32.const 0xCC))
+                (i32.store8 (local.get $body_ptr) (i32.const 0xDD))
                 i32.const 0
             )
         )
@@ -212,6 +372,7 @@ mod tests {
             memory_violation_module(),
             invalid_wasm_bytes(),
             oversized_memory_module(),
+            minimal_filter_pass_no_alloc(),
         ];
 
         for (i, wasm) in fixtures.iter().enumerate() {

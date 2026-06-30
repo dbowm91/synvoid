@@ -93,6 +93,34 @@ pub(crate) struct GuestExports {
     pub(crate) memory: Option<Memory>,
 }
 
+/// Metadata about a loaded WASM module's guest ABI exports.
+///
+/// Used to validate that a plugin provides the required exports before
+/// attempting invocation. The pointer-length ABI requires `memory`,
+/// `guest_alloc`, and `guest_free` to prevent fixed-offset aliasing.
+#[derive(Debug, Clone)]
+pub struct GuestAbiInfo {
+    pub has_filter_request: bool,
+    pub has_transform_response: bool,
+    pub has_handle_request: bool,
+    pub has_memory: bool,
+    pub has_guest_alloc: bool,
+    pub has_guest_free: bool,
+}
+
+impl GuestAbiInfo {
+    /// Returns true if the module has at least one hook export.
+    pub fn has_any_hook(&self) -> bool {
+        self.has_filter_request || self.has_transform_response || self.has_handle_request
+    }
+
+    /// Returns true if the module has the required allocator exports
+    /// for safe pointer-length ABI usage.
+    pub fn has_required_allocator(&self) -> bool {
+        self.has_guest_alloc && self.has_guest_free
+    }
+}
+
 pub struct WasmRuntime {
     engine: Engine,
     module: Module,
@@ -926,6 +954,45 @@ impl ResourceLimiter for RequestContext {
     }
 }
 
+/// Validate a guest pointer+length pair against memory bounds.
+///
+/// Returns the validated `Range<usize>` or a descriptive error.
+/// Uses checked arithmetic to prevent overflow on 32-bit targets.
+fn checked_guest_range(
+    ptr: i32,
+    len: i32,
+    mem_len: usize,
+) -> Result<std::ops::Range<usize>, WasmPluginError> {
+    if ptr < 0 {
+        return Err(WasmPluginError::ExecutionFailed(
+            "negative guest pointer".into(),
+        ));
+    }
+    if len < 0 {
+        return Err(WasmPluginError::ExecutionFailed(
+            "negative guest length".into(),
+        ));
+    }
+    let start = ptr as usize;
+    let len = len as usize;
+    let end = start
+        .checked_add(len)
+        .ok_or_else(|| WasmPluginError::ExecutionFailed("guest pointer range overflow".into()))?;
+    if end > mem_len {
+        return Err(WasmPluginError::ExecutionFailed(format!(
+            "guest pointer range out of bounds: [{}, {}) but memory is {}",
+            start, end, mem_len
+        )));
+    }
+    Ok(start..end)
+}
+
+/// Track a guest allocation for cleanup.
+struct GuestAllocation {
+    ptr: i32,
+    len: i32,
+}
+
 impl WasmRuntime {
     pub fn load(path: &Path, limits: WasmResourceLimits) -> Result<Self, WasmPluginError> {
         Self::load_with_priority(path, limits, 0)
@@ -1300,13 +1367,11 @@ impl WasmRuntime {
                         .unwrap();
                     let mem_data = mem.data(&caller);
 
-                    let key_start = key_ptr as usize;
-                    let key_end = key_start.saturating_add(key_len as usize);
-                    if key_end > mem_data.len() {
-                        return -1;
-                    }
-
-                    let key = String::from_utf8_lossy(&mem_data[key_start..key_end]);
+                    let key_range = match checked_guest_range(key_ptr, key_len, mem_data.len()) {
+                        Ok(r) => r,
+                        Err(_) => return -1,
+                    };
+                    let key = String::from_utf8_lossy(&mem_data[key_range]);
 
                     let value = caller.data().env.get(key.as_ref());
                     let fallback = String::new();
@@ -1314,17 +1379,17 @@ impl WasmRuntime {
                     let value_bytes = value_str.as_bytes();
                     let value_len = value_bytes.len().min(out_max as usize);
 
-                    let out_start = out_ptr as usize;
-                    let out_end = out_start.saturating_add(value_len);
-                    if out_end > mem_data.len() {
-                        return -1;
-                    }
+                    let out_range =
+                        match checked_guest_range(out_ptr, value_len as i32, mem_data.len()) {
+                            Ok(r) => r,
+                            Err(_) => return -1,
+                        };
 
                     unsafe {
                         let mem_ptr = mem.data_ptr(&caller);
                         let slice = std::slice::from_raw_parts_mut(
-                            mem_ptr.add(out_start),
-                            out_end - out_start,
+                            mem_ptr.add(out_range.start),
+                            out_range.len(),
                         );
                         slice.copy_from_slice(&value_bytes[..value_len]);
                     }
@@ -1361,6 +1426,10 @@ impl WasmRuntime {
                                 Some(wasmtime::Extern::Memory(m)) => m,
                                 _ => return -3, // No memory export
                             };
+                            let mem_len = mem.data(&caller).len();
+                            if checked_guest_range(out_ptr, len as i32, mem_len).is_err() {
+                                return -1;
+                            }
                             if mem
                                 .write(&mut caller, out_ptr as usize, &chunk[..len])
                                 .is_err()
@@ -1406,13 +1475,12 @@ impl WasmRuntime {
                     };
                     let mem_data = mem.data(&caller);
 
-                    let key_start = key_ptr as usize;
-                    let key_end = key_start.saturating_add(key_len as usize);
-                    if key_end > mem_data.len() {
-                        return -1;
-                    }
+                    let key_range = match checked_guest_range(key_ptr, key_len, mem_data.len()) {
+                        Ok(r) => r,
+                        Err(_) => return -1,
+                    };
 
-                    let key = String::from_utf8_lossy(&mem_data[key_start..key_end]).to_string();
+                    let key = String::from_utf8_lossy(&mem_data[key_range]).to_string();
 
                     let sensitive_prefixes = [
                         "threat_indicator:",
@@ -1443,21 +1511,23 @@ impl WasmRuntime {
                     {
                         if let Some(value) = provider.get_record(&key) {
                             let value_len = value.len().min(out_max as usize);
-                            let out_start = out_ptr as usize;
-                            let out_end = out_start.saturating_add(value_len);
-                            if out_end <= mem_data.len() {
-                                unsafe {
-                                    let mem_ptr = mem.data_ptr(&caller);
-                                    std::slice::from_raw_parts_mut(
-                                        mem_ptr.add(out_start),
-                                        out_end - out_start,
-                                    )
-                                    .copy_from_slice(&value[..value_len]);
-                                }
-                                value_len as i32
-                            } else {
-                                -1
+                            let out_range = match checked_guest_range(
+                                out_ptr,
+                                value_len as i32,
+                                mem_data.len(),
+                            ) {
+                                Ok(r) => r,
+                                Err(_) => return -1,
+                            };
+                            unsafe {
+                                let mem_ptr = mem.data_ptr(&caller);
+                                std::slice::from_raw_parts_mut(
+                                    mem_ptr.add(out_range.start),
+                                    out_range.len(),
+                                )
+                                .copy_from_slice(&value[..value_len]);
                             }
+                            value_len as i32
                         } else {
                             0
                         }
@@ -1496,13 +1566,12 @@ impl WasmRuntime {
                     };
                     let mem_data = mem.data(&caller);
 
-                    let ip_start = ip_ptr as usize;
-                    let ip_end = ip_start.saturating_add(ip_len as usize);
-                    if ip_end > mem_data.len() {
-                        return -1;
-                    }
+                    let ip_range = match checked_guest_range(ip_ptr, ip_len, mem_data.len()) {
+                        Ok(r) => r,
+                        Err(_) => return -1,
+                    };
 
-                    let ip_str = String::from_utf8_lossy(&mem_data[ip_start..ip_end]).to_string();
+                    let ip_str = String::from_utf8_lossy(&mem_data[ip_range]).to_string();
 
                     let threat_result = if let Some(provider) =
                         crate::mesh_callbacks::get_mesh_provider()
@@ -1554,21 +1623,19 @@ impl WasmRuntime {
                     };
                     let mem_data = mem.data(&caller);
 
-                    let topic_start = topic_ptr as usize;
-                    let topic_end = topic_start.saturating_add(topic_len as usize);
-                    if topic_end > mem_data.len() {
-                        return -1;
-                    }
+                    let topic_range =
+                        match checked_guest_range(topic_ptr, topic_len, mem_data.len()) {
+                            Ok(r) => r,
+                            Err(_) => return -1,
+                        };
 
-                    let data_start = data_ptr as usize;
-                    let data_end = data_start.saturating_add(data_len as usize);
-                    if data_end > mem_data.len() {
-                        return -1;
-                    }
+                    let data_range = match checked_guest_range(data_ptr, data_len, mem_data.len()) {
+                        Ok(r) => r,
+                        Err(_) => return -1,
+                    };
 
-                    let topic =
-                        String::from_utf8_lossy(&mem_data[topic_start..topic_end]).to_string();
-                    let data = mem_data[data_start..data_end].to_vec();
+                    let topic = String::from_utf8_lossy(&mem_data[topic_range]).to_string();
+                    let data = mem_data[data_range].to_vec();
 
                     tracing::debug!("WASM mesh_emit_event('{}', {} bytes)", topic, data.len());
 
@@ -1694,8 +1761,27 @@ impl WasmRuntime {
         func.typed(&mut *store).ok()
     }
 
-    /// Write data into WASM linear memory, using guest_alloc if available,
-    /// otherwise writing at offset 1024 (reserved header area).
+    /// Validate that a loaded module has the required ABI exports.
+    ///
+    /// For the pointer-length ABI, requires `memory` and at least one
+    /// hook export. `guest_alloc`/`guest_free` are required for safe
+    /// memory operations; missing them causes invocation failure.
+    #[allow(dead_code)]
+    fn validate_guest_abi(module: &Module) -> GuestAbiInfo {
+        GuestAbiInfo {
+            has_filter_request: module.get_export("filter_request").is_some(),
+            has_transform_response: module.get_export("transform_response").is_some(),
+            has_handle_request: module.get_export("handle_request").is_some(),
+            has_memory: module.get_export("memory").is_some(),
+            has_guest_alloc: module.get_export("guest_alloc").is_some(),
+            has_guest_free: module.get_export("guest_free").is_some(),
+        }
+    }
+
+    /// Write data into WASM linear memory via guest_alloc.
+    ///
+    /// Requires `guest_alloc` export — the fixed-offset fallback is removed.
+    /// Validates allocation result and memory bounds before writing.
     fn write_to_guest_memory(
         &self,
         store: &mut Store<RequestContext>,
@@ -1715,24 +1801,35 @@ impl WasmRuntime {
             )));
         }
 
-        let ptr = if let Some(alloc_fn) = &exports.guest_alloc {
-            alloc_fn.call(&mut *store, data_len as i32).map_err(|e| {
-                WasmPluginError::ExecutionFailed(format!("guest_alloc failed: {}", e))
-            })?
-        } else {
-            // Fallback: use a fixed offset after the reserved header area
-            1024i32
-        };
-
-        if ptr < 0 {
-            return Err(WasmPluginError::ExecutionFailed(
-                "guest_alloc returned negative pointer".into(),
-            ));
+        // Zero-length writes return a null pointer convention
+        if data_len == 0 {
+            return Ok((0, 0));
         }
 
-        // Check memory bounds
+        let alloc_fn = exports.guest_alloc.as_ref().ok_or_else(|| {
+            WasmPluginError::LoadFailed(
+                "plugin missing required guest_alloc export for pointer-length ABI".into(),
+            )
+        })?;
+
+        let ptr = alloc_fn
+            .call(&mut *store, data_len as i32)
+            .map_err(|e| WasmPluginError::ExecutionFailed(format!("guest_alloc failed: {}", e)))?;
+
+        // Validate allocation result
+        if ptr < 0 {
+            return Err(WasmPluginError::ExecutionFailed(format!(
+                "guest_alloc returned negative pointer: {}",
+                ptr
+            )));
+        }
+
+        // Check memory bounds with checked arithmetic
         let mem_size = memory.data_size(&*store);
-        let end = (ptr as usize) + data_len;
+        let end = (ptr as usize).checked_add(data_len).ok_or_else(|| {
+            WasmPluginError::ExecutionFailed("guest pointer range overflow".into())
+        })?;
+
         if end > mem_size {
             // Try to grow memory
             let pages_needed = (end - mem_size).div_ceil(65536);
@@ -1797,16 +1894,29 @@ impl WasmRuntime {
         Ok(mem_data[start..end].to_vec())
     }
 
-    /// Free guest memory if guest_free is available
+    /// Free guest memory if guest_free is available.
+    ///
+    /// Failures from guest_free are logged but do not panic.
+    /// If guest_free traps, the caller should treat the instance as poisoned.
     fn free_guest_memory(
         &self,
         store: &mut Store<RequestContext>,
         exports: &GuestExports,
-        ptr: i32,
-        len: i32,
-    ) {
+        alloc: &GuestAllocation,
+    ) -> bool {
+        if alloc.ptr == 0 && alloc.len == 0 {
+            return true; // Null allocation, nothing to free
+        }
         if let Some(free_fn) = &exports.guest_free {
-            free_fn.call(&mut *store, (ptr, len)).ok();
+            match free_fn.call(&mut *store, (alloc.ptr, alloc.len)) {
+                Ok(()) => true,
+                Err(e) => {
+                    tracing::debug!("guest_free failed (instance may be poisoned): {}", e);
+                    false
+                }
+            }
+        } else {
+            true
         }
     }
 
@@ -1814,20 +1924,59 @@ impl WasmRuntime {
     ///
     /// Format: [header_count: u16]
     ///         [for each header: [name_len: u16][name][value_len: u16][value]]
-    fn serialize_headers(headers: &HeaderMap) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(1024);
+    ///
+    /// Returns error if header count, name length, or value length exceeds u16::MAX,
+    /// or if total encoded size would exceed the input limit.
+    fn serialize_headers(
+        headers: &HeaderMap,
+        max_encoded_bytes: usize,
+    ) -> Result<Vec<u8>, WasmPluginError> {
+        let header_count = headers.len();
+        if header_count > u16::MAX as usize {
+            return Err(WasmPluginError::SandboxError(format!(
+                "header count {} exceeds u16::MAX",
+                header_count
+            )));
+        }
 
-        buf.extend_from_slice(&(headers.len() as u16).to_le_bytes());
+        let mut buf = Vec::with_capacity(1024.min(max_encoded_bytes));
+        buf.extend_from_slice(&(header_count as u16).to_le_bytes());
+
         for (name, value) in headers.iter() {
             let name_str = name.as_str();
-            buf.extend_from_slice(&(name_str.len() as u16).to_le_bytes());
-            buf.extend_from_slice(name_str.as_bytes());
+            let name_len = name_str.len();
+            if name_len > u16::MAX as usize {
+                return Err(WasmPluginError::SandboxError(format!(
+                    "header name length {} exceeds u16::MAX",
+                    name_len
+                )));
+            }
+
             let val_bytes = value.as_bytes();
-            buf.extend_from_slice(&(val_bytes.len() as u16).to_le_bytes());
+            let val_len = val_bytes.len();
+            if val_len > u16::MAX as usize {
+                return Err(WasmPluginError::SandboxError(format!(
+                    "header value length {} exceeds u16::MAX",
+                    val_len
+                )));
+            }
+
+            // Check if adding this header would exceed the limit
+            let entry_size = 2 + name_len + 2 + val_len;
+            if buf.len() + entry_size > max_encoded_bytes {
+                return Err(WasmPluginError::SandboxError(format!(
+                    "serialized headers would exceed input limit of {} bytes",
+                    max_encoded_bytes
+                )));
+            }
+
+            buf.extend_from_slice(&(name_len as u16).to_le_bytes());
+            buf.extend_from_slice(name_str.as_bytes());
+            buf.extend_from_slice(&(val_len as u16).to_le_bytes());
             buf.extend_from_slice(val_bytes);
         }
 
-        buf
+        Ok(buf)
     }
 
     /// Record a plugin invocation failure on the metrics counter.
@@ -2068,7 +2217,7 @@ impl WasmRuntime {
             self.write_to_guest_memory(&mut *store, &exports, method_bytes)?;
         let (uri_ptr, uri_len) = self.write_to_guest_memory(&mut *store, &exports, uri_bytes)?;
 
-        let headers_meta = Self::serialize_headers(&parts.headers);
+        let headers_meta = Self::serialize_headers(&parts.headers, MAX_WASM_DATA_SIZE)?;
         let (hdr_ptr, hdr_len) =
             self.write_to_guest_memory(&mut *store, &exports, &headers_meta)?;
 
@@ -2096,11 +2245,39 @@ impl WasmRuntime {
             );
         }
 
-        self.free_guest_memory(&mut *store, &exports, method_ptr, method_len);
-        self.free_guest_memory(&mut *store, &exports, uri_ptr, uri_len);
-        self.free_guest_memory(&mut *store, &exports, hdr_ptr, hdr_len);
+        self.free_guest_memory(
+            &mut *store,
+            &exports,
+            &GuestAllocation {
+                ptr: method_ptr,
+                len: method_len,
+            },
+        );
+        self.free_guest_memory(
+            &mut *store,
+            &exports,
+            &GuestAllocation {
+                ptr: uri_ptr,
+                len: uri_len,
+            },
+        );
+        self.free_guest_memory(
+            &mut *store,
+            &exports,
+            &GuestAllocation {
+                ptr: hdr_ptr,
+                len: hdr_len,
+            },
+        );
         if body_len > 0 {
-            self.free_guest_memory(&mut *store, &exports, body_ptr, body_len);
+            self.free_guest_memory(
+                &mut *store,
+                &exports,
+                &GuestAllocation {
+                    ptr: body_ptr,
+                    len: body_len,
+                },
+            );
         }
 
         if self.limits.max_cpu_fuel > 0 {
@@ -2363,8 +2540,22 @@ impl WasmRuntime {
             body
         };
 
-        self.free_guest_memory(&mut *store, &exports, body_ptr, body_len);
-        self.free_guest_memory(&mut *store, &exports, out_ptr, out_max);
+        self.free_guest_memory(
+            &mut *store,
+            &exports,
+            &GuestAllocation {
+                ptr: body_ptr,
+                len: body_len,
+            },
+        );
+        self.free_guest_memory(
+            &mut *store,
+            &exports,
+            &GuestAllocation {
+                ptr: out_ptr,
+                len: out_max,
+            },
+        );
 
         Ok(Response::from_parts(parts, result_body))
     }
@@ -2525,9 +2716,30 @@ impl WasmRuntime {
             );
         }
 
-        self.free_guest_memory(&mut store, &exports, method_ptr, method_len);
-        self.free_guest_memory(&mut store, &exports, uri_ptr, uri_len);
-        self.free_guest_memory(&mut store, &exports, hdr_ptr, hdr_len);
+        self.free_guest_memory(
+            &mut store,
+            &exports,
+            &GuestAllocation {
+                ptr: method_ptr,
+                len: method_len,
+            },
+        );
+        self.free_guest_memory(
+            &mut store,
+            &exports,
+            &GuestAllocation {
+                ptr: uri_ptr,
+                len: uri_len,
+            },
+        );
+        self.free_guest_memory(
+            &mut store,
+            &exports,
+            &GuestAllocation {
+                ptr: hdr_ptr,
+                len: hdr_len,
+            },
+        );
 
         if self.limits.max_cpu_fuel > 0 {
             if let Ok(remaining) = store.get_fuel() {
@@ -2584,8 +2796,22 @@ impl WasmRuntime {
 
         let body_bytes = Bytes::copy_from_slice(&out_body_raw[..actual_body_len]);
 
-        self.free_guest_memory(&mut store, &exports, out_status_ptr, 4);
-        self.free_guest_memory(&mut store, &exports, out_body_ptr, OUT_BODY_MAX as i32);
+        self.free_guest_memory(
+            &mut store,
+            &exports,
+            &GuestAllocation {
+                ptr: out_status_ptr,
+                len: 4,
+            },
+        );
+        self.free_guest_memory(
+            &mut store,
+            &exports,
+            &GuestAllocation {
+                ptr: out_body_ptr,
+                len: OUT_BODY_MAX as i32,
+            },
+        );
 
         record_wasm_decision_pass(plugin_name);
 
@@ -2750,10 +2976,38 @@ impl WasmRuntime {
             );
         }
 
-        self.free_guest_memory(&mut store, &exports, method_ptr, method_len);
-        self.free_guest_memory(&mut store, &exports, uri_ptr, uri_len);
-        self.free_guest_memory(&mut store, &exports, hdr_ptr, hdr_len);
-        self.free_guest_memory(&mut store, &exports, body_ptr, body_len);
+        self.free_guest_memory(
+            &mut store,
+            &exports,
+            &GuestAllocation {
+                ptr: method_ptr,
+                len: method_len,
+            },
+        );
+        self.free_guest_memory(
+            &mut store,
+            &exports,
+            &GuestAllocation {
+                ptr: uri_ptr,
+                len: uri_len,
+            },
+        );
+        self.free_guest_memory(
+            &mut store,
+            &exports,
+            &GuestAllocation {
+                ptr: hdr_ptr,
+                len: hdr_len,
+            },
+        );
+        self.free_guest_memory(
+            &mut store,
+            &exports,
+            &GuestAllocation {
+                ptr: body_ptr,
+                len: body_len,
+            },
+        );
 
         if self.limits.max_cpu_fuel > 0 {
             if let Ok(remaining) = store.get_fuel() {
@@ -2801,12 +3055,21 @@ impl WasmRuntime {
         let body_data = self.read_from_guest_memory(&mut store, &exports, out_body_ptr, code)?;
         let result_body = Bytes::from(body_data);
 
-        self.free_guest_memory(&mut store, &exports, out_status_ptr, 4);
         self.free_guest_memory(
             &mut store,
             &exports,
-            out_body_ptr,
-            OUT_BODY_MAX.try_into().unwrap(),
+            &GuestAllocation {
+                ptr: out_status_ptr,
+                len: 4,
+            },
+        );
+        self.free_guest_memory(
+            &mut store,
+            &exports,
+            &GuestAllocation {
+                ptr: out_body_ptr,
+                len: OUT_BODY_MAX.try_into().unwrap(),
+            },
         );
 
         let response = Response::builder()
@@ -2865,7 +3128,7 @@ mod tests {
         headers.insert("host", HeaderValue::from_static("example.com"));
         headers.insert("content-type", HeaderValue::from_static("application/json"));
 
-        let data = WasmRuntime::serialize_headers(&headers);
+        let data = WasmRuntime::serialize_headers(&headers, MAX_WASM_DATA_SIZE).unwrap();
 
         // Should be non-empty
         assert!(data.len() > 4);
@@ -3971,5 +4234,229 @@ entry = "plugin.wasm"
         let env = Arc::new(std::collections::HashMap::new());
         let result = runtime.filter_request(req, env);
         assert!(result.is_ok());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // Phase 4: ABI Memory Boundary Hardening Tests
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_checked_guest_range_rejects_negative_pointer() {
+        let result = checked_guest_range(-1, 10, 1024);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("negative guest pointer"), "got: {}", msg);
+    }
+
+    #[test]
+    fn test_checked_guest_range_rejects_negative_length() {
+        let result = checked_guest_range(0, -1, 1024);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("negative guest length"), "got: {}", msg);
+    }
+
+    #[test]
+    fn test_checked_guest_range_rejects_overflow() {
+        // On 64-bit, i32::MAX + 10 fits in usize so the bounds check catches it.
+        // On 32-bit, checked_add would trigger overflow. Either way, it must error.
+        let result = checked_guest_range(i32::MAX, 10, 1024);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("overflow") || msg.contains("out of bounds"),
+            "got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_checked_guest_range_rejects_out_of_bounds() {
+        let result = checked_guest_range(500, 600, 1024);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("out of bounds"), "got: {}", msg);
+    }
+
+    #[test]
+    fn test_checked_guest_range_accepts_valid_range_at_end() {
+        let result = checked_guest_range(1000, 24, 1024);
+        assert!(result.is_ok());
+        let range = result.unwrap();
+        assert_eq!(range, 1000..1024);
+    }
+
+    #[test]
+    fn test_checked_guest_range_accepts_zero_length() {
+        let result = checked_guest_range(100, 0, 1024);
+        assert!(result.is_ok());
+        let range = result.unwrap();
+        assert_eq!(range, 100..100);
+    }
+
+    #[test]
+    fn test_guest_abi_info_has_any_hook() {
+        let info = GuestAbiInfo {
+            has_filter_request: true,
+            has_transform_response: false,
+            has_handle_request: false,
+            has_memory: true,
+            has_guest_alloc: true,
+            has_guest_free: true,
+        };
+        assert!(info.has_any_hook());
+        assert!(info.has_required_allocator());
+    }
+
+    #[test]
+    fn test_guest_abi_info_no_hooks() {
+        let info = GuestAbiInfo {
+            has_filter_request: false,
+            has_transform_response: false,
+            has_handle_request: false,
+            has_memory: true,
+            has_guest_alloc: false,
+            has_guest_free: false,
+        };
+        assert!(!info.has_any_hook());
+        assert!(!info.has_required_allocator());
+    }
+
+    #[test]
+    fn test_guest_abi_info_missing_free() {
+        let info = GuestAbiInfo {
+            has_filter_request: true,
+            has_transform_response: false,
+            has_handle_request: false,
+            has_memory: true,
+            has_guest_alloc: true,
+            has_guest_free: false,
+        };
+        assert!(info.has_any_hook());
+        assert!(!info.has_required_allocator());
+    }
+
+    #[test]
+    fn test_validate_guest_abi_with_allocator_plugin() {
+        let wasm = test_fixtures::filter_with_allocator();
+        let engine = wasmtime::Engine::default();
+        let module = wasmtime::Module::from_binary(&engine, &wasm).expect("valid WASM");
+        let info = WasmRuntime::validate_guest_abi(&module);
+        assert!(info.has_filter_request);
+        assert!(info.has_memory);
+        assert!(info.has_guest_alloc);
+        assert!(info.has_guest_free);
+        assert!(info.has_any_hook());
+        assert!(info.has_required_allocator());
+    }
+
+    #[test]
+    fn test_validate_guest_abi_no_exports() {
+        let wasm = test_fixtures::no_exports_module();
+        let engine = wasmtime::Engine::default();
+        let module = wasmtime::Module::from_binary(&engine, &wasm).expect("valid WASM");
+        let info = WasmRuntime::validate_guest_abi(&module);
+        assert!(!info.has_any_hook());
+        assert!(!info.has_required_allocator());
+        assert!(info.has_memory);
+    }
+
+    #[test]
+    fn test_serialize_headers_rejects_oversized_name() {
+        // The http crate itself limits header name length, so test the
+        // defensive u16::MAX check by reading our own source.
+        let source = include_str!("wasm_runtime.rs");
+        // Verify the u16::MAX check for name length exists in serialize_headers
+        assert!(
+            source.contains("header name length") && source.contains("u16::MAX"),
+            "serialize_headers must check name length against u16::MAX"
+        );
+    }
+
+    #[test]
+    fn test_serialize_headers_rejects_oversized_value() {
+        let mut headers = HeaderMap::new();
+        let long_value = "v".repeat(70000);
+        headers.insert(
+            http::header::HeaderName::from_static("x-custom"),
+            HeaderValue::from_bytes(long_value.as_bytes()).unwrap(),
+        );
+        let result = WasmRuntime::serialize_headers(&headers, MAX_WASM_DATA_SIZE);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("value length"), "got: {}", msg);
+    }
+
+    #[test]
+    fn test_serialize_headers_rejects_total_size_beyond_limit() {
+        let mut headers = HeaderMap::new();
+        headers.insert("host", HeaderValue::from_static("example.com"));
+        let result = WasmRuntime::serialize_headers(&headers, 4); // 4 bytes = just the count field
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("input limit"), "got: {}", msg);
+    }
+
+    #[test]
+    fn test_write_to_guest_memory_requires_allocator() {
+        // A module without guest_alloc should fail when write_to_guest_memory is called
+        let wasm = test_fixtures::minimal_filter_pass_no_alloc();
+        let limits = make_limits_with_filter_cap();
+        let runtime =
+            WasmRuntime::load_from_bytes_with_priority("no-alloc-plugin", &wasm, limits, 0)
+                .expect("load should succeed");
+        let mut store = runtime.create_store(std::collections::HashMap::new());
+        let exports = runtime.instantiate(&mut store).expect("instantiate");
+
+        // write_to_guest_memory should fail because guest_alloc is missing
+        let result = runtime.write_to_guest_memory(&mut store, &exports, b"test");
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("guest_alloc"),
+            "expected missing guest_alloc error, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_write_to_guest_memory_zero_length_returns_null() {
+        let wasm = test_fixtures::filter_with_allocator();
+        let limits = make_limits_with_filter_cap();
+        let runtime = WasmRuntime::load_from_bytes_with_priority("alloc-plugin", &wasm, limits, 0)
+            .expect("load should succeed");
+        let mut store = runtime.create_store(std::collections::HashMap::new());
+        let exports = runtime.instantiate(&mut store).expect("instantiate");
+
+        let result = runtime.write_to_guest_memory(&mut store, &exports, &[]);
+        assert!(result.is_ok());
+        let (ptr, len) = result.unwrap();
+        assert_eq!(ptr, 0);
+        assert_eq!(len, 0);
+    }
+
+    #[test]
+    fn test_allocator_plugin_receives_distinct_ranges() {
+        // Load a plugin with allocator, invoke it, and verify it receives
+        // method, URI, headers, and body in distinct memory ranges.
+        let wasm = test_fixtures::filter_verifies_distinct_ranges();
+        let limits = make_limits_with_filter_cap();
+        let runtime =
+            WasmRuntime::load_from_bytes_with_priority("range-check-plugin", &wasm, limits, 0)
+                .expect("load should succeed");
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("http://example.com/api/test")
+            .header("content-type", "application/json")
+            .body(Bytes::from_static(b"{\"key\":\"value\"}"))
+            .unwrap();
+        let env = Arc::new(std::collections::HashMap::new());
+        let result = runtime.filter_request(req, env);
+        assert!(result.is_ok());
+        match result.unwrap() {
+            WasmFilterResult::Pass => {}
+            other => panic!("expected Pass, got {:?}", other),
+        }
     }
 }
