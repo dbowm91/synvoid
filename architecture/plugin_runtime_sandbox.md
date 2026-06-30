@@ -535,3 +535,61 @@ cargo test --test manifest_authority_wiring
 cargo test --test manifest_authority_load_path_guard
 cargo test --test abi_memory_boundary_guard
 ```
+
+## M2 Phase 05: Request/Response Serialization Semantics
+
+The `abi_frame` module (`crates/synvoid-plugin-runtime/src/abi_frame.rs`) provides the canonical serialization and validation for the WASM plugin ABI.
+
+### Serialization Architecture
+
+All request metadata passes through `build_request_frame()` which validates against `RequestFramePolicy` bounds before writing to WASM guest memory. All response transform output passes through `validate_response_transform_output()` which validates against `ResponseFramePolicy` bounds before application.
+
+### Canonical Header Encoding
+
+`serialize_headers_canonical()` is the single authoritative header encoder. Format:
+```
+[header_count: u16 LE] [per entry: u16 LE name_len | name bytes | u16 LE val_len | val bytes]
+```
+
+- Header count, name length, and value length are validated against policy bounds.
+- Repeated header names are preserved as separate entries.
+- Non-UTF8 header values are preserved (raw bytes).
+- Total encoded size is bounded by `max_serialized_headers_bytes`.
+
+### Request Frame Policy
+
+`RequestFramePolicy` bounds: `max_method_bytes`, `max_uri_bytes`, `max_authority_bytes`, `max_header_count`, `max_header_name_bytes`, `max_header_value_bytes`, `max_serialized_headers_bytes`, `max_body_bytes`, `max_total_frame_bytes`.
+
+Derived from `PluginLimits.max_input_bytes` via `request_frame_policy_from_limits()`.
+
+### Response Frame Policy
+
+`ResponseFramePolicy` bounds: `min_status_code`, `max_status_code`, `max_header_count`, `max_header_name_bytes`, `max_header_value_bytes`, `max_body_bytes`, `max_total_frame_bytes`.
+
+Derived from `PluginLimits.max_output_bytes` via `response_frame_policy_from_limits()`.
+
+### Plugin HTTP View
+
+`PluginHttpView` defines what plugins see:
+- Method: raw bytes from `http::Method`
+- URI: raw bytes from `http::Uri` (origin-form or absolute-form)
+- Scheme: from URI or listener state (`http`/`https`)
+- Authority: from `:authority` (HTTP/2/3) or `Host` header (HTTP/1.1)
+- Headers: lowercased names, repeated entries preserved, hop-by-hop included
+- Body: controlled by `PluginBodyMode` (Full, Truncated, None)
+
+### Response Mutation Policy
+
+`PluginResponseMutationPolicy` controls what response transforms are allowed:
+- Inspect-only plugins: no mutations allowed
+- Mutate plugins: body replacement, safe header add/remove within limits
+- Security-sensitive headers always denied: `set-cookie`, `content-length`, `transfer-encoding`, `connection`, `authorization`, etc.
+- `x-plugin-*` prefix headers always allowed
+
+### Failure Classes
+
+`SerializationFailureClass` (13 variants): `MethodTooLarge`, `UriTooLarge`, `AuthorityTooLarge`, `HeaderCountTooLarge`, `HeaderNameTooLarge`, `HeaderValueTooLarge`, `HeaderBlockTooLarge`, `BodyTooLarge`, `FrameTooLarge`, `InvalidStatus`, `InvalidHeaderName`, `InvalidHeaderValue`, `MutationDenied`.
+
+### Metrics
+
+`record_serialization_rejection()` emits `synvoid_plugin_serialization_rejection_total` with bounded labels: plugin name, hook type, failure class, trust tier. No raw header values or body content in metrics.

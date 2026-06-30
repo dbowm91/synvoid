@@ -1,5 +1,6 @@
 //! WASM plugin runtime and sandbox integration.
 
+pub mod abi_frame;
 pub mod axum_loader;
 pub mod global;
 pub mod instance_pool;
@@ -12,6 +13,13 @@ pub mod streaming_body;
 pub mod wasm_metrics;
 pub mod wasm_runtime;
 
+pub use abi_frame::{
+    build_request_frame, record_serialization_rejection, request_frame_policy_from_limits,
+    response_frame_policy_from_limits, serialize_headers_canonical,
+    validate_response_transform_output, FailOpenPolicy, PluginBodyMode, PluginHttpView,
+    PluginResponseMutationPolicy, RequestFrame, RequestFramePolicy, ResponseFramePolicy,
+    SerializationError, SerializationFailureClass, ValidatedResponseTransform,
+};
 pub use global::{
     get_global_plugin_manager, GlobalPluginManager, GlobalWasmMemoryBudget, MemoryBudgetError,
 };

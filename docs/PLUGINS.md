@@ -266,6 +266,49 @@ require_signed = true
 signing_key_path = "/etc/synvoid/keys/plugin.key"
 ```
 
+## ABI Frame Serialization
+
+The WASM plugin ABI uses a canonical binary serialization for request metadata. All plugins receive request data through a single contiguous frame in WASM memory.
+
+### Request Input Frame
+
+Request data is serialized as:
+
+| Field | Format |
+|-------|--------|
+| Method | Raw HTTP method bytes (e.g., `GET`, `POST`) |
+| URI | Raw URI bytes (origin-form or absolute-form) |
+| Authority | URI authority or `Host` header value |
+| Scheme | `http` or `https` from URI/listener state |
+| Headers | Binary: `[count: u16 LE] [name_len: u16 LE][name][val_len: u16 LE][val]...` |
+| Body | Raw body bytes |
+
+### Policy Bounds
+
+All fields are bounded by `RequestFramePolicy` derived from plugin limits:
+- Method: max 256 bytes
+- URI: max 8192 bytes
+- Header count: max 128
+- Header name: max 256 bytes
+- Header value: max 8192 bytes
+- Total serialized headers: max 64KB
+- Body: max 256KB (from `max_input_bytes`)
+- Total frame: max 1MB (from `max_input_bytes`)
+
+Exceeding any bound causes a rejection — metadata is never silently truncated.
+
+### Response Transform Validation
+
+Plugin response transforms are validated before application:
+- Status code must be 100-599
+- Body must be within `max_output_bytes`
+- Security-sensitive headers (`set-cookie`, `content-length`, `transfer-encoding`, etc.) are denied by default
+- `x-plugin-*` prefix headers are always allowed
+
+### Failure Metrics
+
+Serialization rejections emit `synvoid_plugin_serialization_rejection_total` with bounded labels (plugin name, hook type, failure class, trust tier). No raw header values or body content appears in metrics.
+
 ## Troubleshooting
 
 ### Plugin Not Loading

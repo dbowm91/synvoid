@@ -84,6 +84,7 @@ cargo test -p synvoid-plugin-runtime -- test_classify_failure     # Error-to-fai
 cargo test -p synvoid-plugin-runtime -- test_guard_               # Guard state, quarantine, blocking invoke
 cargo test -p synvoid-plugin-runtime -- test_manager_             # Manager introspection (not-found cases)
 cargo test -p synvoid-plugin-runtime -- test_require_any          # Capability matching
+cargo test -p synvoid-plugin-runtime -- abi_frame    # ABI frame serialization: policy bounds, canonical header encoding, response validation, mutation policy
 cargo test --test docs_path_reference_guard  # Stale markdown link detection
 cargo test --test failure_injection  # Failure-injection tests for lifecycle, convergence, plugin, startup
 cargo test --test security_observability_guard  # Security observability invariants: metric labels, doc coverage, registry signals
@@ -101,6 +102,7 @@ cargo test --test mesh_task_ownership_guard --features mesh,dns  # Mesh task own
 - **Signed byte loading**: File-based plugin loading reads WASM bytes once and instantiates from those verified bytes (TOCTOU closure). `PreparedPluginLoad.wasm_bytes` owns the verified bytes.
 - **Strict SignedSandboxed**: Empty `binary_sha256` or `manifest_sha256` fields are rejected for `SignedSandboxed` in production.
 - **Plugin ABI memory boundary**: `write_to_guest_memory` requires `guest_alloc`/`guest_free`. Fixed-offset 1024 fallback is removed. All guest pointer/length operations use `checked_guest_range`.
+- **Plugin ABI frame serialization**: Use `abi_frame::serialize_headers_canonical` and `abi_frame::build_request_frame` — never ad-hoc header encoding. `SerializationFailureClass` classifies rejections for bounded metrics.
 
 ## Admin Control-Plane Authority
 
@@ -161,6 +163,7 @@ Request-path modules must consume **narrow traits**, not concrete infrastructure
 | `src/tls/acme.rs` | `crates/synvoid-tls/src/acme.rs` |
 | `src/tls/acme_dns.rs` | `crates/synvoid-tls/src/acme_dns.rs` |
 | `src/plugin/wasm_runtime.rs` | `crates/synvoid-plugin-runtime/src/wasm_runtime.rs` |
+| `serialize_headers` (inline in wasm_runtime.rs) | `crates/synvoid-plugin-runtime/src/abi_frame.rs` (canonical) |
 | `src/plugin/instance_pool.rs` | `crates/synvoid-plugin-runtime/src/instance_pool.rs` |
 | `src/config/admin.rs` | `crates/synvoid-config/src/admin.rs` |
 | `src/admin/authority.rs` | `crates/synvoid-core/src/admin_mutation.rs` |

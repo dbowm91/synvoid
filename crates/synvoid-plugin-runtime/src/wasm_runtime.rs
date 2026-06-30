@@ -2163,61 +2163,22 @@ impl WasmRuntime {
 
     /// Serialize headers to a compact binary format for passing to WASM guest.
     ///
+    /// Delegates to [`crate::abi_frame::serialize_headers_canonical`] for the
+    /// authoritative serialization logic. This ensures all header encoding
+    /// uses the single canonical path with policy-driven bounds.
+    ///
     /// Format: [header_count: u16]
     ///         [for each header: [name_len: u16][name][value_len: u16][value]]
-    ///
-    /// Returns error if header count, name length, or value length exceeds u16::MAX,
-    /// or if total encoded size would exceed the input limit.
     fn serialize_headers(
         headers: &HeaderMap,
         max_encoded_bytes: usize,
     ) -> Result<Vec<u8>, WasmPluginError> {
-        let header_count = headers.len();
-        if header_count > u16::MAX as usize {
-            return Err(WasmPluginError::SandboxError(format!(
-                "header count {} exceeds u16::MAX",
-                header_count
-            )));
-        }
-
-        let mut buf = Vec::with_capacity(1024.min(max_encoded_bytes));
-        buf.extend_from_slice(&(header_count as u16).to_le_bytes());
-
-        for (name, value) in headers.iter() {
-            let name_str = name.as_str();
-            let name_len = name_str.len();
-            if name_len > u16::MAX as usize {
-                return Err(WasmPluginError::SandboxError(format!(
-                    "header name length {} exceeds u16::MAX",
-                    name_len
-                )));
-            }
-
-            let val_bytes = value.as_bytes();
-            let val_len = val_bytes.len();
-            if val_len > u16::MAX as usize {
-                return Err(WasmPluginError::SandboxError(format!(
-                    "header value length {} exceeds u16::MAX",
-                    val_len
-                )));
-            }
-
-            // Check if adding this header would exceed the limit
-            let entry_size = 2 + name_len + 2 + val_len;
-            if buf.len() + entry_size > max_encoded_bytes {
-                return Err(WasmPluginError::SandboxError(format!(
-                    "serialized headers would exceed input limit of {} bytes",
-                    max_encoded_bytes
-                )));
-            }
-
-            buf.extend_from_slice(&(name_len as u16).to_le_bytes());
-            buf.extend_from_slice(name_str.as_bytes());
-            buf.extend_from_slice(&(val_len as u16).to_le_bytes());
-            buf.extend_from_slice(val_bytes);
-        }
-
-        Ok(buf)
+        let policy = crate::abi_frame::RequestFramePolicy {
+            max_serialized_headers_bytes: max_encoded_bytes,
+            ..Default::default()
+        };
+        crate::abi_frame::serialize_headers_canonical(headers, &policy)
+            .map_err(|e| WasmPluginError::SandboxError(e.to_string()))
     }
 
     /// Record a plugin invocation failure on the metrics counter.
@@ -4647,7 +4608,7 @@ entry = "plugin.wasm"
         let result = WasmRuntime::serialize_headers(&headers, 4); // 4 bytes = just the count field
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("input limit"), "got: {}", msg);
+        assert!(msg.contains("limit"), "got: {}", msg);
     }
 
     #[test]

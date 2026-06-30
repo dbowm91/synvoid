@@ -443,3 +443,15 @@ pub fn load_plugin_from_memory_with_manifest(
 ```
 
 The existing `load_plugin_from_memory()` defaults to `LocalSandboxed` with all-deny capabilities.
+
+## ABI Frame Serialization (M2 Phase 05)
+
+The `abi_frame` module provides canonical request/response serialization for the WASM plugin ABI:
+
+- `serialize_headers_canonical()` — single authoritative header encoder with policy bounds
+- `build_request_frame()` — canonical request frame builder validating all fields against `RequestFramePolicy`
+- `validate_response_transform_output()` — canonical response validator with mutation policy
+- `PluginResponseMutationPolicy` — controls response mutation authority (security headers denied by default)
+- `SerializationFailureClass` — 13-variant enum for bounded metrics labels
+
+All serialization rejections are metric-recorded without raw payload data. The `WasmRuntime::serialize_headers` function delegates to `serialize_headers_canonical`.

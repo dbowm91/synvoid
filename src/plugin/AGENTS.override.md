@@ -162,3 +162,28 @@ At `src/plugin/wasm_runtime.rs:867`, unauthorized DHT queries now log at `error`
 - `skills/spin_wasm.md` — Spin WASM runtime
 - `skills/serverless_wasm.md` — Serverless WASM patterns
 - `skills/wasm_components.md` — WASM component model patterns
+
+## M2 Phase 05: Request/Response Serialization Semantics
+
+The `abi_frame` module (`crates/synvoid-plugin-runtime/src/abi_frame.rs`) provides the canonical serialization and validation for the WASM plugin ABI.
+
+### Key Types
+- `RequestFramePolicy` / `ResponseFramePolicy` — bounds for request/response metadata
+- `SerializationFailureClass` — 13-variant enum classifying rejection reasons for bounded metrics
+- `SerializationError` — wraps failure class + message (no raw payload data)
+- `PluginHttpView` — what plugins see for HTTP metadata (method, URI, scheme, authority, headers, body_mode)
+- `PluginResponseMutationPolicy` — controls what response mutations are allowed
+- `FailOpenPolicy` — fail-open vs fail-closed on transform errors
+
+### Canonical Functions
+- `serialize_headers_canonical(headers, policy)` — single authoritative header encoder
+- `build_request_frame(method, uri, headers, body, policy)` — canonical request frame builder
+- `validate_response_transform_output(status, headers, body, mutation_policy, frame_policy)` — canonical response validator
+- `request_frame_policy_from_limits(max_input_bytes)` — derive policy from PluginLimits
+- `response_frame_policy_from_limits(max_output_bytes)` — derive policy from PluginLimits
+- `record_serialization_rejection(plugin, hook, class, tier)` — bounded metrics
+
+### Integration
+- `WasmRuntime::serialize_headers` delegates to `serialize_headers_canonical`
+- All serialization rejections use `SerializationFailureClass` for metrics
+- Security-sensitive response headers (set-cookie, content-length, transfer-encoding, etc.) are denied by default
