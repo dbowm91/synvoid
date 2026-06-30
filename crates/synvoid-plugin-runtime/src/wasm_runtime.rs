@@ -264,21 +264,38 @@ impl WasmPluginManager {
                     ))
                 })?;
 
+                // Reject manifest entry containing path traversal or absolute paths
+                // before any canonicalization to prevent traversal attacks.
+                if m.entry.contains("..") {
+                    return Err(WasmPluginError::LoadFailed(format!(
+                        "Plugin '{}' (tier: {}): manifest entry '{}' contains path traversal (..)",
+                        m.name, m.trust_tier, m.entry
+                    )));
+                }
+                if Path::new(&m.entry).is_absolute() {
+                    return Err(WasmPluginError::LoadFailed(format!(
+                        "Plugin '{}' (tier: {}): manifest entry '{}' must be a relative path",
+                        m.name, m.trust_tier, m.entry
+                    )));
+                }
+
                 // Verify manifest entry resolves to the same canonical wasm path
-                // or to a file within the same plugin directory
+                // or to a file within the same plugin directory.
                 if let Some(parent) = canonical.parent() {
                     let entry_path = parent.join(&m.entry);
-                    if let Ok(entry_canonical) = entry_path.canonicalize() {
-                        if entry_canonical != canonical {
-                            // Allow if the entry is a different file (e.g., entry points to a symlink)
-                            // but within the same directory
-                            if entry_canonical.parent() != Some(parent) {
-                                return Err(WasmPluginError::LoadFailed(format!(
-                                    "Plugin '{}' (tier: {}): manifest entry '{}' escapes plugin directory",
-                                    m.name, m.trust_tier, m.entry
-                                )));
-                            }
-                        }
+                    let entry_abs = entry_path
+                        .canonicalize()
+                        .map_err(|e| {
+                            WasmPluginError::LoadFailed(format!(
+                                "Plugin '{}' (tier: {}): manifest entry '{}' does not resolve to a valid file: {}",
+                                m.name, m.trust_tier, m.entry, e
+                            ))
+                        })?;
+                    if entry_abs.parent() != Some(parent) {
+                        return Err(WasmPluginError::LoadFailed(format!(
+                            "Plugin '{}' (tier: {}): manifest entry '{}' escapes plugin directory",
+                            m.name, m.trust_tier, m.entry
+                        )));
                     }
                 }
 
@@ -312,7 +329,10 @@ impl WasmPluginManager {
         let source = PluginSourceIdentity {
             path: wasm_path.map(|p| p.to_path_buf()),
             binary_sha256: Some(crate::sandbox::types::compute_binary_hash(&wasm_bytes)),
-            ..Default::default()
+            manifest_sha256: verified_signature
+                .as_ref()
+                .map(|v| v.manifest_sha256.clone()),
+            key_id: verified_signature.as_ref().map(|v| v.key_id.clone()),
         };
         Ok(PreparedPluginLoad {
             manifest: m.clone(),
@@ -949,6 +969,28 @@ impl WasmRuntime {
 
         let linker = Self::create_linker(&engine, &limits)?;
 
+        // Emit structured audit trace for signed plugins (hashes and key_id only,
+        // never raw signature or key material).
+        if let Some(ref p) = prepared {
+            if let Some(ref sig) = p.verified_signature {
+                tracing::info!(
+                    plugin = %name,
+                    trust_tier = ?p.manifest.trust_tier,
+                    key_id = %sig.key_id,
+                    binary_sha256 = %sig.binary_sha256,
+                    manifest_sha256 = %sig.manifest_sha256,
+                    algorithm = ?sig.algorithm,
+                    "Plugin signature verified"
+                );
+            } else if p.manifest.trust_tier == PluginTrustTier::SignedSandboxed {
+                tracing::warn!(
+                    plugin = %name,
+                    trust_tier = ?p.manifest.trust_tier,
+                    "SignedSandboxed plugin loaded without verification metadata"
+                );
+            }
+        }
+
         // Build effective policy if a prepared load was provided
         let effective_policy = prepared.map(|p| EffectivePluginPolicy {
             name: p.manifest.name.clone(),
@@ -1013,7 +1055,7 @@ impl WasmRuntime {
         }
 
         tracing::info!(
-            "Loaded WASM plugin '{}' from memory with limits: {}MB memory, {} fuel, {}s timeout, priority {} (filter={}, transform={}, handle={})",
+            "Loaded WASM plugin '{}' with limits: {}MB memory, {} fuel, {}s timeout, priority {} (filter={}, transform={}, handle={})",
             name,
             limits.max_memory_mb,
             limits.max_cpu_fuel,
@@ -2541,5 +2583,98 @@ mod tests {
             _ => panic!("expected error"),
         };
         assert!(err_msg.contains("signature") || err_msg.contains("MissingSignature"));
+    }
+
+    #[test]
+    fn test_prepare_plugin_load_rejects_entry_path_traversal() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let wasm_path = tmpdir.path().join("plugin.wasm");
+        // Write a minimal (invalid) WASM file
+        std::fs::write(&wasm_path, b"\x00asm\x01\x00\x00\x00").unwrap();
+        // Write a manifest with traversal entry
+        let manifest_path = tmpdir.path().join("plugin.toml");
+        std::fs::write(
+            &manifest_path,
+            r#"
+name = "traversal-test"
+version = "0.1.0"
+entry = "../escape.wasm"
+"#,
+        )
+        .unwrap();
+        let mgr = WasmPluginManager::new();
+        let result = mgr.prepare_plugin_load(Some(&wasm_path), None, None);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("path traversal"),
+            "Expected path traversal error, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_prepare_plugin_load_rejects_entry_absolute_path() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let wasm_path = tmpdir.path().join("plugin.wasm");
+        std::fs::write(&wasm_path, b"\x00asm\x01\x00\x00\x00").unwrap();
+        let manifest_path = tmpdir.path().join("plugin.toml");
+        std::fs::write(
+            &manifest_path,
+            r#"
+name = "absolute-test"
+version = "0.1.0"
+entry = "/etc/passwd"
+"#,
+        )
+        .unwrap();
+        let mgr = WasmPluginManager::new();
+        let result = mgr.prepare_plugin_load(Some(&wasm_path), None, None);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("relative path"),
+            "Expected relative path error, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_prepare_plugin_load_rejects_nonexistent_entry() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let wasm_path = tmpdir.path().join("plugin.wasm");
+        std::fs::write(&wasm_path, b"\x00asm\x01\x00\x00\x00").unwrap();
+        let manifest_path = tmpdir.path().join("plugin.toml");
+        std::fs::write(
+            &manifest_path,
+            r#"
+name = "noentry-test"
+version = "0.1.0"
+entry = "nonexistent.wasm"
+"#,
+        )
+        .unwrap();
+        let mgr = WasmPluginManager::new();
+        let result = mgr.prepare_plugin_load(Some(&wasm_path), None, None);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("does not resolve"),
+            "Expected entry resolution error, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_reload_plugin_preserves_old_on_failure() {
+        let mgr = WasmPluginManager::new();
+        // Attempt reload on nonexistent path — should fail cleanly
+        let result = mgr.reload_plugin(Path::new("/nonexistent/plugin.wasm"));
+        assert!(result.is_err());
+        // Manager state should be unchanged
+        assert!(
+            mgr.list_plugins().is_empty(),
+            "reload failure should not modify plugin list"
+        );
     }
 }
