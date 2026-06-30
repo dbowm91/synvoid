@@ -1,7 +1,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use super::types::{PluginCapabilities, PluginLimits, PluginManifest, PluginTrustTier};
+use bytes::Bytes;
+
+use super::types::{
+    PluginCapabilities, PluginLimits, PluginManifest, PluginTrustTier, VerifiedPluginSignature,
+};
 use crate::wasm_runtime::WasmResourceLimits;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -68,6 +72,11 @@ pub struct PreparedPluginLoad {
     pub effective_limits: WasmResourceLimits,
     /// Source identity for provenance tracking.
     pub source: PluginSourceIdentity,
+    /// The verified WASM bytes. File loads read once and instantiate from these
+    /// bytes to close TOCTOU. Memory loads store the provided slice.
+    pub wasm_bytes: Bytes,
+    /// Cryptographic verification metadata, if the plugin was signature-verified.
+    pub verified_signature: Option<VerifiedPluginSignature>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

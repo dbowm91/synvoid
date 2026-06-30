@@ -393,3 +393,53 @@ limits.check_output(300_000)?; // Err(ResourceLimitError::OutputTooLarge)
 cargo test --test plugin_capability_boundary_guard
 cargo test -p synvoid-plugin-runtime
 ```
+
+### Signed Byte Loading (Phase 2)
+
+File-based plugin loading reads WASM bytes once, verifies those bytes, and instantiates from the same verified byte slice. This closes TOCTOU races between policy enforcement and instantiation.
+
+```rust
+pub struct PreparedPluginLoad {
+    pub manifest: PluginManifest,
+    pub effective_limits: WasmResourceLimits,
+    pub source: PluginSourceIdentity,
+    pub wasm_bytes: bytes::Bytes,              // Phase 2: verified bytes
+    pub verified_signature: Option<VerifiedPluginSignature>, // Phase 2: crypto metadata
+}
+```
+
+`WasmRuntime::load_with_policy()` uses `Module::from_binary()` with verified bytes when available.
+
+### Strict SignedSandboxed (Phase 2)
+
+For `SignedSandboxed` trust tier:
+- `binary_sha256` must be non-empty and must match actual bytes
+- `manifest_sha256` must be non-empty and must match manifest payload hash
+- Empty hash fields are rejected in production
+
+### VerifiedPluginSignature (Phase 2)
+
+```rust
+pub struct VerifiedPluginSignature {
+    pub key_id: String,
+    pub binary_sha256: String,
+    pub manifest_sha256: String,
+    pub algorithm: PluginSignatureAlgorithm,
+}
+```
+
+### Memory/Mesh Loads (Phase 2)
+
+`load_plugin_from_memory_with_manifest()` is the production path for mesh/memory loaded plugins:
+
+```rust
+pub fn load_plugin_from_memory_with_manifest(
+    &self,
+    name: &str,
+    data: &[u8],
+    manifest: &PluginManifest,
+    limits: WasmResourceLimits,
+) -> Result<Arc<WasmRuntime>, WasmPluginError>
+```
+
+The existing `load_plugin_from_memory()` defaults to `LocalSandboxed` with all-deny capabilities.

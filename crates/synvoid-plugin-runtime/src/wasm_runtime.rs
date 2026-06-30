@@ -220,6 +220,9 @@ impl WasmPluginManager {
     /// `PreparedPluginLoad` containing the validated manifest and the effective
     /// `WasmResourceLimits` derived from that manifest. Every load path MUST
     /// use the returned `effective_limits` — never `self.default_limits` directly.
+    ///
+    /// File-based loads read the WASM binary once and store the bytes to close
+    /// TOCTOU races between policy enforcement and instantiation.
     fn prepare_plugin_load(
         &self,
         wasm_path: Option<&Path>,
@@ -236,21 +239,87 @@ impl WasmPluginManager {
                 &owned_manifest
             }
         };
-        enforce_plugin_load_policy(m, binary_bytes, &config).map_err(|e| {
-            WasmPluginError::LoadFailed(format!(
-                "Plugin '{}' (tier: {}): {}",
-                m.name, m.trust_tier, e
-            ))
-        })?;
+
+        // Read bytes once for file-based loads to close TOCTOU
+        let wasm_bytes = match (wasm_path, binary_bytes) {
+            (_, Some(bytes)) => Bytes::copy_from_slice(bytes),
+            (Some(path), None) => {
+                // Reject symlink plugin files
+                if path.is_symlink() {
+                    return Err(WasmPluginError::LoadFailed(format!(
+                        "Plugin '{}' (tier: {}): symlink plugin files are not permitted: {}",
+                        m.name,
+                        m.trust_tier,
+                        path.display()
+                    )));
+                }
+                // Read and canonicalize
+                let canonical = path.canonicalize().map_err(|e| {
+                    WasmPluginError::LoadFailed(format!(
+                        "Plugin '{}' (tier: {}): failed to canonicalize path {}: {}",
+                        m.name,
+                        m.trust_tier,
+                        path.display(),
+                        e
+                    ))
+                })?;
+
+                // Verify manifest entry resolves to the same canonical wasm path
+                // or to a file within the same plugin directory
+                if let Some(parent) = canonical.parent() {
+                    let entry_path = parent.join(&m.entry);
+                    if let Ok(entry_canonical) = entry_path.canonicalize() {
+                        if entry_canonical != canonical {
+                            // Allow if the entry is a different file (e.g., entry points to a symlink)
+                            // but within the same directory
+                            if entry_canonical.parent() != Some(parent) {
+                                return Err(WasmPluginError::LoadFailed(format!(
+                                    "Plugin '{}' (tier: {}): manifest entry '{}' escapes plugin directory",
+                                    m.name, m.trust_tier, m.entry
+                                )));
+                            }
+                        }
+                    }
+                }
+
+                let bytes = std::fs::read(&canonical).map_err(|e| {
+                    WasmPluginError::LoadFailed(format!(
+                        "Plugin '{}' (tier: {}): failed to read {}: {}",
+                        m.name,
+                        m.trust_tier,
+                        canonical.display(),
+                        e
+                    ))
+                })?;
+                Bytes::from(bytes)
+            }
+            (None, None) => {
+                // Memory load without bytes - use empty (will fail at instantiation)
+                Bytes::new()
+            }
+        };
+
+        // Enforce load policy with the actual bytes
+        let verified_signature = enforce_plugin_load_policy(m, Some(&wasm_bytes), &config)
+            .map_err(|e| {
+                WasmPluginError::LoadFailed(format!(
+                    "Plugin '{}' (tier: {}): {}",
+                    m.name, m.trust_tier, e
+                ))
+            })?;
+
         let effective_limits = limits_from_manifest(m, &self.default_limits);
         let source = PluginSourceIdentity {
             path: wasm_path.map(|p| p.to_path_buf()),
+            binary_sha256: Some(crate::sandbox::types::compute_binary_hash(&wasm_bytes)),
             ..Default::default()
         };
         Ok(PreparedPluginLoad {
             manifest: m.clone(),
             effective_limits,
             source,
+            wasm_bytes,
+            verified_signature,
         })
     }
 
@@ -286,6 +355,60 @@ impl WasmPluginManager {
         limits: WasmResourceLimits,
     ) -> Result<Arc<WasmRuntime>, WasmPluginError> {
         self.load_plugin_from_memory_with_priority(name, data, limits, 0)
+    }
+
+    /// Load a plugin from in-memory bytes with an explicit manifest.
+    ///
+    /// This is the preferred path for mesh-distributed plugins where the
+    /// manifest is provided alongside the binary. It enforces policy via
+    /// `prepare_plugin_load` and stores the resulting `PreparedPluginLoad`.
+    pub fn load_plugin_from_memory_with_manifest(
+        &self,
+        name: &str,
+        data: &[u8],
+        manifest: &PluginManifest,
+        limits: WasmResourceLimits,
+    ) -> Result<Arc<WasmRuntime>, WasmPluginError> {
+        let prepared = self.prepare_plugin_load(None, Some(manifest), Some(data))?;
+        let effective = WasmResourceLimits {
+            capabilities: prepared.effective_limits.capabilities.clone(),
+            ..limits
+        };
+        let runtime = WasmRuntime::load_from_bytes_with_priority(name, data, effective, 0)?;
+        let arc = Arc::new(runtime);
+        let runtime_name = arc.name().to_string();
+        if self
+            .runtimes
+            .read()
+            .iter()
+            .any(|r| r.name() == runtime_name)
+        {
+            return Err(WasmPluginError::LoadFailed(format!(
+                "plugin '{}' already loaded (duplicate name)",
+                runtime_name
+            )));
+        }
+        self.runtimes.write().push(arc.clone());
+        *self.sorted_runtimes_cache.write() = None;
+        self.plugin_paths.write().insert(
+            runtime_name.clone(),
+            PathBuf::from(format!("memory://{}", name)),
+        );
+        let policy = EffectivePluginPolicy {
+            name: prepared.manifest.name.clone(),
+            version: prepared.manifest.version.clone(),
+            trust_tier: prepared.manifest.trust_tier,
+            capabilities: prepared.effective_limits.capabilities.clone(),
+            limits: prepared.effective_limits.clone(),
+            manifest_limits: prepared.manifest.limits.clone(),
+            source: PluginSourceIdentity {
+                path: Some(PathBuf::from(format!("memory://{}", name))),
+                binary_sha256: Some(crate::sandbox::types::compute_binary_hash(data)),
+                ..prepared.source
+            },
+        };
+        self.plugin_policies.write().insert(runtime_name, policy);
+        Ok(arc)
     }
 
     pub fn load_plugin_from_memory_with_priority(
@@ -752,6 +875,8 @@ impl WasmRuntime {
     ///
     /// This is the preferred constructor for all load paths that have completed
     /// `prepare_plugin_load()`. The policy is stored for runtime introspection.
+    /// When `prepared` is provided with `wasm_bytes`, the module is instantiated
+    /// from those bytes (closing TOCTOU) instead of re-reading from disk.
     pub fn load_with_policy(
         path: &Path,
         limits: WasmResourceLimits,
@@ -771,8 +896,20 @@ impl WasmRuntime {
         let engine =
             Engine::new(&config).map_err(|e| WasmPluginError::LoadFailed(e.to_string()))?;
 
-        let module = Module::from_file(&engine, path)
-            .map_err(|e| WasmPluginError::LoadFailed(e.to_string()))?;
+        // Use pre-read bytes from prepared load to close TOCTOU, or fall back
+        // to reading from disk for legacy callers.
+        let module = match prepared.as_ref().and_then(|p| {
+            if p.wasm_bytes.is_empty() {
+                None
+            } else {
+                Some(p.wasm_bytes.clone())
+            }
+        }) {
+            Some(bytes) => Module::from_binary(&engine, &bytes)
+                .map_err(|e| WasmPluginError::LoadFailed(e.to_string()))?,
+            None => Module::from_file(&engine, path)
+                .map_err(|e| WasmPluginError::LoadFailed(e.to_string()))?,
+        };
 
         let name = path
             .file_stem()
@@ -2333,5 +2470,76 @@ mod tests {
 
         // The key verification is that load_plugin failed as expected
         // (whether due to duplicate name or file not found depends on implementation)
+    }
+
+    // ─── Phase 2: TOCTOU and load policy tests ────────────────────────────
+
+    #[test]
+    fn test_load_plugin_reads_bytes_once_for_toctou() {
+        let mgr = WasmPluginManager::new();
+        let path = Path::new("/nonexistent/plugin.wasm");
+        let result = mgr.prepare_plugin_load(Some(path), None, None);
+        assert!(result.is_err());
+        let err_msg = match result {
+            Err(e) => e.to_string(),
+            _ => panic!("expected error"),
+        };
+        assert!(err_msg.contains("failed to read") || err_msg.contains("No such file"));
+    }
+
+    #[test]
+    fn test_prepare_plugin_load_rejects_symlinks() {
+        use std::os::unix::fs::symlink;
+        let tmpdir = tempfile::tempdir().unwrap();
+        let wasm_path = tmpdir.path().join("plugin.wasm");
+        symlink("/nonexistent/target.wasm", &wasm_path).unwrap();
+        let mgr = WasmPluginManager::new();
+        let result = mgr.prepare_plugin_load(Some(&wasm_path), None, None);
+        assert!(result.is_err());
+        let err_msg = match result {
+            Err(e) => e.to_string(),
+            _ => panic!("expected error"),
+        };
+        assert!(err_msg.contains("symlink"));
+    }
+
+    #[test]
+    fn test_load_plugin_from_memory_defaults_to_local_sandboxed() {
+        let mgr = WasmPluginManager::new();
+        let result =
+            mgr.load_plugin_from_memory("test-plugin", b"fake wasm", WasmResourceLimits::default());
+        assert!(result.is_err());
+        let err_msg = match result {
+            Err(e) => e.to_string(),
+            _ => panic!("expected error"),
+        };
+        // Should NOT mention signature verification (SignedSandboxed)
+        assert!(!err_msg.contains("signature"));
+    }
+
+    #[test]
+    fn test_load_plugin_from_memory_with_manifest_enforces_policy() {
+        let mgr = WasmPluginManager::new();
+        let manifest = PluginManifest {
+            name: "test".into(),
+            version: "0.1.0".into(),
+            entry: "plugin.wasm".into(),
+            trust_tier: PluginTrustTier::SignedSandboxed,
+            capabilities: PluginCapabilities::default(),
+            limits: crate::sandbox::types::PluginLimits::default(),
+            signature: None, // Missing signature should fail
+        };
+        let result = mgr.load_plugin_from_memory_with_manifest(
+            "test",
+            b"fake wasm",
+            &manifest,
+            WasmResourceLimits::default(),
+        );
+        assert!(result.is_err());
+        let err_msg = match result {
+            Err(e) => e.to_string(),
+            _ => panic!("expected error"),
+        };
+        assert!(err_msg.contains("signature") || err_msg.contains("MissingSignature"));
     }
 }

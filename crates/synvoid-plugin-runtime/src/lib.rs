@@ -27,7 +27,7 @@ pub use sandbox::types::{
     PluginInvocationGuard, PluginInvokeError, PluginLimits, PluginLoadConfig, PluginLoadError,
     PluginManifest, PluginRuntimeState, PluginSignatureAlgorithm, PluginSignatureConfig,
     PluginSignatureError, PluginSignatureVerification, PluginTrustTier, ResourceLimitError,
-    SigningPolicy, SigningViolation, TrustedPluginKey,
+    SigningPolicy, SigningViolation, TrustedPluginKey, VerifiedPluginSignature,
 };
 pub use wasm_metrics::{get_all_wasm_metrics, get_wasm_metrics, WasmPluginMetrics};
 pub use wasm_runtime::{PluginInfo, WasmPluginManager, WasmResourceLimits, WasmRuntime};

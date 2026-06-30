@@ -75,7 +75,7 @@ cargo test --test admin_auth_boundary            # Auth authority boundary tests
 cargo test --test mesh_admin_edge_cases          # Mesh admin edge case tests
 cargo test --test plugin_capability_boundary_guard  # Plugin sandbox capability gates, manifest parsing, mem::forget
 cargo test --test plugin_failure_does_not_poison_manager  # Plugin failure isolation: one plugin's failure doesn't poison others
-cargo test --test plugin_signature_policy_guard  # Plugin signature policy enforcement
+cargo test --test plugin_signature_policy_guard  # Plugin signature policy enforcement (includes Phase 2 strict verification)
 cargo test --test manifest_authority_wiring        # Manifest-to-runtime authority differentiation (M1 Phase 01)
 cargo test --test manifest_authority_load_path_guard  # All load paths use PreparedPluginLoad, not raw default_limits
 cargo test --test docs_path_reference_guard  # Stale markdown link detection
@@ -92,6 +92,8 @@ cargo test --test mesh_task_ownership_guard --features mesh,dns  # Mesh task own
 - **File permissions**: Set `0o600` on private key files.
 - **Exception**: Simple `!=` is correct in `security_challenge.rs:196` — the expected solution is public, not a secret.
 - **Plugin lifecycle**: Use `PluginRuntimeOwner` to own plugin hot-reload watchers. Never use `std::mem::forget`.
+- **Signed byte loading**: File-based plugin loading reads WASM bytes once and instantiates from those verified bytes (TOCTOU closure). `PreparedPluginLoad.wasm_bytes` owns the verified bytes.
+- **Strict SignedSandboxed**: Empty `binary_sha256` or `manifest_sha256` fields are rejected for `SignedSandboxed` in production.
 
 ## Admin Control-Plane Authority
 

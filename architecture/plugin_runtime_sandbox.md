@@ -193,7 +193,7 @@ Capability flags are sorted alphabetically. Optional fields (`memory_pages`, `fu
 
 ### Loader Enforcement
 
-The `enforce_plugin_load_policy()` function enforces trust-tier rules at every plugin load path:
+The `enforce_plugin_load_policy()` function enforces trust-tier rules at every plugin load path. It returns `Result<Option<VerifiedPluginSignature>, PluginLoadError>`.
 
 | Trust Tier | Enforcement |
 |------------|-------------|
@@ -211,7 +211,9 @@ The `enforce_plugin_load_policy()` function enforces trust-tier rules at every p
 pub struct PreparedPluginLoad {
     pub manifest: PluginManifest,
     pub effective_limits: WasmResourceLimits,
-    pub source: PluginLoadSource,
+    pub source: PluginSourceIdentity,
+    pub wasm_bytes: bytes::Bytes,
+    pub verified_signature: Option<VerifiedPluginSignature>,
 }
 ```
 
@@ -225,6 +227,72 @@ All load paths must use `prepare_plugin_load()`:
 | `load_plugin_from_memory()` | In-memory load (tests/embedded); calls `prepare_plugin_load()` with no filesystem source |
 
 Bypassing `prepare_plugin_load()` to apply raw `default_limits` is a guardrail violation enforced by the `manifest_authority_load_path_guard` test.
+
+### Signed Byte Loading and TOCTOU Closure (M1 Phase 02)
+
+File-based plugin loading reads WASM bytes once into memory, verifies those bytes, and instantiates from the same verified byte slice. This closes time-of-check/time-of-use (TOCTOU) races between policy enforcement and instantiation.
+
+**Load flow:**
+1. Reject symlink plugin files (unless explicit operator policy permits them later).
+2. Canonicalize the `.wasm` path.
+3. Discover the manifest from the canonical path.
+4. Parse and validate the manifest.
+5. Read the WASM bytes into memory (one read).
+6. Compute `binary_sha256` from those bytes.
+7. Enforce load policy with `Some(&wasm_bytes)`.
+8. Instantiate from the same verified bytes via `Module::from_binary()`.
+
+`WasmRuntime::load_with_policy()` uses pre-read bytes from `PreparedPluginLoad` via `Module::from_binary` when available; falls back to `Module::from_file` only for legacy callers without prepared loads.
+
+### Strict SignedSandboxed Verification (M1 Phase 02)
+
+For `PluginTrustTier::SignedSandboxed`:
+- A `[signature]` block is **required**.
+- `binary_sha256` must be **non-empty** and must match the actual bytes.
+- `manifest_sha256` must be **non-empty** and must match the canonical manifest signing payload.
+- `key_id` must resolve to a trusted key.
+- `algorithm` must be `ed25519`.
+- The Ed25519 signature must verify.
+
+Empty hash fields are rejected in production. If backwards compatibility is needed for development, gate it behind `dev_mode = true` and never under `SignedSandboxed` production semantics.
+
+### VerifiedPluginSignature (M1 Phase 02)
+
+`verify_plugin_signature()` now returns `VerifiedPluginSignature` instead of `PluginSignatureVerification::Valid`:
+
+```rust
+pub struct VerifiedPluginSignature {
+    pub key_id: String,
+    pub binary_sha256: String,
+    pub manifest_sha256: String,
+    pub algorithm: PluginSignatureAlgorithm,
+}
+```
+
+This metadata is stored in `PreparedPluginLoad.verified_signature` and exposed in plugin info/audit logs for operator observability.
+
+### enforce_plugin_load_policy Return Type (M1 Phase 02)
+
+`enforce_plugin_load_policy()` now returns `Result<Option<VerifiedPluginSignature>, PluginLoadError>`:
+- `SignedSandboxed` returns `Some(verified)` with the verification metadata.
+- All other tiers return `None`.
+
+### Memory/Mesh Loads Require Metadata (M1 Phase 02)
+
+`load_plugin_from_memory_with_manifest()` is the production path for mesh-delivered or memory-loaded plugins. It accepts an explicit `PluginManifest` and enforces policy via `prepare_plugin_load()`.
+
+The existing `load_plugin_from_memory()` defaults to `LocalSandboxed` with all-deny capabilities. It cannot produce `SignedSandboxed` semantics without a manifest.
+
+### Atomic Reload (M1 Phase 02)
+
+`reload_plugin()` implements atomic replacement:
+1. Read bytes and verify signature via `prepare_plugin_load()`.
+2. Instantiate new runtime from verified bytes.
+3. Acquire write lock.
+4. Replace old runtime with new runtime.
+5. Invalidate sorted cache.
+
+If the new load fails at any point, the old plugin remains active. This avoids the sequence: remove old → try to load new → fail → leave no plugin.
 
 ### Trusted Key Configuration
 
@@ -302,7 +370,6 @@ Key methods:
 
 - **Python/pyo3 plugins**: Not implemented. Plugin runtime is WASM-only.
 - **Mesh/admin capabilities to plugins**: Explicitly default-denied. Not exposed unless future phases implement safe wrappers.
-- **Full WASM runtime refactor**: Capability gates are added as a thin layer over the existing wasmtime runtime; no deep runtime changes were made.
 - **Marketplace**: No plugin marketplace or registry.
 
 ## Plugin Runtime Surfaces
