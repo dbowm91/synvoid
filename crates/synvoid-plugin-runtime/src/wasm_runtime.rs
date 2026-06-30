@@ -2677,4 +2677,151 @@ entry = "nonexistent.wasm"
             "reload failure should not modify plugin list"
         );
     }
+
+    /// Gap 3: Manifest entry symlink escape must be rejected.
+    ///
+    /// When a manifest's `entry` field resolves via symlink to a file outside
+    /// the plugin directory, the load must fail with "escapes plugin directory".
+    #[test]
+    fn test_prepare_plugin_load_rejects_entry_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let tmpdir = tempfile::tempdir().unwrap();
+        let plugin_dir = tmpdir.path().join("my_plugin");
+        std::fs::create_dir(&plugin_dir).unwrap();
+
+        // Write a valid WASM file inside the plugin directory
+        let wasm_path = plugin_dir.join("plugin.wasm");
+        std::fs::write(&wasm_path, b"\x00asm\x01\x00\x00\x00").unwrap();
+
+        // Create a target file OUTSIDE the plugin directory
+        let escaped_target = tmpdir.path().join("escaped_target.wasm");
+        std::fs::write(&escaped_target, b"\x00asm\x01\x00\x00\x00").unwrap();
+
+        // Create a symlink inside the plugin directory pointing outside
+        let symlink_path = plugin_dir.join("escaped.wasm");
+        symlink(&escaped_target, &symlink_path).unwrap();
+
+        // Write a manifest whose entry points to the symlink
+        let manifest_path = plugin_dir.join("plugin.toml");
+        std::fs::write(
+            &manifest_path,
+            r#"
+name = "symlink-escape-test"
+version = "0.1.0"
+entry = "escaped.wasm"
+"#,
+        )
+        .unwrap();
+
+        let mgr = WasmPluginManager::new();
+        let result = mgr.prepare_plugin_load(Some(&wasm_path), None, None);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("escapes plugin directory"),
+            "Expected directory escape error, got: {}",
+            err_msg
+        );
+    }
+
+    /// Gap 4: Reload with tampered bytes must fail.
+    ///
+    /// When a plugin file is overwritten with invalid WASM bytes between load
+    /// and reload, the reload must fail and the manager state must be unchanged.
+    #[test]
+    fn test_reload_plugin_with_tampered_bytes_fails() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let wasm_path = tmpdir.path().join("plugin.wasm");
+        let manifest_path = tmpdir.path().join("plugin.toml");
+
+        // Write a minimal valid WASM module (empty module: just header)
+        std::fs::write(&wasm_path, b"\x00asm\x01\x00\x00\x00").unwrap();
+        std::fs::write(
+            &manifest_path,
+            r#"
+name = "tamper-test"
+version = "0.1.0"
+entry = "plugin.wasm"
+"#,
+        )
+        .unwrap();
+
+        // Tamper: overwrite with invalid bytes
+        std::fs::write(&wasm_path, b"\xff\xff\xff\xff").unwrap();
+
+        let mgr = WasmPluginManager::new();
+        let result = mgr.reload_plugin(&wasm_path);
+        assert!(result.is_err(), "reload with tampered bytes should fail");
+        // Manager should have no plugins (nothing was loaded before)
+        assert!(
+            mgr.list_plugins().is_empty(),
+            "manager should remain empty after failed reload"
+        );
+    }
+
+    /// Gap 5: Successful reload cycle must update plugin state.
+    ///
+    /// Load a plugin, overwrite the file with valid bytes, reload,
+    /// and verify the reload succeeds and the plugin list is updated.
+    #[test]
+    fn test_reload_plugin_successful_cycle() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let wasm_path = tmpdir.path().join("plugin.wasm");
+        let manifest_path = tmpdir.path().join("plugin.toml");
+
+        // Write a minimal valid WASM module (empty module: just magic + version)
+        std::fs::write(&wasm_path, b"\x00asm\x01\x00\x00\x00").unwrap();
+        std::fs::write(
+            &manifest_path,
+            r#"
+name = "reload-cycle-test"
+version = "0.1.0"
+entry = "plugin.wasm"
+"#,
+        )
+        .unwrap();
+
+        let mgr = WasmPluginManager::new();
+
+        // Initial load via load_plugin
+        let initial = mgr.load_plugin(&wasm_path);
+        assert!(
+            initial.is_ok(),
+            "initial load should succeed: {:?}",
+            initial.err()
+        );
+        assert_eq!(
+            mgr.list_plugins().len(),
+            1,
+            "should have 1 plugin after initial load"
+        );
+
+        // Overwrite with same valid WASM bytes (reload mechanism test).
+        // The reload path must: prepare -> instantiate -> swap under lock.
+        std::fs::write(&wasm_path, b"\x00asm\x01\x00\x00\x00").unwrap();
+
+        // Reload should succeed
+        let reloaded = mgr.reload_plugin(&wasm_path);
+        assert!(
+            reloaded.is_ok(),
+            "reload should succeed: {:?}",
+            reloaded.err()
+        );
+        assert_eq!(
+            mgr.list_plugins().len(),
+            1,
+            "should still have 1 plugin after reload"
+        );
+        assert_eq!(
+            mgr.list_plugins()[0],
+            "plugin",
+            "plugin name should be unchanged (derived from file stem)"
+        );
+
+        // Verify the plugin info is present
+        let info = mgr.get_plugin_info();
+        assert_eq!(info.len(), 1);
+        assert_eq!(info[0].name, "plugin");
+    }
 }

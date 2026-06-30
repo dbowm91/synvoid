@@ -629,3 +629,157 @@ fn loader_trust_audit_document_exists() {
         "audit doc must contain trust tier column"
     );
 }
+
+/// Test 11: `load_with_policy` must use `Module::from_binary` for TOCTOU closure.
+///
+/// When `prepared` bytes are provided, `load_with_policy` must instantiate via
+/// `Module::from_binary` (not `Module::from_file`) to close the TOCTOU race
+/// between verification and instantiation. This guard test scans the function
+/// body to ensure the bytes path exists.
+#[test]
+fn load_with_policy_uses_module_from_binary_for_toctou_closure() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let wasm_file = repo
+        .join("crates")
+        .join("synvoid-plugin-runtime")
+        .join("src")
+        .join("wasm_runtime.rs");
+
+    assert!(
+        wasm_file.exists(),
+        "wasm_runtime.rs must exist at {}",
+        wasm_file.display()
+    );
+
+    let text = std::fs::read_to_string(&wasm_file).expect("read wasm_runtime.rs");
+    let cleaned = strip_comments_and_strings(&text);
+
+    // Find the load_with_policy function body
+    let lines: Vec<&str> = cleaned.lines().collect();
+    let mut in_fn = false;
+    let mut fn_start = None;
+    let mut fn_brace_depth = 0u32;
+
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+
+        if trimmed.contains("pub fn load_with_policy(") {
+            in_fn = true;
+            fn_brace_depth = 0;
+            fn_start = Some(i);
+        }
+
+        if in_fn {
+            fn_brace_depth += trimmed.matches('{').count() as u32;
+            fn_brace_depth = fn_brace_depth.saturating_sub(trimmed.matches('}').count() as u32);
+
+            if fn_brace_depth == 0 && i > fn_start.unwrap() {
+                break;
+            }
+        }
+    }
+
+    assert!(
+        fn_start.is_some(),
+        "WasmRuntime::load_with_policy must exist"
+    );
+
+    // Collect the function body
+    let start = fn_start.unwrap();
+    let fn_body: String = lines
+        .iter()
+        .skip(start)
+        .take(50)
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // The function must use Module::from_binary when prepared bytes are available
+    assert!(
+        fn_body.contains("Module::from_binary"),
+        "load_with_policy must use Module::from_binary for TOCTOU closure when \
+         prepared bytes are available, but found no reference in the function body:\n{}",
+        fn_body
+    );
+
+    // Must also have the prepared bytes check that selects between from_binary and from_file
+    assert!(
+        fn_body.contains("Some(bytes)") || fn_body.contains("prepared"),
+        "load_with_policy must check for prepared bytes to choose between \
+         Module::from_binary and Module::from_file, but found no reference:\n{}",
+        fn_body
+    );
+}
+
+/// Test 12: Mesh memory load path must go through `prepare_plugin_load`.
+///
+/// The `load_plugin_from_memory_with_priority` method (used for mesh-distributed
+/// plugins) must delegate to `prepare_plugin_load`, which in turn calls
+/// `enforce_plugin_load_policy`. This ensures mesh-loaded plugins are subject
+/// to trust-tier enforcement and cannot bypass policy.
+#[test]
+fn mesh_memory_load_path_enforces_policy() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let wasm_file = repo
+        .join("crates")
+        .join("synvoid-plugin-runtime")
+        .join("src")
+        .join("wasm_runtime.rs");
+
+    assert!(
+        wasm_file.exists(),
+        "wasm_runtime.rs must exist at {}",
+        wasm_file.display()
+    );
+
+    let text = std::fs::read_to_string(&wasm_file).expect("read wasm_runtime.rs");
+    let cleaned = strip_comments_and_strings(&text);
+
+    // Find the load_plugin_from_memory_with_priority function body
+    let lines: Vec<&str> = cleaned.lines().collect();
+    let mut in_fn = false;
+    let mut fn_start = None;
+    let mut fn_brace_depth = 0u32;
+
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+
+        if trimmed.contains("fn load_plugin_from_memory_with_priority(") {
+            in_fn = true;
+            fn_brace_depth = 0;
+            fn_start = Some(i);
+        }
+
+        if in_fn {
+            fn_brace_depth += trimmed.matches('{').count() as u32;
+            fn_brace_depth = fn_brace_depth.saturating_sub(trimmed.matches('}').count() as u32);
+
+            if fn_brace_depth == 0 && i > fn_start.unwrap() {
+                break;
+            }
+        }
+    }
+
+    assert!(
+        fn_start.is_some(),
+        "WasmPluginManager::load_plugin_from_memory_with_priority must exist"
+    );
+
+    // Collect the function body
+    let start = fn_start.unwrap();
+    let fn_body: String = lines
+        .iter()
+        .skip(start)
+        .take(40)
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // The function must call prepare_plugin_load, which internally calls enforce_plugin_load_policy
+    assert!(
+        fn_body.contains("prepare_plugin_load"),
+        "load_plugin_from_memory_with_priority must delegate to prepare_plugin_load \
+         (which enforces trust-tier policy), but found no reference in the method body:\n{}",
+        fn_body
+    );
+}
