@@ -137,17 +137,80 @@ The `verify_signing_policy()` function enforces:
 - `SignedSandboxed` trust tier with `RequireSigned` requires a signature.
 - `DevelopmentHotReload` requires explicit dev-mode config externally.
 
-Signature covers plugin binary hash and manifest fields. Trusted public keys are configured in server config. Full cryptographic verification is deferred (see Known Deferred Items).
+Signature covers plugin binary hash and manifest fields. Trusted public keys are configured in server config. Full cryptographic verification is implemented in Phase 13 using Ed25519 via `ed25519-dalek`. The `verify_plugin_signature()` function verifies binary hashes, manifest hashes, and Ed25519 signatures against configured trusted keys.
 
 ### PluginSignatureConfig
 
 ```rust
 pub struct PluginSignatureConfig {
-    pub signature: String,    // hex-encoded signature
+    pub signature: String,    // hex-encoded Ed25519 signature
     pub key_id: String,       // public key identifier
-    pub algorithm: String,    // e.g. "ed25519", "ecdsa-p256"
+    pub algorithm: String,    // "ed25519"
+    pub binary_sha256: String, // SHA-256 hex digest of the plugin binary
+    pub manifest_sha256: String, // SHA-256 hex digest of the canonical manifest payload
 }
 ```
+
+## Signature Verification (Phase 13)
+
+The `verify_plugin_signature()` function performs full cryptographic verification:
+
+1. Checks that `SignedSandboxed` plugins have a `[signature]` block.
+2. Computes SHA-256 of the plugin binary and compares to `binary_sha256`.
+3. Computes a canonical manifest signing payload (deterministic, excludes signature field) and SHA-256 hash, compares to `manifest_sha256`.
+4. Resolves the trusted public key by `key_id` from `PluginLoadConfig.trusted_keys`.
+5. Verifies the Ed25519 signature against the canonical manifest payload.
+
+### Canonical Manifest Payload
+
+The signing payload is a deterministic text format:
+```
+name={name}
+version={version}
+entry={entry}
+trust_tier={trust_tier}
+cap_{Capability}={enabled}
+...
+timeout_ms={timeout_ms}
+max_input_bytes={max_input_bytes}
+max_output_bytes={max_output_bytes}
+max_concurrency={max_concurrency}
+```
+
+Capability flags are sorted alphabetically. Optional fields (`memory_pages`, `fuel`) are included only when present.
+
+### Loader Enforcement
+
+The `enforce_plugin_load_policy()` function enforces trust-tier rules at every plugin load path:
+
+| Trust Tier | Enforcement |
+|------------|-------------|
+| `Disabled` | Always rejected |
+| `SignedSandboxed` | Requires verified signature; fails closed if verification unavailable |
+| `DevelopmentHotReload` | Requires `dev_mode = true` in `PluginLoadConfig` |
+| `LocalTrusted` | Requires `allow_local_trusted = true` in `PluginLoadConfig` |
+| `LocalSandboxed` | Permitted (unsigned, sandboxed) |
+
+### Trusted Key Configuration
+
+Trusted keys are configured in the plugin config:
+```toml
+[plugins]
+dev_mode = false
+allow_local_trusted = false
+
+[[plugins.trusted_keys]]
+key_id = "operator-key-1"
+algorithm = "ed25519"
+public_key = "base64-url-no-pad..."
+```
+
+Fail-closed rules:
+- Missing key → rejected for `SignedSandboxed`
+- Unknown key ID → rejected
+- Malformed key → rejected
+- Binary hash mismatch → rejected
+- Manifest hash mismatch → rejected
 
 ## Failure Isolation
 
@@ -202,7 +265,6 @@ Key methods:
 
 ## Known Deferred Items
 
-- **Full signing verification**: The `verify_signing_policy()` function accepts signed plugins but does not yet perform cryptographic signature verification. The signature field is stored and checked for presence, but not validated against the binary hash.
 - **Python/pyo3 plugins**: Not implemented. Plugin runtime is WASM-only.
 - **Mesh/admin capabilities to plugins**: Explicitly default-denied. Not exposed unless future phases implement safe wrappers.
 - **Full WASM runtime refactor**: Capability gates are added as a thin layer over the existing wasmtime runtime; no deep runtime changes were made.
@@ -238,4 +300,5 @@ The `plugin_capability_boundary_guard` test suite (`tests/plugin_capability_boun
 
 ```bash
 cargo test --test plugin_capability_boundary_guard
+cargo test --test plugin_signature_policy_guard
 ```

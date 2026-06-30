@@ -227,6 +227,7 @@ Phase 10 closure audit. Classifies every public surface of the SynVoid codebase 
 | `admin_auth_boundary` | Auth authority boundary | Strong (fail-closed) | None | Yes |
 | `mesh_admin_edge_cases` | Mesh admin edge cases | Strong (fail-closed) | None | Yes |
 | `plugin_failure_does_not_poison_manager` | Plugin failure isolation | Strong (fail-closed) | None | Yes |
+| `plugin_signature_policy_guard` | Plugin signature policy enforcement | Strong (fail-closed) | None | Yes |
 
 ## 7. Plugin API Surface
 
@@ -239,7 +240,7 @@ Phase 10 closure audit. Classifies every public surface of the SynVoid codebase 
 | `PluginCapabilities` | `crates/synvoid-plugin-runtime/src/sandbox/types.rs:79` | stable_within_workspace | stable | Default-deny capability set; 11 fields |
 | `PluginCapability` | `crates/synvoid-plugin-runtime/src/sandbox/types.rs:52` | stable_within_workspace | stable | 11 fine-grained capability tokens |
 | `PluginLimits` | `crates/synvoid-plugin-runtime/src/sandbox/types.rs:220` | stable_within_workspace | stable | Per-plugin resource limits: timeout_ms, max_input/output_bytes, max_concurrency, memory_pages, fuel |
-| `SigningPolicy` | `crates/synvoid-plugin-runtime/src/sandbox/types.rs:636` | stable_within_workspace | stable | RequireSigned (default), AllowUnsignedWithWarning, Disabled |
+| `SigningPolicy` | `crates/synvoid-plugin-runtime/src/sandbox/types.rs:636` | stable_within_workspace | stable | RequireSigned (default), AllowUnsignedWithWarning, Disabled; full Ed25519 verification in Phase 13 |
 
 ### Runtime Types (host-side, used by composition roots)
 

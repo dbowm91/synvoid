@@ -339,6 +339,8 @@ guard.reset_failures();
 
 ### Signing Policy
 
+> **Phase 13**: `verify_plugin_signature()` now performs full Ed25519 cryptographic verification (binary hash, manifest hash, signature). See `architecture/plugin_runtime_sandbox.md` for details.
+
 ```rust
 use synvoid_plugin_runtime::sandbox::types::{SigningPolicy, verify_signing_policy};
 

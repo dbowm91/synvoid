@@ -299,7 +299,7 @@ impl PluginLimits {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Optional signature metadata stored in the manifest.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PluginSignatureConfig {
     /// Hex-encoded signature of the plugin binary.
     pub signature: String,
@@ -307,6 +307,12 @@ pub struct PluginSignatureConfig {
     pub key_id: String,
     /// Signing algorithm (e.g. "ed25519", "ecdsa-p256").
     pub algorithm: String,
+    /// Expected SHA-256 hash of the plugin binary (hex-encoded).
+    #[serde(default)]
+    pub binary_sha256: String,
+    /// Expected SHA-256 hash of the canonical manifest signing payload (hex-encoded).
+    #[serde(default)]
+    pub manifest_sha256: String,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -734,6 +740,350 @@ impl std::fmt::Display for SigningViolation {
 impl std::error::Error for SigningViolation {}
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Plugin Signature Verification
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Algorithm for plugin signatures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginSignatureAlgorithm {
+    Ed25519,
+}
+
+/// A trusted public key for verifying plugin signatures.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrustedPluginKey {
+    pub key_id: String,
+    pub algorithm: PluginSignatureAlgorithm,
+    /// Base64URL-no-pad encoded Ed25519 public key.
+    pub public_key: String,
+}
+
+/// Plugin load configuration controlling trust enforcement.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PluginLoadConfig {
+    /// Whether dev mode is enabled (allows DevelopmentHotReload tier).
+    #[serde(default)]
+    pub dev_mode: bool,
+    /// Whether local trusted plugins are allowed.
+    #[serde(default)]
+    pub allow_local_trusted: bool,
+    /// Trusted public keys for signature verification.
+    #[serde(default)]
+    pub trusted_keys: Vec<TrustedPluginKey>,
+}
+
+/// Result of signature verification.
+#[derive(Debug)]
+pub enum PluginSignatureVerification {
+    /// Signature verified successfully.
+    Valid,
+    /// Verification was skipped (e.g., development mode).
+    Skipped,
+}
+
+/// Errors during signature verification.
+#[derive(Debug, Clone)]
+pub enum PluginSignatureError {
+    /// SignedSandboxed requires a signature block in the manifest.
+    MissingSignature,
+    /// Binary hash does not match manifest hash.
+    BinaryHashMismatch { expected: String, actual: String },
+    /// Manifest hash does not match computed hash.
+    ManifestHashMismatch { expected: String, actual: String },
+    /// No trusted key matches the key_id in the manifest.
+    UnknownKeyId(String),
+    /// Trusted key has an unsupported algorithm.
+    UnsupportedAlgorithm(String),
+    /// Trusted key is malformed (not valid base64 or wrong length).
+    MalformedKey(String),
+    /// Signature is malformed (not valid hex or wrong length).
+    MalformedSignature(String),
+    /// Signature verification failed (invalid signature).
+    SignatureInvalid,
+    /// Cryptographic verification is unavailable (dependency missing or compile-time feature).
+    VerificationUnavailable,
+}
+
+impl std::fmt::Display for PluginSignatureError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingSignature => write!(f, "SignedSandboxed plugin requires a signature"),
+            Self::BinaryHashMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "binary hash mismatch: expected {}, got {}",
+                    expected, actual
+                )
+            }
+            Self::ManifestHashMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "manifest hash mismatch: expected {}, got {}",
+                    expected, actual
+                )
+            }
+            Self::UnknownKeyId(id) => write!(f, "unknown trusted key ID: '{}'", id),
+            Self::UnsupportedAlgorithm(alg) => write!(f, "unsupported algorithm: '{}'", alg),
+            Self::MalformedKey(msg) => write!(f, "malformed trusted key: {}", msg),
+            Self::MalformedSignature(msg) => write!(f, "malformed signature: {}", msg),
+            Self::SignatureInvalid => write!(f, "signature verification failed"),
+            Self::VerificationUnavailable => {
+                write!(f, "cryptographic signature verification is not available")
+            }
+        }
+    }
+}
+
+impl std::error::Error for PluginSignatureError {}
+
+/// Compute the SHA-256 digest of binary bytes, returned as a hex string.
+pub fn compute_binary_hash(binary_bytes: &[u8]) -> String {
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(binary_bytes);
+    hex::encode(digest)
+}
+
+/// Compute a canonical signing payload from manifest fields (excluding signature).
+/// This produces a deterministic serialization for signing.
+pub fn compute_manifest_signing_payload(manifest: &PluginManifest) -> String {
+    let mut payload = String::new();
+    payload.push_str(&format!("name={}\n", manifest.name));
+    payload.push_str(&format!("version={}\n", manifest.version));
+    payload.push_str(&format!("entry={}\n", manifest.entry));
+    payload.push_str(&format!("trust_tier={}\n", manifest.trust_tier));
+    // Capabilities in sorted order
+    let mut caps: Vec<_> = manifest.capabilities.iter_flags();
+    caps.sort_by_key(|(cap, _)| format!("{:?}", cap));
+    for (cap, enabled) in &caps {
+        payload.push_str(&format!("cap_{:?}={}\n", cap, enabled));
+    }
+    // Limits
+    payload.push_str(&format!("timeout_ms={}\n", manifest.limits.timeout_ms));
+    payload.push_str(&format!(
+        "max_input_bytes={}\n",
+        manifest.limits.max_input_bytes
+    ));
+    payload.push_str(&format!(
+        "max_output_bytes={}\n",
+        manifest.limits.max_output_bytes
+    ));
+    payload.push_str(&format!(
+        "max_concurrency={}\n",
+        manifest.limits.max_concurrency
+    ));
+    if let Some(mp) = manifest.limits.memory_pages {
+        payload.push_str(&format!("memory_pages={}\n", mp));
+    }
+    if let Some(f) = manifest.limits.fuel {
+        payload.push_str(&format!("fuel={}\n", f));
+    }
+    payload
+}
+
+/// Compute SHA-256 of the canonical manifest signing payload.
+pub fn compute_manifest_hash(manifest: &PluginManifest) -> String {
+    let payload = compute_manifest_signing_payload(manifest);
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(payload.as_bytes());
+    hex::encode(digest)
+}
+
+/// Verify a plugin's cryptographic signature.
+///
+/// Steps:
+/// 1. Check that SignedSandboxed has a signature block.
+/// 2. Verify binary hash matches manifest hash.
+/// 3. Compute canonical manifest hash and compare.
+/// 4. Resolve trusted public key by key_id.
+/// 5. Verify Ed25519 signature.
+pub fn verify_plugin_signature(
+    manifest: &PluginManifest,
+    binary_bytes: &[u8],
+    trusted_keys: &[TrustedPluginKey],
+) -> Result<PluginSignatureVerification, PluginSignatureError> {
+    // Step 1: SignedSandboxed requires a signature block
+    let sig_config = match &manifest.signature {
+        Some(s) => s,
+        None => return Err(PluginSignatureError::MissingSignature),
+    };
+
+    // Step 2: Verify binary hash
+    let actual_binary_hash = compute_binary_hash(binary_bytes);
+    if !sig_config.binary_sha256.is_empty() && sig_config.binary_sha256 != actual_binary_hash {
+        return Err(PluginSignatureError::BinaryHashMismatch {
+            expected: sig_config.binary_sha256.clone(),
+            actual: actual_binary_hash,
+        });
+    }
+
+    // Step 3: Compute and verify manifest hash
+    let actual_manifest_hash = compute_manifest_hash(manifest);
+    if !sig_config.manifest_sha256.is_empty() && sig_config.manifest_sha256 != actual_manifest_hash
+    {
+        return Err(PluginSignatureError::ManifestHashMismatch {
+            expected: sig_config.manifest_sha256.clone(),
+            actual: actual_manifest_hash,
+        });
+    }
+
+    // Step 4: Resolve trusted key
+    let trusted_key = trusted_keys
+        .iter()
+        .find(|k| k.key_id == sig_config.key_id)
+        .ok_or_else(|| PluginSignatureError::UnknownKeyId(sig_config.key_id.clone()))?;
+
+    // Step 5: Verify algorithm matches
+    let algorithm = match sig_config.algorithm.as_str() {
+        "ed25519" => PluginSignatureAlgorithm::Ed25519,
+        other => {
+            return Err(PluginSignatureError::UnsupportedAlgorithm(
+                other.to_string(),
+            ))
+        }
+    };
+    if trusted_key.algorithm != algorithm {
+        return Err(PluginSignatureError::UnsupportedAlgorithm(format!(
+            "key algorithm {:?} does not match signature algorithm {:?}",
+            trusted_key.algorithm, algorithm
+        )));
+    }
+
+    // Step 6: Decode public key
+    use base64::Engine;
+    let public_key_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(&trusted_key.public_key)
+        .map_err(|e| PluginSignatureError::MalformedKey(e.to_string()))?;
+
+    // Step 7: Decode signature
+    let signature_bytes = hex::decode(&sig_config.signature)
+        .map_err(|e| PluginSignatureError::MalformedSignature(e.to_string()))?;
+
+    // Step 8: Verify Ed25519 signature
+    let signing_payload = compute_manifest_signing_payload(manifest);
+
+    match algorithm {
+        PluginSignatureAlgorithm::Ed25519 => {
+            use ed25519_dalek::{
+                Signature, Verifier, VerifyingKey, PUBLIC_KEY_LENGTH, SIGNATURE_LENGTH,
+            };
+
+            if public_key_bytes.len() != PUBLIC_KEY_LENGTH {
+                return Err(PluginSignatureError::MalformedKey(format!(
+                    "expected {} bytes, got {}",
+                    PUBLIC_KEY_LENGTH,
+                    public_key_bytes.len()
+                )));
+            }
+            if signature_bytes.len() != SIGNATURE_LENGTH {
+                return Err(PluginSignatureError::MalformedSignature(format!(
+                    "expected {} bytes, got {}",
+                    SIGNATURE_LENGTH,
+                    signature_bytes.len()
+                )));
+            }
+
+            let mut key_arr = [0u8; PUBLIC_KEY_LENGTH];
+            key_arr.copy_from_slice(&public_key_bytes);
+            let verifying_key = VerifyingKey::from_bytes(&key_arr)
+                .map_err(|e| PluginSignatureError::MalformedKey(e.to_string()))?;
+
+            let mut sig_arr = [0u8; SIGNATURE_LENGTH];
+            sig_arr.copy_from_slice(&signature_bytes);
+            let signature = Signature::from_bytes(&sig_arr);
+
+            verifying_key
+                .verify(signing_payload.as_bytes(), &signature)
+                .map_err(|_| PluginSignatureError::SignatureInvalid)?;
+        }
+    }
+
+    Ok(PluginSignatureVerification::Valid)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Plugin Load Policy Enforcement
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Errors from plugin load policy enforcement.
+#[derive(Debug, Clone)]
+pub enum PluginLoadError {
+    /// Plugin trust tier is Disabled.
+    Disabled,
+    /// DevelopmentHotReload not allowed when dev_mode is false.
+    DevHotReloadNotAllowed,
+    /// LocalTrusted not allowed when allow_local_trusted is false.
+    LocalTrustedNotAllowed,
+    /// Signature verification failed.
+    Signature(PluginSignatureError),
+}
+
+impl std::fmt::Display for PluginLoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Disabled => write!(f, "plugin trust tier is disabled"),
+            Self::DevHotReloadNotAllowed => {
+                write!(f, "DevelopmentHotReload tier requires dev_mode = true")
+            }
+            Self::LocalTrustedNotAllowed => {
+                write!(f, "LocalTrusted tier requires allow_local_trusted = true")
+            }
+            Self::Signature(e) => write!(f, "signature verification failed: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for PluginLoadError {}
+
+impl From<PluginSignatureError> for PluginLoadError {
+    fn from(e: PluginSignatureError) -> Self {
+        Self::Signature(e)
+    }
+}
+
+/// Enforce plugin load policy based on trust tier, config, and optional binary.
+///
+/// This function must be called from every plugin loading path before the plugin
+/// is instantiated. It enforces:
+/// - Disabled tier → always rejected
+/// - SignedSandboxed → requires verified signature or fails closed
+/// - DevelopmentHotReload → requires dev_mode = true
+/// - LocalTrusted → requires allow_local_trusted = true
+/// - Other tiers → permitted
+pub fn enforce_plugin_load_policy(
+    manifest: &PluginManifest,
+    binary_bytes: Option<&[u8]>,
+    config: &PluginLoadConfig,
+) -> Result<(), PluginLoadError> {
+    match manifest.trust_tier {
+        PluginTrustTier::Disabled => Err(PluginLoadError::Disabled),
+
+        PluginTrustTier::SignedSandboxed => {
+            let keys = &config.trusted_keys;
+            let binary = binary_bytes.unwrap_or(&[]);
+            verify_plugin_signature(manifest, binary, keys)?;
+            Ok(())
+        }
+
+        PluginTrustTier::DevelopmentHotReload => {
+            if !config.dev_mode {
+                return Err(PluginLoadError::DevHotReloadNotAllowed);
+            }
+            Ok(())
+        }
+
+        PluginTrustTier::LocalTrusted => {
+            if !config.allow_local_trusted {
+                return Err(PluginLoadError::LocalTrustedNotAllowed);
+            }
+            Ok(())
+        }
+
+        PluginTrustTier::LocalSandboxed => Ok(()),
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Invocation Guard
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1052,6 +1402,7 @@ mod tests {
             signature: "abcd1234".to_string(),
             key_id: "key1".to_string(),
             algorithm: "ed25519".to_string(),
+            ..Default::default()
         };
         let result = verify_signing_policy(
             SigningPolicy::RequireSigned,
@@ -1459,6 +1810,7 @@ mod tests {
             signature: "deadbeef".to_string(),
             key_id: "k1".to_string(),
             algorithm: "ed25519".to_string(),
+            ..Default::default()
         };
         let result = verify_signing_policy(
             SigningPolicy::RequireSigned,
@@ -1483,5 +1835,209 @@ mod tests {
                 tier
             );
         }
+    }
+
+    // ─── Phase E: enforce_plugin_load_policy tests ───────────────────────
+
+    #[test]
+    fn signed_sandboxed_requires_signature() {
+        let manifest = PluginManifest {
+            name: "test".into(),
+            version: "0.1.0".into(),
+            entry: "plugin.wasm".into(),
+            trust_tier: PluginTrustTier::SignedSandboxed,
+            capabilities: PluginCapabilities::default(),
+            limits: PluginLimits::default(),
+            signature: None,
+        };
+        let config = PluginLoadConfig::default();
+        let result = enforce_plugin_load_policy(&manifest, Some(&[]), &config);
+        assert!(matches!(
+            result,
+            Err(PluginLoadError::Signature(
+                PluginSignatureError::MissingSignature
+            ))
+        ));
+    }
+
+    #[test]
+    fn signed_sandboxed_rejects_unknown_key() {
+        let sig = PluginSignatureConfig {
+            signature: "abcd".to_string(),
+            key_id: "unknown-key".to_string(),
+            algorithm: "ed25519".to_string(),
+            ..Default::default()
+        };
+        let manifest = PluginManifest {
+            name: "test".into(),
+            version: "0.1.0".into(),
+            entry: "plugin.wasm".into(),
+            trust_tier: PluginTrustTier::SignedSandboxed,
+            capabilities: PluginCapabilities::default(),
+            limits: PluginLimits::default(),
+            signature: Some(sig),
+        };
+        let config = PluginLoadConfig::default();
+        let result = enforce_plugin_load_policy(&manifest, Some(&[]), &config);
+        assert!(matches!(
+            result,
+            Err(PluginLoadError::Signature(
+                PluginSignatureError::UnknownKeyId(_)
+            ))
+        ));
+    }
+
+    #[test]
+    fn development_hot_reload_rejected_without_dev_mode() {
+        let manifest = PluginManifest {
+            name: "test".into(),
+            version: "0.1.0".into(),
+            entry: "plugin.wasm".into(),
+            trust_tier: PluginTrustTier::DevelopmentHotReload,
+            capabilities: PluginCapabilities::default(),
+            limits: PluginLimits::default(),
+            signature: None,
+        };
+        let config = PluginLoadConfig::default(); // dev_mode = false
+        let result = enforce_plugin_load_policy(&manifest, None, &config);
+        assert!(matches!(
+            result,
+            Err(PluginLoadError::DevHotReloadNotAllowed)
+        ));
+    }
+
+    #[test]
+    fn development_hot_reload_allowed_with_explicit_dev_mode() {
+        let manifest = PluginManifest {
+            name: "test".into(),
+            version: "0.1.0".into(),
+            entry: "plugin.wasm".into(),
+            trust_tier: PluginTrustTier::DevelopmentHotReload,
+            capabilities: PluginCapabilities::default(),
+            limits: PluginLimits::default(),
+            signature: None,
+        };
+        let config = PluginLoadConfig {
+            dev_mode: true,
+            ..Default::default()
+        };
+        let result = enforce_plugin_load_policy(&manifest, None, &config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn disabled_plugin_never_loads() {
+        let manifest = PluginManifest {
+            name: "test".into(),
+            version: "0.1.0".into(),
+            entry: "plugin.wasm".into(),
+            trust_tier: PluginTrustTier::Disabled,
+            capabilities: PluginCapabilities::default(),
+            limits: PluginLimits::default(),
+            signature: None,
+        };
+        let config = PluginLoadConfig {
+            dev_mode: true,
+            ..Default::default()
+        };
+        let result = enforce_plugin_load_policy(&manifest, None, &config);
+        assert!(matches!(result, Err(PluginLoadError::Disabled)));
+    }
+
+    #[test]
+    fn local_trusted_requires_explicit_config() {
+        let manifest = PluginManifest {
+            name: "test".into(),
+            version: "0.1.0".into(),
+            entry: "plugin.wasm".into(),
+            trust_tier: PluginTrustTier::LocalTrusted,
+            capabilities: PluginCapabilities::default(),
+            limits: PluginLimits::default(),
+            signature: None,
+        };
+        let config = PluginLoadConfig::default();
+        let result = enforce_plugin_load_policy(&manifest, None, &config);
+        assert!(matches!(
+            result,
+            Err(PluginLoadError::LocalTrustedNotAllowed)
+        ));
+    }
+
+    #[test]
+    fn local_sandboxed_always_allowed() {
+        let manifest = PluginManifest {
+            name: "test".into(),
+            version: "0.1.0".into(),
+            entry: "plugin.wasm".into(),
+            trust_tier: PluginTrustTier::LocalSandboxed,
+            capabilities: PluginCapabilities::default(),
+            limits: PluginLimits::default(),
+            signature: None,
+        };
+        let config = PluginLoadConfig::default();
+        let result = enforce_plugin_load_policy(&manifest, None, &config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn compute_binary_hash_returns_sha256_hex() {
+        let hash = compute_binary_hash(b"hello world");
+        assert_eq!(hash.len(), 64); // SHA-256 hex = 64 chars
+    }
+
+    #[test]
+    fn compute_manifest_hash_deterministic() {
+        let manifest = PluginManifest {
+            name: "test".into(),
+            version: "1.0".into(),
+            entry: "plugin.wasm".into(),
+            trust_tier: PluginTrustTier::LocalSandboxed,
+            capabilities: PluginCapabilities::default(),
+            limits: PluginLimits::default(),
+            signature: None,
+        };
+        let h1 = compute_manifest_hash(&manifest);
+        let h2 = compute_manifest_hash(&manifest);
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn compute_manifest_hash_changes_with_name() {
+        let m1 = PluginManifest {
+            name: "alpha".into(),
+            version: "1.0".into(),
+            entry: "plugin.wasm".into(),
+            trust_tier: PluginTrustTier::LocalSandboxed,
+            capabilities: PluginCapabilities::default(),
+            limits: PluginLimits::default(),
+            signature: None,
+        };
+        let m2 = PluginManifest {
+            name: "beta".into(),
+            ..m1.clone()
+        };
+        assert_ne!(compute_manifest_hash(&m1), compute_manifest_hash(&m2));
+    }
+
+    #[test]
+    fn compute_manifest_signing_payload_excludes_signature() {
+        let manifest = PluginManifest {
+            name: "test".into(),
+            version: "1.0".into(),
+            entry: "plugin.wasm".into(),
+            trust_tier: PluginTrustTier::LocalSandboxed,
+            capabilities: PluginCapabilities::default(),
+            limits: PluginLimits::default(),
+            signature: Some(PluginSignatureConfig {
+                signature: "should-not-appear".to_string(),
+                key_id: "key1".to_string(),
+                algorithm: "ed25519".to_string(),
+                ..Default::default()
+            }),
+        };
+        let payload = compute_manifest_signing_payload(&manifest);
+        assert!(!payload.contains("should-not-appear"));
+        assert!(payload.contains("name=test"));
+        assert!(payload.contains("version=1.0"));
     }
 }
