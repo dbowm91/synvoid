@@ -33,3 +33,6 @@ pub use sandbox::types::{
 pub use wasm_metrics::{get_all_wasm_metrics, get_wasm_metrics, WasmPluginMetrics};
 pub use wasm_runtime::{PluginInfo, WasmPluginManager, WasmResourceLimits, WasmRuntime};
 pub use wasm_runtime::{WasmFilterResult, WasmPluginError};
+
+#[cfg(test)]
+pub mod test_fixtures;
