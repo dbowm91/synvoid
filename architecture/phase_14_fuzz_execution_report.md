@@ -63,9 +63,10 @@ No crashes observed (smoke tests blocked by compilation time).
 
 ## CI / Manual Workflow Status
 
-- **CI integration**: Not yet added to `.github/workflows/ci.yml`
+- **CI integration**: ✅ Added `fuzz-smoke` job to `.github/workflows/ci.yml`
 - **Manual workflow**: Documented in `AGENTS.md` quick commands
-- **Recommended**: Add nightly fuzz smoke job to CI (optional/manual trigger)
+- **Job details**: Runs all 16 targets with `-runs=1000`, nightly toolchain, cargo-fuzz cached
+- **Trigger**: Runs on push to main/master/develop and pull requests (same as other CI jobs)
 
 ## Residual Risks
 
@@ -76,7 +77,6 @@ No crashes observed (smoke tests blocked by compilation time).
 
 ## Recommendations
 
-1. **Add CI nightly job**: Run fuzz smoke tests nightly with `workflow_dispatch` trigger
-2. **Consolidate duplicates**: Merge `fuzz_serialization` and `fuzz_serialization_new`
-3. **Fix minimal target**: Update `fuzz_protocol_proto_decode` to actually call protobuf decode
-4. **Add remaining targets**: Config parse, HTTP chunked body, URL routing matcher
+1. **Consolidate duplicates**: Merge `fuzz_serialization` and `fuzz_serialization_new`
+2. **Fix minimal target**: Update `fuzz_protocol_proto_decode` to actually call protobuf decode
+3. **Add remaining targets**: Config parse, HTTP chunked body, URL routing matcher
