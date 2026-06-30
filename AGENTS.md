@@ -78,6 +78,11 @@ cargo test --test plugin_failure_does_not_poison_manager  # Plugin failure isola
 cargo test --test plugin_signature_policy_guard  # Plugin signature policy enforcement (includes Phase 2 strict verification)
 cargo test --test manifest_authority_wiring        # Manifest-to-runtime authority differentiation (M1 Phase 01)
 cargo test --test manifest_authority_load_path_guard  # All load paths use PreparedPluginLoad, not raw default_limits
+cargo test -p synvoid-plugin-runtime -- test_plugin_failure       # Failure policy defaults and failure class classification
+cargo test -p synvoid-plugin-runtime -- test_classify_failure     # Error-to-failure-class mapping
+cargo test -p synvoid-plugin-runtime -- test_guard_               # Guard state, quarantine, blocking invoke
+cargo test -p synvoid-plugin-runtime -- test_manager_             # Manager introspection (not-found cases)
+cargo test -p synvoid-plugin-runtime -- test_require_any          # Capability matching
 cargo test --test docs_path_reference_guard  # Stale markdown link detection
 cargo test --test failure_injection  # Failure-injection tests for lifecycle, convergence, plugin, startup
 cargo test --test security_observability_guard  # Security observability invariants: metric labels, doc coverage, registry signals

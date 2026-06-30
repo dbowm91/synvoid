@@ -74,6 +74,27 @@ that plugin's runtime authority. The conversion pipeline is:
 - `cargo test --test manifest_authority_wiring` — two-plugin differentiation
 - `cargo test --test manifest_authority_load_path_guard` — static load path enforcement
 
+### Mandatory Invocation Guard (M1 Phase 03)
+
+Every plugin invocation goes through `PluginInvocationGuard`. The guard is the
+mandatory boundary for capability checks, input limits, concurrency, state,
+and failure counting.
+
+**Key files:**
+- `crates/synvoid-plugin-runtime/src/sandbox/types.rs` — `PluginInvocationGuard`, `PluginFailurePolicy`, `PluginFailureClass`
+- `crates/synvoid-plugin-runtime/src/wasm_runtime.rs` — `WasmRuntime.guard` field, `classify_failure()`, `record_and_classify_failure()`
+
+**Rules:**
+- `WasmRuntime::filter_request()` / `transform_response()` / `invoke_handler()` all check guard state before invocation
+- Disabled plugins return fail-closed or fail-open per `PluginFailurePolicy`
+- Capability violations immediately disable the plugin via `guard.disable_for_violation()`
+- Repeated failures/timeouts disable via `guard.record_failure(threshold)`
+- Host-function violations set `RequestContext.capability_violation` and are checked after guest call
+- Failed/poisoned instances are not returned to the pool
+
+**Guardrail tests:**
+- `cargo test -p synvoid-plugin-runtime` — unit tests for guard, failure classes, state transitions
+
 ## Known Bugs (Fixed)
 
 ### Spin Cold-Start Bug (FIXED 2026-05-26)

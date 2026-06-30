@@ -18,8 +18,9 @@ use crate::sandbox::policy::{
     limits_from_manifest, EffectivePluginPolicy, PluginSourceIdentity, PreparedPluginLoad,
 };
 use crate::sandbox::types::{
-    enforce_plugin_load_policy, PluginCapabilities, PluginCapability, PluginLoadConfig,
-    PluginManifest, PluginTrustTier,
+    enforce_plugin_load_policy, PluginCapabilities, PluginCapability, PluginFailureClass,
+    PluginFailurePolicy, PluginInvocationGuard, PluginLimits, PluginLoadConfig, PluginManifest,
+    PluginRuntimeState, PluginTrustTier,
 };
 use crate::streaming_body::StreamingBody;
 use crate::wasm_metrics::{
@@ -101,6 +102,8 @@ pub struct WasmRuntime {
     pool: Arc<WasmInstancePool>,
     linker: Linker<RequestContext>,
     effective_policy: Option<EffectivePluginPolicy>,
+    guard: Arc<PluginInvocationGuard>,
+    failure_policy: PluginFailurePolicy,
 }
 
 #[derive(Debug, Clone)]
@@ -493,6 +496,7 @@ impl WasmPluginManager {
                 max_table_elements,
                 body_receiver: None,
                 capabilities: limits.capabilities.clone(),
+                capability_violation: None,
             },
         );
         store.limiter(|state| state);
@@ -846,6 +850,41 @@ impl WasmPluginManager {
         }
         Ok(result)
     }
+
+    /// Get the runtime state of a plugin by name.
+    pub fn get_plugin_state(&self, name: &str) -> Option<PluginRuntimeState> {
+        self.get_runtime_by_name(name).map(|r| r.guard().state())
+    }
+
+    /// Get the failure count of a plugin by name.
+    pub fn get_plugin_failure_count(&self, name: &str) -> Option<u32> {
+        self.get_runtime_by_name(name)
+            .map(|r| r.guard().failure_count())
+    }
+
+    /// Reset failure counters for a plugin, restoring it to Loaded state.
+    pub fn reset_plugin_failures(&self, name: &str) -> Result<(), WasmPluginError> {
+        let runtime = self
+            .get_runtime_by_name(name)
+            .ok_or_else(|| WasmPluginError::FunctionNotFound(name.to_string()))?;
+        runtime.guard().reset_failures();
+        crate::wasm_metrics::record_plugin_state_transition(name, "loaded", "manual reset");
+        Ok(())
+    }
+
+    /// Quarantine a plugin, preventing all future invocations.
+    pub fn quarantine_plugin(&self, name: &str) -> Result<(), WasmPluginError> {
+        let runtime = self
+            .get_runtime_by_name(name)
+            .ok_or_else(|| WasmPluginError::FunctionNotFound(name.to_string()))?;
+        runtime.guard().quarantine();
+        crate::wasm_metrics::record_plugin_state_transition(
+            name,
+            "quarantined",
+            "manual quarantine",
+        );
+        Ok(())
+    }
 }
 
 impl Default for WasmPluginManager {
@@ -864,6 +903,7 @@ pub(crate) struct RequestContext {
     pub(crate) max_table_elements: usize,
     pub(crate) body_receiver: Option<tokio::sync::mpsc::Receiver<Result<Bytes, std::io::Error>>>,
     pub(crate) capabilities: Arc<PluginCapabilities>,
+    pub(crate) capability_violation: Option<PluginCapability>,
 }
 
 impl ResourceLimiter for RequestContext {
@@ -1002,6 +1042,26 @@ impl WasmRuntime {
             source: p.source,
         });
 
+        let guard = Arc::new(PluginInvocationGuard::new(
+            (*limits.capabilities).clone(),
+            PluginLimits {
+                timeout_ms: limits.timeout_seconds * 1000,
+                max_concurrency: limits.max_instances.max(1),
+                ..Default::default()
+            },
+            limits.max_instances.max(1),
+        ));
+        let failure_policy = effective_policy
+            .as_ref()
+            .map(|_p| PluginFailurePolicy {
+                failure_threshold: 5,
+                timeout_threshold: 3,
+                capability_violation_disables: true,
+                fail_closed_on_filter_error: true,
+                fail_closed_on_transform_error: false,
+            })
+            .unwrap_or_default();
+
         Ok(Self {
             engine,
             module,
@@ -1011,6 +1071,8 @@ impl WasmRuntime {
             pool,
             linker,
             effective_policy,
+            guard,
+            failure_policy,
         })
     }
 
@@ -1076,6 +1138,16 @@ impl WasmRuntime {
 
         let linker = Self::create_linker(&engine, &limits)?;
 
+        let guard = Arc::new(PluginInvocationGuard::new(
+            (*limits.capabilities).clone(),
+            PluginLimits {
+                timeout_ms: limits.timeout_seconds * 1000,
+                max_concurrency: limits.max_instances.max(1),
+                ..Default::default()
+            },
+            limits.max_instances.max(1),
+        ));
+
         Ok(Self {
             engine,
             module,
@@ -1085,6 +1157,8 @@ impl WasmRuntime {
             pool,
             linker,
             effective_policy: None,
+            guard,
+            failure_policy: PluginFailurePolicy::default(),
         })
     }
 
@@ -1148,6 +1222,16 @@ impl WasmRuntime {
 
         let linker = Self::create_linker(&engine, &limits)?;
 
+        let guard = Arc::new(PluginInvocationGuard::new(
+            (*limits.capabilities).clone(),
+            PluginLimits {
+                timeout_ms: limits.timeout_seconds * 1000,
+                max_concurrency: limits.max_instances.max(1),
+                ..Default::default()
+            },
+            limits.max_instances.max(1),
+        ));
+
         Ok(Self {
             engine,
             module,
@@ -1157,6 +1241,8 @@ impl WasmRuntime {
             pool,
             linker,
             effective_policy: None,
+            guard,
+            failure_policy: PluginFailurePolicy::default(),
         })
     }
 
@@ -1516,6 +1602,7 @@ impl WasmRuntime {
                 max_table_elements,
                 body_receiver: None,
                 capabilities: self.limits.capabilities.clone(),
+                capability_violation: None,
             },
         );
 
@@ -1762,6 +1849,77 @@ impl WasmRuntime {
         Ok(())
     }
 
+    /// Classify a WasmPluginError into a failure class for policy decisions.
+    fn classify_failure(error: &WasmPluginError) -> PluginFailureClass {
+        match error {
+            WasmPluginError::SandboxError(msg) => {
+                if msg.contains("fuel") || msg.contains("all fuel") {
+                    PluginFailureClass::FuelExhausted
+                } else if msg.contains("memory") || msg.contains("out of bounds") {
+                    PluginFailureClass::MemoryViolation
+                } else {
+                    PluginFailureClass::GuestTrap
+                }
+            }
+            WasmPluginError::ExecutionFailed(msg) => {
+                if msg.contains("timed out") || msg.contains("timeout") {
+                    PluginFailureClass::Timeout
+                } else if msg.contains("trap") || msg.contains("panic") {
+                    PluginFailureClass::GuestTrap
+                } else if msg.contains("capability") {
+                    PluginFailureClass::CapabilityViolation
+                } else {
+                    PluginFailureClass::OtherRuntimeError
+                }
+            }
+            WasmPluginError::LoadFailed(_) => PluginFailureClass::LoadError,
+            WasmPluginError::FunctionNotFound(_) => PluginFailureClass::OtherRuntimeError,
+        }
+    }
+
+    /// Record a failure using the guard and return the failure class.
+    fn record_and_classify_failure(&self, error: &WasmPluginError) -> PluginFailureClass {
+        let class = Self::classify_failure(error);
+        if class == PluginFailureClass::CapabilityViolation
+            && self.failure_policy.capability_violation_disables
+        {
+            self.guard.disable_for_violation();
+            crate::wasm_metrics::record_plugin_state_transition(
+                &self.name,
+                "disabled_by_capability_violation",
+                "capability violation during invocation",
+            );
+        } else if class.is_timeout() {
+            self.guard
+                .record_failure(self.failure_policy.timeout_threshold);
+            let state = self.guard.state();
+            if state != PluginRuntimeState::Loaded {
+                crate::wasm_metrics::record_plugin_state_transition(
+                    &self.name,
+                    &state.to_string(),
+                    "timeout threshold exceeded",
+                );
+            }
+        } else if class.counts_as_failure() {
+            self.guard
+                .record_failure(self.failure_policy.failure_threshold);
+            let state = self.guard.state();
+            if state != PluginRuntimeState::Loaded {
+                crate::wasm_metrics::record_plugin_state_transition(
+                    &self.name,
+                    &state.to_string(),
+                    "failure threshold exceeded",
+                );
+            }
+        }
+        class
+    }
+
+    /// Get a reference to the invocation guard for this runtime.
+    pub fn guard(&self) -> &PluginInvocationGuard {
+        &self.guard
+    }
+
     pub fn filter_request(
         &self,
         request: Request<Bytes>,
@@ -1769,23 +1927,62 @@ impl WasmRuntime {
     ) -> Result<WasmFilterResult, WasmPluginError> {
         let plugin_name = &self.name;
 
-        if !self
-            .limits
+        // Check runtime state via guard
+        if !self.guard.is_invocable() {
+            let state = self.guard.state();
+            tracing::warn!(
+                "WASM plugin '{}' is not invocable (state: {}) — {}",
+                plugin_name,
+                state,
+                if self.failure_policy.fail_closed_on_filter_error {
+                    "blocking"
+                } else {
+                    "passing through"
+                }
+            );
+            if self.failure_policy.fail_closed_on_filter_error {
+                return Ok(WasmFilterResult::Block(
+                    StatusCode::FORBIDDEN,
+                    format!("Plugin '{}' is disabled ({})", plugin_name, state),
+                ));
+            } else {
+                return Ok(WasmFilterResult::Pass);
+            }
+        }
+
+        // Check capability via guard
+        if self
+            .guard
             .capabilities
-            .permits(PluginCapability::RequestInspect)
-            && !self
-                .limits
-                .capabilities
-                .permits(PluginCapability::RequestMutate)
+            .require_any_capability(&[
+                PluginCapability::RequestInspect,
+                PluginCapability::RequestMutate,
+            ])
+            .is_err()
         {
             tracing::error!(
                 "WASM plugin '{}' lacks RequestInspect/RequestMutate capability — rejecting invocation",
                 plugin_name
             );
             crate::wasm_metrics::record_plugin_capability_violation("RequestInspect");
+            self.guard.disable_for_violation();
+            crate::wasm_metrics::record_plugin_state_transition(
+                plugin_name,
+                "disabled_by_capability_violation",
+                "missing filter_request capability",
+            );
             return Err(WasmPluginError::ExecutionFailed(
                 "plugin lacks required capability".to_string(),
             ));
+        }
+
+        // Check input size
+        let input_len = request.headers().len() + request.body().len();
+        if let Err(e) = self.guard.limits.check_input(input_len) {
+            return Err(WasmPluginError::ExecutionFailed(format!(
+                "input too large: {}",
+                e
+            )));
         }
 
         record_wasm_invocation(plugin_name);
@@ -1813,7 +2010,8 @@ impl WasmRuntime {
                 WasmInstancePool::resolve_exports_from_instance(&inst.instance, &mut inst.store);
             let result = self.do_filter_request_with_exports(parts, body, &mut inst.store, exports);
             self.pool.return_instance(inst);
-            if result.is_err() {
+            if let Err(ref e) = result {
+                self.record_and_classify_failure(e);
                 Self::record_invoke_failure("filter_request");
             }
             return result;
@@ -1824,7 +2022,8 @@ impl WasmRuntime {
             Self::record_invoke_failure("filter_request");
         })?;
         let result = self.do_filter_request_with_exports(parts, body, &mut store, exports);
-        if result.is_err() {
+        if let Err(ref e) = result {
+            self.record_and_classify_failure(e);
             Self::record_invoke_failure("filter_request");
         }
         result
@@ -1878,6 +2077,16 @@ impl WasmRuntime {
                 method_ptr, method_len, uri_ptr, uri_len, hdr_ptr, hdr_len, body_ptr, body_len,
             ),
         );
+
+        // Check for capability violations reported by host functions during guest execution
+        if store.data().capability_violation.is_some() {
+            self.guard.disable_for_violation();
+            crate::wasm_metrics::record_plugin_state_transition(
+                plugin_name,
+                "disabled_by_capability_violation",
+                "host function capability violation during guest call",
+            );
+        }
 
         self.free_guest_memory(&mut *store, &exports, method_ptr, method_len);
         self.free_guest_memory(&mut *store, &exports, uri_ptr, uri_len);
@@ -1955,23 +2164,62 @@ impl WasmRuntime {
     ) -> Result<Response<Bytes>, WasmPluginError> {
         let plugin_name = &self.name;
 
-        if !self
-            .limits
+        // Check runtime state via guard
+        if !self.guard.is_invocable() {
+            let state = self.guard.state();
+            tracing::warn!(
+                "WASM plugin '{}' is not invocable (state: {}) — {}",
+                plugin_name,
+                state,
+                if self.failure_policy.fail_closed_on_transform_error {
+                    "blocking"
+                } else {
+                    "passing through"
+                }
+            );
+            if self.failure_policy.fail_closed_on_transform_error {
+                return Err(WasmPluginError::ExecutionFailed(format!(
+                    "Plugin '{}' is disabled ({})",
+                    plugin_name, state
+                )));
+            } else {
+                return Ok(response);
+            }
+        }
+
+        // Check capability via guard
+        if self
+            .guard
             .capabilities
-            .permits(PluginCapability::ResponseInspect)
-            && !self
-                .limits
-                .capabilities
-                .permits(PluginCapability::ResponseMutate)
+            .require_any_capability(&[
+                PluginCapability::ResponseInspect,
+                PluginCapability::ResponseMutate,
+            ])
+            .is_err()
         {
             tracing::error!(
                 "WASM plugin '{}' lacks ResponseInspect/ResponseMutate capability — rejecting invocation",
                 plugin_name
             );
             crate::wasm_metrics::record_plugin_capability_violation("ResponseInspect");
+            self.guard.disable_for_violation();
+            crate::wasm_metrics::record_plugin_state_transition(
+                plugin_name,
+                "disabled_by_capability_violation",
+                "missing transform_response capability",
+            );
             return Err(WasmPluginError::ExecutionFailed(
                 "plugin lacks required capability".to_string(),
             ));
+        }
+
+        // Check input size
+        let input_len = response.headers().len() + response.body().len();
+        if let Err(e) = self.guard.limits.check_input(input_len) {
+            return Err(WasmPluginError::ExecutionFailed(format!(
+                "input too large: {}",
+                e
+            )));
         }
 
         record_wasm_invocation(plugin_name);
@@ -1999,7 +2247,8 @@ impl WasmRuntime {
             let result =
                 self.do_transform_response_with_exports(parts, body, &mut inst.store, exports);
             self.pool.return_instance(inst);
-            if result.is_err() {
+            if let Err(ref e) = result {
+                self.record_and_classify_failure(e);
                 Self::record_invoke_failure("transform_response");
             }
             return result;
@@ -2010,7 +2259,8 @@ impl WasmRuntime {
             Self::record_invoke_failure("transform_response");
         })?;
         let result = self.do_transform_response_with_exports(parts, body, &mut store, exports);
-        if result.is_err() {
+        if let Err(ref e) = result {
+            self.record_and_classify_failure(e);
             Self::record_invoke_failure("transform_response");
         }
         result
@@ -2065,6 +2315,16 @@ impl WasmRuntime {
                 ))
             })?;
 
+        // Check for capability violations reported by host functions during guest execution
+        if store.data().capability_violation.is_some() {
+            self.guard.disable_for_violation();
+            crate::wasm_metrics::record_plugin_state_transition(
+                plugin_name,
+                "disabled_by_capability_violation",
+                "host function capability violation during guest call",
+            );
+        }
+
         if self.limits.max_cpu_fuel > 0 {
             if let Ok(remaining) = store.get_fuel() {
                 let consumed = self.limits.max_cpu_fuel.saturating_sub(remaining);
@@ -2107,6 +2367,20 @@ impl WasmRuntime {
         let start = Instant::now();
         let plugin_name = &self.name;
 
+        // Check runtime state via guard
+        if !self.guard.is_invocable() {
+            let state = self.guard.state();
+            tracing::warn!(
+                "WASM plugin '{}' is not invocable (state: {}) — blocking serverless invocation",
+                plugin_name,
+                state,
+            );
+            return Err(WasmPluginError::ExecutionFailed(format!(
+                "Plugin '{}' is disabled ({})",
+                plugin_name, state
+            )));
+        }
+
         record_wasm_invocation(plugin_name);
         metrics::counter!("synvoid_plugin_invoke_total", "capability" => "serverless_streaming", "status" => "invoked").increment(1);
 
@@ -2144,7 +2418,8 @@ impl WasmRuntime {
         let mut store = self.create_store(env);
         store.data_mut().body_receiver = Some(rx);
 
-        let exports = self.instantiate(&mut store).inspect_err(|_| {
+        let exports = self.instantiate(&mut store).inspect_err(|e| {
+            self.record_and_classify_failure(e);
             Self::record_invoke_failure("serverless_streaming");
         })?;
 
@@ -2161,7 +2436,8 @@ impl WasmRuntime {
             }
         };
 
-        Self::check_timeout(&store).inspect_err(|_| {
+        Self::check_timeout(&store).inspect_err(|e| {
+            self.record_and_classify_failure(e);
             Self::record_invoke_failure("serverless_streaming");
         })?;
 
@@ -2200,6 +2476,16 @@ impl WasmRuntime {
             ),
         );
 
+        // Check for capability violations reported by host functions during guest execution
+        if store.data().capability_violation.is_some() {
+            self.guard.disable_for_violation();
+            crate::wasm_metrics::record_plugin_state_transition(
+                plugin_name,
+                "disabled_by_capability_violation",
+                "host function capability violation during guest call",
+            );
+        }
+
         self.free_guest_memory(&mut store, &exports, method_ptr, method_len);
         self.free_guest_memory(&mut store, &exports, uri_ptr, uri_len);
         self.free_guest_memory(&mut store, &exports, hdr_ptr, hdr_len);
@@ -2213,6 +2499,10 @@ impl WasmRuntime {
 
         let code = result.map_err(|e| {
             record_wasm_error(plugin_name);
+            self.record_and_classify_failure(&WasmPluginError::ExecutionFailed(format!(
+                "handle_request failed in '{}': {}",
+                self.name, e
+            )));
             Self::record_invoke_failure("serverless_streaming");
             WasmPluginError::ExecutionFailed(format!(
                 "handle_request failed in '{}': {}",
@@ -2225,11 +2515,13 @@ impl WasmRuntime {
 
         if code != 0 {
             record_wasm_error(plugin_name);
-            Self::record_invoke_failure("serverless_streaming");
-            return Err(WasmPluginError::ExecutionFailed(format!(
+            let err = WasmPluginError::ExecutionFailed(format!(
                 "handle_request in '{}' returned error code {}",
                 self.name, code
-            )));
+            ));
+            self.record_and_classify_failure(&err);
+            Self::record_invoke_failure("serverless_streaming");
+            return Err(err);
         }
 
         let status_raw = self.read_from_guest_memory(&mut store, &exports, out_status_ptr, 4)?;
@@ -2295,6 +2587,28 @@ impl WasmRuntime {
         let start = Instant::now();
         let plugin_name = &self.name;
 
+        // Check runtime state via guard
+        if !self.guard.is_invocable() {
+            let state = self.guard.state();
+            tracing::warn!(
+                "WASM plugin '{}' is not invocable (state: {}) — blocking serverless invocation",
+                plugin_name,
+                state,
+            );
+            return Err(WasmPluginError::ExecutionFailed(format!(
+                "Plugin '{}' is disabled ({})",
+                plugin_name, state
+            )));
+        }
+
+        // Check input size
+        if let Err(e) = self.guard.limits.check_input(body.len()) {
+            return Err(WasmPluginError::ExecutionFailed(format!(
+                "input too large: {}",
+                e
+            )));
+        }
+
         record_wasm_invocation(plugin_name);
         metrics::counter!("synvoid_plugin_invoke_total", "capability" => "serverless", "status" => "invoked").increment(1);
 
@@ -2306,7 +2620,8 @@ impl WasmRuntime {
         );
 
         let mut store = self.create_store(env);
-        let exports = self.instantiate(&mut store).inspect_err(|_| {
+        let exports = self.instantiate(&mut store).inspect_err(|e| {
+            self.record_and_classify_failure(e);
             Self::record_invoke_failure("serverless");
         })?;
 
@@ -2323,7 +2638,8 @@ impl WasmRuntime {
             }
         };
 
-        Self::check_timeout(&store).inspect_err(|_| {
+        Self::check_timeout(&store).inspect_err(|e| {
+            self.record_and_classify_failure(e);
             Self::record_invoke_failure("serverless");
         })?;
 
@@ -2359,6 +2675,16 @@ impl WasmRuntime {
             ),
         );
 
+        // Check for capability violations reported by host functions during guest execution
+        if store.data().capability_violation.is_some() {
+            self.guard.disable_for_violation();
+            crate::wasm_metrics::record_plugin_state_transition(
+                plugin_name,
+                "disabled_by_capability_violation",
+                "host function capability violation during guest call",
+            );
+        }
+
         self.free_guest_memory(&mut store, &exports, method_ptr, method_len);
         self.free_guest_memory(&mut store, &exports, uri_ptr, uri_len);
         self.free_guest_memory(&mut store, &exports, hdr_ptr, hdr_len);
@@ -2373,6 +2699,10 @@ impl WasmRuntime {
 
         let code = result.map_err(|e| {
             record_wasm_error(plugin_name);
+            self.record_and_classify_failure(&WasmPluginError::ExecutionFailed(format!(
+                "handle_request failed in '{}': {}",
+                self.name, e
+            )));
             Self::record_invoke_failure("serverless");
             WasmPluginError::ExecutionFailed(format!(
                 "handle_request failed in '{}': {}",
@@ -2385,11 +2715,13 @@ impl WasmRuntime {
 
         if code < 0 {
             record_wasm_error(plugin_name);
-            Self::record_invoke_failure("serverless");
-            return Err(WasmPluginError::ExecutionFailed(format!(
+            let err = WasmPluginError::ExecutionFailed(format!(
                 "Serverless function '{}' returned error",
                 self.name
-            )));
+            ));
+            self.record_and_classify_failure(&err);
+            Self::record_invoke_failure("serverless");
+            return Err(err);
         }
 
         record_wasm_decision_pass(plugin_name);
@@ -2442,6 +2774,7 @@ pub enum WasmFilterResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::types::{PluginInvokeError, ResourceLimitError};
     use http::HeaderValue;
 
     #[test]
@@ -2823,5 +3156,249 @@ entry = "plugin.wasm"
         let info = mgr.get_plugin_info();
         assert_eq!(info.len(), 1);
         assert_eq!(info[0].name, "plugin");
+    }
+
+    #[test]
+    fn test_plugin_failure_policy_default() {
+        let policy = PluginFailurePolicy::default();
+        assert_eq!(policy.failure_threshold, 5);
+        assert_eq!(policy.timeout_threshold, 3);
+        assert!(policy.capability_violation_disables);
+        assert!(policy.fail_closed_on_filter_error);
+        assert!(!policy.fail_closed_on_transform_error);
+    }
+
+    #[test]
+    fn test_plugin_failure_class_counts_as_failure() {
+        assert!(!PluginFailureClass::CapabilityViolation.counts_as_failure());
+        assert!(PluginFailureClass::Timeout.counts_as_failure());
+        assert!(PluginFailureClass::FuelExhausted.counts_as_failure());
+        assert!(PluginFailureClass::GuestTrap.counts_as_failure());
+        assert!(PluginFailureClass::MemoryViolation.counts_as_failure());
+        assert!(PluginFailureClass::OtherRuntimeError.counts_as_failure());
+    }
+
+    #[test]
+    fn test_plugin_failure_class_is_timeout() {
+        assert!(PluginFailureClass::Timeout.is_timeout());
+        assert!(!PluginFailureClass::CapabilityViolation.is_timeout());
+        assert!(!PluginFailureClass::FuelExhausted.is_timeout());
+    }
+
+    #[test]
+    fn test_classify_failure_sandbox_fuel() {
+        let err = WasmPluginError::SandboxError("exhausted fuel budget".to_string());
+        assert_eq!(
+            WasmRuntime::classify_failure(&err),
+            PluginFailureClass::FuelExhausted
+        );
+    }
+
+    #[test]
+    fn test_classify_failure_sandbox_memory() {
+        let err = WasmPluginError::SandboxError("memory out of bounds".to_string());
+        assert_eq!(
+            WasmRuntime::classify_failure(&err),
+            PluginFailureClass::MemoryViolation
+        );
+    }
+
+    #[test]
+    fn test_classify_failure_execution_timeout() {
+        let err = WasmPluginError::ExecutionFailed("timed out after 30.00s".to_string());
+        assert_eq!(
+            WasmRuntime::classify_failure(&err),
+            PluginFailureClass::Timeout
+        );
+    }
+
+    #[test]
+    fn test_classify_failure_execution_capability() {
+        let err = WasmPluginError::ExecutionFailed("plugin lacks required capability".to_string());
+        assert_eq!(
+            WasmRuntime::classify_failure(&err),
+            PluginFailureClass::CapabilityViolation
+        );
+    }
+
+    #[test]
+    fn test_classify_failure_load() {
+        let err = WasmPluginError::LoadFailed("file not found".to_string());
+        assert_eq!(
+            WasmRuntime::classify_failure(&err),
+            PluginFailureClass::LoadError
+        );
+    }
+
+    #[test]
+    fn test_guard_state_reflects_runtime() {
+        let guard = PluginInvocationGuard::new(
+            PluginCapabilities {
+                request_inspect: true,
+                ..Default::default()
+            },
+            PluginLimits::default(),
+            4,
+        );
+        assert_eq!(guard.state(), PluginRuntimeState::Loaded);
+        assert!(guard.is_invocable());
+        assert_eq!(guard.failure_count(), 0);
+
+        guard.record_failure(5);
+        assert_eq!(guard.failure_count(), 1);
+        assert!(guard.is_invocable());
+
+        // Disable at threshold
+        for _ in 0..4 {
+            guard.record_failure(5);
+        }
+        assert_eq!(guard.failure_count(), 5);
+        assert!(!guard.is_invocable());
+        assert_eq!(guard.state(), PluginRuntimeState::DisabledByRuntimeFailure);
+    }
+
+    #[test]
+    fn test_guard_quarantine() {
+        let guard =
+            PluginInvocationGuard::new(PluginCapabilities::default(), PluginLimits::default(), 4);
+        assert_eq!(guard.state(), PluginRuntimeState::Loaded);
+        guard.quarantine();
+        assert_eq!(guard.state(), PluginRuntimeState::Quarantined);
+        assert!(!guard.is_invocable());
+    }
+
+    #[test]
+    fn test_guard_invoke_with_limits_blocking_success() {
+        let guard = PluginInvocationGuard::new(
+            PluginCapabilities {
+                request_inspect: true,
+                ..Default::default()
+            },
+            PluginLimits::default(),
+            4,
+        );
+        let result =
+            guard.invoke_with_limits_blocking(PluginCapability::RequestInspect, 100, || {
+                Ok::<_, PluginInvokeError>(42)
+            });
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 42);
+    }
+
+    #[test]
+    fn test_guard_invoke_with_limits_blocking_disabled() {
+        let guard =
+            PluginInvocationGuard::new(PluginCapabilities::default(), PluginLimits::default(), 4);
+        guard.disable_for_violation();
+        let result =
+            guard.invoke_with_limits_blocking(PluginCapability::RequestInspect, 100, || {
+                Ok::<_, PluginInvokeError>(42)
+            });
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            PluginInvokeError::PluginDisabled
+        ));
+    }
+
+    #[test]
+    fn test_guard_invoke_with_limits_blocking_input_too_large() {
+        let guard = PluginInvocationGuard::new(
+            PluginCapabilities {
+                request_inspect: true,
+                ..Default::default()
+            },
+            PluginLimits {
+                max_input_bytes: 100,
+                ..Default::default()
+            },
+            4,
+        );
+        let result = guard.invoke_with_limits_blocking(
+            PluginCapability::RequestInspect,
+            200, // exceeds limit
+            || Ok::<_, PluginInvokeError>(42),
+        );
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            PluginInvokeError::ResourceLimit(ResourceLimitError::InputTooLarge { .. })
+        ));
+    }
+
+    #[test]
+    fn test_guard_concurrency_blocking_rejects_when_exhausted() {
+        let guard = PluginInvocationGuard::new(
+            PluginCapabilities {
+                request_inspect: true,
+                ..Default::default()
+            },
+            PluginLimits {
+                max_concurrency: 1,
+                ..Default::default()
+            },
+            1,
+        );
+        // Take the only permit
+        let _permit = guard.concurrency.clone().try_acquire_owned().unwrap();
+        let result =
+            guard.invoke_with_limits_blocking(PluginCapability::RequestInspect, 100, || {
+                Ok::<_, PluginInvokeError>(42)
+            });
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            PluginInvokeError::ConcurrencyLimitExceeded
+        ));
+    }
+
+    #[test]
+    fn test_manager_get_plugin_state() {
+        let mgr = WasmPluginManager::new();
+        assert!(mgr.get_plugin_state("nonexistent").is_none());
+        assert!(mgr.get_plugin_failure_count("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_manager_reset_plugin_failures_not_found() {
+        let mgr = WasmPluginManager::new();
+        let result = mgr.reset_plugin_failures("nonexistent");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_manager_quarantine_plugin_not_found() {
+        let mgr = WasmPluginManager::new();
+        let result = mgr.quarantine_plugin("nonexistent");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_require_any_capability() {
+        let caps = PluginCapabilities {
+            request_inspect: true,
+            ..Default::default()
+        };
+        // Should succeed with RequestInspect
+        assert!(caps
+            .require_any_capability(&[
+                PluginCapability::RequestInspect,
+                PluginCapability::RequestMutate,
+            ])
+            .is_ok());
+        // Should fail with ResponseInspect/ResponseMutate
+        assert!(caps
+            .require_any_capability(&[
+                PluginCapability::ResponseInspect,
+                PluginCapability::ResponseMutate,
+            ])
+            .is_err());
+    }
+
+    #[test]
+    fn test_require_any_capability_empty_list() {
+        let caps = PluginCapabilities::default();
+        let result = caps.require_any_capability(&[]);
+        assert!(result.is_err());
     }
 }

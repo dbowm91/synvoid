@@ -356,6 +356,77 @@ Key methods:
 - `reset_failures()` — resets counter and restores `Loaded`.
 - `disable_for_violation()` — transitions to `DisabledByCapabilityViolation`.
 
+### Mandatory Invocation Guard (M1 Phase 03)
+
+Every plugin invocation now goes through `PluginInvocationGuard` as the mandatory boundary. The guard enforces capability checks, input limits, concurrency limits, runtime state, failure counters, and disable/quarantine transitions in the hot path.
+
+**Architecture:**
+
+Each `WasmRuntime` owns an `Arc<PluginInvocationGuard>` and a `PluginFailurePolicy`:
+
+```rust
+pub struct WasmRuntime {
+    // ... existing fields ...
+    guard: Arc<PluginInvocationGuard>,
+    failure_policy: PluginFailurePolicy,
+}
+```
+
+**`PluginFailurePolicy`** controls failure handling thresholds:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `failure_threshold` | `5` | Consecutive failures before disabling |
+| `timeout_threshold` | `3` | Timeouts before disabling |
+| `capability_violation_disables` | `true` | Capability violations immediately disable |
+| `fail_closed_on_filter_error` | `true` | Request filter failures block requests |
+| `fail_closed_on_transform_error` | `false` | Response transform failures pass through |
+
+**`PluginFailureClass`** classifies errors for policy decisions:
+
+| Class | Counts as Failure | Is Timeout |
+|-------|-------------------|------------|
+| `CapabilityViolation` | No | No |
+| `Timeout` | Yes | Yes |
+| `FuelExhausted` | Yes | No |
+| `GuestTrap` | Yes | No |
+| `MemoryViolation` | Yes | No |
+| `HostApiViolation` | Yes | No |
+| `LoadError` | Yes | No |
+| `OtherRuntimeError` | Yes | No |
+
+**Invocation flow:**
+
+1. Guard checks `is_invocable()` — disabled plugins are skipped/failed per policy
+2. Guard checks capability via `require_any_capability()`
+3. Guard checks input size via `limits.check_input()`
+4. Guard acquires concurrency permit (try_acquire for sync, acquire for async)
+5. Guest function executes
+6. On error: `record_and_classify_failure()` increments counters and may disable the plugin
+7. After guest call: `capability_violation` field in `RequestContext` is checked for host-function violations
+
+**Host-function violation tracking:**
+
+The per-request `RequestContext` (WASM store data) includes `capability_violation: Option<PluginCapability>`. Host functions that detect violations set this field. After guest invocation returns, the runtime checks this field and calls `guard.disable_for_violation()` if set.
+
+**Manager introspection:**
+
+`WasmPluginManager` exposes:
+- `get_plugin_state(name)` → `Option<PluginRuntimeState>`
+- `get_plugin_failure_count(name)` → `Option<u32>`
+- `reset_plugin_failures(name)` → `Result<()>`
+- `quarantine_plugin(name)` → `Result<()>`
+
+**Tests:**
+
+```bash
+cargo test -p synvoid-plugin-runtime -- test_plugin_failure
+cargo test -p synvoid-plugin-runtime -- test_classify_failure
+cargo test -p synvoid-plugin-runtime -- test_guard_
+cargo test -p synvoid-plugin-runtime -- test_manager_
+cargo test -p synvoid-plugin-runtime -- test_require_any
+```
+
 ## Production vs Development
 
 | Aspect | Development | Production |

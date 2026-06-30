@@ -123,6 +123,25 @@ impl PluginCapabilities {
         }
     }
 
+    /// Check that at least one of the allowed capabilities is granted.
+    pub fn require_any_capability(
+        &self,
+        allowed: &[PluginCapability],
+    ) -> Result<(), CapabilityViolation> {
+        for cap in allowed {
+            if self.permits(*cap) {
+                return Ok(());
+            }
+        }
+        Err(CapabilityViolation {
+            capability: allowed
+                .first()
+                .copied()
+                .unwrap_or(PluginCapability::RequestInspect),
+            plugin_name: String::new(),
+        })
+    }
+
     /// Iterate all capability tokens and their enabled state.
     pub fn iter_flags(&self) -> Vec<(PluginCapability, bool)> {
         vec![
@@ -1207,6 +1226,58 @@ impl PluginInvocationGuard {
             Err(_elapsed) => Err(PluginInvokeError::Timeout),
         }
     }
+
+    /// Invoke a plugin operation synchronously with capability check, input size check,
+    /// and failure recording. Uses try_acquire for the concurrency semaphore to avoid
+    /// blocking an async reactor thread.
+    pub fn invoke_with_limits_blocking<F, T>(
+        &self,
+        capability: PluginCapability,
+        input_len: usize,
+        f: F,
+    ) -> Result<T, PluginInvokeError>
+    where
+        F: FnOnce() -> Result<T, PluginInvokeError>,
+    {
+        if !self.is_invocable() {
+            return Err(PluginInvokeError::PluginDisabled);
+        }
+
+        self.capabilities
+            .require(capability)
+            .map_err(PluginInvokeError::Capability)?;
+
+        self.limits
+            .check_input(input_len)
+            .map_err(PluginInvokeError::ResourceLimit)?;
+
+        let permit = self
+            .concurrency
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| PluginInvokeError::ConcurrencyLimitExceeded)?;
+
+        let result = f();
+
+        drop(permit);
+
+        result
+    }
+
+    /// Read the current failure count.
+    pub fn failure_count(&self) -> u32 {
+        *self.failure_count.read()
+    }
+
+    /// Read the current runtime state.
+    pub fn state(&self) -> PluginRuntimeState {
+        *self.state.read()
+    }
+
+    /// Quarantine the plugin.
+    pub fn quarantine(&self) {
+        *self.state.write() = PluginRuntimeState::Quarantined;
+    }
 }
 
 impl std::fmt::Debug for PluginInvocationGuard {
@@ -1215,6 +1286,66 @@ impl std::fmt::Debug for PluginInvocationGuard {
             .field("state", &*self.state.read())
             .field("failure_count", &*self.failure_count.read())
             .finish()
+    }
+}
+
+/// Failure policy for a plugin runtime.
+#[derive(Debug, Clone)]
+pub struct PluginFailurePolicy {
+    /// Number of consecutive failures before disabling the plugin.
+    pub failure_threshold: u32,
+    /// Number of timeouts before disabling the plugin.
+    pub timeout_threshold: u32,
+    /// Whether capability violations immediately disable the plugin.
+    pub capability_violation_disables: bool,
+    /// Whether request filter failures should fail closed (block) or fail open (pass).
+    pub fail_closed_on_filter_error: bool,
+    /// Whether response transform failures should fail closed or fail open.
+    pub fail_closed_on_transform_error: bool,
+}
+
+impl Default for PluginFailurePolicy {
+    fn default() -> Self {
+        Self {
+            failure_threshold: 5,
+            timeout_threshold: 3,
+            capability_violation_disables: true,
+            fail_closed_on_filter_error: true,
+            fail_closed_on_transform_error: false,
+        }
+    }
+}
+
+/// Classification of plugin failure types for policy decisions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PluginFailureClass {
+    /// Plugin attempted an unauthorized operation.
+    CapabilityViolation,
+    /// Plugin execution exceeded the time limit.
+    Timeout,
+    /// Plugin consumed all allocated fuel.
+    FuelExhausted,
+    /// Plugin triggered a wasm trap (panic, unreachable, etc.).
+    GuestTrap,
+    /// Plugin attempted to access memory outside its allocation.
+    MemoryViolation,
+    /// Plugin violated a host API contract.
+    HostApiViolation,
+    /// Plugin failed to load.
+    LoadError,
+    /// Unclassified runtime error.
+    OtherRuntimeError,
+}
+
+impl PluginFailureClass {
+    /// Returns true if this failure class should increment the failure counter.
+    pub fn counts_as_failure(self) -> bool {
+        !matches!(self, Self::CapabilityViolation)
+    }
+
+    /// Returns true if this failure class should count toward the timeout threshold.
+    pub fn is_timeout(self) -> bool {
+        matches!(self, Self::Timeout)
     }
 }
 

@@ -24,10 +24,11 @@ pub use sandbox::types::{
     compute_binary_hash, compute_manifest_hash, compute_manifest_signing_payload,
     enforce_plugin_load_policy, verify_plugin_signature, CapabilityViolation, FilesystemViolation,
     ManifestError, ManifestWarning, NetworkViolation, PluginCapabilities, PluginCapability,
-    PluginInvocationGuard, PluginInvokeError, PluginLimits, PluginLoadConfig, PluginLoadError,
-    PluginManifest, PluginRuntimeState, PluginSignatureAlgorithm, PluginSignatureConfig,
-    PluginSignatureError, PluginSignatureVerification, PluginTrustTier, ResourceLimitError,
-    SigningPolicy, SigningViolation, TrustedPluginKey, VerifiedPluginSignature,
+    PluginFailureClass, PluginFailurePolicy, PluginInvocationGuard, PluginInvokeError,
+    PluginLimits, PluginLoadConfig, PluginLoadError, PluginManifest, PluginRuntimeState,
+    PluginSignatureAlgorithm, PluginSignatureConfig, PluginSignatureError,
+    PluginSignatureVerification, PluginTrustTier, ResourceLimitError, SigningPolicy,
+    SigningViolation, TrustedPluginKey, VerifiedPluginSignature,
 };
 pub use wasm_metrics::{get_all_wasm_metrics, get_wasm_metrics, WasmPluginMetrics};
 pub use wasm_runtime::{PluginInfo, WasmPluginManager, WasmResourceLimits, WasmRuntime};
