@@ -16,8 +16,11 @@ Phase 10 closure audit. Classifies every public surface of the SynVoid codebase 
 | `server` | `keep_app_root` | internal | root | UnifiedServer composition root (1344 lines) |
 | `startup` | `keep_app_root` | internal | root | Process startup and bootstrap |
 | `supervisor` | `keep_app_root` | internal | root | Supervisor process lifecycle (re-exports submodules) |
+| `platform` | `keep_app_root` | internal | root | Thin facade re-exports from synvoid-platform; root-owned sandbox/socket/ipc modules |
 | `tcp` | `keep_app_root` | internal | root | TCP proxy with protocol detection |
+| `tarpit` | `keep_app_root` | internal | root | Facade re-exports from synvoid-tarpit; root-owned handler/manager |
 | `udp` | `keep_app_root` | internal | root | UDP proxy |
+| `utils` | `keep_app_root` | internal | root | Re-exports from synvoid-utils; root-only helpers |
 | `worker` | `keep_app_root` | internal | root | Worker process runtime and composition |
 
 ### Mixed Application/Domain Modules (split_required)
@@ -29,11 +32,8 @@ Phase 10 closure audit. Classifies every public surface of the SynVoid codebase 
 | `challenge` | `split_required` | transitional | root (orchestration) + synvoid-challenge | Hybrid: re-exports + local ChallengeManager |
 | `http` | `split_required` | transitional | root (composition) + synvoid-http | 43 submodules; large module needs targeted extraction |
 | `http_client` | `split_required` | transitional | synvoid-http-client + root | QUIC tunnel dispatch depends on root infra |
-| `platform` | `split_required` | transitional | synvoid-platform + root | Mixed: re-exports + platform detection code |
 | `plugin` | `split_required` | transitional | root (composition) + synvoid-plugin-runtime | Plugin lifecycle management root-owned |
-| `tarpit` | `split_required` | transitional | root (handler) + synvoid-tarpit | Handler depends on root; Markov chain extracted |
 | `tls` | `split_required` | transitional | synvoid-tls + root | Local HttpsServer depends on root HTTP infra |
-| `utils` | `split_required` | transitional | synvoid-utils + root | Some utils root-specific; shared in synvoid-utils |
 | `waf` | `split_required` | transitional | synvoid-waf + root | WafCore and adapters are root-owned (1056 lines) |
 
 ### Compatibility Facades (facade_existing_crate)
@@ -424,7 +424,7 @@ SynVoid is pre-1.0. Semver is not yet meaningful for external consumers. All cra
 | Risk | Severity | Mitigation | Status |
 |------|----------|-----------|--------|
 | Pre-1.0 semver | Medium | Documented; no external API promises | Accepted |
-| `split_required` modules still in root | Low | Extraction plan exists; 11 modules tracked | In progress |
+| `split_required` modules still in root | Low | Extraction plan exists; 8 modules tracked | In progress |
 | Mesh protocol has ~130 message types | Low | Fuzz coverage exists for decode paths | Accepted |
 | Config fuzzing not implemented | Medium | Listed in ci_fuzz_failure_injection.md | Deferred |
 | `serder` module is stale | Low | Candidate for removal | Accepted |

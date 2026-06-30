@@ -1,6 +1,12 @@
+//! Compatibility facade for `synvoid-tarpit`.
+//!
+//! Markov chain text generation and tarpit configuration are provided by the
+//! dedicated `synvoid-tarpit` crate. The root-owned [`TarpitHandler`] and
+//! [`TarpitManager`] remain here because they depend on root infrastructure
+//! (metrics, tokio async streams).
+
 pub mod handler;
 
-// Re-export from the extracted crate
 pub use handler::TarpitHandler;
 pub use synvoid_tarpit::{MarkovChain, TarpitConfig};
 

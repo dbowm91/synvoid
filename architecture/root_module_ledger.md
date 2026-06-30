@@ -51,7 +51,7 @@ Status vocabulary:
 | metrics | Metrics re-exports | facade_existing_crate | synvoid-metrics | facade with local tests — glob re-export plus root-level test module | Prefer `synvoid_metrics` in domain crates |
 | mime | MIME type handling | facade_existing_crate | synvoid-app-handlers | pure re-export facade | Prefer `synvoid_app_handlers::mime` in domain crates |
 | php | PHP handler | facade_existing_crate | synvoid-app-handlers | pure re-export facade | Prefer `synvoid_app_handlers::php` in domain crates |
-| platform | Platform abstraction (OS detection, IPC, sandbox) | split_required | synvoid-platform (core) + root (app-level integration) | mixed — re-exports from 6 submodules + real platform detection code | Platform enum and detection methods are root-owned; could extract to synvoid-platform |
+| platform | Platform abstraction (OS detection, IPC, sandbox) | keep_app_root | root app crate (composition) + synvoid-platform (core) | facade with local submodules — thin facade re-exports Platform/PlatformError/fs from synvoid-platform crate; root-owned sandbox/socket/ipc/process/service modules | Duplicate fs.rs removed; Platform enum and detection re-exported from crate |
 | plugin | WASM plugin runtime | split_required | root app crate (composition) + synvoid-plugin-runtime | mixed | Plugin lifecycle management is root-owned; runtime in dedicated crate |
 | process | IPC/process-mode integration | facade_existing_crate | synvoid-ipc | pure re-export facade | Prefer `synvoid_ipc` in domain crates |
 | protocol | Protocol detection types | facade_existing_crate | synvoid-proxy | pure re-export facade | Prefer `synvoid_proxy::protocol` in domain crates |
@@ -69,7 +69,7 @@ Status vocabulary:
 | static_files | Static file handling | facade_existing_crate | synvoid-static-files | facade with local adapter — re-exports crate + root-owned `file_manager` submodule | Prefer `synvoid_static_files` in domain crates; local `file_manager` needs investigation |
 | streaming | Bidirectional streaming proxy | facade_existing_crate | synvoid-proxy | pure re-export facade | Prefer `synvoid_proxy::bidirectional` in domain crates |
 | supervisor | Supervisor process lifecycle | keep_app_root | root app crate | facade over submodules | Process-level supervision; root-owned |
-| tarpit | Tarpit response generation | split_required | root app crate (handler) + synvoid-tarpit (Markov chain) | hybrid — re-exports Markov chain + local handler | Handler depends on root request infra; Markov chain already extracted |
+| tarpit | Tarpit response generation | keep_app_root | root app crate (handler) + synvoid-tarpit (Markov chain) | facade with local submodules — re-exports MarkovChain/TarpitConfig from synvoid-tarpit crate; root-owned TarpitHandler/TarpitManager | Dead generator.rs removed; facade documentation added |
 | tcp | TCP proxy with protocol detection | keep_app_root | root app crate | real implementation | Network-level proxy; root-owned |
 | theme | Theme/rendering | facade_existing_crate | synvoid-theme | pure re-export facade | Prefer `synvoid_theme` in domain crates |
 | tls | TLS termination and ACME | split_required | synvoid-tls (core) + root (server integration) | mixed — re-exports + local `server` submodule | Local `HttpsServer` depends on root HTTP infra; core TLS in dedicated crate |
@@ -77,7 +77,7 @@ Status vocabulary:
 | udp | UDP proxy | keep_app_root | root app crate | real implementation | Network-level proxy; root-owned |
 | upload | Upload handling | facade_existing_crate | synvoid-upload | pure re-export facade | Prefer `synvoid_upload` in domain crates |
 | upstream | Upstream proxy | facade_existing_crate | synvoid-upstream | root re-export (`pub use`) | Prefer `synvoid_upstream` in domain crates |
-| utils | Utility types and helpers | split_required | synvoid-utils (shared) + root (app-level utils) | mixed | Some utils are root-specific; shared utils in synvoid-utils |
+| utils | Utility types and helpers | keep_app_root | root app crate (composition) + synvoid-utils (shared) | facade with local helpers — re-exports shared types from synvoid-utils crate; root-only ResultExt/OptionExt/errors/urlencoding/HotHashMap | Duplicate ArcStr, parse_duration, timestamp functions, etc. removed; re-exported from crate |
 | vpn_client | VPN client | facade_existing_crate | synvoid-vpn-client | pure re-export facade | Prefer `synvoid_vpn_client` in domain crates |
 | waf | WAF engine and adapters | split_required | synvoid-waf (core) + root (WafCore, adapters) | mixed — massive real implementation (1056 lines) + re-exports | WafCore and root adapters are the dominant code; core WAF traits/primitives in synvoid-waf |
 | worker | Worker process runtime and composition | keep_app_root | root app crate | real implementation + re-exports | Worker process entry points and composition root |

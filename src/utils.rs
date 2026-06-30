@@ -1,30 +1,29 @@
 //! Miscellaneous utility functions and types.
 //!
-//! This module provides common utilities used across the SynVoid codebase:
+//! This module provides common utilities used across the SynVoid codebase.
+//! Types and functions that have dedicated crate implementations are re-exported
+//! from `synvoid-utils`. Root-only helpers remain here.
 //!
 //! # Submodules
-//! - [`ratelimit`] - Rate limiting utilities
+//! - [`ratelimit`] - Rate limiting trait definitions
 //! - [`errors`] - Structured error message formatters
 //!
-//! # Types
-//! - [`ArcStr`] - Atomically reference-counted string for efficient cloning
-//! - [`RunningFlag`] - Thread-safe running state flag
-//! - [`DrainFlag`] - Thread-safe drain state flag
+//! # Re-exported from `synvoid-utils`
+//! - [`ArcStr`] - Atomically reference-counted string
+//! - [`RunningFlag`] / [`DrainFlag`] - Thread-safe state flags
+//! - [`parse_duration()`] - Parse duration strings
+//! - [`current_timestamp()`] / [`now_ms()`] / [`safe_unix_timestamp()`] - Time utilities
+//! - [`ip_to_slot()`] / [`hash_ip()`] - IP hashing
+//! - [`check_regex_complexity()`] - ReDoS protection
+//! - [`is_newer_version()`] - Semantic version comparison
+//! - [`get_first_non_loopback_ip()`] - Network utility
 //!
-//! # Extension Traits
-//! - [`ResultExt`] - Extension methods for `Result` types
-//! - [`OptionExt`] - Extension methods for `Option` types
-//!
-//! # Functions
-//! - [`current_timestamp()`] - Returns seconds since UNIX epoch
-//! - [`parse_host_port()`] - Parse host:port strings into `SocketAddr`
-//! - [`ip_to_slot()`] / [`hash_ip()`] - IP hashing for consistent slot assignment
-//! - [`parse_duration()`] / [`format_duration()`] - Parse/format duration strings
-//! - [`urlencoding_decode()`] - Decode URL-encoded strings
-//! - [`is_newer_version()`] - Compare semantic version strings
-
-use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
-use std::sync::Arc;
+//! # Root-owned
+//! - [`ResultExt`] / [`OptionExt`] - Extension traits
+//! - [`errors`] - Error message formatters
+//! - [`HotHashMap`] / [`HotHashSet`] - Fast hash collections
+//! - [`parse_host_port()`] - Socket address parsing
+//! - [`urlencoding_decode()`] - URL decoding
 
 pub mod ratelimit;
 pub mod errors {
@@ -71,71 +70,6 @@ pub mod errors {
                 unhealthy, total
             )
         }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Archive, RkyvDeserialize, RkyvSerialize)]
-pub struct ArcStr(Arc<str>);
-
-impl ArcStr {
-    #[inline]
-    pub fn new(s: impl Into<String>) -> Self {
-        Self(Arc::from(s.into()))
-    }
-
-    #[inline]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    #[inline]
-    pub fn as_arc(&self) -> Arc<str> {
-        self.0.clone()
-    }
-}
-
-impl std::fmt::Display for ArcStr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl From<String> for ArcStr {
-    fn from(s: String) -> Self {
-        Self(Arc::from(s))
-    }
-}
-
-impl From<&str> for ArcStr {
-    fn from(s: &str) -> Self {
-        Self(Arc::from(s))
-    }
-}
-
-impl std::ops::Deref for ArcStr {
-    type Target = str;
-    #[inline]
-    fn deref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl serde::Serialize for ArcStr {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(&self.0)
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for ArcStr {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        Ok(Self(Arc::from(s)))
     }
 }
 
@@ -197,73 +131,6 @@ impl<T> OptionExt<T> for Option<T> {
 
 pub use synvoid_utils::{DrainFlag, RunningFlag};
 
-const DURATION_SUFFIXES: &[(&str, &str, u64)] = &[
-    ("seconds", "s", 1),
-    ("sec", "s", 1),
-    ("minutes", "m", 60),
-    ("min", "m", 60),
-    ("hours", "h", 3600),
-    ("hr", "h", 3600),
-    ("days", "d", 86400),
-    ("day", "d", 86400),
-];
-
-const DURATION_SUFFIX_SHORT: &[(char, u64)] = &[('s', 1), ('m', 60), ('h', 3600), ('d', 86400)];
-
-pub fn parse_duration(s: &str) -> Option<u64> {
-    let s = s.trim();
-
-    if s.is_empty() {
-        return None;
-    }
-
-    if s.eq_ignore_ascii_case("never")
-        || s.eq_ignore_ascii_case("permanent")
-        || s.eq_ignore_ascii_case("0")
-    {
-        return Some(0);
-    }
-
-    if let Ok(num) = s.parse::<u64>() {
-        return Some(num);
-    }
-
-    if s.len() < 2 {
-        return None;
-    }
-
-    // Handle millisecond suffixes before all other suffix matching to prevent
-    // "ms" from being misinterpreted as "m" (last char 's') and "milliseconds"
-    // from matching "seconds". Both convert to seconds by integer-dividing by
-    // 1000. Sub-second precision is truncated since the return type is u64.
-    if let Some(stripped) = s.strip_suffix("ms") {
-        let value = stripped.parse::<u64>().ok()?;
-        return Some(value / 1000);
-    }
-    if s.len() > 12 && s[s.len() - 12..].eq_ignore_ascii_case("milliseconds") {
-        let value = s[..s.len() - 12].parse::<u64>().ok()?;
-        return Some(value / 1000);
-    }
-
-    for (long_suffix, _short_suffix, multiplier) in DURATION_SUFFIXES {
-        let suffix_len = long_suffix.len();
-        if s.len() > suffix_len && s[s.len() - suffix_len..].eq_ignore_ascii_case(long_suffix) {
-            let value = s[..s.len() - suffix_len].parse::<u64>().ok()?;
-            return value.checked_mul(*multiplier);
-        }
-    }
-
-    let last_char = s.chars().last()?;
-    for (short_suffix, multiplier) in DURATION_SUFFIX_SHORT {
-        if last_char.eq_ignore_ascii_case(short_suffix) {
-            let value = s[..s.len() - 1].parse::<u64>().ok()?;
-            return value.checked_mul(*multiplier);
-        }
-    }
-
-    None
-}
-
 pub fn format_duration(seconds: u64) -> String {
     if seconds == 0 {
         return "never".to_string();
@@ -285,12 +152,6 @@ pub fn format_duration(seconds: u64) -> String {
 /// This function handles:
 /// - Percent-encoding (%XX)
 /// - Plus-to-space conversion
-///
-/// # Arguments
-/// * `input` - The URL-encoded string to decode
-///
-/// # Returns
-/// The decoded string
 pub fn urlencoding_decode(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
@@ -340,25 +201,7 @@ pub fn url_decode_all(input: &str) -> String {
     result
 }
 
-pub fn now_ms() -> u64 {
-    safe_unix_duration().as_millis() as u64
-}
-
-/// Returns a `Duration` since UNIX_EPOCH, defaulting to zero on error.
-pub fn safe_unix_duration() -> std::time::Duration {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-}
-
-/// Returns seconds since UNIX_EPOCH, defaulting to 0 on error (e.g. clock skew).
-pub fn safe_unix_timestamp() -> u64 {
-    safe_unix_duration().as_secs()
-}
-
-pub fn current_timestamp() -> u64 {
-    safe_unix_timestamp()
-}
+pub use synvoid_utils::{current_timestamp, now_ms, safe_unix_duration, safe_unix_timestamp};
 
 use ahash::AHashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -400,56 +243,7 @@ pub fn is_ipv6_host(host: &str) -> bool {
     host.contains(':')
 }
 
-#[inline]
-fn hash_ipv6(ipv6: std::net::Ipv6Addr) -> u64 {
-    let segments = ipv6.segments();
-    let mut hash: u64 = 0;
-    for seg in &segments {
-        hash = hash.wrapping_mul(0x9e3779b9).wrapping_add(u64::from(*seg));
-    }
-    hash
-}
-
-#[inline]
-pub fn ip_to_slot(ip: IpAddr, num_slots: usize) -> Option<usize> {
-    if num_slots == 0 {
-        return None;
-    }
-    if num_slots.is_power_of_two() {
-        let mask = num_slots - 1;
-        match ip {
-            IpAddr::V4(ipv4) => {
-                let octets = ipv4.octets();
-                let hash = ((u32::from(octets[0]) << 24)
-                    | (u32::from(octets[1]) << 16)
-                    | (u32::from(octets[2]) << 8)
-                    | u32::from(octets[3]))
-                .wrapping_mul(0x9e3779b9);
-                Some(((hash >> 16) as usize) & mask)
-            }
-            IpAddr::V6(ipv6) => {
-                let hash = hash_ipv6(ipv6);
-                Some(((hash >> 32) as usize) & mask)
-            }
-        }
-    } else {
-        match ip {
-            IpAddr::V4(ipv4) => {
-                let octets = ipv4.octets();
-                let hash = ((u32::from(octets[0]) << 24)
-                    | (u32::from(octets[1]) << 16)
-                    | (u32::from(octets[2]) << 8)
-                    | u32::from(octets[3]))
-                .wrapping_mul(0x9e3779b9);
-                Some((hash >> 16) as usize % num_slots)
-            }
-            IpAddr::V6(ipv6) => {
-                let hash = hash_ipv6(ipv6);
-                Some((hash >> 32) as usize % num_slots)
-            }
-        }
-    }
-}
+pub use synvoid_utils::ip_to_slot;
 
 #[inline]
 pub fn hash_ip(ip: IpAddr) -> usize {
@@ -461,9 +255,22 @@ pub fn hash_ip(ip: IpAddr) -> usize {
                 | (u32::from(octets[2]) << 8)
                 | u32::from(octets[3])) as usize
         }
-        IpAddr::V6(ipv6) => hash_ipv6(ipv6) as usize,
+        IpAddr::V6(ipv6) => {
+            let segments = ipv6.segments();
+            let mut hash: u64 = 0;
+            for seg in &segments {
+                hash = hash.wrapping_mul(0x9e3779b9).wrapping_add(u64::from(*seg));
+            }
+            hash as usize
+        }
     }
 }
+
+pub use synvoid_utils::{check_regex_complexity, RegexComplexityResult};
+
+pub use synvoid_utils::{get_first_non_loopback_ip, is_newer_version};
+
+pub use synvoid_utils::{parse_duration, ArcStr};
 
 #[cfg(test)]
 mod ip_tests {
@@ -617,105 +424,6 @@ mod tests {
     }
 }
 
-pub fn get_first_non_loopback_ip() -> Result<IpAddr, String> {
-    // Try to connect to a public DNS server to get the local IP
-    let socket = std::net::UdpSocket::bind("0.0.0.0:0")
-        .map_err(|e| format!("Failed to bind socket: {}", e))?;
-
-    socket
-        .connect("8.8.8.8:53")
-        .map_err(|e| format!("Failed to connect: {}", e))?;
-
-    let local_addr = socket
-        .local_addr()
-        .map_err(|e| format!("Failed to get local addr: {}", e))?;
-
-    Ok(local_addr.ip())
-}
-
-const REGEX_SIZE_LIMIT: usize = 1024;
-const REGEX_MAX_QUANTIFIERS: usize = 10;
-const REGEX_MAX_GROUPS: usize = 20;
-
-#[derive(Debug, Clone)]
-pub struct RegexComplexityResult {
-    pub safe: bool,
-    pub reason: Option<String>,
-}
-
-impl RegexComplexityResult {
-    pub fn safe() -> Self {
-        Self {
-            safe: true,
-            reason: None,
-        }
-    }
-
-    pub fn unsafe_(reason: impl Into<String>) -> Self {
-        Self {
-            safe: false,
-            reason: Some(reason.into()),
-        }
-    }
-}
-
-pub fn check_regex_complexity(pattern: &str) -> RegexComplexityResult {
-    if pattern.len() > REGEX_SIZE_LIMIT {
-        return RegexComplexityResult::unsafe_(format!(
-            "Pattern too long ({} bytes, max {})",
-            pattern.len(),
-            REGEX_SIZE_LIMIT
-        ));
-    }
-
-    let nested_quantifiers = [
-        (r"(.*)+", "nested .*"),
-        (r"(.+)+", "nested .+"),
-        (r"([^]]*)+", "nested [^]]*"),
-        (r"([^]]*)*", "nested [^]]**"),
-    ];
-
-    for (pat, desc) in &nested_quantifiers {
-        if pattern.contains(pat) {
-            return RegexComplexityResult::unsafe_(format!(
-                "ReDoS risk: nested quantifiers ({})",
-                desc
-            ));
-        }
-    }
-
-    let quant_count = pattern.chars().filter(|c| *c == '+' || *c == '*').count();
-    if quant_count > REGEX_MAX_QUANTIFIERS {
-        return RegexComplexityResult::unsafe_(format!(
-            "Too many quantifiers ({} > {}), may cause catastrophic backtracking",
-            quant_count, REGEX_MAX_QUANTIFIERS
-        ));
-    }
-
-    let group_count = pattern.matches('(').count();
-    if group_count > REGEX_MAX_GROUPS {
-        return RegexComplexityResult::unsafe_(format!(
-            "Too many capture groups ({} > {})",
-            group_count, REGEX_MAX_GROUPS
-        ));
-    }
-
-    let dangerous_lookarounds = [r"(?=", r"(?!", r"(?<=", r"(?<!"];
-    for da in &dangerous_lookarounds {
-        if pattern.contains(da) {
-            let count = pattern.matches(da).count();
-            if count > 5 {
-                return RegexComplexityResult::unsafe_(format!(
-                    "Many lookarounds ({}), potential performance issue",
-                    count
-                ));
-            }
-        }
-    }
-
-    RegexComplexityResult::safe()
-}
-
 #[cfg(test)]
 mod regex_tests {
     use super::*;
@@ -858,7 +566,7 @@ mod drain_flag_tests {
 
         cloned.end_drain();
         assert!(!flag.is_draining());
-        assert!(!cloned.is_draining());
+        assert!(!flag.is_draining());
     }
 
     #[test]
@@ -1068,25 +776,4 @@ mod error_helpers_tests {
         let flag = DrainFlag::default();
         assert!(!flag.is_draining());
     }
-}
-
-pub fn is_newer_version(new: &str, current: &str) -> bool {
-    if new == current {
-        return false;
-    }
-
-    let new_parts: Vec<u32> = new.split('.').filter_map(|s| s.parse().ok()).collect();
-    let current_parts: Vec<u32> = current.split('.').filter_map(|s| s.parse().ok()).collect();
-
-    for i in 0..new_parts.len().max(current_parts.len()) {
-        let new_part = new_parts.get(i).unwrap_or(&0);
-        let current_part = current_parts.get(i).unwrap_or(&0);
-
-        if new_part > current_part {
-            return true;
-        } else if new_part < current_part {
-            return false;
-        }
-    }
-    false
 }
