@@ -196,6 +196,23 @@ pub fn no_exports_module() -> Vec<u8> {
     .expect("valid WAT")
 }
 
+/// WASM module without a memory export.
+/// Tests that load-path ABI validation rejects modules missing memory.
+pub fn no_memory_module() -> Vec<u8> {
+    wat::parse_str(
+        r#"
+        (module
+            ;; No memory export
+            (memory 1)
+            (func (export "filter_request") (param i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
+                i32.const 0
+            )
+        )
+        "#,
+    )
+    .expect("valid WAT")
+}
+
 /// WASM module that writes out of bounds (memory violation).
 /// Signature: (method_ptr, method_len, uri_ptr, uri_len, hdr_ptr, hdr_len, body_ptr, body_len) -> i32
 pub fn memory_violation_module() -> Vec<u8> {

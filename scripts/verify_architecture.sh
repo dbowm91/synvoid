@@ -36,6 +36,10 @@ cargo test --test threat_intel_boundary_guard
 cargo test --test threat_intel_consumer_actionability_guard --features mesh,dns
 cargo test --test plugin_capability_boundary_guard
 cargo test --test plugin_failure_does_not_poison_manager
+cargo test --test abi_memory_boundary_guard
+cargo test --test manifest_authority_wiring
+cargo test --test manifest_authority_load_path_guard
+cargo test --test plugin_signature_policy_guard
 cargo test --test admin_mutation_response_guard
 cargo test --test admin_mutation_blocklist
 cargo test --test admin_auth_boundary

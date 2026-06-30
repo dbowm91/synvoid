@@ -161,6 +161,18 @@ pub enum GuestAbiPolicy {
     DevelopmentAllowMissingFree,
 }
 
+impl GuestAbiPolicy {
+    /// Derive the ABI policy from a plugin trust tier.
+    /// Production tiers require both guest_alloc and guest_free.
+    /// Development tiers allow missing guest_free for test compatibility.
+    pub fn from_trust_tier(tier: PluginTrustTier) -> Self {
+        match tier {
+            PluginTrustTier::DevelopmentHotReload => Self::DevelopmentAllowMissingFree,
+            _ => Self::ProductionPointerLength,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct RequestInputPieces<'a> {
     method: &'a [u8],
@@ -1102,6 +1114,17 @@ impl WasmRuntime {
             .unwrap_or("unknown")
             .to_string();
 
+        // Validate ABI against production or development policy
+        let abi_info = Self::validate_guest_abi(&module);
+        let abi_policy = prepared
+            .as_ref()
+            .map(|p| GuestAbiPolicy::from_trust_tier(p.manifest.trust_tier))
+            .unwrap_or(GuestAbiPolicy::ProductionPointerLength);
+        abi_info.validate_for_policy(abi_policy).map_err(|e| {
+            tracing::warn!("Plugin '{}' ABI validation failed: {}", name, e);
+            e
+        })?;
+
         let has_filter = module.get_export("filter_request").is_some();
         let has_transform = module.get_export("transform_response").is_some();
         let has_handle = module.get_export("handle_request").is_some();
@@ -1231,6 +1254,15 @@ impl WasmRuntime {
         let module = Module::from_binary(&engine, bytes)
             .map_err(|e| WasmPluginError::LoadFailed(e.to_string()))?;
 
+        // Validate ABI — legacy paths without prepared load use production policy
+        let abi_info = Self::validate_guest_abi(&module);
+        abi_info
+            .validate_for_policy(GuestAbiPolicy::ProductionPointerLength)
+            .map_err(|e| {
+                tracing::warn!("Plugin '{}' ABI validation failed: {}", name, e);
+                e
+            })?;
+
         let has_filter = module.get_export("filter_request").is_some();
         let has_transform = module.get_export("transform_response").is_some();
         let has_handle = module.get_export("handle_request").is_some();
@@ -1313,6 +1345,15 @@ impl WasmRuntime {
             .and_then(|s| s.to_str())
             .unwrap_or("unknown")
             .to_string();
+
+        // Validate ABI — legacy paths without prepared load use production policy
+        let abi_info = Self::validate_guest_abi(&module);
+        abi_info
+            .validate_for_policy(GuestAbiPolicy::ProductionPointerLength)
+            .map_err(|e| {
+                tracing::warn!("Plugin '{}' ABI validation failed: {}", name, e);
+                e
+            })?;
 
         // Validate that the module exports at least one of the expected functions
         let has_filter = module.get_export("filter_request").is_some();
@@ -3616,8 +3657,9 @@ entry = "plugin.wasm"
         let wasm_path = tmpdir.path().join("plugin.wasm");
         let manifest_path = tmpdir.path().join("plugin.toml");
 
-        // Write a minimal valid WASM module (empty module: just magic + version)
-        std::fs::write(&wasm_path, b"\x00asm\x01\x00\x00\x00").unwrap();
+        // Write a valid WASM module with complete ABI (guest_alloc + guest_free + filter_request)
+        let valid_wasm = test_fixtures::minimal_filter_pass();
+        std::fs::write(&wasm_path, &valid_wasm).unwrap();
         std::fs::write(
             &manifest_path,
             r#"
@@ -3645,7 +3687,7 @@ entry = "plugin.wasm"
 
         // Overwrite with same valid WASM bytes (reload mechanism test).
         // The reload path must: prepare -> instantiate -> swap under lock.
-        std::fs::write(&wasm_path, b"\x00asm\x01\x00\x00\x00").unwrap();
+        std::fs::write(&wasm_path, &valid_wasm).unwrap();
 
         // Reload should succeed
         let reloaded = mgr.reload_plugin(&wasm_path);
@@ -4130,11 +4172,31 @@ entry = "plugin.wasm"
 
     #[test]
     fn test_plugin_missing_filter_request_returns_pass() {
-        let wasm = test_fixtures::no_exports_module();
+        // Use a module with handle_request but no filter_request — valid ABI, missing optional hook.
+        let wasm = wat::parse_str(
+            r#"
+            (module
+                (memory (export "memory") 1)
+                (global $heap (mut i32) (i32.const 0))
+                (func (export "guest_alloc") (param $size i32) (result i32)
+                    (local $ptr i32)
+                    (local.set $ptr (global.get $heap))
+                    (global.set $heap (i32.add (global.get $heap) (local.get $size)))
+                    (local.get $ptr)
+                )
+                (func (export "guest_free") (param $ptr i32) (param $size i32))
+                (func (export "handle_request")
+                    (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
+                    i32.const 0  ;; Return 0 = success
+                )
+            )
+            "#,
+        )
+        .expect("valid WAT");
         let limits = make_limits_with_filter_cap();
 
         let runtime = WasmRuntime::load_from_bytes_with_priority(
-            "no-exports-plugin",
+            "no-filter-plugin",
             &wasm,
             limits.clone(),
             0,
@@ -4188,11 +4250,19 @@ entry = "plugin.wasm"
 
     #[test]
     fn test_plugin_transform_disables_after_repeated_failures() {
-        // Use a module that traps on transform_response
+        // Use a module with allocator exports and transform_response that traps
         let trapping_transform = wat::parse_str(
             r#"
             (module
                 (memory (export "memory") 1)
+                (global $heap (mut i32) (i32.const 0))
+                (func (export "guest_alloc") (param $size i32) (result i32)
+                    (local $ptr i32)
+                    (local.set $ptr (global.get $heap))
+                    (global.set $heap (i32.add (global.get $heap) (local.get $size)))
+                    (local.get $ptr)
+                )
+                (func (export "guest_free") (param $ptr i32) (param $size i32))
                 (func (export "transform_response") (param i32 i32 i32 i32 i32) (result i32)
                     unreachable  ;; Trap immediately
                 )
@@ -4582,19 +4652,13 @@ entry = "plugin.wasm"
 
     #[test]
     fn test_write_to_guest_memory_requires_allocator() {
-        // A module without guest_alloc should fail when write_to_guest_memory is called
+        // A module without guest_alloc should be rejected at load time
         let wasm = test_fixtures::minimal_filter_pass_no_alloc();
         let limits = make_limits_with_filter_cap();
-        let runtime =
-            WasmRuntime::load_from_bytes_with_priority("no-alloc-plugin", &wasm, limits, 0)
-                .expect("load should succeed");
-        let mut store = runtime.create_store(std::collections::HashMap::new());
-        let exports = runtime.instantiate(&mut store).expect("instantiate");
-
-        // write_to_guest_memory should fail because guest_alloc is missing
-        let result = runtime.write_to_guest_memory(&mut store, &exports, b"test");
-        assert!(result.is_err());
-        let msg = result.unwrap_err().to_string();
+        let result =
+            WasmRuntime::load_from_bytes_with_priority("no-alloc-plugin", &wasm, limits, 0);
+        assert!(result.is_err(), "load should reject missing guest_alloc");
+        let msg = result.err().unwrap().to_string();
         assert!(
             msg.contains("guest_alloc"),
             "expected missing guest_alloc error, got: {}",
@@ -4662,29 +4726,21 @@ entry = "plugin.wasm"
     }
 
     #[test]
-    fn test_write_to_guest_memory_succeeds_without_guest_free() {
-        // write_to_guest_memory only requires guest_alloc, not guest_free.
-        // free_guest_memory gracefully handles missing guest_free as a no-op.
+    fn test_write_to_guest_memory_rejected_without_guest_free() {
+        // Production policy requires guest_free — load should fail at validation
         let wasm = test_fixtures::filter_alloc_only_no_free();
         let limits = make_limits_with_filter_cap();
-        let runtime =
-            WasmRuntime::load_from_bytes_with_priority("alloc-only-plugin", &wasm, limits, 0)
-                .expect("load should succeed");
-        let mut store = runtime.create_store(std::collections::HashMap::new());
-        let exports = runtime.instantiate(&mut store).expect("instantiate");
-
-        let result = runtime.write_to_guest_memory(&mut store, &exports, b"test");
-        assert!(result.is_ok());
-        let (ptr, len) = result.unwrap();
-        assert!(ptr >= 0);
-        assert_eq!(len, 4);
-
-        // free_guest_memory should succeed (no-op) even though guest_free is missing
-        let alloc = GuestAllocation { ptr, len };
-        let freed = runtime.free_guest_memory(&mut store, &exports, &alloc);
+        let result =
+            WasmRuntime::load_from_bytes_with_priority("alloc-only-plugin", &wasm, limits, 0);
         assert!(
-            freed,
-            "free_guest_memory should succeed when guest_free is absent"
+            result.is_err(),
+            "load should reject missing guest_free in production"
+        );
+        let msg = result.err().unwrap().to_string();
+        assert!(
+            msg.contains("guest_free"),
+            "expected guest_free error, got: {}",
+            msg
         );
     }
 
@@ -4976,6 +5032,64 @@ entry = "plugin.wasm"
         assert!(info.has_filter_request);
         assert!(info.has_memory);
         assert!(info.has_any_hook());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // Load-Path ABI Validation Tests
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_load_path_rejects_missing_guest_free() {
+        let wasm = test_fixtures::filter_alloc_only_no_free();
+        let limits = make_limits_with_filter_cap();
+        let result = WasmRuntime::load_from_bytes_with_priority("no-free", &wasm, limits, 0);
+        assert!(result.is_err(), "should reject missing guest_free");
+        let msg = result.err().unwrap().to_string();
+        assert!(
+            msg.contains("guest_free"),
+            "expected guest_free error, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_load_path_accepts_complete_abi() {
+        let wasm = test_fixtures::minimal_filter_pass();
+        let limits = make_limits_with_filter_cap();
+        let result = WasmRuntime::load_from_bytes_with_priority("complete", &wasm, limits, 0);
+        assert!(
+            result.is_ok(),
+            "complete ABI should load: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_load_path_rejects_no_allocator_exports() {
+        let wasm = test_fixtures::minimal_transform_pass();
+        let limits = make_limits_with_filter_cap();
+        let result = WasmRuntime::load_from_bytes_with_priority("no-alloc", &wasm, limits, 0);
+        assert!(result.is_err(), "should reject missing allocator exports");
+        let msg = result.err().unwrap().to_string();
+        assert!(
+            msg.contains("guest_alloc"),
+            "expected guest_alloc error, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_load_path_rejects_no_memory_export() {
+        let wasm = test_fixtures::no_memory_module();
+        let limits = make_limits_with_filter_cap();
+        let result = WasmRuntime::load_from_bytes_with_priority("no-memory", &wasm, limits, 0);
+        assert!(result.is_err(), "should reject missing memory export");
+        let msg = result.err().unwrap().to_string();
+        assert!(
+            msg.contains("memory export"),
+            "expected memory error, got: {}",
+            msg
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════
