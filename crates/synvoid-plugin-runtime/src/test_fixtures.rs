@@ -182,8 +182,8 @@ pub fn mesh_call_without_capability() -> Vec<u8> {
     wat::parse_str(
         r#"
         (module
-            (memory (export "memory") 1)
             (import "env" "mesh_query_dht" (func $mesh_query (param i32 i32 i32 i32) (result i32)))
+            (memory (export "memory") 1)
             (func (export "filter_request") (param i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
                 ;; Try to call mesh_query_dht - should fail if no mesh capability
                 (drop (call $mesh_query (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))

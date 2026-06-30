@@ -1396,6 +1396,7 @@ impl WasmRuntime {
                             "WASM plugin attempted mesh_query_dht without PluginCapability::Mesh"
                         );
                         crate::wasm_metrics::record_plugin_capability_violation("Mesh");
+                        caller.data_mut().capability_violation = Some(PluginCapability::Mesh);
                         return -1;
                     }
 
@@ -1485,6 +1486,7 @@ impl WasmRuntime {
                     if !caller.data().capabilities.permits(PluginCapability::Mesh) {
                         tracing::error!("WASM plugin attempted mesh_check_threat without PluginCapability::Mesh");
                         crate::wasm_metrics::record_plugin_capability_violation("Mesh");
+                        caller.data_mut().capability_violation = Some(PluginCapability::Mesh);
                         return -1;
                     }
 
@@ -1542,6 +1544,7 @@ impl WasmRuntime {
                             "WASM plugin attempted mesh_emit_event without PluginCapability::Mesh"
                         );
                         crate::wasm_metrics::record_plugin_capability_violation("Mesh");
+                        caller.data_mut().capability_violation = Some(PluginCapability::Mesh);
                         return -1;
                     }
 
@@ -2009,10 +2012,15 @@ impl WasmRuntime {
             let exports =
                 WasmInstancePool::resolve_exports_from_instance(&inst.instance, &mut inst.store);
             let result = self.do_filter_request_with_exports(parts, body, &mut inst.store, exports);
-            self.pool.return_instance(inst);
-            if let Err(ref e) = result {
-                self.record_and_classify_failure(e);
-                Self::record_invoke_failure("filter_request");
+            if result.is_err() {
+                // Drop poisoned instance — do not return to pool
+                drop(inst);
+                if let Err(ref e) = result {
+                    self.record_and_classify_failure(e);
+                    Self::record_invoke_failure("filter_request");
+                }
+            } else {
+                self.pool.return_instance(inst);
             }
             return result;
         }
@@ -2246,10 +2254,15 @@ impl WasmRuntime {
                 WasmInstancePool::resolve_exports_from_instance(&inst.instance, &mut inst.store);
             let result =
                 self.do_transform_response_with_exports(parts, body, &mut inst.store, exports);
-            self.pool.return_instance(inst);
-            if let Err(ref e) = result {
-                self.record_and_classify_failure(e);
-                Self::record_invoke_failure("transform_response");
+            if result.is_err() {
+                // Drop poisoned instance — do not return to pool
+                drop(inst);
+                if let Err(ref e) = result {
+                    self.record_and_classify_failure(e);
+                    Self::record_invoke_failure("transform_response");
+                }
+            } else {
+                self.pool.return_instance(inst);
             }
             return result;
         }
@@ -2379,6 +2392,32 @@ impl WasmRuntime {
                 "Plugin '{}' is disabled ({})",
                 plugin_name, state
             )));
+        }
+
+        // Check capability via guard
+        if self
+            .guard
+            .capabilities
+            .require_any_capability(&[
+                PluginCapability::RequestInspect,
+                PluginCapability::RequestMutate,
+            ])
+            .is_err()
+        {
+            tracing::error!(
+                "WASM plugin '{}' lacks RequestInspect/RequestMutate capability — rejecting streaming invocation",
+                plugin_name
+            );
+            crate::wasm_metrics::record_plugin_capability_violation("RequestInspect");
+            self.guard.disable_for_violation();
+            crate::wasm_metrics::record_plugin_state_transition(
+                plugin_name,
+                "disabled_by_capability_violation",
+                "missing invoke_handler_streaming capability",
+            );
+            return Err(WasmPluginError::ExecutionFailed(
+                "plugin lacks required capability".to_string(),
+            ));
         }
 
         record_wasm_invocation(plugin_name);
@@ -2599,6 +2638,32 @@ impl WasmRuntime {
                 "Plugin '{}' is disabled ({})",
                 plugin_name, state
             )));
+        }
+
+        // Check capability via guard
+        if self
+            .guard
+            .capabilities
+            .require_any_capability(&[
+                PluginCapability::RequestInspect,
+                PluginCapability::RequestMutate,
+            ])
+            .is_err()
+        {
+            tracing::error!(
+                "WASM plugin '{}' lacks RequestInspect/RequestMutate capability — rejecting invocation",
+                plugin_name
+            );
+            crate::wasm_metrics::record_plugin_capability_violation("RequestInspect");
+            self.guard.disable_for_violation();
+            crate::wasm_metrics::record_plugin_state_transition(
+                plugin_name,
+                "disabled_by_capability_violation",
+                "missing invoke_handler capability",
+            );
+            return Err(WasmPluginError::ExecutionFailed(
+                "plugin lacks required capability".to_string(),
+            ));
         }
 
         // Check input size
@@ -3538,75 +3603,11 @@ entry = "plugin.wasm"
             WasmRuntime::load_from_bytes_with_priority("trap-plugin", &wasm, limits.clone(), 0)
                 .expect("load should succeed");
 
-        // First invocation should trap
-        let req = Request::builder()
-            .method("GET")
-            .uri("http://example.com/")
-            .body(Bytes::new())
-            .unwrap();
-        let env = Arc::new(std::collections::HashMap::new());
-        let result = runtime.filter_request(req, env.clone());
+        assert!(runtime.guard.is_invocable());
+        assert_eq!(runtime.guard.failure_count(), 0);
 
-        // Debug: print the result to understand what's happening
-        eprintln!("First invocation result: {:?}", result);
-
-        // The trap should result in an error
-        // Note: Some traps may be caught and returned as specific error types
-        if let Err(ref e) = result {
-            eprintln!("Error: {:?}", e);
-        }
-
-        // After threshold (default 5), plugin should be disabled
-        for _ in 0..5 {
-            let req = Request::builder()
-                .method("GET")
-                .uri("http://example.com/")
-                .body(Bytes::new())
-                .unwrap();
-            let _ = runtime.filter_request(req, env.clone());
-        }
-
-        // Verify failure count increased
-        eprintln!("Failure count: {}", runtime.guard.failure_count());
-
-        // After enough failures, plugin should be disabled
-        if !runtime.guard.is_invocable() {
-            assert_eq!(
-                runtime.guard.state(),
-                PluginRuntimeState::DisabledByRuntimeFailure
-            );
-
-            // Subsequent invocations should be blocked by guard
-            let req = Request::builder()
-                .method("GET")
-                .uri("http://example.com/")
-                .body(Bytes::new())
-                .unwrap();
-            let result = runtime.filter_request(req, env);
-            // Should return Block because fail_closed_on_filter_error is true by default
-            assert!(result.is_ok());
-            match result.unwrap() {
-                WasmFilterResult::Block(status, _) => assert_eq!(status, StatusCode::FORBIDDEN),
-                _ => panic!("expected Block after plugin disabled"),
-            }
-        } else {
-            // If plugin is still invocable, verify failure count is tracking
-            assert!(runtime.guard.failure_count() > 0);
-        }
-    }
-
-    #[test]
-    fn test_plugin_fuel_exhaustion_disables_after_threshold() {
-        let wasm = test_fixtures::infinite_loop_module();
-        let mut limits = make_limits_with_filter_cap();
-        limits.max_cpu_fuel = 100; // Very low fuel
-
-        let runtime =
-            WasmRuntime::load_from_bytes_with_priority("fuel-plugin", &wasm, limits.clone(), 0)
-                .expect("load should succeed");
-
-        // Each invocation should exhaust fuel
-        for _ in 0..10 {
+        // Invoke repeatedly — each should trap and record a failure
+        for i in 0..6 {
             let req = Request::builder()
                 .method("GET")
                 .uri("http://example.com/")
@@ -3614,22 +3615,71 @@ entry = "plugin.wasm"
                 .unwrap();
             let env = Arc::new(std::collections::HashMap::new());
             let _ = runtime.filter_request(req, env);
-        }
-
-        // After enough fuel exhaustion failures, plugin should be disabled
-        // or at least have recorded failures
-        eprintln!("Fuel test failure count: {}", runtime.guard.failure_count());
-
-        // Verify that failures are being recorded
-        assert!(runtime.guard.failure_count() > 0);
-
-        // If plugin is disabled, verify the state
-        if !runtime.guard.is_invocable() {
-            assert_eq!(
-                runtime.guard.state(),
-                PluginRuntimeState::DisabledByRuntimeFailure
+            eprintln!(
+                "After invocation {}: failure_count={}",
+                i + 1,
+                runtime.guard.failure_count()
             );
         }
+
+        // After 6 invocations (threshold is 5), plugin MUST be disabled
+        assert!(!runtime.guard.is_invocable());
+        assert_eq!(
+            runtime.guard.state(),
+            PluginRuntimeState::DisabledByRuntimeFailure
+        );
+        assert!(runtime.guard.failure_count() >= 5);
+
+        // Subsequent invocations must be blocked by guard
+        let req = Request::builder()
+            .method("GET")
+            .uri("http://example.com/")
+            .body(Bytes::new())
+            .unwrap();
+        let env = Arc::new(std::collections::HashMap::new());
+        let result = runtime.filter_request(req, env);
+        assert!(result.is_ok());
+        match result.unwrap() {
+            WasmFilterResult::Block(status, _) => assert_eq!(status, StatusCode::FORBIDDEN),
+            _ => panic!("expected Block after plugin disabled"),
+        }
+    }
+
+    #[test]
+    fn test_plugin_fuel_exhaustion_disables_after_threshold() {
+        let wasm = test_fixtures::infinite_loop_module();
+        let mut limits = make_limits_with_filter_cap();
+        limits.max_cpu_fuel = 100; // Very low fuel — each invocation exhausts it
+
+        let runtime =
+            WasmRuntime::load_from_bytes_with_priority("fuel-plugin", &wasm, limits.clone(), 0)
+                .expect("load should succeed");
+
+        assert!(runtime.guard.is_invocable());
+
+        // Each invocation should exhaust fuel and record a failure
+        for i in 0..10 {
+            let req = Request::builder()
+                .method("GET")
+                .uri("http://example.com/")
+                .body(Bytes::new())
+                .unwrap();
+            let env = Arc::new(std::collections::HashMap::new());
+            let _ = runtime.filter_request(req, env);
+            eprintln!(
+                "Fuel test after {}: failure_count={}",
+                i + 1,
+                runtime.guard.failure_count()
+            );
+        }
+
+        // After 10 invocations (threshold is 5), plugin MUST be disabled
+        assert!(!runtime.guard.is_invocable());
+        assert_eq!(
+            runtime.guard.state(),
+            PluginRuntimeState::DisabledByRuntimeFailure
+        );
+        assert!(runtime.guard.failure_count() >= 5);
     }
 
     #[test]
@@ -3662,44 +3712,37 @@ entry = "plugin.wasm"
 
         // Failure count should NOT increase for missing optional export
         assert_eq!(runtime.guard.failure_count(), 0);
+        assert!(runtime.guard.is_invocable());
     }
 
     #[test]
     fn test_plugin_oversized_input_rejected_before_invocation() {
-        // Test that input size check works via the guard directly
+        // Verify that oversized input is rejected at the guard level before WASM execution.
+        // The guard's check_input rejects the request, so guest code never runs.
         let guard = PluginInvocationGuard::new(
             PluginCapabilities {
                 request_inspect: true,
                 ..Default::default()
             },
             PluginLimits {
-                max_input_bytes: 100, // Very small limit
+                max_input_bytes: 10, // Very small limit
                 ..Default::default()
             },
             4,
         );
 
-        // Create request with oversized body
-        let large_body = Bytes::from(vec![0u8; 200]);
-        let req = Request::builder()
-            .method("POST")
-            .uri("http://example.com/")
-            .body(large_body)
-            .unwrap();
-        let input_len = req.headers().len() + req.body().len();
-
-        // Check input size via guard
-        let result = guard.limits.check_input(input_len);
+        // Simulate a large input check
+        let result = guard.limits.check_input(200);
         assert!(result.is_err());
 
         // Failure count should NOT increase for input size rejection
         assert_eq!(guard.failure_count(), 0);
+        assert!(guard.is_invocable());
     }
 
     #[test]
     fn test_plugin_transform_disables_after_repeated_failures() {
         // Use a module that traps on transform_response
-        // Signature: (status_code, body_ptr, body_len, out_ptr, out_max) -> i32
         let trapping_transform = wat::parse_str(
             r#"
             (module
@@ -3744,39 +3787,125 @@ entry = "plugin.wasm"
     }
 
     #[test]
-    fn test_manager_disabled_plugin_fails_filter_request() {
-        // Test that a disabled plugin's guard state is reflected in manager introspection
-        let guard = PluginInvocationGuard::new(
-            PluginCapabilities {
-                request_inspect: true,
+    fn test_host_function_violation_disables_plugin() {
+        // Load a WASM module that calls mesh_query_dht without mesh capability.
+        // The host function should set capability_violation on RequestContext,
+        // and the post-invocation check should disable the plugin.
+        let wasm = test_fixtures::mesh_call_without_capability();
+        let limits = WasmResourceLimits {
+            capabilities: Arc::new(PluginCapabilities {
+                request_inspect: true, // Has filter cap, but NOT mesh cap
                 ..Default::default()
-            },
-            PluginLimits::default(),
-            4,
+            }),
+            ..Default::default()
+        };
+
+        let runtime = WasmRuntime::load_from_bytes_with_priority(
+            "mesh-violation-plugin",
+            &wasm,
+            limits.clone(),
+            0,
+        )
+        .expect("load should succeed");
+
+        assert!(runtime.guard.is_invocable());
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("http://example.com/")
+            .body(Bytes::new())
+            .unwrap();
+        let env = Arc::new(std::collections::HashMap::new());
+        let result = runtime.filter_request(req, env);
+
+        // The guest calls mesh_query_dht which returns -1 (no mesh capability),
+        // then returns 0 (Pass). The host function sets capability_violation.
+        // After guest execution, the post-invocation check should disable the plugin.
+        assert!(result.is_ok());
+        assert!(
+            !runtime.guard.is_invocable(),
+            "plugin should be disabled after host-function capability violation"
         );
-
-        // Initially loaded
-        assert_eq!(guard.state(), PluginRuntimeState::Loaded);
-        assert!(guard.is_invocable());
-
-        // Disable the plugin
-        guard.disable_for_violation();
-
-        // Verify state changed
         assert_eq!(
-            guard.state(),
+            runtime.guard.state(),
             PluginRuntimeState::DisabledByCapabilityViolation
         );
-        assert!(!guard.is_invocable());
-
-        // Verify failure count is still 0 (capability violation doesn't count as failure)
-        assert_eq!(guard.failure_count(), 0);
     }
 
     #[test]
-    fn test_manager_get_plugin_failure_count() {
-        let mgr = WasmPluginManager::new();
-        assert!(mgr.get_plugin_failure_count("nonexistent").is_none());
+    fn test_manager_get_plugin_state_loaded() {
+        let wasm = test_fixtures::minimal_filter_pass();
+        let limits = make_limits_with_filter_cap();
+
+        let runtime =
+            WasmRuntime::load_from_bytes_with_priority("state-plugin", &wasm, limits.clone(), 0)
+                .expect("load should succeed");
+
+        // Loaded runtime should report Loaded state
+        assert_eq!(runtime.guard.state(), PluginRuntimeState::Loaded);
+        assert!(runtime.guard.is_invocable());
+        assert_eq!(runtime.guard.failure_count(), 0);
+
+        // After a successful invocation, state should still be Loaded
+        let req = Request::builder()
+            .method("GET")
+            .uri("http://example.com/")
+            .body(Bytes::new())
+            .unwrap();
+        let env = Arc::new(std::collections::HashMap::new());
+        let result = runtime.filter_request(req, env);
+        assert!(result.is_ok());
+        assert_eq!(runtime.guard.state(), PluginRuntimeState::Loaded);
+    }
+
+    #[test]
+    fn test_manager_disabled_plugin_filter_request_via_runtime() {
+        // Verify that calling filter_request on a disabled runtime returns Block
+        let wasm = test_fixtures::minimal_filter_pass();
+        let limits = make_limits_with_filter_cap();
+
+        let runtime = WasmRuntime::load_from_bytes_with_priority(
+            "disabled-filter-plugin",
+            &wasm,
+            limits.clone(),
+            0,
+        )
+        .expect("load should succeed");
+
+        // Verify initial state
+        assert!(runtime.guard.is_invocable());
+
+        // Disable the plugin via capability violation
+        runtime.guard.disable_for_violation();
+        assert!(!runtime.guard.is_invocable());
+
+        // filter_request should return Block (fail_closed_on_filter_error is true by default)
+        let req = Request::builder()
+            .method("GET")
+            .uri("http://example.com/")
+            .body(Bytes::new())
+            .unwrap();
+        let env = Arc::new(std::collections::HashMap::new());
+        let result = runtime.filter_request(req, env);
+
+        assert!(result.is_ok());
+        match result.unwrap() {
+            WasmFilterResult::Block(status, msg) => {
+                assert_eq!(status, StatusCode::FORBIDDEN);
+                assert!(
+                    msg.contains("disabled"),
+                    "error message should mention disabled: {}",
+                    msg
+                );
+            }
+            other => panic!("expected Block for disabled plugin, got {:?}", other),
+        }
+
+        // Verify state is still disabled
+        assert_eq!(
+            runtime.guard.state(),
+            PluginRuntimeState::DisabledByCapabilityViolation
+        );
     }
 
     #[test]
@@ -3819,25 +3948,9 @@ entry = "plugin.wasm"
     }
 
     #[test]
-    fn test_host_function_violation_disables_plugin() {
-        // Test that a capability violation in a host function disables the plugin
-        let guard = PluginInvocationGuard::new(
-            PluginCapabilities {
-                request_inspect: true,
-                ..Default::default()
-            },
-            PluginLimits::default(),
-            4,
-        );
-
-        // Simulate a host function violation
-        guard.disable_for_violation();
-
-        assert!(!guard.is_invocable());
-        assert_eq!(
-            guard.state(),
-            PluginRuntimeState::DisabledByCapabilityViolation
-        );
+    fn test_manager_get_plugin_failure_count() {
+        let mgr = WasmPluginManager::new();
+        assert!(mgr.get_plugin_failure_count("nonexistent").is_none());
     }
 
     #[test]
