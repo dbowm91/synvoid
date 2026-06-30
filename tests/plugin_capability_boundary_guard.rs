@@ -95,9 +95,13 @@ fn cleaned_lines(cleaned: &str) -> Vec<(usize, &str)> {
 /// `mesh_check_threat`, and `mesh_emit_event` must gate access via the
 /// capability model or explicit prefix/allowlist filtering.
 ///
-/// This test scans the linker registration code for dangerous patterns
-/// (fs, network, mesh) and asserts that each is inside a `func_wrap` block
-/// that contains a capability check (permits/require) or prefix-based guard.
+/// This test scans only the bodies of `func_wrap` closures for dangerous
+/// patterns (fs, network, mesh) and asserts that each has a capability
+/// check (permits/require) or prefix-based guard within the same closure.
+///
+/// Infrastructure code outside `func_wrap` blocks (e.g. `discover_manifest`
+/// which reads plugin TOML manifests during loading) is excluded — it is
+/// not exposed to WASM plugins and legitimately uses filesystem I/O.
 #[test]
 fn plugin_runtime_host_functions_have_capability_gates() {
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -148,41 +152,93 @@ fn plugin_runtime_host_functions_have_capability_gates() {
             .display()
             .to_string();
 
-        for (line_num, line) in cleaned_lines(&cleaned) {
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed.starts_with("//!") {
-                continue;
-            }
-            for pattern in &dangerous_patterns {
-                if trimmed.contains(pattern) {
-                    // Check whether this line is inside a func_wrap block
-                    // that has a capability gate. We use a heuristic: the
-                    // surrounding 30-line window must contain a capability
-                    // check (permits, require, is_sensitive, allowed_, or
-                    // check_threat / sensitive_prefixes).
-                    let window_start = line_num.saturating_sub(30);
-                    let window_end = (line_num + 30).min(cleaned.lines().count());
-                    let window: String = cleaned
-                        .lines()
-                        .skip(window_start)
-                        .take(window_end - window_start)
-                        .collect::<Vec<_>>()
-                        .join("\n");
+        // Extract only func_wrap closure bodies. We track brace depth
+        // starting from each `func_wrap(` opening, collecting lines until
+        // the closure closes. Only lines inside these blocks are scanned
+        // for dangerous patterns.
+        let lines: Vec<&str> = cleaned.lines().collect();
+        let mut i = 0;
+        while i < lines.len() {
+            let trimmed = lines[i].trim();
+            if trimmed.contains("func_wrap(") {
+                // Find the opening brace of the closure
+                let mut brace_depth = 0i32;
+                let mut found_open = false;
+                let block_start = i;
+                let mut block_lines: Vec<(usize, &str)> = Vec::new();
 
-                    let has_gate = window.contains("permits")
-                        || window.contains("require(")
-                        || window.contains("is_sensitive")
-                        || window.contains("allowed_")
-                        || window.contains("sensitive_prefixes")
-                        || window.contains("is_explicitly_allowed");
-
-                    if !has_gate {
-                        violations.push(format!(
-                            "{}:{}: '{}' in linker code without capability gate",
-                            relative, line_num, pattern
-                        ));
+                // Scan forward from the func_wrap line to find and track the closure
+                for j in i..(i + 5).min(lines.len()) {
+                    let line = lines[j];
+                    for ch in line.chars() {
+                        if ch == '{' {
+                            brace_depth += 1;
+                            found_open = true;
+                        } else if ch == '}' {
+                            brace_depth -= 1;
+                        }
                     }
                 }
+
+                if found_open && brace_depth > 0 {
+                    // We're inside an unclosed closure — collect lines until it closes
+                    block_lines.push((block_start + 1, lines[block_start]));
+                    for j in (block_start + 1)..lines.len() {
+                        let line = lines[j];
+                        for ch in line.chars() {
+                            if ch == '{' {
+                                brace_depth += 1;
+                            } else if ch == '}' {
+                                brace_depth -= 1;
+                            }
+                        }
+                        block_lines.push((j + 1, line));
+                        if brace_depth <= 0 {
+                            break;
+                        }
+                    }
+
+                    // Scan the closure body for dangerous patterns
+                    let block_text: String = block_lines
+                        .iter()
+                        .map(|(_, l)| *l)
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let block_window_start =
+                        block_lines.first().map_or(0, |(n, _)| n.saturating_sub(1));
+                    let block_window_end = block_lines.last().map_or(0, |(n, _)| *n);
+
+                    for (line_num, line) in &block_lines {
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() || trimmed.starts_with("//!") {
+                            continue;
+                        }
+                        for pattern in &dangerous_patterns {
+                            if trimmed.contains(pattern) {
+                                let has_gate = block_text.contains("permits")
+                                    || block_text.contains("require(")
+                                    || block_text.contains("is_sensitive")
+                                    || block_text.contains("allowed_")
+                                    || block_text.contains("sensitive_prefixes")
+                                    || block_text.contains("is_explicitly_allowed");
+
+                                if !has_gate {
+                                    violations.push(format!(
+                                        "{}:{}: '{}' in func_wrap closure without capability gate (lines {}-{})",
+                                        relative, line_num, pattern, block_window_start, block_window_end
+                                    ));
+                                }
+                            }
+                        }
+                    }
+
+                    // Skip past this closure
+                    i = block_lines.last().map_or(i + 1, |(n, _)| *n);
+                } else {
+                    i += 1;
+                }
+            } else {
+                i += 1;
             }
         }
     }

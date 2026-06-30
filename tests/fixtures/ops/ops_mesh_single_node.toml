@@ -1,0 +1,78 @@
+# TEST FIXTURE - NOT FOR PRODUCTION
+# Mesh single-node configuration for Phase 16 runtime operations drill
+
+[server]
+host = "127.0.0.1"
+port = 18082
+trusted_proxies = ["127.0.0.1", "::1"]
+
+[tokio]
+worker_threads = 1
+
+[http]
+header_read_timeout_secs = 10
+keep_alive_timeout_secs = 60
+max_headers = 128
+max_request_line_size = 8192
+max_header_size_ingress = 4096
+max_header_size_egress = 16384
+max_request_size = 1048576
+pipeline_limit = 32
+
+[mesh]
+enabled = true
+role = "edge"
+port = 19000
+bind = "127.0.0.1"
+node_name = "ops-test-node"
+bootstrap_peers = []
+
+[admin]
+enabled = true
+port = 18083
+token = "test-only-token-not-for-production"
+
+[logging]
+level = "info"
+access_log = false
+access_log_dir = "/tmp/synvoid-ops-mesh/logs"
+access_log_format = "json"
+retention_days = 1
+max_entries_per_file = 1000
+
+[security]
+ipc_enforce_signing = false
+ipc_session_key_env = "SYNVOID_IPC_KEY"
+
+[metrics]
+enabled = false
+
+[defaults]
+[defaults.ratelimit]
+mode = "shared"
+
+[defaults.ratelimit.ip]
+per_second = 10
+per_minute = 60
+per_5min = 200
+per_10min = 350
+per_hour = 500
+per_day = 1000
+burst = 20
+
+[defaults.ratelimit.global]
+per_second = 500
+per_minute = 5000
+per_5min = 20000
+max_connections = 1000
+
+[defaults.blocked]
+paths = ["/.env", "/.git"]
+use_regex = false
+block_methods = ["GET", "POST"]
+
+[defaults.persistence]
+enabled = true
+data_dir = "/tmp/synvoid-ops-mesh/data"
+persist_interval_secs = 300
+use_persistent_kv = false

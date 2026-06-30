@@ -318,4 +318,4 @@ Track 2 is complete when:
 
 Track 1: Complete.
 
-Track 2: Active.
+Track 2: Complete through Phase 16.

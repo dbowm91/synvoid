@@ -22,7 +22,7 @@ All profile checks pass with zero errors.
 
 ## 3. Guard Test Results
 
-All 26 guard tests pass. 543 individual assertions pass.
+All 27 guard tests pass.
 
 | Guard | Tests | Status |
 |-------|-------|--------|
@@ -40,6 +40,7 @@ All 26 guard tests pass. 543 individual assertions pass.
 | `threat_intel_consumer_actionability_guard` | 17/17 | PASS |
 | `admin_mutation_response_guard` | 2/2 | PASS |
 | `plugin_capability_boundary_guard` | 8/8 | PASS |
+| `plugin_signature_policy_guard` | 10/10 | PASS |
 | `docs_path_reference_guard` | 1/1 | PASS |
 | `security_observability_guard` | 22/22 | PASS |
 | `background_task_ownership_guard` | 38/38 | PASS |
@@ -52,13 +53,14 @@ All 26 guard tests pass. 543 individual assertions pass.
 | `admin_auth_boundary` | 8/8 | PASS |
 | `mesh_admin_edge_cases` | 8/8 | PASS |
 | `plugin_failure_does_not_poison_manager` | 6/6 | PASS |
+| `failure_injection` | 10/10 | PASS |
 
 ## 4. Release Checklist
 
 ### Infrastructure
 
 - [x] All supported profile checks pass
-- [x] All release-required guards pass (26/26)
+- [x] All release-required guards pass (27/27)
 - [x] Format check passes
 - [x] No `mem::forget` lifecycle leaks (guard: `unified_server_lifecycle_ownership_guard`)
 - [x] No domain crate root imports (guard: `root_facade_boundary_guard`)
@@ -122,7 +124,7 @@ All 26 guard tests pass. 543 individual assertions pass.
 **Release status: READY for hardening closure.**
 
 - 5 profile checks: all pass
-- 26 guard tests: all pass (543 assertions)
+- 27 guard tests: all pass
 - 16 fuzz targets: all exist (11 existing + 5 new in Phase 14)
 - No known release-blocking defects
 - All architectural invariants enforced by automated guards

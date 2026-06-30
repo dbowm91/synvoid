@@ -25,8 +25,8 @@ After the fix, CI triggers correctly on push to `main`/`master`/`develop` and PR
 | `cargo check --no-default-features --features mesh` | Pass | Warnings only |
 | `cargo check --no-default-features --features dns` | Pass | Warnings only |
 | `cargo check --no-default-features --features mesh,dns` | Pass | Warnings only |
-| `./scripts/verify_architecture.sh` | Pass | 5 profiles + 26 guard tests |
-| 26 guard tests (individual) | Pass | All pass |
+| `./scripts/verify_architecture.sh` | Pass | 5 profiles + 27 guard tests |
+| 27 guard tests (individual) | Pass | All pass |
 | `cargo test --test failure_injection` | Pass | 10 tests |
 | `cargo test --test security_observability_guard` | Pass | 24 tests (2 new liveness tests) |
 | `cargo test --test threat_intel_consumer_actionability_guard --features mesh,dns` | Pass | All pass |
