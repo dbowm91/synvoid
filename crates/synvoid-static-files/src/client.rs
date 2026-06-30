@@ -364,7 +364,7 @@ enum AsyncCpuTaskDispatchError {
 
 enum AsyncCpuTaskCommand {
     Submit {
-        request: Message,
+        request: Box<Message>,
         response_tx: oneshot::Sender<Result<Message, AsyncCpuTaskDispatchError>>,
     },
     Cancel {
@@ -380,7 +380,7 @@ struct AsyncCpuTaskConnection {
 }
 
 impl AsyncCpuTaskConnection {
-    async fn connect(socket_path: &PathBuf) -> Result<Arc<Self>, MinifierClientError> {
+    async fn connect(socket_path: &std::path::Path) -> Result<Arc<Self>, MinifierClientError> {
         let socket_name = socket_path
             .file_name()
             .and_then(|n| n.to_str())
@@ -428,7 +428,7 @@ impl AsyncCpuTaskConnection {
         let (response_tx, response_rx) = oneshot::channel();
         self.command_tx
             .send(AsyncCpuTaskCommand::Submit {
-                request,
+                request: Box::new(request),
                 response_tx,
             })
             .map_err(|_| {
@@ -1074,6 +1074,7 @@ impl AsyncMinifierClient {
         self
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn request_wasm_transform(
         &self,
         site_id: &str,
@@ -1130,11 +1131,7 @@ impl AsyncMinifierClient {
                     record_cpu_offload_timeout();
                 }
                 self.pool.release(&connection);
-                if is_timeout && connection.is_closed() {
-                    self.pool.evict(&connection).await;
-                } else {
-                    self.pool.evict(&connection).await;
-                }
+                self.pool.evict(&connection).await;
                 return Err(map_async_cpu_task_dispatch_error_for_minifier(err));
             }
         };
@@ -1225,15 +1222,13 @@ impl AsyncMinifierClient {
                 content_type,
                 encoding: resp_encoding,
                 queued_encodings,
-            } => {
-                if resp_id == request_id {
-                    return Ok(MinifyResult {
-                        content: Bytes::from(content),
-                        content_type,
-                        encoding: resp_encoding,
-                        queued_encodings,
-                    });
-                }
+            } if resp_id == request_id => {
+                return Ok(MinifyResult {
+                    content: Bytes::from(content),
+                    content_type,
+                    encoding: resp_encoding,
+                    queued_encodings,
+                });
             }
             Message::CpuTaskResponse {
                 request_id: resp_id,
@@ -1246,33 +1241,27 @@ impl AsyncMinifierClient {
                         queued_encodings,
                         ..
                     },
-            } => {
-                if resp_id == request_id {
-                    return Ok(MinifyResult {
-                        content: Bytes::from(content),
-                        content_type,
-                        encoding: resp_encoding,
-                        queued_encodings,
-                    });
-                }
+            } if resp_id == request_id => {
+                return Ok(MinifyResult {
+                    content: Bytes::from(content),
+                    content_type,
+                    encoding: resp_encoding,
+                    queued_encodings,
+                });
             }
             Message::MinifyError {
                 request_id: resp_id,
                 error,
-            } => {
-                if resp_id == request_id {
-                    return Err(MinifierClientError::MinificationFailed(error));
-                }
+            } if resp_id == request_id => {
+                return Err(MinifierClientError::MinificationFailed(error));
             }
             Message::CpuTaskError {
                 request_id: resp_id,
                 code,
                 message,
                 ..
-            } => {
-                if resp_id == request_id {
-                    return Err(map_cpu_task_error_for_minifier(code, message));
-                }
+            } if resp_id == request_id => {
+                return Err(map_cpu_task_error_for_minifier(code, message));
             }
             _ => {}
         }
@@ -1347,37 +1336,29 @@ impl AsyncMinifierClient {
             Message::GetCompressedResponse {
                 request_id: resp_id,
                 content,
-            } => {
-                if resp_id == request_id {
-                    return Ok(Bytes::from(content));
-                }
+            } if resp_id == request_id => {
+                return Ok(Bytes::from(content));
             }
             Message::CpuTaskResponse {
                 request_id: resp_id,
                 task_kind: synvoid_ipc::CpuTaskKind::GetCompressed,
                 result: synvoid_ipc::CpuTaskResult::GetCompressed { content },
-            } => {
-                if resp_id == request_id {
-                    return Ok(Bytes::from(content));
-                }
+            } if resp_id == request_id => {
+                return Ok(Bytes::from(content));
             }
             Message::MinifyError {
                 request_id: resp_id,
                 error,
-            } => {
-                if resp_id == request_id {
-                    return Err(MinifierClientError::MinificationFailed(error));
-                }
+            } if resp_id == request_id => {
+                return Err(MinifierClientError::MinificationFailed(error));
             }
             Message::CpuTaskError {
                 request_id: resp_id,
                 code,
                 message,
                 ..
-            } => {
-                if resp_id == request_id {
-                    return Err(map_cpu_task_error_for_minifier(code, message));
-                }
+            } if resp_id == request_id => {
+                return Err(map_cpu_task_error_for_minifier(code, message));
             }
             _ => {}
         }
@@ -1550,6 +1531,7 @@ impl ImageRightsClient {
         self
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn mark_image_rights(
         &self,
         site_id: &str,
@@ -1653,37 +1635,29 @@ impl ImageRightsClient {
             synvoid_ipc::Message::PoisonImageResponse {
                 request_id: resp_id,
                 poisoned_body,
-            } => {
-                if resp_id == request_id {
-                    return Ok(poisoned_body);
-                }
+            } if resp_id == request_id => {
+                return Ok(poisoned_body);
             }
             synvoid_ipc::Message::CpuTaskResponse {
                 request_id: resp_id,
                 task_kind: synvoid_ipc::CpuTaskKind::PoisonImage,
                 result: synvoid_ipc::CpuTaskResult::PoisonImage { poisoned_body },
-            } => {
-                if resp_id == request_id {
-                    return Ok(poisoned_body);
-                }
+            } if resp_id == request_id => {
+                return Ok(poisoned_body);
             }
             synvoid_ipc::Message::PoisonImageError {
                 request_id: resp_id,
                 error,
-            } => {
-                if resp_id == request_id {
-                    return Err(ImageRightsClientError::MarkingFailed(error));
-                }
+            } if resp_id == request_id => {
+                return Err(ImageRightsClientError::MarkingFailed(error));
             }
             synvoid_ipc::Message::CpuTaskError {
                 request_id: resp_id,
                 code,
                 message,
                 ..
-            } => {
-                if resp_id == request_id {
-                    return Err(map_cpu_task_error_for_image_rights(code, message));
-                }
+            } if resp_id == request_id => {
+                return Err(map_cpu_task_error_for_image_rights(code, message));
             }
             _ => {}
         }
@@ -1895,20 +1869,16 @@ impl YaraScanClient {
                 request_id: resp_id,
                 task_kind: synvoid_ipc::CpuTaskKind::YaraScan,
                 result: synvoid_ipc::CpuTaskResult::YaraScan { matches },
-            } => {
-                if resp_id == request_id {
-                    return Ok(matches);
-                }
+            } if resp_id == request_id => {
+                return Ok(matches);
             }
             synvoid_ipc::Message::CpuTaskError {
                 request_id: resp_id,
                 code,
                 message,
                 ..
-            } => {
-                if resp_id == request_id {
-                    return Err(map_cpu_task_error_for_yara(code, message));
-                }
+            } if resp_id == request_id => {
+                return Err(map_cpu_task_error_for_yara(code, message));
             }
             _ => {}
         }

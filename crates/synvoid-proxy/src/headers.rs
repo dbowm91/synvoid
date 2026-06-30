@@ -401,7 +401,7 @@ pub fn build_forward_headers(
     config: &ProxyHeadersConfig,
     protocol: ForwardedProtocol,
 ) -> http::HeaderMap {
-    let capacity = original_headers.len().min(32).max(8);
+    let capacity = original_headers.len().clamp(8, 32);
     let mut forward_headers = http::HeaderMap::with_capacity(capacity);
 
     let headers_to_forward: Vec<&str> = if config.forward.is_empty() {

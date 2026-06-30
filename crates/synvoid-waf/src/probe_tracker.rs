@@ -330,7 +330,7 @@ impl ProbeTracker {
     pub fn list_records(&self, limit: usize, offset: usize) -> Vec<ProbeRecord> {
         let store = self.store.read();
         let mut records: Vec<_> = store.values().cloned().collect();
-        records.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
+        records.sort_by_key(|b| std::cmp::Reverse(b.last_seen));
 
         records.into_iter().skip(offset).take(limit).collect()
     }
@@ -360,7 +360,7 @@ impl ProbeTracker {
             .map(|(endpoint, count)| ProbeEndpointStats { endpoint, count })
             .collect();
 
-        top_endpoints_vec.sort_by(|a, b| b.count.cmp(&a.count));
+        top_endpoints_vec.sort_by_key(|b| std::cmp::Reverse(b.count));
         let top_endpoints: Vec<_> = top_endpoints_vec.into_iter().take(10).collect();
 
         ProbeStats {
@@ -602,7 +602,7 @@ impl SuspiciousWordTracker {
             .into_iter()
             .map(|(word, count)| SuspiciousWordCount { word, count })
             .collect();
-        top_words.sort_by(|a, b| b.count.cmp(&a.count));
+        top_words.sort_by_key(|b| std::cmp::Reverse(b.count));
         let top_words: Vec<_> = top_words.into_iter().take(10).collect();
 
         SuspiciousWordStats {
@@ -770,7 +770,7 @@ impl UpstreamErrorTracker {
             .into_iter()
             .map(|(endpoint, count)| UpstreamEndpointErrorCount { endpoint, count })
             .collect();
-        top_endpoints.sort_by(|a, b| b.count.cmp(&a.count));
+        top_endpoints.sort_by_key(|b| std::cmp::Reverse(b.count));
         let top_endpoints: Vec<_> = top_endpoints.into_iter().take(10).collect();
 
         UpstreamErrorStats {

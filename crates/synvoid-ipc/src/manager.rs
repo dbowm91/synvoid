@@ -480,7 +480,7 @@ impl ProcessManager {
             warm_workers_target: dynamic.warm_workers_target,
             health_check_interval_secs: dynamic.health_check_interval_secs,
             control_api_addr: dynamic.control_api_addr.clone(),
-            control_api_tls: dynamic.control_api_tls.clone().map(|c| c.into()),
+            control_api_tls: dynamic.control_api_tls.clone(),
         }
     }
 

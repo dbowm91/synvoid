@@ -2084,6 +2084,7 @@ impl Message {
     ///
     /// Returns `(request, is_legacy_shape)` where `is_legacy_shape` indicates
     /// that the original message used one of the legacy `*Request` variants.
+    #[allow(clippy::type_complexity)]
     pub fn into_cpu_task_request_compat(
         self,
     ) -> Option<(

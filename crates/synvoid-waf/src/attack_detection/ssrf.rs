@@ -271,10 +271,11 @@ impl SsrfDetector {
         if s.starts_with("::ffff:") || s.starts_with("::FFFF:") {
             let after_prefix = &s[7..];
             let colon_count = after_prefix.chars().filter(|&c| c == ':').count();
-            if colon_count == 0 && after_prefix.contains('.') {
-                if after_prefix.chars().all(|c| c.is_ascii_digit() || c == '.') {
-                    return true;
-                }
+            if colon_count == 0
+                && after_prefix.contains('.')
+                && after_prefix.chars().all(|c| c.is_ascii_digit() || c == '.')
+            {
+                return true;
             }
         }
         let colon_count = s.chars().filter(|&c| c == ':').count();
@@ -444,10 +445,8 @@ impl SsrfDetector {
                     }
                 }
             }
-            if self.allowlist_only_mode {
-                if Self::has_word_boundary(input_lower, dot_domain) {
-                    return true;
-                }
+            if self.allowlist_only_mode && Self::has_word_boundary(input_lower, dot_domain) {
+                return true;
             }
             false
         })

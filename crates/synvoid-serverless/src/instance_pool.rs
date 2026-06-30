@@ -534,7 +534,7 @@ impl InstancePool {
         for instance in instances.iter() {
             let metrics = instance.metrics.read();
             if let Some(time) = metrics.last_cold_start_time {
-                if last_cold_start_time.map_or(true, |t| time > t) {
+                if last_cold_start_time.is_none_or(|t| time > t) {
                     last_cold_start_time = Some(time);
                     last_cold_start_duration_ms = metrics.last_cold_start_duration_ms;
                 }

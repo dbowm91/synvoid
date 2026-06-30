@@ -95,6 +95,7 @@ pub struct ProxyServer<W: WafProcessor> {
 }
 
 impl<W: WafProcessor> ProxyServer<W> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         upstream_url: String,
         waf: Arc<W>,
@@ -124,6 +125,7 @@ impl<W: WafProcessor> ProxyServer<W> {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new_with_tls(
         upstream_url: String,
         waf: Arc<W>,
@@ -154,6 +156,7 @@ impl<W: WafProcessor> ProxyServer<W> {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new_with_pool_config(
         upstream_url: String,
         waf: Arc<W>,
@@ -267,6 +270,7 @@ impl<W: WafProcessor> ProxyServer<W> {
         self
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn handle_request(
         &self,
         client_ip: std::net::IpAddr,
@@ -291,7 +295,7 @@ impl<W: WafProcessor> ProxyServer<W> {
                         .status(429)
                         .body(
                             Full::new(Bytes::from("Too Many Connections\n"))
-                                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                                .map_err(std::io::Error::other)
                                 .boxed(),
                         )
                         .unwrap());
@@ -373,7 +377,7 @@ impl<W: WafProcessor> ProxyServer<W> {
                         .status(status_code)
                         .body(
                             Full::new(Bytes::from(message))
-                                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                                .map_err(std::io::Error::other)
                                 .boxed(),
                         )
                         .unwrap());
@@ -387,7 +391,7 @@ impl<W: WafProcessor> ProxyServer<W> {
                         .header("Cache-Control", "no-store, no-cache, must-revalidate")
                         .body(
                             Full::new(bytes::Bytes::from(html))
-                                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                                .map_err(std::io::Error::other)
                                 .boxed(),
                         )
                         .unwrap());
@@ -412,7 +416,7 @@ impl<W: WafProcessor> ProxyServer<W> {
                         .header("Set-Cookie", cookie)
                         .body(
                             Full::new(bytes::Bytes::from(html))
-                                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                                .map_err(std::io::Error::other)
                                 .boxed(),
                         )
                         .unwrap());
@@ -437,7 +441,7 @@ impl<W: WafProcessor> ProxyServer<W> {
                         .status(200)
                         .body(
                             Full::new(Bytes::from("Tarpit active"))
-                                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                                .map_err(std::io::Error::other)
                                 .boxed(),
                         )
                         .unwrap());
@@ -515,7 +519,7 @@ impl<W: WafProcessor> ProxyServer<W> {
                     .status(502)
                     .body(
                         Full::new(Bytes::from_static(b"Bad Gateway"))
-                            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                            .map_err(std::io::Error::other)
                             .boxed(),
                     )
                     .unwrap_or_else(|_| {
@@ -523,7 +527,7 @@ impl<W: WafProcessor> ProxyServer<W> {
                             .status(502)
                             .body(
                                 Full::new(Bytes::from_static(b"Bad Gateway"))
-                                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                                    .map_err(std::io::Error::other)
                                     .boxed(),
                             )
                             .unwrap_or_else(|_| unreachable!())
@@ -567,6 +571,7 @@ impl<W: WafProcessor> ProxyServer<W> {
             .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn handle_request_with_cache(
         &self,
         method: http::Method,
@@ -587,7 +592,7 @@ impl<W: WafProcessor> ProxyServer<W> {
                 .map(|r| {
                     r.map(|b| {
                         Full::new(b)
-                            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                            .map_err(std::io::Error::other)
                             .boxed()
                     })
                 });
@@ -677,7 +682,7 @@ impl<W: WafProcessor> ProxyServer<W> {
                             let response = self.build_cached_response(&cached);
                             return Ok(response.map(|b| {
                                 Full::new(b)
-                                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                                    .map_err(std::io::Error::other)
                                     .boxed()
                             }));
                         }
@@ -1100,7 +1105,7 @@ impl<W: WafProcessor> ProxyServer<W> {
                     let mut cx = std::task::Context::from_waker(&waker);
                     while let std::task::Poll::Ready(Some(Ok(frame))) = b.poll_frame(&mut cx) {
                         if frame.is_data() {
-                            if let Ok(data) = frame.into_data().map(|b| b) {
+                            if let Ok(data) = frame.into_data() {
                                 collected.extend_from_slice(&data);
                             }
                         }
@@ -1132,7 +1137,7 @@ impl<W: WafProcessor> ProxyServer<W> {
 
                 return Ok(builder.body(
                     Full::new(response_body)
-                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                        .map_err(std::io::Error::other)
                         .boxed(),
                 )?);
             } else {
@@ -1143,7 +1148,7 @@ impl<W: WafProcessor> ProxyServer<W> {
         let forward_headers = if let Some(ref config) = self.proxy_headers_config {
             crate::headers::build_forward_headers(
                 std::net::IpAddr::from([127, 0, 0, 1]),
-                headers.as_deref().unwrap_or(&http::HeaderMap::new()),
+                headers.unwrap_or(&http::HeaderMap::new()),
                 config,
                 crate::headers::ForwardedProtocol::Https,
             )
@@ -1174,7 +1179,7 @@ impl<W: WafProcessor> ProxyServer<W> {
         }
 
         let streamed_body = incoming_body
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e)));
+            .map_err(|e| std::io::Error::other(format!("{:?}", e)));
 
         Ok(builder.body(streamed_body.boxed())?)
     }

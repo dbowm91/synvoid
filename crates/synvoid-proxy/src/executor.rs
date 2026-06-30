@@ -107,6 +107,7 @@ pub struct ProxyExecutor {
 }
 
 impl ProxyExecutor {
+    #[allow(clippy::too_many_arguments)]
     pub async fn execute_with_cache(
         &self,
         method: Method,

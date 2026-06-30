@@ -115,7 +115,7 @@ impl LocationMatch {
 /// The current approach is simpler and faster for the use case patterns.
 ///
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct LocationMatcher {
     exact_locations: HashMap<String, (usize, LocationMatchType)>,
     prefix_locations: Vec<(String, (usize, LocationMatchType))>, // Sorted by length descending
@@ -145,7 +145,7 @@ impl LocationMatcher {
         }
 
         // Sort prefix locations by length descending for longest-prefix-match
-        prefix_locations.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        prefix_locations.sort_by_key(|a| std::cmp::Reverse(a.0.len()));
 
         LocationMatcher {
             exact_locations,
@@ -192,16 +192,6 @@ impl LocationMatcher {
 
     pub fn len(&self) -> usize {
         self.exact_locations.len() + self.prefix_locations.len() + self.regex_locations.len()
-    }
-}
-
-impl Default for LocationMatcher {
-    fn default() -> Self {
-        Self {
-            exact_locations: HashMap::new(),
-            prefix_locations: Vec::new(),
-            regex_locations: Vec::new(),
-        }
     }
 }
 

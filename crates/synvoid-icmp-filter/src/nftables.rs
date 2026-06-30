@@ -46,8 +46,8 @@ impl NftablesFilter {
             || self.config.direction == Direction::Outbound;
 
         let (in_interface_filter, out_interface_filter) = match &self.config.interfaces {
-            crate::icmp_filter::config::InterfaceSpec::All => (String::new(), String::new()),
-            crate::icmp_filter::config::InterfaceSpec::Specific(ifaces) => {
+            crate::config::InterfaceSpec::All => (String::new(), String::new()),
+            crate::config::InterfaceSpec::Specific(ifaces) => {
                 if ifaces.len() == 1 {
                     (format!("iif {} ", ifaces[0]), format!("oif {} ", ifaces[0]))
                 } else {
@@ -147,7 +147,7 @@ impl NftablesFilter {
     fn build_icmp_type_rule(
         &self,
         rule: &IcmpTypeRule,
-        is_input: bool,
+        _is_input: bool,
         interface_filter: &str,
         is_v6: bool,
     ) -> String {

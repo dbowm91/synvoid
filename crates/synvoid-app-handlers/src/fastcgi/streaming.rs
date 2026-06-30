@@ -339,7 +339,7 @@ impl StreamingFastCgiClient {
         content: &[u8],
     ) -> Result<(), FastCgiError> {
         let content_len = content.len() as u16;
-        let padding_len = if content_len as usize % 8 != 0 {
+        let padding_len = if !(content_len as usize).is_multiple_of(8) {
             (8 - content_len as usize % 8) as u8
         } else {
             0

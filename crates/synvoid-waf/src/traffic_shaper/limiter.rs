@@ -119,7 +119,7 @@ impl ConnectionLimiter {
             let site_ips = self
                 .site_connections
                 .entry(site_id.to_string())
-                .or_insert_with(DashMap::new);
+                .or_default();
             let ip_counter = site_ips
                 .entry(client_ip)
                 .or_insert_with(|| AtomicU32::new(0));

@@ -56,6 +56,7 @@ pub struct WafConfig {
 }
 
 impl WafConfig {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         enable_css_honeypot: bool,
         enable_pow_challenge: bool,

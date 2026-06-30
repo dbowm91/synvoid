@@ -302,10 +302,8 @@ pub fn parse_directory_params(query_string: Option<&str>) -> DirectoryListingPar
                     params.limit = l.clamp(10, 1000);
                 }
             }
-            "filter" => {
-                if !value.is_empty() {
-                    params.filter = Some(value);
-                }
+            "filter" if !value.is_empty() => {
+                params.filter = Some(value);
             }
             _ => {}
         }

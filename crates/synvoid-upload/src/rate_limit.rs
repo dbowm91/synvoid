@@ -161,7 +161,7 @@ impl UploadRateLimiter {
         if state.minute_byte_count + file_size > self.config.max_bytes_per_minute {
             return RateLimitResult::RateLimited {
                 reason: RateLimitReason::ExceededMinuteBytes,
-                current: state.minute_byte_count as u64,
+                current: state.minute_byte_count,
                 limit: self.config.max_bytes_per_minute,
                 window: "minute".to_string(),
                 retry_after_secs: Some(60),

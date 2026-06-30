@@ -447,22 +447,14 @@ pub async fn batch_restart_workers<S: AdminStateProvider>(
             "restarted": restarted,
             "failed": failed,
         })),
-        mutation_status: if failed.is_empty() {
-            AdminMutationStatus::Applied
-        } else {
-            AdminMutationStatus::Applied
-        },
+        mutation_status: AdminMutationStatus::Applied,
         propagation_status: PropagationStatus::AppliedLocalOnly,
         event_id: None,
     };
     state.log_admin_audit_event(&audit_event);
 
     Ok(Json(AdminMutationResult {
-        status: if failed.is_empty() {
-            AdminMutationStatus::Applied
-        } else {
-            AdminMutationStatus::Applied
-        },
+        status: AdminMutationStatus::Applied,
         target: serde_json::json!("worker_batch"),
         local_store_mutated: !restarted.is_empty(),
         propagation: PropagationStatus::AppliedLocalOnly,

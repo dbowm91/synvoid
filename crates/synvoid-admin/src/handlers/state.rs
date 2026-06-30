@@ -80,6 +80,7 @@ pub trait AdminStateProvider: Send + Sync {
     fn get_metrics_history(&self, seconds: u64) -> Vec<AggregatedMetrics>;
     fn get_system_resources(&self) -> SystemResources;
     fn uptime(&self) -> u64;
+    #[allow(clippy::too_many_arguments)]
     fn get_request_logs(
         &self,
         site_id: Option<&str>,

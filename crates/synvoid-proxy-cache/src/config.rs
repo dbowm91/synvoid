@@ -57,6 +57,7 @@ impl Default for ProxyCacheSettings {
 }
 
 impl ProxyCacheSettings {
+    #[allow(clippy::too_many_arguments)]
     pub fn from_config(
         enable: Option<bool>,
         path: Option<String>,

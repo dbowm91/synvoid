@@ -130,11 +130,10 @@ impl IcmpFilterManager {
                 }
                 #[cfg(not(feature = "icmp-ebpf"))]
                 {
-                    return Err(IcmpFilterError::FeatureNotEnabled(
+                    Err(IcmpFilterError::FeatureNotEnabled(
                         "icmp-ebpf feature not enabled".to_string(),
-                    ));
+                    ))
                 }
-                Ok(Box::new(NftablesFilter::new(config)?))
             }
             FilterType::Nftables => Ok(Box::new(NftablesFilter::new(config)?)),
             FilterType::Auto => {

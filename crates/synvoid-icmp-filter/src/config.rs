@@ -80,16 +80,7 @@ impl IcmpTypeRule {
         matches!(self.action, IcmpAction::Allow)
     }
 
-    pub fn validate(&self, is_v6: bool) -> Result<(), String> {
-        if is_v6 {
-            if self.icmp_type > 255 {
-                return Err(format!("Invalid ICMPv6 type {} for rule", self.icmp_type));
-            }
-        } else {
-            if self.icmp_type > 255 {
-                return Err(format!("Invalid ICMPv4 type {} for rule", self.icmp_type));
-            }
-        }
+    pub fn validate(&self, _is_v6: bool) -> Result<(), String> {
         if let Some(ref desc) = self.description {
             if desc.len() > 256 {
                 return Err("Description too long (max 256 chars)".to_string());
@@ -142,17 +133,12 @@ pub enum Direction {
     Outbound,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum InterfaceSpec {
+    #[default]
     All,
     Specific(Vec<String>),
-}
-
-impl Default for InterfaceSpec {
-    fn default() -> Self {
-        InterfaceSpec::All
-    }
 }
 
 impl InterfaceSpec {

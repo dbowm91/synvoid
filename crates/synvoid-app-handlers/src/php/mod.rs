@@ -31,12 +31,12 @@ static COMMON_PHP_SOCKETS: LazyLock<Vec<PathBuf>> = LazyLock::new(|| {
         for entry in entries.flatten() {
             let path = entry.path();
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if name.ends_with("-fpm.sock") || name.ends_with("-fpm.sock.lock") {
-                    if is_unix_socket(&path) && !name.ends_with(".lock") {
-                        if !paths.contains(&path) {
-                            paths.push(path);
-                        }
-                    }
+                if (name.ends_with("-fpm.sock") || name.ends_with("-fpm.sock.lock"))
+                    && is_unix_socket(&path)
+                    && !name.ends_with(".lock")
+                    && !paths.contains(&path)
+                {
+                    paths.push(path);
                 }
             }
         }
@@ -137,9 +137,10 @@ impl PhpClient {
     }
 
     fn build_fcgi_config(&self) -> FastCgiConfig {
-        let mut fcgi_config = FastCgiConfig::default();
-
-        fcgi_config.socket = self.config.socket.clone();
+        let mut fcgi_config = FastCgiConfig {
+            socket: self.config.socket.clone(),
+            ..Default::default()
+        };
 
         if let Some(ref root) = self.config.root {
             fcgi_config.script_filename = Some(format!("{}/{{script}}", root));

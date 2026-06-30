@@ -65,7 +65,7 @@ pub fn increment_oversized_rejected() {
 type CacheKey = (u64, [u8; 16]);
 type ShardedNonceCache = DashMap<CacheKey, u64>;
 
-static NONCE_CACHE: LazyLock<ShardedNonceCache> = LazyLock::new(|| ShardedNonceCache::new());
+static NONCE_CACHE: LazyLock<ShardedNonceCache> = LazyLock::new(ShardedNonceCache::new);
 const MAX_NONCE_CACHE_SIZE: usize = 10000;
 const REPLAY_WINDOW_SECS: u64 = 60;
 
@@ -82,11 +82,11 @@ fn check_and_insert_nonce(signer_id: u64, nonce: &[u8; 16], timestamp: u64) -> b
             .iter()
             .filter(|entry| *entry.value() <= now.saturating_sub(REPLAY_WINDOW_SECS))
             .min_by_key(|entry| *entry.value())
-            .map(|entry| entry.key().clone());
+            .map(|entry| *entry.key());
         if let Some(key_to_remove) = oldest_key {
             NONCE_CACHE.remove(&key_to_remove);
         } else {
-            let first_key = NONCE_CACHE.iter().next().map(|e| e.key().clone());
+            let first_key = NONCE_CACHE.iter().next().map(|e| *e.key());
             if let Some(key_to_remove) = first_key {
                 NONCE_CACHE.remove(&key_to_remove);
             }

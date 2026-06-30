@@ -105,21 +105,11 @@ impl BackendCapabilities {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct FilterStatus {
     pub enabled: bool,
     pub backend: FilterBackend,
     pub config: IcmpFilterConfig,
-}
-
-impl Default for FilterStatus {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            backend: FilterBackend::default(),
-            config: IcmpFilterConfig::default(),
-        }
-    }
 }
 
 pub trait IcmpFilter: Debug + Send + Sync {

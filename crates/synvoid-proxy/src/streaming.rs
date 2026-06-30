@@ -125,8 +125,7 @@ where
                 }
                 Poll::Ready(None)
             }
-            Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(std::io::Error::other(
                 format!("{:?}", e),
             )))),
             Poll::Pending => Poll::Pending,

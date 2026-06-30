@@ -352,8 +352,8 @@ impl FastCgiPool {
             is_closed: *self.closed.read(),
             is_draining: *self.draining.read(),
             connection_timeout_ms: self.config.connection_timeout.as_millis() as u64,
-            health_check_interval_secs: self.config.health_check_interval.as_secs() as u64,
-            max_idle_time_secs: self.config.max_idle_time.as_secs() as u64,
+            health_check_interval_secs: self.config.health_check_interval.as_secs(),
+            max_idle_time_secs: self.config.max_idle_time.as_secs(),
         }
     }
 }

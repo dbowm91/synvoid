@@ -356,6 +356,7 @@ impl HttpMessageVerifier {
         self.client_mldsa_verifying_keys.write().remove(session_id);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn verify_request(
         &self,
         method: &str,

@@ -473,7 +473,7 @@ impl ProxyCache {
         {
             let mut entry = inflight_requests
                 .entry(key_clone.clone())
-                .or_insert_with(Vec::new);
+                .or_default();
             if entry.is_empty() {
                 entry.push(tx);
                 drop(entry);
@@ -597,7 +597,7 @@ impl ProxyCache {
 
         self.host_index
             .entry(key.host.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(key);
 
         Ok(())

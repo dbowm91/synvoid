@@ -130,6 +130,8 @@ impl StaticFileHandler {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::clone_on_copy)]
     pub fn new_with_minifier(
         config: SiteStaticConfig,
         site_id: String,
@@ -187,7 +189,7 @@ impl StaticFileHandler {
                 theme_config,
                 directory_template_path: None,
                 minifier_client,
-                image_rights_config: mesh_image_protection.clone(),
+                image_rights_config: mesh_image_protection,
             });
         }
 
@@ -261,7 +263,7 @@ impl StaticFileHandler {
             theme_config,
             directory_template_path,
             minifier_client,
-            image_rights_config: mesh_image_protection.clone(),
+            image_rights_config: mesh_image_protection,
         })
     }
 
@@ -402,6 +404,7 @@ impl StaticFileHandler {
         Ok(full_path)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn serve_file(
         &self,
         path: &Path,
@@ -633,7 +636,7 @@ impl StaticFileHandler {
                 && is_minifiable_content(&mime_type)
             {
                 let relative_path = path.strip_prefix(&location.fs_root).unwrap_or(path);
-                let encoding = accept_encoding.as_deref().unwrap_or("identity");
+                let encoding = accept_encoding.unwrap_or("identity");
 
                 if let Some(ref minifier_client) = self.minifier_client {
                     match minifier_client.request_minify(
@@ -658,7 +661,7 @@ impl StaticFileHandler {
                                 return Ok(StaticResponse {
                                     status: StatusCode::OK,
                                     headers,
-                                    body: StaticResponseBody::InMemory(Bytes::from(result.content)),
+                                    body: StaticResponseBody::InMemory(result.content),
                                 });
                             }
                         }

@@ -14,9 +14,9 @@ pub static GLOBAL_SHARED_RATELIMIT_TABLE: LazyLock<RwLock<Option<SharedRateLimit
 /// Shared connection table for distributed load balancing with worker liveness.
 ///
 /// Layout:
-/// - [0..8]: max_workers (u64)
-/// - [8..16]: max_backends (u64)
-/// - [16..16 + max_workers * 8]: heartbeats (AtomicU64)
+/// - [0..8][]: max_workers (u64)
+/// - [8..16][]: max_backends (u64)
+/// - [16..16 + max_workers * 8][]: heartbeats (AtomicU64)
 /// - [16 + max_workers * 8 .. ]: connections (AtomicUsize) [worker_id][backend_index]
 pub struct SharedConnectionTable {
     mmap: Arc<MmapMut>,
@@ -45,6 +45,7 @@ impl SharedConnectionTable {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&path)?;
 
         let header_size = 16;
@@ -146,10 +147,10 @@ impl Clone for SharedConnectionTable {
 /// Shared rate limit table for cross-worker IP rate limiting.
 ///
 /// Layout:
-/// - [0..num_slots * 4]: second_counters (AtomicU32)
-/// - [...]: minute_counters (AtomicU32)
-/// - [...]: five_min_counters (AtomicU32)
-/// - [...]: dirty_bits (AtomicU32)
+/// - [0..num_slots * 4][]: second_counters (AtomicU32)
+/// - [...][]: minute_counters (AtomicU32)
+/// - [...][]: five_min_counters (AtomicU32)
+/// - [...][]: dirty_bits (AtomicU32)
 pub struct SharedRateLimitTable {
     mmap: Arc<MmapMut>,
     num_slots: usize,
@@ -172,6 +173,7 @@ impl SharedRateLimitTable {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&path)?;
 
         let counter_size = num_slots * std::mem::size_of::<AtomicU32>();

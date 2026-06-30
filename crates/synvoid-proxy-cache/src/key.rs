@@ -12,6 +12,7 @@ pub struct CacheKey {
 }
 
 impl CacheKey {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         scheme: &str,
         method: &Method,

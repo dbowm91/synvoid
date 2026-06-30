@@ -119,7 +119,7 @@ impl ServerlessManager {
 
     pub fn subscribe_to_event(&self, function_name: &str, topic: String) {
         let mut subs = self.event_subscriptions.write();
-        subs.entry(topic.clone()).or_insert_with(Vec::new);
+        subs.entry(topic.clone()).or_default();
         if let Some(funcs) = subs.get_mut(&topic) {
             if !funcs.contains(&function_name.to_string()) {
                 funcs.push(function_name.to_string());
@@ -223,13 +223,11 @@ impl ServerlessManager {
             }
         }
 
-        if def.require_trusted_caller {
-            if !caller_role.is_global() {
-                return Err(ServerlessError::PermissionDenied(format!(
-                    "Function {} requires trusted (global) caller, but node {} is not global",
-                    function_name, caller_node_id
-                )));
-            }
+        if def.require_trusted_caller && !caller_role.is_global() {
+            return Err(ServerlessError::PermissionDenied(format!(
+                "Function {} requires trusted (global) caller, but node {} is not global",
+                function_name, caller_node_id
+            )));
         }
 
         if let Some(ref allowed_callers) = def.allowed_callers {
@@ -968,7 +966,8 @@ impl ServerlessManager {
 
         get_global_serverless_registry().record_invocation(function_name);
 
-        if let Some(pool) = self.pools.read().get(function_name).cloned() {
+        let pool = self.pools.read().get(function_name).cloned();
+        if let Some(pool) = pool {
             let instance = pool.get_instance().await.map_err(|e| {
                 get_global_serverless_registry().record_error(function_name);
                 ServerlessError::WasmError(format!("Failed to get instance from pool: {}", e))
@@ -1006,7 +1005,8 @@ impl ServerlessManager {
                             get_global_serverless_registry().record_error(function_name);
                             ServerlessError::CompilationFailed(e.to_string())
                         })?;
-                    if let Some(func) = self.functions.read().get(function_name).cloned() {
+                    let func = self.functions.read().get(function_name).cloned();
+                    if let Some(func) = func {
                         if let Some(runtime) = func.runtime.clone() {
                             return self
                                 .invoke_runtime_for_offload(runtime, function_name, input)

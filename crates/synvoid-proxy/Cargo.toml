@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 default = []
-mesh = []
+mesh = ["synvoid-static-files/mesh"]
 
 [dependencies]
 synvoid-core = { path = "../synvoid-core" }

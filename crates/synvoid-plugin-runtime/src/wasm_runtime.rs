@@ -1467,9 +1467,8 @@ impl WasmRuntime {
         }
 
         let mut store = self.create_store((*env).clone());
-        let exports = self.instantiate(&mut store).map_err(|e| {
+        let exports = self.instantiate(&mut store).inspect_err(|_| {
             Self::record_invoke_failure("filter_request");
-            e
         })?;
         let result = self.do_filter_request_with_exports(parts, body, &mut store, exports);
         if result.is_err() {
@@ -1654,9 +1653,8 @@ impl WasmRuntime {
         }
 
         let mut store = self.create_store((*env).clone());
-        let exports = self.instantiate(&mut store).map_err(|e| {
+        let exports = self.instantiate(&mut store).inspect_err(|_| {
             Self::record_invoke_failure("transform_response");
-            e
         })?;
         let result = self.do_transform_response_with_exports(parts, body, &mut store, exports);
         if result.is_err() {
@@ -1793,9 +1791,8 @@ impl WasmRuntime {
         let mut store = self.create_store(env);
         store.data_mut().body_receiver = Some(rx);
 
-        let exports = self.instantiate(&mut store).map_err(|e| {
+        let exports = self.instantiate(&mut store).inspect_err(|_| {
             Self::record_invoke_failure("serverless_streaming");
-            e
         })?;
 
         let handle_fn = match exports.handle_request.as_ref() {
@@ -1811,9 +1808,8 @@ impl WasmRuntime {
             }
         };
 
-        Self::check_timeout(&store).map_err(|e| {
+        Self::check_timeout(&store).inspect_err(|_| {
             Self::record_invoke_failure("serverless_streaming");
-            e
         })?;
 
         let method_bytes = method.as_bytes();
@@ -1953,9 +1949,8 @@ impl WasmRuntime {
         );
 
         let mut store = self.create_store(env);
-        let exports = self.instantiate(&mut store).map_err(|e| {
+        let exports = self.instantiate(&mut store).inspect_err(|_| {
             Self::record_invoke_failure("serverless");
-            e
         })?;
 
         let handle_fn = match exports.handle_request.as_ref() {
@@ -1971,9 +1966,8 @@ impl WasmRuntime {
             }
         };
 
-        Self::check_timeout(&store).map_err(|e| {
+        Self::check_timeout(&store).inspect_err(|_| {
             Self::record_invoke_failure("serverless");
-            e
         })?;
 
         let method_bytes = method.as_bytes();
