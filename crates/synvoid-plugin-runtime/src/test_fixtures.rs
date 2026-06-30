@@ -313,6 +313,119 @@ pub fn minimal_filter_pass_no_alloc() -> Vec<u8> {
     .expect("valid WAT")
 }
 
+/// WASM module with guest_alloc but NO guest_free.
+/// Tests that missing guest_free is detected by validate_guest_abi and
+/// that write_to_guest_memory succeeds but free_guest_memory is a no-op.
+pub fn filter_alloc_only_no_free() -> Vec<u8> {
+    wat::parse_str(
+        r#"
+        (module
+            (memory (export "memory") 1)
+            (global $heap (mut i32) (i32.const 0))
+
+            (func (export "guest_alloc") (param $size i32) (result i32)
+                (local $ptr i32)
+                (local.set $ptr (global.get $heap))
+                (global.set $heap (i32.add (global.get $heap) (local.get $size)))
+                (local.get $ptr)
+            )
+
+            ;; No guest_free export
+
+            (func (export "filter_request")
+                (param i32 i32 i32 i32 i32 i32 i32 i32)
+                (result i32)
+                i32.const 0  ;; Pass
+            )
+        )
+        "#,
+    )
+    .expect("valid WAT")
+}
+
+/// WASM module where guest_alloc returns -1 (negative pointer).
+/// Tests that write_to_guest_memory rejects negative allocation results.
+pub fn filter_alloc_returns_negative() -> Vec<u8> {
+    wat::parse_str(
+        r#"
+        (module
+            (memory (export "memory") 1)
+            (global $heap (mut i32) (i32.const 0))
+
+            (func (export "guest_alloc") (param $size i32) (result i32)
+                i32.const -1  ;; Return negative pointer
+            )
+
+            (func (export "guest_free") (param $ptr i32) (param $size i32))
+
+            (func (export "filter_request")
+                (param i32 i32 i32 i32 i32 i32 i32 i32)
+                (result i32)
+                i32.const 0  ;; Pass
+            )
+        )
+        "#,
+    )
+    .expect("valid WAT")
+}
+
+/// WASM module where guest_alloc traps (unreachable).
+/// Tests that guest_alloc traps are classified as runtime failure.
+pub fn filter_alloc_traps() -> Vec<u8> {
+    wat::parse_str(
+        r#"
+        (module
+            (memory (export "memory") 1)
+
+            (func (export "guest_alloc") (param $size i32) (result i32)
+                unreachable  ;; Trap immediately
+            )
+
+            (func (export "guest_free") (param $ptr i32) (param $size i32))
+
+            (func (export "filter_request")
+                (param i32 i32 i32 i32 i32 i32 i32 i32)
+                (result i32)
+                i32.const 0
+            )
+        )
+        "#,
+    )
+    .expect("valid WAT")
+}
+
+/// WASM module where guest_free traps (unreachable).
+/// Tests that guest_free traps cause free_guest_memory to return false,
+/// indicating the instance should be poisoned/dropped from pool.
+pub fn filter_free_traps() -> Vec<u8> {
+    wat::parse_str(
+        r#"
+        (module
+            (memory (export "memory") 1)
+            (global $heap (mut i32) (i32.const 0))
+
+            (func (export "guest_alloc") (param $size i32) (result i32)
+                (local $ptr i32)
+                (local.set $ptr (global.get $heap))
+                (global.set $heap (i32.add (global.get $heap) (local.get $size)))
+                (local.get $ptr)
+            )
+
+            (func (export "guest_free") (param $ptr i32) (param $size i32)
+                unreachable  ;; Trap immediately
+            )
+
+            (func (export "filter_request")
+                (param i32 i32 i32 i32 i32 i32 i32 i32)
+                (result i32)
+                i32.const 0
+            )
+        )
+        "#,
+    )
+    .expect("valid WAT")
+}
+
 /// WASM module that allocates all request data into non-overlapping regions
 /// and verifies the ranges are disjoint by writing magic bytes.
 pub fn filter_verifies_distinct_ranges() -> Vec<u8> {
@@ -373,6 +486,10 @@ mod tests {
             invalid_wasm_bytes(),
             oversized_memory_module(),
             minimal_filter_pass_no_alloc(),
+            filter_alloc_only_no_free(),
+            filter_alloc_returns_negative(),
+            filter_alloc_traps(),
+            filter_free_traps(),
         ];
 
         for (i, wasm) in fixtures.iter().enumerate() {

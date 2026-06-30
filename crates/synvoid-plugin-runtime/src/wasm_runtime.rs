@@ -4459,4 +4459,231 @@ entry = "plugin.wasm"
             other => panic!("expected Pass, got {:?}", other),
         }
     }
+
+    // ─── Missing plan item: ABI validation for guest_free ────────────────────
+
+    #[test]
+    fn test_validate_guest_abi_missing_free() {
+        let wasm = test_fixtures::filter_alloc_only_no_free();
+        let engine = wasmtime::Engine::default();
+        let module = wasmtime::Module::from_binary(&engine, &wasm).expect("valid WASM");
+        let info = WasmRuntime::validate_guest_abi(&module);
+        assert!(info.has_filter_request);
+        assert!(info.has_memory);
+        assert!(info.has_guest_alloc);
+        assert!(!info.has_guest_free, "should detect missing guest_free");
+        assert!(
+            !info.has_required_allocator(),
+            "has_required_allocator should be false when guest_free is missing"
+        );
+    }
+
+    #[test]
+    fn test_write_to_guest_memory_succeeds_without_guest_free() {
+        // write_to_guest_memory only requires guest_alloc, not guest_free.
+        // free_guest_memory gracefully handles missing guest_free as a no-op.
+        let wasm = test_fixtures::filter_alloc_only_no_free();
+        let limits = make_limits_with_filter_cap();
+        let runtime =
+            WasmRuntime::load_from_bytes_with_priority("alloc-only-plugin", &wasm, limits, 0)
+                .expect("load should succeed");
+        let mut store = runtime.create_store(std::collections::HashMap::new());
+        let exports = runtime.instantiate(&mut store).expect("instantiate");
+
+        let result = runtime.write_to_guest_memory(&mut store, &exports, b"test");
+        assert!(result.is_ok());
+        let (ptr, len) = result.unwrap();
+        assert!(ptr >= 0);
+        assert_eq!(len, 4);
+
+        // free_guest_memory should succeed (no-op) even though guest_free is missing
+        let alloc = GuestAllocation { ptr, len };
+        let freed = runtime.free_guest_memory(&mut store, &exports, &alloc);
+        assert!(
+            freed,
+            "free_guest_memory should succeed when guest_free is absent"
+        );
+    }
+
+    // ─── Missing plan item: negative pointer → instance poisoned ─────────────
+
+    #[test]
+    fn test_negative_alloc_pointer_fails() {
+        let wasm = test_fixtures::filter_alloc_returns_negative();
+        let limits = make_limits_with_filter_cap();
+        let runtime =
+            WasmRuntime::load_from_bytes_with_priority("neg-alloc-plugin", &wasm, limits, 0)
+                .expect("load should succeed");
+        let mut store = runtime.create_store(std::collections::HashMap::new());
+        let exports = runtime.instantiate(&mut store).expect("instantiate");
+
+        let result = runtime.write_to_guest_memory(&mut store, &exports, b"test");
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("negative pointer"),
+            "expected negative pointer error, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_negative_alloc_pointer_full_invocation_fails() {
+        // Full invocation: filter_request should fail when guest_alloc returns -1
+        let wasm = test_fixtures::filter_alloc_returns_negative();
+        let limits = make_limits_with_filter_cap();
+        let runtime =
+            WasmRuntime::load_from_bytes_with_priority("neg-alloc-plugin", &wasm, limits, 0)
+                .expect("load should succeed");
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("http://example.com/")
+            .body(Bytes::new())
+            .unwrap();
+        let env = Arc::new(std::collections::HashMap::new());
+        let result = runtime.filter_request(req, env);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("guest_alloc") || msg.contains("negative pointer"),
+            "expected allocation failure, got: {}",
+            msg
+        );
+    }
+
+    // ─── Missing plan item: guest traps during guest_alloc ───────────────────
+
+    #[test]
+    fn test_guest_alloc_trap_classified_as_runtime_failure() {
+        let wasm = test_fixtures::filter_alloc_traps();
+        let limits = make_limits_with_filter_cap();
+        let runtime =
+            WasmRuntime::load_from_bytes_with_priority("alloc-trap-plugin", &wasm, limits, 0)
+                .expect("load should succeed");
+        let mut store = runtime.create_store(std::collections::HashMap::new());
+        let exports = runtime.instantiate(&mut store).expect("instantiate");
+
+        let result = runtime.write_to_guest_memory(&mut store, &exports, b"test");
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("guest_alloc failed"),
+            "expected guest_alloc trap error, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_guest_alloc_trap_full_invocation_fails() {
+        let wasm = test_fixtures::filter_alloc_traps();
+        let limits = make_limits_with_filter_cap();
+        let runtime =
+            WasmRuntime::load_from_bytes_with_priority("alloc-trap-plugin", &wasm, limits, 0)
+                .expect("load should succeed");
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("http://example.com/")
+            .body(Bytes::new())
+            .unwrap();
+        let env = Arc::new(std::collections::HashMap::new());
+        let result = runtime.filter_request(req, env);
+        assert!(result.is_err());
+    }
+
+    // ─── Missing plan item: guest traps during guest_free ────────────────────
+
+    #[test]
+    fn test_guest_free_trap_returns_false() {
+        let wasm = test_fixtures::filter_free_traps();
+        let limits = make_limits_with_filter_cap();
+        let runtime =
+            WasmRuntime::load_from_bytes_with_priority("free-trap-plugin", &wasm, limits, 0)
+                .expect("load should succeed");
+        let mut store = runtime.create_store(std::collections::HashMap::new());
+        let exports = runtime.instantiate(&mut store).expect("instantiate");
+
+        // Allocate some memory first
+        let result = runtime.write_to_guest_memory(&mut store, &exports, b"test");
+        assert!(result.is_ok());
+        let (ptr, len) = result.unwrap();
+
+        // free_guest_memory should return false (trap → instance poisoned)
+        let alloc = GuestAllocation { ptr, len };
+        let freed = runtime.free_guest_memory(&mut store, &exports, &alloc);
+        assert!(
+            !freed,
+            "free_guest_memory should return false when guest_free traps"
+        );
+    }
+
+    // ─── Pairwise disjoint range assertion helper + test ─────────────────────
+
+    /// Assert that all given ranges are pairwise disjoint (no overlaps).
+    /// Returns Ok(()) if all ranges are disjoint, or Err with details of the overlap.
+    fn assert_ranges_pairwise_disjoint(
+        ranges: &[std::ops::Range<usize>],
+        labels: &[&str],
+    ) -> Result<(), String> {
+        for i in 0..ranges.len() {
+            for j in (i + 1)..ranges.len() {
+                let a = &ranges[i];
+                let b = &ranges[j];
+                // Two ranges [a_start, a_end) and [b_start, b_end) overlap iff
+                // a_start < b_end && b_start < a_end
+                if a.start < b.end && b.start < a.end {
+                    return Err(format!(
+                        "ranges overlap: {} [{}..{}) and {} [{}..{})",
+                        labels[i], a.start, a.end, labels[j], b.start, b.end
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_pairwise_disjoint_helper_detects_overlap() {
+        let ranges = vec![0..10, 5..15, 20..30];
+        let labels = vec!["a", "b", "c"];
+        let result = assert_ranges_pairwise_disjoint(&ranges, &labels);
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(msg.contains("overlap"), "got: {}", msg);
+    }
+
+    #[test]
+    fn test_pairwise_disjoint_helper_accepts_disjoint() {
+        let ranges = vec![0..10, 10..20, 20..30];
+        let labels = vec!["a", "b", "c"];
+        let result = assert_ranges_pairwise_disjoint(&ranges, &labels);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_pairwise_disjoint_helper_accepts_empty() {
+        let ranges: Vec<std::ops::Range<usize>> = vec![];
+        let labels: Vec<&str> = vec![];
+        let result = assert_ranges_pairwise_disjoint(&ranges, &labels);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    #[allow(clippy::single_range_in_vec_init)]
+    fn test_pairwise_disjoint_helper_accepts_single() {
+        let ranges = vec![50..150];
+        let labels = vec!["only"];
+        let result = assert_ranges_pairwise_disjoint(&ranges, &labels);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_pairwise_disjoint_helper_touching_ok() {
+        // Adjacent ranges that touch at boundary are not overlapping
+        let ranges = vec![0..10, 10..20];
+        let labels = vec!["left", "right"];
+        let result = assert_ranges_pairwise_disjoint(&ranges, &labels);
+        assert!(result.is_ok());
+    }
 }
