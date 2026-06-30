@@ -1,6 +1,6 @@
 # Phase 13 Plan: Plugin Signature Verification and Loader Trust Audit
 
-Status: detailed handoff plan.
+Status: completed.
 
 Roadmap position: Track 2, Phase 13 of `plans/roadmap.md`.
 

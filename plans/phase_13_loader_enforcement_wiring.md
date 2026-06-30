@@ -1,6 +1,6 @@
 # Plan: Wire enforce_plugin_load_policy into All Loader Paths
 
-Status: Implementation plan (replaces deferred item from Phase 13).
+Status: completed.
 
 ## Problem
 
