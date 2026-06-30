@@ -69,3 +69,74 @@ fn test_guest_allocation_tracking_struct_exists() {
         "GuestAllocation tracking struct must exist"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Workstream 5: Strengthen CI and Guardrail Enforcement
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// GuestAbiPolicy enum must exist with required variants for ABI enforcement.
+#[test]
+fn test_guest_abi_policy_enum_exists() {
+    let source = include_str!("../crates/synvoid-plugin-runtime/src/wasm_runtime.rs");
+    assert!(
+        source.contains("GuestAbiPolicy"),
+        "GuestAbiPolicy enum must exist"
+    );
+    assert!(
+        source.contains("ProductionPointerLength"),
+        "ProductionPointerLength variant must exist"
+    );
+    assert!(
+        source.contains("DevelopmentAllowMissingFree"),
+        "DevelopmentAllowMissingFree variant must exist"
+    );
+}
+
+/// validate_for_policy method must exist on GuestAbiInfo for ABI validation.
+#[test]
+fn test_validate_for_policy_exists() {
+    let source = include_str!("../crates/synvoid-plugin-runtime/src/wasm_runtime.rs");
+    assert!(
+        source.contains("fn validate_for_policy"),
+        "validate_for_policy method must exist"
+    );
+}
+
+/// validate_guest_abi must be public for use by loader paths.
+#[test]
+fn test_validate_guest_abi_is_pub() {
+    let source = include_str!("../crates/synvoid-plugin-runtime/src/wasm_runtime.rs");
+    let lines: Vec<&str> = source.lines().collect();
+    for line in &lines {
+        if line.contains("fn validate_guest_abi") && line.contains("module") {
+            assert!(
+                line.trim().starts_with("pub fn") || line.trim().starts_with("pub(crate) fn"),
+                "validate_guest_abi must be public"
+            );
+            return;
+        }
+    }
+    panic!("validate_guest_abi function not found");
+}
+
+/// Single-frame allocation structs and methods must exist for request input.
+#[test]
+fn test_single_frame_allocation_struct_exists() {
+    let source = include_str!("../crates/synvoid-plugin-runtime/src/wasm_runtime.rs");
+    assert!(
+        source.contains("struct GuestInputFrame"),
+        "GuestInputFrame struct must exist"
+    );
+    assert!(
+        source.contains("struct RequestInputPieces"),
+        "RequestInputPieces struct must exist"
+    );
+    assert!(
+        source.contains("fn write_request_input_frame"),
+        "write_request_input_frame method must exist"
+    );
+    assert!(
+        source.contains("fn free_guest_input_frame"),
+        "free_guest_input_frame method must exist"
+    );
+}

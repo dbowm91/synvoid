@@ -183,7 +183,7 @@ impl InstancePool {
                 max_memory_mb: function_definition.memory_mb.unwrap_or(64),
                 max_table_elements: None,
                 max_cpu_fuel: function_definition.cpu_fuel.unwrap_or(1000000),
-                timeout_seconds: function_definition.timeout_seconds.unwrap_or(30),
+                timeout: Duration::from_secs(function_definition.timeout_seconds.unwrap_or(30)),
                 max_instances: function_definition.max_instances.unwrap_or(10),
                 memory_budget_mb: None,
                 wasi_enabled: false,

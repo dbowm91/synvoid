@@ -227,12 +227,12 @@ impl WasmPooledInstance {
     pub(crate) fn prepare_for_request(
         &mut self,
         env: std::collections::HashMap<String, String>,
-        timeout_seconds: u64,
+        timeout: Duration,
         allowed_dht_prefixes: Vec<String>,
         capabilities: Arc<PluginCapabilities>,
     ) {
         self.store.data_mut().start = Instant::now();
-        self.store.data_mut().timeout = Duration::from_secs(timeout_seconds);
+        self.store.data_mut().timeout = timeout;
         self.store.data_mut().env = env;
         self.store.data_mut().body_receiver = None;
         self.store.data_mut().allowed_dht_prefixes = allowed_dht_prefixes;

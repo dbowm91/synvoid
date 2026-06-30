@@ -122,11 +122,11 @@ Enforcement uses `check_input()`, `check_output()`, `timeout()`, and a semaphore
 
 ### Manifest-to-Runtime Conversion (M1 Phase 01)
 
-`limits_from_manifest(manifest, defaults) -> WasmResourceLimits` is the single conversion path from a plugin manifest to runtime resource limits. All load paths use this function; no load path bypasses it to apply raw default limits.
+`limits_from_manifest(manifest, defaults) -> Result<WasmResourceLimits, WasmPluginError>` is the single conversion path from a plugin manifest to runtime resource limits. All load paths use this function; no load path bypasses it to apply raw default limits.
 
 - **Capabilities** always come from the manifest's `[capabilities]` section, never from server defaults. The manifest is the authoritative source for what a plugin can do.
-- **Timeout** is converted from milliseconds to seconds with a minimum of 1 second (`max(1, timeout_ms / 1000)`). Sub-second timeouts are rounded up.
-- **Fuel** maps directly from `manifest.limits.fuel` if present; otherwise falls back to the provided default.
+- **Timeout** is converted from milliseconds to `Duration` with sub-second precision. `Duration::from_millis(timeout_ms.max(1))` maps manifest timeout_ms directly to runtime duration (e.g., 50ms manifest timeout maps to 50ms runtime, not 1s).
+- **Fuel** maps directly from `manifest.limits.fuel` if present; otherwise falls back to the provided default. **Zero fuel is rejected for `SignedSandboxed` and `LocalSandboxed` tiers** — these tiers require a non-zero fuel budget to enforce execution limits.
 - **Memory pages** maps directly from `manifest.limits.memory_pages` if present; otherwise falls back to the provided default.
 - **Max concurrency** maps directly from `manifest.limits.max_concurrency`; defaults apply only when the manifest omits the field.
 
@@ -435,15 +435,22 @@ The host/guest WASM pointer-length ABI is now deterministic, non-overlapping, bo
 
 1. **Fixed-offset fallback removed.** `write_to_guest_memory()` requires `guest_alloc`/`guest_free` exports. Plugins without allocator exports fail at write time with `WasmPluginError::LoadFailed`. The old fallback of writing all buffers at offset `1024` is gone.
 
-2. **`GuestAbiInfo` struct.** Metadata describing a module's ABI exports. `validate_guest_abi(&Module)` returns this struct for introspection and testing.
+2. **`GuestAbiPolicy` enum.** Controls ABI validation strictness per trust tier:
+   - `ProductionPointerLength` — requires both `guest_alloc` AND `guest_free` exports. Used for `SignedSandboxed` and `LocalSandboxed` tiers.
+   - `DevelopmentAllowMissingFree` — allows plugins with only `guest_alloc` (no `guest_free`). Used for `DevelopmentHotReload` and dev/test compatibility.
+   - `validate_for_policy(&self, policy: GuestAbiPolicy) -> Result<(), WasmPluginError>` validates a module against the specified policy.
 
-3. **`checked_guest_range()` function.** Validates guest pointer+length pairs against memory bounds using checked arithmetic. Used by all host functions that read/write guest memory.
+3. **`GuestAbiInfo` struct.** Metadata describing a module's ABI exports. `validate_guest_abi(&Module)` returns this struct for introspection and testing (public function).
 
-4. **`GuestAllocation` tracking.** Each allocation is tracked for safe cleanup. `free_guest_memory()` takes `&GuestAllocation`, logs failures, and returns `bool` (false if `guest_free` traps). Trapped instances are not returned to the pool.
+4. **Single-frame allocation.** All 4 invocation paths (`filter_request`, `transform_response`, `handler`, `streaming handler`) now allocate a single contiguous `GuestInputFrame` per request via `write_request_input_frame()`. The frame contains serialized headers, body, and metadata in one allocation. `free_guest_input_frame()` releases the frame after guest execution.
 
-5. **`serialize_headers()` hardened.** Now returns `Result<Vec<u8>, WasmPluginError>`. Validates header count, name length, and value length against `u16::MAX`. Checks total encoded size against input limits.
+5. **`checked_guest_range()` function.** Validates guest pointer+length pairs against memory bounds using checked arithmetic. Used by all host functions that read/write guest memory.
 
-6. **Host functions use checked arithmetic.** `get_env`, `synvoid_read_body_chunk`, `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event` all use `checked_guest_range` instead of `saturating_add` for bounds checking.
+6. **`GuestAllocation` tracking.** Each allocation is tracked for safe cleanup. `free_guest_memory()` takes `&GuestAllocation`, logs failures, and returns `bool` (false if `guest_free` traps). Trapped instances are not returned to the pool.
+
+7. **`serialize_headers()` hardened.** Now returns `Result<Vec<u8>, WasmPluginError>`. Validates header count, name length, and value length against `u16::MAX`. Checks total encoded size against input limits.
+
+8. **Host functions use checked arithmetic.** `get_env`, `synvoid_read_body_chunk`, `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event` all use `checked_guest_range` instead of `saturating_add` for bounds checking.
 
 **Required WASM exports for pointer-length ABI:**
 
@@ -451,7 +458,7 @@ The host/guest WASM pointer-length ABI is now deterministic, non-overlapping, bo
 |--------|----------|-------------|
 | `memory` | Yes | Linear memory |
 | `guest_alloc` | Yes | Guest-side allocation |
-| `guest_free` | Yes | Guest-side deallocation |
+| `guest_free` | Yes (production) / Optional (dev) | Guest-side deallocation; required for `ProductionPointerLength` policy, optional for `DevelopmentAllowMissingFree` |
 | `filter_request` | At least one | WAF filter hook |
 | `transform_response` | At least one | Response transform hook |
 | `handle_request` | At least one | Serverless handler hook |
@@ -465,10 +472,12 @@ cargo test -p synvoid-plugin-runtime -- test_validate_guest_abi
 cargo test -p synvoid-plugin-runtime -- test_serialize_headers_rejects
 cargo test -p synvoid-plugin-runtime -- test_write_to_guest_memory_requires_allocator
 cargo test -p synvoid-plugin-runtime -- test_allocator_plugin_receives_distinct_ranges
+cargo test -p synvoid-plugin-runtime -- test_guest_abi_policy
+cargo test -p synvoid-plugin-runtime -- test_single_frame_allocation
 cargo test --test abi_memory_boundary_guard
 ```
 
-**Guardrail:** The `abi_memory_boundary_guard` test suite verifies the fixed-offset fallback is removed, `guest_alloc` is required, `checked_guest_range` is defined, `serialize_headers` returns `Result`, and `GuestAllocation` exists.
+**Guardrail:** The `abi_memory_boundary_guard` test suite verifies the fixed-offset fallback is removed, `guest_alloc` is required, `GuestAbiPolicy` validation, single-frame allocation, `checked_guest_range` is defined, `serialize_headers` returns `Result`, and `GuestAllocation` exists.
 
 ## Production vs Development
 
@@ -479,6 +488,8 @@ cargo test --test abi_memory_boundary_guard
 | Mesh/admin capabilities in dev mode | Warned (non-fatal) | Rejected |
 | Hot-reload | Permissive | Must be explicitly configured |
 | Unsigned plugins | Allowed | Rejected or warned per policy |
+| ABI policy | `DevelopmentAllowMissingFree` (guest_free optional) | `ProductionPointerLength` (guest_alloc+guest_free required) |
+| Fuel budget | Optional (zero allowed) | Required non-zero for sandboxed tiers |
 
 ## Known Deferred Items
 
@@ -513,10 +524,14 @@ The `plugin_capability_boundary_guard` test suite (`tests/plugin_capability_boun
 - All 11 `PluginCapability` variants have corresponding `permits()` arms.
 - `PluginCapabilities` default is all-deny.
 - `DevelopmentHotReload` requires explicit config.
+- GuestAbiPolicy is enforced: production requires both `guest_alloc` and `guest_free`.
+- Single-frame allocation is used for all invocation paths.
+- Zero fuel is rejected for sandboxed tiers.
 
 ```bash
 cargo test --test plugin_capability_boundary_guard
 cargo test --test plugin_signature_policy_guard
 cargo test --test manifest_authority_wiring
 cargo test --test manifest_authority_load_path_guard
+cargo test --test abi_memory_boundary_guard
 ```

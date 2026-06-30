@@ -101,6 +101,17 @@ and failure counting.
 
 `write_to_guest_memory()` now requires `guest_alloc` export. Plugins without allocator exports fail with `WasmPluginError::LoadFailed("plugin missing required guest_alloc export")`. The old `1024i32` fallback is gone.
 
+### GuestAbiPolicy
+
+`GuestAbiPolicy` enum controls ABI validation strictness per trust tier:
+- `ProductionPointerLength` — requires both `guest_alloc` AND `guest_free`. Used for `SignedSandboxed` and `LocalSandboxed`.
+- `DevelopmentAllowMissingFree` — allows `guest_alloc` only (no `guest_free`). Used for dev/test compatibility.
+- `validate_for_policy()` validates a module against the specified policy.
+
+### Single-Frame Allocation
+
+All 4 invocation paths (`filter_request`, `transform_response`, `handler`, `streaming handler`) now allocate a single contiguous `GuestInputFrame` per request via `write_request_input_frame()`. The frame contains serialized headers, body, and metadata in one allocation. `free_guest_input_frame()` releases the frame after guest execution.
+
 ### Checked Memory Operations
 
 All guest pointer/length handling uses `checked_guest_range(ptr, len, mem_len)`. Host functions (`get_env`, `synvoid_read_body_chunk`, `mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event`) validate ranges before access.

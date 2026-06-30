@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::plugin::{PluginManager, PluginManagerLifecycle};
 
@@ -35,7 +36,7 @@ impl PluginRuntimeOwner {
             let limits = crate::plugin::WasmResourceLimits {
                 max_memory_mb: plugin_cfg.max_memory_mb.unwrap_or(256),
                 max_cpu_fuel: plugin_cfg.max_cpu_fuel.unwrap_or(1_000_000),
-                timeout_seconds: plugin_cfg.timeout_seconds.unwrap_or(30),
+                timeout: Duration::from_secs(plugin_cfg.timeout_seconds.unwrap_or(30)),
                 allowed_dht_prefixes: plugin_cfg.allowed_dht_prefixes.clone(),
                 ..Default::default()
             };

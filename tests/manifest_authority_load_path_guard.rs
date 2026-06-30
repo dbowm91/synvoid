@@ -3,7 +3,7 @@
 //! Ensures that all plugin load paths use `prepare_plugin_load` or
 //! `limits_from_manifest` rather than directly calling `WasmRuntime::load`
 /// with `self.default_limits.clone()` after manifest enforcement.
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 fn strip_comments_and_strings(content: &str) -> String {
     let mut result = String::with_capacity(content.len());
@@ -237,8 +237,8 @@ fn plugin_info_has_introspection_fields() {
         "PluginInfo must have trust_tier field"
     );
     assert!(
-        cleaned.contains("pub timeout_seconds: u64"),
-        "PluginInfo must have timeout_seconds field"
+        cleaned.contains("pub timeout: Duration"),
+        "PluginInfo must have timeout field (Duration)"
     );
     assert!(
         cleaned.contains("pub capabilities_summary:"),

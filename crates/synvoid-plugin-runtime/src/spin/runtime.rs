@@ -198,7 +198,7 @@ impl SpinRuntime {
                     max_memory_mb: 64,
                     max_table_elements: None,
                     max_cpu_fuel: 1000000,
-                    timeout_seconds: self.config.default_timeout_seconds,
+                    timeout: Duration::from_secs(self.config.default_timeout_seconds),
                     max_instances: 1,
                     memory_budget_mb: None,
                     wasi_enabled,

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use http::{HeaderMap, Method, Response};
@@ -337,7 +337,9 @@ impl ServerlessManager {
                                     max_memory_mb: func_def.memory_mb.unwrap_or(64),
                                     max_table_elements: None,
                                     max_cpu_fuel: func_def.cpu_fuel.unwrap_or(1000000),
-                                    timeout_seconds: func_def.timeout_seconds.unwrap_or(30),
+                                    timeout: Duration::from_secs(
+                                        func_def.timeout_seconds.unwrap_or(30),
+                                    ),
                                     max_instances: 1,
                                     memory_budget_mb: None,
                                     wasi_enabled: false,
@@ -362,7 +364,7 @@ impl ServerlessManager {
                             max_memory_mb: func_def.memory_mb.unwrap_or(64),
                             max_table_elements: None,
                             max_cpu_fuel: func_def.cpu_fuel.unwrap_or(1000000),
-                            timeout_seconds: func_def.timeout_seconds.unwrap_or(30),
+                            timeout: Duration::from_secs(func_def.timeout_seconds.unwrap_or(30)),
                             max_instances: 1,
                             memory_budget_mb: None,
                             wasi_enabled: false,
@@ -522,7 +524,9 @@ impl ServerlessManager {
                     max_memory_mb: func_def.memory_mb.unwrap_or(default_memory),
                     max_table_elements: None,
                     max_cpu_fuel: func_def.cpu_fuel.unwrap_or(default_cpu),
-                    timeout_seconds: func_def.timeout_seconds.unwrap_or(default_timeout),
+                    timeout: Duration::from_secs(
+                        func_def.timeout_seconds.unwrap_or(default_timeout),
+                    ),
                     max_instances: 1,
                     memory_budget_mb: None,
                     wasi_enabled: false,
@@ -551,7 +555,7 @@ impl ServerlessManager {
             max_memory_mb: func_def.memory_mb.unwrap_or(default_memory),
             max_table_elements: None,
             max_cpu_fuel: func_def.cpu_fuel.unwrap_or(default_cpu),
-            timeout_seconds: func_def.timeout_seconds.unwrap_or(default_timeout),
+            timeout: Duration::from_secs(func_def.timeout_seconds.unwrap_or(default_timeout)),
             max_instances: 1,
             memory_budget_mb: None,
             wasi_enabled: false,
@@ -584,7 +588,9 @@ impl ServerlessManager {
                         max_memory_mb: func_def.memory_mb.unwrap_or(default_limits.0),
                         max_table_elements: None,
                         max_cpu_fuel: func_def.cpu_fuel.unwrap_or(default_limits.1),
-                        timeout_seconds: func_def.timeout_seconds.unwrap_or(default_limits.2),
+                        timeout: Duration::from_secs(
+                            func_def.timeout_seconds.unwrap_or(default_limits.2),
+                        ),
                         max_instances: 1,
                         memory_budget_mb: None,
                         wasi_enabled: false,
@@ -611,7 +617,7 @@ impl ServerlessManager {
                 max_memory_mb: func_def.memory_mb.unwrap_or(default_limits.0),
                 max_table_elements: None,
                 max_cpu_fuel: func_def.cpu_fuel.unwrap_or(default_limits.1),
-                timeout_seconds: func_def.timeout_seconds.unwrap_or(default_limits.2),
+                timeout: Duration::from_secs(func_def.timeout_seconds.unwrap_or(default_limits.2)),
                 max_instances: 1,
                 memory_budget_mb: None,
                 wasi_enabled: false,

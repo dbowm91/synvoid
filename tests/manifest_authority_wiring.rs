@@ -4,6 +4,7 @@
 //! authority, validating the manifest-to-runtime conversion pipeline.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use synvoid_plugin_runtime::sandbox::policy::limits_from_manifest;
 use synvoid_plugin_runtime::sandbox::types::{
@@ -47,7 +48,7 @@ async fn two_plugins_different_request_capabilities() {
         },
         PluginLimits::default(),
     );
-    let limits_a = limits_from_manifest(&manifest_a, &default_limits());
+    let limits_a = limits_from_manifest(&manifest_a, &default_limits()).unwrap();
     let guard_a =
         PluginInvocationGuard::new((*limits_a.capabilities).clone(), PluginLimits::default(), 4);
 
@@ -57,7 +58,7 @@ async fn two_plugins_different_request_capabilities() {
         PluginCapabilities::default(),
         PluginLimits::default(),
     );
-    let limits_b = limits_from_manifest(&manifest_b, &default_limits());
+    let limits_b = limits_from_manifest(&manifest_b, &default_limits()).unwrap();
     let guard_b =
         PluginInvocationGuard::new((*limits_b.capabilities).clone(), PluginLimits::default(), 4);
 
@@ -98,7 +99,7 @@ async fn two_plugins_different_mesh_capabilities() {
         },
         PluginLimits::default(),
     );
-    let limits_a = limits_from_manifest(&manifest_a, &default_limits());
+    let limits_a = limits_from_manifest(&manifest_a, &default_limits()).unwrap();
     let guard_a =
         PluginInvocationGuard::new((*limits_a.capabilities).clone(), PluginLimits::default(), 4);
 
@@ -108,7 +109,7 @@ async fn two_plugins_different_mesh_capabilities() {
         PluginCapabilities::default(),
         PluginLimits::default(),
     );
-    let limits_b = limits_from_manifest(&manifest_b, &default_limits());
+    let limits_b = limits_from_manifest(&manifest_b, &default_limits()).unwrap();
     let guard_b =
         PluginInvocationGuard::new((*limits_b.capabilities).clone(), PluginLimits::default(), 4);
 
@@ -147,7 +148,7 @@ fn two_plugins_different_limits() {
             ..Default::default()
         },
     );
-    let limits_a = limits_from_manifest(&manifest_a, &default_limits());
+    let limits_a = limits_from_manifest(&manifest_a, &default_limits()).unwrap();
 
     let manifest_b = make_manifest(
         "slow-plugin",
@@ -160,11 +161,11 @@ fn two_plugins_different_limits() {
             ..Default::default()
         },
     );
-    let limits_b = limits_from_manifest(&manifest_b, &default_limits());
+    let limits_b = limits_from_manifest(&manifest_b, &default_limits()).unwrap();
 
-    // Different timeouts
-    assert_eq!(limits_a.timeout_seconds, 1); // 100ms → 1s
-    assert_eq!(limits_b.timeout_seconds, 5); // 5000ms → 5s
+    // Different timeouts (Duration-based, preserves millisecond precision)
+    assert_eq!(limits_a.timeout, Duration::from_millis(100)); // 100ms
+    assert_eq!(limits_b.timeout, Duration::from_millis(5000)); // 5000ms
 
     // Different concurrency
     assert_eq!(limits_a.max_instances, 8);
@@ -208,7 +209,7 @@ fn manifest_capabilities_override_defaults() {
         ..Default::default()
     });
 
-    let limits = limits_from_manifest(&manifest, &defaults);
+    let limits = limits_from_manifest(&manifest, &defaults).unwrap();
 
     // Manifest denies mesh → effective denies mesh
     assert!(!limits.capabilities.permits(PluginCapability::Mesh));
@@ -243,7 +244,7 @@ fn effective_policy_matches_manifest() {
         },
     );
 
-    let effective_limits = limits_from_manifest(&manifest, &default_limits());
+    let effective_limits = limits_from_manifest(&manifest, &default_limits()).unwrap();
 
     let policy = synvoid_plugin_runtime::EffectivePluginPolicy {
         name: manifest.name.clone(),
@@ -261,7 +262,76 @@ fn effective_policy_matches_manifest() {
     assert!(policy.capabilities.request_inspect);
     assert!(policy.capabilities.response_mutate);
     assert!(policy.capabilities.mesh);
-    assert_eq!(policy.limits.timeout_seconds, 1); // 200ms → 1s
+    assert_eq!(policy.limits.timeout, Duration::from_millis(200)); // 200ms
     assert_eq!(policy.limits.max_instances, 6);
     assert_eq!(policy.limits.max_cpu_fuel, 999);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Workstream 5: Strengthen CI and Guardrail Enforcement
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// limits_from_manifest must reject zero fuel for production sandboxed tiers.
+///
+/// Fuel is the primary CPU containment mechanism. Zero fuel disables the fuel
+/// meter entirely, allowing unbounded guest execution.
+#[test]
+fn test_zero_fuel_rejected_for_sandboxed_tiers() {
+    let src = std::fs::read_to_string(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("crates")
+            .join("synvoid-plugin-runtime")
+            .join("src")
+            .join("sandbox")
+            .join("policy.rs"),
+    )
+    .unwrap();
+    assert!(
+        src.contains("max_cpu_fuel == 0")
+            || src.contains("fuel == 0")
+            || src.contains("fuel.is_some_and(|f| f == 0)")
+            || src.contains("fuel == Some(0)"),
+        "limits_from_manifest must validate zero fuel"
+    );
+    assert!(
+        src.contains("SignedSandboxed") && src.contains("LocalSandboxed"),
+        "fuel validation must check SignedSandboxed and LocalSandboxed tiers"
+    );
+}
+
+/// limits_from_manifest must return Result to propagate fuel validation errors.
+#[test]
+fn test_limits_from_manifest_returns_result() {
+    let src = std::fs::read_to_string(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("crates")
+            .join("synvoid-plugin-runtime")
+            .join("src")
+            .join("sandbox")
+            .join("policy.rs"),
+    )
+    .unwrap();
+    // The function signature spans multiple lines, so check for the function name
+    // and Result type separately within a reasonable window.
+    let lines: Vec<&str> = src.lines().collect();
+    for (i, line) in lines.iter().enumerate() {
+        if line.contains("fn limits_from_manifest") {
+            // Check this line and the next 5 lines for Result return type
+            let window: String = lines
+                .iter()
+                .skip(i)
+                .take(6)
+                .copied()
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                window.contains("Result"),
+                "limits_from_manifest must return Result<WasmResourceLimits, WasmPluginError>, \
+                 but no Result found in function signature:\n{}",
+                window
+            );
+            return;
+        }
+    }
+    panic!("limits_from_manifest function not found in policy.rs");
 }

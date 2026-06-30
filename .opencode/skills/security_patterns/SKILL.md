@@ -149,9 +149,9 @@ fn table_growing(
 
 **Fix**: Reset allowed_dht_prefixes:
 ```rust
-pub(crate) fn prepare_for_request(&mut self, env: ..., timeout_seconds: u64) {
+pub(crate) fn prepare_for_request(&mut self, env: ..., timeout: Duration) {
     self.store.data_mut().start = Instant::now();
-    self.store.data_mut().timeout = Duration::from_secs(timeout_seconds);
+    self.store.data_mut().timeout = timeout;
     self.store.data_mut().env = env;
     self.store.data_mut().allowed_dht_prefixes = self.default_allowed_dht_prefixes.clone();
     // ...

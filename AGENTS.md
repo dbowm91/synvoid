@@ -78,7 +78,7 @@ cargo test --test plugin_failure_does_not_poison_manager  # Plugin failure isola
 cargo test --test plugin_signature_policy_guard  # Plugin signature policy enforcement (includes Phase 2 strict verification)
 cargo test --test manifest_authority_wiring        # Manifest-to-runtime authority differentiation (M1 Phase 01)
 cargo test --test manifest_authority_load_path_guard  # All load paths use PreparedPluginLoad, not raw default_limits
-cargo test --test abi_memory_boundary_guard  # ABI memory boundary hardening: fixed-offset fallback removed, guest_alloc required, checked arithmetic
+cargo test --test abi_memory_boundary_guard  # ABI memory boundary hardening: GuestAbiPolicy, guest_alloc+guest_free required, single-frame allocation, checked arithmetic
 cargo test -p synvoid-plugin-runtime -- test_plugin_failure       # Failure policy defaults and failure class classification
 cargo test -p synvoid-plugin-runtime -- test_classify_failure     # Error-to-failure-class mapping
 cargo test -p synvoid-plugin-runtime -- test_guard_               # Guard state, quarantine, blocking invoke

@@ -426,6 +426,37 @@ pub fn filter_free_traps() -> Vec<u8> {
     .expect("valid WAT")
 }
 
+/// WASM module that counts how many times guest_alloc is called.
+/// Returns the total allocation count via filter_request result.
+pub fn filter_alloc_counter() -> Vec<u8> {
+    wat::parse_str(
+        r#"
+        (module
+            (memory (export "memory") 1)
+            (global $heap (mut i32) (i32.const 0))
+            (global $alloc_count (mut i32) (i32.const 0))
+
+            (func (export "guest_alloc") (param $size i32) (result i32)
+                (local $ptr i32)
+                (local.set $ptr (global.get $heap))
+                (global.set $heap (i32.add (global.get $heap) (local.get $size)))
+                (global.set $alloc_count (i32.add (global.get $alloc_count) (i32.const 1)))
+                (local.get $ptr)
+            )
+
+            (func (export "guest_free") (param $ptr i32) (param $size i32))
+
+            (func (export "filter_request")
+                (param i32 i32 i32 i32 i32 i32 i32 i32)
+                (result i32)
+                (global.get $alloc_count)
+            )
+        )
+        "#,
+    )
+    .expect("valid WAT")
+}
+
 /// WASM module that allocates all request data into non-overlapping regions
 /// and verifies the ranges are disjoint by writing magic bytes.
 pub fn filter_verifies_distinct_ranges() -> Vec<u8> {
@@ -490,6 +521,7 @@ mod tests {
             filter_alloc_returns_negative(),
             filter_alloc_traps(),
             filter_free_traps(),
+            filter_alloc_counter(),
         ];
 
         for (i, wasm) in fixtures.iter().enumerate() {

@@ -533,3 +533,110 @@ fn dev_hot_reload_requires_explicit_config() {
         "SigningPolicy must be defined for production enforcement"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Workstream 5: Strengthen CI and Guardrail Enforcement
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Failed pooled instances must be dropped, not returned to pool.
+///
+/// After a guest_alloc trap, guest_free trap, memory violation, or fuel
+/// exhaustion, the instance must NOT be returned to the pool. The hot path
+/// must drop failed instances to prevent poison propagation.
+#[test]
+fn test_no_pooled_instance_returned_after_trap() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let wasm_file = repo
+        .join("crates")
+        .join("synvoid-plugin-runtime")
+        .join("src")
+        .join("wasm_runtime.rs");
+
+    // Use raw source (not stripped) to find comment markers
+    let raw_source = std::fs::read_to_string(&wasm_file).expect("read wasm_runtime.rs");
+
+    // The filter_request and transform_response methods must have error paths
+    // that drop the pooled instance instead of returning it to the pool.
+    // Check for the "Drop poisoned instance" comment pattern.
+    let drop_comment_count = raw_source.matches("Drop poisoned instance").count();
+    assert!(
+        drop_comment_count >= 2,
+        "Both filter_request and transform_response must have 'Drop poisoned instance' comments (found {}, expected >= 2)",
+        drop_comment_count
+    );
+
+    // Verify the error-path pattern in stripped source: after result.is_err(),
+    // drop(inst) is called and NOT return_instance.
+    let cleaned = strip_comments_and_strings(&raw_source);
+    assert!(
+        cleaned.contains("return_instance"),
+        "return_instance must exist for successful invocations"
+    );
+
+    let lines: Vec<&str> = cleaned.lines().collect();
+    let mut drop_after_error_count = 0;
+    for (i, line) in lines.iter().enumerate() {
+        if line.contains("result.is_err()") {
+            // Look for drop(inst) within the next 5 lines (inside the if block)
+            for j in (i + 1)..(i + 6).min(lines.len()) {
+                if lines[j].contains("drop(inst)") || lines[j].contains("drop(pooled)") {
+                    drop_after_error_count += 1;
+                    break;
+                }
+            }
+        }
+    }
+    assert!(
+        drop_after_error_count >= 2,
+        "Both filter_request and transform_response must drop poisoned instances (found {} drop-after-error patterns, expected >= 2)",
+        drop_after_error_count
+    );
+}
+
+/// Duration-based timeout must be used, not integer seconds.
+///
+/// WasmResourceLimits must use `timeout: Duration` for sub-second precision.
+/// The old `timeout_seconds: u64` field must not exist.
+#[test]
+fn test_duration_based_timeout_not_seconds() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let wasm_file = repo
+        .join("crates")
+        .join("synvoid-plugin-runtime")
+        .join("src")
+        .join("wasm_runtime.rs");
+
+    let text = std::fs::read_to_string(&wasm_file).expect("read wasm_runtime.rs");
+    let cleaned = strip_comments_and_strings(&text);
+
+    // WasmResourceLimits must use Duration for timeout
+    assert!(
+        cleaned.contains("pub timeout: Duration"),
+        "WasmResourceLimits must use timeout: Duration for sub-second precision"
+    );
+
+    // Must NOT have timeout_seconds: u64 in WasmResourceLimits struct
+    let lines: Vec<&str> = cleaned.lines().collect();
+    let mut in_struct = false;
+    let mut struct_brace_depth = 0u32;
+
+    for line in &lines {
+        let trimmed = line.trim();
+        if trimmed.contains("pub struct WasmResourceLimits") {
+            in_struct = true;
+            struct_brace_depth = 0;
+        }
+        if in_struct {
+            struct_brace_depth += trimmed.matches('{').count() as u32;
+            struct_brace_depth =
+                struct_brace_depth.saturating_sub(trimmed.matches('}').count() as u32);
+            assert!(
+                !trimmed.contains("timeout_seconds: u64"),
+                "WasmResourceLimits must not have timeout_seconds: u64 field — use timeout: Duration instead"
+            );
+            if struct_brace_depth == 0 && in_struct {
+                break;
+            }
+        }
+    }
+}

@@ -100,6 +100,10 @@ impl MyPlugin {
 Your WASM module must export:
 
 ```rust
+// Required: Memory allocator (production requires both; development allows alloc-only)
+export fn guest_alloc(len: i32) -> i32;
+export fn guest_free(ptr: i32);
+
 // Required: Filter incoming requests
 // Returns: 0 = Pass, 1 = Block, 2 = Challenge
 export fn filter_request(method: i32, uri: *const u8, uri_len: i32) -> i32;
@@ -108,6 +112,10 @@ export fn filter_request(method: i32, uri: *const u8, uri_len: i32) -> i32;
 // Returns: 0 = Pass, 1 = Modified
 export fn transform_response(status_code: i32, body: *const u8, body_len: i32) -> i32;
 ```
+
+**Production requirements:**
+- Both `guest_alloc` and `guest_free` exports are **required** in production (`SignedSandboxed` / `LocalSandboxed` tiers).
+- Development mode allows `guest_alloc` only (no `guest_free`) via `DevelopmentAllowMissingFree` policy.
 
 ### Example WASM (Rust)
 
@@ -244,7 +252,9 @@ WASM plugins run in a sandboxed environment:
 - No filesystem access (except configured paths)
 - No network access
 - Memory limits enforced
-- Execution timeout enforced
+- Execution timeout enforced with millisecond precision (manifest `timeout_ms` maps directly to `Duration::from_millis`)
+- Sandboxed plugins (`SignedSandboxed`, `LocalSandboxed`) require a non-zero fuel budget to enforce execution limits
+- Production ABI requires both `guest_alloc` and `guest_free` exports
 
 ### Signed Plugins
 
