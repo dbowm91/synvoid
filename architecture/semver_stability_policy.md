@@ -31,6 +31,7 @@ The following surfaces have no compatibility promises before 1.0:
 - **Root re-exports** (`synvoid::*`): Compatibility facades that will be removed as crates are extracted.
 - **Plugin WASM ABI**: Guest export signatures, host function signatures, and memory layout may change without notice. No versioned ABI compatibility tests exist.
 - **Plugin manifest schema**: Fields may be added, renamed, or removed. Deserialize tolerates missing fields via `#[serde(default)]`, but new required fields may be added.
+- **Plugin signature and trust API** (`synvoid-plugin-runtime::sandbox::types`): `verify_plugin_signature`, `enforce_plugin_load_policy`, `PluginLoadConfig`, `TrustedPluginKey`, `PluginSignatureConfig`, `PluginSignatureVerification`, `PluginSignatureError`, `PluginLoadError` — these types and functions are new in Phase 13 and may change shape as loader integration matures.
 - **Admin REST API**: Response shapes, status codes, and endpoint paths may change. The `AdminMutationResult` type is the target contract but not all endpoints use it yet.
 - **CLI flags and config keys**: May be renamed or removed. Config migration is not provided.
 - **Binary interfaces**: `server` and `synvoid-vpn` are operator-facing but not semver-stable.

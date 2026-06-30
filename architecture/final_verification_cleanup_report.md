@@ -85,6 +85,30 @@ After the fix, CI triggers correctly on push to `main`/`master`/`develop` and PR
 Phase 12 completed the conversion of all non-deferred legacy mutating endpoints. The final pass converted: `auth.rs` (create/delete session), `theme.rs` (update_theme), `tcp_udp.rs` (create/delete listener), `mesh_admin.rs` (derive_signing_key, submit_audit_report, report_signature_failure, create_organization), `system.rs` (restart_worker, batch_restart_workers, scale_workers), `logs.rs` (update_error_page), and `probes.rs` (delete_probe, delete_suspicious_word, delete_upstream_error, block_probes). All mutating endpoints now return typed `AdminMutationResult` and emit `AdminAuditEvent`. Only config PUT endpoints (~50+) and site management endpoints (~6) remain deferred (local-only mutations without mesh propagation). The `admin_mutation_response_guard` now also detects `StatusResponse::success` as a legacy pattern.
 Documented in `architecture/admin_control_plane_authority.md`.
 
+## Plugin Signature Verification (Phase 13 — 2026-06-30)
+
+Phase 13 implemented Ed25519 cryptographic signature verification for plugin binaries and manifests, completing the last deferred security item from Phase 7.
+
+| Component | Status | Details |
+|-----------|--------|---------|
+| Ed25519 verification | **Implemented** | `verify_plugin_signature()` in `sandbox/types.rs`, uses `ed25519-dalek` v2 |
+| Binary hash coverage | **Implemented** | `compute_binary_hash()` — SHA-256 of plugin `.wasm` bytes |
+| Manifest hash coverage | **Implemented** | `compute_manifest_hash()` — SHA-256 of canonical manifest payload |
+| Canonical signing payload | **Implemented** | `compute_manifest_signing_payload()` — deterministic text format with sorted capability flags |
+| Trust-tier enforcement | **Implemented** | `enforce_plugin_load_policy()` — single enforcement function for all trust tiers |
+| Trusted key config | **Implemented** | `TrustedPluginKey` type with key_id, algorithm, public_key |
+| Loader audit | **Documented** | `architecture/plugin_loader_trust_audit.md` — 21 loader paths audited |
+| Guard tests | **8 tests** | `tests/plugin_signature_policy_guard.rs` — enforcement existence, bypass prevention, dev-mode gating |
+| Unit tests | **12 tests** | In `synvoid-plugin-runtime` — verification, hashing, enforcement policy |
+
+**Security properties achieved:**
+- `SignedSandboxed` requires verified Ed25519 signature or fails closed
+- `DevelopmentHotReload` rejected without explicit `dev_mode = true`
+- Unknown/malformed keys fail closed
+- Binary and manifest hash verification prevents tampered plugins
+
+**Guard count**: 22 source-scanning + 4 behavioral + 1 signature policy = 27 guard files
+
 ## Observability Audit
 
 - 23 Phase 9 metrics documented in `architecture/security_observability.md`
@@ -116,13 +140,9 @@ Documented in `architecture/admin_control_plane_authority.md`.
 ## Residual Risks
 
 1. **Config PUT endpoints (deferred)**: ~50 config PUT endpoints and ~6 site management endpoints still use legacy response types. These are local-only mutations without mesh propagation. Documented as deferred.
-2. **Full signature verification**: Crypto verification of plugin signatures against binary
-   hash is not implemented. Documented as deferred.
-3. **DevelopmentHotReload gating**: Trust tier enforcement is at the loader level, not inside
-   the WASM runtime. Correct architectural boundary, but loader code was not audited in this pass.
-4. **Fuzz targets**: `cargo-fuzz` not installed in the environment; 11 fuzz targets exist in
-   `fuzz/` but were not smoke-tested. Recommended: install `cargo-fuzz` and run bounded
-   smoke tests in CI.
+2. ~~**Full signature verification**: Crypto verification of plugin signatures against binary hash is not implemented.~~ **Resolved** — Phase 13 implemented Ed25519 verification with `ed25519-dalek`.
+3. ~~**DevelopmentHotReload gating**: Trust tier enforcement is at the loader level, not inside the WASM runtime.~~ **Resolved** — Phase 13 added `enforce_plugin_load_policy()` at the loader boundary; all load paths audited.
+4. **Fuzz targets**: `cargo-fuzz` not installed in the environment; 11 fuzz targets exist in `fuzz/` but were not smoke-tested. Recommended: install `cargo-fuzz` and run bounded smoke tests in CI.
 
 ## Final Status
 

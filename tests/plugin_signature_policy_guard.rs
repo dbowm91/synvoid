@@ -8,7 +8,7 @@
 //! - Error messages must not leak key material.
 //! - Required error enum variants must exist.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -94,8 +94,10 @@ fn enforce_plugin_load_policy_exists() {
 /// Test 2: All plugin loader files must reference enforcement.
 ///
 /// Every file that loads plugins must either call `enforce_plugin_load_policy`
-/// directly or reference `PluginLoadConfig`. This is a soft guard — some files
-/// may be thin wrappers that delegate to other functions in the crate.
+/// directly or reference `PluginLoadConfig`. This is a soft guard — the
+/// enforcement function exists but is not yet wired into all loader paths.
+/// When a loader path is wired, it must reference `PluginLoadConfig`.
+// TODO(Phase 13): Change to hard guard once all loader paths call enforce_plugin_load_policy.
 #[test]
 fn all_load_paths_call_enforcement() {
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -138,8 +140,8 @@ fn all_load_paths_call_enforcement() {
     }
 
     if !soft_violations.is_empty() {
-        // Soft guard — report but don't fail. Some files may be thin wrappers
-        // that delegate to functions within the crate which do enforce the policy.
+        // Soft guard — report but don't fail. Loader paths must reference
+        // PluginLoadConfig or enforce_plugin_load_policy once enforcement is wired.
         eprintln!(
             "[soft] plugin loader files that don't reference enforce_plugin_load_policy or PluginLoadConfig:\n  {}",
             soft_violations.join("\n  ")
@@ -516,4 +518,103 @@ fn plugin_load_error_type_exists() {
             enum_text
         );
     }
+}
+
+/// Test 9: Hot reload must use the same trust policy as initial load.
+///
+/// The `reload_plugin` method in `WasmRuntime` must delegate to `load_with_priority`
+/// (the same code path used for initial loads). If hot reload bypasses the initial
+/// load path, signature verification and trust-tier enforcement would be skipped.
+#[test]
+fn hot_reload_uses_same_trust_policy_as_initial_load() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let wasm_file = repo
+        .join("crates")
+        .join("synvoid-plugin-runtime")
+        .join("src")
+        .join("wasm_runtime.rs");
+
+    assert!(
+        wasm_file.exists(),
+        "wasm_runtime.rs must exist at {}",
+        wasm_file.display()
+    );
+
+    let text = std::fs::read_to_string(&wasm_file).expect("read wasm_runtime.rs");
+    let cleaned = strip_comments_and_strings(&text);
+
+    // Find the reload_plugin method body
+    let lines: Vec<&str> = cleaned.lines().collect();
+    let mut in_reload_fn = false;
+    let mut reload_fn_start = None;
+    let mut fn_brace_depth = 0u32;
+
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+
+        if trimmed.contains("pub fn reload_plugin(") && trimmed.contains("Path") {
+            in_reload_fn = true;
+            fn_brace_depth = 0;
+            reload_fn_start = Some(i);
+        }
+
+        if in_reload_fn {
+            fn_brace_depth += trimmed.matches('{').count() as u32;
+            fn_brace_depth = fn_brace_depth.saturating_sub(trimmed.matches('}').count() as u32);
+
+            if fn_brace_depth == 0 && i > reload_fn_start.unwrap() {
+                break;
+            }
+        }
+    }
+
+    assert!(
+        reload_fn_start.is_some(),
+        "WasmRuntime::reload_plugin must exist"
+    );
+
+    // Check the reload_plugin body calls load_with_priority (same path as initial load)
+    let start = reload_fn_start.unwrap();
+    let window: String = lines
+        .iter()
+        .skip(start)
+        .take(30)
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(
+        window.contains("load_with_priority"),
+        "reload_plugin must delegate to load_with_priority (same trust policy as initial load), \
+         but found no reference in the method body:\n{}",
+        window
+    );
+}
+
+/// Test 10: Loader trust audit document must exist.
+///
+/// The `architecture/plugin_loader_trust_audit.md` document must exist and contain
+/// the loader table. This ensures the audit is kept alongside the enforcement code.
+#[test]
+fn loader_trust_audit_document_exists() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let audit_doc = repo
+        .join("architecture")
+        .join("plugin_loader_trust_audit.md");
+
+    assert!(
+        audit_doc.exists(),
+        "architecture/plugin_loader_trust_audit.md must exist at {}",
+        audit_doc.display()
+    );
+
+    let text = std::fs::read_to_string(&audit_doc).expect("read audit doc");
+    assert!(
+        text.contains("Loader path"),
+        "audit doc must contain a loader path table"
+    );
+    assert!(
+        text.contains("Trust tier"),
+        "audit doc must contain trust tier column"
+    );
 }
