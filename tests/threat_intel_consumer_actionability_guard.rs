@@ -133,11 +133,6 @@ fn is_lookup_allowlisted(relative: &str) -> bool {
         "tests/threat_intel_consumer_actionability_guard.rs",
         "tests/dht_integration_test.rs",
         "src/waf/threat_intel/feed_client.rs",
-        // Composition-root adapters: wrap raw ThreatIntelligenceManager lookups
-        // behind the narrow ThreatIntelLookup trait for WAF/request-path consumption.
-        // These are infrastructure adapters, not enforcement code.
-        "src/worker/unified_server/services.rs",
-        "src/worker/unified_server/init_mesh.rs",
     ];
 
     for entry in allowlist {

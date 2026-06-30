@@ -1287,6 +1287,8 @@ mod block_store_tests {
         DenyListLimitsConfig {
             max_entries: 1000,
             persist_interval_secs: 0,
+            target_state_persist: false,
+            ..DenyListLimitsConfig::default()
         }
     }
 

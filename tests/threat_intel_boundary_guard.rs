@@ -31,11 +31,6 @@ fn is_allowlisted(relative: &str) -> bool {
         "tests/dht_integration_test.rs",
         "tests/request_path_capability_boundary_guard.rs",
         "src/waf/threat_intel/feed_client.rs",
-        // Composition root adapters: ThreatIntelLookupAdapter delegates raw
-        // lookup to the concrete manager. This is the correct location for
-        // the raw-to-narrow bridge — not on the request path.
-        "src/worker/unified_server/services.rs",
-        "src/worker/unified_server/init_mesh.rs",
     ];
 
     for entry in allowlist {

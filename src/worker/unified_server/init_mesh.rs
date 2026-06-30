@@ -539,33 +539,10 @@ pub async fn init_mesh_and_threat_intel(
 
             threat_intel.start_background_tasks();
 
-            // Wrap concrete ThreatIntelligenceManager behind narrow trait
-            // for WAF consumption.
-            struct ThreatIntelLookupAdapter(Arc<ThreatIntelligenceManager>);
-
-            impl crate::worker::context::ThreatIntelLookup for ThreatIntelLookupAdapter {
-                fn is_known_threat_ip(&self, ip: std::net::IpAddr) -> bool {
-                    self.0
-                        .lookup_local_indicator_by_ip(&ip.to_string())
-                        .is_some()
-                }
-                fn threat_level_for_ip(&self, ip: std::net::IpAddr) -> Option<u8> {
-                    self.0
-                        .lookup_local_indicator_by_ip(&ip.to_string())
-                        .map(|i| {
-                            use synvoid_mesh::mesh::protocol::ThreatSeverity;
-                            match i.severity {
-                                ThreatSeverity::Low => 1,
-                                ThreatSeverity::Medium => 2,
-                                ThreatSeverity::High => 3,
-                                ThreatSeverity::Critical => 4,
-                                ThreatSeverity::Unspecified => 0,
-                            }
-                        })
-                }
-            }
-
-            crate::waf::set_threat_intel(Arc::new(ThreatIntelLookupAdapter(threat_intel.clone())));
+            // Request-path threat lookups are wired through
+            // DataPlaneServicesBuilder so they can use the policy-strict
+            // ThreatIntelLookup adapter carried in RequestServices. The old
+            // WAF singleton setter is intentionally left unwired.
 
             // Register mesh DHT provider for WASM plugin runtime
             if let Some(record_store) = transport_manager.get_record_store() {

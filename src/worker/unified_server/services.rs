@@ -122,19 +122,24 @@ impl ThreatIntelLookupAdapter {
             ThreatSeverity::Unspecified => 0,
         }
     }
+
+    fn actionable_ip_indicator(
+        &self,
+        ip: std::net::IpAddr,
+    ) -> Option<synvoid_mesh::mesh::protocol::ThreatIndicator> {
+        self.inner
+            .lookup_local_indicator_by_ip_policy_strict(&ip.to_string())
+    }
 }
 
 #[cfg(feature = "mesh")]
 impl crate::worker::context::ThreatIntelLookup for ThreatIntelLookupAdapter {
     fn is_known_threat_ip(&self, ip: std::net::IpAddr) -> bool {
-        self.inner
-            .lookup_local_indicator_by_ip(&ip.to_string())
-            .is_some()
+        self.actionable_ip_indicator(ip).is_some()
     }
 
     fn threat_level_for_ip(&self, ip: std::net::IpAddr) -> Option<u8> {
-        self.inner
-            .lookup_local_indicator_by_ip(&ip.to_string())
+        self.actionable_ip_indicator(ip)
             .map(|indicator| Self::severity_to_level(indicator.severity))
     }
 }
@@ -364,7 +369,7 @@ mod tests {
     #[cfg(feature = "mesh")]
     use synvoid_mesh::dht::advisory_source::{AdvisoryRecordSource, StaticAdvisoryRecordSource};
     #[cfg(feature = "mesh")]
-    use synvoid_mesh::mesh::protocol::ThreatType;
+    use synvoid_mesh::mesh::protocol::{ThreatIndicator, ThreatSeverity, ThreatType};
     #[cfg(feature = "mesh")]
     use synvoid_mesh::threat_intel::ThreatIntelligenceConfig;
     #[cfg(feature = "mesh")]
@@ -411,6 +416,25 @@ mod tests {
             synvoid_mesh::config::MeshNodeRole::EDGE,
             None,
         ))
+    }
+
+    #[cfg(feature = "mesh")]
+    fn build_test_indicator(ip: &str, severity: ThreatSeverity) -> ThreatIndicator {
+        ThreatIndicator {
+            threat_type: ThreatType::IpBlock,
+            indicator_value: ip.to_string(),
+            severity,
+            reason: "test threat".to_string(),
+            ttl_seconds: 300,
+            source_node_id: "test-node".to_string(),
+            timestamp: crate::utils::current_timestamp(),
+            site_scope: "test-site".to_string(),
+            rate_limit_requests: None,
+            rate_limit_window_secs: None,
+            suspicious_pattern: None,
+            signature: Vec::new(),
+            signer_public_key: None,
+        }
     }
 
     /// Verify that `DataPlaneServicesBuilder` produces a valid
@@ -612,6 +636,29 @@ mod tests {
             .expect("policy context should be applied");
 
         assert!(matches!(decision, ThreatIntelPolicyDecision::Actionable(_)));
+    }
+
+    /// Request-path threat lookups must use strict actionability and fail
+    /// closed until a policy context is available.
+    #[cfg(feature = "mesh")]
+    #[test]
+    fn threat_lookup_adapter_uses_policy_strict_lookup() {
+        let manager = build_test_threat_intel_manager();
+        manager.add_feed_indicator(build_test_indicator(TEST_IP, ThreatSeverity::High));
+
+        let adapter = ThreatIntelLookupAdapter {
+            inner: manager.clone(),
+        };
+        let lookup: &dyn crate::worker::context::ThreatIntelLookup = &adapter;
+        let ip = TEST_IP.parse().expect("test ip should parse");
+
+        assert!(!lookup.is_known_threat_ip(ip));
+        assert_eq!(lookup.threat_level_for_ip(ip), None);
+
+        manager.set_policy_context(Some(build_test_policy_context()));
+
+        assert!(lookup.is_known_threat_ip(ip));
+        assert_eq!(lookup.threat_level_for_ip(ip), Some(3));
     }
 
     /// Iteration 27: Worker bootstrap deliberately passes `None` for

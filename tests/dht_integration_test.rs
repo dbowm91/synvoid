@@ -1406,6 +1406,8 @@ mod threat_intel_tests {
             DenyListLimitsConfig {
                 max_entries: 1000,
                 persist_interval_secs: 0,
+                target_state_persist: false,
+                ..DenyListLimitsConfig::default()
             },
         ));
         ThreatIntelligenceManager::new(config, block_store, "test-node".to_string(), role, None)
@@ -1844,6 +1846,8 @@ mod threat_intel_tests {
             DenyListLimitsConfig {
                 max_entries: 1000,
                 persist_interval_secs: 0,
+                target_state_persist: false,
+                ..DenyListLimitsConfig::default()
             },
         ));
 
