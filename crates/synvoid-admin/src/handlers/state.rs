@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use synvoid_core::admin_mutation::AdminAuditEvent;
 use synvoid_ipc::ProcessManager;
 use synvoid_metrics::payloads::SiteMetricsPayload;
 use synvoid_waf::probe_tracker::{ProbeTracker, SuspiciousWordTracker, UpstreamErrorTracker};
@@ -99,4 +100,5 @@ pub trait AdminStateProvider: Send + Sync {
     fn get_audit_logs_for_user(&self, username: &str, limit: usize) -> Vec<AuditLog>;
     fn get_audit_logs_for_resource(&self, resource: &str, limit: usize) -> Vec<AuditLog>;
     fn audit_log_count(&self) -> usize;
+    fn log_admin_audit_event(&self, event: &AdminAuditEvent);
 }

@@ -7,7 +7,10 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::sync::Arc;
-use synvoid_core::admin_mutation::{AdminMutationResult, AdminMutationStatus, PropagationStatus};
+use synvoid_core::admin_mutation::{
+    AdminActor, AdminAuditEvent, AdminMutationAuthority, AdminMutationResult, AdminMutationStatus,
+    PropagationStatus,
+};
 use synvoid_ipc::current_timestamp;
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -255,7 +258,7 @@ pub async fn get_probe_stats<S: AdminStateProvider>(
         ("ip" = String, Path, description = "IP address to delete probe record for")
     ),
     responses(
-        (status = 204, description = "Probe record deleted"),
+        (status = 200, description = "Probe record deleted"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Probe not found"),
         (status = 500, description = "Internal server error")
@@ -266,15 +269,52 @@ pub async fn delete_probe<S: AdminStateProvider>(
     State(state): State<Arc<S>>,
     _auth: OptionalAuth,
     Path(ip): Path<String>,
-) -> Result<StatusCode, StatusCode> {
+) -> Result<Json<AdminMutationResult>, StatusCode> {
     let tracker = state.probe_tracker().ok_or(StatusCode::NOT_FOUND)?;
 
     let ip_addr: IpAddr = parse_ip(&ip)?;
 
     if tracker.clear_record(&ip_addr) {
-        Ok(StatusCode::NO_CONTENT)
+        let audit_id = uuid::Uuid::new_v4().to_string();
+
+        let audit_event = AdminAuditEvent {
+            audit_id: audit_id.clone(),
+            timestamp: synvoid_ipc::current_timestamp(),
+            actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+            action: "delete_probe_record".to_string(),
+            target_kind: "probe_record".to_string(),
+            target_id: ip.clone(),
+            prior_state: None,
+            requested_state: None,
+            resulting_state: Some(serde_json::json!({
+                "ip": ip,
+                "removed": true,
+            })),
+            mutation_status: AdminMutationStatus::Applied,
+            propagation_status: PropagationStatus::AppliedLocalOnly,
+            event_id: None,
+        };
+        state.log_admin_audit_event(&audit_event);
+
+        Ok(Json(AdminMutationResult {
+            status: AdminMutationStatus::Applied,
+            target: serde_json::json!(ip),
+            local_store_mutated: true,
+            propagation: PropagationStatus::AppliedLocalOnly,
+            event_id: None,
+            audit_id: Some(audit_id),
+            message: "Probe record deleted".to_string(),
+        }))
     } else {
-        Err(StatusCode::NOT_FOUND)
+        Ok(Json(AdminMutationResult {
+            status: AdminMutationStatus::NoOpAlreadyAbsent,
+            target: serde_json::json!(ip),
+            local_store_mutated: false,
+            propagation: PropagationStatus::NotApplicable,
+            event_id: None,
+            audit_id: None,
+            message: "Probe record not found".to_string(),
+        }))
     }
 }
 
@@ -318,7 +358,7 @@ pub async fn block_probes<S: AdminStateProvider>(
     State(state): State<Arc<S>>,
     _auth: OptionalAuth,
     Json(req): Json<BlockProbesRequest>,
-) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
+) -> Result<Json<AdminMutationResult>, StatusCode> {
     let ban_duration_secs = parse_duration(&req.duration);
 
     let mut blocked = Vec::new();
@@ -355,8 +395,30 @@ pub async fn block_probes<S: AdminStateProvider>(
     }
 
     let audit_id = Uuid::new_v4().to_string();
-    let target = format!("{} IPs blocked", blocked.len());
+    let target = serde_json::json!(format!("{} IPs", blocked.len()));
     let message = format!("Blocked {} IPs, {} failed", blocked.len(), failed.len());
+
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_ipc::current_timestamp(),
+        actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+        action: "block_probes".to_string(),
+        target_kind: "probe_ips".to_string(),
+        target_id: format!("{} IPs", blocked.len()),
+        prior_state: None,
+        requested_state: Some(serde_json::json!({
+            "ips": req.ips,
+            "duration": req.duration,
+        })),
+        resulting_state: Some(serde_json::json!({
+            "blocked": blocked,
+            "failed": failed,
+        })),
+        mutation_status: AdminMutationStatus::Applied,
+        propagation_status: PropagationStatus::QueuedBestEffort,
+        event_id: None,
+    };
+    state.log_admin_audit_event(&audit_event);
 
     Ok(Json(AdminMutationResult {
         status: AdminMutationStatus::Applied,
@@ -485,7 +547,7 @@ pub async fn get_suspicious_word_stats<S: AdminStateProvider>(
         ("ip" = String, Path, description = "IP address to delete suspicious word record for")
     ),
     responses(
-        (status = 204, description = "Suspicious word record deleted"),
+        (status = 200, description = "Suspicious word record deleted"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Record not found"),
         (status = 500, description = "Internal server error")
@@ -496,7 +558,7 @@ pub async fn delete_suspicious_word<S: AdminStateProvider>(
     State(state): State<Arc<S>>,
     _auth: OptionalAuth,
     Path(ip): Path<String>,
-) -> Result<StatusCode, StatusCode> {
+) -> Result<Json<AdminMutationResult>, StatusCode> {
     let tracker = state
         .suspicious_word_tracker()
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -504,9 +566,46 @@ pub async fn delete_suspicious_word<S: AdminStateProvider>(
     let ip_addr: IpAddr = parse_ip(&ip)?;
 
     if tracker.clear_record(&ip_addr) {
-        Ok(StatusCode::NO_CONTENT)
+        let audit_id = uuid::Uuid::new_v4().to_string();
+
+        let audit_event = AdminAuditEvent {
+            audit_id: audit_id.clone(),
+            timestamp: synvoid_ipc::current_timestamp(),
+            actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+            action: "delete_suspicious_word".to_string(),
+            target_kind: "suspicious_word".to_string(),
+            target_id: ip.clone(),
+            prior_state: None,
+            requested_state: None,
+            resulting_state: Some(serde_json::json!({
+                "ip": ip,
+                "removed": true,
+            })),
+            mutation_status: AdminMutationStatus::Applied,
+            propagation_status: PropagationStatus::AppliedLocalOnly,
+            event_id: None,
+        };
+        state.log_admin_audit_event(&audit_event);
+
+        Ok(Json(AdminMutationResult {
+            status: AdminMutationStatus::Applied,
+            target: serde_json::json!(ip),
+            local_store_mutated: true,
+            propagation: PropagationStatus::AppliedLocalOnly,
+            event_id: None,
+            audit_id: Some(audit_id),
+            message: "Suspicious word record deleted".to_string(),
+        }))
     } else {
-        Err(StatusCode::NOT_FOUND)
+        Ok(Json(AdminMutationResult {
+            status: AdminMutationStatus::NoOpAlreadyAbsent,
+            target: serde_json::json!(ip),
+            local_store_mutated: false,
+            propagation: PropagationStatus::NotApplicable,
+            event_id: None,
+            audit_id: None,
+            message: "Suspicious word record not found".to_string(),
+        }))
     }
 }
 
@@ -624,7 +723,7 @@ pub async fn get_upstream_error_stats<S: AdminStateProvider>(
         ("ip" = String, Path, description = "IP address to delete upstream error record for")
     ),
     responses(
-        (status = 204, description = "Upstream error record deleted"),
+        (status = 200, description = "Upstream error record deleted"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Record not found"),
         (status = 500, description = "Internal server error")
@@ -635,7 +734,7 @@ pub async fn delete_upstream_error<S: AdminStateProvider>(
     State(state): State<Arc<S>>,
     _auth: OptionalAuth,
     Path(ip): Path<String>,
-) -> Result<StatusCode, StatusCode> {
+) -> Result<Json<AdminMutationResult>, StatusCode> {
     let tracker = state
         .upstream_error_tracker()
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -643,8 +742,45 @@ pub async fn delete_upstream_error<S: AdminStateProvider>(
     let ip_addr: IpAddr = parse_ip(&ip)?;
 
     if tracker.clear_record(&ip_addr) {
-        Ok(StatusCode::NO_CONTENT)
+        let audit_id = uuid::Uuid::new_v4().to_string();
+
+        let audit_event = AdminAuditEvent {
+            audit_id: audit_id.clone(),
+            timestamp: synvoid_ipc::current_timestamp(),
+            actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+            action: "delete_upstream_error".to_string(),
+            target_kind: "upstream_error".to_string(),
+            target_id: ip.clone(),
+            prior_state: None,
+            requested_state: None,
+            resulting_state: Some(serde_json::json!({
+                "ip": ip,
+                "removed": true,
+            })),
+            mutation_status: AdminMutationStatus::Applied,
+            propagation_status: PropagationStatus::AppliedLocalOnly,
+            event_id: None,
+        };
+        state.log_admin_audit_event(&audit_event);
+
+        Ok(Json(AdminMutationResult {
+            status: AdminMutationStatus::Applied,
+            target: serde_json::json!(ip),
+            local_store_mutated: true,
+            propagation: PropagationStatus::AppliedLocalOnly,
+            event_id: None,
+            audit_id: Some(audit_id),
+            message: "Upstream error record deleted".to_string(),
+        }))
     } else {
-        Err(StatusCode::NOT_FOUND)
+        Ok(Json(AdminMutationResult {
+            status: AdminMutationStatus::NoOpAlreadyAbsent,
+            target: serde_json::json!(ip),
+            local_store_mutated: false,
+            propagation: PropagationStatus::NotApplicable,
+            event_id: None,
+            audit_id: None,
+            message: "Upstream error record not found".to_string(),
+        }))
     }
 }

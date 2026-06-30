@@ -7,6 +7,10 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use synvoid_core::admin_mutation::{
+    AdminActor, AdminAuditEvent, AdminMutationAuthority, AdminMutationResult, AdminMutationStatus,
+    PropagationStatus,
+};
 use utoipa::ToSchema;
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -77,7 +81,7 @@ pub struct CreateListenerResponse {
     path = "/tcp-udp/listeners",
     request_body = CreateListenerRequest,
     responses(
-        (status = 200, description = "Listener created", body = CreateListenerResponse),
+        (status = 200, description = "Listener created"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Site not found"),
         (status = 400, description = "Invalid request"),
@@ -89,7 +93,7 @@ pub async fn create_listener(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<CreateListenerRequest>,
-) -> Result<Json<CreateListenerResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let mut config = state.process.config.write().await;
     let site_config = config
         .sites
@@ -110,15 +114,42 @@ pub async fn create_listener(
         site_config.tcp.enabled = Some(true);
     }
 
-    Ok(Json(CreateListenerResponse {
-        listener: TcpUdpListener {
-            id: listener_id,
-            port: req.port,
-            protocol: req.protocol,
-            upstream: req.upstream,
-            enabled: true,
-            active_connections: 0,
-        },
+    let audit_id = uuid::Uuid::new_v4().to_string();
+
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_utils::safe_unix_timestamp(),
+        actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+        action: "create_tcp_udp_listener".to_string(),
+        target_kind: "tcp_udp_listener".to_string(),
+        target_id: listener_id.clone(),
+        prior_state: None,
+        requested_state: Some(serde_json::json!({
+            "site_id": req.site_id,
+            "port": req.port,
+            "protocol": req.protocol,
+            "upstream": req.upstream,
+        })),
+        resulting_state: Some(serde_json::json!({
+            "listener_id": listener_id,
+            "port": req.port,
+            "protocol": req.protocol,
+            "upstream": req.upstream,
+        })),
+        mutation_status: AdminMutationStatus::Applied,
+        propagation_status: PropagationStatus::AppliedLocalOnly,
+        event_id: None,
+    };
+    state.audit.log_audit_event(&audit_event);
+
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target: format!("{}:{}", req.site_id, req.protocol),
+        local_store_mutated: true,
+        propagation: PropagationStatus::AppliedLocalOnly,
+        event_id: None,
+        audit_id: Some(audit_id),
+        message: format!("TCP/UDP listener created on port {}", req.port),
     }))
 }
 
@@ -129,7 +160,7 @@ pub async fn create_listener(
         ("listener_id" = String, Path, description = "Listener ID to delete")
     ),
     responses(
-        (status = 204, description = "Listener deleted"),
+        (status = 200, description = "Listener deleted"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Listener not found"),
         (status = 400, description = "Invalid listener ID format"),
@@ -141,12 +172,20 @@ pub async fn delete_listener(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Path(listener_id): Path<String>,
-) -> Result<StatusCode, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let mut config = state.process.config.write().await;
 
     let parts: Vec<&str> = listener_id.splitn(2, '-').collect();
     if parts.len() != 2 {
-        return Err(StatusCode::BAD_REQUEST);
+        return Ok(Json(AdminMutationResult {
+            status: AdminMutationStatus::InvalidRejected,
+            target: listener_id,
+            local_store_mutated: false,
+            propagation: PropagationStatus::NotApplicable,
+            event_id: None,
+            audit_id: None,
+            message: "Invalid listener ID format".to_string(),
+        }));
     }
     let site_id = parts[0];
     let protocol_name = parts[1];
@@ -154,10 +193,47 @@ pub async fn delete_listener(
     let site_config = config.sites.get_mut(site_id).ok_or(StatusCode::NOT_FOUND)?;
 
     if site_config.tcp.ports.remove(protocol_name).is_some() {
+        let audit_id = uuid::Uuid::new_v4().to_string();
+
+        let audit_event = AdminAuditEvent {
+            audit_id: audit_id.clone(),
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+            action: "delete_tcp_udp_listener".to_string(),
+            target_kind: "tcp_udp_listener".to_string(),
+            target_id: listener_id.clone(),
+            prior_state: None,
+            requested_state: None,
+            resulting_state: Some(serde_json::json!({
+                "listener_id": listener_id,
+                "removed": true,
+            })),
+            mutation_status: AdminMutationStatus::Applied,
+            propagation_status: PropagationStatus::AppliedLocalOnly,
+            event_id: None,
+        };
+        state.audit.log_audit_event(&audit_event);
+
         tracing::info!("Deleted TCP/UDP listener {}", listener_id);
-        Ok(StatusCode::NO_CONTENT)
+        Ok(Json(AdminMutationResult {
+            status: AdminMutationStatus::Applied,
+            target: listener_id,
+            local_store_mutated: true,
+            propagation: PropagationStatus::AppliedLocalOnly,
+            event_id: None,
+            audit_id: Some(audit_id),
+            message: "TCP/UDP listener deleted".to_string(),
+        }))
     } else {
-        Err(StatusCode::NOT_FOUND)
+        Ok(Json(AdminMutationResult {
+            status: AdminMutationStatus::NoOpAlreadyAbsent,
+            target: listener_id,
+            local_store_mutated: false,
+            propagation: PropagationStatus::NotApplicable,
+            event_id: None,
+            audit_id: None,
+            message: "Listener not found".to_string(),
+        }))
     }
 }
 

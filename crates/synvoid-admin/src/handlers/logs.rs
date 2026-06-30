@@ -6,6 +6,10 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use synvoid_core::admin_mutation::{
+    AdminActor, AdminAuditEvent, AdminMutationAuthority, AdminMutationResult, AdminMutationStatus,
+    PropagationStatus,
+};
 use utoipa::ToSchema;
 
 use super::common::{ErrorPage, OptionalAuth};
@@ -140,7 +144,7 @@ pub struct UpdateErrorPageRequest {
     ),
     request_body = UpdateErrorPageRequest,
     responses(
-        (status = 200, description = "Error page updated", body = ErrorPageResponse),
+        (status = 200, description = "Error page updated"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Error page not found"),
         (status = 500, description = "Internal server error")
@@ -152,7 +156,7 @@ pub async fn update_error_page<S: AdminStateProvider>(
     _auth: OptionalAuth,
     Path(code): Path<u16>,
     Json(payload): Json<UpdateErrorPageRequest>,
-) -> Result<Json<ErrorPageResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult>, StatusCode> {
     let error_page = ErrorPage::from_code(code).ok_or(StatusCode::NOT_FOUND)?;
 
     let config_arc = state.config();
@@ -194,11 +198,38 @@ pub async fn update_error_page<S: AdminStateProvider>(
 
     tracing::info!("Updated error page {} at {:?}", code, page_path);
 
-    Ok(Json(ErrorPageResponse {
-        code: error_page.code,
-        name: payload.title.unwrap_or(error_page.name),
-        description: error_page.description,
-        html_preview: Some(html_content),
+    let audit_id = uuid::Uuid::new_v4().to_string();
+
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_ipc::current_timestamp(),
+        actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+        action: "update_error_page".to_string(),
+        target_kind: "error_page".to_string(),
+        target_id: code.to_string(),
+        prior_state: None,
+        requested_state: Some(serde_json::json!({
+            "code": code,
+            "title": payload.title,
+        })),
+        resulting_state: Some(serde_json::json!({
+            "code": code,
+            "page_path": page_path.to_string_lossy(),
+        })),
+        mutation_status: AdminMutationStatus::Applied,
+        propagation_status: PropagationStatus::AppliedLocalOnly,
+        event_id: None,
+    };
+    state.log_admin_audit_event(&audit_event);
+
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target: serde_json::json!(code),
+        local_store_mutated: true,
+        propagation: PropagationStatus::AppliedLocalOnly,
+        event_id: None,
+        audit_id: Some(audit_id),
+        message: format!("Error page {} updated at {:?}", code, page_path),
     }))
 }
 

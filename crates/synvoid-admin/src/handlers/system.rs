@@ -6,10 +6,13 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use synvoid_core::admin_mutation::{AdminMutationResult, AdminMutationStatus, PropagationStatus};
+use synvoid_core::admin_mutation::{
+    AdminActor, AdminAuditEvent, AdminMutationAuthority, AdminMutationResult, AdminMutationStatus,
+    PropagationStatus,
+};
 use utoipa::ToSchema;
 
-use super::common::{OptionalAuth, StatusResponse};
+use super::common::OptionalAuth;
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct SupervisorStatusResponse {
@@ -294,7 +297,7 @@ pub async fn get_workers<S: AdminStateProvider>(
         ("worker_id" = String, Path, description = "Worker ID to restart")
     ),
     responses(
-        (status = 200, description = "Worker restart signal sent", body = StatusResponse),
+        (status = 200, description = "Worker restart signal sent"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Worker not found"),
         (status = 500, description = "Internal server error")
@@ -305,7 +308,7 @@ pub async fn restart_worker<S: AdminStateProvider>(
     State(state): State<Arc<S>>,
     Path(worker_id): Path<String>,
     _auth: OptionalAuth,
-) -> Result<Json<StatusResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult>, StatusCode> {
     let pm = state.process_manager().ok_or(StatusCode::NOT_FOUND)?;
 
     pm.restart_worker_by_id(&worker_id).map_err(|e| {
@@ -313,10 +316,38 @@ pub async fn restart_worker<S: AdminStateProvider>(
         StatusCode::NOT_FOUND
     })?;
 
-    Ok(Json(StatusResponse::success(format!(
-        "Restart signal sent to worker {}",
-        worker_id
-    ))))
+    let audit_id = uuid::Uuid::new_v4().to_string();
+
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_ipc::current_timestamp(),
+        actor: synvoid_core::admin_mutation::AdminActor::new(
+            synvoid_core::admin_mutation::AdminMutationAuthority::SupervisorManual,
+        ),
+        action: "restart_worker".to_string(),
+        target_kind: "worker".to_string(),
+        target_id: worker_id.clone(),
+        prior_state: None,
+        requested_state: None,
+        resulting_state: Some(serde_json::json!({
+            "worker_id": worker_id,
+            "restart_signal_sent": true,
+        })),
+        mutation_status: AdminMutationStatus::Applied,
+        propagation_status: PropagationStatus::AppliedLocalOnly,
+        event_id: None,
+    };
+    state.log_admin_audit_event(&audit_event);
+
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target: serde_json::json!(worker_id),
+        local_store_mutated: false,
+        propagation: PropagationStatus::AppliedLocalOnly,
+        event_id: None,
+        audit_id: Some(audit_id),
+        message: "Restart signal sent".to_string(),
+    }))
 }
 
 #[derive(Debug, serde::Deserialize, ToSchema)]
@@ -339,7 +370,7 @@ pub struct BatchRestartResponse {
     path = "/system/workers/batch-restart",
     request_body = BatchRestartRequest,
     responses(
-        (status = 200, description = "Batch restart result", body = BatchRestartResponse),
+        (status = 200, description = "Batch restart result"),
         (status = 401, description = "Unauthorized"),
         (status = 404, description = "Process manager not found"),
         (status = 500, description = "Internal server error")
@@ -350,7 +381,7 @@ pub async fn batch_restart_workers<S: AdminStateProvider>(
     State(state): State<Arc<S>>,
     _auth: OptionalAuth,
     Json(req): Json<BatchRestartRequest>,
-) -> Result<Json<BatchRestartResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult>, StatusCode> {
     let pm = state.process_manager().ok_or(StatusCode::NOT_FOUND)?;
 
     let mut restarted = Vec::new();
@@ -383,28 +414,65 @@ pub async fn batch_restart_workers<S: AdminStateProvider>(
             }
         }
         _ => {
-            return Ok(Json(BatchRestartResponse {
-                success: false,
+            return Ok(Json(AdminMutationResult {
+                status: AdminMutationStatus::InvalidRejected,
+                target: serde_json::json!("worker_batch"),
+                local_store_mutated: false,
+                propagation: PropagationStatus::NotApplicable,
+                event_id: None,
+                audit_id: None,
                 message: format!(
                     "Unknown strategy: {}. Use 'parallel' or 'rolling'",
                     req.strategy
                 ),
-                restarted: vec![],
-                failed: vec![],
             }));
         }
     }
 
-    let success = failed.is_empty();
-    Ok(Json(BatchRestartResponse {
-        success,
+    let audit_id = uuid::Uuid::new_v4().to_string();
+
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_ipc::current_timestamp(),
+        actor: AdminActor::new(AdminMutationAuthority::SupervisorManual),
+        action: "batch_restart_workers".to_string(),
+        target_kind: "worker_batch".to_string(),
+        target_id: req.worker_ids.join(","),
+        prior_state: None,
+        requested_state: Some(serde_json::json!({
+            "worker_ids": req.worker_ids,
+            "strategy": req.strategy,
+        })),
+        resulting_state: Some(serde_json::json!({
+            "restarted": restarted,
+            "failed": failed,
+        })),
+        mutation_status: if failed.is_empty() {
+            AdminMutationStatus::Applied
+        } else {
+            AdminMutationStatus::Applied
+        },
+        propagation_status: PropagationStatus::AppliedLocalOnly,
+        event_id: None,
+    };
+    state.log_admin_audit_event(&audit_event);
+
+    Ok(Json(AdminMutationResult {
+        status: if failed.is_empty() {
+            AdminMutationStatus::Applied
+        } else {
+            AdminMutationStatus::Applied
+        },
+        target: serde_json::json!("worker_batch"),
+        local_store_mutated: !restarted.is_empty(),
+        propagation: PropagationStatus::AppliedLocalOnly,
+        event_id: None,
+        audit_id: Some(audit_id),
         message: format!(
             "Restarted {} workers, {} failed",
             restarted.len(),
             failed.len()
         ),
-        restarted,
-        failed,
     }))
 }
 
@@ -471,7 +539,7 @@ pub async fn scale_workers<S: AdminStateProvider>(
     State(state): State<Arc<S>>,
     _auth: OptionalAuth,
     Json(req): Json<ScaleWorkersRequest>,
-) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
+) -> Result<Json<AdminMutationResult>, StatusCode> {
     let pm = state.process_manager().ok_or(StatusCode::NOT_FOUND)?;
 
     let current = pm.get_running_worker_count();
@@ -483,13 +551,31 @@ pub async fn scale_workers<S: AdminStateProvider>(
     let target = req.target_count.max(min_workers).min(max_workers);
 
     if target == current {
+        let audit_id = uuid::Uuid::new_v4().to_string();
+        let audit_event = AdminAuditEvent {
+            audit_id: audit_id.clone(),
+            timestamp: synvoid_ipc::current_timestamp(),
+            actor: AdminActor::new(AdminMutationAuthority::SupervisorManual),
+            action: "scale_workers".to_string(),
+            target_kind: "worker_pool".to_string(),
+            target_id: "scale".to_string(),
+            prior_state: None,
+            requested_state: Some(serde_json::json!({"target_count": req.target_count})),
+            resulting_state: Some(
+                serde_json::json!({"current_count": current, "target_count": target}),
+            ),
+            mutation_status: AdminMutationStatus::NoOpAlreadyPresent,
+            propagation_status: PropagationStatus::NotApplicable,
+            event_id: None,
+        };
+        state.log_admin_audit_event(&audit_event);
         return Ok(Json(AdminMutationResult {
             status: AdminMutationStatus::NoOpAlreadyPresent,
-            target: "worker_scale".to_string(),
+            target: serde_json::json!("worker_scale"),
             local_store_mutated: false,
             propagation: PropagationStatus::NotApplicable,
             event_id: None,
-            audit_id: None,
+            audit_id: Some(audit_id),
             message: "Already at target worker count".to_string(),
         }));
     }
@@ -512,13 +598,32 @@ pub async fn scale_workers<S: AdminStateProvider>(
 
     let new_current = pm.get_running_worker_count();
 
+    let audit_id = uuid::Uuid::new_v4().to_string();
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_ipc::current_timestamp(),
+        actor: AdminActor::new(AdminMutationAuthority::SupervisorManual),
+        action: "scale_workers".to_string(),
+        target_kind: "worker_pool".to_string(),
+        target_id: "scale".to_string(),
+        prior_state: Some(serde_json::json!({"current_count": current})),
+        requested_state: Some(serde_json::json!({"target_count": req.target_count})),
+        resulting_state: Some(
+            serde_json::json!({"current_count": new_current, "target_count": target}),
+        ),
+        mutation_status: AdminMutationStatus::Applied,
+        propagation_status: PropagationStatus::NotApplicable,
+        event_id: None,
+    };
+    state.log_admin_audit_event(&audit_event);
+
     Ok(Json(AdminMutationResult {
         status: AdminMutationStatus::Applied,
-        target: "worker_scale".to_string(),
+        target: serde_json::json!("worker_scale"),
         local_store_mutated: true,
         propagation: PropagationStatus::NotApplicable,
         event_id: None,
-        audit_id: None,
+        audit_id: Some(audit_id),
         message: diff,
     }))
 }

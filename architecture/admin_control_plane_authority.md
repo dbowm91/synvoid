@@ -120,6 +120,26 @@ Durable audit storage is future work.
 
 Phase 12 completed the conversion of all legacy mutating endpoints. All mutating endpoints now return typed `AdminMutationResult` and emit `AdminAuditEvent`. Config and site management endpoints are deferred.
 
+### Phase 12 Gap Closure (2026-06-30)
+
+The following endpoints were converted in the final Phase 12 pass:
+
+| Endpoint | File | Change |
+|----------|------|--------|
+| `create_session`, `delete_session` | auth.rs | Audit events added, responses use `AdminMutationResult` |
+| `update_theme` | theme.rs | Converted from `ThemeResponse` to `AdminMutationResult`, audit event added |
+| `create_listener`, `delete_listener` | tcp_udp.rs | Converted to `AdminMutationResult`, audit events added |
+| `derive_signing_key`, `submit_audit_report`, `report_signature_failure`, `create_organization` | mesh_admin.rs | Converted from custom response types to `AdminMutationResult`, audit events added |
+| `restart_worker`, `batch_restart_workers` | system.rs | Converted from `StatusResponse`/`BatchRestartResponse` to `AdminMutationResult`, audit events added |
+| `scale_workers` | system.rs | Audit event added (already had `AdminMutationResult`) |
+| `update_error_page` | logs.rs | Converted from `ErrorPageResponse` to `AdminMutationResult`, audit event added |
+| `delete_probe`, `delete_suspicious_word`, `delete_upstream_error` | probes.rs | Converted from `StatusCode::NO_CONTENT` to `AdminMutationResult`, audit events added |
+| `block_probes` | probes.rs | Audit event added (already had `AdminMutationResult`) |
+
+**Guard test update**: The `admin_mutation_response_guard` now also detects `StatusResponse::success` as a legacy pattern, in addition to `{"success": true}` and `StatusCode::NO_CONTENT`.
+
+All non-deferred mutating endpoints now return `AdminMutationResult` and emit `AdminAuditEvent`. The only remaining legacy patterns are the deferred config PUT endpoints (~50+) and site management endpoints (~6).
+
 ### Block/Unblock Endpoints (Priority) — ALL CONVERTED
 
 | Endpoint | File | Authority | Response |

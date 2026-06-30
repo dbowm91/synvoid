@@ -68,7 +68,7 @@ All 26 guard tests pass. 543 individual assertions pass.
 
 ### Security
 
-- [x] Admin mutation audit model implemented (`AdminMutationResult`) — Phase 12: all mutating endpoints converted
+- [x] Admin mutation audit model implemented (`AdminMutationResult`) — Phase 12: all non-deferred mutating endpoints converted; guard now detects `StatusResponse::success`
 - [x] Plugin capability model implemented (`plugin_capability_boundary_guard`)
 - [x] Threat-intel consumer actionability enforced (7 rules, `threat_intel_consumer_actionability_guard`)
 - [x] Mesh-ID blocks are admin-only (`mesh_id_boundary_guard`)
@@ -131,6 +131,12 @@ CI workflow (`.github/workflows/ci.yml`) was fixed in Phase 11. The `summary` jo
 `scripts/verify_architecture.sh` was updated to include `docs_path_reference_guard` (previously missing, now aligned with CI guard-suite).
 
 Local verification: all profile checks, format, and 27 guard tests pass. CI workflow now triggers correctly on push/PR.
+
+### Phase 12 Gap Closure (2026-06-30)
+
+The `admin_mutation_response_guard` was updated to also detect `StatusResponse::success` as a legacy pattern (previously only detected `{"success": true}` and `StatusCode::NO_CONTENT`).
+
+All non-deferred mutating endpoints now return `AdminMutationResult` and emit `AdminAuditEvent`. The final pass converted endpoints in `auth.rs`, `theme.rs`, `tcp_udp.rs`, `mesh_admin.rs`, `system.rs`, `logs.rs`, and `probes.rs`. The only remaining legacy patterns are deferred config PUT endpoints (~50+) and site management endpoints (~6), which are local-only mutations without mesh propagation.
 
 ## 6. Verification Commands
 

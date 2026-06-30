@@ -6,6 +6,10 @@ use utoipa::ToSchema;
 use super::super::state::AdminState;
 use super::common::OptionalAuth;
 use crate::theme::{ThemeConfig, ThemeDefaults, ThemePreset, ThemeRenderer};
+use synvoid_core::admin_mutation::{
+    AdminActor, AdminAuditEvent, AdminMutationAuthority, AdminMutationResult, AdminMutationStatus,
+    PropagationStatus,
+};
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ThemeResponse {
@@ -143,7 +147,7 @@ pub async fn get_theme(
     path = "/theme",
     request_body = UpdateThemeRequest,
     responses(
-        (status = 200, description = "Theme updated", body = ThemeResponse),
+        (status = 200, description = "Theme updated"),
         (status = 401, description = "Unauthorized"),
         (status = 500, description = "Internal server error")
     ),
@@ -153,7 +157,7 @@ pub async fn update_theme(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<UpdateThemeRequest>,
-) -> Result<Json<ThemeResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let mut config = state.process.config.write().await;
 
     if let Some(preset) = req.preset {
@@ -192,7 +196,44 @@ pub async fn update_theme(
             })?;
     }
 
-    Ok(Json(response))
+    let audit_id = uuid::Uuid::new_v4().to_string();
+
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_utils::safe_unix_timestamp(),
+        actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+        action: "update_theme".to_string(),
+        target_kind: "theme".to_string(),
+        target_id: "default".to_string(),
+        prior_state: None,
+        requested_state: Some(serde_json::json!({
+            "preset": response.preset,
+            "mode": response.mode,
+            "allow_only": response.allow_only,
+        })),
+        resulting_state: Some(serde_json::json!({
+            "preset": response.preset,
+            "mode": response.mode,
+            "allow_only": response.allow_only,
+        })),
+        mutation_status: AdminMutationStatus::Applied,
+        propagation_status: PropagationStatus::AppliedLocalOnly,
+        event_id: None,
+    };
+    state.audit.log_audit_event(&audit_event);
+
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target: "theme".to_string(),
+        local_store_mutated: true,
+        propagation: PropagationStatus::AppliedLocalOnly,
+        event_id: None,
+        audit_id: Some(audit_id),
+        message: format!(
+            "Theme updated: preset={}, mode={}",
+            response.preset, response.mode
+        ),
+    }))
 }
 
 #[utoipa::path(

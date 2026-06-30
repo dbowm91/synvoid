@@ -77,11 +77,12 @@ After the fix, CI triggers correctly on push to `main`/`master`/`develop` and PR
 | Category | Count |
 |----------|-------|
 | Fully converted (AdminMutationResult + audit) | 30+ endpoints |
-| Legacy `success: bool` pattern (no audit) | 0 endpoints |
-| Legacy `StatusResponse` pattern (documented deferred) | ~40 config PUT endpoints |
+| Non-deferred legacy endpoints remaining | **0 endpoints** |
+| Legacy `StatusResponse` pattern (documented deferred) | ~50 config PUT endpoints |
+| Legacy site management endpoints (documented deferred) | ~6 endpoints |
 | Raw token logging fixed | 0 (was 1, now resolved) |
 
-Phase 12 completed the conversion of all legacy mutating endpoints across mesh_admin, ICMP, honeypot, YARA, alerting, threat-level, serverless, spin, rule-feed, plugin, and PHP handler files. Only config PUT endpoints remain deferred (local-only mutations without mesh propagation).
+Phase 12 completed the conversion of all non-deferred legacy mutating endpoints. The final pass converted: `auth.rs` (create/delete session), `theme.rs` (update_theme), `tcp_udp.rs` (create/delete listener), `mesh_admin.rs` (derive_signing_key, submit_audit_report, report_signature_failure, create_organization), `system.rs` (restart_worker, batch_restart_workers, scale_workers), `logs.rs` (update_error_page), and `probes.rs` (delete_probe, delete_suspicious_word, delete_upstream_error, block_probes). All mutating endpoints now return typed `AdminMutationResult` and emit `AdminAuditEvent`. Only config PUT endpoints (~50+) and site management endpoints (~6) remain deferred (local-only mutations without mesh propagation). The `admin_mutation_response_guard` now also detects `StatusResponse::success` as a legacy pattern.
 Documented in `architecture/admin_control_plane_authority.md`.
 
 ## Observability Audit
@@ -114,7 +115,7 @@ Documented in `architecture/admin_control_plane_authority.md`.
 
 ## Residual Risks
 
-1. **Config PUT endpoints (deferred)**: ~40 config PUT endpoints still use `StatusResponse`. These are local-only mutations without mesh propagation. Documented as deferred.
+1. **Config PUT endpoints (deferred)**: ~50 config PUT endpoints and ~6 site management endpoints still use legacy response types. These are local-only mutations without mesh propagation. Documented as deferred.
 2. **Full signature verification**: Crypto verification of plugin signatures against binary
    hash is not implemented. Documented as deferred.
 3. **DevelopmentHotReload gating**: Trust tier enforcement is at the loader level, not inside

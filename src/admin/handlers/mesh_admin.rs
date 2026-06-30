@@ -1085,17 +1085,17 @@ pub async fn get_mesh_status(
     path = "/mesh/derive-signing-key",
     request_body = DeriveSigningKeyRequest,
     responses(
-        (status = 200, description = "Signing key derived", body = DeriveSigningKeyResponse),
+        (status = 200, description = "Signing key derived"),
         (status = 401, description = "Unauthorized"),
         (status = 500, description = "Internal server error")
     ),
     tag = "mesh"
 )]
 pub async fn derive_signing_key(
-    State(_state): State<Arc<AdminState>>,
+    State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(req): Json<DeriveSigningKeyRequest>,
-) -> Result<Json<DeriveSigningKeyResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     use base64::Engine;
 
     let genesis_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
@@ -1106,10 +1106,13 @@ pub async fn derive_signing_key(
         })?;
 
     if genesis_bytes.len() != 32 {
-        return Ok(Json(DeriveSigningKeyResponse {
-            success: false,
-            signing_public_key: None,
-            node_id: None,
+        return Ok(Json(AdminMutationResult {
+            status: AdminMutationStatus::InvalidRejected,
+            target: "signing_key".to_string(),
+            local_store_mutated: false,
+            propagation: PropagationStatus::NotApplicable,
+            event_id: None,
+            audit_id: None,
             message: "Genesis key must be 32 bytes".to_string(),
         }));
     }
@@ -1124,10 +1127,13 @@ pub async fn derive_signing_key(
 
     let mut node_identity = crate::mesh::NodeIdentityConfig::default();
     if let Err(e) = node_identity.derive_signing_key_from_genesis(&genesis_key, &public_key) {
-        return Ok(Json(DeriveSigningKeyResponse {
-            success: false,
-            signing_public_key: None,
-            node_id: None,
+        return Ok(Json(AdminMutationResult {
+            status: AdminMutationStatus::Failed,
+            target: "signing_key".to_string(),
+            local_store_mutated: false,
+            propagation: PropagationStatus::NotApplicable,
+            event_id: None,
+            audit_id: None,
             message: format!("Failed to derive signing key: {}", e),
         }));
     }
@@ -1135,10 +1141,36 @@ pub async fn derive_signing_key(
     let signing_public_key = node_identity.public_key_hex();
     let node_id = node_identity.node_id.clone();
 
-    Ok(Json(DeriveSigningKeyResponse {
-        success: true,
-        signing_public_key: signing_public_key.map(|pk| format!("{}...", &pk[..16.min(pk.len())])),
-        node_id,
+    let audit_id = uuid::Uuid::new_v4().to_string();
+
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_utils::safe_unix_timestamp(),
+        actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+        action: "derive_signing_key".to_string(),
+        target_kind: "signing_key".to_string(),
+        target_id: "genesis".to_string(),
+        prior_state: None,
+        requested_state: Some(serde_json::json!({
+            "genesis_key_base64": req.genesis_key_base64,
+        })),
+        resulting_state: Some(serde_json::json!({
+            "signing_public_key_derived": true,
+            "node_id": node_id,
+        })),
+        mutation_status: AdminMutationStatus::Applied,
+        propagation_status: PropagationStatus::AppliedLocalOnly,
+        event_id: None,
+    };
+    state.audit.log_audit_event(&audit_event);
+
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target: "signing_key".to_string(),
+        local_store_mutated: true,
+        propagation: PropagationStatus::AppliedLocalOnly,
+        event_id: None,
+        audit_id: Some(audit_id),
         message: format!(
             "Signing key derived successfully.\n\
              Add the following to your config/main.toml to use this genesis key:\n\n\
@@ -1155,7 +1187,7 @@ pub async fn derive_signing_key(
     path = "/mesh/audit/report",
     request_body = AuditReportRequest,
     responses(
-        (status = 200, description = "Audit report submitted", body = AuditReportResponseDto),
+        (status = 200, description = "Audit report submitted"),
         (status = 401, description = "Unauthorized"),
         (status = 500, description = "Internal server error")
     ),
@@ -1164,7 +1196,10 @@ pub async fn derive_signing_key(
 pub async fn submit_audit_report(
     State(state): State<Arc<AdminState>>,
     Json(req): Json<AuditReportRequest>,
-) -> Result<Json<AuditReportResponseDto>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
+    let mesh_id_for_audit = req.mesh_id.clone();
+    let edge_node_id_for_audit = req.edge_node_id.clone();
+
     let report = ClientAuditReport {
         mesh_id: req.mesh_id,
         edge_node_id: req.edge_node_id,
@@ -1202,15 +1237,57 @@ pub async fn submit_audit_report(
 
     if let Some(ref manager) = state.mesh.client_audit_manager {
         let response = manager.process_audit_report(report).await;
-        Ok(Json(AuditReportResponseDto::from(response)))
+        let audit_id = uuid::Uuid::new_v4().to_string();
+
+        let audit_event = AdminAuditEvent {
+            audit_id: audit_id.clone(),
+            timestamp: synvoid_utils::safe_unix_timestamp(),
+            actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+            action: "submit_audit_report".to_string(),
+            target_kind: "audit_report".to_string(),
+            target_id: response.message.clone(),
+            prior_state: None,
+            requested_state: Some(serde_json::json!({
+                "mesh_id": mesh_id_for_audit,
+                "edge_node_id": edge_node_id_for_audit,
+            })),
+            resulting_state: Some(serde_json::json!({
+                "accepted": response.accepted,
+                "reputation_updated": response.reputation_updated,
+                "quarantined": response.quarantined,
+            })),
+            mutation_status: if response.accepted {
+                AdminMutationStatus::Applied
+            } else {
+                AdminMutationStatus::Failed
+            },
+            propagation_status: PropagationStatus::AppliedLocalOnly,
+            event_id: None,
+        };
+        state.audit.log_audit_event(&audit_event);
+
+        Ok(Json(AdminMutationResult {
+            status: if response.accepted {
+                AdminMutationStatus::Applied
+            } else {
+                AdminMutationStatus::Failed
+            },
+            target: mesh_id_for_audit.clone(),
+            local_store_mutated: response.accepted,
+            propagation: PropagationStatus::AppliedLocalOnly,
+            event_id: None,
+            audit_id: Some(audit_id),
+            message: response.message,
+        }))
     } else {
-        Ok(Json(AuditReportResponseDto {
-            accepted: false,
+        Ok(Json(AdminMutationResult {
+            status: AdminMutationStatus::Failed,
+            target: mesh_id_for_audit,
+            local_store_mutated: false,
+            propagation: PropagationStatus::NotApplicable,
+            event_id: None,
+            audit_id: None,
             message: "Audit manager not configured".to_string(),
-            reputation_updated: None,
-            quarantined: false,
-            quarantine_reason: None,
-            new_pow_challenge: None,
         }))
     }
 }
@@ -1327,7 +1404,7 @@ pub struct SignatureFailureResponse {
     path = "/mesh/report/signature-failure",
     request_body = SignatureFailureReport,
     responses(
-        (status = 200, description = "Signature failure reported", body = SignatureFailureResponse),
+        (status = 200, description = "Signature failure reported"),
         (status = 401, description = "Unauthorized"),
         (status = 500, description = "Internal server error")
     ),
@@ -1336,7 +1413,7 @@ pub struct SignatureFailureResponse {
 pub async fn report_signature_failure(
     State(state): State<Arc<AdminState>>,
     Json(report): Json<SignatureFailureReport>,
-) -> Result<Json<SignatureFailureResponse>, StatusCode> {
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
     let session_id_hash = report.session_id.as_deref().map(|sid| {
         format!(
             "sha256:{}",
@@ -1357,10 +1434,39 @@ pub async fn report_signature_failure(
         }
     }
 
-    Ok(Json(SignatureFailureResponse {
-        accepted: true,
+    let audit_id = uuid::Uuid::new_v4().to_string();
+
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_utils::safe_unix_timestamp(),
+        actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+        action: "report_signature_failure".to_string(),
+        target_kind: "signature_failure".to_string(),
+        target_id: report
+            .mesh_id
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string()),
+        prior_state: None,
+        requested_state: None,
+        resulting_state: Some(serde_json::json!({
+            "session_id_hash": session_id_hash,
+            "path": report.path,
+            "mesh_id": report.mesh_id,
+        })),
+        mutation_status: AdminMutationStatus::Applied,
+        propagation_status: PropagationStatus::AppliedLocalOnly,
+        event_id: None,
+    };
+    state.audit.log_audit_event(&audit_event);
+
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target: report.mesh_id.unwrap_or_else(|| "unknown".to_string()),
+        local_store_mutated: false,
+        propagation: PropagationStatus::AppliedLocalOnly,
+        event_id: None,
+        audit_id: Some(audit_id),
         message: "Signature failure recorded".to_string(),
-        action_taken: Some("logged".to_string()),
     }))
 }
 
@@ -1496,7 +1602,7 @@ pub struct OrgPublicKeyResponse {
     path = "/mesh/organizations",
     request_body = CreateOrgRequest,
     responses(
-        (status = 200, description = "Organization created", body = OrgResponse),
+        (status = 200, description = "Organization created"),
         (status = 401, description = "Unauthorized"),
         (status = 500, description = "Internal error")
     ),
@@ -1507,16 +1613,17 @@ pub async fn create_organization(
     State(state): State<Arc<AdminState>>,
     _auth: OptionalAuth,
     Json(payload): Json<CreateOrgRequest>,
-) -> Result<Json<OrgResponse>, (StatusCode, String)> {
-    let mgr = state.mesh.org_key_manager.as_ref().ok_or((
-        StatusCode::SERVICE_UNAVAILABLE,
-        "Org key manager not enabled".to_string(),
-    ))?;
+) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
+    let mgr = state
+        .mesh
+        .org_key_manager
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
 
     let org = mgr
         .create_organization(payload.org_id, payload.name)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let pub_key_hex = org
         .org_key
@@ -1524,11 +1631,42 @@ pub async fn create_organization(
         .map(|k| k.public_key_hex())
         .unwrap_or_default();
 
-    Ok(Json(OrgResponse {
-        org_id: org.org_id,
-        name: org.name,
-        public_key: pub_key_hex,
-        created_at: org.created_at,
+    let audit_id = uuid::Uuid::new_v4().to_string();
+
+    let audit_event = AdminAuditEvent {
+        audit_id: audit_id.clone(),
+        timestamp: synvoid_utils::safe_unix_timestamp(),
+        actor: AdminActor::new(AdminMutationAuthority::AdminManual),
+        action: "create_organization".to_string(),
+        target_kind: "organization".to_string(),
+        target_id: org.org_id.clone(),
+        prior_state: None,
+        requested_state: Some(serde_json::json!({
+            "org_id": org.org_id,
+            "name": org.name,
+        })),
+        resulting_state: Some(serde_json::json!({
+            "org_id": org.org_id,
+            "name": org.name,
+            "public_key_derived": !pub_key_hex.is_empty(),
+        })),
+        mutation_status: AdminMutationStatus::Applied,
+        propagation_status: PropagationStatus::AppliedLocalOnly,
+        event_id: None,
+    };
+    state.audit.log_audit_event(&audit_event);
+
+    Ok(Json(AdminMutationResult {
+        status: AdminMutationStatus::Applied,
+        target: org.org_id,
+        local_store_mutated: true,
+        propagation: PropagationStatus::AppliedLocalOnly,
+        event_id: None,
+        audit_id: Some(audit_id),
+        message: format!(
+            "Organization created with public key: {}...",
+            &pub_key_hex[..pub_key_hex.len().min(16)]
+        ),
     }))
 }
 

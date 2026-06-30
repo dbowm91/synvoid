@@ -1124,6 +1124,10 @@ impl synvoid_admin::handlers::state::AdminStateProvider for AdminState {
     fn audit_log_count(&self) -> usize {
         self.audit.count()
     }
+
+    fn log_admin_audit_event(&self, event: &synvoid_core::admin_mutation::AdminAuditEvent) {
+        self.audit.log_audit_event(event);
+    }
 }
 
 pub struct CsrfTokenData {

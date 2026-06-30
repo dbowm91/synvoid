@@ -62,6 +62,7 @@ const GENERIC_SUCCESS_TOKENS: &[&str] = &[
     "\"success\": true",
     "success: true",
     "StatusCode::OK, Json(json!",
+    "StatusResponse::success",
 ];
 
 /// Directories to scan for admin handlers.
@@ -75,6 +76,8 @@ const ALLOWLIST: &[&str] = &[
     "mesh_topology.rs",
     "behavioral_intel.rs",
     "threat_intel_policy.rs",
+    // Deferred: config endpoints use StatusResponse::success (local-only, no mesh propagation)
+    "config.rs",
 ];
 
 #[test]
@@ -136,7 +139,10 @@ fn admin_mutation_response_guard() {
                         || trimmed.contains("reset_")
                         || trimmed.contains("prune_")
                         || trimmed.contains("discard_")
-                        || trimmed.contains("control_"))
+                        || trimmed.contains("control_")
+                        || trimmed.contains("submit_")
+                        || trimmed.contains("derive_")
+                        || trimmed.contains("report_"))
                 {
                     in_mutation_handler = true;
                     brace_depth = 0;
