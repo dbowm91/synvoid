@@ -430,9 +430,61 @@ jobs:
         run: cargo test --test docs_path_reference_guard
         continue-on-error: true
 
+  fuzz-smoke:
+    name: Fuzz Smoke Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust nightly toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo-fuzz
+        id: cache-fuzz
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-fuzz
+          key: ${{ runner.os }}-cargo-fuzz-0.13.2
+
+      - name: Install cargo-fuzz
+        if: steps.cache-fuzz.outputs.cache-hit != 'true'
+        run: cargo install cargo-fuzz
+
+      - name: Run fuzz smoke tests
+        run: |
+          FUZZ_TARGETS=(
+            dns_message_decode
+            http_path_normalization
+            plugin_manifest
+            fuzz_attack_detection
+            fuzz_early_parse
+            fuzz_ipc
+            fuzz_protocol_proto_decode
+            fuzz_raft_commit_notification
+            fuzz_raft_response
+            fuzz_serialization
+            fuzz_serialization_new
+            blocklist_event_decode
+            blocklist_snapshot_decode
+            admin_mutation_result_decode
+            http_header_normalization
+            mesh_protocol_compressed_decode
+          )
+          FAILED=0
+          for target in "${FUZZ_TARGETS[@]}"; do
+            echo "::group::$target"
+            cargo +nightly fuzz run "$target" -- -runs=1000 || FAILED=1
+            echo "::endgroup::"
+          done
+          if [ "$FAILED" -eq 1 ]; then
+            echo "::error::Fuzz smoke tests failed"
+            exit 1
+          fi
+          echo "All fuzz smoke tests passed"
+
   summary:
     name: CI Summary
-    needs: [build, clippy, unsafe-dns, fmt, docs, security-audit, dependency-audit, outdated-deps, core-profile, import-check, miri-test, security-regression, profile-matrix, guard-suite, docs-link-guard]
+    needs: [build, clippy, unsafe-dns, fmt, docs, security-audit, dependency-audit, outdated-deps, core-profile, import-check, miri-test, security-regression, profile-matrix, guard-suite, docs-link-guard, fuzz-smoke]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -457,3 +509,4 @@ jobs:
           echo "| profile-matrix | ${{ needs.profile-matrix.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| guard-suite | ${{ needs.guard-suite.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| docs-link-guard | ${{ needs.docs-link-guard.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| fuzz-smoke | ${{ needs.fuzz-smoke.result }} |" >> $GITHUB_STEP_SUMMARY
