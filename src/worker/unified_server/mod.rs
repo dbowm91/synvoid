@@ -26,18 +26,10 @@ pub mod state;
 pub mod supervision_loop;
 pub mod supervisor_notify;
 
-use std::collections::HashMap;
+#[cfg(all(feature = "mesh", feature = "dns"))]
 use std::sync::Arc;
+#[cfg(all(feature = "mesh", feature = "dns"))]
 use std::time::Duration;
-
-use tokio::sync::Mutex as TokioMutex;
-use tokio::sync::RwLock;
-
-use super::drain_state::WorkerDrainState;
-use super::metrics::WorkerMetrics;
-use crate::server::UnifiedServer;
-use crate::{DrainFlag, RunningFlag};
-use synvoid_ipc::WorkerId;
 
 pub use state::{
     setup_unified_server_panic_handler, UnifiedServerWorkerArgs, UnifiedServerWorkerState,
@@ -331,7 +323,7 @@ async fn register_mesh_generation_support(
     support: MeshSupportTasks,
     generation: u64,
 ) -> Result<MeshGenerationSupport, crate::worker::task_registry::WorkerShutdownCause> {
-    use crate::worker::task_registry::{TaskId, WorkerShutdownCause};
+    use crate::worker::task_registry::TaskId;
 
     let worker_shutdown_rx = state.task_registry.lock().await.child_token();
     let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
@@ -349,7 +341,7 @@ async fn register_mesh_generation_support(
                     biased;
                     _ = gen_cancel.changed() => { return; }
                     _ = worker_shutdown.changed() => { return; }
-                    result = loop_fut => { result; }
+                    result = loop_fut => { let _ = result; }
                 }
             };
             let id = registry.spawn_background(
@@ -488,7 +480,7 @@ pub async fn run_unified_server_worker(
     // ---- Phase 15: supervision loop (select over lifecycle, exits, mesh decisions) ----
     // Extract owned fields from startup before passing to supervision loop.
     #[cfg(feature = "mesh")]
-    let (mesh_decision_rx_opt, required_mesh_startup_failure, mut active_mesh_support) = {
+    let (mesh_decision_rx_opt, required_mesh_startup_failure, active_mesh_support) = {
         match startup.mesh_startup {
             Some(ms) => (
                 Some(ms.decision_rx),

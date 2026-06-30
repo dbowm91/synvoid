@@ -15,6 +15,8 @@ use crate::transport_core::MeshTransportError;
 ///
 /// This trait provides a narrow contract for worker-level code to observe
 /// and control the mesh transport without depending on concrete internals.
+/// It is crate-owned, so async methods are kept here for call-site clarity.
+#[allow(async_fn_in_trait)]
 pub trait ManagedMeshService: Send + Sync {
     /// Subscribe to critical mesh task exits before starting.
     ///

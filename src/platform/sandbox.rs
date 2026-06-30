@@ -392,8 +392,6 @@ pub mod linux {
         }
 
         fn restrict_self(&self, ruleset_fd: i32) -> Result<(), SandboxError> {
-            const LANDLOCK_RESTRICT_SELF: u64 = 3;
-
             unsafe {
                 let ret = libc::syscall(libc::SYS_landlock_restrict_self, ruleset_fd as i64, 0u64);
 

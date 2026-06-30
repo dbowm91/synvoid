@@ -299,13 +299,13 @@ impl DataPlaneServicesBuilder {
     ///
     /// After this call, the returned `DataPlaneServices` is ready for
     /// installation into `UnifiedServerWorkerState`.
-    pub fn build_and_cross_wire(self, unified_server: &Arc<UnifiedServer>) -> DataPlaneServices {
+    pub fn build_and_cross_wire(self, _unified_server: &Arc<UnifiedServer>) -> DataPlaneServices {
         let services = self.build();
 
         #[cfg(feature = "mesh")]
         {
             services.apply_threat_intel_policy_context();
-            cross_wire_mesh_services(unified_server, &services);
+            cross_wire_mesh_services(_unified_server, &services);
         }
 
         services

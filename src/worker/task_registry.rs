@@ -790,7 +790,7 @@ impl WorkerTaskRegistry {
         &mut self,
         task_ids: &[TaskId],
         cooperative_timeout: Duration,
-        forced_timeout: Duration,
+        _forced_timeout: Duration,
         expected_during_shutdown: bool,
     ) -> TaskSubsetCleanupReport {
         let id_set: std::collections::HashSet<TaskId> = task_ids.iter().copied().collect();
@@ -1317,7 +1317,7 @@ mod tests {
             TaskExitReason::Panic(msg) => assert!(msg.contains("test panic")),
             other => panic!("Expected Panic, got {:?}", other),
         }
-        assert_eq!(panics_after, 1);
+        assert_eq!(panics_after, panics_before + 1);
     }
 
     #[tokio::test]
@@ -1769,8 +1769,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_begin_shutdown_marks_expected_without_broadcasting() {
-        let mut registry = WorkerTaskRegistry::new();
-        let mut token = registry.child_token();
+        let registry = WorkerTaskRegistry::new();
+        let token = registry.child_token();
 
         registry.begin_shutdown();
         assert!(registry.is_shutdown_started());
@@ -1780,8 +1780,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_broadcast_shutdown_sends_signal() {
-        let mut registry = WorkerTaskRegistry::new();
-        let mut token = registry.child_token();
+        let registry = WorkerTaskRegistry::new();
+        let token = registry.child_token();
 
         registry.begin_shutdown();
         registry.broadcast_shutdown();
@@ -1790,8 +1790,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_shutdown_begins_and_broadcasts() {
-        let mut registry = WorkerTaskRegistry::new();
-        let mut token = registry.child_token();
+        let registry = WorkerTaskRegistry::new();
+        let token = registry.child_token();
 
         registry.shutdown();
         assert!(registry.is_shutdown_started());

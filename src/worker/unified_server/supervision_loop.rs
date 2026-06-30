@@ -6,7 +6,7 @@
 // This module must NOT perform ordered teardown — it only selects the
 // cause and returns.
 
-use std::sync::Arc;
+#[cfg(all(feature = "mesh", feature = "dns"))]
 use std::time::Duration;
 
 use crate::worker::task_registry::SupervisionOutcome;
@@ -14,6 +14,7 @@ use crate::worker::task_registry::WorkerShutdownCause;
 use crate::worker::unified_server::state::UnifiedServerWorkerState;
 #[cfg(feature = "mesh")]
 use crate::worker::unified_server::MeshGenerationSupport;
+#[cfg(all(feature = "mesh", feature = "dns"))]
 use crate::worker::unified_server::SupportStopContext;
 
 #[cfg(feature = "mesh")]
@@ -42,6 +43,8 @@ pub struct WorkerSupervisionResult {
 ///
 /// This function does NOT perform ordered teardown — that is the
 /// responsibility of `shutdown_executor::execute_worker_shutdown()`.
+#[cfg_attr(not(feature = "mesh"), allow(unused_mut, unused_variables))]
+#[cfg_attr(not(all(feature = "mesh", feature = "dns")), allow(unused_mut))]
 pub async fn run_worker_supervision(
     state: &UnifiedServerWorkerState,
     mut lifecycle_rx: tokio::sync::mpsc::Receiver<
@@ -57,16 +60,20 @@ pub async fn run_worker_supervision(
         registry.shutdown_started_flag()
     };
 
-    let outcome: SupervisionOutcome = 'supervision: {
+    let outcome: SupervisionOutcome = {
         #[cfg(feature = "mesh")]
         if let Some(cause) = required_mesh_startup_failure {
-            break 'supervision SupervisionOutcome::DirectCause(cause);
+            return WorkerSupervisionResult {
+                outcome: SupervisionOutcome::DirectCause(cause),
+                #[cfg(feature = "mesh")]
+                active_mesh_support,
+            };
         }
         loop {
             // Mesh supervision decisions future. Defined outside select to
             // avoid #[cfg] on select branches (not valid proc-macro syntax).
             #[cfg(feature = "mesh")]
-            let mut mesh_decision_future = async {
+            let mesh_decision_future = async {
                 match &mut mesh_decision_rx_opt {
                     Some(rx) => rx.recv().await,
                     None => std::future::pending().await,

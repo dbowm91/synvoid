@@ -17,7 +17,6 @@ use std::path::PathBuf;
 use crate::startup::bootstrap::{init_logging_simple, print_test_mode_warning};
 use crate::startup::daemon::acquire_pid_file;
 use crate::startup::worker::{build_cpu_worker_args, build_unified_server_worker_args};
-use crate::supervisor::commands::handle_configtest;
 use crate::supervisor::run_supervisor_mode;
 use crate::worker::{
     run_cpu_worker, run_unified_server_worker, setup_unified_server_panic_handler,

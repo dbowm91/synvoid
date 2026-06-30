@@ -648,7 +648,6 @@ pub struct MeshSupervisionCoordinator {
     decision_tx: mpsc::Sender<MeshSupervisorDecision>,
     budget: RestartBudget,
     generation: u64,
-    restart_tx: Option<broadcast::Sender<RestartTimerElapsed>>,
 }
 
 /// Restart timer event with generation for stale detection.
@@ -672,7 +671,6 @@ impl MeshSupervisionCoordinator {
             decision_tx,
             budget,
             generation: 0,
-            restart_tx: None,
         }
     }
 

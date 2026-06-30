@@ -7,8 +7,6 @@ use synvoid_ipc::WorkerId;
 
 use crate::worker::task_registry::WorkerShutdownCause;
 
-type BoxError = Box<dyn std::error::Error + Send + Sync>;
-
 /// Map a `WorkerShutdownCause` to the appropriate supervisor IPC message.
 pub async fn notify_supervisor_of_shutdown(
     ipc: &tokio::sync::Mutex<synvoid_ipc::AsyncIpcStream>,

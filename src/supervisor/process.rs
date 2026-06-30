@@ -187,7 +187,7 @@ impl SupervisorProcess {
 
                     // Check for finished supervisor tasks
                     let finished = self.supervisor_tasks.join_finished().await;
-                    for (task_id, outcome) in finished {
+                    for (_task_id, outcome) in finished {
                         match outcome {
                             SupervisorTaskOutcome::Failed(reason) => {
                                 tracing::error!(

@@ -1138,7 +1138,6 @@ pub async fn derive_signing_key(
         }));
     }
 
-    let signing_public_key = node_identity.public_key_hex();
     let node_id = node_identity.node_id.clone();
 
     let audit_id = uuid::Uuid::new_v4().to_string();

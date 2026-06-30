@@ -186,7 +186,7 @@ pub fn validate_mesh_runtime_inputs(
 /// standalone function.
 pub async fn init_mesh_and_threat_intel(
     shared_config: &Arc<RwLock<ConfigManager>>,
-    config_path: &std::path::Path,
+    _config_path: &std::path::Path,
     unified_server: &Arc<UnifiedServer>,
 ) -> MeshInit {
     #[cfg(feature = "mesh")]
@@ -344,11 +344,11 @@ pub async fn init_mesh_and_threat_intel(
         )> = Vec::new();
         // Default values for components populated inside #[cfg(feature = "dns")].
         #[cfg(all(feature = "mesh", feature = "dns"))]
-        let mut yara_broadcast: Option<(
+        let yara_broadcast: Option<(
             tokio::sync::mpsc::Receiver<crate::mesh::protocol::MeshMessage>,
             Arc<crate::mesh::transport::MeshTransport>,
             Arc<tokio::sync::Semaphore>,
-        )> = None;
+        )>;
 
         #[cfg(feature = "dns")]
         {
@@ -606,7 +606,7 @@ pub async fn init_mesh_and_threat_intel(
 
     #[cfg(not(feature = "mesh"))]
     {
-        let _ = (shared_config, config_path, unified_server);
+        let _ = (shared_config, _config_path, unified_server);
         MeshInit {}
     }
 }

@@ -408,7 +408,7 @@ impl UnifiedServer {
         }
 
         // ── Plugin runtime (kept alive until after shutdown) ────────
-        let mut plugin_owner = {
+        let plugin_owner = {
             let cfg = config.read().await;
             let main_config = cfg.main.clone();
 
@@ -700,20 +700,13 @@ impl UnifiedServer {
         let mut shutdown_rx = self.shutdown_tx.subscribe();
         let (critical_tx, mut critical_rx) = tokio::sync::oneshot::channel::<String>();
 
-        // Spawn a watcher that monitors handles for critical failures
-        // (This is a short-lived diagnostic task, not a long-lived server task)
-        let watch_handles_for_critical = {
-            let mut handles_ref = UnifiedServerRuntimeHandles::new();
-            // We can't borrow handles here, so we use a different approach:
-            // just wait for shutdown signal OR critical_rx
-            async {
-                tokio::select! {
-                    _ = shutdown_rx.recv() => "signal".to_string(),
-                    msg = &mut critical_rx => {
-                        match msg {
-                            Ok(name) => name,
-                            Err(_) => "channel_closed".to_string(),
-                        }
+        let shutdown_trigger = async {
+            tokio::select! {
+                _ = shutdown_rx.recv() => "signal".to_string(),
+                msg = &mut critical_rx => {
+                    match msg {
+                        Ok(name) => name,
+                        Err(_) => "channel_closed".to_string(),
                     }
                 }
             }
@@ -724,7 +717,7 @@ impl UnifiedServer {
         // If we wanted to detect critical task exits, we'd need the tasks
         // to send on critical_tx. For now, we just wait for ctrl_c/signal.
         let _ = critical_tx; // suppress unused warning — kept for future use
-        let shutdown_cause = watch_handles_for_critical.await;
+        let shutdown_cause = shutdown_trigger.await;
         tracing::info!(cause = %shutdown_cause, "Shutdown trigger received, broadcasting shutdown");
 
         // ── Broadcast shutdown and drain all tasks ───────────────────

@@ -355,6 +355,9 @@ async fn handle_worker_connection_internal(
     state: SupervisorState,
     initial_message: Option<Message>,
 ) {
+    #[cfg(not(feature = "mesh"))]
+    let _ = &state;
+
     let enforce_signing = process_manager.get_ipc_enforce_signing();
     let session_key = process_manager.get_ipc_session_key();
 

@@ -46,7 +46,7 @@ impl UnifiedServerResources {
     pub fn build(
         main_config: &MainConfig,
         plan: &UnifiedServerStartupPlan,
-        config: Arc<RwLock<ConfigManager>>,
+        _config: Arc<RwLock<ConfigManager>>,
     ) -> Result<Self, UnifiedServerResourceError> {
         let tls_config = crate::tls::config::InternalTlsConfig::from(main_config.tls.clone());
 
@@ -345,16 +345,9 @@ impl UnifiedServerResources {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::ConfigManager;
     use crate::config::MainConfig;
     use crate::server::startup_plan::UnifiedServerStartupPlan;
     use std::sync::Arc;
-    use tokio::sync::RwLock;
-
-    fn make_test_config_manager() -> Arc<RwLock<ConfigManager>> {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        Arc::new(RwLock::new(ConfigManager::new(tmp.keep())))
-    }
 
     #[test]
     fn build_with_defaults_succeeds() {

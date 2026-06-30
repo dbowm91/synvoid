@@ -311,20 +311,18 @@ pub fn execute_supervisor_control_command(
                 .map_err(classify_control_error)?;
             Ok(SupervisorControlOutcome::Rehash(outcome))
         }
+        #[cfg(feature = "mesh")]
         SupervisorControlCommand::ExportThreatFeed { sign_with, site_id } => {
-            #[cfg(feature = "mesh")]
-            {
-                let summary = crate::supervisor::commands::handle_export_threat_feed_data(
-                    &sign_with,
-                    site_id.as_deref(),
-                )
-                .map_err(classify_control_error)?;
-                Ok(SupervisorControlOutcome::ThreatFeedExported(summary))
-            }
-            #[cfg(not(feature = "mesh"))]
-            {
-                Err(SupervisorControlError::UnsupportedFeature("mesh"))
-            }
+            let summary = crate::supervisor::commands::handle_export_threat_feed_data(
+                &sign_with,
+                site_id.as_deref(),
+            )
+            .map_err(classify_control_error)?;
+            Ok(SupervisorControlOutcome::ThreatFeedExported(summary))
+        }
+        #[cfg(not(feature = "mesh"))]
+        SupervisorControlCommand::ExportThreatFeed { .. } => {
+            Err(SupervisorControlError::UnsupportedFeature("mesh"))
         }
     }
 }

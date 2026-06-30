@@ -159,21 +159,26 @@ pub async fn execute_worker_shutdown(
     let WorkerShutdownContext {
         worker_id,
         state,
-        mut shutdown_cause,
+        shutdown_cause,
         lifecycle_ack,
         graceful,
         drain_timeout,
         #[cfg(feature = "mesh")]
         mut active_mesh_support,
     } = ctx;
+    #[cfg(feature = "mesh")]
+    let mut shutdown_cause = shutdown_cause;
 
     // Step 1: Record coordinated shutdown intent before any teardown,
     // and acknowledge the lifecycle event so the IPC task can return.
     super::lifecycle::begin_coordinated_shutdown(&state.task_registry, lifecycle_ack).await;
 
     // Step 1.5: Establish real shutdown deadline.
+    #[cfg(feature = "mesh")]
     let shutdown_started_at = std::time::Instant::now();
+    #[cfg(feature = "mesh")]
     let shutdown_deadline = shutdown_started_at + drain_timeout;
+    #[cfg(feature = "mesh")]
     let remaining_budget = || -> std::time::Duration {
         shutdown_deadline.saturating_duration_since(std::time::Instant::now())
     };

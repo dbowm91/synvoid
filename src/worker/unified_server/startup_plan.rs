@@ -13,7 +13,6 @@ use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
 use tokio::sync::RwLock;
 
-use super::init_mesh::MeshInit;
 use super::passthrough_validation;
 use super::services::DataPlaneServicesBuilder;
 use super::state::{self, UnifiedServerWorkerArgs, UnifiedServerWorkerState};
@@ -29,7 +28,6 @@ use synvoid_ipc::WorkerId;
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 type SharedConfig = Arc<RwLock<ConfigManager>>;
 type SharedUnifiedServer = Arc<UnifiedServer>;
-type SharedTaskRegistry = Arc<TokioMutex<crate::worker::task_registry::WorkerTaskRegistry>>;
 
 /// Readiness plan for the worker.
 ///
@@ -253,7 +251,11 @@ pub async fn build_worker_startup(
     let stop_accepting_sender = unified_server.get_stop_accepting_sender();
     let stop_accepting_tx = Arc::new(TokioMutex::new(Some(stop_accepting_sender)));
 
+    #[cfg(feature = "mesh")]
     let mut builder =
+        DataPlaneServicesBuilder::new(serverless_manager).with_port_honeypot(port_honeypot_runner);
+    #[cfg(not(feature = "mesh"))]
+    let builder =
         DataPlaneServicesBuilder::new(serverless_manager).with_port_honeypot(port_honeypot_runner);
 
     #[cfg(feature = "mesh")]
@@ -303,9 +305,6 @@ pub async fn build_worker_startup(
         #[cfg(all(feature = "mesh", feature = "dns"))]
         yara_broadcast: mesh_init.yara_broadcast,
     };
-    #[cfg(not(feature = "mesh"))]
-    let support_tasks = super::MeshSupportTasks::empty();
-
     #[cfg(feature = "mesh")]
     let support_tasks = Some(support_tasks);
 
@@ -370,13 +369,13 @@ pub async fn build_worker_startup(
     };
 
     // ---- Phase 12: subscribe to exit notifications BEFORE spawning tasks ----
-    let mut exit_rx = {
+    let exit_rx = {
         let registry = state.task_registry.lock().await;
         registry.subscribe_exits()
     };
 
     // ---- Phase 13: spawn lifecycle tasks via registry ----
-    let mut lifecycle_rx = {
+    let lifecycle_rx = {
         let mut registry = state.task_registry.lock().await;
         super::lifecycle::spawn_heartbeat_task(state.clone(), &mut registry);
         super::lifecycle::spawn_bandwidth_persist_task(&mut registry);
@@ -420,9 +419,6 @@ pub async fn build_worker_startup(
         })
         .await?
     };
-    #[cfg(not(feature = "mesh"))]
-    let mesh_startup: Option<()> = None;
-
     Ok(WorkerStartupArtifacts {
         worker_id,
         args,

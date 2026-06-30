@@ -291,7 +291,6 @@ impl<R: tokio::io::AsyncRead + Unpin> PrefixReader<R> {
         while filled < buf.len() {
             // Try prefix first (synchronous read from Cursor), but only if not exhausted.
             if !self.prefix_exhausted {
-                use std::io::Read;
                 let n = std::io::Read::read(&mut self.prefix, &mut buf[filled..])
                     .map_err(|e| HttpResponseFramingError::Io(e.to_string()))?;
                 filled += n;

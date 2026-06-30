@@ -101,6 +101,7 @@ pub(crate) const MAX_SNAPSHOT_RECORDS: usize = 10000;
 /// Maximum duration for a block received from another node (24 hours)
 pub(crate) const MAX_BLOCK_DURATION_SECS: u64 = 86400;
 
+#[allow(dead_code)]
 pub(crate) struct AuxiliarySubmissionTestHooks {
     pub after_lock: Option<std::sync::Arc<tokio::sync::Barrier>>,
     pub before_insert: Option<std::sync::Arc<tokio::sync::Barrier>>,
@@ -3117,9 +3118,8 @@ impl MeshTransport {
                 .collect();
             for id in stale_ids {
                 if let Some(entry) = aux.remove(&id) {
-                    if let AuxiliaryRegistryEntry::Running(task) = entry {
-                        stale.push(task);
-                    }
+                    let AuxiliaryRegistryEntry::Running(task) = entry;
+                    stale.push(task);
                 }
             }
         }
@@ -3221,9 +3221,8 @@ impl MeshTransport {
             }
             for task_id in to_remove {
                 if let Some(entry) = aux.remove(&task_id) {
-                    if let AuxiliaryRegistryEntry::Running(task) = entry {
-                        to_join.push(task);
-                    }
+                    let AuxiliaryRegistryEntry::Running(task) = entry;
+                    to_join.push(task);
                 }
             }
         }
@@ -3552,7 +3551,7 @@ impl MeshTransport {
     /// identical classification. A cancelled `JoinError` is the expected
     /// result of `abort()` and maps to `ForcedParentAbort`, not `Failed`.
     async fn force_abort_peer_session(
-        mut handle: tokio::task::JoinHandle<()>,
+        handle: tokio::task::JoinHandle<()>,
     ) -> PeerSessionStopOutcome {
         handle.abort();
         match handle.await {
@@ -3700,10 +3699,9 @@ impl MeshTransport {
             .collect();
         for id in to_remove {
             if let Some(entry) = aux.remove(&id) {
-                if let AuxiliaryRegistryEntry::Running(task) = entry {
-                    task.handle.abort();
-                    let _ = task.handle.await;
-                }
+                let AuxiliaryRegistryEntry::Running(task) = entry;
+                task.handle.abort();
+                let _ = task.handle.await;
             }
         }
     }
@@ -4893,7 +4891,7 @@ impl MeshTransport {
 
         // Capture topology state before mutation (Iteration 73, Phase 2-3)
         // Defined before the match so it survives the HelloAck arm scope.
-        let mut topology_snapshot_before: Option<crate::topology::PeerState> = None;
+        let topology_snapshot_before: Option<crate::topology::PeerState>;
 
         let (session_id, peer_info) = match response {
             MeshMessage::HelloAck {

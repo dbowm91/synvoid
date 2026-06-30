@@ -63,15 +63,6 @@ struct RequiredMeshStartOutput {
 }
 
 #[cfg(feature = "mesh")]
-struct OptionalMeshStartInput<'a> {
-    state: &'a UnifiedServerWorkerState,
-    mesh_status: Arc<tokio::sync::RwLock<crate::worker::mesh_supervision::WorkerMeshStatus>>,
-    mesh_transport: Arc<synvoid_mesh::MeshTransport>,
-    event_tx: tokio::sync::mpsc::Sender<crate::worker::mesh_supervision::MeshSupervisionEvent>,
-    support_tasks: Option<super::MeshSupportTasks>,
-}
-
-#[cfg(feature = "mesh")]
 struct OptionalMeshStartOutput {
     startup_failure: Option<crate::worker::task_registry::WorkerShutdownCause>,
     active_mesh_support: Option<MeshGenerationSupport>,
@@ -323,7 +314,7 @@ async fn await_optional_mesh_startup(
     let mut startup_failure: Option<crate::worker::task_registry::WorkerShutdownCause> = None;
 
     loop {
-        let mut mesh_decision_future = async { decision_rx.recv().await };
+        let mesh_decision_future = async { decision_rx.recv().await };
 
         tokio::select! {
             optional_result = &mut optional_startup_rx => {

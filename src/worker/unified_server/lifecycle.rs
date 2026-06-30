@@ -181,7 +181,10 @@ pub fn spawn_heartbeat_task(
             next_heartbeat_at += heartbeat_interval;
 
             let uptime = state.start_time.elapsed().as_secs();
+            #[cfg(feature = "mesh")]
             let mut payload = state.metrics.to_payload(uptime);
+            #[cfg(not(feature = "mesh"))]
+            let payload = state.metrics.to_payload(uptime);
 
             // Mesh health snapshot
             #[cfg(feature = "mesh")]

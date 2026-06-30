@@ -63,7 +63,6 @@ mod minifier_tests {
         MinifierConfig, MinifierGenerator,
     };
     use bytes::Bytes;
-    use std::io::Write;
     use std::sync::Arc;
     use std::time::{Instant, SystemTime};
 
