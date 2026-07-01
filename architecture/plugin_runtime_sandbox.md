@@ -593,3 +593,117 @@ Derived from `PluginLimits.max_output_bytes` via `response_frame_policy_from_lim
 ### Metrics
 
 `record_serialization_rejection()` emits `synvoid_plugin_serialization_rejection_total` with bounded labels: plugin name, hook type, failure class, trust tier. No raw header values or body content in metrics.
+
+## M2 Phase 06: Execution Containment and Pool Isolation
+
+Phase 06 strengthens runtime containment around WASM plugin execution: CPU containment via epoch interruption, independent host-call budgets, explicit pool state semantics, warmup/cold parity, and operator visibility.
+
+### Epoch Interruption Backstop
+
+Wasmtime epoch interruption provides a wall-clock backstop beyond voluntary fuel-based CPU metering. When `epoch_deadline_enabled` is true (default), the engine is configured with `Config::epoch_interruption(true)` and each store gets `Store::set_epoch_deadline(ticks)`.
+
+**`ExecutionInterruptPolicy`** controls interruption behavior:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `fuel_required` | `true` | Fuel is the primary CPU mechanism |
+| `epoch_deadline_enabled` | `true` | Epoch interruption as wall-clock backstop |
+| `epoch_ticks_per_timeout` | `10` | Epoch ticks per timeout period |
+| `host_call_timeout` | `5s` | Per host-call timeout budget |
+
+`WasmResourceLimits` includes `epoch_deadline_enabled`, `epoch_ticks_per_timeout`, and `host_call_timeout` fields.
+
+`PluginFailureClass::EpochInterrupted` distinguishes epoch interruption from fuel exhaustion and generic timeout.
+
+### Host Call Budgets
+
+Every host function has independent timeout and size limits via `HostCallBudget`:
+
+| Field | Default | Applies To |
+|-------|---------|-----------|
+| `env_lookup_timeout` | `5s` | `get_env` |
+| `body_chunk_timeout` | `5s` | `synvoid_read_body_chunk` |
+| `mesh_query_timeout` | `5s` | `mesh_query_dht` |
+| `mesh_threat_timeout` | `5s` | `mesh_check_threat` |
+| `mesh_emit_timeout` | `5s` | `mesh_emit_event` |
+| `max_body_chunk_bytes` | `64 KiB` | `synvoid_read_body_chunk` |
+| `max_env_value_bytes` | `4 KiB` | `get_env` |
+| `max_mesh_key_bytes` | `1 KiB` | mesh DHT queries |
+| `max_mesh_value_bytes` | `64 KiB` | mesh DHT queries |
+
+### Stable ABI Error Codes
+
+Host-call failures return stable, documented error codes:
+
+| Code | Name | Description |
+|------|------|-------------|
+| `0` | `ABI_SUCCESS` | Success |
+| `-1` | `ABI_ERR_CAPABILITY_DENIED` | Missing capability |
+| `-2` | `ABI_ERR_INVALID_POINTER` | Bad guest pointer/range |
+| `-3` | `ABI_ERR_TIMEOUT` | Host call timed out |
+| `-4` | `ABI_ERR_INPUT_TOO_LARGE` | Input exceeds size limit |
+| `-5` | `ABI_ERR_UNAVAILABLE` | Resource unavailable |
+| `-6` | `ABI_ERR_INTERNAL` | Internal host error |
+
+`HostCallFailureClass` enum classifies failures for metrics. `record_host_call_failure()` emits `synvoid_plugin_host_call_failure_total` with plugin, host_function, and failure_class labels.
+
+### Pool State Semantics
+
+`PluginStateModel` enum controls cross-request state behavior:
+
+| Variant | Semantics |
+|---------|-----------|
+| `RequestIsolated` (default) | Host-side context fully reset; guest memory persists but is untrusted |
+| `StatefulPooled` | Instances reused with host-side reset; guest memory persistence expected by plugin |
+
+**Enforcement:**
+- `SignedSandboxed` tier overrides `StatefulPooled` to `RequestIsolated` (security invariant).
+- `DevelopmentHotReload` and `LocalTrusted` tiers allow `StatefulPooled` with explicit opt-in.
+- `LocalSandboxed` defaults to `RequestIsolated`.
+
+`state_model` is part of `PluginLimits` (manifest), `WasmResourceLimits` (runtime), and `EffectivePluginPolicy` (per-plugin).
+
+### Warmup/Cold Parity
+
+`WasmInstancePool::warmup()` now accepts `&WasmResourceLimits` and `Option<&Linker<RequestContext>>`. Hard-coded defaults (30s timeout, 64MB memory, 0 fuel) are removed. Warmed instances use the same limits, fuel setting, epoch deadline, and resource limiter as cold instances.
+
+Key invariant: warmed instances cannot bypass manifest-derived policy. Fuel is set on warmed stores. Epoch deadlines are configured. The store limiter is applied.
+
+### Operator Visibility
+
+Extended `WasmPluginMetrics`:
+
+| Metric | Description |
+|--------|-------------|
+| `pool_hits` | Pool reuse count |
+| `pool_misses` | Fresh instance creation count |
+| `pool_dropped` | Poisoned instance drop count |
+| `fuel_exhausted_count` | Fuel exhaustion events |
+| `epoch_timeout_count` | Epoch interruption events |
+| `host_call_timeout_count` | Host call timeout events |
+
+Extended `PluginInfo` with: `failure_policy_summary`, `current_state`, `failure_count`, `timeout_count`, `last_failure_class`, `fuel_budget`, `pool_stats_hits`, `pool_stats_misses`, `pool_stats_dropped`, `state_model`.
+
+State transition logging: `record_plugin_state_transition()` emits both a `tracing::info!` log and a `synvoid_plugin_state_transition_total` metric counter.
+
+### Metrics Counters
+
+| Counter | Labels | Description |
+|---------|--------|-------------|
+| `synvoid_plugin_host_call_failure_total` | plugin, host_function, failure_class | Host call failures |
+| `synvoid_plugin_pool_hit_total` | plugin | Pool reuse events |
+| `synvoid_plugin_pool_miss_total` | plugin | Fresh instance events |
+| `synvoid_plugin_pool_dropped_total` | plugin | Dropped poisoned instances |
+| `synvoid_plugin_state_transition_total` | from, to, reason | State transitions |
+
+### Tests
+
+```bash
+cargo test -p synvoid-plugin-runtime -- test_execution_interrupt_policy
+cargo test -p synvoid-plugin-runtime -- test_host_call_budget
+cargo test -p synvoid-plugin-runtime -- test_abi_error_codes
+cargo test -p synvoid-plugin-runtime -- test_plugin_state_model
+cargo test -p synvoid-plugin-runtime -- test_warmup_uses_provided_limits
+cargo test -p synvoid-plugin-runtime -- test_record_pool_hit
+cargo test -p synvoid-plugin-runtime -- test_wasm_plugin_metrics_new_fields
+```

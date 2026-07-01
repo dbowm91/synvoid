@@ -35,11 +35,18 @@ pub use sandbox::types::{
     PluginFailureClass, PluginFailurePolicy, PluginInvocationGuard, PluginInvokeError,
     PluginLimits, PluginLoadConfig, PluginLoadError, PluginManifest, PluginRuntimeState,
     PluginSignatureAlgorithm, PluginSignatureConfig, PluginSignatureError,
-    PluginSignatureVerification, PluginTrustTier, ResourceLimitError, SigningPolicy,
-    SigningViolation, TrustedPluginKey, VerifiedPluginSignature,
+    PluginSignatureVerification, PluginStateModel, PluginTrustTier, ResourceLimitError,
+    SigningPolicy, SigningViolation, TrustedPluginKey, VerifiedPluginSignature,
 };
-pub use wasm_metrics::{get_all_wasm_metrics, get_wasm_metrics, WasmPluginMetrics};
-pub use wasm_runtime::{GuestAbiInfo, GuestAbiPolicy, WasmFilterResult, WasmPluginError};
+pub use wasm_metrics::{
+    get_all_wasm_metrics, get_wasm_metrics, record_epoch_timeout, record_fuel_exhausted,
+    record_host_call_timeout, record_plugin_pool_stats, record_pool_drop, record_pool_hit,
+    record_pool_miss, WasmPluginMetrics,
+};
+pub use wasm_runtime::{
+    ExecutionInterruptPolicy, GuestAbiInfo, GuestAbiPolicy, HostCallBudget, WasmFilterResult,
+    WasmPluginError,
+};
 pub use wasm_runtime::{PluginInfo, WasmPluginManager, WasmResourceLimits, WasmRuntime};
 
 #[cfg(test)]

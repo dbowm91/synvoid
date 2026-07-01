@@ -36,6 +36,10 @@ cargo test --test mesh_http_framing --features mesh,dns
 cargo test --test supervisor_task_ownership_guard
 cargo test -p synvoid supervisor::task_registry
 cargo test -p synvoid supervisor::shutdown
+
+# Plugin runtime tests (M2 Phase 06)
+cargo test -p synvoid-plugin-runtime -- test_epoch_interrupted
+cargo test -p synvoid-plugin-runtime -- test_state_model
 ```
 
 ## Feature Profiles
@@ -85,6 +89,13 @@ cargo test -p synvoid-plugin-runtime -- test_guard_               # Guard state,
 cargo test -p synvoid-plugin-runtime -- test_manager_             # Manager introspection (not-found cases)
 cargo test -p synvoid-plugin-runtime -- test_require_any          # Capability matching
 cargo test -p synvoid-plugin-runtime -- abi_frame    # ABI frame serialization: policy bounds, canonical header encoding, response validation, mutation policy
+cargo test -p synvoid-plugin-runtime -- test_execution_interrupt_policy
+cargo test -p synvoid-plugin-runtime -- test_host_call_budget
+cargo test -p synvoid-plugin-runtime -- test_abi_error_codes
+cargo test -p synvoid-plugin-runtime -- test_plugin_state_model
+cargo test -p synvoid-plugin-runtime -- test_warmup_uses_provided_limits
+cargo test -p synvoid-plugin-runtime -- test_record_pool_hit
+cargo test -p synvoid-plugin-runtime -- test_wasm_plugin_metrics_new_fields
 cargo test --test docs_path_reference_guard  # Stale markdown link detection
 cargo test --test failure_injection  # Failure-injection tests for lifecycle, convergence, plugin, startup
 cargo test --test security_observability_guard  # Security observability invariants: metric labels, doc coverage, registry signals

@@ -18,6 +18,18 @@ static WASM_PLUGIN_FUEL_CONSUMED: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static WASM_PLUGIN_DURATIONS_MS: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+static WASM_PLUGIN_POOL_HITS: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static WASM_PLUGIN_POOL_MISSES: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static WASM_PLUGIN_POOL_DROPPED: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static WASM_PLUGIN_FUEL_EXHAUSTED: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static WASM_PLUGIN_EPOCH_TIMEOUTS: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static WASM_PLUGIN_HOST_CALL_TIMEOUTS: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Debug, Clone, Default)]
 pub struct WasmPluginMetrics {
@@ -28,6 +40,12 @@ pub struct WasmPluginMetrics {
     pub errors: u64,
     pub fuel_consumed: u64,
     pub total_duration_ms: u64,
+    pub pool_hits: u64,
+    pub pool_misses: u64,
+    pub pool_dropped: u64,
+    pub fuel_exhausted_count: u64,
+    pub epoch_timeout_count: u64,
+    pub host_call_timeout_count: u64,
 }
 
 impl WasmPluginMetrics {
@@ -67,6 +85,36 @@ impl WasmPluginMetrics {
             .get(plugin_name)
             .map(|c| c.load(Ordering::Relaxed))
             .unwrap_or(0);
+        let pool_hits = WASM_PLUGIN_POOL_HITS
+            .lock()
+            .get(plugin_name)
+            .map(|c| c.load(Ordering::Relaxed))
+            .unwrap_or(0);
+        let pool_misses = WASM_PLUGIN_POOL_MISSES
+            .lock()
+            .get(plugin_name)
+            .map(|c| c.load(Ordering::Relaxed))
+            .unwrap_or(0);
+        let pool_dropped = WASM_PLUGIN_POOL_DROPPED
+            .lock()
+            .get(plugin_name)
+            .map(|c| c.load(Ordering::Relaxed))
+            .unwrap_or(0);
+        let fuel_exhausted_count = WASM_PLUGIN_FUEL_EXHAUSTED
+            .lock()
+            .get(plugin_name)
+            .map(|c| c.load(Ordering::Relaxed))
+            .unwrap_or(0);
+        let epoch_timeout_count = WASM_PLUGIN_EPOCH_TIMEOUTS
+            .lock()
+            .get(plugin_name)
+            .map(|c| c.load(Ordering::Relaxed))
+            .unwrap_or(0);
+        let host_call_timeout_count = WASM_PLUGIN_HOST_CALL_TIMEOUTS
+            .lock()
+            .get(plugin_name)
+            .map(|c| c.load(Ordering::Relaxed))
+            .unwrap_or(0);
 
         Self {
             invocations,
@@ -76,6 +124,12 @@ impl WasmPluginMetrics {
             errors,
             fuel_consumed,
             total_duration_ms,
+            pool_hits,
+            pool_misses,
+            pool_dropped,
+            fuel_exhausted_count,
+            epoch_timeout_count,
+            host_call_timeout_count,
         }
     }
 
@@ -153,6 +207,72 @@ pub fn record_wasm_duration(plugin_name: &str, duration_ms: u64) {
         .fetch_add(duration_ms, Ordering::Relaxed);
 }
 
+pub fn record_pool_hit(plugin_name: &str) {
+    WASM_PLUGIN_POOL_HITS
+        .lock()
+        .entry(plugin_name.to_string())
+        .or_insert_with(|| AtomicU64::new(0))
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_pool_miss(plugin_name: &str) {
+    WASM_PLUGIN_POOL_MISSES
+        .lock()
+        .entry(plugin_name.to_string())
+        .or_insert_with(|| AtomicU64::new(0))
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_pool_drop(plugin_name: &str) {
+    WASM_PLUGIN_POOL_DROPPED
+        .lock()
+        .entry(plugin_name.to_string())
+        .or_insert_with(|| AtomicU64::new(0))
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_fuel_exhausted(plugin_name: &str) {
+    WASM_PLUGIN_FUEL_EXHAUSTED
+        .lock()
+        .entry(plugin_name.to_string())
+        .or_insert_with(|| AtomicU64::new(0))
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_epoch_timeout(plugin_name: &str) {
+    WASM_PLUGIN_EPOCH_TIMEOUTS
+        .lock()
+        .entry(plugin_name.to_string())
+        .or_insert_with(|| AtomicU64::new(0))
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_host_call_timeout(plugin_name: &str) {
+    WASM_PLUGIN_HOST_CALL_TIMEOUTS
+        .lock()
+        .entry(plugin_name.to_string())
+        .or_insert_with(|| AtomicU64::new(0))
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_plugin_pool_stats(plugin_name: &str, hits: u64, misses: u64, dropped: u64) {
+    metrics::counter!(
+        "synvoid_plugin_pool_hit_total",
+        "plugin" => plugin_name.to_string()
+    )
+    .increment(hits);
+    metrics::counter!(
+        "synvoid_plugin_pool_miss_total",
+        "plugin" => plugin_name.to_string()
+    )
+    .increment(misses);
+    metrics::counter!(
+        "synvoid_plugin_pool_dropped_total",
+        "plugin" => plugin_name.to_string()
+    )
+    .increment(dropped);
+}
+
 pub fn get_wasm_metrics(plugin_name: &str) -> WasmPluginMetrics {
     WasmPluginMetrics::get(plugin_name)
 }
@@ -166,6 +286,12 @@ pub fn get_all_wasm_metrics() -> HashMap<String, WasmPluginMetrics> {
 }
 
 pub fn record_plugin_state_transition(from: &str, to: &str, reason: &str) {
+    tracing::info!(
+        from = from,
+        to = to,
+        reason = reason,
+        "Plugin state transition"
+    );
     metrics::counter!(
         "synvoid_plugin_state_transition_total",
         "from" => from.to_string(),
@@ -198,4 +324,85 @@ pub fn record_plugin_capability_violation(capability: &str) {
         "capability" => capability.to_string()
     )
     .increment(1);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HostCallFailureClass {
+    EnvLookupTimeout,
+    BodyChunkTimeout,
+    MeshQueryTimeout,
+    MeshThreatTimeout,
+    MeshEmitTimeout,
+    CapabilityDenied,
+    InvalidPointer,
+    InputTooLarge,
+    Unavailable,
+    InternalError,
+}
+
+pub fn record_host_call_failure(plugin_name: &str, host_function: &str, failure_class: &str) {
+    metrics::counter!(
+        "synvoid_plugin_host_call_failure_total",
+        "plugin" => plugin_name.to_string(),
+        "host_function" => host_function.to_string(),
+        "failure_class" => failure_class.to_string()
+    )
+    .increment(1);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_wasm_plugin_metrics_new_fields_default() {
+        let metrics = WasmPluginMetrics::default();
+        assert_eq!(metrics.pool_hits, 0);
+        assert_eq!(metrics.pool_misses, 0);
+        assert_eq!(metrics.pool_dropped, 0);
+        assert_eq!(metrics.fuel_exhausted_count, 0);
+        assert_eq!(metrics.epoch_timeout_count, 0);
+        assert_eq!(metrics.host_call_timeout_count, 0);
+    }
+
+    #[test]
+    fn test_record_pool_hit_miss_drop() {
+        let name = "test_pool_plugin";
+        record_pool_hit(name);
+        record_pool_miss(name);
+        record_pool_drop(name);
+        let m = WasmPluginMetrics::get(name);
+        assert!(m.pool_hits > 0);
+        assert!(m.pool_misses > 0);
+        assert!(m.pool_dropped > 0);
+    }
+
+    #[test]
+    fn test_record_fuel_exhausted() {
+        let name = "test_fuel_plugin";
+        record_fuel_exhausted(name);
+        let m = WasmPluginMetrics::get(name);
+        assert_eq!(m.fuel_exhausted_count, 1);
+    }
+
+    #[test]
+    fn test_record_epoch_timeout() {
+        let name = "test_epoch_plugin";
+        record_epoch_timeout(name);
+        let m = WasmPluginMetrics::get(name);
+        assert_eq!(m.epoch_timeout_count, 1);
+    }
+
+    #[test]
+    fn test_record_host_call_timeout() {
+        let name = "test_host_timeout_plugin";
+        record_host_call_timeout(name);
+        let m = WasmPluginMetrics::get(name);
+        assert_eq!(m.host_call_timeout_count, 1);
+    }
+
+    #[test]
+    fn test_record_plugin_state_transition_emits_log() {
+        record_plugin_state_transition("test_from", "test_to", "test_reason");
+    }
 }

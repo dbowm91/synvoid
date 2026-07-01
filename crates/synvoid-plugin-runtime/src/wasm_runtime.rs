@@ -26,10 +26,21 @@ use crate::streaming_body::StreamingBody;
 use crate::wasm_metrics::{
     record_wasm_decision_block, record_wasm_decision_challenge, record_wasm_decision_pass,
     record_wasm_duration, record_wasm_error, record_wasm_fuel_consumed, record_wasm_invocation,
+    WasmPluginMetrics,
 };
 
 /// Maximum size of request/response data passed through WASM memory (1MB)
 const MAX_WASM_DATA_SIZE: usize = 1024 * 1024;
+
+/// Stable ABI error codes for host-call failures.
+/// These are returned to guest code when a host function fails.
+pub const ABI_SUCCESS: i32 = 0;
+pub const ABI_ERR_CAPABILITY_DENIED: i32 = -1;
+pub const ABI_ERR_INVALID_POINTER: i32 = -2;
+pub const ABI_ERR_TIMEOUT: i32 = -3;
+pub const ABI_ERR_INPUT_TOO_LARGE: i32 = -4;
+pub const ABI_ERR_UNAVAILABLE: i32 = -5;
+pub const ABI_ERR_INTERNAL: i32 = -6;
 
 // ─── Guest ABI function signatures ───────────────────────────────────────────
 
@@ -55,6 +66,67 @@ type GuestAllocFn = TypedFunc<i32, i32>;
 type GuestFreeFn = TypedFunc<(i32, i32), ()>;
 
 #[derive(Debug, Clone)]
+pub struct ExecutionInterruptPolicy {
+    pub fuel_required: bool,
+    pub epoch_deadline_enabled: bool,
+    pub epoch_ticks_per_timeout: u64,
+    pub host_call_timeout: Duration,
+}
+
+impl Default for ExecutionInterruptPolicy {
+    fn default() -> Self {
+        Self {
+            fuel_required: true,
+            epoch_deadline_enabled: true,
+            epoch_ticks_per_timeout: 10,
+            host_call_timeout: Duration::from_secs(5),
+        }
+    }
+}
+
+/// Per-call budgets for individual host functions.
+///
+/// Each host function gets independent timeout and size limits so that a slow
+/// `mesh_query_dht` cannot starve `get_env` or vice-versa.
+#[derive(Debug, Clone)]
+pub struct HostCallBudget {
+    /// Timeout for `get_env` host calls.
+    pub env_lookup_timeout: Duration,
+    /// Timeout for `synvoid_read_body_chunk` host calls.
+    pub body_chunk_timeout: Duration,
+    /// Timeout for `mesh_query_dht` host calls.
+    pub mesh_query_timeout: Duration,
+    /// Timeout for `mesh_check_threat` host calls.
+    pub mesh_threat_timeout: Duration,
+    /// Timeout for `mesh_emit_event` host calls.
+    pub mesh_emit_timeout: Duration,
+    /// Maximum bytes returned by `synvoid_read_body_chunk`.
+    pub max_body_chunk_bytes: usize,
+    /// Maximum bytes returned by `get_env`.
+    pub max_env_value_bytes: usize,
+    /// Maximum key size for mesh DHT queries.
+    pub max_mesh_key_bytes: usize,
+    /// Maximum value size for mesh DHT queries.
+    pub max_mesh_value_bytes: usize,
+}
+
+impl Default for HostCallBudget {
+    fn default() -> Self {
+        Self {
+            env_lookup_timeout: Duration::from_secs(5),
+            body_chunk_timeout: Duration::from_secs(5),
+            mesh_query_timeout: Duration::from_secs(5),
+            mesh_threat_timeout: Duration::from_secs(5),
+            mesh_emit_timeout: Duration::from_secs(5),
+            max_body_chunk_bytes: 64 * 1024,
+            max_env_value_bytes: 4 * 1024,
+            max_mesh_key_bytes: 1024,
+            max_mesh_value_bytes: 64 * 1024,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct WasmResourceLimits {
     pub max_memory_mb: usize,
     pub max_table_elements: Option<usize>,
@@ -69,6 +141,12 @@ pub struct WasmResourceLimits {
     pub wasi_enabled: bool,
     pub allowed_dht_prefixes: Vec<String>,
     pub capabilities: Arc<PluginCapabilities>,
+    pub epoch_deadline_enabled: bool,
+    pub epoch_ticks_per_timeout: u64,
+    pub host_call_timeout: Duration,
+    pub host_call_budget: HostCallBudget,
+    /// Pool state model controlling cross-request state semantics.
+    pub state_model: crate::sandbox::types::PluginStateModel,
 }
 
 impl Default for WasmResourceLimits {
@@ -83,6 +161,11 @@ impl Default for WasmResourceLimits {
             wasi_enabled: false,
             allowed_dht_prefixes: Vec::new(),
             capabilities: Arc::new(PluginCapabilities::default()),
+            epoch_deadline_enabled: true,
+            epoch_ticks_per_timeout: 10,
+            host_call_timeout: Duration::from_secs(5),
+            host_call_budget: HostCallBudget::default(),
+            state_model: crate::sandbox::types::PluginStateModel::default(),
         }
     }
 }
@@ -215,6 +298,16 @@ pub struct PluginInfo {
     pub max_cpu_fuel: u64,
     pub max_instances: usize,
     pub capabilities_summary: Vec<(PluginCapability, bool)>,
+    pub state_model: crate::sandbox::types::PluginStateModel,
+    pub failure_policy_summary: String,
+    pub current_state: String,
+    pub failure_count: u32,
+    pub timeout_count: u32,
+    pub last_failure_class: Option<String>,
+    pub fuel_budget: u64,
+    pub pool_stats_hits: u64,
+    pub pool_stats_misses: u64,
+    pub pool_stats_dropped: u64,
 }
 
 pub struct WasmPluginManager {
@@ -527,6 +620,7 @@ impl WasmPluginManager {
                 binary_sha256: Some(crate::sandbox::types::compute_binary_hash(data)),
                 ..prepared.source
             },
+            state_model: prepared.effective_limits.state_model,
         };
         self.plugin_policies.write().insert(runtime_name, policy);
         Ok(arc)
@@ -570,6 +664,7 @@ impl WasmPluginManager {
                 path: Some(PathBuf::from(format!("mesh://{}", name))),
                 ..prepared.source
             },
+            state_model: prepared.effective_limits.state_model,
         };
         self.plugin_policies.write().insert(runtime_name, policy);
         Ok(arc)
@@ -595,6 +690,7 @@ impl WasmPluginManager {
                 body_receiver: None,
                 capabilities: limits.capabilities.clone(),
                 capability_violation: None,
+                host_call_budget: limits.host_call_budget.clone(),
             },
         );
         store.limiter(|state| state);
@@ -837,6 +933,17 @@ impl WasmPluginManager {
                 let name = r.name();
                 let path = paths.get(name).cloned();
                 let policy = policies.get(name);
+                let metrics = WasmPluginMetrics::get(name);
+                let failure_policy = &r.failure_policy;
+                let failure_policy_summary = format!(
+                    "threshold={}, timeout_threshold={}, cap_violation_disables={}, fail_closed_filter={}, fail_closed_transform={}",
+                    failure_policy.failure_threshold,
+                    failure_policy.timeout_threshold,
+                    failure_policy.capability_violation_disables,
+                    failure_policy.fail_closed_on_filter_error,
+                    failure_policy.fail_closed_on_transform_error,
+                );
+                let guard_state = r.guard().state();
                 PluginInfo {
                     name: name.to_string(),
                     path: path.clone(),
@@ -849,6 +956,18 @@ impl WasmPluginManager {
                     max_cpu_fuel: r.limits.max_cpu_fuel,
                     max_instances: r.limits.max_instances,
                     capabilities_summary: r.limits.capabilities.iter_flags(),
+                    state_model: policy
+                        .map(|p| p.state_model)
+                        .unwrap_or_default(),
+                    failure_policy_summary,
+                    current_state: guard_state.to_string(),
+                    failure_count: r.guard().failure_count(),
+                    timeout_count: 0,
+                    last_failure_class: None,
+                    fuel_budget: r.limits.max_cpu_fuel,
+                    pool_stats_hits: metrics.pool_hits,
+                    pool_stats_misses: metrics.pool_misses,
+                    pool_stats_dropped: metrics.pool_dropped,
                 }
             })
             .collect()
@@ -1002,6 +1121,7 @@ pub(crate) struct RequestContext {
     pub(crate) body_receiver: Option<tokio::sync::mpsc::Receiver<Result<Bytes, std::io::Error>>>,
     pub(crate) capabilities: Arc<PluginCapabilities>,
     pub(crate) capability_violation: Option<PluginCapability>,
+    pub(crate) host_call_budget: HostCallBudget,
 }
 
 impl ResourceLimiter for RequestContext {
@@ -1088,6 +1208,10 @@ impl WasmRuntime {
 
         if limits.max_cpu_fuel > 0 {
             config.consume_fuel(true);
+        }
+
+        if limits.epoch_deadline_enabled {
+            config.epoch_interruption(true);
         }
 
         let engine =
@@ -1185,9 +1309,10 @@ impl WasmRuntime {
             version: p.manifest.version.clone(),
             trust_tier: p.manifest.trust_tier,
             capabilities: p.effective_limits.capabilities.clone(),
-            limits: p.effective_limits,
+            limits: p.effective_limits.clone(),
             manifest_limits: p.manifest.limits.clone(),
             source: p.source,
+            state_model: p.effective_limits.state_model,
         });
 
         let guard = Arc::new(PluginInvocationGuard::new(
@@ -1460,15 +1585,22 @@ impl WasmRuntime {
                  out_ptr: i32,
                  out_max: i32|
                  -> i32 {
-                    let mem = caller
-                        .get_export("memory")
-                        .and_then(|e| e.into_memory())
-                        .unwrap();
+                    let mem = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                        Some(m) => m,
+                        None => return ABI_ERR_INTERNAL,
+                    };
                     let mem_data = mem.data(&caller);
 
                     let key_range = match checked_guest_range(key_ptr, key_len, mem_data.len()) {
                         Ok(r) => r,
-                        Err(_) => return -1,
+                        Err(_) => {
+                            crate::wasm_metrics::record_host_call_failure(
+                                "",
+                                "get_env",
+                                "InvalidPointer",
+                            );
+                            return ABI_ERR_INVALID_POINTER;
+                        }
                     };
                     let key = String::from_utf8_lossy(&mem_data[key_range]);
 
@@ -1476,12 +1608,21 @@ impl WasmRuntime {
                     let fallback = String::new();
                     let value_str = value.unwrap_or(&fallback);
                     let value_bytes = value_str.as_bytes();
-                    let value_len = value_bytes.len().min(out_max as usize);
+                    let max_bytes = caller.data().host_call_budget.max_env_value_bytes as i32;
+                    let clamped_max = out_max.min(max_bytes);
+                    let value_len = value_bytes.len().min(clamped_max as usize);
 
                     let out_range =
                         match checked_guest_range(out_ptr, value_len as i32, mem_data.len()) {
                             Ok(r) => r,
-                            Err(_) => return -1,
+                            Err(_) => {
+                                crate::wasm_metrics::record_host_call_failure(
+                                    "",
+                                    "get_env",
+                                    "InvalidPointer",
+                                );
+                                return ABI_ERR_INVALID_POINTER;
+                            }
                         };
 
                     unsafe {
@@ -1506,39 +1647,83 @@ impl WasmRuntime {
                  out_ptr: i32,
                  out_max: i32|
                  -> i32 {
+                    let start = caller.data().start;
+                    let budget_timeout = caller.data().host_call_budget.body_chunk_timeout;
+
                     let mut rx = match caller.data_mut().body_receiver.take() {
                         Some(rx) => rx,
-                        None => return -1, // Already consumed or not available
+                        None => {
+                            crate::wasm_metrics::record_host_call_failure(
+                                "",
+                                "synvoid_read_body_chunk",
+                                "InternalError",
+                            );
+                            return ABI_ERR_INTERNAL;
+                        }
                     };
 
-                    // Blocking receive since this is called from within a sync WASM execution
-                    // which is typically run in a spawn_blocking thread.
                     let result = rx.blocking_recv();
+
+                    // Per-call budget check: reject if we exceeded the per-call timeout
+                    if start.elapsed() > budget_timeout {
+                        caller.data_mut().body_receiver = Some(rx);
+                        crate::wasm_metrics::record_host_call_failure(
+                            "",
+                            "synvoid_read_body_chunk",
+                            "BodyChunkTimeout",
+                        );
+                        return ABI_ERR_TIMEOUT;
+                    }
 
                     // Put the receiver back for future calls
                     caller.data_mut().body_receiver = Some(rx);
 
                     match result {
                         Some(Ok(chunk)) => {
-                            let len = chunk.len().min(out_max as usize);
+                            let max_bytes = caller.data().host_call_budget.max_body_chunk_bytes;
+                            let len = chunk.len().min(out_max as usize).min(max_bytes);
                             let mem = match caller.get_export("memory") {
                                 Some(wasmtime::Extern::Memory(m)) => m,
-                                _ => return -3, // No memory export
+                                _ => {
+                                    crate::wasm_metrics::record_host_call_failure(
+                                        "",
+                                        "synvoid_read_body_chunk",
+                                        "InternalError",
+                                    );
+                                    return ABI_ERR_INTERNAL;
+                                }
                             };
                             let mem_len = mem.data(&caller).len();
                             if checked_guest_range(out_ptr, len as i32, mem_len).is_err() {
-                                return -1;
+                                crate::wasm_metrics::record_host_call_failure(
+                                    "",
+                                    "synvoid_read_body_chunk",
+                                    "InvalidPointer",
+                                );
+                                return ABI_ERR_INVALID_POINTER;
                             }
                             if mem
                                 .write(&mut caller, out_ptr as usize, &chunk[..len])
                                 .is_err()
                             {
-                                return -4; // Memory write error
+                                crate::wasm_metrics::record_host_call_failure(
+                                    "",
+                                    "synvoid_read_body_chunk",
+                                    "InternalError",
+                                );
+                                return ABI_ERR_INTERNAL;
                             }
                             len as i32
                         }
-                        Some(Err(_)) => -2, // Error reading chunk
-                        None => 0,          // EOF
+                        Some(Err(_)) => {
+                            crate::wasm_metrics::record_host_call_failure(
+                                "",
+                                "synvoid_read_body_chunk",
+                                "InternalError",
+                            );
+                            ABI_ERR_INTERNAL
+                        }
+                        None => 0, // EOF
                     }
                 },
             )
@@ -1564,22 +1749,44 @@ impl WasmRuntime {
                             "WASM plugin attempted mesh_query_dht without PluginCapability::Mesh"
                         );
                         crate::wasm_metrics::record_plugin_capability_violation("Mesh");
+                        crate::wasm_metrics::record_host_call_failure(
+                            "",
+                            "mesh_query_dht",
+                            "CapabilityDenied",
+                        );
                         caller.data_mut().capability_violation = Some(PluginCapability::Mesh);
-                        return -1;
+                        return ABI_ERR_CAPABILITY_DENIED;
                     }
 
                     let mem = match caller.get_export("memory").and_then(|e| e.into_memory()) {
                         Some(m) => m,
-                        None => return -1,
+                        None => return ABI_ERR_INTERNAL,
                     };
                     let mem_data = mem.data(&caller);
 
                     let key_range = match checked_guest_range(key_ptr, key_len, mem_data.len()) {
                         Ok(r) => r,
-                        Err(_) => return -1,
+                        Err(_) => {
+                            crate::wasm_metrics::record_host_call_failure(
+                                "",
+                                "mesh_query_dht",
+                                "InvalidPointer",
+                            );
+                            return ABI_ERR_INVALID_POINTER;
+                        }
                     };
 
                     let key = String::from_utf8_lossy(&mem_data[key_range]).to_string();
+
+                    // Enforce per-call key size budget
+                    if key.len() > caller.data().host_call_budget.max_mesh_key_bytes {
+                        crate::wasm_metrics::record_host_call_failure(
+                            "",
+                            "mesh_query_dht",
+                            "InputTooLarge",
+                        );
+                        return ABI_ERR_INPUT_TOO_LARGE;
+                    }
 
                     let sensitive_prefixes = [
                         "threat_indicator:",
@@ -1603,20 +1810,33 @@ impl WasmRuntime {
                             "WASM plugin attempted unauthorized DHT query: key='{}'",
                             key
                         );
-                        return -2;
+                        crate::wasm_metrics::record_host_call_failure(
+                            "",
+                            "mesh_query_dht",
+                            "CapabilityDenied",
+                        );
+                        return ABI_ERR_CAPABILITY_DENIED;
                     }
 
                     let result = if let Some(provider) = crate::mesh_callbacks::get_mesh_provider()
                     {
                         if let Some(value) = provider.get_record(&key) {
-                            let value_len = value.len().min(out_max as usize);
+                            let max_bytes = caller.data().host_call_budget.max_mesh_value_bytes;
+                            let value_len = value.len().min(out_max as usize).min(max_bytes);
                             let out_range = match checked_guest_range(
                                 out_ptr,
                                 value_len as i32,
                                 mem_data.len(),
                             ) {
                                 Ok(r) => r,
-                                Err(_) => return -1,
+                                Err(_) => {
+                                    crate::wasm_metrics::record_host_call_failure(
+                                        "",
+                                        "mesh_query_dht",
+                                        "InvalidPointer",
+                                    );
+                                    return ABI_ERR_INVALID_POINTER;
+                                }
                             };
                             unsafe {
                                 let mem_ptr = mem.data_ptr(&caller);
@@ -1655,19 +1875,27 @@ impl WasmRuntime {
                     if !caller.data().capabilities.permits(PluginCapability::Mesh) {
                         tracing::error!("WASM plugin attempted mesh_check_threat without PluginCapability::Mesh");
                         crate::wasm_metrics::record_plugin_capability_violation("Mesh");
+                        crate::wasm_metrics::record_host_call_failure(
+                            "", "mesh_check_threat", "CapabilityDenied",
+                        );
                         caller.data_mut().capability_violation = Some(PluginCapability::Mesh);
-                        return -1;
+                        return ABI_ERR_CAPABILITY_DENIED;
                     }
 
                     let mem = match caller.get_export("memory").and_then(|e| e.into_memory()) {
                         Some(m) => m,
-                        None => return -1,
+                        None => return ABI_ERR_INTERNAL,
                     };
                     let mem_data = mem.data(&caller);
 
                     let ip_range = match checked_guest_range(ip_ptr, ip_len, mem_data.len()) {
                         Ok(r) => r,
-                        Err(_) => return -1,
+                        Err(_) => {
+                            crate::wasm_metrics::record_host_call_failure(
+                                "", "mesh_check_threat", "InvalidPointer",
+                            );
+                            return ABI_ERR_INVALID_POINTER;
+                        }
                     };
 
                     let ip_str = String::from_utf8_lossy(&mem_data[ip_range]).to_string();
@@ -1712,25 +1940,44 @@ impl WasmRuntime {
                             "WASM plugin attempted mesh_emit_event without PluginCapability::Mesh"
                         );
                         crate::wasm_metrics::record_plugin_capability_violation("Mesh");
+                        crate::wasm_metrics::record_host_call_failure(
+                            "",
+                            "mesh_emit_event",
+                            "CapabilityDenied",
+                        );
                         caller.data_mut().capability_violation = Some(PluginCapability::Mesh);
-                        return -1;
+                        return ABI_ERR_CAPABILITY_DENIED;
                     }
 
                     let mem = match caller.get_export("memory").and_then(|e| e.into_memory()) {
                         Some(m) => m,
-                        None => return -1,
+                        None => return ABI_ERR_INTERNAL,
                     };
                     let mem_data = mem.data(&caller);
 
                     let topic_range =
                         match checked_guest_range(topic_ptr, topic_len, mem_data.len()) {
                             Ok(r) => r,
-                            Err(_) => return -1,
+                            Err(_) => {
+                                crate::wasm_metrics::record_host_call_failure(
+                                    "",
+                                    "mesh_emit_event",
+                                    "InvalidPointer",
+                                );
+                                return ABI_ERR_INVALID_POINTER;
+                            }
                         };
 
                     let data_range = match checked_guest_range(data_ptr, data_len, mem_data.len()) {
                         Ok(r) => r,
-                        Err(_) => return -1,
+                        Err(_) => {
+                            crate::wasm_metrics::record_host_call_failure(
+                                "",
+                                "mesh_emit_event",
+                                "InvalidPointer",
+                            );
+                            return ABI_ERR_INVALID_POINTER;
+                        }
                     };
 
                     let topic = String::from_utf8_lossy(&mem_data[topic_range]).to_string();
@@ -1772,6 +2019,7 @@ impl WasmRuntime {
                 body_receiver: None,
                 capabilities: self.limits.capabilities.clone(),
                 capability_violation: None,
+                host_call_budget: self.limits.host_call_budget.clone(),
             },
         );
 
@@ -1779,6 +2027,11 @@ impl WasmRuntime {
 
         if self.limits.max_cpu_fuel > 0 {
             store.set_fuel(self.limits.max_cpu_fuel).ok();
+        }
+
+        if self.limits.epoch_deadline_enabled {
+            let ticks = self.limits.epoch_ticks_per_timeout.max(1);
+            store.set_epoch_deadline(ticks);
         }
 
         store
@@ -3297,6 +3550,16 @@ mod tests {
             max_cpu_fuel: limits.max_cpu_fuel,
             max_instances: limits.max_instances,
             capabilities_summary: Vec::new(),
+            state_model: crate::sandbox::types::PluginStateModel::default(),
+            failure_policy_summary: String::new(),
+            current_state: "active".into(),
+            failure_count: 0,
+            timeout_count: 0,
+            last_failure_class: None,
+            fuel_budget: limits.max_cpu_fuel,
+            pool_stats_hits: 0,
+            pool_stats_misses: 0,
+            pool_stats_dropped: 0,
         };
         assert_eq!(info.timeout, Duration::from_millis(50));
     }
@@ -5185,6 +5448,23 @@ entry = "plugin.wasm"
     }
 
     #[test]
+    fn test_execution_interrupt_policy_default() {
+        let policy = ExecutionInterruptPolicy::default();
+        assert!(policy.fuel_required);
+        assert!(policy.epoch_deadline_enabled);
+        assert_eq!(policy.epoch_ticks_per_timeout, 10);
+        assert_eq!(policy.host_call_timeout, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn test_wasm_resource_limits_epoch_defaults() {
+        let limits = WasmResourceLimits::default();
+        assert!(limits.epoch_deadline_enabled);
+        assert_eq!(limits.epoch_ticks_per_timeout, 10);
+        assert_eq!(limits.host_call_timeout, Duration::from_secs(5));
+    }
+
+    #[test]
     fn test_pooled_instance_preparation_preserves_timeout() {
         use crate::pool::PooledInstance;
         use crate::sandbox::types::PluginCapabilities;
@@ -5229,5 +5509,53 @@ entry = "plugin.wasm"
             Duration::from_millis(1500),
             "prepare_for_request must preserve millisecond timeout"
         );
+    }
+
+    #[test]
+    fn test_host_call_budget_default() {
+        let budget = HostCallBudget::default();
+        assert_eq!(budget.env_lookup_timeout, Duration::from_secs(5));
+        assert_eq!(budget.body_chunk_timeout, Duration::from_secs(5));
+        assert_eq!(budget.mesh_query_timeout, Duration::from_secs(5));
+        assert_eq!(budget.mesh_threat_timeout, Duration::from_secs(5));
+        assert_eq!(budget.mesh_emit_timeout, Duration::from_secs(5));
+        assert_eq!(budget.max_body_chunk_bytes, 64 * 1024);
+        assert_eq!(budget.max_env_value_bytes, 4 * 1024);
+        assert_eq!(budget.max_mesh_key_bytes, 1024);
+        assert_eq!(budget.max_mesh_value_bytes, 64 * 1024);
+    }
+
+    #[test]
+    fn test_abi_error_codes_are_distinct() {
+        let codes = [
+            ABI_SUCCESS,
+            ABI_ERR_CAPABILITY_DENIED,
+            ABI_ERR_INVALID_POINTER,
+            ABI_ERR_TIMEOUT,
+            ABI_ERR_INPUT_TOO_LARGE,
+            ABI_ERR_UNAVAILABLE,
+            ABI_ERR_INTERNAL,
+        ];
+        let mut sorted = codes.to_vec();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(
+            codes.len(),
+            sorted.len(),
+            "ABI error codes must be distinct"
+        );
+    }
+
+    #[test]
+    fn test_abi_error_codes_stability() {
+        // These values are part of the stable ABI contract.
+        // Do not change them without a version bump.
+        assert_eq!(ABI_SUCCESS, 0);
+        assert_eq!(ABI_ERR_CAPABILITY_DENIED, -1);
+        assert_eq!(ABI_ERR_INVALID_POINTER, -2);
+        assert_eq!(ABI_ERR_TIMEOUT, -3);
+        assert_eq!(ABI_ERR_INPUT_TOO_LARGE, -4);
+        assert_eq!(ABI_ERR_UNAVAILABLE, -5);
+        assert_eq!(ABI_ERR_INTERNAL, -6);
     }
 }

@@ -5,7 +5,8 @@ use std::time::Duration;
 use bytes::Bytes;
 
 use super::types::{
-    PluginCapabilities, PluginLimits, PluginManifest, PluginTrustTier, VerifiedPluginSignature,
+    PluginCapabilities, PluginLimits, PluginManifest, PluginStateModel, PluginTrustTier,
+    VerifiedPluginSignature,
 };
 use crate::wasm_runtime::{WasmPluginError, WasmResourceLimits};
 
@@ -54,6 +55,8 @@ pub struct EffectivePluginPolicy {
     pub manifest_limits: PluginLimits,
     /// Provenance metadata for the loaded plugin.
     pub source: PluginSourceIdentity,
+    /// Pool state model controlling cross-request state semantics.
+    pub state_model: PluginStateModel,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -142,6 +145,21 @@ pub fn limits_from_manifest(
             }
             _ => {} // Other tiers can have zero fuel (e.g., DevelopmentHotReload, Unsandboxed)
         }
+    }
+
+    // State model: inherit from manifest limits.
+    limits.state_model = manifest.limits.state_model;
+
+    // SignedSandboxed plugins default to RequestIsolated.
+    // StatefulPooled requires explicit opt-in and is only allowed for non-sandboxed tiers.
+    if manifest.trust_tier == PluginTrustTier::SignedSandboxed
+        && manifest.limits.state_model == PluginStateModel::StatefulPooled
+    {
+        tracing::warn!(
+            "Plugin '{}': SignedSandboxed tier overrides stateful-pooled to request-isolated for security",
+            manifest.name
+        );
+        limits.state_model = PluginStateModel::RequestIsolated;
     }
 
     Ok(limits)
@@ -328,6 +346,7 @@ mod tests {
             limits: limits_from_manifest(&manifest, &default_limits()).unwrap(),
             manifest_limits: manifest.limits.clone(),
             source,
+            state_model: PluginStateModel::default(),
         };
         assert_eq!(policy.trust_tier, PluginTrustTier::SignedSandboxed);
         assert_eq!(
@@ -415,5 +434,39 @@ mod tests {
         let result = limits_from_manifest(&manifest, &default_limits());
         assert!(result.is_ok());
         assert_eq!(result.unwrap().max_cpu_fuel, 0);
+    }
+
+    #[test]
+    fn test_signed_sandboxed_overrides_stateful_to_request_isolated() {
+        let mut manifest = minimal_manifest();
+        manifest.trust_tier = PluginTrustTier::SignedSandboxed;
+        manifest.limits.state_model = PluginStateModel::StatefulPooled;
+        let limits = limits_from_manifest(&manifest, &default_limits()).unwrap();
+        assert_eq!(limits.state_model, PluginStateModel::RequestIsolated);
+    }
+
+    #[test]
+    fn test_development_hot_reload_allows_stateful() {
+        let mut manifest = minimal_manifest();
+        manifest.trust_tier = PluginTrustTier::DevelopmentHotReload;
+        manifest.limits.state_model = PluginStateModel::StatefulPooled;
+        let limits = limits_from_manifest(&manifest, &default_limits()).unwrap();
+        assert_eq!(limits.state_model, PluginStateModel::StatefulPooled);
+    }
+
+    #[test]
+    fn test_local_sandboxed_defaults_to_request_isolated() {
+        let manifest = minimal_manifest();
+        let limits = limits_from_manifest(&manifest, &default_limits()).unwrap();
+        assert_eq!(limits.state_model, PluginStateModel::RequestIsolated);
+    }
+
+    #[test]
+    fn test_local_trusted_allows_stateful() {
+        let mut manifest = minimal_manifest();
+        manifest.trust_tier = PluginTrustTier::LocalTrusted;
+        manifest.limits.state_model = PluginStateModel::StatefulPooled;
+        let limits = limits_from_manifest(&manifest, &default_limits()).unwrap();
+        assert_eq!(limits.state_model, PluginStateModel::StatefulPooled);
     }
 }

@@ -43,6 +43,34 @@ impl std::fmt::Display for PluginTrustTier {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Pool State Model
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Controls whether pooled WASM instances maintain state across requests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginStateModel {
+    /// Request-isolated: host-side context is fully reset between requests.
+    /// Guest memory/globals persist but are treated as untrusted.
+    /// Security assumptions must not depend on guest state persistence.
+    #[default]
+    RequestIsolated,
+    /// Stateful-pooled: instances are reused with full host-side reset.
+    /// Guest memory/globals persist AND this is expected by the plugin.
+    /// Only allowed for trusted plugins or with explicit `stateful = true`.
+    StatefulPooled,
+}
+
+impl std::fmt::Display for PluginStateModel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::RequestIsolated => write!(f, "request-isolated"),
+            Self::StatefulPooled => write!(f, "stateful-pooled"),
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Capability Model
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -256,6 +284,9 @@ pub struct PluginLimits {
     /// Optional wasmtime fuel limit per invocation.
     #[serde(default)]
     pub fuel: Option<u64>,
+    /// Pool state model controlling cross-request state semantics.
+    #[serde(default)]
+    pub state_model: PluginStateModel,
 }
 
 fn default_timeout_ms() -> u64 {
@@ -280,6 +311,7 @@ impl Default for PluginLimits {
             max_concurrency: default_max_concurrency(),
             memory_pages: None,
             fuel: None,
+            state_model: PluginStateModel::default(),
         }
     }
 }
@@ -910,6 +942,7 @@ pub fn compute_manifest_signing_payload(manifest: &PluginManifest) -> String {
     if let Some(f) = manifest.limits.fuel {
         payload.push_str(&format!("fuel={}\n", f));
     }
+    payload.push_str(&format!("state_model={}\n", manifest.limits.state_model));
     payload
 }
 
@@ -1333,6 +1366,8 @@ pub enum PluginFailureClass {
     HostApiViolation,
     /// Plugin failed to load.
     LoadError,
+    /// Plugin was interrupted by epoch deadline (wall-clock backstop).
+    EpochInterrupted,
     /// Unclassified runtime error.
     OtherRuntimeError,
 }
@@ -1346,6 +1381,11 @@ impl PluginFailureClass {
     /// Returns true if this failure class should count toward the timeout threshold.
     pub fn is_timeout(self) -> bool {
         matches!(self, Self::Timeout)
+    }
+
+    /// Returns true if this failure class represents an epoch deadline interruption.
+    pub fn is_epoch_interrupted(self) -> bool {
+        matches!(self, Self::EpochInterrupted)
     }
 }
 
@@ -2603,5 +2643,38 @@ mod tests {
         let result = enforce_plugin_load_policy(&manifest, None, &config);
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_epoch_interrupted_failure_class() {
+        assert!(PluginFailureClass::EpochInterrupted.counts_as_failure());
+        assert!(!PluginFailureClass::EpochInterrupted.is_timeout());
+        assert!(PluginFailureClass::EpochInterrupted.is_epoch_interrupted());
+    }
+
+    #[test]
+    fn test_plugin_state_model_default_is_request_isolated() {
+        assert_eq!(
+            PluginStateModel::default(),
+            PluginStateModel::RequestIsolated
+        );
+    }
+
+    #[test]
+    fn test_plugin_limits_default_state_model() {
+        let limits = PluginLimits::default();
+        assert_eq!(limits.state_model, PluginStateModel::RequestIsolated);
+    }
+
+    #[test]
+    fn test_plugin_state_model_display() {
+        assert_eq!(
+            PluginStateModel::RequestIsolated.to_string(),
+            "request-isolated"
+        );
+        assert_eq!(
+            PluginStateModel::StatefulPooled.to_string(),
+            "stateful-pooled"
+        );
     }
 }

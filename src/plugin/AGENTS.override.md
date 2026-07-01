@@ -187,3 +187,13 @@ The `abi_frame` module (`crates/synvoid-plugin-runtime/src/abi_frame.rs`) provid
 - `WasmRuntime::serialize_headers` delegates to `serialize_headers_canonical`
 - All serialization rejections use `SerializationFailureClass` for metrics
 - Security-sensitive response headers (set-cookie, content-length, transfer-encoding, etc.) are denied by default
+
+### M2 Phase 06: Execution Containment
+
+- `ExecutionInterruptPolicy` controls epoch interruption and fuel-based CPU containment.
+- `HostCallBudget` provides independent per-call timeout and size limits for host functions.
+- Stable ABI error codes (`ABI_ERR_*`) are returned on host-call failures.
+- `PluginStateModel` controls pool state semantics (RequestIsolated vs StatefulPooled).
+- `SignedSandboxed` tier forces `RequestIsolated` regardless of manifest setting.
+- Warmed instances must use the same `WasmResourceLimits` as cold instances.
+- `WasmPluginMetrics` tracks pool hits/misses/drops, fuel exhaustion, epoch timeouts, host call timeouts.

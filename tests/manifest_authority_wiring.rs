@@ -254,6 +254,7 @@ fn effective_policy_matches_manifest() {
         limits: effective_limits.clone(),
         manifest_limits: manifest.limits.clone(),
         source: Default::default(),
+        state_model: effective_limits.state_model,
     };
 
     assert_eq!(policy.name, "policy-test");

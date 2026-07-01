@@ -7,13 +7,16 @@ use wasmtime::{Engine, Instance, Linker, Module, Store};
 
 use crate::pool::{PooledInstance, WasmPool};
 use crate::sandbox::types::PluginCapabilities;
-use crate::wasm_runtime::{GuestExports, RequestContext};
+use crate::wasm_runtime::{GuestExports, RequestContext, WasmResourceLimits};
 
 pub struct WasmInstancePool {
     pool: Arc<Mutex<VecDeque<WasmPooledInstance>>>,
+    #[allow(dead_code)]
     engine: Arc<Engine>,
     max_size: usize,
+    #[allow(dead_code)]
     default_allowed_dht_prefixes: Vec<String>,
+    #[allow(dead_code)]
     default_capabilities: Arc<PluginCapabilities>,
 }
 
@@ -87,117 +90,150 @@ impl WasmInstancePool {
         }
     }
 
-    pub async fn warmup(&self, modules: &[(String, Module)]) {
+    #[allow(dead_code)]
+    pub(crate) async fn warmup(
+        &self,
+        modules: &[(String, Module)],
+        limits: &WasmResourceLimits,
+        linker: Option<&Linker<RequestContext>>,
+    ) {
         let mut warm_instances = VecDeque::new();
 
         for (filter_name, module) in modules {
+            let timeout = limits.timeout;
+            let max_memory = limits.max_memory_mb * 1024 * 1024;
+            let max_table_elements = limits.max_table_elements.unwrap_or(0);
+
             let mut store = Store::new(
                 &self.engine,
                 RequestContext {
                     start: Instant::now(),
-                    timeout: Duration::from_secs(30),
+                    timeout,
                     env: std::collections::HashMap::new(),
-                    allowed_dht_prefixes: self.default_allowed_dht_prefixes.clone(),
-                    max_memory: 64 * 1024 * 1024,
-                    max_table_elements: 1024 * 1024,
+                    allowed_dht_prefixes: limits.allowed_dht_prefixes.clone(),
+                    max_memory,
+                    max_table_elements,
                     body_receiver: None,
-                    capabilities: self.default_capabilities.clone(),
+                    capabilities: limits.capabilities.clone(),
                     capability_violation: None,
+                    host_call_budget: limits.host_call_budget.clone(),
                 },
             );
 
-            let mut linker = Linker::new(&self.engine);
+            store.limiter(|state| state);
 
-            linker
-                .func_wrap(
-                    "env",
-                    "abort",
-                    |_caller: wasmtime::Caller<'_, RequestContext>,
-                     _msg_ptr: i32,
-                     _msg_len: i32| {
-                        tracing::error!("WASM plugin abort at ptr={}, len={}", _msg_ptr, _msg_len);
-                    },
-                )
-                .ok();
+            if limits.max_cpu_fuel > 0 {
+                store.set_fuel(limits.max_cpu_fuel).ok();
+            }
 
-            linker
-                .func_wrap(
-                    "env",
-                    "check_timeout",
-                    |_caller: wasmtime::Caller<'_, RequestContext>| -> i32 { 0 },
-                )
-                .ok();
+            if limits.epoch_deadline_enabled {
+                let ticks = limits.epoch_ticks_per_timeout.max(1);
+                store.set_epoch_deadline(ticks);
+            }
 
-            linker
-                .func_wrap(
-                    "env",
-                    "get_env",
-                    |_caller: wasmtime::Caller<'_, RequestContext>,
-                     _key_ptr: i32,
-                     _key_len: i32,
-                     _out_ptr: i32,
-                     _out_max: i32|
-                     -> i32 { 0 },
-                )
-                .ok();
+            let instance_result = match linker {
+                Some(linker) => linker.instantiate(&mut store, module),
+                None => {
+                    let mut stub_linker = Linker::new(&self.engine);
 
-            linker
-                .func_wrap(
-                    "env",
-                    "synvoid_read_body_chunk",
-                    |_caller: wasmtime::Caller<'_, RequestContext>,
-                     _out_ptr: i32,
-                     _out_max: i32|
-                     -> i32 { 0 },
-                )
-                .ok();
+                    stub_linker
+                        .func_wrap(
+                            "env",
+                            "abort",
+                            |_caller: wasmtime::Caller<'_, RequestContext>,
+                             _msg_ptr: i32,
+                             _msg_len: i32| {
+                                tracing::error!(
+                                    "WASM plugin abort at ptr={}, len={}",
+                                    _msg_ptr,
+                                    _msg_len
+                                );
+                            },
+                        )
+                        .ok();
 
-            linker
-                .func_wrap(
-                    "env",
-                    "mesh_query_dht",
-                    |_caller: wasmtime::Caller<'_, RequestContext>,
-                     _key_ptr: i32,
-                     _key_len: i32,
-                     _out_ptr: i32,
-                     _out_max: i32|
-                     -> i32 { 0 },
-                )
-                .ok();
+                    stub_linker
+                        .func_wrap(
+                            "env",
+                            "check_timeout",
+                            |_caller: wasmtime::Caller<'_, RequestContext>| -> i32 { 0 },
+                        )
+                        .ok();
 
-            linker
-                .func_wrap(
-                    "env",
-                    "mesh_check_threat",
-                    |_caller: wasmtime::Caller<'_, RequestContext>,
-                     _ip_ptr: i32,
-                     _ip_len: i32|
-                     -> i32 { 0 },
-                )
-                .ok();
+                    stub_linker
+                        .func_wrap(
+                            "env",
+                            "get_env",
+                            |_caller: wasmtime::Caller<'_, RequestContext>,
+                             _key_ptr: i32,
+                             _key_len: i32,
+                             _out_ptr: i32,
+                             _out_max: i32|
+                             -> i32 { 0 },
+                        )
+                        .ok();
 
-            linker
-                .func_wrap(
-                    "env",
-                    "mesh_emit_event",
-                    |_caller: wasmtime::Caller<'_, RequestContext>,
-                     _topic_ptr: i32,
-                     _topic_len: i32,
-                     _data_ptr: i32,
-                     _data_len: i32|
-                     -> i32 { 0 },
-                )
-                .ok();
+                    stub_linker
+                        .func_wrap(
+                            "env",
+                            "synvoid_read_body_chunk",
+                            |_caller: wasmtime::Caller<'_, RequestContext>,
+                             _out_ptr: i32,
+                             _out_max: i32|
+                             -> i32 { 0 },
+                        )
+                        .ok();
 
-            match linker.instantiate(&mut store, module) {
+                    stub_linker
+                        .func_wrap(
+                            "env",
+                            "mesh_query_dht",
+                            |_caller: wasmtime::Caller<'_, RequestContext>,
+                             _key_ptr: i32,
+                             _key_len: i32,
+                             _out_ptr: i32,
+                             _out_max: i32|
+                             -> i32 { 0 },
+                        )
+                        .ok();
+
+                    stub_linker
+                        .func_wrap(
+                            "env",
+                            "mesh_check_threat",
+                            |_caller: wasmtime::Caller<'_, RequestContext>,
+                             _ip_ptr: i32,
+                             _ip_len: i32|
+                             -> i32 { 0 },
+                        )
+                        .ok();
+
+                    stub_linker
+                        .func_wrap(
+                            "env",
+                            "mesh_emit_event",
+                            |_caller: wasmtime::Caller<'_, RequestContext>,
+                             _topic_ptr: i32,
+                             _topic_len: i32,
+                             _data_ptr: i32,
+                             _data_len: i32|
+                             -> i32 { 0 },
+                        )
+                        .ok();
+
+                    stub_linker.instantiate(&mut store, module)
+                }
+            };
+
+            match instance_result {
                 Ok(instance) => {
                     warm_instances.push_back(WasmPooledInstance {
                         instance,
                         store,
                         filter_name: filter_name.clone(),
-                        max_cpu_fuel: 0,
-                        default_allowed_dht_prefixes: self.default_allowed_dht_prefixes.clone(),
-                        capabilities: self.default_capabilities.clone(),
+                        max_cpu_fuel: limits.max_cpu_fuel,
+                        default_allowed_dht_prefixes: limits.allowed_dht_prefixes.clone(),
+                        capabilities: limits.capabilities.clone(),
                     });
                 }
                 Err(e) => {
@@ -224,6 +260,12 @@ impl WasmInstancePool {
 }
 
 impl WasmPooledInstance {
+    /// Reset host-side state for a new request.
+    ///
+    /// Host-side context is always reset for both RequestIsolated and StatefulPooled.
+    /// Guest memory/globals persist in both cases — this is a Wasmtime limitation.
+    /// For RequestIsolated: callers must not assume guest state persists.
+    /// For StatefulPooled: callers may rely on guest state persistence.
     pub(crate) fn prepare_for_request(
         &mut self,
         env: std::collections::HashMap<String, String>,
@@ -275,6 +317,7 @@ impl WasmPool for WasmInstancePool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wasm_runtime::HostCallBudget;
 
     #[test]
     fn test_pool_creation() {
@@ -293,7 +336,8 @@ mod tests {
         let pool =
             WasmInstancePool::new(engine, 4, vec![], Arc::new(PluginCapabilities::default()));
 
-        pool.warmup(&[]).await;
+        let limits = WasmResourceLimits::default();
+        pool.warmup(&[], &limits, None).await;
     }
 
     #[test]
@@ -308,5 +352,25 @@ mod tests {
 
         let module_result = Module::from_file(&engine, std::path::Path::new("/nonexistent.wasm"));
         assert!(module_result.is_err());
+    }
+
+    #[test]
+    fn test_warmup_uses_provided_limits() {
+        let limits = WasmResourceLimits {
+            max_cpu_fuel: 500000,
+            timeout: Duration::from_millis(100),
+            max_memory_mb: 32,
+            max_table_elements: Some(512),
+            epoch_deadline_enabled: false,
+            epoch_ticks_per_timeout: 5,
+            host_call_budget: HostCallBudget::default(),
+            ..Default::default()
+        };
+        assert_eq!(limits.max_cpu_fuel, 500000);
+        assert_eq!(limits.timeout, Duration::from_millis(100));
+        assert_eq!(limits.max_memory_mb, 32);
+        assert_eq!(limits.max_table_elements, Some(512));
+        assert!(!limits.epoch_deadline_enabled);
+        assert_eq!(limits.epoch_ticks_per_timeout, 5);
     }
 }
