@@ -687,6 +687,36 @@ pub fn filter_global_counter() -> Vec<u8> {
     .expect("valid WAT")
 }
 
+/// WASM module that calls mesh_query_dht WITH the Mesh capability.
+/// The host function path is exercised (provider access, timeout).
+pub fn mesh_query_with_capability() -> Vec<u8> {
+    wat::parse_str(
+        r#"
+        (module
+            (import "env" "mesh_query_dht" (func $mesh_query (param i32 i32 i32 i32) (result i32)))
+            (memory (export "memory") 1)
+            (global $heap (mut i32) (i32.const 64))
+
+            (func (export "guest_alloc") (param $size i32) (result i32)
+                (local $ptr i32)
+                (local.set $ptr (global.get $heap))
+                (global.set $heap (i32.add (global.get $heap) (local.get $size)))
+                (local.get $ptr)
+            )
+
+            (func (export "guest_free") (param $ptr i32) (param $size i32))
+
+            (func (export "filter_request") (param i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
+                ;; Call mesh_query_dht with empty key (len=0) — exercises the provider path
+                (drop (call $mesh_query (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
+                i32.const 0
+            )
+        )
+        "#,
+    )
+    .expect("valid WAT")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -714,6 +744,7 @@ mod tests {
             filter_get_env_invalid_pointer(),
             filter_body_reader(),
             filter_global_counter(),
+            mesh_query_with_capability(),
         ];
 
         for (i, wasm) in fixtures.iter().enumerate() {
