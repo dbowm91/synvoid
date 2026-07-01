@@ -35,6 +35,7 @@ impl PooledInstance {
         self.store.data_mut().body_receiver = None;
         self.store.data_mut().allowed_dht_prefixes = allowed_dht_prefixes;
         self.store.data_mut().capabilities = capabilities;
+        self.store.data_mut().capability_violation = None;
         if self.max_cpu_fuel > 0 {
             self.store.set_fuel(self.max_cpu_fuel).ok();
         }

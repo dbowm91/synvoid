@@ -516,6 +516,177 @@ pub fn filter_verifies_distinct_ranges() -> Vec<u8> {
     .expect("valid WAT")
 }
 
+/// WASM module that calls `get_env` with a known key and writes the
+/// returned value (as 4 bytes — the env value as bytes plus return code)
+/// into memory at a known offset (2048) so the host can observe it
+/// after the call. Layout at offset 2048:
+///   bytes 0..4: env_return (ABI code or value length) as i32 LE
+///   bytes 4..8: env_first_byte as i32 LE (the byte value, or -1)
+pub fn filter_env_reader() -> Vec<u8> {
+    wat::parse_str(
+        r#"
+        (module
+            (import "env" "get_env" (func $get_env (param i32 i32 i32 i32) (result i32)))
+            (memory (export "memory") 1)
+            (global $heap (mut i32) (i32.const 64))
+
+            (func (export "guest_alloc") (param $size i32) (result i32)
+                (local $ptr i32)
+                (local.set $ptr (global.get $heap))
+                (global.set $heap (i32.add (global.get $heap) (local.get $size)))
+                (local.get $ptr)
+            )
+
+            (func (export "guest_free") (param $ptr i32) (param $size i32))
+
+            ;; Pre-populated key "FOO" at offset 0
+            (data (i32.const 0) "FOO")
+
+            (func (export "filter_request")
+                (param $method_ptr i32) (param $method_len i32)
+                (param $uri_ptr i32) (param $uri_len i32)
+                (param $hdr_ptr i32) (param $hdr_len i32)
+                (param $body_ptr i32) (param $body_len i32)
+                (result i32)
+                (local $n i32)
+                ;; call get_env with key "FOO", output buffer at 1024 (16 bytes)
+                (local.set $n (call $get_env
+                    (i32.const 0)
+                    (i32.const 3)
+                    (i32.const 1024)
+                    (i32.const 16)))
+                ;; Write env_return to memory[2048..2052] as i32 LE
+                (i32.store (i32.const 2048) (local.get $n))
+                ;; Write first byte of env value to memory[2052..2056]
+                (i32.store (i32.const 2052)
+                    (i32.load8_u (i32.const 1024)))
+                i32.const 0
+            )
+        )
+        "#,
+    )
+    .expect("valid WAT")
+}
+
+/// WASM module that calls `get_env` with an invalid output pointer
+/// (out_ptr beyond memory size). Host must return ABI_ERR_INVALID_POINTER.
+pub fn filter_get_env_invalid_pointer() -> Vec<u8> {
+    wat::parse_str(
+        r#"
+        (module
+            (import "env" "get_env" (func $get_env (param i32 i32 i32 i32) (result i32)))
+            (memory (export "memory") 1)
+            (global $heap (mut i32) (i32.const 64))
+
+            (func (export "guest_alloc") (param $size i32) (result i32)
+                (local $ptr i32)
+                (local.set $ptr (global.get $heap))
+                (global.set $heap (i32.add (global.get $heap) (local.get $size)))
+                (local.get $ptr)
+            )
+
+            (func (export "guest_free") (param $ptr i32) (param $size i32))
+
+            (data (i32.const 0) "FOO")
+
+            (func (export "filter_request")
+                (param $method_ptr i32) (param $method_len i32)
+                (param $uri_ptr i32) (param $uri_len i32)
+                (param $hdr_ptr i32) (param $hdr_len i32)
+                (param $body_ptr i32) (param $body_len i32)
+                (result i32)
+                (local $n i32)
+                (local.set $n (call $get_env
+                    (i32.const 0)
+                    (i32.const 3)
+                    (i32.const 1000000) ;; far beyond 1 page (65536 bytes)
+                    (i32.const 16)))
+                (i32.store (i32.const 2048) (local.get $n))
+                i32.const 0
+            )
+        )
+        "#,
+    )
+    .expect("valid WAT")
+}
+
+/// WASM module that calls `synvoid_read_body_chunk` once and writes
+/// the return code to memory[2048..2052] as i32 LE.
+pub fn filter_body_reader() -> Vec<u8> {
+    wat::parse_str(
+        r#"
+        (module
+            (import "env" "synvoid_read_body_chunk" (func $read_body (param i32 i32) (result i32)))
+            (memory (export "memory") 1)
+            (global $heap (mut i32) (i32.const 64))
+
+            (func (export "guest_alloc") (param $size i32) (result i32)
+                (local $ptr i32)
+                (local.set $ptr (global.get $heap))
+                (global.set $heap (i32.add (global.get $heap) (local.get $size)))
+                (local.get $ptr)
+            )
+
+            (func (export "guest_free") (param $ptr i32) (param $size i32))
+
+            (func (export "filter_request")
+                (param $method_ptr i32) (param $method_len i32)
+                (param $uri_ptr i32) (param $uri_len i32)
+                (param $hdr_ptr i32) (param $hdr_len i32)
+                (param $body_ptr i32) (param $body_len i32)
+                (result i32)
+                (local $n i32)
+                (local.set $n (call $read_body
+                    (i32.const 1024)
+                    (i32.const 64)))
+                (i32.store (i32.const 2048) (local.get $n))
+                i32.const 0
+            )
+        )
+        "#,
+    )
+    .expect("valid WAT")
+}
+
+/// WASM module with a persistent global counter that survives across
+/// filter_request invocations on a single Store. Used to verify
+/// StatefulPooled semantics: the global persists because Wasmtime
+/// does not reset globals between calls on the same instance.
+/// The counter value is also written to memory[2048..2052] as i32 LE
+/// so the host can read it after each invocation.
+pub fn filter_global_counter() -> Vec<u8> {
+    wat::parse_str(
+        r#"
+        (module
+            (memory (export "memory") 1)
+            (global $heap (mut i32) (i32.const 64))
+            (global $counter (mut i32) (i32.const 0))
+
+            (func (export "guest_alloc") (param $size i32) (result i32)
+                (local $ptr i32)
+                (local.set $ptr (global.get $heap))
+                (global.set $heap (i32.add (global.get $heap) (local.get $size)))
+                (local.get $ptr)
+            )
+
+            (func (export "guest_free") (param $ptr i32) (param $size i32))
+
+            (func (export "filter_request")
+                (param $method_ptr i32) (param $method_len i32)
+                (param $uri_ptr i32) (param $uri_len i32)
+                (param $hdr_ptr i32) (param $hdr_len i32)
+                (param $body_ptr i32) (param $body_len i32)
+                (result i32)
+                (global.set $counter (i32.add (global.get $counter) (i32.const 1)))
+                (i32.store (i32.const 2048) (global.get $counter))
+                (global.get $counter)
+            )
+        )
+        "#,
+    )
+    .expect("valid WAT")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -539,10 +710,13 @@ mod tests {
             filter_alloc_traps(),
             filter_free_traps(),
             filter_alloc_counter(),
+            filter_env_reader(),
+            filter_get_env_invalid_pointer(),
+            filter_body_reader(),
+            filter_global_counter(),
         ];
 
         for (i, wasm) in fixtures.iter().enumerate() {
-            // Verify WASM magic number
             assert!(
                 wasm.len() >= 4 && wasm[0..4] == *b"\x00asm",
                 "Fixture {} missing WASM magic number",
