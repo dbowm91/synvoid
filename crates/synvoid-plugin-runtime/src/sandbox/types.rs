@@ -118,6 +118,21 @@ pub struct PluginCapabilities {
     pub network: Vec<String>,
     pub mesh: bool,
     pub admin_events: bool,
+    /// Scoped mesh sub-capability policy. Only evaluated when `mesh = true`.
+    #[serde(default)]
+    pub mesh_policy: PluginMeshPolicy,
+    /// Filesystem sub-capability policy for future host functions.
+    #[serde(default)]
+    pub filesystem_policy: PluginFilesystemPolicy,
+    /// Network sub-capability policy for future host functions.
+    #[serde(default)]
+    pub network_policy: PluginNetworkPolicy,
+    /// Persistence sub-capability policy.
+    #[serde(default)]
+    pub persistence_policy: PluginPersistencePolicy,
+    /// Metrics sub-capability policy for cardinality bounds.
+    #[serde(default)]
+    pub metrics_policy: PluginMetricsPolicy,
 }
 
 impl PluginCapabilities {
@@ -256,6 +271,409 @@ impl PluginCapabilities {
             host: host.to_string(),
             port,
         })
+    }
+
+    // ─── Sub-capability checks ──────────────────────────────────────────────
+
+    /// Check if the mesh sub-policy allows a DHT read for the given key.
+    /// Requires `mesh = true` AND the key prefix in `dht_read_prefixes`.
+    pub fn check_mesh_dht_read(&self, key: &str) -> Result<(), CapabilityViolation> {
+        if !self.mesh {
+            return Err(CapabilityViolation {
+                capability: PluginCapability::Mesh,
+                plugin_name: String::new(),
+            });
+        }
+        if self.mesh_policy.allows_dht_read(key) {
+            Ok(())
+        } else {
+            Err(CapabilityViolation {
+                capability: PluginCapability::Mesh,
+                plugin_name: String::new(),
+            })
+        }
+    }
+
+    /// Check if the mesh sub-policy allows a DHT write for the given key.
+    pub fn check_mesh_dht_write(&self, key: &str) -> Result<(), CapabilityViolation> {
+        if !self.mesh {
+            return Err(CapabilityViolation {
+                capability: PluginCapability::Mesh,
+                plugin_name: String::new(),
+            });
+        }
+        if self.mesh_policy.allows_dht_write(key) {
+            Ok(())
+        } else {
+            Err(CapabilityViolation {
+                capability: PluginCapability::Mesh,
+                plugin_name: String::new(),
+            })
+        }
+    }
+
+    /// Check if the mesh sub-policy allows threat checks.
+    pub fn check_mesh_threat_check(&self) -> Result<(), CapabilityViolation> {
+        if !self.mesh || !self.mesh_policy.allow_threat_check {
+            return Err(CapabilityViolation {
+                capability: PluginCapability::Mesh,
+                plugin_name: String::new(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Check if the mesh sub-policy allows emitting an event with the given topic.
+    pub fn check_mesh_event_emit(&self, topic: &str) -> Result<(), CapabilityViolation> {
+        if !self.mesh {
+            return Err(CapabilityViolation {
+                capability: PluginCapability::Mesh,
+                plugin_name: String::new(),
+            });
+        }
+        if self.mesh_policy.allows_event_emit(topic) {
+            Ok(())
+        } else {
+            Err(CapabilityViolation {
+                capability: PluginCapability::Mesh,
+                plugin_name: String::new(),
+            })
+        }
+    }
+
+    /// Check if the metrics sub-policy allows a metric with the given name and labels.
+    pub fn check_metrics_emit(
+        &self,
+        metric_name: &str,
+        label_keys: &[&str],
+    ) -> Result<(), CapabilityViolation> {
+        if !self.metrics {
+            return Err(CapabilityViolation {
+                capability: PluginCapability::Metrics,
+                plugin_name: String::new(),
+            });
+        }
+        let mp = &self.metrics_policy;
+        // Check metric name prefix
+        if !mp.allowed_metric_prefixes.is_empty()
+            && !mp
+                .allowed_metric_prefixes
+                .iter()
+                .any(|p| metric_name.starts_with(p.as_str()))
+        {
+            return Err(CapabilityViolation {
+                capability: PluginCapability::Metrics,
+                plugin_name: String::new(),
+            });
+        }
+        // Check label count
+        if mp.max_label_count > 0 && label_keys.len() > mp.max_label_count {
+            return Err(CapabilityViolation {
+                capability: PluginCapability::Metrics,
+                plugin_name: String::new(),
+            });
+        }
+        // Check denied label keys
+        for key in label_keys {
+            if mp.denied_label_keys.iter().any(|d| d == key) {
+                return Err(CapabilityViolation {
+                    capability: PluginCapability::Metrics,
+                    plugin_name: String::new(),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Sub-Capability Policies
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Scoped mesh policy controlling which mesh operations a plugin may perform.
+///
+/// The top-level `PluginCapability::Mesh` gate must be `true` for any mesh
+/// operation. This policy then narrows which specific operations are allowed.
+/// Missing sub-policy sections default to deny (no DHT access, no threat
+/// checks, no event emission).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PluginMeshPolicy {
+    /// Allow `mesh_check_threat` host calls.
+    #[serde(default)]
+    pub allow_threat_check: bool,
+    /// DHT key prefixes the plugin may read (e.g. `["threat_indicator:"]`).
+    /// Empty means no DHT read access.
+    #[serde(default)]
+    pub dht_read_prefixes: Vec<String>,
+    /// DHT key prefixes the plugin may write. Empty means no write access.
+    #[serde(default)]
+    pub dht_write_prefixes: Vec<String>,
+    /// Mesh event topic prefixes the plugin may emit (e.g. `["plugin.audit"]`).
+    /// Empty means no event emission.
+    #[serde(default)]
+    pub event_emit_topics: Vec<String>,
+    /// Maximum DHT key size in bytes. 0 uses the global default.
+    #[serde(default)]
+    pub max_key_bytes: usize,
+    /// Maximum DHT value size in bytes. 0 uses the global default.
+    #[serde(default)]
+    pub max_value_bytes: usize,
+    /// Maximum event payload size in bytes. 0 uses the global default.
+    #[serde(default)]
+    pub max_event_bytes: usize,
+}
+
+impl PluginMeshPolicy {
+    /// Check if the key matches any allowed DHT read prefix.
+    pub fn allows_dht_read(&self, key: &str) -> bool {
+        self.dht_read_prefixes
+            .iter()
+            .any(|p| key.starts_with(p.as_str()))
+    }
+
+    /// Check if the key matches any allowed DHT write prefix.
+    pub fn allows_dht_write(&self, key: &str) -> bool {
+        self.dht_write_prefixes
+            .iter()
+            .any(|p| key.starts_with(p.as_str()))
+    }
+
+    /// Check if the topic matches any allowed event emit prefix.
+    pub fn allows_event_emit(&self, topic: &str) -> bool {
+        self.event_emit_topics
+            .iter()
+            .any(|p| topic.starts_with(p.as_str()))
+    }
+
+    /// Validate that the policy does not contain wildcard or empty prefixes
+    /// that would grant overly broad access. Returns errors for violations.
+    pub fn validate(&self, strict: bool) -> Vec<MeshPolicyViolation<'_>> {
+        let mut violations = Vec::new();
+        if strict {
+            for prefix in &self.dht_read_prefixes {
+                if prefix.is_empty() {
+                    violations.push(MeshPolicyViolation::EmptyPrefix("dht_read_prefixes"));
+                }
+                if prefix == "*" {
+                    violations.push(MeshPolicyViolation::WildcardPrefix("dht_read_prefixes"));
+                }
+            }
+            for prefix in &self.dht_write_prefixes {
+                if prefix.is_empty() {
+                    violations.push(MeshPolicyViolation::EmptyPrefix("dht_write_prefixes"));
+                }
+                if prefix == "*" {
+                    violations.push(MeshPolicyViolation::WildcardPrefix("dht_write_prefixes"));
+                }
+            }
+            for topic in &self.event_emit_topics {
+                if topic.is_empty() {
+                    violations.push(MeshPolicyViolation::EmptyPrefix("event_emit_topics"));
+                }
+                if topic == "*" {
+                    violations.push(MeshPolicyViolation::WildcardPrefix("event_emit_topics"));
+                }
+            }
+        }
+        violations
+    }
+}
+
+/// Errors from mesh sub-capability policy validation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MeshPolicyViolation<'a> {
+    EmptyPrefix(&'a str),
+    WildcardPrefix(&'a str),
+}
+
+impl<'a> std::fmt::Display for MeshPolicyViolation<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EmptyPrefix(field) => write!(f, "empty prefix not allowed in {}", field),
+            Self::WildcardPrefix(field) => {
+                write!(f, "wildcard '*' prefix not allowed in {}", field)
+            }
+        }
+    }
+}
+
+/// Filesystem access policy controlling which paths a plugin may read/write.
+///
+/// This policy is ready before filesystem host APIs become broad. All paths
+/// are canonicalized and checked against allowed roots. Symlink escapes are
+/// rejected.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PluginFilesystemPolicy {
+    /// Directories the plugin may read from. Empty means no read access.
+    #[serde(default)]
+    pub read_roots: Vec<String>,
+    /// Directories the plugin may write to. Empty means no write access.
+    #[serde(default)]
+    pub write_roots: Vec<String>,
+    /// Allow creating new files within write roots.
+    #[serde(default)]
+    pub allow_create: bool,
+    /// Allow overwriting existing files within write roots.
+    #[serde(default)]
+    pub allow_overwrite: bool,
+    /// Maximum bytes per read operation. 0 means no limit (subject to global).
+    #[serde(default)]
+    pub max_read_bytes: usize,
+    /// Maximum bytes per write operation. 0 means no limit (subject to global).
+    #[serde(default)]
+    pub max_write_bytes: usize,
+}
+
+/// Network access policy controlling which outbound connections a plugin may make.
+///
+/// Production defaults deny wildcards and private/link-local/loopback ranges
+/// for third-party plugins.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginNetworkPolicy {
+    /// Hostnames the plugin may connect to (exact match, lowercase).
+    #[serde(default)]
+    pub allowed_hosts: Vec<String>,
+    /// Ports the plugin may connect to. Empty means all ports (subject to host).
+    #[serde(default)]
+    pub allowed_ports: Vec<u16>,
+    /// CIDR ranges the plugin may connect to (e.g. `["10.0.0.0/8"]`).
+    #[serde(default)]
+    pub allowed_cidrs: Vec<String>,
+    /// Deny connections to private/link-local/loopback ranges by default.
+    #[serde(default = "default_deny_private_ranges")]
+    pub deny_private_ranges: bool,
+    /// Maximum request payload size in bytes.
+    #[serde(default)]
+    pub max_request_bytes: usize,
+    /// Maximum response payload size in bytes.
+    #[serde(default)]
+    pub max_response_bytes: usize,
+    /// Connection timeout.
+    #[serde(default)]
+    pub timeout_ms: u64,
+}
+
+impl Default for PluginNetworkPolicy {
+    fn default() -> Self {
+        Self {
+            allowed_hosts: Vec::new(),
+            allowed_ports: Vec::new(),
+            allowed_cidrs: Vec::new(),
+            deny_private_ranges: true,
+            max_request_bytes: 0,
+            max_response_bytes: 0,
+            timeout_ms: 0,
+        }
+    }
+}
+
+fn default_deny_private_ranges() -> bool {
+    true
+}
+
+/// Persistence policy controlling state storage for a plugin.
+///
+/// Persistence is namespaced by `(site_id, plugin_name, plugin_hash)` and
+/// quota-bound. Cross-plugin namespace access is rejected.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PluginPersistencePolicy {
+    /// Storage namespace (auto-derived from site_id + plugin identity).
+    #[serde(default)]
+    pub namespace: String,
+    /// Maximum key size in bytes.
+    #[serde(default)]
+    pub max_key_bytes: usize,
+    /// Maximum value size in bytes.
+    #[serde(default)]
+    pub max_value_bytes: usize,
+    /// Maximum total storage in bytes for this plugin.
+    #[serde(default)]
+    pub max_total_bytes: usize,
+    /// Allow deleting stored keys.
+    #[serde(default)]
+    pub allow_delete: bool,
+    /// Require TTL for all writes (untrusted plugins).
+    #[serde(default)]
+    pub ttl_required: bool,
+    /// Maximum TTL duration.
+    #[serde(default)]
+    pub max_ttl_ms: u64,
+}
+
+/// Metrics policy controlling what metrics a plugin may emit.
+///
+/// Prevents unbounded cardinality and sensitive data leakage through metric
+/// labels. All plugin-emitted metric names must be prefixed with the allowed
+/// prefix (typically `plugin.<plugin_name>.`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PluginMetricsPolicy {
+    /// Allowed metric name prefixes (e.g. `["plugin.my_plugin."]`).
+    #[serde(default)]
+    pub allowed_metric_prefixes: Vec<String>,
+    /// Maximum metric name size in bytes.
+    #[serde(default)]
+    pub max_metric_name_bytes: usize,
+    /// Maximum number of labels per metric.
+    #[serde(default)]
+    pub max_label_count: usize,
+    /// Maximum label key size in bytes.
+    #[serde(default)]
+    pub max_label_key_bytes: usize,
+    /// Maximum label value size in bytes.
+    #[serde(default)]
+    pub max_label_value_bytes: usize,
+    /// Explicitly allowed label keys (overrides denied list).
+    #[serde(default)]
+    pub allowed_label_keys: Vec<String>,
+    /// Denied label keys (high-cardinality / sensitive).
+    #[serde(default)]
+    pub denied_label_keys: Vec<String>,
+}
+
+/// Classification of host API denial and failure reasons for stable ABI codes
+/// and bounded observability signals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostApiFailureClass {
+    /// Top-level capability not declared.
+    CapabilityDenied,
+    /// DHT key prefix not in allowlist.
+    PrefixDenied,
+    /// Event topic not in allowlist.
+    TopicDenied,
+    /// Filesystem path not in allowlist.
+    PathDenied,
+    /// Network destination not in allowlist.
+    HostDenied,
+    /// Quota or size limit exceeded.
+    QuotaExceeded,
+    /// Payload exceeds size limit.
+    PayloadTooLarge,
+    /// Host call timed out.
+    Timeout,
+    /// Invalid guest pointer or range.
+    InvalidPointer,
+    /// Backend (mesh, filesystem, network) unavailable.
+    BackendUnavailable,
+    /// Internal host error.
+    InternalError,
+}
+
+impl std::fmt::Display for HostApiFailureClass {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CapabilityDenied => write!(f, "CapabilityDenied"),
+            Self::PrefixDenied => write!(f, "PrefixDenied"),
+            Self::TopicDenied => write!(f, "TopicDenied"),
+            Self::PathDenied => write!(f, "PathDenied"),
+            Self::HostDenied => write!(f, "HostDenied"),
+            Self::QuotaExceeded => write!(f, "QuotaExceeded"),
+            Self::PayloadTooLarge => write!(f, "PayloadTooLarge"),
+            Self::Timeout => write!(f, "Timeout"),
+            Self::InvalidPointer => write!(f, "InvalidPointer"),
+            Self::BackendUnavailable => write!(f, "BackendUnavailable"),
+            Self::InternalError => write!(f, "InternalError"),
+        }
     }
 }
 
@@ -447,6 +865,18 @@ impl PluginManifest {
             }
             PluginTrustTier::LocalTrusted => {
                 // Operator explicitly trusts; still warn about overly broad access.
+            }
+        }
+
+        // Phase 7: Validate mesh sub-policy for strict tiers
+        if self.capabilities.mesh {
+            let strict = matches!(
+                self.trust_tier,
+                PluginTrustTier::SignedSandboxed | PluginTrustTier::LocalSandboxed
+            );
+            let violations = self.capabilities.mesh_policy.validate(strict);
+            for v in violations {
+                warnings.push(ManifestWarning::MeshSubPolicyViolation(format!("{}", v)));
             }
         }
 
@@ -658,6 +1088,7 @@ pub enum ManifestWarning {
     AdminInDevMode,
     BroadFilesystemAccess,
     UnsignedPluginInProduction,
+    MeshSubPolicyViolation(String),
 }
 
 impl std::fmt::Display for ManifestWarning {
@@ -679,6 +1110,9 @@ impl std::fmt::Display for ManifestWarning {
             Self::BroadFilesystemAccess => write!(f, "broad filesystem access declared"),
             Self::UnsignedPluginInProduction => {
                 write!(f, "unsigned plugin loaded in production mode")
+            }
+            Self::MeshSubPolicyViolation(msg) => {
+                write!(f, "mesh sub-policy violation: {}", msg)
             }
         }
     }
@@ -910,6 +1344,10 @@ pub fn compute_binary_hash(binary_bytes: &[u8]) -> String {
 
 /// Compute a canonical signing payload from manifest fields (excluding signature).
 /// This produces a deterministic serialization for signing.
+///
+/// Sub-capability policies are included in the signing payload so that
+/// tampering with mesh/filesystem/network/persistence/metrics sub-policies
+/// after signing invalidates the manifest hash.
 pub fn compute_manifest_signing_payload(manifest: &PluginManifest) -> String {
     let mut payload = String::new();
     payload.push_str(&format!("name={}\n", manifest.name));
@@ -922,6 +1360,112 @@ pub fn compute_manifest_signing_payload(manifest: &PluginManifest) -> String {
     for (cap, enabled) in &caps {
         payload.push_str(&format!("cap_{:?}={}\n", cap, enabled));
     }
+    // Sub-capability policies (sorted by section name for determinism)
+    let mp = &manifest.capabilities.mesh_policy;
+    payload.push_str(&format!(
+        "mesh_allow_threat_check={}\n",
+        mp.allow_threat_check
+    ));
+    let mut read_prefixes = mp.dht_read_prefixes.clone();
+    read_prefixes.sort();
+    payload.push_str(&format!(
+        "mesh_dht_read_prefixes={}\n",
+        read_prefixes.join(",")
+    ));
+    let mut write_prefixes = mp.dht_write_prefixes.clone();
+    write_prefixes.sort();
+    payload.push_str(&format!(
+        "mesh_dht_write_prefixes={}\n",
+        write_prefixes.join(",")
+    ));
+    let mut event_topics = mp.event_emit_topics.clone();
+    event_topics.sort();
+    payload.push_str(&format!(
+        "mesh_event_emit_topics={}\n",
+        event_topics.join(",")
+    ));
+    payload.push_str(&format!("mesh_max_key_bytes={}\n", mp.max_key_bytes));
+    payload.push_str(&format!("mesh_max_value_bytes={}\n", mp.max_value_bytes));
+    payload.push_str(&format!("mesh_max_event_bytes={}\n", mp.max_event_bytes));
+
+    let fp = &manifest.capabilities.filesystem_policy;
+    let mut read_roots = fp.read_roots.clone();
+    read_roots.sort();
+    payload.push_str(&format!("fs_read_roots={}\n", read_roots.join(",")));
+    let mut write_roots = fp.write_roots.clone();
+    write_roots.sort();
+    payload.push_str(&format!("fs_write_roots={}\n", write_roots.join(",")));
+    payload.push_str(&format!("fs_allow_create={}\n", fp.allow_create));
+    payload.push_str(&format!("fs_allow_overwrite={}\n", fp.allow_overwrite));
+    payload.push_str(&format!("fs_max_read_bytes={}\n", fp.max_read_bytes));
+    payload.push_str(&format!("fs_max_write_bytes={}\n", fp.max_write_bytes));
+
+    let np = &manifest.capabilities.network_policy;
+    let mut hosts = np.allowed_hosts.clone();
+    hosts.sort();
+    payload.push_str(&format!("net_allowed_hosts={}\n", hosts.join(",")));
+    let mut ports = np.allowed_ports.clone();
+    ports.sort();
+    let port_strs: Vec<String> = ports.iter().map(|p| p.to_string()).collect();
+    payload.push_str(&format!("net_allowed_ports={}\n", port_strs.join(",")));
+    let mut cidrs = np.allowed_cidrs.clone();
+    cidrs.sort();
+    payload.push_str(&format!("net_allowed_cidrs={}\n", cidrs.join(",")));
+    payload.push_str(&format!(
+        "net_deny_private_ranges={}\n",
+        np.deny_private_ranges
+    ));
+    payload.push_str(&format!("net_max_request_bytes={}\n", np.max_request_bytes));
+    payload.push_str(&format!(
+        "net_max_response_bytes={}\n",
+        np.max_response_bytes
+    ));
+    payload.push_str(&format!("net_timeout_ms={}\n", np.timeout_ms));
+
+    let pp = &manifest.capabilities.persistence_policy;
+    payload.push_str(&format!("persist_max_key_bytes={}\n", pp.max_key_bytes));
+    payload.push_str(&format!("persist_max_value_bytes={}\n", pp.max_value_bytes));
+    payload.push_str(&format!("persist_max_total_bytes={}\n", pp.max_total_bytes));
+    payload.push_str(&format!("persist_allow_delete={}\n", pp.allow_delete));
+    payload.push_str(&format!("persist_ttl_required={}\n", pp.ttl_required));
+    payload.push_str(&format!("persist_max_ttl_ms={}\n", pp.max_ttl_ms));
+
+    let mtp = &manifest.capabilities.metrics_policy;
+    let mut prefixes = mtp.allowed_metric_prefixes.clone();
+    prefixes.sort();
+    payload.push_str(&format!(
+        "metrics_allowed_prefixes={}\n",
+        prefixes.join(",")
+    ));
+    payload.push_str(&format!(
+        "metrics_max_name_bytes={}\n",
+        mtp.max_metric_name_bytes
+    ));
+    payload.push_str(&format!(
+        "metrics_max_label_count={}\n",
+        mtp.max_label_count
+    ));
+    payload.push_str(&format!(
+        "metrics_max_label_key_bytes={}\n",
+        mtp.max_label_key_bytes
+    ));
+    payload.push_str(&format!(
+        "metrics_max_label_value_bytes={}\n",
+        mtp.max_label_value_bytes
+    ));
+    let mut allowed_labels = mtp.allowed_label_keys.clone();
+    allowed_labels.sort();
+    payload.push_str(&format!(
+        "metrics_allowed_label_keys={}\n",
+        allowed_labels.join(",")
+    ));
+    let mut denied_labels = mtp.denied_label_keys.clone();
+    denied_labels.sort();
+    payload.push_str(&format!(
+        "metrics_denied_label_keys={}\n",
+        denied_labels.join(",")
+    ));
+
     // Limits
     payload.push_str(&format!("timeout_ms={}\n", manifest.limits.timeout_ms));
     payload.push_str(&format!(
@@ -2676,5 +3220,470 @@ mod tests {
             PluginStateModel::StatefulPooled.to_string(),
             "stateful-pooled"
         );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Phase 7: Sub-Capability Policy Tests
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_mesh_policy_default_is_all_deny() {
+        let policy = PluginMeshPolicy::default();
+        assert!(!policy.allow_threat_check);
+        assert!(policy.dht_read_prefixes.is_empty());
+        assert!(policy.dht_write_prefixes.is_empty());
+        assert!(policy.event_emit_topics.is_empty());
+    }
+
+    #[test]
+    fn test_mesh_policy_allows_dht_read_prefix() {
+        let policy = PluginMeshPolicy {
+            dht_read_prefixes: vec!["threat_indicator:".into(), "ip_reputation:".into()],
+            ..Default::default()
+        };
+        assert!(policy.allows_dht_read("threat_indicator:1.2.3.4"));
+        assert!(policy.allows_dht_read("ip_reputation:5.6.7.8"));
+        assert!(!policy.allows_dht_read("dns_zone:example.com"));
+        assert!(!policy.allows_dht_read("random_key"));
+    }
+
+    #[test]
+    fn test_mesh_policy_allows_dht_write_prefix() {
+        let policy = PluginMeshPolicy {
+            dht_write_prefixes: vec!["plugin.output:".into()],
+            ..Default::default()
+        };
+        assert!(policy.allows_dht_write("plugin.output:result"));
+        assert!(!policy.allows_dht_write("threat_indicator:x"));
+    }
+
+    #[test]
+    fn test_mesh_policy_allows_event_emit_topic() {
+        let policy = PluginMeshPolicy {
+            event_emit_topics: vec!["plugin.audit".into(), "plugin.signal".into()],
+            ..Default::default()
+        };
+        assert!(policy.allows_event_emit("plugin.audit.blocked"));
+        assert!(policy.allows_event_emit("plugin.signal.urgent"));
+        assert!(!policy.allows_event_emit("mesh.admin"));
+        assert!(!policy.allows_event_emit("other.topic"));
+    }
+
+    #[test]
+    fn test_mesh_policy_validate_rejects_empty_prefix() {
+        let policy = PluginMeshPolicy {
+            dht_read_prefixes: vec!["".into()],
+            ..Default::default()
+        };
+        let violations = policy.validate(true);
+        assert_eq!(violations.len(), 1);
+        assert!(matches!(
+            violations[0],
+            MeshPolicyViolation::EmptyPrefix("dht_read_prefixes")
+        ));
+    }
+
+    #[test]
+    fn test_mesh_policy_validate_rejects_wildcard() {
+        let policy = PluginMeshPolicy {
+            event_emit_topics: vec!["*".into()],
+            ..Default::default()
+        };
+        let violations = policy.validate(true);
+        assert_eq!(violations.len(), 1);
+        assert!(matches!(
+            violations[0],
+            MeshPolicyViolation::WildcardPrefix("event_emit_topics")
+        ));
+    }
+
+    #[test]
+    fn test_mesh_policy_validate_strict_false_allows_empty() {
+        let policy = PluginMeshPolicy {
+            dht_read_prefixes: vec!["".into()],
+            ..Default::default()
+        };
+        let violations = policy.validate(false);
+        assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn test_capabilities_mesh_false_denies_all_mesh_operations() {
+        let caps = PluginCapabilities {
+            mesh: false,
+            ..Default::default()
+        };
+        assert!(caps.check_mesh_dht_read("threat_indicator:x").is_err());
+        assert!(caps.check_mesh_dht_write("plugin.output:x").is_err());
+        assert!(caps.check_mesh_threat_check().is_err());
+        assert!(caps.check_mesh_event_emit("plugin.audit").is_err());
+    }
+
+    #[test]
+    fn test_capabilities_mesh_true_no_sub_policy_denies_all() {
+        let caps = PluginCapabilities {
+            mesh: true,
+            mesh_policy: PluginMeshPolicy::default(),
+            ..Default::default()
+        };
+        // mesh=true but empty sub-policies should deny everything
+        assert!(caps.check_mesh_dht_read("threat_indicator:x").is_err());
+        assert!(caps.check_mesh_dht_write("plugin.output:x").is_err());
+        assert!(caps.check_mesh_threat_check().is_err());
+        assert!(caps.check_mesh_event_emit("plugin.audit").is_err());
+    }
+
+    #[test]
+    fn test_capabilities_mesh_sub_policy_scoped_grants() {
+        let caps = PluginCapabilities {
+            mesh: true,
+            mesh_policy: PluginMeshPolicy {
+                allow_threat_check: true,
+                dht_read_prefixes: vec!["threat_indicator:".into()],
+                dht_write_prefixes: vec![],
+                event_emit_topics: vec!["plugin.audit".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        // Allowed operations
+        assert!(caps.check_mesh_dht_read("threat_indicator:1.2.3.4").is_ok());
+        assert!(caps.check_mesh_threat_check().is_ok());
+        assert!(caps.check_mesh_event_emit("plugin.audit.blocked").is_ok());
+        // Denied operations
+        assert!(caps.check_mesh_dht_read("dns_zone:example.com").is_err());
+        assert!(caps.check_mesh_dht_write("plugin.output:x").is_err());
+        assert!(caps.check_mesh_event_emit("mesh.admin").is_err());
+    }
+
+    #[test]
+    fn test_capabilities_one_mesh_grant_cannot_reach_another() {
+        // Plugin with only threat_check cannot read DHT or emit events
+        let caps = PluginCapabilities {
+            mesh: true,
+            mesh_policy: PluginMeshPolicy {
+                allow_threat_check: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(caps.check_mesh_threat_check().is_ok());
+        assert!(caps.check_mesh_dht_read("threat_indicator:x").is_err());
+        assert!(caps.check_mesh_event_emit("plugin.audit").is_err());
+    }
+
+    #[test]
+    fn test_capabilities_dht_read_cannot_write() {
+        let caps = PluginCapabilities {
+            mesh: true,
+            mesh_policy: PluginMeshPolicy {
+                dht_read_prefixes: vec!["threat_indicator:".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(caps.check_mesh_dht_read("threat_indicator:x").is_ok());
+        assert!(caps.check_mesh_dht_write("threat_indicator:x").is_err());
+    }
+
+    #[test]
+    fn test_capabilities_event_topic_prefix_match() {
+        // Topic "plugin.audit" should match "plugin.audit.blocked" (prefix match)
+        let caps = PluginCapabilities {
+            mesh: true,
+            mesh_policy: PluginMeshPolicy {
+                event_emit_topics: vec!["plugin.audit".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(caps.check_mesh_event_emit("plugin.audit").is_ok());
+        assert!(caps.check_mesh_event_emit("plugin.audit.blocked").is_ok());
+        assert!(caps
+            .check_mesh_event_emit("plugin.audit.failed_login")
+            .is_ok());
+        assert!(caps.check_mesh_event_emit("plugin.signal").is_err());
+    }
+
+    #[test]
+    fn test_filesystem_policy_default_is_all_deny() {
+        let policy = PluginFilesystemPolicy::default();
+        assert!(policy.read_roots.is_empty());
+        assert!(policy.write_roots.is_empty());
+        assert!(!policy.allow_create);
+        assert!(!policy.allow_overwrite);
+    }
+
+    #[test]
+    fn test_network_policy_default_deny_private_ranges() {
+        let policy = PluginNetworkPolicy::default();
+        assert!(policy.deny_private_ranges);
+        assert!(policy.allowed_hosts.is_empty());
+    }
+
+    #[test]
+    fn test_persistence_policy_default_is_all_deny() {
+        let policy = PluginPersistencePolicy::default();
+        assert!(policy.max_key_bytes == 0);
+        assert!(policy.max_value_bytes == 0);
+        assert!(policy.max_total_bytes == 0);
+        assert!(!policy.allow_delete);
+        assert!(!policy.ttl_required);
+    }
+
+    #[test]
+    fn test_metrics_policy_default_is_all_deny() {
+        let policy = PluginMetricsPolicy::default();
+        assert!(policy.allowed_metric_prefixes.is_empty());
+        assert!(policy.max_label_count == 0);
+        assert!(policy.denied_label_keys.is_empty());
+    }
+
+    #[test]
+    fn test_capabilities_check_metrics_emit() {
+        let caps = PluginCapabilities {
+            metrics: true,
+            metrics_policy: PluginMetricsPolicy {
+                allowed_metric_prefixes: vec!["plugin.test.".into()],
+                max_label_count: 3,
+                denied_label_keys: vec!["ip_address".into(), "user_agent".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        // Valid metric
+        assert!(caps.check_metrics_emit("plugin.test.requests", &[]).is_ok());
+        // Wrong prefix
+        assert!(caps.check_metrics_emit("system.cpu", &[]).is_err());
+        // Denied label
+        assert!(caps
+            .check_metrics_emit("plugin.test.requests", &["ip_address"])
+            .is_err());
+        // Too many labels
+        assert!(caps
+            .check_metrics_emit("plugin.test.requests", &["a", "b", "c", "d"])
+            .is_err());
+        // Valid labels
+        assert!(caps
+            .check_metrics_emit("plugin.test.requests", &["method", "status"])
+            .is_ok());
+    }
+
+    #[test]
+    fn test_capabilities_metrics_false_denies_all() {
+        let caps = PluginCapabilities {
+            metrics: false,
+            ..Default::default()
+        };
+        assert!(caps.check_metrics_emit("plugin.test.x", &[]).is_err());
+    }
+
+    #[test]
+    fn test_host_api_failure_class_display() {
+        assert_eq!(
+            HostApiFailureClass::CapabilityDenied.to_string(),
+            "CapabilityDenied"
+        );
+        assert_eq!(
+            HostApiFailureClass::PrefixDenied.to_string(),
+            "PrefixDenied"
+        );
+        assert_eq!(HostApiFailureClass::TopicDenied.to_string(), "TopicDenied");
+        assert_eq!(HostApiFailureClass::PathDenied.to_string(), "PathDenied");
+        assert_eq!(HostApiFailureClass::HostDenied.to_string(), "HostDenied");
+        assert_eq!(
+            HostApiFailureClass::QuotaExceeded.to_string(),
+            "QuotaExceeded"
+        );
+        assert_eq!(
+            HostApiFailureClass::PayloadTooLarge.to_string(),
+            "PayloadTooLarge"
+        );
+        assert_eq!(HostApiFailureClass::Timeout.to_string(), "Timeout");
+        assert_eq!(
+            HostApiFailureClass::InvalidPointer.to_string(),
+            "InvalidPointer"
+        );
+        assert_eq!(
+            HostApiFailureClass::BackendUnavailable.to_string(),
+            "BackendUnavailable"
+        );
+        assert_eq!(
+            HostApiFailureClass::InternalError.to_string(),
+            "InternalError"
+        );
+    }
+
+    #[test]
+    fn test_manifest_toml_parses_mesh_sub_policy() {
+        let toml = r#"
+            name = "mesh-plugin"
+            version = "1.0.0"
+            entry = "plugin.wasm"
+
+            [capabilities]
+            mesh = true
+
+            [capabilities.mesh_policy]
+            allow_threat_check = true
+            dht_read_prefixes = ["threat_indicator:", "ip_reputation:"]
+            dht_write_prefixes = []
+            event_emit_topics = ["plugin.audit", "plugin.signal"]
+            max_key_bytes = 512
+            max_value_bytes = 8192
+            max_event_bytes = 4096
+        "#;
+        let manifest = PluginManifest::parse_toml(toml, Path::new("test.toml")).unwrap();
+        assert!(manifest.capabilities.mesh);
+        assert!(manifest.capabilities.mesh_policy.allow_threat_check);
+        assert_eq!(
+            manifest.capabilities.mesh_policy.dht_read_prefixes,
+            vec!["threat_indicator:", "ip_reputation:"]
+        );
+        assert!(manifest
+            .capabilities
+            .mesh_policy
+            .dht_write_prefixes
+            .is_empty());
+        assert_eq!(
+            manifest.capabilities.mesh_policy.event_emit_topics,
+            vec!["plugin.audit", "plugin.signal"]
+        );
+        assert_eq!(manifest.capabilities.mesh_policy.max_key_bytes, 512);
+        assert_eq!(manifest.capabilities.mesh_policy.max_value_bytes, 8192);
+        assert_eq!(manifest.capabilities.mesh_policy.max_event_bytes, 4096);
+    }
+
+    #[test]
+    fn test_manifest_toml_missing_sub_policy_defaults_deny() {
+        let toml = r#"
+            name = "test-plugin"
+            version = "1.0.0"
+            entry = "plugin.wasm"
+
+            [capabilities]
+            mesh = true
+        "#;
+        let manifest = PluginManifest::parse_toml(toml, Path::new("test.toml")).unwrap();
+        assert!(manifest.capabilities.mesh);
+        assert!(!manifest.capabilities.mesh_policy.allow_threat_check);
+        assert!(manifest
+            .capabilities
+            .mesh_policy
+            .dht_read_prefixes
+            .is_empty());
+        assert!(manifest
+            .capabilities
+            .mesh_policy
+            .event_emit_topics
+            .is_empty());
+    }
+
+    #[test]
+    fn test_signing_payload_includes_mesh_sub_policy() {
+        let manifest_without = PluginManifest {
+            name: "test".into(),
+            version: "1.0.0".into(),
+            entry: "plugin.wasm".into(),
+            capabilities: PluginCapabilities {
+                mesh: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let manifest_with = PluginManifest {
+            name: "test".into(),
+            version: "1.0.0".into(),
+            entry: "plugin.wasm".into(),
+            capabilities: PluginCapabilities {
+                mesh: true,
+                mesh_policy: PluginMeshPolicy {
+                    allow_threat_check: true,
+                    dht_read_prefixes: vec!["threat_indicator:".into()],
+                    event_emit_topics: vec!["plugin.audit".into()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let payload_without = compute_manifest_signing_payload(&manifest_without);
+        let payload_with = compute_manifest_signing_payload(&manifest_with);
+        // Payloads must differ when sub-policies differ
+        assert_ne!(payload_without, payload_with);
+        // Sub-policy fields must appear in the payload
+        assert!(payload_with.contains("mesh_allow_threat_check=true"));
+        assert!(payload_with.contains("mesh_dht_read_prefixes=threat_indicator:"));
+        assert!(payload_with.contains("mesh_event_emit_topics=plugin.audit"));
+    }
+
+    #[test]
+    fn test_signing_payload_includes_filesystem_sub_policy() {
+        let manifest = PluginManifest {
+            name: "test".into(),
+            version: "1.0.0".into(),
+            entry: "plugin.wasm".into(),
+            capabilities: PluginCapabilities {
+                filesystem_policy: PluginFilesystemPolicy {
+                    read_roots: vec!["/data".into()],
+                    write_roots: vec!["/tmp".into()],
+                    allow_create: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let payload = compute_manifest_signing_payload(&manifest);
+        assert!(payload.contains("fs_read_roots=/data"));
+        assert!(payload.contains("fs_write_roots=/tmp"));
+        assert!(payload.contains("fs_allow_create=true"));
+    }
+
+    #[test]
+    fn test_signing_payload_includes_metrics_sub_policy() {
+        let manifest = PluginManifest {
+            name: "test".into(),
+            version: "1.0.0".into(),
+            entry: "plugin.wasm".into(),
+            capabilities: PluginCapabilities {
+                metrics: true,
+                metrics_policy: PluginMetricsPolicy {
+                    allowed_metric_prefixes: vec!["plugin.test.".into()],
+                    max_label_count: 5,
+                    denied_label_keys: vec!["ip_address".into()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let payload = compute_manifest_signing_payload(&manifest);
+        assert!(payload.contains("metrics_allowed_prefixes=plugin.test."));
+        assert!(payload.contains("metrics_max_label_count=5"));
+        assert!(payload.contains("metrics_denied_label_keys=ip_address"));
+    }
+
+    #[test]
+    fn test_manifest_validate_trust_consistency_mesh_sub_policy() {
+        let manifest = PluginManifest {
+            name: "test".into(),
+            version: "1.0.0".into(),
+            entry: "plugin.wasm".into(),
+            trust_tier: PluginTrustTier::SignedSandboxed,
+            capabilities: PluginCapabilities {
+                mesh: true,
+                mesh_policy: PluginMeshPolicy {
+                    dht_read_prefixes: vec!["".into()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let warnings = manifest.validate_trust_consistency();
+        assert!(warnings
+            .iter()
+            .any(|w| matches!(w, ManifestWarning::MeshSubPolicyViolation(_))));
     }
 }

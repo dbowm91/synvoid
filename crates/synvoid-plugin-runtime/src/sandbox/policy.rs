@@ -127,10 +127,19 @@ pub fn limits_from_manifest(
 
     // Mesh capability & DHT prefixes:
     // - mesh = false: always clear prefixes (plugin has no mesh access).
-    // - mesh = true: DO NOT inherit global prefixes. The manifest must
-    //   explicitly declare allowed prefixes (Phase 2 feature). For now,
-    //   mesh=true grants the capability flag only, not prefix access.
+    // - mesh = true: populate allowed_dht_prefixes from the mesh sub-policy.
+    //   The manifest must explicitly declare allowed prefixes via mesh_policy.
     limits.allowed_dht_prefixes.clear();
+    if manifest.capabilities.mesh {
+        limits.allowed_dht_prefixes.extend(
+            manifest
+                .capabilities
+                .mesh_policy
+                .dht_read_prefixes
+                .iter()
+                .cloned(),
+        );
+    }
 
     // Production invariant: sandboxed tiers must have non-zero fuel.
     // Fuel is the primary CPU containment mechanism — zero fuel disables

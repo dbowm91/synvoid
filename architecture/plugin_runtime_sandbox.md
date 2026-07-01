@@ -707,3 +707,96 @@ cargo test -p synvoid-plugin-runtime -- test_warmup_uses_provided_limits
 cargo test -p synvoid-plugin-runtime -- test_record_pool_hit
 cargo test -p synvoid-plugin-runtime -- test_wasm_plugin_metrics_new_fields
 ```
+
+## M2 Phase 07: Host API Sub-Capabilities
+
+Phase 7 replaces coarse plugin host authority with narrow, auditable, default-deny sub-capabilities. A plugin receives only the exact host operations it needs: specific mesh read prefixes, event topics, threat-check authority, bounded metrics emission, and future filesystem/network/persistence access under explicit allowlists.
+
+### Design Principles
+
+1. Default deny at every host API surface.
+2. Capability checks are semantic, not just boolean.
+3. Prefix/topic/host/path allowlists are normalized before comparison.
+4. Production policies avoid wildcard grants by default.
+5. Host API failures return stable ABI errors and record bounded metrics.
+6. Policy is carried in `EffectivePluginPolicy`, not hidden in global runtime defaults.
+
+### Sub-Capability Policy Types
+
+| Policy | File | Description |
+|--------|------|-------------|
+| `PluginMeshPolicy` | `types.rs` | Scoped mesh: threat check, DHT read/write prefixes, event topics, size limits |
+| `PluginFilesystemPolicy` | `types.rs` | Read/write roots, create/overwrite flags, size limits |
+| `PluginNetworkPolicy` | `types.rs` | Allowed hosts, ports, CIDRs, private range denial, timeouts |
+| `PluginPersistencePolicy` | `types.rs` | Namespace, key/value/total quotas, TTL, delete policy |
+| `PluginMetricsPolicy` | `types.rs` | Metric prefixes, label count/key/value limits, denied labels |
+
+### Mesh Sub-Capability Enforcement
+
+The top-level `PluginCapability::Mesh` gate must be `true` for any mesh operation. The `mesh_policy` sub-struct then narrows which specific operations are allowed:
+
+| Host Function | Sub-Capability Check |
+|---------------|---------------------|
+| `mesh_query_dht` | `mesh = true` AND key prefix in `mesh_policy.dht_read_prefixes` |
+| `mesh_check_threat` | `mesh = true` AND `mesh_policy.allow_threat_check = true` |
+| `mesh_emit_event` | `mesh = true` AND topic prefix in `mesh_policy.event_emit_topics` |
+
+Missing sub-policy sections default to deny (no DHT access, no threat checks, no event emission).
+
+### Manifest TOML Example
+
+```toml
+[capabilities]
+mesh = true
+
+[capabilities.mesh_policy]
+allow_threat_check = true
+dht_read_prefixes = ["threat_indicator:", "ip_reputation:"]
+dht_write_prefixes = []
+event_emit_topics = ["plugin.audit", "plugin.signal"]
+max_key_bytes = 512
+max_value_bytes = 8192
+max_event_bytes = 4096
+```
+
+### Signing Payload Coverage
+
+Sub-capability policies are included in the canonical signing payload. Tampering with mesh/filesystem/network/persistence/metrics sub-policies after signing invalidates the manifest hash. Fields are sorted alphabetically for determinism.
+
+### HostApiFailureClass
+
+Stable error classification for host API denials:
+
+| Variant | Description |
+|---------|-------------|
+| `CapabilityDenied` | Top-level capability not declared |
+| `PrefixDenied` | DHT key prefix not in allowlist |
+| `TopicDenied` | Event topic not in allowlist |
+| `PathDenied` | Filesystem path not in allowlist |
+| `HostDenied` | Network destination not in allowlist |
+| `QuotaExceeded` | Quota or size limit exceeded |
+| `PayloadTooLarge` | Payload exceeds size limit |
+| `Timeout` | Host call timed out |
+| `InvalidPointer` | Invalid guest pointer or range |
+| `BackendUnavailable` | Backend unavailable |
+| `InternalError` | Internal host error |
+
+### Validation
+
+`PluginMeshPolicy::validate(strict)` checks for empty or wildcard prefixes:
+- `strict = true` (production sandboxed tiers): rejects empty and `*` wildcards.
+- `strict = false` (dev/test): allows but returns warnings.
+
+Manifest `validate_trust_consistency()` emits `MeshSubPolicyViolation` warnings for invalid mesh sub-policies.
+
+### Tests
+
+```bash
+cargo test -p synvoid-plugin-runtime -- test_mesh_policy
+cargo test -p synvoid-plugin-runtime -- test_capabilities_mesh
+cargo test -p synvoid-plugin-runtime -- test_capabilities_check_metrics
+cargo test -p synvoid-plugin-runtime -- test_host_api_failure_class
+cargo test -p synvoid-plugin-runtime -- test_manifest_toml_parses_mesh
+cargo test -p synvoid-plugin-runtime -- test_signing_payload_includes
+cargo test -p synvoid-plugin-runtime -- test_manifest_validate_trust
+```

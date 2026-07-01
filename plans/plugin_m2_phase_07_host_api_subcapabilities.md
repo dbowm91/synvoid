@@ -410,3 +410,17 @@ This phase is complete when:
 - Sub-capability policy is part of the effective policy and signed manifest authority chain.
 - Host API denials return stable ABI codes and bounded observability signals.
 - Tests prove one host authority grant cannot be used to reach another host authority surface.
+
+## Status: COMPLETE
+
+All workstreams implemented and validated:
+
+- **Workstream 1**: Mesh authority split into `PluginMeshPolicy` with `allow_threat_check`, `dht_read_prefixes`, `dht_write_prefixes`, `event_emit_topics`, and size limits. Host functions (`mesh_query_dht`, `mesh_check_threat`, `mesh_emit_event`) use sub-capability checks.
+- **Workstream 2**: `PluginFilesystemPolicy` with read/write roots, create/overwrite flags, size limits.
+- **Workstream 3**: `PluginNetworkPolicy` with hosts, ports, CIDRs, private range denial, timeouts.
+- **Workstream 4**: `PluginPersistencePolicy` with namespace, quotas, TTL, delete policy.
+- **Workstream 5**: `PluginMetricsPolicy` with metric prefixes, label count/key/value limits, denied labels.
+- **Workstream 6**: All sub-policies integrated into `PluginCapabilities` and `EffectivePluginPolicy`. Signing payload covers all sub-capability sections. Manifest TOML parsing supports `[capabilities.mesh_policy]` etc.
+- **Workstream 7**: `HostApiFailureClass` enum with 11 stable variants. Bounded metrics via `record_host_call_failure`.
+
+**Tests**: 329 passing (26 new tests for sub-capability enforcement). All guardrail tests pass. Clippy clean. Format clean.

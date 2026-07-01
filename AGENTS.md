@@ -40,6 +40,15 @@ cargo test -p synvoid supervisor::shutdown
 # Plugin runtime tests (M2 Phase 06)
 cargo test -p synvoid-plugin-runtime -- test_epoch_interrupted
 cargo test -p synvoid-plugin-runtime -- test_state_model
+
+# Plugin runtime tests (M2 Phase 07: Host API Sub-Capabilities)
+cargo test -p synvoid-plugin-runtime -- test_mesh_policy
+cargo test -p synvoid-plugin-runtime -- test_capabilities_mesh
+cargo test -p synvoid-plugin-runtime -- test_capabilities_check_metrics
+cargo test -p synvoid-plugin-runtime -- test_host_api_failure_class
+cargo test -p synvoid-plugin-runtime -- test_manifest_toml_parses_mesh
+cargo test -p synvoid-plugin-runtime -- test_signing_payload_includes
+cargo test -p synvoid-plugin-runtime -- test_manifest_validate_trust
 ```
 
 ## Feature Profiles
@@ -96,6 +105,13 @@ cargo test -p synvoid-plugin-runtime -- test_plugin_state_model
 cargo test -p synvoid-plugin-runtime -- test_warmup_uses_provided_limits
 cargo test -p synvoid-plugin-runtime -- test_record_pool_hit
 cargo test -p synvoid-plugin-runtime -- test_wasm_plugin_metrics_new_fields
+cargo test -p synvoid-plugin-runtime -- test_mesh_policy          # Mesh sub-capability policy validation
+cargo test -p synvoid-plugin-runtime -- test_capabilities_mesh    # Mesh sub-capability enforcement
+cargo test -p synvoid-plugin-runtime -- test_capabilities_check_metrics  # Metrics sub-capability enforcement
+cargo test -p synvoid-plugin-runtime -- test_host_api_failure_class     # HostApiFailureClass display
+cargo test -p synvoid-plugin-runtime -- test_manifest_toml_parses_mesh  # TOML mesh sub-policy parsing
+cargo test -p synvoid-plugin-runtime -- test_signing_payload_includes   # Signing payload covers sub-policies
+cargo test -p synvoid-plugin-runtime -- test_manifest_validate_trust    # Trust consistency mesh sub-policy
 cargo test --test docs_path_reference_guard  # Stale markdown link detection
 cargo test --test failure_injection  # Failure-injection tests for lifecycle, convergence, plugin, startup
 cargo test --test security_observability_guard  # Security observability invariants: metric labels, doc coverage, registry signals

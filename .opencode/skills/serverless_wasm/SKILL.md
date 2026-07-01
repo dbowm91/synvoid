@@ -287,6 +287,9 @@ use synvoid_plugin_runtime::sandbox::types::{
     PluginManifest, PluginCapabilities, PluginCapability, PluginLimits,
     PluginTrustTier, PluginRuntimeState, PluginInvocationGuard,
     SigningPolicy, PluginSignatureConfig,
+    // Phase 7: Sub-capability policies
+    PluginMeshPolicy, PluginFilesystemPolicy, PluginNetworkPolicy,
+    PluginPersistencePolicy, PluginMetricsPolicy, HostApiFailureClass,
 };
 ```
 
@@ -317,6 +320,55 @@ caps.require(PluginCapability::RequestMutate)?;  // Err(CapabilityViolation)
 ```
 
 `permits()` returns `bool`. `require()` returns `Result<(), CapabilityViolation>`. `iter_flags()` returns all 11 capabilities and their enabled state.
+
+### Phase 7: Sub-Capability Policies
+
+The top-level `PluginCapability::Mesh` gate must be `true` for any mesh operation. The `mesh_policy` sub-struct then narrows which specific operations are allowed:
+
+```rust
+let caps = PluginCapabilities {
+    mesh: true,
+    mesh_policy: PluginMeshPolicy {
+        allow_threat_check: true,
+        dht_read_prefixes: vec!["threat_indicator:".into()],
+        event_emit_topics: vec!["plugin.audit".into()],
+        ..Default::default()
+    },
+    ..Default::default()
+};
+
+// Sub-capability checks
+caps.check_mesh_dht_read("threat_indicator:1.2.3.4")?;  // Ok
+caps.check_mesh_dht_read("dns_zone:example.com")?;       // Err
+caps.check_mesh_threat_check()?;                          // Ok
+caps.check_mesh_event_emit("plugin.audit.blocked")?;     // Ok
+caps.check_mesh_event_emit("mesh.admin")?;               // Err
+```
+
+Other sub-capability policies (filesystem, network, persistence, metrics) follow the same default-deny pattern and are ready before their respective host APIs become broad.
+
+### HostApiFailureClass
+
+Stable error classification for host API denials:
+
+```rust
+use synvoid_plugin_runtime::sandbox::types::HostApiFailureClass;
+
+// Used in host functions to classify denials
+match failure {
+    HostApiFailureClass::CapabilityDenied => // top-level cap missing
+    HostApiFailureClass::PrefixDenied => // DHT key prefix not in allowlist
+    HostApiFailureClass::TopicDenied => // event topic not in allowlist
+    HostApiFailureClass::PathDenied => // filesystem path not in allowlist
+    HostApiFailureClass::HostDenied => // network dest not in allowlist
+    HostApiFailureClass::QuotaExceeded => // quota/size limit exceeded
+    HostApiFailureClass::PayloadTooLarge => // payload exceeds limit
+    HostApiFailureClass::Timeout => // host call timed out
+    HostApiFailureClass::InvalidPointer => // invalid guest pointer
+    HostApiFailureClass::BackendUnavailable => // backend unavailable
+    HostApiFailureClass::InternalError => // internal host error
+}
+```
 
 ### PluginInvocationGuard
 
@@ -391,7 +443,13 @@ limits.check_output(300_000)?; // Err(ResourceLimitError::OutputTooLarge)
 
 ```bash
 cargo test --test plugin_capability_boundary_guard
-cargo test -p synvoid-plugin-runtime
+cargo test -p synvoid-plugin-runtime -- test_mesh_policy
+cargo test -p synvoid-plugin-runtime -- test_capabilities_mesh
+cargo test -p synvoid-plugin-runtime -- test_capabilities_check_metrics
+cargo test -p synvoid-plugin-runtime -- test_host_api_failure_class
+cargo test -p synvoid-plugin-runtime -- test_manifest_toml_parses_mesh
+cargo test -p synvoid-plugin-runtime -- test_signing_payload_includes
+cargo test -p synvoid-plugin-runtime -- test_manifest_validate_trust
 ```
 
 ### Signed Byte Loading (Phase 2)

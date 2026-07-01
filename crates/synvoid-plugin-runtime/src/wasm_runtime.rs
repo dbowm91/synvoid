@@ -1791,7 +1791,9 @@ impl WasmRuntime {
                  out_ptr: i32,
                  out_max: i32|
                  -> i32 {
-                    if !caller.data().capabilities.permits(PluginCapability::Mesh) {
+                    // Phase 7: Sub-capability check — mesh must be enabled AND key prefix
+                    // must be in mesh_policy.dht_read_prefixes.
+                    if !caller.data().capabilities.mesh {
                         tracing::error!(
                             "WASM plugin attempted mesh_query_dht without PluginCapability::Mesh"
                         );
@@ -1825,8 +1827,17 @@ impl WasmRuntime {
 
                     let key = String::from_utf8_lossy(&mem_data[key_range]).to_string();
 
-                    // Enforce per-call key size budget
-                    if key.len() > caller.data().host_call_budget.max_mesh_key_bytes {
+                    // Enforce per-call key size budget (use mesh policy max_key_bytes if set)
+                    let max_key = {
+                        let policy_max = caller.data().capabilities.mesh_policy.max_key_bytes;
+                        let budget_max = caller.data().host_call_budget.max_mesh_key_bytes;
+                        if policy_max > 0 {
+                            policy_max.min(budget_max)
+                        } else {
+                            budget_max
+                        }
+                    };
+                    if key.len() > max_key {
                         crate::wasm_metrics::record_host_call_failure(
                             "",
                             "mesh_query_dht",
@@ -1835,32 +1846,17 @@ impl WasmRuntime {
                         return ABI_ERR_INPUT_TOO_LARGE;
                     }
 
-                    let sensitive_prefixes = [
-                        "threat_indicator:",
-                        "yara_rule:",
-                        "yara_rules_manifest:",
-                        "edge_attestation:",
-                        "dns_zone:",
-                        "dns_record:",
-                        "dns_domain_reg:",
-                    ];
-
-                    let is_sensitive = sensitive_prefixes.iter().any(|p| key.starts_with(p));
-                    let is_explicitly_allowed = caller
-                        .data()
-                        .allowed_dht_prefixes
-                        .iter()
-                        .any(|p| key.starts_with(p));
-
-                    if is_sensitive && !is_explicitly_allowed {
+                    // Phase 7: Check DHT read prefix against mesh sub-policy.
+                    // The mesh_policy.dht_read_prefixes must explicitly allow this key prefix.
+                    if !caller.data().capabilities.mesh_policy.allows_dht_read(&key) {
                         tracing::error!(
-                            "WASM plugin attempted unauthorized DHT query: key='{}'",
+                            "WASM plugin attempted unauthorized DHT read: key='{}' not in dht_read_prefixes",
                             key
                         );
                         crate::wasm_metrics::record_host_call_failure(
                             "",
                             "mesh_query_dht",
-                            "CapabilityDenied",
+                            "PrefixDenied",
                         );
                         return ABI_ERR_CAPABILITY_DENIED;
                     }
@@ -1937,8 +1933,12 @@ impl WasmRuntime {
                  ip_ptr: i32,
                  ip_len: i32|
                  -> i32 {
-                    if !caller.data().capabilities.permits(PluginCapability::Mesh) {
-                        tracing::error!("WASM plugin attempted mesh_check_threat without PluginCapability::Mesh");
+                    // Phase 7: Sub-capability check — mesh must be enabled AND
+                    // mesh_policy.allow_threat_check must be true.
+                    if !caller.data().capabilities.mesh
+                        || !caller.data().capabilities.mesh_policy.allow_threat_check
+                    {
+                        tracing::error!("WASM plugin attempted mesh_check_threat without mesh sub-capability (allow_threat_check)");
                         crate::wasm_metrics::record_plugin_capability_violation("Mesh");
                         crate::wasm_metrics::record_host_call_failure(
                             "", "mesh_check_threat", "CapabilityDenied",
@@ -2022,7 +2022,9 @@ impl WasmRuntime {
                  data_ptr: i32,
                  data_len: i32|
                  -> i32 {
-                    if !caller.data().capabilities.permits(PluginCapability::Mesh) {
+                    // Phase 7: Sub-capability check — mesh must be enabled AND
+                    // mesh_policy.event_emit_topics must allow this topic.
+                    if !caller.data().capabilities.mesh {
                         tracing::error!(
                             "WASM plugin attempted mesh_emit_event without PluginCapability::Mesh"
                         );
@@ -2069,6 +2071,39 @@ impl WasmRuntime {
 
                     let topic = String::from_utf8_lossy(&mem_data[topic_range]).to_string();
                     let data = mem_data[data_range].to_vec();
+
+                    // Phase 7: Check event topic against mesh sub-policy.
+                    if !caller.data().capabilities.mesh_policy.allows_event_emit(&topic) {
+                        tracing::error!(
+                            "WASM plugin attempted unauthorized event emission: topic='{}' not in event_emit_topics",
+                            topic
+                        );
+                        crate::wasm_metrics::record_host_call_failure(
+                            "",
+                            "mesh_emit_event",
+                            "TopicDenied",
+                        );
+                        return ABI_ERR_CAPABILITY_DENIED;
+                    }
+
+                    // Enforce event payload size limit
+                    let max_event = {
+                        let policy_max = caller.data().capabilities.mesh_policy.max_event_bytes;
+                        let budget_max = data.len();
+                        if policy_max > 0 {
+                            policy_max
+                        } else {
+                            budget_max
+                        }
+                    };
+                    if data.len() > max_event {
+                        crate::wasm_metrics::record_host_call_failure(
+                            "",
+                            "mesh_emit_event",
+                            "PayloadTooLarge",
+                        );
+                        return ABI_ERR_INPUT_TOO_LARGE;
+                    }
 
                     tracing::debug!("WASM mesh_emit_event('{}', {} bytes)", topic, data.len());
 
