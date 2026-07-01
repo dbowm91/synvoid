@@ -273,6 +273,14 @@ pub fn record_plugin_pool_stats(plugin_name: &str, hits: u64, misses: u64, dropp
     .increment(dropped);
 }
 
+pub fn record_concurrency_limit_exceeded(plugin_name: &str) {
+    metrics::counter!(
+        "synvoid_plugin_concurrency_limit_exceeded_total",
+        "plugin" => plugin_name.to_string()
+    )
+    .increment(1);
+}
+
 pub fn get_wasm_metrics(plugin_name: &str) -> WasmPluginMetrics {
     WasmPluginMetrics::get(plugin_name)
 }
