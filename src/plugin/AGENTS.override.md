@@ -193,7 +193,13 @@ The `abi_frame` module (`crates/synvoid-plugin-runtime/src/abi_frame.rs`) provid
 - `ExecutionInterruptPolicy` controls epoch interruption and fuel-based CPU containment.
 - `HostCallBudget` provides independent per-call timeout and size limits for host functions.
 - Stable ABI error codes (`ABI_ERR_*`) are returned on host-call failures.
-- `PluginStateModel` controls pool state semantics (RequestIsolated vs StatefulPooled).
-- `SignedSandboxed` tier forces `RequestIsolated` regardless of manifest setting.
+- `PluginStateModel` has three variants: `HostContextIsolated` (default), `FreshInstancePerRequest`, `StatefulPooled`. `RequestIsolated` is accepted as a deprecated alias for `HostContextIsolated`.
+- `HostContextIsolated` resets host-side context only; guest memory/globals persist if instance is reused.
+- `FreshInstancePerRequest` skips pool entirely; instantiates fresh per invocation.
+- `SignedSandboxed` tier forces `HostContextIsolated` regardless of manifest setting.
 - Warmed instances must use the same `WasmResourceLimits` as cold instances.
-- `WasmPluginMetrics` tracks pool hits/misses/drops, fuel exhaustion, epoch timeouts, host call timeouts.
+- `WasmPluginMetrics` tracks pool hits/misses/drops, fresh instances, concurrency limit exceeded, fuel exhaustion, epoch timeouts, host call timeouts.
+- `record_concurrency_limit_exceeded` is reserved for actual semaphore/guard exhaustion, NOT pool misses.
+- `PluginRuntimeOwner` owns the epoch incrementer lifecycle. Production composition root at `src/server/mod.rs` calls `start_epoch_incrementer()`.
+- `WasmPluginManager::epoch_incrementer_running()` and `validate_execution_containment_runtime()` are available for introspection.
+- Body chunk timeout is enforced via `HostCallBudget.body_chunk_timeout` with ABI code `ABI_ERR_TIMEOUT`.

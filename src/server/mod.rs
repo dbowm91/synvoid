@@ -428,6 +428,12 @@ impl UnifiedServer {
                     }
                 }
             }
+
+            // Start epoch incrementer after plugins are loaded so that any
+            // engine with epoch_deadline_enabled=true will have its epoch
+            // advanced. Default interval: 1 second.
+            owner.start_epoch_incrementer(std::time::Duration::from_secs(1));
+
             owner
         };
 

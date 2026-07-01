@@ -40,7 +40,7 @@ pub use sandbox::types::{
 };
 pub use wasm_metrics::{
     get_all_wasm_metrics, get_wasm_metrics, record_concurrency_limit_exceeded,
-    record_epoch_timeout, record_fuel_exhausted, record_host_call_timeout,
+    record_epoch_timeout, record_fresh_instance, record_fuel_exhausted, record_host_call_timeout,
     record_plugin_pool_stats, record_pool_drop, record_pool_hit, record_pool_miss,
     WasmPluginMetrics,
 };

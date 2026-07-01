@@ -55,4 +55,9 @@ cargo test --test unified_worker_composition_root_guard
 cargo test --test docs_path_reference_guard
 
 echo ""
+echo "=== Plugin runtime crate checks ==="
+cargo clippy -p synvoid-plugin-runtime --all-targets -- -D warnings
+cargo test -p synvoid-plugin-runtime
+
+echo ""
 echo "=== All architecture checks passed ==="

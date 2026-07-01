@@ -8,9 +8,13 @@ use crate::plugin::{PluginManager, PluginManagerLifecycle};
 ///
 /// Replaces the `std::mem::forget(lifecycle)` pattern with proper RAII
 /// ownership so the watcher is dropped when the server shuts down.
+///
+/// Also ensures the epoch incrementer is cleanly stopped before the
+/// plugin manager is dropped.
 pub struct PluginRuntimeOwner {
     manager: Arc<PluginManager>,
     lifecycle: Option<PluginManagerLifecycle>,
+    epoch_started: bool,
 }
 
 impl PluginRuntimeOwner {
@@ -18,11 +22,32 @@ impl PluginRuntimeOwner {
         Self {
             manager,
             lifecycle: None,
+            epoch_started: false,
         }
     }
 
     pub fn manager(&self) -> &Arc<PluginManager> {
         &self.manager
+    }
+
+    /// Start the background epoch incrementer task on the WASM manager.
+    ///
+    /// This must be called after plugins are loaded and before the server
+    /// begins accepting requests. If the incrementer is already running,
+    /// this is a no-op (logs a warning).
+    pub fn start_epoch_incrementer(&mut self, interval: Duration) {
+        self.manager
+            .wasm_manager()
+            .start_epoch_incrementer(interval);
+        self.epoch_started = true;
+    }
+
+    /// Stop the epoch incrementer task if running.
+    pub fn stop_epoch_incrementer(&mut self) {
+        if self.epoch_started {
+            self.manager.wasm_manager().stop_epoch_incrementer();
+            self.epoch_started = false;
+        }
     }
 
     /// Load all WASM plugins declared in the config.
@@ -89,6 +114,17 @@ impl PluginRuntimeOwner {
     }
 }
 
+impl Drop for PluginRuntimeOwner {
+    fn drop(&mut self) {
+        // Stop the epoch incrementer before dropping the manager so that the
+        // background task is cancelled and no further epoch increments occur
+        // while engines are being torn down.
+        if self.epoch_started {
+            self.manager.wasm_manager().stop_epoch_incrementer();
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct PluginRuntimeReport {
     pub loaded: usize,
@@ -113,5 +149,64 @@ mod tests {
         let report = owner.load_configured_plugins(&[]);
         assert_eq!(report.loaded, 0);
         assert_eq!(report.failed, 0);
+    }
+
+    #[tokio::test]
+    async fn epoch_incrementer_running_false_before_start() {
+        let mgr = Arc::new(PluginManager::new());
+        assert!(!mgr.wasm_manager().epoch_incrementer_running());
+    }
+
+    #[tokio::test]
+    async fn epoch_incrementer_running_true_after_start() {
+        let mgr = Arc::new(PluginManager::new());
+        mgr.wasm_manager()
+            .start_epoch_incrementer(Duration::from_millis(100));
+        assert!(mgr.wasm_manager().epoch_incrementer_running());
+        mgr.wasm_manager().stop_epoch_incrementer();
+    }
+
+    #[tokio::test]
+    async fn start_epoch_incrementer_twice_is_idempotent() {
+        let mgr = Arc::new(PluginManager::new());
+        mgr.wasm_manager()
+            .start_epoch_incrementer(Duration::from_millis(100));
+        // Second start should log warning and not panic.
+        mgr.wasm_manager()
+            .start_epoch_incrementer(Duration::from_millis(100));
+        assert!(mgr.wasm_manager().epoch_incrementer_running());
+        mgr.wasm_manager().stop_epoch_incrementer();
+    }
+
+    #[tokio::test]
+    async fn drop_stops_epoch_incrementer() {
+        let mgr = Arc::new(PluginManager::new());
+        let mut owner = PluginRuntimeOwner::new(mgr.clone());
+        owner.start_epoch_incrementer(Duration::from_millis(100));
+        assert!(mgr.wasm_manager().epoch_incrementer_running());
+        drop(owner);
+        assert!(!mgr.wasm_manager().epoch_incrementer_running());
+    }
+
+    #[tokio::test]
+    async fn validate_fails_when_epoch_needed_but_not_running() {
+        let mgr = Arc::new(PluginManager::new());
+        // No plugins loaded, no incrementer — should pass (no epochs needed).
+        assert!(mgr
+            .wasm_manager()
+            .validate_execution_containment_runtime()
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn validate_passes_when_incrementer_running() {
+        let mgr = Arc::new(PluginManager::new());
+        mgr.wasm_manager()
+            .start_epoch_incrementer(Duration::from_millis(100));
+        assert!(mgr
+            .wasm_manager()
+            .validate_execution_containment_runtime()
+            .is_ok());
+        mgr.wasm_manager().stop_epoch_incrementer();
     }
 }

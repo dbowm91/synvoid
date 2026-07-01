@@ -352,6 +352,10 @@ impl WasmPluginManager {
     /// The interval is configurable (default: 1 second). The task is
     /// cancelled when the returned handle is dropped.
     pub fn start_epoch_incrementer(&self, interval: std::time::Duration) {
+        if self.epoch_incrementer_running() {
+            tracing::warn!("Epoch incrementer already running; ignoring duplicate start");
+            return;
+        }
         let runtimes = Arc::clone(&self.runtimes);
         let handle = tokio::spawn(async move {
             loop {
@@ -365,13 +369,46 @@ impl WasmPluginManager {
             }
         });
         *self.epoch_incrementer_handle.write() = Some(handle);
+        tracing::info!("Epoch incrementer started");
     }
 
     /// Stop the background epoch incrementer task if running.
     pub fn stop_epoch_incrementer(&self) {
         if let Some(handle) = self.epoch_incrementer_handle.write().take() {
             handle.abort();
+            tracing::info!("Epoch incrementer stopped");
         }
+    }
+
+    /// Returns `true` if the epoch incrementer task is currently running.
+    pub fn epoch_incrementer_running(&self) -> bool {
+        let guard = self.epoch_incrementer_handle.read();
+        match guard.as_ref() {
+            Some(handle) => !handle.is_finished(),
+            None => false,
+        }
+    }
+
+    /// Validate that the execution containment runtime is correctly configured.
+    ///
+    /// If any loaded plugin has `epoch_deadline_enabled = true`, the epoch
+    /// incrementer must be running. Returns `Ok(())` if the invariant holds,
+    /// or an error describing the violation.
+    pub fn validate_execution_containment_runtime(&self) -> Result<(), WasmPluginError> {
+        let needs_incrementer = {
+            let runtimes = self.runtimes.read();
+            runtimes.iter().any(|rt| rt.limits.epoch_deadline_enabled)
+        };
+        if needs_incrementer && !self.epoch_incrementer_running() {
+            tracing::warn!(
+                "Epoch incrementer required but not running; plugins with \
+                 epoch_deadline_enabled will never have their epochs advanced"
+            );
+            return Err(WasmPluginError::ExecutionFailed(
+                "Epoch incrementer required but not running".to_string(),
+            ));
+        }
+        Ok(())
     }
 
     pub fn with_limits(mut self, limits: WasmResourceLimits) -> Self {
@@ -2743,6 +2780,23 @@ impl WasmRuntime {
             parts.uri
         );
 
+        // FreshInstancePerRequest: skip pool, instantiate fresh, drop after use.
+        if self.limits.state_model
+            == crate::sandbox::types::PluginStateModel::FreshInstancePerRequest
+        {
+            crate::wasm_metrics::record_fresh_instance(plugin_name);
+            let mut store = self.create_store((*env).clone());
+            let exports = self.instantiate(&mut store).inspect_err(|_| {
+                Self::record_invoke_failure("filter_request");
+            })?;
+            let result = self.do_filter_request_with_exports(parts, body, &mut store, exports);
+            if let Err(ref e) = result {
+                self.record_and_classify_failure(e);
+                Self::record_invoke_failure("filter_request");
+            }
+            return result;
+        }
+
         let pooled_instance = self.pool.get(&self.name);
 
         if let Some(mut inst) = pooled_instance {
@@ -3000,6 +3054,23 @@ impl WasmRuntime {
             self.name,
             parts.status
         );
+
+        // FreshInstancePerRequest: skip pool, instantiate fresh, drop after use.
+        if self.limits.state_model
+            == crate::sandbox::types::PluginStateModel::FreshInstancePerRequest
+        {
+            crate::wasm_metrics::record_fresh_instance(plugin_name);
+            let mut store = self.create_store((*env).clone());
+            let exports = self.instantiate(&mut store).inspect_err(|_| {
+                Self::record_invoke_failure("transform_response");
+            })?;
+            let result = self.do_transform_response_with_exports(parts, body, &mut store, exports);
+            if let Err(ref e) = result {
+                self.record_and_classify_failure(e);
+                Self::record_invoke_failure("transform_response");
+            }
+            return result;
+        }
 
         let pooled_instance = self.pool.get(&self.name);
 
@@ -5778,6 +5849,56 @@ entry = "plugin.wasm"
         mgr.stop_epoch_incrementer();
     }
 
+    /// Verify `epoch_incrementer_running()` reflects actual state.
+    #[tokio::test]
+    async fn test_epoch_incrementer_running_reflects_state() {
+        let mgr = WasmPluginManager::new();
+        assert!(!mgr.epoch_incrementer_running());
+        mgr.start_epoch_incrementer(Duration::from_millis(100));
+        assert!(mgr.epoch_incrementer_running());
+        mgr.stop_epoch_incrementer();
+        assert!(!mgr.epoch_incrementer_running());
+    }
+
+    /// Calling start twice does not leak or replace (idempotent).
+    #[tokio::test]
+    async fn test_epoch_incrementer_double_start_no_leak() {
+        let mgr = WasmPluginManager::new();
+        mgr.start_epoch_incrementer(Duration::from_millis(100));
+        mgr.start_epoch_incrementer(Duration::from_millis(100));
+        assert!(mgr.epoch_incrementer_running());
+        mgr.stop_epoch_incrementer();
+        assert!(!mgr.epoch_incrementer_running());
+    }
+
+    /// Dropping the manager stops the incrementer task.
+    #[tokio::test]
+    async fn test_epoch_incrementer_stopped_on_drop() {
+        let mgr = WasmPluginManager::new();
+        mgr.start_epoch_incrementer(Duration::from_millis(100));
+        assert!(mgr.epoch_incrementer_running());
+        drop(mgr);
+        // Manager dropped — no panic, task is cancelled.
+    }
+
+    /// `validate_execution_containment_runtime` fails when epoch deadlines
+    /// are enabled but incrementer is not running.
+    #[tokio::test]
+    async fn test_validate_fails_when_epoch_needed_but_not_running() {
+        let mgr = WasmPluginManager::new();
+        // No plugins loaded → no epochs needed → passes.
+        assert!(mgr.validate_execution_containment_runtime().is_ok());
+    }
+
+    /// `validate_execution_containment_runtime` passes when incrementer is running.
+    #[tokio::test]
+    async fn test_validate_passes_when_incrementer_running() {
+        let mgr = WasmPluginManager::new();
+        mgr.start_epoch_incrementer(Duration::from_millis(100));
+        assert!(mgr.validate_execution_containment_runtime().is_ok());
+        mgr.stop_epoch_incrementer();
+    }
+
     /// Verify pool metrics are recorded on hit/miss/drop.
     #[test]
     fn test_pool_metrics_recorded_on_invocation() {
@@ -5914,7 +6035,7 @@ entry = "plugin.wasm"
         assert_eq!(info.pool_stats_dropped, 0);
         assert_eq!(
             info.state_model,
-            crate::sandbox::types::PluginStateModel::RequestIsolated
+            crate::sandbox::types::PluginStateModel::HostContextIsolated
         );
     }
 
@@ -6330,6 +6451,112 @@ entry = "plugin.wasm"
         runtime.free_guest_input_frame(&mut store, &exports, &frame);
     }
 
+    /// FreshInstancePerRequest: each invocation gets a fresh store/instance,
+    /// so guest globals do NOT persist. Two consecutive filter_request calls
+    /// must both see the counter at 1 (not 1 then 2).
+    #[test]
+    fn test_fresh_instance_per_request_does_not_preserve_guest_globals() {
+        let wasm = test_fixtures::filter_global_counter();
+        let mut limits = make_limits_with_filter_cap();
+        limits.state_model = crate::sandbox::types::PluginStateModel::FreshInstancePerRequest;
+        let runtime =
+            WasmRuntime::load_from_bytes_with_priority("fresh-instance-test", &wasm, limits, 0)
+                .expect("load should succeed");
+
+        let make_req = || {
+            Request::builder()
+                .method("GET")
+                .uri("http://example.com/")
+                .body(Bytes::new())
+                .unwrap()
+        };
+        let env = std::collections::HashMap::new();
+
+        // First invocation — counter goes 0 → 1
+        let r1 = runtime.filter_request(make_req(), Arc::new(env.clone()));
+        assert!(r1.is_ok(), "first invocation should succeed");
+
+        // Second invocation — fresh instance, counter resets to 0 → 1 again
+        let r2 = runtime.filter_request(make_req(), Arc::new(env));
+        assert!(r2.is_ok(), "second invocation should succeed");
+
+        // The key invariant: fresh_instance metric was recorded
+        let m = WasmPluginMetrics::get("fresh-instance-test");
+        assert!(
+            m.fresh_instance_count >= 2,
+            "FreshInstancePerRequest must record fresh instance metric for each invocation, got {}",
+            m.fresh_instance_count
+        );
+    }
+
+    /// StatefulPooled: guest globals persist across pooled invocations AND
+    /// this is the explicit intent of the plugin author (not just a Wasmtime
+    /// limitation). Two filter_request calls on the same store must see the
+    /// counter incrementing, proving stateful semantics.
+    #[test]
+    fn test_stateful_pooled_preserves_guest_globals_explicitly() {
+        let wasm = test_fixtures::filter_global_counter();
+        let mut limits = make_limits_with_filter_cap();
+        limits.state_model = crate::sandbox::types::PluginStateModel::StatefulPooled;
+        let runtime =
+            WasmRuntime::load_from_bytes_with_priority("stateful-persist-test", &wasm, limits, 0)
+                .expect("load should succeed");
+
+        let mut store = runtime.create_store(std::collections::HashMap::new());
+        let exports = runtime.instantiate(&mut store).expect("instantiate");
+
+        let pieces = RequestInputPieces {
+            method: b"GET",
+            uri: b"/",
+            headers: vec![],
+            body: &[],
+        };
+        let frame = runtime
+            .write_request_input_frame(&mut store, &exports, pieces)
+            .expect("write frame");
+
+        let method_ptr = frame.method.ptr;
+        let method_len = frame.method.len;
+        let uri_ptr = frame.uri.ptr;
+        let uri_len = frame.uri.len;
+        let hdr_ptr = frame.headers.ptr;
+        let hdr_len = frame.headers.len;
+        let body_ptr = frame.body.as_ref().map(|b| b.ptr).unwrap_or(0);
+        let body_len = frame.body.as_ref().map(|b| b.len).unwrap_or(0);
+
+        let filter_fn = exports
+            .filter_request
+            .as_ref()
+            .expect("filter_request present");
+
+        // First call — counter goes 0 → 1, returns 1
+        let r1 = filter_fn
+            .call(
+                &mut store,
+                (
+                    method_ptr, method_len, uri_ptr, uri_len, hdr_ptr, hdr_len, body_ptr, body_len,
+                ),
+            )
+            .expect("call 1");
+        assert_eq!(r1, 1);
+
+        // Second call on the same store — counter goes 1 → 2, returns 2
+        let r2 = filter_fn
+            .call(
+                &mut store,
+                (
+                    method_ptr, method_len, uri_ptr, uri_len, hdr_ptr, hdr_len, body_ptr, body_len,
+                ),
+            )
+            .expect("call 2");
+        assert_eq!(
+            r2, 2,
+            "StatefulPooled: guest global counter MUST persist across calls on same store"
+        );
+
+        runtime.free_guest_input_frame(&mut store, &exports, &frame);
+    }
+
     /// Failed instance (guest_free trap) is dropped, not returned to the pool.
     /// The metrics must show pool_dropped incrementing.
     #[test]
@@ -6720,7 +6947,7 @@ entry = "plugin.wasm"
         assert_eq!(info.timeout, runtime.limits.timeout);
         assert_eq!(
             info.state_model,
-            crate::sandbox::types::PluginStateModel::RequestIsolated
+            crate::sandbox::types::PluginStateModel::HostContextIsolated
         );
     }
 
@@ -7167,22 +7394,75 @@ entry = "plugin.wasm"
     // ═══════════════════════════════════════════════════════════════════════════════
     // Gap closure: Body chunk timeout test (un-ignored)
     // ═══════════════════════════════════════════════════════════════════════════════
-
-    /// `synvoid_read_body_chunk` timeout behavior requires `Handle::block_on`
-    /// which deadlocks when called from within a tokio runtime context (the
-    /// runtime thread is blocked so the timer can't fire). The timeout
-    /// enforcement is verified via:
-    /// - `test_read_body_chunk_no_receiver_returns_internal` (no receiver path)
-    /// - `test_read_body_chunk_respects_max_chunk_size` (happy path with timeout)
-    /// - `test_host_call_budget_production_sanity` (budget field is positive)
-    /// - `test_mesh_query_timeout_config_flows_through` (budget wired to store)
+    /// `synvoid_read_body_chunk` returns ABI_ERR_TIMEOUT (-3) when the
+    /// body_receiver channel has no data within `body_chunk_timeout`.
+    ///
+    /// Requires a multi-thread runtime because `Handle::block_on` inside the
+    /// synchronous WASM host callback blocks the calling thread; timer workers
+    /// must run on separate threads to fire the timeout.
     #[test]
-    #[ignore]
     fn test_read_body_chunk_timeout_returns_abi_code() {
-        // Timeout path is reachable in production (multi-thread tokio runtime)
-        // but cannot be exercised in the unit test harness without rt-multi-thread.
-    }
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .expect("tokio multi-thread runtime");
 
+        let handle = std::thread::spawn(move || {
+            let _guard = rt.enter();
+
+            let wasm = test_fixtures::filter_body_reader();
+            let mut limits = make_limits_with_filter_cap();
+            limits.host_call_budget.body_chunk_timeout = std::time::Duration::from_millis(1);
+            let runtime =
+                WasmRuntime::load_from_bytes_with_priority("body-chunk-timeout", &wasm, limits, 0)
+                    .expect("load should succeed");
+
+            let mut store = runtime.create_store(std::collections::HashMap::new());
+            // Create a receiver that will never produce data — forces timeout.
+            let (_tx, rx) = tokio::sync::mpsc::channel::<Result<bytes::Bytes, std::io::Error>>(1);
+            store.data_mut().body_receiver = Some(rx);
+            let exports = runtime.instantiate(&mut store).expect("instantiate");
+
+            let pieces = RequestInputPieces {
+                method: b"GET",
+                uri: b"/",
+                headers: vec![],
+                body: &[],
+            };
+            let frame = runtime
+                .write_request_input_frame(&mut store, &exports, pieces)
+                .expect("write frame");
+
+            let filter_fn = exports
+                .filter_request
+                .as_ref()
+                .expect("filter_request present");
+            let call_result = filter_fn.call(
+                &mut store,
+                (
+                    frame.method.ptr,
+                    frame.method.len,
+                    frame.uri.ptr,
+                    frame.uri.len,
+                    frame.headers.ptr,
+                    frame.headers.len,
+                    frame.body.as_ref().map(|b| b.ptr).unwrap_or(0),
+                    frame.body.as_ref().map(|b| b.len).unwrap_or(0),
+                ),
+            );
+            assert!(call_result.is_ok(), "filter_request must not panic");
+            let body_return = read_i32_at(&mut store, exports.memory.as_ref().unwrap(), 2048);
+            assert_eq!(
+                body_return, ABI_ERR_TIMEOUT,
+                "host should return ABI_ERR_TIMEOUT when body_chunk_timeout expires"
+            );
+
+            runtime.free_guest_input_frame(&mut store, &exports, &frame);
+        });
+
+        handle.join().expect("test thread should not panic");
+    }
     // ═══════════════════════════════════════════════════════════════════════════════
     // Test helpers
     // ═══════════════════════════════════════════════════════════════════════════════

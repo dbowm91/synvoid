@@ -18,10 +18,11 @@ pub struct PooledInstance {
 impl PooledInstance {
     /// Reset host-side state for a new request.
     ///
-    /// Host-side context is always reset for both RequestIsolated and StatefulPooled.
+    /// Host-side context is always reset for both HostContextIsolated and StatefulPooled.
     /// Guest memory/globals persist in both cases — this is a Wasmtime limitation.
-    /// For RequestIsolated: callers must not assume guest state persists.
+    /// For HostContextIsolated: callers must not assume guest state persists.
     /// For StatefulPooled: callers may rely on guest state persistence.
+    /// For FreshInstancePerRequest: pool is bypassed entirely (no reset needed).
     pub fn prepare_for_request(
         &mut self,
         env: std::collections::HashMap<String, String>,

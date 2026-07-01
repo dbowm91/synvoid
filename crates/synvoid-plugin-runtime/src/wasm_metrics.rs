@@ -30,6 +30,8 @@ static WASM_PLUGIN_EPOCH_TIMEOUTS: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static WASM_PLUGIN_HOST_CALL_TIMEOUTS: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+static WASM_PLUGIN_FRESH_INSTANCES: LazyLock<Mutex<HashMap<String, AtomicU64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Debug, Clone, Default)]
 pub struct WasmPluginMetrics {
@@ -46,6 +48,7 @@ pub struct WasmPluginMetrics {
     pub fuel_exhausted_count: u64,
     pub epoch_timeout_count: u64,
     pub host_call_timeout_count: u64,
+    pub fresh_instance_count: u64,
 }
 
 impl WasmPluginMetrics {
@@ -115,6 +118,11 @@ impl WasmPluginMetrics {
             .get(plugin_name)
             .map(|c| c.load(Ordering::Relaxed))
             .unwrap_or(0);
+        let fresh_instance_count = WASM_PLUGIN_FRESH_INSTANCES
+            .lock()
+            .get(plugin_name)
+            .map(|c| c.load(Ordering::Relaxed))
+            .unwrap_or(0);
 
         Self {
             invocations,
@@ -130,6 +138,7 @@ impl WasmPluginMetrics {
             fuel_exhausted_count,
             epoch_timeout_count,
             host_call_timeout_count,
+            fresh_instance_count,
         }
     }
 
@@ -231,6 +240,14 @@ pub fn record_pool_drop(plugin_name: &str) {
         .fetch_add(1, Ordering::Relaxed);
 }
 
+pub fn record_fresh_instance(plugin_name: &str) {
+    WASM_PLUGIN_FRESH_INSTANCES
+        .lock()
+        .entry(plugin_name.to_string())
+        .or_insert_with(|| AtomicU64::new(0))
+        .fetch_add(1, Ordering::Relaxed);
+}
+
 pub fn record_fuel_exhausted(plugin_name: &str) {
     WASM_PLUGIN_FUEL_EXHAUSTED
         .lock()
@@ -273,6 +290,11 @@ pub fn record_plugin_pool_stats(plugin_name: &str, hits: u64, misses: u64, dropp
     .increment(dropped);
 }
 
+/// Record a concurrency-limit exceeded event.
+///
+/// This metric is reserved for actual concurrency gating (semaphore exhaustion
+/// in `PluginInvocationGuard`), NOT for pool misses. A pool miss means no warm
+/// instance was available — the request is served by instantiating a fresh one.
 pub fn record_concurrency_limit_exceeded(plugin_name: &str) {
     metrics::counter!(
         "synvoid_plugin_concurrency_limit_exceeded_total",
@@ -371,6 +393,7 @@ mod tests {
         assert_eq!(metrics.fuel_exhausted_count, 0);
         assert_eq!(metrics.epoch_timeout_count, 0);
         assert_eq!(metrics.host_call_timeout_count, 0);
+        assert_eq!(metrics.fresh_instance_count, 0);
     }
 
     #[test]
@@ -407,6 +430,14 @@ mod tests {
         record_host_call_timeout(name);
         let m = WasmPluginMetrics::get(name);
         assert_eq!(m.host_call_timeout_count, 1);
+    }
+
+    #[test]
+    fn test_record_fresh_instance() {
+        let name = "test_fresh_instance_plugin";
+        record_fresh_instance(name);
+        let m = WasmPluginMetrics::get(name);
+        assert_eq!(m.fresh_instance_count, 1);
     }
 
     #[test]

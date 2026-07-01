@@ -47,24 +47,65 @@ impl std::fmt::Display for PluginTrustTier {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Controls whether pooled WASM instances maintain state across requests.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+///
+/// The variant determines pool behavior:
+/// - `HostContextIsolated`: instance is reused from pool; host-side context is
+///   fully reset but guest memory/globals may persist (Wasmtime limitation).
+/// - `FreshInstancePerRequest`: a new instance is instantiated for every
+///   request and dropped afterward. No pool reuse. Guarantees full isolation.
+/// - `StatefulPooled`: instance is reused; guest memory/globals persist AND
+///   this is expected by the plugin.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginStateModel {
-    /// Request-isolated: host-side context is fully reset between requests.
-    /// Guest memory/globals persist but are treated as untrusted.
-    /// Security assumptions must not depend on guest state persistence.
+    /// Host-context-isolated: instance is reused from pool but host-side
+    /// context (env, body, capabilities, DHT prefixes, fuel, timeout) is
+    /// fully reset between requests. Guest memory/globals persist but are
+    /// treated as untrusted — security assumptions must not depend on
+    /// guest state persistence.
     #[default]
-    RequestIsolated,
+    HostContextIsolated,
+    /// Fresh-instance-per-request: a new WASM instance is instantiated
+    /// for every request and dropped afterward. No pool reuse. This
+    /// guarantees full isolation of guest memory and globals.
+    FreshInstancePerRequest,
     /// Stateful-pooled: instances are reused with full host-side reset.
     /// Guest memory/globals persist AND this is expected by the plugin.
     /// Only allowed for trusted plugins or with explicit `stateful = true`.
     StatefulPooled,
 }
 
+/// Backward-compatible deserialization: maps legacy "request_isolated" to
+/// `HostContextIsolated`.
+impl<'de> serde::Deserialize<'de> for PluginStateModel {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.as_str() {
+            "host_context_isolated" => Ok(PluginStateModel::HostContextIsolated),
+            "request_isolated" => Ok(PluginStateModel::HostContextIsolated),
+            "fresh_instance_per_request" => Ok(PluginStateModel::FreshInstancePerRequest),
+            "stateful_pooled" => Ok(PluginStateModel::StatefulPooled),
+            other => Err(serde::de::Error::unknown_variant(
+                other,
+                &[
+                    "host_context_isolated",
+                    "request_isolated",
+                    "fresh_instance_per_request",
+                    "stateful_pooled",
+                ],
+            )),
+        }
+    }
+}
+
 impl std::fmt::Display for PluginStateModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::RequestIsolated => write!(f, "request-isolated"),
+            Self::HostContextIsolated => write!(f, "host-context-isolated"),
+            Self::FreshInstancePerRequest => write!(f, "fresh-instance-per-request"),
             Self::StatefulPooled => write!(f, "stateful-pooled"),
         }
     }
@@ -3197,28 +3238,57 @@ mod tests {
     }
 
     #[test]
-    fn test_plugin_state_model_default_is_request_isolated() {
+    fn test_plugin_state_model_default_is_host_context_isolated() {
         assert_eq!(
             PluginStateModel::default(),
-            PluginStateModel::RequestIsolated
+            PluginStateModel::HostContextIsolated
         );
     }
 
     #[test]
     fn test_plugin_limits_default_state_model() {
         let limits = PluginLimits::default();
-        assert_eq!(limits.state_model, PluginStateModel::RequestIsolated);
+        assert_eq!(limits.state_model, PluginStateModel::HostContextIsolated);
     }
 
     #[test]
     fn test_plugin_state_model_display() {
         assert_eq!(
-            PluginStateModel::RequestIsolated.to_string(),
-            "request-isolated"
+            PluginStateModel::HostContextIsolated.to_string(),
+            "host-context-isolated"
+        );
+        assert_eq!(
+            PluginStateModel::FreshInstancePerRequest.to_string(),
+            "fresh-instance-per-request"
         );
         assert_eq!(
             PluginStateModel::StatefulPooled.to_string(),
             "stateful-pooled"
+        );
+    }
+
+    #[test]
+    fn test_plugin_state_model_deprecated_alias_deserializes() {
+        // "request_isolated" should map to HostContextIsolated
+        let toml_str = r#"state_model = "request_isolated""#;
+        let parsed: PluginLimits = toml::from_str(toml_str).unwrap();
+        assert_eq!(parsed.state_model, PluginStateModel::HostContextIsolated);
+    }
+
+    #[test]
+    fn test_plugin_state_model_new_name_deserializes() {
+        let toml_str = r#"state_model = "host_context_isolated""#;
+        let parsed: PluginLimits = toml::from_str(toml_str).unwrap();
+        assert_eq!(parsed.state_model, PluginStateModel::HostContextIsolated);
+    }
+
+    #[test]
+    fn test_plugin_state_model_fresh_instance_deserializes() {
+        let toml_str = r#"state_model = "fresh_instance_per_request""#;
+        let parsed: PluginLimits = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            parsed.state_model,
+            PluginStateModel::FreshInstancePerRequest
         );
     }
 

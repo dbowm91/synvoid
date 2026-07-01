@@ -421,6 +421,46 @@ jobs:
           cargo test --test background_task_ownership_guard
           cargo test --test unified_worker_composition_root_guard
 
+  plugin-runtime-guardrails:
+    name: Plugin Runtime Guardrails
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy plugin runtime
+        run: cargo clippy -p synvoid-plugin-runtime --all-targets -- -D warnings
+
+      - name: Plugin runtime unit tests
+        run: cargo test -p synvoid-plugin-runtime
+
+      - name: ABI memory boundary guard
+        run: cargo test --test abi_memory_boundary_guard
+
+      - name: Plugin capability boundary guard
+        run: cargo test --test plugin_capability_boundary_guard
+
+      - name: Plugin signature policy guard
+        run: cargo test --test plugin_signature_policy_guard
+
+      - name: Manifest authority wiring
+        run: cargo test --test manifest_authority_wiring
+
+      - name: Manifest authority load path guard
+        run: cargo test --test manifest_authority_load_path_guard
+
+      - name: Plugin failure isolation
+        run: cargo test --test plugin_failure_does_not_poison_manager
+
   docs-link-guard:
     name: Docs Path Reference Guard
     runs-on: ubuntu-latest
@@ -488,7 +528,7 @@ jobs:
 
   summary:
     name: CI Summary
-    needs: [build, clippy, unsafe-dns, fmt, docs, security-audit, dependency-audit, outdated-deps, core-profile, import-check, miri-test, security-regression, profile-matrix, guard-suite, docs-link-guard, fuzz-smoke]
+    needs: [build, clippy, unsafe-dns, fmt, docs, security-audit, dependency-audit, outdated-deps, core-profile, import-check, miri-test, security-regression, profile-matrix, guard-suite, plugin-runtime-guardrails, docs-link-guard, fuzz-smoke]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -512,5 +552,6 @@ jobs:
           echo "| security-regression | ${{ needs.security-regression.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| profile-matrix | ${{ needs.profile-matrix.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| guard-suite | ${{ needs.guard-suite.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| plugin-runtime-guardrails | ${{ needs.plugin-runtime-guardrails.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| docs-link-guard | ${{ needs.docs-link-guard.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| fuzz-smoke | ${{ needs.fuzz-smoke.result }} |" >> $GITHUB_STEP_SUMMARY

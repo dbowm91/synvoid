@@ -615,6 +615,14 @@ Wasmtime epoch interruption provides a wall-clock backstop beyond voluntary fuel
 
 `PluginFailureClass::EpochInterrupted` distinguishes epoch interruption from fuel exhaustion and generic timeout.
 
+### Epoch Incrementer Lifecycle (WS1 Closure)
+
+`PluginRuntimeOwner` owns the epoch incrementer. The production composition root at `src/server/mod.rs` calls `start_epoch_incrementer()` during startup. Dropping the owner stops the incrementer task.
+
+`WasmPluginManager` exposes:
+- `epoch_incrementer_running()` — returns `true` when the incrementer task is active.
+- `validate_execution_containment_runtime()` — rejects production configs where any loaded sandboxed runtime has `epoch_deadline_enabled = true` but no incrementer is running.
+
 ### Host Call Budgets
 
 Every host function has independent timeout and size limits via `HostCallBudget`:
@@ -630,6 +638,10 @@ Every host function has independent timeout and size limits via `HostCallBudget`
 | `max_env_value_bytes` | `4 KiB` | `get_env` |
 | `max_mesh_key_bytes` | `1 KiB` | mesh DHT queries |
 | `max_mesh_value_bytes` | `64 KiB` | mesh DHT queries |
+
+### Body Chunk Timeout Enforcement (WS2 Closure)
+
+`HostCallBudget.body_chunk_timeout` is enforced via `tokio::time::timeout` wrapping the body chunk receive. The timeout test is enabled with a multi-thread Tokio runtime (`#[tokio::test(flavor = "multi_thread")]`). Exceeding the timeout returns `ABI_ERR_TIMEOUT` (`-3`).
 
 ### Stable ABI Error Codes
 
@@ -653,13 +665,16 @@ Host-call failures return stable, documented error codes:
 
 | Variant | Semantics |
 |---------|-----------|
-| `RequestIsolated` (default) | Host-side context fully reset; guest memory persists but is untrusted |
-| `StatefulPooled` | Instances reused with host-side reset; guest memory persistence expected by plugin |
+| `HostContextIsolated` (default) | Host-side request context fully reset (env, body, capability violation, DHT prefixes, fuel, timeout). Guest memory and globals may persist if the instance is reused from the pool. |
+| `FreshInstancePerRequest` | Skips pool entirely; instantiates a fresh WASM instance per invocation and drops it after. No guest state carries over. Records `fresh_instance` metric. |
+| `StatefulPooled` | Instances reused with host-side reset; guest memory and globals persist by design. Explicit opt-in for plugins that maintain cross-request state. |
+
+`RequestIsolated` is accepted as a deprecated alias for `HostContextIsolated` (parsed with a deprecation warning for backward compatibility).
 
 **Enforcement:**
-- `SignedSandboxed` tier overrides `StatefulPooled` to `RequestIsolated` (security invariant).
+- `SignedSandboxed` tier overrides `StatefulPooled` to `HostContextIsolated` (security invariant).
 - `DevelopmentHotReload` and `LocalTrusted` tiers allow `StatefulPooled` with explicit opt-in.
-- `LocalSandboxed` defaults to `RequestIsolated`.
+- `LocalSandboxed` defaults to `HostContextIsolated`.
 
 `state_model` is part of `PluginLimits` (manifest), `WasmResourceLimits` (runtime), and `EffectivePluginPolicy` (per-plugin).
 
@@ -676,13 +691,15 @@ Extended `WasmPluginMetrics`:
 | Metric | Description |
 |--------|-------------|
 | `pool_hits` | Pool reuse count |
-| `pool_misses` | Fresh instance creation count |
+| `pool_misses` | Fresh instance creation count (no pooled instance available) |
 | `pool_dropped` | Poisoned instance drop count |
+| `fresh_instances` | `FreshInstancePerRequest` invocations (instantiated fresh, dropped after use) |
+| `concurrency_limit_exceeded` | Actual semaphore/guard exhaustion (NOT pool misses) |
 | `fuel_exhausted_count` | Fuel exhaustion events |
 | `epoch_timeout_count` | Epoch interruption events |
 | `host_call_timeout_count` | Host call timeout events |
 
-Extended `PluginInfo` with: `failure_policy_summary`, `current_state`, `failure_count`, `timeout_count`, `last_failure_class`, `fuel_budget`, `pool_stats_hits`, `pool_stats_misses`, `pool_stats_dropped`, `state_model`.
+Extended `PluginInfo` with: `failure_policy_summary`, `current_state`, `failure_count`, `timeout_count`, `last_failure_class`, `fuel_budget`, `pool_stats_hits`, `pool_stats_misses`, `pool_stats_dropped`, `fresh_instance_count`, `state_model`.
 
 State transition logging: `record_plugin_state_transition()` emits both a `tracing::info!` log and a `synvoid_plugin_state_transition_total` metric counter.
 
@@ -692,9 +709,17 @@ State transition logging: `record_plugin_state_transition()` emits both a `traci
 |---------|--------|-------------|
 | `synvoid_plugin_host_call_failure_total` | plugin, host_function, failure_class | Host call failures |
 | `synvoid_plugin_pool_hit_total` | plugin | Pool reuse events |
-| `synvoid_plugin_pool_miss_total` | plugin | Fresh instance events |
+| `synvoid_plugin_pool_miss_total` | plugin | No pooled instance available; fresh instance created |
 | `synvoid_plugin_pool_dropped_total` | plugin | Dropped poisoned instances |
 | `synvoid_plugin_state_transition_total` | from, to, reason | State transitions |
+
+**Pool metrics semantics (WS3 closure):**
+
+- `pool_hit`: a pooled instance was reused.
+- `pool_miss`: no pooled instance was available, but execution continued by creating a fresh instance.
+- `pool_drop`: a poisoned or failed instance was discarded.
+- `record_fresh_instance`: tracks `FreshInstancePerRequest` invocations (instances instantiated fresh and dropped after use).
+- `record_concurrency_limit_exceeded`: reserved for actual semaphore/guard exhaustion — execution was denied or failed because concurrency limits were reached. NOT emitted on normal pool misses.
 
 ### Tests
 
@@ -706,6 +731,9 @@ cargo test -p synvoid-plugin-runtime -- test_plugin_state_model
 cargo test -p synvoid-plugin-runtime -- test_warmup_uses_provided_limits
 cargo test -p synvoid-plugin-runtime -- test_record_pool_hit
 cargo test -p synvoid-plugin-runtime -- test_wasm_plugin_metrics_new_fields
+cargo test -p synvoid-plugin-runtime -- test_epoch_incrementer
+cargo test -p synvoid-plugin-runtime -- test_body_chunk_timeout
+cargo test -p synvoid-plugin-runtime -- test_pool_metrics
 ```
 
 ## M2 Phase 07: Host API Sub-Capabilities

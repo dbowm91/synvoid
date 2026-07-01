@@ -159,16 +159,17 @@ pub fn limits_from_manifest(
     // State model: inherit from manifest limits.
     limits.state_model = manifest.limits.state_model;
 
-    // SignedSandboxed plugins default to RequestIsolated.
+    // SignedSandboxed plugins default to HostContextIsolated.
     // StatefulPooled requires explicit opt-in and is only allowed for non-sandboxed tiers.
+    // FreshInstancePerRequest is allowed for SignedSandboxed (stronger isolation).
     if manifest.trust_tier == PluginTrustTier::SignedSandboxed
         && manifest.limits.state_model == PluginStateModel::StatefulPooled
     {
         tracing::warn!(
-            "Plugin '{}': SignedSandboxed tier overrides stateful-pooled to request-isolated for security",
+            "Plugin '{}': SignedSandboxed tier overrides stateful-pooled to host-context-isolated for security",
             manifest.name
         );
-        limits.state_model = PluginStateModel::RequestIsolated;
+        limits.state_model = PluginStateModel::HostContextIsolated;
     }
 
     Ok(limits)
@@ -446,12 +447,12 @@ mod tests {
     }
 
     #[test]
-    fn test_signed_sandboxed_overrides_stateful_to_request_isolated() {
+    fn test_signed_sandboxed_overrides_stateful_to_host_context_isolated() {
         let mut manifest = minimal_manifest();
         manifest.trust_tier = PluginTrustTier::SignedSandboxed;
         manifest.limits.state_model = PluginStateModel::StatefulPooled;
         let limits = limits_from_manifest(&manifest, &default_limits()).unwrap();
-        assert_eq!(limits.state_model, PluginStateModel::RequestIsolated);
+        assert_eq!(limits.state_model, PluginStateModel::HostContextIsolated);
     }
 
     #[test]
@@ -464,10 +465,10 @@ mod tests {
     }
 
     #[test]
-    fn test_local_sandboxed_defaults_to_request_isolated() {
+    fn test_local_sandboxed_defaults_to_host_context_isolated() {
         let manifest = minimal_manifest();
         let limits = limits_from_manifest(&manifest, &default_limits()).unwrap();
-        assert_eq!(limits.state_model, PluginStateModel::RequestIsolated);
+        assert_eq!(limits.state_model, PluginStateModel::HostContextIsolated);
     }
 
     #[test]

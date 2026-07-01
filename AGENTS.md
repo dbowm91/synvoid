@@ -40,6 +40,9 @@ cargo test -p synvoid supervisor::shutdown
 # Plugin runtime tests (M2 Phase 06)
 cargo test -p synvoid-plugin-runtime -- test_epoch_interrupted
 cargo test -p synvoid-plugin-runtime -- test_state_model
+cargo test -p synvoid-plugin-runtime -- test_epoch_incrementer
+cargo test -p synvoid-plugin-runtime -- test_body_chunk_timeout
+cargo test -p synvoid-plugin-runtime -- test_pool_metrics
 
 # Plugin runtime tests (M2 Phase 07: Host API Sub-Capabilities)
 cargo test -p synvoid-plugin-runtime -- test_mesh_policy
@@ -105,6 +108,9 @@ cargo test -p synvoid-plugin-runtime -- test_plugin_state_model
 cargo test -p synvoid-plugin-runtime -- test_warmup_uses_provided_limits
 cargo test -p synvoid-plugin-runtime -- test_record_pool_hit
 cargo test -p synvoid-plugin-runtime -- test_wasm_plugin_metrics_new_fields
+cargo test -p synvoid-plugin-runtime -- test_epoch_incrementer    # Epoch incrementer lifecycle ownership
+cargo test -p synvoid-plugin-runtime -- test_body_chunk_timeout   # Body chunk timeout enforcement
+cargo test -p synvoid-plugin-runtime -- test_pool_metrics         # Pool metrics semantic separation
 cargo test -p synvoid-plugin-runtime -- test_mesh_policy          # Mesh sub-capability policy validation
 cargo test -p synvoid-plugin-runtime -- test_capabilities_mesh    # Mesh sub-capability enforcement
 cargo test -p synvoid-plugin-runtime -- test_capabilities_check_metrics  # Metrics sub-capability enforcement

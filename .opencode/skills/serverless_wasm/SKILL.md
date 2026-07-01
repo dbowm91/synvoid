@@ -129,7 +129,7 @@ if let Some(ref handle) = function.compilation_handle {
 
 ### State Isolation (Wave 4.8)
 
-Memory is cleared between requests via `_reset()` export or re-instantiation.
+Memory is cleared between requests via `_reset()` export or re-instantiation. For WASM plugins, `PluginStateModel` controls cross-request state behavior: `HostContextIsolated` resets host-side context only (guest memory/globals may persist), `FreshInstancePerRequest` instantiates a fresh instance per invocation, and `StatefulPooled` reuses instances with guest state preserved.
 
 ### WASI Support (Wave 4.6)
 
