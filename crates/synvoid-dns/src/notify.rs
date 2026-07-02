@@ -59,25 +59,13 @@ impl NotifyHandler {
             return None;
         }
 
-        if query.len() < 12 {
+        let parsed = ParsedDnsQuery::parse(query).ok()?;
+
+        if !parsed.is_notify() || parsed.flags.is_response {
             return None;
         }
 
-        let flags = wire::get_message_flags(query)?;
-        if flags.opcode != wire::OPCODE_NOTIFY {
-            return None;
-        }
-
-        if flags.is_response {
-            return None;
-        }
-
-        let qdcount = u16::from_be_bytes([query[4], query[5]]);
-        if qdcount == 0 {
-            return None;
-        }
-
-        let zone_name = parse_notify_zone_name(query, 12)?;
+        let zone_name = &parsed.qname;
 
         let zone_origin = if zone_name.ends_with('.') {
             zone_name[..zone_name.len() - 1].to_string()
@@ -207,58 +195,35 @@ impl NotifyHandler {
     }
 }
 
-fn parse_notify_zone_name(query: &[u8], _pos: usize) -> Option<String> {
-    // The zone name in a NOTIFY is the QNAME in the question section.
-    // The canonical parser always parses from offset 12.
-    ParsedDnsQuery::parse(query).ok().map(|p| p.qname)
-}
-
 pub fn build_notify_response(query: &[u8], rcode: u8) -> Vec<u8> {
-    if query.len() < 12 {
-        return Vec::new();
-    }
-
-    let id = u16::from_be_bytes([query[0], query[1]]);
-
-    let flags = wire::MessageFlags {
-        is_response: true,
-        opcode: wire::OPCODE_NOTIFY,
-        authoritative: true,
-        truncated: false,
-        recursion_desired: false,
-        recursion_available: false,
-        authentic_data: false,
-        response_code: rcode,
+    let parsed = match ParsedDnsQuery::parse(query) {
+        Ok(p) => p,
+        Err(_) => return Vec::new(),
     };
 
-    let response = wire::build_response_header(id, flags, 1, 0, 0, 0);
+    let id = parsed.id;
 
-    let mut full_response = response;
-
-    let mut pos = 12;
-    let mut question_section = Vec::new();
-    while pos < query.len() {
-        let len = query[pos] as usize;
-        if len == 0 {
-            pos += 1;
-            break;
-        }
-        if pos + 1 + len > query.len() {
-            break;
-        }
-        question_section.push(query[pos]);
-        question_section.extend_from_slice(&query[pos + 1..pos + 1 + len]);
-        pos += 1 + len;
+    // NOTIFY responses always use OPCODE_NOTIFY, QR=1, AA=1, RD echoed from query
+    let mut flags: u16 = 0x8000; // QR
+    flags |= 0x0400; // AA
+    flags |= ((wire::OPCODE_NOTIFY as u16) & 0x0F) << 11; // OPCODE = NOTIFY
+    if parsed.flags.recursion_desired {
+        flags |= 0x0100; // RD echoed
     }
-    question_section.push(0);
+    flags |= rcode as u16 & 0x000F;
 
-    if pos + 4 <= query.len() {
-        question_section.extend_from_slice(&query[pos..pos + 4]);
-    }
+    let mut response = Vec::with_capacity(12 + parsed.question_end - 12);
+    response.extend_from_slice(&id.to_be_bytes());
+    response.extend_from_slice(&flags.to_be_bytes());
+    response.extend_from_slice(&1u16.to_be_bytes()); // QDCOUNT
+    response.extend_from_slice(&0u16.to_be_bytes()); // ANCOUNT
+    response.extend_from_slice(&0u16.to_be_bytes()); // NSCOUNT
+    response.extend_from_slice(&0u16.to_be_bytes()); // ARCOUNT
 
-    full_response.extend_from_slice(&question_section);
+    // Copy entire question section from raw query
+    response.extend_from_slice(&parsed.raw[12..parsed.question_end]);
 
-    full_response
+    response
 }
 
 #[cfg(test)]

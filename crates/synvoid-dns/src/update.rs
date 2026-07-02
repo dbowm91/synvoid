@@ -520,24 +520,30 @@ impl DynamicUpdateHandler {
     }
 
     fn build_response(&self, query: &[u8], rcode: u8) -> Vec<u8> {
-        if query.len() < 12 {
-            return Vec::new();
-        }
-
-        let id = u16::from_be_bytes([query[0], query[1]]);
-
-        let flags = wire::MessageFlags {
-            is_response: true,
-            opcode: wire::OPCODE_UPDATE,
-            authoritative: true,
-            truncated: false,
-            recursion_desired: false,
-            recursion_available: false,
-            authentic_data: false,
-            response_code: rcode,
+        let parsed = match crate::parsed_query::ParsedDnsQuery::parse(query) {
+            Ok(p) => p,
+            Err(_) => return Vec::new(),
         };
 
-        wire::build_response_header(id, flags, 0, 0, 0, 0)
+        let id = parsed.id;
+
+        // UPDATE responses: QR=1, AA=1, RA=0, opcode=UPDATE
+        let flags = crate::parsed_query::build_response_flags_from_query(
+            &parsed, true,  // authoritative
+            false, // truncated
+            false, // recursion_available
+            false, // authentic_data
+            rcode,
+        );
+
+        let mut response = Vec::with_capacity(12);
+        response.extend_from_slice(&id.to_be_bytes());
+        response.extend_from_slice(&flags.to_be_bytes());
+        response.extend_from_slice(&0u16.to_be_bytes()); // QDCOUNT
+        response.extend_from_slice(&0u16.to_be_bytes()); // ANCOUNT
+        response.extend_from_slice(&0u16.to_be_bytes()); // NSCOUNT
+        response.extend_from_slice(&0u16.to_be_bytes()); // ARCOUNT
+        response
     }
 }
 

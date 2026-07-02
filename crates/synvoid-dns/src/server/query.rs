@@ -7,24 +7,11 @@ use crate::parsed_query::ParsedDnsQuery;
 
 impl DnsServer {
     pub(super) fn build_simple_nxdomain_response(query: &[u8]) -> Option<Arc<Vec<u8>>> {
-        use crate::wire::{build_response_header, MessageFlags};
+        use crate::parsed_query::{build_response_flags_full, ParsedDnsQuery};
 
-        if query.len() < 12 {
-            return None;
-        }
+        let parsed = ParsedDnsQuery::parse(query).ok()?;
 
-        let id = wire::get_message_id(query)?;
-
-        let flags = MessageFlags {
-            is_response: true,
-            opcode: 0,
-            authoritative: true,
-            truncated: false,
-            recursion_desired: false,
-            recursion_available: false,
-            authentic_data: false,
-            response_code: 3, // NXDOMAIN
-        };
+        let id = parsed.id;
 
         // RFC 2308: NXDOMAIN responses MUST include SOA in authority section.
         // Build SOA record before header so we know the authority count.
@@ -44,38 +31,22 @@ impl DnsServer {
         // MINIMUM
         soa_rdata.extend_from_slice(&60u32.to_be_bytes());
 
-        // Copy question name from query for SOA owner
-        let mut question_name = Vec::new();
-        let mut pos = 12;
-        while pos < query.len() {
-            let len = query[pos] as usize;
-            if len == 0 {
-                question_name.push(query[pos]);
-                pos += 1;
-                break;
-            }
-            if pos + 1 + len > query.len() {
-                break;
-            }
-            question_name.push(query[pos]);
-            question_name.extend_from_slice(&query[pos + 1..pos + 1 + len]);
-            pos += 1 + len;
-        }
-        if question_name.is_empty() {
-            question_name.push(0);
-        }
+        let flags = build_response_flags_full(true, false, false, false, false, false, 3); // NXDOMAIN
 
         // Build header with 1 question, 0 answer, 1 authority (SOA), 0 additional
-        let mut response = build_response_header(id, flags, 1, 0, 1, 0);
+        let mut response = Vec::with_capacity(12 + 64 + soa_rdata.len());
+        response.extend_from_slice(&id.to_be_bytes());
+        response.extend_from_slice(&flags.to_be_bytes());
+        response.extend_from_slice(&1u16.to_be_bytes()); // QDCOUNT
+        response.extend_from_slice(&0u16.to_be_bytes()); // ANCOUNT
+        response.extend_from_slice(&1u16.to_be_bytes()); // NSCOUNT (SOA in authority)
+        response.extend_from_slice(&0u16.to_be_bytes()); // ARCOUNT
 
-        // Append question section (name + type + class)
-        response.extend_from_slice(&question_name);
-        if pos + 4 <= query.len() {
-            response.extend_from_slice(&query[pos..pos + 4]);
-        }
+        // Copy entire question section from raw query
+        response.extend_from_slice(&parsed.raw[12..parsed.question_end]);
 
-        // Append SOA record in authority section
-        response.extend_from_slice(&question_name); // owner name (same as query name)
+        // Append SOA record in authority section (owner = question name)
+        response.extend_from_slice(&parsed.raw[12..parsed.qname_end]); // SOA owner name
         response.extend_from_slice(&6u16.to_be_bytes()); // type: SOA
         response.extend_from_slice(&1u16.to_be_bytes()); // class: IN
         response.extend_from_slice(&0u32.to_be_bytes()); // TTL: 0
@@ -325,14 +296,9 @@ impl DnsServer {
         mut cache_key: CacheKey,
         client_ip: Option<std::net::IpAddr>,
     ) -> Option<Arc<Vec<u8>>> {
-        if query.len() < 12 {
-            return None;
-        }
+        let parsed = ParsedDnsQuery::parse(query).ok()?;
 
-        let raw_flags = u16::from_be_bytes([query[2], query[3]]);
-        let opcode = (raw_flags & 0x7800) >> 11;
-
-        if opcode as u8 == crate::wire::OPCODE_NOTIFY {
+        if parsed.is_notify() {
             if let Some(handler) = ctx.notify_handler {
                 if let Some(ip) = client_ip {
                     return handler.handle_notify(query, ip).map(Arc::new);
@@ -341,7 +307,7 @@ impl DnsServer {
             return None;
         }
 
-        if opcode as u8 == crate::wire::OPCODE_UPDATE {
+        if parsed.is_update() {
             if let Some(handler) = ctx.update_handler {
                 if let Some(ip) = client_ip {
                     match handler.handle_update(query, ip) {
@@ -352,8 +318,6 @@ impl DnsServer {
             }
             return None;
         }
-
-        let parsed = ParsedDnsQuery::parse(query).ok()?;
 
         if parsed.is_axfr() {
             if let (Some(zt), Some(ip)) = (ctx.zone_transfer, client_ip) {
@@ -480,24 +444,16 @@ impl DnsServer {
             return None;
         }
 
-        // Advance past the question section (QNAME end + qtype + qclass)
-        let mut pos = parsed.question_end;
+        // Skip past the SOA owner name in the authority section to find the serial.
+        // The SOA owner name starts at question_end (after the question section).
+        let after_soa_owner = ParsedDnsQuery::skip_wire_name(query, parsed.question_end)?;
 
-        while pos < query.len() {
-            let len = query[pos] as usize;
-            if len == 0 {
-                pos += 1;
-                break;
-            }
-            pos += 1 + len;
-        }
-
-        if pos + 4 <= query.len() {
+        if after_soa_owner + 4 <= query.len() {
             Some(u32::from_be_bytes([
-                query[pos],
-                query[pos + 1],
-                query[pos + 2],
-                query[pos + 3],
+                query[after_soa_owner],
+                query[after_soa_owner + 1],
+                query[after_soa_owner + 2],
+                query[after_soa_owner + 3],
             ]))
         } else {
             None
@@ -566,15 +522,10 @@ impl DnsServer {
     ) -> Option<Arc<Vec<u8>>> {
         use crate::server::RecordTypeExt;
 
-        if query.len() < 12 {
-            return None;
-        }
+        let parsed = ParsedDnsQuery::parse(query).ok()?;
+        let query_id = parsed.id;
 
-        let query_id = u16::from_be_bytes([query[0], query[1]]);
-        let flags = u16::from_be_bytes([query[2], query[3]]);
-        let opcode = (flags & 0x7800) >> 11;
-
-        if opcode as u8 == crate::wire::OPCODE_NOTIFY {
+        if parsed.is_notify() {
             if let Some(handler) = ctx.notify_handler {
                 if let Some(ip) = client_ip {
                     return handler.handle_notify(query, ip).map(Arc::new);
@@ -583,7 +534,7 @@ impl DnsServer {
             return None;
         }
 
-        if opcode as u8 == crate::wire::OPCODE_UPDATE {
+        if parsed.is_update() {
             if let Some(handler) = ctx.update_handler {
                 if let Some(ip) = client_ip {
                     match handler.handle_update(query, ip) {
@@ -594,8 +545,6 @@ impl DnsServer {
             }
             return None;
         }
-
-        let parsed = ParsedDnsQuery::parse(query).ok()?;
 
         let mut edns_options = parse_edns_options(query);
 
@@ -936,7 +885,7 @@ impl DnsServer {
                     let nsec3_records = Self::build_nsec3_nodata(&zone, &parsed.qname, record_type);
                     let zsk = zone.zsk_key.as_ref();
                     return Some(Self::build_nodata_response(
-                        query,
+                        parsed.id,
                         &parsed.qname,
                         parsed.qtype,
                         &nsec3_records,
@@ -951,7 +900,7 @@ impl DnsServer {
                     let nsec_records = Self::build_nsec_records(&zone, &parsed.qname, record_type);
                     let zsk = zone.zsk_key.as_ref();
                     return Some(Self::build_nodata_response(
-                        query,
+                        parsed.id,
                         &parsed.qname,
                         parsed.qtype,
                         &nsec_records,
@@ -976,7 +925,7 @@ impl DnsServer {
                     if !nsec_records.is_empty() {
                         let zsk = zone.zsk_key.as_ref();
                         return Some(Self::build_nxdomain_response(
-                            query,
+                            parsed.id,
                             &parsed.qname,
                             parsed.qtype,
                             &nsec_records,
@@ -993,7 +942,7 @@ impl DnsServer {
                     if !nsec3_records.is_empty() {
                         let zsk = zone.zsk_key.as_ref();
                         return Some(Self::build_nxdomain_response(
-                            query,
+                            parsed.id,
                             &parsed.qname,
                             parsed.qtype,
                             &nsec3_records,
@@ -1012,7 +961,7 @@ impl DnsServer {
     }
 
     pub(super) fn build_nxdomain_response(
-        query: &[u8],
+        response_id: u16,
         qname: &str,
         qtype: u16,
         nsec_records: &[DnsZoneRecord],
@@ -1024,9 +973,6 @@ impl DnsServer {
     ) -> Arc<Vec<u8>> {
         let mut response = Vec::new();
 
-        let response_id = wire::get_message_id(query).unwrap_or_else(|| {
-            Self::generate_random_id().expect("Crypto RNG failure for DNS transaction ID")
-        });
         response.extend_from_slice(&response_id.to_be_bytes());
 
         let mut flags =
@@ -1122,7 +1068,7 @@ impl DnsServer {
     }
 
     pub(super) fn build_nodata_response(
-        query: &[u8],
+        response_id: u16,
         qname: &str,
         qtype: u16,
         nsec_records: &[DnsZoneRecord],
@@ -1135,9 +1081,6 @@ impl DnsServer {
     ) -> Arc<Vec<u8>> {
         let mut response = Vec::new();
 
-        let response_id = wire::get_message_id(query).unwrap_or_else(|| {
-            Self::generate_random_id().expect("Crypto RNG failure for DNS transaction ID")
-        });
         response.extend_from_slice(&response_id.to_be_bytes());
 
         // NODATA: RCODE 0 (NOERROR), authoritative answer

@@ -246,6 +246,25 @@ impl<'a> ParsedDnsQuery<'a> {
     pub fn is_ixfr(&self) -> bool {
         self.qtype == crate::transfer::IXFR_QUERY_TYPE
     }
+
+    /// Skip past a wire-format name in raw query bytes, starting at `pos`.
+    /// Returns the byte position after the terminating zero byte, or `None`
+    /// if the data is truncated or contains a compression pointer.
+    pub fn skip_wire_name(raw: &[u8], start: usize) -> Option<usize> {
+        let mut pos = start;
+        while pos < raw.len() {
+            let len = raw[pos] as usize;
+            if len == 0 {
+                return Some(pos + 1);
+            }
+            // Reject compression pointers
+            if (len & 0xC0) == 0xC0 {
+                return None;
+            }
+            pos += 1 + len;
+        }
+        None
+    }
 }
 
 /// Build a response flags u16 from policy parameters.
@@ -254,12 +273,37 @@ impl<'a> ParsedDnsQuery<'a> {
 /// (authoritative-only mode) or true only when recursion is actually
 /// offered to the client. `authentic_data` should only be set for
 /// validated recursive data, not merely signed authoritative data.
+/// `checking_disabled` echoes the client's CD bit for recursive validation policy.
 pub fn build_response_flags(
     authoritative: bool,
     truncated: bool,
     recursion_desired: bool,
     recursion_available: bool,
     authentic_data: bool,
+    rcode: u8,
+) -> u16 {
+    build_response_flags_full(
+        authoritative,
+        truncated,
+        recursion_desired,
+        recursion_available,
+        authentic_data,
+        false,
+        rcode,
+    )
+}
+
+/// Build a response flags u16 with full control over all flag bits.
+///
+/// This is the canonical response flag constructor. All other flag construction
+/// methods must delegate here.
+pub fn build_response_flags_full(
+    authoritative: bool,
+    truncated: bool,
+    recursion_desired: bool,
+    recursion_available: bool,
+    authentic_data: bool,
+    checking_disabled: bool,
     rcode: u8,
 ) -> u16 {
     let mut flags: u16 = 0x8000; // QR bit
@@ -278,6 +322,9 @@ pub fn build_response_flags(
     if authentic_data {
         flags |= 0x0020;
     }
+    if checking_disabled {
+        flags |= 0x0010;
+    }
     flags |= rcode as u16 & 0x000F;
     flags
 }
@@ -290,6 +337,7 @@ pub fn build_response_flags(
 /// - Echo RD if the query set it (per RFC 1035 §4.1.1).
 /// - Set RA only if recursion is available to this client.
 /// - Set AD only for validated recursive data, not signed authoritative data.
+/// - Echo CD from the query when validation policy allows it.
 /// - Set RCODE from explicit response outcome.
 /// - Preserve opcode for NOTIFY/UPDATE responses.
 pub fn build_response_flags_from_query(
@@ -315,6 +363,10 @@ pub fn build_response_flags_from_query(
     }
     if authentic_data {
         flags |= 0x0020;
+    }
+    // Echo CD bit from query when validation policy allows it
+    if parsed.flags.checking_disabled {
+        flags |= 0x0010;
     }
     // Preserve opcode for non-query responses (NOTIFY, UPDATE, etc.)
     flags |= ((parsed.flags.opcode as u16) & 0x0F) << 11;
@@ -686,5 +738,68 @@ mod tests {
         let parsed = ParsedDnsQuery::parse(&q).unwrap();
         assert_eq!(parsed.question_end, 23);
         assert_eq!(parsed.raw.len(), 23);
+    }
+
+    #[test]
+    fn trailing_dot_produces_same_result() {
+        let q1 = build_query(0x0001, 0x0100, "example.com", 1, 1);
+        let q2 = build_query(0x0001, 0x0100, "example.com.", 1, 1);
+        let p1 = ParsedDnsQuery::parse(&q1).unwrap();
+        let p2 = ParsedDnsQuery::parse(&q2).unwrap();
+        assert_eq!(p1.qname, p2.qname);
+        assert_eq!(p1.qtype, p2.qtype);
+        assert_eq!(p1.question_end, p2.question_end);
+    }
+
+    #[test]
+    fn non_standard_qclass_is_parsed() {
+        let q = build_query(0x0001, 0x0100, "example.com", 1, 3); // CLASS 3 = CH (Chaosnet)
+        let parsed = ParsedDnsQuery::parse(&q).unwrap();
+        assert_eq!(parsed.qclass, 3);
+        let q = build_query(0x0001, 0x0100, "example.com", 1, 4); // CLASS 4 = HS (Hesiod)
+        let parsed = ParsedDnsQuery::parse(&q).unwrap();
+        assert_eq!(parsed.qclass, 4);
+    }
+
+    #[test]
+    fn high_opcode_is_parsed() {
+        let flags = 0x0100 | (7u16 << 11); // RD + OPCODE 7 (reserved/unknown)
+        let q = build_query(0x0001, flags, "example.com", 1, 1);
+        let parsed = ParsedDnsQuery::parse(&q).unwrap();
+        assert_eq!(parsed.flags.opcode, 7);
+        assert!(!parsed.is_notify());
+        assert!(!parsed.is_update());
+    }
+
+    #[test]
+    fn response_flags_formerr() {
+        let flags = build_response_flags(true, false, false, false, false, 1); // FORMERR
+        assert_eq!(flags & 0x8000, 0x8000); // QR
+        assert_eq!(flags & 0x000F, 1); // FORMERR
+    }
+
+    #[test]
+    fn response_flags_notimp() {
+        let flags = build_response_flags(true, false, false, false, false, 4); // NOTIMP
+        assert_eq!(flags & 0x8000, 0x8000); // QR
+        assert_eq!(flags & 0x000F, 4); // NOTIMP
+    }
+
+    #[test]
+    fn response_flags_from_query_rd_unset() {
+        let q = build_query(0x0001, 0x0000, "example.com", 1, 1);
+        let parsed = ParsedDnsQuery::parse(&q).unwrap();
+        let flags = build_response_flags_from_query(&parsed, true, false, false, false, 0);
+        assert_eq!(flags & 0x0100, 0); // RD must NOT be echoed when unset
+        assert_eq!(flags & 0x8000, 0x8000); // QR must be set
+    }
+
+    #[test]
+    fn raw_question_section_accessible() {
+        let q = build_query(0x0001, 0x0100, "example.com", 1, 1);
+        let parsed = ParsedDnsQuery::parse(&q).unwrap();
+        // The question section spans raw[12..question_end]
+        assert_eq!(parsed.raw.len(), parsed.question_end);
+        assert_eq!(parsed.raw.len(), q.len());
     }
 }

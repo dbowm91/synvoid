@@ -82,3 +82,7 @@ path = "http_header_normalization.rs"
 [[bin]]
 name = "mesh_protocol_compressed_decode"
 path = "mesh_protocol_compressed_decode.rs"
+
+[[bin]]
+name = "parsed_query_parse"
+path = "parsed_query_parse.rs"

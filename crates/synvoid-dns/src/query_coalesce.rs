@@ -26,6 +26,9 @@ static COALESCER_IN_FLIGHT: std::sync::LazyLock<Gauge> =
 pub struct QueryKey {
     pub name: String,
     pub qtype: u16,
+    pub qclass: u16,
+    pub dnssec_ok: bool,
+    pub edns_udp_size: u16,
     pub client_ip: Option<String>,
 }
 
@@ -33,9 +36,26 @@ impl QueryKey {
     pub fn from_query(query: &[u8], client_ip: Option<std::net::IpAddr>) -> Option<Self> {
         let parsed = ParsedDnsQuery::parse(query).ok()?;
         let client_str = client_ip.map(|ip| ip.to_string());
+        let edns_udp_size = if parsed.has_edns {
+            // Extract UDP payload size from EDNS OPT record class field
+            // OPT record class field = UDP payload size
+            if parsed.question_end + 3 < query.len() {
+                u16::from_be_bytes([
+                    query[parsed.question_end + 3],
+                    query[parsed.question_end + 4],
+                ])
+            } else {
+                512
+            }
+        } else {
+            512
+        };
         Some(Self {
             name: parsed.qname.to_lowercase(),
             qtype: parsed.qtype,
+            qclass: parsed.qclass,
+            dnssec_ok: parsed.dnssec_ok,
+            edns_udp_size,
             client_ip: client_str,
         })
     }
@@ -288,6 +308,9 @@ mod tests {
         let key = QueryKey {
             name: "example.com".to_string(),
             qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
             client_ip: None,
         };
 
@@ -301,6 +324,9 @@ mod tests {
         let key = QueryKey {
             name: "example.com".to_string(),
             qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
             client_ip: None,
         };
 
@@ -341,6 +367,9 @@ mod tests {
             let key = QueryKey {
                 name: format!("example{}.com", i),
                 qtype: 1,
+                qclass: 1,
+                dnssec_ok: false,
+                edns_udp_size: 512,
                 client_ip: None,
             };
             coalescer.get_or_wait(key).await;
@@ -357,6 +386,9 @@ mod tests {
         let key = QueryKey {
             name: "example.com".to_string(),
             qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
             client_ip: None,
         };
 

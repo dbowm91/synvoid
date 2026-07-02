@@ -93,10 +93,6 @@ impl DnsServer {
         super::crypto_rng::random_bytes(16)
     }
 
-    fn generate_random_id() -> Result<u16, super::crypto_rng::CryptoRngError> {
-        super::crypto_rng::random_u16()
-    }
-
     fn parse_soa_serial(soa_value: &str) -> u32 {
         for token in soa_value.split_whitespace() {
             if let Ok(serial) = token.parse::<u32>() {
