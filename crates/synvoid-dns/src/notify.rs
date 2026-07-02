@@ -5,7 +5,7 @@ use std::net::IpAddr;
 use std::sync::Arc;
 
 use super::wire;
-use crate::parsed_query::ParsedDnsQuery;
+use crate::parsed_query::{build_response_flags_from_query, ParsedDnsQuery};
 use crate::server::ShardedZoneStore;
 
 #[derive(Clone, Debug, Default)]
@@ -203,14 +203,13 @@ pub fn build_notify_response(query: &[u8], rcode: u8) -> Vec<u8> {
 
     let id = parsed.id;
 
-    // NOTIFY responses always use OPCODE_NOTIFY, QR=1, AA=1, RD echoed from query
-    let mut flags: u16 = 0x8000; // QR
-    flags |= 0x0400; // AA
-    flags |= ((wire::OPCODE_NOTIFY as u16) & 0x0F) << 11; // OPCODE = NOTIFY
-    if parsed.flags.recursion_desired {
-        flags |= 0x0100; // RD echoed
-    }
-    flags |= rcode as u16 & 0x000F;
+    let flags = build_response_flags_from_query(
+        &parsed, true,  // authoritative
+        false, // truncated
+        false, // recursion_available (authoritative-only)
+        false, // authentic_data
+        rcode,
+    );
 
     let mut response = Vec::with_capacity(12 + parsed.question_end - 12);
     response.extend_from_slice(&id.to_be_bytes());
@@ -239,7 +238,8 @@ mod tests {
     fn test_build_notify_response() {
         let mut query = vec![0u8; 28];
         query[0..2].copy_from_slice(&0x1234u16.to_be_bytes());
-        query[2..4].copy_from_slice(&(0x0400u16).to_be_bytes());
+        // NOTIFY query: opcode=4 (bits 11-14), QR=0
+        query[2..4].copy_from_slice(&0x2000u16.to_be_bytes());
         query[4..6].copy_from_slice(&1u16.to_be_bytes());
         query.extend_from_slice(b"\x07example\x03com\x00");
         query.extend_from_slice(&1u16.to_be_bytes());

@@ -2,6 +2,22 @@ use std::net::IpAddr;
 
 use super::server::RecordType;
 
+/// Pre-parse validation gate with configurable limits.
+///
+/// This module intentionally walks raw wire bytes independently of the
+/// canonical [`ParsedDnsQuery`] parser. It serves as a defense-in-depth
+/// layer that runs BEFORE the canonical parser, providing:
+///
+/// - Configurable limits (`max_labels`, `max_name_length`, `max_query_size`)
+///   that the canonical parser does not support
+/// - A structured error response (`validate_query_with_response`) that can
+///   be sent directly to the client without needing a full parse
+/// - An early rejection path for obviously malformed traffic before the
+///   canonical parser even runs
+///
+/// The label walking and qtype/qclass extraction here are **intentionally
+/// redundant** with `ParsedDnsQuery::parse`. This is a security pattern,
+/// not a bug.
 #[derive(Clone, Default)]
 pub struct DnsQueryValidator {
     max_query_size: usize,
