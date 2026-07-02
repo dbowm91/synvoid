@@ -17,6 +17,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::firewall::DnsFirewall;
 use crate::metrics::DnsMetrics;
+use crate::parsed_query::ParsedDnsQuery;
 use parking_lot::RwLock;
 use synvoid_config::dns::RecursiveDnsConfig;
 
@@ -322,13 +323,15 @@ impl RecursiveDnsServer {
         }
 
         if let Some(ref firewall) = self.firewall {
-            let fw = firewall.read();
-            if let Ok(decision) = fw.evaluate_query(&query, client_addr.ip(), "") {
-                if decision.action == crate::firewall::DnsFirewallAction::Block {
-                    if let Some(metrics) = &self.metrics {
-                        metrics.record_firewall_blocked("recursive_tcp");
+            if let Ok(parsed_q) = ParsedDnsQuery::parse(&query) {
+                let fw = firewall.read();
+                if let Ok(decision) = fw.evaluate_query(&parsed_q, client_addr.ip(), "") {
+                    if decision.action == crate::firewall::DnsFirewallAction::Block {
+                        if let Some(metrics) = &self.metrics {
+                            metrics.record_firewall_blocked("recursive_tcp");
+                        }
+                        return Err(RecursiveDnsError::FirewallBlocked);
                     }
-                    return Err(RecursiveDnsError::FirewallBlocked);
                 }
             }
         }
@@ -423,13 +426,15 @@ impl RecursiveDnsServer {
         }
 
         if let Some(ref firewall) = self.firewall {
-            let fw = firewall.read();
-            if let Ok(decision) = fw.evaluate_query(&packet, client_addr.ip(), "") {
-                if decision.action == crate::firewall::DnsFirewallAction::Block {
-                    if let Some(metrics) = &self.metrics {
-                        metrics.record_firewall_blocked("recursive");
+            if let Ok(parsed_q) = ParsedDnsQuery::parse(&packet) {
+                let fw = firewall.read();
+                if let Ok(decision) = fw.evaluate_query(&parsed_q, client_addr.ip(), "") {
+                    if decision.action == crate::firewall::DnsFirewallAction::Block {
+                        if let Some(metrics) = &self.metrics {
+                            metrics.record_firewall_blocked("recursive");
+                        }
+                        return Err(RecursiveDnsError::FirewallBlocked);
                     }
-                    return Err(RecursiveDnsError::FirewallBlocked);
                 }
             }
         }

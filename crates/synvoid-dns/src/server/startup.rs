@@ -205,28 +205,32 @@ impl DnsServer {
                                     }
                                 }
 
-                                // Extract query name once for firewall and RRL checks
-                                let query_name = ParsedDnsQuery::parse(&buf[..len])
-                                    .map(|p| p.qname)
+                                // Parse once for firewall, coalescing, and downstream
+                                let parsed = ParsedDnsQuery::parse(&buf[..len]);
+                                let query_name = parsed
+                                    .as_ref()
+                                    .map(|p| p.qname.clone())
                                     .unwrap_or_else(|_| "unknown".to_string());
 
                                 // Firewall check
                                 if let Some(fw) = firewall_udp.as_ref() {
-                                    let firewall = fw.read();
-                                    match firewall.evaluate_query(&buf[..len], client_ip, &query_name) {
-                                        Ok(decision) => {
-                                            if decision.action == crate::firewall::DnsFirewallAction::Block {
-                                                tracing::warn!(
-                                                    "DNS query blocked by firewall: rule={} client={} qname={}",
-                                                    decision.rule_id,
-                                                    client_ip,
-                                                    query_name
-                                                );
-                                                continue;
+                                    if let Ok(ref parsed_q) = parsed {
+                                        let firewall = fw.read();
+                                        match firewall.evaluate_query(parsed_q, client_ip, &query_name) {
+                                            Ok(decision) => {
+                                                if decision.action == crate::firewall::DnsFirewallAction::Block {
+                                                    tracing::warn!(
+                                                        "DNS query blocked by firewall: rule={} client={} qname={}",
+                                                        decision.rule_id,
+                                                        client_ip,
+                                                        query_name
+                                                    );
+                                                    continue;
+                                                }
                                             }
-                                        }
-                                        Err(e) => {
-                                            tracing::warn!("Firewall evaluation error: {}", e);
+                                            Err(e) => {
+                                                tracing::warn!("Firewall evaluation error: {}", e);
+                                            }
                                         }
                                     }
                                 }

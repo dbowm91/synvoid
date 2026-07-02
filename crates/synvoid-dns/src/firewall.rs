@@ -35,11 +35,6 @@ fn is_private_ip(ip: &IpAddr) -> bool {
     }
 }
 
-#[deprecated(note = "Use ParsedDnsQuery::parse instead; retained for backward compatibility")]
-fn extract_query_type_from_query(query: &[u8]) -> Option<u16> {
-    ParsedDnsQuery::parse(query).ok().map(|p| p.qtype)
-}
-
 #[derive(Debug, Clone)]
 pub struct DnsFirewallRule {
     pub id: String,
@@ -119,7 +114,7 @@ impl DnsFirewall {
 
     pub fn evaluate_query(
         &self,
-        query: &[u8],
+        parsed: &ParsedDnsQuery<'_>,
         client_ip: IpAddr,
         qname: &str,
     ) -> Result<DnsFirewallDecision, String> {
@@ -128,7 +123,7 @@ impl DnsFirewall {
                 continue;
             }
 
-            if !self.rule_matches(rule, query, client_ip, qname) {
+            if !self.rule_matches(rule, parsed, client_ip, qname) {
                 continue;
             }
 
@@ -180,7 +175,7 @@ impl DnsFirewall {
     fn rule_matches(
         &self,
         rule: &DnsFirewallRule,
-        query: &[u8],
+        parsed: &ParsedDnsQuery<'_>,
         client_ip: IpAddr,
         qname: &str,
     ) -> bool {
@@ -208,23 +203,17 @@ impl DnsFirewall {
                 }
             }
             DnsFirewallRuleType::QueryType => {
-                let qtype = extract_query_type_from_query(query);
-                if let Some(qt) = qtype {
-                    if rule.target == format!("0x{:x}", qt) {
-                        return true;
-                    }
+                if rule.target == format!("0x{:x}", parsed.qtype) {
+                    return true;
                 }
             }
             DnsFirewallRuleType::Opcode => {
-                let opcode = (u16::from_be_bytes([query[2], query[3]]) & 0x7800) >> 11;
-                if rule.target == format!("0x{:x}", opcode) {
+                if rule.target == format!("0x{:x}", parsed.flags.opcode) {
                     return true;
                 }
             }
             DnsFirewallRuleType::ResponseCode => {
-                let flags = u16::from_be_bytes([query[2], query[3]]);
-                let rcode = flags & 0x000F;
-                if rule.target == format!("0x{:x}", rcode) {
+                if rule.target == format!("0x{:x}", parsed.flags.response_code) {
                     return true;
                 }
             }

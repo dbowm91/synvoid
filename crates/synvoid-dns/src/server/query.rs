@@ -117,21 +117,17 @@ impl DnsServer {
         // Parse once — pass parsed state to firewall and downstream
         let parsed_tcp = ParsedDnsQuery::parse(&query);
 
-        // Firewall check
-        if let Some(fw) = ctx.firewall.as_ref() {
-            let qname = match &parsed_tcp {
-                Ok(p) => p.qname.clone(),
-                Err(_) => Self::extract_query_name(&query),
-            };
+        // Firewall check — skip if parse fails (malformed query → FORMERR anyway)
+        if let (Some(fw), Ok(ref parsed_q)) = (ctx.firewall.as_ref(), &parsed_tcp) {
             let fw_read = fw.read();
-            match fw_read.evaluate_query(&query, client_ip, &qname) {
+            match fw_read.evaluate_query(parsed_q, client_ip, &parsed_q.qname) {
                 Ok(decision) => {
                     if decision.action == crate::firewall::DnsFirewallAction::Block {
                         tracing::warn!(
                             "DNS TCP query blocked by firewall: rule={} client={} qname={}",
                             decision.rule_id,
                             client_ip,
-                            qname
+                            parsed_q.qname
                         );
                         return Err("Blocked by firewall".to_string());
                     }
@@ -1209,10 +1205,5 @@ impl DnsServer {
         }
 
         Arc::new(response)
-    }
-
-    #[deprecated(note = "Use ParsedDnsQuery::parse instead; retained for fallback paths only")]
-    pub(super) fn extract_query_name(query: &[u8]) -> String {
-        wire::parse_query_name(query, 12).unwrap_or_else(|| "unknown".to_string())
     }
 }
