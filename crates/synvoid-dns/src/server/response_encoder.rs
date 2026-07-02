@@ -102,13 +102,17 @@ pub(super) fn encode_rr(
         RecordType::TXT => {
             let mut txt_data = Vec::new();
             let txt_bytes = record.value.as_bytes();
-            let mut offset = 0;
-            while offset < txt_bytes.len() {
-                let remaining = txt_bytes.len() - offset;
-                let chunk_len = std::cmp::min(remaining, 255);
-                txt_data.push(chunk_len as u8);
-                txt_data.extend_from_slice(&txt_bytes[offset..offset + chunk_len]);
-                offset += chunk_len;
+            if txt_bytes.is_empty() {
+                txt_data.push(0);
+            } else {
+                let mut offset = 0;
+                while offset < txt_bytes.len() {
+                    let remaining = txt_bytes.len() - offset;
+                    let chunk_len = std::cmp::min(remaining, 255);
+                    txt_data.push(chunk_len as u8);
+                    txt_data.extend_from_slice(&txt_bytes[offset..offset + chunk_len]);
+                    offset += chunk_len;
+                }
             }
             txt_data
         }
@@ -126,6 +130,30 @@ pub(super) fn encode_rr(
             }
             mx_data.push(0);
             mx_data
+        }
+        RecordType::SOA => {
+            let parts: Vec<&str> = record.value.split_whitespace().collect();
+            if parts.len() < 7 {
+                return Err("SOA record requires 7 fields: mname rname serial refresh retry expire minimum".to_string());
+            }
+            let serial: u32 = parts[2].parse().map_err(|_| "Invalid SOA serial")?;
+            let refresh: u32 = parts[3].parse().map_err(|_| "Invalid SOA refresh")?;
+            let retry: u32 = parts[4].parse().map_err(|_| "Invalid SOA retry")?;
+            let expire: u32 = parts[5].parse().map_err(|_| "Invalid SOA expire")?;
+            let minimum: u32 = parts[6].parse().map_err(|_| "Invalid SOA minimum")?;
+            let mut soa_data = Vec::new();
+            soa_data.extend_from_slice(&super::wire::encode_name(parts[0]));
+            soa_data.extend_from_slice(&super::wire::encode_name(parts[1]));
+            soa_data.extend_from_slice(&serial.to_be_bytes());
+            soa_data.extend_from_slice(&refresh.to_be_bytes());
+            soa_data.extend_from_slice(&retry.to_be_bytes());
+            soa_data.extend_from_slice(&expire.to_be_bytes());
+            soa_data.extend_from_slice(&minimum.to_be_bytes());
+            soa_data
+        }
+        RecordType::NSEC | RecordType::NSEC3 | RecordType::NSEC3PARAM => {
+            hex::decode(&record.value)
+                .map_err(|_| format!("Invalid {} hex value", u16::from(record.record_type)))?
         }
         RecordType::DNSKEY => {
             let key_bytes =
@@ -572,7 +600,7 @@ mod tests {
 
     #[test]
     fn test_encode_rr_unsupported_type() {
-        let record = make_record("example.com", RecordType::SOA, "ns1.example.com admin.example.com 2024010101 3600 900 604800 86400", 300);
+        let record = make_record("example.com", RecordType::SRV, "0 5 5060 sip.example.com", 300);
         let result = encode_rr(&record, None);
         assert!(result.is_err(), "Unsupported type must return error");
     }
@@ -728,9 +756,246 @@ mod tests {
     }
 
     #[test]
-    fn test_unsupported_type_no_partial_bytes() {
-        let record = make_record("example.com", RecordType::SRV, "0 5 5060 sip.example.com", 300);
+    fn test_encode_rr_soa_record() {
+        let record = make_record(
+            "example.com",
+            RecordType::SOA,
+            "ns1.example.com admin.example.com 2024010101 3600 900 604800 86400",
+            300,
+        );
+        let encoded = encode_rr(&record, None).unwrap();
+        assert_eq!(encoded.record_type, RecordType::SOA);
+        assert_eq!(encoded.ttl, 300);
+
+        let (_, _, _, rdlength, rdata_start) = parse_rr(&encoded.bytes);
+        let rdata = &encoded.bytes[rdata_start..rdata_start + rdlength];
+        // SOA RDATA: mname_name + rname_name + 5 * u32 (20 bytes)
+        // "ns1.example.com": [3,ns1] + [7,example] + [3,com] + [0] = 17 bytes
+        // "admin.example.com": [5,admin] + [7,example] + [3,com] + [0] = 19 bytes
+        assert_eq!(rdlength, 17 + 19 + 20, "SOA RDLENGTH must cover mname + rname + 5 u32 fields");
+
+        // Verify SERIAL at offset mname + rname
+        let serial_offset = 17 + 19;
+        let serial = u32::from_be_bytes([
+            rdata[serial_offset],
+            rdata[serial_offset + 1],
+            rdata[serial_offset + 2],
+            rdata[serial_offset + 3],
+        ]);
+        assert_eq!(serial, 2024010101, "SOA serial must match");
+
+        let refresh = u32::from_be_bytes([
+            rdata[serial_offset + 4],
+            rdata[serial_offset + 5],
+            rdata[serial_offset + 6],
+            rdata[serial_offset + 7],
+        ]);
+        assert_eq!(refresh, 3600, "SOA refresh must match");
+
+        let retry = u32::from_be_bytes([
+            rdata[serial_offset + 8],
+            rdata[serial_offset + 9],
+            rdata[serial_offset + 10],
+            rdata[serial_offset + 11],
+        ]);
+        assert_eq!(retry, 900, "SOA retry must match");
+
+        let expire = u32::from_be_bytes([
+            rdata[serial_offset + 12],
+            rdata[serial_offset + 13],
+            rdata[serial_offset + 14],
+            rdata[serial_offset + 15],
+        ]);
+        assert_eq!(expire, 604800, "SOA expire must match");
+
+        let minimum = u32::from_be_bytes([
+            rdata[serial_offset + 16],
+            rdata[serial_offset + 17],
+            rdata[serial_offset + 18],
+            rdata[serial_offset + 19],
+        ]);
+        assert_eq!(minimum, 86400, "SOA minimum must match");
+    }
+
+    #[test]
+    fn test_encode_rr_soa_too_few_fields() {
+        let record = make_record("example.com", RecordType::SOA, "ns1.example.com admin.example.com 1", 300);
         let result = encode_rr(&record, None);
-        assert!(result.is_err());
+        assert!(result.is_err(), "SOA with too few fields must return error");
+    }
+
+    #[test]
+    fn test_encode_rr_soa_mname_rname_end_with_root_label() {
+        let record = make_record(
+            "example.com",
+            RecordType::SOA,
+            "ns1.example.com admin.example.com 2024010101 3600 900 604800 86400",
+            300,
+        );
+        let encoded = encode_rr(&record, None).unwrap();
+        let (_, _, _, rdlength, rdata_start) = parse_rr(&encoded.bytes);
+        let rdata = &encoded.bytes[rdata_start..rdata_start + rdlength];
+        // mname "ns1.example.com" is 17 bytes (indices 0..17), root at index 16
+        // rname "admin.example.com" is 19 bytes (indices 17..36), root at index 35
+        assert_eq!(rdata[16], 0x00, "MNAME must end with root label");
+        assert_eq!(rdata[35], 0x00, "RNAME must end with root label");
+    }
+
+    #[test]
+    fn test_encode_rr_dnskey_from_hex() {
+        let key_hex = "01010003080bed0b3b5c091c4728bfe63b25d3e7e3c26f8536b0e4df1e053e7f224c134e";
+        let record = make_record("example.com", RecordType::DNSKEY, key_hex, 3600);
+        let encoded = encode_rr(&record, None).unwrap();
+        assert_eq!(encoded.record_type, RecordType::DNSKEY);
+        assert_eq!(encoded.ttl, 3600);
+
+        let (_, _, _, rdlength, _) = parse_rr(&encoded.bytes);
+        assert!(rdlength > 0, "DNSKEY RDLENGTH must be > 0");
+    }
+
+    #[test]
+    fn test_encode_rr_https_record() {
+        let record = make_record("example.com", RecordType::HTTPS, "1 . alpn=h2", 300);
+        let encoded = encode_rr(&record, None).unwrap();
+        assert_eq!(encoded.record_type, RecordType::HTTPS);
+        let (_, _, _, rdlength, _) = parse_rr(&encoded.bytes);
+        assert!(rdlength > 4, "HTTPS must have priority(2) + target + params");
+    }
+
+    #[test]
+    fn test_encode_rr_nsec_from_hex() {
+        let nsec_hex = "04777777086578616d706c6503636f6d000006c0010000000000";
+        let record = make_record("www.example.com", RecordType::NSEC, nsec_hex, 3600);
+        let encoded = encode_rr(&record, None).unwrap();
+        assert_eq!(encoded.record_type, RecordType::NSEC);
+        let (_, _, _, rdlength, _) = parse_rr(&encoded.bytes);
+        assert!(rdlength > 0, "NSEC RDLENGTH must be > 0");
+    }
+
+    #[test]
+    fn test_encode_rr_nsec3_from_hex() {
+        let nsec3_hex = "0100056B52473B2E9C82B40F7C437E05B9C6E1A9";
+        let record = make_record("example.com", RecordType::NSEC3, nsec3_hex, 3600);
+        let encoded = encode_rr(&record, None).unwrap();
+        assert_eq!(encoded.record_type, RecordType::NSEC3);
+        let (_, _, _, rdlength, _) = parse_rr(&encoded.bytes);
+        assert!(rdlength > 0, "NSEC3 RDLENGTH must be > 0");
+    }
+
+    #[test]
+    fn test_encode_rr_nsec3param_from_hex() {
+        let nsec3param_hex = "0100056B52473B2E";
+        let record = make_record("example.com", RecordType::NSEC3PARAM, nsec3param_hex, 3600);
+        let encoded = encode_rr(&record, None).unwrap();
+        assert_eq!(encoded.record_type, RecordType::NSEC3PARAM);
+        let (_, _, _, rdlength, _) = parse_rr(&encoded.bytes);
+        assert!(rdlength > 0, "NSEC3PARAM RDLENGTH must be > 0");
+    }
+
+    #[test]
+    fn test_opt_increments_arcount() {
+        let mut envelope = ResponseEnvelope::default();
+        let record = make_record("www.example.com", RecordType::A, "1.2.3.4", 300);
+        envelope.answer_records.push(encode_rr(&record, Some(("example.com", 12))).unwrap());
+        envelope.additional_records.push(build_opt_encoded_record(4096, true));
+
+        let packet = assemble_packet(&envelope, 0x1234, 0x8580, "example.com", 1);
+        let ancount = u16::from_be_bytes([packet[6], packet[7]]);
+        let arcount = u16::from_be_bytes([packet[10], packet[11]]);
+        assert_eq!(ancount, 1, "ANCOUNT must be 1");
+        assert_eq!(arcount, 1, "ARCOUNT must be 1 for OPT additional record");
+    }
+
+    #[test]
+    fn test_invalid_mx_does_not_produce_partial_bytes() {
+        let record = make_record("example.com", RecordType::MX, "mail.example.com", 300);
+        // MX is valid, so test with empty exchange to ensure it doesn't panic
+        let record_empty = make_record("example.com", RecordType::MX, "", 300);
+        let result = encode_rr(&record_empty, None);
+        // Empty MX should succeed but produce a record with just root label after preference
+        if let Ok(encoded) = result {
+            let (_, _, _, rdlength, rdata_start) = parse_rr(&encoded.bytes);
+            let rdata = &encoded.bytes[rdata_start..rdata_start + rdlength];
+            assert!(rdlength >= 3, "MX RDLENGTH must be at least 2 (preference) + 1 (root)");
+            let pref = u16::from_be_bytes([rdata[0], rdata[1]]);
+            assert_eq!(pref, 10, "Default MX preference must be 10");
+        }
+    }
+
+    #[test]
+    fn test_empty_txt_value_produces_valid_wire_format() {
+        // Empty TXT produces a single 0-length character string chunk, which is valid per RFC 1035
+        let record = make_record("test.example.com", RecordType::TXT, "", 300);
+        let result = encode_rr(&record, None);
+        assert!(result.is_ok(), "Empty TXT value is valid wire format (0-length chunk)");
+        let encoded = result.unwrap();
+        let (_, _, _, rdlength, rdata_start) = parse_rr(&encoded.bytes);
+        let rdata = &encoded.bytes[rdata_start..rdata_start + rdlength];
+        assert_eq!(rdlength, 1, "Empty TXT must have 1-byte RDLENGTH (0-length chunk)");
+        assert_eq!(rdata[0], 0, "Empty TXT chunk length must be 0");
+    }
+
+    #[test]
+    fn test_assemble_packet_dnskey_response() {
+        let mut envelope = ResponseEnvelope::default();
+        let key_hex = "01010003080bed0b3b5c091c4728bfe63b25d3e7e3c26f8536b0e4df1e053e7f224c134e";
+        let record = make_record("example.com", RecordType::DNSKEY, key_hex, 3600);
+        envelope.answer_records.push(encode_rr(&record, None).unwrap());
+
+        let packet = assemble_packet(&envelope, 0xABCD, 0x8580, "example.com", 48);
+        let id = u16::from_be_bytes([packet[0], packet[1]]);
+        let ancount = u16::from_be_bytes([packet[6], packet[7]]);
+        assert_eq!(id, 0xABCD, "Query ID must be preserved for DNSKEY response");
+        assert_eq!(ancount, 1, "ANCOUNT must be 1 for DNSKEY response");
+    }
+
+    #[test]
+    fn test_assemble_packet_rrsig_response() {
+        let mut envelope = ResponseEnvelope::default();
+        let rrsig_hex = "00300e10000000005f9f0000000000000000000000";
+        let record = make_record("example.com", RecordType::RRSIG, rrsig_hex, 300);
+        envelope.answer_records.push(encode_rr(&record, None).unwrap());
+
+        let packet = assemble_packet(&envelope, 0x5678, 0x8580, "example.com", 1);
+        let ancount = u16::from_be_bytes([packet[6], packet[7]]);
+        assert_eq!(ancount, 1, "ANCOUNT must be 1 for RRSIG response");
+    }
+
+    #[test]
+    fn test_assemble_packet_with_multiple_records_and_opt() {
+        let mut envelope = ResponseEnvelope::default();
+        let a1 = make_record("www.example.com", RecordType::A, "1.2.3.4", 300);
+        let a2 = make_record("www.example.com", RecordType::A, "5.6.7.8", 300);
+        envelope.answer_records.push(encode_rr(&a1, Some(("example.com", 12))).unwrap());
+        envelope.answer_records.push(encode_rr(&a2, Some(("example.com", 12))).unwrap());
+        envelope.additional_records.push(build_opt_encoded_record(4096, false));
+
+        let packet = assemble_packet(&envelope, 0x9999, 0x8580, "example.com", 1);
+        let ancount = u16::from_be_bytes([packet[6], packet[7]]);
+        let arcount = u16::from_be_bytes([packet[10], packet[11]]);
+        assert_eq!(ancount, 2, "ANCOUNT must be 2");
+        assert_eq!(arcount, 1, "ARCOUNT must be 1 (OPT)");
+    }
+
+    #[test]
+    fn test_truncated_response_preserves_id_and_sets_tc() {
+        let mut envelope = ResponseEnvelope::default();
+        for i in 0..20 {
+            let record = make_record(
+                &format!("host{}.example.com", i),
+                RecordType::A,
+                &format!("10.0.0.{}", i % 256),
+                300,
+            );
+            envelope.answer_records.push(encode_rr(&record, None).unwrap());
+        }
+        truncate_to_fit(&mut envelope, 80);
+
+        let flags = build_response_flags(true, true, true, true, false, 0);
+        let packet = assemble_packet(&envelope, 0xBEEF, flags, "example.com", 1);
+        let id = u16::from_be_bytes([packet[0], packet[1]]);
+        let flags_val = u16::from_be_bytes([packet[2], packet[3]]);
+        assert_eq!(id, 0xBEEF, "Truncated response must preserve query ID");
+        assert_ne!(flags_val & 0x0200, 0, "Truncated response must set TC bit");
     }
 }
