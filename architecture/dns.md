@@ -26,6 +26,7 @@ The module is located at `src/dns/` and exports a rich set of submodules.
 | `server/mod.rs` | `src/dns/server/mod.rs` | Main `DnsServer` struct, zone management, query handling |
 | `server/query.rs` | `src/dns/server/query.rs` | Query parsing, validation, cookie checking |
 | `server/response.rs` | `src/dns/server/response.rs` | Response building, NXDOMAIN, error responses |
+| `server/response_encoder.rs` | `src/dns/server/response_encoder.rs` | Typed wire-format response encoder (`EncodedRecord`, `ResponseEnvelope`, per-record encoders) |
 | `server/startup.rs` | `src/dns/server/startup.rs` | Server startup, socket binding |
 | `server/zone.rs` | `src/dns/server/zone.rs` | Zone record management |
 | `server/dnssec_impl.rs` | `src/dns/server/dnssec_impl.rs` | DNSSEC-signed response handling |

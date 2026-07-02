@@ -31,6 +31,7 @@ mod dnssec_impl;
 mod query;
 mod rate_limit;
 mod response;
+mod response_encoder;
 mod sharded_store;
 mod startup;
 mod zone;

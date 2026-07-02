@@ -1,4 +1,8 @@
 use super::*;
+use super::response_encoder::{
+    assemble_packet, build_opt_encoded_record, build_response_flags, encode_rr,
+    truncate_to_fit, ResponseEnvelope,
+};
 
 impl DnsServer {
     pub(super) fn build_response(
@@ -15,320 +19,87 @@ impl DnsServer {
             .map(|e| e.udp_payload_size as usize)
             .unwrap_or(512);
 
-        let mut response = Vec::new();
-        let mut compressor = DnsMessageCompressor::new();
-
-        response.extend_from_slice(&query_id.to_be_bytes());
-
-        let mut qr_aa = 0x8580u16;
-        // AD flag: only set when records are actually DNSSEC-signed (not just when client requests it)
-        let records_signed = dnssec_ok
-            && !records.is_empty()
-            && records[0].record_type != RecordType::DNSKEY
-            && zsk.is_some();
-        if records_signed {
-            qr_aa |= 0x0020;
-        }
-        response.extend_from_slice(&qr_aa.to_be_bytes());
-
-        response.extend_from_slice(&1u16.to_be_bytes());
-        let ancount_offset = response.len();
-        response.extend_from_slice(&0u16.to_be_bytes()); // ANCOUNT placeholder
-        response.extend_from_slice(&0u16.to_be_bytes()); // NSCOUNT
-        let arcount_offset = response.len();
-        response.extend_from_slice(&0u16.to_be_bytes()); // ARCOUNT placeholder
-
-        let qname_for_compression = if qname.is_empty() || qname == "@" {
+        let qname_clean = if qname.is_empty() || qname == "@" {
             String::new()
         } else {
             qname.trim_end_matches('.').to_lowercase()
         };
 
-        let question_name_offset = response.len();
-        if !qname_for_compression.is_empty() {
-            compressor.add_label(&qname_for_compression, question_name_offset as u16);
-        }
+        let question_name_offset: u16 = 12;
 
-        let name_parts: Vec<&str> = if qname.is_empty() || qname == "@" {
-            vec![""]
-        } else {
-            qname.split('.').collect()
-        };
-
-        for part in &name_parts {
-            response.push((*part).len() as u8);
-            response.extend_from_slice(part.as_bytes());
-        }
-        response.push(0);
-
-        response.extend_from_slice(&qtype.to_be_bytes());
-        response.extend_from_slice(&1u16.to_be_bytes());
+        let mut envelope = ResponseEnvelope::default();
 
         for record in records {
-            let record_name = if record.name == "@" || record.name.is_empty() {
-                qname_for_compression.clone()
+            let compression = if qname_clean.is_empty() {
+                None
             } else {
-                record.name.to_lowercase()
+                Some((qname_clean.as_str(), question_name_offset))
             };
-
-            if record_name == qname_for_compression && !qname_for_compression.is_empty() {
-                response.push(0xC0 | (question_name_offset >> 8) as u8);
-                response.push((question_name_offset & 0xFF) as u8);
-            } else {
-                compressor.add_label(&record_name, response.len() as u16);
-                for part in record_name.split('.') {
-                    if !part.is_empty() {
-                        response.push(part.len() as u8);
-                        response.extend_from_slice(part.as_bytes());
-                    }
-                }
-                response.push(0);
-            }
-
-            response.extend_from_slice(&u16::from(record.record_type).to_be_bytes());
-            response.extend_from_slice(&1u16.to_be_bytes());
-            response.extend_from_slice(&record.ttl.to_be_bytes());
-
-            match record.record_type {
-                RecordType::A => {
-                    if let Ok(ip) = record.value.parse::<std::net::Ipv4Addr>() {
-                        let bytes: &[u8; 4] = &ip.octets();
-                        let len = bytes.len() as u16;
-                        response.extend_from_slice(&len.to_be_bytes());
-                        response.extend_from_slice(bytes);
-                    }
-                }
-                RecordType::AAAA => {
-                    if let Ok(ip) = record.value.parse::<std::net::Ipv6Addr>() {
-                        let bytes = ip.octets();
-                        let len = bytes.len() as u16;
-                        response.extend_from_slice(&len.to_be_bytes());
-                        response.extend_from_slice(&bytes);
-                    }
-                }
-                RecordType::CNAME | RecordType::NS => {
-                    let mut target_parts: Vec<&str> =
-                        record.value.split('.').filter(|s| !s.is_empty()).collect();
-                    if target_parts.is_empty() {
-                        target_parts.push("");
-                    }
-                    let mut total_len = 1; // trailing null byte
-                    for part in &target_parts {
-                        total_len += 1 + part.len();
-                    }
-                    response.extend_from_slice(&(total_len as u16).to_be_bytes());
-                    for part in &target_parts {
-                        response.push((*part).len() as u8);
-                        response.extend_from_slice(part.as_bytes());
-                    }
-                    response.push(0);
-                }
-                RecordType::TXT => {
-                    let txt_value = record.value.as_bytes();
-                    let mut offset = 0;
-                    while offset < txt_value.len() {
-                        let remaining = txt_value.len() - offset;
-                        let chunk_len = std::cmp::min(remaining, 255);
-                        response.push(chunk_len as u8);
-                        response.extend_from_slice(&txt_value[offset..offset + chunk_len]);
-                        offset += chunk_len;
-                    }
-                }
-                RecordType::MX => {
-                    let priority = record.priority.unwrap_or(10);
-                    response.extend_from_slice(&2u16.to_be_bytes());
-                    response.extend_from_slice(&priority.to_be_bytes());
-                    let mut target_parts: Vec<&str> =
-                        record.value.split('.').filter(|s| !s.is_empty()).collect();
-                    if target_parts.is_empty() {
-                        target_parts.push("");
-                    }
-                    for part in &target_parts {
-                        response.push((*part).len() as u8);
-                        response.extend_from_slice(part.as_bytes());
-                    }
-                    response.push(0);
-                }
-                RecordType::DNSKEY => {
-                    if let Ok(key_bytes) = hex::decode(&record.value) {
-                        let dnskey = compute_dnskey(&crate::dnssec::ZoneSigningKey {
-                            key_id: String::new(),
-                            algorithm: Algorithm::Ed25519,
-                            key_type: crate::dnssec::KeyType::KSK,
-                            created_at: 0,
-                            expires_at: 0,
-                            public_key: key_bytes.clone(),
-                            private_key: Vec::new(),
-                            key_tag: 0,
-                            flags: 257,
-                            key_size: None,
-                        });
-                        response.extend_from_slice(&(dnskey.len() as u16).to_be_bytes());
-                        response.extend_from_slice(&dnskey);
-                    }
-                }
-                RecordType::DS => {
-                    if let Ok(ds_bytes) = hex::decode(&record.value) {
-                        response.extend_from_slice(&(ds_bytes.len() as u16).to_be_bytes());
-                        response.extend_from_slice(&ds_bytes);
-                    }
-                }
-                RecordType::PTR => {
-                    let mut target_parts: Vec<&str> =
-                        record.value.split('.').filter(|s| !s.is_empty()).collect();
-                    if target_parts.is_empty() {
-                        target_parts.push("");
-                    }
-                    let mut total_len = 0;
-                    for part in &target_parts {
-                        total_len += 1 + part.len();
-                    }
-                    response.extend_from_slice(&(total_len as u16).to_be_bytes());
-                    for part in &target_parts {
-                        response.push((*part).len() as u8);
-                        response.extend_from_slice(part.as_bytes());
-                    }
-                }
-                RecordType::CAA => {
-                    // Wire format: flags (1 byte) | tag length (1 byte) | tag bytes | value bytes
-                    // Expected input format: "flags tag value" e.g. "0 issue \"letsencrypt.org\""
-                    let mut data = Vec::new();
-                    let parts: Vec<&str> = record.value.splitn(3, ' ').collect();
-                    if parts.len() >= 3 {
-                        let flags: u8 = parts[0].parse().unwrap_or(0);
-                        let tag = parts[1].as_bytes();
-                        let value = parts[2].trim_matches('"').as_bytes();
-                        data.push(flags);
-                        data.push(tag.len() as u8);
-                        data.extend_from_slice(tag);
-                        data.extend_from_slice(value);
-                    } else {
-                        // Fallback: treat entire value as raw data with flags=0
-                        data.push(0);
-                        data.push(record.value.len() as u8);
-                        data.extend_from_slice(record.value.as_bytes());
-                    }
-                    response.extend_from_slice(&(data.len() as u16).to_be_bytes());
-                    response.extend_from_slice(&data);
-                }
-                RecordType::TLSA => {
-                    // Wire format: usage (1) | selector (1) | matching type (1) | cert data bytes
-                    // Expected input format: "usage selector matching_type cert_data"
-                    let mut data = Vec::new();
-                    let parts: Vec<&str> = record.value.splitn(4, ' ').collect();
-                    if parts.len() >= 4 {
-                        let usage: u8 = parts[0].parse().unwrap_or(0);
-                        let selector: u8 = parts[1].parse().unwrap_or(0);
-                        let matching_type: u8 = parts[2].parse().unwrap_or(0);
-                        let cert_data =
-                            hex::decode(parts[3]).unwrap_or_else(|_| parts[3].as_bytes().to_vec());
-                        data.push(usage);
-                        data.push(selector);
-                        data.push(matching_type);
-                        data.extend_from_slice(&cert_data);
-                    } else {
-                        // Fallback: treat entire value as raw data
-                        data.extend_from_slice(record.value.as_bytes());
-                    }
-                    response.extend_from_slice(&(data.len() as u16).to_be_bytes());
-                    response.extend_from_slice(&data);
-                }
-                RecordType::SVCB | RecordType::HTTPS => {
-                    if let Ok(svcb_data) = Self::parse_svcb_value(&record.value) {
-                        response.extend_from_slice(&(svcb_data.len() as u16).to_be_bytes());
-                        response.extend_from_slice(&svcb_data);
-                    }
-                }
-                RecordType::NAPTR => {
-                    if let Ok(naptr_data) = Self::parse_naptr_value(&record.value) {
-                        response.extend_from_slice(&(naptr_data.len() as u16).to_be_bytes());
-                        response.extend_from_slice(&naptr_data);
-                    }
-                }
-                RecordType::SSHFP => {
-                    if let Ok(sshfp_data) = Self::parse_sshfp_value(&record.value) {
-                        response.extend_from_slice(&(sshfp_data.len() as u16).to_be_bytes());
-                        response.extend_from_slice(&sshfp_data);
-                    }
-                }
-                _ => continue,
-            };
-        }
-
-        if dnssec_ok && !records.is_empty() && records[0].record_type != RecordType::DNSKEY {
-            if let Some(key) = zsk {
-                for record in records {
-                    let _rrname_offset = response.len();
-                    if !qname_for_compression.is_empty() {
-                        response.push(0xC0 | (question_name_offset >> 8) as u8);
-                        response.push((question_name_offset & 0xFF) as u8);
-                    } else {
-                        response.push(0);
-                    }
-
-                    let rrsig = Self::create_signed_rrsig(record, signer_name, key);
-                    if !rrsig.is_empty() {
-                        response.extend_from_slice(&46u16.to_be_bytes());
-                        response.extend_from_slice(&1u16.to_be_bytes());
-                        response.extend_from_slice(&record.ttl.to_be_bytes());
-                        response.extend_from_slice(&(rrsig.len() as u16).to_be_bytes());
-                        response.extend_from_slice(&rrsig);
-                    }
-                }
+            if let Ok(encoded) = encode_rr(record, compression) {
+                envelope.answer_records.push(encoded);
             }
         }
 
-        if let Some(edns) = edns_options {
-            let opt_record =
-                crate::edns::EdnsOptions::build_opt_record(edns.udp_payload_size, dnssec_ok);
-            if !opt_record.is_empty() {
-                response.extend_from_slice(&[0]);
-                response.extend_from_slice(&41u16.to_be_bytes());
-                response.extend_from_slice(&(opt_record.len() as u16).to_be_bytes());
-                response.extend_from_slice(&opt_record);
-            }
-        } else if dnssec_ok {
-            let opt_record = crate::edns::EdnsOptions::build_opt_record(4096, dnssec_ok);
-            response.extend_from_slice(&[0]);
-            response.extend_from_slice(&41u16.to_be_bytes());
-            response.extend_from_slice(&(opt_record.len() as u16).to_be_bytes());
-            response.extend_from_slice(&opt_record);
-        }
-
-        // Patch ANCOUNT: answer records + RRSIG records
-        let rrsig_count = if dnssec_ok
+        let records_signed = dnssec_ok
             && !records.is_empty()
             && records[0].record_type != RecordType::DNSKEY
-            && zsk.is_some()
-        {
-            records.len()
-        } else {
-            0
-        };
-        let ancount = (records.len() + rrsig_count) as u16;
-        response[ancount_offset..ancount_offset + 2].copy_from_slice(&ancount.to_be_bytes());
+            && zsk.is_some();
 
-        // Patch ARCOUNT: 1 for OPT record if present, 0 otherwise
-        let has_opt = edns_options.is_some() || dnssec_ok;
-        let arcount: u16 = if has_opt { 1 } else { 0 };
-        response[arcount_offset..arcount_offset + 2].copy_from_slice(&arcount.to_be_bytes());
-
-        if response.len() > max_response_size && max_response_size > 0 {
-            return Self::build_truncated_response(
-                qname,
-                qtype,
-                records,
-                dnssec_ok,
-                edns_options,
-                zsk,
-                signer_name,
-            );
+        if records_signed {
+            if let Some(key) = zsk {
+                for record in records {
+                    let rrsig = Self::create_signed_rrsig(record, signer_name, key);
+                    if !rrsig.is_empty() {
+                        let rrsig_record = DnsZoneRecord {
+                            name: record.name.clone(),
+                            record_type: RecordType::RRSIG,
+                            value: hex::encode(&rrsig),
+                            ttl: record.ttl,
+                            priority: None,
+                        };
+                        let compression = if qname_clean.is_empty() {
+                            None
+                        } else {
+                            Some((qname_clean.as_str(), question_name_offset))
+                        };
+                        if let Ok(encoded) = encode_rr(&rrsig_record, compression) {
+                            envelope.answer_records.push(encoded);
+                        }
+                    }
+                }
+            }
         }
 
+        let has_opt = edns_options.is_some() || dnssec_ok;
+        if has_opt {
+            let udp_size = edns_options
+                .map(|e| e.udp_payload_size)
+                .unwrap_or(4096);
+            envelope
+                .additional_records
+                .push(build_opt_encoded_record(udp_size, dnssec_ok));
+        }
+
+        let mut flags = build_response_flags(
+            true,
+            false,
+            true,
+            true,
+            records_signed,
+            0,
+        );
+
+        if envelope.answer_records.len() > max_response_size && max_response_size > 0 {
+            truncate_to_fit(&mut envelope, max_response_size);
+            flags = build_response_flags(true, true, true, true, records_signed, 0);
+        }
+
+        let response = assemble_packet(&envelope, query_id, flags, qname, qtype);
         Arc::new(response)
     }
 
     pub(super) fn build_truncated_response(
+        query_id: u16,
         qname: &str,
         qtype: u16,
         records: &[DnsZoneRecord],
@@ -341,189 +112,72 @@ impl DnsServer {
             .map(|e| e.udp_payload_size as usize)
             .unwrap_or(512);
 
-        let mut response = Vec::new();
-
-        let response_id =
-            Self::generate_random_id().expect("Crypto RNG failure for DNS transaction ID");
-        response.extend_from_slice(&response_id.to_be_bytes());
-        response.extend_from_slice(&0x8582u16.to_be_bytes());
-        response.extend_from_slice(&1u16.to_be_bytes());
-
-        let name_parts: Vec<&str> = if qname.is_empty() || qname == "@" {
-            vec![""]
+        let qname_clean = if qname.is_empty() || qname == "@" {
+            String::new()
         } else {
-            qname.split('.').collect()
+            qname.trim_end_matches('.').to_lowercase()
         };
 
-        let mut included_records = Vec::new();
+        let question_name_offset: u16 = 12;
+
+        let mut envelope = ResponseEnvelope::default();
 
         for record in records {
-            let record_size = Self::estimate_record_size(record, &name_parts);
-
-            let rrsig_size = if dnssec_ok && zsk.is_some() && record.record_type.is_signed() {
-                let sig_size = zsk
-                    .map(|k| match k.algorithm {
-                        crate::dnssec::Algorithm::Ed25519 => 64,
-                        crate::dnssec::Algorithm::RSA => 256, // RSA signatures are larger
-                    })
-                    .unwrap_or(64);
-
-                2 + name_parts.iter().map(|p| 1 + p.len()).sum::<usize>()
-                    + 1
-                    + 2
-                    + 2
-                    + 4
-                    + 8
-                    + 8
-                    + 2
-                    + signer_name.len()
-                    + 1
-                    + sig_size
+            let compression = if qname_clean.is_empty() {
+                None
             } else {
-                0
+                Some((qname_clean.as_str(), question_name_offset))
             };
-
-            if response.len() + record_size + rrsig_size + 20 > max_size {
-                break;
-            }
-
-            included_records.push(record.clone());
-        }
-
-        let ancount = included_records.len() as u16;
-        response.extend_from_slice(&ancount.to_be_bytes());
-        response.extend_from_slice(&0u16.to_be_bytes());
-        response.extend_from_slice(&0u16.to_be_bytes());
-
-        for part in &name_parts {
-            if !part.is_empty() {
-                response.push((*part).len() as u8);
-                response.extend_from_slice(part.as_bytes());
+            if let Ok(encoded) = encode_rr(record, compression) {
+                envelope.answer_records.push(encoded);
             }
         }
-        response.push(0);
 
-        response.extend_from_slice(&qtype.to_be_bytes());
-        response.extend_from_slice(&1u16.to_be_bytes());
+        let records_signed = dnssec_ok
+            && !records.is_empty()
+            && records[0].record_type != RecordType::DNSKEY
+            && zsk.is_some();
 
-        for record in &included_records {
-            for part in &name_parts {
-                if !part.is_empty() {
-                    response.push((*part).len() as u8);
-                    response.extend_from_slice(part.as_bytes());
-                }
-            }
-            response.push(0);
-
-            response.extend_from_slice(&u16::from(record.record_type).to_be_bytes());
-            response.extend_from_slice(&1u16.to_be_bytes());
-            response.extend_from_slice(&record.ttl.to_be_bytes());
-
-            match record.record_type {
-                RecordType::A => {
-                    if let Ok(ip) = record.value.parse::<std::net::Ipv4Addr>() {
-                        let bytes: &[u8; 4] = &ip.octets();
-                        response.extend_from_slice(&(bytes.len() as u16).to_be_bytes());
-                        response.extend_from_slice(bytes);
-                    }
-                }
-                RecordType::AAAA => {
-                    if let Ok(ip) = record.value.parse::<std::net::Ipv6Addr>() {
-                        let bytes = ip.octets();
-                        response.extend_from_slice(&(bytes.len() as u16).to_be_bytes());
-                        response.extend_from_slice(&bytes);
-                    }
-                }
-                RecordType::CNAME | RecordType::NS => {
-                    let mut target_parts: Vec<&str> =
-                        record.value.split('.').filter(|s| !s.is_empty()).collect();
-                    if target_parts.is_empty() {
-                        target_parts.push("");
-                    }
-                    let mut total_len = 1; // trailing null byte
-                    for part in &target_parts {
-                        total_len += 1 + part.len();
-                    }
-                    response.extend_from_slice(&(total_len as u16).to_be_bytes());
-                    for part in &target_parts {
-                        response.push((*part).len() as u8);
-                        response.extend_from_slice(part.as_bytes());
-                    }
-                    response.push(0);
-                }
-                RecordType::TXT => {
-                    let txt_value = record.value.as_bytes();
-                    let mut offset = 0;
-                    while offset < txt_value.len() {
-                        let remaining = txt_value.len() - offset;
-                        let chunk_len = std::cmp::min(remaining, 255);
-                        response.push(chunk_len as u8);
-                        response.extend_from_slice(&txt_value[offset..offset + chunk_len]);
-                        offset += chunk_len;
-                    }
-                }
-                RecordType::MX => {
-                    let priority = record.priority.unwrap_or(10);
-                    response.extend_from_slice(&2u16.to_be_bytes());
-                    response.extend_from_slice(&priority.to_be_bytes());
-                    let mut target_parts: Vec<&str> =
-                        record.value.split('.').filter(|s| !s.is_empty()).collect();
-                    if target_parts.is_empty() {
-                        target_parts.push("");
-                    }
-                    for part in &target_parts {
-                        response.push((*part).len() as u8);
-                        response.extend_from_slice(part.as_bytes());
-                    }
-                    response.push(0);
-                }
-                RecordType::SVCB | RecordType::HTTPS => {
-                    if let Ok(svcb_data) = Self::parse_svcb_value(&record.value) {
-                        response.extend_from_slice(&(svcb_data.len() as u16).to_be_bytes());
-                        response.extend_from_slice(&svcb_data);
-                    }
-                }
-                RecordType::NAPTR => {
-                    if let Ok(naptr_data) = Self::parse_naptr_value(&record.value) {
-                        response.extend_from_slice(&(naptr_data.len() as u16).to_be_bytes());
-                        response.extend_from_slice(&naptr_data);
-                    }
-                }
-                _ => continue,
-            };
-        }
-
-        if dnssec_ok && !included_records.is_empty() {
+        if records_signed {
             if let Some(key) = zsk {
-                for record in &included_records {
+                for record in records {
                     let rrsig = Self::create_signed_rrsig(record, signer_name, key);
-                    if !rrsig.is_empty() && response.len() + rrsig.len() + 12 < max_size {
-                        for part in &name_parts {
-                            if !part.is_empty() {
-                                response.push((*part).len() as u8);
-                                response.extend_from_slice(part.as_bytes());
-                            }
+                    if !rrsig.is_empty() {
+                        let rrsig_record = DnsZoneRecord {
+                            name: record.name.clone(),
+                            record_type: RecordType::RRSIG,
+                            value: hex::encode(&rrsig),
+                            ttl: record.ttl,
+                            priority: None,
+                        };
+                        let compression = if qname_clean.is_empty() {
+                            None
+                        } else {
+                            Some((qname_clean.as_str(), question_name_offset))
+                        };
+                        if let Ok(encoded) = encode_rr(&rrsig_record, compression) {
+                            envelope.answer_records.push(encoded);
                         }
-                        response.push(0);
-                        response.extend_from_slice(&46u16.to_be_bytes());
-                        response.extend_from_slice(&1u16.to_be_bytes());
-                        response.extend_from_slice(&record.ttl.to_be_bytes());
-                        response.extend_from_slice(&(rrsig.len() as u16).to_be_bytes());
-                        response.extend_from_slice(&rrsig);
                     }
                 }
             }
         }
 
-        if let Some(edns) = edns_options {
-            let opt_record =
-                crate::edns::EdnsOptions::build_opt_record(edns.udp_payload_size, dnssec_ok);
-            response.extend_from_slice(&[0]);
-            response.extend_from_slice(&41u16.to_be_bytes());
-            response.extend_from_slice(&(opt_record.len() as u16).to_be_bytes());
-            response.extend_from_slice(&opt_record);
+        let has_opt = edns_options.is_some() || dnssec_ok;
+        if has_opt {
+            let udp_size = edns_options
+                .map(|e| e.udp_payload_size)
+                .unwrap_or(4096);
+            envelope
+                .additional_records
+                .push(build_opt_encoded_record(udp_size, dnssec_ok));
         }
 
+        truncate_to_fit(&mut envelope, max_size);
+
+        let flags = build_response_flags(true, true, true, true, records_signed, 0);
+
+        let response = assemble_packet(&envelope, query_id, flags, qname, qtype);
         Arc::new(response)
     }
 
@@ -747,6 +401,7 @@ impl DnsServer {
         Ok(result)
     }
 
+    #[allow(dead_code)]
     pub(super) fn estimate_record_size(record: &DnsZoneRecord, name_parts: &[&str]) -> usize {
         let name_size = name_parts.iter().map(|p| 1 + p.len()).sum::<usize>() + 1;
         let rdata_size = match record.record_type {
@@ -789,60 +444,45 @@ impl DnsServer {
             .map(|e| e.udp_payload_size as usize)
             .unwrap_or(512);
 
-        let mut response = Vec::new();
+        let qname_clean = if qname.is_empty() || qname == "@" {
+            String::new()
+        } else {
+            qname.trim_end_matches('.').to_lowercase()
+        };
 
-        response.extend_from_slice(&query_id.to_be_bytes());
-        response.extend_from_slice(&0x8580u16.to_be_bytes());
-        response.extend_from_slice(&1u16.to_be_bytes());
-        response.extend_from_slice(&1u16.to_be_bytes()); // ANCOUNT = 1
-        response.extend_from_slice(&0u16.to_be_bytes()); // NSCOUNT
-        let arcount_offset = response.len();
-        response.extend_from_slice(&0u16.to_be_bytes()); // ARCOUNT placeholder
+        let question_name_offset: u16 = 12;
 
-        let name_parts: Vec<&str> = qname.split('.').collect();
-        for part in &name_parts {
-            response.push((*part).len() as u8);
-            response.extend_from_slice(part.as_bytes());
+        let mut envelope = ResponseEnvelope::default();
+
+        let acme_record = DnsZoneRecord {
+            name: qname.to_string(),
+            record_type: RecordType::TXT,
+            value: txt_value.to_string(),
+            ttl: 300,
+            priority: None,
+        };
+        let compression = if qname_clean.is_empty() {
+            None
+        } else {
+            Some((qname_clean.as_str(), question_name_offset))
+        };
+        if let Ok(encoded) = encode_rr(&acme_record, compression) {
+            envelope.answer_records.push(encoded);
         }
-        response.push(0);
-
-        response.extend_from_slice(&16u16.to_be_bytes()); // TYPE TXT
-        response.extend_from_slice(&1u16.to_be_bytes()); // CLASS IN
-
-        // TTL = 300 seconds (5 minutes)
-        response.extend_from_slice(&300u32.to_be_bytes());
-
-        // Build TXT record data
-        let txt_bytes = txt_value.as_bytes();
-        let mut txt_data = Vec::new();
-        let mut offset = 0;
-        while offset < txt_bytes.len() {
-            let remaining = txt_bytes.len() - offset;
-            let chunk_len = std::cmp::min(remaining, 255);
-            txt_data.push(chunk_len as u8);
-            txt_data.extend_from_slice(&txt_bytes[offset..offset + chunk_len]);
-            offset += chunk_len;
-        }
-        response.extend_from_slice(&(txt_data.len() as u16).to_be_bytes());
-        response.extend_from_slice(&txt_data);
 
         if let Some(edns) = edns_options {
-            let opt_record =
-                crate::edns::EdnsOptions::build_opt_record(edns.udp_payload_size, false);
-            if !opt_record.is_empty() {
-                response.extend_from_slice(&[0]);
-                response.extend_from_slice(&41u16.to_be_bytes());
-                response.extend_from_slice(&(opt_record.len() as u16).to_be_bytes());
-                response.extend_from_slice(&opt_record);
-            }
+            envelope
+                .additional_records
+                .push(build_opt_encoded_record(edns.udp_payload_size, false));
         }
 
-        let has_opt = edns_options.is_some();
-        let arcount: u16 = if has_opt { 1 } else { 0 };
-        response[arcount_offset..arcount_offset + 2].copy_from_slice(&arcount.to_be_bytes());
+        let flags = build_response_flags(true, false, true, true, false, 0);
+
+        let response = assemble_packet(&envelope, query_id, flags, qname, 16);
 
         if response.len() > max_response_size && max_response_size > 0 {
             return Self::build_truncated_response(
+                query_id,
                 qname,
                 16,
                 &[crate::server::DnsZoneRecord {

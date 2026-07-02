@@ -27,7 +27,8 @@ src/dns/
 │   ├── mod.rs              # DnsServer, DnsHandler
 │   ├── dnssec_impl.rs      # Authoritative DNSSEC implementation
 │   ├── query.rs             # Query handling with NSEC/NSEC3
-│   └── response.rs          # Response building with AD bit
+│   ├── response.rs          # Response building with AD bit
+│   └── response_encoder.rs  # Typed wire-format response encoder
 └── config/
     ├── dns_recursive.rs     # Recursive DNS config
     └── dns_dnssec.rs        # DNSSEC and trust anchor config

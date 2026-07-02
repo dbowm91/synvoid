@@ -32,6 +32,9 @@ cargo test --test worker_supervision_control_flow --features mesh,dns
 cargo test --test composition_root_behavioral --features mesh,dns
 cargo test --test mesh_http_framing --features mesh,dns
 
+# DNS response encoder tests
+cargo test -p synvoid-dns -- response_encoder
+
 # Supervisor lifecycle (Phase 3)
 cargo test --test supervisor_task_ownership_guard
 cargo test -p synvoid supervisor::task_registry

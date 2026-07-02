@@ -45,6 +45,7 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
 | `cache.rs` | Authoritative server response cache |
 | `firewall.rs` | DNS firewall for blocking queries/responses |
 | `wire.rs` | DNS wire format parsing/building |
+| `server/response_encoder.rs` | Typed wire-format response encoder: `EncodedRecord`, `DnsSection`, `ResponseEnvelope`, per-record encoders, packet assembly |
 | `messages.rs` | Mesh sync messages for distributed DNS |
 | `anycast.rs` | Anycast socket management |
 | `anycast_sync.rs` | Mesh-based zone synchronization |
