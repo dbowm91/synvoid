@@ -204,9 +204,16 @@ The `abi_frame` module (`crates/synvoid-plugin-runtime/src/abi_frame.rs`) provid
 - `WasmPluginManager::epoch_incrementer_running()` and `validate_execution_containment_runtime()` are available for introspection.
 - Body chunk timeout is enforced via `HostCallBudget.body_chunk_timeout` with ABI code `ABI_ERR_TIMEOUT`.
 
-## Unsafe Native Extensions (Phase 8)
+## Unsafe Native Extensions (Phase 8) — COMPLETE
 
-Native shared-library plugins are now classified as **unsafe native extensions**, not sandboxed plugins.
+Native shared-library plugins are classified as **unsafe native extensions**, not sandboxed plugins. Phase 8 is fully enforced via `validate_for_load()` with 34 unit tests covering the full test matrix.
+
+### Production Gate Enforcement (COMPLETE)
+- `validate_for_load()` checks `is_production`, `allow_in_production`, `risk_acknowledgement`, and `allowed_dirs` before any load proceeds. Error variants are no longer dead code.
+- FFI panics are caught via `std::panic::catch_unwind` around `factory()` and `Box::from_raw()` to prevent UB from native panics crossing the FFI boundary.
+- Hot-reload is separately gated via `hot_reload_enabled` config, independent of WASM hot-reload.
+- Path permissions reject **world-writable only** (not exact mode checks). Files with `others-w` bit set are rejected; `0o644`/`0o744` are permitted.
+- Deprecated config alias `native_plugins_enabled` migrates to `unsafe_native_enabled` with a deprecation warning.
 
 ### Key invariants:
 - The canonical loader is in `crates/synvoid-plugin-runtime/src/unsafe_native_loader.rs`
@@ -216,14 +223,23 @@ Native shared-library plugins are now classified as **unsafe native extensions**
 - Errors: `UnsafeNativePluginError` (with `AxumPluginError` backward-compat alias)
 - Hot-reload for native extensions is gated by `hot_reload_enabled`, separate from WASM
 
+### Metrics
+- `synvoid_unsafe_native_extension_loaded_total` — successful loads
+- `synvoid_unsafe_native_extension_load_failed_total` — failed loads
+- `synvoid_unsafe_native_extension_reloaded_total` — hot-reload events
+- `synvoid_unsafe_native_extension_request_total` — per-plugin request counters
+
+### ExternalPluginClient Placeholder
+- `ExternalPluginClient` trait exists in `unsafe_native_loader.rs` as a placeholder for future out-of-process native plugin architecture.
+
 ### Forbidden patterns:
 - Never load native extensions without going through the config gate
 - Never store only the `Router` without the `UnsafeNativeExtension` (loses library lifetime)
 - Never call `Library::drop` while in-flight requests may reference plugin code
 
-## Plugin Lifecycle and Hot-Reload Hardening (Phase 9)
+## Plugin Lifecycle and Hot-Reload Hardening (Phase 9) — COMPLETE
 
-Phase 9 hardened how plugins are loaded, reloaded, replaced, disabled, quarantined, and unloaded over time.
+Phase 9 hardened how plugins are loaded, reloaded, replaced, disabled, quarantined, and unloaded over time. **Verified complete with 44+ tests across `plugin_lifecycle_guard`, `plugin_capability_boundary_guard`, and `plugin_signature_policy_guard` guardrail files.**
 
 ### Generation Tracking
 

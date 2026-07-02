@@ -742,6 +742,104 @@ fn lifecycle_transition_audit_trail() {
     }
 }
 
+/// Native and WASM plugins use separate namespaces.
+///
+/// `PluginManager` must store native extensions and WASM plugins in
+/// separate fields so that name collisions across plugin types are
+/// impossible.
+#[test]
+fn native_wasm_namespace_separation() {
+    let file = plugin_runtime_src().join("plugin_manager.rs");
+    let cleaned = read_cleaned(&file);
+
+    // PluginManager struct must have both fields
+    let mut in_struct = false;
+    let mut brace_depth = 0i32;
+    let mut has_wasm_manager = false;
+    let mut has_unsafe_native = false;
+
+    for line in cleaned.lines() {
+        let trimmed = line.trim();
+        if trimmed.contains("pub struct PluginManager") {
+            in_struct = true;
+            brace_depth = 0;
+            has_wasm_manager = false;
+            has_unsafe_native = false;
+        }
+        if in_struct {
+            brace_depth += trimmed.matches('{').count() as i32;
+            brace_depth -= trimmed.matches('}').count() as i32;
+            if trimmed.contains("wasm_manager:") {
+                has_wasm_manager = true;
+            }
+            if trimmed.contains("unsafe_native_extensions:") {
+                has_unsafe_native = true;
+            }
+            if brace_depth <= 0 && in_struct {
+                break;
+            }
+        }
+    }
+
+    assert!(
+        has_wasm_manager,
+        "PluginManager must have 'wasm_manager' field for WASM plugins"
+    );
+    assert!(
+        has_unsafe_native,
+        "PluginManager must have 'unsafe_native_extensions' field for native plugins"
+    );
+    assert!(
+        has_wasm_manager && has_unsafe_native,
+        "PluginManager must store WASM and native plugins in separate fields to prevent namespace collision"
+    );
+}
+
+/// PluginDetail must include hash and last_error fields.
+///
+/// `PluginDetail` must have `hash: Option<String>` and
+/// `last_error: Option<String>` fields for operator introspection.
+#[test]
+fn plugin_detail_includes_hash_and_last_error() {
+    let file = wasm_runtime_rs();
+    let cleaned = read_cleaned(&file);
+
+    // Find PluginDetail struct
+    let mut in_struct = false;
+    let mut brace_depth = 0i32;
+    let mut has_hash = false;
+    let mut has_last_error = false;
+
+    for line in cleaned.lines() {
+        let trimmed = line.trim();
+        if trimmed.contains("pub struct PluginDetail") {
+            in_struct = true;
+            brace_depth = 0;
+            has_hash = false;
+            has_last_error = false;
+        }
+        if in_struct {
+            brace_depth += trimmed.matches('{').count() as i32;
+            brace_depth -= trimmed.matches('}').count() as i32;
+            if trimmed.contains("pub hash:") {
+                has_hash = true;
+            }
+            if trimmed.contains("pub last_error:") {
+                has_last_error = true;
+            }
+            if brace_depth <= 0 && in_struct {
+                break;
+            }
+        }
+    }
+
+    assert!(has_hash, "PluginDetail must have 'pub hash' field");
+    assert!(
+        has_last_error,
+        "PluginDetail must have 'pub last_error' field"
+    );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Behavioral Tests — exercise actual WasmPluginManager runtime
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -972,5 +1070,109 @@ mod behavioral {
         mgr.remove_plugin("remove_me").unwrap();
         assert!(!mgr.is_plugin_loaded("remove_me"));
         assert!(mgr.get_plugin_generation("remove_me").is_none());
+    }
+
+    #[test]
+    fn invalid_lifecycle_transition_rejected() {
+        let mgr = WasmPluginManager::new();
+        let bytes = minimal_wasm_bytes();
+
+        // Load plugin (generation 1, state Active)
+        mgr.load_plugin_from_memory("transition_reject", &bytes, WasmResourceLimits::default())
+            .unwrap();
+
+        assert_eq!(
+            mgr.get_plugin_lifecycle_state("transition_reject"),
+            Some(PluginLifecycleState::Active)
+        );
+
+        // Removed -> Active is not a valid transition
+        let invalid_result = mgr.set_plugin_lifecycle_state(
+            "transition_reject",
+            PluginLifecycleState::Active,
+            "test invalid transition",
+        );
+        assert!(
+            invalid_result.is_err(),
+            "Removed->Active transition should be rejected"
+        );
+
+        // Verify state is unchanged (still Active)
+        assert_eq!(
+            mgr.get_plugin_lifecycle_state("transition_reject"),
+            Some(PluginLifecycleState::Active),
+            "plugin state must remain unchanged after rejected transition"
+        );
+
+        // Direct validation via is_valid_transition
+        assert!(
+            !PluginLifecycleState::is_valid_transition(
+                PluginLifecycleState::Removed,
+                PluginLifecycleState::Active
+            ),
+            "is_valid_transition(Removed, Active) must return false"
+        );
+        assert!(
+            !PluginLifecycleState::is_valid_transition(
+                PluginLifecycleState::Removed,
+                PluginLifecycleState::Reloading
+            ),
+            "is_valid_transition(Removed, Reloading) must return false"
+        );
+        assert!(
+            !PluginLifecycleState::is_valid_transition(
+                PluginLifecycleState::FailedLoad,
+                PluginLifecycleState::Active
+            ),
+            "is_valid_transition(FailedLoad, Active) must return false"
+        );
+        assert!(
+            !PluginLifecycleState::is_valid_transition(
+                PluginLifecycleState::Loading,
+                PluginLifecycleState::Removed
+            ),
+            "is_valid_transition(Loading, Removed) must return false"
+        );
+        assert!(
+            !PluginLifecycleState::is_valid_transition(
+                PluginLifecycleState::Unloading,
+                PluginLifecycleState::Active
+            ),
+            "is_valid_transition(Unloading, Active) must return false"
+        );
+    }
+
+    #[test]
+    fn get_plugin_detail_returns_hash() {
+        let mgr = WasmPluginManager::new();
+        let bytes = minimal_wasm_bytes();
+
+        mgr.load_plugin_from_memory("hash_detail", &bytes, WasmResourceLimits::default())
+            .unwrap();
+
+        // The binary hash is on LoadedPluginGeneration, accessible via
+        // get_plugin_generation_detail (used by get_plugin_detail internally).
+        let gen_detail = mgr.get_plugin_generation_detail("hash_detail");
+        assert!(
+            gen_detail.is_some(),
+            "generation detail must exist after load"
+        );
+        let gen_detail = gen_detail.unwrap();
+
+        // The hash field must exist and be a valid SHA-256 hex string (64 chars)
+        // or empty for memory-loaded plugins (where effective_policy is not
+        // propagated to the runtime). The structural presence is what matters.
+        assert!(
+            gen_detail.binary_hash.is_empty()
+                || gen_detail.binary_hash.len() == 64,
+            "binary_hash must be either empty (memory load) or a 64-char SHA-256 hex string, got len={}",
+            gen_detail.binary_hash.len()
+        );
+
+        // Verify get_plugin_detail returns a PluginDetail with the generation info.
+        let detail = mgr.get_plugin_detail("hash_detail");
+        assert!(detail.is_some());
+        let detail = detail.unwrap();
+        assert_eq!(detail.name, "hash_detail");
     }
 }

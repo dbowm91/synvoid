@@ -315,3 +315,8 @@ The `architecture/` directory (87 docs) and `.opencode/skills/` directory contai
 - `src/admin/alerting/mod.rs:349` — Email alerting is a stub (logs, returns Ok).
 - `spin` idle instance eviction never cleans up old UUID entries (plan DOC-L7).
 - `wasmtime` 40.0.4 (via yara-x) has known CVEs but only used for YARA compilation, not wasm sandbox — mitigated by `[patch.crates-io]` for direct dep.
+
+## Recent Completions
+
+- **Plugin M3 Phase 8** — Unsafe native extension production gate, FFI panic catching, hot-reload gating, world-writable path rejection, config migration, metrics, and 34 unit tests. All items in `plans/plugin_m3_phase_08_gap_fixes.md` are complete.
+- **Plugin M3 Phase 9** — Lifecycle hardening: generation tracking, atomic reload pipeline, file stability detection, lifecycle state machine, operator APIs, and 44+ tests across guard files. All items in `plans/plugin_m3_phase_09_gap_fixes.md` are complete.

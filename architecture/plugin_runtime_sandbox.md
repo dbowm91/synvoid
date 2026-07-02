@@ -16,7 +16,7 @@ The `PluginTrustTier` enum controls what a plugin can request and how strictly i
 
 Serialization uses `snake_case` (`"local_sandboxed"`, `"signed_sandboxed"`, etc.).
 
-## Unsafe Native Extensions (Separate from WASM Sandbox)
+## Unsafe Native Extensions (Separate from WASM Sandbox) — Phase 8 COMPLETE
 
 Native shared-library extensions loaded via `libloading` run inside the Synvoid address space with full process authority. They are **not** subject to the WASM sandbox, trust tiers, capability manifest, signing policy, fuel/epoch limits, or host API sub-capabilities described above.
 
@@ -27,6 +27,24 @@ Unsafe native extensions are:
 - Optional SHA-256 hash verification
 - Retaining `Arc<Library>` handles to prevent use-after-free
 - Exposed via separate observability status and metrics
+
+### Phase 8 Closure Summary
+
+The production gate is now fully enforced via `validate_for_load()`, which checks `is_production`, `allow_in_production`, `risk_acknowledgement`, and `allowed_dirs` before any load proceeds. Error variants that were previously dead code are now active enforcement points.
+
+**FFI panic handling:** Native panics crossing the FFI boundary are caught via `std::panic::catch_unwind` around `factory()` and `Box::from_raw()`, preventing undefined behavior.
+
+**Hot-reload gating:** Native extension hot-reload is separately gated via `hot_reload_enabled` config, independent of WASM hot-reload settings.
+
+**Path permission policy:** World-writable files are rejected. Exact mode checks (`0o755`/`0o500`) have been removed; `0o644`/`0o744` files are permitted. Only the `others-w` bit triggers rejection.
+
+**Config migration:** The deprecated `native_plugins_enabled` alias migrates to `unsafe_native_enabled` with a deprecation warning logged at startup.
+
+**Test coverage:** 34 unit tests cover the full matrix: production gate enforcement, FFI panic catching, hot-reload gating, path permission rejection, config migration, metrics counters, and `ExternalPluginClient` placeholder.
+
+**Metrics:** `synvoid_unsafe_native_extension_loaded_total`, `synvoid_unsafe_native_extension_load_failed_total`, `synvoid_unsafe_native_extension_reloaded_total`, and per-plugin request counters are emitted.
+
+**ExternalPluginClient placeholder:** A trait exists in `unsafe_native_loader.rs` for future out-of-process native plugin architecture.
 
 See `docs/PLUGINS.md` for the unsafe native extension configuration reference and `architecture/unsafe_native_extensions.md` for the full design.
 

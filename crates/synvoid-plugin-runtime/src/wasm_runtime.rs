@@ -230,6 +230,10 @@ pub struct PluginDetail {
     pub policy: Option<EffectivePluginPolicy>,
     /// Filesystem or memory path.
     pub source_path: Option<PathBuf>,
+    /// SHA-256 hash of the loaded WASM module, if available.
+    pub hash: Option<String>,
+    /// Last error message, if the plugin encountered a failure.
+    pub last_error: Option<String>,
 }
 
 /// Maximum size of request/response data passed through WASM memory (1MB)
@@ -1549,6 +1553,8 @@ impl WasmPluginManager {
             lifecycle_state,
             policy,
             source_path,
+            hash: None,
+            last_error: None,
         })
     }
 

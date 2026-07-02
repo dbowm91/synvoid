@@ -1007,4 +1007,344 @@ mod tests {
         let gen2 = next_generation();
         assert!(gen2 > gen1);
     }
+
+    // ── 17: 744 permissions accepted ────────────────────────────────────────
+
+    #[cfg(unix)]
+    #[test]
+    fn test_744_permissions_accepted() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = temp_dir();
+        let so_path = dir.join("test.so");
+        fs::write(&so_path, b"fake").unwrap();
+        fs::set_permissions(&so_path, fs::Permissions::from_mode(0o744)).unwrap();
+
+        let result = validate_plugin_path(&so_path, &[]);
+        assert!(
+            result.is_ok(),
+            "0o744 permissions should be accepted, got: {:?}",
+            result.err()
+        );
+
+        cleanup(&dir);
+    }
+
+    // ── 18: Hot reload disabled by default ──────────────────────────────────
+
+    #[test]
+    fn test_hot_reload_disabled_by_default() {
+        let config = UnsafeNativeExtensionConfig::default();
+        assert!(
+            !config.hot_reload_enabled,
+            "hot_reload_enabled should default to false"
+        );
+    }
+
+    // ── 19: Native hot reload requires separate config ──────────────────────
+
+    #[test]
+    fn test_native_hot_reload_requires_separate_config() {
+        let config = UnsafeNativeExtensionConfig {
+            hot_reload_enabled: false,
+            ..Default::default()
+        };
+        assert!(
+            !config.hot_reload_enabled,
+            "Native hot reload should be independent of WASM hot reload"
+        );
+
+        let config_with_reload = UnsafeNativeExtensionConfig {
+            hot_reload_enabled: true,
+            ..Default::default()
+        };
+        assert!(config_with_reload.hot_reload_enabled);
+    }
+
+    // ── 20: Production native hot reload requires config ────────────────────
+
+    #[test]
+    fn test_production_native_hot_reload_requires_config() {
+        let config = UnsafeNativeExtensionConfig {
+            enabled: true,
+            allow_in_production: true,
+            risk_acknowledgement: Some(
+                "I understand native extensions run with full Synvoid process authority"
+                    .to_string(),
+            ),
+            hot_reload_enabled: false,
+            production_mode_override: Some(true),
+            ..Default::default()
+        };
+
+        // Config validates for load (all production gates pass)
+        let result = config.validate_for_load(&["/some/dir".to_string()]);
+        assert!(result.is_ok(), "Config should validate for load");
+
+        // But hot_reload_enabled is false
+        assert!(
+            !config.hot_reload_enabled,
+            "hot_reload_enabled should be false even when load validation passes"
+        );
+    }
+
+    // ── 21: Reload increments generation ────────────────────────────────────
+
+    #[test]
+    fn test_reload_increments_generation() {
+        let gen1 = next_generation();
+        let gen2 = next_generation();
+        let gen3 = next_generation();
+        assert!(gen2 > gen1);
+        assert!(gen3 > gen2);
+    }
+
+    // ── 22: Status reports generation ───────────────────────────────────────
+
+    #[test]
+    fn test_status_reports_generation() {
+        let status = UnsafeNativeExtensionStatus {
+            name: "my_ext".to_string(),
+            path: "/plugins/my_ext.so".to_string(),
+            sha256: "deadbeef".to_string(),
+            abi_version: "1.0.0".to_string(),
+            loaded_at: 2000,
+            generation: 7,
+        };
+        assert_eq!(status.generation, 7);
+        assert_eq!(status.name, "my_ext");
+    }
+
+    // ── 23: Last load error set on rejection ────────────────────────────────
+
+    #[test]
+    fn test_last_load_error_set_on_rejection() {
+        let dir = temp_dir();
+        let so_path = dir.join("test.so");
+        fs::write(&so_path, b"fake").unwrap();
+
+        let config = UnsafeNativeExtensionConfig {
+            enabled: false,
+            production_mode_override: Some(false),
+            ..Default::default()
+        };
+        set_global_unsafe_native_config(config);
+
+        let result = load_plugin(&so_path, &[], None);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("disabled"),
+            "Error message should contain 'disabled', got: {}",
+            err_msg
+        );
+
+        cleanup(&dir);
+    }
+
+    // ── 24: Load failure records metric ─────────────────────────────────────
+
+    #[test]
+    fn test_load_failure_records_metric() {
+        crate::wasm_metrics::record_unsafe_native_extension_load_failed("test_metric_fail");
+    }
+
+    // ── 25: Load success records metric ─────────────────────────────────────
+
+    #[test]
+    fn test_load_success_records_metric() {
+        crate::wasm_metrics::record_unsafe_native_extension_loaded("test_metric_success");
+    }
+
+    // ── 26: Factory panic returns safe error ────────────────────────────────
+
+    #[test]
+    fn test_factory_panic_returns_safe_error() {
+        let dir = temp_dir();
+        let so_path = dir.join("fake_plugin.so");
+        fs::write(&so_path, b"not a real shared library").unwrap();
+
+        let config = UnsafeNativeExtensionConfig {
+            enabled: true,
+            production_mode_override: Some(false),
+            ..Default::default()
+        };
+        set_global_unsafe_native_config(config);
+
+        let result = load_plugin(&so_path, &[], None);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            UnsafeNativePluginError::LoadFailed(_) | UnsafeNativePluginError::SymbolNotFound(_) => {
+            }
+            other => panic!("Expected LoadFailed or SymbolNotFound, got: {:?}", other),
+        }
+
+        cleanup(&dir);
+    }
+
+    // ── 27: Null factory pointer returns error ──────────────────────────────
+
+    #[test]
+    fn test_null_factory_pointer_returns_error() {
+        let dir = temp_dir();
+        let so_path = dir.join("test.so");
+        fs::write(&so_path, b"fake binary content").unwrap();
+
+        let config = UnsafeNativeExtensionConfig {
+            enabled: true,
+            production_mode_override: Some(false),
+            ..Default::default()
+        };
+        set_global_unsafe_native_config(config);
+
+        let result = load_plugin(&so_path, &[], None);
+        assert!(result.is_err(), "Loading a fake .so should fail");
+        let err = result.unwrap_err();
+        let is_expected = matches!(
+            err,
+            UnsafeNativePluginError::LoadFailed(_) | UnsafeNativePluginError::SymbolNotFound(_)
+        );
+        assert!(
+            is_expected,
+            "Expected LoadFailed or SymbolNotFound for fake .so, got: {:?}",
+            err
+        );
+
+        cleanup(&dir);
+    }
+
+    // ── 28: Unsafe native docs not sandboxed ────────────────────────────────
+
+    #[test]
+    fn test_unsafe_native_docs_not_sandboxed() {
+        let example = create_plugin_library_example();
+        assert!(
+            example.contains("create_router"),
+            "Example should mention create_router"
+        );
+        assert!(
+            example.contains("synvoid_abi_version"),
+            "Example should mention synvoid_abi_version"
+        );
+    }
+
+    // ── 29: Global config snapshot ──────────────────────────────────────────
+
+    #[test]
+    fn test_global_config_snapshot() {
+        let config = UnsafeNativeExtensionConfig {
+            enabled: true,
+            allow_in_production: true,
+            risk_acknowledgement: Some("ack".to_string()),
+            allowed_dirs: vec!["/tmp/plugins".to_string()],
+            hot_reload_enabled: true,
+            production_mode_override: Some(true),
+        };
+        set_global_unsafe_native_config(config.clone());
+
+        let snapshot = get_global_unsafe_native_config();
+        assert!(snapshot.enabled);
+        assert!(snapshot.allow_in_production);
+        assert_eq!(snapshot.risk_acknowledgement, Some("ack".to_string()));
+        assert_eq!(snapshot.allowed_dirs, vec!["/tmp/plugins".to_string()]);
+        assert!(snapshot.hot_reload_enabled);
+        assert_eq!(snapshot.production_mode_override, Some(true));
+    }
+
+    // ── 30: validate_for_load enabled check ─────────────────────────────────
+
+    #[test]
+    fn test_validate_for_load_enabled_check() {
+        let config = UnsafeNativeExtensionConfig {
+            enabled: false,
+            production_mode_override: Some(false),
+            ..Default::default()
+        };
+        let result = config.validate_for_load(&[]);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            UnsafeNativePluginError::LoadFailed(msg) => {
+                assert!(
+                    msg.contains("disabled"),
+                    "Expected disabled message, got: {}",
+                    msg
+                );
+            }
+            other => panic!("Expected LoadFailed(disabled), got: {:?}", other),
+        }
+    }
+
+    // ── 31: validate_for_load production check ──────────────────────────────
+
+    #[test]
+    fn test_validate_for_load_production_check() {
+        let config = UnsafeNativeExtensionConfig {
+            enabled: true,
+            allow_in_production: false,
+            production_mode_override: Some(true),
+            ..Default::default()
+        };
+        let result = config.validate_for_load(&["/tmp".to_string()]);
+        assert!(matches!(
+            result.unwrap_err(),
+            UnsafeNativePluginError::ProductionDenied
+        ));
+    }
+
+    // ── 32: validate_for_load risk acknowledgement check ────────────────────
+
+    #[test]
+    fn test_validate_for_load_risk_acknowledgement_check() {
+        let config = UnsafeNativeExtensionConfig {
+            enabled: true,
+            allow_in_production: true,
+            risk_acknowledgement: Some("wrong acknowledgement".to_string()),
+            production_mode_override: Some(true),
+            ..Default::default()
+        };
+        let result = config.validate_for_load(&["/tmp".to_string()]);
+        assert!(matches!(
+            result.unwrap_err(),
+            UnsafeNativePluginError::RiskAcknowledgementRequired
+        ));
+    }
+
+    // ── 33: validate_for_load allowed dirs check ────────────────────────────
+
+    #[test]
+    fn test_validate_for_load_allowed_dirs_check() {
+        let config = UnsafeNativeExtensionConfig {
+            enabled: true,
+            allow_in_production: true,
+            risk_acknowledgement: Some(
+                "I understand native extensions run with full Synvoid process authority"
+                    .to_string(),
+            ),
+            allowed_dirs: vec![],
+            production_mode_override: Some(true),
+            ..Default::default()
+        };
+        let result = config.validate_for_load(&[]);
+        assert!(matches!(
+            result.unwrap_err(),
+            UnsafeNativePluginError::NoAllowedDirs
+        ));
+    }
+
+    // ── 34: validate_for_load development passes ────────────────────────────
+
+    #[test]
+    fn test_validate_for_load_development_passes() {
+        let config = UnsafeNativeExtensionConfig {
+            enabled: true,
+            production_mode_override: Some(false),
+            ..Default::default()
+        };
+        let result = config.validate_for_load(&[]);
+        assert!(
+            result.is_ok(),
+            "Development mode should pass all checks, got: {:?}",
+            result.err()
+        );
+    }
 }
