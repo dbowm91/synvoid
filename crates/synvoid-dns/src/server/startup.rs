@@ -1,4 +1,5 @@
 use super::*;
+use crate::parsed_query::ParsedDnsQuery;
 
 impl DnsServer {
     fn build_handler_state(&self) -> DnsHandlerState {
@@ -205,7 +206,9 @@ impl DnsServer {
                                 }
 
                                 // Extract query name once for firewall and RRL checks
-                                let query_name = Self::extract_query_name(&buf[..len]);
+                                let query_name = ParsedDnsQuery::parse(&buf[..len])
+                                    .map(|p| p.qname)
+                                    .unwrap_or_else(|_| "unknown".to_string());
 
                                 // Firewall check
                                 if let Some(fw) = firewall_udp.as_ref() {

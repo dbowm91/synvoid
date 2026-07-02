@@ -413,8 +413,9 @@ pub fn build_bad_version_response(query: &[u8]) -> Option<Vec<u8>> {
 
     response.extend_from_slice(&id.to_be_bytes());
 
-    response.push(0x81);
-    response.push(0x20);
+    // QR=1, RD=1, AD=1 — BADVERS response to unknown EDNS version
+    let bad_version_flags: u16 = 0x8120;
+    response.extend_from_slice(&bad_version_flags.to_be_bytes());
 
     response.extend_from_slice(&[0x00, 0x01]);
 

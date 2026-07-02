@@ -5,6 +5,7 @@ use std::net::IpAddr;
 use std::sync::Arc;
 
 use super::wire;
+use crate::parsed_query::ParsedDnsQuery;
 use crate::server::ShardedZoneStore;
 
 #[derive(Clone, Debug, Default)]
@@ -206,47 +207,10 @@ impl NotifyHandler {
     }
 }
 
-fn parse_notify_zone_name(query: &[u8], mut pos: usize) -> Option<String> {
-    let mut name = String::new();
-    let mut jumps = 0;
-
-    while pos < query.len() {
-        let len = query[pos] as usize;
-
-        if len == 0 {
-            pos += 1;
-            break;
-        }
-
-        if (len & 0xC0) == 0xC0 {
-            if jumps > 10 {
-                return None;
-            }
-            jumps += 1;
-            let offset = (len & 0x3F) << 8 | query[pos + 1] as usize;
-            pos = offset;
-            continue;
-        }
-
-        if !name.is_empty() {
-            name.push('.');
-        }
-
-        pos += 1;
-        if pos + len > query.len() {
-            return None;
-        }
-
-        name.push_str(&String::from_utf8_lossy(&query[pos..pos + len]));
-        pos += len;
-    }
-    let _ = pos;
-
-    if name.is_empty() {
-        None
-    } else {
-        Some(name)
-    }
+fn parse_notify_zone_name(query: &[u8], _pos: usize) -> Option<String> {
+    // The zone name in a NOTIFY is the QNAME in the question section.
+    // The canonical parser always parses from offset 12.
+    ParsedDnsQuery::parse(query).ok().map(|p| p.qname)
 }
 
 pub fn build_notify_response(query: &[u8], rcode: u8) -> Vec<u8> {

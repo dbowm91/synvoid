@@ -1,6 +1,7 @@
 use std::net::IpAddr;
 use std::sync::Arc;
 
+use crate::parsed_query::build_response_flags;
 use crate::server::{DnsZoneRecord, RecordType, RecordTypeExt, ShardedZoneStore, Zone};
 use crate::tsig::{TsigParseResult, TsigVerifier};
 use crate::wire;
@@ -632,7 +633,9 @@ impl ZoneTransfer {
         let mut response = Vec::new();
 
         response.extend_from_slice(&message_id.to_be_bytes());
-        response.extend_from_slice(&0x8580u16.to_be_bytes());
+        response.extend_from_slice(
+            &build_response_flags(true, false, true, true, false, 0).to_be_bytes(),
+        );
         response.extend_from_slice(&1u16.to_be_bytes());
         response.extend_from_slice(&ancount.to_be_bytes());
         response.extend_from_slice(&0u16.to_be_bytes());
@@ -683,7 +686,9 @@ impl ZoneTransfer {
 
         let mut response = Vec::new();
         response.extend_from_slice(&message_id.to_be_bytes());
-        response.extend_from_slice(&0x8580u16.to_be_bytes());
+        response.extend_from_slice(
+            &build_response_flags(true, false, true, true, false, 0).to_be_bytes(),
+        );
         response.extend_from_slice(&1u16.to_be_bytes());
         response.extend_from_slice(&1u16.to_be_bytes());
         response.extend_from_slice(&0u16.to_be_bytes());
@@ -803,9 +808,9 @@ impl ZoneTransfer {
         response.extend_from_slice(&message_id.to_be_bytes());
 
         let flags = if record_type == &RecordType::SOA {
-            0x8580u16
+            build_response_flags(true, false, true, true, false, 0)
         } else {
-            0x8180u16
+            build_response_flags(false, false, true, true, false, 0)
         };
         response.extend_from_slice(&flags.to_be_bytes());
 

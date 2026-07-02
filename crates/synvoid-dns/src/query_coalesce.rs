@@ -7,6 +7,8 @@ use parking_lot::RwLock;
 use tokio::sync::broadcast;
 use tokio::time::timeout;
 
+use crate::parsed_query::ParsedDnsQuery;
+
 static COALESCER_HITS: std::sync::LazyLock<Gauge> =
     std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_hits_total"));
 static COALESCER_MISSES: std::sync::LazyLock<Gauge> =
@@ -29,46 +31,11 @@ pub struct QueryKey {
 
 impl QueryKey {
     pub fn from_query(query: &[u8], client_ip: Option<std::net::IpAddr>) -> Option<Self> {
-        // Parse query name directly from wire format (skip DNS header)
-        let mut pos = 12; // DNS header is 12 bytes
-        let mut name = String::new();
-
-        while pos < query.len() {
-            let len = query[pos] as usize;
-            if len == 0 {
-                break;
-            }
-            // Check for compression pointer
-            if (len & 0xC0) == 0xC0 {
-                break;
-            }
-            if pos + 1 + len > query.len() {
-                return None;
-            }
-            if !name.is_empty() {
-                name.push('.');
-            }
-            let label = String::from_utf8_lossy(&query[pos + 1..pos + 1 + len]);
-            name.push_str(&label);
-            pos += 1 + len;
-        }
-
-        if name.is_empty() {
-            return None;
-        }
-
-        // Get qtype from bytes after the name
-        let qtype_pos = pos + 1; // Skip null byte
-        if qtype_pos + 2 > query.len() {
-            return None;
-        }
-        let qtype = u16::from_be_bytes([query[qtype_pos], query[qtype_pos + 1]]);
-
+        let parsed = ParsedDnsQuery::parse(query).ok()?;
         let client_str = client_ip.map(|ip| ip.to_string());
-
         Some(Self {
-            name,
-            qtype,
+            name: parsed.qname.to_lowercase(),
+            qtype: parsed.qtype,
             client_ip: client_str,
         })
     }

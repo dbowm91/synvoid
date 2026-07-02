@@ -1,8 +1,8 @@
-use super::*;
 use super::response_encoder::{
-    assemble_packet, build_opt_encoded_record, build_response_flags, encode_rr,
-    truncate_to_fit, ResponseEnvelope,
+    assemble_packet, build_opt_encoded_record, build_response_flags, encode_rr, truncate_to_fit,
+    ResponseEnvelope,
 };
+use super::*;
 
 impl DnsServer {
     pub(super) fn build_response(
@@ -72,22 +72,13 @@ impl DnsServer {
 
         let has_opt = edns_options.is_some() || dnssec_ok;
         if has_opt {
-            let udp_size = edns_options
-                .map(|e| e.udp_payload_size)
-                .unwrap_or(4096);
+            let udp_size = edns_options.map(|e| e.udp_payload_size).unwrap_or(4096);
             envelope
                 .additional_records
                 .push(build_opt_encoded_record(udp_size, dnssec_ok));
         }
 
-        let mut flags = build_response_flags(
-            true,
-            false,
-            true,
-            true,
-            records_signed,
-            0,
-        );
+        let mut flags = build_response_flags(true, false, true, true, records_signed, 0);
 
         if envelope.answer_records.len() > max_response_size && max_response_size > 0 {
             truncate_to_fit(&mut envelope, max_response_size);
@@ -165,9 +156,7 @@ impl DnsServer {
 
         let has_opt = edns_options.is_some() || dnssec_ok;
         if has_opt {
-            let udp_size = edns_options
-                .map(|e| e.udp_payload_size)
-                .unwrap_or(4096);
+            let udp_size = edns_options.map(|e| e.udp_payload_size).unwrap_or(4096);
             envelope
                 .additional_records
                 .push(build_opt_encoded_record(udp_size, dnssec_ok));

@@ -3,6 +3,8 @@ use super::*;
 #[cfg(feature = "mesh")]
 use crate::mesh_sync::MeshDnsRegistry;
 
+use crate::parsed_query::ParsedDnsQuery;
+
 impl DnsServer {
     pub(super) fn build_simple_nxdomain_response(query: &[u8]) -> Option<Arc<Vec<u8>>> {
         use crate::wire::{build_response_header, MessageFlags};
@@ -227,65 +229,63 @@ impl DnsServer {
         if let Some(resp) = response {
             // Check if this is a zone transfer (AXFR/IXFR) - need special multi-message handling for TCP
             if let Some(zt) = ctx.zone_transfer {
-                // Detect zone transfer by checking query type at offset 20
-                let query_qtype = if query.len() >= 22 {
-                    u16::from_be_bytes([query[20], query[21]])
-                } else {
-                    0
-                };
-
-                if query_qtype == crate::transfer::AXFR_QUERY_TYPE {
-                    let qname = Self::extract_query_name(&query);
-                    let tsig = crate::tsig::parse_tsig_from_query(&query, 22);
-                    let message_id = u16::from_be_bytes([query[0], query[1]]);
-                    match zt.handle_axfr_request_messages(
-                        &qname,
-                        client_ip,
-                        tsig.as_ref(),
-                        message_id,
-                        &query,
-                    ) {
-                        Ok(messages) => {
-                            for msg in messages {
-                                let len = msg.len() as u16;
-                                let mut buf = len.to_be_bytes().to_vec();
-                                buf.extend_from_slice(&msg);
-                                stream.write_all(&buf).await.map_err(|e| e.to_string())?;
+                let parsed_zt = ParsedDnsQuery::parse(&query);
+                if let Ok(parsed_zt) = &parsed_zt {
+                    if parsed_zt.is_axfr() {
+                        let qname = Self::extract_query_name(&query);
+                        let tsig =
+                            crate::tsig::parse_tsig_from_query(&query, parsed_zt.question_end);
+                        let message_id = u16::from_be_bytes([query[0], query[1]]);
+                        match zt.handle_axfr_request_messages(
+                            &qname,
+                            client_ip,
+                            tsig.as_ref(),
+                            message_id,
+                            &query,
+                        ) {
+                            Ok(messages) => {
+                                for msg in messages {
+                                    let len = msg.len() as u16;
+                                    let mut buf = len.to_be_bytes().to_vec();
+                                    buf.extend_from_slice(&msg);
+                                    stream.write_all(&buf).await.map_err(|e| e.to_string())?;
+                                }
+                                return Ok(());
                             }
-                            return Ok(());
-                        }
-                        Err(e) => {
-                            tracing::warn!("AXFR multi-message failed: {}", e);
-                            return Err(format!("AXFR failed: {}", e));
+                            Err(e) => {
+                                tracing::warn!("AXFR multi-message failed: {}", e);
+                                return Err(format!("AXFR failed: {}", e));
+                            }
                         }
                     }
-                }
 
-                if query_qtype == crate::transfer::IXFR_QUERY_TYPE {
-                    let qname = Self::extract_query_name(&query);
-                    let serial = Self::extract_ixfr_serial(&query);
-                    let tsig = crate::tsig::parse_tsig_from_query(&query, 22);
-                    let message_id = u16::from_be_bytes([query[0], query[1]]);
-                    match zt.handle_ixfr_request_messages(
-                        &qname,
-                        client_ip,
-                        serial,
-                        tsig.as_ref(),
-                        message_id,
-                        &query,
-                    ) {
-                        Ok(messages) => {
-                            for msg in messages {
-                                let len = msg.len() as u16;
-                                let mut buf = len.to_be_bytes().to_vec();
-                                buf.extend_from_slice(&msg);
-                                stream.write_all(&buf).await.map_err(|e| e.to_string())?;
+                    if parsed_zt.is_ixfr() {
+                        let qname = Self::extract_query_name(&query);
+                        let serial = Self::extract_ixfr_serial(&query);
+                        let tsig =
+                            crate::tsig::parse_tsig_from_query(&query, parsed_zt.question_end);
+                        let message_id = u16::from_be_bytes([query[0], query[1]]);
+                        match zt.handle_ixfr_request_messages(
+                            &qname,
+                            client_ip,
+                            serial,
+                            tsig.as_ref(),
+                            message_id,
+                            &query,
+                        ) {
+                            Ok(messages) => {
+                                for msg in messages {
+                                    let len = msg.len() as u16;
+                                    let mut buf = len.to_be_bytes().to_vec();
+                                    buf.extend_from_slice(&msg);
+                                    stream.write_all(&buf).await.map_err(|e| e.to_string())?;
+                                }
+                                return Ok(());
                             }
-                            return Ok(());
-                        }
-                        Err(e) => {
-                            tracing::warn!("IXFR multi-message failed: {}", e);
-                            return Err(format!("IXFR failed: {}", e));
+                            Err(e) => {
+                                tracing::warn!("IXFR multi-message failed: {}", e);
+                                return Err(format!("IXFR failed: {}", e));
+                            }
                         }
                     }
                 }
@@ -329,8 +329,8 @@ impl DnsServer {
             return None;
         }
 
-        let flags = u16::from_be_bytes([query[2], query[3]]);
-        let opcode = (flags & 0x7800) >> 11;
+        let raw_flags = u16::from_be_bytes([query[2], query[3]]);
+        let opcode = (raw_flags & 0x7800) >> 11;
 
         if opcode as u8 == crate::wire::OPCODE_NOTIFY {
             if let Some(handler) = ctx.notify_handler {
@@ -353,40 +353,13 @@ impl DnsServer {
             return None;
         }
 
-        let mut pos = 12;
-        let mut qname = String::new();
+        let parsed = ParsedDnsQuery::parse(query).ok()?;
 
-        while pos < query.len() {
-            let len = query[pos] as usize;
-            if len == 0 {
-                pos += 1;
-                break;
-            }
-            if !qname.is_empty() {
-                qname.push('.');
-            }
-            let label_bytes = &query[pos + 1..pos + 1 + len];
-            if !label_bytes
-                .iter()
-                .all(|&b| b.is_ascii_graphic() || b == b'-' || b == b'_')
-            {
-                return None;
-            }
-            qname.push_str(std::str::from_utf8(label_bytes).unwrap_or(""));
-            pos += 1 + len;
-        }
-
-        if pos + 4 > query.len() {
-            return None;
-        }
-
-        let qtype = u16::from_be_bytes([query[pos], query[pos + 1]]);
-
-        if qtype == crate::transfer::AXFR_QUERY_TYPE {
+        if parsed.is_axfr() {
             if let (Some(zt), Some(ip)) = (ctx.zone_transfer, client_ip) {
-                let tsig = crate::tsig::parse_tsig_from_query(query, pos + 4);
+                let tsig = crate::tsig::parse_tsig_from_query(query, parsed.question_end);
                 let message_id = u16::from_be_bytes([query[0], query[1]]);
-                match zt.handle_axfr_request(&qname, ip, tsig.as_ref(), message_id, query) {
+                match zt.handle_axfr_request(&parsed.qname, ip, tsig.as_ref(), message_id, query) {
                     Ok(response) => return Some(Arc::new(response)),
                     Err(e) => {
                         tracing::warn!("AXFR failed: {}", e);
@@ -397,12 +370,19 @@ impl DnsServer {
             return None;
         }
 
-        if qtype == crate::transfer::IXFR_QUERY_TYPE {
+        if parsed.is_ixfr() {
             if let (Some(zt), Some(ip)) = (ctx.zone_transfer, client_ip) {
                 let serial = Self::extract_ixfr_serial(query);
-                let tsig = crate::tsig::parse_tsig_from_query(query, pos + 4);
+                let tsig = crate::tsig::parse_tsig_from_query(query, parsed.question_end);
                 let message_id = u16::from_be_bytes([query[0], query[1]]);
-                match zt.handle_ixfr_request(&qname, ip, serial, tsig.as_ref(), message_id, query) {
+                match zt.handle_ixfr_request(
+                    &parsed.qname,
+                    ip,
+                    serial,
+                    tsig.as_ref(),
+                    message_id,
+                    query,
+                ) {
                     Ok(response) => return Some(Arc::new(response)),
                     Err(e) => {
                         tracing::warn!("IXFR failed: {}", e);
@@ -413,9 +393,9 @@ impl DnsServer {
             return None;
         }
 
-        let record_type = RecordType::from(qtype);
+        let record_type = RecordType::from(parsed.qtype);
 
-        cache_key.qname = qname.clone();
+        cache_key.qname = parsed.qname.clone();
         use crate::server::RecordTypeExt;
         cache_key.qtype = record_type.to_u16();
 
@@ -494,26 +474,15 @@ impl DnsServer {
             return None;
         }
 
-        let mut pos = 12;
-        while pos < query.len() {
-            let len = query[pos] as usize;
-            if len == 0 {
-                pos += 1;
-                break;
-            }
-            pos += 1 + len;
-        }
+        let parsed = ParsedDnsQuery::parse(query).ok()?;
 
-        if pos + 8 > query.len() {
+        if parsed.qtype != crate::transfer::IXFR_QUERY_TYPE {
             return None;
         }
 
-        let qtype = u16::from_be_bytes([query[pos], query[pos + 1]]);
-        if qtype != crate::transfer::IXFR_QUERY_TYPE {
-            return None;
-        }
+        // Advance past the question section (QNAME end + qtype + qclass)
+        let mut pos = parsed.question_end;
 
-        let mut pos = pos + 4;
         while pos < query.len() {
             let len = query[pos] as usize;
             if len == 0 {
@@ -626,12 +595,7 @@ impl DnsServer {
             return None;
         }
 
-        let qdcount = u16::from_be_bytes([query[4], query[5]]);
-
-        let is_query = (flags & 0x8000) == 0;
-        if !is_query || qdcount == 0 {
-            return None;
-        }
+        let parsed = ParsedDnsQuery::parse(query).ok()?;
 
         let mut edns_options = parse_edns_options(query);
 
@@ -663,41 +627,12 @@ impl DnsServer {
             }
         }
 
-        let mut pos = 12;
-        let mut qname = String::new();
-
-        while pos < query.len() {
-            let len = query[pos] as usize;
-            if len == 0 {
-                pos += 1;
-                break;
-            }
-            if !qname.is_empty() {
-                qname.push('.');
-            }
-            let label_bytes = &query[pos + 1..pos + 1 + len];
-            if !label_bytes
-                .iter()
-                .all(|&b| b.is_ascii_graphic() || b == b'-' || b == b'_')
-            {
-                return None;
-            }
-            qname.push_str(std::str::from_utf8(label_bytes).unwrap_or(""));
-            pos += 1 + len;
-        }
-
-        if pos + 4 > query.len() {
-            return None;
-        }
-
-        let qtype = u16::from_be_bytes([query[pos], query[pos + 1]]);
-
-        let qname_lower = qname.to_lowercase();
+        let qname_lower = parsed.qname.to_lowercase();
         if qname_lower.ends_with(".example") || qname_lower == "example" {
             return Self::build_simple_nxdomain_response(query);
         }
 
-        if qtype == 16 {
+        if parsed.qtype == 16 {
             // TXT record query - check for ACME DNS-01 challenge
             if qname_lower.starts_with("_acme-challenge.") {
                 if let Some(acme_challenges) = ctx.acme_dns_challenges {
@@ -712,7 +647,7 @@ impl DnsServer {
                         );
                         return Some(Self::build_acme_txt_response(
                             query_id,
-                            &qname,
+                            &parsed.qname,
                             &txt_value,
                             edns_options.as_ref(),
                         ));
@@ -721,7 +656,7 @@ impl DnsServer {
             }
         }
 
-        let record_type = RecordType::from(qtype);
+        let record_type = RecordType::from(parsed.qtype);
 
         let trie_guard = ctx.zone_trie.read();
 
@@ -741,23 +676,25 @@ impl DnsServer {
 
         // Reuse qname_lower instead of calling to_lowercase again
         let qname_lower_trimmed = qname_lower.trim_end_matches('.').to_string();
-        let lookup_name =
-            if qname_lower_trimmed == origin_lower_for_strip || qname.is_empty() || qname == "@" {
-                "@".to_string()
-            } else {
-                let suffix = format!(".{}", origin_lower_for_strip);
-                match qname_lower_trimmed.strip_suffix(&suffix) {
-                    Some(s) => s.to_string(),
-                    None => qname_lower_trimmed.clone(),
-                }
-            };
+        let lookup_name = if qname_lower_trimmed == origin_lower_for_strip
+            || parsed.qname.is_empty()
+            || parsed.qname == "@"
+        {
+            "@".to_string()
+        } else {
+            let suffix = format!(".{}", origin_lower_for_strip);
+            match qname_lower_trimmed.strip_suffix(&suffix) {
+                Some(s) => s.to_string(),
+                None => qname_lower_trimmed.clone(),
+            }
+        };
 
         let key = (lookup_name.clone(), record_type);
         if let Some(records) = zone.records.get(&key) {
             return Some(Self::build_response(
                 query_id,
-                &qname,
-                qtype,
+                &parsed.qname,
+                parsed.qtype,
                 records,
                 dnssec_ok,
                 edns_options.as_ref(),
@@ -771,16 +708,16 @@ impl DnsServer {
             if let Some(cname_records) = zone.records.get(&cname_key) {
                 if let Some(cname) = cname_records.first() {
                     let cname_target = cname.value.trim_end_matches('.');
-                    let qname_stripped = qname.trim_end_matches('.');
+                    let qname_stripped = parsed.qname.trim_end_matches('.');
                     if cname_target.eq_ignore_ascii_case(qname_stripped) {
-                        tracing::warn!("CNAME loop detected for {}", qname);
+                        tracing::warn!("CNAME loop detected for {}", parsed.qname);
                         return None;
                     }
                 }
                 return Some(Self::build_response(
                     query_id,
-                    &qname,
-                    qtype,
+                    &parsed.qname,
+                    parsed.qtype,
                     cname_records,
                     dnssec_ok,
                     edns_options.as_ref(),
@@ -790,7 +727,7 @@ impl DnsServer {
             }
         }
 
-        if qtype == 255 {
+        if parsed.qtype == 255 {
             let mut all_records = Vec::new();
             let mut seen_cname = false;
             let lookup_name_for_qtype = lookup_name.clone();
@@ -823,8 +760,8 @@ impl DnsServer {
             if !all_records.is_empty() {
                 return Some(Self::build_response(
                     query_id,
-                    &qname,
-                    qtype,
+                    &parsed.qname,
+                    parsed.qtype,
                     &all_records,
                     dnssec_ok,
                     edns_options.as_ref(),
@@ -837,8 +774,8 @@ impl DnsServer {
                 let dnskey_records = Self::build_dnskey_records(&zone);
                 return Some(Self::build_response(
                     query_id,
-                    &qname,
-                    qtype,
+                    &parsed.qname,
+                    parsed.qtype,
                     &dnskey_records,
                     dnssec_ok,
                     edns_options.as_ref(),
@@ -847,13 +784,13 @@ impl DnsServer {
                 ));
             }
 
-            if qtype == 59 && qname_lower_trimmed == origin_lower_for_strip {
+            if parsed.qtype == 59 && qname_lower_trimmed == origin_lower_for_strip {
                 if let Some(ksk) = &zone.ksk_key {
                     let cds_records = Self::build_cds_records(ksk);
                     return Some(Self::build_response(
                         query_id,
-                        &qname,
-                        qtype,
+                        &parsed.qname,
+                        parsed.qtype,
                         &cds_records,
                         dnssec_ok,
                         edns_options.as_ref(),
@@ -863,12 +800,12 @@ impl DnsServer {
                 }
             }
 
-            if qtype == 60 && qname_lower_trimmed == origin_lower_for_strip {
+            if parsed.qtype == 60 && qname_lower_trimmed == origin_lower_for_strip {
                 let cdnskey_records = Self::build_cdnskey_records(&zone);
                 return Some(Self::build_response(
                     query_id,
-                    &qname,
-                    qtype,
+                    &parsed.qname,
+                    parsed.qtype,
                     &cdnskey_records,
                     dnssec_ok,
                     edns_options.as_ref(),
@@ -882,8 +819,8 @@ impl DnsServer {
                     let ds_records = Self::build_ds_records(ksk);
                     return Some(Self::build_response(
                         query_id,
-                        &qname,
-                        qtype,
+                        &parsed.qname,
+                        parsed.qtype,
                         &ds_records,
                         dnssec_ok,
                         edns_options.as_ref(),
@@ -899,8 +836,8 @@ impl DnsServer {
                 if let Some(nsec3param_record) = Self::build_nsec3param_record(&zone) {
                     return Some(Self::build_response(
                         query_id,
-                        &qname,
-                        qtype,
+                        &parsed.qname,
+                        parsed.qtype,
                         &[nsec3param_record],
                         dnssec_ok,
                         edns_options.as_ref(),
@@ -914,31 +851,31 @@ impl DnsServer {
         #[cfg(feature = "mesh")]
         if let (Some(registry), Some(ip)) = (ctx.mesh_registry, client_ip) {
             if let Some(mesh_records) =
-                Self::resolve_from_mesh(registry, &qname, ip, ctx.geoip_lookup, qtype)
+                Self::resolve_from_mesh(registry, &parsed.qname, ip, ctx.geoip_lookup, parsed.qtype)
             {
                 if !mesh_records.is_empty() {
-                    tracing::debug!("Resolved {} from mesh network", qname);
-                    let mesh_zone = ctx.zones.find_by_suffix(&qname);
+                    tracing::debug!("Resolved {} from mesh network", parsed.qname);
+                    let mesh_zone = ctx.zones.find_by_suffix(&parsed.qname);
                     let zsk = mesh_zone.as_ref().and_then(|zone| zone.zsk_key.as_ref());
                     return Some(Self::build_response(
                         query_id,
-                        &qname,
-                        qtype,
+                        &parsed.qname,
+                        parsed.qtype,
                         &mesh_records,
                         dnssec_ok,
                         edns_options.as_ref(),
                         zsk,
-                        &qname,
+                        &parsed.qname,
                     ));
                 }
             }
         }
 
         // DNS64 synthesis: if AAAA query found no records, try synthesizing from A records
-        if qtype == 28 {
+        if parsed.qtype == 28 {
             if let Some(translator) = ctx.dns64_translator {
                 if translator.should_synthesize(28, client_ip) {
-                    if let Some(zone) = ctx.zones.find_by_suffix(&qname) {
+                    if let Some(zone) = ctx.zones.find_by_suffix(&parsed.qname) {
                         let a_key = (lookup_name.clone(), RecordType::A);
                         if let Some(a_records) = zone.records.get(&a_key) {
                             let aaaa_records: Vec<DnsZoneRecord> = a_records
@@ -960,7 +897,7 @@ impl DnsServer {
                                 tracing::debug!(
                                     "DNS64: Synthesized {} AAAA records from A records for {}",
                                     aaaa_records.len(),
-                                    qname
+                                    parsed.qname
                                 );
                                 let origin = qname_lower
                                     .split_once('.')
@@ -968,8 +905,8 @@ impl DnsServer {
                                     .unwrap_or_else(|| qname_lower.clone());
                                 return Some(Self::build_response(
                                     query_id,
-                                    &qname,
-                                    qtype,
+                                    &parsed.qname,
+                                    parsed.qtype,
                                     &aaaa_records,
                                     dnssec_ok,
                                     edns_options.as_ref(),
@@ -986,9 +923,9 @@ impl DnsServer {
         if dnssec_ok {
             // Check for NODATA: name exists but requested type does not
             // Use suffix index for O(k) lookup instead of O(n) full scan
-            if let Some(zone) = ctx.zones.find_by_suffix_with_filter(&qname, |zone| {
+            if let Some(zone) = ctx.zones.find_by_suffix_with_filter(&parsed.qname, |zone| {
                 (zone.nsec_enabled || zone.nsec3_enabled)
-                    && Self::is_nodata(zone, &qname, record_type)
+                    && Self::is_nodata(zone, &parsed.qname, record_type)
             }) {
                 let origin = zone.origin.clone();
                 let soa_record = zone
@@ -996,12 +933,12 @@ impl DnsServer {
                     .get(&("@".to_string(), RecordType::SOA))
                     .and_then(|records| records.first().cloned());
                 if zone.nsec3_enabled {
-                    let nsec3_records = Self::build_nsec3_nodata(&zone, &qname, record_type);
+                    let nsec3_records = Self::build_nsec3_nodata(&zone, &parsed.qname, record_type);
                     let zsk = zone.zsk_key.as_ref();
                     return Some(Self::build_nodata_response(
                         query,
-                        &qname,
-                        qtype,
+                        &parsed.qname,
+                        parsed.qtype,
                         &nsec3_records,
                         50,
                         dnssec_ok,
@@ -1011,12 +948,12 @@ impl DnsServer {
                         soa_record.as_ref(),
                     ));
                 } else if zone.nsec_enabled {
-                    let nsec_records = Self::build_nsec_records(&zone, &qname, record_type);
+                    let nsec_records = Self::build_nsec_records(&zone, &parsed.qname, record_type);
                     let zsk = zone.zsk_key.as_ref();
                     return Some(Self::build_nodata_response(
                         query,
-                        &qname,
-                        qtype,
+                        &parsed.qname,
+                        parsed.qtype,
                         &nsec_records,
                         47,
                         dnssec_ok,
@@ -1030,19 +967,18 @@ impl DnsServer {
 
             // NXDOMAIN NSEC/NSEC3 proof
             // Use suffix index for O(k) lookup instead of O(n) full scan
-            if let Some(zone) = ctx
-                .zones
-                .find_by_suffix_with_filter(&qname, |zone| zone.nsec_enabled || zone.nsec3_enabled)
-            {
+            if let Some(zone) = ctx.zones.find_by_suffix_with_filter(&parsed.qname, |zone| {
+                zone.nsec_enabled || zone.nsec3_enabled
+            }) {
                 let origin = zone.origin.clone();
                 if zone.nsec_enabled {
-                    let nsec_records = Self::build_nsec_records(&zone, &qname, record_type);
+                    let nsec_records = Self::build_nsec_records(&zone, &parsed.qname, record_type);
                     if !nsec_records.is_empty() {
                         let zsk = zone.zsk_key.as_ref();
                         return Some(Self::build_nxdomain_response(
                             query,
-                            &qname,
-                            qtype,
+                            &parsed.qname,
+                            parsed.qtype,
                             &nsec_records,
                             47,
                             dnssec_ok,
@@ -1052,13 +988,14 @@ impl DnsServer {
                         ));
                     }
                 } else if zone.nsec3_enabled {
-                    let nsec3_records = Self::build_nsec3_records(&zone, &qname, record_type);
+                    let nsec3_records =
+                        Self::build_nsec3_records(&zone, &parsed.qname, record_type);
                     if !nsec3_records.is_empty() {
                         let zsk = zone.zsk_key.as_ref();
                         return Some(Self::build_nxdomain_response(
                             query,
-                            &qname,
-                            qtype,
+                            &parsed.qname,
+                            parsed.qtype,
                             &nsec3_records,
                             50,
                             dnssec_ok,
@@ -1092,7 +1029,8 @@ impl DnsServer {
         });
         response.extend_from_slice(&response_id.to_be_bytes());
 
-        let mut flags = 0x8583u16;
+        let mut flags =
+            crate::parsed_query::build_response_flags(true, false, true, true, false, 3);
         // AD flag: only set when NSEC/NSEC3 proof records are present
         if dnssec_ok && !nsec_records.is_empty() {
             flags |= 0x0020;
@@ -1203,7 +1141,8 @@ impl DnsServer {
         response.extend_from_slice(&response_id.to_be_bytes());
 
         // NODATA: RCODE 0 (NOERROR), authoritative answer
-        let mut flags = 0x8580u16;
+        let mut flags =
+            crate::parsed_query::build_response_flags(true, false, true, true, false, 0);
         // AD flag: set when NSEC3 proof records are present
         if dnssec_ok && !nsec_records.is_empty() {
             flags |= 0x0020;

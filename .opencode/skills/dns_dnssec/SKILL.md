@@ -16,6 +16,7 @@ SynVoid implements a dual-mode DNS system:
 ```
 src/dns/
 ├── mod.rs                    # Module exports
+├── parsed_query.rs           # Canonical query parser (ParsedDnsQuery, QueryFlags, build_response_flags)
 ├── recursive.rs              # RecursiveDnsServer with caching
 ├── recursive_cache.rs        # Cache implementation with DNSSEC tracking
 ├── resolver.rs              # HickoryRecursor, HickoryResolver, TrustAnchorManager

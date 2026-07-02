@@ -35,6 +35,9 @@ cargo test --test mesh_http_framing --features mesh,dns
 # DNS response encoder tests
 cargo test -p synvoid-dns -- response_encoder
 
+# DNS canonical query parser tests
+cargo test -p synvoid-dns -- parsed_query
+
 # Supervisor lifecycle (Phase 3)
 cargo test --test supervisor_task_ownership_guard
 cargo test -p synvoid supervisor::task_registry

@@ -866,11 +866,43 @@ pub struct RecursiveCacheKey {
 }
 ```
 
-### 9.6 Wire Format Parsing (wire.rs)
+### 9.6 Wire Format Parsing
 
+**Canonical query parser** (`parsed_query.rs`):
+```rust
+/// One-shot canonical parser for DNS query messages.
+/// Replaces 7+ ad-hoc QNAME/QTYPE extraction loops across the codebase.
+pub struct ParsedDnsQuery<'a> {
+    pub id: u16,
+    pub flags: QueryFlags,
+    pub qdcount: u16,
+    pub qname: String,
+    pub qname_end: usize,
+    pub qtype: u16,
+    pub qclass: u16,
+    pub question_end: usize,
+    pub has_edns: bool,
+    pub dnssec_ok: bool,
+    pub raw: &'a [u8],
+}
+impl<'a> ParsedDnsQuery<'a> {
+    pub fn parse(query: &'a [u8]) -> Result<Self, QueryParseError>;
+    pub fn is_query(&self) -> bool;
+    pub fn is_axfr(&self) -> bool;
+    pub fn is_ixfr(&self) -> bool;
+    pub fn is_notify(&self) -> bool;
+    pub fn is_update(&self) -> bool;
+}
+
+/// Canonical response flag constructor (replaces magic hex constants).
+pub fn build_response_flags(auth: bool, trunc: bool, rd: bool, ra: bool, ad: bool, rcode: u16) -> u16;
+pub fn build_response_flags_from_query(parsed: &ParsedDnsQuery, auth: bool, trunc: bool, ra: bool, ad: bool, rcode: u16) -> u16;
+```
+
+**Low-level wire utilities** (`wire.rs`):
 ```rust
 pub fn parse_dns_message(msg: &[u8]) -> Result<ParsedMessage, WireError>
-pub fn parse_query_name(msg: &[u8], pos: usize) -> Result<(&[u8str], usize), WireError>
+pub fn parse_query_name(msg: &[u8], pos: usize) -> Option<String>
 pub fn build_question(...) -> Vec<u8>
 pub fn build_response_header(...) -> Vec<u8>
 pub fn build_error_response(...) -> Option<Vec<u8>>

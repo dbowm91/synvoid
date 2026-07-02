@@ -4,6 +4,8 @@ use std::time::Duration;
 
 use synvoid_core::time::current_timestamp_secs;
 
+use crate::parsed_query::ParsedDnsQuery;
+
 fn is_private_ip(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V4(ipv4) => {
@@ -34,30 +36,7 @@ fn is_private_ip(ip: &IpAddr) -> bool {
 }
 
 fn extract_query_type_from_query(query: &[u8]) -> Option<u16> {
-    if query.len() < 12 {
-        return None;
-    }
-
-    let qdcount = u16::from_be_bytes([query[4], query[5]]);
-    if qdcount == 0 {
-        return None;
-    }
-
-    let mut pos = 12;
-    while pos < query.len() {
-        let len = query[pos] as usize;
-        if len == 0 {
-            pos += 1;
-            break;
-        }
-        pos += 1 + len;
-    }
-
-    if pos + 4 > query.len() {
-        return None;
-    }
-
-    Some(u16::from_be_bytes([query[pos], query[pos + 1]]))
+    ParsedDnsQuery::parse(query).ok().map(|p| p.qtype)
 }
 
 #[derive(Debug, Clone)]

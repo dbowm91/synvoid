@@ -32,6 +32,7 @@ pub mod limits;
 pub mod messages;
 pub mod metrics;
 pub mod notify;
+pub mod parsed_query;
 pub mod platform;
 pub mod qname;
 pub mod query_coalesce;
@@ -94,6 +95,10 @@ pub use metrics::{
     DnsSecurityEventType, DnsSecurityLogger,
 };
 pub use notify::{build_notify_response, NotifyConfig, NotifyHandler};
+pub use parsed_query::{
+    build_response_flags as build_response_flags_canonical, build_response_flags_from_query,
+    ParsedDnsQuery, QueryFlags, QueryParseError,
+};
 pub use platform::{create_platform, AnycastSocketPlatform};
 pub use qname::RebindingChecker;
 pub use query_coalesce::{CoalesceResult, QueryCoalescer, QueryKey};
