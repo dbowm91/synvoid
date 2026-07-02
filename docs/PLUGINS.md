@@ -462,6 +462,67 @@ SynVoid performs the following security checks when loading native plugins:
 5. **Monitoring** - Watch for crashes and memory leaks
 6. **Version Pinning** - Lock plugin versions in production
 
+## Runtime Lifecycle and Guarantees
+
+### Plugin State Models
+
+Each plugin is configured with a `state_model` that controls instance reuse and isolation guarantees:
+
+| Model | Instance Reuse | Guest Globals | Host Context Reset | Use Case |
+|-------|---------------|---------------|-------------------|----------|
+| `HostContextIsolated` | Pooled (same store/instance) | Persist across requests | Yes — env, body, caps, DHT, fuel, timeout | Default for `SignedSandboxed` and `LocalSandboxed` |
+| `FreshInstancePerRequest` | No — instantiated fresh, dropped after use | Reset per request | Yes | Strict isolation, no guest state leakage |
+| `StatefulPooled` | Pooled | Persist across requests | Yes | Explicit stateful plugins (counters, caches) |
+
+**Important**: `HostContextIsolated` was previously named `RequestIsolated`. The name was changed to precisely reflect the guarantee: host-side context is reset, but guest linear memory and globals may persist due to Wasmtime instance reuse. Manifest files using `"request_isolated"` are automatically mapped to `HostContextIsolated`.
+
+### Epoch Interruption Lifecycle
+
+WASM plugins execute with epoch-based interruption to enforce CPU time limits. The epoch incrementer is a background Tokio task managed by `PluginRuntimeOwner`.
+
+- `PluginRuntimeOwner` starts the epoch incrementer on construction and stops it on drop.
+- `WasmPluginManager::validate_execution_containment_runtime()` rejects production configs where sandboxed plugins have `epoch_deadline_enabled = true` but no incrementer is running.
+- Dev/test mode may skip the incrementer when no sandboxed plugins are loaded.
+
+### Body Chunk Timeout
+
+The `synvoid_read_body_chunk` host function enforces a timeout (`body_chunk_timeout`) when waiting for upstream body data. If no data arrives within the timeout, the host returns `ABI_ERR_TIMEOUT` (-3) to the guest.
+
+- Timeout uses `tokio::time::timeout` inside the synchronous Wasmtime host callback.
+- Multi-thread Tokio runtime is required for timeout enforcement (timer workers need separate threads).
+- Chunks exceeding `max_body_chunk_bytes` are clamped to the limit.
+
+### Pool Metrics
+
+Plugin pool metrics use distinct counters with precise semantics:
+
+| Metric | Meaning |
+|--------|---------|
+| `pool_hit` | A pooled instance was reused (warm start) |
+| `pool_miss` | No pooled instance was available; a fresh instance was created |
+| `pool_drop` | A poisoned or failed instance was discarded |
+| `concurrency_limit_exceeded` | Execution denied due to concurrency/instance cap exhaustion |
+| `fresh_instance_created` | A `FreshInstancePerRequest` invocation bypassed the pool |
+
+`pool_miss` and `concurrency_limit_exceeded` are semantically separate: a miss means no warm instance was available but execution continued successfully; a limit exceeded means execution was denied due to backpressure.
+
+### CI Guardrails
+
+Plugin runtime changes are validated by the `plugin-runtime-guardrails` CI job:
+
+```bash
+# Local verification (mirrors CI steps)
+cargo fmt --all -- --check
+cargo clippy -p synvoid-plugin-runtime --all-targets -- -D warnings
+cargo test -p synvoid-plugin-runtime
+cargo test --test abi_memory_boundary_guard
+cargo test --test plugin_capability_boundary_guard
+cargo test --test plugin_failure_does_not_poison_manager
+cargo test --test plugin_signature_policy_guard
+cargo test --test manifest_authority_wiring
+cargo test --test manifest_authority_load_path_guard
+```
+
 ## See Also
 
 - [CONFIGURATION.md](./CONFIGURATION.md) - Plugin configuration
