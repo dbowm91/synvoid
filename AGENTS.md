@@ -141,6 +141,7 @@ cargo test --test mesh_task_ownership_guard --features mesh,dns  # Mesh task own
 - **Plugin ABI memory boundary**: `write_to_guest_memory` requires `guest_alloc`/`guest_free`. Fixed-offset 1024 fallback is removed. All guest pointer/length operations use `checked_guest_range`.
 - **Plugin ABI frame serialization**: Use `abi_frame::serialize_headers_canonical` and `abi_frame::build_request_frame` — never ad-hoc header encoding. `SerializationFailureClass` classifies rejections for bounded metrics.
 - **Unsafe native extensions**: Disabled by default. Production loading requires explicit risk acknowledgement, path allowlist, and optional SHA-256 hash verification. The `Library` handle is retained via `Arc` for the lifetime of any plugin-derived values. Native extensions are NOT sandboxed and have full process authority.
+- **Plugin lifecycle**: Reload is prepare-then-commit with generation-aware atomic swaps. Failed reloads must never replace a working plugin. Hot reload waits for stable files and debounces watcher events. Lifecycle states and transitions are explicit and auditable.
 
 ## Admin Control-Plane Authority
 

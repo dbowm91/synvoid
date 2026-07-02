@@ -59,6 +59,7 @@ pub struct UnsafeNativeExtension {
     pub abi_version: String,
     pub loaded_at: SystemTime,
     pub sha256: String,
+    pub generation: u64,            // Incremented on reload for safe drain
 }
 ```
 

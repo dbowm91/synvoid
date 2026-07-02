@@ -151,6 +151,30 @@ impl PluginManager {
             .collect()
     }
 
+    /// Returns global status of the unsafe native extension subsystem,
+    /// combining configuration state with per-extension status.
+    pub fn unsafe_native_global_status(
+        &self,
+    ) -> crate::unsafe_native_loader::UnsafeNativeGlobalStatus {
+        let config = crate::unsafe_native_loader::get_global_unsafe_native_config();
+        let extensions: Vec<crate::unsafe_native_loader::UnsafeNativeExtensionStatus> = self
+            .unsafe_native_extensions
+            .read()
+            .iter()
+            .map(|w| w.extension.status())
+            .collect();
+        let last_load_error = self.last_native_load_error.read().clone();
+        crate::unsafe_native_loader::UnsafeNativeGlobalStatus {
+            enabled: config.enabled,
+            production_mode: config.is_production(),
+            allow_in_production: config.allow_in_production,
+            hot_reload_enabled: config.hot_reload_enabled,
+            loaded_count: extensions.len(),
+            last_load_error,
+            extensions,
+        }
+    }
+
     /// Returns the last error from a failed native extension load attempt.
     pub fn last_native_load_error(&self) -> Option<String> {
         self.last_native_load_error.read().clone()

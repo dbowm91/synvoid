@@ -502,6 +502,102 @@ pub fn load_plugin_from_memory_with_manifest(
 
 The existing `load_plugin_from_memory()` defaults to `LocalSandboxed` with all-deny capabilities.
 
+## Plugin Lifecycle Hardening (Phase 9)
+
+Phase 9 hardened how plugins are loaded, reloaded, replaced, disabled, quarantined, and unloaded over time. The key types and patterns relevant to serverless WASM are:
+
+### Generation Tracking
+
+Every plugin load creates a `LoadedPluginGeneration` with a monotonically increasing `PluginGenerationId`. Generation IDs are never reused within process lifetime. In-flight requests hold a stable `Arc<WasmRuntime>` reference to their generation, preventing use-after-reload.
+
+```rust
+pub struct LoadedPluginGeneration {
+    pub generation_id: PluginGenerationId,
+    pub binary_sha256: String,
+    pub manifest_sha256: String,
+    pub trust_tier: PluginTrustTier,
+    pub loaded_at: u64,
+}
+```
+
+### Atomic Reload Pipeline
+
+Reload follows a prepare-then-commit pattern:
+1. `prepare_reload_candidate(path)` — validates the candidate without touching the active generation
+2. `commit_reload_candidate(name, runtime, generation)` — atomically swaps under lock
+
+Failed reloads never replace the active generation. The `PluginReloadOutcome` enum provides structured results: `Replaced`, `Unchanged`, or `Failed`.
+
+### File Stability Detection
+
+`FileStabilityPolicy` prevents loading partially written files during hot-reload:
+
+```rust
+pub struct FileStabilityPolicy {
+    pub debounce: Duration,        // Initial delay (default: 300ms)
+    pub stable_checks: usize,      // Consecutive identical observations (default: 3)
+    pub stable_interval: Duration,  // Time between checks (default: 100ms)
+    pub max_wait: Duration,         // Maximum wait time (default: 5s)
+}
+```
+
+### Lifecycle State Machine
+
+`PluginLifecycleState` defines explicit states with validated transitions:
+
+```
+Loading -> Active | FailedLoad
+Active -> Reloading | Disabled | Quarantined | Unloading
+Reloading -> Active | FailedLoad
+Disabled -> Active (operator reset)
+Quarantined -> Disabled | Removed
+Unloading -> Removed
+```
+
+All transitions are recorded in the lifecycle audit trail via `LifecycleTransition` records.
+
+### Hot Reload Configuration
+
+`HotReloadConfig` separates WASM and native hot-reload gates:
+- `enabled` — master toggle
+- `production_enabled` — required for production mode
+- `unsafe_native_enabled` — separate gate for native extensions
+- `require_signed_wasm` — optional signature enforcement
+
+### Operator Lifecycle APIs
+
+Manager provides: `disable_plugin()`, `reset_plugin()`, `remove_plugin()`, `quarantine_plugin()`. Each records audit events with generation, hashes, and reasons.
+
+### Usage Pattern
+
+```rust
+use synvoid_plugin_runtime::sandbox::types::{
+    PluginGenerationId, LoadedPluginGeneration, PluginLifecycleState,
+    PluginReloadOutcome, FileStabilityPolicy, HotReloadConfig,
+};
+
+// Check lifecycle state before invoking
+let state = manager.get_plugin_lifecycle_state("my-plugin");
+if state == PluginLifecycleState::Active {
+    // safe to invoke
+}
+
+// Reload with generation awareness
+match manager.reload_plugin("my-plugin").await? {
+    PluginReloadOutcome::Replaced(gen) => { /* new generation active */ }
+    PluginReloadOutcome::Unchanged => { /* candidate identical to active */ }
+    PluginReloadOutcome::Failed(e) => { /* active generation untouched */ }
+}
+
+// Configure hot-reload for production
+let config = HotReloadConfig {
+    enabled: true,
+    production_enabled: true,
+    unsafe_native_enabled: false,
+    require_signed_wasm: true,
+};
+```
+
 ## ABI Frame Serialization (M2 Phase 05)
 
 The `abi_frame` module provides canonical request/response serialization for the WASM plugin ABI:

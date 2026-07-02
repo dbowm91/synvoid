@@ -123,3 +123,82 @@ fn default_max_cpu_fuel() -> u64 {
 fn default_timeout_seconds() -> u64 {
     30
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_defaults_disabled() {
+        let config = UnsafeNativePluginConfig::default();
+        assert!(!config.enabled);
+        assert!(!config.allow_in_production);
+        assert!(!config.hot_reload_enabled);
+        assert!(config.risk_acknowledgement.is_none());
+        assert!(config.allowed_dirs.is_empty());
+        assert!(config.allowed_libraries.is_empty());
+    }
+
+    #[test]
+    fn test_deprecated_config_key_maps_to_new_key() {
+        let toml = r#"
+[native_plugins]
+enabled = true
+allow_in_production = true
+risk_acknowledgement = "I understand native extensions run with full Synvoid process authority"
+allowed_dirs = ["/opt/native"]
+hot_reload_enabled = true
+"#;
+        let mut config: PluginConfig = toml::from_str(toml).unwrap();
+        assert!(config.native_plugins_compat.is_some());
+        assert!(!config.unsafe_native.enabled);
+
+        let migrated = config.migrate_deprecated_native_plugins();
+        assert!(
+            migrated,
+            "migration should return true when compat key is present"
+        );
+        assert!(config.native_plugins_compat.is_none());
+        assert!(config.unsafe_native.enabled);
+        assert!(config.unsafe_native.allow_in_production);
+        assert!(config.unsafe_native.hot_reload_enabled);
+        assert_eq!(
+            config.unsafe_native.risk_acknowledgement.as_deref(),
+            Some("I understand native extensions run with full Synvoid process authority")
+        );
+        assert_eq!(config.unsafe_native.allowed_dirs, vec!["/opt/native"]);
+    }
+
+    #[test]
+    fn test_deprecated_config_does_not_overwrite_explicit_new_config() {
+        let toml = r#"
+[unsafe_native]
+enabled = true
+allow_in_production = true
+
+[native_plugins]
+enabled = false
+"#;
+        let mut config: PluginConfig = toml::from_str(toml).unwrap();
+        let migrated = config.migrate_deprecated_native_plugins();
+        assert!(migrated);
+        // Should NOT overwrite because unsafe_native was explicitly configured (non-default)
+        assert!(config.unsafe_native.enabled);
+        assert!(config.unsafe_native.allow_in_production);
+    }
+
+    #[test]
+    fn test_no_deprecated_key_no_migration() {
+        let toml = r#"
+[unsafe_native]
+enabled = true
+"#;
+        let mut config: PluginConfig = toml::from_str(toml).unwrap();
+        let migrated = config.migrate_deprecated_native_plugins();
+        assert!(
+            !migrated,
+            "migration should return false when no compat key"
+        );
+        assert!(config.unsafe_native.enabled);
+    }
+}

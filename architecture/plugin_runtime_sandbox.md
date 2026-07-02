@@ -842,3 +842,66 @@ cargo test -p synvoid-plugin-runtime -- test_manifest_toml_parses_mesh
 cargo test -p synvoid-plugin-runtime -- test_signing_payload_includes
 cargo test -p synvoid-plugin-runtime -- test_manifest_validate_trust
 ```
+
+## Plugin Lifecycle Hardening (Phase 9)
+
+### Generation Model
+
+Every plugin load creates a `LoadedPluginGeneration` with:
+- Monotonic `PluginGenerationId` (never reused)
+- Binary and manifest SHA-256 hashes
+- Trust tier and source identity
+- Load timestamp and previous generation link
+
+### Atomic Reload Pipeline
+
+```
+reload event
+  -> resolve path
+  -> read bytes once (TOCTOU closure)
+  -> validate manifest and signature
+  -> build effective policy
+  -> compile/instantiate candidate
+  -> ABI validation
+  -> acquire manager write lock
+  -> atomically swap active generation
+  -> update sorted cache
+  -> emit lifecycle event
+```
+
+If any candidate step fails, the active generation remains unchanged.
+
+### File Stability Policy
+
+```rust
+pub struct FileStabilityPolicy {
+    pub debounce: Duration,        // Initial delay (default: 300ms)
+    pub stable_checks: usize,      // Consecutive identical observations (default: 3)
+    pub stable_interval: Duration,  // Time between checks (default: 100ms)
+    pub max_wait: Duration,         // Maximum wait time (default: 5s)
+}
+```
+
+### Lifecycle State Machine
+
+```
+Loading -> Active | FailedLoad
+Active -> Reloading | Disabled | Quarantined | Unloading
+Reloading -> Active | FailedLoad
+Disabled -> Active (operator reset)
+Quarantined -> Disabled | Removed
+Unloading -> Removed
+```
+
+### Hot Reload Configuration
+
+Production hot reload requires explicit `production_enabled = true`. Native hot reload has a separate `unsafe_native_enabled` gate. Both are validated at startup.
+
+### Operator Controls
+
+- `disable_plugin(name, reason)` — prevents new invocations
+- `reset_plugin(name)` — re-enables disabled/quarantined plugins
+- `remove_plugin(name)` — fully removes from registry
+- `quarantine_plugin(name, reason)` — blocks all invocations
+
+All operations emit lifecycle transitions with generation, hashes, and timestamps.

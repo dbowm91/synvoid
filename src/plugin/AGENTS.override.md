@@ -220,3 +220,52 @@ Native shared-library plugins are now classified as **unsafe native extensions**
 - Never load native extensions without going through the config gate
 - Never store only the `Router` without the `UnsafeNativeExtension` (loses library lifetime)
 - Never call `Library::drop` while in-flight requests may reference plugin code
+
+## Plugin Lifecycle and Hot-Reload Hardening (Phase 9)
+
+Phase 9 hardened how plugins are loaded, reloaded, replaced, disabled, quarantined, and unloaded over time.
+
+### Generation Tracking
+
+Every plugin load/reload creates a new `LoadedPluginGeneration` with a monotonically increasing `PluginGenerationId`. Generation IDs are never reused within process lifetime. In-flight requests hold a stable `Arc<WasmRuntime>` reference to their generation.
+
+### Atomic Reload Pipeline
+
+Reload follows a prepare-then-commit pattern:
+1. `prepare_reload_candidate(path)` — validates candidate without touching active generation
+2. `commit_reload_candidate(name, runtime, generation)` — atomically swaps under lock
+
+Failed reloads never replace the active generation. The `PluginReloadOutcome` enum provides structured results: `Replaced`, `Unchanged`, or `Failed`.
+
+### File Stability Detection
+
+`FileStabilityPolicy` and `wait_for_stable_file()` prevent loading partially written files during hot-reload. The policy configures debounce delay, stability check count, check interval, and maximum wait.
+
+### Lifecycle State Machine
+
+`PluginLifecycleState` defines explicit states: `Loading`, `Active`, `Reloading`, `Disabled`, `Quarantined`, `Unloading`, `Removed`, `FailedLoad`. Only validated transitions are permitted. All transitions are recorded in the lifecycle audit trail.
+
+### Production/Development Hot Reload Gates
+
+`HotReloadConfig` separates WASM and native hot-reload gates:
+- `enabled` — master toggle
+- `production_enabled` — required for production mode
+- `unsafe_native_enabled` — separate gate for native extensions
+- `require_signed_wasm` — optional signature enforcement
+
+### Operator Lifecycle APIs
+
+Manager provides: `disable_plugin()`, `reset_plugin()`, `remove_plugin()`, `quarantine_plugin()`. Each records audit events with generation, hashes, and reasons.
+
+### Key Types
+
+| Type | Purpose |
+|------|---------|
+| `PluginGenerationId` | Monotonic generation identifier |
+| `LoadedPluginGeneration` | Generation metadata (hash, trust tier, timestamps) |
+| `PluginLifecycleState` | Explicit lifecycle state machine |
+| `PluginReloadOutcome` | Structured reload result |
+| `PluginReplacePolicy` | Duplicate name handling policy |
+| `FileStabilityPolicy` | Hot-reload debounce configuration |
+| `HotReloadConfig` | Production/development hot-reload gates |
+| `LifecycleTransition` | Audit trail record |

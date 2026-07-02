@@ -410,7 +410,43 @@ impl UnifiedServer {
         // ── Plugin runtime (kept alive until after shutdown) ────────
         let plugin_owner = {
             let cfg = config.read().await;
-            let main_config = cfg.main.clone();
+            let mut main_config = cfg.main.clone();
+
+            // ── Wire unsafe native extension config to runtime ──────────
+            if main_config.plugins.migrate_deprecated_native_plugins() {
+                tracing::warn!(
+                    "DEPRECATION: [plugins.native_plugins] is deprecated. \
+                     Use [plugins.unsafe_native] instead."
+                );
+            }
+            let native_cfg = &main_config.plugins.unsafe_native;
+            let runtime_native_config = crate::plugin::UnsafeNativeExtensionConfig {
+                enabled: native_cfg.enabled,
+                allow_in_production: native_cfg.allow_in_production,
+                risk_acknowledgement: native_cfg.risk_acknowledgement.clone(),
+                allowed_dirs: native_cfg.allowed_dirs.clone(),
+                hot_reload_enabled: native_cfg.hot_reload_enabled,
+                ..Default::default()
+            };
+            crate::plugin::set_global_unsafe_native_config(runtime_native_config);
+
+            // ── Startup log for unsafe native extension status ──────────
+            if native_cfg.enabled {
+                if crate::plugin::is_production_env() {
+                    if native_cfg.allow_in_production {
+                        tracing::warn!("Unsafe native extensions: ENABLED in production mode");
+                    } else {
+                        tracing::warn!(
+                            "Unsafe native extensions: enabled but blocked in production \
+                             (allow_in_production=false)"
+                        );
+                    }
+                } else {
+                    tracing::info!("Unsafe native extensions: enabled in development mode");
+                }
+            } else {
+                tracing::debug!("Unsafe native extensions: disabled");
+            }
 
             let mut owner = crate::server::plugin_runtime::PluginRuntimeOwner::new(Arc::new(
                 crate::plugin::PluginManager::new(),

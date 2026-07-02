@@ -12,7 +12,7 @@ pub mod unsafe_native_loader;
 pub use synvoid_plugin_runtime::unsafe_native_loader::{
     current_generation, get_global_unsafe_native_config, is_production_env,
     set_global_unsafe_native_config, UnsafeNativeExtension, UnsafeNativeExtensionConfig,
-    UnsafeNativeExtensionStatus,
+    UnsafeNativeExtensionStatus, UnsafeNativeGlobalStatus,
 };
 pub use synvoid_plugin_runtime::{
     get_all_wasm_metrics, get_global_plugin_manager, get_wasm_metrics, GlobalPluginManager,
@@ -169,6 +169,28 @@ impl PluginManager {
             .iter()
             .map(|w| w.extension.status())
             .collect()
+    }
+
+    /// Returns global status of the unsafe native extension subsystem,
+    /// combining configuration state with per-extension status.
+    pub fn unsafe_native_global_status(&self) -> UnsafeNativeGlobalStatus {
+        let config = get_global_unsafe_native_config();
+        let extensions: Vec<UnsafeNativeExtensionStatus> = self
+            .unsafe_native_extensions
+            .read()
+            .iter()
+            .map(|w| w.extension.status())
+            .collect();
+        let last_load_error = self.last_native_load_error.read().clone();
+        UnsafeNativeGlobalStatus {
+            enabled: config.enabled,
+            production_mode: config.is_production(),
+            allow_in_production: config.allow_in_production,
+            hot_reload_enabled: config.hot_reload_enabled,
+            loaded_count: extensions.len(),
+            last_load_error,
+            extensions,
+        }
     }
 
     /// Returns the last error from a failed native extension load attempt.

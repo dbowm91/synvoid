@@ -182,6 +182,21 @@ pub struct UnsafeNativeExtensionStatus {
     pub generation: u64,
 }
 
+/// Global status of unsafe native extension subsystem.
+///
+/// Combines global configuration state with per-extension status for
+/// operator visibility and incident review.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct UnsafeNativeGlobalStatus {
+    pub enabled: bool,
+    pub production_mode: bool,
+    pub allow_in_production: bool,
+    pub hot_reload_enabled: bool,
+    pub loaded_count: usize,
+    pub last_load_error: Option<String>,
+    pub extensions: Vec<UnsafeNativeExtensionStatus>,
+}
+
 // ─── ExternalPluginClient placeholder ────────────────────────────────────────
 
 /// Placeholder trait for out-of-process native extension communication.
@@ -519,12 +534,27 @@ unsafe fn load_native_library(
         generation
     );
 
+    // Wrap the router with a request-counting middleware layer so that
+    // `synvoid_unsafe_native_extension_request_total` is emitted for every
+    // request that passes through this native extension's routes.
+    let extension_name = name.to_owned();
+    let metrics_layer = axum::Router::new().layer(axum::middleware::from_fn(
+        move |req: axum::http::Request<axum::body::Body>, next: axum::middleware::Next| {
+            let name = extension_name.clone();
+            async move {
+                crate::wasm_metrics::record_unsafe_native_extension_request(&name);
+                next.run(req).await
+            }
+        },
+    ));
+    let router = metrics_layer.merge(*router);
+
     Ok(UnsafeNativeExtension {
         name: name.to_string(),
         path: canonical_path.to_path_buf(),
         canonical_path: canonical_path.to_path_buf(),
         library: lib,
-        router: Arc::new(*router),
+        router: Arc::new(router),
         abi_version: plugin_version,
         loaded_at: SystemTime::now(),
         sha256: sha256.to_string(),

@@ -595,8 +595,12 @@ fn hot_reload_uses_same_trust_policy_as_initial_load() {
         .join("\n");
 
     assert!(
-        window.contains("load_with_priority") || window.contains("load_with_policy"),
-        "reload_plugin must delegate to load_with_priority or load_with_policy \
+        window.contains("load_with_priority")
+            || window.contains("load_with_policy")
+            || window.contains("reload_plugin_with_outcome")
+            || window.contains("prepare_reload_candidate"),
+        "reload_plugin must delegate to load_with_priority, load_with_policy, \
+         reload_plugin_with_outcome, or prepare_reload_candidate \
          (same trust policy as initial load), but found no reference in the method body:\n{}",
         window
     );
