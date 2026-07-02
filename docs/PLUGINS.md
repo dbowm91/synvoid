@@ -29,36 +29,51 @@ WebAssembly plugins run in a sandboxed environment for safe execution of custom 
 
 ## Configuration
 
-### Enable Plugins
+### Global WASM Plugin Limits
 
 ```toml
-[plugins]
-enabled = true
-plugins_dir = "/etc/synvoid/plugins"
-watch_for_changes = true
+[plugins.wasm]
+max_memory_mb = 64
+max_cpu_fuel = 1000000
+timeout_seconds = 30
+```
 
-# Resource limits
-[plugins.limits]
-max_memory_mb = 128
-max_cpu_percent = 50
-max_execution_time_ms = 1000
+### Per-Instance Overrides
+
+```toml
+[[plugins.wasm.plugins]]
+name = "my_plugin"
+path = "/etc/synvoid/plugins/my_plugin.wasm"
+memory_mb = 128          # optional override
+cpu_fuel = 500000        # optional override
+timeout_seconds = 10     # optional override
+priority = 100           # optional execution order
+on_error = "block"       # optional: "pass" or "block"
+allowed_dht_prefixes = ["site:example.com"]  # optional DHT scoping
 ```
 
 ### Configuration Options
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `enabled` | `false` | Enable plugin system |
-| `plugins_dir` | `"./plugins"` | Directory containing WASM plugins |
-| `watch_for_changes` | `false` | Auto-reload on file changes |
-
-### Resource Limits
+#### `[plugins.wasm]` — Global Defaults
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `max_memory_mb` | `128` | Max memory per plugin |
-| `max_cpu_percent` | `50` | Max CPU percentage |
-| `max_execution_time_ms` | `1000` | Max execution time |
+| `max_memory_mb` | `64` | Max memory per plugin instance (MB) |
+| `max_cpu_fuel` | `1000000` | Wasmtime fuel budget per execution |
+| `timeout_seconds` | `30` | Execution timeout |
+
+#### `[[plugins.wasm.plugins]]` — Per-Instance Overrides
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `name` | *(required)* | Plugin name (must be unique) |
+| `path` | *(required)* | Path to `.wasm` file |
+| `memory_mb` | `None` | Override global memory limit |
+| `cpu_fuel` | `None` | Override global fuel budget |
+| `timeout_seconds` | `None` | Override global timeout |
+| `priority` | `None` | Execution order (lower runs first) |
+| `on_error` | `None` | `"pass"` or `"block"` on plugin error |
+| `allowed_dht_prefixes` | `None` | Restrict DHT access to these prefixes |
 
 ## Writing a Plugin
 
@@ -258,13 +273,7 @@ WASM plugins run in a sandboxed environment:
 
 ### Signed Plugins
 
-Verify plugin integrity:
-
-```toml
-[plugins]
-require_signed = true
-signing_key_path = "/etc/synvoid/keys/plugin.key"
-```
+Plugin signing is managed through manifest trust tiers (`SignedSandboxed`, `LocalSandboxed`, `Development`) rather than a global config toggle. See `architecture/plugin_runtime_sandbox.md` for trust tier details and `HotReloadConfig.require_signed_wasm` for hot-reload signature enforcement.
 
 ## ABI Frame Serialization
 
@@ -326,8 +335,8 @@ wasm-validate /etc/synvoid/plugins/my_plugin.wasm
 Increase timeout in config:
 
 ```toml
-[plugins.limits]
-max_execution_time_ms = 5000
+[plugins.wasm]
+timeout_seconds = 60
 ```
 
 ### Memory Issues
@@ -335,19 +344,41 @@ max_execution_time_ms = 5000
 Reduce memory limit:
 
 ```toml
-[plugins.limits]
-max_memory_mb = 64
+[plugins.wasm]
+max_memory_mb = 32
 ```
 
 ## Metrics
 
-```bash
-synvoid_plugin_load_total       # Plugins loaded
-synvoid_plugin_execution_total  # Total executions
-synvoid_plugin_block_total      # Blocks by plugins
-synvoid_plugin_error_total     # Plugin errors
-synvoid_plugin_duration_ms      # Execution duration
-```
+### Pool & Execution Metrics
+
+| Metric | Labels | Description |
+|--------|--------|-------------|
+| `synvoid_plugin_pool_hit_total` | `plugin` | Pooled instance reused (warm start) |
+| `synvoid_plugin_pool_miss_total` | `plugin` | No pooled instance available; fresh instance created |
+| `synvoid_plugin_pool_dropped_total` | `plugin` | Poisoned/failed instance discarded |
+| `synvoid_plugin_concurrency_limit_exceeded_total` | `plugin` | Execution denied due to concurrency cap |
+| `synvoid_plugin_invoke_total` | `plugin`, `capability`, `status` | Total invocation attempts |
+| `synvoid_plugin_load_total` | `tier`, `status` | Plugin load events |
+| `synvoid_plugin_hot_reload_total` | `status` | Hot-reload attempts |
+| `synvoid_plugin_state_transition_total` | `from`, `to`, `reason` | Lifecycle state transitions |
+
+### Capability & Host API Metrics
+
+| Metric | Labels | Description |
+|--------|--------|-------------|
+| `synvoid_plugin_capability_violation_total` | `capability` | Capability check denials |
+| `synvoid_plugin_host_call_failure_total` | `plugin`, `host_function`, `failure_class` | Host call failures (timeout, capability denied, etc.) |
+| `synvoid_plugin_serialization_rejection_total` | `plugin`, `hook`, `failure_class`, `trust_tier` | ABI frame serialization rejections |
+
+### Unsafe Native Extension Metrics
+
+| Metric | Labels | Description |
+|--------|--------|-------------|
+| `synvoid_unsafe_native_extension_loaded_total` | `name` | Extensions loaded |
+| `synvoid_unsafe_native_extension_load_failed_total` | `name` | Failed load attempts |
+| `synvoid_unsafe_native_extension_reloaded_total` | `name` | Hot-reload successes |
+| `synvoid_unsafe_native_extension_request_total` | `name` | Requests routed to extensions |
 
 ## Best Practices
 
@@ -493,6 +524,90 @@ Each plugin is configured with a `state_model` that controls instance reuse and 
 
 **Important**: `HostContextIsolated` was previously named `RequestIsolated`. The name was changed to precisely reflect the guarantee: host-side context is reset, but guest linear memory and globals may persist due to Wasmtime instance reuse. Manifest files using `"request_isolated"` are automatically mapped to `HostContextIsolated`.
 
+### Lifecycle Hardening (Phase 9)
+
+#### Generation Tracking
+
+Every plugin load/reload creates a new `LoadedPluginGeneration` with a monotonically increasing `PluginGenerationId`. Generation IDs are never reused within process lifetime. In-flight requests hold a stable `Arc<WasmRuntime>` reference to their generation.
+
+| Type | Purpose |
+|------|---------|
+| `PluginGenerationId` | Monotonic generation identifier (`u64`) |
+| `LoadedPluginGeneration` | Generation metadata (hash, trust tier, timestamps, previous generation) |
+| `PluginReloadOutcome` | Structured reload result: `Replaced`, `Unchanged`, or `Failed` |
+| `PluginReplacePolicy` | Duplicate name handling: `RejectExisting`, `ReplaceSameSource`, `ReplaceAnyWithOperatorOverride` |
+| `LifecycleTransition` | Audit trail record for state transitions |
+
+#### Atomic Reload Pipeline
+
+Reload follows a prepare-then-commit pattern:
+
+1. `prepare_reload_candidate(path)` — validates candidate without touching the active generation
+2. `commit_reload_candidate(name, runtime, generation)` — atomically swaps under lock
+
+Failed reloads **never** replace the active generation. The `PluginReloadOutcome` enum provides structured results.
+
+#### File Stability Detection
+
+`FileStabilityPolicy` prevents loading partially written files during hot-reload:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `debounce` | `300ms` | Initial delay before stability check |
+| `stable_checks` | `3` | Consecutive identical observations required |
+| `stable_interval` | `100ms` | Interval between stability checks |
+| `max_wait` | `5s` | Maximum time to wait for file to stabilize |
+
+#### Lifecycle State Machine
+
+`PluginLifecycleState` defines explicit states with validated transitions:
+
+```
+Loading ──→ Active ──→ Reloading ──→ Active
+  │            │                        │
+  ↓            ↓                        ↓
+FailedLoad   Disabled ←────────────── Quarantined
+                 │                        │
+                 ↓                        ↓
+              Active ──→ Unloading ──→ Removed
+```
+
+Valid transitions:
+- `Loading` → `Active` | `FailedLoad`
+- `Active` → `Reloading` | `Disabled` | `Quarantined` | `Unloading`
+- `Reloading` → `Active` | `FailedLoad`
+- `Disabled` → `Active`
+- `Quarantined` → `Disabled` | `Active` | `Removed`
+- `Unloading` → `Removed`
+
+All transitions are recorded in the lifecycle audit trail.
+
+#### Production/Development Hot Reload Gates
+
+`HotReloadConfig` separates WASM and native hot-reload gates:
+
+| Field | Description |
+|-------|-------------|
+| `enabled` | Master toggle for hot reload |
+| `production_enabled` | Required for production mode hot reload |
+| `unsafe_native_enabled` | Separate gate for native extension hot reload |
+| `require_signed_wasm` | Optional signature enforcement for WASM reload |
+| `watch_dirs` | Directories to watch for plugin changes |
+| `stability_policy` | `FileStabilityPolicy` for debounce configuration |
+
+#### Operator Lifecycle APIs
+
+The `WasmPluginManager` provides operator-facing lifecycle controls:
+
+| API | Description |
+|-----|-------------|
+| `disable_plugin(name, reason)` | Transitions `Active` → `Disabled` |
+| `reset_plugin(name)` | Transitions `Disabled`/`Quarantined` → `Active` |
+| `remove_plugin(name)` | Transitions `Active` → `Unloading` → `Removed` |
+| `quarantine_plugin(name, reason)` | Transitions `Active` → `Quarantined` |
+
+Each operation records audit events with generation, hashes, and reasons.
+
 ### Epoch Interruption Lifecycle
 
 WASM plugins execute with epoch-based interruption to enforce CPU time limits. The epoch incrementer is a background Tokio task managed by `PluginRuntimeOwner`.
@@ -538,6 +653,7 @@ cargo test --test plugin_failure_does_not_poison_manager
 cargo test --test plugin_signature_policy_guard
 cargo test --test manifest_authority_wiring
 cargo test --test manifest_authority_load_path_guard
+cargo test --test plugin_lifecycle_guard
 ```
 
 ## See Also

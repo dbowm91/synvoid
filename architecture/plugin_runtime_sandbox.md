@@ -739,11 +739,21 @@ State transition logging: `record_plugin_state_transition()` emits both a `traci
 
 | Counter | Labels | Description |
 |---------|--------|-------------|
-| `synvoid_plugin_host_call_failure_total` | plugin, host_function, failure_class | Host call failures |
 | `synvoid_plugin_pool_hit_total` | plugin | Pool reuse events |
 | `synvoid_plugin_pool_miss_total` | plugin | No pooled instance available; fresh instance created |
 | `synvoid_plugin_pool_dropped_total` | plugin | Dropped poisoned instances |
+| `synvoid_plugin_concurrency_limit_exceeded_total` | plugin | Execution denied due to concurrency/instance cap exhaustion |
 | `synvoid_plugin_state_transition_total` | from, to, reason | State transitions |
+| `synvoid_plugin_load_total` | tier, status | Plugin load events |
+| `synvoid_plugin_hot_reload_total` | status | Hot-reload events |
+| `synvoid_plugin_invoke_total` | capability, status | Plugin invocation events |
+| `synvoid_plugin_capability_violation_total` | capability | Capability violations |
+| `synvoid_plugin_host_call_failure_total` | plugin, host_function, failure_class | Host call failures |
+| `synvoid_plugin_serialization_rejection_total` | plugin, hook, failure_class, trust_tier | ABI frame serialization rejections |
+| `synvoid_unsafe_native_extension_loaded_total` | name | Unsafe native extension loaded |
+| `synvoid_unsafe_native_extension_load_failed_total` | name | Unsafe native extension load failed |
+| `synvoid_unsafe_native_extension_reloaded_total` | name | Unsafe native extension reloaded |
+| `synvoid_unsafe_native_extension_request_total` | name | Unsafe native extension request |
 
 **Pool metrics semantics (WS3 closure):**
 
