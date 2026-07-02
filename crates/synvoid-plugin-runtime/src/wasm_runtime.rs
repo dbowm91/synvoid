@@ -102,6 +102,10 @@ impl PluginLifecycleState {
                 )
                 | (
                     PluginLifecycleState::Quarantined,
+                    PluginLifecycleState::Active
+                )
+                | (
+                    PluginLifecycleState::Quarantined,
                     PluginLifecycleState::Removed
                 )
                 | (
@@ -210,6 +214,22 @@ pub struct LifecycleTransition {
     pub generation: Option<PluginGenerationId>,
     pub timestamp: SystemTime,
     pub reason: String,
+}
+
+/// Comprehensive detail about a loaded plugin, combining generation, lifecycle,
+/// and policy information for operator introspection.
+#[derive(Debug, Clone)]
+pub struct PluginDetail {
+    /// Plugin name.
+    pub name: String,
+    /// Current generation metadata.
+    pub generation: LoadedPluginGeneration,
+    /// Current lifecycle state.
+    pub lifecycle_state: PluginLifecycleState,
+    /// Effective plugin policy (capabilities, limits, source identity).
+    pub policy: Option<EffectivePluginPolicy>,
+    /// Filesystem or memory path.
+    pub source_path: Option<PathBuf>,
 }
 
 /// Maximum size of request/response data passed through WASM memory (1MB)
@@ -818,17 +838,13 @@ impl WasmPluginManager {
 
     pub fn load_plugin(&self, path: &Path) -> Result<Arc<WasmRuntime>, WasmPluginError> {
         let prepared = self.prepare_plugin_load(Some(path), None, None)?;
+        let new_source = prepared.source.clone();
         let limits = prepared.effective_limits.clone();
         let runtime = WasmRuntime::load_with_policy(path, limits, 0, Some(prepared))?;
         let arc = Arc::new(runtime);
         let name = arc.name().to_string();
 
-        if self.runtimes.read().iter().any(|r| r.name() == name) {
-            return Err(WasmPluginError::LoadFailed(format!(
-                "plugin '{}' already loaded (duplicate name)",
-                name
-            )));
-        }
+        self.check_duplicate_name(&name, &new_source)?;
 
         self.runtimes.write().push(arc.clone());
         *self.sorted_runtimes_cache.write() = None;
@@ -889,6 +905,12 @@ impl WasmPluginManager {
         limits: WasmResourceLimits,
     ) -> Result<Arc<WasmRuntime>, WasmPluginError> {
         let prepared = self.prepare_plugin_load(None, Some(manifest), Some(data))?;
+        let base_source = prepared.source.clone();
+        let new_source = PluginSourceIdentity {
+            path: Some(PathBuf::from(format!("memory://{}", name))),
+            binary_sha256: Some(crate::sandbox::types::compute_binary_hash(data)),
+            ..base_source
+        };
         let effective = WasmResourceLimits {
             capabilities: prepared.effective_limits.capabilities.clone(),
             ..limits
@@ -896,17 +918,8 @@ impl WasmPluginManager {
         let runtime = WasmRuntime::load_from_bytes_with_priority(name, data, effective, 0)?;
         let arc = Arc::new(runtime);
         let runtime_name = arc.name().to_string();
-        if self
-            .runtimes
-            .read()
-            .iter()
-            .any(|r| r.name() == runtime_name)
-        {
-            return Err(WasmPluginError::LoadFailed(format!(
-                "plugin '{}' already loaded (duplicate name)",
-                runtime_name
-            )));
-        }
+
+        self.check_duplicate_name(&runtime_name, &new_source)?;
         self.runtimes.write().push(arc.clone());
         *self.sorted_runtimes_cache.write() = None;
         self.plugin_paths.write().insert(
@@ -920,14 +933,38 @@ impl WasmPluginManager {
             capabilities: prepared.effective_limits.capabilities.clone(),
             limits: prepared.effective_limits.clone(),
             manifest_limits: prepared.manifest.limits.clone(),
-            source: PluginSourceIdentity {
-                path: Some(PathBuf::from(format!("memory://{}", name))),
-                binary_sha256: Some(crate::sandbox::types::compute_binary_hash(data)),
-                ..prepared.source
-            },
+            source: new_source,
             state_model: prepared.effective_limits.state_model,
         };
-        self.plugin_policies.write().insert(runtime_name, policy);
+        self.plugin_policies
+            .write()
+            .insert(runtime_name.clone(), policy);
+
+        let gen = LoadedPluginGeneration {
+            name: runtime_name.clone(),
+            generation: self.next_generation_id(),
+            source_path: Some(PathBuf::from(format!("memory://{}", name))),
+            binary_hash: arc
+                .effective_policy()
+                .and_then(|p| p.source.binary_sha256.clone())
+                .unwrap_or_default(),
+            manifest_hash: arc
+                .effective_policy()
+                .and_then(|p| p.source.manifest_sha256.clone()),
+            trust_tier: arc
+                .effective_policy()
+                .map(|p| p.trust_tier)
+                .unwrap_or_default(),
+            loaded_at: SystemTime::now(),
+            previous_generation: None,
+        };
+        self.plugin_generations
+            .write()
+            .insert(runtime_name.clone(), gen);
+        self.plugin_lifecycle_states
+            .write()
+            .insert(runtime_name, PluginLifecycleState::Active);
+
         Ok(arc)
     }
 
@@ -942,6 +979,11 @@ impl WasmPluginManager {
         // The manifest is discovered from the default (LocalSandboxed) since
         // memory-loaded plugins don't have a file path to look up a TOML.
         let prepared = self.prepare_plugin_load(None, None, Some(data))?;
+        let base_source = prepared.source.clone();
+        let new_source = PluginSourceIdentity {
+            path: Some(PathBuf::from(format!("mesh://{}", name))),
+            ..base_source
+        };
         // Merge caller-supplied limits with manifest-derived limits.
         // Manifest capabilities are authoritative; resource limits use manifest
         // values where declared, falling back to caller-supplied then defaults.
@@ -953,17 +995,7 @@ impl WasmPluginManager {
         let arc = Arc::new(runtime);
         let runtime_name = arc.name().to_string();
 
-        if self
-            .runtimes
-            .read()
-            .iter()
-            .any(|r| r.name() == runtime_name)
-        {
-            return Err(WasmPluginError::LoadFailed(format!(
-                "plugin '{}' already loaded (duplicate name)",
-                runtime_name
-            )));
-        }
+        self.check_duplicate_name(&runtime_name, &new_source)?;
 
         self.runtimes.write().push(arc.clone());
         *self.sorted_runtimes_cache.write() = None;
@@ -978,13 +1010,39 @@ impl WasmPluginManager {
             capabilities: prepared.effective_limits.capabilities.clone(),
             limits: prepared.effective_limits.clone(),
             manifest_limits: prepared.manifest.limits.clone(),
-            source: PluginSourceIdentity {
-                path: Some(PathBuf::from(format!("mesh://{}", name))),
-                ..prepared.source
-            },
+            source: new_source,
             state_model: prepared.effective_limits.state_model,
         };
-        self.plugin_policies.write().insert(runtime_name, policy);
+        self.plugin_policies
+            .write()
+            .insert(runtime_name.clone(), policy);
+
+        let old_generation = self.get_plugin_generation(&runtime_name);
+        let gen = LoadedPluginGeneration {
+            name: runtime_name.clone(),
+            generation: self.next_generation_id(),
+            source_path: Some(PathBuf::from(format!("mesh://{}", name))),
+            binary_hash: arc
+                .effective_policy()
+                .and_then(|p| p.source.binary_sha256.clone())
+                .unwrap_or_default(),
+            manifest_hash: arc
+                .effective_policy()
+                .and_then(|p| p.source.manifest_sha256.clone()),
+            trust_tier: arc
+                .effective_policy()
+                .map(|p| p.trust_tier)
+                .unwrap_or_default(),
+            loaded_at: SystemTime::now(),
+            previous_generation: old_generation,
+        };
+        self.plugin_generations
+            .write()
+            .insert(runtime_name.clone(), gen);
+        self.plugin_lifecycle_states
+            .write()
+            .insert(runtime_name, PluginLifecycleState::Active);
+
         Ok(arc)
     }
 
@@ -1158,6 +1216,7 @@ impl WasmPluginManager {
         limits: WasmResourceLimits,
     ) -> Result<Arc<WasmRuntime>, WasmPluginError> {
         let prepared = self.prepare_plugin_load(Some(path), None, None)?;
+        let new_source = prepared.source.clone();
         // Merge: manifest capabilities are authoritative, caller-supplied
         // resource limits override manifest values where declared.
         let effective = WasmResourceLimits {
@@ -1168,12 +1227,7 @@ impl WasmPluginManager {
         let arc = Arc::new(runtime);
         let name = arc.name().to_string();
 
-        if self.runtimes.read().iter().any(|r| r.name() == name) {
-            return Err(WasmPluginError::LoadFailed(format!(
-                "plugin '{}' already loaded (duplicate name)",
-                name
-            )));
-        }
+        self.check_duplicate_name(&name, &new_source)?;
 
         self.runtimes.write().push(arc.clone());
         *self.sorted_runtimes_cache.write() = None;
@@ -1181,8 +1235,34 @@ impl WasmPluginManager {
             .write()
             .insert(name.clone(), path.to_path_buf());
         if let Some(policy) = arc.effective_policy() {
-            self.plugin_policies.write().insert(name, policy.clone());
+            self.plugin_policies
+                .write()
+                .insert(name.clone(), policy.clone());
         }
+
+        let gen = LoadedPluginGeneration {
+            name: name.clone(),
+            generation: self.next_generation_id(),
+            source_path: Some(path.to_path_buf()),
+            binary_hash: arc
+                .effective_policy()
+                .and_then(|p| p.source.binary_sha256.clone())
+                .unwrap_or_default(),
+            manifest_hash: arc
+                .effective_policy()
+                .and_then(|p| p.source.manifest_sha256.clone()),
+            trust_tier: arc
+                .effective_policy()
+                .map(|p| p.trust_tier)
+                .unwrap_or_default(),
+            loaded_at: SystemTime::now(),
+            previous_generation: None,
+        };
+        self.plugin_generations.write().insert(name.clone(), gen);
+        self.plugin_lifecycle_states
+            .write()
+            .insert(name, PluginLifecycleState::Active);
+
         Ok(arc)
     }
 
@@ -1210,7 +1290,9 @@ impl WasmPluginManager {
         match outcome {
             PluginReloadOutcome::Replaced { name, .. } => {
                 self.get_runtime_by_name(&name).ok_or_else(|| {
-                    WasmPluginError::LoadFailed("reload succeeded but runtime not found".to_string())
+                    WasmPluginError::LoadFailed(
+                        "reload succeeded but runtime not found".to_string(),
+                    )
                 })
             }
             PluginReloadOutcome::Unchanged { reason, .. } => Err(WasmPluginError::LoadFailed(
@@ -1406,16 +1488,20 @@ impl WasmPluginManager {
     }
 
     /// Quarantine a plugin, preventing all future invocations.
-    pub fn quarantine_plugin(&self, name: &str) -> Result<(), WasmPluginError> {
+    pub fn quarantine_plugin(&self, name: &str, reason: &str) -> Result<(), WasmPluginError> {
         let runtime = self
             .get_runtime_by_name(name)
             .ok_or_else(|| WasmPluginError::FunctionNotFound(name.to_string()))?;
         runtime.guard().quarantine();
-        crate::wasm_metrics::record_plugin_state_transition(
+        let _ = self.set_plugin_lifecycle_state(name, PluginLifecycleState::Quarantined, reason);
+        self.record_lifecycle_transition(
             name,
-            "quarantined",
-            "manual quarantine",
+            PluginLifecycleState::Active,
+            PluginLifecycleState::Quarantined,
+            self.get_plugin_generation(name),
+            reason,
         );
+        crate::wasm_metrics::record_plugin_state_transition(name, "quarantined", reason);
         Ok(())
     }
 
@@ -1435,6 +1521,35 @@ impl WasmPluginManager {
     /// Get detailed generation metadata for a plugin.
     pub fn get_plugin_generation_detail(&self, name: &str) -> Option<LoadedPluginGeneration> {
         self.plugin_generations.read().get(name).cloned()
+    }
+
+    /// List all loaded plugins with their generation metadata.
+    pub fn list_plugin_generations(&self) -> Vec<(String, LoadedPluginGeneration)> {
+        self.plugin_generations
+            .read()
+            .iter()
+            .map(|(name, gen)| (name.clone(), gen.clone()))
+            .collect()
+    }
+
+    /// Get comprehensive detail about a loaded plugin.
+    pub fn get_plugin_detail(&self, name: &str) -> Option<PluginDetail> {
+        let generation = self.plugin_generations.read().get(name).cloned()?;
+        let lifecycle_state = self
+            .plugin_lifecycle_states
+            .read()
+            .get(name)
+            .copied()
+            .unwrap_or(PluginLifecycleState::Loading);
+        let policy = self.plugin_policies.read().get(name).cloned();
+        let source_path = self.plugin_paths.read().get(name).cloned();
+        Some(PluginDetail {
+            name: name.to_string(),
+            generation,
+            lifecycle_state,
+            policy,
+            source_path,
+        })
     }
 
     /// Get the lifecycle state of a plugin.
@@ -1482,6 +1597,61 @@ impl WasmPluginManager {
     /// Set the replace policy.
     pub fn set_replace_policy(&self, policy: PluginReplacePolicy) {
         *self.replace_policy.write() = policy;
+    }
+
+    /// Check whether a plugin name is already loaded and whether the new source
+    /// is allowed to replace it according to the current `PluginReplacePolicy`.
+    ///
+    /// Returns `Ok(())` if the name is free or replacement is allowed.
+    /// Returns `Err` if the duplicate is rejected.
+    fn check_duplicate_name(
+        &self,
+        name: &str,
+        new_source: &PluginSourceIdentity,
+    ) -> Result<(), WasmPluginError> {
+        let has_existing = self.runtimes.read().iter().any(|r| r.name() == name);
+        if !has_existing {
+            return Ok(()); // name is free
+        }
+
+        let policy = *self.replace_policy.read();
+        match policy {
+            PluginReplacePolicy::RejectExisting => Err(WasmPluginError::LoadFailed(format!(
+                "plugin '{}' already loaded (duplicate name)",
+                name
+            ))),
+            PluginReplacePolicy::ReplaceSameSource => {
+                let same_source = self
+                    .plugin_policies
+                    .read()
+                    .get(name)
+                    .map(|existing_policy| {
+                        let ep = &existing_policy.source;
+                        // Match by canonical path (file-based) or binary hash (memory/mesh)
+                        if let (Some(np), Some(ep_path)) =
+                            (new_source.path.as_ref(), ep.path.as_ref())
+                        {
+                            np == ep_path
+                        } else if let (Some(nh), Some(eh)) =
+                            (new_source.binary_sha256.as_ref(), ep.binary_sha256.as_ref())
+                        {
+                            nh == eh
+                        } else {
+                            false
+                        }
+                    })
+                    .unwrap_or(false);
+                if same_source {
+                    Ok(())
+                } else {
+                    Err(WasmPluginError::LoadFailed(format!(
+                        "plugin '{}' already loaded from different source (replace policy: ReplaceSameSource)",
+                        name
+                    )))
+                }
+            }
+            PluginReplacePolicy::ReplaceAnyWithOperatorOverride => Ok(()),
+        }
     }
 
     /// Get the hot reload configuration.
@@ -1607,15 +1777,38 @@ impl WasmPluginManager {
 
     /// Prepare a reload candidate without touching the active generation.
     /// Returns the prepared runtime and generation metadata.
+    ///
+    /// If `stability_policy` is provided, waits for the file to stabilize before
+    /// reading. Otherwise uses the manager's `hot_reload_config.stability_policy`.
     pub fn prepare_reload_candidate(
         &self,
         path: &Path,
+        stability_policy: Option<&FileStabilityPolicy>,
     ) -> Result<(Arc<WasmRuntime>, LoadedPluginGeneration), WasmPluginError> {
         let name = path
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("unknown")
             .to_string();
+
+        // Wait for file to stabilize before reading
+        let policy_ref;
+        let default_policy;
+        let policy = match stability_policy {
+            Some(p) => p,
+            None => {
+                default_policy = self.hot_reload_config.read().stability_policy.clone();
+                policy_ref = default_policy;
+                &policy_ref
+            }
+        };
+        wait_for_stable_file(path, policy).map_err(|e| {
+            WasmPluginError::LoadFailed(format!(
+                "file stability check failed for '{}': {}",
+                path.display(),
+                e
+            ))
+        })?;
 
         let priority = self
             .runtimes
@@ -1684,7 +1877,7 @@ impl WasmPluginManager {
         );
 
         // Prepare candidate (does not touch active generation)
-        let (new_runtime, generation) = match self.prepare_reload_candidate(path) {
+        let (new_runtime, generation) = match self.prepare_reload_candidate(path, None) {
             Ok(r) => r,
             Err(e) => {
                 let _ = self.set_plugin_lifecycle_state(
@@ -5045,7 +5238,7 @@ entry = "plugin.wasm"
     #[test]
     fn test_manager_quarantine_plugin_not_found() {
         let mgr = WasmPluginManager::new();
-        let result = mgr.quarantine_plugin("nonexistent");
+        let result = mgr.quarantine_plugin("nonexistent", "test quarantine");
         assert!(result.is_err());
     }
 

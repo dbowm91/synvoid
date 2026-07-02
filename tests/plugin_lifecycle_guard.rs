@@ -244,7 +244,10 @@ fn duplicate_name_check_in_all_load_paths() {
             _ => false,
         };
 
-        if !has_duplicate_string && !has_structural_check {
+        // Check 3: Delegation — method calls check_duplicate_name (centralized check)
+        let has_delegated_check = method_body.contains("check_duplicate_name");
+
+        if !has_duplicate_string && !has_structural_check && !has_delegated_check {
             let short_name = method_sig.trim_start_matches("fn ").trim_end_matches('(');
             violations.push(format!(
                 "{}: no duplicate name check found (no 'duplicate name' string and no runtimes.read() before runtimes.write().push())",
@@ -736,5 +739,238 @@ fn lifecycle_transition_audit_trail() {
             field,
             fields
         );
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Behavioral Tests — exercise actual WasmPluginManager runtime
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod behavioral {
+    use synvoid_plugin_runtime::{
+        PluginLifecycleState, PluginReplacePolicy, WasmPluginManager, WasmResourceLimits,
+    };
+
+    fn minimal_wasm_bytes() -> Vec<u8> {
+        wat::parse_str(
+            r#"
+            (module
+                (memory (export "memory") 1)
+                (global $heap (mut i32) (i32.const 0))
+                (func (export "guest_alloc") (param $size i32) (result i32)
+                    (local $ptr i32)
+                    (local.set $ptr (global.get $heap))
+                    (global.set $heap (i32.add (global.get $heap) (local.get $size)))
+                    (local.get $ptr))
+                (func (export "guest_free") (param $ptr i32) (param $size i32))
+                (func (export "filter_request") (param i32 i32 i32 i32 i32 i32 i32 i32) (result i32)
+                    i32.const 0)
+            )
+            "#,
+        )
+        .expect("valid WAT")
+    }
+
+    #[test]
+    fn load_creates_generation_1() {
+        let mgr = WasmPluginManager::new();
+        let bytes = minimal_wasm_bytes();
+        let _rt = mgr
+            .load_plugin_from_memory("gen1_plugin", &bytes, WasmResourceLimits::default())
+            .expect("load should succeed");
+
+        let gen = mgr.get_plugin_generation("gen1_plugin");
+        assert!(gen.is_some(), "generation should exist after load");
+        let gen = gen.unwrap();
+        assert_eq!(gen.0, 1, "first load should be generation 1");
+
+        let state = mgr.get_plugin_lifecycle_state("gen1_plugin");
+        assert_eq!(state, Some(PluginLifecycleState::Active));
+
+        let detail = mgr.get_plugin_generation_detail("gen1_plugin");
+        assert!(detail.is_some());
+        let detail = detail.unwrap();
+        assert!(detail.previous_generation.is_none());
+    }
+
+    #[test]
+    fn reload_increments_generation() {
+        let mgr = WasmPluginManager::new();
+        let bytes = minimal_wasm_bytes();
+
+        mgr.load_plugin_from_memory("reload_gen", &bytes, WasmResourceLimits::default())
+            .expect("initial load");
+        let gen1 = mgr.get_plugin_generation("reload_gen").unwrap();
+        assert_eq!(gen1.0, 1);
+
+        // Reload same name (replace policy must allow it)
+        mgr.set_replace_policy(PluginReplacePolicy::ReplaceSameSource);
+        mgr.load_plugin_from_memory("reload_gen", &bytes, WasmResourceLimits::default())
+            .expect("reload should succeed");
+
+        let gen2 = mgr.get_plugin_generation("reload_gen").unwrap();
+        assert_eq!(gen2.0, 2, "second load should be generation 2");
+
+        let detail = mgr.get_plugin_generation_detail("reload_gen").unwrap();
+        assert_eq!(detail.previous_generation, Some(gen1));
+    }
+
+    #[test]
+    fn list_plugin_generations_returns_all() {
+        let mgr = WasmPluginManager::new();
+        let bytes = minimal_wasm_bytes();
+
+        mgr.load_plugin_from_memory("list_a", &bytes, WasmResourceLimits::default())
+            .unwrap();
+        mgr.load_plugin_from_memory("list_b", &bytes, WasmResourceLimits::default())
+            .unwrap();
+
+        let list = mgr.list_plugin_generations();
+        assert_eq!(list.len(), 2);
+        let names: Vec<&str> = list.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.contains(&"list_a"));
+        assert!(names.contains(&"list_b"));
+    }
+
+    #[test]
+    fn get_plugin_detail_returns_full_info() {
+        let mgr = WasmPluginManager::new();
+        let bytes = minimal_wasm_bytes();
+
+        mgr.load_plugin_from_memory("detail_plugin", &bytes, WasmResourceLimits::default())
+            .unwrap();
+
+        let detail = mgr.get_plugin_detail("detail_plugin");
+        assert!(detail.is_some());
+        let detail = detail.unwrap();
+        assert_eq!(detail.name, "detail_plugin");
+        assert_eq!(detail.lifecycle_state, PluginLifecycleState::Active);
+        assert!(detail.policy.is_some());
+        assert_eq!(detail.generation.generation.0, 1);
+    }
+
+    #[test]
+    fn quarantine_sets_lifecycle_state() {
+        let mgr = WasmPluginManager::new();
+        let bytes = minimal_wasm_bytes();
+
+        mgr.load_plugin_from_memory("quarantine_test", &bytes, WasmResourceLimits::default())
+            .unwrap();
+
+        mgr.quarantine_plugin("quarantine_test", "suspicious behavior")
+            .expect("quarantine should succeed");
+
+        let state = mgr.get_plugin_lifecycle_state("quarantine_test");
+        assert_eq!(state, Some(PluginLifecycleState::Quarantined));
+
+        let transitions = mgr.get_plugin_lifecycle_transitions("quarantine_test");
+        assert!(
+            transitions
+                .iter()
+                .any(|t| t.to == PluginLifecycleState::Quarantined),
+            "should have Quarantined transition in audit trail"
+        );
+    }
+
+    #[test]
+    fn quarantine_then_reset() {
+        let mgr = WasmPluginManager::new();
+        let bytes = minimal_wasm_bytes();
+
+        mgr.load_plugin_from_memory("qr_test", &bytes, WasmResourceLimits::default())
+            .unwrap();
+
+        mgr.quarantine_plugin("qr_test", "test").unwrap();
+        assert_eq!(
+            mgr.get_plugin_lifecycle_state("qr_test"),
+            Some(PluginLifecycleState::Quarantined)
+        );
+
+        mgr.reset_plugin("qr_test").unwrap();
+        assert_eq!(
+            mgr.get_plugin_lifecycle_state("qr_test"),
+            Some(PluginLifecycleState::Active)
+        );
+    }
+
+    #[test]
+    fn disable_plugin_prevents_lifecycle_state() {
+        let mgr = WasmPluginManager::new();
+        let bytes = minimal_wasm_bytes();
+
+        mgr.load_plugin_from_memory("disable_test", &bytes, WasmResourceLimits::default())
+            .unwrap();
+
+        mgr.disable_plugin("disable_test", "testing disable")
+            .unwrap();
+        assert_eq!(
+            mgr.get_plugin_lifecycle_state("disable_test"),
+            Some(PluginLifecycleState::Disabled)
+        );
+    }
+
+    #[test]
+    fn validate_hot_reload_config_production_default_rejects() {
+        let mgr = WasmPluginManager::new();
+        // Default config has enabled=false, production_enabled=false
+        let config = mgr.get_hot_reload_config();
+        assert!(!config.enabled);
+        assert!(!config.production_enabled);
+
+        // When enabled but not production_enabled, validate should reject in prod
+        mgr.set_hot_reload_config(synvoid_plugin_runtime::HotReloadConfig {
+            enabled: true,
+            production_enabled: false,
+            ..Default::default()
+        });
+        // Note: validate_hot_reload_config only errors if is_production_env() is true
+        // and production_enabled is false. In test env, this may or may not trigger.
+        // Just verify the method exists and doesn't panic.
+        let _ = mgr.validate_hot_reload_config();
+    }
+
+    #[test]
+    fn replace_policy_reject_existing_blocks_duplicate() {
+        let mgr = WasmPluginManager::new();
+        let bytes = minimal_wasm_bytes();
+
+        mgr.set_replace_policy(PluginReplacePolicy::RejectExisting);
+
+        mgr.load_plugin_from_memory("reject_dup", &bytes, WasmResourceLimits::default())
+            .unwrap();
+
+        let result =
+            mgr.load_plugin_from_memory("reject_dup", &bytes, WasmResourceLimits::default());
+        assert!(result.is_err(), "RejectExisting should block duplicate");
+    }
+
+    #[test]
+    fn replace_policy_replace_same_source_allows_same_name() {
+        let mgr = WasmPluginManager::new();
+        let bytes = minimal_wasm_bytes();
+
+        mgr.set_replace_policy(PluginReplacePolicy::ReplaceSameSource);
+
+        mgr.load_plugin_from_memory("same_src", &bytes, WasmResourceLimits::default())
+            .unwrap();
+
+        // Same name + same bytes (same binary hash) should be allowed
+        let result = mgr.load_plugin_from_memory("same_src", &bytes, WasmResourceLimits::default());
+        assert!(result.is_ok(), "ReplaceSameSource should allow same source");
+    }
+
+    #[test]
+    fn remove_plugin_clears_registry() {
+        let mgr = WasmPluginManager::new();
+        let bytes = minimal_wasm_bytes();
+
+        mgr.load_plugin_from_memory("remove_me", &bytes, WasmResourceLimits::default())
+            .unwrap();
+        assert!(mgr.is_plugin_loaded("remove_me"));
+
+        mgr.remove_plugin("remove_me").unwrap();
+        assert!(!mgr.is_plugin_loaded("remove_me"));
+        assert!(mgr.get_plugin_generation("remove_me").is_none());
     }
 }

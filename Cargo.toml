@@ -290,6 +290,7 @@ proptest = "1.5"
 proptest-derive = "0.4"
 criterion = { version = "0.5", features = ["html_reports"] }
 wasmtime = "42.0.2"
+wat = "1"
 
 [[bench]]
 name = "bench_attack_detection"

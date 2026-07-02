@@ -51,8 +51,8 @@ pub use wasm_metrics::{
 };
 pub use wasm_runtime::{
     wait_for_stable_file, FileStabilityPolicy, HotReloadConfig, LifecycleTransition,
-    LoadedPluginGeneration, PluginGenerationId, PluginLifecycleState, PluginReloadOutcome,
-    PluginReplacePolicy,
+    LoadedPluginGeneration, PluginDetail, PluginGenerationId, PluginLifecycleState,
+    PluginReloadOutcome, PluginReplacePolicy,
 };
 pub use wasm_runtime::{
     ExecutionInterruptPolicy, GuestAbiInfo, GuestAbiPolicy, HostCallBudget, WasmFilterResult,

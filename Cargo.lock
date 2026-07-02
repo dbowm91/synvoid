@@ -8021,6 +8021,7 @@ dependencies = [
  "uuid",
  "walkdir",
  "wasmtime 42.0.2",
+ "wat",
  "windows-sys 0.59.0",
  "x25519-dalek",
  "zeroize",
