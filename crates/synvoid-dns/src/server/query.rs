@@ -6,12 +6,10 @@ use crate::mesh_sync::MeshDnsRegistry;
 use crate::parsed_query::ParsedDnsQuery;
 
 impl DnsServer {
-    pub(super) fn build_simple_nxdomain_response(query: &[u8]) -> Option<Arc<Vec<u8>>> {
-        use crate::parsed_query::{build_response_flags_full, ParsedDnsQuery};
-
-        let parsed = ParsedDnsQuery::parse(query).ok()?;
-
-        let id = parsed.id;
+    pub(super) fn build_simple_nxdomain_response(
+        parsed: &ParsedDnsQuery<'_>,
+    ) -> Option<Arc<Vec<u8>>> {
+        use crate::parsed_query::build_response_flags_full;
 
         // RFC 2308: NXDOMAIN responses MUST include SOA in authority section.
         // Build SOA record before header so we know the authority count.
@@ -35,7 +33,7 @@ impl DnsServer {
 
         // Build header with 1 question, 0 answer, 1 authority (SOA), 0 additional
         let mut response = Vec::with_capacity(12 + 64 + soa_rdata.len());
-        response.extend_from_slice(&id.to_be_bytes());
+        response.extend_from_slice(&parsed.id.to_be_bytes());
         response.extend_from_slice(&flags.to_be_bytes());
         response.extend_from_slice(&1u16.to_be_bytes()); // QDCOUNT
         response.extend_from_slice(&0u16.to_be_bytes()); // ANCOUNT
@@ -116,9 +114,15 @@ impl DnsServer {
             }
         }
 
+        // Parse once — pass parsed state to firewall and downstream
+        let parsed_tcp = ParsedDnsQuery::parse(&query);
+
         // Firewall check
         if let Some(fw) = ctx.firewall.as_ref() {
-            let qname = Self::extract_query_name(&query);
+            let qname = match &parsed_tcp {
+                Ok(p) => p.qname.clone(),
+                Err(_) => Self::extract_query_name(&query),
+            };
             let fw_read = fw.read();
             match fw_read.evaluate_query(&query, client_ip, &qname) {
                 Ok(decision) => {
@@ -203,15 +207,13 @@ impl DnsServer {
                 let parsed_zt = ParsedDnsQuery::parse(&query);
                 if let Ok(parsed_zt) = &parsed_zt {
                     if parsed_zt.is_axfr() {
-                        let qname = Self::extract_query_name(&query);
                         let tsig =
                             crate::tsig::parse_tsig_from_query(&query, parsed_zt.question_end);
-                        let message_id = u16::from_be_bytes([query[0], query[1]]);
                         match zt.handle_axfr_request_messages(
-                            &qname,
+                            &parsed_zt.qname,
                             client_ip,
                             tsig.as_ref(),
-                            message_id,
+                            parsed_zt.id,
                             &query,
                         ) {
                             Ok(messages) => {
@@ -231,17 +233,15 @@ impl DnsServer {
                     }
 
                     if parsed_zt.is_ixfr() {
-                        let qname = Self::extract_query_name(&query);
                         let serial = Self::extract_ixfr_serial(&query);
                         let tsig =
                             crate::tsig::parse_tsig_from_query(&query, parsed_zt.question_end);
-                        let message_id = u16::from_be_bytes([query[0], query[1]]);
                         match zt.handle_ixfr_request_messages(
-                            &qname,
+                            &parsed_zt.qname,
                             client_ip,
                             serial,
                             tsig.as_ref(),
-                            message_id,
+                            parsed_zt.id,
                             &query,
                         ) {
                             Ok(messages) => {
@@ -578,7 +578,7 @@ impl DnsServer {
 
         let qname_lower = parsed.qname.to_lowercase();
         if qname_lower.ends_with(".example") || qname_lower == "example" {
-            return Self::build_simple_nxdomain_response(query);
+            return Self::build_simple_nxdomain_response(&parsed);
         }
 
         if parsed.qtype == 16 {
@@ -1211,6 +1211,7 @@ impl DnsServer {
         Arc::new(response)
     }
 
+    #[deprecated(note = "Use ParsedDnsQuery::parse instead; retained for fallback paths only")]
     pub(super) fn extract_query_name(query: &[u8]) -> String {
         wire::parse_query_name(query, 12).unwrap_or_else(|| "unknown".to_string())
     }

@@ -35,6 +35,7 @@ fn is_private_ip(ip: &IpAddr) -> bool {
     }
 }
 
+#[deprecated(note = "Use ParsedDnsQuery::parse instead; retained for backward compatibility")]
 fn extract_query_type_from_query(query: &[u8]) -> Option<u16> {
     ParsedDnsQuery::parse(query).ok().map(|p| p.qtype)
 }

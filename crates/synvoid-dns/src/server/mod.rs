@@ -296,11 +296,13 @@ mod zone_tests {
 #[cfg(test)]
 mod nxdomain_tests {
     use super::*;
+    use crate::parsed_query::ParsedDnsQuery;
 
     #[test]
     fn test_nxdomain_response_basic() {
         let query = build_query(0x1234, "example.com");
-        let response = DnsServer::build_simple_nxdomain_response(&query).unwrap();
+        let parsed = ParsedDnsQuery::parse(&query).unwrap();
+        let response = DnsServer::build_simple_nxdomain_response(&parsed).unwrap();
 
         assert!(
             response.len() > 12,
@@ -342,7 +344,8 @@ mod nxdomain_tests {
         let test_ids = [0x0001, 0x1234, 0xABCD, 0xFFFF];
         for id in test_ids {
             let query = build_query(id, "nonexistent.example.com");
-            let response = DnsServer::build_simple_nxdomain_response(&query).unwrap();
+            let parsed = ParsedDnsQuery::parse(&query).unwrap();
+            let response = DnsServer::build_simple_nxdomain_response(&parsed).unwrap();
             let response_id = u16::from_be_bytes([response[0], response[1]]);
             assert_eq!(response_id, id, "Response ID should match query ID");
         }
@@ -351,15 +354,15 @@ mod nxdomain_tests {
     #[test]
     fn test_nxdomain_response_too_short_query() {
         let query = b"too short";
-        let response = DnsServer::build_simple_nxdomain_response(query);
-        assert!(response.is_none());
+        let parsed = ParsedDnsQuery::parse(query);
+        assert!(parsed.is_err(), "Parsing too-short query should fail");
     }
 
     #[test]
     fn test_nxdomain_response_empty_query() {
         let query = Vec::new();
-        let response = DnsServer::build_simple_nxdomain_response(&query);
-        assert!(response.is_none());
+        let parsed = ParsedDnsQuery::parse(&query);
+        assert!(parsed.is_err(), "Parsing empty query should fail");
     }
 
     fn build_query(id: u16, qname: &str) -> Vec<u8> {
