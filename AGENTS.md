@@ -99,6 +99,8 @@ cargo test --test plugin_signature_policy_guard  # Plugin signature policy enfor
 cargo test --test manifest_authority_wiring        # Manifest-to-runtime authority differentiation (M1 Phase 01)
 cargo test --test manifest_authority_load_path_guard  # All load paths use PreparedPluginLoad, not raw default_limits
 cargo test --test abi_memory_boundary_guard  # ABI memory boundary hardening: GuestAbiPolicy, guest_alloc+guest_free required, single-frame allocation, checked arithmetic
+cargo test --test plugin_lifecycle_guard  # Lifecycle state transitions, generation tracking, hot-reload gates, replace policy
+cargo test --test unsafe_native_sandbox_language_guard  # Docs must not imply native plugins are sandboxed
 cargo test -p synvoid-plugin-runtime -- test_plugin_failure       # Failure policy defaults and failure class classification
 cargo test -p synvoid-plugin-runtime -- test_classify_failure     # Error-to-failure-class mapping
 cargo test -p synvoid-plugin-runtime -- test_guard_               # Guard state, quarantine, blocking invoke

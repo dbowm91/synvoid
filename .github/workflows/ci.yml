@@ -420,6 +420,8 @@ jobs:
           cargo test --test manual_enforcement_provenance_guard
           cargo test --test background_task_ownership_guard
           cargo test --test unified_worker_composition_root_guard
+          cargo test --test plugin_lifecycle_guard
+          cargo test --test unsafe_native_sandbox_language_guard
 
   plugin-runtime-guardrails:
     name: Plugin Runtime Guardrails
