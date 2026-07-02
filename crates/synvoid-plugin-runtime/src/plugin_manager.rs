@@ -17,6 +17,8 @@ use crate::wasm_runtime::{
 pub struct PluginManager {
     wasm_manager: Arc<WasmPluginManager>,
     unsafe_native_extensions: RwLock<Vec<Arc<UnsafeNativeExtensionWrapper>>>,
+    /// Tracks the last error from a native extension load attempt.
+    last_native_load_error: RwLock<Option<String>>,
 }
 
 struct UnsafeNativeExtensionWrapper {
@@ -28,6 +30,7 @@ impl PluginManager {
         PluginManager {
             wasm_manager: Arc::new(WasmPluginManager::new()),
             unsafe_native_extensions: RwLock::new(Vec::new()),
+            last_native_load_error: RwLock::new(None),
         }
     }
 
@@ -35,6 +38,7 @@ impl PluginManager {
         PluginManager {
             wasm_manager: Arc::new(WasmPluginManager::new().with_limits(limits)),
             unsafe_native_extensions: RwLock::new(Vec::new()),
+            last_native_load_error: RwLock::new(None),
         }
     }
 
@@ -42,6 +46,7 @@ impl PluginManager {
         PluginManager {
             wasm_manager: Arc::new(WasmPluginManager::new().with_load_config(config)),
             unsafe_native_extensions: RwLock::new(Vec::new()),
+            last_native_load_error: RwLock::new(None),
         }
     }
 
@@ -76,15 +81,23 @@ impl PluginManager {
         allowed_dirs: &[String],
         expected_hash: Option<&str>,
     ) -> Result<Arc<Router>, UnsafeNativePluginError> {
-        let ext = crate::unsafe_native_loader::load_plugin(path, allowed_dirs, expected_hash)?;
-        let router = ext.router.clone();
-        let wrapper = UnsafeNativeExtensionWrapper {
-            extension: Arc::new(ext),
-        };
-        self.unsafe_native_extensions
-            .write()
-            .push(Arc::new(wrapper));
-        Ok(router)
+        match crate::unsafe_native_loader::load_plugin(path, allowed_dirs, expected_hash) {
+            Ok(ext) => {
+                *self.last_native_load_error.write() = None;
+                let router = ext.router.clone();
+                let wrapper = UnsafeNativeExtensionWrapper {
+                    extension: Arc::new(ext),
+                };
+                self.unsafe_native_extensions
+                    .write()
+                    .push(Arc::new(wrapper));
+                Ok(router)
+            }
+            Err(e) => {
+                *self.last_native_load_error.write() = Some(e.to_string());
+                Err(e)
+            }
+        }
     }
 
     /// Backward-compatible wrapper for loading an unsafe native extension.
@@ -136,6 +149,11 @@ impl PluginManager {
             .iter()
             .map(|w| w.extension.status())
             .collect()
+    }
+
+    /// Returns the last error from a failed native extension load attempt.
+    pub fn last_native_load_error(&self) -> Option<String> {
+        self.last_native_load_error.read().clone()
     }
 
     pub fn apply_wasm_filters(
@@ -319,7 +337,8 @@ impl PluginManagerLifecycle {
     }
 
     /// Enable hot-reload watching on a directory.
-    /// When `.wasm`, `.wat`, `.so`, `.dylib`, or `.dll` files change, plugins are reloaded.
+    /// When `.wasm`/`.wat` files change, plugins are reloaded.
+    /// `.so`/`.dylib`/`.dll` files are only hot-reloaded when native hot-reload is enabled.
     pub fn enable_hot_reload(&mut self, dir: &Path) -> Result<(), String> {
         let dir = dir.to_path_buf();
         if !dir.is_dir() {
@@ -360,6 +379,15 @@ impl PluginManagerLifecycle {
                                     }
                                 }
                                 Some("so") | Some("dylib") | Some("dll") => {
+                                    let native_config =
+                                        crate::unsafe_native_loader::get_global_unsafe_native_config();
+                                    if !native_config.hot_reload_enabled {
+                                        tracing::debug!(
+                                            "Skipping native hot-reload (hot_reload_enabled=false): {}",
+                                            path.display()
+                                        );
+                                        return;
+                                    }
                                     tracing::info!(
                                         "Hot-reloading unsafe native extension: {}",
                                         path.display()
@@ -374,6 +402,7 @@ impl PluginManagerLifecycle {
                                     plugin_manager.unload_axum_plugin(&name);
                                     match plugin_manager.load_axum_plugin(path) {
                                         Ok(_) => {
+                                            crate::wasm_metrics::record_unsafe_native_extension_reloaded(&name);
                                             tracing::info!(
                                                 "Successfully hot-reloaded: {}",
                                                 path.display()

@@ -38,6 +38,11 @@ pub use sandbox::types::{
     PluginSignatureVerification, PluginStateModel, PluginTrustTier, ResourceLimitError,
     SigningPolicy, SigningViolation, TrustedPluginKey, VerifiedPluginSignature,
 };
+pub use unsafe_native_loader::{
+    current_generation, get_global_unsafe_native_config, is_production_env,
+    set_global_unsafe_native_config, UnsafeNativeExtension, UnsafeNativeExtensionConfig,
+    UnsafeNativeExtensionStatus,
+};
 pub use wasm_metrics::{
     get_all_wasm_metrics, get_wasm_metrics, record_concurrency_limit_exceeded,
     record_epoch_timeout, record_fresh_instance, record_fuel_exhausted, record_host_call_timeout,

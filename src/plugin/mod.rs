@@ -10,7 +10,9 @@ use parking_lot::RwLock;
 pub mod unsafe_native_loader;
 
 pub use synvoid_plugin_runtime::unsafe_native_loader::{
-    UnsafeNativeExtension, UnsafeNativeExtensionStatus,
+    current_generation, get_global_unsafe_native_config, is_production_env,
+    set_global_unsafe_native_config, UnsafeNativeExtension, UnsafeNativeExtensionConfig,
+    UnsafeNativeExtensionStatus,
 };
 pub use synvoid_plugin_runtime::{
     get_all_wasm_metrics, get_global_plugin_manager, get_wasm_metrics, GlobalPluginManager,
@@ -31,6 +33,7 @@ pub use synvoid_plugin_runtime::plugin_manager::UnsafeNativePluginError;
 pub struct PluginManager {
     wasm_manager: Arc<WasmPluginManager>,
     unsafe_native_extensions: RwLock<Vec<Arc<UnsafeNativeExtensionWrapper>>>,
+    last_native_load_error: RwLock<Option<String>>,
 }
 
 struct UnsafeNativeExtensionWrapper {
@@ -42,6 +45,7 @@ impl PluginManager {
         PluginManager {
             wasm_manager: Arc::new(WasmPluginManager::new()),
             unsafe_native_extensions: RwLock::new(Vec::new()),
+            last_native_load_error: RwLock::new(None),
         }
     }
 
@@ -49,6 +53,7 @@ impl PluginManager {
         PluginManager {
             wasm_manager: Arc::new(WasmPluginManager::new().with_limits(limits)),
             unsafe_native_extensions: RwLock::new(Vec::new()),
+            last_native_load_error: RwLock::new(None),
         }
     }
 
@@ -56,6 +61,7 @@ impl PluginManager {
         PluginManager {
             wasm_manager: Arc::new(WasmPluginManager::new().with_load_config(config)),
             unsafe_native_extensions: RwLock::new(Vec::new()),
+            last_native_load_error: RwLock::new(None),
         }
     }
 
@@ -102,15 +108,23 @@ impl PluginManager {
         allowed_dirs: &[String],
         expected_hash: Option<&str>,
     ) -> Result<Arc<Router>, UnsafeNativePluginError> {
-        let ext = unsafe_native_loader::load_plugin_full(path, allowed_dirs, expected_hash)?;
-        let router = ext.router.clone();
-        let wrapper = UnsafeNativeExtensionWrapper {
-            extension: Arc::new(ext),
-        };
-        self.unsafe_native_extensions
-            .write()
-            .push(Arc::new(wrapper));
-        Ok(router)
+        match unsafe_native_loader::load_plugin_full(path, allowed_dirs, expected_hash) {
+            Ok(ext) => {
+                *self.last_native_load_error.write() = None;
+                let router = ext.router.clone();
+                let wrapper = UnsafeNativeExtensionWrapper {
+                    extension: Arc::new(ext),
+                };
+                self.unsafe_native_extensions
+                    .write()
+                    .push(Arc::new(wrapper));
+                Ok(router)
+            }
+            Err(e) => {
+                *self.last_native_load_error.write() = Some(e.to_string());
+                Err(e)
+            }
+        }
     }
 
     /// Get the first loaded unsafe native extension router, if any
@@ -155,6 +169,11 @@ impl PluginManager {
             .iter()
             .map(|w| w.extension.status())
             .collect()
+    }
+
+    /// Returns the last error from a failed native extension load attempt.
+    pub fn last_native_load_error(&self) -> Option<String> {
+        self.last_native_load_error.read().clone()
     }
 
     pub fn apply_wasm_filters(
@@ -381,6 +400,15 @@ impl PluginManagerLifecycle {
                                     }
                                 }
                                 Some("so") | Some("dylib") | Some("dll") => {
+                                    let native_config =
+                                        synvoid_plugin_runtime::get_global_unsafe_native_config();
+                                    if !native_config.hot_reload_enabled {
+                                        tracing::debug!(
+                                            "Skipping native hot-reload (hot_reload_enabled=false): {}",
+                                            path.display()
+                                        );
+                                        return;
+                                    }
                                     tracing::info!(
                                         "Hot-reloading unsafe native extension: {}",
                                         path.display()

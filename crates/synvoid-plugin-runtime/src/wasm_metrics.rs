@@ -348,6 +348,38 @@ pub fn record_plugin_hot_reload(status: &str) {
     .increment(1);
 }
 
+pub fn record_unsafe_native_extension_loaded(name: &str) {
+    metrics::counter!(
+        "synvoid_unsafe_native_extension_loaded_total",
+        "name" => name.to_string()
+    )
+    .increment(1);
+}
+
+pub fn record_unsafe_native_extension_load_failed(name: &str) {
+    metrics::counter!(
+        "synvoid_unsafe_native_extension_load_failed_total",
+        "name" => name.to_string()
+    )
+    .increment(1);
+}
+
+pub fn record_unsafe_native_extension_reloaded(name: &str) {
+    metrics::counter!(
+        "synvoid_unsafe_native_extension_reloaded_total",
+        "name" => name.to_string()
+    )
+    .increment(1);
+}
+
+pub fn record_unsafe_native_extension_request(name: &str) {
+    metrics::counter!(
+        "synvoid_unsafe_native_extension_request_total",
+        "name" => name.to_string()
+    )
+    .increment(1);
+}
+
 pub fn record_plugin_capability_violation(capability: &str) {
     metrics::counter!(
         "synvoid_plugin_capability_violation_total",

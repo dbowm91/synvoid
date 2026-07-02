@@ -7,7 +7,7 @@ use utoipa::ToSchema;
 /// Native extensions run with full Synvoid process authority: memory access,
 /// arbitrary syscalls, panic/UB potential, allocator interaction, and thread
 /// spawning. They are NOT sandboxed and must only be loaded from trusted sources.
-#[derive(Debug, Default, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, JsonSchema, ToSchema)]
 pub struct UnsafeNativePluginConfig {
     /// Enable loading of unsafe native extensions. Default: false.
     #[serde(default)]
@@ -30,7 +30,7 @@ pub struct UnsafeNativePluginConfig {
 }
 
 /// An explicitly allowed native library with optional SHA-256 hash verification.
-#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, JsonSchema, ToSchema)]
 pub struct UnsafeNativeAllowedLibrary {
     /// Absolute path to the shared library.
     pub path: String,
@@ -43,8 +43,13 @@ pub struct UnsafeNativeAllowedLibrary {
 pub struct PluginConfig {
     #[serde(default)]
     pub wasm: WasmPluginGlobalConfig,
+    /// Main native extension config.
     #[serde(default)]
     pub unsafe_native: UnsafeNativePluginConfig,
+    /// Deprecated alias for `unsafe_native`. If set, the value is migrated to `unsafe_native`
+    /// and a deprecation warning is logged at startup.
+    #[serde(default, alias = "native_plugins")]
+    pub native_plugins_compat: Option<UnsafeNativePluginConfig>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]
@@ -86,6 +91,27 @@ pub struct WasmPluginInstanceConfig {
     pub on_error: Option<super::site::WasmOnError>,
     #[serde(default)]
     pub allowed_dht_prefixes: Vec<String>,
+}
+
+impl PluginConfig {
+    /// Migrate deprecated `native_plugins_compat` into `unsafe_native` if set.
+    ///
+    /// Returns `true` if migration occurred (caller should log a deprecation warning).
+    pub fn migrate_deprecated_native_plugins(&mut self) -> bool {
+        if let Some(legacy) = self.native_plugins_compat.take() {
+            tracing::warn!(
+                "DEPRECATION: [plugins.native_plugins] is deprecated. \
+                 Use [plugins.unsafe_native] instead."
+            );
+            // Only overwrite if the new section is at defaults (not explicitly configured)
+            if self.unsafe_native == UnsafeNativePluginConfig::default() {
+                self.unsafe_native = legacy;
+            }
+            true
+        } else {
+            false
+        }
+    }
 }
 
 fn default_max_memory_mb() -> usize {
