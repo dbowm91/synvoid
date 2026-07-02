@@ -850,6 +850,74 @@ mod behavioral {
         PluginLifecycleState, PluginReplacePolicy, WasmPluginManager, WasmResourceLimits,
     };
 
+    // ── Gap 3: Deprecated config migration behavioral test (WS8 #22) ───────
+
+    /// Verify that a config migrated from the deprecated `native_plugins` TOML
+    /// key produces an `UnsafeNativeExtensionConfig` that passes `validate_for_load`.
+    #[test]
+    fn deprecated_config_migration_produces_valid_runtime_config() {
+        use synvoid_config::PluginConfig;
+        use synvoid_plugin_runtime::UnsafeNativeExtensionConfig;
+
+        let toml = r#"
+[native_plugins]
+enabled = true
+allow_in_production = false
+hot_reload_enabled = false
+"#;
+        let mut config: PluginConfig = toml::from_str(toml).unwrap();
+        assert!(
+            config.native_plugins_compat.is_some(),
+            "deprecated key should populate native_plugins_compat"
+        );
+
+        let migrated = config.migrate_deprecated_native_plugins();
+        assert!(migrated, "migration should succeed");
+        assert!(config.native_plugins_compat.is_none());
+
+        let rt_config = UnsafeNativeExtensionConfig {
+            enabled: config.unsafe_native.enabled,
+            allow_in_production: config.unsafe_native.allow_in_production,
+            risk_acknowledgement: config.unsafe_native.risk_acknowledgement.clone(),
+            allowed_dirs: config.unsafe_native.allowed_dirs.clone(),
+            hot_reload_enabled: config.unsafe_native.hot_reload_enabled,
+            production_mode_override: Some(false),
+        };
+        let result = rt_config.validate_for_load(&[]);
+        assert!(
+            result.is_ok(),
+            "migrated config should pass validate_for_load in dev mode, got: {:?}",
+            result.err()
+        );
+    }
+
+    /// When both deprecated and new keys are present, the new key takes precedence.
+    #[test]
+    fn deprecated_config_does_not_overwrite_explicit_new_at_runtime() {
+        use synvoid_config::PluginConfig;
+        use synvoid_plugin_runtime::UnsafeNativeExtensionConfig;
+
+        let toml = r#"
+[unsafe_native]
+enabled = true
+
+[native_plugins]
+enabled = false
+"#;
+        let mut config: PluginConfig = toml::from_str(toml).unwrap();
+        let migrated = config.migrate_deprecated_native_plugins();
+        assert!(migrated);
+        assert!(config.unsafe_native.enabled);
+
+        let rt_config = UnsafeNativeExtensionConfig {
+            enabled: config.unsafe_native.enabled,
+            production_mode_override: Some(false),
+            ..Default::default()
+        };
+        let result = rt_config.validate_for_load(&[]);
+        assert!(result.is_ok(), "explicit new config should pass validation");
+    }
+
     fn minimal_wasm_bytes() -> Vec<u8> {
         wat::parse_str(
             r#"
@@ -1174,5 +1242,146 @@ mod behavioral {
         assert!(detail.is_some());
         let detail = detail.unwrap();
         assert_eq!(detail.name, "hash_detail");
+    }
+
+    // ── Gap 5: Memory-with-manifest generation/lifecycle (WS9) ─────────────
+
+    #[test]
+    fn load_plugin_from_memory_with_manifest_sets_generation_and_lifecycle() {
+        use synvoid_plugin_runtime::PluginManifest;
+
+        let mgr = WasmPluginManager::new();
+        let bytes = minimal_wasm_bytes();
+
+        let manifest = PluginManifest {
+            name: "manifest_test".to_string(),
+            version: "0.1.0".to_string(),
+            entry: "filter_request".to_string(),
+            ..Default::default()
+        };
+
+        let _rt = mgr
+            .load_plugin_from_memory_with_manifest(
+                "manifest_test",
+                &bytes,
+                &manifest,
+                WasmResourceLimits::default(),
+            )
+            .expect("load with manifest should succeed");
+
+        // Generation must be set
+        let gen = mgr.get_plugin_generation("manifest_test");
+        assert!(gen.is_some(), "generation must exist after manifest load");
+        assert_eq!(gen.unwrap().0, 1, "first load should be generation 1");
+
+        // Lifecycle state must be Active
+        let state = mgr.get_plugin_lifecycle_state("manifest_test");
+        assert_eq!(state, Some(PluginLifecycleState::Active));
+
+        // Generation detail must exist
+        let detail = mgr.get_plugin_generation_detail("manifest_test");
+        assert!(detail.is_some());
+    }
+
+    // ── Gap 6: Failed reload preserves generation (WS9) ────────────────────
+
+    #[test]
+    fn failed_reload_preserves_original_generation() {
+        let mgr = WasmPluginManager::new();
+        let bytes = minimal_wasm_bytes();
+
+        mgr.load_plugin_from_memory("reload_preserve", &bytes, WasmResourceLimits::default())
+            .expect("initial load");
+
+        let gen_before = mgr.get_plugin_generation("reload_preserve");
+        assert!(gen_before.is_some());
+        let gen_before = gen_before.unwrap();
+        assert_eq!(gen_before.0, 1);
+
+        // Attempt reload from a non-existent file — must fail
+        let non_existent = std::env::temp_dir().join(format!(
+            "nonexistent_plugin_{}.wasm",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let result = mgr.reload_plugin_with_outcome(&non_existent);
+        assert!(
+            result.is_ok(),
+            "reload_plugin_with_outcome should return Ok even on failure"
+        );
+        match result.unwrap() {
+            synvoid_plugin_runtime::PluginReloadOutcome::Failed { .. } => {}
+            other => panic!("Expected Failed outcome, got: {:?}", other),
+        }
+
+        // Original generation must be preserved
+        let gen_after = mgr.get_plugin_generation("reload_preserve");
+        assert_eq!(
+            gen_after,
+            Some(gen_before),
+            "generation must be preserved after failed reload"
+        );
+
+        // Plugin must still be active
+        let state = mgr.get_plugin_lifecycle_state("reload_preserve");
+        assert_eq!(
+            state,
+            Some(PluginLifecycleState::Active),
+            "plugin must remain Active after failed reload"
+        );
+    }
+
+    // ── Gap 7: Stable-file policy invocation (WS9) ─────────────────────────
+
+    #[test]
+    fn prepare_reload_candidate_accepts_stability_policy() {
+        use std::time::Duration;
+        use synvoid_plugin_runtime::{FileStabilityPolicy, WasmRuntime};
+
+        let mgr = WasmPluginManager::new();
+        let bytes = minimal_wasm_bytes();
+
+        // Load a plugin first so we can attempt prepare_reload_candidate
+        mgr.load_plugin_from_memory("stable_policy_test", &bytes, WasmResourceLimits::default())
+            .expect("initial load");
+
+        // Write the WASM bytes to a temp file so prepare_reload_candidate can read it
+        let tmp_dir = std::env::temp_dir().join(format!(
+            "stable_policy_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp_dir).expect("create tmp dir");
+        let wasm_path = tmp_dir.join("stable_policy_test.wasm");
+        std::fs::write(&wasm_path, &bytes).expect("write wasm file");
+
+        // Use a very fast stability policy
+        let policy = FileStabilityPolicy {
+            debounce: Duration::from_millis(1),
+            stable_checks: 1,
+            stable_interval: Duration::from_millis(1),
+            max_wait: Duration::from_secs(1),
+        };
+
+        let result = mgr.prepare_reload_candidate(&wasm_path, Some(&policy));
+        assert!(
+            result.is_ok(),
+            "prepare_reload_candidate with custom stability policy should succeed, got: {:?}",
+            result.err()
+        );
+
+        let (_runtime, gen) = result.unwrap();
+        assert_eq!(
+            gen.previous_generation,
+            mgr.get_plugin_generation("stable_policy_test")
+        );
+        assert!(gen.generation.0 > 1, "reload generation must be > 1");
+
+        // Cleanup
+        std::fs::remove_dir_all(&tmp_dir).ok();
     }
 }

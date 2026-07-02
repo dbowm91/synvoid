@@ -96,6 +96,18 @@ For production deployments requiring native extensibility, the recommended archi
 
 In-process native extensions should be treated as a development convenience or trusted operator tool.
 
+## Mesh / Distributed Native Load Path (Deferred)
+
+Native extension loading via the mesh (DHT-based plugin distribution) is **not implemented** in this phase. The `ExternalPluginClient` trait in `unsafe_native_loader.rs` exists as a placeholder for future out-of-process native plugin architecture.
+
+**Rationale:** In-process native code loaded from mesh-distributed binaries poses unacceptable security risks — it grants full process authority to code originating from potentially untrusted peers. The recommended architecture for mesh-distributed native extensions is:
+
+1. Mesh peers distribute signed WASM plugins, not native libraries
+2. Native extensions requiring mesh distribution must run in a separate process per-node
+3. Inter-node communication uses the existing mesh transport layer (UDS/gRPC)
+
+**Deferral scope:** No implementation, tests, or configuration for mesh-based native plugin loading. The `load_plugin` API accepts only local file paths. The `ExternalPluginClient` trait is a structural placeholder with no runtime consumers.
+
 ## Migration from "Axum Plugins"
 
 Phase 8 renamed the concept from "Axum plugins" or "native plugins" to "unsafe native extensions" to make the security boundary unambiguous. The `AxumPluginError` type alias is retained for backward compatibility.
