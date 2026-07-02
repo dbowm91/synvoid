@@ -7,9 +7,11 @@ use http::{Request, Response};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
 
-pub mod axum_loader;
+pub mod unsafe_native_loader;
 
-// Re-export types from the new crate
+pub use synvoid_plugin_runtime::unsafe_native_loader::{
+    UnsafeNativeExtension, UnsafeNativeExtensionStatus,
+};
 pub use synvoid_plugin_runtime::{
     get_all_wasm_metrics, get_global_plugin_manager, get_wasm_metrics, GlobalPluginManager,
     GlobalWasmMemoryBudget, MemoryBudgetError, PluginInfo, PluginLoadConfig, PooledInstance,
@@ -20,37 +22,40 @@ pub use synvoid_plugin_runtime::{
     limits_from_manifest, EffectivePluginPolicy, PluginSourceIdentity, PreparedPluginLoad,
 };
 
+/// Backward-compatible alias — prefer `UnsafeNativePluginError` for new code.
+pub use synvoid_plugin_runtime::plugin_manager::AxumPluginError;
+pub use synvoid_plugin_runtime::plugin_manager::UnsafeNativePluginError;
+
 // ─── PluginManager (public API) ──────────────────────────────────────────────
 
 pub struct PluginManager {
     wasm_manager: Arc<WasmPluginManager>,
-    axum_plugins: RwLock<Vec<Arc<AxumPluginWrapper>>>,
+    unsafe_native_extensions: RwLock<Vec<Arc<UnsafeNativeExtensionWrapper>>>,
 }
 
-struct AxumPluginWrapper {
-    router: Arc<axum::Router<()>>,
-    name: String,
+struct UnsafeNativeExtensionWrapper {
+    extension: Arc<UnsafeNativeExtension>,
 }
 
 impl PluginManager {
     pub fn new() -> Self {
         PluginManager {
             wasm_manager: Arc::new(WasmPluginManager::new()),
-            axum_plugins: RwLock::new(Vec::new()),
+            unsafe_native_extensions: RwLock::new(Vec::new()),
         }
     }
 
     pub fn with_wasm_limits(limits: WasmResourceLimits) -> Self {
         PluginManager {
             wasm_manager: Arc::new(WasmPluginManager::new().with_limits(limits)),
-            axum_plugins: RwLock::new(Vec::new()),
+            unsafe_native_extensions: RwLock::new(Vec::new()),
         }
     }
 
     pub fn with_load_config(config: PluginLoadConfig) -> Self {
         PluginManager {
             wasm_manager: Arc::new(WasmPluginManager::new().with_load_config(config)),
-            axum_plugins: RwLock::new(Vec::new()),
+            unsafe_native_extensions: RwLock::new(Vec::new()),
         }
     }
 
@@ -87,50 +92,69 @@ impl PluginManager {
         Ok(())
     }
 
-    pub fn load_axum_plugin(&self, path: &Path) -> Result<Arc<Router>, AxumPluginError> {
-        let (router, wrapper_name) = axum_loader::load_plugin(path)?;
+    pub fn load_axum_plugin(&self, path: &Path) -> Result<Arc<Router>, UnsafeNativePluginError> {
+        self.load_unsafe_native_extension(path, &[], None)
+    }
 
-        let wrapper = AxumPluginWrapper {
-            router: router.clone(),
-            name: wrapper_name.clone(),
+    pub fn load_unsafe_native_extension(
+        &self,
+        path: &Path,
+        allowed_dirs: &[String],
+        expected_hash: Option<&str>,
+    ) -> Result<Arc<Router>, UnsafeNativePluginError> {
+        let ext = unsafe_native_loader::load_plugin_full(path, allowed_dirs, expected_hash)?;
+        let router = ext.router.clone();
+        let wrapper = UnsafeNativeExtensionWrapper {
+            extension: Arc::new(ext),
         };
-
-        self.axum_plugins.write().push(Arc::new(wrapper));
-        tracing::info!("Loaded Axum plugin: {}", wrapper_name);
-
+        self.unsafe_native_extensions
+            .write()
+            .push(Arc::new(wrapper));
         Ok(router)
     }
 
-    /// Get the first loaded Axum plugin router, if any
+    /// Get the first loaded unsafe native extension router, if any
     pub fn get_axum_router(&self) -> Option<Arc<Router>> {
-        self.axum_plugins.read().first().map(|w| w.router.clone())
+        self.unsafe_native_extensions
+            .read()
+            .first()
+            .map(|w| w.extension.router.clone())
     }
 
-    /// Get an Axum plugin router by name
+    /// Get an unsafe native extension router by name
     pub fn get_axum_router_by_name(&self, name: &str) -> Option<Arc<Router>> {
-        self.axum_plugins
+        self.unsafe_native_extensions
             .read()
             .iter()
-            .find(|w| w.name == name)
-            .map(|w| w.router.clone())
+            .find(|w| w.extension.name == name)
+            .map(|w| w.extension.router.clone())
     }
 
-    /// Get all loaded Axum plugin routers
+    /// Get all loaded unsafe native extension routers
     pub fn get_axum_routers(&self) -> Vec<Arc<Router>> {
-        self.axum_plugins
+        self.unsafe_native_extensions
             .read()
             .iter()
-            .map(|w| w.router.clone())
+            .map(|w| w.extension.router.clone())
             .collect()
     }
 
-    /// Remove an Axum plugin by name. Returns true if found and removed.
+    /// Remove an unsafe native extension by name. Returns true if found and removed.
     /// The old router stays in memory until all references are dropped.
     pub fn unload_axum_plugin(&self, name: &str) -> bool {
-        let mut plugins = self.axum_plugins.write();
+        let mut plugins = self.unsafe_native_extensions.write();
         let before = plugins.len();
-        plugins.retain(|w| w.name != name);
+        plugins.retain(|w| w.extension.name != name);
         plugins.len() < before
+    }
+
+    /// Returns status information for all loaded unsafe native extensions.
+    pub fn unsafe_native_status(&self) -> Vec<UnsafeNativeExtensionStatus> {
+        self.unsafe_native_extensions
+            .read()
+            .iter()
+            .map(|w| w.extension.status())
+            .collect()
     }
 
     pub fn apply_wasm_filters(
@@ -173,16 +197,6 @@ impl PluginManager {
     pub fn wasm_manager(&self) -> &Arc<WasmPluginManager> {
         &self.wasm_manager
     }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum AxumPluginError {
-    #[error("Failed to load plugin: {0}")]
-    LoadFailed(String),
-    #[error("Plugin ABI version {plugin} does not match expected version {expected}")]
-    AbiMismatch { plugin: String, expected: String },
-    #[error("Symbol not found: {0}")]
-    SymbolNotFound(String),
 }
 
 impl Default for PluginManager {
@@ -282,7 +296,7 @@ impl PluginManagerLifecycle {
         Ok(loaded)
     }
 
-    /// Load all Axum plugins (.so/.dylib/.dll) from a directory
+    /// Load all unsafe native extensions (.so/.dylib/.dll) from a directory
     pub fn load_axum_plugins_from_dir(&mut self, dir: &Path) -> Result<usize, AxumPluginError> {
         if !dir.is_dir() {
             return Err(AxumPluginError::LoadFailed(format!(
@@ -311,7 +325,11 @@ impl PluginManagerLifecycle {
                             loaded += 1;
                         }
                         Err(e) => {
-                            tracing::error!("Failed to load Axum plugin {}: {}", path.display(), e);
+                            tracing::error!(
+                                "Failed to load unsafe native extension {}: {}",
+                                path.display(),
+                                e
+                            );
                         }
                     }
                 }
@@ -363,8 +381,11 @@ impl PluginManagerLifecycle {
                                     }
                                 }
                                 Some("so") | Some("dylib") | Some("dll") => {
-                                    tracing::info!("Hot-reloading Axum plugin: {}", path.display());
-                                    // Remove old plugin entry by name (library stays loaded
+                                    tracing::info!(
+                                        "Hot-reloading unsafe native extension: {}",
+                                        path.display()
+                                    );
+                                    // Remove old extension entry by name (library stays loaded
                                     // until all in-flight request references are dropped)
                                     let name = path
                                         .file_stem()

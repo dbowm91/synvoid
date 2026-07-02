@@ -7749,7 +7749,10 @@ entry = "plugin.wasm"
         // that both calls succeed using the same instance, proving guest globals
         // persist across requests under HostContextIsolated.
         let r2 = runtime.filter_request(make_req(), Arc::new(env));
-        assert!(r2.is_ok(), "second invocation should succeed — guest globals persist in HostContextIsolated");
+        assert!(
+            r2.is_ok(),
+            "second invocation should succeed — guest globals persist in HostContextIsolated"
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════

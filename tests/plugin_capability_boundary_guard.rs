@@ -111,7 +111,7 @@ fn plugin_runtime_host_functions_have_capability_gates() {
         .join("src");
 
     // Only scan files that register WASM host functions (linker code).
-    // Loader files (axum_loader, plugin_manager, spin/manifest) legitimately
+    // Loader files (unsafe_native_loader, plugin_manager, spin/manifest) legitimately
     // read plugin files from disk — they are not exposed to WASM plugins.
     let linker_files = [
         crate_root.join("wasm_runtime.rs"),

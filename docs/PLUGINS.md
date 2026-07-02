@@ -3,7 +3,7 @@
 SynVoid supports two plugin systems for extending functionality:
 
 1. **WASM Plugins** - Sandboxed WebAssembly modules for request filtering and response transformation
-2. **Native Axum Plugins** - Shared library plugins that extend routing capabilities
+2. **Unsafe Native Extensions** - Shared library plugins with full process authority (NOT sandboxed)
 
 ## Architecture
 
@@ -13,9 +13,9 @@ SynVoid supports two plugin systems for extending functionality:
 │  ┌─────────────────────────────────────────────────┐   │
 │  │              Plugin Runtime                      │   │
 │  │  ┌─────────┐  ┌─────────┐  ┌─────────────┐    │   │
-│  │  │WASM     │  │WASM     │  │   Axum      │    │   │
-│  │  │Plugin 1 │  │Plugin 2 │  │   Plugin    │    │   │
-│  │  │(Sandbox)│  │(Sandbox)│  │ (Native)    │    │   │
+│  │  │WASM     │  │WASM     │  │  Unsafe     │    │   │
+│  │  │Plugin 1 │  │Plugin 2 │  │  Native     │    │   │
+│  │  │(Sandbox)│  │(Sandbox)│  │  Extension  │    │   │
 │  │  └─────────┘  └─────────┘  └─────────────┘    │   │
 │  └─────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────┘
@@ -357,12 +357,15 @@ synvoid_plugin_duration_ms      # Execution duration
 4. **Test Thoroughly** - Unit test WASM code
 5. **Version Control** - Track plugin versions
 6. **Monitor Performance** - Watch execution time
+7. **Prefer Out-of-Process** - For unsafe native extensions, prefer out-of-process (UDS/HTTP/gRPC) over in-process loading in production
 
 ---
 
-## Native Axum Plugins
+## Unsafe Native Extensions
 
-Native plugins are shared libraries that extend SynVoid's routing capabilities using the Axum web framework. They offer better performance than WASM but require more careful security considerations.
+> **SECURITY WARNING:** Unsafe native extensions run in the same process as SynVoid with **full process authority** — memory access, arbitrary syscalls, panic/UB potential, allocator interaction, thread spawning, and access to all linked process state. They are **NOT sandboxed**. Only load extensions from fully trusted sources.
+
+The WASM plugin runtime is the **only sandboxed production plugin model**. Unsafe native extensions are a separate, explicitly-unsafe path for trusted operator extensions.
 
 ### Supported Formats
 
@@ -374,7 +377,7 @@ Native plugins are shared libraries that extend SynVoid's routing capabilities u
 
 ### Required Exports
 
-Your plugin must export:
+Your native extension must export:
 
 ```rust
 use axum::{Router, routing::get};
@@ -388,79 +391,93 @@ pub static synvoid_abi_version: *const std::ffi::c_char =
 #[no_mangle]
 pub extern "C" fn create_router() -> *mut Router<()> {
     let router = Router::new()
-        .route("/", get(|| async { "Hello from plugin!" }))
+        .route("/", get(|| async { "Hello from extension!" }))
         .route("/api/custom", get(my_handler));
     Box::into_raw(Box::new(router))
 }
-
-async fn my_handler() -> &'static str {
-    "Custom endpoint from native plugin"
-}
-```
-
-### Building a Native Plugin
-
-```toml
-# Cargo.toml
-[package]
-name = "my-synvoid-plugin"
-version = "0.1.0"
-edition = "2021"
-
-[lib]
-crate-type = ["cdylib"]
-
-[dependencies]
-axum = "0.8"
-```
-
-```bash
-# Build for Linux
-cargo build --release --target x86_64-unknown-linux-gnu
-
-# Build for macOS
-cargo build --release --target x86_64-apple-darwin
-
-# Output: target/release/libmy_synvoid_plugin.so (or .dylib)
 ```
 
 ### Configuration
 
-```toml
-[plugins.axum]
-enabled = true
+Unsafe native extensions are **disabled by default**. In production, loading requires explicit operator risk acknowledgement.
 
-[[plugins.axum.plugins]]
-name = "my-plugin"
-path = "/etc/synvoid/plugins/my_plugin.so"
+```toml
+[plugins]
+wasm_enabled = true
+unsafe_native_enabled = false
+
+[plugins.unsafe_native]
+enabled = false
+allow_in_production = false
+hot_reload_enabled = false
+allowed_dirs = ["/opt/synvoid/native-extensions"]
+
+# Optional: explicit library allowlist with hash verification
+[[plugins.unsafe_native.allowed_libraries]]
+path = "/opt/synvoid/native-extensions/foo.so"
+sha256 = "abc123..."
 ```
+
+#### Production Requirements
+
+In production mode, all of the following must be true:
+- `enabled = true`
+- `allow_in_production = true`
+- `risk_acknowledgement` set to the required acknowledgement string
+- Non-empty `allowed_dirs` configured
 
 ### Security Validations
 
-SynVoid performs the following security checks when loading native plugins:
+SynVoid performs the following checks when loading unsafe native extensions:
 
-1. **Symlink Prevention** - Rejects plugin files that are symlinks
-2. **Permission Check** - Warns if permissions are not 755 or 500 (Unix)
-3. **Extension Validation** - Only accepts proper shared library extensions
-4. **ABI Version Check** - Validates `synvoid_abi_version` symbol exists
+1. **Symlink Prevention** - Rejects files that are symlinks
+2. **World-Writable Rejection** - Rejects world-writable files and parent directories (Unix)
+3. **Permission Check** - Requires permissions 755 or 500 (Unix)
+4. **Extension Validation** - Only accepts .so, .dylib, or .dll
+5. **Dangerous Name Check** - Rejects filenames matching known system libraries
+6. **Path Allowlist** - Restricts loading to configured `allowed_dirs`
+7. **SHA-256 Hash Verification** - Optional hash allowlist for library integrity
+8. **ABI Version Check** - Validates `synvoid_abi_version` matches SynVoid version
 
 ### Security Considerations
 
-> **Warning:** Native plugins run in the same process as SynVoid and have full access to system resources. Only load plugins from trusted sources.
+- Native extensions are **NOT sandboxed**
+- They can access files, network, and system calls directly
+- A crashing extension can crash the entire process
+- Memory corruption in an extension affects the host process
+- They bypass WASM manifest capabilities, fuel limits, epoch interruption, and host API sub-capabilities
 
-- Native plugins are **not sandboxed**
-- They can access files, network, and system calls
-- A crashing plugin can crash the entire WAF
-- Memory corruption in a plugin affects the host process
+### Recommended Production Model: Out-of-Process
 
-### Best Practices for Native Plugins
+For production native extensibility, the **recommended approach** is an out-of-process extension:
 
-1. **Trust Verification** - Only load plugins from verified sources
-2. **Minimal Permissions** - Set file permissions to 755 or 500
-3. **Code Review** - Audit plugin source code before deployment
-4. **Isolation** - Consider running critical services in separate processes
-5. **Monitoring** - Watch for crashes and memory leaks
-6. **Version Pinning** - Lock plugin versions in production
+- UDS or loopback HTTP/gRPC service
+- Explicit request/response schema
+- Timeout and concurrency limits at the client boundary
+- Separate process user, seccomp/AppArmor/systemd restrictions
+- Same capability policy concepts as WASM host APIs
+
+In-process native extensions should be treated as a development convenience or trusted operator tool, not a production deployment pattern.
+
+### Lifecycle and Library Handle Safety
+
+The `UnsafeNativeExtension` struct retains an `Arc<libloading::Library>` handle for the lifetime of the extension. This prevents use-after-free: the shared library cannot be unloaded while any plugin-derived router or handler may still execute.
+
+Hot-reload for native extensions is **gated separately** from WASM hot-reload via `hot_reload_enabled`. When a native extension is reloaded, the old library stays loaded until all in-flight references are dropped.
+
+### Observability
+
+Native extension status is exposed separately from WASM plugin status:
+
+| Field | Description |
+|-------|-------------|
+| name | Extension name (from library filename) |
+| path | Canonical file path |
+| sha256 | SHA-256 hash of the loaded library |
+| abi_version | ABI version reported by the extension |
+| loaded_at | Unix timestamp of load |
+
+Metrics: `synvoid_unsafe_native_extension_loaded_total`, `synvoid_unsafe_native_extension_load_failed_total`, `synvoid_unsafe_native_extension_reloaded_total`.
 
 ## Runtime Lifecycle and Guarantees
 

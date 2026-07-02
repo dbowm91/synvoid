@@ -16,33 +16,32 @@ use crate::wasm_runtime::{
 
 pub struct PluginManager {
     wasm_manager: Arc<WasmPluginManager>,
-    axum_plugins: RwLock<Vec<Arc<AxumPluginWrapper>>>,
+    unsafe_native_extensions: RwLock<Vec<Arc<UnsafeNativeExtensionWrapper>>>,
 }
 
-struct AxumPluginWrapper {
-    router: Arc<axum::Router<()>>,
-    name: String,
+struct UnsafeNativeExtensionWrapper {
+    extension: std::sync::Arc<crate::unsafe_native_loader::UnsafeNativeExtension>,
 }
 
 impl PluginManager {
     pub fn new() -> Self {
         PluginManager {
             wasm_manager: Arc::new(WasmPluginManager::new()),
-            axum_plugins: RwLock::new(Vec::new()),
+            unsafe_native_extensions: RwLock::new(Vec::new()),
         }
     }
 
     pub fn with_wasm_limits(limits: WasmResourceLimits) -> Self {
         PluginManager {
             wasm_manager: Arc::new(WasmPluginManager::new().with_limits(limits)),
-            axum_plugins: RwLock::new(Vec::new()),
+            unsafe_native_extensions: RwLock::new(Vec::new()),
         }
     }
 
     pub fn with_load_config(config: PluginLoadConfig) -> Self {
         PluginManager {
             wasm_manager: Arc::new(WasmPluginManager::new().with_load_config(config)),
-            axum_plugins: RwLock::new(Vec::new()),
+            unsafe_native_extensions: RwLock::new(Vec::new()),
         }
     }
 
@@ -71,50 +70,72 @@ impl PluginManager {
         Ok(())
     }
 
-    pub fn load_axum_plugin(&self, path: &Path) -> Result<Arc<Router>, AxumPluginError> {
-        let (router, wrapper_name) = crate::axum_loader::load_plugin(path)?;
-
-        let wrapper = AxumPluginWrapper {
-            router: router.clone(),
-            name: wrapper_name.clone(),
+    pub fn load_unsafe_native_extension(
+        &self,
+        path: &Path,
+        allowed_dirs: &[String],
+        expected_hash: Option<&str>,
+    ) -> Result<Arc<Router>, UnsafeNativePluginError> {
+        let ext = crate::unsafe_native_loader::load_plugin(path, allowed_dirs, expected_hash)?;
+        let router = ext.router.clone();
+        let wrapper = UnsafeNativeExtensionWrapper {
+            extension: Arc::new(ext),
         };
-
-        self.axum_plugins.write().push(Arc::new(wrapper));
-        tracing::info!("Loaded Axum plugin: {}", wrapper_name);
-
+        self.unsafe_native_extensions
+            .write()
+            .push(Arc::new(wrapper));
         Ok(router)
     }
 
-    /// Get the first loaded Axum plugin router, if any
+    /// Backward-compatible wrapper for loading an unsafe native extension.
+    pub fn load_axum_plugin(&self, path: &Path) -> Result<Arc<Router>, UnsafeNativePluginError> {
+        self.load_unsafe_native_extension(path, &[], None)
+    }
+
+    /// Get the first loaded unsafe native extension router, if any
     pub fn get_axum_router(&self) -> Option<Arc<Router>> {
-        self.axum_plugins.read().first().map(|w| w.router.clone())
+        self.unsafe_native_extensions
+            .read()
+            .first()
+            .map(|w| w.extension.router.clone())
     }
 
-    /// Get an Axum plugin router by name
+    /// Get an unsafe native extension router by name
     pub fn get_axum_router_by_name(&self, name: &str) -> Option<Arc<Router>> {
-        self.axum_plugins
+        self.unsafe_native_extensions
             .read()
             .iter()
-            .find(|w| w.name == name)
-            .map(|w| w.router.clone())
+            .find(|w| w.extension.name == name)
+            .map(|w| w.extension.router.clone())
     }
 
-    /// Get all loaded Axum plugin routers
+    /// Get all loaded unsafe native extension routers
     pub fn get_axum_routers(&self) -> Vec<Arc<Router>> {
-        self.axum_plugins
+        self.unsafe_native_extensions
             .read()
             .iter()
-            .map(|w| w.router.clone())
+            .map(|w| w.extension.router.clone())
             .collect()
     }
 
-    /// Remove an Axum plugin by name. Returns true if found and removed.
+    /// Remove an unsafe native extension by name. Returns true if found and removed.
     /// The old router stays in memory until all references are dropped.
     pub fn unload_axum_plugin(&self, name: &str) -> bool {
-        let mut plugins = self.axum_plugins.write();
+        let mut plugins = self.unsafe_native_extensions.write();
         let before = plugins.len();
-        plugins.retain(|w| w.name != name);
+        plugins.retain(|w| w.extension.name != name);
         plugins.len() < before
+    }
+
+    /// Returns status information for all loaded unsafe native extensions.
+    pub fn unsafe_native_status(
+        &self,
+    ) -> Vec<crate::unsafe_native_loader::UnsafeNativeExtensionStatus> {
+        self.unsafe_native_extensions
+            .read()
+            .iter()
+            .map(|w| w.extension.status())
+            .collect()
     }
 
     pub fn apply_wasm_filters(
@@ -160,14 +181,25 @@ impl PluginManager {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum AxumPluginError {
-    #[error("Failed to load plugin: {0}")]
+pub enum UnsafeNativePluginError {
+    #[error("Failed to load unsafe native extension: {0}")]
     LoadFailed(String),
-    #[error("Plugin ABI version {plugin} does not match expected version {expected}")]
+    #[error(
+        "Unsafe native extension ABI version {plugin} does not match expected version {expected}"
+    )]
     AbiMismatch { plugin: String, expected: String },
     #[error("Symbol not found: {0}")]
     SymbolNotFound(String),
+    #[error("Unsafe native extension not allowed in production mode")]
+    ProductionDenied,
+    #[error("Risk acknowledgement missing or incorrect")]
+    RiskAcknowledgementRequired,
+    #[error("No allowed directories configured for unsafe native extensions")]
+    NoAllowedDirs,
 }
+
+/// Backward-compatible alias.
+pub type AxumPluginError = UnsafeNativePluginError;
 
 impl Default for PluginManager {
     fn default() -> Self {
@@ -239,18 +271,22 @@ impl PluginManagerLifecycle {
         Ok(loaded)
     }
 
-    /// Load all Axum plugins (.so/.dylib/.dll) from a directory
-    pub fn load_axum_plugins_from_dir(&mut self, dir: &Path) -> Result<usize, AxumPluginError> {
+    /// Load all unsafe native extensions (.so/.dylib/.dll) from a directory
+    pub fn load_axum_plugins_from_dir(
+        &mut self,
+        dir: &Path,
+    ) -> Result<usize, UnsafeNativePluginError> {
         if !dir.is_dir() {
-            return Err(AxumPluginError::LoadFailed(format!(
+            return Err(UnsafeNativePluginError::LoadFailed(format!(
                 "plugin directory does not exist: {}",
                 dir.display()
             )));
         }
 
         let mut loaded = 0;
-        let entries = std::fs::read_dir(dir)
-            .map_err(|e| AxumPluginError::LoadFailed(format!("failed to read dir: {}", e)))?;
+        let entries = std::fs::read_dir(dir).map_err(|e| {
+            UnsafeNativePluginError::LoadFailed(format!("failed to read dir: {}", e))
+        })?;
 
         for entry in entries {
             let entry = match entry {
@@ -268,7 +304,11 @@ impl PluginManagerLifecycle {
                             loaded += 1;
                         }
                         Err(e) => {
-                            tracing::error!("Failed to load Axum plugin {}: {}", path.display(), e);
+                            tracing::error!(
+                                "Failed to load unsafe native extension {}: {}",
+                                path.display(),
+                                e
+                            );
                         }
                     }
                 }
@@ -320,8 +360,11 @@ impl PluginManagerLifecycle {
                                     }
                                 }
                                 Some("so") | Some("dylib") | Some("dll") => {
-                                    tracing::info!("Hot-reloading Axum plugin: {}", path.display());
-                                    // Remove old plugin entry by name (library stays loaded
+                                    tracing::info!(
+                                        "Hot-reloading unsafe native extension: {}",
+                                        path.display()
+                                    );
+                                    // Remove old extension entry by name (library stays loaded
                                     // until all in-flight request references are dropped)
                                     let name = path
                                         .file_stem()

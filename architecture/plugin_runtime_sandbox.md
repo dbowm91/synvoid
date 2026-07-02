@@ -16,6 +16,20 @@ The `PluginTrustTier` enum controls what a plugin can request and how strictly i
 
 Serialization uses `snake_case` (`"local_sandboxed"`, `"signed_sandboxed"`, etc.).
 
+## Unsafe Native Extensions (Separate from WASM Sandbox)
+
+Native shared-library extensions loaded via `libloading` run inside the Synvoid address space with full process authority. They are **not** subject to the WASM sandbox, trust tiers, capability manifest, signing policy, fuel/epoch limits, or host API sub-capabilities described above.
+
+Unsafe native extensions are:
+- Disabled by default in all modes
+- Requiring explicit operator acknowledgement in production
+- Path-scoped with allowlisted directories
+- Optional SHA-256 hash verification
+- Retaining `Arc<Library>` handles to prevent use-after-free
+- Exposed via separate observability status and metrics
+
+See `docs/PLUGINS.md` for the unsafe native extension configuration reference and `architecture/unsafe_native_extensions.md` for the full design.
+
 ## Manifest Schema
 
 Each plugin provides a `synvoid-plugin.toml` manifest. The `PluginManifest` struct is parsed via `toml::from_str` with validation for non-empty `name` and `entry`.

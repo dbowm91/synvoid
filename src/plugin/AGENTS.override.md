@@ -203,3 +203,20 @@ The `abi_frame` module (`crates/synvoid-plugin-runtime/src/abi_frame.rs`) provid
 - `PluginRuntimeOwner` owns the epoch incrementer lifecycle. Production composition root at `src/server/mod.rs` calls `start_epoch_incrementer()`.
 - `WasmPluginManager::epoch_incrementer_running()` and `validate_execution_containment_runtime()` are available for introspection.
 - Body chunk timeout is enforced via `HostCallBudget.body_chunk_timeout` with ABI code `ABI_ERR_TIMEOUT`.
+
+## Unsafe Native Extensions (Phase 8)
+
+Native shared-library plugins are now classified as **unsafe native extensions**, not sandboxed plugins.
+
+### Key invariants:
+- The canonical loader is in `crates/synvoid-plugin-runtime/src/unsafe_native_loader.rs`
+- The root crate's `src/plugin/unsafe_native_loader.rs` is a thin re-export wrapper
+- `UnsafeNativeExtension` retains `Arc<Library>` — never drop it while handlers may execute
+- Config struct: `UnsafeNativePluginConfig` in `crates/synvoid-config/src/plugins.rs`
+- Errors: `UnsafeNativePluginError` (with `AxumPluginError` backward-compat alias)
+- Hot-reload for native extensions is gated by `hot_reload_enabled`, separate from WASM
+
+### Forbidden patterns:
+- Never load native extensions without going through the config gate
+- Never store only the `Router` without the `UnsafeNativeExtension` (loses library lifetime)
+- Never call `Library::drop` while in-flight requests may reference plugin code

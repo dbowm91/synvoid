@@ -98,7 +98,7 @@ fn enforce_plugin_load_policy_exists() {
 /// aware of trust-tier enforcement.
 ///
 /// Exception allowlist:
-/// - `axum_loader.rs`: Native `.so` loader — no WASM manifest concept.
+/// - `unsafe_native_loader.rs`: Native `.so` loader — no WASM manifest concept.
 ///   Trust validation is file-permission-based (no symlinks, size, ABI version).
 #[test]
 fn all_load_paths_call_enforcement() {
@@ -112,7 +112,7 @@ fn all_load_paths_call_enforcement() {
     let exempt_files: Vec<PathBuf> = vec![
         // Native .so loader: no WASM manifest/signing concept. Validates via
         // file permissions, no symlinks, size checks, and ABI version.
-        plugin_runtime_src.join("axum_loader.rs"),
+        plugin_runtime_src.join("unsafe_native_loader.rs"),
         // Composition root that delegates to WasmPluginManager. Trust-tier
         // enforcement happens inside WasmPluginManager::load_plugin_with_limits.
         repo.join("src").join("server").join("plugin_runtime.rs"),
@@ -121,7 +121,7 @@ fn all_load_paths_call_enforcement() {
     let loader_files = [
         plugin_runtime_src.join("plugin_manager.rs"),
         plugin_runtime_src.join("wasm_runtime.rs"),
-        plugin_runtime_src.join("axum_loader.rs"),
+        plugin_runtime_src.join("unsafe_native_loader.rs"),
         repo.join("src").join("plugin").join("mod.rs"),
         repo.join("src").join("server").join("plugin_runtime.rs"),
     ];

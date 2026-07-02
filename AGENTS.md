@@ -52,6 +52,10 @@ cargo test -p synvoid-plugin-runtime -- test_host_api_failure_class
 cargo test -p synvoid-plugin-runtime -- test_manifest_toml_parses_mesh
 cargo test -p synvoid-plugin-runtime -- test_signing_payload_includes
 cargo test -p synvoid-plugin-runtime -- test_manifest_validate_trust
+
+# Unsafe native extension tests (Phase 8)
+cargo test -p synvoid-plugin-runtime -- unsafe_native
+cargo test -p synvoid-plugin-runtime -- test_unsafe_native
 ```
 
 ## Feature Profiles
@@ -136,6 +140,7 @@ cargo test --test mesh_task_ownership_guard --features mesh,dns  # Mesh task own
 - **Strict SignedSandboxed**: Empty `binary_sha256` or `manifest_sha256` fields are rejected for `SignedSandboxed` in production.
 - **Plugin ABI memory boundary**: `write_to_guest_memory` requires `guest_alloc`/`guest_free`. Fixed-offset 1024 fallback is removed. All guest pointer/length operations use `checked_guest_range`.
 - **Plugin ABI frame serialization**: Use `abi_frame::serialize_headers_canonical` and `abi_frame::build_request_frame` — never ad-hoc header encoding. `SerializationFailureClass` classifies rejections for bounded metrics.
+- **Unsafe native extensions**: Disabled by default. Production loading requires explicit risk acknowledgement, path allowlist, and optional SHA-256 hash verification. The `Library` handle is retained via `Arc` for the lifetime of any plugin-derived values. Native extensions are NOT sandboxed and have full process authority.
 
 ## Admin Control-Plane Authority
 
