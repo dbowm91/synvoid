@@ -113,6 +113,79 @@ pub struct DnsZoneRecord {
 }
 
 #[derive(Debug, Clone)]
+pub enum AuthoritativeLookupOutcome {
+    Positive {
+        origin: String,
+        qname: String,
+        qtype: u16,
+        records: Vec<DnsZoneRecord>,
+    },
+    Cname {
+        origin: String,
+        qname: String,
+        cname_records: Vec<DnsZoneRecord>,
+    },
+    NoData {
+        origin: String,
+        qname: String,
+        qtype: u16,
+        soa: Option<DnsZoneRecord>,
+    },
+    NxDomain {
+        origin: String,
+        qname: String,
+        qtype: u16,
+        soa: Option<DnsZoneRecord>,
+    },
+    NoAuthoritativeZone {
+        qname: String,
+        qtype: u16,
+    },
+}
+
+impl Zone {
+    pub fn owner_exists(&self, lookup_name: &str) -> bool {
+        let origin = self.origin.trim_end_matches('.').to_lowercase();
+        self.records.keys().any(|(name, _)| {
+            name == lookup_name
+                || (lookup_name == "@" && name.to_lowercase() == origin)
+                || (name == "@" && lookup_name.to_lowercase() == origin)
+        })
+    }
+
+    pub fn type_exists_at_owner(&self, lookup_name: &str, qtype: RecordType) -> bool {
+        let origin = self.origin.trim_end_matches('.').to_lowercase();
+        self.records.keys().any(|(name, rt)| {
+            (name == lookup_name
+                || (lookup_name == "@" && name.to_lowercase() == origin)
+                || (name == "@" && lookup_name.to_lowercase() == origin))
+                && *rt == qtype
+        })
+    }
+
+    pub fn get_soa(&self) -> Option<DnsZoneRecord> {
+        let origin = self.origin.trim_end_matches('.').to_lowercase();
+        self.records
+            .get(&("@".to_string(), RecordType::SOA))
+            .or_else(|| self.records.get(&(origin, RecordType::SOA)))
+            .and_then(|records| records.first().cloned())
+    }
+
+    pub fn get_soa_minimum(&self) -> u32 {
+        self.get_soa()
+            .and_then(|soa| {
+                let parts: Vec<&str> = soa.value.split_whitespace().collect();
+                if parts.len() >= 7 {
+                    parts[6].parse().ok()
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(300)
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct DsRecordExport {
     pub key_tag: u16,
     pub algorithm: u8,

@@ -4,7 +4,6 @@ use crate::parsed_query::build_response_flags as canonical_build_response_flags;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum DnsSection {
     Answer,
-    #[allow(dead_code)]
     Authority,
     Additional,
 }

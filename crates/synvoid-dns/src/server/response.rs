@@ -1,6 +1,6 @@
 use super::response_encoder::{
     assemble_packet, build_opt_encoded_record, build_response_flags, encode_rr, truncate_to_fit,
-    ResponseEnvelope,
+    DnsSection, ResponseEnvelope,
 };
 use super::*;
 
@@ -489,5 +489,83 @@ impl DnsServer {
         }
 
         Arc::new(response)
+    }
+
+    pub(super) fn build_unsigned_nxdomain(
+        query_id: u16,
+        qname: &str,
+        qtype: u16,
+        soa: Option<&DnsZoneRecord>,
+        edns_options: Option<&EdnsOptions>,
+        _negative_cache_ttl: u32,
+    ) -> Arc<Vec<u8>> {
+        let mut envelope = ResponseEnvelope::default();
+
+        let flags = build_response_flags(true, false, true, true, false, 3);
+
+        if let Some(soa_record) = soa {
+            if let Ok(mut rec) = encode_rr(soa_record, None) {
+                rec.section = DnsSection::Authority;
+                envelope.authority_records.push(rec);
+            }
+        }
+
+        if let Some(edns) = edns_options {
+            envelope
+                .additional_records
+                .push(build_opt_encoded_record(edns.udp_payload_size, false));
+        }
+
+        let packet = assemble_packet(&envelope, query_id, flags, qname, qtype);
+        Arc::new(packet)
+    }
+
+    pub(super) fn build_unsigned_nodata(
+        query_id: u16,
+        qname: &str,
+        qtype: u16,
+        soa: Option<&DnsZoneRecord>,
+        edns_options: Option<&EdnsOptions>,
+        _negative_cache_ttl: u32,
+    ) -> Arc<Vec<u8>> {
+        let mut envelope = ResponseEnvelope::default();
+
+        let flags = build_response_flags(true, false, true, true, false, 0);
+
+        if let Some(soa_record) = soa {
+            if let Ok(mut rec) = encode_rr(soa_record, None) {
+                rec.section = DnsSection::Authority;
+                envelope.authority_records.push(rec);
+            }
+        }
+
+        if let Some(edns) = edns_options {
+            envelope
+                .additional_records
+                .push(build_opt_encoded_record(edns.udp_payload_size, false));
+        }
+
+        let packet = assemble_packet(&envelope, query_id, flags, qname, qtype);
+        Arc::new(packet)
+    }
+
+    pub(super) fn build_refused(
+        query_id: u16,
+        qname: &str,
+        qtype: u16,
+        edns_options: Option<&EdnsOptions>,
+    ) -> Arc<Vec<u8>> {
+        let mut envelope = ResponseEnvelope::default();
+
+        let flags = build_response_flags(true, false, true, true, false, 5);
+
+        if let Some(edns) = edns_options {
+            envelope
+                .additional_records
+                .push(build_opt_encoded_record(edns.udp_payload_size, false));
+        }
+
+        let packet = assemble_packet(&envelope, query_id, flags, qname, qtype);
+        Arc::new(packet)
     }
 }

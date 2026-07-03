@@ -6,6 +6,7 @@ use crate::mesh_sync::MeshDnsRegistry;
 use crate::parsed_query::ParsedDnsQuery;
 
 impl DnsServer {
+    #[cfg(test)]
     pub(super) fn build_simple_nxdomain_response(
         parsed: &ParsedDnsQuery<'_>,
     ) -> Option<Arc<Vec<u8>>> {
@@ -573,9 +574,6 @@ impl DnsServer {
         }
 
         let qname_lower = parsed.qname.to_lowercase();
-        if qname_lower.ends_with(".example") || qname_lower == "example" {
-            return Self::build_simple_nxdomain_response(&parsed);
-        }
 
         if parsed.qtype == 16 {
             // TXT record query - check for ACME DNS-01 challenge
@@ -611,9 +609,23 @@ impl DnsServer {
         let (origin_str, zone) = match best_match {
             Some(origin) => match ctx.zones.get(&origin) {
                 Some(zone) => (origin.clone(), zone),
-                None => return None,
+                None => {
+                    return Some(Self::build_refused(
+                        parsed.id,
+                        &parsed.qname,
+                        parsed.qtype,
+                        edns_options.as_ref(),
+                    ));
+                }
             },
-            None => return None,
+            None => {
+                return Some(Self::build_refused(
+                    parsed.id,
+                    &parsed.qname,
+                    parsed.qtype,
+                    edns_options.as_ref(),
+                ));
+            }
         };
 
         let origin_canonical = origin_str.clone();
@@ -656,7 +668,12 @@ impl DnsServer {
                     let qname_stripped = parsed.qname.trim_end_matches('.');
                     if cname_target.eq_ignore_ascii_case(qname_stripped) {
                         tracing::warn!("CNAME loop detected for {}", parsed.qname);
-                        return None;
+                        return Some(Self::build_refused(
+                            parsed.id,
+                            &parsed.qname,
+                            parsed.qtype,
+                            edns_options.as_ref(),
+                        ));
                     }
                 }
                 return Some(Self::build_response(
@@ -953,7 +970,28 @@ impl DnsServer {
             }
         }
 
-        None
+        let soa_record = zone.get_soa();
+
+        let name_exists = zone.owner_exists(&lookup_name);
+        if name_exists {
+            Some(Self::build_unsigned_nodata(
+                parsed.id,
+                &parsed.qname,
+                parsed.qtype,
+                soa_record.as_ref(),
+                edns_options.as_ref(),
+                ctx.negative_cache_ttl,
+            ))
+        } else {
+            Some(Self::build_unsigned_nxdomain(
+                parsed.id,
+                &parsed.qname,
+                parsed.qtype,
+                soa_record.as_ref(),
+                edns_options.as_ref(),
+                ctx.negative_cache_ttl,
+            ))
+        }
     }
 
     pub(super) fn build_nxdomain_response(
