@@ -1023,15 +1023,16 @@ Completed 2026-07-03. 390/390 DNS lib tests pass, 30/30 authoritative_negative t
 | No-zone REFUSED | Verified | Unknown zones return RCODE=5 (REFUSED) |
 | Truncation | Verified | Byte-size based (EDNS UDP payload or 512); TC response preserves query ID, RD echo, QDCOUNT=1 |
 | AD/RA policy | Verified | Authoritative responses: AA=1, RA=0, AD=false. AD is only set by recursive resolver when `is_dnssec_validated` |
-| SOA enforcement | Verified | Zones rejected at load time if SOA missing; runtime SERVFAIL if SOA absent at query time |
+| SOA enforcement | Verified | Zones rejected at load time if SOA missing; runtime SERVFAIL if SOA absent at query time (fail-closed) |
+| Signed NXDOMAIN SOA | Verified | `build_nxdomain_response` includes SOA in authority section before NSEC/NSEC3 records |
 | DNSSEC NODATA wire encoding | Fixed | SOA RDATA in NODATA responses uses proper wire format (mname/rname via `encode_name` + 5×u32) |
 
 ### 11.2 Test Inventory
 
 | Test suite | Count | Location |
 |------------|-------|----------|
-| DNS lib unit tests | 390 | `crates/synvoid-dns/src/` |
-| Authoritative negative integration | 30 | `tests/authoritative_negative.rs` |
+| DNS lib unit tests | 399 | `crates/synvoid-dns/src/` |
+| Authoritative negative integration | 37 | `tests/authoritative_negative.rs` |
 | Flag builder unit tests | 28 | `crates/synvoid-dns/src/parsed_query.rs` |
 | Response encoder unit tests | ~30 | `crates/synvoid-dns/src/server/response_encoder.rs` |
 | Truncation tests | 10 | `crates/synvoid-dns/src/server/response.rs` |
@@ -1052,11 +1053,27 @@ External smoke tests (dig/drill/delv against a running server) were not run duri
 ### 11.5 Verification Commands
 
 ```bash
-cargo test -p synvoid-dns                                    # 390 tests
-cargo test -p synvoid-dns --test authoritative_negative      # 30 tests
-cargo test -p synvoid-dns -- flag                            # 28 flag tests
+cargo test -p synvoid-dns                                    # 399 tests
+cargo test -p synvoid-dns --test authoritative_negative      # 37 tests
+cargo test -p synvoid-dns -- flag                            # 33 flag tests (5 regression added)
 cargo test -p synvoid-dns -- response_encoder                # ~30 encoder tests
 cargo check -p synvoid-dns --all-features                    # clean
 cargo check --workspace                                      # clean
 ```
+
+### 11.6 Milestone 1 Closure Summary
+
+Milestone 1 is closed. The authoritative DNS wire/query correctness is verified:
+
+- **399 lib tests + 37 authoritative_negative integration tests** pass.
+- All authoritative responses (positive, NODATA, NXDOMAIN, REFUSED, truncated) have correct flags: AA=1, RA=0, AD=0, RD echoed from query.
+- Both signed and unsigned negative responses include SOA in the authority section (fail-closed: missing SOA returns SERVFAIL).
+- Signed NXDOMAIN now includes SOA before NSEC/NSEC3 denial proofs.
+- 5 flag regression tests guard against future reintroduction of AD/RA into authoritative responses.
+- 2 SOA fail-closed tests verify SERVFAIL when SOA is absent.
+- Duplicate legacy `src/dns/` tree removed (43 dead files, ~25k lines). Canonical path: `crates/synvoid-dns/src/`.
+
+**What Milestone 1 is**: Authoritative wire-format correctness, query parsing, response assembly, SOA inclusion, flag semantics, DNSSEC NODATA/NXDOMAIN denial proof scaffolding, and truncation.
+
+**What Milestone 1 is not**: Full DNSSEC production hardening (NSEC3 closest-encloser, RFC 5001/5155 compliance, key lifecycle), recursive resolver transport, or external interoperability validation. These remain deferred to Milestone 3.
 

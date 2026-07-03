@@ -339,6 +339,7 @@ fn is_response(resp: &[u8]) -> bool {
 // ── RCODE constants ────────────────────────────────────────────────────
 
 const RCODE_NOERROR: u8 = 0;
+const RCODE_SERVFAIL: u8 = 2;
 const RCODE_NXDOMAIN: u8 = 3;
 const RCODE_REFUSED: u8 = 5;
 
@@ -1246,4 +1247,211 @@ fn lookup_authoritative_positive_records_cloned_independently() {
     } else {
         panic!("Both lookups should return Positive");
     }
+}
+
+// ── SOA defense-in-depth tests ───────────────────────────────────────
+
+/// Zone without SOA triggers SERVFAIL via defense-in-depth check.
+///
+/// A zone loaded without a SOA record violates RFC 1035, but the server
+/// must handle this gracefully by returning SERVFAIL rather than an
+/// invalid NODATA/NXDOMAIN response.
+#[test]
+fn zone_without_soa_returns_servfail() {
+    let zones = Arc::new(ShardedZoneStore::new());
+    let mut zone = Zone::new("nosoa.local".to_string());
+    // Intentionally omit SOA record
+    zone.records.insert(
+        ("@".to_string(), RecordType::NS),
+        vec![DnsZoneRecord {
+            name: "@".to_string(),
+            record_type: RecordType::NS,
+            value: "ns1.nosoa.local.".to_string(),
+            ttl: 300,
+            priority: None,
+        }],
+    );
+    zone.records.insert(
+        ("www".to_string(), RecordType::A),
+        vec![DnsZoneRecord {
+            name: "www".to_string(),
+            record_type: RecordType::A,
+            value: "192.0.2.10".to_string(),
+            ttl: 300,
+            priority: None,
+        }],
+    );
+    zones.insert("nosoa.local".to_string(), zone);
+
+    let mut trie = ZoneTrie::new();
+    trie.insert("nosoa.local");
+    let zone_trie = Arc::new(RwLock::new(trie));
+
+    let ecs_config = EcsFilterConfig::default();
+    let ctx = make_ctx(&zones, &zone_trie, &ecs_config);
+
+    // Query for an existing record — defense-in-depth should catch missing SOA
+    let query = build_query(0xC0A1, "www.nosoa.local", 1);
+    let resp = DnsServer::handle_query(&ctx, &query, Some(IpAddr::from([127, 0, 0, 1])))
+        .expect("handle_query should return Some");
+
+    assert!(is_response(&resp));
+    assert!(is_authoritative(&resp));
+    assert_eq!(
+        response_rcode(&resp),
+        RCODE_SERVFAIL,
+        "Zone without SOA must return SERVFAIL (2), not NOERROR or NXDOMAIN"
+    );
+    assert_eq!(
+        response_ancount(&resp),
+        0,
+        "SERVFAIL must have no answer records"
+    );
+}
+
+/// Zone without SOA returns SERVFAIL for NXDOMAIN-style queries too.
+#[test]
+fn zone_without_soa_nxdomain_query_returns_servfail() {
+    let zones = Arc::new(ShardedZoneStore::new());
+    let mut zone = Zone::new("nosoa2.local".to_string());
+    // Intentionally omit SOA record
+    zone.records.insert(
+        ("@".to_string(), RecordType::NS),
+        vec![DnsZoneRecord {
+            name: "@".to_string(),
+            record_type: RecordType::NS,
+            value: "ns1.nosoa2.local.".to_string(),
+            ttl: 300,
+            priority: None,
+        }],
+    );
+    zones.insert("nosoa2.local".to_string(), zone);
+
+    let mut trie = ZoneTrie::new();
+    trie.insert("nosoa2.local");
+    let zone_trie = Arc::new(RwLock::new(trie));
+
+    let ecs_config = EcsFilterConfig::default();
+    let ctx = make_ctx(&zones, &zone_trie, &ecs_config);
+
+    // Query for a non-existent name — defense-in-depth should catch missing SOA
+    let query = build_query(0xC0B2, "nonexistent.nosoa2.local", 1);
+    let resp = DnsServer::handle_query(&ctx, &query, Some(IpAddr::from([127, 0, 0, 1])))
+        .expect("handle_query should return Some");
+
+    assert!(is_response(&resp));
+    assert!(is_authoritative(&resp));
+    assert_eq!(
+        response_rcode(&resp),
+        RCODE_SERVFAIL,
+        "Zone without SOA must return SERVFAIL (2) for NXDOMAIN queries too"
+    );
+}
+
+// ── Flag regression tests ──────────────────────────────────────────────
+
+/// Bit helpers for flag assertions.
+fn flag_ra(resp: &[u8]) -> bool {
+    response_flags(resp) & 0x0800 != 0
+}
+
+fn flag_ad(resp: &[u8]) -> bool {
+    response_flags(resp) & 0x0020 != 0
+}
+
+fn flag_tc(resp: &[u8]) -> bool {
+    response_flags(resp) & 0x0200 != 0
+}
+
+fn flag_rd(resp: &[u8]) -> bool {
+    response_flags(resp) & 0x0100 != 0
+}
+
+/// Positive authoritative: AA=true, RD echoed, RA=false, AD=false.
+#[test]
+fn flag_positive_authoritative() {
+    let (zones, zone_trie, ecs_filter_config) = setup();
+    let ctx = make_ctx(&zones, &zone_trie, &ecs_filter_config);
+
+    // Query with RD=1
+    let query = build_query(0xF001, "www.test.local", 1);
+    let resp = DnsServer::handle_query(&ctx, &query, Some(IpAddr::from([127, 0, 0, 1])))
+        .expect("handle_query should return Some");
+
+    assert!(is_response(&resp));
+    assert!(is_authoritative(&resp), "AA must be true");
+    assert!(flag_rd(&resp), "RD must be echoed from query");
+    assert!(!flag_ra(&resp), "RA must be false for authoritative");
+    assert!(!flag_ad(&resp), "AD must be false for authoritative");
+}
+
+/// Unsigned NODATA: AA=true, RA=false, AD=false.
+#[test]
+fn flag_unsigned_nodata() {
+    let (zones, zone_trie, ecs_filter_config) = setup();
+    let ctx = make_ctx(&zones, &zone_trie, &ecs_filter_config);
+
+    // www exists but has no MX
+    let query = build_query(0xF002, "www.test.local", 15);
+    let resp = DnsServer::handle_query(&ctx, &query, Some(IpAddr::from([127, 0, 0, 1])))
+        .expect("handle_query should return Some");
+
+    assert!(is_response(&resp));
+    assert!(is_authoritative(&resp), "AA must be true");
+    assert!(!flag_ra(&resp), "RA must be false");
+    assert!(!flag_ad(&resp), "AD must be false");
+    assert_eq!(response_rcode(&resp), RCODE_NOERROR);
+}
+
+/// Unsigned NXDOMAIN: AA=true, RA=false, AD=false.
+#[test]
+fn flag_unsigned_nxdomain() {
+    let (zones, zone_trie, ecs_filter_config) = setup();
+    let ctx = make_ctx(&zones, &zone_trie, &ecs_filter_config);
+
+    let query = build_query(0xF003, "nonexistent.test.local", 1);
+    let resp = DnsServer::handle_query(&ctx, &query, Some(IpAddr::from([127, 0, 0, 1])))
+        .expect("handle_query should return Some");
+
+    assert!(is_response(&resp));
+    assert!(is_authoritative(&resp), "AA must be true");
+    assert!(!flag_ra(&resp), "RA must be false");
+    assert!(!flag_ad(&resp), "AD must be false");
+    assert_eq!(response_rcode(&resp), RCODE_NXDOMAIN);
+}
+
+/// REFUSED no-zone: RA=false, AD=false.
+#[test]
+fn flag_refused_no_zone() {
+    let (zones, zone_trie, ecs_filter_config) = setup();
+    let ctx = make_ctx(&zones, &zone_trie, &ecs_filter_config);
+
+    let query = build_query(0xF004, "unknown.example.com", 1);
+    let resp = DnsServer::handle_query(&ctx, &query, Some(IpAddr::from([127, 0, 0, 1])))
+        .expect("handle_query should return Some");
+
+    assert!(is_response(&resp));
+    assert!(is_authoritative(&resp), "AA must be true");
+    assert!(!flag_ra(&resp), "RA must be false");
+    assert!(!flag_ad(&resp), "AD must be false");
+    assert_eq!(response_rcode(&resp), RCODE_REFUSED);
+}
+
+/// RD=0 query: authoritative still responds with RD=0 echoed, AA=true, RA=false.
+#[test]
+fn flag_rd_zero_query_rd_echoed() {
+    let (zones, zone_trie, ecs_filter_config) = setup();
+    let ctx = make_ctx(&zones, &zone_trie, &ecs_filter_config);
+
+    // Build query with RD=0
+    let mut q = build_query(0xF005, "www.test.local", 1);
+    q[2] &= !0x01; // Clear RD bit (byte 2, bit 0)
+    let resp = DnsServer::handle_query(&ctx, &q, Some(IpAddr::from([127, 0, 0, 1])))
+        .expect("handle_query should return Some");
+
+    assert!(is_response(&resp));
+    assert!(is_authoritative(&resp), "AA must be true");
+    assert!(!flag_rd(&resp), "RD must be echoed as 0");
+    assert!(!flag_ra(&resp), "RA must be false");
+    assert!(!flag_ad(&resp), "AD must be false");
 }

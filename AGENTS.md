@@ -219,6 +219,7 @@ Request-path modules must consume **narrow traits**, not concrete infrastructure
 | `src/admin/authority.rs` | `crates/synvoid-core/src/admin_mutation.rs` |
 | `src/wasm_pow/` | `crates/synvoid-wasm-pow/` |
 | `src/server/mod.rs` (monolithic) | `src/server/` (split: `startup_plan.rs`, `resources.rs`, `runtime_handles.rs`, `plugin_runtime.rs`) |
+| `src/dns/*.rs` (legacy copies) | `crates/synvoid-dns/src/` (canonical). `src/dns/mod.rs` re-exports `synvoid_dns::*`. |
 
 ## Module Overrides
 
@@ -226,7 +227,7 @@ Each subsystem has specialized `AGENTS.override.md` files. Load the relevant one
 
 | Module | Path |
 |--------|------|
-| DNS/DNSSEC | `src/dns/AGENTS.override.md` |
+| DNS/DNSSEC | `crates/synvoid-dns/AGENTS.override.md` |
 | WAF | `src/waf/AGENTS.override.md` |
 | HTTP Server | `src/http/AGENTS.override.md` |
 | HTTP Client | `src/http_client/AGENTS.override.md` |

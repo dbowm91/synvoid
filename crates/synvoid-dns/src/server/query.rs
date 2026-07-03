@@ -1073,6 +1073,10 @@ impl DnsServer {
                 zone.nsec_enabled || zone.nsec3_enabled
             }) {
                 let origin = zone.origin.clone();
+                let soa_record = zone
+                    .records
+                    .get(&("@".to_string(), RecordType::SOA))
+                    .and_then(|records| records.first().cloned());
                 if zone.nsec_enabled {
                     let nsec_records = Self::build_nsec_records(&zone, &parsed.qname, record_type);
                     if !nsec_records.is_empty() {
@@ -1087,6 +1091,7 @@ impl DnsServer {
                             edns_options.as_ref(),
                             zsk,
                             origin.as_str(),
+                            soa_record.as_ref(),
                             rd,
                         ));
                     }
@@ -1105,6 +1110,7 @@ impl DnsServer {
                             edns_options.as_ref(),
                             zsk,
                             origin.as_str(),
+                            soa_record.as_ref(),
                             rd,
                         ));
                     }
@@ -1152,6 +1158,7 @@ impl DnsServer {
         edns_options: Option<&EdnsOptions>,
         zsk: Option<&crate::dnssec::ZoneSigningKey>,
         signer_name: &str,
+        soa_record: Option<&DnsZoneRecord>,
         rd: bool,
     ) -> Arc<Vec<u8>> {
         let _ = nsec_record_type;
@@ -1161,6 +1168,65 @@ impl DnsServer {
         };
 
         let mut envelope = ResponseEnvelope::default();
+
+        // Fail-closed: missing SOA is an internal invariant violation.
+        // The zone SOA check in handle_parsed_query should catch this earlier,
+        // but we enforce it here as defense-in-depth.
+        let Some(soa) = soa_record else {
+            tracing::error!(
+                qname = %qname,
+                "Missing SOA record for signed NXDOMAIN response (internal invariant violation), returning SERVFAIL"
+            );
+            let flags = build_response_flags(true, false, rd, false, false, 2);
+            let question = super::wire::build_question(qname, qtype, 1);
+            let has_opt = edns_options.is_some();
+            let arcount: u16 = if has_opt { 1 } else { 0 };
+            let mut packet = Vec::with_capacity(12 + question.len() + 16);
+            packet.extend_from_slice(&response_id.to_be_bytes());
+            packet.extend_from_slice(&flags.to_be_bytes());
+            packet.extend_from_slice(&1u16.to_be_bytes());
+            packet.extend_from_slice(&0u16.to_be_bytes());
+            packet.extend_from_slice(&0u16.to_be_bytes());
+            packet.extend_from_slice(&arcount.to_be_bytes());
+            packet.extend_from_slice(&question);
+            if let Some(edns) = edns_options {
+                let opt = build_opt_encoded_record(edns.udp_payload_size, false);
+                packet.extend_from_slice(&opt.bytes);
+            }
+            return Arc::new(packet);
+        };
+
+        // Authority section: SOA record (RFC 2308)
+        match encode_rr(soa, None) {
+            Ok(mut rec) => {
+                rec.section = DnsSection::Authority;
+                envelope.authority_records.push(rec);
+            }
+            Err(reason) => {
+                tracing::error!(
+                    qname = %qname,
+                    reason = %reason,
+                    "DNS encode: SOA record failed for NXDOMAIN response, returning SERVFAIL"
+                );
+                let flags = build_response_flags(true, false, rd, false, false, 2);
+                let question = super::wire::build_question(qname, qtype, 1);
+                let has_opt = edns_options.is_some();
+                let arcount: u16 = if has_opt { 1 } else { 0 };
+                let mut packet = Vec::with_capacity(12 + question.len() + 16);
+                packet.extend_from_slice(&response_id.to_be_bytes());
+                packet.extend_from_slice(&flags.to_be_bytes());
+                packet.extend_from_slice(&1u16.to_be_bytes());
+                packet.extend_from_slice(&0u16.to_be_bytes());
+                packet.extend_from_slice(&0u16.to_be_bytes());
+                packet.extend_from_slice(&arcount.to_be_bytes());
+                packet.extend_from_slice(&question);
+                if let Some(edns) = edns_options {
+                    let opt = build_opt_encoded_record(edns.udp_payload_size, false);
+                    packet.extend_from_slice(&opt.bytes);
+                }
+                return Arc::new(packet);
+            }
+        }
 
         // Authority section: NSEC/NSEC3 denial proof records
         for nsec_record in nsec_records {
@@ -1253,20 +1319,62 @@ impl DnsServer {
 
         let mut envelope = ResponseEnvelope::default();
 
+        // Fail-closed: missing SOA is an internal invariant violation.
+        // The zone SOA check in handle_parsed_query should catch this earlier,
+        // but we enforce it here as defense-in-depth.
+        let Some(soa) = soa_record else {
+            tracing::error!(
+                qname = %qname,
+                "Missing SOA record for signed NODATA response (internal invariant violation), returning SERVFAIL"
+            );
+            let flags = build_response_flags(true, false, rd, false, false, 2);
+            let question = super::wire::build_question(qname, qtype, 1);
+            let has_opt = edns_options.is_some();
+            let arcount: u16 = if has_opt { 1 } else { 0 };
+            let mut packet = Vec::with_capacity(12 + question.len() + 16);
+            packet.extend_from_slice(&response_id.to_be_bytes());
+            packet.extend_from_slice(&flags.to_be_bytes());
+            packet.extend_from_slice(&1u16.to_be_bytes());
+            packet.extend_from_slice(&0u16.to_be_bytes());
+            packet.extend_from_slice(&0u16.to_be_bytes());
+            packet.extend_from_slice(&arcount.to_be_bytes());
+            packet.extend_from_slice(&question);
+            if let Some(edns) = edns_options {
+                let opt = build_opt_encoded_record(edns.udp_payload_size, false);
+                packet.extend_from_slice(&opt.bytes);
+            }
+            return Arc::new(packet);
+        };
+
         // Authority section: SOA record (RFC 2308)
-        if let Some(soa) = soa_record {
-            match encode_rr(soa, None) {
-                Ok(mut rec) => {
-                    rec.section = DnsSection::Authority;
-                    envelope.authority_records.push(rec);
+        match encode_rr(soa, None) {
+            Ok(mut rec) => {
+                rec.section = DnsSection::Authority;
+                envelope.authority_records.push(rec);
+            }
+            Err(reason) => {
+                tracing::error!(
+                    qname = %qname,
+                    reason = %reason,
+                    "DNS encode: SOA record failed for NODATA response, returning SERVFAIL"
+                );
+                let flags = build_response_flags(true, false, rd, false, false, 2);
+                let question = super::wire::build_question(qname, qtype, 1);
+                let has_opt = edns_options.is_some();
+                let arcount: u16 = if has_opt { 1 } else { 0 };
+                let mut packet = Vec::with_capacity(12 + question.len() + 16);
+                packet.extend_from_slice(&response_id.to_be_bytes());
+                packet.extend_from_slice(&flags.to_be_bytes());
+                packet.extend_from_slice(&1u16.to_be_bytes());
+                packet.extend_from_slice(&0u16.to_be_bytes());
+                packet.extend_from_slice(&0u16.to_be_bytes());
+                packet.extend_from_slice(&arcount.to_be_bytes());
+                packet.extend_from_slice(&question);
+                if let Some(edns) = edns_options {
+                    let opt = build_opt_encoded_record(edns.udp_payload_size, false);
+                    packet.extend_from_slice(&opt.bytes);
                 }
-                Err(reason) => {
-                    tracing::error!(
-                        qname = %qname,
-                        reason = %reason,
-                        "DNS encode: SOA record failed for NODATA response"
-                    );
-                }
+                return Arc::new(packet);
             }
         }
 

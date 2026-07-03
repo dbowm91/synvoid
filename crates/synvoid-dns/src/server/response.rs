@@ -554,26 +554,51 @@ impl DnsServer {
         let mut envelope = ResponseEnvelope::default();
         let mut report = EncodeReport::default();
 
+        // Fail-closed: missing SOA is an internal invariant violation.
+        // The zone SOA check in handle_parsed_query should catch this earlier,
+        // but we enforce it here as defense-in-depth.
+        let Some(soa_record) = soa else {
+            tracing::error!(
+                qname = %qname,
+                "Missing SOA record for NXDOMAIN response (internal invariant violation), returning SERVFAIL"
+            );
+            let flags = build_response_flags(true, false, rd, false, false, 2);
+            let question = super::wire::build_question(qname, qtype, 1);
+            let has_opt = edns_options.is_some();
+            let arcount: u16 = if has_opt { 1 } else { 0 };
+            let mut packet = Vec::with_capacity(12 + question.len() + 16);
+            packet.extend_from_slice(&query_id.to_be_bytes());
+            packet.extend_from_slice(&flags.to_be_bytes());
+            packet.extend_from_slice(&1u16.to_be_bytes());
+            packet.extend_from_slice(&0u16.to_be_bytes());
+            packet.extend_from_slice(&0u16.to_be_bytes());
+            packet.extend_from_slice(&arcount.to_be_bytes());
+            packet.extend_from_slice(&question);
+            if let Some(edns) = edns_options {
+                let opt = build_opt_encoded_record(edns.udp_payload_size, false);
+                packet.extend_from_slice(&opt.bytes);
+            }
+            return (Arc::new(packet), report);
+        };
+
         let mut soa_failed = false;
-        if let Some(soa_record) = soa {
-            match encode_rr(soa_record, None) {
-                Ok(mut rec) => {
-                    rec.section = DnsSection::Authority;
-                    envelope.authority_records.push(rec);
-                }
-                Err(reason) => {
-                    tracing::error!(
-                        qname = %qname,
-                        reason = %reason,
-                        "DNS encode: SOA record failed for NXDOMAIN response, returning SERVFAIL"
-                    );
-                    report.skipped.push(SkippedRecord {
-                        name: soa_record.name.clone(),
-                        record_type: RecordType::SOA,
-                        reason,
-                    });
-                    soa_failed = true;
-                }
+        match encode_rr(soa_record, None) {
+            Ok(mut rec) => {
+                rec.section = DnsSection::Authority;
+                envelope.authority_records.push(rec);
+            }
+            Err(reason) => {
+                tracing::error!(
+                    qname = %qname,
+                    reason = %reason,
+                    "DNS encode: SOA record failed for NXDOMAIN response, returning SERVFAIL"
+                );
+                report.skipped.push(SkippedRecord {
+                    name: soa_record.name.clone(),
+                    record_type: RecordType::SOA,
+                    reason,
+                });
+                soa_failed = true;
             }
         }
 
@@ -621,26 +646,51 @@ impl DnsServer {
         let mut envelope = ResponseEnvelope::default();
         let mut report = EncodeReport::default();
 
+        // Fail-closed: missing SOA is an internal invariant violation.
+        // The zone SOA check in handle_parsed_query should catch this earlier,
+        // but we enforce it here as defense-in-depth.
+        let Some(soa_record) = soa else {
+            tracing::error!(
+                qname = %qname,
+                "Missing SOA record for NODATA response (internal invariant violation), returning SERVFAIL"
+            );
+            let flags = build_response_flags(true, false, rd, false, false, 2);
+            let question = super::wire::build_question(qname, qtype, 1);
+            let has_opt = edns_options.is_some();
+            let arcount: u16 = if has_opt { 1 } else { 0 };
+            let mut packet = Vec::with_capacity(12 + question.len() + 16);
+            packet.extend_from_slice(&query_id.to_be_bytes());
+            packet.extend_from_slice(&flags.to_be_bytes());
+            packet.extend_from_slice(&1u16.to_be_bytes());
+            packet.extend_from_slice(&0u16.to_be_bytes());
+            packet.extend_from_slice(&0u16.to_be_bytes());
+            packet.extend_from_slice(&arcount.to_be_bytes());
+            packet.extend_from_slice(&question);
+            if let Some(edns) = edns_options {
+                let opt = build_opt_encoded_record(edns.udp_payload_size, false);
+                packet.extend_from_slice(&opt.bytes);
+            }
+            return (Arc::new(packet), report);
+        };
+
         let mut soa_failed = false;
-        if let Some(soa_record) = soa {
-            match encode_rr(soa_record, None) {
-                Ok(mut rec) => {
-                    rec.section = DnsSection::Authority;
-                    envelope.authority_records.push(rec);
-                }
-                Err(reason) => {
-                    tracing::error!(
-                        qname = %qname,
-                        reason = %reason,
-                        "DNS encode: SOA record failed for NODATA response, returning SERVFAIL"
-                    );
-                    report.skipped.push(SkippedRecord {
-                        name: soa_record.name.clone(),
-                        record_type: RecordType::SOA,
-                        reason,
-                    });
-                    soa_failed = true;
-                }
+        match encode_rr(soa_record, None) {
+            Ok(mut rec) => {
+                rec.section = DnsSection::Authority;
+                envelope.authority_records.push(rec);
+            }
+            Err(reason) => {
+                tracing::error!(
+                    qname = %qname,
+                    reason = %reason,
+                    "DNS encode: SOA record failed for NODATA response, returning SERVFAIL"
+                );
+                report.skipped.push(SkippedRecord {
+                    name: soa_record.name.clone(),
+                    record_type: RecordType::SOA,
+                    reason,
+                });
+                soa_failed = true;
             }
         }
 
@@ -931,6 +981,54 @@ mod tests {
         let flags = u16::from_be_bytes([resp[2], resp[3]]);
         let rcode = (flags & 0x000F) as u8;
         assert_eq!(rcode, 0, "RCODE must be 0 (NOERROR) for TC response");
+    }
+
+    // ── SOA fail-closed tests ──────────────────────────────────────────
+
+    #[test]
+    fn unsigned_nodata_no_soa_returns_servfail() {
+        let (resp, _report) = DnsServer::build_unsigned_nodata(
+            0x50A1,
+            "www.example.com",
+            15,   // MX
+            None, // no SOA
+            None,
+            300,
+            true,
+        );
+
+        let flags = u16::from_be_bytes([resp[2], resp[3]]);
+        let rcode = (flags & 0x000F) as u8;
+        assert_eq!(rcode, 2, "RCODE must be SERVFAIL (2) when SOA is None");
+        assert_ne!(flags & 0x0400, 0, "AA bit must be set");
+        assert_eq!(
+            u16::from_be_bytes([resp[6], resp[7]]),
+            0,
+            "ANCOUNT must be 0"
+        );
+    }
+
+    #[test]
+    fn unsigned_nxdomain_no_soa_returns_servfail() {
+        let (resp, _report) = DnsServer::build_unsigned_nxdomain(
+            0x50A2,
+            "nonexistent.example.com",
+            1,    // A
+            None, // no SOA
+            None,
+            300,
+            true,
+        );
+
+        let flags = u16::from_be_bytes([resp[2], resp[3]]);
+        let rcode = (flags & 0x000F) as u8;
+        assert_eq!(rcode, 2, "RCODE must be SERVFAIL (2) when SOA is None");
+        assert_ne!(flags & 0x0400, 0, "AA bit must be set");
+        assert_eq!(
+            u16::from_be_bytes([resp[6], resp[7]]),
+            0,
+            "ANCOUNT must be 0"
+        );
     }
 
     #[test]
