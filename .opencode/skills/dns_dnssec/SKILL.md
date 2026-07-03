@@ -305,6 +305,26 @@ coalescer.broadcast_response(key, response.clone());
 
 On failure, `cancel_in_flight()` cleans up. Negative responses (NXDOMAIN/NODATA) are also broadcast when key dimensions match. Coalescing key includes DO bit, qclass, qtype, qname, and client dimensions.
 
+**QueryKey 6-Dimensional Key** (`crates/synvoid-dns/src/query_coalesce.rs:25-33`):
+| Dimension | Type | Description |
+|-----------|------|-------------|
+| `name` | `String` | Lowercased qname |
+| `qtype` | `u16` | Query type (A, AAAA, MX, etc.) |
+| `qclass` | `u16` | Query class (IN, CH, etc.) |
+| `dnssec_ok` | `bool` | DO bit from EDNS |
+| `edns_udp_size` | `u16` | EDNS UDP buffer size (default 512) |
+| `client_ip` | `Option<String>` | Client subnet for per-client coalescing |
+
+**Coalescer Metrics** (lazy static gauges):
+- `dns_query_coalescer_hits_total` — Waiter received coalesced response
+- `dns_query_coalescer_misses_total` — Query became new owner
+- `dns_query_coalescer_broadcasts_total` — Owner broadcast response to waiters
+- `dns_query_coalescer_cancels_total` — Owner cancelled in-flight entry (failure path)
+- `dns_query_coalescer_evictions_total` — LRU eviction due to max_entries
+- `dns_query_coalescer_timeouts_total` — Waiter timed out waiting
+- `dns_query_coalescer_lagged_total` — Waiter lagged on broadcast channel
+- `dns_query_coalescer_in_flight` — Current in-flight query count
+
 ### Runtime Correctness (Phase G)
 
 - Bind address from `DnsSettings.bind_address` is honored for UDP/TCP listeners.
@@ -411,4 +431,7 @@ cargo test -p synvoid-dns -- parsed_query
 
 # Authoritative negative response tests (Phase D: NODATA/NXDOMAIN with SOA)
 cargo test --test authoritative_negative
+
+# Query coalescing tests (Phase F: key dimensions, owner/waiter lifecycle, metrics)
+cargo test -p synvoid-dns -- query_coalesce
 ```

@@ -85,7 +85,7 @@ The module is located at `src/dns/` and exports a rich set of submodules.
 | `platform.rs` | `src/dns/platform.rs` | `AnycastSocketPlatform` - platform-specific anycast socket support |
 | `prefetch.rs` | `src/dns/prefetch.rs` | `DnsPrefetcher` - DNS response prefetching based on query frequency |
 | `qname.rs` | `src/dns/qname.rs` | QNAME minimization and rebinding checks |
-| `query_coalesce.rs` | `src/dns/query_coalesce.rs` | Query coalescing |
+| `query_coalesce.rs` | `crates/synvoid-dns/src/query_coalesce.rs` | Query coalescing |
 | `query_validator.rs` | `src/dns/query_validator.rs` | Query validation |
 | `secure_server.rs` | `src/dns/secure_server.rs` | `SecureDnsServerBase` - TLS DNS server base (DoT/DoH/DoQ) |
 | `sharded_cache.rs` | `src/dns/sharded_cache.rs` | `ShardedDnsCache` - high-performance sharded DNS cache |
@@ -1001,7 +1001,7 @@ pub struct TrustAnchor { ... }
 | Item | Location | Description |
 |------|----------|--------------|
 | DNS Cookie wiring | `server/query.rs:645-662` | `validate_cookie()` called for RFC 7873 |
-| Query Coalescer | `query_coalesce.rs:121` | `max_wait_ms` parameter controls timeout for coalescing |
+| Query Coalescer | `crates/synvoid-dns/src/query_coalesce.rs:131` | `with_config(max_wait_ms, max_entries, entry_ttl_secs)` |
 | DNSSEC validation | `resolver.rs:423` | `HickoryResolver` always returns `is_dnssec_validated: false` |
 | GlobalNodeResolver | `resolver_global.rs` | Resolves via mesh global nodes |
 | mesh_sync | `anycast_sync.rs` | Mesh-based zone sync |

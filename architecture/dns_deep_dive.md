@@ -64,7 +64,7 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
 4. **Firewall**: `DnsFirewall` evaluates against blocking rules (subnet, opcode)
 5. **Cache Check**: If enabled, `DnsCache` checked first
 6.  **Query Coalescing**: `QueryCoalescer` collapses identical in-flight queries
-    - Implemented at `src/dns/query_coalesce.rs`
+    - Implemented at `crates/synvoid-dns/src/query_coalesce.rs`
     - Configured via `config.settings.query_coalescing` (enabled, max_wait_ms, max_entries, entry_ttl_secs)
     - `QueryCoalescer::with_config()` created in `DnsServer::new()` at `src/dns/server/mod.rs:634-644`
     - Passed to query handler via `QueryContext` at `src/dns/server/mod.rs:419-445`

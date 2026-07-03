@@ -19,6 +19,10 @@ static COALESCER_TIMEOUTS: std::sync::LazyLock<Gauge> =
     std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_timeouts_total"));
 static COALESCER_LAGGED: std::sync::LazyLock<Gauge> =
     std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_lagged_total"));
+static COALESCER_BROADCASTS: std::sync::LazyLock<Gauge> =
+    std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_broadcasts_total"));
+static COALESCER_CANCELS: std::sync::LazyLock<Gauge> =
+    std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_cancels_total"));
 static COALESCER_IN_FLIGHT: std::sync::LazyLock<Gauge> =
     std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_in_flight"));
 
@@ -97,6 +101,8 @@ pub struct QueryCoalescerMetrics {
     pub evictions: usize,
     pub timeouts: usize,
     pub lagged: usize,
+    pub broadcasts: usize,
+    pub cancels: usize,
 }
 
 pub struct QueryCoalescer {
@@ -232,12 +238,16 @@ impl QueryCoalescer {
 
         let mut in_flight = self.in_flight.write();
         in_flight.remove(&key);
+        self.metrics.write().broadcasts += 1;
+        COALESCER_BROADCASTS.increment(1.0);
         COALESCER_IN_FLIGHT.set(in_flight.len() as f64);
     }
 
     pub fn cancel_in_flight(&self, key: &QueryKey) {
         let mut in_flight = self.in_flight.write();
         if in_flight.remove(key).is_some() {
+            self.metrics.write().cancels += 1;
+            COALESCER_CANCELS.increment(1.0);
             COALESCER_IN_FLIGHT.set(in_flight.len() as f64);
         }
     }
@@ -294,6 +304,8 @@ impl QueryCoalescer {
             lagged: guard.lagged,
             timeouts: guard.timeouts,
             evictions: guard.evictions,
+            broadcasts: guard.broadcasts,
+            cancels: guard.cancels,
         }
     }
 
@@ -574,5 +586,487 @@ mod tests {
             client_ip: None,
         };
         assert_ne!(key1, key2);
+    }
+
+    #[test]
+    fn test_coalescing_key_qclass_differs() {
+        let key1 = QueryKey {
+            name: "example.com".to_string(),
+            qtype: 1,
+            qclass: 1, // IN
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: None,
+        };
+        let key2 = QueryKey {
+            name: "example.com".to_string(),
+            qtype: 1,
+            qclass: 3, // CH
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: None,
+        };
+        assert_ne!(key1, key2, "Different qclass must not coalesce");
+    }
+
+    #[test]
+    fn test_coalescing_key_client_ip_differs() {
+        let key1 = QueryKey {
+            name: "example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: Some("10.0.0.1".to_string()),
+        };
+        let key2 = QueryKey {
+            name: "example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: Some("10.0.0.2".to_string()),
+        };
+        assert_ne!(key1, key2, "Different client_ip must not coalesce");
+    }
+
+    #[test]
+    fn test_coalescing_key_client_ip_none_vs_some() {
+        let key1 = QueryKey {
+            name: "example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: None,
+        };
+        let key2 = QueryKey {
+            name: "example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: Some("10.0.0.1".to_string()),
+        };
+        assert_ne!(
+            key1, key2,
+            "None vs Some client_ip must not coalesce"
+        );
+    }
+
+    #[test]
+    fn test_coalescing_key_edns_size_differs() {
+        let key1 = QueryKey {
+            name: "example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: true,
+            edns_udp_size: 512,
+            client_ip: None,
+        };
+        let key2 = QueryKey {
+            name: "example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: true,
+            edns_udp_size: 4096,
+            client_ip: None,
+        };
+        assert_ne!(
+            key1, key2,
+            "Different EDNS UDP size must not coalesce"
+        );
+    }
+
+    #[test]
+    fn test_coalescing_key_qtype_differs() {
+        let key1 = QueryKey {
+            name: "example.com".to_string(),
+            qtype: 1,  // A
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: None,
+        };
+        let key2 = QueryKey {
+            name: "example.com".to_string(),
+            qtype: 28, // AAAA
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: None,
+        };
+        assert_ne!(key1, key2, "Different qtype must not coalesce");
+    }
+
+    #[test]
+    fn test_coalescing_key_canonical_name_case_insensitive() {
+        let key1 = QueryKey {
+            name: "Example.COM".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: None,
+        };
+        let key2 = QueryKey {
+            name: "example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: None,
+        };
+        // Note: from_query lowercases names, but keys constructed directly are not.
+        // This test documents that if you construct keys with different cases, they are different.
+        // The from_query/from_parsed methods handle lowercasing.
+        assert_ne!(key1, key2, "Unnormalized names must not coalesce");
+    }
+
+    #[tokio::test]
+    async fn test_multiple_waiters_all_receive_response() {
+        let coalescer = Arc::new(QueryCoalescer::with_config(2000, 10000, 30));
+        let key = QueryKey {
+            name: "multiwaiter.example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: None,
+        };
+
+        // Owner
+        let result = coalescer.get_or_wait(key.clone()).await;
+        assert!(matches!(result, Some(CoalesceResult::NewQuery(_))));
+
+        let num_waiters = 5;
+        let mut handles = Vec::new();
+        for _ in 0..num_waiters {
+            let c = coalescer.clone();
+            let k = key.clone();
+            handles.push(tokio::spawn(async move { c.get_or_wait(k).await }));
+        }
+
+        // Let waiters register
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        let response = Arc::new(vec![0xDE, 0xAD, 0xBE, 0xEF]);
+        coalescer.broadcast_response(key.clone(), response.clone());
+
+        for handle in handles {
+            let result = handle.await.unwrap();
+            match result {
+                Some(CoalesceResult::Response(r)) => {
+                    assert_eq!(*r, *response);
+                }
+                _ => panic!("Expected Response for waiter, got {:?}", result),
+            }
+        }
+
+        assert_eq!(coalescer.in_flight_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_owner_cancel_removes_in_flight() {
+        let coalescer = Arc::new(QueryCoalescer::with_config(5000, 10000, 30));
+        let key = QueryKey {
+            name: "cancel.example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: None,
+        };
+
+        let result = coalescer.get_or_wait(key.clone()).await;
+        assert!(matches!(result, Some(CoalesceResult::NewQuery(_))));
+        assert_eq!(coalescer.in_flight_count(), 1);
+
+        // Simulate owner failure
+        coalescer.cancel_in_flight(&key);
+
+        assert_eq!(coalescer.in_flight_count(), 0);
+
+        // A new query after cancel should become a new owner
+        let result2 = coalescer.get_or_wait(key).await;
+        assert!(
+            matches!(result2, Some(CoalesceResult::NewQuery(_))),
+            "After cancel, next query should be NewQuery"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_late_broadcast_after_cleanup_is_ignored() {
+        let coalescer = Arc::new(QueryCoalescer::with_config(50, 10000, 1));
+        let key = QueryKey {
+            name: "late.example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: None,
+        };
+
+        let result = coalescer.get_or_wait(key.clone()).await;
+        assert!(matches!(result, Some(CoalesceResult::NewQuery(_))));
+        assert_eq!(coalescer.in_flight_count(), 1);
+
+        // Wait for entry to become stale
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        coalescer.cleanup_stale();
+        assert_eq!(coalescer.in_flight_count(), 0);
+
+        // Late broadcast should not panic
+        let response = Arc::new(vec![0x01]);
+        coalescer.broadcast_response(key.clone(), response);
+
+        // Entry was already removed, so no change
+        assert_eq!(coalescer.in_flight_count(), 0);
+
+        // New query should become owner
+        let result2 = coalescer.get_or_wait(key).await;
+        assert!(matches!(result2, Some(CoalesceResult::NewQuery(_))));
+    }
+
+    #[tokio::test]
+    async fn test_repeated_query_after_broadcast_becomes_new_owner() {
+        let coalescer = Arc::new(QueryCoalescer::new());
+        let key = QueryKey {
+            name: "repeat.example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: None,
+        };
+
+        // First owner
+        let result1 = coalescer.get_or_wait(key.clone()).await;
+        assert!(matches!(result1, Some(CoalesceResult::NewQuery(_))));
+
+        let response = Arc::new(vec![0xAA, 0xBB]);
+        coalescer.broadcast_response(key.clone(), response.clone());
+        assert_eq!(coalescer.in_flight_count(), 0);
+
+        // Second query should be new owner (not a waiter)
+        let result2 = coalescer.get_or_wait(key.clone()).await;
+        assert!(
+            matches!(result2, Some(CoalesceResult::NewQuery(_))),
+            "After broadcast, next query should become new owner"
+        );
+
+        coalescer.broadcast_response(key.clone(), response);
+        assert_eq!(coalescer.in_flight_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_waiter_timeout_does_not_affect_owner() {
+        let coalescer = Arc::new(QueryCoalescer::with_config(30, 10000, 30));
+        let key = QueryKey {
+            name: "timeout_owner.example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: None,
+        };
+
+        // Owner
+        let result = coalescer.get_or_wait(key.clone()).await;
+        assert!(matches!(result, Some(CoalesceResult::NewQuery(_))));
+
+        // Waiter that times out
+        let c = coalescer.clone();
+        let k = key.clone();
+        let handle = tokio::spawn(async move { c.get_or_wait(k).await });
+        let waiter_result = handle.await.unwrap();
+        assert!(matches!(waiter_result, Some(CoalesceResult::Timeout)));
+
+        // Owner entry should still be there
+        assert_eq!(coalescer.in_flight_count(), 1);
+
+        // Owner can still broadcast
+        let response = Arc::new(vec![0x01]);
+        coalescer.broadcast_response(key.clone(), response);
+        assert_eq!(coalescer.in_flight_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_stale_removes_zero_receiver_entries() {
+        let coalescer = Arc::new(QueryCoalescer::with_config(5000, 10000, 1));
+        let key = QueryKey {
+            name: "stale_cleanup.example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: None,
+        };
+
+        let result = coalescer.get_or_wait(key.clone()).await;
+        assert!(matches!(result, Some(CoalesceResult::NewQuery(_))));
+        assert_eq!(coalescer.in_flight_count(), 1);
+
+        // Wait for TTL to expire
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+
+        coalescer.cleanup_stale();
+        assert_eq!(coalescer.in_flight_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_stale_aged_removes_old_entries() {
+        let coalescer = Arc::new(QueryCoalescer::with_config(5000, 10000, 60));
+        let key = QueryKey {
+            name: "aged_cleanup.example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: None,
+        };
+
+        let result = coalescer.get_or_wait(key.clone()).await;
+        assert!(matches!(result, Some(CoalesceResult::NewQuery(_))));
+        assert_eq!(coalescer.in_flight_count(), 1);
+
+        // Wait so the entry is actually older than max_age
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        // Use cleanup_stale_aged with a very short age
+        coalescer.cleanup_stale_aged(Duration::from_millis(1));
+        assert_eq!(
+            coalescer.in_flight_count(),
+            0,
+            "cleanup_stale_aged should remove entries older than max_age"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_preserves_fresh_entries() {
+        let coalescer = Arc::new(QueryCoalescer::with_config(5000, 10000, 30));
+        let key = QueryKey {
+            name: "fresh.example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: None,
+        };
+
+        let result = coalescer.get_or_wait(key.clone()).await;
+        assert!(matches!(result, Some(CoalesceResult::NewQuery(_))));
+        assert_eq!(coalescer.in_flight_count(), 1);
+
+        // Spawn a waiter so the entry has an active receiver (non-zero receiver_count)
+        let c = coalescer.clone();
+        let k = key.clone();
+        let handle = tokio::spawn(async move { c.get_or_wait(k).await });
+
+        // Give the waiter time to register its receiver
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        // Cleanup immediately - entry is fresh and has receivers
+        coalescer.cleanup_stale();
+        assert_eq!(
+            coalescer.in_flight_count(),
+            1,
+            "Fresh entry with active receivers should not be cleaned up"
+        );
+
+        // Clean up the waiter so it doesn't hang
+        let response = Arc::new(vec![0x01]);
+        coalescer.broadcast_response(key, response);
+        let _ = handle.await.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod key_parsing_integration {
+    use super::*;
+
+    fn build_query(name: &str, qtype: u16, qclass: u16) -> Vec<u8> {
+        let mut query = vec![
+            0x12, 0x34, // ID
+            0x01, 0x00, // Flags: standard query, RD=1
+            0x00, 0x01, // QDCOUNT=1
+            0x00, 0x00, // ANCOUNT=0
+            0x00, 0x00, // NSCOUNT=0
+            0x00, 0x00, // ARCOUNT=0
+        ];
+        // Encode name
+        for label in name.split('.') {
+            query.push(label.len() as u8);
+            query.extend_from_slice(label.as_bytes());
+        }
+        query.push(0x00); // root
+        query.push((qtype >> 8) as u8);
+        query.push((qtype & 0xFF) as u8);
+        query.push((qclass >> 8) as u8);
+        query.push((qclass & 0xFF) as u8);
+        query
+    }
+
+    #[test]
+    fn test_axfr_query_parses_to_key() {
+        // AXFR qtype = 252
+        let query = build_query("example.com", 252, 1);
+        let key = QueryKey::from_query(&query, None);
+        assert!(key.is_some(), "AXFR query should parse into a QueryKey");
+        let key = key.unwrap();
+        assert_eq!(key.qtype, 252);
+        assert_eq!(key.name, "example.com");
+    }
+
+    #[test]
+    fn test_ixfr_query_parses_to_key() {
+        // IXFR qtype = 251
+        let query = build_query("example.com", 251, 1);
+        let key = QueryKey::from_query(&query, None);
+        assert!(key.is_some(), "IXFR query should parse into a QueryKey");
+        let key = key.unwrap();
+        assert_eq!(key.qtype, 251);
+    }
+
+    #[test]
+    fn test_axfr_and_ixfr_keys_are_different() {
+        let axfr_query = build_query("example.com", 252, 1);
+        let ixfr_query = build_query("example.com", 251, 1);
+        let key_axfr = QueryKey::from_query(&axfr_query, None).unwrap();
+        let key_ixfr = QueryKey::from_query(&ixfr_query, None).unwrap();
+        assert_ne!(key_axfr, key_ixfr, "AXFR and IXFR must have different keys");
+    }
+
+    #[test]
+    fn test_axfr_key_differs_from_a_record() {
+        let axfr_query = build_query("example.com", 252, 1);
+        let a_query = build_query("example.com", 1, 1);
+        let key_axfr = QueryKey::from_query(&axfr_query, None).unwrap();
+        let key_a = QueryKey::from_query(&a_query, None).unwrap();
+        assert_ne!(key_axfr, key_a, "AXFR must not coalesce with A record query");
+    }
+
+    #[test]
+    fn test_notify_query_parses_to_key() {
+        // NOTIFY has opcode=4 in the flags (0x2800)
+        let mut query = vec![
+            0x12, 0x34, // ID
+            0x28, 0x00, // Flags: opcode=NOTIFY (4), QR=0
+            0x00, 0x01, // QDCOUNT=1
+            0x00, 0x00, // ANCOUNT=0
+            0x00, 0x00, // NSCOUNT=0
+            0x00, 0x00, // ARCOUNT=0
+        ];
+        for label in "example.com".split('.') {
+            query.push(label.len() as u8);
+            query.extend_from_slice(label.as_bytes());
+        }
+        query.push(0x00);
+        query.push(0x00); // qtype = ANY (255)
+        query.push(0xFF);
+        query.push(0x00); // qclass = IN
+        query.push(0x01);
+        let key = QueryKey::from_query(&query, None);
+        assert!(key.is_some(), "NOTIFY should parse into a QueryKey");
     }
 }
