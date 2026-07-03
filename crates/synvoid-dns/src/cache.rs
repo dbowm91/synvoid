@@ -906,7 +906,9 @@ impl Default for SecureDnsCache {
     }
 }
 
-// SAFETY_REASON: Used by detect_dnssec_signed for DNS name parsing
+/// Compression-aware DNS name skipper. Used by `detect_dnssec_signed`.
+/// Currently only reachable from the orphaned `sharded_cache.rs` module;
+/// retained for when that module is integrated.
 #[allow(dead_code)]
 fn skip_name(data: &[u8], mut offset: usize) -> Option<usize> {
     loop {
@@ -928,6 +930,8 @@ fn skip_name(data: &[u8], mut offset: usize) -> Option<usize> {
     }
 }
 
+/// Detect whether a DNS response wire-format contains RRSIG records.
+/// Used by `sharded_cache.rs` (currently orphaned) and tests.
 #[allow(dead_code)]
 pub(crate) fn detect_dnssec_signed(data: &[u8]) -> bool {
     if data.len() < 12 {

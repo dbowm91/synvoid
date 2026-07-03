@@ -7,10 +7,8 @@ use crate::cache::TransportClass;
 use crate::parsed_query::ParsedDnsQuery;
 
 #[derive(Debug)]
-#[allow(dead_code)]
 enum TtlParseError {
     Truncated,
-    MalformedPointer,
     MalformedLabel,
 }
 
