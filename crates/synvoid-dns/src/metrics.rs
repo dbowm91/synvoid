@@ -17,6 +17,7 @@ pub struct DnsMetrics {
     rrl_limited_responses: AtomicU64,
     malformed_queries: AtomicU64,
     nxdomain_responses: AtomicU64,
+    encode_failures: AtomicU64,
     tcp_connections: AtomicUsize,
     active_tcp_connections: AtomicUsize,
     query_types: RwLock<HashMap<String, AtomicU64>>,
@@ -45,6 +46,7 @@ impl DnsMetrics {
             rrl_limited_responses: AtomicU64::new(0),
             malformed_queries: AtomicU64::new(0),
             nxdomain_responses: AtomicU64::new(0),
+            encode_failures: AtomicU64::new(0),
             tcp_connections: AtomicUsize::new(0),
             active_tcp_connections: AtomicUsize::new(0),
             query_types: RwLock::new(HashMap::new()),
@@ -115,6 +117,10 @@ impl DnsMetrics {
 
     pub fn record_nxdomain(&self) {
         self.nxdomain_responses.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_encode_failure(&self) {
+        self.encode_failures.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn record_firewall_allowed(&self) {
@@ -242,6 +248,7 @@ impl DnsMetrics {
             rrl_limited_responses: self.rrl_limited_responses.load(Ordering::Relaxed),
             malformed_queries: self.malformed_queries.load(Ordering::Relaxed),
             nxdomain_responses: self.nxdomain_responses.load(Ordering::Relaxed),
+            encode_failures: self.encode_failures.load(Ordering::Relaxed),
             tcp_connections: self.tcp_connections.load(Ordering::Relaxed),
             active_tcp_connections: self.active_tcp_connections.load(Ordering::Relaxed),
             firewall_queries_allowed: self.firewall_queries_allowed.load(Ordering::Relaxed),
@@ -275,6 +282,7 @@ impl DnsMetrics {
         self.rrl_limited_responses.store(0, Ordering::Relaxed);
         self.malformed_queries.store(0, Ordering::Relaxed);
         self.nxdomain_responses.store(0, Ordering::Relaxed);
+        self.encode_failures.store(0, Ordering::Relaxed);
         self.tcp_connections.store(0, Ordering::Relaxed);
         self.active_tcp_connections.store(0, Ordering::Relaxed);
         self.firewall_queries_allowed.store(0, Ordering::Relaxed);
@@ -348,6 +356,13 @@ impl DnsMetrics {
             summary.malformed_queries
         ));
 
+        output.push_str("# HELP dns_encode_failures_total Total record encode failures\n");
+        output.push_str("# TYPE dns_encode_failures_total counter\n");
+        output.push_str(&format!(
+            "dns_encode_failures_total {}\n\n",
+            summary.encode_failures
+        ));
+
         output.push_str("# HELP dns_firewall_queries_allowed Total firewall-allowed queries\n");
         output.push_str("# TYPE dns_firewall_queries_allowed counter\n");
         output.push_str(&format!(
@@ -401,6 +416,7 @@ pub struct DnsMetricsSummary {
     pub rrl_limited_responses: u64,
     pub malformed_queries: u64,
     pub nxdomain_responses: u64,
+    pub encode_failures: u64,
     pub tcp_connections: usize,
     pub active_tcp_connections: usize,
     pub firewall_queries_allowed: u64,

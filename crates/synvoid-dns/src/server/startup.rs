@@ -97,7 +97,12 @@ impl DnsServer {
     }
 
     async fn start_standard_mode(&mut self) -> Result<(), String> {
-        let bind_addr = SocketAddr::from(([0, 0, 0, 0], self.config.port));
+        let bind_ip: std::net::IpAddr = self
+            .config
+            .bind_address
+            .parse()
+            .unwrap_or_else(|_| std::net::IpAddr::from([0, 0, 0, 0]));
+        let bind_addr = SocketAddr::from((bind_ip, self.config.port));
 
         let socket = UdpSocket::bind(bind_addr)
             .await
@@ -122,6 +127,7 @@ impl DnsServer {
         let geoip_lookup_udp = geoip_lookup.clone();
         let acme_dns_challenges_udp = self.acme_dns_challenges.clone();
         let _cookie_server_udp = self.cookie_server.clone();
+        let dns64_translator_udp = self.dns64_translator.clone();
 
         tokio::spawn(async move {
             let DnsHandlerState {
@@ -166,7 +172,7 @@ impl DnsServer {
                 update_handler: update_handler_udp.as_ref(),
                 notify_handler: notify_handler_udp.as_ref(),
                 query_coalescer: query_coalescer_udp.as_ref(),
-                dns64_translator: None,
+                dns64_translator: dns64_translator_udp.as_ref(),
                 acme_dns_challenges: acme_dns_challenges_udp.as_ref(),
                 cookie_server: cookie_server_udp.as_ref(),
                 #[cfg(feature = "mesh")]
@@ -235,8 +241,12 @@ impl DnsServer {
                                     }
                                 }
 
-                                let query_key = crate::query_coalesce::QueryKey::from_query(&buf[..len], Some(client_ip));
-                                let cache_key = if let Some(ref key) = query_key {
+                                let query_key = if let Ok(ref parsed_q) = parsed {
+                                    crate::query_coalesce::QueryKey::from_parsed(parsed_q, Some(client_ip), &buf[..len])
+                                } else {
+                                    crate::query_coalesce::QueryKey::from_query(&buf[..len], Some(client_ip))
+                                };
+                                let mut cache_key = if let Some(ref key) = query_key {
                                     CacheKey::new(key.name.clone(), RecordType::from(key.qtype), Some(client_ip))
                                 } else {
                                     CacheKey::new(String::new(), RecordType::NULL, Some(client_ip))
@@ -254,35 +264,63 @@ impl DnsServer {
                                             Some(crate::query_coalesce::CoalesceResult::Response(resp)) => {
                                                 Some(resp)
                                             }
-                                            Some(crate::query_coalesce::CoalesceResult::NewQuery(_)) => {
-                                                if let Some(c) = &ctx.cache {
+                                            Some(crate::query_coalesce::CoalesceResult::NewQuery(_tx)) => {
+                                                let resp = if let (Some(c), Ok(ref parsed_q)) = (&ctx.cache, &parsed) {
+                                                    Self::handle_parsed_query_with_cache(&ctx, parsed_q, &buf[..len], c, &mut cache_key, Some(client_ip))
+                                                } else if let Some(c) = &ctx.cache {
                                                     Self::handle_query_with_cache(&ctx, &buf[..len], c, cache_key, Some(client_ip))
+                                                } else if let Ok(ref parsed_q) = &parsed {
+                                                    Self::handle_parsed_query(&ctx, parsed_q, &buf[..len], Some(client_ip))
                                                 } else {
                                                     Self::handle_query(&ctx, &buf[..len], Some(client_ip))
+                                                };
+
+                                                if let Some(ref r) = resp {
+                                                    coalescer.broadcast_response(key.clone(), r.clone());
+                                                } else {
+                                                    coalescer.cancel_in_flight(&key);
                                                 }
+
+                                                resp
                                             }
                                             None => {
-                                                if let Some(c) = &ctx.cache {
+                                                if let (Some(c), Ok(ref parsed_q)) = (&ctx.cache, &parsed) {
+                                                    Self::handle_parsed_query_with_cache(&ctx, parsed_q, &buf[..len], c, &mut cache_key, Some(client_ip))
+                                                } else if let Some(c) = &ctx.cache {
                                                     Self::handle_query_with_cache(&ctx, &buf[..len], c, cache_key, Some(client_ip))
+                                                } else if let Ok(ref parsed_q) = &parsed {
+                                                    Self::handle_parsed_query(&ctx, parsed_q, &buf[..len], Some(client_ip))
                                                 } else {
                                                     Self::handle_query(&ctx, &buf[..len], Some(client_ip))
                                                 }
                                             }
                                             _ => {
-                                                if let Some(c) = &ctx.cache {
+                                                if let (Some(c), Ok(ref parsed_q)) = (&ctx.cache, &parsed) {
+                                                    Self::handle_parsed_query_with_cache(&ctx, parsed_q, &buf[..len], c, &mut cache_key, Some(client_ip))
+                                                } else if let Some(c) = &ctx.cache {
                                                     Self::handle_query_with_cache(&ctx, &buf[..len], c, cache_key, Some(client_ip))
+                                                } else if let Ok(ref parsed_q) = &parsed {
+                                                    Self::handle_parsed_query(&ctx, parsed_q, &buf[..len], Some(client_ip))
                                                 } else {
                                                     Self::handle_query(&ctx, &buf[..len], Some(client_ip))
                                                 }
                                             }
                                         }
+                                    } else if let (Some(c), Ok(ref parsed_q)) = (&ctx.cache, &parsed) {
+                                        Self::handle_parsed_query_with_cache(&ctx, parsed_q, &buf[..len], c, &mut cache_key, Some(client_ip))
                                     } else if let Some(c) = &ctx.cache {
                                         Self::handle_query_with_cache(&ctx, &buf[..len], c, cache_key, Some(client_ip))
+                                    } else if let Ok(ref parsed_q) = &parsed {
+                                        Self::handle_parsed_query(&ctx, parsed_q, &buf[..len], Some(client_ip))
                                     } else {
                                         Self::handle_query(&ctx, &buf[..len], Some(client_ip))
                                     }
+                                } else if let (Some(c), Ok(ref parsed_q)) = (&ctx.cache, &parsed) {
+                                    Self::handle_parsed_query_with_cache(&ctx, parsed_q, &buf[..len], c, &mut cache_key, Some(client_ip))
                                 } else if let Some(c) = &ctx.cache {
                                     Self::handle_query_with_cache(&ctx, &buf[..len], c, cache_key, Some(client_ip))
+                                } else if let Ok(ref parsed_q) = &parsed {
+                                    Self::handle_parsed_query(&ctx, parsed_q, &buf[..len], Some(client_ip))
                                 } else {
                                     Self::handle_query(&ctx, &buf[..len], Some(client_ip))
                                 };
@@ -319,6 +357,7 @@ impl DnsServer {
         let tcp_buffer_size = self.config.limits.udp_buffer_size;
         let acme_dns_challenges_tcp = self.acme_dns_challenges.clone();
         let cookie_server_tcp = self.cookie_server.clone();
+        let dns64_translator_tcp = self.dns64_translator.clone();
 
         tokio::spawn(async move {
             let DnsHandlerState {
@@ -363,15 +402,6 @@ impl DnsServer {
                                     continue;
                                 }
 
-                                let connection_limits = connection_limits_tcp.clone();
-                                match connection_limits.try_acquire_connection() {
-                                    Ok(_guard) => {}
-                                    Err(e) => {
-                                        tracing::warn!("Connection rejected by limits: {}", e);
-                                        continue;
-                                    }
-                                }
-
                                 let zones_clone = zones_tcp.clone();
                                 let zone_trie_clone = zone_trie_tcp.clone();
                                 let _zone_index_clone = zone_index_tcp.clone();
@@ -389,10 +419,19 @@ impl DnsServer {
                                 let query_coalescer_clone = query_coalescer_tcp.clone();
                                 let acme_dns_challenges_clone = acme_dns_challenges_tcp.clone();
                                 let cookie_server_clone = cookie_server_tcp.clone();
+                                let connection_limits_clone = connection_limits_tcp.clone();
+                                let dns64_clone = dns64_translator_tcp.clone();
 
                                 tokio::spawn(async move {
+                                    let _connection_guard = match connection_limits_clone.try_acquire_connection() {
+                                        Ok(guard) => guard,
+                                        Err(e) => {
+                                            tracing::warn!("Connection rejected by limits: {}", e);
+                                            return;
+                                        }
+                                    };
                                     let max_idle_time = Some(std::time::Duration::from_secs(
-                                        connection_limits.max_tcp_idle_time().as_secs()
+                                        connection_limits_clone.max_tcp_idle_time().as_secs()
                                     ));
                                     let ctx = QueryContext {
                                         zones: &zones_clone,
@@ -405,7 +444,7 @@ impl DnsServer {
                                         signer_name: signer_name_clone.as_ref(),
                                         query_validator: query_validator_clone.as_ref(),
                                         firewall: firewall_clone.as_ref(),
-                                        connection_limits: Some(&connection_limits),
+                                        connection_limits: Some(&connection_limits_clone),
                                         max_idle_time,
                                         zone_transfer: zone_transfer_clone.as_ref(),
                                         ecs_filter_config: &ecs_filter_clone,
@@ -414,7 +453,7 @@ impl DnsServer {
                                         update_handler: update_handler_clone.as_ref(),
                                         notify_handler: notify_handler_clone.as_ref(),
                                         query_coalescer: query_coalescer_clone.as_ref(),
-                                        dns64_translator: None,
+                                        dns64_translator: dns64_clone.as_ref(),
                                         acme_dns_challenges: acme_dns_challenges_clone.as_ref(),
                                         cookie_server: cookie_server_clone.as_ref(),
                                         #[cfg(feature = "mesh")]

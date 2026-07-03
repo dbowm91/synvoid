@@ -340,6 +340,51 @@ pub fn build_response_flags_full(
 /// - Echo CD from the query when validation policy allows it.
 /// - Set RCODE from explicit response outcome.
 /// - Preserve opcode for NOTIFY/UPDATE responses.
+#[derive(Debug, Clone, Copy)]
+pub struct ResponsePolicy {
+    pub authoritative: bool,
+    pub recursion_available: bool,
+    pub authentic_data: bool,
+    pub checking_disabled: bool,
+}
+
+impl ResponsePolicy {
+    pub fn authoritative_only() -> Self {
+        Self {
+            authoritative: true,
+            recursion_available: false,
+            authentic_data: false,
+            checking_disabled: false,
+        }
+    }
+
+    pub fn from_query(parsed: &ParsedDnsQuery<'_>) -> Self {
+        Self {
+            authoritative: true,
+            recursion_available: false,
+            authentic_data: false,
+            checking_disabled: parsed.flags.checking_disabled,
+        }
+    }
+}
+
+pub fn build_response_flags_with_policy(
+    policy: ResponsePolicy,
+    truncated: bool,
+    recursion_desired: bool,
+    rcode: u8,
+) -> u16 {
+    build_response_flags_full(
+        policy.authoritative,
+        truncated,
+        recursion_desired,
+        policy.recursion_available,
+        policy.authentic_data,
+        policy.checking_disabled,
+        rcode,
+    )
+}
+
 pub fn build_response_flags_from_query(
     parsed: &ParsedDnsQuery,
     authoritative: bool,
@@ -801,5 +846,59 @@ mod tests {
         // The question section spans raw[12..question_end]
         assert_eq!(parsed.raw.len(), parsed.question_end);
         assert_eq!(parsed.raw.len(), q.len());
+    }
+
+    #[test]
+    fn response_policy_authoritative_only_has_no_ra_or_ad() {
+        let policy = ResponsePolicy::authoritative_only();
+        assert!(policy.authoritative);
+        assert!(!policy.recursion_available);
+        assert!(!policy.authentic_data);
+        assert!(!policy.checking_disabled);
+    }
+
+    #[test]
+    fn response_policy_from_query_preserves_cd() {
+        let q = build_query(0x0001, 0x0100 | 0x0010, "example.com", 1, 1);
+        let parsed = ParsedDnsQuery::parse(&q).unwrap();
+        let policy = ResponsePolicy::from_query(&parsed);
+        assert!(policy.checking_disabled);
+        assert!(policy.authoritative);
+        assert!(!policy.recursion_available);
+        assert!(!policy.authentic_data);
+    }
+
+    #[test]
+    fn response_flags_with_policy_authoritative_only() {
+        let policy = ResponsePolicy::authoritative_only();
+        let flags = build_response_flags_with_policy(policy, false, true, 0);
+        assert_eq!(flags & 0x8000, 0x8000); // QR
+        assert_eq!(flags & 0x0400, 0x0400); // AA
+        assert_eq!(flags & 0x0100, 0x0100); // RD echoed from query
+        assert_eq!(flags & 0x0080, 0); // RA must be 0
+        assert_eq!(flags & 0x0020, 0); // AD must be 0
+        assert_eq!(flags & 0x000F, 0); // RCODE
+    }
+
+    #[test]
+    fn response_flags_with_policy_rd_preserved() {
+        let policy = ResponsePolicy::authoritative_only();
+        let flags = build_response_flags_with_policy(policy, false, false, 0);
+        assert_eq!(flags & 0x0100, 0); // RD not set when query didn't set it
+    }
+
+    #[test]
+    fn response_flags_with_policy_truncated() {
+        let policy = ResponsePolicy::authoritative_only();
+        let flags = build_response_flags_with_policy(policy, true, true, 0);
+        assert_ne!(flags & 0x0200, 0); // TC set
+    }
+
+    #[test]
+    fn response_flags_with_policy_nxdomain() {
+        let policy = ResponsePolicy::authoritative_only();
+        let flags = build_response_flags_with_policy(policy, false, true, 3);
+        assert_eq!(flags & 0x000F, 3); // NXDOMAIN
+        assert_eq!(flags & 0x0080, 0); // RA must be 0
     }
 }

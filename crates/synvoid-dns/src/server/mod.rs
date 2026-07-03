@@ -9,7 +9,6 @@ use tokio::net::UdpSocket;
 use tokio::sync::oneshot;
 
 use super::cache::{CacheKey, DnsCache};
-use super::compression::DnsMessageCompressor;
 use super::dnssec::DnsSecKeyManager;
 use super::dnssec::{compute_dnskey, Algorithm};
 use super::doh::DohServer;
@@ -169,6 +168,53 @@ impl Zone {
             .get(&("@".to_string(), RecordType::SOA))
             .or_else(|| self.records.get(&(origin, RecordType::SOA)))
             .and_then(|records| records.first().cloned())
+    }
+
+    pub fn lookup_authoritative(
+        &self,
+        lookup_name: &str,
+        qtype: u16,
+    ) -> AuthoritativeLookupOutcome {
+        let origin = self.origin.clone();
+        let record_type = RecordType::from(qtype);
+        let key = (lookup_name.to_string(), record_type);
+
+        if let Some(records) = self.records.get(&key) {
+            return AuthoritativeLookupOutcome::Positive {
+                origin,
+                qname: lookup_name.to_string(),
+                qtype,
+                records: records.clone(),
+            };
+        }
+
+        let cname_key = (lookup_name.to_string(), RecordType::CNAME);
+        if let Some(cname_records) = self.records.get(&cname_key) {
+            return AuthoritativeLookupOutcome::Cname {
+                origin,
+                qname: lookup_name.to_string(),
+                cname_records: cname_records.clone(),
+            };
+        }
+
+        let name_exists = self.owner_exists(lookup_name);
+        let soa = self.get_soa();
+
+        if name_exists {
+            AuthoritativeLookupOutcome::NoData {
+                origin,
+                qname: lookup_name.to_string(),
+                qtype,
+                soa,
+            }
+        } else {
+            AuthoritativeLookupOutcome::NxDomain {
+                origin,
+                qname: lookup_name.to_string(),
+                qtype,
+                soa,
+            }
+        }
     }
 
     pub fn get_soa_minimum(&self) -> u32 {

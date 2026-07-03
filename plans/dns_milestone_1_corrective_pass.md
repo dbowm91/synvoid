@@ -1,5 +1,19 @@
 # DNS Milestone 1 Corrective Pass
 
+## Completion Summary
+
+**All phases (A–G) are complete.** The DNS module now has:
+
+- **Response flags (Phase A):** `ResponsePolicy` struct and `build_response_flags_with_policy()` centralized in `parsed_query.rs`. All authoritative responses use RA=false and echo RD from query.
+- **Byte-size truncation (Phase B):** `build_response` assembles full packet and checks `packet.len() > max_size`. Added `EncodedRecord::wire_len()` and `ResponseEnvelope::total_wire_len()`. Added `build_truncated_tc_response` helper.
+- **Parser propagation (Phase C):** `QueryKey::from_parsed()`, `handle_parsed_query()`, `handle_parsed_query_with_cache()`. TCP/UDP paths parse once and pass `ParsedDnsQuery` downward.
+- **Authoritative NODATA/NXDOMAIN (Phase D):** `Zone::lookup_authoritative()` returning `AuthoritativeLookupOutcome`. Unsigned negative responses use SOA from zone. `.example` shortcut removed from production flow.
+- **Encoder strictness (Phase E):** `SkippedRecord`/`EncodeReport` types. MX priority > u16::MAX rejected. CAA tag > 255 rejected. TLSA validation hardened. SOA encode failure → SERVFAIL. `encode_failures` metric added.
+- **Query coalescing (Phase F):** Owner broadcasts response after compute. `cancel_in_flight()` on failure. Negative responses coalesce.
+- **Runtime correctness (Phase G):** Bind address from config honored. DNS64 translator passed through. TCP guard inside spawn closure.
+
+See `architecture/dns.md` and `.opencode/skills/dns_dnssec/SKILL.md` for updated architectural details.
+
 ## Context
 
 This plan follows the first implementation pass after the DNS production-readiness roadmap and Milestone 1 phase plans. The repository has moved in the correct direction: `crates/synvoid-dns/src/server/response_encoder.rs` now provides a typed response encoder, `crates/synvoid-dns/src/parsed_query.rs` now provides a canonical parser and response flag helpers, and the query path has begun moving away from direct byte slicing.

@@ -303,7 +303,52 @@ pub struct DnsSettings {
 }
 ```
 
-### 3.10 PrefetchConfig (prefetch.rs:9)
+### 3.10 AuthoritativeLookupOutcome (server/zone.rs)
+
+```rust
+/// Result of an authoritative zone lookup (Phase D).
+pub enum AuthoritativeLookupOutcome {
+    Positive(Vec<DnsZoneRecord>),
+    Cname(Vec<DnsZoneRecord>),
+    NoData { soa: DnsZoneRecord },
+    NxDomain { soa: DnsZoneRecord },
+    NoAuthoritativeZone,
+}
+```
+
+`Zone::lookup_authoritative(name, qtype)` returns this enum. Unsigned negative responses (NODATA/NXDOMAIN) include SOA from the zone. No `.example` synthetic shortcut in production.
+
+### 3.11 Encoder Strictness Types (server/response_encoder.rs)
+
+```rust
+/// Record skipped during encoding with reason.
+pub struct SkippedRecord {
+    pub owner: String,
+    pub record_type: u16,
+    pub reason: String,
+}
+
+/// Aggregated report of encoding outcomes for a response.
+pub struct EncodeReport {
+    pub total_records: usize,
+    pub encoded_records: usize,
+    pub skipped: Vec<SkippedRecord>,
+}
+
+impl ResponseEnvelope {
+    /// Exact wire-length of fully assembled packet.
+    pub fn total_wire_len(&self) -> usize;
+    /// Build truncated TC response when packet exceeds UDP payload size.
+    pub fn build_truncated_tc_response(&self, max_size: usize) -> Vec<u8>;
+}
+
+impl EncodedRecord {
+    /// Wire-length contribution of this single record.
+    pub fn wire_len(&self) -> usize;
+}
+```
+
+### 3.12 PrefetchConfig (prefetch.rs:9)
 
 ```rust
 pub struct PrefetchConfig {
@@ -816,13 +861,32 @@ pub struct TrustAnchorConfig {
 ### 9.1 Query Processing Pipeline (server/query.rs)
 
 The authoritative server processes queries through:
-1. **Parse** - `wire::parse_dns_message()`
+1. **Parse** - `wire::parse_dns_message()` → `ParsedDnsQuery` (parse-once, Phase C)
 2. **Validate** - `DnsQueryValidator`
 3. **Rate limit** - `DnsRateLimiter::check_ip()`
 4. **Firewall** - `DnsFirewall::evaluate_query()`
 5. **Cookie check** - `DnsCookieServer::validate_cookie()` (RFC 7873)
-6. **Zone lookup** - `ShardedZoneStore` + `ZoneTrie`
-7. **Build response** - Records or NXDOMAIN/SERVFAIL
+6. **Zone lookup** - `ShardedZoneStore` + `ZoneTrie`; `Zone::lookup_authoritative()` returns `AuthoritativeLookupOutcome` (Phase D)
+7. **Build response** - Records or NXDOMAIN/SERVFAIL; flags derived from `ResponsePolicy` (Phase A)
+8. **Truncation** - Byte-size check: `packet.len() > max_size` → `build_truncated_tc_response()` (Phase B)
+9. **Coalescing** - Owner broadcasts response to waiters; `cancel_in_flight()` on failure (Phase F)
+
+**Handler entry points** (parse-once, Phase C):
+- `handle_parsed_query(ctx, parsed, client_ip)` — UDP and TCP paths
+- `handle_parsed_query_with_cache(ctx, parsed, cache, cache_key, client_ip)` — recursive/cached path
+
+### 9.1.1 Response Flag Policy (Phase A)
+
+All authoritative responses derive flags from `ResponsePolicy` via `build_response_flags_with_policy()`:
+
+| Flag | Authoritative | Recursive |
+|------|--------------|-----------|
+| AA | true | false |
+| RA | false | true (if server supports recursion) |
+| RD | echoed from query | echoed from query |
+| AD | false (even with RRSIGs) | true only if DNSSEC validated |
+
+This prevents authoritative responses from advertising recursion and prevents signing alone from asserting AD.
 
 ### 9.2 DNS Cookie Server (RFC 7873)
 
@@ -894,9 +958,23 @@ impl<'a> ParsedDnsQuery<'a> {
     pub fn is_update(&self) -> bool;
 }
 
+/// Response flag policy — derived from parsed query.
+pub struct ResponsePolicy {
+    pub authoritative: bool,
+    pub recursion_available: bool,
+    pub authentic_data: bool,
+    pub checking_disabled_allowed: bool,
+}
+
 /// Canonical response flag constructor (replaces magic hex constants).
 pub fn build_response_flags(auth: bool, trunc: bool, rd: bool, ra: bool, ad: bool, rcode: u16) -> u16;
 pub fn build_response_flags_from_query(parsed: &ParsedDnsQuery, auth: bool, trunc: bool, ra: bool, ad: bool, rcode: u16) -> u16;
+pub fn build_response_flags_with_policy(parsed: &ParsedDnsQuery, policy: &ResponsePolicy, trunc: bool, rcode: u16) -> u16;
+
+/// Coalescing key derived from parsed query state.
+impl QueryKey {
+    pub fn from_parsed(parsed: &ParsedDnsQuery, client_ip: &str, dimensions: ...) -> Self;
+}
 ```
 
 **Low-level wire utilities** (`wire.rs`):

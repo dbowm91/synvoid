@@ -211,6 +211,108 @@ pub fn len(&self) -> usize {
 | `src/dns/server/query.rs` | Query handling |
 | `src/dns/server/response.rs` | Response building |
 
+## Milestone 1 Corrective Pass Changes
+
+### Response Flag Policy (Phase A)
+
+`ResponsePolicy` (in `parsed_query.rs`) centralizes authoritative response flag semantics:
+
+```rust
+pub struct ResponsePolicy {
+    pub authoritative: bool,       // AA bit
+    pub recursion_available: bool, // RA bit
+    pub authentic_data: bool,      // AD bit
+    pub checking_disabled_allowed: bool, // CD bit
+}
+```
+
+`build_response_flags_with_policy(parsed, policy, trunc, rcode)` derives flags from the parsed query and policy. **All authoritative paths** use this:
+
+- **RA=false** for authoritative-only answers
+- **RD echoed** from query (not hard-coded)
+- **AD=false** even when RRSIGs are present — AD is only for validated recursive data
+
+### Byte-Size Truncation (Phase B)
+
+Truncation is now driven by byte size, not record count:
+
+- `EncodedRecord::wire_len()` — wire-length of a single record
+- `ResponseEnvelope::total_wire_len()` — exact assembled packet size
+- `build_truncated_tc_response(max_size)` — builds minimal TC response when packet exceeds UDP payload size
+
+The `build_response` function assembles the full packet, checks `packet.len() > max_size`, and emits a TC response if over limit.
+
+### Parser Propagation — Parse Once (Phase C)
+
+TCP and UDP paths now parse each query once via `ParsedDnsQuery::parse()`, then pass the parsed state downward:
+
+```rust
+// Handler entry points
+handle_parsed_query(ctx, parsed, client_ip)
+handle_parsed_query_with_cache(ctx, parsed, cache, cache_key, client_ip)
+```
+
+`QueryKey::from_parsed()` derives coalescing/cache keys from parsed state. Transfer detection uses `parsed.is_axfr()` / `parsed.is_ixfr()` directly. Raw packet bytes remain available via `parsed.raw` for TSIG, UPDATE, and NOTIFY.
+
+### Authoritative NODATA/NXDOMAIN (Phase D)
+
+`Zone::lookup_authoritative(name, qtype)` returns `AuthoritativeLookupOutcome`:
+
+```rust
+pub enum AuthoritativeLookupOutcome {
+    Positive(Vec<DnsZoneRecord>),
+    Cname(Vec<DnsZoneRecord>),
+    NoData { soa: DnsZoneRecord },     // owner exists, qtype absent
+    NxDomain { soa: DnsZoneRecord },   // owner absent
+    NoAuthoritativeZone,
+}
+```
+
+Unsigned negative responses include SOA from the zone. The `.example` synthetic shortcut is removed from production flow.
+
+### Encoder Strictness (Phase E)
+
+The response encoder now reports skipped records via `EncodeReport`:
+
+```rust
+pub struct SkippedRecord {
+    pub owner: String,
+    pub record_type: u16,
+    pub reason: String,
+}
+
+pub struct EncodeReport {
+    pub total_records: usize,
+    pub encoded_records: usize,
+    pub skipped: Vec<SkippedRecord>,
+}
+```
+
+Validation rules enforced at encode time:
+- MX priority > `u16::MAX` → rejected
+- CAA tag > 255 bytes → rejected
+- TLSA fields validated for numeric range
+- SOA encode failure → SERVFAIL
+- `encode_failures` metric incremented for observability
+
+### Query Coalescing Broadcast (Phase F)
+
+After the owner computes a response, it broadcasts to all waiters:
+
+```rust
+coalescer.broadcast_response(key, response.clone());
+```
+
+On failure, `cancel_in_flight()` cleans up. Negative responses (NXDOMAIN/NODATA) are also broadcast when key dimensions match. Coalescing key includes DO bit, qclass, qtype, qname, and client dimensions.
+
+### Runtime Correctness (Phase G)
+
+- Bind address from `DnsSettings.bind_address` is honored for UDP/TCP listeners.
+- DNS64 translator is passed through `DnsHandlerState` into query context (no longer `None`).
+- TCP connection limit guard is held inside the `tokio::spawn` closure for the lifetime of the task.
+
+---
+
 ## Common Patterns
 
 ### Checking DNSSEC Validation Status
@@ -300,4 +402,13 @@ cargo test --lib dns
 
 # Run with DNS feature
 cargo test --features dns
+
+# Response encoder tests (Phase E: EncodeReport, wire_len, truncation)
+cargo test -p synvoid-dns -- response_encoder
+
+# Canonical query parser tests (Phase C: parse-once, QueryKey::from_parsed)
+cargo test -p synvoid-dns -- parsed_query
+
+# Authoritative negative response tests (Phase D: NODATA/NXDOMAIN with SOA)
+cargo test --test authoritative_negative
 ```

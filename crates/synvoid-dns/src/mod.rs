@@ -97,7 +97,7 @@ pub use metrics::{
 pub use notify::{build_notify_response, NotifyConfig, NotifyHandler};
 pub use parsed_query::{
     build_response_flags as build_response_flags_canonical, build_response_flags_from_query,
-    ParsedDnsQuery, QueryFlags, QueryParseError,
+    build_response_flags_with_policy, ParsedDnsQuery, QueryFlags, QueryParseError, ResponsePolicy,
 };
 pub use platform::{create_platform, AnycastSocketPlatform};
 pub use qname::RebindingChecker;

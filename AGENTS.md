@@ -38,6 +38,9 @@ cargo test -p synvoid-dns -- response_encoder
 # DNS canonical query parser tests
 cargo test -p synvoid-dns -- parsed_query
 
+# DNS authoritative negative response tests
+cargo test --test authoritative_negative
+
 # Supervisor lifecycle (Phase 3)
 cargo test --test supervisor_task_ownership_guard
 cargo test -p synvoid supervisor::task_registry
@@ -326,3 +329,4 @@ The `architecture/` directory (87 docs) and `.opencode/skills/` directory contai
 
 - **Plugin M3 Phase 8** — Unsafe native extension production gate, FFI panic catching, hot-reload gating, world-writable path rejection, config migration, metrics, and 34 unit tests. All items in `plans/plugin_m3_phase_08_gap_fixes.md` are complete.
 - **Plugin M3 Phase 9** — Lifecycle hardening: generation tracking, atomic reload pipeline, file stability detection, lifecycle state machine, operator APIs, and 44+ tests across guard files. All items in `plans/plugin_m3_phase_09_gap_fixes.md` are complete.
+- **DNS Milestone 1 Corrective Pass** — Response flag semantics (RA=false authoritative, RD echoed), byte-size truncation, parser propagation (parse-once), authoritative NODATA/NXDOMAIN with SOA, encoder strictness (MX/CAA/TLSA validation, EncodeReport), query coalescing broadcast, runtime correctness (bind address, DNS64 pass-through, TCP guard). All phases (A–G) complete. See `plans/dns_milestone_1_corrective_pass.md`.

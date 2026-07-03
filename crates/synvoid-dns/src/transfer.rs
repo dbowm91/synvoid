@@ -634,7 +634,7 @@ impl ZoneTransfer {
 
         response.extend_from_slice(&message_id.to_be_bytes());
         response.extend_from_slice(
-            &build_response_flags(true, false, true, true, false, 0).to_be_bytes(),
+            &build_response_flags(true, false, true, false, false, 0).to_be_bytes(),
         );
         response.extend_from_slice(&1u16.to_be_bytes());
         response.extend_from_slice(&ancount.to_be_bytes());
@@ -687,7 +687,7 @@ impl ZoneTransfer {
         let mut response = Vec::new();
         response.extend_from_slice(&message_id.to_be_bytes());
         response.extend_from_slice(
-            &build_response_flags(true, false, true, true, false, 0).to_be_bytes(),
+            &build_response_flags(true, false, true, false, false, 0).to_be_bytes(),
         );
         response.extend_from_slice(&1u16.to_be_bytes());
         response.extend_from_slice(&1u16.to_be_bytes());
@@ -808,9 +808,9 @@ impl ZoneTransfer {
         response.extend_from_slice(&message_id.to_be_bytes());
 
         let flags = if record_type == &RecordType::SOA {
-            build_response_flags(true, false, true, true, false, 0)
+            build_response_flags(true, false, true, false, false, 0)
         } else {
-            build_response_flags(false, false, true, true, false, 0)
+            build_response_flags(false, false, true, false, false, 0)
         };
         response.extend_from_slice(&flags.to_be_bytes());
 

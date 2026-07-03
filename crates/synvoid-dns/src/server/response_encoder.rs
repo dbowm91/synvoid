@@ -9,6 +9,34 @@ pub(super) enum DnsSection {
 }
 
 #[derive(Debug, Clone)]
+pub struct SkippedRecord {
+    #[allow(dead_code)]
+    pub name: String,
+    #[allow(dead_code)]
+    pub record_type: RecordType,
+    #[allow(dead_code)]
+    pub reason: String,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct EncodeReport {
+    pub total_records: usize,
+    pub encoded_ok: usize,
+    pub skipped: Vec<SkippedRecord>,
+}
+
+impl EncodeReport {
+    pub fn all_failed(&self) -> bool {
+        self.total_records > 0 && self.encoded_ok == 0
+    }
+
+    #[allow(dead_code)]
+    pub fn has_skipped(&self) -> bool {
+        !self.skipped.is_empty()
+    }
+}
+
+#[derive(Debug, Clone)]
 pub(super) struct EncodedRecord {
     #[allow(dead_code)]
     pub section: DnsSection,
@@ -19,11 +47,38 @@ pub(super) struct EncodedRecord {
     pub bytes: Vec<u8>,
 }
 
+impl EncodedRecord {
+    #[allow(dead_code)]
+    fn wire_len(&self) -> usize {
+        self.bytes.len()
+    }
+}
+
 #[derive(Debug, Default)]
 pub(super) struct ResponseEnvelope {
     pub answer_records: Vec<EncodedRecord>,
     pub authority_records: Vec<EncodedRecord>,
     pub additional_records: Vec<EncodedRecord>,
+}
+
+impl ResponseEnvelope {
+    #[allow(dead_code)]
+    fn total_wire_len(&self) -> usize {
+        self.answer_records
+            .iter()
+            .map(|r| r.wire_len())
+            .sum::<usize>()
+            + self
+                .authority_records
+                .iter()
+                .map(|r| r.wire_len())
+                .sum::<usize>()
+            + self
+                .additional_records
+                .iter()
+                .map(|r| r.wire_len())
+                .sum::<usize>()
+    }
 }
 
 pub(super) fn build_response_flags(
@@ -107,7 +162,9 @@ pub(super) fn encode_rr(
             txt_data
         }
         RecordType::MX => {
-            let priority = record.priority.unwrap_or(10) as u16;
+            let priority_val = record.priority.unwrap_or(10);
+            let priority = u16::try_from(priority_val)
+                .map_err(|_| format!("MX priority {} exceeds u16::MAX (65535)", priority_val))?;
             let mut mx_data = Vec::new();
             mx_data.extend_from_slice(&priority.to_be_bytes());
             let mut parts: Vec<&str> = record.value.split('.').filter(|s| !s.is_empty()).collect();
@@ -179,14 +236,26 @@ pub(super) fn encode_rr(
             let mut data = Vec::new();
             let parts: Vec<&str> = record.value.splitn(3, ' ').collect();
             if parts.len() >= 3 {
-                let flags: u8 = parts[0].parse().unwrap_or(0);
-                let tag = parts[1].as_bytes();
+                let flags: u8 = parts[0].parse().map_err(|_| "Invalid CAA flags")?;
+                let tag = parts[1];
+                if tag.len() > 255 {
+                    return Err(format!(
+                        "CAA tag length {} exceeds maximum 255 bytes",
+                        tag.len()
+                    ));
+                }
                 let value = parts[2].trim_matches('"').as_bytes();
                 data.push(flags);
                 data.push(tag.len() as u8);
-                data.extend_from_slice(tag);
+                data.extend_from_slice(tag.as_bytes());
                 data.extend_from_slice(value);
             } else {
+                if record.value.len() > 255 {
+                    return Err(format!(
+                        "CAA value length {} exceeds maximum for single-field encoding",
+                        record.value.len()
+                    ));
+                }
                 data.push(0);
                 data.push(record.value.len() as u8);
                 data.extend_from_slice(record.value.as_bytes());
@@ -197,17 +266,26 @@ pub(super) fn encode_rr(
             let mut data = Vec::new();
             let parts: Vec<&str> = record.value.splitn(4, ' ').collect();
             if parts.len() >= 4 {
-                let usage: u8 = parts[0].parse().unwrap_or(0);
-                let selector: u8 = parts[1].parse().unwrap_or(0);
-                let matching_type: u8 = parts[2].parse().unwrap_or(0);
-                let cert_data =
-                    hex::decode(parts[3]).unwrap_or_else(|_| parts[3].as_bytes().to_vec());
+                let usage: u8 = parts[0]
+                    .parse()
+                    .map_err(|_| format!("Invalid TLSA usage: {}", parts[0]))?;
+                let selector: u8 = parts[1]
+                    .parse()
+                    .map_err(|_| format!("Invalid TLSA selector: {}", parts[1]))?;
+                let matching_type: u8 = parts[2]
+                    .parse()
+                    .map_err(|_| format!("Invalid TLSA matching type: {}", parts[2]))?;
+                let cert_data = hex::decode(parts[3])
+                    .map_err(|_| format!("Invalid TLSA certificate data hex: {}", parts[3]))?;
                 data.push(usage);
                 data.push(selector);
                 data.push(matching_type);
                 data.extend_from_slice(&cert_data);
             } else {
-                data.extend_from_slice(record.value.as_bytes());
+                return Err(
+                    "TLSA record requires 4 fields: usage selector matching_type cert_data"
+                        .to_string(),
+                );
             }
             data
         }
@@ -280,6 +358,7 @@ pub(super) fn assemble_packet(
     packet
 }
 
+#[allow(dead_code)]
 pub(super) fn truncate_to_fit(envelope: &mut ResponseEnvelope, max_size: usize) {
     let authority_size: usize = envelope
         .authority_records
@@ -1124,5 +1203,314 @@ mod tests {
         let flags_val = u16::from_be_bytes([packet[2], packet[3]]);
         assert_eq!(id, 0xBEEF, "Truncated response must preserve query ID");
         assert_ne!(flags_val & 0x0200, 0, "Truncated response must set TC bit");
+    }
+
+    #[test]
+    fn test_wire_len_returns_byte_count() {
+        let record = make_record("www.example.com", RecordType::A, "1.2.3.4", 300);
+        let encoded = encode_rr(&record, None).unwrap();
+        assert_eq!(encoded.wire_len(), encoded.bytes.len());
+        assert!(encoded.wire_len() > 0);
+    }
+
+    #[test]
+    fn test_total_wire_len_sums_all_sections() {
+        let mut envelope = ResponseEnvelope::default();
+        let a = make_record("www.example.com", RecordType::A, "1.2.3.4", 300);
+        let ns = make_record("example.com", RecordType::NS, "ns1.example.com", 86400);
+        let opt = build_opt_encoded_record(4096, false);
+
+        let enc_a = encode_rr(&a, None).unwrap();
+        let enc_ns = encode_rr(&ns, None).unwrap();
+        let enc_opt = opt;
+
+        let expected = enc_a.wire_len() + enc_ns.wire_len() + enc_opt.wire_len();
+
+        envelope.answer_records.push(enc_a);
+        envelope.authority_records.push(enc_ns);
+        envelope.additional_records.push(enc_opt);
+
+        assert_eq!(envelope.total_wire_len(), expected);
+    }
+
+    #[test]
+    fn test_oversized_txt_records_produce_large_packet() {
+        let mut envelope = ResponseEnvelope::default();
+        for i in 0..10 {
+            let long_value = "x".repeat(100);
+            let record = make_record(
+                &format!("host{}.example.com", i),
+                RecordType::TXT,
+                &long_value,
+                300,
+            );
+            envelope
+                .answer_records
+                .push(encode_rr(&record, None).unwrap());
+        }
+
+        let flags = build_response_flags(true, false, true, false, false, 0);
+        let packet = assemble_packet(&envelope, 0x1234, flags, "example.com", 16);
+        assert!(
+            packet.len() > 512,
+            "Packet with 10 long TXT records must exceed 512 bytes, got {}",
+            packet.len()
+        );
+    }
+
+    #[test]
+    fn test_small_a_record_response_fits_512() {
+        let mut envelope = ResponseEnvelope::default();
+        let record = make_record("www.example.com", RecordType::A, "1.2.3.4", 300);
+        envelope
+            .answer_records
+            .push(encode_rr(&record, Some(("example.com", 12))).unwrap());
+
+        let flags = build_response_flags(true, false, true, false, false, 0);
+        let packet = assemble_packet(&envelope, 0x1234, flags, "example.com", 1);
+        assert!(
+            packet.len() <= 512,
+            "Small A record response must fit in 512 bytes, got {}",
+            packet.len()
+        );
+    }
+
+    #[test]
+    fn test_minimal_tc_response_preserves_id() {
+        let query_id: u16 = 0x1234;
+        let flags = build_response_flags(true, true, true, false, false, 0);
+        let question = super::wire::build_question("example.com", 1, 1);
+
+        let mut packet = Vec::with_capacity(12 + question.len());
+        packet.extend_from_slice(&query_id.to_be_bytes());
+        packet.extend_from_slice(&flags.to_be_bytes());
+        packet.extend_from_slice(&1u16.to_be_bytes());
+        packet.extend_from_slice(&0u16.to_be_bytes());
+        packet.extend_from_slice(&0u16.to_be_bytes());
+        packet.extend_from_slice(&0u16.to_be_bytes());
+        packet.extend_from_slice(&question);
+
+        let id = u16::from_be_bytes([packet[0], packet[1]]);
+        assert_eq!(id, 0x1234, "TC response must preserve query ID");
+    }
+
+    #[test]
+    fn test_minimal_tc_response_has_valid_section_counts() {
+        let flags = build_response_flags(true, true, true, false, false, 0);
+        let question = super::wire::build_question("example.com", 1, 1);
+
+        let mut packet = Vec::with_capacity(12 + question.len());
+        packet.extend_from_slice(&0xABCDu16.to_be_bytes());
+        packet.extend_from_slice(&flags.to_be_bytes());
+        packet.extend_from_slice(&1u16.to_be_bytes());
+        packet.extend_from_slice(&0u16.to_be_bytes());
+        packet.extend_from_slice(&0u16.to_be_bytes());
+        packet.extend_from_slice(&0u16.to_be_bytes());
+        packet.extend_from_slice(&question);
+
+        let qdcount = u16::from_be_bytes([packet[4], packet[5]]);
+        let ancount = u16::from_be_bytes([packet[6], packet[7]]);
+        let nscount = u16::from_be_bytes([packet[8], packet[9]]);
+
+        assert_eq!(qdcount, 1, "TC response QDCOUNT must be 1");
+        assert_eq!(ancount, 0, "TC response ANCOUNT must be 0");
+        assert_eq!(nscount, 0, "TC response NSCOUNT must be 0");
+    }
+
+    #[test]
+    fn test_minimal_tc_response_sets_tc_bit() {
+        let flags = build_response_flags(true, true, true, false, false, 0);
+        assert_ne!(flags & 0x0200, 0, "TC bit must be set in flags");
+    }
+
+    #[test]
+    fn test_minimal_tc_response_fits_512() {
+        let flags = build_response_flags(true, true, true, false, false, 0);
+        let question = super::wire::build_question("example.com", 1, 1);
+
+        let mut packet = Vec::with_capacity(12 + question.len());
+        packet.extend_from_slice(&0x1234u16.to_be_bytes());
+        packet.extend_from_slice(&flags.to_be_bytes());
+        packet.extend_from_slice(&1u16.to_be_bytes());
+        packet.extend_from_slice(&0u16.to_be_bytes());
+        packet.extend_from_slice(&0u16.to_be_bytes());
+        packet.extend_from_slice(&0u16.to_be_bytes());
+        packet.extend_from_slice(&question);
+
+        assert!(
+            packet.len() <= 512,
+            "Minimal TC response must fit in 512 bytes, got {}",
+            packet.len()
+        );
+    }
+
+    // === Phase E: Encoder strictness and malformed zone data policy ===
+
+    #[test]
+    fn test_mx_priority_exceeds_u16_max_rejected() {
+        let record = DnsZoneRecord {
+            name: "example.com".to_string(),
+            record_type: RecordType::MX,
+            value: "mail.example.com".to_string(),
+            ttl: 300,
+            priority: Some(70000), // > u16::MAX (65535)
+        };
+        let result = encode_rr(&record, None);
+        assert!(result.is_err(), "MX priority > u16::MAX must be rejected");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("exceeds u16::MAX"),
+            "Error should mention u16::MAX: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_mx_priority_at_u16_max_accepted() {
+        let record = DnsZoneRecord {
+            name: "example.com".to_string(),
+            record_type: RecordType::MX,
+            value: "mail.example.com".to_string(),
+            ttl: 300,
+            priority: Some(65535), // exactly u16::MAX
+        };
+        let result = encode_rr(&record, None);
+        assert!(result.is_ok(), "MX priority at u16::MAX should be accepted");
+        let encoded = result.unwrap();
+        let (_, _, _, rdlength, rdata_start) = parse_rr(&encoded.bytes);
+        let rdata = &encoded.bytes[rdata_start..rdata_start + rdlength];
+        let pref = u16::from_be_bytes([rdata[0], rdata[1]]);
+        assert_eq!(pref, 65535, "MX preference must be 65535");
+    }
+
+    #[test]
+    fn test_invalid_a_record_returns_error() {
+        let record = make_record("bad.example.com", RecordType::A, "not-an-ip-address", 300);
+        let result = encode_rr(&record, None);
+        assert!(result.is_err(), "Invalid A record must return error");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("Invalid A record"),
+            "Error should mention invalid A: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_caa_tag_too_long_rejected() {
+        let long_tag = "a".repeat(256); // > 255 bytes
+        let record = make_record(
+            "example.com",
+            RecordType::CAA,
+            &format!(r#"0 {} "value""#, long_tag),
+            300,
+        );
+        let result = encode_rr(&record, None);
+        assert!(result.is_err(), "CAA tag > 255 bytes must be rejected");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("exceeds maximum"),
+            "Error should mention max length: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_caa_tag_at_255_bytes_accepted() {
+        let tag_255 = "a".repeat(255);
+        let record = make_record(
+            "example.com",
+            RecordType::CAA,
+            &format!(r#"0 {} "value""#, tag_255),
+            300,
+        );
+        let result = encode_rr(&record, None);
+        assert!(
+            result.is_ok(),
+            "CAA tag at exactly 255 bytes should be accepted"
+        );
+    }
+
+    #[test]
+    fn test_tlsa_invalid_usage_rejected() {
+        let record = make_record(
+            "_25._tcp.mail.example.com",
+            RecordType::TLSA,
+            "not-a-number 1 1 AABBCCDD",
+            300,
+        );
+        let result = encode_rr(&record, None);
+        assert!(
+            result.is_err(),
+            "TLSA with non-numeric usage must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_tlsa_too_few_fields_rejected() {
+        let record = make_record("_25._tcp.mail.example.com", RecordType::TLSA, "3 1", 300);
+        let result = encode_rr(&record, None);
+        assert!(result.is_err(), "TLSA with too few fields must be rejected");
+    }
+
+    #[test]
+    fn test_tlsa_invalid_hex_rejected() {
+        let record = make_record(
+            "_25._tcp.mail.example.com",
+            RecordType::TLSA,
+            "3 1 1 not-hex-data!",
+            300,
+        );
+        let result = encode_rr(&record, None);
+        assert!(result.is_err(), "TLSA with invalid hex must be rejected");
+    }
+
+    #[test]
+    fn test_encode_report_all_failed() {
+        let mut report = super::EncodeReport {
+            total_records: 3,
+            encoded_ok: 0,
+            skipped: vec![
+                super::SkippedRecord {
+                    name: "a.example.com".to_string(),
+                    record_type: RecordType::A,
+                    reason: "Invalid A record value".to_string(),
+                },
+                super::SkippedRecord {
+                    name: "b.example.com".to_string(),
+                    record_type: RecordType::A,
+                    reason: "Invalid A record value".to_string(),
+                },
+                super::SkippedRecord {
+                    name: "c.example.com".to_string(),
+                    record_type: RecordType::A,
+                    reason: "Invalid A record value".to_string(),
+                },
+            ],
+        };
+        assert!(
+            report.all_failed(),
+            "Report with 0 encoded and 3 total should report all_failed"
+        );
+        assert!(report.has_skipped(), "Report should have skipped records");
+
+        report.encoded_ok = 1;
+        assert!(
+            !report.all_failed(),
+            "Report with 1 encoded should not report all_failed"
+        );
+    }
+
+    #[test]
+    fn test_encode_report_default_is_not_all_failed() {
+        let report = super::EncodeReport::default();
+        assert!(
+            !report.all_failed(),
+            "Default report should not be all_failed"
+        );
+        assert!(
+            !report.has_skipped(),
+            "Default report should have no skipped records"
+        );
     }
 }

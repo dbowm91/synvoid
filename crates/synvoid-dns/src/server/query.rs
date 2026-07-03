@@ -142,13 +142,26 @@ impl DnsServer {
         let cache_key = CacheKey::new(String::new(), RecordType::NULL, Some(client_ip));
 
         let response = if let Some(coalescer) = ctx.query_coalescer {
-            let query_key = crate::query_coalesce::QueryKey::from_query(&query, Some(client_ip));
+            let query_key = if let Ok(ref parsed_q) = parsed_tcp {
+                crate::query_coalesce::QueryKey::from_parsed(parsed_q, Some(client_ip), &query)
+            } else {
+                crate::query_coalesce::QueryKey::from_query(&query, Some(client_ip))
+            };
 
             if let Some(key) = query_key {
                 match coalescer.get_or_wait(key.clone()).await {
                     Some(crate::query_coalesce::CoalesceResult::Response(resp)) => Some(resp),
-                    Some(crate::query_coalesce::CoalesceResult::NewQuery(_)) => {
-                        if let Some(c) = ctx.cache {
+                    Some(crate::query_coalesce::CoalesceResult::NewQuery(_tx)) => {
+                        let resp = if let (Some(c), Ok(ref parsed_q)) = (ctx.cache, &parsed_tcp) {
+                            Self::handle_parsed_query_with_cache(
+                                &ctx,
+                                parsed_q,
+                                &query,
+                                c,
+                                &mut cache_key.clone(),
+                                Some(client_ip),
+                            )
+                        } else if let Some(c) = ctx.cache {
                             Self::handle_query_with_cache(
                                 &ctx,
                                 &query,
@@ -156,12 +169,31 @@ impl DnsServer {
                                 cache_key,
                                 Some(client_ip),
                             )
+                        } else if let Ok(ref parsed_q) = parsed_tcp {
+                            Self::handle_parsed_query(&ctx, parsed_q, &query, Some(client_ip))
                         } else {
                             Self::handle_query(&ctx, &query, Some(client_ip))
+                        };
+
+                        if let Some(ref r) = resp {
+                            coalescer.broadcast_response(key.clone(), r.clone());
+                        } else {
+                            coalescer.cancel_in_flight(&key);
                         }
+
+                        resp
                     }
                     None => {
-                        if let Some(c) = ctx.cache {
+                        if let (Some(c), Ok(ref parsed_q)) = (ctx.cache, &parsed_tcp) {
+                            Self::handle_parsed_query_with_cache(
+                                &ctx,
+                                parsed_q,
+                                &query,
+                                c,
+                                &mut cache_key.clone(),
+                                Some(client_ip),
+                            )
+                        } else if let Some(c) = ctx.cache {
                             Self::handle_query_with_cache(
                                 &ctx,
                                 &query,
@@ -169,12 +201,23 @@ impl DnsServer {
                                 cache_key,
                                 Some(client_ip),
                             )
+                        } else if let Ok(ref parsed_q) = parsed_tcp {
+                            Self::handle_parsed_query(&ctx, parsed_q, &query, Some(client_ip))
                         } else {
                             Self::handle_query(&ctx, &query, Some(client_ip))
                         }
                     }
                     _ => {
-                        if let Some(c) = ctx.cache {
+                        if let (Some(c), Ok(ref parsed_q)) = (ctx.cache, &parsed_tcp) {
+                            Self::handle_parsed_query_with_cache(
+                                &ctx,
+                                parsed_q,
+                                &query,
+                                c,
+                                &mut cache_key.clone(),
+                                Some(client_ip),
+                            )
+                        } else if let Some(c) = ctx.cache {
                             Self::handle_query_with_cache(
                                 &ctx,
                                 &query,
@@ -182,27 +225,49 @@ impl DnsServer {
                                 cache_key,
                                 Some(client_ip),
                             )
+                        } else if let Ok(ref parsed_q) = parsed_tcp {
+                            Self::handle_parsed_query(&ctx, parsed_q, &query, Some(client_ip))
                         } else {
                             Self::handle_query(&ctx, &query, Some(client_ip))
                         }
                     }
                 }
+            } else if let (Some(c), Ok(ref parsed_q)) = (ctx.cache, &parsed_tcp) {
+                Self::handle_parsed_query_with_cache(
+                    &ctx,
+                    parsed_q,
+                    &query,
+                    c,
+                    &mut cache_key.clone(),
+                    Some(client_ip),
+                )
             } else if let Some(c) = ctx.cache {
                 Self::handle_query_with_cache(&ctx, &query, c, cache_key, Some(client_ip))
+            } else if let Ok(ref parsed_q) = parsed_tcp {
+                Self::handle_parsed_query(&ctx, parsed_q, &query, Some(client_ip))
             } else {
                 Self::handle_query(&ctx, &query, Some(client_ip))
             }
+        } else if let (Some(c), Ok(ref parsed_q)) = (ctx.cache, &parsed_tcp) {
+            Self::handle_parsed_query_with_cache(
+                &ctx,
+                parsed_q,
+                &query,
+                c,
+                &mut cache_key.clone(),
+                Some(client_ip),
+            )
         } else if let Some(c) = ctx.cache {
             Self::handle_query_with_cache(&ctx, &query, c, cache_key, Some(client_ip))
+        } else if let Ok(ref parsed_q) = parsed_tcp {
+            Self::handle_parsed_query(&ctx, parsed_q, &query, Some(client_ip))
         } else {
             Self::handle_query(&ctx, &query, Some(client_ip))
         };
 
         if let Some(resp) = response {
-            // Check if this is a zone transfer (AXFR/IXFR) - need special multi-message handling for TCP
             if let Some(zt) = ctx.zone_transfer {
-                let parsed_zt = ParsedDnsQuery::parse(&query);
-                if let Ok(parsed_zt) = &parsed_zt {
+                if let Ok(ref parsed_zt) = parsed_tcp {
                     if parsed_zt.is_axfr() {
                         let tsig =
                             crate::tsig::parse_tsig_from_query(&query, parsed_zt.question_end);
@@ -294,7 +359,17 @@ impl DnsServer {
         client_ip: Option<std::net::IpAddr>,
     ) -> Option<Arc<Vec<u8>>> {
         let parsed = ParsedDnsQuery::parse(query).ok()?;
+        Self::handle_parsed_query_with_cache(ctx, &parsed, query, cache, &mut cache_key, client_ip)
+    }
 
+    pub(super) fn handle_parsed_query_with_cache(
+        ctx: &QueryContext,
+        parsed: &ParsedDnsQuery<'_>,
+        query: &[u8],
+        cache: &Arc<DnsCache>,
+        cache_key: &mut CacheKey,
+        client_ip: Option<std::net::IpAddr>,
+    ) -> Option<Arc<Vec<u8>>> {
         if parsed.is_notify() {
             if let Some(handler) = ctx.notify_handler {
                 if let Some(ip) = client_ip {
@@ -360,16 +435,16 @@ impl DnsServer {
         use crate::server::RecordTypeExt;
         cache_key.qtype = record_type.to_u16();
 
-        if let Some(cached) = cache.get(&cache_key) {
+        if let Some(cached) = cache.get(cache_key) {
             return Some(cached);
         }
 
-        let result = Self::handle_query(ctx, query, client_ip);
+        let result = Self::handle_parsed_query(ctx, parsed, query, client_ip);
 
         if let Some(ref data) = result {
             let ttl = Self::extract_ttl_from_response(data.as_ref(), ctx.negative_cache_ttl);
             if ttl > 0 {
-                cache.insert(cache_key, data.as_ref().clone(), ttl);
+                cache.insert(cache_key.clone(), data.as_ref().clone(), ttl);
             }
         }
 
@@ -517,10 +592,20 @@ impl DnsServer {
         query: &[u8],
         client_ip: Option<std::net::IpAddr>,
     ) -> Option<Arc<Vec<u8>>> {
+        let parsed = ParsedDnsQuery::parse(query).ok()?;
+        Self::handle_parsed_query(ctx, &parsed, query, client_ip)
+    }
+
+    pub(super) fn handle_parsed_query(
+        ctx: &QueryContext,
+        parsed: &ParsedDnsQuery<'_>,
+        query: &[u8],
+        client_ip: Option<std::net::IpAddr>,
+    ) -> Option<Arc<Vec<u8>>> {
         use crate::server::RecordTypeExt;
 
-        let parsed = ParsedDnsQuery::parse(query).ok()?;
         let query_id = parsed.id;
+        let rd = parsed.flags.recursion_desired;
 
         if parsed.is_notify() {
             if let Some(handler) = ctx.notify_handler {
@@ -588,12 +673,13 @@ impl DnsServer {
                             domain,
                             txt_value
                         );
-                        return Some(Self::build_acme_txt_response(
+                        let (resp, _report) = Self::build_acme_txt_response(
                             query_id,
                             &parsed.qname,
                             &txt_value,
                             edns_options.as_ref(),
-                        ));
+                        );
+                        return Some(resp);
                     }
                 }
             }
@@ -610,21 +696,23 @@ impl DnsServer {
             Some(origin) => match ctx.zones.get(&origin) {
                 Some(zone) => (origin.clone(), zone),
                 None => {
-                    return Some(Self::build_refused(
+                    let (resp, _report) = Self::build_refused(
                         parsed.id,
                         &parsed.qname,
                         parsed.qtype,
                         edns_options.as_ref(),
-                    ));
+                    );
+                    return Some(resp);
                 }
             },
             None => {
-                return Some(Self::build_refused(
+                let (resp, _report) = Self::build_refused(
                     parsed.id,
                     &parsed.qname,
                     parsed.qtype,
                     edns_options.as_ref(),
-                ));
+                );
+                return Some(resp);
             }
         };
 
@@ -648,7 +736,7 @@ impl DnsServer {
 
         let key = (lookup_name.clone(), record_type);
         if let Some(records) = zone.records.get(&key) {
-            return Some(Self::build_response(
+            let (resp, _report) = Self::build_response(
                 query_id,
                 &parsed.qname,
                 parsed.qtype,
@@ -657,7 +745,9 @@ impl DnsServer {
                 edns_options.as_ref(),
                 zone.zsk_key.as_ref(),
                 &origin_canonical,
-            ));
+                rd,
+            );
+            return Some(resp);
         }
 
         if record_type == RecordTypeExt::UNKNOWN || record_type == RecordType::A {
@@ -668,15 +758,16 @@ impl DnsServer {
                     let qname_stripped = parsed.qname.trim_end_matches('.');
                     if cname_target.eq_ignore_ascii_case(qname_stripped) {
                         tracing::warn!("CNAME loop detected for {}", parsed.qname);
-                        return Some(Self::build_refused(
+                        let (resp, _report) = Self::build_refused(
                             parsed.id,
                             &parsed.qname,
                             parsed.qtype,
                             edns_options.as_ref(),
-                        ));
+                        );
+                        return Some(resp);
                     }
                 }
-                return Some(Self::build_response(
+                let (resp, _report) = Self::build_response(
                     query_id,
                     &parsed.qname,
                     parsed.qtype,
@@ -685,7 +776,9 @@ impl DnsServer {
                     edns_options.as_ref(),
                     zone.zsk_key.as_ref(),
                     &origin_canonical,
-                ));
+                    rd,
+                );
+                return Some(resp);
             }
         }
 
@@ -720,7 +813,7 @@ impl DnsServer {
             }
 
             if !all_records.is_empty() {
-                return Some(Self::build_response(
+                let (resp, _report) = Self::build_response(
                     query_id,
                     &parsed.qname,
                     parsed.qtype,
@@ -729,12 +822,14 @@ impl DnsServer {
                     edns_options.as_ref(),
                     zone.zsk_key.as_ref(),
                     &origin_canonical,
-                ));
+                    rd,
+                );
+                return Some(resp);
             }
 
             if record_type == RecordType::DNSKEY && qname_lower_trimmed == origin_lower_for_strip {
                 let dnskey_records = Self::build_dnskey_records(&zone);
-                return Some(Self::build_response(
+                let (resp, _report) = Self::build_response(
                     query_id,
                     &parsed.qname,
                     parsed.qtype,
@@ -743,13 +838,15 @@ impl DnsServer {
                     edns_options.as_ref(),
                     zone.ksk_key.as_ref(),
                     &origin_canonical,
-                ));
+                    rd,
+                );
+                return Some(resp);
             }
 
             if parsed.qtype == 59 && qname_lower_trimmed == origin_lower_for_strip {
                 if let Some(ksk) = &zone.ksk_key {
                     let cds_records = Self::build_cds_records(ksk);
-                    return Some(Self::build_response(
+                    let (resp, _report) = Self::build_response(
                         query_id,
                         &parsed.qname,
                         parsed.qtype,
@@ -758,13 +855,15 @@ impl DnsServer {
                         edns_options.as_ref(),
                         zone.ksk_key.as_ref(),
                         &origin_canonical,
-                    ));
+                        rd,
+                    );
+                    return Some(resp);
                 }
             }
 
             if parsed.qtype == 60 && qname_lower_trimmed == origin_lower_for_strip {
                 let cdnskey_records = Self::build_cdnskey_records(&zone);
-                return Some(Self::build_response(
+                let (resp, _report) = Self::build_response(
                     query_id,
                     &parsed.qname,
                     parsed.qtype,
@@ -773,13 +872,15 @@ impl DnsServer {
                     edns_options.as_ref(),
                     zone.ksk_key.as_ref(),
                     &origin_canonical,
-                ));
+                    rd,
+                );
+                return Some(resp);
             }
 
             if record_type == RecordType::DS && qname_lower_trimmed == origin_lower_for_strip {
                 if let Some(ksk) = &zone.ksk_key {
                     let ds_records = Self::build_ds_records(ksk);
-                    return Some(Self::build_response(
+                    let (resp, _report) = Self::build_response(
                         query_id,
                         &parsed.qname,
                         parsed.qtype,
@@ -788,7 +889,9 @@ impl DnsServer {
                         edns_options.as_ref(),
                         zone.ksk_key.as_ref(),
                         &origin_canonical,
-                    ));
+                        rd,
+                    );
+                    return Some(resp);
                 }
             }
 
@@ -796,7 +899,7 @@ impl DnsServer {
                 && qname_lower_trimmed == origin_lower_for_strip
             {
                 if let Some(nsec3param_record) = Self::build_nsec3param_record(&zone) {
-                    return Some(Self::build_response(
+                    let (resp, _report) = Self::build_response(
                         query_id,
                         &parsed.qname,
                         parsed.qtype,
@@ -805,7 +908,9 @@ impl DnsServer {
                         edns_options.as_ref(),
                         zone.zsk_key.as_ref(),
                         &origin_canonical,
-                    ));
+                        rd,
+                    );
+                    return Some(resp);
                 }
             }
         }
@@ -819,7 +924,7 @@ impl DnsServer {
                     tracing::debug!("Resolved {} from mesh network", parsed.qname);
                     let mesh_zone = ctx.zones.find_by_suffix(&parsed.qname);
                     let zsk = mesh_zone.as_ref().and_then(|zone| zone.zsk_key.as_ref());
-                    return Some(Self::build_response(
+                    let (resp, _report) = Self::build_response(
                         query_id,
                         &parsed.qname,
                         parsed.qtype,
@@ -828,7 +933,9 @@ impl DnsServer {
                         edns_options.as_ref(),
                         zsk,
                         &parsed.qname,
-                    ));
+                        rd,
+                    );
+                    return Some(resp);
                 }
             }
         }
@@ -865,7 +972,7 @@ impl DnsServer {
                                     .split_once('.')
                                     .map(|(_, suffix)| format!(".{}", suffix))
                                     .unwrap_or_else(|| qname_lower.clone());
-                                return Some(Self::build_response(
+                                let (resp, _report) = Self::build_response(
                                     query_id,
                                     &parsed.qname,
                                     parsed.qtype,
@@ -874,7 +981,9 @@ impl DnsServer {
                                     edns_options.as_ref(),
                                     None,
                                     &origin,
-                                ));
+                                    rd,
+                                );
+                                return Some(resp);
                             }
                         }
                     }
@@ -908,6 +1017,7 @@ impl DnsServer {
                         zsk,
                         origin.as_str(),
                         soa_record.as_ref(),
+                        rd,
                     ));
                 } else if zone.nsec_enabled {
                     let nsec_records = Self::build_nsec_records(&zone, &parsed.qname, record_type);
@@ -923,6 +1033,7 @@ impl DnsServer {
                         zsk,
                         origin.as_str(),
                         soa_record.as_ref(),
+                        rd,
                     ));
                 }
             }
@@ -947,6 +1058,7 @@ impl DnsServer {
                             edns_options.as_ref(),
                             zsk,
                             origin.as_str(),
+                            rd,
                         ));
                     }
                 } else if zone.nsec3_enabled {
@@ -964,33 +1076,40 @@ impl DnsServer {
                             edns_options.as_ref(),
                             zsk,
                             origin.as_str(),
+                            rd,
                         ));
                     }
                 }
             }
         }
 
-        let soa_record = zone.get_soa();
-
-        let name_exists = zone.owner_exists(&lookup_name);
-        if name_exists {
-            Some(Self::build_unsigned_nodata(
-                parsed.id,
-                &parsed.qname,
-                parsed.qtype,
-                soa_record.as_ref(),
-                edns_options.as_ref(),
-                ctx.negative_cache_ttl,
-            ))
-        } else {
-            Some(Self::build_unsigned_nxdomain(
-                parsed.id,
-                &parsed.qname,
-                parsed.qtype,
-                soa_record.as_ref(),
-                edns_options.as_ref(),
-                ctx.negative_cache_ttl,
-            ))
+        let outcome = zone.lookup_authoritative(&lookup_name, parsed.qtype);
+        match outcome {
+            AuthoritativeLookupOutcome::NoData { soa, .. } => {
+                let (resp, _report) = Self::build_unsigned_nodata(
+                    parsed.id,
+                    &parsed.qname,
+                    parsed.qtype,
+                    soa.as_ref(),
+                    edns_options.as_ref(),
+                    ctx.negative_cache_ttl,
+                    rd,
+                );
+                Some(resp)
+            }
+            AuthoritativeLookupOutcome::NxDomain { soa, .. } => {
+                let (resp, _report) = Self::build_unsigned_nxdomain(
+                    parsed.id,
+                    &parsed.qname,
+                    parsed.qtype,
+                    soa.as_ref(),
+                    edns_options.as_ref(),
+                    ctx.negative_cache_ttl,
+                    rd,
+                );
+                Some(resp)
+            }
+            _ => None,
         }
     }
 
@@ -1004,13 +1123,13 @@ impl DnsServer {
         edns_options: Option<&EdnsOptions>,
         zsk: Option<&crate::dnssec::ZoneSigningKey>,
         signer_name: &str,
+        rd: bool,
     ) -> Arc<Vec<u8>> {
         let mut response = Vec::new();
 
         response.extend_from_slice(&response_id.to_be_bytes());
 
-        let mut flags =
-            crate::parsed_query::build_response_flags(true, false, true, true, false, 3);
+        let mut flags = crate::parsed_query::build_response_flags(true, false, rd, false, false, 3);
         // AD flag: only set when NSEC/NSEC3 proof records are present
         if dnssec_ok && !nsec_records.is_empty() {
             flags |= 0x0020;
@@ -1112,14 +1231,14 @@ impl DnsServer {
         zsk: Option<&crate::dnssec::ZoneSigningKey>,
         signer_name: &str,
         soa_record: Option<&DnsZoneRecord>,
+        rd: bool,
     ) -> Arc<Vec<u8>> {
         let mut response = Vec::new();
 
         response.extend_from_slice(&response_id.to_be_bytes());
 
         // NODATA: RCODE 0 (NOERROR), authoritative answer
-        let mut flags =
-            crate::parsed_query::build_response_flags(true, false, true, true, false, 0);
+        let mut flags = crate::parsed_query::build_response_flags(true, false, rd, false, false, 0);
         // AD flag: set when NSEC3 proof records are present
         if dnssec_ok && !nsec_records.is_empty() {
             flags |= 0x0020;

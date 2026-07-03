@@ -40,30 +40,96 @@ impl DnsServer {
             }
 
             for record_config in &zone_config.records {
+                let record_type = match record_config.record_type {
+                    synvoid_config::dns::DnsRecordType::A => RecordType::A,
+                    synvoid_config::dns::DnsRecordType::Aaaa => RecordType::AAAA,
+                    synvoid_config::dns::DnsRecordType::CName => RecordType::CNAME,
+                    synvoid_config::dns::DnsRecordType::Mx => RecordType::MX,
+                    synvoid_config::dns::DnsRecordType::Txt => RecordType::TXT,
+                    synvoid_config::dns::DnsRecordType::Ns => RecordType::NS,
+                    synvoid_config::dns::DnsRecordType::Soa => RecordType::SOA,
+                    synvoid_config::dns::DnsRecordType::Srv => RecordType::SRV,
+                    synvoid_config::dns::DnsRecordType::Ptr => RecordType::PTR,
+                    synvoid_config::dns::DnsRecordType::Caa => RecordType::CAA,
+                    synvoid_config::dns::DnsRecordType::Tlsa => RecordType::TLSA,
+                    synvoid_config::dns::DnsRecordType::Svcb => RecordType::SVCB,
+                    synvoid_config::dns::DnsRecordType::Https => RecordType::HTTPS,
+                    synvoid_config::dns::DnsRecordType::Naptr => RecordType::NAPTR,
+                    synvoid_config::dns::DnsRecordType::Sshfp => RecordType::SSHFP,
+                    synvoid_config::dns::DnsRecordType::Uri => RecordType::from(256),
+                    synvoid_config::dns::DnsRecordType::Rp => RecordType::from(17),
+                    synvoid_config::dns::DnsRecordType::Afsdb => RecordType::from(18),
+                    synvoid_config::dns::DnsRecordType::Ds => RecordType::DS,
+                    synvoid_config::dns::DnsRecordType::Other => RecordType::NULL,
+                };
+
+                if record_type == RecordType::MX || record_type == RecordType::SRV {
+                    if let Some(pri) = record_config.priority {
+                        if pri > u16::MAX as u32 {
+                            tracing::warn!(
+                                zone = %zone_config.zone,
+                                name = %record_config.name,
+                                priority = %pri,
+                                "Skipping record: priority {} exceeds u16::MAX (65535)",
+                                pri
+                            );
+                            continue;
+                        }
+                    }
+                }
+
+                if record_type == RecordType::SOA {
+                    let parts: Vec<&str> = record_config.value.split_whitespace().collect();
+                    if parts.len() < 7 {
+                        tracing::error!(
+                            zone = %zone_config.zone,
+                            name = %record_config.name,
+                            "Rejecting zone: SOA record requires 7 fields (mname rname serial refresh retry expire minimum), got {}",
+                            parts.len()
+                        );
+                        return Err(format!(
+                            "Zone {}: SOA record requires 7 fields, got {}",
+                            zone_config.zone,
+                            parts.len()
+                        ));
+                    }
+                    if parts[2].parse::<u32>().is_err() {
+                        tracing::error!(
+                            zone = %zone_config.zone,
+                            name = %record_config.name,
+                            serial = %parts[2],
+                            "Rejecting zone: SOA serial is not a valid u32"
+                        );
+                        return Err(format!(
+                            "Zone {}: SOA serial '{}' is not a valid u32",
+                            zone_config.zone, parts[2]
+                        ));
+                    }
+                    for (idx, field_name) in
+                        ["refresh", "retry", "expire", "minimum"].iter().enumerate()
+                    {
+                        if parts[3 + idx].parse::<u32>().is_err() {
+                            tracing::error!(
+                                zone = %zone_config.zone,
+                                name = %record_config.name,
+                                field = %field_name,
+                                value = %parts[3 + idx],
+                                "Rejecting zone: SOA {} is not a valid u32",
+                                field_name
+                            );
+                            return Err(format!(
+                                "Zone {}: SOA {} '{}' is not a valid u32",
+                                zone_config.zone,
+                                field_name,
+                                parts[3 + idx]
+                            ));
+                        }
+                    }
+                }
+
                 let record = DnsZoneRecord {
                     name: record_config.name.clone(),
-                    record_type: match record_config.record_type {
-                        synvoid_config::dns::DnsRecordType::A => RecordType::A,
-                        synvoid_config::dns::DnsRecordType::Aaaa => RecordType::AAAA,
-                        synvoid_config::dns::DnsRecordType::CName => RecordType::CNAME,
-                        synvoid_config::dns::DnsRecordType::Mx => RecordType::MX,
-                        synvoid_config::dns::DnsRecordType::Txt => RecordType::TXT,
-                        synvoid_config::dns::DnsRecordType::Ns => RecordType::NS,
-                        synvoid_config::dns::DnsRecordType::Soa => RecordType::SOA,
-                        synvoid_config::dns::DnsRecordType::Srv => RecordType::SRV,
-                        synvoid_config::dns::DnsRecordType::Ptr => RecordType::PTR,
-                        synvoid_config::dns::DnsRecordType::Caa => RecordType::CAA,
-                        synvoid_config::dns::DnsRecordType::Tlsa => RecordType::TLSA,
-                        synvoid_config::dns::DnsRecordType::Svcb => RecordType::SVCB,
-                        synvoid_config::dns::DnsRecordType::Https => RecordType::HTTPS,
-                        synvoid_config::dns::DnsRecordType::Naptr => RecordType::NAPTR,
-                        synvoid_config::dns::DnsRecordType::Sshfp => RecordType::SSHFP,
-                        synvoid_config::dns::DnsRecordType::Uri => RecordType::from(256),
-                        synvoid_config::dns::DnsRecordType::Rp => RecordType::from(17),
-                        synvoid_config::dns::DnsRecordType::Afsdb => RecordType::from(18),
-                        synvoid_config::dns::DnsRecordType::Ds => RecordType::DS,
-                        synvoid_config::dns::DnsRecordType::Other => RecordType::NULL,
-                    },
+                    record_type,
                     value: record_config.value.clone(),
                     ttl: record_config
                         .ttl

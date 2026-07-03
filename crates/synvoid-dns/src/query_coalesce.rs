@@ -37,13 +37,36 @@ impl QueryKey {
         let parsed = ParsedDnsQuery::parse(query).ok()?;
         let client_str = client_ip.map(|ip| ip.to_string());
         let edns_udp_size = if parsed.has_edns {
-            // Extract UDP payload size from EDNS OPT record class field
-            // OPT record class field = UDP payload size
             if parsed.question_end + 3 < query.len() {
                 u16::from_be_bytes([
                     query[parsed.question_end + 3],
                     query[parsed.question_end + 4],
                 ])
+            } else {
+                512
+            }
+        } else {
+            512
+        };
+        Some(Self {
+            name: parsed.qname.to_lowercase(),
+            qtype: parsed.qtype,
+            qclass: parsed.qclass,
+            dnssec_ok: parsed.dnssec_ok,
+            edns_udp_size,
+            client_ip: client_str,
+        })
+    }
+
+    pub fn from_parsed(
+        parsed: &ParsedDnsQuery<'_>,
+        client_ip: Option<std::net::IpAddr>,
+        raw: &[u8],
+    ) -> Option<Self> {
+        let client_str = client_ip.map(|ip| ip.to_string());
+        let edns_udp_size = if parsed.has_edns {
+            if parsed.question_end + 3 < raw.len() {
+                u16::from_be_bytes([raw[parsed.question_end + 3], raw[parsed.question_end + 4]])
             } else {
                 512
             }
@@ -212,6 +235,13 @@ impl QueryCoalescer {
         COALESCER_IN_FLIGHT.set(in_flight.len() as f64);
     }
 
+    pub fn cancel_in_flight(&self, key: &QueryKey) {
+        let mut in_flight = self.in_flight.write();
+        if in_flight.remove(key).is_some() {
+            COALESCER_IN_FLIGHT.set(in_flight.len() as f64);
+        }
+    }
+
     pub fn cleanup_stale(&self) {
         let mut in_flight = self.in_flight.write();
         let now = Instant::now();
@@ -278,6 +308,7 @@ impl Default for QueryCoalescer {
     }
 }
 
+#[derive(Debug)]
 pub enum CoalesceResult {
     Response(Arc<Vec<u8>>),
     NewQuery(broadcast::Sender<Arc<Vec<u8>>>),
@@ -402,5 +433,146 @@ mod tests {
             metrics.timeouts, 2,
             "Should have 2 timeouts for subsequent calls"
         );
+    }
+
+    #[tokio::test]
+    async fn test_two_identical_queries_coalesce() {
+        let coalescer = Arc::new(QueryCoalescer::new());
+        let key = QueryKey {
+            name: "example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: None,
+        };
+
+        let result1 = coalescer.get_or_wait(key.clone()).await;
+        assert!(matches!(result1, Some(CoalesceResult::NewQuery(_))));
+
+        let c = coalescer.clone();
+        let k = key.clone();
+        let handle = tokio::spawn(async move { c.get_or_wait(k).await });
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        let response = Arc::new(vec![0x00, 0x01, 0x02]);
+        coalescer.broadcast_response(key, response.clone());
+
+        let result2 = handle.await.unwrap();
+        match result2 {
+            Some(CoalesceResult::Response(r)) => {
+                assert_eq!(*r, *response);
+            }
+            _ => panic!("Expected Response, got {:?}", result2),
+        }
+
+        assert_eq!(coalescer.in_flight_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_owner_broadcasts_positive_response() {
+        let coalescer = Arc::new(QueryCoalescer::new());
+        let key = QueryKey {
+            name: "example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: None,
+        };
+
+        let result = coalescer.get_or_wait(key.clone()).await;
+        assert!(matches!(result, Some(CoalesceResult::NewQuery(_))));
+
+        let response = Arc::new(vec![
+            0x00, 0x01, 0x81, 0x80, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+        ]);
+        coalescer.broadcast_response(key.clone(), response.clone());
+
+        assert_eq!(coalescer.in_flight_count(), 0);
+
+        let result2 = coalescer.get_or_wait(key).await;
+        assert!(matches!(result2, Some(CoalesceResult::NewQuery(_))));
+    }
+
+    #[tokio::test]
+    async fn test_owner_broadcasts_negative_response() {
+        let coalescer = Arc::new(QueryCoalescer::new());
+        let key = QueryKey {
+            name: "example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: None,
+        };
+
+        let result = coalescer.get_or_wait(key.clone()).await;
+        assert!(matches!(result, Some(CoalesceResult::NewQuery(_))));
+
+        // NXDOMAIN: flags 0x8183 = QR=1, RD=1, RA=1, RCODE=3
+        let response = Arc::new(vec![
+            0x00, 0x01, 0x81, 0x83, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ]);
+        coalescer.broadcast_response(key.clone(), response.clone());
+
+        assert_eq!(coalescer.in_flight_count(), 0);
+
+        let result2 = coalescer.get_or_wait(key).await;
+        assert!(matches!(result2, Some(CoalesceResult::NewQuery(_))));
+    }
+
+    #[tokio::test]
+    async fn test_timeout_cleans_up_in_flight() {
+        let coalescer = Arc::new(QueryCoalescer::with_config(50, 10000, 1));
+        let key = QueryKey {
+            name: "example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: None,
+        };
+
+        let result = coalescer.get_or_wait(key.clone()).await;
+        assert!(matches!(result, Some(CoalesceResult::NewQuery(_))));
+        assert_eq!(coalescer.in_flight_count(), 1);
+
+        let c = coalescer.clone();
+        let k = key.clone();
+        let handle = tokio::spawn(async move { c.get_or_wait(k).await });
+
+        let result2 = handle.await.unwrap();
+        assert!(matches!(result2, Some(CoalesceResult::Timeout)));
+
+        assert_eq!(coalescer.in_flight_count(), 1);
+
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+
+        coalescer.cleanup_stale();
+
+        assert_eq!(coalescer.in_flight_count(), 0);
+    }
+
+    #[test]
+    fn test_coalescing_key_do_bit_differs() {
+        let key1 = QueryKey {
+            name: "example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: None,
+        };
+        let key2 = QueryKey {
+            name: "example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: true,
+            edns_udp_size: 4096,
+            client_ip: None,
+        };
+        assert_ne!(key1, key2);
     }
 }

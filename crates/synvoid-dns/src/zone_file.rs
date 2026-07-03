@@ -253,7 +253,18 @@ impl ZoneFileParser {
         }
 
         let priority = if record_type == RecordType::MX || record_type == RecordType::SRV {
-            let prio: u32 = parts[pos].parse().unwrap_or(10);
+            let prio: u32 = parts[pos].parse().map_err(|e: std::num::ParseIntError| {
+                ZoneParseError::InvalidRecord(format!(
+                    "Invalid {} priority '{}': {}",
+                    record_type_str, parts[pos], e
+                ))
+            })?;
+            if prio > u16::MAX as u32 {
+                return Err(ZoneParseError::InvalidRecord(format!(
+                    "{} priority {} exceeds u16::MAX (65535)",
+                    record_type_str, prio
+                )));
+            }
             pos += 1;
             Some(prio)
         } else {
@@ -283,7 +294,8 @@ impl ZoneFileParser {
     ) -> Result<Option<ParsedRecord>, ZoneParseError> {
         if parts.len() < 7 {
             return Err(ZoneParseError::InvalidRecord(
-                "SOA record requires 7 fields".to_string(),
+                "SOA record requires 7 fields: mname rname serial refresh retry expire minimum"
+                    .to_string(),
             ));
         }
 
@@ -299,11 +311,36 @@ impl ZoneFileParser {
         }
         self.soa_rname = rname.clone();
 
-        self.soa_serial = parts[2].parse().unwrap_or(1);
-        self.soa_refresh = parts[3].parse().unwrap_or(3600);
-        self.soa_retry = parts[4].parse().unwrap_or(600);
-        self.soa_expire = parts[5].parse().unwrap_or(604800);
-        self.soa_minimum = parts[6].parse().unwrap_or(86400);
+        self.soa_serial = parts[2].parse().map_err(|e: std::num::ParseIntError| {
+            ZoneParseError::InvalidRecord(format!(
+                "SOA serial '{}' is not a valid u32: {}",
+                parts[2], e
+            ))
+        })?;
+        self.soa_refresh = parts[3].parse().map_err(|e: std::num::ParseIntError| {
+            ZoneParseError::InvalidRecord(format!(
+                "SOA refresh '{}' is not a valid u32: {}",
+                parts[3], e
+            ))
+        })?;
+        self.soa_retry = parts[4].parse().map_err(|e: std::num::ParseIntError| {
+            ZoneParseError::InvalidRecord(format!(
+                "SOA retry '{}' is not a valid u32: {}",
+                parts[4], e
+            ))
+        })?;
+        self.soa_expire = parts[5].parse().map_err(|e: std::num::ParseIntError| {
+            ZoneParseError::InvalidRecord(format!(
+                "SOA expire '{}' is not a valid u32: {}",
+                parts[5], e
+            ))
+        })?;
+        self.soa_minimum = parts[6].parse().map_err(|e: std::num::ParseIntError| {
+            ZoneParseError::InvalidRecord(format!(
+                "SOA minimum '{}' is not a valid u32: {}",
+                parts[6], e
+            ))
+        })?;
 
         let value = format!(
             "{} {} {} {} {} {} {}",
@@ -363,5 +400,122 @@ mail    IN      A       192.0.2.3
 
         let a_key = ("example.com".to_string(), RecordType::A);
         assert!(zone.records.contains_key(&a_key));
+    }
+
+    #[test]
+    fn test_mx_priority_exceeds_u16_max_rejected() {
+        let content = r#"$TTL 3600
+$ORIGIN example.com.
+@       IN      SOA     ns1.example.com. admin.example.com. 2024030901 3600 600 604800 86400
+@       IN      MX      70000 mail.example.com.
+        "#;
+
+        let result = parse_zone_content(content, "example.com");
+        assert!(
+            result.is_err(),
+            "MX priority > u16::MAX should be rejected at parse time"
+        );
+        let err = result.unwrap_err();
+        let err_str = format!("{}", err);
+        assert!(
+            err_str.contains("exceeds u16::MAX"),
+            "Error should mention u16::MAX: {}",
+            err_str
+        );
+    }
+
+    #[test]
+    fn test_mx_priority_at_u16_max_accepted() {
+        let content = r#"$TTL 3600
+$ORIGIN example.com.
+@       IN      SOA     ns1.example.com. admin.example.com. 2024030901 3600 600 604800 86400
+@       IN      MX      65535 mail.example.com.
+        "#;
+
+        let result = parse_zone_content(content, "example.com");
+        assert!(result.is_ok(), "MX priority at u16::MAX should be accepted");
+    }
+
+    #[test]
+    fn test_soa_invalid_serial_rejected() {
+        let content = r#"$TTL 3600
+$ORIGIN example.com.
+@       IN      SOA     ns1.example.com. admin.example.com. not-a-number 3600 600 604800 86400
+        "#;
+
+        let result = parse_zone_content(content, "example.com");
+        assert!(
+            result.is_err(),
+            "SOA with non-numeric serial should be rejected"
+        );
+        let err_str = format!("{}", result.unwrap_err());
+        assert!(
+            err_str.contains("SOA serial"),
+            "Error should mention SOA serial: {}",
+            err_str
+        );
+    }
+
+    #[test]
+    fn test_soa_invalid_refresh_rejected() {
+        let content = r#"$TTL 3600
+$ORIGIN example.com.
+@       IN      SOA     ns1.example.com. admin.example.com. 2024030901 not-a-number 600 604800 86400
+        "#;
+
+        let result = parse_zone_content(content, "example.com");
+        assert!(
+            result.is_err(),
+            "SOA with non-numeric refresh should be rejected"
+        );
+        let err_str = format!("{}", result.unwrap_err());
+        assert!(
+            err_str.contains("SOA refresh"),
+            "Error should mention SOA refresh: {}",
+            err_str
+        );
+    }
+
+    #[test]
+    fn test_soa_too_few_fields_rejected() {
+        let content = r#"$TTL 3600
+$ORIGIN example.com.
+@       IN      SOA     ns1.example.com. admin.example.com. 2024030901
+        "#;
+
+        let result = parse_zone_content(content, "example.com");
+        assert!(
+            result.is_err(),
+            "SOA with too few fields should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_soa_numeric_field_validation_covers_all_fields() {
+        // Test each numeric field of SOA
+        for (idx, field_name) in ["serial", "refresh", "retry", "expire", "minimum"]
+            .iter()
+            .enumerate()
+        {
+            let mut fields = vec![
+                "ns1.example.com",
+                "admin.example.com",
+                "2024030901",
+                "3600",
+                "600",
+                "604800",
+                "86400",
+            ];
+            fields[2 + idx] = "not-a-number";
+            let soa_line = format!("@       IN      SOA     {}", fields.join(" "));
+            let content = format!("$TTL 3600\n$ORIGIN example.com.\n{}\n", soa_line);
+
+            let result = parse_zone_content(&content, "example.com");
+            assert!(
+                result.is_err(),
+                "SOA with invalid {} should be rejected",
+                field_name
+            );
+        }
     }
 }

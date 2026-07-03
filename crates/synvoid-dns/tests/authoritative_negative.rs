@@ -45,8 +45,7 @@ fn build_test_zone() -> Zone {
         vec![DnsZoneRecord {
             name: "@".to_string(),
             record_type: RecordType::SOA,
-            value: "ns1.test.local. admin.test.local. 2026070201 3600 600 604800 300"
-                .to_string(),
+            value: "ns1.test.local. admin.test.local. 2026070201 3600 600 604800 300".to_string(),
             ttl: 300,
             priority: None,
         }],
@@ -113,7 +112,11 @@ fn build_test_zone() -> Zone {
 /// Set up the minimal QueryContext for testing.
 ///
 /// Returns the Arc-wrapped stores so they outlive the context.
-fn setup() -> (Arc<ShardedZoneStore>, Arc<RwLock<ZoneTrie>>, EcsFilterConfig) {
+fn setup() -> (
+    Arc<ShardedZoneStore>,
+    Arc<RwLock<ZoneTrie>>,
+    EcsFilterConfig,
+) {
     let zone = build_test_zone();
 
     let zones = Arc::new(ShardedZoneStore::new());
@@ -277,8 +280,7 @@ fn decode_wire_name(resp: &[u8], start: usize) -> Option<String> {
             if pos + 1 >= resp.len() {
                 return None;
             }
-            let offset =
-                ((len & 0x3F) as usize) << 8 | resp[pos + 1] as usize;
+            let offset = ((len & 0x3F) as usize) << 8 | resp[pos + 1] as usize;
             if !jumped {
                 jump_pos = Some(pos + 2);
             }
@@ -675,11 +677,14 @@ fn txt_record_query_returns_noerror() {
     assert!(ancount >= 1);
     let mut pos = skip_question_section(&resp);
     pos = skip_wire_name(&resp, pos); // skip owner name
-    // type(2) + class(2) + ttl(4) + rdlength(2)
+                                      // type(2) + class(2) + ttl(4) + rdlength(2)
     pos += 10;
     if pos < resp.len() {
         let chunk_len = resp[pos] as usize;
-        assert_eq!(chunk_len, 5, "TXT first chunk length must be 5 (len of 'hello')");
+        assert_eq!(
+            chunk_len, 5,
+            "TXT first chunk length must be 5 (len of 'hello')"
+        );
         assert_eq!(
             &resp[pos + 1..pos + 1 + chunk_len],
             b"hello",
@@ -807,5 +812,263 @@ fn subdomain_not_in_records_returns_nxdomain() {
     assert!(
         response_nscount(&resp) >= 1,
         "authority section must contain SOA"
+    );
+}
+
+// ── Phase D tests ────────────────────────────────────────────────────────
+
+/// Phase D: Negative response section counts match emitted authority records.
+///
+/// NSCOUNT in the header must exactly equal the number of authority RRs
+/// written to the wire. We verify this for both NODATA and NXDOMAIN.
+#[test]
+fn nodata_nscount_matches_authority_records() {
+    let (zones, zone_trie, ecs_filter_config) = setup();
+    let ctx = make_ctx(&zones, &zone_trie, &ecs_filter_config);
+
+    // www exists but has no MX → NODATA
+    let query = build_query(0xD1A0, "www.test.local", 15); // MX
+    let resp = DnsServer::handle_query(&ctx, &query, Some(IpAddr::from([127, 0, 0, 1])))
+        .expect("handle_query should return Some");
+
+    let nscount = response_nscount(&resp) as usize;
+    assert!(nscount >= 1, "NSCOUNT must be ≥1 for NODATA (SOA)");
+
+    // Walk the authority section and count actual RRs
+    let mut pos = skip_question_section(&resp);
+    // Skip answer records
+    for _ in 0..response_ancount(&resp) as usize {
+        pos = skip_wire_name(&resp, pos);
+        if pos + 10 > resp.len() {
+            break;
+        }
+        let rdlen = u16::from_be_bytes([resp[pos + 8], resp[pos + 9]]) as usize;
+        pos += 10 + rdlen;
+    }
+    let mut actual_authority = 0usize;
+    for _ in 0..nscount {
+        pos = skip_wire_name(&resp, pos);
+        if pos + 10 > resp.len() {
+            break;
+        }
+        let rdlen = u16::from_be_bytes([resp[pos + 8], resp[pos + 9]]) as usize;
+        pos += 10 + rdlen;
+        actual_authority += 1;
+    }
+    assert_eq!(
+        nscount, actual_authority,
+        "NSCOUNT must equal number of authority RRs on the wire"
+    );
+}
+
+#[test]
+fn nxdomain_nscount_matches_authority_records() {
+    let (zones, zone_trie, ecs_filter_config) = setup();
+    let ctx = make_ctx(&zones, &zone_trie, &ecs_filter_config);
+
+    // nonexistent.test.local does not exist → NXDOMAIN
+    let query = build_query(0xD1A1, "nonexistent.test.local", 1);
+    let resp = DnsServer::handle_query(&ctx, &query, Some(IpAddr::from([127, 0, 0, 1])))
+        .expect("handle_query should return Some");
+
+    let nscount = response_nscount(&resp) as usize;
+    assert!(nscount >= 1, "NSCOUNT must be ≥1 for NXDOMAIN (SOA)");
+
+    let mut pos = skip_question_section(&resp);
+    for _ in 0..response_ancount(&resp) as usize {
+        pos = skip_wire_name(&resp, pos);
+        if pos + 10 > resp.len() {
+            break;
+        }
+        let rdlen = u16::from_be_bytes([resp[pos + 8], resp[pos + 9]]) as usize;
+        pos += 10 + rdlen;
+    }
+    let mut actual_authority = 0usize;
+    for _ in 0..nscount {
+        pos = skip_wire_name(&resp, pos);
+        if pos + 10 > resp.len() {
+            break;
+        }
+        let rdlen = u16::from_be_bytes([resp[pos + 8], resp[pos + 9]]) as usize;
+        pos += 10 + rdlen;
+        actual_authority += 1;
+    }
+    assert_eq!(
+        nscount, actual_authority,
+        "NSCOUNT must equal number of authority RRs on the wire"
+    );
+}
+
+/// Phase D: Negative response TTL policy is deterministic.
+///
+/// The negative cache TTL is taken from ctx.negative_cache_ttl (300 in test setup).
+/// Both NODATA and NXDOMAIN SOA authority records must carry a TTL equal to
+/// the SOA minimum, which the zone defines as 300.
+#[test]
+fn negative_response_ttl_is_deterministic() {
+    let (zones, zone_trie, ecs_filter_config) = setup();
+    let ctx = make_ctx(&zones, &zone_trie, &ecs_filter_config);
+
+    // NODATA: www exists, MX absent
+    let query_nodata = build_query(0xD1A2, "www.test.local", 15);
+    let resp_nodata =
+        DnsServer::handle_query(&ctx, &query_nodata, Some(IpAddr::from([127, 0, 0, 1])))
+            .expect("handle_query should return Some for NODATA");
+
+    // NXDOMAIN: nonexistent name
+    let query_nxdomain = build_query(0xD1A3, "nonexistent.test.local", 1);
+    let resp_nxdomain =
+        DnsServer::handle_query(&ctx, &query_nxdomain, Some(IpAddr::from([127, 0, 0, 1])))
+            .expect("handle_query should return Some for NXDOMAIN");
+
+    // Verify SOA TTL is present and deterministic for both
+    for (label, resp) in [("NODATA", &resp_nodata), ("NXDOMAIN", &resp_nxdomain)] {
+        let nscount = response_nscount(&resp) as usize;
+        let mut pos = skip_question_section(&resp);
+        // skip answers
+        for _ in 0..response_ancount(&resp) as usize {
+            pos = skip_wire_name(&resp, pos);
+            if pos + 10 > resp.len() {
+                break;
+            }
+            let rdlen = u16::from_be_bytes([resp[pos + 8], resp[pos + 9]]) as usize;
+            pos += 10 + rdlen;
+        }
+        for _ in 0..nscount {
+            pos = skip_wire_name(&resp, pos);
+            if pos + 10 > resp.len() {
+                break;
+            }
+            let rr_type = u16::from_be_bytes([resp[pos], resp[pos + 1]]);
+            let ttl =
+                u32::from_be_bytes([resp[pos + 4], resp[pos + 5], resp[pos + 6], resp[pos + 7]]);
+            let rdlen = u16::from_be_bytes([resp[pos + 8], resp[pos + 9]]) as usize;
+            pos += 10 + rdlen;
+
+            if rr_type == 6 {
+                // SOA record: TTL must be the SOA minimum (300 in test zone)
+                assert_eq!(
+                    ttl, 300,
+                    "{}: SOA authority TTL must be deterministic (expected 300, got {})",
+                    label, ttl
+                );
+            }
+        }
+    }
+}
+
+/// Phase D: `.example` does not receive synthetic NXDOMAIN treatment in production.
+///
+/// When no zone for `.example` is loaded, querying `foo.example` returns
+/// REFUSED (no matching zone), not a synthetic NXDOMAIN. This confirms the
+/// `.example` shortcut was removed from the production query flow.
+#[test]
+fn example_domain_not_loaded_returns_refused_not_synthetic_nxdomain() {
+    let (zones, zone_trie, ecs_filter_config) = setup();
+    let ctx = make_ctx(&zones, &zone_trie, &ecs_filter_config);
+
+    // foo.example has no zone loaded → should be REFUSED, not NXDOMAIN
+    let query = build_query(0xD1A4, "foo.example", 1);
+    let resp = DnsServer::handle_query(&ctx, &query, Some(IpAddr::from([127, 0, 0, 1])))
+        .expect("handle_query should return Some");
+
+    assert!(is_response(&resp));
+    assert!(is_authoritative(&resp));
+    assert_eq!(
+        response_rcode(&resp),
+        RCODE_REFUSED,
+        " unloaded .example must return REFUSED (5), not synthetic NXDOMAIN (3)"
+    );
+    assert_eq!(response_ancount(&resp), 0);
+}
+
+/// Phase D: `.example` receives proper treatment when a test zone IS loaded.
+///
+/// Loading a zone for `example` allows normal NXDOMAIN/NODATA for names
+/// under that zone, confirming the zone-based path works.
+#[test]
+fn example_domain_with_loaded_zone_returns_nxdomain() {
+    let (zones, zone_trie, ecs_filter_config) = setup();
+
+    // Insert a zone for "example" with SOA
+    let mut example_zone = Zone::new("example".to_string());
+    example_zone.serial = 2026070301;
+    example_zone.records.insert(
+        ("@".to_string(), RecordType::SOA),
+        vec![DnsZoneRecord {
+            name: "@".to_string(),
+            record_type: RecordType::SOA,
+            value: "ns1.example. admin.example. 2026070301 3600 600 604800 300".to_string(),
+            ttl: 300,
+            priority: None,
+        }],
+    );
+    example_zone.records.insert(
+        ("@".to_string(), RecordType::NS),
+        vec![DnsZoneRecord {
+            name: "@".to_string(),
+            record_type: RecordType::NS,
+            value: "ns1.example.".to_string(),
+            ttl: 300,
+            priority: None,
+        }],
+    );
+    zones.insert("example".to_string(), example_zone);
+    zone_trie.write().insert("example");
+
+    let ctx = make_ctx(&zones, &zone_trie, &ecs_filter_config);
+
+    // nonexistent.example → NXDOMAIN with SOA (zone is loaded)
+    let query = build_query(0xD1A5, "nonexistent.example", 1);
+    let resp = DnsServer::handle_query(&ctx, &query, Some(IpAddr::from([127, 0, 0, 1])))
+        .expect("handle_query should return Some");
+
+    assert!(is_response(&resp));
+    assert!(is_authoritative(&resp));
+    assert_eq!(
+        response_rcode(&resp),
+        RCODE_NXDOMAIN,
+        "loaded .example zone must return NXDOMAIN (3) for missing names"
+    );
+    assert_eq!(response_ancount(&resp), 0);
+    assert!(
+        response_nscount(&resp) >= 1,
+        "authority section must contain SOA"
+    );
+}
+
+/// Phase D: CNAME owner queried for A returns CNAME (not NODATA/NXDOMAIN).
+///
+/// "alias.test.local" has a CNAME record. Querying it for type A should
+/// return the CNAME record in the answer section.
+#[test]
+fn cname_owner_queried_for_a_returns_cname() {
+    let (zones, zone_trie, ecs_filter_config) = setup();
+    let ctx = make_ctx(&zones, &zone_trie, &ecs_filter_config);
+
+    let query = build_query(0xD1A6, "alias.test.local", 1); // A record
+    let resp = DnsServer::handle_query(&ctx, &query, Some(IpAddr::from([127, 0, 0, 1])))
+        .expect("handle_query should return Some");
+
+    assert!(is_response(&resp));
+    assert!(is_authoritative(&resp));
+    assert_eq!(
+        response_rcode(&resp),
+        RCODE_NOERROR,
+        "CNAME owner queried for A must return NOERROR"
+    );
+    assert_eq!(
+        response_ancount(&resp),
+        1,
+        "answer count must be 1 (CNAME record)"
+    );
+
+    let rr_type = first_answer_rr_type(&resp).expect("answer record must exist");
+    assert_eq!(rr_type, 5, "answer record type must be CNAME (5)");
+
+    let cname = first_answer_cname_rdata(&resp).expect("CNAME RDATA must be present");
+    assert_eq!(
+        cname, "www.test.local",
+        "CNAME target must be www.test.local"
     );
 }
