@@ -45,6 +45,10 @@ cargo test --test authoritative_negative
 cargo test --test dns_config_fidelity
 cargo test --test dns_recursive_isolation
 
+# DNS Phase 7 cache tests
+cargo test -p synvoid-dns -- phase7_cache_tests
+cargo test -p synvoid-dns -- recursive_cache
+
 # DNS config-runtime matrix
 # See architecture/dns_config_runtime_matrix.md
 

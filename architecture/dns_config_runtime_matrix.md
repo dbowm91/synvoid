@@ -218,9 +218,9 @@ Source: `crates/synvoid-config/src/dns/dns_recursive.rs:97`
 | `dns.recursive.upstream_servers` | `[]` | custom upstreams | implemented | recursive tests | none |
 | `dns.recursive.cache.capacity` | `1000000` | recursive cache size | implemented | recursive cache tests | none |
 | `dns.recursive.cache.negative_ttl_secs` | `300` | negative cache TTL | implemented | recursive cache tests | none |
-| `dns.recursive.cache.stale_ttl_secs` | `86400` | not consumed | unsupported | none | document or wire |
-| `dns.recursive.cache.max_ttl_secs` | `86400` | not consumed | unsupported | none | document or wire |
-| `dns.recursive.cache.min_ttl_secs` | `0` | not consumed | unsupported | none | document or wire |
+| `dns.recursive.cache.stale_ttl_secs` | `86400` | `RecursiveDnsCache` TTL override | implemented | recursive cache tests | none |
+| `dns.recursive.cache.max_ttl_secs` | `86400` | `RecursiveDnsCache` max TTL clamp | implemented | recursive cache tests | none |
+| `dns.recursive.cache.min_ttl_secs` | `0` | `RecursiveDnsCache` min TTL clamp | implemented | recursive cache tests | none |
 | `dns.recursive.dnssec_validation` | `true` | passed to HickoryRecursor | implemented | recursive tests | none |
 | `dns.recursive.qname_minimization` | `true` | `HickoryResolver` config | implemented | recursive tests | none |
 | `dns.recursive.max_concurrent_queries` | `10000` | `Semaphore` permits | implemented | recursive tests | none |
@@ -348,7 +348,6 @@ The following features have config fields but are confirmed deferred. They do NO
 | Firewall default_action | `dns.firewall.default_action` | Always Allow; configurable action deferred |
 | Firewall max_rules | `dns.firewall.max_rules` | Rule count limit not enforced |
 | Rebinding Protection | `dns.firewall.rebinding_protection` | Function exists, not wired into query path |
-| Recursive cache TTL overrides | `dns.recursive.cache.stale_ttl_secs`, `max_ttl_secs`, `min_ttl_secs` | Not consumed in RecursiveDnsCache |
 | Query timeout | `dns.recursive.query_timeout_secs` | Only used for DNSSEC warning, not actual timeout |
 | Default TTL | `dns.settings.default_ttl` | Not consumed in runtime |
 

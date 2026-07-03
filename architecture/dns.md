@@ -921,7 +921,15 @@ current.wrapping_add(1)  // Proper wrap-around handling
 
 ### 9.5 DNS Cache Architecture (Phase 7)
 
-Three cache implementations serve distinct roles:
+Three cache implementations serve distinct roles. Phase 7 cache semantics and invalidation workstreams added ~31 tests to `cache.rs` (authoritative cache) and ~19 tests to `recursive_cache.rs` (recursive cache), covering cache key dimensions, serve-stale, TTL clamping, negative TTL from SOA, poisoning detection, cache invalidation on zone mutations, and recursive cache TTL overrides (`stale_ttl_secs`, `max_ttl_secs`, `min_ttl_secs` now confirmed wired).
+
+Test workstreams covered:
+- **Cache key redesign**: composite fingerprint keys, qclass/DO-bit/transport-class/namespace dimensions
+- **Serve-stale policy**: stale entry serving, `max_stale_count` eviction, counter reset on fresh insert
+- **Negative TTL**: SOA-derived TTL (`min(SOA_TTL, SOA_MINIMUM)`), clamped to `[0, negative_cache_ttl]`
+- **Poisoning detection**: composite fingerprint keys preventing cross-type conflicts
+- **Cache invalidation**: zone mutations (load, add, update, delete, clear) trigger `invalidate_zone()`
+- **Recursive cache TTL overrides**: `stale_ttl_secs`, `max_ttl_secs`, `min_ttl_secs` now wired from config
 
 #### Authoritative Cache (`cache.rs`)
 

@@ -622,4 +622,149 @@ mod tests {
             "TTL 300 should be clamped to max 100"
         );
     }
+
+    #[test]
+    fn test_negative_nxdomain_ttl_from_soa() {
+        let config = synvoid_config::dns::RecursiveCacheConfig {
+            negative_ttl_secs: 300,
+            ..Default::default()
+        };
+        let cache = RecursiveDnsCache::new(1000, &config);
+
+        let key = RecursiveCacheKey::new(b"nxd-soa.test", 1, None);
+        cache.insert_negative(key.clone(), true, 60);
+
+        let entry = cache.inner.negative_cache.get(&key).unwrap();
+        assert_eq!(entry.ncache_ttl, Duration::from_secs(60));
+        assert!(entry.is_nxdomain);
+    }
+
+    #[test]
+    fn test_negative_nodata_ttl_from_soa() {
+        let config = synvoid_config::dns::RecursiveCacheConfig {
+            negative_ttl_secs: 300,
+            ..Default::default()
+        };
+        let cache = RecursiveDnsCache::new(1000, &config);
+
+        let key = RecursiveCacheKey::new(b"nodata-soa.test", 28, None);
+        cache.insert_negative(key.clone(), false, 45);
+
+        let entry = cache.inner.negative_cache.get(&key).unwrap();
+        assert_eq!(entry.ncache_ttl, Duration::from_secs(45));
+        assert!(!entry.is_nxdomain);
+    }
+
+    #[test]
+    fn test_invalidation_by_qname_removes_all_types() {
+        let config = synvoid_config::dns::RecursiveCacheConfig::default();
+        let cache = RecursiveDnsCache::new(1000, &config);
+
+        let a_key = RecursiveCacheKey::new(b"multi.test", 1, None);
+        let aaaa_key = RecursiveCacheKey::new(b"multi.test", 28, None);
+
+        let a_records = vec![CachedRecord {
+            name: b"multi.test".to_vec(),
+            record_type: 1,
+            ttl: 300,
+            data: vec![1, 2, 3, 4],
+        }];
+        let aaaa_records = vec![CachedRecord {
+            name: b"multi.test".to_vec(),
+            record_type: 28,
+            ttl: 300,
+            data: vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+        }];
+
+        cache.insert_positive(a_key.clone(), a_records, 300, false);
+        cache.insert_positive(aaaa_key.clone(), aaaa_records, 300, false);
+        assert_eq!(cache.positive_len(), 2);
+
+        cache.invalidate(b"multi.test");
+        assert_eq!(cache.positive_len(), 0);
+        assert!(cache.get(&a_key).is_none());
+        assert!(cache.get(&aaaa_key).is_none());
+    }
+
+    #[test]
+    fn test_disabled_serve_stale_returns_miss() {
+        let config = synvoid_config::dns::RecursiveCacheConfig {
+            stale_ttl_secs: 0,
+            max_ttl_secs: 300,
+            ..Default::default()
+        };
+        let cache = RecursiveDnsCache::new(1000, &config);
+
+        let key = RecursiveCacheKey::new(b"no-stale.test", 1, None);
+        let records = vec![CachedRecord {
+            name: b"no-stale.test".to_vec(),
+            record_type: 1,
+            ttl: 1,
+            data: vec![1, 2, 3, 4],
+        }];
+        cache.insert_positive(key.clone(), records, 1, false);
+
+        let result = cache.get(&key);
+        assert!(result.is_some());
+        assert!(!result.unwrap().1);
+
+        std::thread::sleep(Duration::from_millis(1100));
+
+        let result = cache.get(&key);
+        assert!(
+            result.is_none(),
+            "Disabled serve-stale should return miss after expiry"
+        );
+    }
+
+    #[test]
+    fn test_stale_beyond_max_window_returns_miss() {
+        let config = synvoid_config::dns::RecursiveCacheConfig {
+            stale_ttl_secs: 2,
+            max_ttl_secs: 300,
+            ..Default::default()
+        };
+        let cache = RecursiveDnsCache::new(1000, &config);
+
+        let key = RecursiveCacheKey::new(b"stale-window.test", 1, None);
+        let records = vec![CachedRecord {
+            name: b"stale-window.test".to_vec(),
+            record_type: 1,
+            ttl: 1,
+            data: vec![1, 2, 3, 4],
+        }];
+        cache.insert_positive(key.clone(), records, 1, false);
+
+        std::thread::sleep(Duration::from_millis(1100));
+        let result = cache.get(&key);
+        assert!(result.is_some(), "Should be stale within window");
+        assert!(result.unwrap().1, "Should be flagged as stale");
+
+        std::thread::sleep(Duration::from_millis(2500));
+        let result = cache.get(&key);
+        assert!(result.is_none(), "Should miss beyond stale window");
+    }
+
+    #[test]
+    fn test_stats_tracks_evictions() {
+        let config = synvoid_config::dns::RecursiveCacheConfig {
+            max_ttl_secs: 300,
+            ..Default::default()
+        };
+        let cache = RecursiveDnsCache::new(2, &config);
+
+        for i in 0..10u8 {
+            let name = format!("evict{}.test", i);
+            let key = RecursiveCacheKey::new(name.as_bytes(), 1, None);
+            let records = vec![CachedRecord {
+                name: name.into_bytes(),
+                record_type: 1,
+                ttl: 300,
+                data: vec![1, 2, 3, 4],
+            }];
+            cache.insert_positive(key, records, 300, false);
+        }
+
+        assert_eq!(cache.stats().insertions, 10);
+    }
 }

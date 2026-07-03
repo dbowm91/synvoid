@@ -434,4 +434,10 @@ cargo test --test authoritative_negative
 
 # Query coalescing tests (Phase F: key dimensions, owner/waiter lifecycle, metrics)
 cargo test -p synvoid-dns -- query_coalesce
+
+# DNS Phase 7 cache tests (cache key redesign, serve-stale, negative TTL, poisoning, invalidation)
+cargo test -p synvoid-dns -- phase7_cache_tests
+
+# Recursive cache tests (TTL overrides, isolation, moka config wiring)
+cargo test -p synvoid-dns -- recursive_cache
 ```

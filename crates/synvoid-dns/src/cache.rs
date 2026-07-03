@@ -1198,6 +1198,318 @@ mod phase7_cache_tests {
         assert_eq!(snap1.hits, 0);
         assert_eq!(snap2.hits, 1);
     }
+
+    #[test]
+    fn test_cache_key_do_bit_separation() {
+        let no_dnssec = CacheKey::new("example.com".into(), RecordType::A, None);
+        let with_dnssec = CacheKey::with_dnssec("example.com".into(), RecordType::A, None);
+        assert_ne!(no_dnssec, with_dnssec);
+    }
+
+    #[test]
+    fn test_cache_key_transport_class_separation() {
+        let udp = CacheKey::with_transport(
+            "example.com".into(),
+            RecordType::A,
+            None,
+            TransportClass::Udp512,
+        );
+        let tcp = CacheKey::with_transport(
+            "example.com".into(),
+            RecordType::A,
+            None,
+            TransportClass::Tcp,
+        );
+        let https = CacheKey::with_transport(
+            "example.com".into(),
+            RecordType::A,
+            None,
+            TransportClass::Http,
+        );
+        assert_ne!(udp, tcp);
+        assert_ne!(udp, https);
+        assert_ne!(tcp, https);
+    }
+
+    #[test]
+    fn test_cache_key_client_subnet_separation() {
+        let no_ecs = CacheKey::new("example.com".into(), RecordType::A, None);
+        let ecs_1 = CacheKey::new(
+            "example.com".into(),
+            RecordType::A,
+            Some("8.8.8.8".parse().unwrap()),
+        );
+        let ecs_2 = CacheKey::new(
+            "example.com".into(),
+            RecordType::A,
+            Some("1.1.1.1".parse().unwrap()),
+        );
+        assert_ne!(no_ecs, ecs_1);
+        assert_ne!(no_ecs, ecs_2);
+        assert_ne!(ecs_1, ecs_2);
+    }
+
+    #[test]
+    fn test_ttl_clamping_min_max() {
+        let cache = DnsCache::new(100, 300, 60);
+
+        let key_below_min = CacheKey::new("ttl-clamp-min.example.com".into(), RecordType::A, None);
+        cache.insert(key_below_min.clone(), vec![1, 2, 3, 4], 5);
+        let entry = cache.inner.cache.get(&key_below_min).unwrap();
+        assert_eq!(entry.ttl, Duration::from_secs(60));
+
+        let key_above_max = CacheKey::new("ttl-clamp-max.example.com".into(), RecordType::A, None);
+        cache.insert(key_above_max.clone(), vec![1, 2, 3, 4], 99999);
+        let entry = cache.inner.cache.get(&key_above_max).unwrap();
+        assert_eq!(entry.ttl, Duration::from_secs(300));
+
+        let key_in_range = CacheKey::new("ttl-clamp-range.example.com".into(), RecordType::A, None);
+        cache.insert(key_in_range.clone(), vec![1, 2, 3, 4], 120);
+        let entry = cache.inner.cache.get(&key_in_range).unwrap();
+        assert_eq!(entry.ttl, Duration::from_secs(120));
+    }
+
+    #[test]
+    fn test_negative_ttl_from_config() {
+        let cache = DnsCache::new(100, 300, 30);
+
+        let key = CacheKey::new("neg-ttl.example.com".into(), RecordType::A, None);
+        cache.insert(key.clone(), vec![1, 2, 3, 4], 0);
+        let entry = cache.inner.cache.get(&key).unwrap();
+        assert_eq!(entry.ttl, Duration::from_secs(30));
+
+        let key2 = CacheKey::new("neg-ttl2.example.com".into(), RecordType::A, None);
+        cache.insert(key2.clone(), vec![1, 2, 3, 4], 10);
+        let entry = cache.inner.cache.get(&key2).unwrap();
+        assert_eq!(entry.ttl, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn test_zone_invalidation_clears_all_variants() {
+        let cache = DnsCache::with_security(100, 300, 10, 65535, false, false);
+
+        let key_auth = CacheKey::new("sub.variant.example.com".into(), RecordType::A, None);
+        let key_dnssec =
+            CacheKey::with_dnssec("sub.variant.example.com".into(), RecordType::A, None);
+        let key_ecs = CacheKey::new(
+            "sub.variant.example.com".into(),
+            RecordType::A,
+            Some("8.8.8.8".parse().unwrap()),
+        );
+        let key_tcp = CacheKey::with_transport(
+            "sub.variant.example.com".into(),
+            RecordType::A,
+            None,
+            TransportClass::Tcp,
+        );
+
+        cache.insert(key_auth.clone(), vec![1, 2, 3, 4], 300);
+        cache.insert(key_dnssec.clone(), vec![5, 6, 7, 8], 300);
+        cache.insert(key_ecs.clone(), vec![9, 10, 11, 12], 300);
+        cache.insert(key_tcp.clone(), vec![13, 14, 15, 16], 300);
+
+        assert_eq!(cache.len(), 4);
+        cache.invalidate_zone("variant.example.com");
+        assert_eq!(cache.len(), 0);
+    }
+
+    #[test]
+    fn test_record_invalidation_specific_type() {
+        let cache = DnsCache::new(100, 300, 10);
+
+        let key_a = CacheKey::new("typed.inv.example.com".into(), RecordType::A, None);
+        let key_aaaa = CacheKey::new("typed.inv.example.com".into(), RecordType::AAAA, None);
+        let key_mx = CacheKey::new("typed.inv.example.com".into(), RecordType::MX, None);
+
+        cache.insert(key_a.clone(), vec![1, 2, 3, 4], 300);
+        cache.insert(
+            key_aaaa.clone(),
+            vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+            300,
+        );
+        cache.insert(
+            key_mx.clone(),
+            vec![0, 10, 0, 0, 5, 6, 7, 8, 10, 11, 12, 13],
+            300,
+        );
+
+        cache.invalidate_record("example.com", "typed.inv", RecordType::A);
+
+        assert!(cache.get(&key_a).is_none());
+        assert!(cache.get(&key_aaaa).is_some());
+        assert!(cache.get(&key_mx).is_some());
+    }
+
+    #[test]
+    fn test_invalidation_removes_negative_entries() {
+        let cache = DnsCache::with_security(100, 300, 10, 65535, false, false);
+
+        let key = CacheKey::new("neg-inv.example.com".into(), RecordType::A, None);
+        cache.insert(key.clone(), vec![], 0);
+        assert!(
+            cache.get(&key).is_some(),
+            "Negative entry should be cached with min_ttl"
+        );
+
+        cache.insert(key.clone(), vec![1, 2, 3, 4], 300);
+        let data = cache.get(&key).unwrap();
+        assert_eq!(
+            *data,
+            vec![1, 2, 3, 4],
+            "Positive entry should replace negative"
+        );
+    }
+
+    #[test]
+    fn test_serve_stale_disabled_returns_miss() {
+        let cache = DnsCache::with_serve_stale(100, 300, 1, false, 3600);
+
+        let key = CacheKey::new("stale-disabled.example.com".into(), RecordType::A, None);
+        cache.insert(key.clone(), vec![1, 2, 3, 4], 1);
+
+        assert!(cache.get(&key).is_some(), "Fresh entry should hit");
+
+        std::thread::sleep(Duration::from_millis(1100));
+
+        assert!(
+            cache.get(&key).is_none(),
+            "Stale entry should miss when serve_stale disabled"
+        );
+    }
+
+    #[test]
+    fn test_serve_stale_beyond_max_window_returns_miss() {
+        let cache = DnsCache::with_serve_stale(100, 300, 1, true, 2);
+
+        let key = CacheKey::new("stale-window.example.com".into(), RecordType::A, None);
+        cache.insert(key.clone(), vec![1, 2, 3, 4], 1);
+
+        assert!(cache.get(&key).is_some(), "Fresh entry should hit");
+
+        std::thread::sleep(Duration::from_millis(1100));
+        assert!(
+            cache.get(&key).is_some(),
+            "Within max_stale window should hit"
+        );
+
+        std::thread::sleep(Duration::from_millis(2000));
+        assert!(
+            cache.get(&key).is_none(),
+            "Beyond max_stale window should miss"
+        );
+    }
+
+    #[test]
+    fn test_zone_update_invalidates_stale_entry() {
+        let cache = DnsCache::with_serve_stale(100, 300, 1, true, 3600);
+
+        let key = CacheKey::new("stale-zone-inv.example.com".into(), RecordType::A, None);
+        cache.insert(key.clone(), vec![1, 2, 3, 4], 1);
+
+        std::thread::sleep(Duration::from_millis(1100));
+        assert!(cache.get(&key).is_some(), "Stale entry should be served");
+
+        cache.invalidate_zone("stale-zone-inv.example.com");
+        assert!(
+            cache.get(&key).is_none(),
+            "After invalidation, stale entry should be gone"
+        );
+    }
+
+    #[test]
+    fn test_a_aaaa_no_fingerprint_conflict() {
+        let cache = DnsCache::with_security(100, 300, 10, 65535, true, true);
+
+        let a_key = CacheKey::new("fp-conflict.example.com".into(), RecordType::A, None);
+        let aaaa_key = CacheKey::new("fp-conflict.example.com".into(), RecordType::AAAA, None);
+
+        let a_data = vec![0, 0, 0, 0];
+        let aaaa_data = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+
+        cache.insert(a_key.clone(), a_data, 300);
+        assert!(cache.get(&a_key).is_some(), "A record should be accepted");
+
+        cache.insert(aaaa_key.clone(), aaaa_data, 300);
+        assert!(
+            cache.get(&aaaa_key).is_some(),
+            "AAAA record should be accepted without poisoning rejection"
+        );
+
+        assert_eq!(cache.metrics().poisoned_rejections, 0);
+    }
+
+    #[test]
+    fn test_dnssec_nondnssec_no_conflict() {
+        let cache = DnsCache::with_security(100, 300, 10, 65535, true, true);
+
+        let nondnssec_key =
+            CacheKey::new("dnssec-conflict.example.com".into(), RecordType::A, None);
+        let dnssec_key =
+            CacheKey::with_dnssec("dnssec-conflict.example.com".into(), RecordType::A, None);
+
+        let data1 = vec![1, 2, 3, 4];
+        let data2 = vec![5, 6, 7, 8];
+
+        cache.insert(nondnssec_key.clone(), data1, 300);
+        assert!(cache.get(&nondnssec_key).is_some());
+
+        cache.insert(dnssec_key.clone(), data2, 300);
+        assert!(cache.get(&dnssec_key).is_some());
+
+        assert_eq!(cache.metrics().poisoned_rejections, 0);
+    }
+
+    #[test]
+    fn test_metrics_stale_hit_counter() {
+        let cache = DnsCache::with_serve_stale(100, 300, 1, true, 3600);
+
+        let key = CacheKey::new("stale-metrics.example.com".into(), RecordType::A, None);
+        cache.insert(key.clone(), vec![1, 2, 3, 4], 1);
+
+        assert_eq!(cache.metrics().stale_hits, 0);
+
+        std::thread::sleep(Duration::from_millis(1100));
+
+        cache.get(&key);
+        assert_eq!(cache.metrics().stale_hits, 1);
+
+        cache.get(&key);
+        assert_eq!(cache.metrics().stale_hits, 2);
+    }
+
+    #[test]
+    fn test_metrics_miss_counter() {
+        let cache = DnsCache::new(100, 300, 10);
+
+        let key = CacheKey::new("miss-metrics.example.com".into(), RecordType::A, None);
+
+        assert_eq!(cache.metrics().misses, 0);
+
+        cache.get(&key);
+        assert_eq!(cache.metrics().misses, 1);
+
+        cache.get(&key);
+        assert_eq!(cache.metrics().misses, 2);
+    }
+
+    #[test]
+    fn test_metrics_invalidation_counter() {
+        let cache = DnsCache::new(100, 300, 10);
+
+        let key1 = CacheKey::new("inv-metrics.example.com".into(), RecordType::A, None);
+        let key2 = CacheKey::new("other.example.com".into(), RecordType::A, None);
+
+        cache.insert(key1, vec![1, 2, 3, 4], 300);
+        cache.insert(key2, vec![5, 6, 7, 8], 300);
+
+        assert_eq!(cache.metrics().invalidations, 0);
+
+        cache.invalidate_zone("inv-metrics.example.com");
+        assert_eq!(cache.metrics().invalidations, 1);
+
+        cache.invalidate_zone("other.example.com");
+        assert_eq!(cache.metrics().invalidations, 2);
+    }
 }
 
 #[cfg(test)]
