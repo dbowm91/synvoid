@@ -572,6 +572,7 @@ pub struct DnsServer {
     connection_limits: Arc<super::limits::ConnectionLimits>,
     geoip_lookup: Option<Arc<synvoid_geoip::GeoIpManager>>,
     shutdown_tx: Option<oneshot::Sender<()>>,
+    shutdown_watcher_tx: Option<tokio::sync::watch::Sender<bool>>,
     cache: Option<Arc<DnsCache>>,
     dnssec: Option<Arc<RwLock<DnsSecKeyManager>>>,
     signer_name: Option<String>,
@@ -611,7 +612,8 @@ impl Clone for DnsServer {
             firewall: self.firewall.clone(),
             connection_limits: self.connection_limits.clone(),
             geoip_lookup: self.geoip_lookup.clone(),
-            shutdown_tx: None, // Cannot clone sender
+            shutdown_tx: None,         // Cannot clone sender
+            shutdown_watcher_tx: None, // Cannot clone sender
             cache: self.cache.clone(),
             dnssec: self.dnssec.clone(),
             signer_name: self.signer_name.clone(),
@@ -925,6 +927,7 @@ impl DnsServer {
             connection_limits,
             geoip_lookup,
             shutdown_tx: None,
+            shutdown_watcher_tx: None,
             cache,
             dnssec,
             signer_name,

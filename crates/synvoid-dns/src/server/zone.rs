@@ -391,6 +391,10 @@ impl DnsServer {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
         }
+        if let Some(watcher) = self.shutdown_watcher_tx.take() {
+            let _ = watcher.send(true);
+        }
+        self.connection_limits.initiate_graceful_shutdown();
     }
 
     pub fn invalidate_cache(&self) {

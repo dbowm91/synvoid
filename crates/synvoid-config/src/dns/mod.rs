@@ -196,6 +196,9 @@ impl DnsConfig {
         self.settings.validate()?;
         self.dnssec.validate()?;
         self.recursive.validate()?;
+        self.limits
+            .validate()
+            .map_err(DnsConfigError::InvalidSettings)?;
 
         if let DnsMode::Mesh = self.mode {
             self.mesh.validate()?;

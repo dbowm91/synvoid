@@ -1,6 +1,19 @@
 use super::*;
 use crate::parsed_query::ParsedDnsQuery;
 
+/// Parse and validate the bind address from config.
+/// Returns `Err` immediately on invalid address instead of silently falling back.
+pub(crate) fn configured_bind_addr(config: &DnsConfig) -> Result<SocketAddr, String> {
+    let bind_ip: std::net::IpAddr = config
+        .bind_address
+        .parse()
+        .map_err(|e| format!("Invalid DNS bind_address '{}': {}", config.bind_address, e))?;
+    if config.port == 0 {
+        return Err("DNS port cannot be zero".to_string());
+    }
+    Ok(SocketAddr::from((bind_ip, config.port)))
+}
+
 impl DnsServer {
     fn build_handler_state(&self) -> DnsHandlerState {
         DnsHandlerState {
@@ -47,10 +60,14 @@ impl DnsServer {
             self.start_recursive_server().await?;
         }
 
+        let (shutdown_watcher_tx, shutdown_watcher_rx) = tokio::sync::watch::channel(false);
+        self.shutdown_watcher_tx = Some(shutdown_watcher_tx);
+
         if let Some(ref coalescer) = self.query_coalescer {
             Self::start_coalescer_cleanup_task(
                 Some(coalescer),
                 self.config.settings.query_coalescing.cleanup_interval_secs,
+                shutdown_watcher_rx,
             );
         }
 
@@ -63,6 +80,18 @@ impl DnsServer {
         }
 
         Ok(())
+    }
+
+    /// Initiate graceful shutdown of the DNS runtime. Idempotent — safe to call multiple times.
+    pub fn shutdown_runtime(&mut self) {
+        if let Some(tx) = self.shutdown_tx.take() {
+            tracing::info!("DNS server shutdown requested");
+            let _ = tx.send(());
+        }
+        if let Some(watcher) = self.shutdown_watcher_tx.take() {
+            let _ = watcher.send(true);
+        }
+        self.connection_limits.initiate_graceful_shutdown();
     }
 
     async fn start_recursive_server(&mut self) -> Result<(), String> {
@@ -97,12 +126,7 @@ impl DnsServer {
     }
 
     async fn start_standard_mode(&mut self) -> Result<(), String> {
-        let bind_ip: std::net::IpAddr = self
-            .config
-            .bind_address
-            .parse()
-            .unwrap_or_else(|_| std::net::IpAddr::from([0, 0, 0, 0]));
-        let bind_addr = SocketAddr::from((bind_ip, self.config.port));
+        let bind_addr = configured_bind_addr(&self.config)?;
 
         let socket = UdpSocket::bind(bind_addr)
             .await
@@ -194,7 +218,11 @@ impl DnsServer {
                                 };
 
                                 if !allowed {
-                                    tracing::debug!("DNS query rate limited for {}", client_ip);
+                                    tracing::debug!(
+                                        transport = "udp",
+                                        client = %client_ip,
+                                        "DNS query rate limited"
+                                    );
                                     continue;
                                 }
 
@@ -329,12 +357,22 @@ impl DnsServer {
                                     if rrl_enabled {
                                         if let Some(rl) = rate_limiter.as_ref() {
                                             if !rl.should_respond(client_ip) {
-                                                tracing::debug!("RRL dropping response to {}", client_ip);
+                                                tracing::debug!(
+                                                    transport = "udp",
+                                                    client = %client_ip,
+                                                    "RRL dropping response"
+                                                );
                                                 continue;
                                             }
                                         }
                                     }
 
+                                    tracing::trace!(
+                                        transport = "udp",
+                                        client = %client_ip,
+                                        response_len = resp.len(),
+                                        "DNS response sent"
+                                    );
                                     let _ = socket.send_to(resp, src).await;
                                 }
                             }
@@ -398,7 +436,11 @@ impl DnsServer {
                                 };
 
                                 if !allowed {
-                                    tracing::debug!("DNS TCP query rate limited for {}", client_ip);
+                                    tracing::debug!(
+                                        transport = "tcp",
+                                        client = %client_ip,
+                                        "DNS TCP query rate limited"
+                                    );
                                     continue;
                                 }
 
@@ -426,7 +468,11 @@ impl DnsServer {
                                     let _connection_guard = match connection_limits_clone.try_acquire_connection() {
                                         Ok(guard) => guard,
                                         Err(e) => {
-                                            tracing::warn!("Connection rejected by limits: {}", e);
+                                            tracing::warn!(
+                                                transport = "tcp",
+                                                client = %client_ip,
+                                                "Connection rejected by limits: {}", e
+                                            );
                                             return;
                                         }
                                     };
@@ -460,7 +506,11 @@ impl DnsServer {
                                         mesh_registry: None,
                                     };
                                     if let Err(e) = Self::handle_tcp_query(stream, ctx).await {
-                                        tracing::debug!("TCP DNS error: {}", e);
+                                        tracing::debug!(
+                                            transport = "tcp",
+                                            client = %client_ip,
+                                            "TCP DNS error: {}", e
+                                        );
                                     }
                                 });
                             }
@@ -522,6 +572,7 @@ impl DnsServer {
     pub(crate) fn start_coalescer_cleanup_task(
         coalescer: Option<&Arc<crate::query_coalesce::QueryCoalescer>>,
         interval_secs: u64,
+        mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
     ) {
         if let Some(coalescer) = coalescer {
             let coalescer = coalescer.clone();
@@ -530,18 +581,26 @@ impl DnsServer {
                 let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
 
                 loop {
-                    interval.tick().await;
+                    tokio::select! {
+                        _ = interval.tick() => {
+                            let count_before = coalescer.in_flight_count();
+                            coalescer.cleanup_stale();
+                            let count_after = coalescer.in_flight_count();
 
-                    let count_before = coalescer.in_flight_count();
-                    coalescer.cleanup_stale();
-                    let count_after = coalescer.in_flight_count();
-
-                    if count_before != count_after {
-                        tracing::debug!(
-                            "Query coalescer cleanup: {} -> {} entries",
-                            count_before,
-                            count_after
-                        );
+                            if count_before != count_after {
+                                tracing::debug!(
+                                    "Query coalescer cleanup: {} -> {} entries",
+                                    count_before,
+                                    count_after
+                                );
+                            }
+                        }
+                        _ = shutdown_rx.changed() => {
+                            if *shutdown_rx.borrow() {
+                                tracing::info!("Query coalescer cleanup task shutting down");
+                                break;
+                            }
+                        }
                     }
                 }
             });
@@ -555,5 +614,80 @@ impl DnsServer {
 
     pub fn get_coalescer_metrics(&self) -> Option<crate::query_coalesce::QueryCoalescerMetrics> {
         self.query_coalescer.as_ref().map(|c| c.metrics())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    fn make_config(bind: &str, port: u16) -> DnsConfig {
+        let mut c = DnsConfig::default();
+        c.bind_address = bind.to_string();
+        c.port = port;
+        c
+    }
+
+    #[test]
+    fn configured_bind_addr_ipv4() {
+        let config = make_config("127.0.0.1", 5353);
+        let addr = configured_bind_addr(&config).unwrap();
+        assert_eq!(addr.ip(), IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
+        assert_eq!(addr.port(), 5353);
+    }
+
+    #[test]
+    fn configured_bind_addr_ipv6() {
+        let config = make_config("::1", 5353);
+        let addr = configured_bind_addr(&config).unwrap();
+        assert_eq!(addr.ip(), IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)));
+        assert_eq!(addr.port(), 5353);
+    }
+
+    #[test]
+    fn configured_bind_addr_wildcard() {
+        let config = make_config("0.0.0.0", 53);
+        let addr = configured_bind_addr(&config).unwrap();
+        assert_eq!(addr.ip(), IpAddr::V4(Ipv4Addr::UNSPECIFIED));
+        assert_eq!(addr.port(), 53);
+    }
+
+    #[test]
+    fn configured_bind_addr_invalid_fails_fast() {
+        let config = make_config("not-an-ip", 53);
+        let result = configured_bind_addr(&config);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("Invalid DNS bind_address"),
+            "Error should mention bind_address: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn configured_bind_addr_port_zero_fails() {
+        let config = make_config("0.0.0.0", 0);
+        let result = configured_bind_addr(&config);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("port cannot be zero"),
+            "Error should mention port: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn shutdown_runtime_is_idempotent() {
+        let mut config = DnsConfig::default();
+        config.bind_address = "127.0.0.1".to_string();
+        config.port = 5353;
+        let mut server = DnsServer::new(config, None);
+        // First call should send the signal
+        server.shutdown_runtime();
+        // Second call should not panic
+        server.shutdown_runtime();
     }
 }

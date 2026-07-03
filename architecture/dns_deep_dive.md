@@ -73,6 +73,37 @@ The DNS module is gated by the `dns` feature in `Cargo.toml`.
 8. **DNSSEC Signing**: If zone signed, RRSIG records added
 9. **Response**: Wire format response sent to client
 
+### Transport Hardening (Phase 4)
+
+Production-safe transport handling with fail-fast startup, enforced limits, and clean shutdown.
+
+**Bind-Address Policy** (`server/startup.rs`):
+- `configured_bind_addr()` parses `bind_address` + `port` into a `SocketAddr`, returning `Err` on invalid input.
+- **Fail-fast**: Invalid bind addresses (e.g., `999.999.999.999`) cause startup failure instead of silently falling back to `0.0.0.0`.
+- Port 0 is rejected (must be explicit).
+
+**UDP Receive/Send Boundary**:
+- Buffer size from `DnsLimitsConfig::udp_buffer_size`, clamped to `[512, 65535]` via `effective_udp_buffer_size()`.
+- `DnsLimitsConfig::validate()` enforces minimum sane values for `max_tcp_connections`, `max_concurrent_queries`, and buffer sizes at config validation time.
+- EDNS UDP payload size (default 512) controls truncation threshold; responses exceeding it get TC bit set.
+- Structured tracing fields (`transport`, `client`, `response_len`) on all UDP/TCP paths.
+
+**TCP Lifecycle**:
+- **One-query-per-connection** (RFC 7766 §4): `handle_tcp_query` reads one query via 2-byte length prefix, processes it, and returns. Connection closes after response.
+- **Exception**: AXFR/IXFR use multi-message chunking (multiple queries over one connection).
+- Connection count guarded by `ConnectionLimits` RAII guard for entire connection lifetime.
+
+**Transport Response-Size Limits**:
+- **UDP**: Truncation via EDNS buffer size in `build_response()`. Responses exceeding `udp_payload_size` get TC flag + question-only fallback.
+- **TCP**: `validate_response_size()` enforced (not advisory). Responses exceeding `max_response_size` (default 65535) return SERVFAIL and close connection.
+- AXFR/IXFR responses use chunked encoding to stay within limits.
+
+**Shutdown and Background Tasks**:
+- `DnsServer::shutdown_runtime()` sends both oneshot shutdown signal and watch channel signal, plus initiates graceful connection drain.
+- Coalescer cleanup task uses `tokio::select!` on interval tick + shutdown watch signal (no longer runs forever).
+- Shutdown is idempotent — multiple calls are safe.
+- Ports become reusable after shutdown completes.
+
 ### Zone Transfers (AXFR/IXFR) (`transfer.rs`)
 
 **IXFR** (RFC 1995) - Incremental zone transfer

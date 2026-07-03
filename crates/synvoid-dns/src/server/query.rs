@@ -55,6 +55,15 @@ impl DnsServer {
         Some(Arc::new(response))
     }
 
+    /// Handle a single DNS query over TCP.
+    ///
+    /// TCP mode is **one-query-per-connection** (RFC 7766 §4). The server reads
+    /// the 2-byte length prefix, processes exactly one query, writes the response,
+    /// and closes the connection. This matches the common DNS-over-TCP behavior
+    /// where clients open a new connection per query.
+    ///
+    /// AXFR/IXFR are handled as multi-message responses over the same connection,
+    /// but the connection still closes after the transfer completes.
     pub(super) async fn handle_tcp_query(
         mut stream: tokio::net::TcpStream,
         ctx: QueryContext<'_>,
@@ -336,7 +345,32 @@ impl DnsServer {
 
             if let Some(limits) = ctx.connection_limits {
                 if let Err(e) = limits.validate_response_size(resp.len()) {
-                    tracing::warn!("Response size {} exceeds limit: {}", resp.len(), e);
+                    tracing::warn!(
+                        transport = "tcp",
+                        client = %client_ip,
+                        response_size = resp.len(),
+                        "{}", e
+                    );
+                    let query_id = if resp.len() >= 2 {
+                        u16::from_be_bytes([resp[0], resp[1]])
+                    } else {
+                        0
+                    };
+                    let flags = crate::parsed_query::build_response_flags(
+                        true, false, false, false, false, 2,
+                    );
+                    let mut servfail = Vec::with_capacity(12);
+                    servfail.extend_from_slice(&query_id.to_be_bytes());
+                    servfail.extend_from_slice(&flags.to_be_bytes());
+                    servfail.extend_from_slice(&1u16.to_be_bytes());
+                    servfail.extend_from_slice(&0u16.to_be_bytes());
+                    servfail.extend_from_slice(&0u16.to_be_bytes());
+                    servfail.extend_from_slice(&0u16.to_be_bytes());
+                    let len = servfail.len() as u16;
+                    let mut response_buf = len.to_be_bytes().to_vec();
+                    response_buf.extend_from_slice(&servfail);
+                    let _ = stream.write_all(&response_buf).await;
+                    return Ok(());
                 }
             }
             let len = resp.len() as u16;
