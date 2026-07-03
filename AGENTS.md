@@ -41,6 +41,13 @@ cargo test -p synvoid-dns -- parsed_query
 # DNS authoritative negative response tests
 cargo test --test authoritative_negative
 
+# DNS config fidelity tests (Phase 5)
+cargo test --test dns_config_fidelity
+cargo test --test dns_recursive_isolation
+
+# DNS config-runtime matrix
+# See architecture/dns_config_runtime_matrix.md
+
 # Supervisor lifecycle (Phase 3)
 cargo test --test supervisor_task_ownership_guard
 cargo test -p synvoid supervisor::task_registry
@@ -319,6 +326,7 @@ The `architecture/` directory (87 docs) and `.opencode/skills/` directory contai
 | `architecture/runtime_operations_drill.md` | Reproducible operator drill steps for runtime operations readiness (Phase 16) |
 | `architecture/runtime_operations_drill_report.md` | Drill results, corrections applied, observability signals (Phase 16) |
 | `architecture/semver_stability_policy.md` | Semver versioning, stability classifications, deprecation rules |
+| `architecture/dns_config_runtime_matrix.md` | DNS config field inventory with runtime status, defaults, and wiring |
 
 ## Known Issues
 
@@ -328,6 +336,7 @@ The `architecture/` directory (87 docs) and `.opencode/skills/` directory contai
 
 ## Recent Completions
 
+- **DNS Phase 5 Config-to-Runtime Fidelity** — serve_stale wiring, DNS64 exclude_aaaa_synthesis, 37 new tests (config fidelity + recursive isolation), config-runtime matrix document, deferred feature documentation. All items in `plans/dns_phase_05_config_runtime_fidelity.md` addressed.
 - **Plugin M3 Phase 8** — Unsafe native extension production gate, FFI panic catching, hot-reload gating, world-writable path rejection, config migration, metrics, and 34 unit tests. All items in `plans/plugin_m3_phase_08_gap_fixes.md` are complete.
 - **Plugin M3 Phase 9** — Lifecycle hardening: generation tracking, atomic reload pipeline, file stability detection, lifecycle state machine, operator APIs, and 44+ tests across guard files. All items in `plans/plugin_m3_phase_09_gap_fixes.md` are complete.
 - **DNS Milestone 1 Corrective Pass** — Response flag semantics (RA=false authoritative, RD echoed), byte-size truncation, parser propagation (parse-once), authoritative NODATA/NXDOMAIN with SOA, encoder strictness (MX/CAA/TLSA validation, EncodeReport), query coalescing broadcast, runtime correctness (bind address, DNS64 pass-through, TCP guard). All phases (A–G) complete. See `plans/dns_milestone_1_corrective_pass.md`.

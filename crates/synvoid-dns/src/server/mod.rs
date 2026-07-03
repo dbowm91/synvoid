@@ -687,11 +687,21 @@ impl DnsServer {
         };
 
         let cache = if config.settings.cache_enabled {
-            Some(Arc::new(DnsCache::new(
-                config.settings.cache_size,
-                config.settings.cache_max_ttl,
-                config.settings.cache_min_ttl,
-            )))
+            if config.settings.serve_stale.enabled {
+                Some(Arc::new(DnsCache::with_serve_stale(
+                    config.settings.cache_size,
+                    config.settings.cache_max_ttl,
+                    config.settings.cache_min_ttl,
+                    true,
+                    config.settings.serve_stale.max_stale_secs,
+                )))
+            } else {
+                Some(Arc::new(DnsCache::new(
+                    config.settings.cache_size,
+                    config.settings.cache_max_ttl,
+                    config.settings.cache_min_ttl,
+                )))
+            }
         } else {
             None
         };
@@ -908,6 +918,7 @@ impl DnsServer {
                 }),
                 fallback_resolver: None,
                 enabled: true,
+                exclude_aaaa_synthesis: config.dns64.exclude_aaaa_synthesis,
             };
             Some(super::dns64::Dns64Translator::new(core_config))
         } else {

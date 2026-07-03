@@ -1077,3 +1077,36 @@ Milestone 1 is closed. The authoritative DNS wire/query correctness is verified:
 
 **What Milestone 1 is not**: Full DNSSEC production hardening (NSEC3 closest-encloser, RFC 5001/5155 compliance, key lifecycle), recursive resolver transport, or external interoperability validation. These remain deferred to Milestone 3.
 
+---
+
+## Phase 5: Config-to-Runtime Fidelity
+
+Phase 5 audited every DNS config field and ensured each is either fully implemented, explicitly documented as deferred, or removed. See `architecture/dns_config_runtime_matrix.md` for the complete field inventory.
+
+### Key Changes
+
+1. **serve_stale wiring**: `DnsServer::new()` now uses `DnsCache::with_serve_stale()` when `config.settings.serve_stale.enabled` is true, passing `max_stale_secs` from config.
+
+2. **DNS64 exclude_aaaa_synthesis**: Added `exclude_aaaa_synthesis: bool` to runtime `Dns64Config`. When true, AAAA synthesis is skipped entirely for all clients.
+
+### Deferred Features (Phase 7+)
+
+The following features have config fields but are NOT wired to runtime behavior:
+
+- **RPZ** (`dns.rpz.*`): Requires rule database engine
+- **Dynamic Update** (`dns.settings.dynamic_update`): Handler exists but not wired; security-sensitive
+- **Notify** (`dns.settings.notify`): Handler exists but not wired
+- **Zone Transfer** (`dns.settings.allow_transfer`, `require_tsig`, `allow_wildcard_transfer`, `wildcard_transfer_requires_tsig`): Requires TSIG infrastructure
+- **IXFR** (`dns.settings.ixfr_enabled`, `ixfr_history_size`, `ixfr_fallback_to_axfr`): Requires delta encoding
+- **Trust Anchors** (`dns.trust_anchors`): Uses system defaults via HickoryRecursor
+- **Prefetch** (`dns.prefetch.*`): Requires predictive cache warming
+- **Anycast** (`dns.anycast.*`): Requires mesh feature gate
+- **QName Privacy** (`dns.settings.qname_privacy`): Logging integration not wired
+- **Padding** (`dns.settings.padding`): EDNS padding struct exists but not wired from config
+
+### Test Coverage
+
+Phase 5 added 37+ tests across two integration test files:
+- `dns_config_fidelity.rs`: Cache serve_stale, min/max TTL, DNS64 synthesis/disable/custom prefix/exclude, ECS filter, firewall rules
+- `dns_recursive_isolation.rs`: Recursive mode bind independence, cache isolation, authoritative REFUSED, anycast/mesh feature gates, config validation guards
+

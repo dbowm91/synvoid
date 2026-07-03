@@ -5,6 +5,7 @@ pub struct Dns64Config {
     pub prefix: Ipv6Addr,
     pub fallback_resolver: Option<String>,
     pub enabled: bool,
+    pub exclude_aaaa_synthesis: bool,
 }
 
 impl Default for Dns64Config {
@@ -14,6 +15,7 @@ impl Default for Dns64Config {
             prefix: Ipv6Addr::new(0x0064, 0xff9b, 0, 0, 0, 0, 0, 0),
             fallback_resolver: None,
             enabled: false,
+            exclude_aaaa_synthesis: false,
         }
     }
 }
@@ -24,6 +26,7 @@ impl Dns64Config {
             prefix,
             fallback_resolver: None,
             enabled: true,
+            exclude_aaaa_synthesis: false,
         }
     }
 
@@ -102,6 +105,10 @@ impl Dns64Translator {
 
     pub fn should_synthesize(&self, qtype: u16, client_ipv6: Option<IpAddr>) -> bool {
         if !self.config.enabled {
+            return false;
+        }
+
+        if self.config.exclude_aaaa_synthesis {
             return false;
         }
 
