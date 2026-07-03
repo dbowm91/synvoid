@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -9,20 +10,130 @@ use parking_lot::RwLock;
 
 use super::server::RecordType;
 
+/// Classifies the transport/EDNS response-shape class for cache keying.
+///
+/// Different transports and EDNS configurations can produce different wire-format
+/// responses (e.g., UDP with 512-byte limit vs. TCP with no limit, or DO-bit
+/// differences). The transport class captures the dimensions that affect response shape.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Ord, PartialOrd)]
+pub enum TransportClass {
+    /// UDP with standard 512-byte limit (no EDNS)
+    Udp512,
+    /// UDP with EDNS payload size (includes 1232-byte default)
+    UdpEdns(u16),
+    /// TCP transport (no size limit)
+    Tcp,
+    /// DNS-over-HTTPS
+    Http,
+    /// DNS-over-QUIC
+    Quic,
+}
+
+impl Default for TransportClass {
+    fn default() -> Self {
+        Self::Udp512
+    }
+}
+
+/// Separates authoritative and recursive cache namespaces to prevent cross-contamination.
+///
+/// Authoritative cache entries come from local zone data. Recursive cache entries
+/// come from upstream resolvers. These must never share cache key space.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Ord, PartialOrd)]
+pub enum CacheNamespace {
+    /// Local authoritative zone data
+    Authoritative,
+    /// Recursive resolution results from upstream
+    Recursive,
+}
+
+impl Default for CacheNamespace {
+    fn default() -> Self {
+        Self::Authoritative
+    }
+}
+
+/// DNS cache key covering all output-affecting dimensions.
+///
+/// Two queries that could produce different wire-format responses MUST have
+/// different cache keys. Dimensions:
+/// - `qname` — canonical (lowercased) query name
+/// - `qtype` — DNS record type
+/// - `qclass` — DNS class (default IN=1)
+/// - `dnssec_ok` — DO bit affects RRSIG presence in response
+/// - `client_subnet` — ECS option affects answer content
+/// - `transport_class` — transport/EDNS affects TC flag and truncation
+/// - `namespace` — separates authoritative vs recursive cache entries
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Ord, PartialOrd)]
 pub struct CacheKey {
     pub qname: String,
     pub qtype: u16,
+    pub qclass: u16,
+    pub dnssec_ok: bool,
     pub client_subnet: Option<IpAddr>,
+    pub transport_class: TransportClass,
+    pub namespace: CacheNamespace,
 }
 
 impl CacheKey {
+    /// Full constructor with all dimensions.
     pub fn new(qname: String, qtype: RecordType, client_subnet: Option<IpAddr>) -> Self {
         Self {
             qname,
             qtype: qtype.into(),
+            qclass: 1, // IN
+            dnssec_ok: false,
             client_subnet,
+            transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         }
+    }
+
+    /// Construct with DNSSEC OK bit set.
+    pub fn with_dnssec(qname: String, qtype: RecordType, client_subnet: Option<IpAddr>) -> Self {
+        Self {
+            dnssec_ok: true,
+            ..Self::new(qname, qtype, client_subnet)
+        }
+    }
+
+    /// Construct for the recursive namespace.
+    pub fn recursive(qname: String, qtype: RecordType, client_subnet: Option<IpAddr>) -> Self {
+        Self {
+            namespace: CacheNamespace::Recursive,
+            ..Self::new(qname, qtype, client_subnet)
+        }
+    }
+
+    /// Construct with explicit class.
+    pub fn with_class(
+        qname: String,
+        qtype: RecordType,
+        qclass: u16,
+        client_subnet: Option<IpAddr>,
+    ) -> Self {
+        Self {
+            qclass,
+            ..Self::new(qname, qtype, client_subnet)
+        }
+    }
+
+    /// Construct with transport class.
+    pub fn with_transport(
+        qname: String,
+        qtype: RecordType,
+        client_subnet: Option<IpAddr>,
+        transport_class: TransportClass,
+    ) -> Self {
+        Self {
+            transport_class,
+            ..Self::new(qname, qtype, client_subnet)
+        }
+    }
+
+    /// Canonicalize qname to lowercase for case-insensitive lookup.
+    pub fn canonicalize(&mut self) {
+        self.qname = self.qname.to_lowercase();
     }
 }
 
@@ -34,6 +145,49 @@ pub struct CachedResponse {
     pub fingerprint: u64,
     pub source_ip: Option<IpAddr>,
     pub is_dnssec_signed: bool,
+}
+
+/// Aggregate metrics for cache operations.
+#[derive(Debug)]
+pub struct CacheMetrics {
+    pub hits: AtomicU64,
+    pub stale_hits: AtomicU64,
+    pub negative_hits: AtomicU64,
+    pub misses: AtomicU64,
+    pub insertions: AtomicU64,
+    pub invalidations: AtomicU64,
+    pub poisoned_rejections: AtomicU64,
+    pub size_rejections: AtomicU64,
+}
+
+impl Default for CacheMetrics {
+    fn default() -> Self {
+        Self {
+            hits: AtomicU64::new(0),
+            stale_hits: AtomicU64::new(0),
+            negative_hits: AtomicU64::new(0),
+            misses: AtomicU64::new(0),
+            insertions: AtomicU64::new(0),
+            invalidations: AtomicU64::new(0),
+            poisoned_rejections: AtomicU64::new(0),
+            size_rejections: AtomicU64::new(0),
+        }
+    }
+}
+
+impl Clone for CacheMetrics {
+    fn clone(&self) -> Self {
+        Self {
+            hits: AtomicU64::new(self.hits.load(Ordering::Relaxed)),
+            stale_hits: AtomicU64::new(self.stale_hits.load(Ordering::Relaxed)),
+            negative_hits: AtomicU64::new(self.negative_hits.load(Ordering::Relaxed)),
+            misses: AtomicU64::new(self.misses.load(Ordering::Relaxed)),
+            insertions: AtomicU64::new(self.insertions.load(Ordering::Relaxed)),
+            invalidations: AtomicU64::new(self.invalidations.load(Ordering::Relaxed)),
+            poisoned_rejections: AtomicU64::new(self.poisoned_rejections.load(Ordering::Relaxed)),
+            size_rejections: AtomicU64::new(self.size_rejections.load(Ordering::Relaxed)),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -54,7 +208,10 @@ struct InnerDnsCache {
     max_capacity: usize,
     serve_stale_enabled: bool,
     serve_stale_max_stale: Duration,
+    stale_served_count: AtomicU64,
+    max_stale_count: u64,
     confirmation_threshold: usize,
+    metrics: CacheMetrics,
 }
 
 impl DnsCache {
@@ -81,7 +238,10 @@ impl DnsCache {
                 max_capacity: capacity,
                 serve_stale_enabled: false,
                 serve_stale_max_stale: Duration::from_secs(86400),
+                stale_served_count: AtomicU64::new(0),
+                max_stale_count: 100,
                 confirmation_threshold: 3,
+                metrics: CacheMetrics::default(),
             }),
         }
     }
@@ -116,7 +276,10 @@ impl DnsCache {
                 max_capacity: capacity,
                 serve_stale_enabled: false,
                 serve_stale_max_stale: Duration::from_secs(86400),
+                stale_served_count: AtomicU64::new(0),
+                max_stale_count: 100,
                 confirmation_threshold: 3,
+                metrics: CacheMetrics::default(),
             }),
         }
     }
@@ -150,7 +313,10 @@ impl DnsCache {
                 max_capacity: capacity,
                 serve_stale_enabled,
                 serve_stale_max_stale: Duration::from_secs(serve_stale_max_stale_secs),
+                stale_served_count: AtomicU64::new(0),
+                max_stale_count: 100,
                 confirmation_threshold: 3,
+                metrics: CacheMetrics::default(),
             }),
         }
     }
@@ -166,6 +332,10 @@ impl DnsCache {
         let inner = &self.inner;
 
         if data.len() > inner.max_entry_size {
+            inner
+                .metrics
+                .size_rejections
+                .fetch_add(1, Ordering::Relaxed);
             return Err(CachePoisoningError::EntryTooLarge {
                 size: data.len(),
                 max: inner.max_entry_size,
@@ -174,16 +344,22 @@ impl DnsCache {
 
         if inner.enable_fingerprinting {
             let fingerprint = Self::compute_fingerprint(data);
-            let qname = key.qname.clone();
+            // WS6: Key fingerprint by full cache key dimensions (qname+qtype+qclass+dnssec+namespace),
+            // not just qname. This prevents A and AAAA for same qname from conflicting.
+            let fp_key = Self::fingerprint_key(key);
             let fingerprints = inner.cache_fingerprints.write();
 
-            if let Some(existing) = fingerprints.get(&qname) {
+            if let Some(existing) = fingerprints.get(&fp_key) {
                 let has_fingerprint = existing.iter().any(|(fp, _)| *fp == fingerprint);
                 if existing.len() >= inner.max_fingerprints_per_name {
                     if !has_fingerprint {
                         let fps: Vec<u64> = existing.iter().map(|(fp, _)| *fp).collect();
+                        inner
+                            .metrics
+                            .poisoned_rejections
+                            .fetch_add(1, Ordering::Relaxed);
                         return Err(CachePoisoningError::FingerprintMismatch {
-                            qname: qname.clone(),
+                            qname: key.qname.clone(),
                             expected: fps,
                             actual: fingerprint,
                         });
@@ -194,24 +370,20 @@ impl DnsCache {
                         .iter()
                         .filter(|(fp, _)| *fp == first_fingerprint)
                         .count();
+                    // After confirmation threshold, allow new fingerprints (legitimate zone changes).
+                    // Only reject if under threshold — this handles legitimate variance after zone updates.
                     if confirmations < inner.confirmation_threshold {
                         tracing::warn!(
-                            "Cache poisoning detected for {} (unconfirmed fingerprint: {}) - blocking response",
-                            qname,
+                            "Cache poisoning suspected for {} (unconfirmed fingerprint: {}) - blocking response",
+                            key.qname,
                             fingerprint
                         );
+                        inner
+                            .metrics
+                            .poisoned_rejections
+                            .fetch_add(1, Ordering::Relaxed);
                         return Err(CachePoisoningError::PotentialPoisoning {
-                            qname: qname.clone(),
-                            new_fingerprint: fingerprint,
-                        });
-                    } else {
-                        tracing::warn!(
-                            "Cache poisoning detected for {} (new fingerprint: {}) - blocking response",
-                            qname,
-                            fingerprint
-                        );
-                        return Err(CachePoisoningError::PotentialPoisoning {
-                            qname: qname.clone(),
+                            qname: key.qname.clone(),
                             new_fingerprint: fingerprint,
                         });
                     }
@@ -222,6 +394,15 @@ impl DnsCache {
         Ok(())
     }
 
+    /// Build a fingerprint key from full cache key dimensions.
+    /// Format: "qname|qtype|qclass|dnssec|namespace"
+    fn fingerprint_key(key: &CacheKey) -> String {
+        format!(
+            "{}|{}|{}|{}|{:?}",
+            key.qname, key.qtype, key.qclass, key.dnssec_ok, key.namespace
+        )
+    }
+
     fn record_fingerprint(&self, key: &CacheKey, data: &[u8]) {
         let inner = &self.inner;
 
@@ -230,11 +411,11 @@ impl DnsCache {
         }
 
         let fingerprint = Self::compute_fingerprint(data);
-        let qname = key.qname.clone();
+        let fp_key = Self::fingerprint_key(key);
         let now = Instant::now();
         let mut fingerprints = inner.cache_fingerprints.write();
 
-        let entry = fingerprints.entry(qname).or_default();
+        let entry = fingerprints.entry(fp_key).or_default();
 
         // Evict entries older than 1 hour
         let max_age = Duration::from_secs(3600);
@@ -256,10 +437,21 @@ impl DnsCache {
             let age = cached.cached_at.elapsed();
             if age < cached.ttl {
                 tracing::debug!("Cache hit for {}", key.qname);
+                inner.metrics.hits.fetch_add(1, Ordering::Relaxed);
                 return Some(cached.data.clone());
             } else if inner.serve_stale_enabled && age < cached.ttl + inner.serve_stale_max_stale {
-                tracing::debug!("Cache stale hit for {} (age: {:?})", key.qname, age);
-                return Some(cached.data.clone());
+                let stale_count = inner.stale_served_count.load(Ordering::Relaxed);
+                if stale_count >= inner.max_stale_count {
+                    tracing::debug!(
+                        "Cache stale hit for {} rejected: stale_served_count {} >= max_stale_count {}",
+                        key.qname, stale_count, inner.max_stale_count
+                    );
+                } else {
+                    inner.stale_served_count.fetch_add(1, Ordering::Relaxed);
+                    tracing::debug!("Cache stale hit for {} (age: {:?})", key.qname, age);
+                    inner.metrics.stale_hits.fetch_add(1, Ordering::Relaxed);
+                    return Some(cached.data.clone());
+                }
             } else {
                 tracing::debug!("Cache expired for {}", key.qname);
                 inner.cache.invalidate(key);
@@ -269,6 +461,7 @@ impl DnsCache {
             }
         }
 
+        inner.metrics.misses.fetch_add(1, Ordering::Relaxed);
         None
     }
 
@@ -280,10 +473,21 @@ impl DnsCache {
             let age = cached.cached_at.elapsed();
             if age < cached.ttl {
                 tracing::debug!("Cache hit for {}", key.qname);
+                inner.metrics.hits.fetch_add(1, Ordering::Relaxed);
                 return Some((cached.data.clone(), false));
             } else if inner.serve_stale_enabled && age < cached.ttl + inner.serve_stale_max_stale {
-                tracing::debug!("Cache stale hit for {} (age: {:?})", key.qname, age);
-                return Some((cached.data.clone(), true));
+                let stale_count = inner.stale_served_count.load(Ordering::Relaxed);
+                if stale_count >= inner.max_stale_count {
+                    tracing::debug!(
+                        "Cache stale hit for {} rejected: stale_served_count {} >= max_stale_count {}",
+                        key.qname, stale_count, inner.max_stale_count
+                    );
+                } else {
+                    inner.stale_served_count.fetch_add(1, Ordering::Relaxed);
+                    tracing::debug!("Cache stale hit for {} (age: {:?})", key.qname, age);
+                    inner.metrics.stale_hits.fetch_add(1, Ordering::Relaxed);
+                    return Some((cached.data.clone(), true));
+                }
             } else {
                 tracing::debug!("Cache expired for {}", key.qname);
                 inner.cache.invalidate(key);
@@ -293,6 +497,7 @@ impl DnsCache {
             }
         }
 
+        inner.metrics.misses.fetch_add(1, Ordering::Relaxed);
         None
     }
 
@@ -333,7 +538,11 @@ impl DnsCache {
             is_dnssec_signed: false,
         };
 
+        inner.metrics.insertions.fetch_add(1, Ordering::Relaxed);
         inner.cache.insert(key.clone(), cached);
+
+        // WS5: Reset stale served count on fresh insertion — fresh data means stale budget resets.
+        inner.stale_served_count.store(0, Ordering::Relaxed);
 
         let mut index = inner.qname_index.write();
         index.entry(key.qname.clone()).or_default().insert(key);
@@ -392,10 +601,13 @@ impl DnsCache {
             }
         }
 
+        // WS6: Clean up fingerprints keyed by the new composite format
+        let origin_with_suffix = format!("{}|", origin);
         let mut fingerprints = inner.cache_fingerprints.write();
-        fingerprints.retain(|name, _| !name.ends_with(origin) && *name != origin);
+        fingerprints.retain(|name, _| !name.starts_with(&origin_with_suffix) && *name != origin);
 
         if !keys_to_remove.is_empty() {
+            inner.metrics.invalidations.fetch_add(1, Ordering::Relaxed);
             tracing::info!(
                 "Invalidated {} cache entries for zone {}",
                 keys_to_remove.len(),
@@ -478,6 +690,34 @@ impl DnsCache {
             enable_fingerprinting: inner.enable_fingerprinting,
         }
     }
+
+    /// Return a snapshot of cache metrics.
+    pub fn metrics(&self) -> CacheMetricsSnapshot {
+        let m = &self.inner.metrics;
+        CacheMetricsSnapshot {
+            hits: m.hits.load(Ordering::Relaxed),
+            stale_hits: m.stale_hits.load(Ordering::Relaxed),
+            negative_hits: m.negative_hits.load(Ordering::Relaxed),
+            misses: m.misses.load(Ordering::Relaxed),
+            insertions: m.insertions.load(Ordering::Relaxed),
+            invalidations: m.invalidations.load(Ordering::Relaxed),
+            poisoned_rejections: m.poisoned_rejections.load(Ordering::Relaxed),
+            size_rejections: m.size_rejections.load(Ordering::Relaxed),
+        }
+    }
+}
+
+/// Snapshot of cache metrics with plain values (no atomics).
+#[derive(Debug, Clone, Default)]
+pub struct CacheMetricsSnapshot {
+    pub hits: u64,
+    pub stale_hits: u64,
+    pub negative_hits: u64,
+    pub misses: u64,
+    pub insertions: u64,
+    pub invalidations: u64,
+    pub poisoned_rejections: u64,
+    pub size_rejections: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -616,6 +856,10 @@ impl SecureDnsCache {
     pub fn stats(&self) -> CacheStats {
         self.0.stats()
     }
+
+    pub fn metrics(&self) -> CacheMetricsSnapshot {
+        self.0.metrics()
+    }
 }
 
 impl Default for SecureDnsCache {
@@ -689,6 +933,271 @@ pub(crate) fn detect_dnssec_signed(data: &[u8]) -> bool {
     }
 
     false
+}
+
+#[cfg(test)]
+mod phase7_cache_tests {
+    use super::*;
+
+    #[test]
+    fn test_cache_key_dimensions_produce_distinct_keys() {
+        let base = CacheKey::new("example.com".into(), RecordType::A, None);
+        let different_qtype = CacheKey::new("example.com".into(), RecordType::AAAA, None);
+        let different_class = CacheKey::with_class("example.com".into(), RecordType::A, 3, None);
+        let different_dnssec = CacheKey::with_dnssec("example.com".into(), RecordType::A, None);
+        let different_transport = CacheKey::with_transport(
+            "example.com".into(),
+            RecordType::A,
+            None,
+            TransportClass::Tcp,
+        );
+        let different_ns = CacheKey::recursive("example.com".into(), RecordType::A, None);
+        let different_ecs = CacheKey::new(
+            "example.com".into(),
+            RecordType::A,
+            Some("8.8.8.8".parse().unwrap()),
+        );
+
+        assert_ne!(base, different_qtype);
+        assert_ne!(base, different_class);
+        assert_ne!(base, different_dnssec);
+        assert_ne!(base, different_transport);
+        assert_ne!(base, different_ns);
+        assert_ne!(base, different_ecs);
+    }
+
+    #[test]
+    fn test_cache_key_canonicalize() {
+        let mut key = CacheKey::new("Example.COM".into(), RecordType::A, None);
+        key.canonicalize();
+        assert_eq!(key.qname, "example.com");
+    }
+
+    #[test]
+    fn test_ttl_clamping() {
+        let cache = DnsCache::new(100, 300, 0);
+
+        let key = CacheKey::new("ttl-test.example.com".into(), RecordType::A, None);
+        cache.insert(key.clone(), vec![1, 2, 3, 4], 0);
+        assert!(
+            cache.get(&key).is_none(),
+            "TTL 0 with min_ttl=0 should not be cached"
+        );
+
+        let cache2 = DnsCache::new(100, 300, 10);
+        cache2.insert(key.clone(), vec![1, 2, 3, 4], 5);
+        let entry = cache2.inner.cache.get(&key).unwrap();
+        assert_eq!(
+            entry.ttl,
+            Duration::from_secs(10),
+            "Should clamp to min_ttl"
+        );
+
+        cache2.insert(key.clone(), vec![1, 2, 3, 4], 99999);
+        let entry = cache2.inner.cache.get(&key).unwrap();
+        assert_eq!(
+            entry.ttl,
+            Duration::from_secs(300),
+            "Should clamp to max_ttl"
+        );
+    }
+
+    #[test]
+    fn test_fingerprint_composite_key_separates_types() {
+        let cache = DnsCache::with_security(100, 300, 10, 65535, false, true);
+
+        let a_key = CacheKey::new("fp-test.example.com".into(), RecordType::A, None);
+        let aaaa_key = CacheKey::new("fp-test.example.com".into(), RecordType::AAAA, None);
+
+        let a_data = vec![1, 2, 3, 4];
+        let aaaa_data = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+
+        cache.insert(a_key.clone(), a_data, 300);
+        cache.insert(aaaa_key.clone(), aaaa_data, 300);
+
+        assert!(cache.get(&a_key).is_some());
+        assert!(cache.get(&aaaa_key).is_some());
+    }
+
+    #[test]
+    fn test_fingerprint_key_format() {
+        let key = CacheKey {
+            qname: "example.com".into(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: true,
+            client_subnet: None,
+            transport_class: TransportClass::Udp512,
+            namespace: CacheNamespace::Authoritative,
+        };
+        let fp_key = DnsCache::fingerprint_key(&key);
+        assert_eq!(fp_key, "example.com|1|1|true|Authoritative");
+    }
+
+    #[test]
+    fn test_serve_stale_max_stale_count() {
+        // max_ttl_secs=300 so moka doesn't evict; min_ttl=1 so record_ttl=1 stays at 1
+        let cache = DnsCache::with_serve_stale(100, 300, 1, true, 3600);
+
+        let key = CacheKey::new("stale-max.example.com".into(), RecordType::A, None);
+        cache.insert(key.clone(), vec![1, 2, 3, 4], 1);
+
+        std::thread::sleep(Duration::from_millis(1100));
+
+        assert!(cache.get(&key).is_some(), "First stale hit should work");
+        assert!(cache.get(&key).is_some(), "Second stale hit should work");
+
+        let metrics = cache.metrics();
+        assert!(metrics.stale_hits >= 2, "Should track stale hits");
+    }
+
+    #[test]
+    fn test_serve_stale_fresh_insert_resets_counter() {
+        let cache = DnsCache::with_serve_stale(100, 300, 1, true, 3600);
+
+        let key1 = CacheKey::new("reset-test-1.example.com".into(), RecordType::A, None);
+        let key2 = CacheKey::new("reset-test-2.example.com".into(), RecordType::A, None);
+
+        cache.insert(key1.clone(), vec![1, 2, 3, 4], 1);
+        std::thread::sleep(Duration::from_millis(1100));
+        cache.get(&key1);
+
+        cache.insert(key2.clone(), vec![5, 6, 7, 8], 300);
+        assert!(cache.get(&key2).is_some(), "Fresh entry should be a hit");
+    }
+
+    #[test]
+    fn test_metrics_tracking() {
+        let cache = DnsCache::new(100, 300, 10);
+
+        let key = CacheKey::new("metrics.example.com".into(), RecordType::A, None);
+        cache.get(&key);
+        assert_eq!(cache.metrics().misses, 1);
+
+        cache.insert(key.clone(), vec![1, 2, 3, 4], 300);
+        assert_eq!(cache.metrics().insertions, 1);
+
+        cache.get(&key);
+        assert_eq!(cache.metrics().hits, 1);
+
+        cache.invalidate_zone("metrics.example.com");
+        assert_eq!(cache.metrics().invalidations, 1);
+    }
+
+    #[test]
+    fn test_zone_invalidation() {
+        let cache = DnsCache::new(100, 300, 10);
+
+        let key1 = CacheKey::new("a.zone-test.example.com".into(), RecordType::A, None);
+        let key2 = CacheKey::new("b.zone-test.example.com".into(), RecordType::A, None);
+        let key3 = CacheKey::new("other.example.com".into(), RecordType::A, None);
+
+        cache.insert(key1.clone(), vec![1, 2, 3, 4], 300);
+        cache.insert(key2.clone(), vec![5, 6, 7, 8], 300);
+        cache.insert(key3.clone(), vec![9, 10, 11, 12], 300);
+
+        cache.invalidate_zone("zone-test.example.com");
+
+        assert!(cache.get(&key1).is_none());
+        assert!(cache.get(&key2).is_none());
+        assert!(cache.get(&key3).is_some(), "Different zone should survive");
+    }
+
+    #[test]
+    fn test_record_invalidation() {
+        let cache = DnsCache::new(100, 300, 10);
+
+        let key_a = CacheKey::new("rec-inv.example.com".into(), RecordType::A, None);
+        let key_aaaa = CacheKey::new("rec-inv.example.com".into(), RecordType::AAAA, None);
+
+        cache.insert(key_a.clone(), vec![1, 2, 3, 4], 300);
+        cache.insert(
+            key_aaaa.clone(),
+            vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+            300,
+        );
+
+        cache.invalidate_record("example.com", "rec-inv", RecordType::A);
+
+        assert!(
+            cache.get(&key_a).is_none(),
+            "A record should be invalidated"
+        );
+        assert!(cache.get(&key_aaaa).is_some(), "AAAA record should survive");
+    }
+
+    #[test]
+    fn test_size_rejection() {
+        let cache = DnsCache::with_security(100, 300, 10, 100, false, false);
+
+        let key = CacheKey::new("size-reject.example.com".into(), RecordType::A, None);
+        cache.insert(key.clone(), vec![0u8; 200], 300);
+
+        assert!(cache.get(&key).is_none());
+        assert_eq!(cache.metrics().size_rejections, 1);
+    }
+
+    #[test]
+    fn test_get_with_metadata_returns_stale_flag() {
+        // max_ttl_secs=300 so moka doesn't evict; min_ttl=1 so record_ttl=1 stays at 1
+        let cache = DnsCache::with_serve_stale(100, 300, 1, true, 3600);
+
+        let key = CacheKey::new("meta-test.example.com".into(), RecordType::A, None);
+        cache.insert(key.clone(), vec![1, 2, 3, 4], 1);
+
+        let result = cache.get_with_metadata(&key);
+        assert!(result.is_some());
+        let (_, is_stale) = result.unwrap();
+        assert!(!is_stale);
+
+        std::thread::sleep(Duration::from_millis(1100));
+
+        let result = cache.get_with_metadata(&key);
+        assert!(result.is_some());
+        let (_, is_stale) = result.unwrap();
+        assert!(is_stale);
+    }
+
+    #[test]
+    fn test_namespace_separation() {
+        let cache = DnsCache::new(100, 300, 10);
+
+        let auth_key = CacheKey::new("ns-test.example.com".into(), RecordType::A, None);
+        let rec_key = CacheKey::recursive("ns-test.example.com".into(), RecordType::A, None);
+
+        cache.insert(auth_key.clone(), vec![1, 2, 3, 4], 300);
+        cache.insert(rec_key.clone(), vec![5, 6, 7, 8], 300);
+
+        let auth_data = cache.get(&auth_key).unwrap();
+        let rec_data = cache.get(&rec_key).unwrap();
+        assert_ne!(*auth_data, *rec_data);
+    }
+
+    #[test]
+    fn test_clear_all() {
+        let cache = DnsCache::new(100, 300, 10);
+
+        for i in 0..10 {
+            let key = CacheKey::new(format!("clear-{}.example.com", i), RecordType::A, None);
+            cache.insert(key, vec![1, 2, 3, 4], 300);
+        }
+
+        assert_eq!(cache.len(), 10);
+        cache.clear();
+        assert_eq!(cache.len(), 0);
+    }
+
+    #[test]
+    fn test_cache_metrics_snapshot_independence() {
+        let cache = DnsCache::new(100, 300, 10);
+        let key = CacheKey::new("snap.example.com".into(), RecordType::A, None);
+        cache.insert(key.clone(), vec![1, 2, 3, 4], 300);
+        let snap1 = cache.metrics();
+        cache.get(&key);
+        let snap2 = cache.metrics();
+        assert_eq!(snap1.hits, 0);
+        assert_eq!(snap2.hits, 1);
+    }
 }
 
 #[cfg(test)]

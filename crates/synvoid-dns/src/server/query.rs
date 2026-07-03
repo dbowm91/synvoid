@@ -493,14 +493,28 @@ impl DnsServer {
         let flags = u16::from_be_bytes([response[2], response[3]]);
         let rcode = flags & 0x000F;
         let ancount = u16::from_be_bytes([response[6], response[7]]);
+        let nscount = u16::from_be_bytes([response[8], response[9]]);
+
+        if ancount == 0 && rcode == 3 {
+            // WS2: Try to extract SOA minimum TTL from authority section.
+            // Per RFC 2308, negative cache TTL = min(SOA.minimum, SOA.ttl).
+            if let Some(soa_min_ttl) = Self::extract_soa_minimum_from_response(response, 12) {
+                return soa_min_ttl.min(negative_cache_ttl);
+            }
+            return negative_cache_ttl;
+        }
 
         if ancount == 0 {
-            if rcode == 3 {
-                return negative_cache_ttl;
+            // WS2: NODATA — try SOA minimum if authority section present.
+            if nscount > 0 {
+                if let Some(soa_min_ttl) = Self::extract_soa_minimum_from_response(response, 12) {
+                    return soa_min_ttl.min(negative_cache_ttl);
+                }
             }
             return 0;
         }
 
+        // Parse first answer record TTL
         let mut pos = 12;
         while pos < response.len() {
             let len = response[pos] as usize;
@@ -537,6 +551,127 @@ impl DnsServer {
             response[pos + 2],
             response[pos + 3],
         ])
+    }
+
+    /// Extract the SOA minimum TTL from the authority section of a DNS response.
+    /// Walks through the question section, then scans authority records for type 6 (SOA).
+    /// Returns min(SOA_minimum, SOA_rdata_ttl) per RFC 2308.
+    fn extract_soa_minimum_from_response(response: &[u8], mut pos: usize) -> Option<u32> {
+        if response.len() < 12 {
+            return None;
+        }
+
+        // Skip the question section
+        let qdcount = u16::from_be_bytes([response[4], response[5]]) as usize;
+        for _ in 0..qdcount {
+            // Skip QNAME
+            loop {
+                if pos >= response.len() {
+                    return None;
+                }
+                let len = response[pos] as usize;
+                if len == 0 {
+                    pos += 1;
+                    break;
+                }
+                pos += 1 + len;
+            }
+            // Skip QTYPE (2) + QCLASS (2)
+            pos += 4;
+            if pos > response.len() {
+                return None;
+            }
+        }
+
+        // Parse authority records looking for SOA (type 6)
+        let ancount = u16::from_be_bytes([response[6], response[7]]) as usize;
+        let nscount = u16::from_be_bytes([response[8], response[9]]) as usize;
+        // Skip answer records first
+        for _ in 0..ancount {
+            pos = Self::skip_rr(response, pos)?;
+        }
+
+        // Scan authority records for SOA
+        for _ in 0..nscount {
+            let rr_start = pos;
+            // Skip name
+            pos = Self::skip_rr_name(response, pos)?;
+            if pos + 10 > response.len() {
+                return None;
+            }
+            let rr_type = u16::from_be_bytes([response[pos], response[pos + 1]]);
+            // Skip type (2) + class (2) + ttl (4) + rdlength (2)
+            pos += 2 + 2 + 4 + 2;
+            let rdlength = u16::from_be_bytes([response[pos - 2], response[pos - 1]]) as usize;
+            let rdstart = pos;
+
+            if rr_type == 6 && rdlength >= 20 {
+                // SOA RDATA: MNAME (name) + RNAME (name) + SERIAL (4) + REFRESH (4) + RETRY (4) + EXPIRE (4) + MINIMUM (4)
+                // We need the record-level TTL and the MINIMUM field (last 4 bytes of RDATA)
+                // Record-level TTL is at offset +6 from type field
+                let rr_ttl_pos = rr_start + Self::rr_name_len(response, rr_start)? + 4; // skip type+class
+                if rr_ttl_pos + 4 > response.len() {
+                    return None;
+                }
+                let rr_ttl = u32::from_be_bytes([
+                    response[rr_ttl_pos],
+                    response[rr_ttl_pos + 1],
+                    response[rr_ttl_pos + 2],
+                    response[rr_ttl_pos + 3],
+                ]);
+
+                // MINIMUM is last 4 bytes of SOA RDATA
+                let minimum_pos = rdstart + rdlength - 4;
+                if minimum_pos + 4 > response.len() {
+                    return None;
+                }
+                let minimum = u32::from_be_bytes([
+                    response[minimum_pos],
+                    response[minimum_pos + 1],
+                    response[minimum_pos + 2],
+                    response[minimum_pos + 3],
+                ]);
+
+                return Some(rr_ttl.min(minimum));
+            }
+
+            pos = rdstart + rdlength;
+        }
+
+        None
+    }
+
+    /// Skip a wire-format RR name starting at `pos`.
+    fn skip_rr_name(response: &[u8], mut pos: usize) -> Option<usize> {
+        loop {
+            if pos >= response.len() {
+                return None;
+            }
+            let len = response[pos] as usize;
+            if len == 0 {
+                return Some(pos + 1);
+            }
+            if len & 0xC0 == 0xC0 {
+                return Some(pos + 2);
+            }
+            pos += 1 + len;
+        }
+    }
+
+    /// Return the byte-length of a wire-format name starting at `pos`.
+    fn rr_name_len(response: &[u8], pos: usize) -> Option<usize> {
+        Self::skip_rr_name(response, pos).map(|end| end - pos)
+    }
+
+    /// Skip a complete RR starting at `pos` (after question section).
+    fn skip_rr(response: &[u8], pos: usize) -> Option<usize> {
+        let name_end = Self::skip_rr_name(response, pos)?;
+        if name_end + 10 > response.len() {
+            return None;
+        }
+        let rdlength =
+            u16::from_be_bytes([response[name_end + 8], response[name_end + 9]]) as usize;
+        Some(name_end + 10 + rdlength)
     }
 
     pub(super) fn extract_ixfr_serial(query: &[u8]) -> Option<u32> {

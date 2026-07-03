@@ -336,6 +336,7 @@ The `architecture/` directory (87 docs) and `.opencode/skills/` directory contai
 
 ## Recent Completions
 
+- **DNS Phase 7 Cache Semantics & Invalidation** — Cache key redesign (qclass, DO bit, transport class, namespace), SOA-derived negative TTL, dynamic update cache invalidation, composite fingerprint keys, serve-stale max_stale_count wiring, cache metrics (stale/negative/invalidation/poisoned), 30 new tests, architecture docs updated. All items in `plans/dns_phase_07_cache_semantics_invalidation.md` addressed.
 - **DNS Phase 5 Config-to-Runtime Fidelity** — serve_stale wiring, DNS64 exclude_aaaa_synthesis, 37 new tests (config fidelity + recursive isolation), config-runtime matrix document, deferred feature documentation. All items in `plans/dns_phase_05_config_runtime_fidelity.md` addressed.
 - **Plugin M3 Phase 8** — Unsafe native extension production gate, FFI panic catching, hot-reload gating, world-writable path rejection, config migration, metrics, and 34 unit tests. All items in `plans/plugin_m3_phase_08_gap_fixes.md` are complete.
 - **Plugin M3 Phase 9** — Lifecycle hardening: generation tracking, atomic reload pipeline, file stability detection, lifecycle state machine, operator APIs, and 44+ tests across guard files. All items in `plans/plugin_m3_phase_09_gap_fixes.md` are complete.

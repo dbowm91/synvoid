@@ -648,10 +648,7 @@ mod tests {
             edns_udp_size: 512,
             client_ip: Some("10.0.0.1".to_string()),
         };
-        assert_ne!(
-            key1, key2,
-            "None vs Some client_ip must not coalesce"
-        );
+        assert_ne!(key1, key2, "None vs Some client_ip must not coalesce");
     }
 
     #[test]
@@ -672,17 +669,14 @@ mod tests {
             edns_udp_size: 4096,
             client_ip: None,
         };
-        assert_ne!(
-            key1, key2,
-            "Different EDNS UDP size must not coalesce"
-        );
+        assert_ne!(key1, key2, "Different EDNS UDP size must not coalesce");
     }
 
     #[test]
     fn test_coalescing_key_qtype_differs() {
         let key1 = QueryKey {
             name: "example.com".to_string(),
-            qtype: 1,  // A
+            qtype: 1, // A
             qclass: 1,
             dnssec_ok: false,
             edns_udp_size: 512,
@@ -1043,7 +1037,10 @@ mod key_parsing_integration {
         let a_query = build_query("example.com", 1, 1);
         let key_axfr = QueryKey::from_query(&axfr_query, None).unwrap();
         let key_a = QueryKey::from_query(&a_query, None).unwrap();
-        assert_ne!(key_axfr, key_a, "AXFR must not coalesce with A record query");
+        assert_ne!(
+            key_axfr, key_a,
+            "AXFR must not coalesce with A record query"
+        );
     }
 
     #[test]

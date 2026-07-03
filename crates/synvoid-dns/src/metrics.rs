@@ -11,6 +11,10 @@ pub struct DnsMetrics {
     responses_sent: AtomicU64,
     cache_hits: AtomicU64,
     cache_misses: AtomicU64,
+    cache_stale_hits: AtomicU64,
+    cache_negative_hits: AtomicU64,
+    cache_invalidations: AtomicU64,
+    cache_poisoned_rejections: AtomicU64,
     dnssec_queries: AtomicU64,
     dnssec_signed_responses: AtomicU64,
     rate_limited_queries: AtomicU64,
@@ -40,6 +44,10 @@ impl DnsMetrics {
             responses_sent: AtomicU64::new(0),
             cache_hits: AtomicU64::new(0),
             cache_misses: AtomicU64::new(0),
+            cache_stale_hits: AtomicU64::new(0),
+            cache_negative_hits: AtomicU64::new(0),
+            cache_invalidations: AtomicU64::new(0),
+            cache_poisoned_rejections: AtomicU64::new(0),
             dnssec_queries: AtomicU64::new(0),
             dnssec_signed_responses: AtomicU64::new(0),
             rate_limited_queries: AtomicU64::new(0),
@@ -93,6 +101,23 @@ impl DnsMetrics {
 
     pub fn record_cache_miss(&self) {
         self.cache_misses.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_cache_stale_hit(&self) {
+        self.cache_stale_hits.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_cache_negative_hit(&self) {
+        self.cache_negative_hits.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_cache_invalidation(&self) {
+        self.cache_invalidations.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_cache_poisoned_rejection(&self) {
+        self.cache_poisoned_rejections
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn record_dnssec_query(&self) {
@@ -242,6 +267,10 @@ impl DnsMetrics {
             } else {
                 0.0
             },
+            cache_stale_hits: self.cache_stale_hits.load(Ordering::Relaxed),
+            cache_negative_hits: self.cache_negative_hits.load(Ordering::Relaxed),
+            cache_invalidations: self.cache_invalidations.load(Ordering::Relaxed),
+            cache_poisoned_rejections: self.cache_poisoned_rejections.load(Ordering::Relaxed),
             dnssec_queries: self.dnssec_queries.load(Ordering::Relaxed),
             dnssec_signed_responses: self.dnssec_signed_responses.load(Ordering::Relaxed),
             rate_limited_queries: self.rate_limited_queries.load(Ordering::Relaxed),
@@ -276,6 +305,10 @@ impl DnsMetrics {
         self.responses_sent.store(0, Ordering::Relaxed);
         self.cache_hits.store(0, Ordering::Relaxed);
         self.cache_misses.store(0, Ordering::Relaxed);
+        self.cache_stale_hits.store(0, Ordering::Relaxed);
+        self.cache_negative_hits.store(0, Ordering::Relaxed);
+        self.cache_invalidations.store(0, Ordering::Relaxed);
+        self.cache_poisoned_rejections.store(0, Ordering::Relaxed);
         self.dnssec_queries.store(0, Ordering::Relaxed);
         self.dnssec_signed_responses.store(0, Ordering::Relaxed);
         self.rate_limited_queries.store(0, Ordering::Relaxed);
@@ -333,6 +366,36 @@ impl DnsMetrics {
         output.push_str(&format!(
             "dns_cache_hit_rate {:.2}\n\n",
             summary.cache_hit_rate
+        ));
+
+        output.push_str("# HELP dns_cache_stale_hits_total Total DNS cache stale hits\n");
+        output.push_str("# TYPE dns_cache_stale_hits_total counter\n");
+        output.push_str(&format!(
+            "dns_cache_stale_hits_total {}\n\n",
+            summary.cache_stale_hits
+        ));
+
+        output.push_str("# HELP dns_cache_negative_hits_total Total DNS negative cache hits\n");
+        output.push_str("# TYPE dns_cache_negative_hits_total counter\n");
+        output.push_str(&format!(
+            "dns_cache_negative_hits_total {}\n\n",
+            summary.cache_negative_hits
+        ));
+
+        output.push_str("# HELP dns_cache_invalidations_total Total DNS cache invalidations\n");
+        output.push_str("# TYPE dns_cache_invalidations_total counter\n");
+        output.push_str(&format!(
+            "dns_cache_invalidations_total {}\n\n",
+            summary.cache_invalidations
+        ));
+
+        output.push_str(
+            "# HELP dns_cache_poisoned_rejections_total Total cache poisoning rejections\n",
+        );
+        output.push_str("# TYPE dns_cache_poisoned_rejections_total counter\n");
+        output.push_str(&format!(
+            "dns_cache_poisoned_rejections_total {}\n\n",
+            summary.cache_poisoned_rejections
         ));
 
         output.push_str("# HELP dns_rate_limited_total Total rate-limited queries\n");
@@ -410,6 +473,10 @@ pub struct DnsMetricsSummary {
     pub cache_hits: u64,
     pub cache_misses: u64,
     pub cache_hit_rate: f64,
+    pub cache_stale_hits: u64,
+    pub cache_negative_hits: u64,
+    pub cache_invalidations: u64,
+    pub cache_poisoned_rejections: u64,
     pub dnssec_queries: u64,
     pub dnssec_signed_responses: u64,
     pub rate_limited_queries: u64,

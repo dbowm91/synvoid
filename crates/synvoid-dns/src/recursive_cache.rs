@@ -227,7 +227,7 @@ impl RecursiveDnsCache {
             if age < nx_entry.ncache_ttl + inner.config.stale_ttl {
                 inner.stats.write().hits += 1;
                 inner.stats.write().stale_hits += 1;
-                return Some((Vec::new(), false, false));
+                return Some((Vec::new(), true, false));
             }
         }
 
@@ -417,5 +417,209 @@ mod tests {
         assert_eq!(u16::from(RecursiveRecordType::Aaaa), 28);
         assert_eq!(RecursiveRecordType::from(1), RecursiveRecordType::A);
         assert_eq!(RecursiveRecordType::from(28), RecursiveRecordType::Aaaa);
+    }
+
+    #[test]
+    fn test_negative_stale_returns_stale_flag() {
+        // max_ttl_secs=300 so moka doesn't evict; stale_ttl_secs=60
+        let config = synvoid_config::dns::RecursiveCacheConfig {
+            negative_ttl_secs: 300,
+            stale_ttl_secs: 60,
+            max_ttl_secs: 300,
+            ..Default::default()
+        };
+        let cache = RecursiveDnsCache::new(1000, &config);
+
+        // Insert with ncache_ttl=1 (the NegativeCacheEntry's own ttl), clamped to min(negative_ttl_secs=300)
+        // We need ncache_ttl=1 to be under negative_ttl_secs=300 so it stays at 1.
+        // Actually negative_ttl clamping: ncache_ttl.min(negative_ttl_secs) = 1.min(300) = 1.
+        let key = RecursiveCacheKey::new(b"nxd-stale.test", 1, None);
+        cache.insert_negative(key.clone(), true, 1);
+
+        let result = cache.get(&key).unwrap();
+        assert!(!result.1, "Fresh negative should not be stale");
+
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+
+        let result = cache.get(&key).unwrap();
+        assert!(
+            result.1,
+            "Expired negative within stale window should be stale"
+        );
+        assert!(result.0.is_empty());
+    }
+
+    #[test]
+    fn test_positive_stale_returns_records() {
+        // max_ttl_secs=300 so moka doesn't evict; stale_ttl_secs=60
+        let config = synvoid_config::dns::RecursiveCacheConfig {
+            max_ttl_secs: 300,
+            stale_ttl_secs: 60,
+            ..Default::default()
+        };
+        let cache = RecursiveDnsCache::new(1000, &config);
+
+        // Insert with original_ttl=1, clamped to min(1, 300).max(min_ttl) = 1 (min_ttl default 0)
+        let key = RecursiveCacheKey::new(b"pos-stale.test", 1, None);
+        let records = vec![CachedRecord {
+            name: b"pos-stale.test".to_vec(),
+            record_type: 1,
+            ttl: 1,
+            data: vec![93, 184, 216, 34],
+        }];
+        cache.insert_positive(key.clone(), records, 1, false);
+
+        let result = cache.get(&key).unwrap();
+        assert!(!result.1, "Fresh positive should not be stale");
+
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+
+        let result = cache.get(&key).unwrap();
+        assert!(
+            result.1,
+            "Expired positive within stale window should be stale"
+        );
+        assert_eq!(result.0.len(), 1);
+    }
+
+    #[test]
+    fn test_cache_entry_is_stale_and_is_expired() {
+        let entry = CacheEntry::Positive(PositiveCacheEntry {
+            records: vec![],
+            ttl: Duration::from_secs(1),
+            cached_at: Instant::now() - Duration::from_secs(2),
+            is_dnssec_validated: false,
+        });
+        assert!(entry.is_expired(Instant::now()));
+        assert!(entry.is_stale(Instant::now(), Duration::from_secs(60)));
+
+        let entry = CacheEntry::Negative(NegativeCacheEntry {
+            qname: vec![],
+            qtype: RecursiveRecordType::A,
+            ncache_ttl: Duration::from_secs(1),
+            cached_at: Instant::now() - Duration::from_secs(2),
+            is_nxdomain: true,
+        });
+        assert!(entry.is_expired(Instant::now()));
+        assert!(entry.is_stale(Instant::now(), Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn test_ttl_clamping() {
+        let config = synvoid_config::dns::RecursiveCacheConfig {
+            max_ttl_secs: 100,
+            min_ttl_secs: 10,
+            ..Default::default()
+        };
+        let cache = RecursiveDnsCache::new(1000, &config);
+
+        let key = RecursiveCacheKey::new(b"clamp.test", 1, None);
+        let records = vec![CachedRecord {
+            name: b"clamp.test".to_vec(),
+            record_type: 1,
+            ttl: 5,
+            data: vec![1, 2, 3, 4],
+        }];
+        cache.insert_positive(key.clone(), records.clone(), 5, false);
+        let entry = cache.inner.positive_cache.get(&key).unwrap();
+        assert_eq!(
+            entry.ttl,
+            Duration::from_secs(10),
+            "Should clamp to min_ttl"
+        );
+
+        cache.insert_positive(key.clone(), records.clone(), 9999, false);
+        let entry = cache.inner.positive_cache.get(&key).unwrap();
+        assert_eq!(
+            entry.ttl,
+            Duration::from_secs(100),
+            "Should clamp to max_ttl"
+        );
+    }
+
+    #[test]
+    fn test_negative_ttl_clamping() {
+        let config = synvoid_config::dns::RecursiveCacheConfig {
+            negative_ttl_secs: 30,
+            ..Default::default()
+        };
+        let cache = RecursiveDnsCache::new(1000, &config);
+
+        let key = RecursiveCacheKey::new(b"neg-clamp.test", 1, None);
+        cache.insert_negative(key.clone(), true, 999);
+        let entry = cache.inner.negative_cache.get(&key).unwrap();
+        assert_eq!(
+            entry.ncache_ttl,
+            Duration::from_secs(30),
+            "Should clamp to negative_ttl"
+        );
+    }
+
+    #[test]
+    fn test_invalidation_increments_stats() {
+        let config = synvoid_config::dns::RecursiveCacheConfig::default();
+        let cache = RecursiveDnsCache::new(1000, &config);
+
+        let key = RecursiveCacheKey::new(b"inv-stats.test", 1, None);
+        let records = vec![CachedRecord {
+            name: b"inv-stats.test".to_vec(),
+            record_type: 1,
+            ttl: 300,
+            data: vec![1, 2, 3, 4],
+        }];
+        cache.insert_positive(key.clone(), records, 300, false);
+
+        cache.invalidate(b"inv-stats.test");
+        assert_eq!(cache.stats().invalidations, 1);
+    }
+
+    #[test]
+    fn test_ttl_clamping_boundary_values() {
+        let config = synvoid_config::dns::RecursiveCacheConfig {
+            max_ttl_secs: 100,
+            min_ttl_secs: 10,
+            ..Default::default()
+        };
+        let cache = RecursiveDnsCache::new(1000, &config);
+
+        let key = RecursiveCacheKey::new(b"boundary.test", 1, None);
+        let records = vec![CachedRecord {
+            name: b"boundary.test".to_vec(),
+            record_type: 1,
+            ttl: 300,
+            data: vec![1, 2, 3, 4],
+        }];
+        cache.insert_positive(key.clone(), records, 300, false);
+        let entry = cache.inner.positive_cache.get(&key).unwrap();
+        assert_eq!(
+            entry.ttl,
+            Duration::from_secs(100),
+            "TTL 300 should be clamped to max 100"
+        );
+    }
+
+    #[test]
+    fn test_ttl_clamping_min_boundary() {
+        let config = synvoid_config::dns::RecursiveCacheConfig {
+            max_ttl_secs: 100,
+            min_ttl_secs: 10,
+            ..Default::default()
+        };
+        let cache = RecursiveDnsCache::new(1000, &config);
+
+        let key = RecursiveCacheKey::new(b"min-boundary.test", 1, None);
+        let records = vec![CachedRecord {
+            name: b"min-boundary.test".to_vec(),
+            record_type: 1,
+            ttl: 300,
+            data: vec![1, 2, 3, 4],
+        }];
+        cache.insert_positive(key.clone(), records, 300, false);
+        let entry = cache.inner.positive_cache.get(&key).unwrap();
+        assert_eq!(
+            entry.ttl,
+            Duration::from_secs(100),
+            "TTL 300 should be clamped to max 100"
+        );
     }
 }

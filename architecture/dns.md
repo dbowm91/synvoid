@@ -919,18 +919,120 @@ const HALF_RANGE: u32 = 0x80000000;
 current.wrapping_add(1)  // Proper wrap-around handling
 ```
 
-### 9.5 Cache Key Structure
+### 9.5 DNS Cache Architecture (Phase 7)
+
+Three cache implementations serve distinct roles:
+
+#### Authoritative Cache (`cache.rs`)
 
 ```rust
-// recursive_cache.rs - RecursiveCacheKey
-pub struct RecursiveCacheKey {
-    pub qname: Vec<u8>,
-    pub qtype: RecursiveRecordType,
-    pub client_subnet: Option<IpAddr>,  // For EDNS Client Subnet
+pub struct CacheKey {
+    pub qname: String,
+    pub qtype: u16,
+    pub client_subnet: Option<IpAddr>,
+    pub qclass: u16,              // IN=1, CH=3, etc.
+    pub dnssec_ok: bool,          // DO bit — affects response shape
+    pub transport_class: TransportClass,  // Udp512 | UdpEdns(u16) | Tcp | Http | Quic
+    pub namespace: CacheNamespace,        // Authoritative | Recursive
+}
+
+pub enum TransportClass {
+    Udp512,
+    UdpEdns(u16),   // EDNS UDP payload size
+    Tcp,
+    Http,
+    Quic,
+}
+
+pub enum CacheNamespace {
+    Authoritative,
+    Recursive,
 }
 ```
 
-### 9.6 Wire Format Parsing
+Cache key dimensions ensure entries are not shared across:
+- Different qclasses (IN vs CH)
+- Different DO bit values (DNSSEC-signed vs unsigned responses)
+- Different transport classes (TCP may have larger responses than UDP)
+- Authoritative vs recursive namespaces
+
+Case-insensitive qname canonicalization via `CacheKey::canonicalize()`.
+
+#### Recursive Cache (`recursive_cache.rs`)
+
+Separate positive and negative moka caches (negative = 10% capacity). Uses `Vec<u8>` qname and `RecursiveRecordType` enum.
+
+#### Sharded Cache (`sharded_cache.rs`)
+
+16-shard HashMap for high-concurrency scenarios. No fingerprinting or serve-stale support.
+
+### 9.6 TTL and Negative Caching Policy (Phase 7)
+
+**Positive answers:** TTL clamped to `[config_min_ttl, config_max_ttl]`. Moka `time_to_live` enforces `max_ttl_secs` at the cache layer.
+
+**Negative answers (NXDOMAIN):** TTL derived from SOA authority section: `min(SOA_TTL, SOA_MINIMUM)` per RFC 2308, then clamped to `[0, config_negative_cache_ttl]`.
+
+**NODATA responses:** Same SOA-derived TTL as NXDOMAIN.
+
+**SERVFAIL/REFUSED:** Not cached by default (TTL extraction returns 0 for unrecognized RCODEs).
+
+**Malformed responses:** Not cached (TTL extraction fails → TTL=0).
+
+### 9.7 Cache Invalidation (Phase 7)
+
+All zone mutation paths trigger cache invalidation:
+
+| Mutation Path | Trigger | Mechanism |
+|---------------|---------|-----------|
+| Config zone load | `server/mod.rs` | `cache.invalidate_zone()` on zone reload |
+| `add_record()` | `server/zone.rs` | `cache.invalidate_zone()` after record insert |
+| Dynamic update (RFC 2136) | `update.rs` | `cache.invalidate_zone()` after zone record modification |
+| Zone delete | `server/zone.rs` | `cache.invalidate_zone()` |
+| Clear all | `server/zone.rs` | `cache.clear()` |
+
+**Zone transfer note:** `transfer.rs` only serves outbound AXFR/IXFR — no incoming transfer path exists, so no cache invalidation needed.
+
+Invalidation uses the `qname_index` secondary index for O(1) qname lookup (not O(n) scan).
+
+### 9.8 Serve-Stale Policy (Phase 7)
+
+- **Disabled by default** (`serve_stale.enabled = false`).
+- When enabled, stale entries are served within `max_stale_secs` window (default 86400s).
+- `max_stale_count` bounds total stale entries served per cache instance (counter resets on fresh insert).
+- No background revalidation — stale entries are served as-is and removed when they exceed the stale window.
+- Config: `ServeStaleConfig { enabled, max_stale_secs, max_stale_count }`.
+
+### 9.9 Cache Poisoning Detection (Phase 7)
+
+Fingerprint-based poisoning detection uses **composite keys** to prevent cross-type conflicts:
+
+```
+fingerprint_key = "{qname}|{qtype}|{qclass}|{dnssec_ok}|{namespace}"
+```
+
+Previously, fingerprinting was keyed by qname only — A and AAAA records for the same qname would conflict, causing false positive poisoning alerts.
+
+After `confirmation_threshold` (default 3) consistent fingerprints, new fingerprints are allowed (legitimate zone changes).
+
+### 9.10 Cache Metrics (Phase 7)
+
+**Cache-level metrics** (`CacheMetrics`):
+- `hits` — fresh cache hits
+- `stale_hits` — stale entries served
+- `negative_hits` — negative cache hits
+- `misses` — cache misses
+- `insertions` — entries inserted
+- `invalidations` — entries invalidated (by zone/record clear)
+- `poisoned_rejections` — entries rejected by poisoning detection
+- `size_rejections` — entries rejected due to max_entry_size
+
+**Prometheus export** (`dns_cache_*`):
+- `dns_cache_hits_total`, `dns_cache_misses_total`
+- `dns_cache_stale_hits_total`, `dns_cache_negative_hits_total`
+- `dns_cache_invalidations_total`, `dns_cache_poisoned_rejections_total`
+- `dns_cache_hit_rate`
+
+### 9.11 Wire Format Parsing
 
 **Canonical query parser** (`parsed_query.rs`):
 ```rust
@@ -986,7 +1088,7 @@ pub fn build_response_header(...) -> Vec<u8>
 pub fn build_error_response(...) -> Option<Vec<u8>>
 ```
 
-### 9.7 Serialization
+### 9.12 Serialization
 
 Trust anchor persistence uses **Postcard** (via `rkyv`) for binary serialization:
 ```rust

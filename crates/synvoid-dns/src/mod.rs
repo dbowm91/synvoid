@@ -65,7 +65,8 @@ pub use wire::{
 
 pub use anycast::{AnycastHealthUpdate, AnycastPacketInfo, AnycastSocketManager};
 pub use cache::{
-    CacheKey, CachePoisoningError, CacheStats, CachedResponse, DnsCache, SecureDnsCache,
+    CacheKey, CacheMetricsSnapshot, CacheNamespace, CachePoisoningError, CacheStats,
+    CachedResponse, DnsCache, SecureDnsCache, TransportClass,
 };
 pub use config::DnsSettings;
 pub use cookie::{build_cookie_option, DnsCookieServer};

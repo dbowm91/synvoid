@@ -232,6 +232,7 @@ pub struct DynamicUpdateHandler {
     require_tsig: bool,
     tsig_verifier: Option<Arc<TsigVerifier>>,
     allowed_ips: Vec<String>,
+    cache: Option<Arc<crate::DnsCache>>,
     #[cfg(feature = "mesh")]
     zone_sync: Option<Arc<crate::anycast_sync::AnycastZoneSync>>,
 }
@@ -245,6 +246,7 @@ impl DynamicUpdateHandler {
             require_tsig: true,
             tsig_verifier: None,
             allowed_ips: Vec::new(),
+            cache: None,
             #[cfg(feature = "mesh")]
             zone_sync: None,
         }
@@ -264,6 +266,11 @@ impl DynamicUpdateHandler {
 
     pub fn with_allowed_ips(mut self, allowed_ips: Vec<String>) -> Self {
         self.allowed_ips = allowed_ips;
+        self
+    }
+
+    pub fn with_cache(mut self, cache: Arc<crate::DnsCache>) -> Self {
+        self.cache = Some(cache);
         self
     }
 
@@ -435,6 +442,11 @@ impl DynamicUpdateHandler {
         let zone_key = zone_origin.clone();
         let zone_value = updated_zone;
         self.zones.insert(zone_key.clone(), zone_value);
+
+        // WS3: Invalidate cache after dynamic update so stale entries don't persist
+        if let Some(ref cache) = self.cache {
+            cache.invalidate_zone(&zone_origin);
+        }
 
         #[cfg(feature = "mesh")]
         if let Some(ref sync) = self.zone_sync {
