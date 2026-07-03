@@ -15,6 +15,144 @@ use synvoid_dns::server::RecordType;
 
 // ── Cache tests ──────────────────────────────────────────────────────
 
+/// Verifies `cache_size` is **weighted byte capacity**, not entry count.
+///
+/// `DnsCache::new` passes `capacity` to moka's `.max_capacity(capacity as u64)`
+/// and uses a `.weigher()` returning `value.data.len()` (the byte length of the
+/// cached DNS response). Therefore `cache_size` bounds the total bytes of cached
+/// response data, not the number of entries.
+///
+/// We insert entries whose total byte weight (512 bytes each) far exceeds the
+/// configured capacity, then verify the cache does not grow beyond the capacity.
+#[test]
+fn test_cache_size_is_weighted_byte_capacity() {
+    let capacity = 100;
+    let cache = DnsCache::new(capacity, 3600, 60);
+
+    // Each entry weighs 512 bytes. 10 entries = 5120 bytes >> 100-byte capacity.
+    for i in 0..10 {
+        let key = CacheKey::new(format!("cap-test-{}.example.com", i), RecordType::A, None);
+        cache.insert(key, vec![0u8; 512], 300);
+    }
+
+    // Force moka to process pending maintenance (evictions).
+    cache.run_pending_tasks();
+
+    // Moka's weigher enforces the weighted byte limit. With 512-byte entries
+    // and a 100-byte capacity, at most 1 entry can fit (moka's internal
+    // accounting may allow slight overshoot due to segment-based eviction).
+    // The key assertion: not all 10 entries fit.
+    let count = cache.len();
+    assert!(
+        count < 10,
+        "cache_size should cap total weighted bytes ({} entries found, expected < 10)",
+        count
+    );
+}
+
+/// Verifies that `DnsServer::new` constructs a serve-stale-enabled cache when
+/// config has `serve_stale.enabled = true`.
+///
+/// `DnsServer::new` (server/mod.rs:689-697) passes:
+///   `DnsCache::with_serve_stale(cache_size, cache_max_ttl, cache_min_ttl, true, serve_stale.max_stale_secs)`
+///
+/// We can't construct `DnsConfig` from this integration test (it's not re-exported),
+/// so we verify config propagation by constructing `DnsCache::with_serve_stale` with
+/// the same default parameter values that `DnsServer::new` would use and checking
+/// the cache reports the expected serve-stale state.
+#[test]
+fn test_config_propagation_serve_stale_enabled() {
+    // Default config values (from synvoid_config dns_settings.rs):
+    //   cache_size: 100_000, cache_max_ttl: 3600, cache_min_ttl: 60
+    //   serve_stale.enabled: false, serve_stale.max_stale_secs: 86400
+    //
+    // When serve_stale is enabled in config, DnsServer::new passes:
+    //   DnsCache::with_serve_stale(100_000, 3600, 60, true, 86400)
+    let cache = DnsCache::with_serve_stale(100_000, 3600, 60, true, 86400);
+
+    assert!(
+        cache.is_serve_stale_enabled(),
+        "Cache constructed with serve_stale=true should report enabled"
+    );
+}
+
+/// Verifies that `DnsServer::new` constructs a non-stale cache when config has
+/// `serve_stale.enabled = false` (the default).
+///
+/// When serve_stale is disabled, `DnsServer::new` calls `DnsCache::new(cache_size, cache_max_ttl, cache_min_ttl)`.
+#[test]
+fn test_config_propagation_serve_stale_disabled_default() {
+    let cache = DnsCache::new(100_000, 3600, 60);
+
+    assert!(
+        !cache.is_serve_stale_enabled(),
+        "Cache constructed without serve_stale should report disabled"
+    );
+}
+
+/// Verifies that `max_stale_secs` config value is honored by the cache.
+///
+/// When `serve_stale.max_stale_secs = 600` is configured, entries should be
+/// served stale for up to 600 seconds after TTL expiry. This matches the
+/// parameter `DnsServer::new` passes to `DnsCache::with_serve_stale`.
+#[test]
+fn test_config_propagation_max_stale_secs() {
+    let cache = DnsCache::with_serve_stale(100_000, 3600, 60, true, 600);
+
+    let key = CacheKey::new("stale-config.example.com".to_string(), RecordType::A, None);
+    let data = vec![0xc0, 0xa8, 0x01, 0x01];
+
+    // Insert with TTL=1 so it expires quickly
+    cache.insert(key.clone(), data, 1);
+    assert!(cache.get(&key).is_some(), "Fresh entry should hit");
+
+    // Wait for TTL to expire (1s) but well within the 600s stale window
+    thread::sleep(Duration::from_secs(2));
+
+    assert!(
+        cache.get(&key).is_some(),
+        "Entry within max_stale_secs window should be served stale"
+    );
+}
+
+/// End-to-end: cache constructed with config-matching defaults serves stale
+/// data for the full stale window.
+///
+/// Note: We use `min_ttl_secs=1` (not the config default of 60) so that
+/// `record_ttl=1` isn't clamped up to 60s, which would make the stale window
+/// too long for a fast test. This is intentional — it tests the serve-stale
+/// mechanism itself, not TTL clamping (covered by `test_cache_min_ttl_floor`).
+#[test]
+fn test_serve_stale_end_to_end_with_config_defaults() {
+    // max_ttl_secs=3600, min_ttl_secs=1 so record_ttl=1 stays at 1
+    let cache = DnsCache::with_serve_stale(100_000, 3600, 1, true, 3);
+
+    let key = CacheKey::new(
+        "e2e-config-stale.example.com".to_string(),
+        RecordType::A,
+        None,
+    );
+    let data = vec![0x0a, 0x00, 0x00, 0x01];
+
+    cache.insert(key.clone(), data, 1);
+    assert!(cache.get(&key).is_some(), "Fresh entry should hit");
+
+    // After TTL expires (1s) but well within stale window (3s stale = 4s total)
+    thread::sleep(Duration::from_millis(1500));
+    assert!(
+        cache.get(&key).is_some(),
+        "Within stale window should return stale data"
+    );
+
+    // Sleep well beyond the stale window (1s TTL + 3s stale = 4s total,
+    // plus generous margin for test timing variance)
+    thread::sleep(Duration::from_secs(6));
+    assert!(
+        cache.get(&key).is_none(),
+        "Beyond stale window should return miss"
+    );
+}
+
 #[test]
 fn test_cache_serve_stale_enabled() {
     let cache = DnsCache::with_serve_stale(100, 5, 1, true, 300);

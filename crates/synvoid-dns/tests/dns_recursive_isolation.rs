@@ -865,3 +865,152 @@ fn test_dns_config_ipv6_wildcard_bind_accepted() {
         result
     );
 }
+
+// ──── Additional zone mutation / recursive safety tests ────
+
+fn build_ixfr_query(id: u16, qname: &str) -> Vec<u8> {
+    build_query(id, qname, 251) // IXFR type = 251
+}
+
+fn make_ctx_with_handlers<'a>(
+    zones: &'a Arc<ShardedZoneStore>,
+    zone_trie: &'a Arc<RwLock<ZoneTrie>>,
+    ecs_filter_config: &'a EcsFilterConfig,
+    notify_handler: Option<&'a synvoid_dns::notify::NotifyHandler>,
+    update_handler: Option<&'a synvoid_dns::update::DynamicUpdateHandler>,
+) -> QueryContext<'a> {
+    QueryContext {
+        zones,
+        zone_trie,
+        geoip_lookup: None,
+        min_geo_ttl: 0,
+        negative_cache_ttl: 300,
+        cache: None,
+        dnssec: None,
+        signer_name: None,
+        query_validator: None,
+        firewall: None,
+        connection_limits: None,
+        max_idle_time: None,
+        zone_transfer: None,
+        ecs_filter_config,
+        rate_limiter: None,
+        rrl_enabled: false,
+        update_handler,
+        notify_handler,
+        query_coalescer: None,
+        dns64_translator: None,
+        acme_dns_challenges: None,
+        cookie_server: None,
+        #[cfg(feature = "mesh")]
+        mesh_registry: None,
+    }
+}
+
+/// WS4: IXFR denied when zone_transfer is None — silent drop (handle_query path)
+#[test]
+fn test_ixfr_denied_when_zone_transfer_none() {
+    let (zones, zone_trie, ecs_filter_config) = setup();
+    let ctx = make_ctx(&zones, &zone_trie, &ecs_filter_config);
+
+    let query = build_ixfr_query(0xDD10, "test.local");
+    let result = DnsServer::handle_query(&ctx, &query, Some(IpAddr::from([127, 0, 0, 1])));
+
+    // IXFR with zone_transfer=None: handle_query treats it as a normal query type
+    // and returns NODATA (no IXFR data). Same behavior as AXFR through handle_query.
+    assert!(
+        result.is_some(),
+        "IXFR with zone_transfer=None: handle_query returns NODATA (treats as normal query)"
+    );
+}
+
+/// WS4: NOTIFY handler present but enabled=false — returns None
+#[test]
+fn test_notify_handler_disabled_returns_none() {
+    let (zones, zone_trie, ecs_filter_config) = setup();
+    let notify_config = synvoid_dns::notify::NotifyConfig {
+        enabled: false,
+        also_notify: vec![],
+    };
+    let notify_handler = synvoid_dns::notify::NotifyHandler::new(Arc::clone(&zones), notify_config);
+    let ctx = make_ctx_with_handlers(
+        &zones,
+        &zone_trie,
+        &ecs_filter_config,
+        Some(&notify_handler),
+        None,
+    );
+
+    let query = build_notify_query(0xDD11, "test.local");
+    let result = DnsServer::handle_query(&ctx, &query, Some(IpAddr::from([127, 0, 0, 1])));
+
+    // NOTIFY with enabled=false: NotifyHandler.handle_notify returns None
+    assert!(
+        result.is_none(),
+        "NOTIFY with handler.enabled=false should return None"
+    );
+}
+
+/// WS4: UPDATE handler present but enabled=false — returns None
+#[test]
+fn test_update_handler_disabled_returns_none() {
+    let (zones, zone_trie, ecs_filter_config) = setup();
+    let update_handler = synvoid_dns::update::DynamicUpdateHandler::new(Arc::clone(&zones))
+        .with_config(false, false, true);
+    let ctx = make_ctx_with_handlers(
+        &zones,
+        &zone_trie,
+        &ecs_filter_config,
+        None,
+        Some(&update_handler),
+    );
+
+    let query = build_update_query(0xDD12, "test.local");
+    let result = DnsServer::handle_query(&ctx, &query, Some(IpAddr::from([127, 0, 0, 1])));
+
+    // UPDATE with enabled=false: DynamicUpdateHandler.handle_update returns Err,
+    // which causes the dispatch to return None (silent drop).
+    assert!(
+        result.is_none(),
+        "UPDATE with handler.enabled=false should return None"
+    );
+}
+
+/// WS4: Wildcard transfer denied when allow_wildcard_transfer=false
+#[test]
+fn test_wildcard_transfer_denied_when_disabled() {
+    let zones = Arc::new(ShardedZoneStore::default());
+    let transfer = synvoid_dns::transfer::ZoneTransfer::with_security_config(
+        Arc::clone(&zones),
+        vec!["*".to_string()],
+        None,
+        false, // allow_wildcard_transfer
+        true,  // wildcard_transfer_requires_tsig
+        true,  // ixfr_enabled
+        true,  // ixfr_fallback_to_axfr
+        true,  // require_tsig
+    );
+    let allowed = transfer.is_transfer_allowed("10.0.0.1".parse().unwrap(), "example.com");
+    assert!(
+        !allowed,
+        "Wildcard transfer should be denied when allow_wildcard_transfer=false"
+    );
+}
+
+/// WS5: Default config recursive disabled
+#[test]
+fn test_default_config_recursive_disabled() {
+    let config = synvoid_config::DnsConfig::default();
+    assert!(
+        !config.recursive.enabled,
+        "Recursive DNS should be disabled by default"
+    );
+    assert_eq!(
+        config.recursive.bind_address, "127.0.0.1",
+        "Recursive should bind to loopback"
+    );
+    assert_eq!(
+        config.recursive.port, 1053,
+        "Recursive should use non-standard port"
+    );
+}

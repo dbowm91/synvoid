@@ -440,4 +440,10 @@ cargo test -p synvoid-dns -- phase7_cache_tests
 
 # Recursive cache tests (TTL overrides, isolation, moka config wiring)
 cargo test -p synvoid-dns -- recursive_cache
+
+# Config-to-runtime fidelity tests (cache, DNS64, ECS, serve-stale)
+cargo test --test dns_config_fidelity
+
+# Recursive isolation + zone mutation feature flag tests (30 tests)
+cargo test --test dns_recursive_isolation
 ```

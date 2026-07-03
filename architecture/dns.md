@@ -1216,9 +1216,9 @@ The following features have config fields but are NOT wired to runtime behavior:
 
 ### Test Coverage
 
-Phase 5 added 37+ tests across two integration test files:
-- `dns_config_fidelity.rs`: Cache serve_stale, min/max TTL, DNS64 synthesis/disable/custom prefix/exclude, ECS filter, firewall rules
-- `dns_recursive_isolation.rs`: Recursive mode bind independence, cache isolation, authoritative REFUSED, anycast/mesh feature gates, config validation guards
+Phase 5 added 47 integration tests across two files:
+- `dns_config_fidelity.rs` (17): Cache weighted byte capacity, serve_stale enabled/disabled, max_stale_secs, serve-stale end-to-end, min/max TTL, max_entry_size, DNS64 synthesis/disable/custom prefix/exclude, ECS filter
+- `dns_recursive_isolation.rs` (30): Recursive mode bind independence, cache isolation, authoritative REFUSED, anycast/mesh feature gates, config validation guards, zone mutation feature flags (UPDATE/NOTIFY/IXFR/wildcard transfer/TSIG), recursive default safety, deferred feature behavior
 
 ---
 

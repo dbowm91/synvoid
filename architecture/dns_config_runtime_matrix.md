@@ -94,7 +94,7 @@ Source: `crates/synvoid-config/src/dns/mod.rs:75`
 | `dns.rpz.default_action` | `""` | not consumed | unsupported | none | document as deferred to Phase 7 |
 | `dns.dns64.enabled` | `false` | `Dns64Translator::new()` | implemented | dns64 tests | none |
 | `dns.dns64.prefix` | `"64:ff9b::"` | `Dns64Translator::new()` | implemented | dns64 tests | none |
-| `dns.dns64.exclude_aaaa_synthesis` | `false` | not in runtime struct | partially implemented | none | wire or document |
+| `dns.dns64.exclude_aaaa_synthesis` | `false` | `Dns64Translator::should_synthesize()` gate | implemented | dns64 tests | none |
 | `dns.prefetch.enabled` | `false` | not consumed | unsupported | none | document as deferred |
 | `dns.prefetch.min_query_count` | `10` | not consumed | unsupported | none | document as deferred |
 | `dns.prefetch.prefetch_ttl_threshold` | `300` | not consumed | unsupported | none | document as deferred |
@@ -131,41 +131,41 @@ Source: `crates/synvoid-config/src/dns/dns_settings.rs:9`
 |---|---|---|---|---|---|
 | `dns.settings.default_ttl` | `300` | not consumed | unsupported | none | wire or document |
 | `dns.settings.min_geo_ttl` | `60` | `DnsHandlerState.min_geo_ttl` | implemented | none | add test |
-| `dns.settings.allow_transfer` | `[]` | not consumed | deferred | none | document as deferred to Phase 7 |
+| `dns.settings.allow_transfer` | `[]` | `ZoneTransfer` struct exists; `zone_transfer` hardcoded to `None` in `DnsServer::new()` (line 950) | deferred | zone mutation tests (handler-level only) | wire from config or document deferred |
 | `dns.settings.cache_enabled` | `true` | `DnsCache::new()` | implemented | cache tests | none |
-| `dns.settings.cache_size` | `100000` | `DnsCache::new()` capacity | implemented | cache tests | document as entry count |
+| `dns.settings.cache_size` | `100000` | `DnsCache::new()` capacity | implemented | cache tests | document as weighted byte capacity (moka weigher) |
 | `dns.settings.cache_max_ttl` | `3600` | `DnsCache::new()` | implemented | cache tests | none |
 | `dns.settings.cache_min_ttl` | `60` | `DnsCache::new()` | implemented | cache tests | none |
 | `dns.settings.negative_cache_ttl` | `300` | `DnsHandlerState.negative_cache_ttl` | implemented | none | add negative TTL test |
-| `dns.settings.allow_wildcard_transfer` | `false` | not consumed | deferred | none | document as deferred |
-| `dns.settings.wildcard_transfer_requires_tsig` | `true` | not consumed | deferred | none | document as deferred |
-| `dns.settings.require_tsig` | `true` | not consumed | deferred | none | document as deferred |
+| `dns.settings.allow_wildcard_transfer` | `false` | `ZoneTransfer::with_security_config()` accepts this; not wired from config | deferred | zone mutation tests (handler-level only) | wire from config or document deferred |
+| `dns.settings.wildcard_transfer_requires_tsig` | `true` | `ZoneTransfer::with_security_config()` accepts this; not wired from config | deferred | zone mutation tests (handler-level only) | wire from config or document deferred |
+| `dns.settings.require_tsig` | `true` | `ZoneTransfer::with_security_config()` accepts this; not wired from config | deferred | zone mutation tests (handler-level only) | wire from config or document deferred |
 | `dns.settings.serve_stale.enabled` | `false` | `DnsCache::with_serve_stale()` | implemented | cache tests | none |
 | `dns.settings.serve_stale.max_stale_secs` | `86400` | stale expiry via `DnsCache` | implemented | cache tests | none |
 | `dns.settings.serve_stale.max_stale_count` | `100` | stale eviction via `DnsCache` | implemented | cache tests | none |
-| `dns.settings.ixfr_history_size` | `200` | not consumed | deferred | none | document as deferred |
-| `dns.settings.ixfr_enabled` | `true` | not consumed | deferred | none | document as deferred |
-| `dns.settings.ixfr_fallback_to_axfr` | `true` | not consumed | deferred | none | document as deferred |
+| `dns.settings.ixfr_history_size` | `200` | not consumed | deferred | none | wire from config or document deferred |
+| `dns.settings.ixfr_enabled` | `true` | IXFR handler exists in `handle_parsed_query_with_cache` but config toggle not consumed | partially implemented | zone mutation tests | wire config toggle or document deferred |
+| `dns.settings.ixfr_fallback_to_axfr` | `true` | `ZoneTransfer::with_security_config()` accepts this; not wired from config | deferred | zone mutation tests (handler-level only) | wire from config or document deferred |
 | `dns.settings.ecs_filtering.enabled` | `false` | `EcsFilterConfig::from_settings()` | implemented | ecs tests | none |
 | `dns.settings.ecs_filtering.prefix_v4` | `24` | ECS filtering | implemented | ecs tests | none |
 | `dns.settings.ecs_filtering.prefix_v6` | `48` | ECS filtering | implemented | ecs tests | none |
 | `dns.settings.ecs_filtering.allow_private_prefix` | `false` | ECS filtering | implemented | ecs tests | none |
-| `dns.settings.padding.enabled` | `false` | `DnsPadding` struct exists, not wired | partially implemented | none | wire from config or document deferred |
-| `dns.settings.padding.block_size` | `128` | not consumed | partially implemented | none | wire or document deferred |
-| `dns.settings.padding.mode` | `Normal` | not consumed | partially implemented | none | wire or document deferred |
+| `dns.settings.padding.enabled` | `false` | `DnsPadding` struct exists in `edns.rs:540`, not wired from config | deferred | none | wire from config or remove |
+| `dns.settings.padding.block_size` | `128` | not consumed | deferred | none | wire from config or remove |
+| `dns.settings.padding.mode` | `Normal` | not consumed | deferred | none | wire from config or remove |
 | `dns.settings.query_coalescing.enabled` | `false` | `QueryCoalescer::with_config()` | implemented | coalescing tests | none |
 | `dns.settings.query_coalescing.max_wait_ms` | `500` | `QueryCoalescer` | implemented | coalescing tests | none |
 | `dns.settings.query_coalescing.max_entries` | `10000` | `QueryCoalescer` | implemented | coalescing tests | none |
 | `dns.settings.query_coalescing.entry_ttl_secs` | `30` | `QueryCoalescer` | implemented | coalescing tests | none |
 | `dns.settings.query_coalescing.cleanup_interval_secs` | `10` | `QueryCoalescer` | implemented | coalescing tests | none |
-| `dns.settings.dynamic_update.enabled` | `false` | handler exists, set to `None` | partially implemented | none | document as deferred |
-| `dns.settings.dynamic_update.allow_any` | `false` | not consumed | deferred | none | document as deferred |
-| `dns.settings.dynamic_update.require_tsig` | `false` | not consumed | deferred | none | document as deferred |
-| `dns.settings.notify.enabled` | `false` | handler exists, set to `None` | partially implemented | none | document as deferred |
-| `dns.settings.notify.also_notify` | `[]` | not consumed | deferred | none | document as deferred |
-| `dns.settings.qname_privacy.enabled` | `false` | `sanitize_qname()` exists, not wired | partially implemented | none | document as deferred |
-| `dns.settings.qname_privacy.mode` | `ZoneOnly` | not consumed | partially implemented | none | document as deferred |
-| `dns.settings.qname_privacy.log_level` | `Zone` | not consumed | partially implemented | none | document as deferred |
+| `dns.settings.dynamic_update.enabled` | `false` | `DynamicUpdateHandler` struct exists; `update_handler` hardcoded to `None` in `DnsServer::new()` (line 952) | deferred | zone mutation tests (handler-level only) | wire from config or document deferred |
+| `dns.settings.dynamic_update.allow_any` | `false` | `DynamicUpdateHandler::with_config()` accepts this; not wired from config | deferred | zone mutation tests (handler-level only) | wire from config or document deferred |
+| `dns.settings.dynamic_update.require_tsig` | `false` | `DynamicUpdateHandler::with_config()` accepts this; not wired from config | deferred | zone mutation tests (handler-level only) | wire from config or document deferred |
+| `dns.settings.notify.enabled` | `false` | `NotifyHandler` struct exists; `notify_handler` hardcoded to `None` in `DnsServer::new()` (line 953) | deferred | zone mutation tests (handler-level only) | wire from config or document deferred |
+| `dns.settings.notify.also_notify` | `[]` | `NotifyHandler` struct exists; not wired from config | deferred | zone mutation tests (handler-level only) | wire from config or document deferred |
+| `dns.settings.qname_privacy.enabled` | `false` | `sanitize_qname()` exists in `dns_settings.rs:245`, not called from DNS query path | deferred | none | wire into query path or remove |
+| `dns.settings.qname_privacy.mode` | `ZoneOnly` | not consumed | deferred | none | wire into query path or remove |
+| `dns.settings.qname_privacy.log_level` | `Zone` | not consumed | deferred | none | wire into query path or remove |
 
 ---
 
@@ -293,11 +293,11 @@ All DoT/DoH/DoQ fields are covered in §1 root table.
 | Category | Count |
 |----------|-------|
 | **Total config fields** | ~110 |
-| **Fully implemented** | ~60 |
-| **Partially implemented** | ~10 |
+| **Fully implemented** | ~61 |
+| **Partially implemented** | ~3 |
 | **Validation-only** | ~10 |
-| **Deferred (planned for future phases)** | ~15 |
-| **Unsupported / documentation-only** | ~15 |
+| **Deferred (planned for future phases)** | ~23 |
+| **Unsupported / documentation-only** | ~13 |
 
 ---
 
@@ -306,9 +306,9 @@ All DoT/DoH/DoQ fields are covered in §1 root table.
 | Feature | Config fields | Notes |
 |---------|---------------|-------|
 | RPZ (Response Policy Zones) | `dns.rpz.*` (10 fields) | No runtime consumer exists |
-| Dynamic Update | `dns.settings.dynamic_update.*` (3 fields) | Handler stub exists, set to `None` |
-| Notify | `dns.settings.notify.*` (2 fields) | Handler stub exists, set to `None` |
-| Zone Transfer (AXFR/IXFR) | `dns.settings.ixfr_*`, `dns.settings.allow_transfer` | Config only, no runtime |
+| Dynamic Update | `dns.settings.dynamic_update.*` (3 fields) | `DynamicUpdateHandler` struct exists; `update_handler` hardcoded to `None` in `DnsServer::new()` (line 952) |
+| Notify | `dns.settings.notify.*` (2 fields) | `NotifyHandler` struct exists; `notify_handler` hardcoded to `None` in `DnsServer::new()` (line 953) |
+| Zone Transfer (AXFR/IXFR) | `dns.settings.ixfr_*`, `dns.settings.allow_transfer` | `ZoneTransfer` struct exists; `zone_transfer` hardcoded to `None` in `DnsServer::new()`; IXFR handler exists in `handle_parsed_query_with_cache` but config toggle not consumed |
 | Trust Anchors (custom) | `dns.trust_anchors.*` (9 fields) | Config struct exists, no runtime consumer |
 | Prefetch | `dns.prefetch.*` (4 fields) | Config struct exists, no runtime consumer |
 | Anycast | `dns.anycast.*` (11 fields) | Requires mesh integration |
@@ -325,9 +325,23 @@ All DoT/DoH/DoQ fields are covered in §1 root table.
 
 2. **DNS64 exclude_aaaa_synthesis** (`crates/synvoid-dns/src/dns64.rs`, `crates/synvoid-dns/src/server/mod.rs`): Added `exclude_aaaa_synthesis: bool` to runtime `Dns64Config`. When true, `should_synthesize()` returns false and AAAA synthesis is skipped. Wired from `config.dns64.exclude_aaaa_synthesis`.
 
-3. **New integration test suite** (`crates/synvoid-dns/tests/dns_config_fidelity.rs`): 12+ tests covering cache serve_stale, min/max TTL, DNS64 synthesis/disable/custom prefix/exclude flag, ECS filter behavior, and firewall rules.
+3. **New integration test suite** (`crates/synvoid-dns/tests/dns_config_fidelity.rs`): 17 tests covering cache serve_stale, weighted byte capacity, min/max TTL, max_entry_size, DNS64 synthesis/disable/custom prefix/exclude flag, and ECS filter behavior.
 
-4. **Recursive isolation tests** (`crates/synvoid-dns/tests/dns_recursive_isolation.rs`): 25 tests covering recursive mode bind address independence, cache isolation, authoritative REFUSED without zones, anycast/mesh feature gate validation, config validation guards, and deferred feature behavior documentation.
+4. **Recursive isolation tests** (`crates/synvoid-dns/tests/dns_recursive_isolation.rs`): 30 tests covering recursive mode bind address independence, cache isolation, authoritative REFUSED without zones, anycast/mesh feature gate validation, config validation guards, zone mutation feature flags (UPDATE/NOTIFY/IXFR/wildcard transfer/TSIG), recursive default safety, and deferred feature behavior documentation.
+
+### Phase 2 Matrix Reconciliation Changes
+
+5. **DNS64 `exclude_aaaa_synthesis` status corrected**: Changed from "partially implemented" to "implemented" — investigation confirmed the field is wired at `server/mod.rs:910-926` and `dns64.rs:331-336`.
+
+6. **`cache_size` semantics documented**: Changed action from "document as entry count" to "weighted byte capacity (moka weigher)" — `DnsCache::new()` passes capacity to moka's `.max_capacity()` with a `.weigher()` returning `value.data.len()`.
+
+7. **Zone mutation handler status corrected**: `dynamic_update.enabled` and `notify.enabled` changed from "partially implemented" to "deferred" — `DnsServer::new()` hardcodes `update_handler: None` (line 952) and `notify_handler: None` (line 953). Handler structs exist but are not wired from config.
+
+8. **IXFR handler status corrected**: `ixfr_enabled` changed from "deferred" to "partially implemented" — IXFR handler exists in `handle_parsed_query_with_cache` but the config toggle is not consumed.
+
+9. **Transfer config fields updated**: `allow_transfer`, `allow_wildcard_transfer`, `wildcard_transfer_requires_tsig`, `require_tsig` — `ZoneTransfer` struct exists with these parameters but `zone_transfer` is hardcoded to `None` in `DnsServer::new()` (line 950).
+
+10. **QNAME Privacy and Padding confirmed deferred**: Both features have config structs and partial implementations (`sanitize_qname()` at `dns_settings.rs:245`, `DnsPadding` at `edns.rs:540`) but are not wired into the DNS query path.
 
 ### Deferred Features (Confirmed Phase 7+)
 
@@ -448,6 +462,7 @@ block_internal_ips = true
 | Coalescing exclusions | AXFR, IXFR, UPDATE, NOTIFY excluded from coalescing via `parsed.is_axfr()` / `parsed.is_ixfr()` checks. |
 | TCP SERVFAIL response (hard limit) | Echoes original question, preserves RD bit. Byte-size enforced (not advisory). |
 | Serve-stale wiring | `DnsCache::with_serve_stale()` used when `serve_stale.enabled = true`. `max_stale_secs` and `max_stale_count` from config. |
+| DNS64 `exclude_aaaa_synthesis` | Runtime struct wired at `server/mod.rs:910-926`. Config fidelity test added. |
 | Query coalescing metrics | 8 counters: hits, misses, broadcasts, cancels, evictions, timeouts, lagged, in_flight gauge. |
 
 ### Partial (Implemented, Tests Needed)
@@ -455,7 +470,6 @@ block_internal_ips = true
 | Item | Details |
 |------|---------|
 | ECS/client subnet in cache key | Client IP stored in `CacheKey.client_subnet`. Full ECS prefix routing not yet implemented. |
-| DNS64 `exclude_aaaa_synthesis` | Runtime struct wired; config fidelity test added. |
 | Recursive cache TTL overrides | `stale_ttl_secs`, `max_ttl_secs`, `min_ttl_secs` wired from config with tests. |
 
 ### Deferred (Config Fields Exist, No Runtime Consumer)
