@@ -263,7 +263,7 @@ format!(r#"<td><a href="{}">{} {}</a></td>"#, entry.href, icon, escaped_name)
 
 ### RSA 1024 Auto-Upgrade in DNSSEC
 
-**Location**: `src/dns/dnssec_key_mgmt.rs:232-254`
+**Location**: `crates/synvoid-dns/src/dnssec_key_mgmt.rs:232-254`
 
 **Fix**: Auto-upgrade RSA 1024 to 2048:
 
@@ -454,7 +454,7 @@ if let Some(stored) = session.csrf_token.as_deref() {
 
 ### DNS Crypto RNG Pattern
 
-**Location**: `src/dns/crypto_rng.rs`
+**Location**: `crates/synvoid-dns/src/crypto_rng.rs`
 
 **Issue**: Cryptographic functions returning zero-filled values when entropy fails instead of propagating errors.
 
@@ -948,7 +948,7 @@ fn refresh_sparse_buckets(&self) {
 |------|-----|
 | `src/auth/mod.rs` | Constant-time CSRF comparison |
 | `src/admin/state.rs` | Constant-time session ID comparison |
-| `src/dns/crypto_rng.rs` | Result-based RNG with error propagation |
+| `crates/synvoid-dns/src/crypto_rng.rs` | Result-based RNG with error propagation |
 | `crates/synvoid-mesh/src/mesh/peer_auth.rs` | Role-based Ed25519 + PoW authentication |
 | `src/process/ipc.rs` | IPC signing with HMAC |
 | `src/process/ipc_signed.rs` | Signed message deserialization |
@@ -1007,8 +1007,8 @@ pub struct UpgradeConfig { ... }
 rg "ct_eq" src/auth/mod.rs src/admin/state.rs
 
 # Check crypto RNG returns Result
-rg "fn random_" src/dns/crypto_rng.rs
-rg "Result.*CryptoRngError" src/dns/
+rg "fn random_" crates/synvoid-dns/src/crypto_rng.rs
+rg "Result.*CryptoRngError" crates/synvoid-dns/src/
 
 # Check peer auth validation
 rg "validate_peer_role" crates/synvoid-mesh/src/mesh/
@@ -1082,7 +1082,7 @@ if !check_and_insert_nonce(&nonce, timestamp) {
 
 ### DNS Dynamic Update TSIG Enforcement
 
-**Location**: `src/dns/update.rs:288-395`
+**Location**: `crates/synvoid-dns/src/update.rs:288-395`
 
 **Issue**: `handle_update` never enforced TSIG authentication despite `require_tsig` field existing.
 
@@ -1105,7 +1105,7 @@ if self.require_tsig {
 
 ### DNS Cookie Timing Attack Prevention
 
-**Location**: `src/dns/cookie.rs:82-88`
+**Location**: `crates/synvoid-dns/src/cookie.rs:82-88`
 
 **Issue**: Cookie MAC comparison used XOR loop instead of constant-time comparison.
 
@@ -1414,7 +1414,7 @@ if let Some(pubkey) = lookup_global_node_key(&verified.global_node_id) {
 
 ### RFC 5011 Missing→Pending Transition
 
-**Location**: `src/dns/trust_anchor.rs:481-500`
+**Location**: `crates/synvoid-dns/src/trust_anchor.rs:481-500`
 
 **Issue**: Key in `Missing` state could transition to `Seen` without verifying it was previously Valid.
 
@@ -1461,7 +1461,7 @@ rng.try_fill_bytes(&mut key).expect("RNG failure");
 
 ### Dynamic Update RDATA Validation
 
-**Location**: `src/dns/update.rs:455-517`
+**Location**: `crates/synvoid-dns/src/update.rs:455-517`
 
 **Issue**: `check_prerequisite()` only verified existence, not RDATA content when present.
 

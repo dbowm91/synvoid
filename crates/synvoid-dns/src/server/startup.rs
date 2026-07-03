@@ -1,4 +1,5 @@
 use super::*;
+use crate::cache::TransportClass;
 use crate::parsed_query::ParsedDnsQuery;
 
 /// Parse and validate the bind address from config.
@@ -269,15 +270,37 @@ impl DnsServer {
                                     }
                                 }
 
-                                let query_key = if let Ok(ref parsed_q) = parsed {
+                                let skip_coalesce = parsed
+                                    .as_ref()
+                                    .map(|pq| crate::query_coalesce::should_skip_coalescing(pq.qtype, pq.flags.opcode))
+                                    .unwrap_or(false);
+
+                                // Derive transport class from EDNS for cache keying
+                                let transport_class = if let Ok(ref parsed_q) = parsed {
+                                    if parsed_q.has_edns {
+                                        // Extract UDP payload size from OPT record class field
+                                        let opt_offset = parsed_q.question_end;
+                                        if opt_offset + 4 <= buf.len() {
+                                            let udp_payload_size = u16::from_be_bytes(
+                                                [buf[opt_offset + 3], buf[opt_offset + 4]],
+                                            );
+                                            TransportClass::UdpEdns(udp_payload_size)
+                                        } else {
+                                            TransportClass::UdpEdns(1232)
+                                        }
+                                    } else {
+                                        TransportClass::Udp512
+                                    }
+                                } else {
+                                    TransportClass::Udp512
+                                };
+
+                                let query_key = if skip_coalesce {
+                                    None
+                                } else if let Ok(ref parsed_q) = parsed {
                                     crate::query_coalesce::QueryKey::from_parsed(parsed_q, Some(client_ip), &buf[..len])
                                 } else {
                                     crate::query_coalesce::QueryKey::from_query(&buf[..len], Some(client_ip))
-                                };
-                                let mut cache_key = if let Some(ref key) = query_key {
-                                    CacheKey::new(key.name.clone(), RecordType::from(key.qtype), Some(client_ip))
-                                } else {
-                                    CacheKey::new(String::new(), RecordType::NULL, Some(client_ip))
                                 };
 
                                 let _dnssec = dnssec_udp.clone();
@@ -294,9 +317,9 @@ impl DnsServer {
                                             }
                                             Some(crate::query_coalesce::CoalesceResult::NewQuery(_tx)) => {
                                                 let resp = if let (Some(c), Ok(ref parsed_q)) = (&ctx.cache, &parsed) {
-                                                    Self::handle_parsed_query_with_cache(&ctx, parsed_q, &buf[..len], c, &mut cache_key, Some(client_ip))
+                                                    Self::handle_parsed_query_with_cache(&ctx, parsed_q, &buf[..len], c, transport_class, Some(client_ip))
                                                 } else if let Some(c) = &ctx.cache {
-                                                    Self::handle_query_with_cache(&ctx, &buf[..len], c, cache_key, Some(client_ip))
+                                                    Self::handle_query_with_cache(&ctx, &buf[..len], c, transport_class, Some(client_ip))
                                                 } else if let Ok(ref parsed_q) = &parsed {
                                                     Self::handle_parsed_query(&ctx, parsed_q, &buf[..len], Some(client_ip))
                                                 } else {
@@ -313,9 +336,9 @@ impl DnsServer {
                                             }
                                             None => {
                                                 if let (Some(c), Ok(ref parsed_q)) = (&ctx.cache, &parsed) {
-                                                    Self::handle_parsed_query_with_cache(&ctx, parsed_q, &buf[..len], c, &mut cache_key, Some(client_ip))
+                                                    Self::handle_parsed_query_with_cache(&ctx, parsed_q, &buf[..len], c, transport_class, Some(client_ip))
                                                 } else if let Some(c) = &ctx.cache {
-                                                    Self::handle_query_with_cache(&ctx, &buf[..len], c, cache_key, Some(client_ip))
+                                                    Self::handle_query_with_cache(&ctx, &buf[..len], c, transport_class, Some(client_ip))
                                                 } else if let Ok(ref parsed_q) = &parsed {
                                                     Self::handle_parsed_query(&ctx, parsed_q, &buf[..len], Some(client_ip))
                                                 } else {
@@ -324,9 +347,9 @@ impl DnsServer {
                                             }
                                             _ => {
                                                 if let (Some(c), Ok(ref parsed_q)) = (&ctx.cache, &parsed) {
-                                                    Self::handle_parsed_query_with_cache(&ctx, parsed_q, &buf[..len], c, &mut cache_key, Some(client_ip))
+                                                    Self::handle_parsed_query_with_cache(&ctx, parsed_q, &buf[..len], c, transport_class, Some(client_ip))
                                                 } else if let Some(c) = &ctx.cache {
-                                                    Self::handle_query_with_cache(&ctx, &buf[..len], c, cache_key, Some(client_ip))
+                                                    Self::handle_query_with_cache(&ctx, &buf[..len], c, transport_class, Some(client_ip))
                                                 } else if let Ok(ref parsed_q) = &parsed {
                                                     Self::handle_parsed_query(&ctx, parsed_q, &buf[..len], Some(client_ip))
                                                 } else {
@@ -335,18 +358,18 @@ impl DnsServer {
                                             }
                                         }
                                     } else if let (Some(c), Ok(ref parsed_q)) = (&ctx.cache, &parsed) {
-                                        Self::handle_parsed_query_with_cache(&ctx, parsed_q, &buf[..len], c, &mut cache_key, Some(client_ip))
+                                        Self::handle_parsed_query_with_cache(&ctx, parsed_q, &buf[..len], c, transport_class, Some(client_ip))
                                     } else if let Some(c) = &ctx.cache {
-                                        Self::handle_query_with_cache(&ctx, &buf[..len], c, cache_key, Some(client_ip))
+                                        Self::handle_query_with_cache(&ctx, &buf[..len], c, transport_class, Some(client_ip))
                                     } else if let Ok(ref parsed_q) = &parsed {
                                         Self::handle_parsed_query(&ctx, parsed_q, &buf[..len], Some(client_ip))
                                     } else {
                                         Self::handle_query(&ctx, &buf[..len], Some(client_ip))
                                     }
                                 } else if let (Some(c), Ok(ref parsed_q)) = (&ctx.cache, &parsed) {
-                                    Self::handle_parsed_query_with_cache(&ctx, parsed_q, &buf[..len], c, &mut cache_key, Some(client_ip))
+                                    Self::handle_parsed_query_with_cache(&ctx, parsed_q, &buf[..len], c, transport_class, Some(client_ip))
                                 } else if let Some(c) = &ctx.cache {
-                                    Self::handle_query_with_cache(&ctx, &buf[..len], c, cache_key, Some(client_ip))
+                                    Self::handle_query_with_cache(&ctx, &buf[..len], c, transport_class, Some(client_ip))
                                 } else if let Ok(ref parsed_q) = &parsed {
                                     Self::handle_parsed_query(&ctx, parsed_q, &buf[..len], Some(client_ip))
                                 } else {

@@ -62,5 +62,5 @@ This gives us full control over the validation process and trust anchor manageme
 - `is_dnssec_validated` flag propagates to AD bit in responses
 
 ## References
-- `src/dns/trust_anchor.rs` - RFC 5011 state machine
+- `crates/synvoid-dns/src/trust_anchor.rs` - RFC 5011 state machine
 - `skills/dns_dnssec.md` - Detailed DNSSEC architecture documentation

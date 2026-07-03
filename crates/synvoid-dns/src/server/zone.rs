@@ -5,6 +5,7 @@ use crate::mesh_sync::MeshDnsRegistry;
 
 impl DnsServer {
     pub fn load_zones(&self, zone_configs: Vec<DnsZoneEntry>) -> Result<(), String> {
+        let zone_origins: Vec<String> = zone_configs.iter().map(|zc| zc.zone.clone()).collect();
         for zone_config in zone_configs {
             let mut zone = Zone::new(zone_config.zone.clone());
             zone.dnskey_ttl = Some(3600);
@@ -164,11 +165,18 @@ impl DnsServer {
 
         self.rebuild_zone_index();
 
+        if let Some(ref cache) = self.cache {
+            for origin in &zone_origins {
+                cache.invalidate_zone(origin);
+            }
+        }
+
         Ok(())
     }
 
     pub fn load_zones_from_store(&self, store: &ZoneStore) -> Result<(), String> {
         let stored_zones = store.load_zones()?;
+        let mut loaded_origins = Vec::new();
 
         for (origin, zone) in stored_zones {
             // Defense-in-depth: reject zones without SOA even from persistence.
@@ -183,10 +191,17 @@ impl DnsServer {
                 ));
             }
             tracing::info!("Loaded DNS zone from store: {}", origin);
-            self.zones.insert(origin, zone);
+            self.zones.insert(origin.clone(), zone);
+            loaded_origins.push(origin);
         }
 
         self.rebuild_zone_index();
+
+        if let Some(ref cache) = self.cache {
+            for origin in &loaded_origins {
+                cache.invalidate_zone(origin);
+            }
+        }
 
         Ok(())
     }

@@ -32,7 +32,7 @@ The hickory-dns crates (hickory-proto, hickory-resolver, hickory-recursor) versi
 
 ## Files Modified
 
-- `src/dns/resolver.rs`
-- `src/dns/recursive.rs`
+- `crates/synvoid-dns/src/resolver.rs`
+- `crates/synvoid-dns/src/recursive.rs`
 - `Cargo.toml`
 - `src/waf/rule_feed.rs` (fix test panic)

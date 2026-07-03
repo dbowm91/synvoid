@@ -707,7 +707,7 @@ crates/synvoid-mesh/src/mesh/
 | Module | Relationship |
 |--------|-------------|
 | `src/proxy/` | `MeshProxy` wraps `MeshTransport` and uses it to forward requests between peers. The proxy's `BackendType` enum includes `Mesh` variant for mesh-based routing. |
-| `src/dns/` | The `dns` feature enables `MeshDnsRegistry` and `transport_dns.rs` for DNS over mesh. DHT stores DNS records. `DnsConfig.validate()` is called from `MainConfig::validate()`. |
+| `crates/synvoid-dns/` | The `dns` feature enables `MeshDnsRegistry` and `transport_dns.rs` for DNS over mesh. DHT stores DNS records. `DnsConfig.validate()` is called from `MainConfig::validate()`. |
 | `src/config/` | `MeshConfig` lives here; `ConfigManager` in `crates/synvoid-config/src/lib.rs`. |
 | `src/supervisor/` | Supervisor manages `UnifiedServerWorker` which uses mesh transport for inter-node communication. |
 | `src/platform/` | Platform layer provides sandboxing, TUN device, and OS-level primitives used by mesh transport. |

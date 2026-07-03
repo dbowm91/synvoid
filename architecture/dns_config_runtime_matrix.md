@@ -140,9 +140,9 @@ Source: `crates/synvoid-config/src/dns/dns_settings.rs:9`
 | `dns.settings.allow_wildcard_transfer` | `false` | not consumed | deferred | none | document as deferred |
 | `dns.settings.wildcard_transfer_requires_tsig` | `true` | not consumed | deferred | none | document as deferred |
 | `dns.settings.require_tsig` | `true` | not consumed | deferred | none | document as deferred |
-| `dns.settings.serve_stale.enabled` | `false` | `DnsCache::new()` hardcodes false | partially implemented | none | wire `with_serve_stale()` constructor |
-| `dns.settings.serve_stale.max_stale_secs` | `86400` | stale expiry | partially implemented | none | wire from config |
-| `dns.settings.serve_stale.max_stale_count` | `100` | stale eviction | partially implemented | none | wire from config |
+| `dns.settings.serve_stale.enabled` | `false` | `DnsCache::with_serve_stale()` | implemented | cache tests | none |
+| `dns.settings.serve_stale.max_stale_secs` | `86400` | stale expiry via `DnsCache` | implemented | cache tests | none |
+| `dns.settings.serve_stale.max_stale_count` | `100` | stale eviction via `DnsCache` | implemented | cache tests | none |
 | `dns.settings.ixfr_history_size` | `200` | not consumed | deferred | none | document as deferred |
 | `dns.settings.ixfr_enabled` | `true` | not consumed | deferred | none | document as deferred |
 | `dns.settings.ixfr_fallback_to_axfr` | `true` | not consumed | deferred | none | document as deferred |
@@ -430,3 +430,49 @@ block_internal_ips = true
 | `DnsRpzConfig`, `Dns64Config`, `DnsPrefetchConfig` | `crates/synvoid-config/src/dns/dns_misc.rs` |
 | `DnsZonesConfig` | `crates/synvoid-config/src/dns/dns_zones.rs` |
 | `TrustAnchorConfig` | `crates/synvoid-config/src/dns/dns_dnssec.rs` |
+
+---
+
+## Milestone Status (Post-Milestone 2 Corrective Pass)
+
+### Closed (Fully Implemented & Tested)
+
+| Item | Details |
+|------|---------|
+| Cache key dimensions | 7 dimensions: qname, qtype, qclass, dnssec_ok, transport_class, namespace, client_subnet. `CacheKey::from_parsed_authoritative()` and `CacheKey::from_parsed_recursive()` constructors. |
+| Cache key fingerprint poisoning | Composite fingerprint key `{qname}\|{qtype}\|{qclass}\|{dnssec_ok}\|{namespace}` prevents cross-type conflicts. |
+| TTL extraction (compression-safe) | `skip_dns_name()`, `first_answer_ttl()`, `negative_soa_ttl()` handle compression pointers. Minimum TTL across all answer RRs. |
+| TTL extraction (protocol-aware) | Negative TTL from SOA authority: `min(SOA_TTL, SOA_MINIMUM)` clamped to `[0, negative_cache_ttl]`. SERVFAIL/REFUSED not cached (TTL=0). Malformed responses not cached. |
+| Cache invalidation on zone load | All zone mutation paths (config load, add_record, dynamic update, zone delete, clear) trigger `cache.invalidate_zone()`. |
+| `invalidate_record` fingerprint cleanup | Fingerprint state cleared on authoritative zone mutation. |
+| Coalescing exclusions | AXFR, IXFR, UPDATE, NOTIFY excluded from coalescing via `parsed.is_axfr()` / `parsed.is_ixfr()` checks. |
+| TCP SERVFAIL response (hard limit) | Echoes original question, preserves RD bit. Byte-size enforced (not advisory). |
+| Serve-stale wiring | `DnsCache::with_serve_stale()` used when `serve_stale.enabled = true`. `max_stale_secs` and `max_stale_count` from config. |
+| Query coalescing metrics | 8 counters: hits, misses, broadcasts, cancels, evictions, timeouts, lagged, in_flight gauge. |
+
+### Partial (Implemented, Tests Needed)
+
+| Item | Details |
+|------|---------|
+| ECS/client subnet in cache key | Client IP stored in `CacheKey.client_subnet`. Full ECS prefix routing not yet implemented. |
+| DNS64 `exclude_aaaa_synthesis` | Runtime struct wired; config fidelity test added. |
+| Recursive cache TTL overrides | `stale_ttl_secs`, `max_ttl_secs`, `min_ttl_secs` wired from config with tests. |
+
+### Deferred (Config Fields Exist, No Runtime Consumer)
+
+| Item | Config Fields |
+|------|---------------|
+| RPZ (Response Policy Zones) | `dns.rpz.*` (10 fields) |
+| Dynamic Update | `dns.settings.dynamic_update.*` (3 fields) |
+| Notify | `dns.settings.notify.*` (2 fields) |
+| Zone Transfer (IXFR) | `dns.settings.ixfr_*` (3 fields) |
+| Trust Anchors (custom) | `dns.trust_anchors.*` (9 fields) |
+| Prefetch | `dns.prefetch.*` (4 fields) |
+| Anycast | `dns.anycast.*` (11 fields) |
+| Padding | `dns.settings.padding.*` (3 fields) |
+| QNAME Privacy | `dns.settings.qname_privacy.*` (3 fields) |
+| Firewall default_action | `dns.firewall.default_action` |
+| Firewall max_rules | `dns.firewall.max_rules` |
+| Rebinding Protection | `dns.firewall.rebinding_protection.*` (4 fields) |
+| Query timeout | `dns.recursive.query_timeout_secs` |
+| Default TTL | `dns.settings.default_ttl` |

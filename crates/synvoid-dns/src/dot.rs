@@ -6,11 +6,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsAcceptor;
 
-use crate::cache::CacheKey;
 use crate::secure_server::{
     DnsServerConfig, SecureDnsServerBase, MAX_QUERY_SIZE, TLS_HANDSHAKE_TIMEOUT_SECS,
 };
-use crate::server::{DnsServer, RecordType};
+use crate::server::DnsServer;
 use synvoid_config::dns::DnsDotConfig;
 use synvoid_tls::cert_resolver::CertResolver;
 
@@ -141,8 +140,13 @@ impl DotServer {
             };
 
             let response = if let Some(c) = &ctx.cache {
-                let cache_key = CacheKey::new(String::new(), RecordType::NULL, Some(client_ip));
-                DnsServer::handle_query_with_cache(&ctx, &query_buf, c, cache_key, Some(client_ip))
+                DnsServer::handle_query_with_cache(
+                    &ctx,
+                    &query_buf,
+                    c,
+                    crate::cache::TransportClass::Tcp,
+                    Some(client_ip),
+                )
             } else {
                 DnsServer::handle_query(&ctx, &query_buf, Some(client_ip))
             };

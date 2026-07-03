@@ -113,7 +113,7 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
 
   unsafe-dns:
-    name: No Unsafe in src/dns/
+    name: No Unsafe in crates/synvoid-dns/src/
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -121,17 +121,17 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Check for unsafe in src/dns/
+      - name: Check for unsafe in crates/synvoid-dns/src/
         run: |
-          # Check for unsafe blocks in src/dns/ directory
-          UNSAFE_COUNT=$(grep -r "unsafe {" src/dns/ --include="*.rs" | wc -l)
+          # Check for unsafe blocks in crates/synvoid-dns/src/ directory
+          UNSAFE_COUNT=$(grep -r "unsafe {" crates/synvoid-dns/src/ --include="*.rs" | wc -l)
           if [ "$UNSAFE_COUNT" -gt 0 ]; then
-            echo "Found $UNSAFE_COUNT unsafe block(s) in src/dns/:"
-            grep -r "unsafe {" src/dns/ --include="*.rs"
-            echo "::error::Found $UNSAFE_COUNT unsafe block(s) in src/dns/ - these should be eliminated"
+            echo "Found $UNSAFE_COUNT unsafe block(s) in crates/synvoid-dns/src/:"
+            grep -r "unsafe {" crates/synvoid-dns/src/ --include="*.rs"
+            echo "::error::Found $UNSAFE_COUNT unsafe block(s) in crates/synvoid-dns/src/ - these should be eliminated"
             exit 1
           else
-            echo "✅ No unsafe blocks found in src/dns/"
+            echo "✅ No unsafe blocks found in crates/synvoid-dns/src/"
           fi
 
   fmt:

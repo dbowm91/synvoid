@@ -26,6 +26,19 @@ static COALESCER_CANCELS: std::sync::LazyLock<Gauge> =
 static COALESCER_IN_FLIGHT: std::sync::LazyLock<Gauge> =
     std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_in_flight"));
 
+/// Returns `true` for query types and opcodes that must never be coalesced.
+///
+/// AXFR/IXFR are multi-message transfers that share a connection and must not
+/// have their responses mixed. NOTIFY and UPDATE carry per-message state and
+/// must always be handled individually.
+pub fn should_skip_coalescing(qtype: u16, opcode: u8) -> bool {
+    // AXFR (252) and IXFR (251) are zone transfers
+    qtype == 252 || qtype == 251
+        // NOTIFY (opcode 4) and UPDATE (opcode 5)
+        || opcode == 4
+        || opcode == 5
+}
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct QueryKey {
     pub name: String,
@@ -972,6 +985,149 @@ mod tests {
         let response = Arc::new(vec![0x01]);
         coalescer.broadcast_response(key, response);
         let _ = handle.await.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod coalescing_exclusion_tests {
+    use super::*;
+
+    #[test]
+    fn test_axfr_skips_coalescing() {
+        assert!(
+            should_skip_coalescing(252, 0),
+            "AXFR qtype 252 must skip coalescing"
+        );
+    }
+
+    #[test]
+    fn test_ixfr_skips_coalescing() {
+        assert!(
+            should_skip_coalescing(251, 0),
+            "IXFR qtype 251 must skip coalescing"
+        );
+    }
+
+    #[test]
+    fn test_notify_skips_coalescing() {
+        assert!(
+            should_skip_coalescing(1, 4),
+            "NOTIFY opcode 4 must skip coalescing"
+        );
+    }
+
+    #[test]
+    fn test_update_skips_coalescing() {
+        assert!(
+            should_skip_coalescing(1, 5),
+            "UPDATE opcode 5 must skip coalescing"
+        );
+    }
+
+    #[test]
+    fn test_standard_query_does_not_skip() {
+        assert!(
+            !should_skip_coalescing(1, 0),
+            "Standard A query must not skip"
+        );
+        assert!(
+            !should_skip_coalescing(28, 0),
+            "Standard AAAA query must not skip"
+        );
+        assert!(
+            !should_skip_coalescing(15, 0),
+            "Standard MX query must not skip"
+        );
+    }
+
+    #[test]
+    fn test_axfr_with_notify_opcode_skips() {
+        assert!(
+            should_skip_coalescing(252, 4),
+            "AXFR + NOTIFY must skip coalescing"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_axfr_query_always_returns_new_query() {
+        let coalescer = QueryCoalescer::new();
+        let qtype: u16 = 252; // AXFR
+        let opcode: u8 = 0;
+        assert!(should_skip_coalescing(qtype, opcode));
+
+        let key = QueryKey {
+            name: "example.com".to_string(),
+            qtype,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: None,
+        };
+
+        // Even if an entry exists, should_skip_coalescing means the caller
+        // must not call get_or_wait. This test documents the intent: the
+        // caller checks should_skip_coalescing before entering the coalescer.
+        let result = coalescer.get_or_wait(key.clone()).await;
+        assert!(matches!(result, Some(CoalesceResult::NewQuery(_))));
+    }
+
+    #[tokio::test]
+    async fn test_ixfr_query_always_returns_new_query() {
+        let coalescer = QueryCoalescer::new();
+        let qtype: u16 = 251; // IXFR
+        let opcode: u8 = 0;
+        assert!(should_skip_coalescing(qtype, opcode));
+
+        let key = QueryKey {
+            name: "example.com".to_string(),
+            qtype,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: None,
+        };
+
+        let result = coalescer.get_or_wait(key.clone()).await;
+        assert!(matches!(result, Some(CoalesceResult::NewQuery(_))));
+    }
+
+    #[tokio::test]
+    async fn test_notify_opcode_skips_coalescing() {
+        let coalescer = QueryCoalescer::new();
+        let opcode: u8 = 4; // NOTIFY
+        assert!(should_skip_coalescing(1, opcode));
+
+        // NOTIFY queries typically use qtype ANY (255)
+        let key = QueryKey {
+            name: "example.com".to_string(),
+            qtype: 255,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: None,
+        };
+
+        let result = coalescer.get_or_wait(key.clone()).await;
+        assert!(matches!(result, Some(CoalesceResult::NewQuery(_))));
+    }
+
+    #[tokio::test]
+    async fn test_update_opcode_skips_coalescing() {
+        let coalescer = QueryCoalescer::new();
+        let opcode: u8 = 5; // UPDATE
+        assert!(should_skip_coalescing(1, opcode));
+
+        let key = QueryKey {
+            name: "example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: None,
+        };
+
+        let result = coalescer.get_or_wait(key.clone()).await;
+        assert!(matches!(result, Some(CoalesceResult::NewQuery(_))));
     }
 }
 

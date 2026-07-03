@@ -194,7 +194,7 @@ The following vulnerabilities exist in transitive dependencies and are documente
 - **Implementation**:
   - Added `rkyv` dependency (renamed to avoid lightningcss conflict)
   - Created `src/serialization_rkyv.rs` module re-exporting rkyv
-  - Added rkyv derives to DNS message types (`src/dns/messages.rs`)
+  - Added rkyv derives to DNS message types (`crates/synvoid-dns/src/messages.rs`)
   - Added rkyv derives to DHT types (keys, signed, stake, network_policy, merkle, store, routing)
   - Added rkyv derives to `MeshNodeRole` in `src/mesh/config.rs`
 - **Default Serialization**: rkyv is now the default for:

@@ -29,8 +29,8 @@ if bool::from(computed.ct_eq(&original)) { ... }
 ```
 
 **Locations requiring constant-time comparison**:
-- DNS TSIG MAC verification (`src/dns/tsig.rs`)
-- DNS cookie MAC verification (`src/dns/cookie.rs`)
+- DNS TSIG MAC verification (`crates/synvoid-dns/src/tsig.rs`)
+- DNS cookie MAC verification (`crates/synvoid-dns/src/cookie.rs`)
 
 ### Edge Node PoW Authentication
 
@@ -65,7 +65,7 @@ fs::rename(&temp_path, path)?;
 When `enable_dnssec=true` and `upstream_provider = "Recursive"`:
 
 ```rust
-// src/dns/resolver.rs:693-702
+// crates/synvoid-dns/src/resolver.rs:693-702
 let dnssec_policy = if enable_dnssec {
     let trust_anchors = Self::build_trust_anchors(trust_anchor_path, trust_anchor_manager.as_ref());
     let mut config = hickory_resolver::recursor::DnssecConfig::default();
@@ -95,7 +95,7 @@ See `skills/dns_dnssec.md:130-146` for detailed explanation.
 
 ### DNS Cookie Server Wiring (FIXED 2026-05-27)
 
-`DnsCookieServer` is wired into query validation at `src/dns/server/query.rs:640-658`:
+`DnsCookieServer` is wired into query validation at `crates/synvoid-dns/src/server/query.rs:640-658`:
 
 ```rust
 let mut cookie_valid = false;
@@ -121,7 +121,7 @@ Cookie validation follows RFC 7873 pattern using constant-time comparison from `
 
 ### Query Coalescer max_wait_ms (DNS-QUERY - ✅ FIXED 2026-05-27)
 
-The `max_wait_ms` parameter is now used. At `src/dns/query_coalesce.rs`:
+The `max_wait_ms` parameter is now used. At `crates/synvoid-dns/src/query_coalesce.rs`:
 - Added `max_wait: Duration` field to `QueryCoalescer` struct
 - Changed `get_or_wait()` from sync to async fn
 - Uses `tokio::time::timeout(max_wait, receiver.recv())` instead of non-blocking `try_recv()`

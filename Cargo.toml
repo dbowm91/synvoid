@@ -168,7 +168,7 @@ subtle = "2"
 # HSM / PKCS#11 support
 cryptoki = { version = "0.12", optional = true }
 
-# QUIC — root-owned for DNS-over-QUIC (src/dns/doq.rs) and TCP protocol detection (src/tcp/listener.rs)
+# QUIC — root-owned for DNS-over-QUIC (crates/synvoid-dns/src/doq.rs) and TCP protocol detection (src/tcp/listener.rs)
 # h3, h3-quinn: owned by synvoid-http3 (see plans/architecture_boundary_cleanup_iteration_1.md)
 quinn = { version = "0.11", features = ["runtime-tokio"] }
 

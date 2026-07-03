@@ -13,7 +13,7 @@ The SynVoid DNS module provides a **comprehensive, production-grade DNS server**
 - **Geo-steering** based on client location and node health
 - **Mesh mode** for dynamic registration from edge nodes
 
-The module is located at `src/dns/` and exports a rich set of submodules.
+The module is located at `crates/synvoid-dns/` and exports a rich set of submodules.
 
 ---
 
@@ -23,82 +23,82 @@ The module is located at `src/dns/` and exports a rich set of submodules.
 
 | Submodule | File | Responsibility |
 |-----------|------|----------------|
-| `server/mod.rs` | `src/dns/server/mod.rs` | Main `DnsServer` struct, zone management, query handling |
-| `server/query.rs` | `src/dns/server/query.rs` | Query parsing, validation, cookie checking |
-| `server/response.rs` | `src/dns/server/response.rs` | Response building, NXDOMAIN, error responses |
-| `server/response_encoder.rs` | `src/dns/server/response_encoder.rs` | Typed wire-format response encoder (`EncodedRecord`, `ResponseEnvelope`, per-record encoders) |
-| `server/startup.rs` | `src/dns/server/startup.rs` | Server startup, socket binding |
-| `server/zone.rs` | `src/dns/server/zone.rs` | Zone record management |
-| `server/dnssec_impl.rs` | `src/dns/server/dnssec_impl.rs` | DNSSEC-signed response handling |
-| `server/rate_limit.rs` | `src/dns/server/rate_limit.rs` | Rate limiting (Response Rate Limiting - RRL) |
-| `server/sharded_store.rs` | `src/dns/server/sharded_store.rs` | `ShardedZoneStore` for concurrent zone access |
+| `server/mod.rs` | `crates/synvoid-dns/src/server/mod.rs` | Main `DnsServer` struct, zone management, query handling |
+| `server/query.rs` | `crates/synvoid-dns/src/server/query.rs` | Query parsing, validation, cookie checking |
+| `server/response.rs` | `crates/synvoid-dns/src/server/response.rs` | Response building, NXDOMAIN, error responses |
+| `server/response_encoder.rs` | `crates/synvoid-dns/src/server/response_encoder.rs` | Typed wire-format response encoder (`EncodedRecord`, `ResponseEnvelope`, per-record encoders) |
+| `server/startup.rs` | `crates/synvoid-dns/src/server/startup.rs` | Server startup, socket binding |
+| `server/zone.rs` | `crates/synvoid-dns/src/server/zone.rs` | Zone record management |
+| `server/dnssec_impl.rs` | `crates/synvoid-dns/src/server/dnssec_impl.rs` | DNSSEC-signed response handling |
+| `server/rate_limit.rs` | `crates/synvoid-dns/src/server/rate_limit.rs` | Rate limiting (Response Rate Limiting - RRL) |
+| `server/sharded_store.rs` | `crates/synvoid-dns/src/server/sharded_store.rs` | `ShardedZoneStore` for concurrent zone access |
 
 ### 2.2 DNSSEC
 
 | Submodule | File | Responsibility |
 |-----------|------|----------------|
-| `dnssec.rs` | `src/dns/dnssec.rs` | Core types: `Algorithm`, `KeyType`, `ZoneSigningKey`, `Nsec3Config`, `KeyRotationConfig` |
-| `dnssec_key_mgmt.rs` | `src/dns/dnssec_key_mgmt.rs` | `DnsSecKeyManager` - key generation, storage |
-| `dnssec_signing.rs` | `src/dns/dnssec_signing.rs` | RRSIG creation, NSEC/NSEC3 record generation |
-| `dnssec_validation.rs` | `src/dns/dnssec_validation.rs` | Signature verification, canonicalization, DS digest |
-| `trust_anchor.rs` | `src/dns/trust_anchor.rs` | RFC 5011 trust anchor state machine |
+| `dnssec.rs` | `crates/synvoid-dns/src/dnssec.rs` | Core types: `Algorithm`, `KeyType`, `ZoneSigningKey`, `Nsec3Config`, `KeyRotationConfig` |
+| `dnssec_key_mgmt.rs` | `crates/synvoid-dns/src/dnssec_key_mgmt.rs` | `DnsSecKeyManager` - key generation, storage |
+| `dnssec_signing.rs` | `crates/synvoid-dns/src/dnssec_signing.rs` | RRSIG creation, NSEC/NSEC3 record generation |
+| `dnssec_validation.rs` | `crates/synvoid-dns/src/dnssec_validation.rs` | Signature verification, canonicalization, DS digest |
+| `trust_anchor.rs` | `crates/synvoid-dns/src/trust_anchor.rs` | RFC 5011 trust anchor state machine |
 
 ### 2.3 Resolvers
 
 | Submodule | File | Responsibility |
 |-----------|------|----------------|
-| `recursive.rs` | `src/dns/recursive.rs` | `RecursiveDnsServer` - recursive resolver server |
-| `resolver.rs` | `src/dns/resolver.rs` | `DnsResolver` trait, `HickoryResolver`, `HickoryRecursor` |
-| `recursive_cache.rs` | `src/dns/recursive_cache.rs` | `RecursiveDnsCache` - cache for recursive resolver |
+| `recursive.rs` | `crates/synvoid-dns/src/recursive.rs` | `RecursiveDnsServer` - recursive resolver server |
+| `resolver.rs` | `crates/synvoid-dns/src/resolver.rs` | `DnsResolver` trait, `HickoryResolver`, `HickoryRecursor` |
+| `recursive_cache.rs` | `crates/synvoid-dns/src/recursive_cache.rs` | `RecursiveDnsCache` - cache for recursive resolver |
 
 ### 2.4 Protocol Support
 
 | Submodule | File | Responsibility |
 |-----------|------|----------------|
-| `doh.rs` | `src/dns/doh.rs` | DNS-over-HTTPS server |
-| `dot.rs` | `src/dns/dot.rs` | DNS-over-TLS server |
-| `doq.rs` | `src/dns/doq.rs` | DNS-over-Quic server |
-| `tsig.rs` | `src/dns/tsig.rs` | TSIG transaction signing and verification |
+| `doh.rs` | `crates/synvoid-dns/src/doh.rs` | DNS-over-HTTPS server |
+| `dot.rs` | `crates/synvoid-dns/src/dot.rs` | DNS-over-TLS server |
+| `doq.rs` | `crates/synvoid-dns/src/doq.rs` | DNS-over-Quic server |
+| `tsig.rs` | `crates/synvoid-dns/src/tsig.rs` | TSIG transaction signing and verification |
 
 ### 2.5 Security
 
 | Submodule | File | Responsibility |
 |-----------|------|----------------|
-| `firewall.rs` | `src/dns/firewall.rs` | `DnsFirewall` - query filtering |
-| `cookie.rs` | `src/dns/cookie.rs` | DNS Cookie Server (RFC 7873) |
-| `limits.rs` | `src/dns/limits.rs` | Connection limits |
-| `update.rs` | `src/dns/update.rs` | Dynamic DNS updates (RFC 2136) |
-| `notify.rs` | `src/dns/notify.rs` | DNS NOTIFY handling |
-| `transfer.rs` | `src/dns/transfer.rs` | Zone transfers (AXFR/IXFR) |
+| `firewall.rs` | `crates/synvoid-dns/src/firewall.rs` | `DnsFirewall` - query filtering |
+| `cookie.rs` | `crates/synvoid-dns/src/cookie.rs` | DNS Cookie Server (RFC 7873) |
+| `limits.rs` | `crates/synvoid-dns/src/limits.rs` | Connection limits |
+| `update.rs` | `crates/synvoid-dns/src/update.rs` | Dynamic DNS updates (RFC 2136) |
+| `notify.rs` | `crates/synvoid-dns/src/notify.rs` | DNS NOTIFY handling |
+| `transfer.rs` | `crates/synvoid-dns/src/transfer.rs` | Zone transfers (AXFR/IXFR) |
 
 ### 2.6 Supporting Modules
 
 | Submodule | File | Responsibility |
 |-----------|------|----------------|
-| `cache.rs` | `src/dns/cache.rs` | `DnsCache` - authoritative server cache |
-| `compression.rs` | `src/dns/compression.rs` | DNS message compression |
-| `config.rs` | `src/dns/config.rs` | `DnsSettings` - DNS configuration wrapper with bind address and geoip |
-| `edns.rs` | `src/dns/edns.rs` | EDNS(0) option parsing |
-| `messages.rs` | `src/dns/messages.rs` | Mesh DNS message types |
-| `mesh_dnssec.rs` | `src/dns/mesh_dnssec.rs` | Mesh DNSSEC validation - `MeshDnsSecValidator`, `MeshTrustAnchor` |
-| `metrics.rs` | `src/dns/metrics.rs` | DNS metrics |
-| `platform.rs` | `src/dns/platform.rs` | `AnycastSocketPlatform` - platform-specific anycast socket support |
-| `prefetch.rs` | `src/dns/prefetch.rs` | `DnsPrefetcher` - DNS response prefetching based on query frequency |
-| `qname.rs` | `src/dns/qname.rs` | QNAME minimization and rebinding checks |
+| `cache.rs` | `crates/synvoid-dns/src/cache.rs` | `DnsCache` - authoritative server cache |
+| `compression.rs` | `crates/synvoid-dns/src/compression.rs` | DNS message compression |
+| `config.rs` | `crates/synvoid-dns/src/config.rs` | `DnsSettings` - DNS configuration wrapper with bind address and geoip |
+| `edns.rs` | `crates/synvoid-dns/src/edns.rs` | EDNS(0) option parsing |
+| `messages.rs` | `crates/synvoid-dns/src/messages.rs` | Mesh DNS message types |
+| `mesh_dnssec.rs` | `crates/synvoid-dns/src/mesh_dnssec.rs` | Mesh DNSSEC validation - `MeshDnsSecValidator`, `MeshTrustAnchor` |
+| `metrics.rs` | `crates/synvoid-dns/src/metrics.rs` | DNS metrics |
+| `platform.rs` | `crates/synvoid-dns/src/platform.rs` | `AnycastSocketPlatform` - platform-specific anycast socket support |
+| `prefetch.rs` | `crates/synvoid-dns/src/prefetch.rs` | `DnsPrefetcher` - DNS response prefetching based on query frequency |
+| `qname.rs` | `crates/synvoid-dns/src/qname.rs` | QNAME minimization and rebinding checks |
 | `query_coalesce.rs` | `crates/synvoid-dns/src/query_coalesce.rs` | Query coalescing |
-| `query_validator.rs` | `src/dns/query_validator.rs` | Query validation |
-| `secure_server.rs` | `src/dns/secure_server.rs` | `SecureDnsServerBase` - TLS DNS server base (DoT/DoH/DoQ) |
-| `sharded_cache.rs` | `src/dns/sharded_cache.rs` | `ShardedDnsCache` - high-performance sharded DNS cache |
-| `store.rs` | `src/dns/store.rs` | `ZoneStore` trait |
-| `wire.rs` | `src/dns/wire.rs` | Wire-format DNS parsing/building |
-| `zone_file.rs` | `src/dns/zone_file.rs` | Zone file parsing |
-| `zone_manager.rs` | `src/dns/zone_manager.rs` | Zone lifecycle management - index rebuilding, record CRUD |
-| `zone_trie.rs` | `src/dns/zone_trie.rs` | Zone lookup trie |
-| `rpz.rs` | `src/dns/rpz.rs` | Response Policy Zones |
-| `dns64.rs` | `src/dns/dns64.rs` | DNS64 translator |
-| `anycast.rs` | `src/dns/anycast.rs` | Anycast support |
-| `hsm.rs` | `src/dns/hsm.rs` | HSM-backed key management |
-| `crypto_rng.rs` | `src/dns/crypto_rng.rs` | Cryptographic RNG |
+| `query_validator.rs` | `crates/synvoid-dns/src/query_validator.rs` | Query validation |
+| `secure_server.rs` | `crates/synvoid-dns/src/secure_server.rs` | `SecureDnsServerBase` - TLS DNS server base (DoT/DoH/DoQ) |
+| `sharded_cache.rs` | `crates/synvoid-dns/src/sharded_cache.rs` | `ShardedDnsCache` - high-performance sharded DNS cache |
+| `store.rs` | `crates/synvoid-dns/src/store.rs` | `ZoneStore` trait |
+| `wire.rs` | `crates/synvoid-dns/src/wire.rs` | Wire-format DNS parsing/building |
+| `zone_file.rs` | `crates/synvoid-dns/src/zone_file.rs` | Zone file parsing |
+| `zone_manager.rs` | `crates/synvoid-dns/src/zone_manager.rs` | Zone lifecycle management - index rebuilding, record CRUD |
+| `zone_trie.rs` | `crates/synvoid-dns/src/zone_trie.rs` | Zone lookup trie |
+| `rpz.rs` | `crates/synvoid-dns/src/rpz.rs` | Response Policy Zones |
+| `dns64.rs` | `crates/synvoid-dns/src/dns64.rs` | DNS64 translator |
+| `anycast.rs` | `crates/synvoid-dns/src/anycast.rs` | Anycast support |
+| `hsm.rs` | `crates/synvoid-dns/src/hsm.rs` | HSM-backed key management |
+| `crypto_rng.rs` | `crates/synvoid-dns/src/crypto_rng.rs` | Cryptographic RNG |
 
 ---
 
@@ -890,7 +890,7 @@ This prevents authoritative responses from advertising recursion and prevents si
 
 ### 9.2 DNS Cookie Server (RFC 7873)
 
-Cookie validation at `src/dns/server/query.rs:640-658`:
+Cookie validation at `crates/synvoid-dns/src/server/query.rs:640-658`:
 ```rust
 if let (Some(cs), Some(edns)) = (ctx.cookie_server, &edns_options) {
     if let Some(ref cookie) = edns.cookie {
@@ -1219,4 +1219,42 @@ The following features have config fields but are NOT wired to runtime behavior:
 Phase 5 added 37+ tests across two integration test files:
 - `dns_config_fidelity.rs`: Cache serve_stale, min/max TTL, DNS64 synthesis/disable/custom prefix/exclude, ECS filter, firewall rules
 - `dns_recursive_isolation.rs`: Recursive mode bind independence, cache isolation, authoritative REFUSED, anycast/mesh feature gates, config validation guards
+
+---
+
+## Milestone Status (Post-Milestone 2 Corrective Pass)
+
+### Closed
+
+| Area | Status | Details |
+|------|--------|---------|
+| Authoritative wire correctness | Closed | 399 lib tests + 37 authoritative_negative integration tests. Flags: AA=1, RA=0, AD=0, RD echoed. |
+| Cache key dimensions | Closed | 7 dimensions with `from_parsed_authoritative()` / `from_parsed_recursive()` constructors. |
+| TTL extraction | Closed | Compression-safe (`skip_dns_name`, `first_answer_ttl`, `negative_soa_ttl`). Protocol-aware negative TTL from SOA. |
+| Cache invalidation | Closed | All zone mutation paths trigger `cache.invalidate_zone()`. Fingerprint state cleared on mutation. |
+| Query coalescing | Closed | 6-dimensional `QueryKey`, AXFR/IXFR/UPDATE/NOTIFY excluded, 8 metrics counters. |
+| TCP hard-limit SERVFAIL | Closed | Echoes question, preserves RD bit, byte-size enforced. |
+| Serve-stale | Closed | `DnsCache::with_serve_stale()`, config-wired `max_stale_secs` / `max_stale_count`. |
+| Config-runtime fidelity | Closed | 37+ Phase 5 tests. All config fields classified as implemented/deferred/unsupported. |
+| Stale `src/dns/` references | Closed | All ~100 stale references updated to `crates/synvoid-dns/src/`. |
+
+### Partial
+
+| Area | Status | Details |
+|------|--------|---------|
+| ECS/client subnet in cache key | Partial | Client IP stored; full ECS prefix routing not yet implemented. |
+| DNS64 exclude_aaaa_synthesis | Partial | Wired + tested; production validation pending. |
+
+### Deferred (Milestone 3+)
+
+| Area | Status | Details |
+|------|--------|---------|
+| DNSSEC production hardening | Deferred | NSEC3 closest-encloser, RFC 5001/5155 compliance, key lifecycle hardening. |
+| RPZ (Response Policy Zones) | Deferred | Config fields exist, no runtime consumer. |
+| Dynamic Update (RFC 2136) | Deferred | Handler stub exists, not wired; security-sensitive. |
+| Zone Transfer (IXFR) | Deferred | Config fields exist, requires delta encoding. |
+| Trust Anchors (custom config) | Deferred | Uses system defaults via HickoryRecursor. |
+| Prefetch | Deferred | Config fields exist, no runtime consumer. |
+| Anycast | Deferred | Requires mesh feature gate. |
+| External interoperability | Deferred | dig/drill/delv smoke tests require live server. |
 

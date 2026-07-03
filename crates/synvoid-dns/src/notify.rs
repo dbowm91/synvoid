@@ -5,6 +5,7 @@ use std::net::IpAddr;
 use std::sync::Arc;
 
 use super::wire;
+use crate::cache::DnsCache;
 use crate::parsed_query::{build_response_flags_from_query, ParsedDnsQuery};
 use crate::server::ShardedZoneStore;
 
@@ -28,6 +29,7 @@ pub struct NotifyHandler {
     zones: Arc<ShardedZoneStore>,
     config: NotifyConfig,
     notified_secondaries: Arc<RwLock<HashMap<String, u32>>>,
+    cache: Option<Arc<DnsCache>>,
 }
 
 impl NotifyHandler {
@@ -36,7 +38,13 @@ impl NotifyHandler {
             zones,
             config,
             notified_secondaries: Arc::new(RwLock::new(HashMap::new())),
+            cache: None,
         }
+    }
+
+    pub fn with_cache(mut self, cache: Arc<DnsCache>) -> Self {
+        self.cache = Some(cache);
+        self
     }
 
     pub fn is_enabled(&self) -> bool {
@@ -74,6 +82,12 @@ impl NotifyHandler {
         };
 
         let zone = self.zones.get(&zone_origin);
+
+        if zone.is_some() {
+            if let Some(ref cache) = self.cache {
+                cache.invalidate_zone(&zone_origin);
+            }
+        }
 
         let rcode = if zone.is_some() {
             wire::RCODE_NOERROR

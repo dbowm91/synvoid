@@ -3,7 +3,16 @@ use super::*;
 #[cfg(feature = "mesh")]
 use crate::mesh_sync::MeshDnsRegistry;
 
+use crate::cache::TransportClass;
 use crate::parsed_query::ParsedDnsQuery;
+
+#[derive(Debug)]
+#[allow(dead_code)]
+enum TtlParseError {
+    Truncated,
+    MalformedPointer,
+    MalformedLabel,
+}
 
 impl DnsServer {
     #[cfg(test)]
@@ -148,10 +157,15 @@ impl DnsServer {
             }
         }
 
-        let cache_key = CacheKey::new(String::new(), RecordType::NULL, Some(client_ip));
+        let skip_coalesce = parsed_tcp
+            .as_ref()
+            .map(|pq| crate::query_coalesce::should_skip_coalescing(pq.qtype, pq.flags.opcode))
+            .unwrap_or(false);
 
         let response = if let Some(coalescer) = ctx.query_coalescer {
-            let query_key = if let Ok(ref parsed_q) = parsed_tcp {
+            let query_key = if skip_coalesce {
+                None
+            } else if let Ok(ref parsed_q) = parsed_tcp {
                 crate::query_coalesce::QueryKey::from_parsed(parsed_q, Some(client_ip), &query)
             } else {
                 crate::query_coalesce::QueryKey::from_query(&query, Some(client_ip))
@@ -167,7 +181,7 @@ impl DnsServer {
                                 parsed_q,
                                 &query,
                                 c,
-                                &mut cache_key.clone(),
+                                TransportClass::Tcp,
                                 Some(client_ip),
                             )
                         } else if let Some(c) = ctx.cache {
@@ -175,7 +189,7 @@ impl DnsServer {
                                 &ctx,
                                 &query,
                                 c,
-                                cache_key,
+                                TransportClass::Tcp,
                                 Some(client_ip),
                             )
                         } else if let Ok(ref parsed_q) = parsed_tcp {
@@ -199,7 +213,7 @@ impl DnsServer {
                                 parsed_q,
                                 &query,
                                 c,
-                                &mut cache_key.clone(),
+                                TransportClass::Tcp,
                                 Some(client_ip),
                             )
                         } else if let Some(c) = ctx.cache {
@@ -207,7 +221,7 @@ impl DnsServer {
                                 &ctx,
                                 &query,
                                 c,
-                                cache_key,
+                                TransportClass::Tcp,
                                 Some(client_ip),
                             )
                         } else if let Ok(ref parsed_q) = parsed_tcp {
@@ -223,7 +237,7 @@ impl DnsServer {
                                 parsed_q,
                                 &query,
                                 c,
-                                &mut cache_key.clone(),
+                                TransportClass::Tcp,
                                 Some(client_ip),
                             )
                         } else if let Some(c) = ctx.cache {
@@ -231,7 +245,7 @@ impl DnsServer {
                                 &ctx,
                                 &query,
                                 c,
-                                cache_key,
+                                TransportClass::Tcp,
                                 Some(client_ip),
                             )
                         } else if let Ok(ref parsed_q) = parsed_tcp {
@@ -247,11 +261,11 @@ impl DnsServer {
                     parsed_q,
                     &query,
                     c,
-                    &mut cache_key.clone(),
+                    TransportClass::Tcp,
                     Some(client_ip),
                 )
             } else if let Some(c) = ctx.cache {
-                Self::handle_query_with_cache(&ctx, &query, c, cache_key, Some(client_ip))
+                Self::handle_query_with_cache(&ctx, &query, c, TransportClass::Tcp, Some(client_ip))
             } else if let Ok(ref parsed_q) = parsed_tcp {
                 Self::handle_parsed_query(&ctx, parsed_q, &query, Some(client_ip))
             } else {
@@ -263,11 +277,11 @@ impl DnsServer {
                 parsed_q,
                 &query,
                 c,
-                &mut cache_key.clone(),
+                TransportClass::Tcp,
                 Some(client_ip),
             )
         } else if let Some(c) = ctx.cache {
-            Self::handle_query_with_cache(&ctx, &query, c, cache_key, Some(client_ip))
+            Self::handle_query_with_cache(&ctx, &query, c, TransportClass::Tcp, Some(client_ip))
         } else if let Ok(ref parsed_q) = parsed_tcp {
             Self::handle_parsed_query(&ctx, parsed_q, &query, Some(client_ip))
         } else {
@@ -351,21 +365,44 @@ impl DnsServer {
                         response_size = resp.len(),
                         "{}", e
                     );
-                    let query_id = if resp.len() >= 2 {
-                        u16::from_be_bytes([resp[0], resp[1]])
+
+                    // Build a SERVFAIL that echoes the original question section
+                    // when the query was successfully parsed (RFC 1035 §4.1.1).
+                    let (query_id, rd, question_bytes) = if let Ok(ref parsed_q) = parsed_tcp {
+                        // Question section: QNAME (wire) + QTYPE (2) + QCLASS (2)
+                        let q = &query[12..parsed_q.question_end];
+                        (
+                            parsed_q.id,
+                            parsed_q.flags.recursion_desired,
+                            Some(q.to_vec()),
+                        )
+                    } else if query.len() >= 4 {
+                        let qid = u16::from_be_bytes([query[0], query[1]]);
+                        let flags = u16::from_be_bytes([query[2], query[3]]);
+                        let rd = (flags & 0x0100) != 0;
+                        (qid, rd, None)
                     } else {
-                        0
+                        (0u16, false, None)
                     };
-                    let flags = crate::parsed_query::build_response_flags(
-                        true, false, false, false, false, 2,
-                    );
-                    let mut servfail = Vec::with_capacity(12);
+
+                    // QR=1, AA=0, TC=0, RD=echoed, RA=1, RCODE=2 (SERVFAIL)
+                    let flags =
+                        crate::parsed_query::build_response_flags(false, false, rd, true, false, 2);
+
+                    let qdcount: u16 = if question_bytes.is_some() { 1 } else { 0 };
+
+                    let mut servfail =
+                        Vec::with_capacity(12 + question_bytes.as_ref().map_or(0, |q| q.len()));
                     servfail.extend_from_slice(&query_id.to_be_bytes());
                     servfail.extend_from_slice(&flags.to_be_bytes());
-                    servfail.extend_from_slice(&1u16.to_be_bytes());
-                    servfail.extend_from_slice(&0u16.to_be_bytes());
-                    servfail.extend_from_slice(&0u16.to_be_bytes());
-                    servfail.extend_from_slice(&0u16.to_be_bytes());
+                    servfail.extend_from_slice(&qdcount.to_be_bytes());
+                    servfail.extend_from_slice(&0u16.to_be_bytes()); // ANCOUNT
+                    servfail.extend_from_slice(&0u16.to_be_bytes()); // NSCOUNT
+                    servfail.extend_from_slice(&0u16.to_be_bytes()); // ARCOUNT
+                    if let Some(q) = question_bytes {
+                        servfail.extend_from_slice(&q);
+                    }
+
                     let len = servfail.len() as u16;
                     let mut response_buf = len.to_be_bytes().to_vec();
                     response_buf.extend_from_slice(&servfail);
@@ -389,11 +426,11 @@ impl DnsServer {
         ctx: &QueryContext,
         query: &[u8],
         cache: &Arc<DnsCache>,
-        mut cache_key: CacheKey,
+        transport_class: TransportClass,
         client_ip: Option<std::net::IpAddr>,
     ) -> Option<Arc<Vec<u8>>> {
         let parsed = ParsedDnsQuery::parse(query).ok()?;
-        Self::handle_parsed_query_with_cache(ctx, &parsed, query, cache, &mut cache_key, client_ip)
+        Self::handle_parsed_query_with_cache(ctx, &parsed, query, cache, transport_class, client_ip)
     }
 
     pub(super) fn handle_parsed_query_with_cache(
@@ -401,7 +438,7 @@ impl DnsServer {
         parsed: &ParsedDnsQuery<'_>,
         query: &[u8],
         cache: &Arc<DnsCache>,
-        cache_key: &mut CacheKey,
+        transport_class: TransportClass,
         client_ip: Option<std::net::IpAddr>,
     ) -> Option<Arc<Vec<u8>>> {
         if parsed.is_notify() {
@@ -463,13 +500,17 @@ impl DnsServer {
             return None;
         }
 
-        let record_type = RecordType::from(parsed.qtype);
+        let cache_key = if let Some(ip) = client_ip {
+            CacheKey::from_parsed_authoritative(parsed, ip, transport_class)
+        } else {
+            CacheKey::from_parsed_authoritative(
+                parsed,
+                std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+                transport_class,
+            )
+        };
 
-        cache_key.qname = parsed.qname.clone();
-        use crate::server::RecordTypeExt;
-        cache_key.qtype = record_type.to_u16();
-
-        if let Some(cached) = cache.get(cache_key) {
+        if let Some(cached) = cache.get(&cache_key) {
             return Some(cached);
         }
 
@@ -478,11 +519,133 @@ impl DnsServer {
         if let Some(ref data) = result {
             let ttl = Self::extract_ttl_from_response(data.as_ref(), ctx.negative_cache_ttl);
             if ttl > 0 {
-                cache.insert(cache_key.clone(), data.as_ref().clone(), ttl);
+                cache.insert(cache_key, data.as_ref().clone(), ttl);
             }
         }
 
         result
+    }
+
+    /// Skip a DNS name in a packet, handling compression pointers.
+    fn skip_dns_name(buf: &[u8], pos: usize) -> Result<usize, TtlParseError> {
+        if pos >= buf.len() {
+            return Err(TtlParseError::Truncated);
+        }
+        let mut p = pos;
+        loop {
+            if p >= buf.len() {
+                return Err(TtlParseError::Truncated);
+            }
+            let len = buf[p];
+            if len == 0 {
+                return Ok(p + 1);
+            }
+            if (len & 0xC0) == 0xC0 {
+                if p + 2 > buf.len() {
+                    return Err(TtlParseError::Truncated);
+                }
+                return Ok(p + 2);
+            }
+            if len > 63 {
+                return Err(TtlParseError::MalformedLabel);
+            }
+            p += 1 + len as usize;
+        }
+    }
+
+    /// Skip the header (12 bytes) and all question entries.
+    fn skip_header_and_question(buf: &[u8]) -> Result<usize, TtlParseError> {
+        if buf.len() < 12 {
+            return Err(TtlParseError::Truncated);
+        }
+        let qdcount = u16::from_be_bytes([buf[4], buf[5]]) as usize;
+        let mut pos = 12;
+        for _ in 0..qdcount {
+            pos = Self::skip_dns_name(buf, pos)?;
+            pos += 4; // QTYPE + QCLASS
+        }
+        Ok(pos)
+    }
+
+    /// Skip a single RR (name + type + class + ttl + rdlength + rdata).
+    fn skip_rr_safe(buf: &[u8], pos: usize) -> Result<usize, TtlParseError> {
+        let name_end = Self::skip_dns_name(buf, pos)?;
+        if name_end + 10 > buf.len() {
+            return Err(TtlParseError::Truncated);
+        }
+        let rdlength = u16::from_be_bytes([buf[name_end + 8], buf[name_end + 9]]) as usize;
+        Ok(name_end + 10 + rdlength)
+    }
+
+    /// Extract the minimum TTL from all answer RRs.
+    fn first_answer_ttl(buf: &[u8]) -> Result<Option<u32>, TtlParseError> {
+        let mut pos = Self::skip_header_and_question(buf)?;
+        let ancount = u16::from_be_bytes([buf[6], buf[7]]) as usize;
+        if ancount == 0 {
+            return Ok(None);
+        }
+        let mut min_ttl = u32::MAX;
+        for _ in 0..ancount {
+            let name_end = Self::skip_dns_name(buf, pos)?;
+            if name_end + 10 > buf.len() {
+                return Err(TtlParseError::Truncated);
+            }
+            // After name: type(2) + class(2) + TTL(4) + rdlength(2)
+            let ttl = u32::from_be_bytes([
+                buf[name_end + 4],
+                buf[name_end + 5],
+                buf[name_end + 6],
+                buf[name_end + 7],
+            ]);
+            min_ttl = min_ttl.min(ttl);
+            pos = Self::skip_rr_safe(buf, pos)?;
+        }
+        Ok(Some(min_ttl))
+    }
+
+    /// Extract negative TTL from SOA authority record.
+    fn negative_soa_ttl(buf: &[u8]) -> Result<Option<u32>, TtlParseError> {
+        let answer_end = {
+            let mut pos = Self::skip_header_and_question(buf)?;
+            let ancount = u16::from_be_bytes([buf[6], buf[7]]) as usize;
+            for _ in 0..ancount {
+                pos = Self::skip_rr_safe(buf, pos)?;
+            }
+            pos
+        };
+        let nscount = u16::from_be_bytes([buf[8], buf[9]]) as usize;
+        let mut pos = answer_end;
+        for _ in 0..nscount {
+            let name_end = Self::skip_dns_name(buf, pos)?;
+            if name_end + 10 > buf.len() {
+                return Err(TtlParseError::Truncated);
+            }
+            let rtype = u16::from_be_bytes([buf[name_end], buf[name_end + 1]]);
+            let ttl = u32::from_be_bytes([
+                buf[name_end + 4],
+                buf[name_end + 5],
+                buf[name_end + 6],
+                buf[name_end + 7],
+            ]);
+            let rdlength = u16::from_be_bytes([buf[name_end + 8], buf[name_end + 9]]) as usize;
+            if rtype == 6 && rdlength >= 20 {
+                // SOA MINIMUM is the last 4 bytes of RDATA
+                let rdstart = name_end + 10;
+                let minimum_pos = rdstart + rdlength - 4;
+                if minimum_pos + 4 > buf.len() {
+                    return Err(TtlParseError::Truncated);
+                }
+                let soa_minimum = u32::from_be_bytes([
+                    buf[minimum_pos],
+                    buf[minimum_pos + 1],
+                    buf[minimum_pos + 2],
+                    buf[minimum_pos + 3],
+                ]);
+                return Ok(Some(ttl.min(soa_minimum)));
+            }
+            pos = name_end + 10 + rdlength;
+        }
+        Ok(None)
     }
 
     pub(super) fn extract_ttl_from_response(response: &[u8], negative_cache_ttl: u32) -> u32 {
@@ -495,183 +658,32 @@ impl DnsServer {
         let ancount = u16::from_be_bytes([response[6], response[7]]);
         let nscount = u16::from_be_bytes([response[8], response[9]]);
 
-        if ancount == 0 && rcode == 3 {
-            // WS2: Try to extract SOA minimum TTL from authority section.
-            // Per RFC 2308, negative cache TTL = min(SOA.minimum, SOA.ttl).
-            if let Some(soa_min_ttl) = Self::extract_soa_minimum_from_response(response, 12) {
+        // SERVFAIL (2) and REFUSED (5) are transient — never cache.
+        if rcode == 2 || rcode == 5 {
+            return 0;
+        }
+
+        // Positive response: extract TTL from answer RRs.
+        if ancount > 0 {
+            if let Ok(Some(ttl)) = Self::first_answer_ttl(response) {
+                return ttl;
+            }
+            return 0;
+        }
+
+        // NXDOMAIN (3) or NODATA (0 with no answers): try SOA negative TTL.
+        if rcode == 3 || nscount > 0 {
+            if let Ok(Some(soa_min_ttl)) = Self::negative_soa_ttl(response) {
                 return soa_min_ttl.min(negative_cache_ttl);
             }
+        }
+
+        // No SOA found — for NXDOMAIN still apply negative cache.
+        if rcode == 3 {
             return negative_cache_ttl;
         }
 
-        if ancount == 0 {
-            // WS2: NODATA — try SOA minimum if authority section present.
-            if nscount > 0 {
-                if let Some(soa_min_ttl) = Self::extract_soa_minimum_from_response(response, 12) {
-                    return soa_min_ttl.min(negative_cache_ttl);
-                }
-            }
-            return 0;
-        }
-
-        // Parse first answer record TTL
-        let mut pos = 12;
-        while pos < response.len() {
-            let len = response[pos] as usize;
-            if len == 0 {
-                pos += 1;
-                break;
-            }
-            pos += 1 + len;
-        }
-        pos += 4;
-
-        if pos + 10 > response.len() {
-            return 0;
-        }
-
-        let record_type = u16::from_be_bytes([response[pos], response[pos + 1]]);
-        if record_type != 1
-            && record_type != 28
-            && record_type != 5
-            && record_type != 15
-            && record_type != 16
-            && record_type != 2
-            && record_type != 6
-            && record_type != 33
-        {
-            return 0;
-        }
-        pos += 2;
-        pos += 2;
-
-        u32::from_be_bytes([
-            response[pos],
-            response[pos + 1],
-            response[pos + 2],
-            response[pos + 3],
-        ])
-    }
-
-    /// Extract the SOA minimum TTL from the authority section of a DNS response.
-    /// Walks through the question section, then scans authority records for type 6 (SOA).
-    /// Returns min(SOA_minimum, SOA_rdata_ttl) per RFC 2308.
-    fn extract_soa_minimum_from_response(response: &[u8], mut pos: usize) -> Option<u32> {
-        if response.len() < 12 {
-            return None;
-        }
-
-        // Skip the question section
-        let qdcount = u16::from_be_bytes([response[4], response[5]]) as usize;
-        for _ in 0..qdcount {
-            // Skip QNAME
-            loop {
-                if pos >= response.len() {
-                    return None;
-                }
-                let len = response[pos] as usize;
-                if len == 0 {
-                    pos += 1;
-                    break;
-                }
-                pos += 1 + len;
-            }
-            // Skip QTYPE (2) + QCLASS (2)
-            pos += 4;
-            if pos > response.len() {
-                return None;
-            }
-        }
-
-        // Parse authority records looking for SOA (type 6)
-        let ancount = u16::from_be_bytes([response[6], response[7]]) as usize;
-        let nscount = u16::from_be_bytes([response[8], response[9]]) as usize;
-        // Skip answer records first
-        for _ in 0..ancount {
-            pos = Self::skip_rr(response, pos)?;
-        }
-
-        // Scan authority records for SOA
-        for _ in 0..nscount {
-            let rr_start = pos;
-            // Skip name
-            pos = Self::skip_rr_name(response, pos)?;
-            if pos + 10 > response.len() {
-                return None;
-            }
-            let rr_type = u16::from_be_bytes([response[pos], response[pos + 1]]);
-            // Skip type (2) + class (2) + ttl (4) + rdlength (2)
-            pos += 2 + 2 + 4 + 2;
-            let rdlength = u16::from_be_bytes([response[pos - 2], response[pos - 1]]) as usize;
-            let rdstart = pos;
-
-            if rr_type == 6 && rdlength >= 20 {
-                // SOA RDATA: MNAME (name) + RNAME (name) + SERIAL (4) + REFRESH (4) + RETRY (4) + EXPIRE (4) + MINIMUM (4)
-                // We need the record-level TTL and the MINIMUM field (last 4 bytes of RDATA)
-                // Record-level TTL is at offset +6 from type field
-                let rr_ttl_pos = rr_start + Self::rr_name_len(response, rr_start)? + 4; // skip type+class
-                if rr_ttl_pos + 4 > response.len() {
-                    return None;
-                }
-                let rr_ttl = u32::from_be_bytes([
-                    response[rr_ttl_pos],
-                    response[rr_ttl_pos + 1],
-                    response[rr_ttl_pos + 2],
-                    response[rr_ttl_pos + 3],
-                ]);
-
-                // MINIMUM is last 4 bytes of SOA RDATA
-                let minimum_pos = rdstart + rdlength - 4;
-                if minimum_pos + 4 > response.len() {
-                    return None;
-                }
-                let minimum = u32::from_be_bytes([
-                    response[minimum_pos],
-                    response[minimum_pos + 1],
-                    response[minimum_pos + 2],
-                    response[minimum_pos + 3],
-                ]);
-
-                return Some(rr_ttl.min(minimum));
-            }
-
-            pos = rdstart + rdlength;
-        }
-
-        None
-    }
-
-    /// Skip a wire-format RR name starting at `pos`.
-    fn skip_rr_name(response: &[u8], mut pos: usize) -> Option<usize> {
-        loop {
-            if pos >= response.len() {
-                return None;
-            }
-            let len = response[pos] as usize;
-            if len == 0 {
-                return Some(pos + 1);
-            }
-            if len & 0xC0 == 0xC0 {
-                return Some(pos + 2);
-            }
-            pos += 1 + len;
-        }
-    }
-
-    /// Return the byte-length of a wire-format name starting at `pos`.
-    fn rr_name_len(response: &[u8], pos: usize) -> Option<usize> {
-        Self::skip_rr_name(response, pos).map(|end| end - pos)
-    }
-
-    /// Skip a complete RR starting at `pos` (after question section).
-    fn skip_rr(response: &[u8], pos: usize) -> Option<usize> {
-        let name_end = Self::skip_rr_name(response, pos)?;
-        if name_end + 10 > response.len() {
-            return None;
-        }
-        let rdlength =
-            u16::from_be_bytes([response[name_end + 8], response[name_end + 9]]) as usize;
-        Some(name_end + 10 + rdlength)
+        0
     }
 
     pub(super) fn extract_ixfr_serial(query: &[u8]) -> Option<u32> {
@@ -1616,5 +1628,346 @@ impl DnsServer {
         let flags = build_response_flags(true, false, rd, false, false, 0);
         let packet = assemble_packet(&envelope, response_id, flags, qname, qtype);
         Arc::new(packet)
+    }
+}
+
+#[cfg(test)]
+mod servfail_response_tests {
+    use super::*;
+
+    fn build_query_with_flags(id: u16, flags: u16, name: &str, qtype: u16, qclass: u16) -> Vec<u8> {
+        let mut q = Vec::new();
+        q.extend_from_slice(&id.to_be_bytes());
+        q.extend_from_slice(&flags.to_be_bytes());
+        q.extend_from_slice(&1u16.to_be_bytes());
+        q.extend_from_slice(&0u16.to_be_bytes());
+        q.extend_from_slice(&0u16.to_be_bytes());
+        q.extend_from_slice(&0u16.to_be_bytes());
+        for label in name.split('.') {
+            q.push(label.len() as u8);
+            q.extend_from_slice(label.as_bytes());
+        }
+        q.push(0);
+        q.extend_from_slice(&qtype.to_be_bytes());
+        q.extend_from_slice(&qclass.to_be_bytes());
+        q
+    }
+
+    #[test]
+    fn test_servfail_echoes_question_section() {
+        let query = build_query_with_flags(0xABCD, 0x0100, "example.com", 1, 1);
+        let parsed = ParsedDnsQuery::parse(&query).unwrap();
+
+        let query_id = parsed.id;
+        let rd = parsed.flags.recursion_desired;
+        let question_bytes = Some(query[12..parsed.question_end].to_vec());
+
+        let flags = crate::parsed_query::build_response_flags(false, false, rd, true, false, 2);
+        let qdcount: u16 = if question_bytes.is_some() { 1 } else { 0 };
+
+        let mut servfail = Vec::with_capacity(12 + question_bytes.as_ref().map_or(0, |q| q.len()));
+        servfail.extend_from_slice(&query_id.to_be_bytes());
+        servfail.extend_from_slice(&flags.to_be_bytes());
+        servfail.extend_from_slice(&qdcount.to_be_bytes());
+        servfail.extend_from_slice(&0u16.to_be_bytes());
+        servfail.extend_from_slice(&0u16.to_be_bytes());
+        servfail.extend_from_slice(&0u16.to_be_bytes());
+        if let Some(q) = question_bytes {
+            servfail.extend_from_slice(&q);
+        }
+
+        assert_eq!(servfail[0], 0xAB);
+        assert_eq!(servfail[1], 0xCD);
+
+        let resp_flags = u16::from_be_bytes([servfail[2], servfail[3]]);
+        assert_ne!(resp_flags & 0x8000, 0, "QR=1");
+        assert_eq!(resp_flags & 0x0400, 0, "AA=0");
+        assert_eq!(resp_flags & 0x0200, 0, "TC=0");
+        assert_ne!(resp_flags & 0x0100, 0, "RD echoed");
+        assert_ne!(resp_flags & 0x0080, 0, "RA=1");
+        assert_eq!(resp_flags & 0x000F, 2, "RCODE=SERVFAIL");
+
+        assert_eq!(
+            u16::from_be_bytes([servfail[4], servfail[5]]),
+            1,
+            "QDCOUNT=1"
+        );
+        assert!(servfail.len() > 12);
+        assert_eq!(&servfail[12..], &query[12..parsed.question_end]);
+    }
+
+    #[test]
+    fn test_servfail_rd_zero_when_query_rd_zero() {
+        let query = build_query_with_flags(0x1234, 0x0000, "test.local", 28, 1);
+        let parsed = ParsedDnsQuery::parse(&query).unwrap();
+        let flags = crate::parsed_query::build_response_flags(
+            false,
+            false,
+            parsed.flags.recursion_desired,
+            true,
+            false,
+            2,
+        );
+        assert_eq!(flags & 0x0100, 0);
+    }
+
+    #[test]
+    fn test_servfail_rd_one_when_query_rd_one() {
+        let query = build_query_with_flags(0x5678, 0x0100, "test.local", 15, 1);
+        let parsed = ParsedDnsQuery::parse(&query).unwrap();
+        let flags = crate::parsed_query::build_response_flags(
+            false,
+            false,
+            parsed.flags.recursion_desired,
+            true,
+            false,
+            2,
+        );
+        assert_ne!(flags & 0x0100, 0);
+    }
+
+    #[test]
+    fn test_servfail_flags_bit_layout() {
+        let flags = crate::parsed_query::build_response_flags(false, false, true, true, false, 2);
+        assert_eq!(flags, 0x8182);
+    }
+
+    #[test]
+    fn test_servfail_fallback_without_parsed_query() {
+        let query = build_query_with_flags(0xDEAD, 0x0100, "bad", 1, 1);
+        let short_query = &query[..8];
+        let qid = u16::from_be_bytes([short_query[0], short_query[1]]);
+        let flags_raw = u16::from_be_bytes([short_query[2], short_query[3]]);
+        let rd = (flags_raw & 0x0100) != 0;
+        let flags = crate::parsed_query::build_response_flags(false, false, rd, true, false, 2);
+
+        let mut servfail = Vec::with_capacity(12);
+        servfail.extend_from_slice(&qid.to_be_bytes());
+        servfail.extend_from_slice(&flags.to_be_bytes());
+        servfail.extend_from_slice(&0u16.to_be_bytes());
+        servfail.extend_from_slice(&0u16.to_be_bytes());
+        servfail.extend_from_slice(&0u16.to_be_bytes());
+        servfail.extend_from_slice(&0u16.to_be_bytes());
+
+        assert_eq!(servfail.len(), 12);
+        assert_eq!(u16::from_be_bytes([servfail[0], servfail[1]]), 0xDEAD);
+    }
+
+    // --- TTL parsing helper tests ---
+
+    fn build_positive_response(id: u16, answer_ttl: u32) -> Vec<u8> {
+        let flags = crate::parsed_query::build_response_flags(true, true, false, true, false, 0);
+        let mut r = Vec::new();
+        r.extend_from_slice(&id.to_be_bytes());
+        r.extend_from_slice(&flags.to_be_bytes());
+        r.extend_from_slice(&1u16.to_be_bytes()); // QDCOUNT
+        r.extend_from_slice(&1u16.to_be_bytes()); // ANCOUNT
+        r.extend_from_slice(&0u16.to_be_bytes()); // NSCOUNT
+        r.extend_from_slice(&0u16.to_be_bytes()); // ARCOUNT
+                                                  // question: example.com IN A
+        r.extend_from_slice(&[7, b'e', b'x', b'a', b'm', b'p', b'l', b'e']);
+        r.extend_from_slice(&[3, b'c', b'o', b'm']);
+        r.push(0);
+        r.extend_from_slice(&1u16.to_be_bytes()); // QTYPE A
+        r.extend_from_slice(&1u16.to_be_bytes()); // QCLASS IN
+                                                  // answer: example.com IN A 300
+        r.extend_from_slice(&[7, b'e', b'x', b'a', b'm', b'p', b'l', b'e']);
+        r.extend_from_slice(&[3, b'c', b'o', b'm']);
+        r.push(0);
+        r.extend_from_slice(&1u16.to_be_bytes()); // TYPE A
+        r.extend_from_slice(&1u16.to_be_bytes()); // CLASS IN
+        r.extend_from_slice(&answer_ttl.to_be_bytes()); // TTL
+        r.extend_from_slice(&4u16.to_be_bytes()); // RDLENGTH
+        r.extend_from_slice(&[93, 184, 216, 34]); // RDATA
+        r
+    }
+
+    fn build_nxdomain_response_with_soa(id: u16) -> Vec<u8> {
+        let flags = crate::parsed_query::build_response_flags(true, true, false, true, false, 3);
+        let mut r = Vec::new();
+        r.extend_from_slice(&id.to_be_bytes());
+        r.extend_from_slice(&flags.to_be_bytes());
+        r.extend_from_slice(&1u16.to_be_bytes()); // QDCOUNT
+        r.extend_from_slice(&0u16.to_be_bytes()); // ANCOUNT
+        r.extend_from_slice(&1u16.to_be_bytes()); // NSCOUNT (SOA)
+        r.extend_from_slice(&0u16.to_be_bytes()); // ARCOUNT
+                                                  // question
+        r.extend_from_slice(&[7, b'e', b'x', b'a', b'm', b'p', b'l', b'e']);
+        r.extend_from_slice(&[3, b'c', b'o', b'm']);
+        r.push(0);
+        r.extend_from_slice(&1u16.to_be_bytes());
+        r.extend_from_slice(&1u16.to_be_bytes());
+        // authority: SOA record
+        r.extend_from_slice(&[7, b'e', b'x', b'a', b'm', b'p', b'l', b'e']);
+        r.extend_from_slice(&[3, b'c', b'o', b'm']);
+        r.push(0);
+        r.extend_from_slice(&6u16.to_be_bytes()); // TYPE SOA
+        r.extend_from_slice(&1u16.to_be_bytes()); // CLASS IN
+        r.extend_from_slice(&120u32.to_be_bytes()); // SOA TTL
+        let soa_rdata: Vec<u8> = [
+            0, // MNAME root
+            0, // RNAME root
+        ]
+        .iter()
+        .copied()
+        .chain(0u32.to_be_bytes().iter().copied())
+        .chain(3600u32.to_be_bytes().iter().copied())
+        .chain(600u32.to_be_bytes().iter().copied())
+        .chain(604800u32.to_be_bytes().iter().copied())
+        .chain(300u32.to_be_bytes().iter().copied()) // MINIMUM = 300
+        .collect();
+        r.extend_from_slice(&(soa_rdata.len() as u16).to_be_bytes());
+        r.extend_from_slice(&soa_rdata);
+        r
+    }
+
+    fn build_response_with_rcode(id: u16, rcode: u8) -> Vec<u8> {
+        let flags =
+            crate::parsed_query::build_response_flags(true, false, false, true, false, rcode);
+        let mut r = Vec::new();
+        r.extend_from_slice(&id.to_be_bytes());
+        r.extend_from_slice(&flags.to_be_bytes());
+        r.extend_from_slice(&0u16.to_be_bytes());
+        r.extend_from_slice(&0u16.to_be_bytes());
+        r.extend_from_slice(&0u16.to_be_bytes());
+        r.extend_from_slice(&0u16.to_be_bytes());
+        r
+    }
+
+    #[test]
+    fn test_extract_ttl_positive_response() {
+        let resp = build_positive_response(0x1234, 300);
+        let ttl = super::DnsServer::extract_ttl_from_response(&resp, 60);
+        assert_eq!(ttl, 300);
+    }
+
+    #[test]
+    fn test_extract_ttl_servfail_returns_zero() {
+        let resp = build_response_with_rcode(0x1234, 2u8); // SERVFAIL
+        let ttl = super::DnsServer::extract_ttl_from_response(&resp, 60);
+        assert_eq!(ttl, 0, "SERVFAIL must not be cached");
+    }
+
+    #[test]
+    fn test_extract_ttl_refused_returns_zero() {
+        let resp = build_response_with_rcode(0x1234, 5u8); // REFUSED
+        let ttl = super::DnsServer::extract_ttl_from_response(&resp, 60);
+        assert_eq!(ttl, 0, "REFUSED must not be cached");
+    }
+
+    #[test]
+    fn test_extract_ttl_nxdomain_with_soa() {
+        let resp = build_nxdomain_response_with_soa(0x1234);
+        let ttl = super::DnsServer::extract_ttl_from_response(&resp, 60);
+        // SOA minimum = 300, negative_cache_ttl = 60, min(300, 60) = 60
+        assert_eq!(ttl, 60);
+    }
+
+    #[test]
+    fn test_extract_ttl_nxdomain_no_soa_uses_negative_cache() {
+        // NXDOMAIN with no authority section
+        let flags = crate::parsed_query::build_response_flags(true, true, false, true, false, 3);
+        let mut resp = Vec::new();
+        resp.extend_from_slice(&0x1234u16.to_be_bytes());
+        resp.extend_from_slice(&flags.to_be_bytes());
+        resp.extend_from_slice(&1u16.to_be_bytes()); // QDCOUNT
+        resp.extend_from_slice(&0u16.to_be_bytes()); // ANCOUNT
+        resp.extend_from_slice(&0u16.to_be_bytes()); // NSCOUNT
+        resp.extend_from_slice(&0u16.to_be_bytes()); // ARCOUNT
+        resp.extend_from_slice(&[7, b'e', b'x', b'a', b'm', b'p', b'l', b'e']);
+        resp.extend_from_slice(&[3, b'c', b'o', b'm']);
+        resp.push(0);
+        resp.extend_from_slice(&1u16.to_be_bytes());
+        resp.extend_from_slice(&1u16.to_be_bytes());
+        let ttl = super::DnsServer::extract_ttl_from_response(&resp, 90);
+        assert_eq!(
+            ttl, 90,
+            "NXDOMAIN without SOA should use negative_cache_ttl"
+        );
+    }
+
+    #[test]
+    fn test_first_answer_ttl_basic() {
+        let resp = build_positive_response(0xABCD, 600);
+        let ttl = super::DnsServer::first_answer_ttl(&resp).unwrap();
+        assert_eq!(ttl, Some(600));
+    }
+
+    #[test]
+    fn test_first_answer_ttl_empty_answers() {
+        let flags = crate::parsed_query::build_response_flags(true, true, false, true, false, 0);
+        let mut r = Vec::new();
+        r.extend_from_slice(&0xABCDu16.to_be_bytes());
+        r.extend_from_slice(&flags.to_be_bytes());
+        r.extend_from_slice(&1u16.to_be_bytes());
+        r.extend_from_slice(&0u16.to_be_bytes()); // ANCOUNT=0
+        r.extend_from_slice(&0u16.to_be_bytes());
+        r.extend_from_slice(&0u16.to_be_bytes());
+        r.extend_from_slice(&[3, b'f', b'o', b'o']);
+        r.push(0);
+        r.extend_from_slice(&1u16.to_be_bytes());
+        r.extend_from_slice(&1u16.to_be_bytes());
+        let ttl = super::DnsServer::first_answer_ttl(&r).unwrap();
+        assert_eq!(ttl, None);
+    }
+
+    #[test]
+    fn test_skip_dns_name_simple() {
+        let mut buf = Vec::new();
+        // example.com
+        buf.extend_from_slice(&[7]);
+        buf.extend_from_slice(b"example");
+        buf.extend_from_slice(&[3]);
+        buf.extend_from_slice(b"com");
+        buf.push(0);
+        let end = super::DnsServer::skip_dns_name(&buf, 0).unwrap();
+        assert_eq!(end, 13); // 1+7 + 1+3 + 1 = 13
+    }
+
+    #[test]
+    fn test_skip_dns_name_compression_pointer() {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&[7]);
+        buf.extend_from_slice(b"example");
+        buf.extend_from_slice(&[3]);
+        buf.extend_from_slice(b"com");
+        buf.push(0);
+        // pointer to offset 0
+        buf.extend_from_slice(&[0xC0, 0x00]);
+        // Position 12 is the null terminator; the pointer is at position 13
+        let end = super::DnsServer::skip_dns_name(&buf, 13).unwrap();
+        assert_eq!(end, 15);
+    }
+
+    #[test]
+    fn test_skip_dns_name_truncated() {
+        let buf = &[0xFF]; // truncated label
+        assert!(super::DnsServer::skip_dns_name(buf, 0).is_err());
+    }
+
+    #[test]
+    fn test_negative_soa_ttl_basic() {
+        let resp = build_nxdomain_response_with_soa(0x1234);
+        let ttl = super::DnsServer::negative_soa_ttl(&resp).unwrap();
+        // SOA record TTL = 120, SOA MINIMUM = 300, min = 120
+        assert_eq!(ttl, Some(120));
+    }
+
+    #[test]
+    fn test_negative_soa_ttl_no_answer() {
+        let flags = crate::parsed_query::build_response_flags(true, true, false, true, false, 0);
+        let mut r = Vec::new();
+        r.extend_from_slice(&0x1234u16.to_be_bytes());
+        r.extend_from_slice(&flags.to_be_bytes());
+        r.extend_from_slice(&1u16.to_be_bytes());
+        r.extend_from_slice(&0u16.to_be_bytes());
+        r.extend_from_slice(&0u16.to_be_bytes()); // NSCOUNT=0
+        r.extend_from_slice(&0u16.to_be_bytes());
+        r.extend_from_slice(&[3, b'f', b'o', b'o']);
+        r.push(0);
+        r.extend_from_slice(&1u16.to_be_bytes());
+        r.extend_from_slice(&1u16.to_be_bytes());
+        let ttl = super::DnsServer::negative_soa_ttl(&r).unwrap();
+        assert_eq!(ttl, None);
     }
 }

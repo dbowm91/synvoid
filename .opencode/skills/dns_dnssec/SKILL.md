@@ -14,7 +14,7 @@ SynVoid implements a dual-mode DNS system:
 ## DNS Module Structure
 
 ```
-src/dns/
+crates/synvoid-dns/src/
 ├── mod.rs                    # Module exports
 ├── parsed_query.rs           # Canonical query parser (ParsedDnsQuery, QueryFlags, build_response_flags)
 ├── recursive.rs              # RecursiveDnsServer with caching
@@ -42,7 +42,7 @@ src/dns/
 Performs full DNSSEC validation when `enable_dnssec: true`.
 
 ```rust
-// src/dns/resolver.rs:605
+// crates/synvoid-dns/src/resolver.rs:605
 HickoryRecursor::from_paths(root_hints_path, trust_anchor_path, enable_dnssec)
 ```
 
@@ -57,7 +57,7 @@ HickoryRecursor::from_paths(root_hints_path, trust_anchor_path, enable_dnssec)
 Does NOT perform DNSSEC validation - simply forwards to upstream.
 
 ```rust
-// src/dns/resolver.rs:141
+// crates/synvoid-dns/src/resolver.rs:141
 // NOTE: is_dnssec_validated is ALWAYS false for HickoryResolver
 ```
 
@@ -88,7 +88,7 @@ If validation fails → SERVFAIL or Bogus
 
 The AD (Authentic Data) bit is set based on validation status:
 
-**Authoritative server** (`src/dns/server/response.rs`):
+**Authoritative server** (`crates/synvoid-dns/src/server/response.rs`):
 ```rust
 let records_signed = dnssec_ok && !records.is_empty() && zsk.is_some();
 if records_signed {
@@ -96,7 +96,7 @@ if records_signed {
 }
 ```
 
-**Recursive server** (`src/dns/recursive.rs`):
+**Recursive server** (`crates/synvoid-dns/src/recursive.rs`):
 ```rust
 authentic_data: is_dnssec_validated,  // From upstream resolver
 ```
@@ -165,7 +165,7 @@ Keys transition through states:
 
 ## Recursive DNS Cache Implementation
 
-**Location**: `src/dns/recursive_cache.rs`
+**Location**: `crates/synvoid-dns/src/recursive_cache.rs`
 
 The `RecursiveDnsCache` uses Moka with weighted entries (via `weigher` callback) AND time-to-live expiration. When using these together:
 
@@ -173,7 +173,7 @@ The `RecursiveDnsCache` uses Moka with weighted entries (via `weigher` callback)
 - Use `iter().count()` instead for accurate count of entries
 - Use `len()`, `positive_len()`, `negative_len()` methods which correctly use `iter().count()`
 
-**Example from** `src/dns/recursive_cache.rs:326-342`:
+**Example from** `crates/synvoid-dns/src/recursive_cache.rs:326-342`:
 ```rust
 pub fn len(&self) -> usize {
     let inner = &self.inner;
@@ -202,14 +202,14 @@ pub fn len(&self) -> usize {
 
 | File | Purpose |
 |------|---------|
-| `src/dns/resolver.rs` | HickoryRecursor, HickoryResolver, TrustAnchorManager |
-| `src/dns/recursive.rs` | RecursiveDnsServer with caching |
-| `src/dns/trust_anchor.rs` | RFC 5011 state machine |
-| `src/dns/dnssec_signing.rs` | RRSIG creation, NSEC/NSEC3 |
-| `src/dns/dnssec_validation.rs` | Key tag, DS digest, canonicalization |
-| `src/dns/server/dnssec_impl.rs` | Authoritative DNSSEC |
-| `src/dns/server/query.rs` | Query handling |
-| `src/dns/server/response.rs` | Response building |
+| `crates/synvoid-dns/src/resolver.rs` | HickoryRecursor, HickoryResolver, TrustAnchorManager |
+| `crates/synvoid-dns/src/recursive.rs` | RecursiveDnsServer with caching |
+| `crates/synvoid-dns/src/trust_anchor.rs` | RFC 5011 state machine |
+| `crates/synvoid-dns/src/dnssec_signing.rs` | RRSIG creation, NSEC/NSEC3 |
+| `crates/synvoid-dns/src/dnssec_validation.rs` | Key tag, DS digest, canonicalization |
+| `crates/synvoid-dns/src/server/dnssec_impl.rs` | Authoritative DNSSEC |
+| `crates/synvoid-dns/src/server/query.rs` | Query handling |
+| `crates/synvoid-dns/src/server/response.rs` | Response building |
 
 ## Milestone 1 Corrective Pass Changes
 
@@ -392,13 +392,13 @@ Keys with `trust_point == 0` (never valid) must use `trust_anchor_check()` with 
 1. **Forwarder mode ignores `dnssec_validation`** - Google/Cloudflare providers don't validate
 2. **TrustAnchorManager and hickory_proto::TrustAnchors are separate** - Synchronization between RFC 5011 manager and hickory's internal anchors
 3. **NSEC3 uses SHA-1** - RFC 9276 suggests SHA-1 is acceptable for NSEC3 hashing
-4. **NSEC3 Hash Length Encoding** - When creating NSEC3 records, the hash must be prefixed with its length as a single byte per RFC 5155 Section 3.2. The `create_nsec3_record()` function in `src/dns/dnssec_signing.rs` handles this correctly.
+4. **NSEC3 Hash Length Encoding** - When creating NSEC3 records, the hash must be prefixed with its length as a single byte per RFC 5155 Section 3.2. The `create_nsec3_record()` function in `crates/synvoid-dns/src/dnssec_signing.rs` handles this correctly.
 
 ## Security Notes
 
 ### DS Digest Comparison (2026-05-23)
 
-**Location**: `src/dns/dnssec_validation.rs:272`
+**Location**: `crates/synvoid-dns/src/dnssec_validation.rs:272`
 
 DS digest comparison MUST use constant-time comparison to prevent timing attacks:
 

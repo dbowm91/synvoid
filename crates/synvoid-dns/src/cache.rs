@@ -8,6 +8,7 @@ use ahash::AHasher;
 use moka::sync::Cache;
 use parking_lot::RwLock;
 
+use super::parsed_query::ParsedDnsQuery;
 use super::server::RecordType;
 
 /// Classifies the transport/EDNS response-shape class for cache keying.
@@ -86,6 +87,40 @@ impl CacheKey {
             client_subnet,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
+        }
+    }
+
+    /// Build a cache key from a parsed query for authoritative responses.
+    pub fn from_parsed_authoritative(
+        parsed: &ParsedDnsQuery<'_>,
+        client_ip: IpAddr,
+        transport_class: TransportClass,
+    ) -> Self {
+        CacheKey {
+            qname: parsed.qname.clone(),
+            qtype: parsed.qtype,
+            qclass: parsed.qclass,
+            dnssec_ok: parsed.dnssec_ok,
+            client_subnet: Some(client_ip),
+            transport_class,
+            namespace: CacheNamespace::Authoritative,
+        }
+    }
+
+    /// Build a cache key from a parsed query for recursive responses.
+    pub fn from_parsed_recursive(
+        parsed: &ParsedDnsQuery<'_>,
+        client_ip: IpAddr,
+        transport_class: TransportClass,
+    ) -> Self {
+        CacheKey {
+            qname: parsed.qname.clone(),
+            qtype: parsed.qtype,
+            qclass: parsed.qclass,
+            dnssec_ok: parsed.dnssec_ok,
+            client_subnet: Some(client_ip),
+            transport_class,
+            namespace: CacheNamespace::Recursive,
         }
     }
 
@@ -630,6 +665,9 @@ impl DnsCache {
         if let Some(keys) = inner.qname_index.write().get_mut(&key.qname) {
             keys.remove(&key);
         }
+
+        let fp_key = Self::fingerprint_key(&key);
+        inner.cache_fingerprints.write().remove(&fp_key);
 
         tracing::debug!("Invalidated cache entry for {}/{:?}", key.qname, key.qtype);
     }

@@ -276,16 +276,11 @@ impl DoqServer {
         let ctx = server.query_context();
 
         if let Some(c) = &ctx.cache {
-            let cache_key = crate::cache::CacheKey::new(
-                String::new(),
-                crate::server::RecordType::NULL,
-                Some(client_ip),
-            );
             crate::server::DnsServer::handle_query_with_cache(
                 &ctx,
                 query,
                 c,
-                cache_key,
+                crate::cache::TransportClass::Quic,
                 Some(client_ip),
             )
         } else {
