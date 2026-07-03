@@ -424,3 +424,108 @@ impl Default for ConnectionLimits {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connection_guard_acquire_and_drop() {
+        let mut limits = ConnectionLimits::new(2, 10, 65535, 65535, 1000, 300, 30);
+        limits.disable_graceful_degradation();
+        assert_eq!(limits.get_stats().current_connections, 0);
+
+        let guard1 = limits.try_acquire_connection().unwrap();
+        assert_eq!(limits.get_stats().current_connections, 1);
+
+        let guard2 = limits.try_acquire_connection().unwrap();
+        assert_eq!(limits.get_stats().current_connections, 2);
+
+        drop(guard1);
+        assert_eq!(limits.get_stats().current_connections, 1);
+
+        drop(guard2);
+        assert_eq!(limits.get_stats().current_connections, 0);
+    }
+
+    #[test]
+    fn connection_guard_max_rejects() {
+        let mut limits = ConnectionLimits::new(1, 10, 65535, 65535, 1000, 300, 30);
+        limits.disable_graceful_degradation();
+
+        let _guard = limits.try_acquire_connection().unwrap();
+        assert!(matches!(
+            limits.try_acquire_connection(),
+            Err(ConnectionLimitError::MaxConnectionsReached)
+        ));
+    }
+
+    #[test]
+    fn query_guard_acquire_and_drop() {
+        let mut limits = ConnectionLimits::new(10, 2, 65535, 65535, 1000, 300, 30);
+        limits.disable_graceful_degradation();
+        assert_eq!(limits.get_stats().current_queries, 0);
+
+        let g1 = limits.try_acquire_query().unwrap();
+        assert_eq!(limits.get_stats().current_queries, 1);
+
+        let g2 = limits.try_acquire_query().unwrap();
+        assert_eq!(limits.get_stats().current_queries, 2);
+
+        assert!(matches!(
+            limits.try_acquire_query(),
+            Err(ConnectionLimitError::MaxQueriesReached)
+        ));
+
+        drop(g1);
+        assert_eq!(limits.get_stats().current_queries, 1);
+
+        drop(g2);
+        assert_eq!(limits.get_stats().current_queries, 0);
+    }
+
+    #[test]
+    fn graceful_shutdown_blocks_acquire() {
+        let mut limits = ConnectionLimits::new(10, 10, 65535, 65535, 1000, 300, 30);
+        limits.disable_graceful_degradation();
+        limits.initiate_graceful_shutdown();
+
+        assert!(matches!(
+            limits.try_acquire_connection(),
+            Err(ConnectionLimitError::GracefulShutdown)
+        ));
+        assert!(matches!(
+            limits.try_acquire_query(),
+            Err(ConnectionLimitError::GracefulShutdown)
+        ));
+    }
+
+    #[test]
+    fn validate_query_size_rejects_large() {
+        let limits = ConnectionLimits::new(10, 10, 1024, 65535, 1000, 300, 30);
+        assert!(limits.validate_query_size(512).is_ok());
+        assert!(matches!(
+            limits.validate_query_size(2048),
+            Err(ConnectionLimitError::QueryTooLarge { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_response_size_rejects_large() {
+        let limits = ConnectionLimits::new(10, 10, 65535, 1024, 1000, 300, 30);
+        assert!(limits.validate_response_size(512).is_ok());
+        assert!(matches!(
+            limits.validate_response_size(2048),
+            Err(ConnectionLimitError::ResponseTooLarge { .. })
+        ));
+    }
+
+    #[test]
+    fn stats_usage_percent() {
+        let limits = ConnectionLimits::new(100, 200, 65535, 65535, 1000, 300, 30);
+        let stats = limits.get_stats();
+        assert_eq!(stats.connection_usage_percent(), 0.0);
+        assert_eq!(stats.query_usage_percent(), 0.0);
+        assert_eq!(stats.degradation_level, DegradationLevel::Normal);
+    }
+}

@@ -1251,7 +1251,7 @@ mod tests {
 
         let digest = crate::dnssec::compute_ds_digest(3, 257, 3, 8, &public_key);
         assert!(digest.is_err());
-        assert!(digest.unwrap_err().contains("Unsupported"));
+        assert!(digest.unwrap_err().contains("not yet supported"));
     }
 
     #[test]

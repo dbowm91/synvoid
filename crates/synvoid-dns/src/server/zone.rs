@@ -149,6 +149,15 @@ impl DnsServer {
                 zone.serial = 1;
             }
 
+            // RFC 1035 §3.3.13: every authoritative zone MUST contain at least one SOA record.
+            if zone.get_soa().is_none() {
+                tracing::error!(
+                    zone = %zone.origin,
+                    "Rejecting zone: no SOA record found (RFC 1035 §3.3.13 requires at least one SOA per zone)"
+                );
+                return Err(format!("Zone {}: must contain a SOA record", zone.origin));
+            }
+
             tracing::info!("Loaded DNS zone: {} (serial: {})", zone.origin, zone.serial);
             self.zones.insert(zone.origin.clone(), zone);
         }
@@ -162,6 +171,17 @@ impl DnsServer {
         let stored_zones = store.load_zones()?;
 
         for (origin, zone) in stored_zones {
+            // Defense-in-depth: reject zones without SOA even from persistence.
+            if zone.get_soa().is_none() {
+                tracing::error!(
+                    zone = %origin,
+                    "Rejecting zone from store: no SOA record found"
+                );
+                return Err(format!(
+                    "Zone {} (from store): must contain a SOA record",
+                    origin
+                ));
+            }
             tracing::info!("Loaded DNS zone from store: {}", origin);
             self.zones.insert(origin, zone);
         }

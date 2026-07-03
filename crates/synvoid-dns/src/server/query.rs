@@ -716,6 +716,35 @@ impl DnsServer {
             }
         };
 
+        // Defense-in-depth: SERVFAIL if the zone somehow lacks a SOA record.
+        // Zone loader validates SOA presence, but a zone loaded from persistence
+        // or a race condition could bypass that check.
+        if zone.get_soa().is_none() {
+            tracing::error!(
+                zone = %origin_str,
+                qname = %parsed.qname,
+                "Zone has no SOA record, returning SERVFAIL"
+            );
+            let flags = crate::parsed_query::build_response_flags(true, false, rd, false, false, 2);
+            let question = super::wire::build_question(&parsed.qname, parsed.qtype, 1);
+            let has_opt = edns_options.is_some();
+            let arcount: u16 = if has_opt { 1 } else { 0 };
+            let mut packet = Vec::with_capacity(12 + question.len() + 16);
+            packet.extend_from_slice(&parsed.id.to_be_bytes());
+            packet.extend_from_slice(&flags.to_be_bytes());
+            packet.extend_from_slice(&1u16.to_be_bytes());
+            packet.extend_from_slice(&0u16.to_be_bytes());
+            packet.extend_from_slice(&0u16.to_be_bytes());
+            packet.extend_from_slice(&arcount.to_be_bytes());
+            packet.extend_from_slice(&question);
+            if let Some(edns) = edns_options {
+                let opt =
+                    super::response_encoder::build_opt_encoded_record(edns.udp_payload_size, false);
+                packet.extend_from_slice(&opt.bytes);
+            }
+            return Some(Arc::new(packet));
+        }
+
         let origin_canonical = origin_str.clone();
         let origin_lower_for_strip = origin_canonical.trim_end_matches('.').to_lowercase();
 
@@ -1125,99 +1154,82 @@ impl DnsServer {
         signer_name: &str,
         rd: bool,
     ) -> Arc<Vec<u8>> {
-        let mut response = Vec::new();
-
-        response.extend_from_slice(&response_id.to_be_bytes());
-
-        let mut flags = crate::parsed_query::build_response_flags(true, false, rd, false, false, 3);
-        // AD flag: only set when NSEC/NSEC3 proof records are present
-        if dnssec_ok && !nsec_records.is_empty() {
-            flags |= 0x0020;
-        }
-        response.extend_from_slice(&flags.to_be_bytes());
-
-        response.extend_from_slice(&1u16.to_be_bytes());
-        response.extend_from_slice(&0u16.to_be_bytes());
-        response.extend_from_slice(&0u16.to_be_bytes());
-        response.extend_from_slice(&(nsec_records.len() as u16).to_be_bytes());
-
-        let name_parts: Vec<&str> = if qname.is_empty() || qname == "@" {
-            vec![""]
-        } else {
-            qname.split('.').collect()
+        let _ = nsec_record_type;
+        use super::response_encoder::{
+            assemble_packet, build_opt_encoded_record, build_response_flags, encode_rr, DnsSection,
+            ResponseEnvelope,
         };
 
-        for part in &name_parts {
-            if !part.is_empty() {
-                response.push((*part).len() as u8);
-                response.extend_from_slice(part.as_bytes());
-            }
-        }
-        response.push(0);
+        let mut envelope = ResponseEnvelope::default();
 
-        response.extend_from_slice(&qtype.to_be_bytes());
-        response.extend_from_slice(&1u16.to_be_bytes());
-
+        // Authority section: NSEC/NSEC3 denial proof records
         for nsec_record in nsec_records {
-            let nsec_name_parts: Vec<&str> = nsec_record.name.split('.').collect();
-
-            for part in &nsec_name_parts {
-                if !part.is_empty() {
-                    response.push((*part).len() as u8);
-                    response.extend_from_slice(part.as_bytes());
+            let encoded = DnsZoneRecord {
+                name: nsec_record.name.clone(),
+                record_type: nsec_record.record_type,
+                value: nsec_record.value.clone(),
+                ttl: nsec_record.ttl,
+                priority: None,
+            };
+            match encode_rr(&encoded, None) {
+                Ok(mut rec) => {
+                    rec.section = DnsSection::Authority;
+                    envelope.authority_records.push(rec);
+                }
+                Err(reason) => {
+                    tracing::error!(
+                        qname = %qname,
+                        reason = %reason,
+                        "DNS encode: NSEC/NSEC3 record failed for NXDOMAIN response"
+                    );
                 }
             }
-            response.push(0);
 
-            response.extend_from_slice(&nsec_record_type.to_be_bytes());
-            response.extend_from_slice(&1u16.to_be_bytes());
-            response.extend_from_slice(&nsec_record.ttl.to_be_bytes());
-
-            if let Ok(nsec_data) = hex::decode(&nsec_record.value) {
-                response.extend_from_slice(&(nsec_data.len() as u16).to_be_bytes());
-                response.extend_from_slice(&nsec_data);
-            }
-        }
-
-        if dnssec_ok && !nsec_records.is_empty() {
-            if let Some(key) = zsk {
-                for nsec_record in nsec_records {
+            // RRSIG for the denial proof record
+            if dnssec_ok {
+                if let Some(key) = zsk {
                     let rrsig = Self::create_signed_rrsig(nsec_record, signer_name, key);
                     if !rrsig.is_empty() {
-                        let nsec_name_parts: Vec<&str> = nsec_record.name.split('.').collect();
-                        for part in &nsec_name_parts {
-                            if !part.is_empty() {
-                                response.push((*part).len() as u8);
-                                response.extend_from_slice(part.as_bytes());
+                        let rrsig_record = DnsZoneRecord {
+                            name: nsec_record.name.clone(),
+                            record_type: RecordType::RRSIG,
+                            value: hex::encode(&rrsig),
+                            ttl: nsec_record.ttl,
+                            priority: None,
+                        };
+                        match encode_rr(&rrsig_record, None) {
+                            Ok(mut rec) => {
+                                rec.section = DnsSection::Authority;
+                                envelope.authority_records.push(rec);
+                            }
+                            Err(reason) => {
+                                tracing::error!(
+                                    qname = %qname,
+                                    reason = %reason,
+                                    "DNS encode: RRSIG record failed for NXDOMAIN response"
+                                );
                             }
                         }
-                        response.push(0);
-                        response.extend_from_slice(&46u16.to_be_bytes());
-                        response.extend_from_slice(&1u16.to_be_bytes());
-                        response.extend_from_slice(&nsec_record.ttl.to_be_bytes());
-                        response.extend_from_slice(&(rrsig.len() as u16).to_be_bytes());
-                        response.extend_from_slice(&rrsig);
                     }
                 }
             }
         }
 
+        // Additional section: OPT record
         if let Some(edns) = edns_options {
-            let opt_record =
-                crate::edns::EdnsOptions::build_opt_record(edns.udp_payload_size, dnssec_ok);
-            response.extend_from_slice(&[0]);
-            response.extend_from_slice(&41u16.to_be_bytes());
-            response.extend_from_slice(&(opt_record.len() as u16).to_be_bytes());
-            response.extend_from_slice(&opt_record);
+            envelope
+                .additional_records
+                .push(build_opt_encoded_record(edns.udp_payload_size, dnssec_ok));
         } else if dnssec_ok {
-            let opt_record = crate::edns::EdnsOptions::build_opt_record(4096, dnssec_ok);
-            response.extend_from_slice(&[0]);
-            response.extend_from_slice(&41u16.to_be_bytes());
-            response.extend_from_slice(&(opt_record.len() as u16).to_be_bytes());
-            response.extend_from_slice(&opt_record);
+            envelope
+                .additional_records
+                .push(build_opt_encoded_record(4096, dnssec_ok));
         }
 
-        Arc::new(response)
+        // Authoritative servers never set AD — AD is a recursive validation signal.
+        let flags = build_response_flags(true, false, rd, false, false, 3);
+        let packet = assemble_packet(&envelope, response_id, flags, qname, qtype);
+        Arc::new(packet)
     }
 
     pub(super) fn build_nodata_response(
@@ -1233,134 +1245,99 @@ impl DnsServer {
         soa_record: Option<&DnsZoneRecord>,
         rd: bool,
     ) -> Arc<Vec<u8>> {
-        let mut response = Vec::new();
-
-        response.extend_from_slice(&response_id.to_be_bytes());
-
-        // NODATA: RCODE 0 (NOERROR), authoritative answer
-        let mut flags = crate::parsed_query::build_response_flags(true, false, rd, false, false, 0);
-        // AD flag: set when NSEC3 proof records are present
-        if dnssec_ok && !nsec_records.is_empty() {
-            flags |= 0x0020;
-        }
-        response.extend_from_slice(&flags.to_be_bytes());
-
-        response.extend_from_slice(&1u16.to_be_bytes()); // QDCOUNT
-        response.extend_from_slice(&0u16.to_be_bytes()); // ANCOUNT (empty for NODATA)
-        response.extend_from_slice(&0u16.to_be_bytes()); // NSCOUNT placeholder
-        let nscount_offset = response.len() - 2;
-        response.extend_from_slice(&(nsec_records.len() as u16).to_be_bytes()); // ARCOUNT placeholder
-
-        let name_parts: Vec<&str> = if qname.is_empty() || qname == "@" {
-            vec![""]
-        } else {
-            qname.split('.').collect()
+        let _ = nsec_record_type;
+        use super::response_encoder::{
+            assemble_packet, build_opt_encoded_record, build_response_flags, encode_rr, DnsSection,
+            ResponseEnvelope,
         };
 
-        for part in &name_parts {
-            if !part.is_empty() {
-                response.push((*part).len() as u8);
-                response.extend_from_slice(part.as_bytes());
-            }
-        }
-        response.push(0);
+        let mut envelope = ResponseEnvelope::default();
 
-        response.extend_from_slice(&qtype.to_be_bytes());
-        response.extend_from_slice(&1u16.to_be_bytes());
-
-        let mut nscount: u16 = 0;
-
-        // Add SOA record to authority section (RFC 2308)
+        // Authority section: SOA record (RFC 2308)
         if let Some(soa) = soa_record {
-            let soa_name_parts: Vec<&str> = if qname.is_empty() || qname == "@" {
-                vec![""]
-            } else {
-                qname.split('.').collect()
-            };
-
-            for part in &soa_name_parts {
-                if !part.is_empty() {
-                    response.push((*part).len() as u8);
-                    response.extend_from_slice(part.as_bytes());
+            match encode_rr(soa, None) {
+                Ok(mut rec) => {
+                    rec.section = DnsSection::Authority;
+                    envelope.authority_records.push(rec);
+                }
+                Err(reason) => {
+                    tracing::error!(
+                        qname = %qname,
+                        reason = %reason,
+                        "DNS encode: SOA record failed for NODATA response"
+                    );
                 }
             }
-            response.push(0);
-
-            response.extend_from_slice(&RecordType::SOA.to_u16().to_be_bytes());
-            response.extend_from_slice(&1u16.to_be_bytes());
-            response.extend_from_slice(&soa.ttl.to_be_bytes());
-
-            // SOA record value as wire format
-            let soa_value = soa.value.as_bytes();
-            response.extend_from_slice(&(soa_value.len() as u16).to_be_bytes());
-            response.extend_from_slice(soa_value);
-            nscount += 1;
         }
 
+        // Authority section: NSEC/NSEC3 denial proof records
         for nsec_record in nsec_records {
-            let nsec_name_parts: Vec<&str> = nsec_record.name.split('.').collect();
-
-            for part in &nsec_name_parts {
-                if !part.is_empty() {
-                    response.push((*part).len() as u8);
-                    response.extend_from_slice(part.as_bytes());
+            let encoded = DnsZoneRecord {
+                name: nsec_record.name.clone(),
+                record_type: nsec_record.record_type,
+                value: nsec_record.value.clone(),
+                ttl: nsec_record.ttl,
+                priority: None,
+            };
+            match encode_rr(&encoded, None) {
+                Ok(mut rec) => {
+                    rec.section = DnsSection::Authority;
+                    envelope.authority_records.push(rec);
+                }
+                Err(reason) => {
+                    tracing::error!(
+                        qname = %qname,
+                        reason = %reason,
+                        "DNS encode: NSEC/NSEC3 record failed for NODATA response"
+                    );
                 }
             }
-            response.push(0);
 
-            response.extend_from_slice(&nsec_record_type.to_be_bytes());
-            response.extend_from_slice(&1u16.to_be_bytes());
-            response.extend_from_slice(&nsec_record.ttl.to_be_bytes());
-
-            if let Ok(nsec_data) = hex::decode(&nsec_record.value) {
-                response.extend_from_slice(&(nsec_data.len() as u16).to_be_bytes());
-                response.extend_from_slice(&nsec_data);
-            }
-            nscount += 1;
-        }
-
-        if dnssec_ok && !nsec_records.is_empty() {
-            if let Some(key) = zsk {
-                for nsec_record in nsec_records {
+            // RRSIG for the denial proof record
+            if dnssec_ok {
+                if let Some(key) = zsk {
                     let rrsig = Self::create_signed_rrsig(nsec_record, signer_name, key);
                     if !rrsig.is_empty() {
-                        let nsec_name_parts: Vec<&str> = nsec_record.name.split('.').collect();
-                        for part in &nsec_name_parts {
-                            if !part.is_empty() {
-                                response.push((*part).len() as u8);
-                                response.extend_from_slice(part.as_bytes());
+                        let rrsig_record = DnsZoneRecord {
+                            name: nsec_record.name.clone(),
+                            record_type: RecordType::RRSIG,
+                            value: hex::encode(&rrsig),
+                            ttl: nsec_record.ttl,
+                            priority: None,
+                        };
+                        match encode_rr(&rrsig_record, None) {
+                            Ok(mut rec) => {
+                                rec.section = DnsSection::Authority;
+                                envelope.authority_records.push(rec);
+                            }
+                            Err(reason) => {
+                                tracing::error!(
+                                    qname = %qname,
+                                    reason = %reason,
+                                    "DNS encode: RRSIG record failed for NODATA response"
+                                );
                             }
                         }
-                        response.push(0);
-                        response.extend_from_slice(&46u16.to_be_bytes());
-                        response.extend_from_slice(&1u16.to_be_bytes());
-                        response.extend_from_slice(&nsec_record.ttl.to_be_bytes());
-                        response.extend_from_slice(&(rrsig.len() as u16).to_be_bytes());
-                        response.extend_from_slice(&rrsig);
-                        nscount += 1;
                     }
                 }
             }
         }
 
-        // Update NSCOUNT
-        response[nscount_offset..nscount_offset + 2].copy_from_slice(&nscount.to_be_bytes());
-
+        // Additional section: OPT record
         if let Some(edns) = edns_options {
-            let opt_record =
-                crate::edns::EdnsOptions::build_opt_record(edns.udp_payload_size, dnssec_ok);
-            response.extend_from_slice(&[0]);
-            response.extend_from_slice(&41u16.to_be_bytes());
-            response.extend_from_slice(&(opt_record.len() as u16).to_be_bytes());
-            response.extend_from_slice(&opt_record);
+            envelope
+                .additional_records
+                .push(build_opt_encoded_record(edns.udp_payload_size, dnssec_ok));
         } else if dnssec_ok {
-            let opt_record = crate::edns::EdnsOptions::build_opt_record(4096, dnssec_ok);
-            response.extend_from_slice(&[0]);
-            response.extend_from_slice(&41u16.to_be_bytes());
-            response.extend_from_slice(&(opt_record.len() as u16).to_be_bytes());
-            response.extend_from_slice(&opt_record);
+            envelope
+                .additional_records
+                .push(build_opt_encoded_record(4096, dnssec_ok));
         }
 
-        Arc::new(response)
+        // NODATA: RCODE 0 (NOERROR), authoritative answer
+        // Authoritative servers never set AD — AD is a recursive validation signal.
+        let flags = build_response_flags(true, false, rd, false, false, 0);
+        let packet = assemble_packet(&envelope, response_id, flags, qname, qtype);
+        Arc::new(packet)
     }
 }

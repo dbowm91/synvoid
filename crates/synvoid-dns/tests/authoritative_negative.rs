@@ -1072,3 +1072,178 @@ fn cname_owner_queried_for_a_returns_cname() {
         "CNAME target must be www.test.local"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Phase 5: lookup_authoritative unit tests
+// ---------------------------------------------------------------------------
+
+use synvoid_dns::server::AuthoritativeLookupOutcome;
+
+#[test]
+fn lookup_authoritative_exact_a_match() {
+    let zone = build_test_zone();
+    let outcome = zone.lookup_authoritative("www", 1);
+    match outcome {
+        AuthoritativeLookupOutcome::Positive {
+            origin,
+            qname,
+            qtype,
+            records,
+        } => {
+            assert_eq!(origin, "test.local");
+            assert_eq!(qname, "www");
+            assert_eq!(qtype, 1);
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0].value, "192.0.2.10");
+        }
+        other => panic!("Expected Positive, got {:?}", other),
+    }
+}
+
+#[test]
+fn lookup_authoritative_cname_returns_cname_for_any_qtype() {
+    let zone = build_test_zone();
+    let outcome = zone.lookup_authoritative("alias", 1);
+    match outcome {
+        AuthoritativeLookupOutcome::Cname {
+            origin,
+            qname,
+            cname_records,
+        } => {
+            assert_eq!(origin, "test.local");
+            assert_eq!(qname, "alias");
+            assert_eq!(cname_records.len(), 1);
+            assert_eq!(cname_records[0].value, "www.test.local.");
+        }
+        other => panic!("Expected Cname, got {:?}", other),
+    }
+}
+
+#[test]
+fn lookup_authoritative_cname_returns_cname_for_aaaa() {
+    let zone = build_test_zone();
+    let outcome = zone.lookup_authoritative("alias", 28);
+    assert!(
+        matches!(outcome, AuthoritativeLookupOutcome::Cname { .. }),
+        "AAAA query on CNAME owner must return Cname, got {:?}",
+        outcome
+    );
+}
+
+#[test]
+fn lookup_authoritative_name_exists_wrong_type_returns_nodata() {
+    let zone = build_test_zone();
+    let outcome = zone.lookup_authoritative("www", 15);
+    match outcome {
+        AuthoritativeLookupOutcome::NoData {
+            origin,
+            qname,
+            qtype,
+            soa,
+        } => {
+            assert_eq!(origin, "test.local");
+            assert_eq!(qname, "www");
+            assert_eq!(qtype, 15);
+            assert!(soa.is_some(), "NoData must include SOA");
+        }
+        other => panic!("Expected NoData, got {:?}", other),
+    }
+}
+
+#[test]
+fn lookup_authoritative_nonexistent_name_returns_nxdomain() {
+    let zone = build_test_zone();
+    let outcome = zone.lookup_authoritative("nonexistent", 1);
+    match outcome {
+        AuthoritativeLookupOutcome::NxDomain {
+            origin,
+            qname,
+            qtype,
+            soa,
+        } => {
+            assert_eq!(origin, "test.local");
+            assert_eq!(qname, "nonexistent");
+            assert_eq!(qtype, 1);
+            assert!(soa.is_some(), "NxDomain must include SOA");
+        }
+        other => panic!("Expected NxDomain, got {:?}", other),
+    }
+}
+
+#[test]
+fn lookup_authoritative_deep_subdomain_returns_nxdomain() {
+    let zone = build_test_zone();
+    let outcome = zone.lookup_authoritative("deep.sub", 1);
+    assert!(
+        matches!(outcome, AuthoritativeLookupOutcome::NxDomain { .. }),
+        "Deep subdomain must return NxDomain, got {:?}",
+        outcome
+    );
+}
+
+#[test]
+fn lookup_authoritative_txt_match_returns_positive() {
+    let zone = build_test_zone();
+    let outcome = zone.lookup_authoritative("_txt", 16);
+    match outcome {
+        AuthoritativeLookupOutcome::Positive { records, .. } => {
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0].value, "hello");
+        }
+        other => panic!("Expected Positive, got {:?}", other),
+    }
+}
+
+#[test]
+fn lookup_authoritative_ns_at_origin() {
+    let zone = build_test_zone();
+    let outcome = zone.lookup_authoritative("@", 2);
+    match outcome {
+        AuthoritativeLookupOutcome::Positive { records, .. } => {
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0].value, "ns1.test.local.");
+        }
+        other => panic!("Expected Positive for @ NS, got {:?}", other),
+    }
+}
+
+#[test]
+fn lookup_authoritative_soa_at_origin() {
+    let zone = build_test_zone();
+    let outcome = zone.lookup_authoritative("@", 6);
+    match outcome {
+        AuthoritativeLookupOutcome::Positive { records, .. } => {
+            assert_eq!(records.len(), 1);
+            assert!(records[0].value.contains("ns1.test.local."));
+        }
+        other => panic!("Expected Positive for @ SOA, got {:?}", other),
+    }
+}
+
+#[test]
+fn lookup_authoritative_ns_nonexistent_type_at_origin_returns_nodata() {
+    let zone = build_test_zone();
+    let outcome = zone.lookup_authoritative("@", 28);
+    match outcome {
+        AuthoritativeLookupOutcome::NoData { soa, .. } => {
+            assert!(soa.is_some(), "NoData at origin must include SOA");
+        }
+        other => panic!("Expected NoData, got {:?}", other),
+    }
+}
+
+#[test]
+fn lookup_authoritative_positive_records_cloned_independently() {
+    let zone = build_test_zone();
+    let outcome1 = zone.lookup_authoritative("www", 1);
+    let outcome2 = zone.lookup_authoritative("www", 1);
+    if let (
+        AuthoritativeLookupOutcome::Positive { records: r1, .. },
+        AuthoritativeLookupOutcome::Positive { records: r2, .. },
+    ) = (outcome1, outcome2)
+    {
+        assert_eq!(r1[0].value, r2[0].value);
+    } else {
+        panic!("Both lookups should return Positive");
+    }
+}

@@ -149,4 +149,60 @@ mod tests {
         let regular = Ipv6Addr::new(2001, 0xdb8, 0, 0, 0, 0, 0, 1);
         assert!(!config.is_synthesized_aaaa(regular));
     }
+
+    #[test]
+    fn translator_disabled_returns_false() {
+        let config = Dns64Config {
+            enabled: false,
+            ..Default::default()
+        };
+        let translator = Dns64Translator::new(config);
+        let client = Some(IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)));
+        assert!(!translator.should_synthesize(28, client));
+    }
+
+    #[test]
+    fn translator_ipv4_client_bypass() {
+        let config = Dns64Config::new(Ipv6Addr::new(0x0064, 0xff9b, 0, 0, 0, 0, 0, 0));
+        let translator = Dns64Translator::new(config);
+        let client = Some(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)));
+        assert!(!translator.should_synthesize(28, client));
+    }
+
+    #[test]
+    fn translator_non_aaaa_query_bypass() {
+        let config = Dns64Config::new(Ipv6Addr::new(0x0064, 0xff9b, 0, 0, 0, 0, 0, 0));
+        let translator = Dns64Translator::new(config);
+        let client = Some(IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)));
+        // qtype 1 = A, not AAAA (28)
+        assert!(!translator.should_synthesize(1, client));
+    }
+
+    #[test]
+    fn translator_no_client_info_bypass() {
+        let config = Dns64Config::new(Ipv6Addr::new(0x0064, 0xff9b, 0, 0, 0, 0, 0, 0));
+        let translator = Dns64Translator::new(config);
+        // No client IP provided → should not synthesize
+        assert!(!translator.should_synthesize(28, None));
+    }
+
+    #[test]
+    fn translator_enabled_aaaa_from_ipv6_synthesizes() {
+        let config = Dns64Config::new(Ipv6Addr::new(0x0064, 0xff9b, 0, 0, 0, 0, 0, 0));
+        let translator = Dns64Translator::new(config);
+        let client = Some(IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)));
+        assert!(translator.should_synthesize(28, client));
+    }
+
+    #[test]
+    fn translator_custom_prefix_synthesis() {
+        let custom_prefix = Ipv6Addr::new(0x2001, 0xdb8, 0x64, 0, 0, 0, 0, 0);
+        let config = Dns64Config::new(custom_prefix);
+        let ipv4 = Ipv4Addr::new(10, 0, 0, 1);
+        let aaaa = config.synthesize_aaaa(ipv4);
+        assert_eq!(
+            aaaa,
+            Ipv6Addr::new(0x2001, 0xdb8, 0x64, 0, 0, 0, 0x0a00, 0x0001)
+        );
+    }
 }

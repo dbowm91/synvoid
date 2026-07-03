@@ -20,15 +20,8 @@ impl DnsServer {
 
         response.extend_from_slice(&query_id.to_be_bytes());
 
-        let mut qr_aa = 0x8580u16;
-        // AD flag: only set when records are actually DNSSEC-signed (not just when client requests it)
-        let records_signed = dnssec_ok
-            && !records.is_empty()
-            && records[0].record_type != RecordType::DNSKEY
-            && zsk.is_some();
-        if records_signed {
-            qr_aa |= 0x0020;
-        }
+        // Authoritative servers never set AD — AD is a recursive validation signal.
+        let qr_aa = 0x8580u16;
         response.extend_from_slice(&qr_aa.to_be_bytes());
 
         response.extend_from_slice(&1u16.to_be_bytes());

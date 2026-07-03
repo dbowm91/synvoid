@@ -1091,11 +1091,8 @@ impl DnsServer {
         });
         response.extend_from_slice(&response_id.to_be_bytes());
 
-        let mut flags = 0x8583u16;
-        // AD flag: only set when NSEC/NSEC3 proof records are present
-        if dnssec_ok && !nsec_records.is_empty() {
-            flags |= 0x0020;
-        }
+        // Authoritative servers never set AD — AD is a recursive validation signal.
+        let flags = 0x8583u16;
         response.extend_from_slice(&flags.to_be_bytes());
 
         response.extend_from_slice(&1u16.to_be_bytes());
@@ -1202,11 +1199,8 @@ impl DnsServer {
         response.extend_from_slice(&response_id.to_be_bytes());
 
         // NODATA: RCODE 0 (NOERROR), authoritative answer
-        let mut flags = 0x8580u16;
-        // AD flag: set when NSEC3 proof records are present
-        if dnssec_ok && !nsec_records.is_empty() {
-            flags |= 0x0020;
-        }
+        // Authoritative servers never set AD — AD is a recursive validation signal.
+        let flags = 0x8580u16;
         response.extend_from_slice(&flags.to_be_bytes());
 
         response.extend_from_slice(&1u16.to_be_bytes()); // QDCOUNT

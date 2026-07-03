@@ -141,7 +141,9 @@ impl DnsServer {
                 .push(build_opt_encoded_record(udp_size, dnssec_ok));
         }
 
-        let flags = build_response_flags(true, false, rd, false, records_signed, 0);
+        // Authoritative servers never set AD — AD is a recursive validation signal.
+        // records_signed is only used for signing, not for the AD flag.
+        let flags = build_response_flags(true, false, rd, false, false, 0);
 
         let response = assemble_packet(&envelope, query_id, flags, qname, qtype);
 
@@ -692,5 +694,392 @@ impl DnsServer {
 
         let packet = assemble_packet(&envelope, query_id, flags, qname, qtype);
         (Arc::new(packet), EncodeReport::default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::server::response_encoder::{build_opt_encoded_record, build_response_flags};
+
+    fn make_record(name: &str, rt: RecordType, value: &str, ttl: u32) -> DnsZoneRecord {
+        DnsZoneRecord {
+            name: name.to_string(),
+            record_type: rt,
+            value: value.to_string(),
+            ttl,
+            priority: None,
+        }
+    }
+
+    #[test]
+    fn tc_oversized_no_edns_returns_tc_within_512() {
+        let mut records = Vec::new();
+        for i in 0..50 {
+            records.push(make_record(
+                &format!("host{}.example.com", i),
+                RecordType::TXT,
+                &"x".repeat(20),
+                300,
+            ));
+        }
+
+        let (resp, _report) = DnsServer::build_response(
+            0xABCD,
+            "example.com",
+            16,
+            &records,
+            false,
+            None,
+            None,
+            "",
+            true,
+        );
+
+        assert!(
+            resp.len() <= 512,
+            "TC response must fit in 512, got {}",
+            resp.len()
+        );
+        let flags = u16::from_be_bytes([resp[2], resp[3]]);
+        assert_ne!(flags & 0x0200, 0, "TC bit must be set");
+        let qdcount = u16::from_be_bytes([resp[4], resp[5]]);
+        let ancount = u16::from_be_bytes([resp[6], resp[7]]);
+        let nscount = u16::from_be_bytes([resp[8], resp[9]]);
+        let arcount = u16::from_be_bytes([resp[10], resp[11]]);
+        assert_eq!(qdcount, 1, "QDCOUNT must be 1");
+        assert_eq!(ancount, 0, "ANCOUNT must be 0 in TC response");
+        assert_eq!(nscount, 0, "NSCOUNT must be 0 in TC response");
+        assert_eq!(arcount, 0, "ARCOUNT must be 0 without EDNS");
+    }
+
+    #[test]
+    fn tc_oversized_exceeding_edns_4096_returns_tc_with_opt() {
+        let mut records = Vec::new();
+        for i in 0..200 {
+            records.push(make_record(
+                &format!("host{}.example.com", i),
+                RecordType::TXT,
+                &"x".repeat(100),
+                300,
+            ));
+        }
+
+        let edns = EdnsOptions {
+            udp_payload_size: 4096,
+            dnssec_ok: false,
+            ..Default::default()
+        };
+
+        let (resp, _report) = DnsServer::build_response(
+            0x1234,
+            "example.com",
+            16,
+            &records,
+            false,
+            Some(&edns),
+            None,
+            "",
+            true,
+        );
+
+        let flags = u16::from_be_bytes([resp[2], resp[3]]);
+        assert_ne!(
+            flags & 0x0200,
+            0,
+            "TC bit must be set when response exceeds EDNS buffer"
+        );
+        assert!(
+            resp.len() <= 4096,
+            "TC response must fit in EDNS buffer, got {}",
+            resp.len()
+        );
+        let arcount = u16::from_be_bytes([resp[10], resp[11]]);
+        assert_eq!(arcount, 1, "ARCOUNT must be 1 (OPT) with EDNS");
+    }
+
+    #[test]
+    fn tc_response_preserves_query_id() {
+        let mut records = Vec::new();
+        for i in 0..50 {
+            records.push(make_record(
+                &format!("host{}.example.com", i),
+                RecordType::TXT,
+                &"x".repeat(20),
+                300,
+            ));
+        }
+
+        let (resp, _) = DnsServer::build_response(
+            0xDEAD,
+            "example.com",
+            16,
+            &records,
+            false,
+            None,
+            None,
+            "",
+            true,
+        );
+
+        let id = u16::from_be_bytes([resp[0], resp[1]]);
+        assert_eq!(id, 0xDEAD, "Query ID must be preserved in TC response");
+    }
+
+    #[test]
+    fn tc_response_preserves_rd_flag() {
+        let mut records = Vec::new();
+        for i in 0..50 {
+            records.push(make_record(
+                &format!("host{}.example.com", i),
+                RecordType::TXT,
+                &"x".repeat(20),
+                300,
+            ));
+        }
+
+        // rd=true
+        let (resp_rd, _) = DnsServer::build_response(
+            0x1111,
+            "example.com",
+            16,
+            &records,
+            false,
+            None,
+            None,
+            "",
+            true,
+        );
+        let flags_rd = u16::from_be_bytes([resp_rd[2], resp_rd[3]]);
+        assert_ne!(
+            flags_rd & 0x0100,
+            0,
+            "RD bit must be set when query has RD=true"
+        );
+
+        // rd=false
+        let (resp_nord, _) = DnsServer::build_response(
+            0x2222,
+            "example.com",
+            16,
+            &records,
+            false,
+            None,
+            None,
+            "",
+            false,
+        );
+        let flags_nord = u16::from_be_bytes([resp_nord[2], resp_nord[3]]);
+        assert_eq!(
+            flags_nord & 0x0100,
+            0,
+            "RD bit must not be set when query has RD=false"
+        );
+    }
+
+    #[test]
+    fn tc_response_sets_aa_and_no_ra() {
+        let mut records = Vec::new();
+        for i in 0..50 {
+            records.push(make_record(
+                &format!("host{}.example.com", i),
+                RecordType::TXT,
+                &"x".repeat(20),
+                300,
+            ));
+        }
+
+        let (resp, _) = DnsServer::build_response(
+            0x3333,
+            "example.com",
+            16,
+            &records,
+            false,
+            None,
+            None,
+            "",
+            true,
+        );
+        let flags = u16::from_be_bytes([resp[2], resp[3]]);
+        assert_ne!(flags & 0x0400, 0, "AA bit must be set (authoritative)");
+        assert_eq!(flags & 0x0080, 0, "RA bit must not be set (authoritative)");
+    }
+
+    #[test]
+    fn tc_response_rcode_zero() {
+        let mut records = Vec::new();
+        for i in 0..50 {
+            records.push(make_record(
+                &format!("host{}.example.com", i),
+                RecordType::TXT,
+                &"x".repeat(20),
+                300,
+            ));
+        }
+
+        let (resp, _) = DnsServer::build_response(
+            0x4444,
+            "example.com",
+            16,
+            &records,
+            false,
+            None,
+            None,
+            "",
+            true,
+        );
+        let flags = u16::from_be_bytes([resp[2], resp[3]]);
+        let rcode = (flags & 0x000F) as u8;
+        assert_eq!(rcode, 0, "RCODE must be 0 (NOERROR) for TC response");
+    }
+
+    #[test]
+    fn tc_acme_txt_response_rd_echoed() {
+        let mut records = Vec::new();
+        for i in 0..30 {
+            records.push(make_record(
+                &format!("_acme-challenge.host{}.example.com", i),
+                RecordType::TXT,
+                &"x".repeat(30),
+                300,
+            ));
+        }
+
+        let (resp, _) = DnsServer::build_response(
+            0x5555,
+            "_acme-challenge.example.com",
+            16,
+            &records,
+            false,
+            None,
+            None,
+            "",
+            true,
+        );
+
+        let flags = u16::from_be_bytes([resp[2], resp[3]]);
+        assert_ne!(
+            flags & 0x0200,
+            0,
+            "TC bit must be set for oversized ACME response"
+        );
+        assert_ne!(flags & 0x0100, 0, "RD must be echoed in TC ACME response");
+    }
+
+    #[test]
+    fn non_oversized_no_edns_fits_512() {
+        let records = vec![make_record(
+            "www.example.com",
+            RecordType::A,
+            "192.0.2.10",
+            300,
+        )];
+
+        let (resp, report) = DnsServer::build_response(
+            0x6666,
+            "example.com",
+            1,
+            &records,
+            false,
+            None,
+            None,
+            "",
+            true,
+        );
+
+        assert!(
+            resp.len() <= 512,
+            "Small response must fit in 512, got {}",
+            resp.len()
+        );
+        let flags = u16::from_be_bytes([resp[2], resp[3]]);
+        assert_eq!(
+            flags & 0x0200,
+            0,
+            "TC bit must NOT be set for small response"
+        );
+        assert_eq!(report.encoded_ok, 1, "One record must be encoded");
+    }
+
+    #[test]
+    fn non_oversized_with_edns_4096_no_truncation() {
+        let mut records = Vec::new();
+        for i in 0..10 {
+            records.push(make_record(
+                &format!("host{}.example.com", i),
+                RecordType::TXT,
+                &"x".repeat(50),
+                300,
+            ));
+        }
+
+        let edns = EdnsOptions {
+            udp_payload_size: 4096,
+            dnssec_ok: false,
+            ..Default::default()
+        };
+
+        let (resp, report) = DnsServer::build_response(
+            0x7777,
+            "example.com",
+            16,
+            &records,
+            false,
+            Some(&edns),
+            None,
+            "",
+            true,
+        );
+
+        // Should be > 512 but <= 4096, with no TC
+        assert!(
+            resp.len() > 512,
+            "Response with 10 TXT should exceed 512, got {}",
+            resp.len()
+        );
+        assert!(
+            resp.len() <= 4096,
+            "Response must fit in EDNS 4096, got {}",
+            resp.len()
+        );
+        let flags = u16::from_be_bytes([resp[2], resp[3]]);
+        assert_eq!(
+            flags & 0x0200,
+            0,
+            "TC bit must NOT be set when response fits EDNS buffer"
+        );
+        assert_eq!(report.encoded_ok, 10, "All 10 records must be encoded");
+    }
+
+    #[test]
+    fn tc_response_has_question_section() {
+        let mut records = Vec::new();
+        for i in 0..50 {
+            records.push(make_record(
+                &format!("host{}.example.com", i),
+                RecordType::TXT,
+                &"x".repeat(20),
+                300,
+            ));
+        }
+
+        let (resp, _) = DnsServer::build_response(
+            0x8888,
+            "example.com",
+            16,
+            &records,
+            false,
+            None,
+            None,
+            "",
+            true,
+        );
+
+        // 12-byte header + question section (QNAME + QTYPE(2) + QCLASS(2))
+        // Minimal question is 5 bytes (root label + qtype + qclass)
+        assert!(
+            resp.len() > 12 + 4,
+            "Response must contain question section after header"
+        );
     }
 }

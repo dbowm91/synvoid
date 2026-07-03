@@ -1006,3 +1006,57 @@ pub struct TrustAnchor { ... }
 | GlobalNodeResolver | `resolver_global.rs` | Resolves via mesh global nodes |
 | mesh_sync | `anycast_sync.rs` | Mesh-based zone sync |
 
+---
+
+## 11. Milestone 1 Verification Status
+
+Completed 2026-07-03. 390/390 DNS lib tests pass, 30/30 authoritative_negative tests pass.
+
+### 11.1 Behavior Verified
+
+| Area | Status | Details |
+|------|--------|---------|
+| Positive RR encoding | Verified | `encode_rr` handles A, AAAA, NS, SOA, MX, TXT, CNAME, SRV, CAA, TLSA, DNSKEY, DS, NSEC, NSEC3, RRSIG |
+| Parsed query propagation | Verified | `ParsedDnsQuery::parse()` called once at UDP/TCP entry; `&ParsedDnsQuery` passed to all handlers |
+| Query coalescing | Verified | `QueryKey` (6 dimensions: name, qtype, qclass, dnssec_ok, edns_udp_size, client_ip); `broadcast_response` on success, `cancel_in_flight` on failure |
+| Unsigned negative responses | Verified | NODATA (RCODE=0 + SOA) and NXDOMAIN (RCODE=3 + SOA) include SOA in authority section via `encode_rr` |
+| No-zone REFUSED | Verified | Unknown zones return RCODE=5 (REFUSED) |
+| Truncation | Verified | Byte-size based (EDNS UDP payload or 512); TC response preserves query ID, RD echo, QDCOUNT=1 |
+| AD/RA policy | Verified | Authoritative responses: AA=1, RA=0, AD=false. AD is only set by recursive resolver when `is_dnssec_validated` |
+| SOA enforcement | Verified | Zones rejected at load time if SOA missing; runtime SERVFAIL if SOA absent at query time |
+| DNSSEC NODATA wire encoding | Fixed | SOA RDATA in NODATA responses uses proper wire format (mname/rname via `encode_name` + 5×u32) |
+
+### 11.2 Test Inventory
+
+| Test suite | Count | Location |
+|------------|-------|----------|
+| DNS lib unit tests | 390 | `crates/synvoid-dns/src/` |
+| Authoritative negative integration | 30 | `tests/authoritative_negative.rs` |
+| Flag builder unit tests | 28 | `crates/synvoid-dns/src/parsed_query.rs` |
+| Response encoder unit tests | ~30 | `crates/synvoid-dns/src/server/response_encoder.rs` |
+| Truncation tests | 10 | `crates/synvoid-dns/src/server/response.rs` |
+| Limits tests | 7 | `crates/synvoid-dns/src/limits.rs` |
+| DNS64 tests | 6 | `crates/synvoid-dns/src/dns64.rs` |
+
+### 11.3 DNSSEC Limitations (Deferred to Milestone 3)
+
+- **Signed NODATA/NXDOMAIN**: The signed negative response path uses `build_nxdomain_response`/`build_nodata_response` which assemble NSEC/NSEC3 + RRSIG records. While these are now routed through `encode_rr` and `ResponseEnvelope`, the DNSSEC denial proof logic is minimal and not production-hardened.
+- **NSEC3 closest-encloser**: Not fully implemented; wildcard matching is limited to NSEC3 denial proofs.
+- **RFC 5001 / RFC 5155 compliance**: Not audited for full conformance.
+- **DNSSEC signing**: Zones can have KSK/ZSK and generate RRSIGs, but key lifecycle, rotation, and failure modes are not hardened.
+
+### 11.4 External Interoperability
+
+External smoke tests (dig/drill/delv against a running server) were not run during this verification pass. They require a live server instance and external DNS client tools. These should be validated in a staging environment before production deployment.
+
+### 11.5 Verification Commands
+
+```bash
+cargo test -p synvoid-dns                                    # 390 tests
+cargo test -p synvoid-dns --test authoritative_negative      # 30 tests
+cargo test -p synvoid-dns -- flag                            # 28 flag tests
+cargo test -p synvoid-dns -- response_encoder                # ~30 encoder tests
+cargo check -p synvoid-dns --all-features                    # clean
+cargo check --workspace                                      # clean
+```
+
