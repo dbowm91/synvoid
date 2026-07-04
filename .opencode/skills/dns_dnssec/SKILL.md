@@ -414,6 +414,26 @@ Ok(bool::from(computed.ct_eq(expected_digest)))
 
 This matches the pattern used in `tsig.rs:238` and `cookie.rs:86`.
 
+## Milestone 2 Phase 1 Changes
+
+### Bind Fail-Fast (`server/startup.rs`)
+`configured_bind_addr()` validates the bind address and port at startup, returning `Err` immediately on invalid input. No silent fallback.
+
+### TCP One-Query-Per-Connection (`server/query.rs`)
+RFC 7766 §4: read one length-prefixed DNS message, respond, close. AXFR/IXFR transfers send multiple messages but still close after completion. Persistent TCP (pipelining) is deferred.
+
+### UDP/EDNS Truncation (`server/response.rs`)
+When a response exceeds the EDNS UDP payload size (512 without EDNS, OPT CLASS field with EDNS, default 1232), the server emits TC=1 with the question section. Clients retry over TCP.
+
+### TCP Hard-Limit SERVFAIL (`server/query.rs:390-479`)
+TCP responses exceeding `max_response_size` produce a protocol-correct SERVFAIL: echoed query ID, question section, RD bit, RA=0, AD=0, RCODE=2. The SERVFAIL is self-validated to fit within the hard limit.
+
+### Shutdown (`server/startup.rs`)
+`shutdown_runtime()` is idempotent. Three shutdown channels: `shutdown_tx` (UDP), `shutdown_watcher_tx` (coalescer), `connection_limits` drain (TCP). Sockets are dropped on task exit for port reuse. Fire-and-forget tasks (key rotation, recursive server, coalescer cleanup) exit via channels or runtime drop.
+
+### Transport Class (`cache.rs`)
+`TransportClass` enum (`Udp512`, `UdpEdns(u16)`, `Tcp`, `Http`, `Quic`) separates cache and coalescing keys by transport type, preventing cross-contamination of wire-format responses.
+
 ## Testing
 
 ```bash
@@ -446,4 +466,25 @@ cargo test --test dns_config_fidelity
 
 # Recursive isolation + zone mutation feature flag tests (30 tests)
 cargo test --test dns_recursive_isolation
+
+# M2 Phase 1: Transport class separation (cache/coalescing keys by transport)
+cargo test -p synvoid-dns -- transport
+
+# M2 Phase 1: Transport lifecycle (bind, startup, shutdown ordering)
+cargo test -p synvoid-dns -- transport_lifecycle
+
+# M2 Phase 1: Bind fail-fast (invalid address, port zero)
+cargo test -p synvoid-dns -- configured_bind_addr
+
+# M2 Phase 1: Shutdown idempotency
+cargo test -p synvoid-dns -- shutdown_runtime
+
+# M2 Phase 1: TCP hard-limit SERVFAIL
+cargo test -p synvoid-dns -- tcp_hard_limit
+
+# M2 Phase 1: SERVFAIL response behavior (question echo, RD bit, RA/AD semantics)
+cargo test -p synvoid-dns -- servfail_response
+
+# M2 Phase 1: UDP/EDNS truncation (TC bit, question echoed)
+cargo test -p synvoid-dns -- truncation
 ```

@@ -157,3 +157,16 @@ cargo check --workspace
 ## Completion criteria
 
 Phase 1 is complete when transport startup, TCP lifecycle, hard-limit responses, shutdown, and transport-class propagation are verified and documented.
+
+## Completion Status
+
+**COMPLETE** — All 6 workstreams closed:
+
+| Workstream | Status | Evidence |
+|------------|--------|----------|
+| 1. Compile verification | Done | `cargo test -p synvoid-dns` passes; no stale `src/dns` references |
+| 2. TCP lifecycle | Done | One-query-per-connection (RFC 7766 §4); persistent TCP deferred |
+| 3. TCP hard-limit SERVFAIL | Done | Protocol-correct SERVFAIL echoes question, preserves RD bit, self-size validated |
+| 4. Shutdown lifecycle | Done | `shutdown_runtime()` idempotent; 3 shutdown channels; sockets dropped on exit |
+| 5. Transport class propagation | Done | `TransportClass` enum in cache/coalescing keys; 5 variants |
+| 6. Documentation | Done | `architecture/dns.md`, `AGENTS.override.md`, `SKILL.md` all updated |

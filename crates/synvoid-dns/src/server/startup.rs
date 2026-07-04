@@ -298,9 +298,9 @@ impl DnsServer {
                                 let query_key = if skip_coalesce {
                                     None
                                 } else if let Ok(ref parsed_q) = parsed {
-                                    crate::query_coalesce::QueryKey::from_parsed(parsed_q, Some(client_ip), &buf[..len])
+                                    crate::query_coalesce::QueryKey::from_parsed(parsed_q, Some(client_ip), &buf[..len], Some(transport_class))
                                 } else {
-                                    crate::query_coalesce::QueryKey::from_query(&buf[..len], Some(client_ip))
+                                    crate::query_coalesce::QueryKey::from_query(&buf[..len], Some(client_ip), Some(transport_class))
                                 };
 
                                 let _dnssec = dnssec_udp.clone();
@@ -592,7 +592,7 @@ impl DnsServer {
         Ok(())
     }
 
-    pub(crate) fn start_coalescer_cleanup_task(
+    pub fn start_coalescer_cleanup_task(
         coalescer: Option<&Arc<crate::query_coalesce::QueryCoalescer>>,
         interval_secs: u64,
         mut shutdown_rx: tokio::sync::watch::Receiver<bool>,

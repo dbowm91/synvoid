@@ -2,6 +2,66 @@
 
 Specialized guidance for DNS server, DNSSEC, and TSIG.
 
+## Milestone 2 Phase 1 Workstream
+
+M2 Phase 1 hardened the DNS transport lifecycle and protocol behavior. Key invariants:
+
+### Bind Fail-Fast (`server/startup.rs`)
+- `configured_bind_addr()` validates address and port at startup
+- Returns `Err` immediately on invalid address or port zero
+- No silent fallback to `0.0.0.0`
+
+### TCP One-Query-Per-Connection (`server/query.rs`)
+- RFC 7766 §4 semantics: read one length-prefixed message, respond, close
+- AXFR/IXFR is the exception (multi-message over same connection)
+- Persistent TCP (pipelining) is **deferred** to future milestone
+
+### UDP/EDNS Truncation (`server/response.rs`)
+- `build_truncated_tc_response()`: TC=1, RCODE=0, question echoed
+- EDNS payload size from OPT CLASS field; default 1232 if unreadable
+- Clients should retry over TCP
+
+### TCP Hard-Limit SERVFAIL (`server/query.rs:390-479`)
+- Response exceeds `max_response_size` → SERVFAIL with echoed question
+- RA=0, AD=0, RD echoed, RCODE=2
+- SERVFAIL itself validated to fit within hard limit
+
+### Shutdown (`server/startup.rs`)
+- `shutdown_runtime()` is idempotent — safe to call multiple times
+- Three channels: `shutdown_tx` (UDP), `shutdown_watcher_tx` (coalescer), `connection_limits.initiate_graceful_shutdown()` (TCP)
+- Sockets dropped on task exit for port reuse
+- Fire-and-forget tasks (key rotation, recursive server, coalescer cleanup) exit via shutdown channels or runtime drop
+
+### Transport Class (`cache.rs`)
+- `TransportClass` enum: `Udp512`, `UdpEdns(u16)`, `Tcp`, `Http`, `Quic`
+- Separates cache and coalescing keys by transport type
+- Prevents cross-contamination of wire-format responses
+
+## Test Patterns
+
+```bash
+# Transport class separation (cache keys differ by transport)
+cargo test -p synvoid-dns -- transport
+
+# Transport lifecycle (bind, startup, shutdown ordering)
+cargo test -p synvoid-dns -- transport_lifecycle
+
+# Bind fail-fast (invalid address, port zero)
+cargo test -p synvoid-dns -- configured_bind_addr
+
+# Shutdown idempotency
+cargo test -p synvoid-dns -- shutdown_runtime
+
+# TCP hard-limit SERVFAIL
+cargo test -p synvoid-dns -- tcp_hard_limit
+
+# SERVFAIL response behavior (question echo, RD bit, RA/AD semantics)
+cargo test -p synvoid-dns -- servfail_response
+
+# UDP/EDNS truncation (TC bit, question echoed)
+cargo test -p synvoid-dns -- truncation
+```
+
 ## DNSSEC RFC 5011 Trust Anchor States
 
 Keys transition through states: **Seen → Pending → Valid → Revoked → Removed → Missing**

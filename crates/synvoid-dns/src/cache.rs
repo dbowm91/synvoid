@@ -36,6 +36,24 @@ impl Default for TransportClass {
     }
 }
 
+impl TransportClass {
+    /// Derive transport class from EDNS OPT record context.
+    ///
+    /// When a query includes an EDNS OPT record, the CLASS field of the OPT RR
+    /// contains the sender's UDP payload size. This value determines the maximum
+    /// response size that fits without fragmentation, so different values produce
+    /// different response shapes and must not share cache entries.
+    ///
+    /// If `has_edns` is false, returns `Udp512` (legacy 512-byte limit).
+    pub fn from_edns(has_edns: bool, udp_payload_size: u16) -> Self {
+        if has_edns {
+            Self::UdpEdns(udp_payload_size)
+        } else {
+            Self::Udp512
+        }
+    }
+}
+
 /// Separates authoritative and recursive cache namespaces to prevent cross-contamination.
 ///
 /// Authoritative cache entries come from local zone data. Recursive cache entries
@@ -660,16 +678,47 @@ impl DnsCache {
             format!("{}.{}", name, origin)
         };
 
-        let key = CacheKey::new(full_name, record_type, None);
-        inner.cache.invalidate(&key);
-        if let Some(keys) = inner.qname_index.write().get_mut(&key.qname) {
-            keys.remove(&key);
+        let qtype_val: u16 = record_type.into();
+
+        // Invalidate ALL transport-class/DNSSEC/ECS variants for this record.
+        // The qname index stores keys grouped by qname; iterate and remove
+        // all keys matching the record type regardless of other dimensions.
+        let keys_to_remove: Vec<CacheKey> = {
+            let index = inner.qname_index.read();
+            index
+                .get(&full_name)
+                .map(|keys| {
+                    keys.iter()
+                        .filter(|k| k.qtype == qtype_val)
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+
+        for key in &keys_to_remove {
+            inner.cache.invalidate(key);
+            let fp_key = Self::fingerprint_key(key);
+            inner.cache_fingerprints.write().remove(&fp_key);
         }
 
-        let fp_key = Self::fingerprint_key(&key);
-        inner.cache_fingerprints.write().remove(&fp_key);
+        // Remove matching keys from the index
+        {
+            let mut index = inner.qname_index.write();
+            if let Some(keys) = index.get_mut(&full_name) {
+                keys.retain(|k| k.qtype != qtype_val);
+                if keys.is_empty() {
+                    index.remove(&full_name);
+                }
+            }
+        }
 
-        tracing::debug!("Invalidated cache entry for {}/{:?}", key.qname, key.qtype);
+        tracing::debug!(
+            "Invalidated {} cache entries for {}/{:?}",
+            keys_to_remove.len(),
+            full_name,
+            record_type
+        );
     }
 
     pub fn clear(&self) {

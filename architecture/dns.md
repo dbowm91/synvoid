@@ -986,19 +986,26 @@ Separate positive and negative moka caches (negative = 10% capacity). Uses `Vec<
 
 **Malformed responses:** Not cached (TTL extraction fails → TTL=0).
 
-### 9.7 Cache Invalidation (Phase 7)
+### 9.7 Cache Invalidation (Phase 7 + Phase 3)
 
 All zone mutation paths trigger cache invalidation:
 
 | Mutation Path | Trigger | Mechanism |
 |---------------|---------|-----------|
-| Config zone load | `server/mod.rs` | `cache.invalidate_zone()` on zone reload |
-| `add_record()` | `server/zone.rs` | `cache.invalidate_zone()` after record insert |
+| Config zone load | `server/zone.rs` | `cache.invalidate_zone()` on zone reload |
+| Store zone load | `server/zone.rs` | `cache.invalidate_zone()` on persistence load |
+| `add_record()` (zone.rs) | `server/zone.rs` | `cache.invalidate_zone()` after record insert |
+| `add_record()` (zone_manager.rs) | `zone_manager.rs` | `cache.invalidate_zone()` after record insert |
 | Dynamic update (RFC 2136) | `update.rs` | `cache.invalidate_zone()` after zone record modification |
-| Zone delete | `server/zone.rs` | `cache.invalidate_zone()` |
+| Incoming NOTIFY | `notify.rs` | `cache.invalidate_zone()` on zone refresh |
+| Zone delete | `server/zone.rs` | `cache.invalidate_zone()` via `delete_zone()` |
+| DNSSEC key rollover | `server/zone.rs` | `cache.clear()` — rollover affects all zones |
+| RPZ zone remove | `rpz.rs` | `cache.clear()` — RPZ can affect any DNS name |
 | Clear all | `server/zone.rs` | `cache.clear()` |
 
 **Zone transfer note:** `transfer.rs` only serves outbound AXFR/IXFR — no incoming transfer path exists, so no cache invalidation needed.
+
+**Invalidation scope (Phase 3):** `invalidate_record()` iterates the `qname_index` and removes ALL keys matching the record type regardless of transport class, DNSSEC bit, ECS, or namespace — preventing stale entries across transport-class variants (UDP/TCP/DoH/DoT/DoQ).
 
 Invalidation uses the `qname_index` secondary index for O(1) qname lookup (not O(n) scan).
 
@@ -1039,6 +1046,30 @@ After `confirmation_threshold` (default 3) consistent fingerprints, new fingerpr
 - `dns_cache_stale_hits_total`, `dns_cache_negative_hits_total`
 - `dns_cache_invalidations_total`, `dns_cache_poisoned_rejections_total`
 - `dns_cache_hit_rate`
+
+### 9.11 Cache Integration Closure (Phase 3)
+
+Phase 3 closed the remaining gaps from the cache integration gap analysis:
+
+**Invalidation hardening:**
+- `invalidate_record()` now iterates all `qname_index` entries for the name, removing all keys matching the record type regardless of transport class, DNSSEC, ECS, or namespace dimensions.
+- DNSSEC key rollover (`start_key_rollover`/`complete_key_rollover`) now invalidates the full cache via `DnsServer` wrapper methods — rollover affects all zones.
+- `DnsServer::delete_zone()` removes from in-memory `ShardedZoneStore` and invalidates cache.
+- `RpzManager::remove_zone_with_cache()` clears the full cache when an RPZ zone is removed.
+
+**TTL extraction hardening (tests added):**
+- Multi-answer TTL minimum: verifies `first_answer_ttl` returns `min(TTL1, TTL2)` when ANCOUNT > 1.
+- Compression pointer bounds: confirms `skip_dns_name` handles 2-byte pointers correctly.
+- Malformed SOA rdata: verifies `negative_soa_ttl` returns `None` when SOA rdlength < 20.
+
+**Server path integration verified complete:**
+- All 5 transports (UDP, TCP, DoT, DoH, DoQ) construct full 7-dimension cache keys via `CacheKey::from_parsed_authoritative`.
+- Same key used for cache hit and insert (no dimension mismatch).
+
+**Recursive cache separation verified:**
+- Type-level isolation: `DnsCache` (string-keyed, 7 dimensions) vs `RecursiveDnsCache` (byte-keyed, 3 dimensions).
+- Different types, different backing stores, different code paths — collision structurally impossible.
+- `CacheNamespace::Recursive` and `from_parsed_recursive` are dead code in production (recursive server uses `RecursiveCacheKey` directly).
 
 ### 9.11 Wire Format Parsing
 
@@ -1163,10 +1194,19 @@ External smoke tests (dig/drill/delv against a running server) were not run duri
 ### 11.5 Verification Commands
 
 ```bash
-cargo test -p synvoid-dns                                    # 399 tests
+cargo test -p synvoid-dns                                    # All lib tests
 cargo test -p synvoid-dns --test authoritative_negative      # 37 tests
-cargo test -p synvoid-dns -- flag                            # 33 flag tests (5 regression added)
+cargo test -p synvoid-dns -- flag                            # Flag tests (5 regression added)
 cargo test -p synvoid-dns -- response_encoder                # ~30 encoder tests
+cargo test -p synvoid-dns -- transport                       # Transport class separation tests
+cargo test -p synvoid-dns -- transport_lifecycle             # Transport lifecycle tests
+cargo test -p synvoid-dns -- configured_bind_addr            # Bind fail-fast tests
+cargo test -p synvoid-dns -- shutdown_runtime                # Shutdown idempotency tests
+cargo test -p synvoid-dns -- tcp_hard_limit                  # TCP hard-limit SERVFAIL tests
+cargo test -p synvoid-dns -- servfail_response               # SERVFAIL response behavior tests
+cargo test -p synvoid-dns -- truncation                      # UDP/EDNS truncation tests
+cargo test -p synvoid-dns --test dns_config_fidelity         # Config-to-runtime fidelity
+cargo test -p synvoid-dns --test dns_recursive_isolation     # Recursive isolation
 cargo check -p synvoid-dns --all-features                    # clean
 cargo check --workspace                                      # clean
 ```
@@ -1222,7 +1262,122 @@ Phase 5 added 47 integration tests across two files:
 
 ---
 
-## Milestone Status (Post-Milestone 2 Corrective Pass)
+## Milestone 2 Phase 1: Transport Lifecycle & Protocol Hardening
+
+### Bind Fail-Fast Behavior
+
+The DNS bind address is validated at startup before any socket binding. The `configured_bind_addr()` function in `server/startup.rs` parses the `dns.bind_address` and `dns.port` config values, returning `Err` immediately on invalid addresses or port zero. This prevents silent fallbacks to `0.0.0.0` when a custom bind address is misconfigured.
+
+```rust
+// crates/synvoid-dns/src/server/startup.rs:7
+pub(crate) fn configured_bind_addr(config: &DnsConfig) -> Result<SocketAddr, String> {
+    let bind_ip: std::net::IpAddr = config.bind_address.parse()
+        .map_err(|e| format!("Invalid DNS bind_address '{}': {}", config.bind_address, e))?;
+    if config.port == 0 {
+        return Err("DNS port cannot be zero".to_string());
+    }
+    Ok(SocketAddr::from((bind_ip, config.port)))
+}
+```
+
+The error propagates through `start_standard_mode()` and surfaces as a startup failure. Tests in `startup.rs` (`configured_bind_addr_invalid_fails_fast`, `configured_bind_addr_port_zero_fails`) guard this invariant.
+
+### TCP Lifecycle Policy
+
+TCP uses **one-query-per-connection** semantics per RFC 7766 §4 (`server/query.rs:65-91`). The handler reads exactly one length-prefixed DNS message, processes it, writes the response, and drops the `TcpStream` (closing the connection). The server never loops to read a second query from the same stream.
+
+**Exception**: AXFR/IXFR transfers send multiple length-prefixed messages over the same connection, but the connection closes after the transfer completes.
+
+**Deferred**: Persistent TCP connections (pipelining, multiplexing, connection reuse across multiple queries) are not implemented. They require framing state, per-query idle timeout management, and connection pool accounting. This is deferred to a future milestone.
+
+The TCP idle timeout defaults to the `max_tcp_idle_time_secs` config value (default 300s). The connection guard (`ConnectionGuard`) is held inside the `tokio::spawn` closure for the lifetime of the task, ensuring the connection count is properly decremented on drop.
+
+### UDP/EDNS Truncation Behavior
+
+When a UDP response exceeds the client's advertised EDNS UDP payload size (default 512 bytes without EDNS, or the OPT record CLASS field value with EDNS), the response is truncated:
+
+1. **Truncation check** (`server/response.rs:150-151`): After assembling the full packet, if `response.len() > max_size`, the server emits a TC (Truncated) response.
+2. **TC response construction** (`build_truncated_tc_response`): Sets QR=1, TC=1, RD echoed from query, RA=0, AD=0, RCODE=0 (NOERROR). The response contains the original question section but zero answer/authority/additional records.
+3. **Client retry**: Per DNS standards, clients receiving a TC=1 response should retry over TCP. The server's TCP handler has no size limit and serves the full response.
+
+The EDNS UDP payload size is extracted from the OPT record's CLASS field at `server/startup.rs:283-286`. When EDNS is present but the payload size field is unreadable, the default 1232 bytes is used.
+
+### TCP Hard-Limit Behavior
+
+TCP responses are validated against `max_response_size` (configurable via `dns.limits.max_response_size`, default 65535). When a TCP response exceeds this hard limit:
+
+1. **Protocol-correct SERVFAIL** (`server/query.rs:390-479`): The server constructs a SERVFAIL that echoes:
+   - Original query ID
+   - Question section (QNAME wire encoding + QTYPE + QCLASS)
+   - RD bit echoed from the original query
+   - RA=0 (not claiming recursion availability)
+   - AD=0 (no validation performed for this error)
+   - RCODE=2 (SERVFAIL)
+2. **Self-size check**: The SERVFAIL itself is validated to fit within the hard limit. If it doesn't (theoretically impossible at ~271 bytes max), the connection is closed without sending anything.
+3. **Connection close**: After sending the SERVFAIL, the TCP connection is closed (handler returns, dropping the `TcpStream`).
+
+This prevents unbounded memory allocation from oversized zone data or amplification attacks over TCP.
+
+### Shutdown Behavior
+
+`DnsServer::shutdown_runtime()` (`server/startup.rs:87-96`) is **idempotent** — safe to call multiple times without panic:
+
+```rust
+pub fn shutdown_runtime(&mut self) {
+    if let Some(tx) = self.shutdown_tx.take() {
+        tracing::info!("DNS server shutdown requested");
+        let _ = tx.send(());
+    }
+    if let Some(watcher) = self.shutdown_watcher_tx.take() {
+        let _ = watcher.send(true);
+    }
+    self.connection_limits.initiate_graceful_shutdown();
+}
+```
+
+Shutdown propagates through three channels:
+1. **`shutdown_tx`** (oneshot): Signals the UDP listener task to stop. The UDP task then signals the TCP listener via `tx_tcp.send(())`.
+2. **`shutdown_watcher_tx`** (watch): Signals the coalescer cleanup task to stop.
+3. **`connection_limits.initiate_graceful_shutdown()`**: Sets the drain flag, causing new TCP connection attempts to be rejected with `GracefulShutdown`.
+
+**Socket cleanup**: When the UDP/TCP listener tasks exit their `loop` blocks, the `UdpSocket` and `TcpListener` are dropped, releasing the port for reuse by a subsequent server instance.
+
+**Fire-and-forget task cleanup**: The following background tasks are cleaned up via shutdown channels:
+- **DNSSEC key rotation** (`start_key_rotation_task`): Runs on a `tokio::time::interval`. When the `DnsServer` is dropped, the `Arc<RwLock<DnsSecKeyManager>>` is released. The task itself is not explicitly cancelled (it runs until the Tokio runtime shuts down), but it holds no locks or resources that would prevent port reuse.
+- **Recursive server**: Started as an `Arc<RecursiveDnsServer>` with its own internal shutdown. When the `DnsServer` drops, the recursive server's `Arc` count drops.
+- **Coalescer cleanup** (`start_coalescer_cleanup_task`): Runs on a `tokio::time::interval` with a `watch::Receiver`. When `shutdown_watcher_tx` sends `true`, the task exits its loop.
+
+### Transport Class Propagation
+
+The `TransportClass` enum (`cache.rs:20-31`) separates cache and coalescing keys by transport type to prevent cross-contamination of wire-format responses:
+
+```rust
+pub enum TransportClass {
+    Udp512,              // UDP, no EDNS (512-byte limit)
+    UdpEdns(u16),        // UDP with EDNS payload size
+    Tcp,                 // TCP (no size limit)
+    Http,                // DNS-over-HTTPS
+    Quic,                // DNS-over-QUIC
+}
+```
+
+**Derivation at each transport**:
+| Transport | TransportClass | Source |
+|-----------|---------------|--------|
+| UDP without EDNS | `Udp512` | `startup.rs:292` |
+| UDP with EDNS OPT | `UdpEdns(payload_size)` | `startup.rs:287` |
+| TCP | `Tcp` | `query.rs:194` |
+| DoH | `Http` | `doh.rs:210` |
+| DoT | `Tcp` | `dot.rs:147` |
+| DoQ | `Quic` | `doq.rs:283` |
+
+**Cache key impact**: The `TransportClass` is included in `CacheKey` as a field. Two queries for the same name/type/class will have different cache entries if one arrives via `Udp512` and the other via `Tcp`, because TCP responses can be larger and have no TC flag. Similarly, `UdpEdns(1232)` and `UdpEdns(4096)` produce different cache entries because the 4096-byte client can receive larger responses without truncation.
+
+**Coalescing key impact**: The `QueryKey::from_parsed()` constructor includes `transport_class` in the coalescing key. A UDP query for `example.com A` will not be coalesced with a TCP query for the same name, even though both resolve the same record — because the responses may differ (TC=1 for UDP, full answer for TCP).
+
+---
+
+## Milestone Status (Post-Milestone 2 Phase 1)
 
 ### Closed
 
@@ -1233,10 +1388,15 @@ Phase 5 added 47 integration tests across two files:
 | TTL extraction | Closed | Compression-safe (`skip_dns_name`, `first_answer_ttl`, `negative_soa_ttl`). Protocol-aware negative TTL from SOA. |
 | Cache invalidation | Closed | All zone mutation paths trigger `cache.invalidate_zone()`. Fingerprint state cleared on mutation. |
 | Query coalescing | Closed | 6-dimensional `QueryKey`, AXFR/IXFR/UPDATE/NOTIFY excluded, 8 metrics counters. |
-| TCP hard-limit SERVFAIL | Closed | Echoes question, preserves RD bit, byte-size enforced. |
+| TCP hard-limit SERVFAIL | Closed | Echoes question, preserves RD bit, byte-size enforced. SERVFAIL self-size validated. |
 | Serve-stale | Closed | `DnsCache::with_serve_stale()`, config-wired `max_stale_secs` / `max_stale_count`. |
 | Config-runtime fidelity | Closed | 37+ Phase 5 tests. All config fields classified as implemented/deferred/unsupported. |
 | Stale `src/dns/` references | Closed | All ~100 stale references updated to `crates/synvoid-dns/src/`. |
+| Bind fail-fast | Closed | `configured_bind_addr()` validates address/port at startup. Tests guard invalid/port-zero. |
+| TCP one-query-per-connection | Closed | RFC 7766 §4 semantics. AXFR/IXFR exception for multi-message transfers. |
+| UDP/EDNS truncation | Closed | TC=1 response with question section; client retries over TCP. |
+| Shutdown idempotency | Closed | `shutdown_runtime()` safe to call multiple times. Fire-and-forget tasks cleaned via channels. |
+| Transport class propagation | Closed | `TransportClass` enum separates cache/coalescing keys by transport. 5 variants: Udp512, UdpEdns, Tcp, Http, Quic. |
 
 ### Partial
 
@@ -1249,6 +1409,7 @@ Phase 5 added 47 integration tests across two files:
 
 | Area | Status | Details |
 |------|--------|---------|
+| Persistent TCP (pipelining) | Deferred | Requires framing state, per-query idle management, connection pool. |
 | DNSSEC production hardening | Deferred | NSEC3 closest-encloser, RFC 5001/5155 compliance, key lifecycle hardening. |
 | RPZ (Response Policy Zones) | Deferred | Config fields exist, no runtime consumer. |
 | Dynamic Update (RFC 2136) | Deferred | Handler stub exists, not wired; security-sensitive. |

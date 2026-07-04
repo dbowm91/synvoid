@@ -7,6 +7,7 @@ use parking_lot::RwLock;
 use tokio::sync::broadcast;
 use tokio::time::timeout;
 
+use crate::cache::TransportClass;
 use crate::parsed_query::ParsedDnsQuery;
 
 static COALESCER_HITS: std::sync::LazyLock<Gauge> =
@@ -47,10 +48,15 @@ pub struct QueryKey {
     pub dnssec_ok: bool,
     pub edns_udp_size: u16,
     pub client_ip: Option<String>,
+    pub transport_class: TransportClass,
 }
 
 impl QueryKey {
-    pub fn from_query(query: &[u8], client_ip: Option<std::net::IpAddr>) -> Option<Self> {
+    pub fn from_query(
+        query: &[u8],
+        client_ip: Option<std::net::IpAddr>,
+        transport_class: Option<TransportClass>,
+    ) -> Option<Self> {
         let parsed = ParsedDnsQuery::parse(query).ok()?;
         let client_str = client_ip.map(|ip| ip.to_string());
         let edns_udp_size = if parsed.has_edns {
@@ -65,6 +71,7 @@ impl QueryKey {
         } else {
             512
         };
+        let tc = transport_class.unwrap_or(TransportClass::default());
         Some(Self {
             name: parsed.qname.to_lowercase(),
             qtype: parsed.qtype,
@@ -72,6 +79,7 @@ impl QueryKey {
             dnssec_ok: parsed.dnssec_ok,
             edns_udp_size,
             client_ip: client_str,
+            transport_class: tc,
         })
     }
 
@@ -79,6 +87,7 @@ impl QueryKey {
         parsed: &ParsedDnsQuery<'_>,
         client_ip: Option<std::net::IpAddr>,
         raw: &[u8],
+        transport_class: Option<TransportClass>,
     ) -> Option<Self> {
         let client_str = client_ip.map(|ip| ip.to_string());
         let edns_udp_size = if parsed.has_edns {
@@ -90,6 +99,7 @@ impl QueryKey {
         } else {
             512
         };
+        let tc = transport_class.unwrap_or(TransportClass::default());
         Some(Self {
             name: parsed.qname.to_lowercase(),
             qtype: parsed.qtype,
@@ -97,6 +107,7 @@ impl QueryKey {
             dnssec_ok: parsed.dnssec_ok,
             edns_udp_size,
             client_ip: client_str,
+            transport_class: tc,
         })
     }
 }
@@ -353,7 +364,7 @@ mod tests {
             0x01,
         ];
 
-        let key = QueryKey::from_query(&query, None).unwrap();
+        let key = QueryKey::from_query(&query, None, None).unwrap();
         assert_eq!(key.name, "example.com");
         assert_eq!(key.qtype, 1);
     }
@@ -368,6 +379,7 @@ mod tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
 
         let result = coalescer.get_or_wait(key.clone()).await;
@@ -384,6 +396,7 @@ mod tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
 
         let response = Arc::new(vec![0x00, 0x01, 0x02, 0x03]);
@@ -427,6 +440,7 @@ mod tests {
                 dnssec_ok: false,
                 edns_udp_size: 512,
                 client_ip: None,
+                transport_class: TransportClass::default(),
             };
             coalescer.get_or_wait(key).await;
         }
@@ -446,6 +460,7 @@ mod tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
 
         coalescer.get_or_wait(key.clone()).await;
@@ -470,6 +485,7 @@ mod tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
 
         let result1 = coalescer.get_or_wait(key.clone()).await;
@@ -505,6 +521,7 @@ mod tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
 
         let result = coalescer.get_or_wait(key.clone()).await;
@@ -531,6 +548,7 @@ mod tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
 
         let result = coalescer.get_or_wait(key.clone()).await;
@@ -558,6 +576,7 @@ mod tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
 
         let result = coalescer.get_or_wait(key.clone()).await;
@@ -589,6 +608,7 @@ mod tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
         let key2 = QueryKey {
             name: "example.com".to_string(),
@@ -597,6 +617,7 @@ mod tests {
             dnssec_ok: true,
             edns_udp_size: 4096,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
         assert_ne!(key1, key2);
     }
@@ -610,6 +631,7 @@ mod tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
         let key2 = QueryKey {
             name: "example.com".to_string(),
@@ -618,6 +640,7 @@ mod tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
         assert_ne!(key1, key2, "Different qclass must not coalesce");
     }
@@ -631,6 +654,7 @@ mod tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: Some("10.0.0.1".to_string()),
+            transport_class: TransportClass::default(),
         };
         let key2 = QueryKey {
             name: "example.com".to_string(),
@@ -639,6 +663,7 @@ mod tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: Some("10.0.0.2".to_string()),
+            transport_class: TransportClass::default(),
         };
         assert_ne!(key1, key2, "Different client_ip must not coalesce");
     }
@@ -652,6 +677,7 @@ mod tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
         let key2 = QueryKey {
             name: "example.com".to_string(),
@@ -660,6 +686,7 @@ mod tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: Some("10.0.0.1".to_string()),
+            transport_class: TransportClass::default(),
         };
         assert_ne!(key1, key2, "None vs Some client_ip must not coalesce");
     }
@@ -673,6 +700,7 @@ mod tests {
             dnssec_ok: true,
             edns_udp_size: 512,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
         let key2 = QueryKey {
             name: "example.com".to_string(),
@@ -681,6 +709,7 @@ mod tests {
             dnssec_ok: true,
             edns_udp_size: 4096,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
         assert_ne!(key1, key2, "Different EDNS UDP size must not coalesce");
     }
@@ -694,6 +723,7 @@ mod tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
         let key2 = QueryKey {
             name: "example.com".to_string(),
@@ -702,6 +732,7 @@ mod tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
         assert_ne!(key1, key2, "Different qtype must not coalesce");
     }
@@ -715,6 +746,7 @@ mod tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
         let key2 = QueryKey {
             name: "example.com".to_string(),
@@ -723,11 +755,82 @@ mod tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
         // Note: from_query lowercases names, but keys constructed directly are not.
         // This test documents that if you construct keys with different cases, they are different.
         // The from_query/from_parsed methods handle lowercasing.
         assert_ne!(key1, key2, "Unnormalized names must not coalesce");
+    }
+
+    #[test]
+    fn test_coalescing_key_transport_class_differs() {
+        let udp_key = QueryKey {
+            name: "example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: None,
+            transport_class: TransportClass::Udp512,
+        };
+        let tcp_key = QueryKey {
+            name: "example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: None,
+            transport_class: TransportClass::Tcp,
+        };
+        let edns_key = QueryKey {
+            name: "example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 1232,
+            client_ip: None,
+            transport_class: TransportClass::UdpEdns(1232),
+        };
+        let https_key = QueryKey {
+            name: "example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: None,
+            transport_class: TransportClass::Http,
+        };
+        assert_ne!(udp_key, tcp_key, "UDP vs TCP must not coalesce");
+        assert_ne!(udp_key, edns_key, "UDP512 vs UdpEdns must not coalesce");
+        assert_ne!(udp_key, https_key, "UDP vs HTTPS must not coalesce");
+        assert_ne!(tcp_key, https_key, "TCP vs HTTPS must not coalesce");
+    }
+
+    #[test]
+    fn test_coalescing_key_edns_size_in_transport_class() {
+        let edns_512 = QueryKey {
+            name: "example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 512,
+            client_ip: None,
+            transport_class: TransportClass::UdpEdns(512),
+        };
+        let edns_4096 = QueryKey {
+            name: "example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            edns_udp_size: 4096,
+            client_ip: None,
+            transport_class: TransportClass::UdpEdns(4096),
+        };
+        assert_ne!(
+            edns_512, edns_4096,
+            "Different EDNS buffer sizes in transport class must not coalesce"
+        );
     }
 
     #[tokio::test]
@@ -740,6 +843,7 @@ mod tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
 
         // Owner
@@ -783,6 +887,7 @@ mod tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
 
         let result = coalescer.get_or_wait(key.clone()).await;
@@ -812,6 +917,7 @@ mod tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
 
         let result = coalescer.get_or_wait(key.clone()).await;
@@ -845,6 +951,7 @@ mod tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
 
         // First owner
@@ -876,6 +983,7 @@ mod tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
 
         // Owner
@@ -908,6 +1016,7 @@ mod tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
 
         let result = coalescer.get_or_wait(key.clone()).await;
@@ -931,6 +1040,7 @@ mod tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
 
         let result = coalescer.get_or_wait(key.clone()).await;
@@ -959,6 +1069,7 @@ mod tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
 
         let result = coalescer.get_or_wait(key.clone()).await;
@@ -1062,6 +1173,7 @@ mod coalescing_exclusion_tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
 
         // Even if an entry exists, should_skip_coalescing means the caller
@@ -1085,6 +1197,7 @@ mod coalescing_exclusion_tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
 
         let result = coalescer.get_or_wait(key.clone()).await;
@@ -1105,6 +1218,7 @@ mod coalescing_exclusion_tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
 
         let result = coalescer.get_or_wait(key.clone()).await;
@@ -1124,6 +1238,7 @@ mod coalescing_exclusion_tests {
             dnssec_ok: false,
             edns_udp_size: 512,
             client_ip: None,
+            transport_class: TransportClass::default(),
         };
 
         let result = coalescer.get_or_wait(key.clone()).await;
@@ -1161,7 +1276,7 @@ mod key_parsing_integration {
     fn test_axfr_query_parses_to_key() {
         // AXFR qtype = 252
         let query = build_query("example.com", 252, 1);
-        let key = QueryKey::from_query(&query, None);
+        let key = QueryKey::from_query(&query, None, None);
         assert!(key.is_some(), "AXFR query should parse into a QueryKey");
         let key = key.unwrap();
         assert_eq!(key.qtype, 252);
@@ -1172,7 +1287,7 @@ mod key_parsing_integration {
     fn test_ixfr_query_parses_to_key() {
         // IXFR qtype = 251
         let query = build_query("example.com", 251, 1);
-        let key = QueryKey::from_query(&query, None);
+        let key = QueryKey::from_query(&query, None, None);
         assert!(key.is_some(), "IXFR query should parse into a QueryKey");
         let key = key.unwrap();
         assert_eq!(key.qtype, 251);
@@ -1182,8 +1297,8 @@ mod key_parsing_integration {
     fn test_axfr_and_ixfr_keys_are_different() {
         let axfr_query = build_query("example.com", 252, 1);
         let ixfr_query = build_query("example.com", 251, 1);
-        let key_axfr = QueryKey::from_query(&axfr_query, None).unwrap();
-        let key_ixfr = QueryKey::from_query(&ixfr_query, None).unwrap();
+        let key_axfr = QueryKey::from_query(&axfr_query, None, None).unwrap();
+        let key_ixfr = QueryKey::from_query(&ixfr_query, None, None).unwrap();
         assert_ne!(key_axfr, key_ixfr, "AXFR and IXFR must have different keys");
     }
 
@@ -1191,8 +1306,8 @@ mod key_parsing_integration {
     fn test_axfr_key_differs_from_a_record() {
         let axfr_query = build_query("example.com", 252, 1);
         let a_query = build_query("example.com", 1, 1);
-        let key_axfr = QueryKey::from_query(&axfr_query, None).unwrap();
-        let key_a = QueryKey::from_query(&a_query, None).unwrap();
+        let key_axfr = QueryKey::from_query(&axfr_query, None, None).unwrap();
+        let key_a = QueryKey::from_query(&a_query, None, None).unwrap();
         assert_ne!(
             key_axfr, key_a,
             "AXFR must not coalesce with A record query"
@@ -1219,7 +1334,7 @@ mod key_parsing_integration {
         query.push(0xFF);
         query.push(0x00); // qclass = IN
         query.push(0x01);
-        let key = QueryKey::from_query(&query, None);
+        let key = QueryKey::from_query(&query, None, None);
         assert!(key.is_some(), "NOTIFY should parse into a QueryKey");
     }
 }

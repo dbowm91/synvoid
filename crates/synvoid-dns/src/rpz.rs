@@ -152,6 +152,16 @@ impl RpzManager {
         zones.remove(name);
     }
 
+    /// Remove an RPZ zone and invalidate cached DNS responses.
+    /// RPZ zones can affect any DNS name, so the full cache is cleared.
+    pub fn remove_zone_with_cache(&self, name: &str, cache: Option<&crate::cache::DnsCache>) {
+        self.remove_zone(name);
+        if let Some(cache) = cache {
+            cache.clear();
+            tracing::info!("Cache cleared after removing RPZ zone {}", name);
+        }
+    }
+
     pub fn check(&self, qname: &str, client_ip: Option<IpAddr>) -> RpzAction {
         let zones = self.zones.read();
 

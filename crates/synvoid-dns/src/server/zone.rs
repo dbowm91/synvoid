@@ -421,4 +421,53 @@ impl DnsServer {
     pub fn cache_stats(&self) -> Option<crate::cache::CacheStats> {
         self.cache.as_ref().map(|c| c.stats())
     }
+
+    /// Delete a zone from the in-memory store and invalidate all cached entries for it.
+    /// If a `ZoneStore` is provided, also removes from SQLite persistence.
+    pub fn delete_zone(&self, origin: &str, store: Option<&ZoneStore>) -> Result<(), String> {
+        let origin_lower = origin.trim_end_matches('.').to_lowercase();
+
+        self.zones.remove(&origin_lower);
+        self.zone_index_dirty.store(true, Ordering::Release);
+
+        if let Some(ref cache) = self.cache {
+            cache.invalidate_zone(&origin_lower);
+        }
+
+        if let Some(store) = store {
+            store.delete_zone(&origin_lower)?;
+        }
+
+        tracing::info!("Deleted zone {}", origin_lower);
+        Ok(())
+    }
+
+    /// Start a DNSSEC key rollover and invalidate all cached DNSSEC-signed responses.
+    /// Key rollover affects all zones, so the entire cache is cleared.
+    pub fn start_key_rollover(&self, key_type: crate::dnssec::KeyType) -> Result<(), String> {
+        if let Some(ref dnssec) = self.dnssec {
+            dnssec.write().start_key_rollover(key_type)?;
+            if let Some(ref cache) = self.cache {
+                cache.clear();
+                tracing::info!("Cache cleared after starting {:?} rollover", key_type);
+            }
+            Ok(())
+        } else {
+            Err("DNSSEC not configured".to_string())
+        }
+    }
+
+    /// Complete a DNSSEC key rollover and invalidate all cached DNSSEC-signed responses.
+    pub fn complete_key_rollover(&self, key_type: crate::dnssec::KeyType) -> Result<(), String> {
+        if let Some(ref dnssec) = self.dnssec {
+            dnssec.write().complete_key_rollover(key_type)?;
+            if let Some(ref cache) = self.cache {
+                cache.clear();
+                tracing::info!("Cache cleared after completing {:?} rollover", key_type);
+            }
+            Ok(())
+        } else {
+            Err("DNSSEC not configured".to_string())
+        }
+    }
 }

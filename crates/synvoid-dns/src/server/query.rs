@@ -64,19 +64,42 @@ impl DnsServer {
 
     /// Handle a single DNS query over TCP.
     ///
+    /// # One-query-per-connection policy
+    ///
     /// TCP mode is **one-query-per-connection** (RFC 7766 §4). The server reads
     /// the 2-byte length prefix, processes exactly one query, writes the response,
     /// and closes the connection. This matches the common DNS-over-TCP behavior
     /// where clients open a new connection per query.
     ///
-    /// AXFR/IXFR are handled as multi-message responses over the same connection,
-    /// but the connection still closes after the transfer completes.
+    /// This design is intentionally conservative: the server never reads a second
+    /// length-prefixed frame from the same TCP stream. The connection is dropped
+    /// after sending the single response (or error), which signals EOF to the
+    /// client.
+    ///
+    /// # AXFR/IXFR exception
+    ///
+    /// AXFR/IXFR transfers send multiple length-prefixed messages over the same
+    /// connection, but the connection still closes after the transfer completes.
+    /// This is handled as a special case before the one-query return.
+    ///
+    /// # Deferred: persistent TCP
+    ///
+    /// Persistent TCP connections (pipelining, multiplexing, connection reuse
+    /// across multiple queries) are **not implemented** in this milestone. They
+    /// require additional framing state, idle timeout management per query, and
+    /// connection pool accounting. This is deferred to a future milestone.
     pub(super) async fn handle_tcp_query(
         mut stream: tokio::net::TcpStream,
         ctx: QueryContext<'_>,
     ) -> Result<(), String> {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::time::{timeout, Duration};
+
+        // ── One-query-per-connection ────────────────────────────────────
+        // This handler reads exactly ONE length-prefixed DNS message,
+        // processes it, writes the response, and returns. The TcpStream
+        // is dropped on return, closing the connection. We never loop
+        // to read a second query from the same stream.
 
         let client_ip = stream
             .peer_addr()
@@ -164,9 +187,18 @@ impl DnsServer {
             let query_key = if skip_coalesce {
                 None
             } else if let Ok(ref parsed_q) = parsed_tcp {
-                crate::query_coalesce::QueryKey::from_parsed(parsed_q, Some(client_ip), &query)
+                crate::query_coalesce::QueryKey::from_parsed(
+                    parsed_q,
+                    Some(client_ip),
+                    &query,
+                    Some(TransportClass::Tcp),
+                )
             } else {
-                crate::query_coalesce::QueryKey::from_query(&query, Some(client_ip))
+                crate::query_coalesce::QueryKey::from_query(
+                    &query,
+                    Some(client_ip),
+                    Some(TransportClass::Tcp),
+                )
             };
 
             if let Some(key) = query_key {
@@ -366,6 +398,14 @@ impl DnsServer {
 
                     // Build a SERVFAIL that echoes the original question section
                     // when the query was successfully parsed (RFC 1035 §4.1.1).
+                    //
+                    // When parsing succeeds, we capture query ID, RD bit, and the
+                    // full question section (QNAME wire + QTYPE + QCLASS) from the
+                    // parsed query to construct a standards-compliant SERVFAIL.
+                    //
+                    // When parsing fails (malformed query), we extract what we can
+                    // from the raw header bytes and emit a minimal SERVFAIL with
+                    // no question section (QDCOUNT=0).
                     let (query_id, rd, question_bytes) = if let Ok(ref parsed_q) = parsed_tcp {
                         // Question section: QNAME (wire) + QTYPE (2) + QCLASS (2)
                         let q = &query[12..parsed_q.question_end];
@@ -383,9 +423,23 @@ impl DnsServer {
                         (0u16, false, None)
                     };
 
-                    // QR=1, AA=0, TC=0, RD=echoed, RA=1, RCODE=2 (SERVFAIL)
-                    let flags =
-                        crate::parsed_query::build_response_flags(false, false, rd, true, false, 2);
+                    // QR=1, AA=0, TC=0, RD=echoed, RA=0, AD=0, RCODE=2 (SERVFAIL)
+                    //
+                    // RA=0: We are returning SERVFAIL, not claiming recursion is
+                    // available. A SERVFAIL with RA=1 could mislead clients into
+                    // retrying via recursion when the real issue is response size.
+                    //
+                    // AD=0: We have not validated anything for this response, so
+                    // the Authentic Data bit must not be set.
+                    //
+                    // AA=0: We do not know whether this query is for an
+                    // authoritative zone at this point in the TCP handler, so we
+                    // omit the Authoritative Answer bit. A future enhancement
+                    // could check zone context and set AA=true for authoritative
+                    // SERVFAIL responses.
+                    let flags = crate::parsed_query::build_response_flags(
+                        false, false, rd, false, false, 2,
+                    );
 
                     let qdcount: u16 = if question_bytes.is_some() { 1 } else { 0 };
 
@@ -399,6 +453,23 @@ impl DnsServer {
                     servfail.extend_from_slice(&0u16.to_be_bytes()); // ARCOUNT
                     if let Some(q) = question_bytes {
                         servfail.extend_from_slice(&q);
+                    }
+
+                    // Verify the SERVFAIL itself fits within the TCP hard limit.
+                    // The SERVFAIL is at most ~271 bytes (12 header + 259 max question),
+                    // so this should always pass for any reasonable limit, but we
+                    // enforce it defensively.
+                    if let Some(limits) = ctx.connection_limits {
+                        if let Err(e) = limits.validate_response_size(servfail.len()) {
+                            tracing::warn!(
+                                transport = "tcp",
+                                client = %client_ip,
+                                servfail_size = servfail.len(),
+                                "SERVFAIL itself exceeds hard limit: {}. Closing connection.",
+                                e
+                            );
+                            return Ok(());
+                        }
                     }
 
                     let len = servfail.len() as u16;
@@ -1660,7 +1731,8 @@ mod servfail_response_tests {
         let rd = parsed.flags.recursion_desired;
         let question_bytes = Some(query[12..parsed.question_end].to_vec());
 
-        let flags = crate::parsed_query::build_response_flags(false, false, rd, true, false, 2);
+        // RA=false: we are returning SERVFAIL, not claiming recursion is available
+        let flags = crate::parsed_query::build_response_flags(false, false, rd, false, false, 2);
         let qdcount: u16 = if question_bytes.is_some() { 1 } else { 0 };
 
         let mut servfail = Vec::with_capacity(12 + question_bytes.as_ref().map_or(0, |q| q.len()));
@@ -1682,7 +1754,8 @@ mod servfail_response_tests {
         assert_eq!(resp_flags & 0x0400, 0, "AA=0");
         assert_eq!(resp_flags & 0x0200, 0, "TC=0");
         assert_ne!(resp_flags & 0x0100, 0, "RD echoed");
-        assert_ne!(resp_flags & 0x0080, 0, "RA=1");
+        assert_eq!(resp_flags & 0x0080, 0, "RA=0");
+        assert_eq!(resp_flags & 0x0020, 0, "AD=0");
         assert_eq!(resp_flags & 0x000F, 2, "RCODE=SERVFAIL");
 
         assert_eq!(
@@ -1702,7 +1775,7 @@ mod servfail_response_tests {
             false,
             false,
             parsed.flags.recursion_desired,
-            true,
+            false,
             false,
             2,
         );
@@ -1717,7 +1790,7 @@ mod servfail_response_tests {
             false,
             false,
             parsed.flags.recursion_desired,
-            true,
+            false,
             false,
             2,
         );
@@ -1726,8 +1799,9 @@ mod servfail_response_tests {
 
     #[test]
     fn test_servfail_flags_bit_layout() {
-        let flags = crate::parsed_query::build_response_flags(false, false, true, true, false, 2);
-        assert_eq!(flags, 0x8182);
+        // QR=1, AA=0, TC=0, RD=1, RA=0, AD=0, RCODE=2
+        let flags = crate::parsed_query::build_response_flags(false, false, true, false, false, 2);
+        assert_eq!(flags, 0x8102);
     }
 
     #[test]
@@ -1737,7 +1811,7 @@ mod servfail_response_tests {
         let qid = u16::from_be_bytes([short_query[0], short_query[1]]);
         let flags_raw = u16::from_be_bytes([short_query[2], short_query[3]]);
         let rd = (flags_raw & 0x0100) != 0;
-        let flags = crate::parsed_query::build_response_flags(false, false, rd, true, false, 2);
+        let flags = crate::parsed_query::build_response_flags(false, false, rd, false, false, 2);
 
         let mut servfail = Vec::with_capacity(12);
         servfail.extend_from_slice(&qid.to_be_bytes());
@@ -1967,5 +2041,579 @@ mod servfail_response_tests {
         r.extend_from_slice(&1u16.to_be_bytes());
         let ttl = super::DnsServer::negative_soa_ttl(&r).unwrap();
         assert_eq!(ttl, None);
+    }
+
+    #[test]
+    fn test_first_answer_ttl_chooses_minimum() {
+        // Build a response with ANCOUNT=2, TTLs 100 and 300
+        let flags = crate::parsed_query::build_response_flags(true, true, false, true, false, 0);
+        let mut r = Vec::new();
+        r.extend_from_slice(&0xABCDu16.to_be_bytes());
+        r.extend_from_slice(&flags.to_be_bytes());
+        r.extend_from_slice(&1u16.to_be_bytes()); // QDCOUNT
+        r.extend_from_slice(&2u16.to_be_bytes()); // ANCOUNT=2
+        r.extend_from_slice(&0u16.to_be_bytes());
+        r.extend_from_slice(&0u16.to_be_bytes());
+        // question
+        r.extend_from_slice(&[3, b'f', b'o', b'o']);
+        r.push(0);
+        r.extend_from_slice(&1u16.to_be_bytes());
+        r.extend_from_slice(&1u16.to_be_bytes());
+        // answer 1: foo A TTL=100
+        r.extend_from_slice(&[3, b'f', b'o', b'o']);
+        r.push(0);
+        r.extend_from_slice(&1u16.to_be_bytes());
+        r.extend_from_slice(&1u16.to_be_bytes());
+        r.extend_from_slice(&100u32.to_be_bytes());
+        r.extend_from_slice(&4u16.to_be_bytes());
+        r.extend_from_slice(&[1, 2, 3, 4]);
+        // answer 2: foo A TTL=300
+        r.extend_from_slice(&[3, b'f', b'o', b'o']);
+        r.push(0);
+        r.extend_from_slice(&1u16.to_be_bytes());
+        r.extend_from_slice(&1u16.to_be_bytes());
+        r.extend_from_slice(&300u32.to_be_bytes());
+        r.extend_from_slice(&4u16.to_be_bytes());
+        r.extend_from_slice(&[5, 6, 7, 8]);
+        let ttl = super::DnsServer::first_answer_ttl(&r).unwrap();
+        assert_eq!(ttl, Some(100), "should choose minimum TTL across answers");
+    }
+
+    #[test]
+    fn test_skip_dns_name_pointer_beyond_buffer() {
+        // Compression pointer at offset 0 — the pointer itself is in bounds (2 bytes),
+        // so skip_dns_name succeeds (it skips the name without following the pointer).
+        let buf = &[0xC0, 0xFF];
+        let result = super::DnsServer::skip_dns_name(buf, 0);
+        assert_eq!(result.unwrap(), 2, "should advance past the 2-byte pointer");
+    }
+
+    #[test]
+    fn test_negative_soa_ttl_malformed_rdata() {
+        // Build NXDOMAIN response with SOA authority where rdlength < 20
+        let flags = crate::parsed_query::build_response_flags(true, true, false, true, false, 3);
+        let mut r = Vec::new();
+        r.extend_from_slice(&0x1234u16.to_be_bytes());
+        r.extend_from_slice(&flags.to_be_bytes());
+        r.extend_from_slice(&1u16.to_be_bytes()); // QDCOUNT
+        r.extend_from_slice(&0u16.to_be_bytes()); // ANCOUNT
+        r.extend_from_slice(&1u16.to_be_bytes()); // NSCOUNT (SOA)
+        r.extend_from_slice(&0u16.to_be_bytes()); // ARCOUNT
+                                                  // question
+        r.extend_from_slice(&[7, b'e', b'x', b'a', b'm', b'p', b'l', b'e']);
+        r.extend_from_slice(&[3, b'c', b'o', b'm']);
+        r.push(0);
+        r.extend_from_slice(&1u16.to_be_bytes());
+        r.extend_from_slice(&1u16.to_be_bytes());
+        // authority: SOA with rdlength=10 (too short for SOA rdata which needs >= 20)
+        r.extend_from_slice(&[7, b'e', b'x', b'a', b'm', b'p', b'l', b'e']);
+        r.extend_from_slice(&[3, b'c', b'o', b'm']);
+        r.push(0);
+        r.extend_from_slice(&6u16.to_be_bytes()); // TYPE SOA
+        r.extend_from_slice(&1u16.to_be_bytes()); // CLASS IN
+        r.extend_from_slice(&120u32.to_be_bytes()); // TTL
+        r.extend_from_slice(&10u16.to_be_bytes()); // RDLENGTH (too short)
+        r.extend_from_slice(&[0u8; 10]); // only 10 bytes of rdata
+        let ttl = super::DnsServer::negative_soa_ttl(&r).unwrap();
+        assert_eq!(ttl, None, "malformed SOA rdata should return None");
+    }
+
+    // ── TCP hard-limit SERVFAIL tests ──────────────────────────────────
+
+    /// Build a SERVFAIL using the same logic as the TCP hard-limit handler.
+    /// Returns (wire_response, raw_query).
+    fn build_tcp_hardlimit_servfail(
+        id: u16,
+        flags_raw: u16,
+        name: &str,
+        qtype: u16,
+        qclass: u16,
+    ) -> (Vec<u8>, Vec<u8>) {
+        let query = build_query_with_flags(id, flags_raw, name, qtype, qclass);
+        let parsed = ParsedDnsQuery::parse(&query).unwrap();
+        let rd = parsed.flags.recursion_desired;
+        let question_bytes = Some(query[12..parsed.question_end].to_vec());
+
+        // RA=false, AD=false (matching the updated hard-limit handler)
+        let flags = crate::parsed_query::build_response_flags(false, false, rd, false, false, 2);
+        let qdcount: u16 = if question_bytes.is_some() { 1 } else { 0 };
+
+        let mut servfail = Vec::with_capacity(12 + question_bytes.as_ref().map_or(0, |q| q.len()));
+        servfail.extend_from_slice(&id.to_be_bytes());
+        servfail.extend_from_slice(&flags.to_be_bytes());
+        servfail.extend_from_slice(&qdcount.to_be_bytes());
+        servfail.extend_from_slice(&0u16.to_be_bytes()); // ANCOUNT
+        servfail.extend_from_slice(&0u16.to_be_bytes()); // NSCOUNT
+        servfail.extend_from_slice(&0u16.to_be_bytes()); // ARCOUNT
+        if let Some(q) = question_bytes {
+            servfail.extend_from_slice(&q);
+        }
+
+        (servfail, query)
+    }
+
+    #[test]
+    fn test_hardlimit_servfail_preserves_query_id() {
+        let (servfail, _) = build_tcp_hardlimit_servfail(0xBEEF, 0x0100, "example.com", 1, 1);
+        assert_eq!(u16::from_be_bytes([servfail[0], servfail[1]]), 0xBEEF);
+    }
+
+    #[test]
+    fn test_hardlimit_servfail_preserves_rd_bit() {
+        // RD=1 query → SERVFAIL should echo RD=1
+        let (servfail, _) = build_tcp_hardlimit_servfail(0x0001, 0x0100, "a.b", 1, 1);
+        let flags = u16::from_be_bytes([servfail[2], servfail[3]]);
+        assert_ne!(flags & 0x0100, 0, "RD should be echoed");
+
+        // RD=0 query → SERVFAIL should echo RD=0
+        let (servfail2, _) = build_tcp_hardlimit_servfail(0x0002, 0x0000, "a.b", 1, 1);
+        let flags2 = u16::from_be_bytes([servfail2[2], servfail2[3]]);
+        assert_eq!(flags2 & 0x0100, 0, "RD=0 should be echoed");
+    }
+
+    #[test]
+    fn test_hardlimit_servfail_ra_false() {
+        let (servfail, _) = build_tcp_hardlimit_servfail(0x0003, 0x0100, "example.com", 1, 1);
+        let flags = u16::from_be_bytes([servfail[2], servfail[3]]);
+        assert_eq!(flags & 0x0080, 0, "RA must be 0 in hard-limit SERVFAIL");
+    }
+
+    #[test]
+    fn test_hardlimit_servfail_ad_false() {
+        let (servfail, _) = build_tcp_hardlimit_servfail(0x0004, 0x0100, "example.com", 1, 1);
+        let flags = u16::from_be_bytes([servfail[2], servfail[3]]);
+        assert_eq!(flags & 0x0020, 0, "AD must be 0 in hard-limit SERVFAIL");
+    }
+
+    #[test]
+    fn test_hardlimit_servfail_echoes_question_section() {
+        let (servfail, query) = build_tcp_hardlimit_servfail(0xABCD, 0x0100, "example.com", 1, 1);
+        let parsed = ParsedDnsQuery::parse(&query).unwrap();
+        let qdcount = u16::from_be_bytes([servfail[4], servfail[5]]);
+        assert_eq!(qdcount, 1, "QDCOUNT=1 when question is echoed");
+        assert_eq!(
+            &servfail[12..],
+            &query[12..parsed.question_end],
+            "question section must be echoed verbatim"
+        );
+    }
+
+    #[test]
+    fn test_hardlimit_servfail_echoes_qtype_and_qclass() {
+        let (servfail, query) = build_tcp_hardlimit_servfail(0xABCD, 0x0100, "example.com", 28, 1);
+        let parsed = ParsedDnsQuery::parse(&query).unwrap();
+        // QTYPE and QCLASS are the last 4 bytes of the question section
+        let q_section = &query[12..parsed.question_end];
+        let qtype_bytes = &q_section[q_section.len() - 4..q_section.len() - 2];
+        let qclass_bytes = &q_section[q_section.len() - 2..];
+        assert_eq!(
+            u16::from_be_bytes([qtype_bytes[0], qtype_bytes[1]]),
+            28,
+            "QTYPE=AAAA"
+        );
+        assert_eq!(
+            u16::from_be_bytes([qclass_bytes[0], qclass_bytes[1]]),
+            1,
+            "QCLASS=IN"
+        );
+        // Verify they appear in the SERVFAIL
+        let sf_q_section = &servfail[12..];
+        assert_eq!(sf_q_section, q_section);
+    }
+
+    #[test]
+    fn test_hardlimit_servfail_is_within_size_limits() {
+        // SERVFAIL with question section: 12 + question_len
+        // For "example.com" the question is 17 bytes (7+example + 3+com + 0 + 2+2)
+        let (servfail, _) = build_tcp_hardlimit_servfail(0x0001, 0x0100, "example.com", 1, 1);
+        assert!(servfail.len() <= 512, "SERVFAIL must fit in 512 bytes");
+        assert!(servfail.len() > 12, "SERVFAIL must have question section");
+    }
+
+    #[test]
+    fn test_hardlimit_servfail_no_partial_oversized_response() {
+        // The SERVFAIL itself should be well under any reasonable limit.
+        // This test verifies the SERVFAIL is never truncated.
+        let (servfail, _) = build_tcp_hardlimit_servfail(0xBEEF, 0x0100, "example.com", 1, 1);
+        let flags = u16::from_be_bytes([servfail[2], servfail[3]]);
+        assert_eq!(flags & 0x0200, 0, "TC=0: SERVFAIL must not be truncated");
+    }
+
+    #[test]
+    fn test_hardlimit_servfail_fallback_without_parsed_query() {
+        // When parsing fails (query too short), SERVFAIL has QDCOUNT=0
+        let query = build_query_with_flags(0xDEAD, 0x0100, "bad", 1, 1);
+        let short_query = &query[..8];
+        let qid = u16::from_be_bytes([short_query[0], short_query[1]]);
+        let flags_raw = u16::from_be_bytes([short_query[2], short_query[3]]);
+        let rd = (flags_raw & 0x0100) != 0;
+        let flags = crate::parsed_query::build_response_flags(false, false, rd, false, false, 2);
+
+        let mut servfail = Vec::with_capacity(12);
+        servfail.extend_from_slice(&qid.to_be_bytes());
+        servfail.extend_from_slice(&flags.to_be_bytes());
+        servfail.extend_from_slice(&0u16.to_be_bytes()); // QDCOUNT=0
+        servfail.extend_from_slice(&0u16.to_be_bytes()); // ANCOUNT
+        servfail.extend_from_slice(&0u16.to_be_bytes()); // NSCOUNT
+        servfail.extend_from_slice(&0u16.to_be_bytes()); // ARCOUNT
+
+        assert_eq!(servfail.len(), 12);
+        assert_eq!(u16::from_be_bytes([servfail[0], servfail[1]]), 0xDEAD);
+        assert_eq!(
+            u16::from_be_bytes([servfail[4], servfail[5]]),
+            0,
+            "QDCOUNT=0 when parsing failed"
+        );
+    }
+}
+
+// ── TCP one-query-per-connection lifecycle tests ──────────────────────
+
+#[cfg(test)]
+mod tcp_lifecycle_tests {
+    use super::*;
+    use crate::edns::EcsFilterConfig;
+    use crate::limits::ConnectionLimits;
+    use crate::server::DnsZoneRecord;
+    use crate::server::RecordType;
+    use crate::server::Zone;
+    use crate::zone_trie::ZoneTrie;
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    /// Build a raw DNS query in wire format.
+    fn build_query(id: u16, qname: &str, qtype: u16) -> Vec<u8> {
+        let mut q = Vec::with_capacity(12 + 256 + 4);
+        q.extend_from_slice(&id.to_be_bytes());
+        q.extend_from_slice(&0x0100u16.to_be_bytes()); // RD=1
+        q.extend_from_slice(&1u16.to_be_bytes()); // QDCOUNT
+        q.extend_from_slice(&0u16.to_be_bytes()); // ANCOUNT
+        q.extend_from_slice(&0u16.to_be_bytes()); // NSCOUNT
+        q.extend_from_slice(&0u16.to_be_bytes()); // ARCOUNT
+
+        if qname.is_empty() || qname == "." {
+            q.push(0);
+        } else {
+            for label in qname.split('.').filter(|s| !s.is_empty()) {
+                q.push(label.len() as u8);
+                q.extend_from_slice(label.as_bytes());
+            }
+            q.push(0);
+        }
+
+        q.extend_from_slice(&qtype.to_be_bytes());
+        q.extend_from_slice(&1u16.to_be_bytes()); // CLASS IN
+        q
+    }
+
+    /// Wrap a DNS message with a 2-byte TCP length prefix.
+    fn wrap_tcp(msg: &[u8]) -> Vec<u8> {
+        let len = msg.len() as u16;
+        let mut buf = len.to_be_bytes().to_vec();
+        buf.extend_from_slice(msg);
+        buf
+    }
+
+    /// Build a test zone with records that produce a response large enough
+    /// to exceed a small hard limit. The TXT record wire encoding is ~50 bytes.
+    fn build_test_zone() -> Zone {
+        let mut zone = Zone::new("test.local".to_string());
+        zone.serial = 2026070301;
+        zone.nsec_enabled = false;
+        zone.nsec3_enabled = false;
+
+        zone.records.insert(
+            ("@".to_string(), RecordType::SOA),
+            vec![DnsZoneRecord {
+                name: "@".to_string(),
+                record_type: RecordType::SOA,
+                value: "ns1.test.local. admin.test.local. 2026070301 3600 600 604800 300"
+                    .to_string(),
+                ttl: 300,
+                priority: None,
+            }],
+        );
+
+        zone.records.insert(
+            ("www".to_string(), RecordType::A),
+            vec![DnsZoneRecord {
+                name: "www".to_string(),
+                record_type: RecordType::A,
+                value: "192.0.2.10".to_string(),
+                ttl: 300,
+                priority: None,
+            }],
+        );
+
+        zone.records.insert(
+            ("txt".to_string(), RecordType::TXT),
+            vec![DnsZoneRecord {
+                name: "txt".to_string(),
+                record_type: RecordType::TXT,
+                value: "a-long-enough-txt-record-to-make-the-response-exceed-thirty-bytes"
+                    .to_string(),
+                ttl: 300,
+                priority: None,
+            }],
+        );
+
+        zone
+    }
+
+    /// Start a DNS server on a random port with an optional zone and connection limits.
+    async fn start_test_server_with_zone(
+        zone: Option<Zone>,
+        connection_limits: Option<Arc<ConnectionLimits>>,
+    ) -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let (stream, _peer) = listener.accept().await.unwrap();
+            let zones = Arc::new(ShardedZoneStore::new());
+            let mut trie = ZoneTrie::new();
+
+            if let Some(z) = zone {
+                let origin = z.origin.clone();
+                zones.insert(origin.clone(), z);
+                trie.insert(&origin);
+            }
+
+            let zone_trie = Arc::new(RwLock::new(trie));
+            let ecs_config = EcsFilterConfig::default();
+            let limits = connection_limits.unwrap_or_else(|| {
+                Arc::new(ConnectionLimits::new(
+                    100, 1000, 65535, 65535, 1000, 300, 30,
+                ))
+            });
+            let ctx = QueryContext {
+                zones: &zones,
+                zone_trie: &zone_trie,
+                geoip_lookup: None,
+                min_geo_ttl: 0,
+                negative_cache_ttl: 300,
+                cache: None,
+                dnssec: None,
+                signer_name: None,
+                query_validator: None,
+                firewall: None,
+                connection_limits: Some(&limits),
+                max_idle_time: Some(std::time::Duration::from_secs(5)),
+                zone_transfer: None,
+                ecs_filter_config: &ecs_config,
+                rate_limiter: None,
+                rrl_enabled: false,
+                update_handler: None,
+                notify_handler: None,
+                query_coalescer: None,
+                dns64_translator: None,
+                acme_dns_challenges: None,
+                cookie_server: None,
+                #[cfg(feature = "mesh")]
+                mesh_registry: None,
+            };
+            let _ = DnsServer::handle_tcp_query(stream, ctx).await;
+        });
+
+        addr
+    }
+
+    #[tokio::test]
+    async fn test_tcp_one_query_then_connection_closed() {
+        // Use a zone so we get a real response instead of REFUSED
+        let zone = build_test_zone();
+        let addr = start_test_server_with_zone(Some(zone), None).await;
+
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+
+        // Send a valid DNS query over TCP (length-prefixed)
+        let query = build_query(0x1234, "www.test.local", 1);
+        let tcp_msg = wrap_tcp(&query);
+        stream.write_all(&tcp_msg).await.unwrap();
+
+        // Read the response
+        let mut len_buf = [0u8; 2];
+        stream.read_exact(&mut len_buf).await.unwrap();
+        let resp_len = u16::from_be_bytes(len_buf) as usize;
+        let mut resp_buf = vec![0u8; resp_len];
+        stream.read_exact(&mut resp_buf).await.unwrap();
+
+        // Response should be a valid DNS message
+        assert!(resp_buf.len() >= 12);
+        let resp_flags = u16::from_be_bytes([resp_buf[2], resp_buf[3]]);
+        assert_ne!(resp_flags & 0x8000, 0, "QR=1 in response");
+        // NOERROR (0) since the zone has the record
+        assert_eq!(
+            resp_flags & 0x000F,
+            0,
+            "RCODE=NOERROR (zone has the record)"
+        );
+
+        // Connection should be closed by the server after one response.
+        // Attempting to read should return 0 bytes (EOF) or an error.
+        let read_result = stream.read(&mut [0u8; 1]).await;
+        match read_result {
+            Ok(0) => {} // EOF — connection closed by server
+            Ok(_) => {
+                panic!(
+                    "Expected connection closed (EOF), but got additional data. \
+                     The server is not enforcing one-query-per-connection."
+                );
+            }
+            Err(_) => {} // Connection reset — also acceptable
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tcp_second_query_not_processed() {
+        let zone = build_test_zone();
+        let addr = start_test_server_with_zone(Some(zone), None).await;
+
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+
+        // Send first query
+        let query1 = build_query(0x1111, "www.test.local", 1);
+        stream.write_all(&wrap_tcp(&query1)).await.unwrap();
+
+        // Read first response
+        let mut len_buf = [0u8; 2];
+        stream.read_exact(&mut len_buf).await.unwrap();
+        let resp_len = u16::from_be_bytes(len_buf) as usize;
+        let mut resp_buf = vec![0u8; resp_len];
+        stream.read_exact(&mut resp_buf).await.unwrap();
+        assert_eq!(
+            u16::from_be_bytes([resp_buf[2], resp_buf[3]]) & 0x000F,
+            0,
+            "First query returns NOERROR"
+        );
+
+        // Server should have closed the connection. Verify by trying to send
+        // a second query — this should fail or produce no response.
+        let query2 = build_query(0x2222, "www.test.local", 1);
+        let write_result = stream.write_all(&wrap_tcp(&query2)).await;
+
+        // Either the write fails (broken pipe) or we get EOF on read
+        if write_result.is_ok() {
+            let read_result = stream.read(&mut [0u8; 1]).await;
+            match read_result {
+                Ok(0) => {} // EOF — correct
+                Ok(_) => {
+                    panic!(
+                        "Server processed a second query on the same TCP connection. \
+                         One-query-per-connection policy is violated."
+                    );
+                }
+                Err(_) => {} // Connection reset — acceptable
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tcp_hardlimit_returns_servfail() {
+        // Set up a zone with a TXT record that produces a response > 40 bytes.
+        // The SERVFAIL with question section is ~32 bytes for "txt.test.local",
+        // so max_response_size=40 rejects the real response but allows the SERVFAIL.
+        let zone = build_test_zone();
+
+        let limits = Arc::new(ConnectionLimits::new(
+            100,   // max_tcp_connections
+            1000,  // max_concurrent_queries
+            65535, // max_query_size
+            40,    // max_response_size — rejects real responses (~48+ bytes)
+            // but allows SERVFAIL (~32 bytes)
+            1000, // max_records_per_response
+            300,  // max_tcp_idle_time_secs
+            30,   // max_tcp_query_time_secs
+        ));
+        let addr = start_test_server_with_zone(Some(zone), Some(limits)).await;
+
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+
+        // Query for the TXT record which should produce a large response
+        let query = build_query(0xFACE, "txt.test.local", 16);
+        stream.write_all(&wrap_tcp(&query)).await.unwrap();
+
+        // Read the length prefix
+        let mut len_buf = [0u8; 2];
+        stream.read_exact(&mut len_buf).await.unwrap();
+        let resp_len = u16::from_be_bytes(len_buf) as usize;
+        let mut resp_buf = vec![0u8; resp_len];
+        stream.read_exact(&mut resp_buf).await.unwrap();
+
+        // Should be a SERVFAIL
+        assert!(resp_buf.len() >= 12);
+        let resp_flags = u16::from_be_bytes([resp_buf[2], resp_buf[3]]);
+        assert_eq!(
+            resp_flags & 0x000F,
+            2,
+            "RCODE must be SERVFAIL (2) when response exceeds hard limit"
+        );
+        // RA must be 0
+        assert_eq!(
+            resp_flags & 0x0080,
+            0,
+            "RA must be 0 in hard-limit SERVFAIL"
+        );
+        // AD must be 0
+        assert_eq!(
+            resp_flags & 0x0020,
+            0,
+            "AD must be 0 in hard-limit SERVFAIL"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tcp_hardlimit_servfail_preserves_id() {
+        let zone = build_test_zone();
+        let limits = Arc::new(ConnectionLimits::new(100, 1000, 65535, 40, 1000, 300, 30));
+        let addr = start_test_server_with_zone(Some(zone), Some(limits)).await;
+
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+
+        let query = build_query(0xCAFE, "txt.test.local", 16);
+        stream.write_all(&wrap_tcp(&query)).await.unwrap();
+
+        let mut len_buf = [0u8; 2];
+        stream.read_exact(&mut len_buf).await.unwrap();
+        let resp_len = u16::from_be_bytes(len_buf) as usize;
+        let mut resp_buf = vec![0u8; resp_len];
+        stream.read_exact(&mut resp_buf).await.unwrap();
+
+        // Query ID must be preserved in the SERVFAIL
+        let resp_id = u16::from_be_bytes([resp_buf[0], resp_buf[1]]);
+        assert_eq!(resp_id, 0xCAFE, "SERVFAIL must preserve query ID");
+    }
+
+    #[tokio::test]
+    async fn test_tcp_hardlimit_servfail_echoes_question() {
+        let zone = build_test_zone();
+        let limits = Arc::new(ConnectionLimits::new(100, 1000, 65535, 40, 1000, 300, 30));
+        let addr = start_test_server_with_zone(Some(zone), Some(limits)).await;
+
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+
+        let query = build_query(0xBEEF, "txt.test.local", 16);
+        stream.write_all(&wrap_tcp(&query)).await.unwrap();
+
+        let mut len_buf = [0u8; 2];
+        stream.read_exact(&mut len_buf).await.unwrap();
+        let resp_len = u16::from_be_bytes(len_buf) as usize;
+        let mut resp_buf = vec![0u8; resp_len];
+        stream.read_exact(&mut resp_buf).await.unwrap();
+
+        // Parse the question section from the original query
+        let parsed = ParsedDnsQuery::parse(&query).unwrap();
+        let question = &query[12..parsed.question_end];
+
+        // SERVFAIL should have QDCOUNT=1 and echo the question section
+        let qdcount = u16::from_be_bytes([resp_buf[4], resp_buf[5]]);
+        assert_eq!(qdcount, 1, "SERVFAIL must have QDCOUNT=1");
+        assert_eq!(
+            &resp_buf[12..],
+            question,
+            "SERVFAIL must echo the full question section"
+        );
     }
 }

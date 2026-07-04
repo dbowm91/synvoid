@@ -49,6 +49,14 @@ cargo test --test dns_recursive_isolation
 cargo test -p synvoid-dns -- phase7_cache_tests
 cargo test -p synvoid-dns -- recursive_cache
 
+# DNS Milestone 2 Phase 1 tests (transport lifecycle, bind fail-fast, shutdown, truncation)
+cargo test -p synvoid-dns -- transport
+cargo test -p synvoid-dns -- transport_lifecycle
+cargo test -p synvoid-dns -- configured_bind_addr
+cargo test -p synvoid-dns -- shutdown_runtime
+cargo test -p synvoid-dns -- tcp_hard_limit
+cargo test -p synvoid-dns -- truncation
+
 # DNS config-runtime matrix
 # See architecture/dns_config_runtime_matrix.md
 
