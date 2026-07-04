@@ -1337,6 +1337,22 @@ TCP uses **one-query-per-connection** semantics per RFC 7766 §4 (`server/query.
 
 The TCP idle timeout defaults to the `max_tcp_idle_time_secs` config value (default 300s). The connection guard (`ConnectionGuard`) is held inside the `tokio::spawn` closure for the lifetime of the task, ensuring the connection count is properly decremented on drop.
 
+### EDNS Keepalive
+
+EDNS keepalive (RFC 7828, option code 11) is parsed in `edns.rs` and stored as `EdnsOptions.keepalive: Option<u16>`. The `build_keepalive_option(timeout_secs)` function constructs the EDNS option for responses.
+
+**Current state**: EDNS keepalive is parsed but not wired into connection management. Since the server uses one-query-per-connection semantics (TCP), keepalive negotiation is moot — the connection closes after each query response. Persistent TCP connections (pipelining/multiplexing) are deferred to a future milestone, at which point EDNS keepalive will be used to set per-connection idle timeouts.
+
+### Query Timeout
+
+Query timeout enforcement is wired at two levels:
+
+1. **Initial read timeout** (`server/query.rs:109`): TCP connections use `tokio::time::timeout(idle_timeout, stream.read_exact(...))` with a default of 30 seconds (`max_idle_time`). This guards against slow-loris attacks on TCP connections.
+
+2. **Recursive query timeout** (`recursive.rs:133-167`): `query_timeout_secs` from `RecursiveDnsConfig` is passed to `HickoryResolver` constructors. This controls how long the recursive resolver waits for upstream responses before returning SERVFAIL.
+
+**Note**: Query timeout is not enforced mid-processing — only on the initial read. Once a query is being processed (e.g., zone lookups, DNSSEC validation), there is no per-step timeout. This is standard DNS server behavior; the client-side query timeout handles the overall deadline.
+
 ### UDP/EDNS Truncation Behavior
 
 When a UDP response exceeds the client's advertised EDNS UDP payload size (default 512 bytes without EDNS, or the OPT record CLASS field value with EDNS), the response is truncated:
@@ -1419,6 +1435,14 @@ pub enum TransportClass {
 **Cache key impact**: The `TransportClass` is included in `CacheKey` as a field. Two queries for the same name/type/class will have different cache entries if one arrives via `Udp512` and the other via `Tcp`, because TCP responses can be larger and have no TC flag. Similarly, `UdpEdns(1232)` and `UdpEdns(4096)` produce different cache entries because the 4096-byte client can receive larger responses without truncation.
 
 **Coalescing key impact**: The `QueryKey::from_parsed()` constructor includes `transport_class` in the coalescing key. A UDP query for `example.com A` will not be coalesced with a TCP query for the same name, even though both resolve the same record — because the responses may differ (TC=1 for UDP, full answer for TCP).
+
+### Coalescing Namespace Policy
+
+The `QueryKey.namespace` field is hardcoded to `CacheNamespace::Authoritative` in all constructors (`QueryKey::from_query`, `QueryKey::from_parsed`). This is **by design** — the query coalescer operates only in the authoritative server path, not the recursive resolver path.
+
+**Rationale**: Recursive queries are resolved via `HickoryResolver`, which has its own internal connection pooling and query pipelining. The coalescer deduplicates concurrent authoritative queries arriving over UDP/TCP from external clients. Recursive queries never pass through the coalescer — they use a different code path (`recursive.rs`) that bypasses `handle_query` entirely.
+
+**Skip list**: `should_skip_coalescing()` returns `true` for AXFR (type 252), IXFR (type 251), NOTIFY (opcode 4), and UPDATE (opcode 5). These operation types are always handled individually regardless of in-flight state, because they carry zone-modifying side effects that must not be deduplicated.
 
 ---
 

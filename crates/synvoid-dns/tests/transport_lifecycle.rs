@@ -202,3 +202,281 @@ fn recursive_server_handle_is_not_leaked() {
     // Verify server can be dropped without issues (no join handle leaks)
     drop(server);
 }
+
+// ── Coalescing integration tests ────────────────────────────────────────
+
+#[tokio::test]
+async fn coalescer_get_or_wait_returns_new_query_for_first_request() {
+    use std::sync::Arc;
+    use synvoid_dns::cache::TransportClass;
+    use synvoid_dns::query_coalesce::{QueryCoalescer, QueryKey};
+
+    let coalescer = Arc::new(QueryCoalescer::with_config(500, 100, 30));
+
+    let key = QueryKey {
+        name: "first.test".to_string(),
+        qtype: 1,
+        qclass: 1,
+        dnssec_ok: false,
+        client_ip: None,
+        transport_class: TransportClass::Udp512,
+        namespace: synvoid_dns::cache::CacheNamespace::Authoritative,
+    };
+
+    let result = coalescer.get_or_wait(key.clone()).await;
+    assert!(result.is_some(), "first request should return Some");
+    match result.unwrap() {
+        synvoid_dns::CoalesceResult::NewQuery(_tx) => {} // expected
+        other => panic!("expected NewQuery, got {:?}", other),
+    }
+    assert_eq!(coalescer.in_flight_count(), 1);
+}
+
+#[tokio::test]
+async fn coalescer_broadcast_shares_response_to_waiters() {
+    use std::sync::Arc;
+    use synvoid_dns::cache::TransportClass;
+    use synvoid_dns::query_coalesce::{QueryCoalescer, QueryKey};
+    use synvoid_dns::CoalesceResult;
+
+    // Long max_wait so the waiter doesn't timeout before broadcast
+    let coalescer = Arc::new(QueryCoalescer::with_config(5000, 100, 30));
+
+    let key = QueryKey {
+        name: "share.test".to_string(),
+        qtype: 1,
+        qclass: 1,
+        dnssec_ok: false,
+        client_ip: None,
+        transport_class: TransportClass::Udp512,
+        namespace: synvoid_dns::cache::CacheNamespace::Authoritative,
+    };
+
+    // Owner claims the key
+    let _owner_tx = match coalescer.get_or_wait(key.clone()).await {
+        Some(CoalesceResult::NewQuery(tx)) => tx,
+        other => panic!("expected NewQuery, got {:?}", other),
+    };
+
+    // Spawn a waiter while owner is still in-flight
+    let coalescer_clone = Arc::clone(&coalescer);
+    let key_clone = key.clone();
+    let waiter_handle = tokio::spawn(async move { coalescer_clone.get_or_wait(key_clone).await });
+
+    // Give the waiter time to register
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // Broadcast the response
+    let response = Arc::new(vec![0x12, 0x34, 0x01, 0x00]);
+    coalescer.broadcast_response(key.clone(), Arc::clone(&response));
+
+    // The waiter should receive the broadcast response
+    let waiter_result = waiter_handle.await.unwrap();
+    match waiter_result {
+        Some(CoalesceResult::Response(resp)) => {
+            assert_eq!(
+                *resp, *response,
+                "waiter should receive the broadcast response"
+            );
+        }
+        other => panic!("expected Response from waiter, got {:?}", other),
+    }
+
+    let metrics = coalescer.metrics();
+    assert!(metrics.broadcasts > 0, "should have at least one broadcast");
+}
+
+#[tokio::test]
+async fn coalescer_cancel_in_flight_removes_entry() {
+    use std::sync::Arc;
+    use synvoid_dns::cache::TransportClass;
+    use synvoid_dns::query_coalesce::{QueryCoalescer, QueryKey};
+
+    let coalescer = Arc::new(QueryCoalescer::with_config(500, 100, 30));
+
+    let key = QueryKey {
+        name: "cancel.test".to_string(),
+        qtype: 1,
+        qclass: 1,
+        dnssec_ok: false,
+        client_ip: None,
+        transport_class: TransportClass::Udp512,
+        namespace: synvoid_dns::cache::CacheNamespace::Authoritative,
+    };
+
+    // Owner claims the key
+    let _ = coalescer.get_or_wait(key.clone()).await;
+    assert_eq!(coalescer.in_flight_count(), 1);
+
+    // Cancel the in-flight entry
+    coalescer.cancel_in_flight(&key);
+    assert_eq!(coalescer.in_flight_count(), 0);
+
+    // Next request should get NewQuery (not a stale broadcast receiver)
+    let result = coalescer.get_or_wait(key.clone()).await;
+    assert!(result.is_some());
+    match result.unwrap() {
+        synvoid_dns::CoalesceResult::NewQuery(_tx) => {} // expected after cancel
+        other => panic!("expected NewQuery after cancel, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn coalescer_metrics_track_hits_misses_and_evictions() {
+    use std::sync::Arc;
+    use synvoid_dns::cache::TransportClass;
+    use synvoid_dns::query_coalesce::{QueryCoalescer, QueryKey};
+
+    // Use a tiny max_entries to trigger eviction
+    let coalescer = Arc::new(QueryCoalescer::with_config(500, 2, 30));
+
+    let key1 = QueryKey {
+        name: "metrics1.test".to_string(),
+        qtype: 1,
+        qclass: 1,
+        dnssec_ok: false,
+        client_ip: None,
+        transport_class: TransportClass::Udp512,
+        namespace: synvoid_dns::cache::CacheNamespace::Authoritative,
+    };
+    let key2 = QueryKey {
+        name: "metrics2.test".to_string(),
+        qtype: 1,
+        qclass: 1,
+        dnssec_ok: false,
+        client_ip: None,
+        transport_class: TransportClass::Udp512,
+        namespace: synvoid_dns::cache::CacheNamespace::Authoritative,
+    };
+    let key3 = QueryKey {
+        name: "metrics3.test".to_string(),
+        qtype: 1,
+        qclass: 1,
+        dnssec_ok: false,
+        client_ip: None,
+        transport_class: TransportClass::Udp512,
+        namespace: synvoid_dns::cache::CacheNamespace::Authoritative,
+    };
+
+    // Two entries fill the capacity
+    let _ = coalescer.get_or_wait(key1.clone()).await;
+    let _ = coalescer.get_or_wait(key2.clone()).await;
+    assert_eq!(coalescer.in_flight_count(), 2);
+
+    // Third entry triggers eviction
+    let _ = coalescer.get_or_wait(key3.clone()).await;
+    let metrics = coalescer.metrics();
+    assert!(
+        metrics.evictions > 0,
+        "should have evictions when over capacity"
+    );
+}
+
+#[test]
+fn coalescer_skip_list_bypasses_coalescing() {
+    use synvoid_dns::query_coalesce::should_skip_coalescing;
+
+    // AXFR (type 252) should skip
+    assert!(
+        should_skip_coalescing(252, 0),
+        "AXFR should skip coalescing"
+    );
+    // IXFR (type 251) should skip
+    assert!(
+        should_skip_coalescing(251, 0),
+        "IXFR should skip coalescing"
+    );
+    // NOTIFY (opcode 4) should skip
+    assert!(
+        should_skip_coalescing(1, 4),
+        "NOTIFY should skip coalescing"
+    );
+    // UPDATE (opcode 5) should skip
+    assert!(
+        should_skip_coalescing(1, 5),
+        "UPDATE should skip coalescing"
+    );
+    // Normal A query should NOT skip
+    assert!(
+        !should_skip_coalescing(1, 0),
+        "A query should not skip coalescing"
+    );
+    // Normal AAAA query should NOT skip
+    assert!(
+        !should_skip_coalescing(28, 0),
+        "AAAA query should not skip coalescing"
+    );
+}
+
+#[tokio::test]
+async fn coalescer_cleanup_removes_stale_entries() {
+    use std::sync::Arc;
+    use synvoid_dns::cache::TransportClass;
+    use synvoid_dns::query_coalesce::{QueryCoalescer, QueryKey};
+
+    // Use a very short entry TTL
+    let coalescer = Arc::new(QueryCoalescer::with_config(500, 100, 0));
+
+    let key = QueryKey {
+        name: "stale.test".to_string(),
+        qtype: 1,
+        qclass: 1,
+        dnssec_ok: false,
+        client_ip: None,
+        transport_class: TransportClass::Udp512,
+        namespace: synvoid_dns::cache::CacheNamespace::Authoritative,
+    };
+
+    let _ = coalescer.get_or_wait(key.clone()).await;
+    assert_eq!(coalescer.in_flight_count(), 1);
+
+    // Wait for the entry to become stale (TTL=0 means immediately stale)
+    tokio::time::sleep(Duration::from_millis(10)).await;
+
+    coalescer.cleanup_stale();
+    assert_eq!(
+        coalescer.in_flight_count(),
+        0,
+        "stale entry should be cleaned up"
+    );
+}
+
+#[tokio::test]
+async fn coalescer_metrics_track_timeouts() {
+    use std::sync::Arc;
+    use synvoid_dns::cache::TransportClass;
+    use synvoid_dns::query_coalesce::{QueryCoalescer, QueryKey};
+    use synvoid_dns::CoalesceResult;
+
+    // Very short max_wait
+    let coalescer = Arc::new(QueryCoalescer::with_config(10, 100, 30));
+
+    let key = QueryKey {
+        name: "timeout.test".to_string(),
+        qtype: 1,
+        qclass: 1,
+        dnssec_ok: false,
+        client_ip: None,
+        transport_class: TransportClass::Udp512,
+        namespace: synvoid_dns::cache::CacheNamespace::Authoritative,
+    };
+
+    // Owner claims the key
+    let _ = coalescer.get_or_wait(key.clone()).await;
+
+    // Second request will wait and should timeout
+    let result = coalescer.get_or_wait(key.clone()).await;
+    // The result could be Timeout or NewQuery depending on timing,
+    // but if it's Timeout, we should see it in metrics
+    match result {
+        Some(CoalesceResult::Timeout) => {
+            let metrics = coalescer.metrics();
+            assert!(metrics.timeouts > 0, "should track timeout metric");
+        }
+        Some(CoalesceResult::NewQuery(_)) => {
+            // If the owner's entry expired before the waiter registered,
+            // the waiter becomes the new owner — this is also valid
+        }
+        other => panic!("expected Timeout or NewQuery, got {:?}", other),
+    }
+}

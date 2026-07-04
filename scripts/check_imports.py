@@ -25,7 +25,7 @@ ForbiddenPattern = Tuple[str, str, str]
 FORBIDDEN_PATTERNS: List[ForbiddenPattern] = [
     ("src/worker/", "crate::mesh::", "Worker module must not depend on mesh (data plane separation)"),
     ("src/admin/", "crate::mesh::", "Admin module must not depend on mesh (mesh should be feature-gated)"),
-    ("src/dns/", "crate::mesh::", "DNS module should use local-first or DNS-native sync"),
+    ("src/dns/", "crate::mesh::", "DNS re-export shim must not directly import mesh (canonical DNS code is in crates/synvoid-dns/)"),
     ("src/tls/", "crate::config::mesh", "TLS termination is independent of mesh identity"),
 ]
 

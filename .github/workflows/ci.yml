@@ -22,11 +22,11 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             test: true
-            features: "wireguard,icmp-nftables,icmp-ebpf"
+            features: "wireguard,icmp-filter"
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             test: false
-            features: "wireguard,icmp-nftables"
+            features: "wireguard"
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             test: false
@@ -48,7 +48,7 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             test: true
-            features: "wireguard,icmp-winfw"
+            features: "wireguard"
           - target: x86_64-unknown-freebsd
             os: ubuntu-latest
             test: false
@@ -133,6 +133,35 @@ jobs:
           else
             echo "✅ No unsafe blocks found in crates/synvoid-dns/src/"
           fi
+
+  dns-tests:
+    name: DNS Crate Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt -p synvoid-dns -- --check
+
+      - name: Clippy DNS crate
+        run: cargo clippy -p synvoid-dns --all-targets -- -D warnings
+
+      - name: Run DNS unit tests
+        run: cargo test -p synvoid-dns --release
+
+      - name: Run DNS integration tests
+        run: |
+          cargo test -p synvoid-dns --test authoritative_negative --release
+          cargo test -p synvoid-dns --test dns_config_fidelity --release
+          cargo test -p synvoid-dns --test dns_recursive_isolation --release
+          cargo test -p synvoid-dns --test transport_lifecycle --release
 
   fmt:
     name: Rustfmt
@@ -530,7 +559,7 @@ jobs:
 
   summary:
     name: CI Summary
-    needs: [build, clippy, unsafe-dns, fmt, docs, security-audit, dependency-audit, outdated-deps, core-profile, import-check, miri-test, security-regression, profile-matrix, guard-suite, plugin-runtime-guardrails, docs-link-guard, fuzz-smoke]
+    needs: [build, clippy, unsafe-dns, dns-tests, fmt, docs, security-audit, dependency-audit, outdated-deps, core-profile, import-check, miri-test, security-regression, profile-matrix, guard-suite, plugin-runtime-guardrails, docs-link-guard, fuzz-smoke]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -543,6 +572,7 @@ jobs:
           echo "| build | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| clippy | ${{ needs.clippy.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| unsafe-dns | ${{ needs.unsafe-dns.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| dns-tests | ${{ needs.dns-tests.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| fmt | ${{ needs.fmt.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| docs | ${{ needs.docs.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| security-audit | ${{ needs.security-audit.result }} |" >> $GITHUB_STEP_SUMMARY

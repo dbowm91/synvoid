@@ -66,6 +66,9 @@ cargo test -p synvoid-dns -- query_timeout
 cargo test -p synvoid-dns -- open_resolver
 cargo test -p synvoid-dns --test dns_recursive_isolation -- open_resolver
 
+# DNS coalescing tests
+cargo test -p synvoid-dns --test transport_lifecycle -- coalescer
+
 # DNS config-runtime matrix
 # See architecture/dns_config_runtime_matrix.md
 
