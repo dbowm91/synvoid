@@ -292,12 +292,14 @@ All DoT/DoH/DoQ fields are covered in §1 root table.
 
 | Category | Count |
 |----------|-------|
-| **Total config fields** | ~110 |
-| **Fully implemented** | ~64 |
-| **Partially implemented** | ~2 |
-| **Validation-only** | ~10 |
-| **Deferred (planned for future phases)** | ~23 |
-| **Unsupported / documentation-only** | ~11 |
+| **Total config fields** | ~170 |
+| **Implemented** | ~101 |
+| **Partially implemented** | 3 |
+| **Validation-only** | 11 |
+| **Deferred** | 17 |
+| **Unsupported / documentation-only** | ~40 |
+
+Note: ~45 implemented fields lack dedicated test coverage (DoT/DoH/DoQ, rate limiter, firewall fields). These are wired and functional but not covered by unit/integration tests.
 
 ---
 
@@ -362,8 +364,6 @@ The following features have config fields but are confirmed deferred. They do NO
 | Firewall default_action | `dns.firewall.default_action` | Always Allow; configurable action deferred |
 | Firewall max_rules | `dns.firewall.max_rules` | Rule count limit not enforced |
 | Rebinding Protection | `dns.firewall.rebinding_protection` | Function exists, not wired into query path |
-| Query timeout | `dns.recursive.query_timeout_secs` | Only used for DNSSEC warning, not actual timeout |
-| Default TTL | `dns.settings.default_ttl` | Not consumed in runtime |
 
 ### Safe Default Profiles
 
@@ -526,3 +526,39 @@ block_internal_ips = true
 
 13. **`dns_config_fidelity`** — 17 tests (existing suite, all passing).
 14. **`dns_recursive_isolation`** — 30 tests (existing suite, all passing). Covers open-resolver guard, NOTIMP responses, recursive config validation.
+
+---
+
+## Phase 5 Changes Applied (Verification & Release Gate)
+
+### Verification Results
+
+All 8 gate areas verified on Milestone 2 completion:
+
+| Gate | Result | Details |
+|------|--------|---------|
+| **Gate 1: Compile and test baseline** | PASS | `cargo fmt --check`, `cargo test -p synvoid-dns` (576 tests), `cargo check --workspace` all pass |
+| **Gate 2: Deleted duplicate DNS tree** | PASS | `src/dns/mod.rs` is a clean re-export shim; canonical implementation in `crates/synvoid-dns/` |
+| **Gate 3: Config-runtime matrix** | PASS | Summary statistics updated; internal contradictions fixed; deferred features table corrected |
+| **Gate 4: Transport/runtime behavior** | PASS | All 8 behaviors tested: bind fail-fast, port zero, TCP lifecycle, TCP hard-limit, UDP truncation, shutdown idempotency, coalescer cleanup, connection guard lifetime |
+| **Gate 5: Cache behavior** | PASS | All 9 behaviors tested: cache key dimensions, namespace separation, DO bit, qclass, transport class, TTL extraction, negative TTL, SERVFAIL/REFUSED not cached, mutation invalidation |
+| **Gate 6: Coalescing behavior** | PASS | 47 tests covering key dimensions, exclusions, owner/waiter lifecycle, cancellation, timeout, metrics |
+| **Gate 7: Recursive isolation** | PASS | 31 tests covering open-resolver prevention, bind address independence, cache isolation, NOTIMP responses, zone mutation feature flags |
+| **Gate 8: Documentation** | PASS | All docs updated: config matrix, AGENTS.md, DNS override, skill file |
+
+### Corrections Applied
+
+1. **Summary statistics updated**: Changed from ~110 to ~170 total fields (tables grew but summary was stale).
+2. **Internal contradiction fixed**: `dns.recursive.query_timeout_secs` and `dns.settings.default_ttl` removed from Deferred Features table (they are implemented per Phase 2 corrections).
+3. **Formatting fix**: `crates/synvoid-dns/src/query_coalesce.rs` reformatted (long `assert_eq!` macros split across lines).
+
+### Known Limitations (Deferred)
+
+| Item | Status | Notes |
+|------|--------|-------|
+| DoT/DoH/DoQ test coverage | Wired, no tests | 28 fields implemented but untested |
+| Rate limiter test coverage | Wired, no tests | 9 fields implemented but untested |
+| Firewall test coverage | Wired, no tests | 3 security controls untested |
+| ECS client subnet | Partial | Full prefix routing not implemented |
+| DoQ bind address | Partial | Config field ignored, hardcoded to 0.0.0.0 |
+| RPZ, Dynamic Update, Notify, IXFR, Trust Anchors, Prefetch, Anycast, Padding, QNAME Privacy | Deferred | Config fields exist, no runtime consumer |

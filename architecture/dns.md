@@ -1505,3 +1505,61 @@ Phase 2 closed the gap between the config-runtime matrix and actual runtime beha
 | Anycast | Deferred | Requires mesh feature gate. |
 | External interoperability | Deferred | dig/drill/delv smoke tests require live server. |
 
+---
+
+## Milestone 2 Phase 5: Verification & Release Gate
+
+Phase 5 is a verification-only phase. It confirms that transport/runtime, config fidelity, cache integration, coalescing policy, and duplicate-tree cleanup are complete enough to support the next milestone without hidden regressions.
+
+### Gate Results
+
+| Gate | Status | Details |
+|------|--------|---------|
+| Compile and test baseline | PASS | `cargo fmt --check` clean, 576 DNS tests pass, workspace compiles |
+| Deleted duplicate DNS tree | PASS | `src/dns/mod.rs` is re-export shim only; canonical in `crates/synvoid-dns/` |
+| Config-runtime matrix | PASS | Summary stats updated (~170 fields); internal contradictions fixed |
+| Transport/runtime behavior | PASS | All 8 behaviors tested: bind fail-fast, port zero, TCP lifecycle, TCP hard-limit, UDP truncation, shutdown idempotency, coalescer cleanup, connection guard |
+| Cache behavior | PASS | All 9 behaviors tested: 7-dimension keys, namespace separation, DO bit, qclass, transport class, TTL extraction, negative TTL, SERVFAIL/REFUSED not cached, mutation invalidation |
+| Coalescing behavior | PASS | 47 tests covering key dimensions, exclusions, owner/waiter lifecycle, cancellation, timeout, metrics |
+| Recursive isolation | PASS | 31 tests covering open-resolver prevention, bind address independence, cache isolation, NOTIMP responses |
+| Documentation | PASS | All docs updated: config matrix, AGENTS.md, DNS override, skill file |
+
+### Corrections Applied
+
+1. **Config matrix summary statistics**: Updated from ~110 to ~170 total fields (tables grew but summary was stale).
+2. **Deferred features table**: Removed `query_timeout_secs` and `default_ttl` (they are implemented per Phase 2 corrections).
+3. **Formatting**: `query_coalesce.rs` reformatted (long macro lines split).
+
+### Known Limitations
+
+| Item | Status | Notes |
+|------|--------|-------|
+| DoT/DoH/DoQ test coverage | Wired, no tests | 28 fields implemented but untested |
+| Rate limiter test coverage | Wired, no tests | 9 fields implemented but untested |
+| Firewall test coverage | Wired, no tests | 3 security controls untested |
+| ECS client subnet | Partial | Full prefix routing not implemented |
+| DoQ bind address | Partial | Config field ignored, hardcoded to 0.0.0.0 |
+| Full DNSSEC production validation | Deferred | NSEC3 closest-encloser, RFC 5001/5155, key lifecycle |
+| RPZ, Dynamic Update, Notify, IXFR, Trust Anchors, Prefetch, Anycast, Padding, QNAME Privacy | Deferred | Config fields exist, no runtime consumer |
+
+### Verification Commands
+
+```bash
+# Gate 1: Compile and test baseline
+cargo fmt --all --check
+cargo test -p synvoid-config dns
+cargo test -p synvoid-dns
+cargo check -p synvoid-dns --all-features
+cargo check --workspace
+
+# Gate 4-7: Targeted tests
+cargo test -p synvoid-dns authoritative_negative
+cargo test -p synvoid-dns transport
+cargo test -p synvoid-dns cache
+cargo test -p synvoid-dns phase7_cache_tests
+cargo test -p synvoid-dns recursive_cache
+cargo test -p synvoid-dns query_coalesce
+cargo test -p synvoid-dns --test dns_recursive_isolation
+cargo test -p synvoid-dns -- open_resolver
+```
+

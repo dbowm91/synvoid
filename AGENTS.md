@@ -48,6 +48,10 @@ cargo test -p synvoid-dns --test dns_recursive_isolation
 # DNS Phase 7 cache tests
 cargo test -p synvoid-dns -- phase7_cache_tests
 cargo test -p synvoid-dns -- recursive_cache
+cargo test -p synvoid-dns -- cache
+
+# DNS query coalescing tests (Phase 4)
+cargo test -p synvoid-dns -- query_coalesce
 
 # DNS Milestone 2 Phase 1 tests (transport lifecycle, bind fail-fast, shutdown, truncation)
 cargo test -p synvoid-dns -- transport

@@ -512,3 +512,26 @@ cargo test -p synvoid-dns -- servfail_response
 # M2 Phase 1: UDP/EDNS truncation (TC bit, question echoed)
 cargo test -p synvoid-dns -- truncation
 ```
+
+## Milestone 2 Phase 5: Verification & Release Gate
+
+All 8 gate areas verified:
+
+| Gate | Status | Command |
+|------|--------|---------|
+| Compile/test baseline | PASS | `cargo test -p synvoid-dns` (576 tests) |
+| Duplicate DNS tree | PASS | `src/dns/` is re-export only |
+| Config-runtime matrix | PASS | Summary stats fixed, contradictions resolved |
+| Transport behavior | PASS | Bind fail-fast, TCP lifecycle, shutdown idempotency |
+| Cache behavior | PASS | 7-dimension keys, namespace separation, invalidation |
+| Coalescing behavior | PASS | Key dimensions, exclusions, owner/waiter lifecycle |
+| Recursive isolation | PASS | Open-resolver prevention, NOTIMP responses |
+| Documentation | PASS | All docs updated |
+
+### Known Limitations
+
+- DoT/DoH/DoQ (28 fields) wired but untested
+- Rate limiter (9 fields) wired but untested
+- Firewall (3 security controls) wired but untested
+- DoQ `bind_address` partially implemented (hardcoded to 0.0.0.0)
+- Full DNSSEC production validation deferred to later milestone

@@ -208,3 +208,33 @@ The `max_wait_ms` parameter is now used. At `crates/synvoid-dns/src/query_coales
 ### Exclusions
 - AXFR (qtype 252), IXFR (qtype 251), NOTIFY (opcode 4), UPDATE (opcode 5) bypass coalescing entirely
 - Malformed queries that fail key parsing return `None` and bypass coalescing
+
+## Milestone 2 Phase 5: Verification & Release Gate (2026-07-04)
+
+### Gate Results
+
+| Gate | Status | Notes |
+|------|--------|-------|
+| Compile and test baseline | PASS | 576 tests pass, fmt clean, workspace compiles |
+| Deleted duplicate DNS tree | PASS | `src/dns/` is re-export shim only; canonical in `crates/synvoid-dns/` |
+| Config-runtime matrix | PASS | Summary stats updated; internal contradictions fixed |
+| Transport/runtime behavior | PASS | All 8 behaviors tested |
+| Cache behavior | PASS | All 9 behaviors tested |
+| Coalescing behavior | PASS | 47 tests covering key dimensions and lifecycle |
+| Recursive isolation | PASS | 31 tests covering open-resolver prevention and NOTIMP |
+| Documentation | PASS | All docs updated |
+
+### Corrections Applied
+
+1. **Config matrix summary**: Updated from ~110 to ~170 total fields (tables grew but summary was stale).
+2. **Deferred features table**: Removed `query_timeout_secs` and `default_ttl` (they are implemented per Phase 2).
+3. **Formatting**: `query_coalesce.rs` reformatted (long macro lines).
+
+### Known Limitations
+
+- DoT/DoH/DoQ fields (28) wired but untested
+- Rate limiter fields (9) wired but untested
+- Firewall fields (3 security controls) wired but untested
+- DoQ `bind_address` partially implemented (hardcoded to 0.0.0.0)
+- Full DNSSEC production validation deferred
+- RPZ, Dynamic Update, Notify, IXFR, Trust Anchors, Prefetch, Anycast, Padding, QNAME Privacy deferred

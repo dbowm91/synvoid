@@ -1141,7 +1141,11 @@ mod tests {
 
         // Give the waiter time to subscribe to the broadcast channel
         tokio::time::sleep(Duration::from_millis(50)).await;
-        assert_eq!(coalescer.in_flight_count(), 1, "Entry should still be in-flight before cancel");
+        assert_eq!(
+            coalescer.in_flight_count(),
+            1,
+            "Entry should still be in-flight before cancel"
+        );
 
         coalescer.cancel_in_flight(&key);
 
@@ -1171,11 +1175,20 @@ mod tests {
 
         for cycle in 0..5 {
             let result = coalescer.get_or_wait(key.clone()).await;
-            assert!(matches!(result, Some(CoalesceResult::NewQuery(_))), "Cycle {}: should be NewQuery", cycle);
+            assert!(
+                matches!(result, Some(CoalesceResult::NewQuery(_))),
+                "Cycle {}: should be NewQuery",
+                cycle
+            );
 
             let response = Arc::new(vec![cycle as u8]);
             coalescer.broadcast_response(key.clone(), response.clone());
-            assert_eq!(coalescer.in_flight_count(), 0, "Cycle {}: should be empty after broadcast", cycle);
+            assert_eq!(
+                coalescer.in_flight_count(),
+                0,
+                "Cycle {}: should be empty after broadcast",
+                cycle
+            );
         }
     }
 
@@ -1228,7 +1241,10 @@ mod tests {
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Recursive,
         };
-        assert_ne!(key_auth, key_rec, "Authoritative and Recursive namespace must not coalesce");
+        assert_ne!(
+            key_auth, key_rec,
+            "Authoritative and Recursive namespace must not coalesce"
+        );
     }
 }
 
@@ -1381,7 +1397,10 @@ mod coalescing_exclusion_tests {
     #[test]
     fn test_malformed_query_returns_none_from_key_parsing() {
         let key = QueryKey::from_query(&[0x00], None, None);
-        assert!(key.is_none(), "Malformed query must not produce a coalescing key");
+        assert!(
+            key.is_none(),
+            "Malformed query must not produce a coalescing key"
+        );
     }
 }
 
