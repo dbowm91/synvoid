@@ -2,7 +2,7 @@
 
 ## 1. Purpose and Responsibility
 
-The SynVoid DNS module provides a **comprehensive, production-grade DNS server** with support for:
+The SynVoid DNS module provides a **comprehensive DNS server** with support for:
 
 - **Authoritative DNS serving** with zone management
 - **Recursive DNS resolution** with caching
@@ -1260,7 +1260,7 @@ cargo check --workspace                                      # clean
 
 Milestone 1 is closed. The authoritative DNS wire/query correctness is verified:
 
-- **399 lib tests + 37 authoritative_negative integration tests** pass.
+- **484 lib tests + 37 authoritative_negative integration tests** pass (576 total).
 - All authoritative responses (positive, NODATA, NXDOMAIN, REFUSED, truncated) have correct flags: AA=1, RA=0, AD=0, RD echoed from query.
 - Both signed and unsigned negative responses include SOA in the authority section (fail-closed: missing SOA returns SERVFAIL).
 - Signed NXDOMAIN now includes SOA before NSEC/NSEC3 denial proofs.
@@ -1464,7 +1464,7 @@ Phase 2 closed the gap between the config-runtime matrix and actual runtime beha
 
 | Area | Status | Details |
 |------|--------|---------|
-| Authoritative wire correctness | Closed | 399 lib tests + 37 authoritative_negative integration tests. Flags: AA=1, RA=0, AD=0, RD echoed. |
+| Authoritative wire correctness | Closed | 484 lib tests + 37 authoritative_negative integration tests (576 total). Flags: AA=1, RA=0, AD=0, RD echoed. |
 | Cache key dimensions | Closed | 7 dimensions with `from_parsed_authoritative()` / `from_parsed_recursive()` constructors. |
 | TTL extraction | Closed | Compression-safe (`skip_dns_name`, `first_answer_ttl`, `negative_soa_ttl`). Protocol-aware negative TTL from SOA. |
 | Cache invalidation | Closed | All zone mutation paths trigger `cache.invalidate_zone()`. Fingerprint state cleared on mutation. |

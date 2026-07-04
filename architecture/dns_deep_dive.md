@@ -10,7 +10,7 @@ This document covers SynVoid's DNS server with DNSSEC support, tunnel protocols 
 
 ### Overview
 
-SynVoid's DNS module provides an **authoritative DNS server** with DNSSEC signing, recursive resolver capabilities, and support for encrypted DNS protocols (DoT, DoH, DoQ). It also supports dynamic updates (RFC 2136), zone transfers (AXFR/IXFR), and mesh-based anycast for distributed deployments.
+SynVoid's DNS module provides an **authoritative DNS server** with DNSSEC signing, recursive resolver capabilities, and support for encrypted DNS protocols (DoT, DoH, DoQ). Dynamic updates (RFC 2136), zone transfers (AXFR/IXFR), and mesh-based anycast have handler stubs and config fields but are **deferred** (not wired to runtime).
 
 ### Feature-Gated
 
