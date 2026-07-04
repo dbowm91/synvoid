@@ -183,7 +183,7 @@ mod tests {
     fn test_connection_limits_defaults() {
         use synvoid::dns::ConnectionLimits;
 
-        let mut limits = ConnectionLimits::new(1000, 5000, 4096, 65535, 100, 30, 60);
+        let mut limits = ConnectionLimits::new(1000, 5000, 4096, 65535, 100, 30, 60, false);
         limits.disable_graceful_degradation();
 
         assert!(!limits.is_in_graceful_shutdown());

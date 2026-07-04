@@ -516,7 +516,7 @@ impl DnsServer {
                     return handler.handle_notify(query, ip).map(Arc::new);
                 }
             }
-            return None;
+            return wire::build_error_response(query, wire::RCODE_NOTIMP).map(Arc::new);
         }
 
         if parsed.is_update() {
@@ -528,7 +528,7 @@ impl DnsServer {
                     }
                 }
             }
-            return None;
+            return wire::build_error_response(query, wire::RCODE_NOTIMP).map(Arc::new);
         }
 
         if parsed.is_axfr() {
@@ -543,7 +543,7 @@ impl DnsServer {
                     }
                 }
             }
-            return None;
+            return wire::build_error_response(query, wire::RCODE_NOTIMP).map(Arc::new);
         }
 
         if parsed.is_ixfr() {
@@ -566,7 +566,7 @@ impl DnsServer {
                     }
                 }
             }
-            return None;
+            return wire::build_error_response(query, wire::RCODE_NOTIMP).map(Arc::new);
         }
 
         let cache_key = if let Some(ip) = client_ip {
@@ -2385,7 +2385,7 @@ mod tcp_lifecycle_tests {
             let ecs_config = EcsFilterConfig::default();
             let limits = connection_limits.unwrap_or_else(|| {
                 Arc::new(ConnectionLimits::new(
-                    100, 1000, 65535, 65535, 1000, 300, 30,
+                    100, 1000, 65535, 65535, 1000, 300, 30, false,
                 ))
             });
             let ctx = QueryContext {
@@ -2526,6 +2526,7 @@ mod tcp_lifecycle_tests {
             1000, // max_records_per_response
             300,  // max_tcp_idle_time_secs
             30,   // max_tcp_query_time_secs
+            false,
         ));
         let addr = start_test_server_with_zone(Some(zone), Some(limits)).await;
 
@@ -2567,7 +2568,9 @@ mod tcp_lifecycle_tests {
     #[tokio::test]
     async fn test_tcp_hardlimit_servfail_preserves_id() {
         let zone = build_test_zone();
-        let limits = Arc::new(ConnectionLimits::new(100, 1000, 65535, 40, 1000, 300, 30));
+        let limits = Arc::new(ConnectionLimits::new(
+            100, 1000, 65535, 40, 1000, 300, 30, false,
+        ));
         let addr = start_test_server_with_zone(Some(zone), Some(limits)).await;
 
         let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
@@ -2589,7 +2592,9 @@ mod tcp_lifecycle_tests {
     #[tokio::test]
     async fn test_tcp_hardlimit_servfail_echoes_question() {
         let zone = build_test_zone();
-        let limits = Arc::new(ConnectionLimits::new(100, 1000, 65535, 40, 1000, 300, 30));
+        let limits = Arc::new(ConnectionLimits::new(
+            100, 1000, 65535, 40, 1000, 300, 30, false,
+        ));
         let addr = start_test_server_with_zone(Some(zone), Some(limits)).await;
 
         let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();

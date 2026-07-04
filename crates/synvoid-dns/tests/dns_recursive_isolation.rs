@@ -1014,3 +1014,31 @@ fn test_default_config_recursive_disabled() {
         "Recursive should use non-standard port"
     );
 }
+
+/// WS5: Open-resolver guard rejects 0.0.0.0 and :: bind addresses
+#[test]
+fn test_recursive_open_resolver_guard() {
+    let mut config = synvoid_config::dns::RecursiveDnsConfig::default();
+    config.enabled = true;
+
+    // 0.0.0.0 should be rejected
+    config.bind_address = "0.0.0.0".to_string();
+    assert!(
+        config.validate().is_err(),
+        "Recursive DNS with bind_address=0.0.0.0 must fail validation (open resolver)"
+    );
+
+    // :: should be rejected
+    config.bind_address = "::".to_string();
+    assert!(
+        config.validate().is_err(),
+        "Recursive DNS with bind_address=:: must fail validation (open resolver)"
+    );
+
+    // 127.0.0.1 should be accepted
+    config.bind_address = "127.0.0.1".to_string();
+    assert!(
+        config.validate().is_ok(),
+        "Recursive DNS with bind_address=127.0.0.1 should pass validation"
+    );
+}

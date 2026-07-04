@@ -54,7 +54,7 @@ fn test_cache_size_is_weighted_byte_capacity() {
 /// config has `serve_stale.enabled = true`.
 ///
 /// `DnsServer::new` (server/mod.rs:689-697) passes:
-///   `DnsCache::with_serve_stale(cache_size, cache_max_ttl, cache_min_ttl, true, serve_stale.max_stale_secs)`
+///   `DnsCache::with_serve_stale(cache_size, cache_max_ttl, cache_min_ttl, true, serve_stale.max_stale_secs, serve_stale.max_stale_count)`
 ///
 /// We can't construct `DnsConfig` from this integration test (it's not re-exported),
 /// so we verify config propagation by constructing `DnsCache::with_serve_stale` with
@@ -67,8 +67,8 @@ fn test_config_propagation_serve_stale_enabled() {
     //   serve_stale.enabled: false, serve_stale.max_stale_secs: 86400
     //
     // When serve_stale is enabled in config, DnsServer::new passes:
-    //   DnsCache::with_serve_stale(100_000, 3600, 60, true, 86400)
-    let cache = DnsCache::with_serve_stale(100_000, 3600, 60, true, 86400);
+    //   DnsCache::with_serve_stale(100_000, 3600, 60, true, 86400, 100)
+    let cache = DnsCache::with_serve_stale(100_000, 3600, 60, true, 86400, 100);
 
     assert!(
         cache.is_serve_stale_enabled(),
@@ -97,7 +97,7 @@ fn test_config_propagation_serve_stale_disabled_default() {
 /// parameter `DnsServer::new` passes to `DnsCache::with_serve_stale`.
 #[test]
 fn test_config_propagation_max_stale_secs() {
-    let cache = DnsCache::with_serve_stale(100_000, 3600, 60, true, 600);
+    let cache = DnsCache::with_serve_stale(100_000, 3600, 60, true, 600, 100);
 
     let key = CacheKey::new("stale-config.example.com".to_string(), RecordType::A, None);
     let data = vec![0xc0, 0xa8, 0x01, 0x01];
@@ -125,7 +125,7 @@ fn test_config_propagation_max_stale_secs() {
 #[test]
 fn test_serve_stale_end_to_end_with_config_defaults() {
     // max_ttl_secs=3600, min_ttl_secs=1 so record_ttl=1 stays at 1
-    let cache = DnsCache::with_serve_stale(100_000, 3600, 1, true, 3);
+    let cache = DnsCache::with_serve_stale(100_000, 3600, 1, true, 3, 100);
 
     let key = CacheKey::new(
         "e2e-config-stale.example.com".to_string(),
@@ -155,7 +155,7 @@ fn test_serve_stale_end_to_end_with_config_defaults() {
 
 #[test]
 fn test_cache_serve_stale_enabled() {
-    let cache = DnsCache::with_serve_stale(100, 5, 1, true, 300);
+    let cache = DnsCache::with_serve_stale(100, 5, 1, true, 300, 100);
     assert!(cache.is_serve_stale_enabled());
 
     let key = CacheKey::new("example.com".to_string(), RecordType::A, None);

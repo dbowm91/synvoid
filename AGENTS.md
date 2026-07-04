@@ -41,9 +41,9 @@ cargo test -p synvoid-dns -- parsed_query
 # DNS authoritative negative response tests
 cargo test --test authoritative_negative
 
-# DNS config fidelity tests (Phase 5)
-cargo test --test dns_config_fidelity
-cargo test --test dns_recursive_isolation
+# DNS config fidelity tests (Phase 5 + Phase 2 closure)
+cargo test -p synvoid-dns --test dns_config_fidelity
+cargo test -p synvoid-dns --test dns_recursive_isolation
 
 # DNS Phase 7 cache tests
 cargo test -p synvoid-dns -- phase7_cache_tests
@@ -56,6 +56,11 @@ cargo test -p synvoid-dns -- configured_bind_addr
 cargo test -p synvoid-dns -- shutdown_runtime
 cargo test -p synvoid-dns -- tcp_hard_limit
 cargo test -p synvoid-dns -- truncation
+
+# DNS Milestone 2 Phase 2 tests (config closure: open-resolver guard, NOTIMP, query timeout)
+cargo test -p synvoid-dns -- query_timeout
+cargo test -p synvoid-dns -- open_resolver
+cargo test -p synvoid-dns --test dns_recursive_isolation -- open_resolver
 
 # DNS config-runtime matrix
 # See architecture/dns_config_runtime_matrix.md
@@ -348,6 +353,7 @@ The `architecture/` directory (87 docs) and `.opencode/skills/` directory contai
 
 ## Recent Completions
 
+- **DNS Milestone 2 Phase 2 Config Matrix Closure** — Matrix reconciliation (6 corrections: default_ttl, negative_cache_ttl, enable_graceful_degradation, doq.bind_address, serve_stale.max_stale_count, query_timeout_secs), serve-stale max_stale_count wiring, NOTIMP responses for disabled zone mutation (NOTIFY/UPDATE/AXFR/IXFR), query timeout wiring to HickoryResolver, open-resolver prevention guard, graceful degradation wiring, 48 integration tests passing. All items in `plans/dns_milestone_2_phase_02_config_matrix_closure.md` addressed.
 - **DNS Phase 7 Cache Semantics & Invalidation** — Cache key redesign (qclass, DO bit, transport class, namespace), SOA-derived negative TTL, dynamic update cache invalidation, composite fingerprint keys, serve-stale max_stale_count wiring, cache metrics (stale/negative/invalidation/poisoned), 30 new tests, architecture docs updated. All items in `plans/dns_phase_07_cache_semantics_invalidation.md` addressed.
 - **DNS Phase 5 Config-to-Runtime Fidelity** — serve_stale wiring, DNS64 exclude_aaaa_synthesis, 37 new tests (config fidelity + recursive isolation), config-runtime matrix document, deferred feature documentation. All items in `plans/dns_phase_05_config_runtime_fidelity.md` addressed.
 - **Plugin M3 Phase 8** — Unsafe native extension production gate, FFI panic catching, hot-reload gating, world-writable path rejection, config migration, metrics, and 34 unit tests. All items in `plans/plugin_m3_phase_08_gap_fixes.md` are complete.

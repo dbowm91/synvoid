@@ -408,8 +408,10 @@ pub async fn init_mesh_and_threat_intel(
                             "No valid upstream DNS servers configured, DNS verification will not work"
                         );
                     } else {
-                        match crate::dns::HickoryResolver::with_upstream_servers(&upstream_servers)
-                        {
+                        match crate::dns::HickoryResolver::with_upstream_servers(
+                            &upstream_servers,
+                            dns_cfg.recursive.query_timeout_secs,
+                        ) {
                             Ok(resolver) => {
                                 tracing::info!(
                                     "Global node DNS resolver initialized with upstream servers: {:?}",

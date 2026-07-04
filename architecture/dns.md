@@ -1207,6 +1207,8 @@ cargo test -p synvoid-dns -- servfail_response               # SERVFAIL response
 cargo test -p synvoid-dns -- truncation                      # UDP/EDNS truncation tests
 cargo test -p synvoid-dns --test dns_config_fidelity         # Config-to-runtime fidelity
 cargo test -p synvoid-dns --test dns_recursive_isolation     # Recursive isolation
+cargo test -p synvoid-dns -- open_resolver                   # Open-resolver guard (Phase 2)
+cargo test -p synvoid-dns -- query_timeout                   # Query timeout wiring (Phase 2)
 cargo check -p synvoid-dns --all-features                    # clean
 cargo check --workspace                                      # clean
 ```
@@ -1256,9 +1258,9 @@ The following features have config fields but are NOT wired to runtime behavior:
 
 ### Test Coverage
 
-Phase 5 added 47 integration tests across two files:
+Phase 5 added 48 integration tests across two files:
 - `dns_config_fidelity.rs` (17): Cache weighted byte capacity, serve_stale enabled/disabled, max_stale_secs, serve-stale end-to-end, min/max TTL, max_entry_size, DNS64 synthesis/disable/custom prefix/exclude, ECS filter
-- `dns_recursive_isolation.rs` (30): Recursive mode bind independence, cache isolation, authoritative REFUSED, anycast/mesh feature gates, config validation guards, zone mutation feature flags (UPDATE/NOTIFY/IXFR/wildcard transfer/TSIG), recursive default safety, deferred feature behavior
+- `dns_recursive_isolation.rs` (31): Recursive mode bind independence, cache isolation, authoritative REFUSED, anycast/mesh feature gates, config validation guards, zone mutation feature flags (UPDATE/NOTIFY/IXFR/wildcard transfer/TSIG), recursive default safety, deferred feature behavior, open-resolver guard
 
 ---
 
@@ -1377,7 +1379,43 @@ pub enum TransportClass {
 
 ---
 
-## Milestone Status (Post-Milestone 2 Phase 1)
+## Milestone 2 Phase 2: Config-to-Runtime Closure
+
+Phase 2 closed the gap between the config-runtime matrix and actual runtime behavior. Every implemented field is now tested or documented; every deferred field is explicitly noted.
+
+### Code Changes
+
+1. **Serve-stale `max_stale_count` wiring** (`cache.rs`, `server/mod.rs`): `DnsCache::with_serve_stale()` now accepts `serve_stale_max_stale_count: u64` instead of hardcoding `100`. `DnsServer::new()` passes `config.settings.serve_stale.max_stale_count`.
+
+2. **NOTIMP for disabled zone mutation** (`server/query.rs`): NOTIFY, UPDATE, AXFR, IXFR handlers that are `None` now return RCODE 4 (NOTIMP) instead of silently dropping the query. This follows RFC 1035/2136/1996 conventions.
+
+3. **Query timeout wiring** (`resolver.rs`, `recursive.rs`): `query_timeout_secs` from `RecursiveDnsConfig` is now passed to `HickoryResolver` constructors. Previously hardcoded to `Duration::from_secs(5)`.
+
+4. **Open-resolver prevention** (`dns_recursive.rs`): `validate()` rejects `0.0.0.0` or `::` as `bind_address` when recursive DNS is enabled.
+
+5. **Graceful degradation wiring** (`limits.rs`, `server/mod.rs`): `ConnectionLimits::new()` now accepts `enable_graceful_degradation: bool` and calls `self.enable_graceful_degradation(0.1)` when true.
+
+### Matrix Corrections
+
+| Field | Before | After | Reason |
+|-------|--------|-------|--------|
+| `dns.settings.default_ttl` | unsupported | implemented | Consumed at `server/zone.rs:137` as zone record fallback TTL |
+| `dns.settings.negative_cache_ttl` | implemented (no tests) | implemented | Tests exist: `server/query.rs:1931`, `server/query.rs:1939` |
+| `dns.limits.enable_graceful_degradation` | implemented | implemented | Config field now wired to `ConnectionLimits` |
+| `dns.doq.bind_address` | implemented | partially implemented | Hardcoded to `0.0.0.0:{port}` at `startup.rs:580` |
+| `dns.settings.serve_stale.max_stale_count` | implemented | implemented | Now explicitly wired from config |
+| `dns.recursive.query_timeout_secs` | partially implemented | implemented | Passed to `HickoryResolver` via `create_resolver()` |
+
+### Test Results
+
+- 570+ unit tests pass across 6 test suites
+- 48 integration tests pass (17 config fidelity + 31 recursive isolation)
+- New test: `test_recursive_open_resolver_guard` validates open-resolver rejection
+- Workspace compiles with 0 errors, `cargo fmt --check` passes
+
+---
+
+## Milestone Status (Post-Milestone 2 Phase 2)
 
 ### Closed
 
@@ -1390,13 +1428,17 @@ pub enum TransportClass {
 | Query coalescing | Closed | 6-dimensional `QueryKey`, AXFR/IXFR/UPDATE/NOTIFY excluded, 8 metrics counters. |
 | TCP hard-limit SERVFAIL | Closed | Echoes question, preserves RD bit, byte-size enforced. SERVFAIL self-size validated. |
 | Serve-stale | Closed | `DnsCache::with_serve_stale()`, config-wired `max_stale_secs` / `max_stale_count`. |
-| Config-runtime fidelity | Closed | 37+ Phase 5 tests. All config fields classified as implemented/deferred/unsupported. |
+| Config-runtime fidelity | Closed | 48+ Phase 5+2 tests. All config fields classified as implemented/deferred/unsupported. |
 | Stale `src/dns/` references | Closed | All ~100 stale references updated to `crates/synvoid-dns/src/`. |
 | Bind fail-fast | Closed | `configured_bind_addr()` validates address/port at startup. Tests guard invalid/port-zero. |
 | TCP one-query-per-connection | Closed | RFC 7766 §4 semantics. AXFR/IXFR exception for multi-message transfers. |
 | UDP/EDNS truncation | Closed | TC=1 response with question section; client retries over TCP. |
 | Shutdown idempotency | Closed | `shutdown_runtime()` safe to call multiple times. Fire-and-forget tasks cleaned via channels. |
 | Transport class propagation | Closed | `TransportClass` enum separates cache/coalescing keys by transport. 5 variants: Udp512, UdpEdns, Tcp, Http, Quic. |
+| Open-resolver prevention | Closed | `RecursiveDnsConfig::validate()` rejects `0.0.0.0`/`::` bind when recursive enabled. |
+| NOTIMP for disabled zone ops | Closed | NOTIFY/UPDATE/AXFR/IXFR return RCODE 4 when handlers are None. |
+| Query timeout wiring | Closed | `query_timeout_secs` from config passed to `HickoryResolver`. |
+| Graceful degradation wiring | Closed | `enable_graceful_degradation` from config wired to `ConnectionLimits`. |
 
 ### Partial
 
@@ -1412,8 +1454,9 @@ pub enum TransportClass {
 | Persistent TCP (pipelining) | Deferred | Requires framing state, per-query idle management, connection pool. |
 | DNSSEC production hardening | Deferred | NSEC3 closest-encloser, RFC 5001/5155 compliance, key lifecycle hardening. |
 | RPZ (Response Policy Zones) | Deferred | Config fields exist, no runtime consumer. |
-| Dynamic Update (RFC 2136) | Deferred | Handler stub exists, not wired; security-sensitive. |
-| Zone Transfer (IXFR) | Deferred | Config fields exist, requires delta encoding. |
+| Dynamic Update (RFC 2136) | Deferred | Handler stub exists, not wired; security-sensitive. Returns NOTIMP when disabled. |
+| Notify | Deferred | Handler stub exists, not wired. Returns NOTIMP when disabled. |
+| Zone Transfer (IXFR) | Deferred | Config fields exist, requires delta encoding. Returns NOTIMP when disabled. |
 | Trust Anchors (custom config) | Deferred | Uses system defaults via HickoryRecursor. |
 | Prefetch | Deferred | Config fields exist, no runtime consumer. |
 | Anycast | Deferred | Requires mesh feature gate. |

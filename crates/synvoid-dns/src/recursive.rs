@@ -130,7 +130,7 @@ impl RecursiveDnsServer {
                      Set upstream_provider='Recursive' to enable DNSSEC validation."
                 );
                 Arc::new(
-                    HickoryResolver::with_google()
+                    HickoryResolver::with_google(config.query_timeout_secs)
                         .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
                 )
             }
@@ -140,7 +140,7 @@ impl RecursiveDnsServer {
                      Set upstream_provider='Recursive' to enable DNSSEC validation."
                 );
                 Arc::new(
-                    HickoryResolver::with_cloudflare()
+                    HickoryResolver::with_cloudflare(config.query_timeout_secs)
                         .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
                 )
             }
@@ -154,13 +154,19 @@ impl RecursiveDnsServer {
                     )
                 } else if config.qname_minimization {
                     Arc::new(
-                        HickoryResolver::with_qname_minimization(&upstream_ips)
-                            .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
+                        HickoryResolver::with_qname_minimization(
+                            &upstream_ips,
+                            config.query_timeout_secs,
+                        )
+                        .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
                     )
                 } else {
                     Arc::new(
-                        HickoryResolver::with_upstream_servers(&upstream_ips)
-                            .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
+                        HickoryResolver::with_upstream_servers(
+                            &upstream_ips,
+                            config.query_timeout_secs,
+                        )
+                        .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
                     )
                 }
             }
@@ -1197,7 +1203,7 @@ mod tests {
                 root_hints_path: "".to_string(),
                 trust_anchor_path: "".to_string(),
             },
-            resolver: Arc::new(HickoryResolver::with_upstream_servers(&[upstream_ip]).unwrap()),
+            resolver: Arc::new(HickoryResolver::with_upstream_servers(&[upstream_ip], 5).unwrap()),
             cache: create_test_cache(),
             rate_limiter: None,
             firewall: None,

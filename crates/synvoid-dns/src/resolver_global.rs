@@ -18,7 +18,7 @@ impl GlobalNodeResolver {
         let fallback = HickoryResolver::from_system_config()?;
 
         let primary = if !global_node_ips.is_empty() {
-            match HickoryResolver::with_upstream_servers(&global_node_ips) {
+            match HickoryResolver::with_upstream_servers(&global_node_ips, 5) {
                 Ok(r) => Some(r),
                 Err(e) => {
                     tracing::warn!(

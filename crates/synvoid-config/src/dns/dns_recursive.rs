@@ -193,6 +193,12 @@ impl RecursiveDnsConfig {
             return Ok(());
         }
 
+        if self.bind_address == "0.0.0.0" || self.bind_address == "::" {
+            return Err(DnsConfigError::InvalidRecursive(
+                "Recursive DNS bind address must not be 0.0.0.0 or :: (open resolver). Bind to 127.0.0.1 or a specific interface.".to_string(),
+            ));
+        }
+
         if self.upstream_provider == RecursiveUpstreamProvider::Custom
             && self.upstream_servers.is_empty()
         {

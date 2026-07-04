@@ -694,6 +694,7 @@ impl DnsServer {
                     config.settings.cache_min_ttl,
                     true,
                     config.settings.serve_stale.max_stale_secs,
+                    config.settings.serve_stale.max_stale_count as u64,
                 )))
             } else {
                 Some(Arc::new(DnsCache::new(
@@ -902,6 +903,7 @@ impl DnsServer {
             config.limits.max_records_per_response,
             config.limits.max_tcp_idle_time_secs,
             config.limits.max_tcp_query_time_secs,
+            config.limits.enable_graceful_degradation,
         ));
 
         let ecs_filter_config =

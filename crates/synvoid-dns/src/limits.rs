@@ -28,8 +28,9 @@ impl ConnectionLimits {
         max_records_per_response: usize,
         max_tcp_idle_time_secs: u64,
         max_tcp_query_time_secs: u64,
+        enable_graceful_degradation: bool,
     ) -> Self {
-        Self {
+        let mut limits = Self {
             max_tcp_connections,
             max_concurrent_queries,
             max_query_size,
@@ -43,7 +44,11 @@ impl ConnectionLimits {
             degraded_mode: RunningFlag::new(),
             graceful_shutdown: DrainFlag::new(),
             reject_ratio: 0.0,
+        };
+        if enable_graceful_degradation {
+            limits.enable_graceful_degradation(0.1);
         }
+        limits
     }
 
     pub fn enable_graceful_degradation(&mut self, reject_ratio: f32) {
@@ -421,6 +426,7 @@ impl Default for ConnectionLimits {
             1000,  // max_records_per_response
             300,   // max_tcp_idle_time_secs (5 minutes)
             30,    // max_tcp_query_time_secs
+            false, // enable_graceful_degradation
         )
     }
 }
@@ -431,7 +437,7 @@ mod tests {
 
     #[test]
     fn connection_guard_acquire_and_drop() {
-        let mut limits = ConnectionLimits::new(2, 10, 65535, 65535, 1000, 300, 30);
+        let mut limits = ConnectionLimits::new(2, 10, 65535, 65535, 1000, 300, 30, false);
         limits.disable_graceful_degradation();
         assert_eq!(limits.get_stats().current_connections, 0);
 
@@ -450,7 +456,7 @@ mod tests {
 
     #[test]
     fn connection_guard_max_rejects() {
-        let mut limits = ConnectionLimits::new(1, 10, 65535, 65535, 1000, 300, 30);
+        let mut limits = ConnectionLimits::new(1, 10, 65535, 65535, 1000, 300, 30, false);
         limits.disable_graceful_degradation();
 
         let _guard = limits.try_acquire_connection().unwrap();
@@ -462,7 +468,7 @@ mod tests {
 
     #[test]
     fn query_guard_acquire_and_drop() {
-        let mut limits = ConnectionLimits::new(10, 2, 65535, 65535, 1000, 300, 30);
+        let mut limits = ConnectionLimits::new(10, 2, 65535, 65535, 1000, 300, 30, false);
         limits.disable_graceful_degradation();
         assert_eq!(limits.get_stats().current_queries, 0);
 
@@ -486,7 +492,7 @@ mod tests {
 
     #[test]
     fn graceful_shutdown_blocks_acquire() {
-        let mut limits = ConnectionLimits::new(10, 10, 65535, 65535, 1000, 300, 30);
+        let mut limits = ConnectionLimits::new(10, 10, 65535, 65535, 1000, 300, 30, false);
         limits.disable_graceful_degradation();
         limits.initiate_graceful_shutdown();
 
@@ -502,7 +508,7 @@ mod tests {
 
     #[test]
     fn validate_query_size_rejects_large() {
-        let limits = ConnectionLimits::new(10, 10, 1024, 65535, 1000, 300, 30);
+        let limits = ConnectionLimits::new(10, 10, 1024, 65535, 1000, 300, 30, false);
         assert!(limits.validate_query_size(512).is_ok());
         assert!(matches!(
             limits.validate_query_size(2048),
@@ -512,7 +518,7 @@ mod tests {
 
     #[test]
     fn validate_response_size_rejects_large() {
-        let limits = ConnectionLimits::new(10, 10, 65535, 1024, 1000, 300, 30);
+        let limits = ConnectionLimits::new(10, 10, 65535, 1024, 1000, 300, 30, false);
         assert!(limits.validate_response_size(512).is_ok());
         assert!(matches!(
             limits.validate_response_size(2048),
@@ -522,7 +528,7 @@ mod tests {
 
     #[test]
     fn stats_usage_percent() {
-        let limits = ConnectionLimits::new(100, 200, 65535, 65535, 1000, 300, 30);
+        let limits = ConnectionLimits::new(100, 200, 65535, 65535, 1000, 300, 30, false);
         let stats = limits.get_stats();
         assert_eq!(stats.connection_usage_percent(), 0.0);
         assert_eq!(stats.query_usage_percent(), 0.0);

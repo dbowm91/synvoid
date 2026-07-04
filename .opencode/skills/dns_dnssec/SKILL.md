@@ -393,6 +393,24 @@ Keys with `trust_point == 0` (never valid) must use `trust_anchor_check()` with 
 2. **TrustAnchorManager and hickory_proto::TrustAnchors are separate** - Synchronization between RFC 5011 manager and hickory's internal anchors
 3. **NSEC3 uses SHA-1** - RFC 9276 suggests SHA-1 is acceptable for NSEC3 hashing
 4. **NSEC3 Hash Length Encoding** - When creating NSEC3 records, the hash must be prefixed with its length as a single byte per RFC 5155 Section 3.2. The `create_nsec3_record()` function in `crates/synvoid-dns/src/dnssec_signing.rs` handles this correctly.
+5. **QNAME Privacy and DNS Padding are deferred** - `sanitize_qname()` (`dns_settings.rs:244`) and `DnsPadding` (`edns.rs:540`) exist but are not wired into the query path.
+6. **DoQ bind_address is partially implemented** - Config field exists but `startup.rs:580` hardcodes bind to `0.0.0.0:{port}`.
+
+## Milestone 2 Phase 2 Changes
+
+### Open-Resolver Prevention (`dns_recursive.rs`)
+`RecursiveDnsConfig::validate()` rejects `0.0.0.0` or `::` as `bind_address` when recursive DNS is enabled. Returns `DnsConfigError::InvalidRecursive` with an explicit open-resolver prevention message.
+
+### NOTIMP for Disabled Zone Mutation (`server/query.rs`)
+When zone mutation handlers (NOTIFY, UPDATE, AXFR, IXFR) are `None` in `DnsServer::new()`, the server now returns RCODE 4 (NOTIMP) instead of silently dropping the query. This follows RFC 1035/2136/1996 conventions for unsupported operations.
+
+### Query Timeout Wiring (`resolver.rs`, `recursive.rs`)
+`query_timeout_secs` from `RecursiveDnsConfig` is now passed to `HickoryResolver` constructors. Previously hardcoded to `Duration::from_secs(5)`.
+
+### Config-to-Runtime Fidelity
+- `serve_stale.max_stale_count` wired from config to `DnsCache::with_serve_stale()`
+- `enable_graceful_degradation` wired from `DnsLimitsConfig` to `ConnectionLimits`
+- `default_ttl` confirmed consumed at `server/zone.rs:137` as zone record fallback TTL
 
 ## Security Notes
 
@@ -462,10 +480,15 @@ cargo test -p synvoid-dns -- phase7_cache_tests
 cargo test -p synvoid-dns -- recursive_cache
 
 # Config-to-runtime fidelity tests (cache, DNS64, ECS, serve-stale)
-cargo test --test dns_config_fidelity
+cargo test -p synvoid-dns --test dns_config_fidelity
 
-# Recursive isolation + zone mutation feature flag tests (30 tests)
-cargo test --test dns_recursive_isolation
+# Recursive isolation + zone mutation feature flag tests (31 tests)
+cargo test -p synvoid-dns --test dns_recursive_isolation
+
+# M2 Phase 2: Open-resolver guard, NOTIMP responses, query timeout
+cargo test -p synvoid-dns -- open_resolver
+cargo test -p synvoid-dns -- query_timeout
+cargo test -p synvoid-dns --test dns_recursive_isolation -- open_resolver
 
 # M2 Phase 1: Transport class separation (cache/coalescing keys by transport)
 cargo test -p synvoid-dns -- transport

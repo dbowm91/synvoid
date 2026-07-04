@@ -203,8 +203,12 @@ impl HickoryResolver {
         Ok(Self { resolver })
     }
 
-    pub fn with_upstream_servers(upstream_ips: &[IpAddr]) -> Result<Self, ResolverError> {
-        let opts = hickory_resolver::config::ResolverOpts::default();
+    pub fn with_upstream_servers(
+        upstream_ips: &[IpAddr],
+        timeout_secs: u64,
+    ) -> Result<Self, ResolverError> {
+        let mut opts = hickory_resolver::config::ResolverOpts::default();
+        opts.timeout = std::time::Duration::from_secs(timeout_secs);
         Self::with_upstream_servers_and_options(upstream_ips, Some(opts))
     }
 
@@ -248,11 +252,14 @@ impl HickoryResolver {
     /// Note: QNAME minimization is natively performed by HickoryRecursor.
     /// In forwarder mode (HickoryResolver), privacy-friendly options are configured,
     /// and QNAME minimization is typically performed by the upstream recursive resolver.
-    pub fn with_qname_minimization(upstream_ips: &[IpAddr]) -> Result<Self, ResolverError> {
+    pub fn with_qname_minimization(
+        upstream_ips: &[IpAddr],
+        timeout_secs: u64,
+    ) -> Result<Self, ResolverError> {
         let mut opts = hickory_resolver::config::ResolverOpts::default();
 
         // Timeout configuration
-        opts.timeout = std::time::Duration::from_secs(5);
+        opts.timeout = std::time::Duration::from_secs(timeout_secs);
         opts.attempts = 3;
 
         // Privacy-friendly configuration
@@ -263,15 +270,18 @@ impl HickoryResolver {
     }
 
     pub fn with_default_servers() -> Result<Self, ResolverError> {
-        Self::with_upstream_servers(&[
-            IpAddr::from([8, 8, 8, 8]),
-            IpAddr::from([8, 8, 4, 4]),
-            IpAddr::from([1, 1, 1, 1]),
-            IpAddr::from([1, 0, 0, 1]),
-        ])
+        Self::with_upstream_servers(
+            &[
+                IpAddr::from([8, 8, 8, 8]),
+                IpAddr::from([8, 8, 4, 4]),
+                IpAddr::from([1, 1, 1, 1]),
+                IpAddr::from([1, 0, 0, 1]),
+            ],
+            5,
+        )
     }
 
-    pub fn with_google() -> Result<Self, ResolverError> {
+    pub fn with_google(timeout_secs: u64) -> Result<Self, ResolverError> {
         let name_servers = vec![
             hickory_resolver::config::NameServerConfig::udp_and_tcp(std::net::IpAddr::V4(
                 std::net::Ipv4Addr::new(8, 8, 8, 8),
@@ -288,7 +298,8 @@ impl HickoryResolver {
         ];
         let config =
             hickory_resolver::config::ResolverConfig::from_parts(None, vec![], name_servers);
-        let opts = hickory_resolver::config::ResolverOpts::default();
+        let mut opts = hickory_resolver::config::ResolverOpts::default();
+        opts.timeout = std::time::Duration::from_secs(timeout_secs);
 
         let mut builder = hickory_resolver::TokioResolver::builder_with_config(
             config,
@@ -302,7 +313,7 @@ impl HickoryResolver {
         Ok(Self { resolver })
     }
 
-    pub fn with_cloudflare() -> Result<Self, ResolverError> {
+    pub fn with_cloudflare(timeout_secs: u64) -> Result<Self, ResolverError> {
         let name_servers = vec![
             hickory_resolver::config::NameServerConfig::udp_and_tcp(std::net::IpAddr::V4(
                 std::net::Ipv4Addr::new(1, 1, 1, 1),
@@ -319,7 +330,8 @@ impl HickoryResolver {
         ];
         let config =
             hickory_resolver::config::ResolverConfig::from_parts(None, vec![], name_servers);
-        let opts = hickory_resolver::config::ResolverOpts::default();
+        let mut opts = hickory_resolver::config::ResolverOpts::default();
+        opts.timeout = std::time::Duration::from_secs(timeout_secs);
 
         let mut builder = hickory_resolver::TokioResolver::builder_with_config(
             config,

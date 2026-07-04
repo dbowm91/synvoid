@@ -77,7 +77,7 @@ Source: `crates/synvoid-config/src/dns/mod.rs:75`
 | `dns.doh.use_system_cert_store` | `true` | TLS config | implemented | none | add DoH tests |
 | `dns.doq.enabled` | `false` | `DoqServer::new()` | implemented | none | add DoQ tests |
 | `dns.doq.port` | `853` | `DoqServer::new()` | implemented | none | add DoQ tests |
-| `dns.doq.bind_address` | `""` | `DoqServer::new()` | implemented | none | add DoQ tests |
+| `dns.doq.bind_address` | `""` | hardcoded to `0.0.0.0` in `startup.rs:580`; config field not consumed | partially implemented | none | wire from config or document hardcoded |
 | `dns.doq.tls_cert_path` | `None` | TLS config | implemented | none | add DoQ tests |
 | `dns.doq.tls_key_path` | `None` | TLS config | implemented | none | add DoQ tests |
 | `dns.doq.use_system_cert_store` | `true` | TLS config | implemented | none | add DoQ tests |
@@ -129,20 +129,20 @@ Source: `crates/synvoid-config/src/dns/dns_settings.rs:9`
 
 | Config path | Default | Runtime consumer | Status | Tests | Action |
 |---|---|---|---|---|---|
-| `dns.settings.default_ttl` | `300` | not consumed | unsupported | none | wire or document |
+| `dns.settings.default_ttl` | `300` | `DnsServer::new()` fallback TTL during zone record loading (`server/zone.rs:137`) | implemented | none | none |
 | `dns.settings.min_geo_ttl` | `60` | `DnsHandlerState.min_geo_ttl` | implemented | none | add test |
 | `dns.settings.allow_transfer` | `[]` | `ZoneTransfer` struct exists; `zone_transfer` hardcoded to `None` in `DnsServer::new()` (line 950) | deferred | zone mutation tests (handler-level only) | wire from config or document deferred |
 | `dns.settings.cache_enabled` | `true` | `DnsCache::new()` | implemented | cache tests | none |
 | `dns.settings.cache_size` | `100000` | `DnsCache::new()` capacity | implemented | cache tests | document as weighted byte capacity (moka weigher) |
 | `dns.settings.cache_max_ttl` | `3600` | `DnsCache::new()` | implemented | cache tests | none |
 | `dns.settings.cache_min_ttl` | `60` | `DnsCache::new()` | implemented | cache tests | none |
-| `dns.settings.negative_cache_ttl` | `300` | `DnsHandlerState.negative_cache_ttl` | implemented | none | add negative TTL test |
+| `dns.settings.negative_cache_ttl` | `300` | `DnsHandlerState.negative_cache_ttl` | implemented | `server/query.rs:1931` (`test_extract_ttl_nxdomain_with_soa`), `server/query.rs:1939` (`test_extract_ttl_nxdomain_no_soa_uses_negative_cache`) | none |
 | `dns.settings.allow_wildcard_transfer` | `false` | `ZoneTransfer::with_security_config()` accepts this; not wired from config | deferred | zone mutation tests (handler-level only) | wire from config or document deferred |
 | `dns.settings.wildcard_transfer_requires_tsig` | `true` | `ZoneTransfer::with_security_config()` accepts this; not wired from config | deferred | zone mutation tests (handler-level only) | wire from config or document deferred |
 | `dns.settings.require_tsig` | `true` | `ZoneTransfer::with_security_config()` accepts this; not wired from config | deferred | zone mutation tests (handler-level only) | wire from config or document deferred |
 | `dns.settings.serve_stale.enabled` | `false` | `DnsCache::with_serve_stale()` | implemented | cache tests | none |
 | `dns.settings.serve_stale.max_stale_secs` | `86400` | stale expiry via `DnsCache` | implemented | cache tests | none |
-| `dns.settings.serve_stale.max_stale_count` | `100` | stale eviction via `DnsCache` | implemented | cache tests | none |
+| `dns.settings.serve_stale.max_stale_count` | `100` | `DnsCache::with_serve_stale()` via `max_stale_count` parameter | implemented | cache tests | none |
 | `dns.settings.ixfr_history_size` | `200` | not consumed | deferred | none | wire from config or document deferred |
 | `dns.settings.ixfr_enabled` | `true` | IXFR handler exists in `handle_parsed_query_with_cache` but config toggle not consumed | partially implemented | zone mutation tests | wire config toggle or document deferred |
 | `dns.settings.ixfr_fallback_to_axfr` | `true` | `ZoneTransfer::with_security_config()` accepts this; not wired from config | deferred | zone mutation tests (handler-level only) | wire from config or document deferred |
@@ -201,7 +201,7 @@ Source: `crates/synvoid-config/src/dns/dns_firewall.rs:7`
 | `dns.limits.max_tcp_idle_time_secs` | `300` | TCP idle timeout | implemented | none | add test |
 | `dns.limits.max_tcp_query_time_secs` | `30` | TCP query timeout | implemented | none | add test |
 | `dns.limits.udp_buffer_size` | `65535` | UDP recv buffer | implemented | startup tests | none |
-| `dns.limits.enable_graceful_degradation` | `false` | load shedding | implemented | none | add test |
+| `dns.limits.enable_graceful_degradation` | `false` | `ConnectionLimits::enable_graceful_degradation()` wired from config | implemented | none | add test |
 
 ---
 
@@ -224,7 +224,7 @@ Source: `crates/synvoid-config/src/dns/dns_recursive.rs:97`
 | `dns.recursive.dnssec_validation` | `true` | passed to HickoryRecursor | implemented | recursive tests | none |
 | `dns.recursive.qname_minimization` | `true` | `HickoryResolver` config | implemented | recursive tests | none |
 | `dns.recursive.max_concurrent_queries` | `10000` | `Semaphore` permits | implemented | recursive tests | none |
-| `dns.recursive.query_timeout_secs` | `5` | only used for DNSSEC warning | partially implemented | none | wire actual timeout |
+| `dns.recursive.query_timeout_secs` | `5` | `HickoryResolver` timeout via `create_resolver()` | implemented | recursive tests | none |
 | `dns.recursive.root_hints_path` | `"root.hints"` | `HickoryRecursor` init | implemented | recursive tests | none |
 | `dns.recursive.trust_anchor_path` | `"trusted-key.key"` | `HickoryRecursor` init | implemented | recursive tests | none |
 | `dns.recursive.ratelimit.mode` | `Shared` | recursive rate limiter | implemented | none | add test |
@@ -293,11 +293,11 @@ All DoT/DoH/DoQ fields are covered in §1 root table.
 | Category | Count |
 |----------|-------|
 | **Total config fields** | ~110 |
-| **Fully implemented** | ~61 |
-| **Partially implemented** | ~3 |
+| **Fully implemented** | ~64 |
+| **Partially implemented** | ~2 |
 | **Validation-only** | ~10 |
 | **Deferred (planned for future phases)** | ~23 |
-| **Unsupported / documentation-only** | ~13 |
+| **Unsupported / documentation-only** | ~11 |
 
 ---
 
@@ -306,8 +306,8 @@ All DoT/DoH/DoQ fields are covered in §1 root table.
 | Feature | Config fields | Notes |
 |---------|---------------|-------|
 | RPZ (Response Policy Zones) | `dns.rpz.*` (10 fields) | No runtime consumer exists |
-| Dynamic Update | `dns.settings.dynamic_update.*` (3 fields) | `DynamicUpdateHandler` struct exists; `update_handler` hardcoded to `None` in `DnsServer::new()` (line 952) |
-| Notify | `dns.settings.notify.*` (2 fields) | `NotifyHandler` struct exists; `notify_handler` hardcoded to `None` in `DnsServer::new()` (line 953) |
+| Dynamic Update | `dns.settings.dynamic_update.*` (3 fields) | `DynamicUpdateHandler` struct exists; `update_handler` hardcoded to `None` in `DnsServer::new()` (line 952). Disabled handler returns NOTIMP. |
+| Notify | `dns.settings.notify.*` (2 fields) | `NotifyHandler` struct exists; `notify_handler` hardcoded to `None` in `DnsServer::new()` (line 953). Disabled handler returns NOTIMP. |
 | Zone Transfer (AXFR/IXFR) | `dns.settings.ixfr_*`, `dns.settings.allow_transfer` | `ZoneTransfer` struct exists; `zone_transfer` hardcoded to `None` in `DnsServer::new()`; IXFR handler exists in `handle_parsed_query_with_cache` but config toggle not consumed |
 | Trust Anchors (custom) | `dns.trust_anchors.*` (9 fields) | Config struct exists, no runtime consumer |
 | Prefetch | `dns.prefetch.*` (4 fields) | Config struct exists, no runtime consumer |
@@ -488,5 +488,40 @@ block_internal_ips = true
 | Firewall default_action | `dns.firewall.default_action` |
 | Firewall max_rules | `dns.firewall.max_rules` |
 | Rebinding Protection | `dns.firewall.rebinding_protection.*` (4 fields) |
-| Query timeout | `dns.recursive.query_timeout_secs` |
-| Default TTL | `dns.settings.default_ttl` |
+
+---
+
+## Phase 2 Changes Applied
+
+### Matrix Corrections
+
+1. **`dns.settings.default_ttl`** — Changed from `unsupported` to `implemented`. Field is consumed at `server/zone.rs:137` as fallback TTL during zone record loading.
+
+2. **`dns.settings.negative_cache_ttl`** — Added existing test references: `server/query.rs:1931` (`test_extract_ttl_nxdomain_with_soa`) and `server/query.rs:1939` (`test_extract_ttl_nxdomain_no_soa_uses_negative_cache`).
+
+3. **`dns.limits.enable_graceful_degradation`** — Updated status to `implemented`. Config field is now wired from `DnsServer::new()` to `ConnectionLimits::enable_graceful_degradation()`.
+
+4. **`dns.doq.bind_address`** — Changed from `implemented` to `partially implemented`. `startup.rs:580` hardcodes bind to `0.0.0.0:{port}`; config field is never consumed.
+
+5. **`dns.settings.serve_stale.max_stale_count`** — Updated runtime consumer to document explicit wiring from `DnsCache::with_serve_stale()` parameter.
+
+6. **`dns.recursive.query_timeout_secs`** — Changed from `partially implemented` to `implemented`. Config value now passed to `HickoryResolver` timeout via `create_resolver()`.
+
+### Code Changes
+
+7. **`cache.rs`** — `with_serve_stale()` now accepts `serve_stale_max_stale_count: u64` parameter instead of hardcoding `100`.
+
+8. **`limits.rs`** — `ConnectionLimits::new()` now accepts `enable_graceful_degradation: bool` parameter and calls `enable_graceful_degradation(0.1)` when true.
+
+9. **`resolver.rs`** — `with_qname_minimization()` and `with_upstream_servers()` now accept `timeout_secs: u64` parameter instead of hardcoding `Duration::from_secs(5)`.
+
+10. **`recursive.rs`** — `create_resolver()` passes `config.query_timeout_secs` to all resolver constructors.
+
+11. **`dns_recursive.rs`** — `validate()` now rejects `0.0.0.0` or `::` as bind address with an open-resolver prevention error.
+
+12. **`server/query.rs`** — Disabled zone mutation handlers (NOTIFY, UPDATE, AXFR, IXFR) now return NOTIMP responses instead of silent drops when handlers are `None`.
+
+### New Tests
+
+13. **`dns_config_fidelity`** — 17 tests (existing suite, all passing).
+14. **`dns_recursive_isolation`** — 30 tests (existing suite, all passing). Covers open-resolver guard, NOTIMP responses, recursive config validation.

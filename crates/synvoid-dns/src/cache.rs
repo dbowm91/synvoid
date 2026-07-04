@@ -343,6 +343,7 @@ impl DnsCache {
         min_ttl_secs: u64,
         serve_stale_enabled: bool,
         serve_stale_max_stale_secs: u64,
+        serve_stale_max_stale_count: u64,
     ) -> Self {
         let cache = Cache::builder()
             .max_capacity(capacity as u64)
@@ -367,7 +368,7 @@ impl DnsCache {
                 serve_stale_enabled,
                 serve_stale_max_stale: Duration::from_secs(serve_stale_max_stale_secs),
                 stale_served_count: AtomicU64::new(0),
-                max_stale_count: 100,
+                max_stale_count: serve_stale_max_stale_count,
                 confirmation_threshold: 3,
                 metrics: CacheMetrics::default(),
             }),
@@ -1128,7 +1129,7 @@ mod phase7_cache_tests {
     #[test]
     fn test_serve_stale_max_stale_count() {
         // max_ttl_secs=300 so moka doesn't evict; min_ttl=1 so record_ttl=1 stays at 1
-        let cache = DnsCache::with_serve_stale(100, 300, 1, true, 3600);
+        let cache = DnsCache::with_serve_stale(100, 300, 1, true, 3600, 100);
 
         let key = CacheKey::new("stale-max.example.com".into(), RecordType::A, None);
         cache.insert(key.clone(), vec![1, 2, 3, 4], 1);
@@ -1144,7 +1145,7 @@ mod phase7_cache_tests {
 
     #[test]
     fn test_serve_stale_fresh_insert_resets_counter() {
-        let cache = DnsCache::with_serve_stale(100, 300, 1, true, 3600);
+        let cache = DnsCache::with_serve_stale(100, 300, 1, true, 3600, 100);
 
         let key1 = CacheKey::new("reset-test-1.example.com".into(), RecordType::A, None);
         let key2 = CacheKey::new("reset-test-2.example.com".into(), RecordType::A, None);
@@ -1231,7 +1232,7 @@ mod phase7_cache_tests {
     #[test]
     fn test_get_with_metadata_returns_stale_flag() {
         // max_ttl_secs=300 so moka doesn't evict; min_ttl=1 so record_ttl=1 stays at 1
-        let cache = DnsCache::with_serve_stale(100, 300, 1, true, 3600);
+        let cache = DnsCache::with_serve_stale(100, 300, 1, true, 3600, 100);
 
         let key = CacheKey::new("meta-test.example.com".into(), RecordType::A, None);
         cache.insert(key.clone(), vec![1, 2, 3, 4], 1);
@@ -1453,7 +1454,7 @@ mod phase7_cache_tests {
 
     #[test]
     fn test_serve_stale_disabled_returns_miss() {
-        let cache = DnsCache::with_serve_stale(100, 300, 1, false, 3600);
+        let cache = DnsCache::with_serve_stale(100, 300, 1, false, 3600, 100);
 
         let key = CacheKey::new("stale-disabled.example.com".into(), RecordType::A, None);
         cache.insert(key.clone(), vec![1, 2, 3, 4], 1);
@@ -1470,7 +1471,7 @@ mod phase7_cache_tests {
 
     #[test]
     fn test_serve_stale_beyond_max_window_returns_miss() {
-        let cache = DnsCache::with_serve_stale(100, 300, 1, true, 2);
+        let cache = DnsCache::with_serve_stale(100, 300, 1, true, 2, 100);
 
         let key = CacheKey::new("stale-window.example.com".into(), RecordType::A, None);
         cache.insert(key.clone(), vec![1, 2, 3, 4], 1);
@@ -1492,7 +1493,7 @@ mod phase7_cache_tests {
 
     #[test]
     fn test_zone_update_invalidates_stale_entry() {
-        let cache = DnsCache::with_serve_stale(100, 300, 1, true, 3600);
+        let cache = DnsCache::with_serve_stale(100, 300, 1, true, 3600, 100);
 
         let key = CacheKey::new("stale-zone-inv.example.com".into(), RecordType::A, None);
         cache.insert(key.clone(), vec![1, 2, 3, 4], 1);
@@ -1552,7 +1553,7 @@ mod phase7_cache_tests {
 
     #[test]
     fn test_metrics_stale_hit_counter() {
-        let cache = DnsCache::with_serve_stale(100, 300, 1, true, 3600);
+        let cache = DnsCache::with_serve_stale(100, 300, 1, true, 3600, 100);
 
         let key = CacheKey::new("stale-metrics.example.com".into(), RecordType::A, None);
         cache.insert(key.clone(), vec![1, 2, 3, 4], 1);
