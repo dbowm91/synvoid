@@ -167,7 +167,7 @@ impl DnsServer {
 
         if let Some(ref cache) = self.cache {
             for origin in &zone_origins {
-                cache.invalidate_zone(origin);
+                cache.invalidate_zone(origin, InvalidationReason::ZoneLoad);
             }
         }
 
@@ -199,7 +199,7 @@ impl DnsServer {
 
         if let Some(ref cache) = self.cache {
             for origin in &loaded_origins {
-                cache.invalidate_zone(origin);
+                cache.invalidate_zone(origin, InvalidationReason::ZoneLoadFromStore);
             }
         }
 
@@ -237,7 +237,7 @@ impl DnsServer {
         });
 
         if let Some(ref cache) = self.cache {
-            cache.invalidate_zone(&zone_origin);
+            cache.invalidate_zone(&zone_origin, InvalidationReason::RecordAdd);
         }
 
         Ok(())
@@ -414,7 +414,7 @@ impl DnsServer {
 
     pub fn invalidate_cache(&self) {
         if let Some(ref cache) = self.cache {
-            cache.clear();
+            cache.clear(InvalidationReason::ManualFlush);
         }
     }
 
@@ -431,7 +431,7 @@ impl DnsServer {
         self.zone_index_dirty.store(true, Ordering::Release);
 
         if let Some(ref cache) = self.cache {
-            cache.invalidate_zone(&origin_lower);
+            cache.invalidate_zone(&origin_lower, InvalidationReason::ZoneDelete);
         }
 
         if let Some(store) = store {
@@ -448,7 +448,7 @@ impl DnsServer {
         if let Some(ref dnssec) = self.dnssec {
             dnssec.write().start_key_rollover(key_type)?;
             if let Some(ref cache) = self.cache {
-                cache.clear();
+                cache.clear(InvalidationReason::DnssecKeyRollover);
                 tracing::info!("Cache cleared after starting {:?} rollover", key_type);
             }
             Ok(())
@@ -462,7 +462,7 @@ impl DnsServer {
         if let Some(ref dnssec) = self.dnssec {
             dnssec.write().complete_key_rollover(key_type)?;
             if let Some(ref cache) = self.cache {
-                cache.clear();
+                cache.clear(InvalidationReason::DnssecKeyRollover);
                 tracing::info!("Cache cleared after completing {:?} rollover", key_type);
             }
             Ok(())

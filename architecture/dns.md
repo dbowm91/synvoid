@@ -1029,23 +1029,57 @@ Previously, fingerprinting was keyed by qname only — A and AAAA records for th
 
 After `confirmation_threshold` (default 3) consistent fingerprints, new fingerprints are allowed (legitimate zone changes).
 
-### 9.10 Cache Metrics (Phase 7)
+### 9.10 Cache Metrics (Phase 7 + Phase 3 Metrics Integration)
 
-**Cache-level metrics** (`CacheMetrics`):
+**Cache-level metrics** (`CacheMetrics` in `cache.rs`):
 - `hits` — fresh cache hits
 - `stale_hits` — stale entries served
 - `negative_hits` — negative cache hits
 - `misses` — cache misses
 - `insertions` — entries inserted
-- `invalidations` — entries invalidated (by zone/record clear)
+- `invalidations` — entries invalidated (by zone/record clear), tracked per-reason via `InvalidationReason` enum
 - `poisoned_rejections` — entries rejected by poisoning detection
 - `size_rejections` — entries rejected due to max_entry_size
+- `invalidations_by_reason` — `HashMap<String, AtomicU64>` tracking invalidation counts by reason label
 
-**Prometheus export** (`dns_cache_*`):
-- `dns_cache_hits_total`, `dns_cache_misses_total`
-- `dns_cache_stale_hits_total`, `dns_cache_negative_hits_total`
-- `dns_cache_invalidations_total`, `dns_cache_poisoned_rejections_total`
-- `dns_cache_hit_rate`
+**DnsMetrics query-level counters** (`metrics.rs`):
+- `queries_received`, `queries_blocked`, `queries_validated`, `responses_sent`
+- `cache_hits`, `cache_misses`, `cache_stale_hits`, `cache_negative_hits`
+- `cache_invalidations`, `cache_poisoned_rejections`, `cache_insertions`, `cache_size_rejections`
+- `dnssec_queries`, `dnssec_signed_responses`
+- `rate_limited_queries`, `rrl_limited_responses`
+- `malformed_queries`, `nxdomain_responses`, `encode_failures`
+- `tcp_connections`, `active_tcp_connections`
+- `firewall_queries_allowed`, `firewall_queries_blocked`, `firewall_rule_matches`
+
+**InvalidationReason enum** (Phase 3 metrics):
+```rust
+pub enum InvalidationReason {
+    ZoneLoad,
+    ZoneLoadFromStore,
+    RecordAdd,
+    ZoneDelete,
+    DynamicUpdate,
+    NotifyReceived,
+    ManualFlush,
+    DnssecKeyRollover,
+    RpzZoneRemoval,
+}
+```
+
+**Cache→DnsMetrics bridge** (`with_metrics()`):
+- `DnsCache::with_metrics(Arc<DnsMetrics>)` wires cache operations to DnsMetrics recording methods
+- `SecureDnsCache::with_metrics()` delegates to inner cache
+- Bridge calls: `record_cache_hit()`, `record_cache_stale_hit()`, `record_cache_miss()`, `record_cache_insertion()`, `record_cache_poisoned_rejection()`, `record_cache_size_rejection()`, `record_cache_invalidation()` — called from `get()`, `insert()`, `validate_response()`, `invalidate_zone()`, `invalidate_record()`, `clear()`
+
+**Prometheus integration** (`metrics::counter!` facade):
+- All `DnsMetrics` recording methods emit `metrics::counter!` / `metrics::gauge!` calls
+- These are auto-collected by the `metrics_exporter_prometheus` on port 9090
+- Metric names: `dns_queries_received`, `dns_cache_hits`, `dns_cache_misses`, `dns_cache_stale_hits`, `dns_cache_negative_hits`, `dns_cache_insertions`, `dns_cache_invalidations`, `dns_cache_poisoned_rejections`, `dns_cache_size_rejections`, `dns_responses_sent`, `dns_response_code`, `dnssec_queries`, `dnssec_signed_responses`, `dns_rate_limited`, `dns_rrl_limited`, `dns_malformed_queries`, `dns_nxdomain_responses`, `dns_encode_failures`, `dns_tcp_connections`, `dns_active_tcp_connections`, `dns_firewall_queries_allowed`, `dns_firewall_queries_blocked`, `dns_queries_validated`, `dns_queries_blocked`
+
+**Manual Prometheus text export** (`export_to_prometheus()`):
+- `DnsMetrics::export_to_prometheus()` builds Prometheus text format with 18+ metrics
+- Currently dead code — no HTTP endpoint serves it (the `metrics::counter!` facade approach above is preferred)
 
 ### 9.11 Cache Integration Closure (Phase 3)
 
@@ -1070,6 +1104,15 @@ Phase 3 closed the remaining gaps from the cache integration gap analysis:
 - Type-level isolation: `DnsCache` (string-keyed, 7 dimensions) vs `RecursiveDnsCache` (byte-keyed, 3 dimensions).
 - Different types, different backing stores, different code paths — collision structurally impossible.
 - `CacheNamespace::Recursive` and `from_parsed_recursive` are dead code in production (recursive server uses `RecursiveCacheKey` directly).
+
+**Metrics integration closure (Phase 3):**
+- `InvalidationReason` enum added to `cache.rs` with 9 variants: `ZoneLoad`, `ZoneLoadFromStore`, `RecordAdd`, `ZoneDelete`, `DynamicUpdate`, `NotifyReceived`, `ManualFlush`, `DnssecKeyRollover`, `RpzZoneRemoval`
+- All 12 invalidation call sites (7 `invalidate_zone`, 5 `clear`) updated to pass `InvalidationReason`
+- `CacheMetrics` extended with `invalidations_by_reason: RwLock<HashMap<String, AtomicU64>>` for per-reason counters
+- `DnsCache::with_metrics(Arc<DnsMetrics>)` builder bridges cache ops to DnsMetrics recording methods
+- `DnsMetrics` recording methods emit `metrics::counter!` / `metrics::gauge!` calls → auto-collected by Prometheus exporter on port 9090
+- `dns_cache_insertions_total` and `dns_cache_size_rejections_total` added to Prometheus export
+- `CacheMetricsSnapshot` extended with `invalidations_by_reason` map
 
 ### 9.11 Wire Format Parsing
 

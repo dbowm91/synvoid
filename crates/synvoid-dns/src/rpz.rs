@@ -157,7 +157,7 @@ impl RpzManager {
     pub fn remove_zone_with_cache(&self, name: &str, cache: Option<&crate::cache::DnsCache>) {
         self.remove_zone(name);
         if let Some(cache) = cache {
-            cache.clear();
+            cache.clear(crate::cache::InvalidationReason::RpzZoneRemoval);
             tracing::info!("Cache cleared after removing RPZ zone {}", name);
         }
     }

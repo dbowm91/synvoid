@@ -15,6 +15,8 @@ pub struct DnsMetrics {
     cache_negative_hits: AtomicU64,
     cache_invalidations: AtomicU64,
     cache_poisoned_rejections: AtomicU64,
+    cache_insertions: AtomicU64,
+    cache_size_rejections: AtomicU64,
     dnssec_queries: AtomicU64,
     dnssec_signed_responses: AtomicU64,
     rate_limited_queries: AtomicU64,
@@ -48,6 +50,8 @@ impl DnsMetrics {
             cache_negative_hits: AtomicU64::new(0),
             cache_invalidations: AtomicU64::new(0),
             cache_poisoned_rejections: AtomicU64::new(0),
+            cache_insertions: AtomicU64::new(0),
+            cache_size_rejections: AtomicU64::new(0),
             dnssec_queries: AtomicU64::new(0),
             dnssec_signed_responses: AtomicU64::new(0),
             rate_limited_queries: AtomicU64::new(0),
@@ -71,6 +75,7 @@ impl DnsMetrics {
 
     pub fn record_query_received(&self) {
         self.queries_received.fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("dns_queries_received").increment(1);
     }
 
     pub fn record_query_blocked(&self, domain: &str) {
@@ -84,10 +89,13 @@ impl DnsMetrics {
 
     pub fn record_query_validated(&self) {
         self.queries_validated.fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("dns_queries_validated").increment(1);
     }
 
     pub fn record_response_sent(&self, response_code: &str) {
         self.responses_sent.fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("dns_responses_sent").increment(1);
+        metrics::counter!("dns_response_code", "code" => response_code.to_string()).increment(1);
         let mut codes = self.response_codes.write();
         let counter = codes
             .entry(response_code.to_string())
@@ -97,65 +105,91 @@ impl DnsMetrics {
 
     pub fn record_cache_hit(&self) {
         self.cache_hits.fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("dns_cache_hits").increment(1);
     }
 
     pub fn record_cache_miss(&self) {
         self.cache_misses.fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("dns_cache_misses").increment(1);
     }
 
     pub fn record_cache_stale_hit(&self) {
         self.cache_stale_hits.fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("dns_cache_stale_hits").increment(1);
     }
 
     pub fn record_cache_negative_hit(&self) {
         self.cache_negative_hits.fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("dns_cache_negative_hits").increment(1);
     }
 
     pub fn record_cache_invalidation(&self) {
         self.cache_invalidations.fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("dns_cache_invalidations").increment(1);
     }
 
     pub fn record_cache_poisoned_rejection(&self) {
         self.cache_poisoned_rejections
             .fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("dns_cache_poisoned_rejections").increment(1);
+    }
+
+    pub fn record_cache_insertion(&self) {
+        self.cache_insertions.fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("dns_cache_insertions").increment(1);
+    }
+
+    pub fn record_cache_size_rejection(&self) {
+        self.cache_size_rejections.fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("dns_cache_size_rejections").increment(1);
     }
 
     pub fn record_dnssec_query(&self) {
         self.dnssec_queries.fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("dnssec_queries").increment(1);
     }
 
     pub fn record_dnssec_signed_response(&self) {
         self.dnssec_signed_responses.fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("dnssec_signed_responses").increment(1);
     }
 
     pub fn record_rate_limited(&self) {
         self.rate_limited_queries.fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("dns_rate_limited").increment(1);
     }
 
     pub fn record_rrl_limited(&self) {
         self.rrl_limited_responses.fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("dns_rrl_limited").increment(1);
     }
 
     pub fn record_malformed_query(&self) {
         self.malformed_queries.fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("dns_malformed_queries").increment(1);
     }
 
     pub fn record_nxdomain(&self) {
         self.nxdomain_responses.fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("dns_nxdomain_responses").increment(1);
     }
 
     pub fn record_encode_failure(&self) {
         self.encode_failures.fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("dns_encode_failures").increment(1);
     }
 
     pub fn record_firewall_allowed(&self) {
         self.firewall_queries_allowed
             .fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("dns_firewall_queries_allowed").increment(1);
     }
 
     pub fn record_firewall_blocked(&self, rule_id: &str) {
         self.firewall_queries_blocked
             .fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("dns_firewall_queries_blocked", "rule" => rule_id.to_string())
+            .increment(1);
         let mut rules = self.firewall_rule_matches.write();
         let counter = rules
             .entry(rule_id.to_string())
@@ -164,6 +198,7 @@ impl DnsMetrics {
     }
 
     pub fn record_firewall_rule_match(&self, rule_id: &str) {
+        metrics::counter!("dns_firewall_rule_matches", "rule" => rule_id.to_string()).increment(1);
         let mut rules = self.firewall_rule_matches.write();
         let counter = rules
             .entry(rule_id.to_string())
@@ -174,12 +209,15 @@ impl DnsMetrics {
     pub fn record_tcp_connection(&self) {
         self.tcp_connections.fetch_add(1, Ordering::Relaxed);
         self.active_tcp_connections.fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("dns_tcp_connections").increment(1);
+        metrics::gauge!("dns_active_tcp_connections").increment(1.0);
     }
 
     pub fn record_tcp_disconnect(&self) {
         let _ =
             self.active_tcp_connections
                 .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
+        metrics::gauge!("dns_active_tcp_connections").decrement(1.0);
     }
 
     pub fn record_query_type(&self, qtype: &str) {
@@ -271,6 +309,8 @@ impl DnsMetrics {
             cache_negative_hits: self.cache_negative_hits.load(Ordering::Relaxed),
             cache_invalidations: self.cache_invalidations.load(Ordering::Relaxed),
             cache_poisoned_rejections: self.cache_poisoned_rejections.load(Ordering::Relaxed),
+            cache_insertions: self.cache_insertions.load(Ordering::Relaxed),
+            cache_size_rejections: self.cache_size_rejections.load(Ordering::Relaxed),
             dnssec_queries: self.dnssec_queries.load(Ordering::Relaxed),
             dnssec_signed_responses: self.dnssec_signed_responses.load(Ordering::Relaxed),
             rate_limited_queries: self.rate_limited_queries.load(Ordering::Relaxed),
@@ -309,6 +349,8 @@ impl DnsMetrics {
         self.cache_negative_hits.store(0, Ordering::Relaxed);
         self.cache_invalidations.store(0, Ordering::Relaxed);
         self.cache_poisoned_rejections.store(0, Ordering::Relaxed);
+        self.cache_insertions.store(0, Ordering::Relaxed);
+        self.cache_size_rejections.store(0, Ordering::Relaxed);
         self.dnssec_queries.store(0, Ordering::Relaxed);
         self.dnssec_signed_responses.store(0, Ordering::Relaxed);
         self.rate_limited_queries.store(0, Ordering::Relaxed);
@@ -398,6 +440,20 @@ impl DnsMetrics {
             summary.cache_poisoned_rejections
         ));
 
+        output.push_str("# HELP dns_cache_insertions_total Total DNS cache insertions\n");
+        output.push_str("# TYPE dns_cache_insertions_total counter\n");
+        output.push_str(&format!(
+            "dns_cache_insertions_total {}\n\n",
+            summary.cache_insertions
+        ));
+
+        output.push_str("# HELP dns_cache_size_rejections_total Total cache size rejections\n");
+        output.push_str("# TYPE dns_cache_size_rejections_total counter\n");
+        output.push_str(&format!(
+            "dns_cache_size_rejections_total {}\n\n",
+            summary.cache_size_rejections
+        ));
+
         output.push_str("# HELP dns_rate_limited_total Total rate-limited queries\n");
         output.push_str("# TYPE dns_rate_limited_total counter\n");
         output.push_str(&format!(
@@ -477,6 +533,8 @@ pub struct DnsMetricsSummary {
     pub cache_negative_hits: u64,
     pub cache_invalidations: u64,
     pub cache_poisoned_rejections: u64,
+    pub cache_insertions: u64,
+    pub cache_size_rejections: u64,
     pub dnssec_queries: u64,
     pub dnssec_signed_responses: u64,
     pub rate_limited_queries: u64,

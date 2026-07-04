@@ -464,6 +464,7 @@ block_internal_ips = true
 | Serve-stale wiring | `DnsCache::with_serve_stale()` used when `serve_stale.enabled = true`. `max_stale_secs` and `max_stale_count` from config. |
 | DNS64 `exclude_aaaa_synthesis` | Runtime struct wired at `server/mod.rs:910-926`. Config fidelity test added. |
 | Query coalescing metrics | 8 counters: hits, misses, broadcasts, cancels, evictions, timeouts, lagged, in_flight gauge. |
+| Cache metrics integration | `InvalidationReason` enum (9 variants), per-reason counters, `DnsCache::with_metrics()` bridge to `DnsMetrics`, `metrics::counter!` calls in all recording methods → auto-collected on port 9090. Prometheus metrics: `dns_cache_hits`, `dns_cache_misses`, `dns_cache_stale_hits`, `dns_cache_negative_hits`, `dns_cache_insertions`, `dns_cache_invalidations`, `dns_cache_poisoned_rejections`, `dns_cache_size_rejections`. |
 
 ### Partial (Implemented, Tests Needed)
 

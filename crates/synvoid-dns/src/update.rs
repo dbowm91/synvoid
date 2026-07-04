@@ -445,7 +445,10 @@ impl DynamicUpdateHandler {
 
         // WS3: Invalidate cache after dynamic update so stale entries don't persist
         if let Some(ref cache) = self.cache {
-            cache.invalidate_zone(&zone_origin);
+            cache.invalidate_zone(
+                &zone_origin,
+                crate::cache::InvalidationReason::DynamicUpdate,
+            );
         }
 
         #[cfg(feature = "mesh")]

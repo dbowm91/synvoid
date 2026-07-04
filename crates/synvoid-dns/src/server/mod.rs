@@ -8,7 +8,7 @@ use parking_lot::RwLock;
 use tokio::net::UdpSocket;
 use tokio::sync::oneshot;
 
-use super::cache::{CacheKey, DnsCache};
+use super::cache::{CacheKey, DnsCache, InvalidationReason};
 use super::dnssec::DnsSecKeyManager;
 use super::dnssec::{compute_dnskey, Algorithm};
 use super::doh::DohServer;

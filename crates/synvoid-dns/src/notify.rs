@@ -85,7 +85,10 @@ impl NotifyHandler {
 
         if zone.is_some() {
             if let Some(ref cache) = self.cache {
-                cache.invalidate_zone(&zone_origin);
+                cache.invalidate_zone(
+                    &zone_origin,
+                    crate::cache::InvalidationReason::NotifyReceived,
+                );
             }
         }
 

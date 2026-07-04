@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -8,8 +9,55 @@ use ahash::AHasher;
 use moka::sync::Cache;
 use parking_lot::RwLock;
 
+use super::metrics::DnsMetrics;
 use super::parsed_query::ParsedDnsQuery;
 use super::server::RecordType;
+
+/// Reasons for cache invalidation, tracked as per-reason counters for operational visibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum InvalidationReason {
+    /// Zone files loaded from disk
+    ZoneLoad,
+    /// Zones restored from SQLite persistence
+    ZoneLoadFromStore,
+    /// A DNS record was inserted into a zone
+    RecordAdd,
+    /// A zone was removed from in-memory store
+    ZoneDelete,
+    /// Client RFC 2136 dynamic update modified a zone
+    DynamicUpdate,
+    /// Peer notified this server that a zone changed
+    NotifyReceived,
+    /// Explicit full cache flush (operator-triggered)
+    ManualFlush,
+    /// DNSSEC key rollover started or completed
+    DnssecKeyRollover,
+    /// RPZ zone removed (affects any DNS name, full wipe needed)
+    RpzZoneRemoval,
+}
+
+impl InvalidationReason {
+    /// Returns the Prometheus metric label for this reason.
+    pub fn as_label(&self) -> &'static str {
+        match self {
+            Self::ZoneLoad => "zone_load",
+            Self::ZoneLoadFromStore => "zone_load_from_store",
+            Self::RecordAdd => "record_add",
+            Self::ZoneDelete => "zone_delete",
+            Self::DynamicUpdate => "dynamic_update",
+            Self::NotifyReceived => "notify_received",
+            Self::ManualFlush => "manual_flush",
+            Self::DnssecKeyRollover => "dnssec_key_rollover",
+            Self::RpzZoneRemoval => "rpz_zone_removal",
+        }
+    }
+}
+
+impl fmt::Display for InvalidationReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_label())
+    }
+}
 
 /// Classifies the transport/EDNS response-shape class for cache keying.
 ///
@@ -211,6 +259,8 @@ pub struct CacheMetrics {
     pub invalidations: AtomicU64,
     pub poisoned_rejections: AtomicU64,
     pub size_rejections: AtomicU64,
+    /// Per-reason invalidation counters. Key is `InvalidationReason::as_label()`.
+    pub invalidations_by_reason: RwLock<HashMap<String, AtomicU64>>,
 }
 
 impl Default for CacheMetrics {
@@ -224,12 +274,21 @@ impl Default for CacheMetrics {
             invalidations: AtomicU64::new(0),
             poisoned_rejections: AtomicU64::new(0),
             size_rejections: AtomicU64::new(0),
+            invalidations_by_reason: RwLock::new(HashMap::new()),
         }
     }
 }
 
 impl Clone for CacheMetrics {
     fn clone(&self) -> Self {
+        let reason_snapshot = {
+            let src = self.invalidations_by_reason.read();
+            let mut dst = HashMap::new();
+            for (k, v) in src.iter() {
+                dst.insert(k.clone(), AtomicU64::new(v.load(Ordering::Relaxed)));
+            }
+            dst
+        };
         Self {
             hits: AtomicU64::new(self.hits.load(Ordering::Relaxed)),
             stale_hits: AtomicU64::new(self.stale_hits.load(Ordering::Relaxed)),
@@ -239,6 +298,7 @@ impl Clone for CacheMetrics {
             invalidations: AtomicU64::new(self.invalidations.load(Ordering::Relaxed)),
             poisoned_rejections: AtomicU64::new(self.poisoned_rejections.load(Ordering::Relaxed)),
             size_rejections: AtomicU64::new(self.size_rejections.load(Ordering::Relaxed)),
+            invalidations_by_reason: RwLock::new(reason_snapshot),
         }
     }
 }
@@ -265,6 +325,8 @@ struct InnerDnsCache {
     max_stale_count: u64,
     confirmation_threshold: usize,
     metrics: CacheMetrics,
+    /// Optional DnsMetrics for bridging cache counters to the Prometheus-exported metrics.
+    dns_metrics: Option<Arc<DnsMetrics>>,
 }
 
 impl DnsCache {
@@ -295,6 +357,7 @@ impl DnsCache {
                 max_stale_count: 100,
                 confirmation_threshold: 3,
                 metrics: CacheMetrics::default(),
+                dns_metrics: None,
             }),
         }
     }
@@ -333,6 +396,7 @@ impl DnsCache {
                 max_stale_count: 100,
                 confirmation_threshold: 3,
                 metrics: CacheMetrics::default(),
+                dns_metrics: None,
             }),
         }
     }
@@ -371,6 +435,7 @@ impl DnsCache {
                 max_stale_count: serve_stale_max_stale_count,
                 confirmation_threshold: 3,
                 metrics: CacheMetrics::default(),
+                dns_metrics: None,
             }),
         }
     }
@@ -382,6 +447,25 @@ impl DnsCache {
         hasher.finish()
     }
 
+    /// Attach `DnsMetrics` to bridge internal cache counters to the Prometheus-exported metrics.
+    ///
+    /// This enables cache operations (get/insert/invalidate/clear) to record into the
+    /// query-level `DnsMetrics` counters that are exposed via the admin metrics endpoint.
+    pub fn with_metrics(self, metrics: Arc<DnsMetrics>) -> Self {
+        // SAFETY: with_metrics is only called during startup before the cache is shared.
+        // Arc::try_unwrap should always succeed at that point.
+        let inner = match Arc::try_unwrap(self.inner) {
+            Ok(inner) => inner,
+            Err(_) => panic!("with_metrics called after cache was shared"),
+        };
+        Self {
+            inner: Arc::new(InnerDnsCache {
+                dns_metrics: Some(metrics),
+                ..inner
+            }),
+        }
+    }
+
     fn validate_response(&self, key: &CacheKey, data: &[u8]) -> Result<(), CachePoisoningError> {
         let inner = &self.inner;
 
@@ -390,6 +474,9 @@ impl DnsCache {
                 .metrics
                 .size_rejections
                 .fetch_add(1, Ordering::Relaxed);
+            if let Some(ref dm) = inner.dns_metrics {
+                dm.record_cache_size_rejection();
+            }
             return Err(CachePoisoningError::EntryTooLarge {
                 size: data.len(),
                 max: inner.max_entry_size,
@@ -412,6 +499,9 @@ impl DnsCache {
                             .metrics
                             .poisoned_rejections
                             .fetch_add(1, Ordering::Relaxed);
+                        if let Some(ref dm) = inner.dns_metrics {
+                            dm.record_cache_poisoned_rejection();
+                        }
                         return Err(CachePoisoningError::FingerprintMismatch {
                             qname: key.qname.clone(),
                             expected: fps,
@@ -436,6 +526,9 @@ impl DnsCache {
                             .metrics
                             .poisoned_rejections
                             .fetch_add(1, Ordering::Relaxed);
+                        if let Some(ref dm) = inner.dns_metrics {
+                            dm.record_cache_poisoned_rejection();
+                        }
                         return Err(CachePoisoningError::PotentialPoisoning {
                             qname: key.qname.clone(),
                             new_fingerprint: fingerprint,
@@ -492,6 +585,9 @@ impl DnsCache {
             if age < cached.ttl {
                 tracing::debug!("Cache hit for {}", key.qname);
                 inner.metrics.hits.fetch_add(1, Ordering::Relaxed);
+                if let Some(ref dm) = inner.dns_metrics {
+                    dm.record_cache_hit();
+                }
                 return Some(cached.data.clone());
             } else if inner.serve_stale_enabled && age < cached.ttl + inner.serve_stale_max_stale {
                 let stale_count = inner.stale_served_count.load(Ordering::Relaxed);
@@ -504,6 +600,9 @@ impl DnsCache {
                     inner.stale_served_count.fetch_add(1, Ordering::Relaxed);
                     tracing::debug!("Cache stale hit for {} (age: {:?})", key.qname, age);
                     inner.metrics.stale_hits.fetch_add(1, Ordering::Relaxed);
+                    if let Some(ref dm) = inner.dns_metrics {
+                        dm.record_cache_stale_hit();
+                    }
                     return Some(cached.data.clone());
                 }
             } else {
@@ -516,6 +615,9 @@ impl DnsCache {
         }
 
         inner.metrics.misses.fetch_add(1, Ordering::Relaxed);
+        if let Some(ref dm) = inner.dns_metrics {
+            dm.record_cache_miss();
+        }
         None
     }
 
@@ -528,6 +630,9 @@ impl DnsCache {
             if age < cached.ttl {
                 tracing::debug!("Cache hit for {}", key.qname);
                 inner.metrics.hits.fetch_add(1, Ordering::Relaxed);
+                if let Some(ref dm) = inner.dns_metrics {
+                    dm.record_cache_hit();
+                }
                 return Some((cached.data.clone(), false));
             } else if inner.serve_stale_enabled && age < cached.ttl + inner.serve_stale_max_stale {
                 let stale_count = inner.stale_served_count.load(Ordering::Relaxed);
@@ -540,6 +645,9 @@ impl DnsCache {
                     inner.stale_served_count.fetch_add(1, Ordering::Relaxed);
                     tracing::debug!("Cache stale hit for {} (age: {:?})", key.qname, age);
                     inner.metrics.stale_hits.fetch_add(1, Ordering::Relaxed);
+                    if let Some(ref dm) = inner.dns_metrics {
+                        dm.record_cache_stale_hit();
+                    }
                     return Some((cached.data.clone(), true));
                 }
             } else {
@@ -552,6 +660,9 @@ impl DnsCache {
         }
 
         inner.metrics.misses.fetch_add(1, Ordering::Relaxed);
+        if let Some(ref dm) = inner.dns_metrics {
+            dm.record_cache_miss();
+        }
         None
     }
 
@@ -593,6 +704,9 @@ impl DnsCache {
         };
 
         inner.metrics.insertions.fetch_add(1, Ordering::Relaxed);
+        if let Some(ref dm) = inner.dns_metrics {
+            dm.record_cache_insertion();
+        }
         inner.cache.insert(key.clone(), cached);
 
         // WS5: Reset stale served count on fresh insertion — fresh data means stale budget resets.
@@ -615,7 +729,7 @@ impl DnsCache {
         }
     }
 
-    pub fn invalidate_zone(&self, origin: &str) {
+    pub fn invalidate_zone(&self, origin: &str, reason: InvalidationReason) {
         let inner = &self.inner;
 
         // Use secondary index for O(1) qname lookup instead of linear scan
@@ -662,15 +776,26 @@ impl DnsCache {
 
         if !keys_to_remove.is_empty() {
             inner.metrics.invalidations.fetch_add(1, Ordering::Relaxed);
+            Self::record_invalidation_reason(&inner.metrics, reason);
+            if let Some(ref dm) = inner.dns_metrics {
+                dm.record_cache_invalidation();
+            }
             tracing::info!(
-                "Invalidated {} cache entries for zone {}",
+                "Invalidated {} cache entries for zone {} (reason: {})",
                 keys_to_remove.len(),
-                origin
+                origin,
+                reason
             );
         }
     }
 
-    pub fn invalidate_record(&self, origin: &str, name: &str, record_type: RecordType) {
+    pub fn invalidate_record(
+        &self,
+        origin: &str,
+        name: &str,
+        record_type: RecordType,
+        reason: InvalidationReason,
+    ) {
         let inner = &self.inner;
 
         let full_name = if name == "@" || name.is_empty() {
@@ -714,15 +839,23 @@ impl DnsCache {
             }
         }
 
+        if !keys_to_remove.is_empty() {
+            inner.metrics.invalidations.fetch_add(1, Ordering::Relaxed);
+            Self::record_invalidation_reason(&inner.metrics, reason);
+            if let Some(ref dm) = inner.dns_metrics {
+                dm.record_cache_invalidation();
+            }
+        }
         tracing::debug!(
-            "Invalidated {} cache entries for {}/{:?}",
+            "Invalidated {} cache entries for {}/{:?} (reason: {})",
             keys_to_remove.len(),
             full_name,
-            record_type
+            record_type,
+            reason
         );
     }
 
-    pub fn clear(&self) {
+    pub fn clear(&self, reason: InvalidationReason) {
         let inner = &self.inner;
         inner.cache.invalidate_all();
 
@@ -732,7 +865,22 @@ impl DnsCache {
         let mut fingerprints = inner.cache_fingerprints.write();
         fingerprints.clear();
 
-        tracing::info!("DNS cache cleared");
+        inner.metrics.invalidations.fetch_add(1, Ordering::Relaxed);
+        Self::record_invalidation_reason(&inner.metrics, reason);
+        if let Some(ref dm) = inner.dns_metrics {
+            dm.record_cache_invalidation();
+        }
+
+        tracing::info!("DNS cache cleared (reason: {})", reason);
+    }
+
+    /// Record a per-reason invalidation counter.
+    fn record_invalidation_reason(metrics: &CacheMetrics, reason: InvalidationReason) {
+        let label = reason.as_label().to_string();
+        let mut map = metrics.invalidations_by_reason.write();
+        map.entry(label)
+            .or_insert_with(|| AtomicU64::new(0))
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn cleanup_fingerprints(&self, max_entries: usize) -> usize {
@@ -782,6 +930,12 @@ impl DnsCache {
     /// Return a snapshot of cache metrics.
     pub fn metrics(&self) -> CacheMetricsSnapshot {
         let m = &self.inner.metrics;
+        let reason_snapshot = {
+            let map = m.invalidations_by_reason.read();
+            map.iter()
+                .map(|(k, v)| (k.clone(), v.load(Ordering::Relaxed)))
+                .collect()
+        };
         CacheMetricsSnapshot {
             hits: m.hits.load(Ordering::Relaxed),
             stale_hits: m.stale_hits.load(Ordering::Relaxed),
@@ -791,6 +945,7 @@ impl DnsCache {
             invalidations: m.invalidations.load(Ordering::Relaxed),
             poisoned_rejections: m.poisoned_rejections.load(Ordering::Relaxed),
             size_rejections: m.size_rejections.load(Ordering::Relaxed),
+            invalidations_by_reason: reason_snapshot,
         }
     }
 }
@@ -806,6 +961,8 @@ pub struct CacheMetricsSnapshot {
     pub invalidations: u64,
     pub poisoned_rejections: u64,
     pub size_rejections: u64,
+    /// Per-reason invalidation counts.
+    pub invalidations_by_reason: HashMap<String, u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -916,8 +1073,8 @@ impl SecureDnsCache {
         self.0.insert(key, data, record_ttl);
     }
 
-    pub fn invalidate_zone(&self, origin: &str) {
-        self.0.invalidate_zone(origin);
+    pub fn invalidate_zone(&self, origin: &str, reason: InvalidationReason) {
+        self.0.invalidate_zone(origin, reason);
     }
 
     pub fn invalidate_record(
@@ -925,12 +1082,13 @@ impl SecureDnsCache {
         origin: &str,
         name: &str,
         record_type: super::server::RecordType,
+        reason: InvalidationReason,
     ) {
-        self.0.invalidate_record(origin, name, record_type);
+        self.0.invalidate_record(origin, name, record_type, reason);
     }
 
-    pub fn clear(&self) {
-        self.0.clear();
+    pub fn clear(&self, reason: InvalidationReason) {
+        self.0.clear(reason);
     }
 
     pub fn len(&self) -> usize {
@@ -947,6 +1105,11 @@ impl SecureDnsCache {
 
     pub fn metrics(&self) -> CacheMetricsSnapshot {
         self.0.metrics()
+    }
+
+    /// Attach `DnsMetrics` to bridge internal cache counters to Prometheus-exported metrics.
+    pub fn with_metrics(self, metrics: Arc<DnsMetrics>) -> Self {
+        Self(self.0.with_metrics(metrics))
     }
 }
 
@@ -1172,7 +1335,7 @@ mod phase7_cache_tests {
         cache.get(&key);
         assert_eq!(cache.metrics().hits, 1);
 
-        cache.invalidate_zone("metrics.example.com");
+        cache.invalidate_zone("metrics.example.com", InvalidationReason::ZoneLoad);
         assert_eq!(cache.metrics().invalidations, 1);
     }
 
@@ -1188,7 +1351,7 @@ mod phase7_cache_tests {
         cache.insert(key2.clone(), vec![5, 6, 7, 8], 300);
         cache.insert(key3.clone(), vec![9, 10, 11, 12], 300);
 
-        cache.invalidate_zone("zone-test.example.com");
+        cache.invalidate_zone("zone-test.example.com", InvalidationReason::ZoneDelete);
 
         assert!(cache.get(&key1).is_none());
         assert!(cache.get(&key2).is_none());
@@ -1209,7 +1372,12 @@ mod phase7_cache_tests {
             300,
         );
 
-        cache.invalidate_record("example.com", "rec-inv", RecordType::A);
+        cache.invalidate_record(
+            "example.com",
+            "rec-inv",
+            RecordType::A,
+            InvalidationReason::RecordAdd,
+        );
 
         assert!(
             cache.get(&key_a).is_none(),
@@ -1275,7 +1443,7 @@ mod phase7_cache_tests {
         }
 
         assert_eq!(cache.len(), 10);
-        cache.clear();
+        cache.clear(InvalidationReason::ManualFlush);
         assert_eq!(cache.len(), 0);
     }
 
@@ -1401,7 +1569,7 @@ mod phase7_cache_tests {
         cache.insert(key_tcp.clone(), vec![13, 14, 15, 16], 300);
 
         assert_eq!(cache.len(), 4);
-        cache.invalidate_zone("variant.example.com");
+        cache.invalidate_zone("variant.example.com", InvalidationReason::ZoneDelete);
         assert_eq!(cache.len(), 0);
     }
 
@@ -1425,7 +1593,12 @@ mod phase7_cache_tests {
             300,
         );
 
-        cache.invalidate_record("example.com", "typed.inv", RecordType::A);
+        cache.invalidate_record(
+            "example.com",
+            "typed.inv",
+            RecordType::A,
+            InvalidationReason::RecordAdd,
+        );
 
         assert!(cache.get(&key_a).is_none());
         assert!(cache.get(&key_aaaa).is_some());
@@ -1501,7 +1674,7 @@ mod phase7_cache_tests {
         std::thread::sleep(Duration::from_millis(1100));
         assert!(cache.get(&key).is_some(), "Stale entry should be served");
 
-        cache.invalidate_zone("stale-zone-inv.example.com");
+        cache.invalidate_zone("stale-zone-inv.example.com", InvalidationReason::ZoneDelete);
         assert!(
             cache.get(&key).is_none(),
             "After invalidation, stale entry should be gone"
@@ -1596,10 +1769,10 @@ mod phase7_cache_tests {
 
         assert_eq!(cache.metrics().invalidations, 0);
 
-        cache.invalidate_zone("inv-metrics.example.com");
+        cache.invalidate_zone("inv-metrics.example.com", InvalidationReason::ZoneLoad);
         assert_eq!(cache.metrics().invalidations, 1);
 
-        cache.invalidate_zone("other.example.com");
+        cache.invalidate_zone("other.example.com", InvalidationReason::ZoneLoad);
         assert_eq!(cache.metrics().invalidations, 2);
     }
 }

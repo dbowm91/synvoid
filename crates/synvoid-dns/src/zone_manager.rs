@@ -1,4 +1,5 @@
 use super::*;
+use crate::cache::InvalidationReason;
 
 impl DnsServer {
     fn reverse_domain(domain: &str) -> String {
@@ -60,7 +61,7 @@ impl DnsServer {
         });
 
         if let Some(ref cache) = self.cache {
-            cache.invalidate_zone(&zone_origin);
+            cache.invalidate_zone(&zone_origin, InvalidationReason::RecordAdd);
         }
 
         Ok(())
@@ -68,7 +69,7 @@ impl DnsServer {
 
     pub fn invalidate_cache(&self) {
         if let Some(ref cache) = self.cache {
-            cache.clear();
+            cache.clear(InvalidationReason::ManualFlush);
         }
     }
 
