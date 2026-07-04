@@ -305,15 +305,16 @@ coalescer.broadcast_response(key, response.clone());
 
 On failure, `cancel_in_flight()` cleans up. Negative responses (NXDOMAIN/NODATA) are also broadcast when key dimensions match. Coalescing key includes DO bit, qclass, qtype, qname, and client dimensions.
 
-**QueryKey 6-Dimensional Key** (`crates/synvoid-dns/src/query_coalesce.rs:25-33`):
+**QueryKey 7-Dimensional Key** (`crates/synvoid-dns/src/query_coalesce.rs`):
 | Dimension | Type | Description |
 |-----------|------|-------------|
 | `name` | `String` | Lowercased qname |
 | `qtype` | `u16` | Query type (A, AAAA, MX, etc.) |
 | `qclass` | `u16` | Query class (IN, CH, etc.) |
 | `dnssec_ok` | `bool` | DO bit from EDNS |
-| `edns_udp_size` | `u16` | EDNS UDP buffer size (default 512) |
 | `client_ip` | `Option<String>` | Client subnet for per-client coalescing |
+| `transport_class` | `TransportClass` | Transport variant (UDP/TCP/DoH/DoQ) |
+| `namespace` | `CacheNamespace` | Authoritative vs Recursive scope |
 
 **Coalescer Metrics** (lazy static gauges):
 - `dns_query_coalescer_hits_total` — Waiter received coalesced response

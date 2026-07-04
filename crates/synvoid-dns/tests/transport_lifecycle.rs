@@ -150,9 +150,9 @@ async fn coalescer_cleanup_uses_shutdown_watcher() {
         qtype: 1,
         qclass: 1,
         dnssec_ok: false,
-        edns_udp_size: 512,
         client_ip: None,
         transport_class: TransportClass::default(),
+        namespace: synvoid_dns::cache::CacheNamespace::Authoritative,
     };
     let _ = coalescer.get_or_wait(key.clone()).await;
     assert_eq!(coalescer.in_flight_count(), 1);

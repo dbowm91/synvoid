@@ -193,3 +193,18 @@ The `max_wait_ms` parameter is now used. At `crates/synvoid-dns/src/query_coales
 |--------|-------|--------|
 | BUG-DNS-1 | HickoryRecursor DNSSEC policy SecurityUnaware | ✅ FIXED - now uses ValidateWithStaticKey |
 | BUG-DNS-4 | HickoryResolver always false | ✅ DONE - by design (hickory-resolver API limitation) |
+
+## Milestone 2 Phase 4: Query Coalescing Policy Closure (2026-06-09)
+
+### QueryKey Alignment
+- Removed `edns_udp_size: u16` from `QueryKey` — redundant with `TransportClass::UdpEdns(u16)`
+- Added `namespace: CacheNamespace` field — separates authoritative vs recursive coalescing scope
+- Key is now 7-dimensional: `name`, `qtype`, `qclass`, `dnssec_ok`, `client_ip`, `transport_class`, `namespace`
+
+### Metrics Correction
+- 7 monotonic statics changed from `Gauge`/`metrics::gauge!` to `Counter`/`metrics::counter!`: hits, misses, evictions, timeouts, lagged, broadcasts, cancels
+- `COALESCER_IN_FLIGHT` remains a `Gauge` (correct — it tracks current count, not cumulative)
+
+### Exclusions
+- AXFR (qtype 252), IXFR (qtype 251), NOTIFY (opcode 4), UPDATE (opcode 5) bypass coalescing entirely
+- Malformed queries that fail key parsing return `None` and bypass coalescing

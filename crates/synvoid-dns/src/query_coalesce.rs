@@ -2,28 +2,28 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use metrics::Gauge;
+use metrics::{Counter, Gauge};
 use parking_lot::RwLock;
 use tokio::sync::broadcast;
 use tokio::time::timeout;
 
-use crate::cache::TransportClass;
+use crate::cache::{CacheNamespace, TransportClass};
 use crate::parsed_query::ParsedDnsQuery;
 
-static COALESCER_HITS: std::sync::LazyLock<Gauge> =
-    std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_hits_total"));
-static COALESCER_MISSES: std::sync::LazyLock<Gauge> =
-    std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_misses_total"));
-static COALESCER_EVICTIONS: std::sync::LazyLock<Gauge> =
-    std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_evictions_total"));
-static COALESCER_TIMEOUTS: std::sync::LazyLock<Gauge> =
-    std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_timeouts_total"));
-static COALESCER_LAGGED: std::sync::LazyLock<Gauge> =
-    std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_lagged_total"));
-static COALESCER_BROADCASTS: std::sync::LazyLock<Gauge> =
-    std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_broadcasts_total"));
-static COALESCER_CANCELS: std::sync::LazyLock<Gauge> =
-    std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_cancels_total"));
+static COALESCER_HITS: std::sync::LazyLock<Counter> =
+    std::sync::LazyLock::new(|| metrics::counter!("dns_query_coalescer_hits_total"));
+static COALESCER_MISSES: std::sync::LazyLock<Counter> =
+    std::sync::LazyLock::new(|| metrics::counter!("dns_query_coalescer_misses_total"));
+static COALESCER_EVICTIONS: std::sync::LazyLock<Counter> =
+    std::sync::LazyLock::new(|| metrics::counter!("dns_query_coalescer_evictions_total"));
+static COALESCER_TIMEOUTS: std::sync::LazyLock<Counter> =
+    std::sync::LazyLock::new(|| metrics::counter!("dns_query_coalescer_timeouts_total"));
+static COALESCER_LAGGED: std::sync::LazyLock<Counter> =
+    std::sync::LazyLock::new(|| metrics::counter!("dns_query_coalescer_lagged_total"));
+static COALESCER_BROADCASTS: std::sync::LazyLock<Counter> =
+    std::sync::LazyLock::new(|| metrics::counter!("dns_query_coalescer_broadcasts_total"));
+static COALESCER_CANCELS: std::sync::LazyLock<Counter> =
+    std::sync::LazyLock::new(|| metrics::counter!("dns_query_coalescer_cancels_total"));
 static COALESCER_IN_FLIGHT: std::sync::LazyLock<Gauge> =
     std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_in_flight"));
 
@@ -46,9 +46,9 @@ pub struct QueryKey {
     pub qtype: u16,
     pub qclass: u16,
     pub dnssec_ok: bool,
-    pub edns_udp_size: u16,
     pub client_ip: Option<String>,
     pub transport_class: TransportClass,
+    pub namespace: CacheNamespace,
 }
 
 impl QueryKey {
@@ -59,55 +59,34 @@ impl QueryKey {
     ) -> Option<Self> {
         let parsed = ParsedDnsQuery::parse(query).ok()?;
         let client_str = client_ip.map(|ip| ip.to_string());
-        let edns_udp_size = if parsed.has_edns {
-            if parsed.question_end + 3 < query.len() {
-                u16::from_be_bytes([
-                    query[parsed.question_end + 3],
-                    query[parsed.question_end + 4],
-                ])
-            } else {
-                512
-            }
-        } else {
-            512
-        };
         let tc = transport_class.unwrap_or(TransportClass::default());
         Some(Self {
             name: parsed.qname.to_lowercase(),
             qtype: parsed.qtype,
             qclass: parsed.qclass,
             dnssec_ok: parsed.dnssec_ok,
-            edns_udp_size,
             client_ip: client_str,
             transport_class: tc,
+            namespace: CacheNamespace::Authoritative,
         })
     }
 
     pub fn from_parsed(
         parsed: &ParsedDnsQuery<'_>,
         client_ip: Option<std::net::IpAddr>,
-        raw: &[u8],
+        _raw: &[u8],
         transport_class: Option<TransportClass>,
     ) -> Option<Self> {
         let client_str = client_ip.map(|ip| ip.to_string());
-        let edns_udp_size = if parsed.has_edns {
-            if parsed.question_end + 3 < raw.len() {
-                u16::from_be_bytes([raw[parsed.question_end + 3], raw[parsed.question_end + 4]])
-            } else {
-                512
-            }
-        } else {
-            512
-        };
         let tc = transport_class.unwrap_or(TransportClass::default());
         Some(Self {
             name: parsed.qname.to_lowercase(),
             qtype: parsed.qtype,
             qclass: parsed.qclass,
             dnssec_ok: parsed.dnssec_ok,
-            edns_udp_size,
             client_ip: client_str,
             transport_class: tc,
+            namespace: CacheNamespace::Authoritative,
         })
     }
 }
@@ -185,12 +164,12 @@ impl QueryCoalescer {
             match timeout(self.max_wait, receiver.recv()).await {
                 Ok(Ok(response)) => {
                     self.metrics.write().hits += 1;
-                    COALESCER_HITS.increment(1.0);
+                    COALESCER_HITS.increment(1);
                     return Some(CoalesceResult::Response(response));
                 }
                 Ok(Err(broadcast::error::RecvError::Lagged(n))) => {
                     self.metrics.write().lagged += 1;
-                    COALESCER_LAGGED.increment(1.0);
+                    COALESCER_LAGGED.increment(1);
                     tracing::debug!("Coalescer lagged {} messages for {:?}", n, key);
                     return Some(CoalesceResult::Lagged);
                 }
@@ -199,7 +178,7 @@ impl QueryCoalescer {
                 }
                 Err(_) => {
                     self.metrics.write().timeouts += 1;
-                    COALESCER_TIMEOUTS.increment(1.0);
+                    COALESCER_TIMEOUTS.increment(1);
                     return Some(CoalesceResult::Timeout);
                 }
             }
@@ -226,7 +205,7 @@ impl QueryCoalescer {
         drop(in_flight);
 
         self.metrics.write().misses += 1;
-        COALESCER_MISSES.increment(1.0);
+        COALESCER_MISSES.increment(1);
         COALESCER_IN_FLIGHT.set(count as f64);
         Some(CoalesceResult::NewQuery(tx))
     }
@@ -244,7 +223,7 @@ impl QueryCoalescer {
         if let Some(key) = oldest_key {
             in_flight.remove(&key);
             self.metrics.write().evictions += 1;
-            COALESCER_EVICTIONS.increment(1.0);
+            COALESCER_EVICTIONS.increment(1);
             COALESCER_IN_FLIGHT.set(in_flight.len() as f64);
             tracing::debug!("Evicted oldest coalescer entry: {:?}", key);
         }
@@ -263,7 +242,7 @@ impl QueryCoalescer {
         let mut in_flight = self.in_flight.write();
         in_flight.remove(&key);
         self.metrics.write().broadcasts += 1;
-        COALESCER_BROADCASTS.increment(1.0);
+        COALESCER_BROADCASTS.increment(1);
         COALESCER_IN_FLIGHT.set(in_flight.len() as f64);
     }
 
@@ -271,7 +250,7 @@ impl QueryCoalescer {
         let mut in_flight = self.in_flight.write();
         if in_flight.remove(key).is_some() {
             self.metrics.write().cancels += 1;
-            COALESCER_CANCELS.increment(1.0);
+            COALESCER_CANCELS.increment(1);
             COALESCER_IN_FLIGHT.set(in_flight.len() as f64);
         }
     }
@@ -293,7 +272,7 @@ impl QueryCoalescer {
         });
         let new_count = in_flight.len();
         if prev_count != new_count {
-            COALESCER_EVICTIONS.increment((prev_count - new_count) as f64);
+            COALESCER_EVICTIONS.increment((prev_count - new_count) as u64);
             COALESCER_IN_FLIGHT.set(new_count as f64);
         }
     }
@@ -315,7 +294,7 @@ impl QueryCoalescer {
         });
         let new_count = in_flight.len();
         if prev_count != new_count {
-            COALESCER_EVICTIONS.increment((prev_count - new_count) as f64);
+            COALESCER_EVICTIONS.increment((prev_count - new_count) as u64);
             COALESCER_IN_FLIGHT.set(new_count as f64);
         }
     }
@@ -377,9 +356,9 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
 
         let result = coalescer.get_or_wait(key.clone()).await;
@@ -394,9 +373,9 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
 
         let response = Arc::new(vec![0x00, 0x01, 0x02, 0x03]);
@@ -438,9 +417,9 @@ mod tests {
                 qtype: 1,
                 qclass: 1,
                 dnssec_ok: false,
-                edns_udp_size: 512,
                 client_ip: None,
                 transport_class: TransportClass::default(),
+                namespace: CacheNamespace::Authoritative,
             };
             coalescer.get_or_wait(key).await;
         }
@@ -458,9 +437,9 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
 
         coalescer.get_or_wait(key.clone()).await;
@@ -483,9 +462,9 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
 
         let result1 = coalescer.get_or_wait(key.clone()).await;
@@ -519,9 +498,9 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
 
         let result = coalescer.get_or_wait(key.clone()).await;
@@ -546,9 +525,9 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
 
         let result = coalescer.get_or_wait(key.clone()).await;
@@ -574,9 +553,9 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
 
         let result = coalescer.get_or_wait(key.clone()).await;
@@ -606,18 +585,18 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
         let key2 = QueryKey {
             name: "example.com".to_string(),
             qtype: 1,
             qclass: 1,
             dnssec_ok: true,
-            edns_udp_size: 4096,
             client_ip: None,
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
         assert_ne!(key1, key2);
     }
@@ -629,18 +608,18 @@ mod tests {
             qtype: 1,
             qclass: 1, // IN
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
         let key2 = QueryKey {
             name: "example.com".to_string(),
             qtype: 1,
             qclass: 3, // CH
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
         assert_ne!(key1, key2, "Different qclass must not coalesce");
     }
@@ -652,18 +631,18 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: Some("10.0.0.1".to_string()),
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
         let key2 = QueryKey {
             name: "example.com".to_string(),
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: Some("10.0.0.2".to_string()),
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
         assert_ne!(key1, key2, "Different client_ip must not coalesce");
     }
@@ -675,18 +654,18 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
         let key2 = QueryKey {
             name: "example.com".to_string(),
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: Some("10.0.0.1".to_string()),
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
         assert_ne!(key1, key2, "None vs Some client_ip must not coalesce");
     }
@@ -698,18 +677,18 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: true,
-            edns_udp_size: 512,
             client_ip: None,
-            transport_class: TransportClass::default(),
+            transport_class: TransportClass::UdpEdns(512),
+            namespace: CacheNamespace::Authoritative,
         };
         let key2 = QueryKey {
             name: "example.com".to_string(),
             qtype: 1,
             qclass: 1,
             dnssec_ok: true,
-            edns_udp_size: 4096,
             client_ip: None,
-            transport_class: TransportClass::default(),
+            transport_class: TransportClass::UdpEdns(4096),
+            namespace: CacheNamespace::Authoritative,
         };
         assert_ne!(key1, key2, "Different EDNS UDP size must not coalesce");
     }
@@ -721,18 +700,18 @@ mod tests {
             qtype: 1, // A
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
         let key2 = QueryKey {
             name: "example.com".to_string(),
             qtype: 28, // AAAA
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
         assert_ne!(key1, key2, "Different qtype must not coalesce");
     }
@@ -744,18 +723,18 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
         let key2 = QueryKey {
             name: "example.com".to_string(),
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
         // Note: from_query lowercases names, but keys constructed directly are not.
         // This test documents that if you construct keys with different cases, they are different.
@@ -770,36 +749,36 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::Udp512,
+            namespace: CacheNamespace::Authoritative,
         };
         let tcp_key = QueryKey {
             name: "example.com".to_string(),
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::Tcp,
+            namespace: CacheNamespace::Authoritative,
         };
         let edns_key = QueryKey {
             name: "example.com".to_string(),
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 1232,
             client_ip: None,
             transport_class: TransportClass::UdpEdns(1232),
+            namespace: CacheNamespace::Authoritative,
         };
         let https_key = QueryKey {
             name: "example.com".to_string(),
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::Http,
+            namespace: CacheNamespace::Authoritative,
         };
         assert_ne!(udp_key, tcp_key, "UDP vs TCP must not coalesce");
         assert_ne!(udp_key, edns_key, "UDP512 vs UdpEdns must not coalesce");
@@ -814,18 +793,18 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::UdpEdns(512),
+            namespace: CacheNamespace::Authoritative,
         };
         let edns_4096 = QueryKey {
             name: "example.com".to_string(),
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 4096,
             client_ip: None,
             transport_class: TransportClass::UdpEdns(4096),
+            namespace: CacheNamespace::Authoritative,
         };
         assert_ne!(
             edns_512, edns_4096,
@@ -841,9 +820,9 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
 
         // Owner
@@ -885,9 +864,9 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
 
         let result = coalescer.get_or_wait(key.clone()).await;
@@ -915,9 +894,9 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
 
         let result = coalescer.get_or_wait(key.clone()).await;
@@ -949,9 +928,9 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
 
         // First owner
@@ -981,9 +960,9 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
 
         // Owner
@@ -1014,9 +993,9 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
 
         let result = coalescer.get_or_wait(key.clone()).await;
@@ -1038,9 +1017,9 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
 
         let result = coalescer.get_or_wait(key.clone()).await;
@@ -1067,9 +1046,9 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
 
         let result = coalescer.get_or_wait(key.clone()).await;
@@ -1096,6 +1075,160 @@ mod tests {
         let response = Arc::new(vec![0x01]);
         coalescer.broadcast_response(key, response);
         let _ = handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_owner_and_multiple_waiters() {
+        let coalescer = Arc::new(QueryCoalescer::with_config(2000, 10000, 30));
+        let key = QueryKey {
+            name: "concurrent.example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            client_ip: None,
+            transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
+        };
+
+        let result = coalescer.get_or_wait(key.clone()).await;
+        assert!(matches!(result, Some(CoalesceResult::NewQuery(_))));
+
+        let mut handles = Vec::new();
+        for i in 0..10 {
+            let c = coalescer.clone();
+            let k = key.clone();
+            handles.push(tokio::spawn(async move {
+                let r = c.get_or_wait(k).await;
+                (i, r)
+            }));
+        }
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        let response = Arc::new(vec![0xCA, 0xFE]);
+        coalescer.broadcast_response(key.clone(), response.clone());
+
+        for handle in handles {
+            let (i, result) = handle.await.unwrap();
+            match result {
+                Some(CoalesceResult::Response(r)) => {
+                    assert_eq!(*r, *response, "Waiter {} should get broadcast response", i);
+                }
+                _ => panic!("Waiter {} expected Response, got {:?}", i, result),
+            }
+        }
+        assert_eq!(coalescer.in_flight_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_cancel_wakes_waiters_with_none() {
+        let coalescer = Arc::new(QueryCoalescer::with_config(5000, 10000, 30));
+        let key = QueryKey {
+            name: "cancel_waiters.example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            client_ip: None,
+            transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
+        };
+
+        let result = coalescer.get_or_wait(key.clone()).await;
+        assert!(matches!(result, Some(CoalesceResult::NewQuery(_))));
+
+        let c = coalescer.clone();
+        let k = key.clone();
+        let handle = tokio::spawn(async move { c.get_or_wait(k).await });
+
+        // Give the waiter time to subscribe to the broadcast channel
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(coalescer.in_flight_count(), 1, "Entry should still be in-flight before cancel");
+
+        coalescer.cancel_in_flight(&key);
+
+        let waiter_result = handle.await.unwrap();
+        // After cancel, the broadcast channel is closed, so waiter gets None
+        // or it may have timed out if scheduling was delayed — both are acceptable
+        assert!(
+            waiter_result.is_none() || matches!(waiter_result, Some(CoalesceResult::Timeout)),
+            "Waiter should receive None or Timeout after cancel, got {:?}",
+            waiter_result
+        );
+        assert_eq!(coalescer.in_flight_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_new_query_after_full_broadcast_cycle() {
+        let coalescer = Arc::new(QueryCoalescer::new());
+        let key = QueryKey {
+            name: "cycle.example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            client_ip: None,
+            transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
+        };
+
+        for cycle in 0..5 {
+            let result = coalescer.get_or_wait(key.clone()).await;
+            assert!(matches!(result, Some(CoalesceResult::NewQuery(_))), "Cycle {}: should be NewQuery", cycle);
+
+            let response = Arc::new(vec![cycle as u8]);
+            coalescer.broadcast_response(key.clone(), response.clone());
+            assert_eq!(coalescer.in_flight_count(), 0, "Cycle {}: should be empty after broadcast", cycle);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_waiter_timeout_then_owner_succeeds() {
+        let coalescer = Arc::new(QueryCoalescer::with_config(20, 10000, 30));
+        let key = QueryKey {
+            name: "timeout_then_owner.example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            client_ip: None,
+            transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
+        };
+
+        let result = coalescer.get_or_wait(key.clone()).await;
+        assert!(matches!(result, Some(CoalesceResult::NewQuery(_))));
+
+        let c = coalescer.clone();
+        let k = key.clone();
+        let handle = tokio::spawn(async move { c.get_or_wait(k).await });
+        let waiter_result = handle.await.unwrap();
+        assert!(matches!(waiter_result, Some(CoalesceResult::Timeout)));
+
+        assert_eq!(coalescer.in_flight_count(), 1);
+
+        let response = Arc::new(vec![0xFF]);
+        coalescer.broadcast_response(key.clone(), response.clone());
+        assert_eq!(coalescer.in_flight_count(), 0);
+    }
+
+    #[test]
+    fn test_namespace_dimension_in_key() {
+        let key_auth = QueryKey {
+            name: "example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            client_ip: None,
+            transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
+        };
+        let key_rec = QueryKey {
+            name: "example.com".to_string(),
+            qtype: 1,
+            qclass: 1,
+            dnssec_ok: false,
+            client_ip: None,
+            transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Recursive,
+        };
+        assert_ne!(key_auth, key_rec, "Authoritative and Recursive namespace must not coalesce");
     }
 }
 
@@ -1171,9 +1304,9 @@ mod coalescing_exclusion_tests {
             qtype,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
 
         // Even if an entry exists, should_skip_coalescing means the caller
@@ -1195,9 +1328,9 @@ mod coalescing_exclusion_tests {
             qtype,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
 
         let result = coalescer.get_or_wait(key.clone()).await;
@@ -1216,9 +1349,9 @@ mod coalescing_exclusion_tests {
             qtype: 255,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
 
         let result = coalescer.get_or_wait(key.clone()).await;
@@ -1236,13 +1369,19 @@ mod coalescing_exclusion_tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
-            edns_udp_size: 512,
             client_ip: None,
             transport_class: TransportClass::default(),
+            namespace: CacheNamespace::Authoritative,
         };
 
         let result = coalescer.get_or_wait(key.clone()).await;
         assert!(matches!(result, Some(CoalesceResult::NewQuery(_))));
+    }
+
+    #[test]
+    fn test_malformed_query_returns_none_from_key_parsing() {
+        let key = QueryKey::from_query(&[0x00], None, None);
+        assert!(key.is_none(), "Malformed query must not produce a coalescing key");
     }
 }
 

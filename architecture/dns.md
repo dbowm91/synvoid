@@ -1202,7 +1202,7 @@ Completed 2026-07-03. 390/390 DNS lib tests pass, 30/30 authoritative_negative t
 |------|--------|---------|
 | Positive RR encoding | Verified | `encode_rr` handles A, AAAA, NS, SOA, MX, TXT, CNAME, SRV, CAA, TLSA, DNSKEY, DS, NSEC, NSEC3, RRSIG |
 | Parsed query propagation | Verified | `ParsedDnsQuery::parse()` called once at UDP/TCP entry; `&ParsedDnsQuery` passed to all handlers |
-| Query coalescing | Verified | `QueryKey` (6 dimensions: name, qtype, qclass, dnssec_ok, edns_udp_size, client_ip); `broadcast_response` on success, `cancel_in_flight` on failure |
+| Query coalescing | Verified | `QueryKey` (7 dimensions: name, qtype, qclass, dnssec_ok, client_ip, transport_class, namespace); `broadcast_response` on success, `cancel_in_flight` on failure |
 | Unsigned negative responses | Verified | NODATA (RCODE=0 + SOA) and NXDOMAIN (RCODE=3 + SOA) include SOA in authority section via `encode_rr` |
 | No-zone REFUSED | Verified | Unknown zones return RCODE=5 (REFUSED) |
 | Truncation | Verified | Byte-size based (EDNS UDP payload or 512); TC response preserves query ID, RD echo, QDCOUNT=1 |
@@ -1468,7 +1468,7 @@ Phase 2 closed the gap between the config-runtime matrix and actual runtime beha
 | Cache key dimensions | Closed | 7 dimensions with `from_parsed_authoritative()` / `from_parsed_recursive()` constructors. |
 | TTL extraction | Closed | Compression-safe (`skip_dns_name`, `first_answer_ttl`, `negative_soa_ttl`). Protocol-aware negative TTL from SOA. |
 | Cache invalidation | Closed | All zone mutation paths trigger `cache.invalidate_zone()`. Fingerprint state cleared on mutation. |
-| Query coalescing | Closed | 6-dimensional `QueryKey`, AXFR/IXFR/UPDATE/NOTIFY excluded, 8 metrics counters. |
+| Query coalescing | Closed | 7-dimensional `QueryKey`, AXFR/IXFR/UPDATE/NOTIFY excluded, 7 counters + 1 gauge metrics. |
 | TCP hard-limit SERVFAIL | Closed | Echoes question, preserves RD bit, byte-size enforced. SERVFAIL self-size validated. |
 | Serve-stale | Closed | `DnsCache::with_serve_stale()`, config-wired `max_stale_secs` / `max_stale_count`. |
 | Config-runtime fidelity | Closed | 48+ Phase 5+2 tests. All config fields classified as implemented/deferred/unsupported. |
