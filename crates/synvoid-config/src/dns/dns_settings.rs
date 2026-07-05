@@ -353,10 +353,17 @@ pub struct DynamicUpdateConfig {
 
     #[serde(default)]
     pub require_tsig: bool,
+
+    #[serde(default = "default_max_update_size")]
+    pub max_update_size: usize,
 }
 
 fn default_dynamic_update_enabled() -> bool {
     false
+}
+
+fn default_max_update_size() -> usize {
+    4096
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, ToSchema)]

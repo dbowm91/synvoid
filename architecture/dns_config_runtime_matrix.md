@@ -552,7 +552,154 @@ All 8 gate areas verified on Milestone 2 completion:
 2. **Internal contradiction fixed**: `dns.recursive.query_timeout_secs` and `dns.settings.default_ttl` removed from Deferred Features table (they are implemented per Phase 2 corrections).
 3. **Formatting fix**: `crates/synvoid-dns/src/query_coalesce.rs` reformatted (long `assert_eq!` macros split across lines).
 
-### Known Limitations (Deferred)
+#---
+
+## Milestone 3 Phase 1: Zone Lifecycle, Hardening & Transfer Correctness
+
+Phase 3 introduced zone lifecycle management, hardened zone transfers (AXFR/IXFR), dynamic UPDATE, and NOTIFY. See `architecture/dns_zone_lifecycle.md` for the full state machine.
+
+### Zone Lifecycle States (`server/mod.rs:245`)
+
+`ZoneState` enum governs which operations are permitted per zone:
+
+| State | Meaning | Serves Queries | Accepts Updates |
+|-------|---------|---------------|-----------------|
+| `Loading` | Zone loaded from config or persistence | No | No |
+| `Active` | Fully loaded, serving queries | Yes | Yes |
+| `Reloading` | Zone transfer or config reload in progress | No | No |
+| `Disabled` | Administratively disabled | No | No |
+| `Failed` | Fatal error (corrupt SOA, DNSSEC failure) | No | No |
+| `Deleting` | Zone is being deleted | No | No |
+
+State transitions are enforced by `Zone::set_state()` (`server/mod.rs:423`). Invalid transitions return `Err`. See `architecture/dns_zone_lifecycle.md` for the full transition diagram.
+
+### Zone Health Metadata (`server/mod.rs:275`)
+
+```rust
+pub struct ZoneHealth {
+    pub state: ZoneState,
+    pub last_load_time: Option<u64>,   // Unix timestamp of last successful load
+    pub last_error: Option<String>,     // Error message if state is Failed
+    pub record_count: usize,            // Number of resource records
+    pub dnssec_state: DnssecState,      // Unsigned | KeyGeneration | Signed | KeyRollover | SigningFailed
+}
+```
+
+### SOA Validation (`server/mod.rs:493`)
+
+- Exactly one SOA per zone apex (RFC 1035 §3.3.13)
+- `Zone::validate_single_soa()` rejects zones with 0 or >1 SOA records at the apex
+- Multi-SOA rejection happens at load time; runtime SERVFAIL if SOA absent (fail-closed)
+- Origin normalization: trim trailing dots, lowercase (`Zone::normalize_origin()`)
+
+### Serial Correctness (`server/mod.rs:386`)
+
+- RFC 1982 serial comparison via `Zone::serial_is_more_recent(s1, s2)` — handles wrap-around at 0x80000000
+- Monotonic increment via `Zone::increment_serial_rfc1982(current)` — uses timestamp when possible, falls back to `wrapping_add(1)`
+- History retention limit: default 200 entries per zone, configurable via `Zone::increment_serial_with_limit(max_history)`
+- `ZoneHistory` entries store previous serial, records snapshot, and timestamp for IXFR delta encoding
+
+### Dynamic UPDATE Hardening (`update.rs`)
+
+| Control | Default | Description |
+|---------|---------|-------------|
+| `enabled` | `false` | Disabled by default; returns NOTIMP when disabled |
+| `require_tsig` | `true` | TSIG authentication required for all updates |
+| `allow_any` | `false` | IP allowlist enforcement (CIDR or `*`) |
+| `allowed_ips` | `[]` | Client IP allowlist (CIDR notation supported) |
+| Per-update metrics | — | Received/accepted/rejected counters via `DnsMetrics` |
+| Audit-safe logging | — | MAC values never logged; only client IP and zone name |
+
+`DynamicUpdateHandler` (`update.rs:228`) validates prerequisites, applies adds/deletes atomically, increments serial, stores history, and triggers cache invalidation.
+
+### NOTIFY Hardening (`notify.rs`)
+
+| Control | Default | Description |
+|---------|---------|-------------|
+| `enabled` | `false` | Disabled unless explicitly configured |
+| `also_notify` | `[]` | Secondary IPs to notify on zone changes |
+| Source allowlist | — | Incoming NOTIFY from unknown sources is silently ignored |
+| Rate-limiting | — | Per-zone cooldown: serial unchanged → skip NOTIFY (`notify_secondaries()`) |
+| TSIG enforcement | optional | TSIG verification on incoming NOTIFY when configured |
+
+### AXFR Hardening (`transfer.rs`)
+
+| Control | Default | Description |
+|---------|---------|-------------|
+| `axfr_enabled` | `false` | AXFR disabled by default (security-sensitive) |
+| `tcp_only` | `true` | AXFR requires TCP transport (RFC 5936 §2) |
+| `require_tsig` | `true` | TSIG authentication required for all transfers |
+| `allowed_transfers` | `[]` | IP allowlist for outbound transfers |
+| `allow_wildcard_transfer` | `false` | Wildcard `*` in allowlist requires explicit opt-in |
+| SOA bracketing | — | AXFR responses must begin and end with SOA record |
+
+### IXFR Correctness (`transfer.rs`)
+
+| Control | Default | Description |
+|---------|---------|-------------|
+| `ixfr_enabled` | `true` | IXFR handler enabled |
+| `ixfr_fallback_to_axfr` | `true` | Fall back to AXFR when history is insufficient |
+| `max_history_size` | `200` | Maximum IXFR history entries per zone |
+| Serial comparison | — | RFC 1982 serial comparison determines if delta is可用 |
+
+### Store Persistence (`store.rs`)
+
+| Feature | Description |
+|---------|-------------|
+| Atomic writes | SQLite transactions ensure zone records are written atomically |
+| Corrupt record handling | Graceful skip with logging; zone remains operational |
+| Volatile mode | `ZoneStore::new_volatile()` — in-memory only, no SQLite persistence |
+| Schema | `zones` table (id, origin, created_at, updated_at) + `records` table (zone_id, name, type, value, ttl, priority) |
+
+### Cache Invalidation (11 reasons)
+
+All zone mutation paths trigger `cache.invalidate_zone()` with a typed `InvalidationReason`:
+
+| Reason | Trigger |
+|--------|---------|
+| `ZoneLoad` | Config zone loaded |
+| `ZoneLoadFromStore` | Zone restored from SQLite persistence |
+| `RecordAdd` | Record inserted into zone |
+| `ZoneDelete` | Zone removed from in-memory store |
+| `DynamicUpdate` | RFC 2136 update applied |
+| `NotifyReceived` | Incoming NOTIFY processed |
+| `ManualFlush` | Operator-triggered cache flush |
+| `DnssecKeyRollover` | DNSSEC key rollover (full cache clear) |
+| `RpzZoneRemoval` | RPZ zone removed (full cache clear) |
+| `ZoneTransferAxfr` | Full zone transfer received |
+| `ZoneTransferIxfr` | Incremental zone transfer received |
+
+`InvalidationReason` labels are emitted as Prometheus counters via `invalidations_by_reason`.
+
+### Config Fields (M3 Phase 1 additions)
+
+| Config path | Default | Status | Notes |
+|---|---|---|---|
+| `dns.settings.dynamic_update.enabled` | `false` | wired | Returns NOTIMP when disabled |
+| `dns.settings.dynamic_update.allow_any` | `false` | wired | IP allowlist enforcement |
+| `dns.settings.dynamic_update.require_tsig` | `true` | wired | TSIG authentication required |
+| `dns.settings.notify.enabled` | `false` | wired | Returns NOTIMP when disabled |
+| `dns.settings.notify.also_notify` | `[]` | wired | Secondary notification list |
+| `dns.settings.ixfr_history_size` | `200` | wired | History retention limit per zone |
+| `dns.settings.ixfr_enabled` | `true` | wired | IXFR handler toggle |
+| `dns.settings.ixfr_fallback_to_axfr` | `true` | wired | Fallback when history insufficient |
+
+### Test Coverage (M3 Phase 1)
+
+| Test suite | Count | Location |
+|------------|-------|----------|
+| Zone lifecycle | — | `zone_lifecycle` tests in `server/mod.rs` |
+| SOA validation | — | `validate_single_soa` tests |
+| Serial comparison | — | `serial_is_more_recent` tests |
+| Dynamic UPDATE | — | `update.rs` handler-level tests |
+| NOTIFY | — | `notify.rs` handler-level tests |
+| AXFR/IXFR | — | `transfer.rs` handler-level tests |
+| Store persistence | — | `store.rs` unit tests |
+| Cache invalidation reasons | — | `cache.rs` invalidation tests |
+
+---
+
+## Known Limitations (Deferred)
 
 | Item | Status | Notes |
 |------|--------|-------|
@@ -561,4 +708,4 @@ All 8 gate areas verified on Milestone 2 completion:
 | Firewall test coverage | Wired, no tests | 3 security controls untested |
 | ECS client subnet | Partial | Full prefix routing not implemented |
 | DoQ bind address | Partial | Config field ignored, hardcoded to 0.0.0.0 |
-| RPZ, Dynamic Update, Notify, IXFR, Trust Anchors, Prefetch, Anycast, Padding, QNAME Privacy | Deferred | Config fields exist, no runtime consumer |
+| RPZ, Trust Anchors, Prefetch, Anycast, Padding, QNAME Privacy | Deferred | Config fields exist, no runtime consumer |

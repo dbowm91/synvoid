@@ -69,6 +69,23 @@ cargo test -p synvoid-dns --test dns_recursive_isolation -- open_resolver
 # DNS coalescing tests
 cargo test -p synvoid-dns --test transport_lifecycle -- coalescer
 
+# DNS Milestone 3 Phase 1 tests (zone lifecycle, SOA validation, UPDATE/NOTIFY/AXFR/IXFR hardening)
+cargo test -p synvoid-dns -- zone_lifecycle
+cargo test -p synvoid-dns -- zone_health
+cargo test -p synvoid-dns -- validate_single_soa
+cargo test -p synvoid-dns -- normalize_origin
+cargo test -p synvoid-dns -- serial_rfc1982
+cargo test -p synvoid-dns -- update_metrics
+cargo test -p synvoid-dns -- update_max_size
+cargo test -p synvoid-dns -- notify_rate_limit
+cargo test -p synvoid-dns -- notify_source_allowlist
+cargo test -p synvoid-dns -- axfr_tcp_only
+cargo test -p synvoid-dns -- axfr_disabled_by_default
+cargo test -p synvoid-dns -- ixfr_history
+cargo test -p synvoid-dns -- store_volatile
+cargo test -p synvoid-dns -- store_atomic_write
+cargo test -p synvoid-dns -- cache_invalidation_axfr
+
 # DNS config-runtime matrix
 # See architecture/dns_config_runtime_matrix.md
 
@@ -366,3 +383,4 @@ The `architecture/` directory (87 docs) and `.opencode/skills/` directory contai
 - **Plugin M3 Phase 8** — Unsafe native extension production gate, FFI panic catching, hot-reload gating, world-writable path rejection, config migration, metrics, and 34 unit tests. All items in `plans/plugin_m3_phase_08_gap_fixes.md` are complete.
 - **Plugin M3 Phase 9** — Lifecycle hardening: generation tracking, atomic reload pipeline, file stability detection, lifecycle state machine, operator APIs, and 44+ tests across guard files. All items in `plans/plugin_m3_phase_09_gap_fixes.md` are complete.
 - **DNS Milestone 1 Corrective Pass** — Response flag semantics (RA=false authoritative, RD echoed), byte-size truncation, parser propagation (parse-once), authoritative NODATA/NXDOMAIN with SOA, encoder strictness (MX/CAA/TLSA validation, EncodeReport), query coalescing broadcast, runtime correctness (bind address, DNS64 pass-through, TCP guard). All phases (A–G) complete. See `plans/dns_milestone_1_corrective_pass.md`.
+- **DNS Milestone 3 Phase 1** — Zone lifecycle management, SOA validation, dynamic update hardening (max size, metrics), NOTIFY rate limiting and source allowlist, AXFR TCP-only enforcement and disabled-by-default guard, IXFR history tracking, volatile/atomic store writes, and cache invalidation on AXFR. All items in `plans/dns_milestone_3_phase_01_zone_lifecycle.md` addressed.

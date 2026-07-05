@@ -159,7 +159,10 @@ impl DnsServer {
                 return Err(format!("Zone {}: must contain a SOA record", zone.origin));
             }
 
+            zone.validate_single_soa()?;
+
             tracing::info!("Loaded DNS zone: {} (serial: {})", zone.origin, zone.serial);
+            zone.mark_active();
             self.zones.insert(zone.origin.clone(), zone);
         }
 
@@ -178,7 +181,7 @@ impl DnsServer {
         let stored_zones = store.load_zones()?;
         let mut loaded_origins = Vec::new();
 
-        for (origin, zone) in stored_zones {
+        for (origin, mut zone) in stored_zones {
             // Defense-in-depth: reject zones without SOA even from persistence.
             if zone.get_soa().is_none() {
                 tracing::error!(
@@ -191,6 +194,7 @@ impl DnsServer {
                 ));
             }
             tracing::info!("Loaded DNS zone from store: {}", origin);
+            zone.mark_active();
             self.zones.insert(origin.clone(), zone);
             loaded_origins.push(origin);
         }
@@ -236,6 +240,10 @@ impl DnsServer {
             zone_entry.records.entry(key).or_default().push(record);
         });
 
+        self.zones.update_zone(&zone_origin, |z| {
+            z.health.record_count = z.records.len();
+        });
+
         if let Some(ref cache) = self.cache {
             cache.invalidate_zone(&zone_origin, InvalidationReason::RecordAdd);
         }
@@ -267,6 +275,8 @@ impl DnsServer {
             ixfr_enabled,
             ixfr_fallback_to_axfr,
             require_tsig,
+            false, // axfr_enabled: disabled by default
+            true,  // tcp_only: AXFR requires TCP
         );
         self.zone_transfer = Some(Arc::new(zone_transfer));
         self
@@ -291,6 +301,9 @@ impl DnsServer {
                     require_tsig,
                 ),
             );
+            self.zones.for_each_mut(|zone| {
+                zone.mark_active();
+            });
         }
         self
     }
@@ -325,6 +338,10 @@ impl DnsServer {
         *self.zone_index_btree.write() = btree_index;
         *self.zone_trie.write() = trie;
         self.zone_index_dirty.store(false, Ordering::Release);
+
+        self.zones.for_each_mut(|zone| {
+            zone.health.record_count = zone.records.len();
+        });
 
         self.zones.rebuild_index();
     }
@@ -427,6 +444,10 @@ impl DnsServer {
     pub fn delete_zone(&self, origin: &str, store: Option<&ZoneStore>) -> Result<(), String> {
         let origin_lower = origin.trim_end_matches('.').to_lowercase();
 
+        self.zones.update_zone(&origin_lower, |z| {
+            let _ = z.set_state(ZoneState::Deleting);
+        });
+
         self.zones.remove(&origin_lower);
         self.zone_index_dirty.store(true, Ordering::Release);
 
@@ -447,6 +468,9 @@ impl DnsServer {
     pub fn start_key_rollover(&self, key_type: crate::dnssec::KeyType) -> Result<(), String> {
         if let Some(ref dnssec) = self.dnssec {
             dnssec.write().start_key_rollover(key_type)?;
+            self.zones.for_each_mut(|zone| {
+                zone.health.dnssec_state = DnssecState::KeyRollover;
+            });
             if let Some(ref cache) = self.cache {
                 cache.clear(InvalidationReason::DnssecKeyRollover);
                 tracing::info!("Cache cleared after starting {:?} rollover", key_type);
@@ -461,6 +485,9 @@ impl DnsServer {
     pub fn complete_key_rollover(&self, key_type: crate::dnssec::KeyType) -> Result<(), String> {
         if let Some(ref dnssec) = self.dnssec {
             dnssec.write().complete_key_rollover(key_type)?;
+            self.zones.for_each_mut(|zone| {
+                zone.health.dnssec_state = DnssecState::Signed;
+            });
             if let Some(ref cache) = self.cache {
                 cache.clear(InvalidationReason::DnssecKeyRollover);
                 tracing::info!("Cache cleared after completing {:?} rollover", key_type);

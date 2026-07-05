@@ -989,6 +989,8 @@ fn test_wildcard_transfer_denied_when_disabled() {
         true,  // ixfr_enabled
         true,  // ixfr_fallback_to_axfr
         true,  // require_tsig
+        false, // axfr_enabled
+        true,  // tcp_only
     );
     let allowed = transfer.is_transfer_allowed("10.0.0.1".parse().unwrap(), "example.com");
     assert!(

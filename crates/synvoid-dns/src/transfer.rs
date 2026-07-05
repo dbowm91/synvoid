@@ -6,6 +6,8 @@ use crate::server::{DnsZoneRecord, RecordType, RecordTypeExt, ShardedZoneStore, 
 use crate::tsig::{TsigParseResult, TsigVerifier};
 use crate::wire;
 
+use crate::cache::InvalidationReason;
+
 pub const AXFR_QUERY_TYPE: u16 = 252;
 pub const IXFR_QUERY_TYPE: u16 = 251;
 
@@ -18,6 +20,13 @@ pub struct ZoneTransfer {
     require_tsig: bool,
     ixfr_enabled: bool,
     ixfr_fallback_to_axfr: bool,
+    /// AXFR is disabled by default for security.
+    axfr_enabled: bool,
+    /// AXFR requires TCP transport.
+    tcp_only: bool,
+    /// Maximum number of IXFR history entries per zone.
+    max_history_size: usize,
+    cache: Option<Arc<crate::DnsCache>>,
 }
 
 impl ZoneTransfer {
@@ -35,6 +44,10 @@ impl ZoneTransfer {
             require_tsig: true,
             ixfr_enabled: true,
             ixfr_fallback_to_axfr: true,
+            axfr_enabled: false,
+            tcp_only: true,
+            max_history_size: 200,
+            cache: None,
         }
     }
 
@@ -47,6 +60,8 @@ impl ZoneTransfer {
         ixfr_enabled: bool,
         ixfr_fallback_to_axfr: bool,
         require_tsig: bool,
+        axfr_enabled: bool,
+        tcp_only: bool,
     ) -> Self {
         if allowed_transfers.contains(&"*".to_string()) && !allow_wildcard_transfer {
             tracing::warn!(
@@ -71,7 +86,16 @@ impl ZoneTransfer {
             require_tsig,
             ixfr_enabled,
             ixfr_fallback_to_axfr,
+            axfr_enabled,
+            tcp_only,
+            max_history_size: 200,
+            cache: None,
         }
+    }
+
+    pub fn with_cache(mut self, cache: Arc<crate::DnsCache>) -> Self {
+        self.cache = Some(cache);
+        self
     }
 
     fn is_wildcard_allowed(&self) -> bool {
@@ -80,6 +104,19 @@ impl ZoneTransfer {
 
     fn wildcard_requires_tsig(&self) -> bool {
         self.wildcard_transfer_requires_tsig
+    }
+
+    pub fn is_axfr_enabled(&self) -> bool {
+        self.axfr_enabled
+    }
+
+    pub fn is_tcp_only(&self) -> bool {
+        self.tcp_only
+    }
+
+    pub fn with_max_history_size(mut self, max_size: usize) -> Self {
+        self.max_history_size = max_size;
+        self
     }
 
     pub fn is_transfer_allowed(&self, client_ip: IpAddr, origin: &str) -> bool {
@@ -187,9 +224,10 @@ impl ZoneTransfer {
         tsig: Option<&TsigParseResult>,
         message_id: u16,
         message: &[u8],
+        is_tcp: bool,
     ) -> Result<Vec<u8>, String> {
         let messages =
-            self.handle_axfr_request_impl(qname, client_ip, tsig, message_id, message)?;
+            self.handle_axfr_request_impl(qname, client_ip, tsig, message_id, message, is_tcp)?;
 
         let mut combined = Vec::new();
         for resp in messages {
@@ -206,8 +244,9 @@ impl ZoneTransfer {
         tsig: Option<&TsigParseResult>,
         message_id: u16,
         message: &[u8],
+        is_tcp: bool,
     ) -> Result<Vec<Vec<u8>>, String> {
-        self.handle_axfr_request_impl(qname, client_ip, tsig, message_id, message)
+        self.handle_axfr_request_impl(qname, client_ip, tsig, message_id, message, is_tcp)
     }
 
     fn handle_axfr_request_impl(
@@ -217,7 +256,28 @@ impl ZoneTransfer {
         tsig: Option<&TsigParseResult>,
         message_id: u16,
         message: &[u8],
+        is_tcp: bool,
     ) -> Result<Vec<Vec<u8>>, String> {
+        // AXFR disabled by default for security
+        if !self.axfr_enabled {
+            tracing::debug!(
+                "AXFR request for zone={} from {} denied: AXFR not enabled",
+                qname,
+                client_ip
+            );
+            return Err("AXFR not enabled".to_string());
+        }
+
+        // AXFR requires TCP per RFC 5936 §2
+        if self.tcp_only && !is_tcp {
+            tracing::warn!(
+                "SECURITY: AXFR request for zone={} from {} denied: TCP required",
+                qname,
+                client_ip
+            );
+            return Err("AXFR requires TCP transport".to_string());
+        }
+
         let origin = qname.trim_end_matches('.');
 
         if !self.is_transfer_allowed(client_ip, origin) {
@@ -332,6 +392,10 @@ impl ZoneTransfer {
             client_ip,
             responses.len()
         );
+
+        if let Some(ref cache) = self.cache {
+            cache.invalidate_zone(origin, InvalidationReason::ZoneTransferAxfr);
+        }
 
         if tsig_configured {
             if let Some(ref key_name) = tsig_key_name {
@@ -492,6 +556,10 @@ impl ZoneTransfer {
             client_ip,
             responses.len()
         );
+
+        if let Some(ref cache) = self.cache {
+            cache.invalidate_zone(origin, InvalidationReason::ZoneTransferIxfr);
+        }
 
         if tsig_configured {
             if let Some(ref key_name) = tsig_key_name {
@@ -1036,5 +1104,88 @@ impl ZoneTransfer {
         }
 
         response
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_axfr_disabled_by_default() {
+        let zones = Arc::new(ShardedZoneStore::new());
+        let transfer = ZoneTransfer::new(zones, vec![], None);
+        assert!(!transfer.is_axfr_enabled());
+    }
+
+    #[test]
+    fn test_axfr_tcp_only_default() {
+        let zones = Arc::new(ShardedZoneStore::new());
+        let transfer = ZoneTransfer::new(zones, vec![], None);
+        assert!(transfer.is_tcp_only());
+    }
+
+    #[test]
+    fn test_axfr_disabled_returns_error() {
+        let zones = Arc::new(ShardedZoneStore::new());
+        let transfer = ZoneTransfer::new(zones, vec![], None);
+        let result = transfer.handle_axfr_request(
+            "example.com",
+            "192.168.1.1".parse().unwrap(),
+            None,
+            0x1234,
+            &[],
+            false,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not enabled"));
+    }
+
+    #[test]
+    fn test_axfr_tcp_only_rejects_udp() {
+        let zones = Arc::new(ShardedZoneStore::new());
+        let transfer = ZoneTransfer::with_security_config(
+            zones,
+            vec!["*".to_string()],
+            None,
+            true,
+            true,
+            true,
+            true,
+            false,
+            true,  // axfr_enabled
+            true,  // tcp_only
+        );
+        let result = transfer.handle_axfr_request(
+            "example.com",
+            "192.168.1.1".parse().unwrap(),
+            None,
+            0x1234,
+            &[],
+            false, // not TCP
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("TCP transport"));
+    }
+
+    #[test]
+    fn test_ixfr_enabled_by_default() {
+        let zones = Arc::new(ShardedZoneStore::new());
+        let transfer = ZoneTransfer::new(zones, vec![], None);
+        assert!(transfer.ixfr_enabled);
+    }
+
+    #[test]
+    fn test_max_history_size_default() {
+        let zones = Arc::new(ShardedZoneStore::new());
+        let transfer = ZoneTransfer::new(zones, vec![], None);
+        assert_eq!(transfer.max_history_size, 200);
+    }
+
+    #[test]
+    fn test_with_cache_builder() {
+        let zones = Arc::new(ShardedZoneStore::new());
+        let transfer = ZoneTransfer::new(zones, vec![], None);
+        assert!(transfer.cache.is_none());
     }
 }

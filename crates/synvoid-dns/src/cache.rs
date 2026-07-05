@@ -34,6 +34,10 @@ pub enum InvalidationReason {
     DnssecKeyRollover,
     /// RPZ zone removed (affects any DNS name, full wipe needed)
     RpzZoneRemoval,
+    /// Full zone transfer (AXFR) received from a primary.
+    ZoneTransferAxfr,
+    /// Incremental zone transfer (IXFR) received from a primary.
+    ZoneTransferIxfr,
 }
 
 impl InvalidationReason {
@@ -49,6 +53,8 @@ impl InvalidationReason {
             Self::ManualFlush => "manual_flush",
             Self::DnssecKeyRollover => "dnssec_key_rollover",
             Self::RpzZoneRemoval => "rpz_zone_removal",
+            Self::ZoneTransferAxfr => "zone_transfer_axfr",
+            Self::ZoneTransferIxfr => "zone_transfer_ixfr",
         }
     }
 }
@@ -1827,5 +1833,83 @@ mod dnssec_detection_tests {
         assert!(!detect_dnssec_signed(&[
             0x00, 0x00, 0x81, 0x80, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00
         ]));
+    }
+}
+
+#[cfg(test)]
+mod invalidation_reason_tests {
+    use super::*;
+
+    #[test]
+    fn test_invalidation_reason_all_labels() {
+        assert_eq!(InvalidationReason::ZoneLoad.as_label(), "zone_load");
+        assert_eq!(
+            InvalidationReason::ZoneLoadFromStore.as_label(),
+            "zone_load_from_store"
+        );
+        assert_eq!(InvalidationReason::RecordAdd.as_label(), "record_add");
+        assert_eq!(InvalidationReason::ZoneDelete.as_label(), "zone_delete");
+        assert_eq!(
+            InvalidationReason::DynamicUpdate.as_label(),
+            "dynamic_update"
+        );
+        assert_eq!(
+            InvalidationReason::NotifyReceived.as_label(),
+            "notify_received"
+        );
+        assert_eq!(InvalidationReason::ManualFlush.as_label(), "manual_flush");
+        assert_eq!(
+            InvalidationReason::DnssecKeyRollover.as_label(),
+            "dnssec_key_rollover"
+        );
+        assert_eq!(
+            InvalidationReason::RpzZoneRemoval.as_label(),
+            "rpz_zone_removal"
+        );
+        assert_eq!(
+            InvalidationReason::ZoneTransferAxfr.as_label(),
+            "zone_transfer_axfr"
+        );
+        assert_eq!(
+            InvalidationReason::ZoneTransferIxfr.as_label(),
+            "zone_transfer_ixfr"
+        );
+    }
+
+    #[test]
+    fn test_invalidation_reason_display() {
+        assert_eq!(format!("{}", InvalidationReason::ZoneLoad), "zone_load");
+        assert_eq!(
+            format!("{}", InvalidationReason::ZoneTransferAxfr),
+            "zone_transfer_axfr"
+        );
+        assert_eq!(
+            format!("{}", InvalidationReason::ZoneTransferIxfr),
+            "zone_transfer_ixfr"
+        );
+    }
+
+    #[test]
+    fn test_cache_invalidate_zone_axfr() {
+        let cache = DnsCache::new(1000, 300, 86400);
+        let key = CacheKey::new("example.com".into(), RecordType::A, None);
+        let response = vec![0u8; 12];
+        cache.insert(key.clone(), response, 300);
+
+        cache.invalidate_zone("example.com", InvalidationReason::ZoneTransferAxfr);
+        assert!(cache.get(&key).is_none());
+        assert_eq!(cache.metrics().invalidations, 1);
+    }
+
+    #[test]
+    fn test_cache_invalidate_zone_ixfr() {
+        let cache = DnsCache::new(1000, 300, 86400);
+        let key = CacheKey::new("example.com".into(), RecordType::A, None);
+        let response = vec![0u8; 12];
+        cache.insert(key.clone(), response, 300);
+
+        cache.invalidate_zone("example.com", InvalidationReason::ZoneTransferIxfr);
+        assert!(cache.get(&key).is_none());
+        assert_eq!(cache.metrics().invalidations, 1);
     }
 }

@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use super::server::{DnsZoneRecord, RecordType, Zone};
@@ -224,7 +225,6 @@ impl DynamicUpdate {
     }
 }
 
-#[derive(Clone)]
 pub struct DynamicUpdateHandler {
     zones: Arc<ShardedZoneStore>,
     enabled: bool,
@@ -233,8 +233,36 @@ pub struct DynamicUpdateHandler {
     tsig_verifier: Option<Arc<TsigVerifier>>,
     allowed_ips: Vec<String>,
     cache: Option<Arc<crate::DnsCache>>,
+    /// Maximum size in bytes for an UPDATE message. Prevents abuse.
+    max_update_size: usize,
+    /// Counter for updates received.
+    updates_received: AtomicU64,
+    /// Counter for updates accepted.
+    updates_accepted: AtomicU64,
+    /// Counter for updates rejected.
+    updates_rejected: AtomicU64,
     #[cfg(feature = "mesh")]
     zone_sync: Option<Arc<crate::anycast_sync::AnycastZoneSync>>,
+}
+
+impl Clone for DynamicUpdateHandler {
+    fn clone(&self) -> Self {
+        Self {
+            zones: self.zones.clone(),
+            enabled: self.enabled,
+            allow_any: self.allow_any,
+            require_tsig: self.require_tsig,
+            tsig_verifier: self.tsig_verifier.clone(),
+            allowed_ips: self.allowed_ips.clone(),
+            cache: self.cache.clone(),
+            max_update_size: self.max_update_size,
+            updates_received: AtomicU64::new(self.updates_received.load(Ordering::Relaxed)),
+            updates_accepted: AtomicU64::new(self.updates_accepted.load(Ordering::Relaxed)),
+            updates_rejected: AtomicU64::new(self.updates_rejected.load(Ordering::Relaxed)),
+            #[cfg(feature = "mesh")]
+            zone_sync: self.zone_sync.clone(),
+        }
+    }
 }
 
 impl DynamicUpdateHandler {
@@ -247,6 +275,10 @@ impl DynamicUpdateHandler {
             tsig_verifier: None,
             allowed_ips: Vec::new(),
             cache: None,
+            max_update_size: 4096,
+            updates_received: AtomicU64::new(0),
+            updates_accepted: AtomicU64::new(0),
+            updates_rejected: AtomicU64::new(0),
             #[cfg(feature = "mesh")]
             zone_sync: None,
         }
@@ -274,6 +306,11 @@ impl DynamicUpdateHandler {
         self
     }
 
+    pub fn with_max_update_size(mut self, max_size: usize) -> Self {
+        self.max_update_size = max_size;
+        self
+    }
+
     #[cfg(feature = "mesh")]
     pub fn with_zone_sync(mut self, zone_sync: crate::anycast_sync::AnycastZoneSync) -> Self {
         self.zone_sync = Some(Arc::new(zone_sync));
@@ -282,6 +319,18 @@ impl DynamicUpdateHandler {
 
     pub fn is_enabled(&self) -> bool {
         self.enabled
+    }
+
+    pub fn updates_received(&self) -> u64 {
+        self.updates_received.load(Ordering::Relaxed)
+    }
+
+    pub fn updates_accepted(&self) -> u64 {
+        self.updates_accepted.load(Ordering::Relaxed)
+    }
+
+    pub fn updates_rejected(&self) -> u64 {
+        self.updates_rejected.load(Ordering::Relaxed)
     }
 
     fn is_ip_allowed(&self, client_ip: std::net::IpAddr) -> bool {
@@ -331,11 +380,26 @@ impl DynamicUpdateHandler {
         query: &[u8],
         client_ip: std::net::IpAddr,
     ) -> Result<Vec<u8>, String> {
+        self.updates_received.fetch_add(1, Ordering::Relaxed);
+
         if !self.enabled {
+            self.updates_rejected.fetch_add(1, Ordering::Relaxed);
             return Err("Dynamic updates not enabled".to_string());
         }
 
+        if query.len() > self.max_update_size {
+            self.updates_rejected.fetch_add(1, Ordering::Relaxed);
+            tracing::warn!(
+                "SECURITY: Dynamic update DENIED from {} - message size {} exceeds max {}",
+                client_ip,
+                query.len(),
+                self.max_update_size
+            );
+            return Err("Update message too large".to_string());
+        }
+
         if !self.allow_any && !self.is_ip_allowed(client_ip) {
+            self.updates_rejected.fetch_add(1, Ordering::Relaxed);
             tracing::warn!(
                 "SECURITY: Dynamic update DENIED for zone update from {} - client IP not in allowed list",
                 client_ip
@@ -354,6 +418,7 @@ impl DynamicUpdateHandler {
 
         if self.require_tsig {
             if tsig.is_none() {
+                self.updates_rejected.fetch_add(1, Ordering::Relaxed);
                 tracing::warn!(
                     "SECURITY: Dynamic update DENIED for zone update from {} - TSIG required but not present",
                     client_ip
@@ -362,7 +427,7 @@ impl DynamicUpdateHandler {
             }
 
             if let (Some(tsig_data), Some(verifier)) = (&tsig, &self.tsig_verifier) {
-                if let Err(e) = verifier.verify(
+                if let Err(_e) = verifier.verify(
                     &[],
                     query,
                     &tsig_data.mac,
@@ -373,20 +438,23 @@ impl DynamicUpdateHandler {
                     tsig_data.tsig_error,
                     tsig_data.other_len,
                 ) {
+                    self.updates_rejected.fetch_add(1, Ordering::Relaxed);
                     tracing::warn!(
-                        "SECURITY: Dynamic update DENIED for zone={} client={} - TSIG verification failed: {}",
+                        "SECURITY: Dynamic update DENIED for zone={} client={} - TSIG verification failed",
                         "unknown",
                         client_ip,
-                        e
                     );
-                    return Err(format!("TSIG verification failed: {}", e));
+                    return Err("TSIG verification failed".to_string());
                 }
             }
         }
 
         let update = DynamicUpdate::parse(query)?;
 
-        let zone = update.zone.ok_or("No zone in UPDATE")?;
+        let zone = update.zone.ok_or_else(|| {
+            self.updates_rejected.fetch_add(1, Ordering::Relaxed);
+            "No zone in UPDATE".to_string()
+        })?;
 
         let zone_origin = if zone.name.ends_with('.') {
             zone.name[..zone.name.len() - 1].to_string()
@@ -394,7 +462,10 @@ impl DynamicUpdateHandler {
             zone.name.clone()
         };
 
-        let mut updated_zone: Zone = self.zones.get(&zone_origin).ok_or("Zone not found")?;
+        let mut updated_zone: Zone = self.zones.get(&zone_origin).ok_or_else(|| {
+            self.updates_rejected.fetch_add(1, Ordering::Relaxed);
+            "Zone not found".to_string()
+        })?;
 
         tracing::info!(
             "Dynamic update request from {} for zone={} ({} prerequisites, {} updates)",
@@ -468,6 +539,7 @@ impl DynamicUpdateHandler {
             });
         }
 
+        self.updates_accepted.fetch_add(1, Ordering::Relaxed);
         Ok(self.build_response(query, wire::UPDATE_RCODE_NOERROR))
     }
 
@@ -571,5 +643,53 @@ mod tests {
         assert_eq!(wire::OPCODE_UPDATE, 5);
         assert_eq!(wire::UPDATE_RCODE_YXDOMAIN, 6);
         assert_eq!(wire::UPDATE_RCODE_YXRRSET, 7);
+    }
+
+    #[test]
+    fn test_update_handler_metrics_initial() {
+        let zones = Arc::new(ShardedZoneStore::new());
+        let handler = DynamicUpdateHandler::new(zones);
+        assert_eq!(handler.updates_received(), 0);
+        assert_eq!(handler.updates_accepted(), 0);
+        assert_eq!(handler.updates_rejected(), 0);
+    }
+
+    #[test]
+    fn test_update_handler_disabled_rejects() {
+        let zones = Arc::new(ShardedZoneStore::new());
+        let handler = DynamicUpdateHandler::new(zones);
+        // handler is disabled by default
+        let result = handler.handle_update(&[0u8; 12], "127.0.0.1".parse().unwrap());
+        assert!(result.is_err());
+        assert_eq!(handler.updates_received(), 1);
+        assert_eq!(handler.updates_rejected(), 1);
+        assert_eq!(handler.updates_accepted(), 0);
+    }
+
+    #[test]
+    fn test_update_handler_max_size_rejects() {
+        let zones = Arc::new(ShardedZoneStore::new());
+        let handler = DynamicUpdateHandler::new(zones)
+            .with_config(true, true, false)
+            .with_max_update_size(100);
+        // Create a query larger than 100 bytes
+        let big_query = vec![0u8; 200];
+        let result = handler.handle_update(&big_query, "127.0.0.1".parse().unwrap());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("too large"));
+        assert_eq!(handler.updates_received(), 1);
+        assert_eq!(handler.updates_rejected(), 1);
+    }
+
+    #[test]
+    fn test_update_handler_ip_not_allowed() {
+        let zones = Arc::new(ShardedZoneStore::new());
+        let handler = DynamicUpdateHandler::new(zones)
+            .with_config(true, false, false)
+            .with_allowed_ips(vec!["10.0.0.1".to_string()]);
+        let result = handler.handle_update(&[0u8; 12], "127.0.0.1".parse().unwrap());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not allowed"));
+        assert_eq!(handler.updates_rejected(), 1);
     }
 }

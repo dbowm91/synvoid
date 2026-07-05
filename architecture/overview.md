@@ -212,7 +212,7 @@ Client ──► TLS Termination ──► HTTP Server ──► WAF Pipeline �
 | Module | Purpose | Architecture Doc | Deep Dive |
 |--------|---------|------------------|-----------|
 | [Mesh](./mesh.md) | P2P networking, DHT, Raft, post-quantum | [`mesh.md`](./mesh.md) | [`mesh_deep_dive.md`](./mesh_deep_dive.md) |
-| [DNS](./dns.md) | DNS server, DNSSEC, DoT/DoH/DoQ, TSIG | [`dns.md`](./dns.md) | [`dns_deep_dive.md`](./dns_deep_dive.md) |
+| [DNS](./dns.md) | DNS server, DNSSEC, DoT/DoH/DoQ, TSIG | [`dns.md`](./dns.md), [`dns_zone_lifecycle.md`](./dns_zone_lifecycle.md) | [`dns_deep_dive.md`](./dns_deep_dive.md) |
 | [VPN Client](./dns_deep_dive.md) | VPN client connectivity | — | [`dns_deep_dive.md`](./dns_deep_dive.md) |
 
 ### Layer 7: Observability & Admin

@@ -1587,3 +1587,158 @@ cargo test -p synvoid-dns --test dns_recursive_isolation
 cargo test -p synvoid-dns -- open_resolver
 ```
 
+---
+
+## Milestone 3 Phase 1: Zone Lifecycle, Hardening & Transfer Correctness
+
+Phase 3 introduced zone lifecycle management, hardened zone transfers (AXFR/IXFR), dynamic UPDATE, and NOTIFY. See `architecture/dns_zone_lifecycle.md` for the full state machine.
+
+### Zone Lifecycle States
+
+`ZoneState` enum (`server/mod.rs:245`) governs which operations are permitted per zone:
+
+```rust
+pub enum ZoneState {
+    Loading,    // Zone is being loaded from config or persistence
+    Active,     // Zone is fully loaded and serving queries
+    Reloading,  // Zone is being reloaded (zone transfer, config reload)
+    Disabled,   // Zone is administratively disabled
+    Failed,     // Zone encountered a fatal error
+    Deleting,   // Zone is being deleted
+}
+```
+
+State transitions are enforced by `Zone::set_state()`. Invalid transitions return `Err`. See `architecture/dns_zone_lifecycle.md` for the full transition diagram.
+
+### Zone Health Metadata
+
+```rust
+pub struct ZoneHealth {
+    pub state: ZoneState,
+    pub last_load_time: Option<u64>,   // Unix timestamp of last successful load
+    pub last_error: Option<String>,     // Error message if state is Failed
+    pub record_count: usize,            // Number of resource records
+    pub dnssec_state: DnssecState,      // Unsigned | KeyGeneration | Signed | KeyRollover | SigningFailed
+}
+```
+
+### SOA Validation
+
+- Exactly one SOA per zone apex (RFC 1035 §3.3.13)
+- `Zone::validate_single_soa()` (`server/mod.rs:511`) rejects zones with 0 or >1 SOA records at the apex
+- Origin normalization: trim trailing dots, lowercase (`Zone::normalize_origin()`)
+- Runtime fail-closed: missing SOA at query time returns SERVFAIL
+
+### Serial Correctness
+
+RFC 1982 serial arithmetic:
+- `Zone::serial_is_more_recent(s1, s2)` (`server/mod.rs:406`) — handles wrap-around at 0x80000000
+- `Zone::increment_serial_rfc1982(current)` (`server/mod.rs:386`) — uses timestamp when possible, falls back to `wrapping_add(1)`
+- History retention: default 200 entries per zone, configurable via `increment_serial_with_limit(max_history)`
+- `ZoneHistory` stores previous serial, records snapshot, and timestamp for IXFR delta encoding
+
+### Dynamic UPDATE Hardening (`update.rs`)
+
+RFC 2136 dynamic updates are hardened with multiple security layers:
+
+| Control | Default | Description |
+|---------|---------|-------------|
+| `enabled` | `false` | Disabled by default; returns NOTIMP when disabled |
+| `require_tsig` | `true` | TSIG authentication required for all updates |
+| `allow_any` | `false` | IP allowlist enforcement (CIDR or `*`) |
+| `allowed_ips` | `[]` | Client IP allowlist (CIDR notation supported) |
+| Per-update metrics | — | Received/accepted/rejected counters via `DnsMetrics` |
+| Audit-safe logging | — | MAC values never logged; only client IP and zone name |
+
+`DynamicUpdateHandler` validates prerequisites, applies adds/deletes atomically, increments serial, stores history, and triggers cache invalidation.
+
+### NOTIFY Hardening (`notify.rs`)
+
+| Control | Default | Description |
+|---------|---------|-------------|
+| `enabled` | `false` | Disabled unless explicitly configured |
+| `also_notify` | `[]` | Secondary IPs to notify on zone changes |
+| Source allowlist | — | Incoming NOTIFY from unknown sources is silently ignored |
+| Rate-limiting | — | Per-zone cooldown: serial unchanged → skip NOTIFY |
+| TSIG enforcement | optional | TSIG verification on incoming NOTIFY when configured |
+
+### AXFR Hardening (`transfer.rs`)
+
+| Control | Default | Description |
+|---------|---------|-------------|
+| `axfr_enabled` | `false` | AXFR disabled by default (security-sensitive) |
+| `tcp_only` | `true` | AXFR requires TCP transport (RFC 5936 §2) |
+| `require_tsig` | `true` | TSIG authentication required for all transfers |
+| `allowed_transfers` | `[]` | IP allowlist for outbound transfers |
+| `allow_wildcard_transfer` | `false` | Wildcard `*` in allowlist requires explicit opt-in |
+| SOA bracketing | — | AXFR responses must begin and end with SOA record |
+
+### IXFR Correctness (`transfer.rs`)
+
+| Control | Default | Description |
+|---------|---------|-------------|
+| `ixfr_enabled` | `true` | IXFR handler enabled |
+| `ixfr_fallback_to_axfr` | `true` | Fall back to AXFR when history is insufficient |
+| `max_history_size` | `200` | Maximum IXFR history entries per zone |
+| Serial comparison | — | RFC 1982 serial comparison determines if delta is applicable |
+
+### Store Persistence (`store.rs`)
+
+- Atomic writes via SQLite transactions
+- Corrupt record handling: graceful skip with logging
+- Volatile mode: `ZoneStore::new_volatile()` — in-memory only, no persistence
+- Schema: `zones` table + `records` table with foreign key cascade deletes
+
+### Cache Invalidation (11 reasons)
+
+All zone mutation paths trigger `cache.invalidate_zone()` with a typed `InvalidationReason` (`cache.rs:18`):
+
+| Reason | Trigger |
+|--------|---------|
+| `ZoneLoad` | Config zone loaded |
+| `ZoneLoadFromStore` | Zone restored from SQLite persistence |
+| `RecordAdd` | Record inserted into zone |
+| `ZoneDelete` | Zone removed from in-memory store |
+| `DynamicUpdate` | RFC 2136 update applied |
+| `NotifyReceived` | Incoming NOTIFY processed |
+| `ManualFlush` | Operator-triggered cache flush |
+| `DnssecKeyRollover` | DNSSEC key rollover (full cache clear) |
+| `RpzZoneRemoval` | RPZ zone removed (full cache clear) |
+| `ZoneTransferAxfr` | Full zone transfer received |
+| `ZoneTransferIxfr` | Incremental zone transfer received |
+
+### Verification Commands
+
+```bash
+# Zone lifecycle state transitions
+cargo test -p synvoid-dns -- zone_lifecycle
+cargo test -p synvoid-dns -- zone_health
+
+# SOA validation
+cargo test -p synvoid-dns -- validate_single_soa
+cargo test -p synvoid-dns -- normalize_origin
+
+# Serial correctness
+cargo test -p synvoid-dns -- serial_rfc1982
+
+# Dynamic UPDATE
+cargo test -p synvoid-dns -- update_metrics
+cargo test -p synvoid-dns -- update_max_size
+
+# NOTIFY
+cargo test -p synvoid-dns -- notify_rate_limit
+cargo test -p synvoid-dns -- notify_source_allowlist
+
+# AXFR/IXFR
+cargo test -p synvoid-dns -- axfr_tcp_only
+cargo test -p synvoid-dns -- axfr_disabled_by_default
+cargo test -p synvoid-dns -- ixfr_history
+
+# Store persistence
+cargo test -p synvoid-dns -- store_volatile
+cargo test -p synvoid-dns -- store_atomic_write
+
+# Cache invalidation
+cargo test -p synvoid-dns -- cache_invalidation_axfr
+```
+

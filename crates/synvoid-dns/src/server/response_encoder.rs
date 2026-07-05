@@ -1093,7 +1093,7 @@ mod tests {
 
     #[test]
     fn test_invalid_mx_does_not_produce_partial_bytes() {
-        let record = make_record("example.com", RecordType::MX, "mail.example.com", 300);
+        let _record = make_record("example.com", RecordType::MX, "mail.example.com", 300);
         // MX is valid, so test with empty exchange to ensure it doesn't panic
         let record_empty = make_record("example.com", RecordType::MX, "", 300);
         let result = encode_rr(&record_empty, None);

@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
+use std::fmt;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -239,6 +240,90 @@ pub struct DsRecordExport {
     pub digest: String,
 }
 
+/// Lifecycle state for a DNS zone, governing which operations are permitted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ZoneState {
+    /// Zone is being loaded from config or persistence.
+    Loading,
+    /// Zone is fully loaded and serving queries.
+    Active,
+    /// Zone is being reloaded (zone transfer, config reload).
+    Reloading,
+    /// Zone is administratively disabled (not serving queries).
+    Disabled,
+    /// Zone encountered a fatal error (corrupt SOA, DNSSEC failure).
+    Failed,
+    /// Zone is being deleted.
+    Deleting,
+}
+
+impl fmt::Display for ZoneState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Loading => write!(f, "loading"),
+            Self::Active => write!(f, "active"),
+            Self::Reloading => write!(f, "reloading"),
+            Self::Disabled => write!(f, "disabled"),
+            Self::Failed => write!(f, "failed"),
+            Self::Deleting => write!(f, "deleting"),
+        }
+    }
+}
+
+/// Per-zone health metadata for operational visibility.
+#[derive(Debug, Clone)]
+pub struct ZoneHealth {
+    /// Current lifecycle state.
+    pub state: ZoneState,
+    /// Unix timestamp of last successful load/reload.
+    pub last_load_time: Option<u64>,
+    /// Last error message if state is Failed.
+    pub last_error: Option<String>,
+    /// Number of resource records in the zone.
+    pub record_count: usize,
+    /// DNSSEC signing state.
+    pub dnssec_state: DnssecState,
+}
+
+impl Default for ZoneHealth {
+    fn default() -> Self {
+        Self {
+            state: ZoneState::Loading,
+            last_load_time: None,
+            last_error: None,
+            record_count: 0,
+            dnssec_state: DnssecState::Unsigned,
+        }
+    }
+}
+
+/// DNSSEC signing state for a zone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DnssecState {
+    /// DNSSEC not configured for this zone.
+    Unsigned,
+    /// DNSSEC keys are being generated.
+    KeyGeneration,
+    /// Zone is signed and serving authenticated responses.
+    Signed,
+    /// DNSSEC key rollover in progress.
+    KeyRollover,
+    /// DNSSEC signing failed.
+    SigningFailed,
+}
+
+impl fmt::Display for DnssecState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unsigned => write!(f, "unsigned"),
+            Self::KeyGeneration => write!(f, "key_generation"),
+            Self::Signed => write!(f, "signed"),
+            Self::KeyRollover => write!(f, "key_rollover"),
+            Self::SigningFailed => write!(f, "signing_failed"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Zone {
     pub origin: String,
@@ -251,6 +336,7 @@ pub struct Zone {
     pub nsec_enabled: bool,
     pub nsec3param: Option<super::dnssec::Nsec3Config>,
     pub history: Vec<ZoneHistory>,
+    pub health: ZoneHealth,
 }
 
 #[derive(Clone, Debug)]
@@ -273,11 +359,12 @@ impl Zone {
             nsec_enabled: false,
             nsec3param: None,
             history: Vec::new(),
+            health: ZoneHealth::default(),
         }
     }
 
     pub fn increment_serial(&mut self) {
-        self.increment_serial_with_limit(50);
+        self.increment_serial_with_limit(200);
     }
 
     pub fn increment_serial_with_limit(&mut self, max_history: usize) {
@@ -329,6 +416,113 @@ impl Zone {
 
     pub fn get_previous_version(&self, serial: u32) -> Option<&ZoneHistory> {
         self.history.iter().find(|h| h.serial == serial)
+    }
+
+    /// Transition the zone to a new lifecycle state.
+    /// Returns Ok(()) on success, Err with description on invalid transition.
+    pub fn set_state(&mut self, new_state: ZoneState) -> Result<(), String> {
+        let valid = matches!(
+            (self.health.state, new_state),
+            (ZoneState::Loading, ZoneState::Active)
+                | (ZoneState::Loading, ZoneState::Failed)
+                | (ZoneState::Active, ZoneState::Reloading)
+                | (ZoneState::Active, ZoneState::Disabled)
+                | (ZoneState::Active, ZoneState::Deleting)
+                | (ZoneState::Active, ZoneState::Failed)
+                | (ZoneState::Reloading, ZoneState::Active)
+                | (ZoneState::Reloading, ZoneState::Failed)
+                | (ZoneState::Disabled, ZoneState::Active)
+                | (ZoneState::Disabled, ZoneState::Deleting)
+                | (ZoneState::Failed, ZoneState::Loading)
+                | (ZoneState::Failed, ZoneState::Deleting)
+                | (ZoneState::Failed, ZoneState::Disabled)
+                | (ZoneState::Deleting, ZoneState::Loading)
+        );
+        if valid {
+            tracing::debug!(
+                zone = %self.origin,
+                from = %self.health.state,
+                to = %new_state,
+                "Zone state transition"
+            );
+            self.health.state = new_state;
+            Ok(())
+        } else {
+            Err(format!(
+                "Invalid state transition: {} -> {}",
+                self.health.state, new_state
+            ))
+        }
+    }
+
+    /// Mark the zone as active with current timestamp and record count.
+    pub fn mark_active(&mut self) {
+        self.health.state = ZoneState::Active;
+        self.health.last_load_time = Some(synvoid_core::time::current_timestamp_secs());
+        self.health.record_count = self.records.len();
+        self.health.last_error = None;
+    }
+
+    /// Mark the zone as failed with an error message.
+    pub fn mark_failed(&mut self, error: String) {
+        self.health.state = ZoneState::Failed;
+        self.health.last_error = Some(error);
+    }
+
+    /// Returns true if the zone is in a state that serves queries.
+    pub fn is_serving(&self) -> bool {
+        self.health.state == ZoneState::Active
+    }
+
+    /// Returns the current zone state.
+    pub fn state(&self) -> ZoneState {
+        self.health.state
+    }
+
+    /// Returns the zone health metadata.
+    pub fn health(&self) -> &ZoneHealth {
+        &self.health
+    }
+
+    /// Normalize the zone origin: trim trailing dots, lowercase, ensure consistent format.
+    /// DNS origins are case-insensitive per RFC 1035 §2.3.1.
+    pub fn normalize_origin(origin: &str) -> String {
+        origin.trim_end_matches('.').to_lowercase()
+    }
+
+    /// Count how many SOA records exist at the zone apex.
+    /// Returns the count of SOA records. Must be exactly 1 per RFC 1035 §3.3.13.
+    pub fn count_apex_soa(&self) -> usize {
+        let origin = Self::normalize_origin(&self.origin);
+        let mut count = 0;
+        for ((name, rtype), records) in &self.records {
+            if *rtype == RecordType::SOA {
+                let normalized = Self::normalize_origin(name);
+                if normalized == origin || normalized == "@" {
+                    count += records.len();
+                }
+            }
+        }
+        count
+    }
+
+    /// Validate that the zone has exactly one SOA record at the apex.
+    /// Returns Ok(()) if valid, Err with description if not.
+    pub fn validate_single_soa(&self) -> Result<(), String> {
+        let count = self.count_apex_soa();
+        if count == 0 {
+            return Err(format!(
+                "Zone {}: no SOA record found (RFC 1035 §3.3.13 requires exactly one)",
+                self.origin
+            ));
+        }
+        if count > 1 {
+            return Err(format!(
+                "Zone {}: found {} SOA records at apex (RFC 1035 §3.3.13 requires exactly one)",
+                self.origin, count
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -409,6 +603,220 @@ mod zone_tests {
     fn test_serial_is_more_recent_wrap_around() {
         assert!(Zone::serial_is_more_recent(1, 0xFFFFFFFF));
         assert!(!Zone::serial_is_more_recent(0xFFFFFFFF, 1));
+    }
+
+    // ── Zone lifecycle state tests ──
+
+    #[test]
+    fn test_zone_lifecycle_valid_transitions() {
+        let mut zone = Zone::new("test.com".to_string());
+        assert_eq!(zone.state(), ZoneState::Loading);
+
+        // Loading -> Active
+        assert!(zone.set_state(ZoneState::Active).is_ok());
+        assert_eq!(zone.state(), ZoneState::Active);
+        assert!(zone.is_serving());
+
+        // Active -> Reloading
+        assert!(zone.set_state(ZoneState::Reloading).is_ok());
+        assert_eq!(zone.state(), ZoneState::Reloading);
+        assert!(!zone.is_serving());
+
+        // Reloading -> Active
+        assert!(zone.set_state(ZoneState::Active).is_ok());
+        assert!(zone.is_serving());
+
+        // Active -> Disabled
+        assert!(zone.set_state(ZoneState::Disabled).is_ok());
+        assert!(!zone.is_serving());
+
+        // Disabled -> Active
+        assert!(zone.set_state(ZoneState::Active).is_ok());
+        assert!(zone.is_serving());
+
+        // Active -> Failed
+        assert!(zone.set_state(ZoneState::Failed).is_ok());
+        assert!(!zone.is_serving());
+
+        // Failed -> Loading (retry)
+        assert!(zone.set_state(ZoneState::Loading).is_ok());
+        assert!(zone.set_state(ZoneState::Active).is_ok());
+    }
+
+    #[test]
+    fn test_zone_lifecycle_invalid_transitions() {
+        let mut zone = Zone::new("test.com".to_string());
+        assert_eq!(zone.state(), ZoneState::Loading);
+
+        // Loading -> Reloading (invalid)
+        assert!(zone.set_state(ZoneState::Reloading).is_err());
+
+        // Loading -> Disabled (invalid)
+        assert!(zone.set_state(ZoneState::Disabled).is_err());
+
+        // Loading -> Deleting (invalid)
+        assert!(zone.set_state(ZoneState::Deleting).is_err());
+
+        // Loading -> Loading (invalid - same state)
+        assert!(zone.set_state(ZoneState::Loading).is_err());
+    }
+
+    #[test]
+    fn test_zone_lifecycle_deleting_to_active() {
+        let mut zone = Zone::new("test.com".to_string());
+        zone.set_state(ZoneState::Active).unwrap();
+        zone.set_state(ZoneState::Deleting).unwrap();
+
+        // Deleting -> Loading (re-add)
+        assert!(zone.set_state(ZoneState::Loading).is_ok());
+        assert!(zone.set_state(ZoneState::Active).is_ok());
+    }
+
+    #[test]
+    fn test_zone_lifecycle_disabled_to_deleting() {
+        let mut zone = Zone::new("test.com".to_string());
+        zone.set_state(ZoneState::Active).unwrap();
+        zone.set_state(ZoneState::Disabled).unwrap();
+
+        // Disabled -> Deleting
+        assert!(zone.set_state(ZoneState::Deleting).is_ok());
+    }
+
+    // ── Zone health metadata tests ──
+
+    #[test]
+    fn test_zone_health_mark_active() {
+        let mut zone = Zone::new("test.com".to_string());
+        zone.records.insert(
+            ("@".to_string(), RecordType::A),
+            vec![DnsZoneRecord {
+                name: "@".to_string(),
+                record_type: RecordType::A,
+                value: "1.2.3.4".to_string(),
+                ttl: 3600,
+                priority: None,
+            }],
+        );
+
+        zone.mark_active();
+        assert_eq!(zone.state(), ZoneState::Active);
+        assert!(zone.health().last_load_time.is_some());
+        assert_eq!(zone.health().record_count, 1);
+        assert!(zone.health().last_error.is_none());
+    }
+
+    #[test]
+    fn test_zone_health_mark_failed() {
+        let mut zone = Zone::new("test.com".to_string());
+        zone.mark_failed("SOA validation failed".to_string());
+
+        assert_eq!(zone.state(), ZoneState::Failed);
+        assert_eq!(
+            zone.health().last_error.as_deref(),
+            Some("SOA validation failed")
+        );
+    }
+
+    #[test]
+    fn test_zone_health_default_is_loading() {
+        let zone = Zone::new("test.com".to_string());
+        assert_eq!(zone.health().state, ZoneState::Loading);
+        assert!(zone.health().last_load_time.is_none());
+        assert_eq!(zone.health().record_count, 0);
+        assert!(zone.health().last_error.is_none());
+        assert_eq!(zone.health().dnssec_state, DnssecState::Unsigned);
+    }
+
+    // ── SOA validation tests ──
+
+    #[test]
+    fn test_validate_single_soa_passes() {
+        let mut zone = Zone::new("test.com".to_string());
+        zone.records.insert(
+            ("@".to_string(), RecordType::SOA),
+            vec![DnsZoneRecord {
+                name: "@".to_string(),
+                record_type: RecordType::SOA,
+                value: "ns1.test.com. admin.test.com. 1 3600 600 86400 300".to_string(),
+                ttl: 3600,
+                priority: None,
+            }],
+        );
+        assert!(zone.validate_single_soa().is_ok());
+    }
+
+    #[test]
+    fn test_validate_single_soa_fails_no_soa() {
+        let zone = Zone::new("test.com".to_string());
+        assert!(zone.validate_single_soa().is_err());
+        assert!(zone.validate_single_soa().unwrap_err().contains("no SOA"));
+    }
+
+    #[test]
+    fn test_validate_single_soa_fails_multi_soa() {
+        let mut zone = Zone::new("test.com".to_string());
+        zone.records.insert(
+            ("@".to_string(), RecordType::SOA),
+            vec![
+                DnsZoneRecord {
+                    name: "@".to_string(),
+                    record_type: RecordType::SOA,
+                    value: "ns1.test.com. admin.test.com. 1 3600 600 86400 300".to_string(),
+                    ttl: 3600,
+                    priority: None,
+                },
+                DnsZoneRecord {
+                    name: "@".to_string(),
+                    record_type: RecordType::SOA,
+                    value: "ns2.test.com. admin.test.com. 2 3600 600 86400 300".to_string(),
+                    ttl: 3600,
+                    priority: None,
+                },
+            ],
+        );
+        assert!(zone.validate_single_soa().is_err());
+        assert!(
+            zone.validate_single_soa()
+                .unwrap_err()
+                .contains("found 2 SOA")
+        );
+    }
+
+    #[test]
+    fn test_count_apex_soa() {
+        let mut zone = Zone::new("test.com".to_string());
+        assert_eq!(zone.count_apex_soa(), 0);
+
+        zone.records.insert(
+            ("@".to_string(), RecordType::SOA),
+            vec![DnsZoneRecord {
+                name: "@".to_string(),
+                record_type: RecordType::SOA,
+                value: "ns1.test.com. admin.test.com. 1 3600 600 86400 300".to_string(),
+                ttl: 3600,
+                priority: None,
+            }],
+        );
+        assert_eq!(zone.count_apex_soa(), 1);
+    }
+
+    // ── Origin normalization tests ──
+
+    #[test]
+    fn test_normalize_origin_trailing_dot() {
+        assert_eq!(Zone::normalize_origin("example.com."), "example.com");
+        assert_eq!(Zone::normalize_origin("example.com"), "example.com");
+    }
+
+    #[test]
+    fn test_normalize_origin_case() {
+        assert_eq!(Zone::normalize_origin("EXAMPLE.COM"), "example.com");
+        assert_eq!(Zone::normalize_origin("Example.Com"), "example.com");
+    }
+
+    #[test]
+    fn test_normalize_origin_combined() {
+        assert_eq!(Zone::normalize_origin("EXAMPLE.COM."), "example.com");
     }
 }
 

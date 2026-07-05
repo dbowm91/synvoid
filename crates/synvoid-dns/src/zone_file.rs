@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use thiserror::Error;
 
-use crate::server::{RecordType, Zone};
+use crate::server::{RecordType, Zone, ZoneHealth};
 
 #[derive(Debug, Clone)]
 pub struct ZoneFileParser {
@@ -132,6 +132,7 @@ impl ZoneFileParser {
             nsec_enabled: true,
             nsec3param: None,
             history: Vec::new(),
+            health: ZoneHealth::default(),
         })
     }
 

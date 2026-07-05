@@ -237,4 +237,133 @@ The `max_wait_ms` parameter is now used. At `crates/synvoid-dns/src/query_coales
 - Firewall fields (3 security controls) wired but untested
 - DoQ `bind_address` partially implemented (hardcoded to 0.0.0.0)
 - Full DNSSEC production validation deferred
-- RPZ, Dynamic Update, Notify, IXFR, Trust Anchors, Prefetch, Anycast, Padding, QNAME Privacy deferred
+- RPZ, Trust Anchors, Prefetch, Anycast, Padding, QNAME Privacy deferred
+
+## Milestone 3 Phase 1: Zone Lifecycle & Hardening
+
+### Zone Lifecycle State Machine
+
+`ZoneState` (`server/mod.rs:245`) governs which operations are permitted per zone. Transitions are enforced by `Zone::set_state()` — invalid transitions return `Err`.
+
+```
+                 ┌──────────┐
+       ┌────────►│ Loading  │◄────────┐
+       │         └────┬─────┘         │
+       │              │               │
+       │         success          reload
+       │              │               │
+       │              ▼               │
+       │         ┌─────────┐         │
+       │         │ Active  │────┐    │
+       │         └────┬────┘    │    │
+       │              │         │    │
+       │     ┌────────┼────┐    │    │
+       │     │        │    │    │    │
+       │  disable   reload│  delete  │
+       │     │        │    │    │    │
+       │     ▼        ▼    │    ▼    │
+       │ ┌──────────┐│  ┌────────┐│  │
+       │ │ Disabled ││  │Failed  ││  │
+       │ └────┬─────┘│  └───┬────┘│  │
+       │      │       │      │     │  │
+       │   enable   error  retry   │  │
+       │      │       │      │     │  │
+       │      └───────┘      └─────┘  │
+       │                              │
+       └──────── Deleting ────────────┘
+```
+
+**Valid transitions:**
+- `Loading → Active` (success), `Loading → Failed` (error)
+- `Active → Reloading`, `Active → Disabled`, `Active → Deleting`, `Active → Failed`
+- `Reloading → Active` (success), `Reloading → Failed` (error)
+- `Disabled → Active` (re-enable), `Disabled → Deleting`
+- `Failed → Loading` (retry), `Failed → Deleting`, `Failed → Disabled`
+- `Deleting → Loading` (re-create after delete)
+
+### Zone Health Metadata
+
+`ZoneHealth` (`server/mod.rs:275`) tracks per-zone operational state:
+- `state`: Current `ZoneState`
+- `last_load_time`: Unix timestamp of last successful load
+- `last_error`: Error message if state is `Failed`
+- `record_count`: Number of resource records
+- `dnssec_state`: `Unsigned | KeyGeneration | Signed | KeyRollover | SigningFailed`
+
+`Zone::is_serving()` returns `true` only when `state == Active`.
+
+### SOA Validation
+
+- `Zone::validate_single_soa()` (`server/mod.rs:511`) — exactly 1 SOA at apex (RFC 1035 §3.3.13)
+- `Zone::count_apex_soa()` counts SOA records matching normalized origin
+- `Zone::normalize_origin()` trims trailing dots and lowercases
+- Missing SOA at query time → SERVFAIL (fail-closed)
+
+### Serial Correctness
+
+- `Zone::serial_is_more_recent(s1, s2)` — RFC 1982 comparison with wrap-around at 0x80000000
+- `Zone::increment_serial_rfc1982(current)` — uses timestamp when possible, else `wrapping_add(1)`
+- `Zone::increment_serial_with_limit(max_history)` — caps `ZoneHistory` at `max_history` entries
+- Default history limit: 200 entries
+
+### Dynamic UPDATE Hardening (`update.rs`)
+
+- Disabled by default (`enabled: false`) → returns NOTIMP when disabled
+- TSIG authentication required by default (`require_tsig: true`)
+- IP allowlist enforcement (`allowed_ips` supports CIDR notation)
+- Per-update metrics via `DnsMetrics`
+- Audit-safe logging: MAC values never logged
+
+### NOTIFY Hardening (`notify.rs`)
+
+- Disabled by default (`enabled: false`) → returns NOTIMP when disabled
+- Per-zone serial check: skips NOTIFY if serial unchanged
+- Source allowlist: unknown sources silently ignored
+- TSIG enforcement optional
+
+### AXFR Hardening (`transfer.rs`)
+
+- **Disabled by default** (`axfr_enabled: false`) — security-sensitive
+- **TCP-only** (`tcp_only: true`) — RFC 5936 §2
+- TSIG authentication required by default
+- Wildcard `*` in allowlist requires explicit `allow_wildcard_transfer: true`
+- SOA bracketing validation (AXFR must begin/end with SOA)
+
+### IXFR Correctness (`transfer.rs`)
+
+- History retention: `max_history_size` (default 200)
+- Fallback to AXFR when history insufficient (`ixfr_fallback_to_axfr: true`)
+- RFC 1982 serial comparison for delta applicability
+
+### Store Persistence (`store.rs`)
+
+- SQLite-backed with atomic transactions
+- Volatile mode: `ZoneStore::new_volatile()` — in-memory only
+- Corrupt records: graceful skip with logging
+
+### Cache Invalidation Reasons (11)
+
+`InvalidationReason` enum (`cache.rs:18`) tracks per-reason counters:
+- `ZoneLoad`, `ZoneLoadFromStore`, `RecordAdd`, `ZoneDelete`, `DynamicUpdate`, `NotifyReceived`, `ManualFlush`, `DnssecKeyRollover`, `RpzZoneRemoval`, `ZoneTransferAxfr`, `ZoneTransferIxfr`
+
+All 12 invalidation call sites pass typed reasons. Per-reason Prometheus counters via `invalidations_by_reason`.
+
+### Test Commands
+
+```bash
+cargo test -p synvoid-dns -- zone_lifecycle
+cargo test -p synvoid-dns -- zone_health
+cargo test -p synvoid-dns -- validate_single_soa
+cargo test -p synvoid-dns -- normalize_origin
+cargo test -p synvoid-dns -- serial_rfc1982
+cargo test -p synvoid-dns -- update_metrics
+cargo test -p synvoid-dns -- update_max_size
+cargo test -p synvoid-dns -- notify_rate_limit
+cargo test -p synvoid-dns -- notify_source_allowlist
+cargo test -p synvoid-dns -- axfr_tcp_only
+cargo test -p synvoid-dns -- axfr_disabled_by_default
+cargo test -p synvoid-dns -- ixfr_history
+cargo test -p synvoid-dns -- store_volatile
+cargo test -p synvoid-dns -- store_atomic_write
+cargo test -p synvoid-dns -- cache_invalidation_axfr
+```

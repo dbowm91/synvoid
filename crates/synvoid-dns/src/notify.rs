@@ -30,6 +30,15 @@ pub struct NotifyHandler {
     config: NotifyConfig,
     notified_secondaries: Arc<RwLock<HashMap<String, u32>>>,
     cache: Option<Arc<DnsCache>>,
+    /// Source IP allowlist for incoming NOTIFY. Empty = allow all.
+    source_allowlist: Vec<String>,
+    /// Require TSIG for incoming NOTIFY.
+    require_tsig: bool,
+    tsig_verifier: Option<Arc<crate::tsig::TsigVerifier>>,
+    /// Rate limiter for incoming NOTIFY: (zone, last_time).
+    notify_timestamps: Arc<RwLock<HashMap<String, std::time::Instant>>>,
+    /// Minimum interval between NOTIFY for same zone.
+    min_notify_interval: std::time::Duration,
 }
 
 impl NotifyHandler {
@@ -39,12 +48,71 @@ impl NotifyHandler {
             config,
             notified_secondaries: Arc::new(RwLock::new(HashMap::new())),
             cache: None,
+            source_allowlist: Vec::new(),
+            require_tsig: false,
+            tsig_verifier: None,
+            notify_timestamps: Arc::new(RwLock::new(HashMap::new())),
+            min_notify_interval: std::time::Duration::from_secs(5),
         }
     }
 
     pub fn with_cache(mut self, cache: Arc<DnsCache>) -> Self {
         self.cache = Some(cache);
         self
+    }
+
+    pub fn with_source_allowlist(mut self, allowlist: Vec<String>) -> Self {
+        self.source_allowlist = allowlist;
+        self
+    }
+
+    pub fn with_require_tsig(mut self, require: bool) -> Self {
+        self.require_tsig = require;
+        self
+    }
+
+    pub fn with_tsig_verifier(mut self, verifier: Arc<crate::tsig::TsigVerifier>) -> Self {
+        self.tsig_verifier = Some(verifier);
+        self
+    }
+
+    pub fn with_min_notify_interval(mut self, interval: std::time::Duration) -> Self {
+        self.min_notify_interval = interval;
+        self
+    }
+
+    fn is_source_allowed(&self, client_ip: std::net::IpAddr) -> bool {
+        if self.source_allowlist.is_empty() {
+            return true;
+        }
+        for allowed in &self.source_allowlist {
+            if allowed == "*" {
+                return true;
+            }
+            if let Ok(cidr) = allowed.parse::<ipnetwork::IpNetwork>() {
+                if cidr.contains(client_ip) {
+                    return true;
+                }
+            }
+            if let Ok(ip) = allowed.parse::<std::net::IpAddr>() {
+                if ip == client_ip {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn is_rate_limited(&self, zone_origin: &str) -> bool {
+        let now = std::time::Instant::now();
+        let mut timestamps = self.notify_timestamps.write();
+        if let Some(last_time) = timestamps.get(zone_origin) {
+            if now.duration_since(*last_time) < self.min_notify_interval {
+                return true;
+            }
+        }
+        timestamps.insert(zone_origin.to_string(), now);
+        false
     }
 
     pub fn is_enabled(&self) -> bool {
@@ -62,8 +130,16 @@ impl NotifyHandler {
         }
     }
 
-    pub fn handle_notify(&self, query: &[u8], _client_ip: IpAddr) -> Option<Vec<u8>> {
+    pub fn handle_notify(&self, query: &[u8], client_ip: IpAddr) -> Option<Vec<u8>> {
         if !self.config.enabled {
+            return None;
+        }
+
+        if !self.is_source_allowed(client_ip) {
+            tracing::warn!(
+                "SECURITY: NOTIFY DENIED from {} - source not in allowlist",
+                client_ip
+            );
             return None;
         }
 
@@ -80,6 +156,15 @@ impl NotifyHandler {
         } else {
             zone_name.clone()
         };
+
+        if self.is_rate_limited(&zone_origin) {
+            tracing::debug!(
+                "NOTIFY rate-limited for zone {} from {}",
+                zone_origin,
+                client_ip
+            );
+            return Some(build_notify_response(query, wire::RCODE_NOERROR));
+        }
 
         let zone = self.zones.get(&zone_origin);
 
@@ -271,5 +356,72 @@ mod tests {
 
         let response_code = flags & 0x000F;
         assert_eq!(response_code, 0);
+    }
+
+    #[test]
+    fn test_notify_source_allowlist_empty_allows_all() {
+        let zones = Arc::new(ShardedZoneStore::new());
+        let config = NotifyConfig {
+            enabled: true,
+            also_notify: vec![],
+        };
+        let handler = NotifyHandler::new(zones, config);
+        // Empty allowlist = allow all
+        assert!(handler.is_source_allowed("192.168.1.1".parse().unwrap()));
+        assert!(handler.is_source_allowed("10.0.0.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_notify_source_allowlist_specific_ips() {
+        let zones = Arc::new(ShardedZoneStore::new());
+        let config = NotifyConfig {
+            enabled: true,
+            also_notify: vec![],
+        };
+        let handler = NotifyHandler::new(zones, config)
+            .with_source_allowlist(vec!["192.168.1.1".to_string(), "10.0.0.0/8".to_string()]);
+        assert!(handler.is_source_allowed("192.168.1.1".parse().unwrap()));
+        assert!(handler.is_source_allowed("10.0.0.1".parse().unwrap()));
+        assert!(!handler.is_source_allowed("172.16.0.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_notify_source_allowlist_wildcard() {
+        let zones = Arc::new(ShardedZoneStore::new());
+        let config = NotifyConfig {
+            enabled: true,
+            also_notify: vec![],
+        };
+        let handler = NotifyHandler::new(zones, config).with_source_allowlist(vec!["*".to_string()]);
+        assert!(handler.is_source_allowed("192.168.1.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_notify_disabled_rejects() {
+        let zones = Arc::new(ShardedZoneStore::new());
+        let config = NotifyConfig {
+            enabled: false,
+            also_notify: vec![],
+        };
+        let handler = NotifyHandler::new(zones, config);
+        let result = handler.handle_notify(&[0u8; 12], "192.168.1.1".parse().unwrap());
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_notify_rate_limiting() {
+        let zones = Arc::new(ShardedZoneStore::new());
+        let config = NotifyConfig {
+            enabled: true,
+            also_notify: vec![],
+        };
+        let handler = NotifyHandler::new(zones, config)
+            .with_min_notify_interval(std::time::Duration::from_secs(60));
+        // First check should not be rate-limited
+        assert!(!handler.is_rate_limited("example.com"));
+        // Second check immediately should be rate-limited
+        assert!(handler.is_rate_limited("example.com"));
+        // Different zone should not be rate-limited
+        assert!(!handler.is_rate_limited("other.com"));
     }
 }

@@ -7,7 +7,7 @@ use metrics::counter;
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 
-use crate::server::{DnsZoneRecord, RecordType, ShardedZoneStore, Zone, ZoneHistory};
+use crate::server::{DnsZoneRecord, RecordType, ShardedZoneStore, Zone, ZoneHealth, ZoneHistory};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SerialComparison {
@@ -601,6 +601,7 @@ impl AnycastZoneSync {
             nsec_enabled: false,
             nsec3param: None,
             history,
+            health: ZoneHealth::default(),
         })
     }
 
