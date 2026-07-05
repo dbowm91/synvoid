@@ -34,6 +34,12 @@ pub struct DnsMetrics {
     firewall_queries_allowed: AtomicU64,
     firewall_queries_blocked: AtomicU64,
     firewall_rule_matches: RwLock<HashMap<String, AtomicU64>>,
+    bailiwick_violations: AtomicU64,
+    recursive_queries: AtomicU64,
+    recursive_cache_hits: AtomicU64,
+    recursive_cache_misses: AtomicU64,
+    recursive_upstream_forwards: AtomicU64,
+    recursive_upstream_failures: AtomicU64,
     last_reset: Instant,
 }
 
@@ -69,6 +75,12 @@ impl DnsMetrics {
             firewall_queries_allowed: AtomicU64::new(0),
             firewall_queries_blocked: AtomicU64::new(0),
             firewall_rule_matches: RwLock::new(HashMap::new()),
+            bailiwick_violations: AtomicU64::new(0),
+            recursive_queries: AtomicU64::new(0),
+            recursive_cache_hits: AtomicU64::new(0),
+            recursive_cache_misses: AtomicU64::new(0),
+            recursive_upstream_forwards: AtomicU64::new(0),
+            recursive_upstream_failures: AtomicU64::new(0),
             last_reset: Instant::now(),
         }
     }
@@ -206,6 +218,33 @@ impl DnsMetrics {
         counter.fetch_add(1, Ordering::Relaxed);
     }
 
+    pub fn record_bailiwick_violation(&self) {
+        self.bailiwick_violations.fetch_add(1, Ordering::Relaxed);
+        metrics::counter!("dns_bailiwick_violations").increment(1);
+    }
+
+    pub fn record_recursive_query(&self) {
+        self.recursive_queries.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_recursive_cache_hit(&self) {
+        self.recursive_cache_hits.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_recursive_cache_miss(&self) {
+        self.recursive_cache_misses.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_recursive_upstream_forward(&self) {
+        self.recursive_upstream_forwards
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_recursive_upstream_failure(&self) {
+        self.recursive_upstream_failures
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn record_tcp_connection(&self) {
         self.tcp_connections.fetch_add(1, Ordering::Relaxed);
         self.active_tcp_connections.fetch_add(1, Ordering::Relaxed);
@@ -328,6 +367,12 @@ impl DnsMetrics {
                 .iter()
                 .map(|(k, v)| (k.clone(), v.load(Ordering::Relaxed)))
                 .collect(),
+            bailiwick_violations: self.bailiwick_violations.load(Ordering::Relaxed),
+            recursive_queries: self.recursive_queries.load(Ordering::Relaxed),
+            recursive_cache_hits: self.recursive_cache_hits.load(Ordering::Relaxed),
+            recursive_cache_misses: self.recursive_cache_misses.load(Ordering::Relaxed),
+            recursive_upstream_forwards: self.recursive_upstream_forwards.load(Ordering::Relaxed),
+            recursive_upstream_failures: self.recursive_upstream_failures.load(Ordering::Relaxed),
             query_types,
             top_queried_domains: top_domains,
             top_blocked_domains: top_blocked,
@@ -362,6 +407,12 @@ impl DnsMetrics {
         self.active_tcp_connections.store(0, Ordering::Relaxed);
         self.firewall_queries_allowed.store(0, Ordering::Relaxed);
         self.firewall_queries_blocked.store(0, Ordering::Relaxed);
+        self.bailiwick_violations.store(0, Ordering::Relaxed);
+        self.recursive_queries.store(0, Ordering::Relaxed);
+        self.recursive_cache_hits.store(0, Ordering::Relaxed);
+        self.recursive_cache_misses.store(0, Ordering::Relaxed);
+        self.recursive_upstream_forwards.store(0, Ordering::Relaxed);
+        self.recursive_upstream_failures.store(0, Ordering::Relaxed);
 
         self.query_types.write().clear();
         self.top_queried_domains.write().clear();
@@ -547,6 +598,12 @@ pub struct DnsMetricsSummary {
     pub firewall_queries_allowed: u64,
     pub firewall_queries_blocked: u64,
     pub firewall_rule_matches: HashMap<String, u64>,
+    pub bailiwick_violations: u64,
+    pub recursive_queries: u64,
+    pub recursive_cache_hits: u64,
+    pub recursive_cache_misses: u64,
+    pub recursive_upstream_forwards: u64,
+    pub recursive_upstream_failures: u64,
     pub query_types: HashMap<String, u64>,
     pub top_queried_domains: HashMap<String, u64>,
     pub top_blocked_domains: HashMap<String, u64>,

@@ -3,11 +3,14 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 use synvoid_config::dns::{
-    DnsAnycastConfig, DnsConfig, DnsMode, RecursiveDnsConfig, RecursiveUpstreamProvider,
+    CircuitBreakerConfig, DnsAnycastConfig, DnsConfig, DnsMode, EcsForwardingPolicy,
+    RecursiveClientAcl, RecursiveDnsConfig, RecursiveEcsConfig, RecursiveUpstreamProvider,
     TrustAnchorConfig,
 };
 use synvoid_dns::edns::EcsFilterConfig;
+use synvoid_dns::recursive::CircuitBreaker;
 use synvoid_dns::recursive_cache::RecursiveDnsCache;
+use synvoid_dns::recursive_cache::DnssecValidationState;
 use synvoid_dns::server::RecordType;
 use synvoid_dns::server::{DnsServer, DnsZoneRecord, QueryContext, ShardedZoneStore, Zone};
 use synvoid_dns::zone_trie::ZoneTrie;
@@ -266,7 +269,7 @@ fn test_recursive_cache_independent() {
         ttl: 300,
         data: vec![93, 184, 216, 34],
     }];
-    recursive_cache.insert_positive(key.clone(), records, 300, false);
+    recursive_cache.insert_positive(key.clone(), records, 300, DnssecValidationState::Unchecked);
 
     // Verify it's in the recursive cache
     assert!(
@@ -1043,4 +1046,1122 @@ fn test_recursive_open_resolver_guard() {
         config.validate().is_ok(),
         "Recursive DNS with bind_address=127.0.0.1 should pass validation"
     );
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Client ACL tests
+// ══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_recursive_client_acl_rejects_non_allowed_client() {
+    let acl = RecursiveClientAcl {
+        allowed_clients: vec!["127.0.0.1/32".to_string()],
+        action: "reject".to_string(),
+    };
+
+    assert!(
+        !acl.is_client_allowed("10.0.0.1".parse().unwrap()),
+        "Client 10.0.0.1 should be rejected when only 127.0.0.1/32 is allowed"
+    );
+}
+
+#[test]
+fn test_recursive_client_acl_allows_matching_client() {
+    let acl = RecursiveClientAcl {
+        allowed_clients: vec!["127.0.0.1/32".to_string()],
+        action: "reject".to_string(),
+    };
+
+    assert!(
+        acl.is_client_allowed("127.0.0.1".parse().unwrap()),
+        "Client 127.0.0.1 should be allowed when 127.0.0.1/32 is in allowlist"
+    );
+}
+
+#[test]
+fn test_recursive_client_acl_empty_allows_all() {
+    let acl = RecursiveClientAcl {
+        allowed_clients: vec![],
+        action: "reject".to_string(),
+    };
+
+    assert!(
+        acl.is_client_allowed("10.0.0.1".parse().unwrap()),
+        "Empty allowlist should allow all clients"
+    );
+    assert!(
+        acl.is_client_allowed("192.168.1.1".parse().unwrap()),
+        "Empty allowlist should allow all clients"
+    );
+}
+
+#[test]
+fn test_recursive_client_acl_invalid_cidr_rejected() {
+    let mut config = RecursiveDnsConfig::default();
+    config.enabled = true;
+    config.client_acl = Some(RecursiveClientAcl {
+        allowed_clients: vec!["not-a-cidr".to_string()],
+        action: "reject".to_string(),
+    });
+
+    let result = config.validate();
+    assert!(
+        result.is_err(),
+        "Invalid CIDR in client_acl should fail validation"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("not-a-cidr"),
+        "Error should mention the invalid CIDR: {}",
+        err_msg
+    );
+}
+
+#[test]
+fn test_recursive_client_acl_wildcard_cidr() {
+    let acl = RecursiveClientAcl {
+        allowed_clients: vec!["0.0.0.0/0".to_string()],
+        action: "reject".to_string(),
+    };
+
+    assert!(
+        acl.is_client_allowed("10.0.0.1".parse().unwrap()),
+        "Client 10.0.0.1 should be allowed by 0.0.0.0/0"
+    );
+    assert!(
+        acl.is_client_allowed("192.168.1.1".parse().unwrap()),
+        "Client 192.168.1.1 should be allowed by 0.0.0.0/0"
+    );
+    assert!(
+        acl.is_client_allowed("255.255.255.255".parse().unwrap()),
+        "Client 255.255.255.255 should be allowed by 0.0.0.0/0"
+    );
+}
+
+#[test]
+fn test_recursive_client_acl_action_allow_permits_non_matching() {
+    let acl = RecursiveClientAcl {
+        allowed_clients: vec!["192.168.1.0/24".to_string()],
+        action: "allow".to_string(),
+    };
+
+    assert!(
+        acl.is_client_allowed("192.168.1.50".parse().unwrap()),
+        "Client in subnet should be allowed"
+    );
+    assert!(
+        acl.is_client_allowed("10.0.0.1".parse().unwrap()),
+        "Client not in subnet should be allowed when action=allow"
+    );
+}
+
+#[test]
+fn test_recursive_client_acl_action_reject_denies_non_matching() {
+    let acl = RecursiveClientAcl {
+        allowed_clients: vec!["192.168.1.0/24".to_string()],
+        action: "reject".to_string(),
+    };
+
+    assert!(
+        acl.is_client_allowed("192.168.1.50".parse().unwrap()),
+        "Client in subnet should be allowed"
+    );
+    assert!(
+        !acl.is_client_allowed("10.0.0.1".parse().unwrap()),
+        "Client not in subnet should be denied when action=reject"
+    );
+}
+
+#[test]
+fn test_recursive_client_acl_invalid_action_rejected() {
+    let mut config = RecursiveDnsConfig::default();
+    config.enabled = true;
+    config.client_acl = Some(RecursiveClientAcl {
+        allowed_clients: vec!["127.0.0.1/32".to_string()],
+        action: "invalid".to_string(),
+    });
+
+    let result = config.validate();
+    assert!(
+        result.is_err(),
+        "Invalid action in client_acl should fail validation"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("invalid"),
+        "Error should mention the invalid action: {}",
+        err_msg
+    );
+}
+
+#[test]
+fn test_recursive_client_acl_multiple_cidrs() {
+    let acl = RecursiveClientAcl {
+        allowed_clients: vec![
+            "192.168.1.0/24".to_string(),
+            "10.0.0.0/8".to_string(),
+            "::1/128".to_string(),
+        ],
+        action: "reject".to_string(),
+    };
+
+    assert!(
+        acl.is_client_allowed("192.168.1.50".parse().unwrap()),
+        "Client in 192.168.1.0/24 should be allowed"
+    );
+    assert!(
+        acl.is_client_allowed("10.0.0.1".parse().unwrap()),
+        "Client in 10.0.0.0/8 should be allowed"
+    );
+    assert!(
+        acl.is_client_allowed("::1".parse().unwrap()),
+        "Client ::1 should be allowed"
+    );
+    assert!(
+        !acl.is_client_allowed("172.16.0.1".parse().unwrap()),
+        "Client 172.16.0.1 should not match any CIDR"
+    );
+}
+
+#[test]
+fn test_recursive_client_acl_none_allows_all() {
+    let mut config = RecursiveDnsConfig::default();
+    config.enabled = true;
+    config.client_acl = None;
+
+    assert!(
+        config.validate().is_ok(),
+        "Config with no client_acl should validate"
+    );
+}
+
+#[test]
+fn test_recursive_client_acl_ipv6_cidr() {
+    let acl = RecursiveClientAcl {
+        allowed_clients: vec!["fe80::/10".to_string()],
+        action: "reject".to_string(),
+    };
+
+    assert!(
+        acl.is_client_allowed("fe80::1".parse().unwrap()),
+        "Link-local address fe80::1 should match fe80::/10"
+    );
+    assert!(
+        !acl.is_client_allowed("2001:db8::1".parse().unwrap()),
+        "Non-link-local address should not match fe80::/10"
+    );
+}
+
+#[test]
+fn test_recursive_client_acl_config_field_default() {
+    let config = RecursiveDnsConfig::default();
+    assert!(
+        config.client_acl.is_none(),
+        "Default client_acl should be None"
+    );
+}
+
+#[test]
+fn test_recursive_client_acl_empty_allowed_clients_is_open() {
+    let acl = RecursiveClientAcl {
+        allowed_clients: vec![],
+        action: "reject".to_string(),
+    };
+
+    assert!(
+        acl.is_client_allowed("1.2.3.4".parse().unwrap()),
+        "Empty allowed_clients should allow all clients (open for loopback)"
+    );
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// CNAME depth limit + circuit breaker tests
+// ══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_max_cname_depth_config_default() {
+    let config = RecursiveDnsConfig::default();
+    assert_eq!(config.max_cname_depth, 10);
+}
+
+#[test]
+fn test_max_cname_depth_zero_means_unlimited() {
+    let mut config = RecursiveDnsConfig::default();
+    config.enabled = true;
+    config.max_cname_depth = 0;
+    assert!(
+        config.validate().is_ok(),
+        "max_cname_depth=0 (unlimited) should be allowed"
+    );
+}
+
+#[test]
+fn test_circuit_breaker_config_default() {
+    let config = CircuitBreakerConfig::default();
+    assert_eq!(config.failure_threshold, 5);
+    assert_eq!(config.recovery_timeout_secs, 30);
+    assert_eq!(config.success_threshold, 2);
+}
+
+#[test]
+fn test_circuit_breaker_config_validation_failure_threshold_zero() {
+    let mut config = RecursiveDnsConfig::default();
+    config.enabled = true;
+    config.circuit_breaker.failure_threshold = 0;
+    assert!(
+        config.validate().is_err(),
+        "failure_threshold=0 should fail validation"
+    );
+}
+
+#[test]
+fn test_circuit_breaker_config_validation_success_threshold_zero() {
+    let mut config = RecursiveDnsConfig::default();
+    config.enabled = true;
+    config.circuit_breaker.success_threshold = 0;
+    assert!(
+        config.validate().is_err(),
+        "success_threshold=0 should fail validation"
+    );
+}
+
+#[test]
+fn test_circuit_breaker_opens_after_failures() {
+    let config = CircuitBreakerConfig {
+        failure_threshold: 3,
+        recovery_timeout_secs: 60,
+        success_threshold: 1,
+    };
+    let cb = CircuitBreaker::new(&config);
+
+    assert!(!cb.is_open(), "circuit should start closed");
+
+    cb.record_failure();
+    assert!(!cb.is_open(), "circuit should stay closed after 1 failure");
+
+    cb.record_failure();
+    assert!(!cb.is_open(), "circuit should stay closed after 2 failures");
+
+    cb.record_failure();
+    assert!(cb.is_open(), "circuit should open after 3 failures");
+}
+
+#[test]
+fn test_circuit_breaker_resets_after_successes() {
+    let config = CircuitBreakerConfig {
+        failure_threshold: 2,
+        recovery_timeout_secs: 60,
+        success_threshold: 2,
+    };
+    let cb = CircuitBreaker::new(&config);
+
+    cb.record_failure();
+    cb.record_failure();
+    assert!(cb.is_open(), "circuit should open after 2 failures");
+
+    cb.record_success();
+    assert!(cb.is_open(), "circuit should stay open with 1 success");
+
+    cb.record_success();
+    assert!(
+        !cb.is_open(),
+        "circuit should close after reaching success_threshold"
+    );
+}
+
+#[test]
+fn test_circuit_breaker_recovery_timeout() {
+    let config = CircuitBreakerConfig {
+        failure_threshold: 1,
+        recovery_timeout_secs: 0,
+        success_threshold: 1,
+    };
+    let cb = CircuitBreaker::new(&config);
+
+    cb.record_failure();
+    assert!(
+        !cb.is_open(),
+        "circuit with recovery_timeout_secs=0 should not stay open"
+    );
+}
+
+#[test]
+fn test_circuit_breaker_default_config_field() {
+    let config = RecursiveDnsConfig::default();
+    assert_eq!(config.circuit_breaker.failure_threshold, 5);
+    assert_eq!(config.circuit_breaker.recovery_timeout_secs, 30);
+    assert_eq!(config.circuit_breaker.success_threshold, 2);
+}
+
+#[test]
+fn test_recursive_config_includes_new_fields() {
+    let config = RecursiveDnsConfig::default();
+    assert_eq!(config.max_cname_depth, 10);
+    assert!(config.circuit_breaker.failure_threshold > 0);
+    assert!(config.circuit_breaker.recovery_timeout_secs > 0);
+    assert!(config.circuit_breaker.success_threshold > 0);
+}
+
+fn build_query_with_flags(id: u16, flags: u16, qname: &str, qtype: u16) -> Vec<u8> {
+    let mut q = Vec::with_capacity(12 + 256 + 4);
+    q.extend_from_slice(&id.to_be_bytes());
+    q.extend_from_slice(&flags.to_be_bytes());
+    q.extend_from_slice(&1u16.to_be_bytes());
+    q.extend_from_slice(&0u16.to_be_bytes());
+    q.extend_from_slice(&0u16.to_be_bytes());
+    q.extend_from_slice(&0u16.to_be_bytes());
+
+    if qname.is_empty() || qname == "." {
+        q.push(0);
+    } else {
+        for label in qname.split('.').filter(|s| !s.is_empty()) {
+            q.push(label.len() as u8);
+            q.extend_from_slice(label.as_bytes());
+        }
+        q.push(0);
+    }
+
+    q.extend_from_slice(&qtype.to_be_bytes());
+    q.extend_from_slice(&1u16.to_be_bytes());
+    q
+}
+
+fn build_query_with_edns(id: u16, flags: u16, qname: &str, qtype: u16, do_bit: bool) -> Vec<u8> {
+    let mut q = build_query_with_flags(id, flags, qname, qtype);
+    q[10] = 0;
+    q[11] = 1;
+    q.push(0);
+    q.extend_from_slice(&41u16.to_be_bytes());
+    q.extend_from_slice(&4096u16.to_be_bytes());
+    q.push(0);
+    q.push(0);
+    if do_bit {
+        q.extend_from_slice(&0x8000u16.to_be_bytes());
+    } else {
+        q.extend_from_slice(&0u16.to_be_bytes());
+    }
+    q.extend_from_slice(&0u16.to_be_bytes());
+    q
+}
+
+const CD_BIT: u16 = 0x0010;
+const AD_BIT: u16 = 0x0020;
+
+#[test]
+fn test_cd_bit_parsed_from_query() {
+    let q = build_query_with_flags(0x1234, 0x0100 | CD_BIT, "example.com", 1);
+    let parsed = synvoid_dns::parsed_query::ParsedDnsQuery::parse(&q).unwrap();
+    assert!(parsed.flags.checking_disabled, "CD bit must be parsed from query flags");
+}
+
+#[test]
+fn test_do_bit_parsed_from_edns() {
+    let q = build_query_with_edns(0x1234, 0x0100, "example.com", 1, true);
+    let parsed = synvoid_dns::parsed_query::ParsedDnsQuery::parse(&q).unwrap();
+    assert!(parsed.dnssec_ok, "DO bit must be parsed from EDNS OPT record");
+}
+
+#[test]
+fn test_do_bit_absent_when_no_edns() {
+    let q = build_query_with_flags(0x1234, 0x0100, "example.com", 1);
+    let parsed = synvoid_dns::parsed_query::ParsedDnsQuery::parse(&q).unwrap();
+    assert!(!parsed.dnssec_ok, "DO bit must be false when no EDNS present");
+}
+
+#[test]
+fn test_cd_bit_echoed_in_response_header() {
+    let flags = synvoid_dns::wire::build_response_header(
+        0x1234,
+        synvoid_dns::wire::MessageFlags {
+            is_response: true,
+            opcode: 0,
+            authoritative: false,
+            truncated: false,
+            recursion_desired: true,
+            recursion_available: true,
+            authentic_data: false,
+            checking_disabled: true,
+            response_code: 0,
+        },
+        1,
+        1,
+        0,
+        0,
+    );
+    assert_ne!(response_flags(&flags) & CD_BIT, 0, "CD bit must be set in response when checking_disabled=true");
+}
+
+#[test]
+fn test_cd_bit_not_set_when_disabled() {
+    let flags = synvoid_dns::wire::build_response_header(
+        0x1234,
+        synvoid_dns::wire::MessageFlags {
+            is_response: true,
+            opcode: 0,
+            authoritative: false,
+            truncated: false,
+            recursion_desired: true,
+            recursion_available: true,
+            authentic_data: false,
+            checking_disabled: false,
+            response_code: 0,
+        },
+        1,
+        1,
+        0,
+        0,
+    );
+    assert_eq!(response_flags(&flags) & CD_BIT, 0, "CD bit must not be set when checking_disabled=false");
+}
+
+#[test]
+fn test_ad_bit_set_only_when_validated_and_do() {
+    let flags = synvoid_dns::wire::build_response_header(
+        0x1234,
+        synvoid_dns::wire::MessageFlags {
+            is_response: true,
+            opcode: 0,
+            authoritative: false,
+            truncated: false,
+            recursion_desired: true,
+            recursion_available: true,
+            authentic_data: true,
+            checking_disabled: false,
+            response_code: 0,
+        },
+        1,
+        1,
+        0,
+        0,
+    );
+    assert_ne!(response_flags(&flags) & AD_BIT, 0, "AD bit must be set when authentic_data=true");
+}
+
+#[test]
+fn test_ad_bit_cleared_when_not_validated() {
+    let flags = synvoid_dns::wire::build_response_header(
+        0x1234,
+        synvoid_dns::wire::MessageFlags {
+            is_response: true,
+            opcode: 0,
+            authoritative: false,
+            truncated: false,
+            recursion_desired: true,
+            recursion_available: true,
+            authentic_data: false,
+            checking_disabled: false,
+            response_code: 0,
+        },
+        1,
+        1,
+        0,
+        0,
+    );
+    assert_eq!(response_flags(&flags) & AD_BIT, 0, "AD bit must not be set when authentic_data=false");
+}
+
+#[test]
+fn test_ad_bit_gated_on_do_bit() {
+    let q_no_do = build_query_with_flags(0x1234, 0x0100, "example.com", 1);
+    let parsed_no_do = synvoid_dns::parsed_query::ParsedDnsQuery::parse(&q_no_do).unwrap();
+    assert!(!parsed_no_do.dnssec_ok);
+
+    let ad_bit_should_be_set = true && parsed_no_do.dnssec_ok;
+    assert!(!ad_bit_should_be_set, "AD must be gated on DO bit: AD=0 when DO=0");
+
+    let q_with_do = build_query_with_edns(0x1234, 0x0100, "example.com", 1, true);
+    let parsed_with_do = synvoid_dns::parsed_query::ParsedDnsQuery::parse(&q_with_do).unwrap();
+    assert!(parsed_with_do.dnssec_ok);
+
+    let ad_bit_when_do = true && parsed_with_do.dnssec_ok;
+    assert!(ad_bit_when_do, "AD can be set when DO=1 and validation succeeds");
+}
+
+#[test]
+fn test_cd_bit_skips_validation() {
+    let q = build_query_with_flags(0x1234, 0x0100 | CD_BIT, "example.com", 1);
+    let parsed = synvoid_dns::parsed_query::ParsedDnsQuery::parse(&q).unwrap();
+    assert!(parsed.flags.checking_disabled);
+
+    let is_dnssec_validated = true;
+    let effective_validated = if parsed.flags.checking_disabled { false } else { is_dnssec_validated };
+    assert!(!effective_validated, "CD=1 must suppress DNSSEC validation result");
+}
+
+#[test]
+fn test_cd_and_do_interaction() {
+    let q = build_query_with_edns(0x1234, 0x0100 | CD_BIT, "example.com", 1, true);
+    let parsed = synvoid_dns::parsed_query::ParsedDnsQuery::parse(&q).unwrap();
+    assert!(parsed.flags.checking_disabled);
+    assert!(parsed.dnssec_ok);
+
+    let is_dnssec_validated = true;
+    let effective_validated = if parsed.flags.checking_disabled { false } else { is_dnssec_validated };
+    let ad_bit = effective_validated && parsed.dnssec_ok;
+    assert!(!ad_bit, "CD=1 must result in AD=0 even when DO=1 and validation would succeed");
+}
+
+#[test]
+fn test_response_header_roundtrip_cd_bit() {
+    let query = build_query_with_flags(0xABCD, 0x0100 | CD_BIT, "example.com", 1);
+    let parsed = synvoid_dns::parsed_query::ParsedDnsQuery::parse(&query).unwrap();
+    assert!(parsed.flags.checking_disabled);
+
+    let response_flags_val = synvoid_dns::wire::build_response_header(
+        0xABCD,
+        synvoid_dns::wire::MessageFlags {
+            is_response: true,
+            opcode: 0,
+            authoritative: false,
+            truncated: false,
+            recursion_desired: parsed.flags.recursion_desired,
+            recursion_available: true,
+            authentic_data: false,
+            checking_disabled: parsed.flags.checking_disabled,
+            response_code: 0,
+        },
+        1,
+        0,
+        0,
+        0,
+    );
+    let resp_flags = response_flags(&response_flags_val);
+    assert_ne!(resp_flags & CD_BIT, 0, "CD bit must be echoed from query to response");
+    assert_ne!(resp_flags & 0x8000, 0, "QR bit must be set");
+    assert_ne!(resp_flags & 0x0100, 0, "RD must be echoed");
+}
+
+#[test]
+fn test_recursive_cache_key_dnssec_ok_separation() {
+    use synvoid_dns::recursive_cache::RecursiveCacheKey;
+
+    let config = synvoid_config::dns::RecursiveCacheConfig::default();
+    let cache = RecursiveDnsCache::new(1000, &config);
+
+    let key_do0 = RecursiveCacheKey::new_with_dnssec(b"dosep.test", 1, None, false);
+    let key_do1 = RecursiveCacheKey::new_with_dnssec(b"dosep.test", 1, None, true);
+
+    assert_ne!(key_do0, key_do1, "DO=0 and DO=1 keys must be distinct");
+
+    let records = vec![synvoid_dns::recursive_cache::CachedRecord {
+        name: b"dosep.test".to_vec(),
+        record_type: 1,
+        ttl: 300,
+        data: vec![1, 2, 3, 4],
+    }];
+    cache.insert_positive(key_do1.clone(), records, 300, DnssecValidationState::Secure);
+
+    assert!(cache.get(&key_do0).is_none(), "DO=0 should not hit DO=1 entry");
+    assert!(cache.get(&key_do1).is_some(), "DO=1 should hit DO=1 entry");
+}
+
+#[test]
+fn test_dnssec_validation_state_secure() {
+    use synvoid_dns::recursive_cache::RecursiveCacheKey;
+
+    let config = synvoid_config::dns::RecursiveCacheConfig::default();
+    let cache = RecursiveDnsCache::new(1000, &config);
+
+    let key = RecursiveCacheKey::new(b"secure.test", 1, None);
+    let records = vec![synvoid_dns::recursive_cache::CachedRecord {
+        name: b"secure.test".to_vec(),
+        record_type: 1,
+        ttl: 300,
+        data: vec![1, 1, 1, 1],
+    }];
+    cache.insert_positive(key.clone(), records, 300, DnssecValidationState::Secure);
+
+    let result = cache.get(&key).unwrap();
+    assert_eq!(result.2, DnssecValidationState::Secure);
+}
+
+#[test]
+fn test_dnssec_validation_state_bogus() {
+    use synvoid_dns::recursive_cache::RecursiveCacheKey;
+
+    let config = synvoid_config::dns::RecursiveCacheConfig::default();
+    let cache = RecursiveDnsCache::new(1000, &config);
+
+    let key = RecursiveCacheKey::new(b"bogus.test", 1, None);
+    let records = vec![synvoid_dns::recursive_cache::CachedRecord {
+        name: b"bogus.test".to_vec(),
+        record_type: 1,
+        ttl: 300,
+        data: vec![2, 2, 2, 2],
+    }];
+    cache.insert_positive(key.clone(), records, 300, DnssecValidationState::Bogus);
+
+    let result = cache.get(&key).unwrap();
+    assert_eq!(result.2, DnssecValidationState::Bogus);
+}
+
+#[test]
+fn test_dnssec_validation_state_unchecked() {
+    use synvoid_dns::recursive_cache::RecursiveCacheKey;
+
+    let config = synvoid_config::dns::RecursiveCacheConfig::default();
+    let cache = RecursiveDnsCache::new(1000, &config);
+
+    let key = RecursiveCacheKey::new(b"unchecked.test", 1, None);
+    let records = vec![synvoid_dns::recursive_cache::CachedRecord {
+        name: b"unchecked.test".to_vec(),
+        record_type: 1,
+        ttl: 300,
+        data: vec![3, 3, 3, 3],
+    }];
+    cache.insert_positive(key.clone(), records, 300, DnssecValidationState::Unchecked);
+
+    let result = cache.get(&key).unwrap();
+    assert_eq!(result.2, DnssecValidationState::Unchecked);
+}
+
+#[test]
+fn test_dnssec_validation_state_insecure() {
+    use synvoid_dns::recursive_cache::RecursiveCacheKey;
+
+    let config = synvoid_config::dns::RecursiveCacheConfig::default();
+    let cache = RecursiveDnsCache::new(1000, &config);
+
+    let key = RecursiveCacheKey::new(b"insecure.test", 1, None);
+    let records = vec![synvoid_dns::recursive_cache::CachedRecord {
+        name: b"insecure.test".to_vec(),
+        record_type: 1,
+        ttl: 300,
+        data: vec![4, 4, 4, 4],
+    }];
+    cache.insert_positive(key.clone(), records, 300, DnssecValidationState::Insecure);
+
+    let result = cache.get(&key).unwrap();
+    assert_eq!(result.2, DnssecValidationState::Insecure);
+}
+
+#[test]
+fn test_cache_dnssec_ok_false_does_not_return_dnssec_entry() {
+    use synvoid_dns::recursive_cache::RecursiveCacheKey;
+
+    let config = synvoid_config::dns::RecursiveCacheConfig::default();
+    let cache = RecursiveDnsCache::new(1000, &config);
+
+    let key_do1 = RecursiveCacheKey::new_with_dnssec(b"return.test", 1, None, true);
+    let records = vec![synvoid_dns::recursive_cache::CachedRecord {
+        name: b"return.test".to_vec(),
+        record_type: 1,
+        ttl: 300,
+        data: vec![10, 20, 30, 40],
+    }];
+    cache.insert_positive(key_do1.clone(), records, 300, DnssecValidationState::Secure);
+
+    let key_do0 = RecursiveCacheKey::new_with_dnssec(b"return.test", 1, None, false);
+    assert!(
+        cache.get(&key_do0).is_none(),
+        "Entry cached with DO=1 must not be returned for DO=0 query"
+    );
+    assert!(
+        cache.get(&key_do1).is_some(),
+        "Entry cached with DO=1 must be returned for DO=1 query"
+    );
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Recursion depth limit + per-client query limit
+// ══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_max_recursion_depth_default() {
+    let config = RecursiveDnsConfig::default();
+    assert_eq!(config.max_recursion_depth, 16);
+}
+
+#[test]
+fn test_max_per_client_queries_default() {
+    let config = RecursiveDnsConfig::default();
+    assert_eq!(config.max_per_client_queries, 100);
+}
+
+#[test]
+fn test_max_recursion_depth_zero_means_unlimited() {
+    let mut config = RecursiveDnsConfig::default();
+    config.enabled = true;
+    config.max_recursion_depth = 0;
+    assert!(
+        config.validate().is_ok(),
+        "max_recursion_depth=0 (unlimited) should be allowed"
+    );
+}
+
+#[test]
+fn test_max_per_client_queries_zero_means_unlimited() {
+    let mut config = RecursiveDnsConfig::default();
+    config.enabled = true;
+    config.max_per_client_queries = 0;
+    assert!(
+        config.validate().is_ok(),
+        "max_per_client_queries=0 (unlimited) should be allowed"
+    );
+}
+
+#[test]
+fn test_recursive_config_includes_recursion_and_per_client_fields() {
+    let config = RecursiveDnsConfig::default();
+    assert_eq!(config.max_recursion_depth, 16);
+    assert_eq!(config.max_per_client_queries, 100);
+    assert_eq!(config.max_cname_depth, 10);
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Bailiwick validation tests
+// ══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_is_in_bailiwick_exact_match() {
+    assert!(synvoid_dns::recursive::is_in_bailiwick(
+        b"example.com.",
+        b"example.com."
+    ));
+}
+
+#[test]
+fn test_is_in_bailiwick_subdomain() {
+    assert!(synvoid_dns::recursive::is_in_bailiwick(
+        b"ns1.example.com.",
+        b"example.com."
+    ));
+}
+
+#[test]
+fn test_is_in_bailiwick_deep_subdomain() {
+    assert!(synvoid_dns::recursive::is_in_bailiwick(
+        b"a.b.c.example.com.",
+        b"example.com."
+    ));
+}
+
+#[test]
+fn test_is_in_bailiwick_out_of_bailiwick() {
+    assert!(!synvoid_dns::recursive::is_in_bailiwick(
+        b"ns.evil.com.",
+        b"example.com."
+    ));
+}
+
+#[test]
+fn test_is_in_bailiwick_suffix_match_not_bailiwick() {
+    assert!(!synvoid_dns::recursive::is_in_bailiwick(
+        b"notexample.com.",
+        b"example.com."
+    ));
+}
+
+#[test]
+fn test_is_in_bailiwick_empty_name() {
+    assert!(synvoid_dns::recursive::is_in_bailiwick(b"", b""));
+}
+
+#[test]
+fn test_is_in_bailiwick_empty_zone() {
+    assert!(!synvoid_dns::recursive::is_in_bailiwick(
+        b"example.com.",
+        b""
+    ));
+}
+
+#[test]
+fn test_is_in_bailiwick_case_insensitive() {
+    assert!(synvoid_dns::recursive::is_in_bailiwick(
+        b"NS1.Example.COM.",
+        b"example.com."
+    ));
+}
+
+#[test]
+fn test_is_in_bailiwick_no_trailing_dot() {
+    assert!(synvoid_dns::recursive::is_in_bailiwick(
+        b"ns1.example.com",
+        b"example.com"
+    ));
+}
+
+#[test]
+fn test_validate_authority_bailiwick_all_in_bailiwick() {
+    let ns = vec![
+        "ns1.example.com.".to_string(),
+        "ns2.example.com.".to_string(),
+    ];
+    assert!(synvoid_dns::recursive::validate_authority_bailiwick(
+        &ns,
+        b"example.com."
+    ));
+}
+
+#[test]
+fn test_validate_authority_bailiwick_one_out() {
+    let ns = vec![
+        "ns1.example.com.".to_string(),
+        "ns1.evil.com.".to_string(),
+    ];
+    assert!(!synvoid_dns::recursive::validate_authority_bailiwick(
+        &ns,
+        b"example.com."
+    ));
+}
+
+#[test]
+fn test_validate_authority_bailiwick_empty_ns() {
+    let ns: Vec<String> = vec![];
+    assert!(synvoid_dns::recursive::validate_authority_bailiwick(
+        &ns,
+        b"example.com."
+    ));
+}
+
+#[test]
+fn test_validate_additional_bailiwick_glue_in_zone() {
+    let ns = vec!["ns1.example.com.".to_string()];
+    assert!(synvoid_dns::recursive::validate_additional_bailiwick(
+        b"ns1.example.com.",
+        &ns
+    ));
+}
+
+#[test]
+fn test_validate_additional_bailiwick_glue_out_of_zone() {
+    let ns = vec!["ns1.example.com.".to_string()];
+    assert!(!synvoid_dns::recursive::validate_additional_bailiwick(
+        b"ns1.evil.com.",
+        &ns
+    ));
+}
+
+#[test]
+fn test_validate_additional_bailiwick_empty_ns() {
+    let ns: Vec<String> = vec![];
+    assert!(!synvoid_dns::recursive::validate_additional_bailiwick(
+        b"ns1.example.com.",
+        &ns
+    ));
+}
+
+#[test]
+fn test_bailiwick_violations_metric_default() {
+    use synvoid_dns::metrics::DnsMetrics;
+    let metrics = DnsMetrics::new();
+    let summary = metrics.get_summary();
+    assert_eq!(summary.bailiwick_violations, 0);
+}
+
+#[test]
+fn test_bailiwick_violations_metric_increment() {
+    use synvoid_dns::metrics::DnsMetrics;
+    let metrics = DnsMetrics::new();
+    metrics.record_bailiwick_violation();
+    metrics.record_bailiwick_violation();
+    let summary = metrics.get_summary();
+    assert_eq!(summary.bailiwick_violations, 2);
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ECS forwarding policy tests
+// ══════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_ecs_forwarding_policy_default_is_never() {
+    assert_eq!(
+        EcsForwardingPolicy::default(),
+        EcsForwardingPolicy::Never
+    );
+}
+
+#[test]
+fn test_ecs_config_defaults() {
+    let config = RecursiveEcsConfig::default();
+    assert_eq!(config.forwarding_policy, EcsForwardingPolicy::Never);
+    assert_eq!(config.prefix_v4, 24);
+    assert_eq!(config.prefix_v6, 56);
+    assert!(!config.include_scope_in_response);
+}
+
+#[test]
+fn test_ecs_recursive_config_includes_ecs_field() {
+    let config = RecursiveDnsConfig::default();
+    assert_eq!(config.ecs.forwarding_policy, EcsForwardingPolicy::Never);
+    assert_eq!(config.ecs.prefix_v4, 24);
+    assert_eq!(config.ecs.prefix_v6, 56);
+}
+
+#[test]
+fn test_ecs_truncate_prefix_v4() {
+    use synvoid_dns::edns::ClientSubnet;
+    use std::net::IpAddr;
+
+    let ecs = ClientSubnet {
+        address: IpAddr::from([10, 0, 0, 0]),
+        prefix_len: 32,
+    };
+    let truncated = synvoid_dns::recursive::truncate_ecs_prefix(&ecs, 24, 56);
+    assert_eq!(truncated.prefix_len, 24);
+    assert_eq!(truncated.address, IpAddr::from([10, 0, 0, 0]));
+}
+
+#[test]
+fn test_ecs_truncate_prefix_v4_already_less_specific() {
+    use synvoid_dns::edns::ClientSubnet;
+    use std::net::IpAddr;
+
+    let ecs = ClientSubnet {
+        address: IpAddr::from([10, 0, 0, 0]),
+        prefix_len: 8,
+    };
+    let truncated = synvoid_dns::recursive::truncate_ecs_prefix(&ecs, 24, 56);
+    assert_eq!(truncated.prefix_len, 8);
+}
+
+#[test]
+fn test_ecs_truncate_prefix_v6() {
+    use synvoid_dns::edns::ClientSubnet;
+    use std::net::IpAddr;
+
+    let ecs = ClientSubnet {
+        address: IpAddr::from([0x2001, 0xdb8, 0, 0, 0, 0, 0, 1]),
+        prefix_len: 128,
+    };
+    let truncated = synvoid_dns::recursive::truncate_ecs_prefix(&ecs, 24, 56);
+    assert_eq!(truncated.prefix_len, 56);
+    assert_eq!(truncated.address, ecs.address);
+}
+
+#[test]
+fn test_ecs_truncate_prefix_no_change() {
+    use synvoid_dns::edns::ClientSubnet;
+    use std::net::IpAddr;
+
+    let ecs = ClientSubnet {
+        address: IpAddr::from([192, 168, 1, 0]),
+        prefix_len: 24,
+    };
+    let truncated = synvoid_dns::recursive::truncate_ecs_prefix(&ecs, 24, 56);
+    assert_eq!(truncated.prefix_len, 24);
+}
+
+#[test]
+fn test_ecs_policy_never_strips_ecs() {
+    use synvoid_dns::edns::ClientSubnet;
+    use std::net::IpAddr;
+
+    let subnet = Some(ClientSubnet {
+        address: IpAddr::from([8, 8, 8, 0]),
+        prefix_len: 24,
+    });
+    let result = synvoid_dns::recursive::evaluate_ecs_forwarding_policy(
+        &EcsForwardingPolicy::Never,
+        &subnet,
+    );
+    assert!(result.is_none());
+}
+
+#[test]
+fn test_ecs_policy_always_forwards_ecs() {
+    use synvoid_dns::edns::ClientSubnet;
+    use std::net::IpAddr;
+
+    let subnet = Some(ClientSubnet {
+        address: IpAddr::from([8, 8, 8, 0]),
+        prefix_len: 24,
+    });
+    let result = synvoid_dns::recursive::evaluate_ecs_forwarding_policy(
+        &EcsForwardingPolicy::Always,
+        &subnet,
+    );
+    assert!(result.is_some());
+    assert_eq!(result.unwrap().prefix_len, 24);
+}
+
+#[test]
+fn test_ecs_policy_always_without_ecs_returns_none() {
+    let subnet: Option<synvoid_dns::edns::ClientSubnet> = None;
+    let result = synvoid_dns::recursive::evaluate_ecs_forwarding_policy(
+        &EcsForwardingPolicy::Always,
+        &subnet,
+    );
+    assert!(result.is_none());
+}
+
+#[test]
+fn test_ecs_policy_if_present_with_ecs() {
+    use synvoid_dns::edns::ClientSubnet;
+    use std::net::IpAddr;
+
+    let subnet = Some(ClientSubnet {
+        address: IpAddr::from([8, 8, 8, 0]),
+        prefix_len: 24,
+    });
+    let result = synvoid_dns::recursive::evaluate_ecs_forwarding_policy(
+        &EcsForwardingPolicy::IfPresent,
+        &subnet,
+    );
+    assert!(result.is_some());
+}
+
+#[test]
+fn test_ecs_policy_if_present_without_ecs() {
+    let subnet: Option<synvoid_dns::edns::ClientSubnet> = None;
+    let result = synvoid_dns::recursive::evaluate_ecs_forwarding_policy(
+        &EcsForwardingPolicy::IfPresent,
+        &subnet,
+    );
+    assert!(result.is_none());
+}
+
+#[test]
+fn test_ecs_policy_cdn_only_returns_none() {
+    use synvoid_dns::edns::ClientSubnet;
+    use std::net::IpAddr;
+
+    let subnet = Some(ClientSubnet {
+        address: IpAddr::from([8, 8, 8, 0]),
+        prefix_len: 24,
+    });
+    let result = synvoid_dns::recursive::evaluate_ecs_forwarding_policy(
+        &EcsForwardingPolicy::CdnOnly,
+        &subnet,
+    );
+    assert!(result.is_none());
+}
+
+#[test]
+fn test_ecs_config_serde_roundtrip() {
+    let config = RecursiveEcsConfig {
+        forwarding_policy: EcsForwardingPolicy::Always,
+        prefix_v4: 16,
+        prefix_v6: 48,
+        include_scope_in_response: true,
+    };
+    let json = serde_json::to_string(&config).unwrap();
+    let deserialized: RecursiveEcsConfig = serde_json::from_str(&json).unwrap();
+    assert_eq!(deserialized.forwarding_policy, EcsForwardingPolicy::Always);
+    assert_eq!(deserialized.prefix_v4, 16);
+    assert_eq!(deserialized.prefix_v6, 48);
+    assert!(deserialized.include_scope_in_response);
+}
+
+#[test]
+fn test_ecs_config_serde_default_policy() {
+    let json = r#"{"prefix_v4": 16}"#;
+    let config: RecursiveEcsConfig = serde_json::from_str(json).unwrap();
+    assert_eq!(config.forwarding_policy, EcsForwardingPolicy::Never);
+    assert_eq!(config.prefix_v4, 16);
+}
+
+#[test]
+fn test_ecs_config_serde_snake_case_variants() {
+    let json = r#"{"forwarding_policy": "if_present"}"#;
+    let config: RecursiveEcsConfig = serde_json::from_str(json).unwrap();
+    assert_eq!(config.forwarding_policy, EcsForwardingPolicy::IfPresent);
+
+    let json = r#"{"forwarding_policy": "always"}"#;
+    let config: RecursiveEcsConfig = serde_json::from_str(json).unwrap();
+    assert_eq!(config.forwarding_policy, EcsForwardingPolicy::Always);
+
+    let json = r#"{"forwarding_policy": "cdn_only"}"#;
+    let config: RecursiveEcsConfig = serde_json::from_str(json).unwrap();
+    assert_eq!(config.forwarding_policy, EcsForwardingPolicy::CdnOnly);
 }

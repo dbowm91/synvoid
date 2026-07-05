@@ -236,6 +236,18 @@ Source: `crates/synvoid-config/src/dns/dns_recursive.rs:97`
 | `dns.recursive.firewall.default_action` | `Allow` | not consumed | unsupported | none | document or wire |
 | `dns.recursive.firewall.max_rules` | `1000` | not consumed | unsupported | none | document or wire |
 | `dns.recursive.firewall.rebinding_protection.enabled` | `true` | not consumed | unsupported | none | document or wire |
+| `dns.recursive.client_acl.allowed_clients` | `[]` | `RecursiveDnsServer` — CIDR matching in `handle_packet()`/`handle_tcp_connection()` | implemented | 12 ACL tests | none |
+| `dns.recursive.client_acl.action` | `"reject"` | ACL match action (allow/reject) | implemented | 12 ACL tests | none |
+| `dns.recursive.max_cname_depth` | `10` | `resolve_query_with_depth()` — CNAME chain depth limit | implemented | 9 CNAME/circuit tests | none |
+| `dns.recursive.circuit_breaker.failure_threshold` | `5` | `CircuitBreaker` — opens after N failures | implemented | 9 CNAME/circuit tests | none |
+| `dns.recursive.circuit_breaker.recovery_timeout_secs` | `30` | `CircuitBreaker` — timeout before half-open | implemented | 9 CNAME/circuit tests | none |
+| `dns.recursive.circuit_breaker.success_threshold` | `2` | `CircuitBreaker` — closes after N successes | implemented | 9 CNAME/circuit tests | none |
+| `dns.recursive.max_recursion_depth` | `16` | `resolve_query_with_depth()` — NS referral depth limit | implemented | 5 depth/per-client tests | none |
+| `dns.recursive.max_per_client_queries` | `100` | `RecursiveDnsServer` — per-IP `Semaphore` in handlers | implemented | 5 depth/per-client tests | none |
+| `dns.recursive.ecs.forwarding_policy` | `Never` | `evaluate_ecs_forwarding_policy()` — ECS upstream forwarding | implemented | 16 ECS tests | none |
+| `dns.recursive.ecs.prefix_v4` | `24` | `truncate_ecs_prefix()` — IPv4 prefix cap | implemented | 16 ECS tests | none |
+| `dns.recursive.ecs.prefix_v6` | `56` | `truncate_ecs_prefix()` — IPv6 prefix cap | implemented | 16 ECS tests | none |
+| `dns.recursive.ecs.include_scope_in_response` | `false` | scope response in EDNS | validation-only | none | wire in recursive server |
 
 ---
 
@@ -344,7 +356,7 @@ Note: ~45 implemented fields lack dedicated test coverage (DoT/DoH/DoQ, rate lim
 
 3. **New integration test suite** (`crates/synvoid-dns/tests/dns_config_fidelity.rs`): 17 tests covering cache serve_stale, weighted byte capacity, min/max TTL, max_entry_size, DNS64 synthesis/disable/custom prefix/exclude flag, and ECS filter behavior.
 
-4. **Recursive isolation tests** (`crates/synvoid-dns/tests/dns_recursive_isolation.rs`): 30 tests covering recursive mode bind address independence, cache isolation, authoritative REFUSED without zones, anycast/mesh feature gate validation, config validation guards, zone mutation feature flags (UPDATE/NOTIFY/IXFR/wildcard transfer/TSIG), recursive default safety, and deferred feature behavior documentation.
+4. **Recursive isolation tests** (`crates/synvoid-dns/tests/dns_recursive_isolation.rs`): 109 tests covering recursive mode bind address independence, cache isolation, authoritative REFUSED without zones, anycast/mesh feature gate validation, config validation guards, zone mutation feature flags (UPDATE/NOTIFY/IXFR/wildcard transfer/TSIG), recursive default safety, deferred feature behavior documentation, client ACL (CIDR matching, IPv6, allow/reject actions), CNAME depth limits, circuit breaker state machine, CD/AD bit handling, DNSSEC validation state, bailiwick validation, routing metrics, ECS forwarding policy, and per-client query limits.
 
 ### Phase 2 Matrix Reconciliation Changes
 
@@ -540,7 +552,39 @@ block_internal_ips = true
 ### New Tests
 
 13. **`dns_config_fidelity`** — 17 tests (existing suite, all passing).
-14. **`dns_recursive_isolation`** — 30 tests (existing suite, all passing). Covers open-resolver guard, NOTIMP responses, recursive config validation.
+14. **`dns_recursive_isolation`** — 109 tests (existing suite, all passing). Covers open-resolver guard, NOTIMP responses, recursive config validation, client ACL, CNAME depth, circuit breaker, CD/AD bits, DNSSEC validation state, bailiwick, routing metrics, ECS forwarding, per-client limits.
+
+---
+
+## Phase 4 Changes Applied (Recursive Resolver Isolation)
+
+### New Config Fields (13 fields)
+
+1. **Client ACL**: `dns.recursive.client_acl.allowed_clients` (Vec<String>), `dns.recursive.client_acl.action` (String) — CIDR-based client access control
+2. **CNAME depth**: `dns.recursive.max_cname_depth` (u8, default 10) — CNAME chain depth limit
+3. **Circuit breaker**: `dns.recursive.circuit_breaker.failure_threshold` (u8, default 5), `dns.recursive.circuit_breaker.recovery_timeout_secs` (u64, default 30), `dns.recursive.circuit_breaker.success_threshold` (u8, default 2)
+4. **Recursion depth**: `dns.recursive.max_recursion_depth` (u8, default 16) — NS referral depth limit
+5. **Per-client limit**: `dns.recursive.max_per_client_queries` (u32, default 100) — per-IP concurrent query limit
+6. **ECS forwarding**: `dns.recursive.ecs.forwarding_policy` (Never/Always/CdnOnly/IfPresent), `dns.recursive.ecs.prefix_v4` (u16, default 24), `dns.recursive.ecs.prefix_v6` (u16, default 56), `dns.recursive.ecs.include_scope_in_response` (bool, default false)
+
+### Runtime Wiring
+
+- **Client ACL**: `recursive.rs` `handle_packet()`/`handle_tcp_connection()` — CIDR matching via `ipnetwork` crate, RCODE_REFUSED on mismatch
+- **CNAME depth**: `resolve_query_with_depth()` — depth counter on CNAME resolution, SERVFAIL when exceeded
+- **Circuit breaker**: `CircuitBreaker` struct (atomics, Send+Sync) — `resolve_upstream()` checks `is_open()`, records success/failure
+- **Recursion depth**: `resolve_query_with_depth()` — alongside CNAME depth check
+- **Per-client semaphore**: `client_semaphores: Arc<Mutex<HashMap<IpAddr, Arc<Semaphore>>>>` — 1s acquire timeout in handlers
+- **CD bit**: `wire.rs` `MessageFlags` — `checking_disabled` field parsed/built; `recursive.rs` CD=1 forces `effective_dnssec_validated = false`
+- **AD gating**: `authentic_data = effective_dnssec_validated && dnssec_ok` — AD only set when DO=1
+- **Cache DNSSEC state**: `RecursiveCacheKey` gains `dnssec_ok` dimension; `DnssecValidationState` enum (Secure/Insecure/Bogus/Unchecked) replaces boolean
+- **Bailiwick**: `is_in_bailiwick()`, `validate_authority_bailiwick()`, `validate_additional_bailiwick()` — observability-only (log + metric)
+- **ECS policy**: `evaluate_ecs_forwarding_policy()`, `truncate_ecs_prefix()` — config-driven ECS forwarding
+- **Routing metrics**: 5 new `DnsMetrics` counters (recursive_queries, recursive_cache_hits/misses, upstream_forwards/failures)
+
+### New Tests
+
+- 109 `dns_recursive_isolation` tests (up from 31)
+- 27 `recursive_cache` tests (DNSSEC state, DO bit separation)
 
 ---
 

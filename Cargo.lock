@@ -8156,6 +8156,7 @@ dependencies = [
  "hex",
  "hkdf",
  "http 1.4.1",
+ "ipnetwork 0.18.0",
  "parking_lot",
  "pbkdf2",
  "pqc",

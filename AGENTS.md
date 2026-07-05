@@ -92,6 +92,10 @@ cargo test -p synvoid-dns -- dot
 cargo test -p synvoid-dns -- doh
 cargo test -p synvoid-dns -- doq
 
+# DNS Milestone 3 Phase 4 tests (recursive resolver isolation: ACL, circuit breaker, CD/AD, bailiwick, ECS, depth limits)
+cargo test -p synvoid-dns --test dns_recursive_isolation
+cargo test -p synvoid-dns -- recursive_cache
+
 # DNS config-runtime matrix
 # See architecture/dns_config_runtime_matrix.md
 

@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use moka::sync::Cache;
 use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum RecursiveRecordType {
@@ -61,11 +62,22 @@ impl From<RecursiveRecordType> for u16 {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DnssecValidationState {
+    Secure,
+    Insecure,
+    Bogus,
+    #[default]
+    Unchecked,
+}
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RecursiveCacheKey {
     pub qname: Vec<u8>,
     pub qtype: RecursiveRecordType,
     pub client_subnet: Option<IpAddr>,
+    pub dnssec_ok: bool,
 }
 
 impl RecursiveCacheKey {
@@ -74,6 +86,16 @@ impl RecursiveCacheKey {
             qname: qname.to_vec(),
             qtype: RecursiveRecordType::from(qtype),
             client_subnet,
+            dnssec_ok: false,
+        }
+    }
+
+    pub fn new_with_dnssec(qname: &[u8], qtype: u16, client_subnet: Option<IpAddr>, dnssec_ok: bool) -> Self {
+        Self {
+            qname: qname.to_vec(),
+            qtype: RecursiveRecordType::from(qtype),
+            client_subnet,
+            dnssec_ok,
         }
     }
 }
@@ -91,7 +113,7 @@ pub struct PositiveCacheEntry {
     pub records: Vec<CachedRecord>,
     pub ttl: Duration,
     pub cached_at: Instant,
-    pub is_dnssec_validated: bool,
+    pub validation_state: DnssecValidationState,
 }
 
 #[derive(Debug, Clone)]
@@ -101,6 +123,7 @@ pub struct NegativeCacheEntry {
     pub ncache_ttl: Duration,
     pub cached_at: Instant,
     pub is_nxdomain: bool,
+    pub validation_state: DnssecValidationState,
 }
 
 #[derive(Debug, Clone)]
@@ -195,14 +218,14 @@ impl RecursiveDnsCache {
         }
     }
 
-    pub fn get(&self, key: &RecursiveCacheKey) -> Option<(Vec<CachedRecord>, bool, bool)> {
+    pub fn get(&self, key: &RecursiveCacheKey) -> Option<(Vec<CachedRecord>, bool, DnssecValidationState)> {
         let inner = &self.inner;
         let now = Instant::now();
 
         if let Some(entry) = inner.positive_cache.get(key) {
             let age = now.duration_since(entry.cached_at);
             let is_stale = age >= entry.ttl && age < entry.ttl + inner.config.stale_ttl;
-            let is_validated = entry.is_dnssec_validated;
+            let validation_state = entry.validation_state;
 
             if age < entry.ttl || is_stale {
                 inner.stats.write().hits += 1;
@@ -211,7 +234,7 @@ impl RecursiveDnsCache {
                 } else {
                     inner.stats.write().positive_hits += 1;
                 }
-                return Some((entry.records.clone(), is_stale, is_validated));
+                return Some((entry.records.clone(), is_stale, validation_state));
             }
         }
 
@@ -221,13 +244,13 @@ impl RecursiveDnsCache {
             if age < nx_entry.ncache_ttl {
                 inner.stats.write().hits += 1;
                 inner.stats.write().negative_hits += 1;
-                return Some((Vec::new(), false, false));
+                return Some((Vec::new(), false, nx_entry.validation_state));
             }
 
             if age < nx_entry.ncache_ttl + inner.config.stale_ttl {
                 inner.stats.write().hits += 1;
                 inner.stats.write().stale_hits += 1;
-                return Some((Vec::new(), true, false));
+                return Some((Vec::new(), true, nx_entry.validation_state));
             }
         }
 
@@ -240,7 +263,7 @@ impl RecursiveDnsCache {
         key: RecursiveCacheKey,
         records: Vec<CachedRecord>,
         original_ttl: u32,
-        is_dnssec_validated: bool,
+        validation_state: DnssecValidationState,
     ) {
         let inner = &self.inner;
         let ttl = Duration::from_secs(
@@ -253,14 +276,14 @@ impl RecursiveDnsCache {
             records,
             ttl,
             cached_at: Instant::now(),
-            is_dnssec_validated,
+            validation_state,
         };
 
         inner.positive_cache.insert(key, entry);
         inner.stats.write().insertions += 1;
     }
 
-    pub fn insert_negative(&self, key: RecursiveCacheKey, is_nxdomain: bool, ncache_ttl: u32) {
+    pub fn insert_negative(&self, key: RecursiveCacheKey, is_nxdomain: bool, ncache_ttl: u32, validation_state: DnssecValidationState) {
         let inner = &self.inner;
         let ttl =
             Duration::from_secs(ncache_ttl.min(inner.config.negative_ttl.as_secs() as u32) as u64);
@@ -271,6 +294,7 @@ impl RecursiveDnsCache {
             ncache_ttl: ttl,
             cached_at: Instant::now(),
             is_nxdomain,
+            validation_state,
         };
 
         inner.negative_cache.insert(key, entry);
@@ -369,7 +393,7 @@ mod tests {
             data: vec![8, 8, 8, 8],
         }];
 
-        cache.insert_positive(key.clone(), records.clone(), 300, false);
+        cache.insert_positive(key.clone(), records.clone(), 300, DnssecValidationState::Unchecked);
 
         let result = cache.get(&key);
         assert!(result.is_some());
@@ -383,10 +407,9 @@ mod tests {
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key = RecursiveCacheKey::new(b"nonexistent.com", 1, None);
-        cache.insert_negative(key.clone(), true, 300);
+        cache.insert_negative(key.clone(), true, 300, DnssecValidationState::Unchecked);
 
         let result = cache.get(&key);
-        // Negative cache returns Some with empty records
         assert!(result.is_some());
         let (records, _stale, _validated) = result.unwrap();
         assert!(records.is_empty());
@@ -405,7 +428,7 @@ mod tests {
             data: vec![8, 8, 8, 8],
         }];
 
-        cache.insert_positive(key.clone(), records, 300, false);
+        cache.insert_positive(key.clone(), records, 300, DnssecValidationState::Unchecked);
 
         let stats = cache.stats();
         assert_eq!(stats.insertions, 1);
@@ -421,7 +444,6 @@ mod tests {
 
     #[test]
     fn test_negative_stale_returns_stale_flag() {
-        // max_ttl_secs=300 so moka doesn't evict; stale_ttl_secs=60
         let config = synvoid_config::dns::RecursiveCacheConfig {
             negative_ttl_secs: 300,
             stale_ttl_secs: 60,
@@ -430,11 +452,8 @@ mod tests {
         };
         let cache = RecursiveDnsCache::new(1000, &config);
 
-        // Insert with ncache_ttl=1 (the NegativeCacheEntry's own ttl), clamped to min(negative_ttl_secs=300)
-        // We need ncache_ttl=1 to be under negative_ttl_secs=300 so it stays at 1.
-        // Actually negative_ttl clamping: ncache_ttl.min(negative_ttl_secs) = 1.min(300) = 1.
         let key = RecursiveCacheKey::new(b"nxd-stale.test", 1, None);
-        cache.insert_negative(key.clone(), true, 1);
+        cache.insert_negative(key.clone(), true, 1, DnssecValidationState::Unchecked);
 
         let result = cache.get(&key).unwrap();
         assert!(!result.1, "Fresh negative should not be stale");
@@ -451,7 +470,6 @@ mod tests {
 
     #[test]
     fn test_positive_stale_returns_records() {
-        // max_ttl_secs=300 so moka doesn't evict; stale_ttl_secs=60
         let config = synvoid_config::dns::RecursiveCacheConfig {
             max_ttl_secs: 300,
             stale_ttl_secs: 60,
@@ -459,7 +477,6 @@ mod tests {
         };
         let cache = RecursiveDnsCache::new(1000, &config);
 
-        // Insert with original_ttl=1, clamped to min(1, 300).max(min_ttl) = 1 (min_ttl default 0)
         let key = RecursiveCacheKey::new(b"pos-stale.test", 1, None);
         let records = vec![CachedRecord {
             name: b"pos-stale.test".to_vec(),
@@ -467,7 +484,7 @@ mod tests {
             ttl: 1,
             data: vec![93, 184, 216, 34],
         }];
-        cache.insert_positive(key.clone(), records, 1, false);
+        cache.insert_positive(key.clone(), records, 1, DnssecValidationState::Unchecked);
 
         let result = cache.get(&key).unwrap();
         assert!(!result.1, "Fresh positive should not be stale");
@@ -488,7 +505,7 @@ mod tests {
             records: vec![],
             ttl: Duration::from_secs(1),
             cached_at: Instant::now() - Duration::from_secs(2),
-            is_dnssec_validated: false,
+            validation_state: DnssecValidationState::Unchecked,
         });
         assert!(entry.is_expired(Instant::now()));
         assert!(entry.is_stale(Instant::now(), Duration::from_secs(60)));
@@ -499,6 +516,7 @@ mod tests {
             ncache_ttl: Duration::from_secs(1),
             cached_at: Instant::now() - Duration::from_secs(2),
             is_nxdomain: true,
+            validation_state: DnssecValidationState::Unchecked,
         });
         assert!(entry.is_expired(Instant::now()));
         assert!(entry.is_stale(Instant::now(), Duration::from_secs(60)));
@@ -520,7 +538,7 @@ mod tests {
             ttl: 5,
             data: vec![1, 2, 3, 4],
         }];
-        cache.insert_positive(key.clone(), records.clone(), 5, false);
+        cache.insert_positive(key.clone(), records.clone(), 5, DnssecValidationState::Unchecked);
         let entry = cache.inner.positive_cache.get(&key).unwrap();
         assert_eq!(
             entry.ttl,
@@ -528,7 +546,7 @@ mod tests {
             "Should clamp to min_ttl"
         );
 
-        cache.insert_positive(key.clone(), records.clone(), 9999, false);
+        cache.insert_positive(key.clone(), records.clone(), 9999, DnssecValidationState::Unchecked);
         let entry = cache.inner.positive_cache.get(&key).unwrap();
         assert_eq!(
             entry.ttl,
@@ -546,7 +564,7 @@ mod tests {
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key = RecursiveCacheKey::new(b"neg-clamp.test", 1, None);
-        cache.insert_negative(key.clone(), true, 999);
+        cache.insert_negative(key.clone(), true, 999, DnssecValidationState::Unchecked);
         let entry = cache.inner.negative_cache.get(&key).unwrap();
         assert_eq!(
             entry.ncache_ttl,
@@ -567,7 +585,7 @@ mod tests {
             ttl: 300,
             data: vec![1, 2, 3, 4],
         }];
-        cache.insert_positive(key.clone(), records, 300, false);
+        cache.insert_positive(key.clone(), records, 300, DnssecValidationState::Unchecked);
 
         cache.invalidate(b"inv-stats.test");
         assert_eq!(cache.stats().invalidations, 1);
@@ -589,7 +607,7 @@ mod tests {
             ttl: 300,
             data: vec![1, 2, 3, 4],
         }];
-        cache.insert_positive(key.clone(), records, 300, false);
+        cache.insert_positive(key.clone(), records, 300, DnssecValidationState::Unchecked);
         let entry = cache.inner.positive_cache.get(&key).unwrap();
         assert_eq!(
             entry.ttl,
@@ -614,7 +632,7 @@ mod tests {
             ttl: 300,
             data: vec![1, 2, 3, 4],
         }];
-        cache.insert_positive(key.clone(), records, 300, false);
+        cache.insert_positive(key.clone(), records, 300, DnssecValidationState::Unchecked);
         let entry = cache.inner.positive_cache.get(&key).unwrap();
         assert_eq!(
             entry.ttl,
@@ -632,7 +650,7 @@ mod tests {
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key = RecursiveCacheKey::new(b"nxd-soa.test", 1, None);
-        cache.insert_negative(key.clone(), true, 60);
+        cache.insert_negative(key.clone(), true, 60, DnssecValidationState::Unchecked);
 
         let entry = cache.inner.negative_cache.get(&key).unwrap();
         assert_eq!(entry.ncache_ttl, Duration::from_secs(60));
@@ -648,7 +666,7 @@ mod tests {
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key = RecursiveCacheKey::new(b"nodata-soa.test", 28, None);
-        cache.insert_negative(key.clone(), false, 45);
+        cache.insert_negative(key.clone(), false, 45, DnssecValidationState::Unchecked);
 
         let entry = cache.inner.negative_cache.get(&key).unwrap();
         assert_eq!(entry.ncache_ttl, Duration::from_secs(45));
@@ -676,8 +694,8 @@ mod tests {
             data: vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
         }];
 
-        cache.insert_positive(a_key.clone(), a_records, 300, false);
-        cache.insert_positive(aaaa_key.clone(), aaaa_records, 300, false);
+        cache.insert_positive(a_key.clone(), a_records, 300, DnssecValidationState::Unchecked);
+        cache.insert_positive(aaaa_key.clone(), aaaa_records, 300, DnssecValidationState::Unchecked);
         assert_eq!(cache.positive_len(), 2);
 
         cache.invalidate(b"multi.test");
@@ -702,7 +720,7 @@ mod tests {
             ttl: 1,
             data: vec![1, 2, 3, 4],
         }];
-        cache.insert_positive(key.clone(), records, 1, false);
+        cache.insert_positive(key.clone(), records, 1, DnssecValidationState::Unchecked);
 
         let result = cache.get(&key);
         assert!(result.is_some());
@@ -733,7 +751,7 @@ mod tests {
             ttl: 1,
             data: vec![1, 2, 3, 4],
         }];
-        cache.insert_positive(key.clone(), records, 1, false);
+        cache.insert_positive(key.clone(), records, 1, DnssecValidationState::Unchecked);
 
         std::thread::sleep(Duration::from_millis(1100));
         let result = cache.get(&key);
@@ -762,9 +780,128 @@ mod tests {
                 ttl: 300,
                 data: vec![1, 2, 3, 4],
             }];
-            cache.insert_positive(key, records, 300, false);
+            cache.insert_positive(key, records, 300, DnssecValidationState::Unchecked);
         }
 
         assert_eq!(cache.stats().insertions, 10);
+    }
+
+    #[test]
+    fn test_dnssec_validation_state_secure() {
+        let config = synvoid_config::dns::RecursiveCacheConfig::default();
+        let cache = RecursiveDnsCache::new(1000, &config);
+
+        let key = RecursiveCacheKey::new(b"secure.test", 1, None);
+        let records = vec![CachedRecord {
+            name: b"secure.test".to_vec(),
+            record_type: 1,
+            ttl: 300,
+            data: vec![1, 1, 1, 1],
+        }];
+        cache.insert_positive(key.clone(), records, 300, DnssecValidationState::Secure);
+
+        let result = cache.get(&key).unwrap();
+        assert_eq!(result.2, DnssecValidationState::Secure);
+    }
+
+    #[test]
+    fn test_dnssec_validation_state_bogus() {
+        let config = synvoid_config::dns::RecursiveCacheConfig::default();
+        let cache = RecursiveDnsCache::new(1000, &config);
+
+        let key = RecursiveCacheKey::new(b"bogus.test", 1, None);
+        let records = vec![CachedRecord {
+            name: b"bogus.test".to_vec(),
+            record_type: 1,
+            ttl: 300,
+            data: vec![2, 2, 2, 2],
+        }];
+        cache.insert_positive(key.clone(), records, 300, DnssecValidationState::Bogus);
+
+        let result = cache.get(&key).unwrap();
+        assert_eq!(result.2, DnssecValidationState::Bogus);
+    }
+
+    #[test]
+    fn test_dnssec_validation_state_unchecked() {
+        let config = synvoid_config::dns::RecursiveCacheConfig::default();
+        let cache = RecursiveDnsCache::new(1000, &config);
+
+        let key = RecursiveCacheKey::new(b"unchecked.test", 1, None);
+        let records = vec![CachedRecord {
+            name: b"unchecked.test".to_vec(),
+            record_type: 1,
+            ttl: 300,
+            data: vec![3, 3, 3, 3],
+        }];
+        cache.insert_positive(key.clone(), records, 300, DnssecValidationState::Unchecked);
+
+        let result = cache.get(&key).unwrap();
+        assert_eq!(result.2, DnssecValidationState::Unchecked);
+    }
+
+    #[test]
+    fn test_dnssec_validation_state_insecure() {
+        let config = synvoid_config::dns::RecursiveCacheConfig::default();
+        let cache = RecursiveDnsCache::new(1000, &config);
+
+        let key = RecursiveCacheKey::new(b"insecure.test", 1, None);
+        let records = vec![CachedRecord {
+            name: b"insecure.test".to_vec(),
+            record_type: 1,
+            ttl: 300,
+            data: vec![4, 4, 4, 4],
+        }];
+        cache.insert_positive(key.clone(), records, 300, DnssecValidationState::Insecure);
+
+        let result = cache.get(&key).unwrap();
+        assert_eq!(result.2, DnssecValidationState::Insecure);
+    }
+
+    #[test]
+    fn test_recursive_cache_key_dnssec_ok_separation() {
+        let config = synvoid_config::dns::RecursiveCacheConfig::default();
+        let cache = RecursiveDnsCache::new(1000, &config);
+
+        let key_do0 = RecursiveCacheKey::new_with_dnssec(b"dosep.test", 1, None, false);
+        let key_do1 = RecursiveCacheKey::new_with_dnssec(b"dosep.test", 1, None, true);
+
+        assert_ne!(key_do0, key_do1);
+
+        let records = vec![CachedRecord {
+            name: b"dosep.test".to_vec(),
+            record_type: 1,
+            ttl: 300,
+            data: vec![1, 2, 3, 4],
+        }];
+        cache.insert_positive(key_do1.clone(), records, 300, DnssecValidationState::Secure);
+
+        assert!(cache.get(&key_do0).is_none(), "DO=0 should not hit DO=1 entry");
+        assert!(cache.get(&key_do1).is_some(), "DO=1 should hit DO=1 entry");
+    }
+
+    #[test]
+    fn test_cache_dnssec_ok_false_does_not_return_dnssec_entry() {
+        let config = synvoid_config::dns::RecursiveCacheConfig::default();
+        let cache = RecursiveDnsCache::new(1000, &config);
+
+        let key_do1 = RecursiveCacheKey::new_with_dnssec(b"return.test", 1, None, true);
+        let records = vec![CachedRecord {
+            name: b"return.test".to_vec(),
+            record_type: 1,
+            ttl: 300,
+            data: vec![10, 20, 30, 40],
+        }];
+        cache.insert_positive(key_do1.clone(), records, 300, DnssecValidationState::Secure);
+
+        let key_do0 = RecursiveCacheKey::new_with_dnssec(b"return.test", 1, None, false);
+        assert!(
+            cache.get(&key_do0).is_none(),
+            "Entry cached with DO=1 must not be returned for DO=0 query"
+        );
+        assert!(
+            cache.get(&key_do1).is_some(),
+            "Entry cached with DO=1 must be returned for DO=1 query"
+        );
     }
 }

@@ -367,3 +367,95 @@ cargo test -p synvoid-dns -- store_volatile
 cargo test -p synvoid-dns -- store_atomic_write
 cargo test -p synvoid-dns -- cache_invalidation_axfr
 ```
+
+## Milestone 3 Phase 4: Recursive Resolver Isolation (2026-07-05)
+
+### Client ACL (`RecursiveClientAcl`)
+
+CIDR-based client access control on the recursive server:
+
+- **Config**: `dns.recursive.client_acl.allowed_clients` (Vec of CIDR strings) + `action` ("reject" or "allow")
+- **Behavior**: Empty `allowed_clients` = allow all (open). When populated, each client IP is checked against CIDRs.
+  - `action = "reject"`: matching clients are REFUSED, non-matching are allowed
+  - `action = "allow"`: matching clients are allowed, non-matching are REFUSED
+- **Check point**: Applied in `handle_packet()` and `handle_tcp_connection()` before rate limiter
+- **Response**: RCODE_REFUSED via `build_error_response()`
+- **IPv6**: Full CIDR support via `ipnetwork` crate
+
+### Circuit Breaker
+
+Per-upstream failure tracking with automatic recovery:
+
+- **Config**: `failure_threshold` (default 5), `recovery_timeout_secs` (default 30), `success_threshold` (default 2)
+- **State machine**: Closed → Open (after N failures) → Half-Open (after timeout) → Closed (after M successes)
+- **Atomic**: `CircuitBreaker` uses atomics (Send+Sync), no mutex needed
+- **Effect**: When open, `resolve_upstream()` returns `CircuitBreakerOpen` immediately (no upstream query)
+
+### CNAME Depth Limit
+
+Prevents CNAME loops and deep chains:
+
+- **Config**: `max_cname_depth` (default 10, 0 = unlimited)
+- **Check point**: `resolve_query_with_depth()` increments depth on each CNAME resolution
+- **Response**: SERVFAIL when depth exceeded
+
+### Recursion Depth Limit
+
+Limits NS referral depth:
+
+- **Config**: `max_recursion_depth` (default 16, 0 = unlimited)
+- **Check point**: `resolve_query_with_depth()` tracks referral depth alongside CNAME depth
+
+### Per-Client Outstanding Query Limit
+
+Prevents single-client DoS:
+
+- **Config**: `max_per_client_queries` (default 100, 0 = unlimited)
+- **Implementation**: Per-IP `Semaphore` in `client_semaphores: Arc<Mutex<HashMap<IpAddr, Arc<Semaphore>>>>`
+- **Timeout**: 1s acquire timeout — returns REFUSED if limit reached
+
+### CD Bit + AD Gating
+
+DNSSEC checking-disabled and authentic-data handling:
+
+- **CD bit**: When CD=1 from client, `effective_dnssec_validated = false` (skip validation). CD echoed in response.
+- **AD bit**: Gated on DO bit: `authentic_data = effective_dnssec_validated && dnssec_ok`. AD only set when client supports DNSSEC (DO=1).
+- **Wire**: `checking_disabled` field added to `MessageFlags` in `wire.rs`
+
+### Cache DNSSEC Validation State
+
+`RecursiveCacheKey` now includes `dnssec_ok` dimension. `PositiveCacheEntry` uses `DnssecValidationState` enum (Secure/Insecure/Bogus/Unchecked) instead of boolean.
+
+### Bailiwick Validation (Observability Only)
+
+Authority and additional section bailiwick checks:
+
+- `is_in_bailiwick(name, zone_origin)` — checks descendant relationship
+- `validate_authority_bailiwick()` — all NS records must be in-bailiwick
+- `validate_additional_bailiwick()` — glue records must be in-bailiwick of at least one NS
+- **Effect**: Observability only (`log::warn!` + `bailiwick_violations` metric counter)
+
+### ECS Forwarding Policy
+
+Configurable EDNS Client Subnet forwarding:
+
+- **Policies**: `Never` (default), `Always`, `CdnOnly`, `IfPresent`
+- **Prefix truncation**: `truncate_ecs_prefix()` caps prefix length per address family
+- **Config**: `dns.recursive.ecs.*` fields
+
+### Routing Metrics
+
+5 new counters in `DnsMetrics`: `recursive_queries`, `recursive_cache_hits`, `recursive_cache_misses`, `recursive_upstream_forwards`, `recursive_upstream_failures`
+
+### Test Commands
+
+```bash
+# Recursive isolation (all Phase 4 workstreams)
+cargo test -p synvoid-dns --test dns_recursive_isolation
+
+# Recursive cache (DNSSEC validation state, DO bit separation)
+cargo test -p synvoid-dns -- recursive_cache
+
+# Full recursive DNS test suite
+cargo test -p synvoid-dns --release
+```

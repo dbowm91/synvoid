@@ -106,8 +106,8 @@ pub use query_coalesce::{CoalesceResult, QueryCoalescer, QueryKey};
 pub use query_validator::{DnsQueryClass, DnsQueryType, DnsQueryValidator};
 pub use recursive::{RecursiveDnsError, RecursiveDnsResult, RecursiveDnsServer};
 pub use recursive_cache::{
-    CacheEntry, CachedRecord, NegativeCacheEntry, PositiveCacheEntry, RecursiveCacheKey,
-    RecursiveCacheStats, RecursiveDnsCache, RecursiveRecordType,
+    CacheEntry, CachedRecord, DnssecValidationState, NegativeCacheEntry, PositiveCacheEntry,
+    RecursiveCacheKey, RecursiveCacheStats, RecursiveDnsCache, RecursiveRecordType,
 };
 pub use resolver::{
     CdsRecord, DnsKeyRecord, DnsResolver, HickoryRecursor, HickoryResolver, NoopResolver, NsRecord,

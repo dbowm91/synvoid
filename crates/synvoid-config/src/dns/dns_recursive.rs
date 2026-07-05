@@ -1,8 +1,59 @@
+use std::net::IpAddr;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::DnsConfigError;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default, JsonSchema, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EcsForwardingPolicy {
+    #[default]
+    Never,
+    Always,
+    CdnOnly,
+    IfPresent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
+#[serde(default)]
+pub struct RecursiveEcsConfig {
+    #[serde(default)]
+    pub forwarding_policy: EcsForwardingPolicy,
+
+    #[serde(default = "default_ecs_prefix_v4")]
+    pub prefix_v4: u8,
+
+    #[serde(default = "default_ecs_prefix_v6")]
+    pub prefix_v6: u8,
+
+    #[serde(default = "default_ecs_include_in_response")]
+    pub include_scope_in_response: bool,
+}
+
+fn default_ecs_prefix_v4() -> u8 {
+    24
+}
+
+fn default_ecs_prefix_v6() -> u8 {
+    56
+}
+
+fn default_ecs_include_in_response() -> bool {
+    false
+}
+
+impl Default for RecursiveEcsConfig {
+    fn default() -> Self {
+        Self {
+            forwarding_policy: EcsForwardingPolicy::default(),
+            prefix_v4: default_ecs_prefix_v4(),
+            prefix_v6: default_ecs_prefix_v6(),
+            include_scope_in_response: default_ecs_include_in_response(),
+        }
+    }
+}
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema, ToSchema,
@@ -38,6 +89,47 @@ impl Default for RecursiveUpstreamServer {
             port: 53,
             ip: None,
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[serde(default)]
+pub struct RecursiveClientAcl {
+    #[serde(default)]
+    pub allowed_clients: Vec<String>,
+
+    #[serde(default = "default_acl_action")]
+    pub action: String,
+}
+
+fn default_acl_action() -> String {
+    "reject".to_string()
+}
+
+impl Default for RecursiveClientAcl {
+    fn default() -> Self {
+        Self {
+            allowed_clients: Vec::new(),
+            action: default_acl_action(),
+        }
+    }
+}
+
+impl RecursiveClientAcl {
+    pub fn is_client_allowed(&self, client_ip: IpAddr) -> bool {
+        if self.allowed_clients.is_empty() {
+            return true;
+        }
+
+        for cidr in &self.allowed_clients {
+            if let Ok(network) = cidr.parse::<ipnetwork::IpNetwork>() {
+                if network.contains(client_ip) {
+                    return true;
+                }
+            }
+        }
+
+        self.action == "allow"
     }
 }
 
@@ -136,6 +228,24 @@ pub struct RecursiveDnsConfig {
 
     #[serde(default = "default_recursive_trust_anchor_path")]
     pub trust_anchor_path: String,
+
+    #[serde(default)]
+    pub client_acl: Option<RecursiveClientAcl>,
+
+    #[serde(default = "default_max_cname_depth")]
+    pub max_cname_depth: u8,
+
+    #[serde(default = "default_max_recursion_depth")]
+    pub max_recursion_depth: u8,
+
+    #[serde(default = "default_max_per_client_queries")]
+    pub max_per_client_queries: u32,
+
+    #[serde(default)]
+    pub circuit_breaker: CircuitBreakerConfig,
+
+    #[serde(default)]
+    pub ecs: RecursiveEcsConfig,
 }
 
 fn default_recursive_bind_address() -> String {
@@ -166,6 +276,53 @@ fn default_recursive_trust_anchor_path() -> String {
     "trusted-key.key".to_string()
 }
 
+fn default_max_cname_depth() -> u8 {
+    10
+}
+
+fn default_max_recursion_depth() -> u8 {
+    16
+}
+
+fn default_max_per_client_queries() -> u32 {
+    100
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[serde(default)]
+pub struct CircuitBreakerConfig {
+    #[serde(default = "default_failure_threshold")]
+    pub failure_threshold: u32,
+
+    #[serde(default = "default_recovery_timeout_secs")]
+    pub recovery_timeout_secs: u64,
+
+    #[serde(default = "default_success_threshold")]
+    pub success_threshold: u32,
+}
+
+fn default_failure_threshold() -> u32 {
+    5
+}
+
+fn default_recovery_timeout_secs() -> u64 {
+    30
+}
+
+fn default_success_threshold() -> u32 {
+    2
+}
+
+impl Default for CircuitBreakerConfig {
+    fn default() -> Self {
+        Self {
+            failure_threshold: default_failure_threshold(),
+            recovery_timeout_secs: default_recovery_timeout_secs(),
+            success_threshold: default_success_threshold(),
+        }
+    }
+}
+
 impl Default for RecursiveDnsConfig {
     fn default() -> Self {
         Self {
@@ -183,6 +340,12 @@ impl Default for RecursiveDnsConfig {
             firewall: super::DnsFirewallConfig::default(),
             root_hints_path: default_root_hints_path(),
             trust_anchor_path: default_recursive_trust_anchor_path(),
+            client_acl: None,
+            max_cname_depth: default_max_cname_depth(),
+            max_recursion_depth: default_max_recursion_depth(),
+            max_per_client_queries: default_max_per_client_queries(),
+            circuit_breaker: CircuitBreakerConfig::default(),
+            ecs: RecursiveEcsConfig::default(),
         }
     }
 }
@@ -239,6 +402,35 @@ impl RecursiveDnsConfig {
             return Err(DnsConfigError::InvalidRecursive(
                 "stale_ttl_secs should be >= negative_ttl_secs for effective negative caching"
                     .to_string(),
+            ));
+        }
+
+        if let Some(ref acl) = self.client_acl {
+            for cidr in &acl.allowed_clients {
+                if cidr.parse::<ipnetwork::IpNetwork>().is_err() {
+                    return Err(DnsConfigError::InvalidRecursive(format!(
+                        "Invalid CIDR notation in client_acl.allowed_clients: {}",
+                        cidr
+                    )));
+                }
+            }
+            if acl.action != "reject" && acl.action != "allow" {
+                return Err(DnsConfigError::InvalidRecursive(format!(
+                    "Invalid client_acl.action: {} (must be 'reject' or 'allow')",
+                    acl.action
+                )));
+            }
+        }
+
+        if self.circuit_breaker.failure_threshold == 0 {
+            return Err(DnsConfigError::InvalidRecursive(
+                "circuit_breaker.failure_threshold must be greater than zero".to_string(),
+            ));
+        }
+
+        if self.circuit_breaker.success_threshold == 0 {
+            return Err(DnsConfigError::InvalidRecursive(
+                "circuit_breaker.success_threshold must be greater than zero".to_string(),
             ));
         }
 

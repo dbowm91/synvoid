@@ -1305,6 +1305,8 @@ Phase 5 added 48 integration tests across two files:
 - `dns_config_fidelity.rs` (17): Cache weighted byte capacity, serve_stale enabled/disabled, max_stale_secs, serve-stale end-to-end, min/max TTL, max_entry_size, DNS64 synthesis/disable/custom prefix/exclude, ECS filter
 - `dns_recursive_isolation.rs` (31): Recursive mode bind independence, cache isolation, authoritative REFUSED, anycast/mesh feature gates, config validation guards, zone mutation feature flags (UPDATE/NOTIFY/IXFR/wildcard transfer/TSIG), recursive default safety, deferred feature behavior, open-resolver guard
 
+Phase 4 grew `dns_recursive_isolation.rs` to 109 tests, adding: client ACL (CIDR, IPv6, allow/reject), CNAME depth limits, circuit breaker state machine, CD/AD bit handling, DNSSEC validation state, bailiwick validation, routing metrics, ECS forwarding policy, per-client query limits.
+
 ---
 
 ## Milestone 2 Phase 1: Transport Lifecycle & Protocol Hardening

@@ -4,9 +4,11 @@
 //! the authoritative DNS server. It uses the hickory-resolver crate for
 //! upstream recursive resolution.
 
+use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use hickory_proto::op::Message;
 use hickory_proto::rr::RecordType;
@@ -21,10 +23,11 @@ use crate::parsed_query::ParsedDnsQuery;
 use parking_lot::RwLock;
 use synvoid_config::dns::RecursiveDnsConfig;
 
-use super::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache};
+use super::recursive_cache::{CachedRecord, DnssecValidationState, RecursiveCacheKey, RecursiveDnsCache};
 use super::resolver::{MxRecord, SrvRecord};
 use super::wire::{
-    build_error_response, build_response_header, get_message_id, parse_dns_message, RCODE_SERVFAIL,
+    build_error_response, build_response_header, get_message_id, parse_dns_message, RCODE_REFUSED,
+    RCODE_SERVFAIL,
 };
 use super::{
     server::DnsRateLimiter, DnsResolver, GlobalNodeResolver, HickoryRecursor, HickoryResolver,
@@ -46,9 +49,67 @@ pub enum RecursiveDnsError {
     Timeout,
     #[error("Invalid query")]
     InvalidQuery,
+    #[error("CNAME depth exceeded")]
+    DepthExceeded,
+    #[error("Circuit breaker open")]
+    CircuitBreakerOpen,
 }
 
 pub type RecursiveDnsResult<T> = Result<T, RecursiveDnsError>;
+
+pub struct CircuitBreaker {
+    failure_count: AtomicU32,
+    success_count: AtomicU32,
+    last_failure_time: AtomicU64,
+    failure_threshold: u32,
+    recovery_timeout_secs: u64,
+    success_threshold: u32,
+}
+
+impl CircuitBreaker {
+    pub fn new(config: &synvoid_config::dns::CircuitBreakerConfig) -> Self {
+        Self {
+            failure_count: AtomicU32::new(0),
+            success_count: AtomicU32::new(0),
+            last_failure_time: AtomicU64::new(0),
+            failure_threshold: config.failure_threshold,
+            recovery_timeout_secs: config.recovery_timeout_secs,
+            success_threshold: config.success_threshold,
+        }
+    }
+
+    pub fn is_open(&self) -> bool {
+        let failures = self.failure_count.load(Ordering::Relaxed);
+        if failures < self.failure_threshold {
+            return false;
+        }
+        let last = self.last_failure_time.load(Ordering::Relaxed);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        now.saturating_sub(last) < self.recovery_timeout_secs
+    }
+
+    pub fn record_success(&self) {
+        let s = self.success_count.fetch_add(1, Ordering::Relaxed) + 1;
+        if s >= self.success_threshold {
+            self.failure_count.store(0, Ordering::Relaxed);
+            self.success_count.store(0, Ordering::Relaxed);
+        }
+    }
+
+    pub fn record_failure(&self) {
+        self.failure_count.fetch_add(1, Ordering::Relaxed);
+        self.last_failure_time.store(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            Ordering::Relaxed,
+        );
+    }
+}
 
 pub struct RecursiveDnsServer {
     config: RecursiveDnsConfig,
@@ -59,6 +120,8 @@ pub struct RecursiveDnsServer {
     metrics: Option<Arc<DnsMetrics>>,
     query_semaphore: Arc<Semaphore>,
     running: Arc<tokio::sync::RwLock<bool>>,
+    circuit_breaker: Arc<CircuitBreaker>,
+    client_semaphores: Arc<Mutex<HashMap<IpAddr, Arc<Semaphore>>>>,
 }
 
 impl RecursiveDnsServer {
@@ -81,6 +144,7 @@ impl RecursiveDnsServer {
         let resolver = Self::create_resolver(&config, &global_node_ips)?;
         let cache = RecursiveDnsCache::new(config.cache.capacity, &config.cache);
         let query_semaphore = Arc::new(Semaphore::new(config.max_concurrent_queries));
+        let circuit_breaker = Arc::new(CircuitBreaker::new(&config.circuit_breaker));
 
         Ok(Self {
             config,
@@ -91,6 +155,8 @@ impl RecursiveDnsServer {
             metrics,
             query_semaphore,
             running: Arc::new(tokio::sync::RwLock::new(false)),
+            circuit_breaker,
+            client_semaphores: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -303,6 +369,32 @@ impl RecursiveDnsServer {
             .await
             .map_err(|_| RecursiveDnsError::RateLimited)?;
 
+        if let Some(metrics) = &self.metrics {
+            metrics.record_recursive_query();
+        }
+
+        let max_per_client = self.config.max_per_client_queries;
+        let client_sem = if max_per_client > 0 {
+            let mut map = self.client_semaphores.lock().unwrap();
+            Some(
+                map.entry(client_addr.ip())
+                    .or_insert_with(|| Arc::new(Semaphore::new(max_per_client as usize)))
+                    .clone(),
+            )
+        } else {
+            None
+        };
+
+        let _client_permit = if let Some(ref sem) = client_sem {
+            let permit = tokio::time::timeout(Duration::from_secs(1), sem.acquire())
+                .await
+                .map_err(|_| RecursiveDnsError::RateLimited)?
+                .map_err(|_| RecursiveDnsError::RateLimited)?;
+            Some(permit)
+        } else {
+            None
+        };
+
         let mut length_buf = [0u8; 2];
         stream.read_exact(&mut length_buf).await.map_err(|e| {
             RecursiveDnsError::UpstreamFailed(format!("Failed to read TCP length: {}", e))
@@ -317,6 +409,18 @@ impl RecursiveDnsServer {
 
         if let Some(metrics) = &self.metrics {
             metrics.record_query_received();
+        }
+
+        if let Some(ref acl) = self.config.client_acl {
+            if !acl.is_client_allowed(client_addr.ip()) {
+                if let Some(response) = build_error_response(&query, RCODE_REFUSED) {
+                    let len = response.len() as u16;
+                    let mut len_bytes = len.to_be_bytes().to_vec();
+                    len_bytes.extend_from_slice(&response);
+                    let _ = stream.write_all(&len_bytes).await;
+                }
+                return Err(RecursiveDnsError::FirewallBlocked);
+            }
         }
 
         if let Some(ref limiter) = self.rate_limiter {
@@ -357,8 +461,11 @@ impl RecursiveDnsServer {
         let qname_str = question.name().to_string();
         let qname_bytes = qname_str.as_bytes().to_vec();
 
+        let checking_disabled = parsed.metadata.checking_disabled;
+        let dnssec_ok = parsed.edns.as_ref().is_some_and(|e| e.flags().dnssec_ok);
+
         let (response, _) = match self
-            .resolve_upstream(&qname_bytes, question.query_type(), message_id)
+            .resolve_upstream(&qname_bytes, question.query_type(), message_id, checking_disabled, dnssec_ok)
             .await
         {
             Ok(r) => r,
@@ -372,6 +479,17 @@ impl RecursiveDnsServer {
                 return Err(e);
             }
         };
+
+        let authority_ns = self.collect_authority_ns(&qname_bytes).await;
+        if !validate_authority_bailiwick(&authority_ns, &qname_bytes) {
+            warn!(
+                "Bailiwick violation: authority NS records not in-bailiwick for {}",
+                String::from_utf8_lossy(&qname_bytes)
+            );
+            if let Some(metrics) = &self.metrics {
+                metrics.record_bailiwick_violation();
+            }
+        }
 
         let len = response.len() as u16;
         let mut len_bytes = len.to_be_bytes().to_vec();
@@ -413,6 +531,87 @@ impl RecursiveDnsServer {
             .await
             .map_err(|_| RecursiveDnsError::RateLimited)?;
 
+        if let Some(metrics) = &self.metrics {
+            metrics.record_recursive_query();
+        }
+
+        let max_per_client = self.config.max_per_client_queries;
+        if max_per_client > 0 {
+            let sem = {
+                let mut map = self.client_semaphores.lock().unwrap();
+                map.entry(client_addr.ip())
+                    .or_insert_with(|| Arc::new(Semaphore::new(max_per_client as usize)))
+                    .clone()
+            };
+            let _client_permit = tokio::time::timeout(Duration::from_secs(1), sem.acquire())
+                .await
+                .map_err(|_| RecursiveDnsError::RateLimited)?
+                .map_err(|_| RecursiveDnsError::RateLimited)?;
+
+            let query = match parse_dns_message(&packet) {
+                Ok(q) => q,
+                Err(_) => return Err(RecursiveDnsError::InvalidQuery),
+            };
+
+            if let Some(metrics) = &self.metrics {
+                metrics.record_query_received();
+            }
+
+            if let Some(ref acl) = self.config.client_acl {
+                if !acl.is_client_allowed(client_addr.ip()) {
+                    if let Some(response) = build_error_response(&packet, RCODE_REFUSED) {
+                        let _ = socket.send_to(&response, client_addr).await;
+                    }
+                    return Err(RecursiveDnsError::FirewallBlocked);
+                }
+            }
+
+            if let Some(ref limiter) = self.rate_limiter {
+                if limiter.check_ip(client_addr.ip()).is_err() {
+                    if let Some(metrics) = &self.metrics {
+                        metrics.record_rate_limited();
+                    }
+                    return Err(RecursiveDnsError::RateLimited);
+                }
+            }
+
+            if let Some(ref firewall) = self.firewall {
+                if let Ok(parsed_q) = ParsedDnsQuery::parse(&packet) {
+                    let fw = firewall.read();
+                    if let Ok(decision) = fw.evaluate_query(&parsed_q, client_addr.ip(), "") {
+                        if decision.action == crate::firewall::DnsFirewallAction::Block {
+                            if let Some(metrics) = &self.metrics {
+                                metrics.record_firewall_blocked("recursive");
+                            }
+                            return Err(RecursiveDnsError::FirewallBlocked);
+                        }
+                    }
+                }
+            }
+
+            let message_id = get_message_id(&packet).unwrap_or(0);
+            let response = match self.resolve_query(&query, message_id).await {
+                Ok(response) => response,
+                Err(e) => {
+                    if let Some(response) = build_error_response(&packet, RCODE_SERVFAIL) {
+                        let _ = socket.send_to(&response, client_addr).await;
+                    }
+                    return Err(e);
+                }
+            };
+
+            socket
+                .send_to(&response, client_addr)
+                .await
+                .map_err(|e| RecursiveDnsError::UpstreamFailed(format!("Send failed: {}", e)))?;
+
+            if let Some(metrics) = &self.metrics {
+                metrics.record_response_sent("NOERROR");
+            }
+
+            return Ok(());
+        }
+
         let query = match parse_dns_message(&packet) {
             Ok(q) => q,
             Err(_) => return Err(RecursiveDnsError::InvalidQuery),
@@ -420,6 +619,15 @@ impl RecursiveDnsServer {
 
         if let Some(metrics) = &self.metrics {
             metrics.record_query_received();
+        }
+
+        if let Some(ref acl) = self.config.client_acl {
+            if !acl.is_client_allowed(client_addr.ip()) {
+                if let Some(response) = build_error_response(&packet, RCODE_REFUSED) {
+                    let _ = socket.send_to(&response, client_addr).await;
+                }
+                return Err(RecursiveDnsError::FirewallBlocked);
+            }
         }
 
         if let Some(ref limiter) = self.rate_limiter {
@@ -469,8 +677,25 @@ impl RecursiveDnsServer {
     }
 
     async fn resolve_query(&self, query: &Message, message_id: u16) -> RecursiveDnsResult<Vec<u8>> {
+        self.resolve_query_with_depth(query, message_id, 0).await
+    }
+
+    async fn resolve_query_with_depth(
+        &self,
+        query: &Message,
+        message_id: u16,
+        recursion_depth: u8,
+    ) -> RecursiveDnsResult<Vec<u8>> {
         if query.queries.is_empty() {
             return Err(RecursiveDnsError::InvalidQuery);
+        }
+
+        if self.config.max_recursion_depth > 0 && recursion_depth >= self.config.max_recursion_depth {
+            return Err(RecursiveDnsError::DepthExceeded);
+        }
+
+        if self.config.max_cname_depth > 0 && recursion_depth >= self.config.max_cname_depth {
+            return Err(RecursiveDnsError::DepthExceeded);
         }
 
         let question = &query.queries[0];
@@ -478,13 +703,17 @@ impl RecursiveDnsServer {
         let qname_bytes = qname_str.as_bytes().to_vec();
         let qtype = question.query_type();
 
+        let checking_disabled = query.metadata.checking_disabled;
+        let dnssec_ok = query.edns.as_ref().is_some_and(|e| e.flags().dnssec_ok);
+
         debug!("Recursive query for {} (type {:?})", question.name(), qtype);
 
         let qtype_u16: u16 = qtype.into();
-        let cache_key = RecursiveCacheKey::new(&qname_bytes, qtype_u16, None);
+        let cache_key = RecursiveCacheKey::new_with_dnssec(&qname_bytes, qtype_u16, None, dnssec_ok);
 
-        if let Some((records, stale, is_dnssec_validated)) = self.cache.get(&cache_key) {
+        if let Some((records, stale, validation_state)) = self.cache.get(&cache_key) {
             if let Some(metrics) = &self.metrics {
+                metrics.record_recursive_cache_hit();
                 if stale {
                     metrics.record_cache_hit();
                 }
@@ -495,17 +724,31 @@ impl RecursiveDnsServer {
                 question.query_type(),
                 records,
                 message_id,
-                is_dnssec_validated,
+                validation_state,
+                checking_disabled,
+                dnssec_ok,
             );
             return Ok(response);
         }
 
-        let (response, _is_dnssec_validated) = self
-            .resolve_upstream(&qname_bytes, question.query_type(), message_id)
+        let (response, _validation_state) = self
+            .resolve_upstream(&qname_bytes, question.query_type(), message_id, checking_disabled, dnssec_ok)
             .await?;
+
+        let authority_ns = self.collect_authority_ns(&qname_bytes).await;
+        if !validate_authority_bailiwick(&authority_ns, &qname_bytes) {
+            warn!(
+                "Bailiwick violation: authority NS records not in-bailiwick for {}",
+                String::from_utf8_lossy(&qname_bytes)
+            );
+            if let Some(metrics) = &self.metrics {
+                metrics.record_bailiwick_violation();
+            }
+        }
 
         if let Some(metrics) = &self.metrics {
             metrics.record_cache_miss();
+            metrics.record_recursive_cache_miss();
         }
 
         Ok(response)
@@ -516,7 +759,20 @@ impl RecursiveDnsServer {
         qname: &[u8],
         qtype: RecordType,
         message_id: u16,
-    ) -> RecursiveDnsResult<(Vec<u8>, bool)> {
+        checking_disabled: bool,
+        dnssec_ok: bool,
+    ) -> RecursiveDnsResult<(Vec<u8>, DnssecValidationState)> {
+        if self.circuit_breaker.is_open() {
+            if let Some(metrics) = &self.metrics {
+                metrics.record_recursive_upstream_failure();
+            }
+            return Err(RecursiveDnsError::CircuitBreakerOpen);
+        }
+
+        if let Some(metrics) = &self.metrics {
+            metrics.record_recursive_upstream_forward();
+        }
+
         let domain = String::from_utf8_lossy(qname).to_string();
         let mut is_dnssec_validated = false;
 
@@ -524,6 +780,7 @@ impl RecursiveDnsServer {
             RecordType::A | RecordType::AAAA => {
                 match self.resolver.lookup_ip_with_ttl(&domain).await {
                     Ok(ip_record) => {
+                        self.circuit_breaker.record_success();
                         is_dnssec_validated = ip_record.is_dnssec_validated;
                         let ttl = ip_record.ttl.unwrap_or(300);
                         ip_record
@@ -552,54 +809,65 @@ impl RecursiveDnsServer {
                             })
                             .collect()
                     }
-                    Err(_) => Vec::new(),
+                    Err(_) => {
+                        self.circuit_breaker.record_failure();
+                        Vec::new()
+                    }
                 }
             }
             RecordType::TXT => match self.resolver.lookup_txt(&domain).await {
-                Ok(txt) => txt
-                    .values
-                    .into_iter()
-                    .map(|v| CachedRecord {
-                        name: qname.to_vec(),
-                        record_type: 16,
-                        ttl: txt.ttl.unwrap_or(300),
-                        data: v.into_bytes(),
-                    })
-                    .collect(),
+                Ok(txt) => {
+                    self.circuit_breaker.record_success();
+                    txt.values
+                        .into_iter()
+                        .map(|v| CachedRecord {
+                            name: qname.to_vec(),
+                            record_type: 16,
+                            ttl: txt.ttl.unwrap_or(300),
+                            data: v.into_bytes(),
+                        })
+                        .collect()
+                }
                 Err(_) => Vec::new(),
             },
             RecordType::NS => match self.resolver.lookup_ns(&domain).await {
-                Ok(ns) => ns
-                    .nameservers
-                    .into_iter()
-                    .map(|ns_name| CachedRecord {
-                        name: qname.to_vec(),
-                        record_type: 2,
-                        ttl: ns.ttl.unwrap_or(300),
-                        data: ns_name.into_bytes(),
-                    })
-                    .collect(),
+                Ok(ns) => {
+                    self.circuit_breaker.record_success();
+                    ns.nameservers
+                        .into_iter()
+                        .map(|ns_name| CachedRecord {
+                            name: qname.to_vec(),
+                            record_type: 2,
+                            ttl: ns.ttl.unwrap_or(300),
+                            data: ns_name.into_bytes(),
+                        })
+                        .collect()
+                }
                 Err(_) => Vec::new(),
             },
             RecordType::MX => match self.resolver.lookup_mx(&domain).await {
-                Ok(mx_records) => mx_records
-                    .into_iter()
-                    .map(|mx: MxRecord| {
-                        let mut data = Vec::new();
-                        data.extend_from_slice(&mx.preference.to_be_bytes());
-                        data.extend_from_slice(mx.exchange.as_bytes());
-                        CachedRecord {
-                            name: qname.to_vec(),
-                            record_type: 15,
-                            ttl: mx.ttl.unwrap_or(300),
-                            data,
-                        }
-                    })
-                    .collect(),
+                Ok(mx_records) => {
+                    self.circuit_breaker.record_success();
+                    mx_records
+                        .into_iter()
+                        .map(|mx: MxRecord| {
+                            let mut data = Vec::new();
+                            data.extend_from_slice(&mx.preference.to_be_bytes());
+                            data.extend_from_slice(mx.exchange.as_bytes());
+                            CachedRecord {
+                                name: qname.to_vec(),
+                                record_type: 15,
+                                ttl: mx.ttl.unwrap_or(300),
+                                data,
+                            }
+                        })
+                        .collect()
+                }
                 Err(_) => Vec::new(),
             },
             RecordType::CNAME => match self.resolver.lookup_cname(&domain).await {
                 Ok(Some(cname_record)) => {
+                    self.circuit_breaker.record_success();
                     let cname_data = encode_domain_to_wire(&cname_record.cname);
                     vec![CachedRecord {
                         name: qname.to_vec(),
@@ -613,6 +881,7 @@ impl RecursiveDnsServer {
             },
             RecordType::SOA => match self.resolver.lookup_soa(&domain).await {
                 Ok(Some(soa)) => {
+                    self.circuit_breaker.record_success();
                     let ttl = soa.ttl.unwrap_or(300);
                     let mut data = Vec::new();
                     data.extend_from_slice(&encode_domain_to_wire(&soa.mname));
@@ -634,6 +903,7 @@ impl RecursiveDnsServer {
             },
             RecordType::PTR => match self.resolver.lookup_ptr(&domain).await {
                 Ok(Some(ptr)) => {
+                    self.circuit_breaker.record_success();
                     let ttl = ptr.ttl.unwrap_or(300);
                     let data = encode_domain_to_wire(&ptr.domain);
                     vec![CachedRecord {
@@ -647,22 +917,25 @@ impl RecursiveDnsServer {
                 Err(_) => Vec::new(),
             },
             RecordType::SRV => match self.resolver.lookup_srv(&domain).await {
-                Ok(srv_records) => srv_records
-                    .into_iter()
-                    .map(|srv: SrvRecord| {
-                        let mut data = Vec::new();
-                        data.extend_from_slice(&srv.priority.to_be_bytes());
-                        data.extend_from_slice(&srv.weight.to_be_bytes());
-                        data.extend_from_slice(&srv.port.to_be_bytes());
-                        data.extend_from_slice(&encode_domain_to_wire(&srv.target));
-                        CachedRecord {
-                            name: qname.to_vec(),
-                            record_type: 33,
-                            ttl: srv.ttl.unwrap_or(300),
-                            data,
-                        }
-                    })
-                    .collect(),
+                Ok(srv_records) => {
+                    self.circuit_breaker.record_success();
+                    srv_records
+                        .into_iter()
+                        .map(|srv: SrvRecord| {
+                            let mut data = Vec::new();
+                            data.extend_from_slice(&srv.priority.to_be_bytes());
+                            data.extend_from_slice(&srv.weight.to_be_bytes());
+                            data.extend_from_slice(&srv.port.to_be_bytes());
+                            data.extend_from_slice(&encode_domain_to_wire(&srv.target));
+                            CachedRecord {
+                                name: qname.to_vec(),
+                                record_type: 33,
+                                ttl: srv.ttl.unwrap_or(300),
+                                data,
+                            }
+                        })
+                        .collect()
+                }
                 Err(_) => Vec::new(),
             },
             _ => Vec::new(),
@@ -670,12 +943,15 @@ impl RecursiveDnsServer {
 
         let qtype_u16: u16 = qtype.into();
 
-        if records.is_empty() {
-            let cache_key = RecursiveCacheKey::new(qname, qtype_u16, None);
-            self.cache
-                .insert_negative(cache_key, true, self.config.cache.negative_ttl_secs as u32);
+        let effective_dnssec_validated = if checking_disabled { false } else { is_dnssec_validated };
 
-            // NODATA: domain exists but requested type doesn't — return NOERROR with empty answer
+        let validation_state = to_validation_state(effective_dnssec_validated, checking_disabled, !self.config.dnssec_validation);
+
+        if records.is_empty() {
+            let cache_key = RecursiveCacheKey::new_with_dnssec(qname, qtype_u16, None, dnssec_ok);
+            self.cache
+                .insert_negative(cache_key, true, self.config.cache.negative_ttl_secs as u32, validation_state);
+
             let flags = crate::wire::MessageFlags {
                 is_response: true,
                 opcode: 0,
@@ -683,8 +959,9 @@ impl RecursiveDnsServer {
                 truncated: false,
                 recursion_desired: true,
                 recursion_available: true,
-                authentic_data: is_dnssec_validated,
-                response_code: 0, // NOERROR, not NXDOMAIN
+                authentic_data: effective_dnssec_validated && dnssec_ok,
+                checking_disabled,
+                response_code: 0,
             };
 
             let question_section = self.build_question_section(qname, qtype_u16);
@@ -692,17 +969,17 @@ impl RecursiveDnsServer {
 
             let mut response = header;
             response.extend_from_slice(&question_section);
-            return Ok((response, is_dnssec_validated));
+            return Ok((response, validation_state));
         }
 
-        let cache_key = RecursiveCacheKey::new(qname, qtype_u16, None);
+        let cache_key = RecursiveCacheKey::new_with_dnssec(qname, qtype_u16, None, dnssec_ok);
         let min_ttl = records.iter().map(|r| r.ttl).min().unwrap_or(300);
         self.cache
-            .insert_positive(cache_key, records.clone(), min_ttl, is_dnssec_validated);
+            .insert_positive(cache_key, records.clone(), min_ttl, validation_state);
 
         Ok((
-            self.build_cached_response(qname, qtype, records, message_id, is_dnssec_validated),
-            is_dnssec_validated,
+            self.build_cached_response(qname, qtype, records, message_id, validation_state, checking_disabled, dnssec_ok),
+            validation_state,
         ))
     }
 
@@ -712,8 +989,12 @@ impl RecursiveDnsServer {
         qtype: RecordType,
         records: Vec<CachedRecord>,
         message_id: u16,
-        is_dnssec_validated: bool,
+        validation_state: DnssecValidationState,
+        checking_disabled: bool,
+        dnssec_ok: bool,
     ) -> Vec<u8> {
+        let effective_dnssec_validated = validation_state == DnssecValidationState::Secure && !checking_disabled;
+        let ad_bit = effective_dnssec_validated && dnssec_ok;
         let qtype_u16: u16 = qtype.into();
 
         let qdcount = 1u16;
@@ -760,7 +1041,8 @@ impl RecursiveDnsServer {
                 truncated: true,
                 recursion_desired: true,
                 recursion_available: true,
-                authentic_data: is_dnssec_validated,
+                authentic_data: ad_bit,
+                checking_disabled,
                 response_code: 0,
             };
 
@@ -779,7 +1061,8 @@ impl RecursiveDnsServer {
                 truncated: false,
                 recursion_desired: true,
                 recursion_available: true,
-                authentic_data: is_dnssec_validated,
+                authentic_data: ad_bit,
+                checking_disabled,
                 response_code: 0,
             };
 
@@ -836,6 +1119,15 @@ impl RecursiveDnsServer {
         section
     }
 
+    async fn collect_authority_ns(&self, qname: &[u8]) -> Vec<String> {
+        let domain = String::from_utf8_lossy(qname).to_string();
+        if let Ok(ns) = self.resolver.lookup_ns(&domain).await {
+            ns.nameservers
+        } else {
+            Vec::new()
+        }
+    }
+
     pub fn cache(&self) -> &RecursiveDnsCache {
         &self.cache
     }
@@ -856,7 +1148,19 @@ impl Clone for RecursiveDnsServer {
             metrics: self.metrics.clone(),
             query_semaphore: self.query_semaphore.clone(),
             running: self.running.clone(),
+            circuit_breaker: self.circuit_breaker.clone(),
+            client_semaphores: self.client_semaphores.clone(),
         }
+    }
+}
+
+fn to_validation_state(is_validated: bool, cd_bit: bool, dnssec_disabled: bool) -> DnssecValidationState {
+    if dnssec_disabled || cd_bit {
+        DnssecValidationState::Unchecked
+    } else if is_validated {
+        DnssecValidationState::Secure
+    } else {
+        DnssecValidationState::Bogus
     }
 }
 
@@ -878,6 +1182,86 @@ fn encode_domain_to_wire(domain: &str) -> Vec<u8> {
     }
     result.push(0);
     result
+}
+
+pub fn is_in_bailiwick(name: &[u8], zone_origin: &[u8]) -> bool {
+    if name.is_empty() || zone_origin.is_empty() {
+        return name == zone_origin;
+    }
+    let name_lower = name.to_ascii_lowercase();
+    let zone_lower = zone_origin.to_ascii_lowercase();
+    if name_lower == zone_lower {
+        return true;
+    }
+    if name_lower.len() <= zone_lower.len() {
+        return false;
+    }
+    let suffix = &name_lower[name_lower.len() - zone_lower.len()..];
+    if suffix != zone_lower {
+        return false;
+    }
+    name_lower[name_lower.len() - zone_lower.len() - 1] == b'.'
+}
+
+pub fn validate_authority_bailiwick(
+    authority_ns: &[String],
+    question_name: &[u8],
+) -> bool {
+    for ns in authority_ns {
+        let ns_bytes = ns.as_bytes();
+        if !is_in_bailiwick(ns_bytes, question_name)
+            && !is_in_bailiwick(question_name, ns_bytes)
+        {
+            return false;
+        }
+    }
+    true
+}
+
+pub fn validate_additional_bailiwick(
+    additional_name: &[u8],
+    authority_ns: &[String],
+) -> bool {
+    for ns in authority_ns {
+        let ns_bytes = ns.as_bytes();
+        if is_in_bailiwick(additional_name, ns_bytes) {
+            return true;
+        }
+    }
+    false
+}
+
+pub fn truncate_ecs_prefix(
+    ecs: &crate::edns::ClientSubnet,
+    max_prefix_v4: u8,
+    max_prefix_v6: u8,
+) -> crate::edns::ClientSubnet {
+    let max_prefix = match ecs.address {
+        std::net::IpAddr::V4(_) => max_prefix_v4,
+        std::net::IpAddr::V6(_) => max_prefix_v6,
+    };
+    crate::edns::ClientSubnet {
+        address: ecs.address,
+        prefix_len: ecs.prefix_len.min(max_prefix),
+    }
+}
+
+pub fn evaluate_ecs_forwarding_policy(
+    policy: &synvoid_config::dns::EcsForwardingPolicy,
+    client_subnet: &Option<crate::edns::ClientSubnet>,
+) -> Option<crate::edns::ClientSubnet> {
+    match policy {
+        synvoid_config::dns::EcsForwardingPolicy::Never => None,
+        synvoid_config::dns::EcsForwardingPolicy::Always => client_subnet.clone(),
+        synvoid_config::dns::EcsForwardingPolicy::IfPresent => {
+            if client_subnet.is_some() {
+                client_subnet.clone()
+            } else {
+                None
+            }
+        }
+        synvoid_config::dns::EcsForwardingPolicy::CdnOnly => None,
+    }
 }
 
 #[cfg(test)]
@@ -906,6 +1290,7 @@ mod tests {
         assert_eq!(key.qname, b"example.com");
         assert_eq!(key.qtype, RecursiveRecordType::A);
         assert!(key.client_subnet.is_none());
+        assert!(!key.dnssec_ok);
     }
 
     #[test]
@@ -929,14 +1314,14 @@ mod tests {
             vec![93, 184, 216, 34],
         )];
 
-        cache.insert_positive(key.clone(), records.clone(), 300, false);
+        cache.insert_positive(key.clone(), records.clone(), 300, DnssecValidationState::Unchecked);
 
         let result = cache.get(&key);
         assert!(result.is_some());
         let (retrieved, stale, validated) = result.unwrap();
         assert_eq!(retrieved.len(), 1);
         assert!(!stale);
-        assert!(!validated);
+        assert_eq!(validated, DnssecValidationState::Unchecked);
     }
 
     #[test]
@@ -944,10 +1329,9 @@ mod tests {
         let cache = create_test_cache();
 
         let key = RecursiveCacheKey::new(b"nonexistent.com", 1, None);
-        cache.insert_negative(key.clone(), true, 300);
+        cache.insert_negative(key.clone(), true, 300, DnssecValidationState::Unchecked);
 
         let result = cache.get(&key);
-        // Negative cache returns Some with empty records
         assert!(result.is_some());
         let (records, _stale, _validated) = result.unwrap();
         assert!(records.is_empty());
@@ -960,7 +1344,7 @@ mod tests {
         let key = RecursiveCacheKey::new(b"example.com", 1, None);
         let records = vec![create_test_record(b"example.com", 1, 300, vec![1, 2, 3, 4])];
 
-        cache.insert_positive(key.clone(), records, 300, false);
+        cache.insert_positive(key.clone(), records, 300, DnssecValidationState::Unchecked);
 
         let stats = cache.stats();
         assert_eq!(stats.insertions, 1);
@@ -975,8 +1359,8 @@ mod tests {
         let records1 = vec![create_test_record(b"example.com", 1, 300, vec![1, 1, 1, 1])];
         let records2 = vec![create_test_record(b"test.com", 1, 300, vec![2, 2, 2, 2])];
 
-        cache.insert_positive(key1.clone(), records1, 300, false);
-        cache.insert_positive(key2.clone(), records2, 300, false);
+        cache.insert_positive(key1.clone(), records1, 300, DnssecValidationState::Unchecked);
+        cache.insert_positive(key2.clone(), records2, 300, DnssecValidationState::Unchecked);
 
         assert!(cache.get(&key1).is_some());
         assert!(cache.get(&key2).is_some());
@@ -996,8 +1380,8 @@ mod tests {
         let records1 = vec![create_test_record(b"example.com", 1, 300, vec![1, 1, 1, 1])];
         let records2 = vec![create_test_record(b"test.com", 1, 300, vec![2, 2, 2, 2])];
 
-        cache.insert_positive(key1.clone(), records1, 300, false);
-        cache.insert_positive(key2.clone(), records2, 300, false);
+        cache.insert_positive(key1.clone(), records1, 300, DnssecValidationState::Unchecked);
+        cache.insert_positive(key2.clone(), records2, 300, DnssecValidationState::Unchecked);
 
         cache.invalidate_all();
 
@@ -1046,7 +1430,7 @@ mod tests {
         let key = RecursiveCacheKey::new(b"example.com", 1, None);
         let records = vec![create_test_record(b"example.com", 1, 300, vec![1, 2, 3, 4])];
 
-        cache.insert_positive(key.clone(), records, 300, false);
+        cache.insert_positive(key.clone(), records, 300, DnssecValidationState::Unchecked);
 
         assert!(!cache.is_empty());
         assert_eq!(cache.len(), 1);
@@ -1060,10 +1444,10 @@ mod tests {
 
         let key1 = RecursiveCacheKey::new(b"exists.com", 1, None);
         let key2 = RecursiveCacheKey::new(b"notfound.com", 1, None);
-        cache.insert_negative(key2.clone(), true, 300);
+        cache.insert_negative(key2.clone(), true, 300, DnssecValidationState::Unchecked);
 
         let records = vec![create_test_record(b"exists.com", 1, 300, vec![1, 1, 1, 1])];
-        cache.insert_positive(key1.clone(), records, 300, false);
+        cache.insert_positive(key1.clone(), records, 300, DnssecValidationState::Unchecked);
 
         assert_eq!(cache.positive_len(), 1);
         assert_eq!(cache.negative_len(), 1);
@@ -1131,8 +1515,8 @@ mod tests {
             vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
         )];
 
-        cache.insert_positive(key_a.clone(), records_a, 300, false);
-        cache.insert_positive(key_aaaa.clone(), records_aaaa, 300, false);
+        cache.insert_positive(key_a.clone(), records_a, 300, DnssecValidationState::Unchecked);
+        cache.insert_positive(key_aaaa.clone(), records_aaaa, 300, DnssecValidationState::Unchecked);
 
         assert_eq!(cache.len(), 2);
 
@@ -1154,13 +1538,13 @@ mod tests {
             key1.clone(),
             vec![create_test_record(b"example.com", 1, 300, vec![1, 1, 1, 1])],
             300,
-            false,
+            DnssecValidationState::Unchecked,
         );
         cache.insert_positive(
             key2.clone(),
             vec![create_test_record(b"test.com", 1, 300, vec![2, 2, 2, 2])],
             300,
-            false,
+            DnssecValidationState::Unchecked,
         );
 
         cache.invalidate(b"example.com");
@@ -1202,6 +1586,12 @@ mod tests {
                 firewall: synvoid_config::dns::DnsFirewallConfig::default(),
                 root_hints_path: "".to_string(),
                 trust_anchor_path: "".to_string(),
+                client_acl: None,
+                max_cname_depth: 10,
+                max_recursion_depth: 16,
+                max_per_client_queries: 100,
+                circuit_breaker: synvoid_config::dns::CircuitBreakerConfig::default(),
+                ecs: synvoid_config::dns::RecursiveEcsConfig::default(),
             },
             resolver: Arc::new(HickoryResolver::with_upstream_servers(&[upstream_ip], 5).unwrap()),
             cache: create_test_cache(),
@@ -1210,6 +1600,10 @@ mod tests {
             metrics: None,
             query_semaphore: Arc::new(Semaphore::new(100)),
             running: Arc::new(tokio::sync::RwLock::new(false)),
+            circuit_breaker: Arc::new(CircuitBreaker::new(
+                &synvoid_config::dns::CircuitBreakerConfig::default(),
+            )),
+            client_semaphores: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }

@@ -28,6 +28,7 @@ aes-gcm = "0.10"
 pbkdf2 = "0.12"
 subtle = "2"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
+ipnetwork = "0.18"
 pqc = { path = "../../pqc" }
 
 [features]
