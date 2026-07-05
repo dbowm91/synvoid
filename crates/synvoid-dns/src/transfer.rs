@@ -1153,8 +1153,8 @@ mod tests {
             true,
             true,
             false,
-            true,  // axfr_enabled
-            true,  // tcp_only
+            true, // axfr_enabled
+            true, // tcp_only
         );
         let result = transfer.handle_axfr_request(
             "example.com",

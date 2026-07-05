@@ -88,10 +88,7 @@ impl DnsServer {
             return (Arc::new(packet), report);
         }
 
-        let records_signed = dnssec_ok
-            && !records.is_empty()
-            && records[0].record_type != RecordType::DNSKEY
-            && zsk.is_some();
+        let records_signed = dnssec_ok && !records.is_empty() && zsk.is_some();
 
         if records_signed {
             if let Some(key) = zsk {

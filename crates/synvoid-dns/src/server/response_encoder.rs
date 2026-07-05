@@ -205,16 +205,29 @@ pub(super) fn encode_rr(
             .map_err(|_| format!("Invalid {} hex value", u16::from(record.record_type)))?,
         RecordType::DNSKEY => {
             let key_bytes = hex::decode(&record.value).map_err(|_| "Invalid DNSKEY hex value")?;
+            if key_bytes.len() < 4 {
+                return Err("DNSKEY RDATA too short".to_string());
+            }
+            let flags = u16::from_be_bytes([key_bytes[0], key_bytes[1]]);
+            let algo_byte = key_bytes[3];
+            let algorithm = Algorithm::from_u8(algo_byte)
+                .ok_or_else(|| format!("Unsupported DNSKEY algorithm: {}", algo_byte))?;
+            let public_key = key_bytes[4..].to_vec();
+            let key_type = if flags & 0x0100 != 0 {
+                crate::dnssec::KeyType::KSK
+            } else {
+                crate::dnssec::KeyType::ZSK
+            };
             compute_dnskey(&crate::dnssec::ZoneSigningKey {
                 key_id: String::new(),
-                algorithm: Algorithm::Ed25519,
-                key_type: crate::dnssec::KeyType::KSK,
+                algorithm,
+                key_type,
                 created_at: 0,
                 expires_at: 0,
-                public_key: key_bytes,
+                public_key,
                 private_key: Vec::new(),
                 key_tag: 0,
-                flags: 257,
+                flags,
                 key_size: None,
             })
         }
@@ -1021,7 +1034,8 @@ mod tests {
 
     #[test]
     fn test_encode_rr_dnskey_from_hex() {
-        let key_hex = "01010003080bed0b3b5c091c4728bfe63b25d3e7e3c26f8536b0e4df1e053e7f224c134e";
+        // Ed25519 KSK: flags=257 (0x0101), protocol=3, algorithm=15 (0x0f), 32-byte public key
+        let key_hex = "0101030faabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccdd";
         let record = make_record("example.com", RecordType::DNSKEY, key_hex, 3600);
         let encoded = encode_rr(&record, None).unwrap();
         assert_eq!(encoded.record_type, RecordType::DNSKEY);
@@ -1132,7 +1146,8 @@ mod tests {
     #[test]
     fn test_assemble_packet_dnskey_response() {
         let mut envelope = ResponseEnvelope::default();
-        let key_hex = "01010003080bed0b3b5c091c4728bfe63b25d3e7e3c26f8536b0e4df1e053e7f224c134e";
+        // Ed25519 KSK: flags=257 (0x0101), protocol=3, algorithm=15 (0x0f), 32-byte public key
+        let key_hex = "0101030faabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccdd";
         let record = make_record("example.com", RecordType::DNSKEY, key_hex, 3600);
         envelope
             .answer_records

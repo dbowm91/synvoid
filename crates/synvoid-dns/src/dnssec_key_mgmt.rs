@@ -47,6 +47,133 @@ impl DnsSecKeyManager {
         Ok(())
     }
 
+    pub fn load_keys_from_disk(&mut self) -> Result<(), String> {
+        for (key_type, is_standby) in [
+            (KeyType::KSK, false),
+            (KeyType::ZSK, false),
+            (KeyType::KSK, true),
+            (KeyType::ZSK, true),
+        ] {
+            let dir_name = match (key_type, is_standby) {
+                (KeyType::KSK, false) => "ksk",
+                (KeyType::ZSK, false) => "zsk",
+                (KeyType::KSK, true) => "ksk",
+                (KeyType::ZSK, true) => "zsk",
+            };
+            let key_dir = self.key_path.join(dir_name);
+            if !key_dir.exists() {
+                continue;
+            }
+
+            let entries = std::fs::read_dir(&key_dir)
+                .map_err(|e| format!("Failed to read key directory: {}", e))?;
+
+            let mut best_key: Option<ZoneSigningKey> = None;
+
+            for entry in entries {
+                let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
+                let path = entry.path();
+                if !path.is_file() || path.extension().map(|e| e != "key").unwrap_or(true) {
+                    continue;
+                }
+
+                let content = std::fs::read_to_string(&path)
+                    .map_err(|e| format!("Failed to read key file: {}", e))?;
+                let meta: serde_json::Value = serde_json::from_str(&content)
+                    .map_err(|e| format!("Invalid key metadata: {}", e))?;
+
+                let meta_standby = meta
+                    .get("standby")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if meta_standby != is_standby {
+                    continue;
+                }
+
+                let created_at = meta.get("created_at").and_then(|v| v.as_u64()).unwrap_or(0);
+                let expires_at = meta
+                    .get("expires_at")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(u64::MAX);
+                let now = synvoid_core::time::current_timestamp_secs();
+                if expires_at < now {
+                    continue;
+                }
+
+                let algo_byte = meta.get("algorithm").and_then(|v| v.as_u64()).unwrap_or(15) as u8;
+                let algorithm = Algorithm::from_u8(algo_byte).unwrap_or(Algorithm::Ed25519);
+                let key_tag = meta.get("key_tag").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
+                let flags = meta.get("flags").and_then(|v| v.as_u64()).unwrap_or(257) as u16;
+                let key_size = meta
+                    .get("key_size")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32);
+                let key_id_str = meta
+                    .get("key_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(dir_name);
+
+                let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                let pub_file = key_dir.join(format!("{}.pub", stem));
+                let priv_file = key_dir.join(format!("{}.priv", stem));
+
+                if !pub_file.exists() || !priv_file.exists() {
+                    continue;
+                }
+
+                let public_key = std::fs::read(&pub_file)
+                    .map_err(|e| format!("Failed to read public key: {}", e))?;
+                let private_key = std::fs::read(&priv_file)
+                    .map_err(|e| format!("Failed to read private key: {}", e))?;
+
+                let zone_key = ZoneSigningKey {
+                    key_id: key_id_str.to_string(),
+                    algorithm,
+                    key_type,
+                    created_at,
+                    expires_at,
+                    public_key,
+                    private_key,
+                    key_tag,
+                    flags,
+                    key_size,
+                };
+
+                match &best_key {
+                    Some(existing) => {
+                        if created_at > existing.created_at {
+                            best_key = Some(zone_key);
+                        }
+                    }
+                    None => best_key = Some(zone_key),
+                }
+            }
+
+            if let Some(key) = best_key {
+                let is_ksk = key_type == KeyType::KSK;
+                if is_standby {
+                    if is_ksk {
+                        self.standby_ksk = Some(key.clone());
+                    } else {
+                        self.standby_zsk = Some(key.clone());
+                    }
+                } else if is_ksk {
+                    self.key_signing_key = Some(key.clone());
+                } else {
+                    self.zone_signing_key = Some(key.clone());
+                }
+                tracing::info!(
+                    "Loaded {}{} key from disk (tag: {})",
+                    if is_standby { "standby " } else { "" },
+                    if is_ksk { "KSK" } else { "ZSK" },
+                    key.key_tag,
+                );
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn get_signing_keys(&self) -> Vec<&ZoneSigningKey> {
         let mut keys = Vec::new();
 
@@ -332,6 +459,13 @@ impl DnsSecKeyManager {
         let priv_file = key_dir.join(format!("{}.priv", key_name));
         std::fs::write(&priv_file, &private_key)
             .map_err(|e| format!("Failed to write private key: {}", e))?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&priv_file, std::fs::Permissions::from_mode(0o600))
+                .map_err(|e| format!("Failed to set private key permissions: {}", e))?;
+        }
 
         let zone_key = ZoneSigningKey {
             key_id: key_id.to_string(),
@@ -808,5 +942,461 @@ impl DnsSecKeyManager {
         tracing::info!("Exported DNSSEC keys to: {}", file_path);
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_key_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "dnssec_key_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        dir
+    }
+
+    #[test]
+    fn test_initialize_creates_directories() {
+        let dir = temp_key_dir();
+        let mut mgr = DnsSecKeyManager::new(dir.clone());
+        mgr.initialize().unwrap();
+        assert!(dir.exists());
+        assert!(dir.join("ksk").exists());
+        assert!(dir.join("zsk").exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_generate_ed25519_ksk() {
+        let dir = temp_key_dir();
+        let mut mgr = DnsSecKeyManager::new(dir.clone());
+        mgr.initialize().unwrap();
+
+        mgr.generate_key(Algorithm::Ed25519, KeyType::KSK, 0, 365)
+            .unwrap();
+
+        let ksk = mgr.key_signing_key.as_ref().expect("KSK should be set");
+        assert_eq!(ksk.algorithm, Algorithm::Ed25519);
+        assert_eq!(ksk.key_type, KeyType::KSK);
+        assert_eq!(ksk.flags, 257);
+        assert_eq!(ksk.public_key.len(), 32);
+        assert_eq!(ksk.private_key.len(), 32);
+        assert!(ksk.key_tag > 0);
+        assert!(ksk.expires_at > ksk.created_at);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_generate_ed25519_zsk() {
+        let dir = temp_key_dir();
+        let mut mgr = DnsSecKeyManager::new(dir.clone());
+        mgr.initialize().unwrap();
+
+        mgr.generate_key(Algorithm::Ed25519, KeyType::ZSK, 0, 90)
+            .unwrap();
+
+        let zsk = mgr.zone_signing_key.as_ref().expect("ZSK should be set");
+        assert_eq!(zsk.algorithm, Algorithm::Ed25519);
+        assert_eq!(zsk.key_type, KeyType::ZSK);
+        assert_eq!(zsk.flags, 256);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_generate_rsa_ksk() {
+        let dir = temp_key_dir();
+        let mut mgr = DnsSecKeyManager::new(dir.clone());
+        mgr.initialize().unwrap();
+
+        mgr.generate_key(Algorithm::RSA, KeyType::KSK, 2048, 365)
+            .unwrap();
+
+        let ksk = mgr.key_signing_key.as_ref().expect("KSK should be set");
+        assert_eq!(ksk.algorithm, Algorithm::RSA);
+        assert_eq!(ksk.key_type, KeyType::KSK);
+        assert_eq!(ksk.flags, 257);
+        assert_eq!(ksk.key_size, Some(2048));
+        assert!(ksk.public_key.len() > 0);
+        assert!(ksk.private_key.len() > 0);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_rsa_1024_auto_upgrades() {
+        let dir = temp_key_dir();
+        let mut mgr = DnsSecKeyManager::new(dir.clone());
+        mgr.initialize().unwrap();
+
+        mgr.generate_key(Algorithm::RSA, KeyType::KSK, 1024, 365)
+            .unwrap();
+
+        let ksk = mgr.key_signing_key.as_ref().expect("KSK should be set");
+        assert_eq!(ksk.key_size, Some(2048));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_generate_standby_key() {
+        let dir = temp_key_dir();
+        let mut mgr = DnsSecKeyManager::new(dir.clone());
+        mgr.initialize().unwrap();
+
+        mgr.generate_standby_key(Algorithm::Ed25519, KeyType::KSK, 0, 365)
+            .unwrap();
+
+        assert!(mgr.key_signing_key.is_none());
+        assert!(mgr.standby_ksk.is_some());
+        let standby = mgr.standby_ksk.as_ref().unwrap();
+        assert_eq!(standby.algorithm, Algorithm::Ed25519);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_start_and_complete_key_rollover() {
+        let dir = temp_key_dir();
+        let mut mgr = DnsSecKeyManager::new(dir.clone());
+        mgr.initialize().unwrap();
+
+        mgr.generate_key(Algorithm::Ed25519, KeyType::KSK, 0, 365)
+            .unwrap();
+        let original_tag = mgr.key_signing_key.as_ref().unwrap().key_tag;
+
+        mgr.start_key_rollover(KeyType::KSK).unwrap();
+        assert!(mgr.rollover_state.ksk_in_rollover);
+        assert!(mgr.standby_ksk.is_some());
+
+        mgr.complete_key_rollover(KeyType::KSK).unwrap();
+        assert!(!mgr.rollover_state.ksk_in_rollover);
+        assert!(mgr.standby_ksk.is_none());
+
+        let new_tag = mgr.key_signing_key.as_ref().unwrap().key_tag;
+        assert_ne!(original_tag, new_tag);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_duplicate_standby_rejected() {
+        let dir = temp_key_dir();
+        let mut mgr = DnsSecKeyManager::new(dir.clone());
+        mgr.initialize().unwrap();
+
+        mgr.generate_key(Algorithm::Ed25519, KeyType::KSK, 0, 365)
+            .unwrap();
+        mgr.generate_standby_key(Algorithm::Ed25519, KeyType::KSK, 0, 365)
+            .unwrap();
+
+        let result = mgr.start_key_rollover(KeyType::KSK);
+        assert!(result.is_err());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_complete_without_start_fails() {
+        let dir = temp_key_dir();
+        let mut mgr = DnsSecKeyManager::new(dir.clone());
+        mgr.initialize().unwrap();
+
+        mgr.generate_key(Algorithm::Ed25519, KeyType::KSK, 0, 365)
+            .unwrap();
+
+        let result = mgr.complete_key_rollover(KeyType::KSK);
+        assert!(result.is_err());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_private_key_permissions() {
+        let dir = temp_key_dir();
+        let mut mgr = DnsSecKeyManager::new(dir.clone());
+        mgr.initialize().unwrap();
+
+        mgr.generate_key(Algorithm::Ed25519, KeyType::KSK, 0, 365)
+            .unwrap();
+
+        let ksk_dir = dir.join("ksk");
+        let entries: Vec<_> = std::fs::read_dir(&ksk_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .map(|ext| ext == "priv")
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        assert!(!entries.is_empty(), "Should have a .priv file");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let priv_file = &entries[0].path();
+            let perms = std::fs::metadata(priv_file).unwrap().permissions();
+            assert_eq!(
+                perms.mode() & 0o777,
+                0o600,
+                "Private key should have 0o600 permissions"
+            );
+        }
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_keys_from_disk() {
+        let dir = temp_key_dir();
+        let mut mgr = DnsSecKeyManager::new(dir.clone());
+        mgr.initialize().unwrap();
+
+        mgr.generate_key(Algorithm::Ed25519, KeyType::KSK, 0, 365)
+            .unwrap();
+        mgr.generate_key(Algorithm::Ed25519, KeyType::ZSK, 0, 90)
+            .unwrap();
+
+        let ksk_tag = mgr.key_signing_key.as_ref().unwrap().key_tag;
+        let zsk_tag = mgr.zone_signing_key.as_ref().unwrap().key_tag;
+
+        drop(mgr);
+
+        let mut mgr2 = DnsSecKeyManager::new(dir.clone());
+        mgr2.load_keys_from_disk().unwrap();
+
+        assert!(mgr2.key_signing_key.is_some());
+        assert!(mgr2.zone_signing_key.is_some());
+        assert_eq!(mgr2.key_signing_key.as_ref().unwrap().key_tag, ksk_tag);
+        assert_eq!(mgr2.zone_signing_key.as_ref().unwrap().key_tag, zsk_tag);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_load_keys_skips_expired() {
+        let dir = temp_key_dir();
+        let mut mgr = DnsSecKeyManager::new(dir.clone());
+        mgr.initialize().unwrap();
+
+        mgr.generate_key(Algorithm::Ed25519, KeyType::KSK, 0, 365)
+            .unwrap();
+
+        let ksk = mgr.key_signing_key.as_ref().unwrap();
+        let ksk_dir = dir.join("ksk");
+        let entries: Vec<_> = std::fs::read_dir(&ksk_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
+        let key_file = entries
+            .iter()
+            .find(|e| {
+                e.path()
+                    .extension()
+                    .map(|ext| ext == "key")
+                    .unwrap_or(false)
+            })
+            .unwrap();
+        let key_path = key_file.path();
+        let stem = key_path.file_stem().unwrap().to_str().unwrap();
+        let pub_file = ksk_dir.join(format!("{}.pub", stem));
+        let priv_file = ksk_dir.join(format!("{}.priv", stem));
+
+        let meta = serde_json::json!({
+            "key_id": "ksk",
+            "algorithm": 15,
+            "key_type": 0,
+            "created_at": 1,
+            "expires_at": 1,
+            "key_tag": ksk.key_tag,
+            "flags": 257,
+            "key_size": null,
+        });
+        std::fs::write(
+            &key_file.path(),
+            serde_json::to_string_pretty(&meta).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(&pub_file, &ksk.public_key).unwrap();
+        std::fs::write(&priv_file, &ksk.private_key).unwrap();
+
+        drop(mgr);
+
+        let mut mgr2 = DnsSecKeyManager::new(dir.clone());
+        mgr2.load_keys_from_disk().unwrap();
+        assert!(
+            mgr2.key_signing_key.is_none(),
+            "Expired key should not be loaded"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_get_signing_keys() {
+        let dir = temp_key_dir();
+        let mut mgr = DnsSecKeyManager::new(dir.clone());
+        mgr.initialize().unwrap();
+
+        mgr.generate_key(Algorithm::Ed25519, KeyType::KSK, 0, 365)
+            .unwrap();
+        mgr.generate_key(Algorithm::Ed25519, KeyType::ZSK, 0, 90)
+            .unwrap();
+
+        let keys = mgr.get_signing_keys();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].key_type, KeyType::ZSK);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_get_all_dnskeys() {
+        let dir = temp_key_dir();
+        let mut mgr = DnsSecKeyManager::new(dir.clone());
+        mgr.initialize().unwrap();
+
+        mgr.generate_key(Algorithm::Ed25519, KeyType::KSK, 0, 365)
+            .unwrap();
+        mgr.generate_key(Algorithm::Ed25519, KeyType::ZSK, 0, 90)
+            .unwrap();
+
+        let keys = mgr.get_all_dnskeys();
+        assert_eq!(keys.len(), 2);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_get_key_status() {
+        let dir = temp_key_dir();
+        let mut mgr = DnsSecKeyManager::new(dir.clone());
+        mgr.initialize().unwrap();
+
+        mgr.generate_key(Algorithm::Ed25519, KeyType::KSK, 0, 365)
+            .unwrap();
+        mgr.generate_key(Algorithm::Ed25519, KeyType::ZSK, 0, 90)
+            .unwrap();
+
+        let status = mgr.get_key_status().unwrap();
+        assert!(status.ksk.is_some());
+        assert!(status.zsk.is_some());
+
+        let ksk = status.ksk.unwrap();
+        assert_eq!(ksk.key_type, "KSK");
+        assert_eq!(ksk.algorithm, "ED25519");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_cleanup_expired_keys() {
+        let dir = temp_key_dir();
+        let mut mgr = DnsSecKeyManager::new(dir.clone());
+        mgr.initialize().unwrap();
+
+        mgr.generate_key(Algorithm::Ed25519, KeyType::KSK, 0, 365)
+            .unwrap();
+
+        let ksk = mgr.key_signing_key.as_ref().unwrap();
+        let ksk_dir = dir.join("ksk");
+        let entries: Vec<_> = std::fs::read_dir(&ksk_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
+        let key_file_entry = entries
+            .iter()
+            .find(|e| {
+                e.path()
+                    .extension()
+                    .map(|ext| ext == "key")
+                    .unwrap_or(false)
+            })
+            .unwrap();
+        let key_path = key_file_entry.path();
+        let stem = key_path.file_stem().unwrap().to_str().unwrap();
+
+        let meta = serde_json::json!({
+            "key_id": "ksk",
+            "algorithm": 15,
+            "key_type": 0,
+            "created_at": 1,
+            "expires_at": 1,
+            "key_tag": ksk.key_tag,
+            "flags": 257,
+            "key_size": null,
+        });
+        std::fs::write(&key_path, serde_json::to_string_pretty(&meta).unwrap()).unwrap();
+
+        mgr.cleanup_expired_keys().unwrap();
+
+        let key_files: Vec<_> = std::fs::read_dir(&ksk_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .map(|ext| ext == "key")
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        assert!(key_files.is_empty(), "Expired key files should be removed");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_rollover_status() {
+        let dir = temp_key_dir();
+        let mut mgr = DnsSecKeyManager::new(dir.clone());
+        mgr.initialize().unwrap();
+
+        let status = mgr.get_rollover_status();
+        assert_eq!(status["ksk_in_rollover"], false);
+        assert_eq!(status["zsk_in_rollover"], false);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_generate_cds_record() {
+        let dir = temp_key_dir();
+        let mut mgr = DnsSecKeyManager::new(dir.clone());
+        mgr.initialize().unwrap();
+
+        mgr.generate_key(Algorithm::Ed25519, KeyType::KSK, 0, 365)
+            .unwrap();
+
+        let ksk = mgr.key_signing_key.as_ref().unwrap();
+        let cds = mgr.generate_cds_record(ksk).unwrap();
+        assert!(!cds.is_empty());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_generate_cdnskey_record() {
+        let dir = temp_key_dir();
+        let mut mgr = DnsSecKeyManager::new(dir.clone());
+        mgr.initialize().unwrap();
+
+        mgr.generate_key(Algorithm::Ed25519, KeyType::KSK, 0, 365)
+            .unwrap();
+
+        let ksk = mgr.key_signing_key.as_ref().unwrap();
+        let cdnskey = mgr.generate_cdnskey_record(ksk).unwrap();
+        assert!(!cdnskey.is_empty());
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

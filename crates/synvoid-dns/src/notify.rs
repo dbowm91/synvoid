@@ -392,7 +392,8 @@ mod tests {
             enabled: true,
             also_notify: vec![],
         };
-        let handler = NotifyHandler::new(zones, config).with_source_allowlist(vec!["*".to_string()]);
+        let handler =
+            NotifyHandler::new(zones, config).with_source_allowlist(vec!["*".to_string()]);
         assert!(handler.is_source_allowed("192.168.1.1".parse().unwrap()));
     }
 

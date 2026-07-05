@@ -536,7 +536,14 @@ impl DnsServer {
             if let (Some(zt), Some(ip)) = (ctx.zone_transfer, client_ip) {
                 let tsig = crate::tsig::parse_tsig_from_query(query, parsed.question_end);
                 let message_id = u16::from_be_bytes([query[0], query[1]]);
-                match zt.handle_axfr_request(&parsed.qname, ip, tsig.as_ref(), message_id, query, transport_class == TransportClass::Tcp) {
+                match zt.handle_axfr_request(
+                    &parsed.qname,
+                    ip,
+                    tsig.as_ref(),
+                    message_id,
+                    query,
+                    transport_class == TransportClass::Tcp,
+                ) {
                     Ok(response) => return Some(Arc::new(response)),
                     Err(e) => {
                         tracing::warn!("AXFR failed: {}", e);

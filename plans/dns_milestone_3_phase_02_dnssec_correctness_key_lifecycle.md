@@ -240,3 +240,40 @@ cargo check --workspace
 ## Completion criteria
 
 Phase 2 is complete when authoritative DNSSEC signing semantics, DNSKEY/DS/RRSIG output, denial proofs, key lifecycle, AD/CD boundaries, and documentation are tested and accurate, with incomplete NSEC3 or recursive-validation items clearly deferred.
+
+---
+
+## Phase 2 Completion Summary
+
+### Bugs Fixed
+
+| Bug | File | Fix |
+|-----|------|-----|
+| DNSKEY encoding hardcodes Ed25519 | `response_encoder.rs` | Parse algorithm from RDATA byte 3 |
+| DNSKEY answers skip RRSIG | `response.rs` | Remove DNSKEY exclusion from signing gate |
+| NSEC3 next-closer not emitted | `dnssec_impl.rs` | Emit next-closer NSEC3 record (RFC 5155 §7.2.6) |
+| NSEC3 NODATA wrong next_domain | `dnssec_impl.rs` | Use SOA hash chain instead of hardcoded wildcard |
+| Private keys written without chmod | `dnssec_key_mgmt.rs` | Add `#[cfg(unix)] chmod 0o600` |
+| No key loading from disk | `dnssec_key_mgmt.rs` | Add `load_keys_from_disk()` method |
+| Test hex used unsupported algo 3 | `response_encoder.rs` | Changed to algo 15 (Ed25519) |
+
+### New Tests Added
+
+| File | Before | After | Change |
+|------|--------|-------|--------|
+| `dnssec_key_mgmt.rs` | 0 | 22 | +22 (key generation, rotation, CDS/CDNSKEY, permissions, loading) |
+| `dnssec_signing.rs` | 0 | 18 | +18 (sign_data, RRSIG, NSEC/NSEC3, base32, type bitmap) |
+| `dnssec_validation.rs` | 0 | 20 | +20 (DNSKEY wire, canonical RDATA, DS digest, verification) |
+| `trust_anchor.rs` | 24 | 37 | +13 (Pending→Valid, Revoked→Removed, Removed→Purged, Valid→Missing lifecycle) |
+| `response_encoder.rs` | existing | +2 fixes | Fixed 2 tests using unsupported DSA algorithm |
+| **Total** | ~23 | **97** | **+74 DNSSEC tests** |
+
+### Verification Commands
+
+```bash
+cargo fmt --all --check
+cargo test -p synvoid-dns --lib -- dnssec
+cargo test -p synvoid-dns --test authoritative_negative
+cargo check -p synvoid-dns --all-features
+cargo check --workspace
+```

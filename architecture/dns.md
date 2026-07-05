@@ -1223,12 +1223,12 @@ Completed 2026-07-03. 390/390 DNS lib tests pass, 30/30 authoritative_negative t
 | Limits tests | 7 | `crates/synvoid-dns/src/limits.rs` |
 | DNS64 tests | 6 | `crates/synvoid-dns/src/dns64.rs` |
 
-### 11.3 DNSSEC Limitations (Deferred to Milestone 3)
+### 11.3 DNSSEC Limitations (Partially Resolved in Phase 2)
 
-- **Signed NODATA/NXDOMAIN**: The signed negative response path uses `build_nxdomain_response`/`build_nodata_response` which assemble NSEC/NSEC3 + RRSIG records. While these are now routed through `encode_rr` and `ResponseEnvelope`, the DNSSEC denial proof logic is minimal and not production-hardened.
-- **NSEC3 closest-encloser**: Not fully implemented; wildcard matching is limited to NSEC3 denial proofs.
-- **RFC 5001 / RFC 5155 compliance**: Not audited for full conformance.
-- **DNSSEC signing**: Zones can have KSK/ZSK and generate RRSIGs, but key lifecycle, rotation, and failure modes are not hardened.
+- **Signed NODATA/NXDOMAIN**: The signed negative response path uses `build_nxdomain_response`/`build_nodata_response` which assemble NSEC/NSEC3 + RRSIG records. These are now routed through `encode_rr` and `ResponseEnvelope`.
+- **NSEC3 closest-encloser**: Phase 2 fixed the next-closer NSEC3 emission (RFC 5155 §7.2.6) and corrected NODATA next_domain hash chain. SHA-256 base32 encoding works in practice but is not rigorously tested against RFC 5155 test vectors.
+- **RFC 5001 / RFC 5155 compliance**: Partially audited; core denial-of-existence paths tested. Full compliance audit deferred.
+- **DNSSEC signing**: Zones can have KSK/ZSK and generate RRSIGs. Key lifecycle now includes `load_keys_from_disk()` for persistence across restarts, private keys are chmod 0o600, and 97 DNSSEC unit tests cover signing, validation, key management, and trust anchor lifecycle.
 
 ### 11.4 External Interoperability
 
@@ -1519,7 +1519,6 @@ Phase 2 closed the gap between the config-runtime matrix and actual runtime beha
 | Area | Status | Details |
 |------|--------|---------|
 | Persistent TCP (pipelining) | Deferred | Requires framing state, per-query idle management, connection pool. |
-| DNSSEC production hardening | Deferred | NSEC3 closest-encloser, RFC 5001/5155 compliance, key lifecycle hardening. |
 | RPZ (Response Policy Zones) | Deferred | Config fields exist, no runtime consumer. |
 | Dynamic Update (RFC 2136) | Deferred | Handler stub exists, not wired; security-sensitive. Returns NOTIMP when disabled. |
 | Notify | Deferred | Handler stub exists, not wired. Returns NOTIMP when disabled. |
@@ -1563,7 +1562,7 @@ Phase 5 is a verification-only phase. It confirms that transport/runtime, config
 | Firewall test coverage | Wired, no tests | 3 security controls untested |
 | ECS client subnet | Partial | Full prefix routing not implemented |
 | DoQ bind address | Partial | Config field ignored, hardcoded to 0.0.0.0 |
-| Full DNSSEC production validation | Deferred | NSEC3 closest-encloser, RFC 5001/5155, key lifecycle |
+| Full DNSSEC production validation | Partial | NSEC3 closest-encloser fixed; key lifecycle hardened; 97 tests. Full RFC 5001/5155 compliance audit deferred. |
 | RPZ, Dynamic Update, Notify, IXFR, Trust Anchors, Prefetch, Anycast, Padding, QNAME Privacy | Deferred | Config fields exist, no runtime consumer |
 
 ### Verification Commands
@@ -1740,5 +1739,42 @@ cargo test -p synvoid-dns -- store_atomic_write
 
 # Cache invalidation
 cargo test -p synvoid-dns -- cache_invalidation_axfr
+```
+
+---
+
+## Milestone 3 Phase 2: DNSSEC Correctness & Key Lifecycle
+
+Phase 2 addressed critical DNSSEC correctness bugs, hardened key lifecycle management, and added comprehensive test coverage. See `plans/dns_milestone_3_phase_02_dnssec_correctness_key_lifecycle.md` for the full plan.
+
+### Bug Fixes
+
+| Bug | File | Fix |
+|-----|------|-----|
+| DNSKEY encoding hardcodes Ed25519 | `response_encoder.rs:206-219` | Parse algorithm from RDATA byte 3 |
+| DNSKEY answers skip RRSIG | `response.rs:91-94` | Remove DNSKEY exclusion from signing gate |
+| NSEC3 next-closer not emitted | `dnssec_impl.rs:244-322` | Emit next-closer NSEC3 record (RFC 5155 §7.2.6) |
+| NSEC3 NODATA wrong next_domain | `dnssec_impl.rs:363-462` | Use SOA hash chain instead of hardcoded wildcard |
+| Private keys written without chmod | `dnssec_key_mgmt.rs:332-339` | Add `#[cfg(unix)] chmod 0o600` |
+| No key loading from disk | `dnssec_key_mgmt.rs:48-188` | Add `load_keys_from_disk()` method |
+
+### Test Coverage
+
+| Module | Before | After |
+|--------|--------|-------|
+| `dnssec_key_mgmt.rs` | 0 | 22 |
+| `dnssec_signing.rs` | 0 | 18 |
+| `dnssec_validation.rs` | 0 | 20 |
+| `trust_anchor.rs` | 24 | 37 |
+| **Total DNSSEC** | ~23 | **97** |
+
+### Verification Commands
+
+```bash
+cargo fmt --all --check
+cargo test -p synvoid-dns --lib -- dnssec
+cargo test -p synvoid-dns --test authoritative_negative
+cargo check -p synvoid-dns --all-features
+cargo check --workspace
 ```
 

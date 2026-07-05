@@ -345,3 +345,209 @@ pub enum ValidationMethod {
     /// No validation performed
     None,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dnssec::{Algorithm, KeyType, ZoneSigningKey};
+
+    fn ed25519_test_key() -> ZoneSigningKey {
+        let mut private_bytes = [0u8; 32];
+        getrandom::getrandom(&mut private_bytes).expect("getrandom failed");
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&private_bytes.into());
+        let verifying_key = signing_key.verifying_key().to_bytes().to_vec();
+        let private_bytes = signing_key.to_bytes().to_vec();
+
+        ZoneSigningKey {
+            key_id: "test-key".to_string(),
+            algorithm: Algorithm::Ed25519,
+            key_type: KeyType::KSK,
+            created_at: 0,
+            expires_at: u64::MAX,
+            public_key: verifying_key,
+            private_key: private_bytes,
+            key_tag: 12345,
+            flags: 257,
+            key_size: None,
+        }
+    }
+
+    #[test]
+    fn test_compute_dnskey_wire_format() {
+        let key = ed25519_test_key();
+        let dnskey = compute_dnskey(&key);
+        assert_eq!(dnskey.len(), 4 + 32);
+        let flags = u16::from_be_bytes([dnskey[0], dnskey[1]]);
+        assert_eq!(flags, 257);
+        assert_eq!(dnskey[2], 3);
+        assert_eq!(dnskey[3], Algorithm::Ed25519.to_u8());
+    }
+
+    #[test]
+    fn test_get_dnskey_record_includes_zero_prefix() {
+        let key = ed25519_test_key();
+        let record = get_dnskey_record(&key);
+        assert_eq!(record[0], 0x00);
+        assert_eq!(record[1], 0x00);
+        assert_eq!(record.len(), 2 + 4 + 32);
+    }
+
+    #[test]
+    fn test_canonical_rdata_a() {
+        let rdata = canonical_rdata(1, "192.168.1.1", None, None, None, 300);
+        assert_eq!(rdata.len(), 4);
+        assert_eq!(rdata, vec![192, 168, 1, 1]);
+    }
+
+    #[test]
+    fn test_canonical_rdata_aaaa() {
+        let rdata = canonical_rdata(28, "::1", None, None, None, 300);
+        assert_eq!(rdata.len(), 16);
+        assert_eq!(rdata[15], 1);
+    }
+
+    #[test]
+    fn test_canonical_name_empty() {
+        let name = canonical_name("");
+        assert_eq!(name, vec![0]);
+    }
+
+    #[test]
+    fn test_canonical_name_root() {
+        let name = canonical_name(".");
+        assert_eq!(name, vec![0]);
+    }
+
+    #[test]
+    fn test_canonical_name_labels() {
+        let name = canonical_name("example.com");
+        assert_eq!(name.len(), 12 + 1);
+        assert_eq!(name[0], 7);
+        assert_eq!(&name[1..8], b"example");
+        assert_eq!(name[8], 3);
+        assert_eq!(&name[9..12], b"com");
+        assert_eq!(name[12], 0);
+    }
+
+    #[test]
+    fn test_count_labels_root() {
+        assert_eq!(count_labels("."), 1);
+    }
+
+    #[test]
+    fn test_count_labels_single() {
+        assert_eq!(count_labels("com"), 1);
+    }
+
+    #[test]
+    fn test_count_labels_multi() {
+        assert_eq!(count_labels("www.example.com"), 3);
+    }
+
+    #[test]
+    fn test_calculate_key_tag_known_ksk() {
+        let tag = calculate_key_tag(257, 3, 15, &[0x01; 32]);
+        assert!(tag > 0);
+    }
+
+    #[test]
+    fn test_calculate_key_tag_stable() {
+        let tag1 = calculate_key_tag(257, 3, 15, &[0xAA; 32]);
+        let tag2 = calculate_key_tag(257, 3, 15, &[0xAA; 32]);
+        assert_eq!(tag1, tag2);
+    }
+
+    #[test]
+    fn test_compute_ds_digest_sha1() {
+        let mut dnskey = vec![0, 1, 0, 3, 15];
+        dnskey.extend_from_slice(&[0xAA; 32]);
+        let digest = compute_ds_digest(1, 15, 3, 1, &dnskey);
+        assert!(digest.is_ok());
+        assert_eq!(digest.unwrap().len(), 20);
+    }
+
+    #[test]
+    fn test_compute_ds_digest_sha256() {
+        let mut dnskey = vec![0, 1, 0, 3, 15];
+        dnskey.extend_from_slice(&[0xBB; 32]);
+        let digest = compute_ds_digest(2, 257, 3, 15, &dnskey);
+        assert!(digest.is_ok());
+        assert_eq!(digest.unwrap().len(), 32);
+    }
+
+    #[test]
+    fn test_compute_ds_digest_sha384() {
+        let mut dnskey = vec![0, 1, 0, 3, 15];
+        dnskey.extend_from_slice(&[0xCC; 32]);
+        let digest = compute_ds_digest(4, 257, 3, 15, &dnskey);
+        assert!(digest.is_ok());
+        assert_eq!(digest.unwrap().len(), 48);
+    }
+
+    #[test]
+    fn test_compute_ds_digest_unsupported() {
+        let mut dnskey = vec![0, 1, 0, 3, 15];
+        dnskey.extend_from_slice(&[0xDD; 32]);
+        let result = compute_ds_digest(3, 257, 3, 15, &dnskey);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_verify_ds_digest_match() {
+        let mut dnskey = vec![0, 1, 0, 3, 15];
+        dnskey.extend_from_slice(&[0xEE; 32]);
+        let digest = compute_ds_digest(1, 257, 3, 15, &dnskey).unwrap();
+        assert!(verify_ds_digest(1, 257, 3, 15, &dnskey, &digest).unwrap());
+    }
+
+    #[test]
+    fn test_verify_ds_digest_mismatch() {
+        let mut dnskey = vec![0, 1, 0, 3, 15];
+        dnskey.extend_from_slice(&[0xEF; 32]);
+        let wrong_digest = vec![0u8; 20];
+        assert!(!verify_ds_digest(1, 257, 3, 15, &dnskey, &wrong_digest).unwrap());
+    }
+
+    #[test]
+    fn test_create_ds_record() {
+        let key = ed25519_test_key();
+        let ds = create_ds_record(&key, DsDigestType::Sha256);
+        assert!(ds.is_ok());
+        let ds_data = ds.unwrap();
+        assert!(ds_data.len() > 4);
+    }
+
+    #[test]
+    fn test_get_ds_record_includes_zero_prefix() {
+        let key = ed25519_test_key();
+        let record = get_ds_record(&key);
+        assert_eq!(record[0], 0x00);
+        assert_eq!(record[1], 0x00);
+    }
+
+    #[test]
+    fn test_compute_dnskey_canonical() {
+        let dnskey = compute_dnskey_canonical(257, 3, 15, &[0x01; 32]);
+        let flags = u16::from_be_bytes([dnskey[0], dnskey[1]]);
+        assert_eq!(flags, 257);
+        assert_eq!(dnskey[2], 3);
+        assert_eq!(dnskey[3], 15);
+    }
+
+    #[test]
+    fn test_validation_result_struct() {
+        let result = ValidationResult {
+            is_secure: true,
+            trust_anchor_id: Some("test-id".to_string()),
+            validation_method: ValidationMethod::Rfc5011,
+        };
+        assert!(result.is_secure);
+        assert_eq!(result.validation_method, ValidationMethod::Rfc5011);
+    }
+
+    #[test]
+    fn test_canonical_dns_message() {
+        let msg = canonical_dns_message("example.com.", 1, 1, 300, &[0x01; 4]);
+        assert!(!msg.is_empty());
+    }
+}

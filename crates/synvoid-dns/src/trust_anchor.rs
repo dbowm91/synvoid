@@ -1568,4 +1568,270 @@ mod tests {
         let anchor = manager.get_anchor_by_keytag(65535);
         assert!(anchor.is_none());
     }
+
+    #[test]
+    fn test_pending_to_valid_promotion() {
+        use tempfile::TempDir;
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test_promotion.db");
+
+        let config = TrustAnchorConfig {
+            db_path: db_path.to_string_lossy().to_string(),
+            pending_observation_days: 30,
+            ..TrustAnchorConfig::default()
+        };
+        let manager = Arc::new(TrustAnchorManager::new(config));
+
+        let public_key = vec![0x01, 0x02, 0x03, 0x04];
+        let key_tag = crate::dnssec::calculate_key_tag(257, 3, 8, &public_key);
+
+        manager
+            .add_anchor(format!("{}-8", key_tag), key_tag, 8, public_key.clone())
+            .unwrap();
+
+        {
+            let mut anchors = manager.anchors.write();
+            let anchor = anchors.get_mut(&format!("{}-8", key_tag)).unwrap();
+            let thirty_one_days_ago = synvoid_core::time::current_timestamp_secs() - (31 * 86400);
+            anchor.state = TrustAnchorState::Pending;
+            anchor.pending_since = Some(thirty_one_days_ago);
+            anchor.trust_point = 0;
+        }
+
+        let events = manager.process_rfc5011_updates();
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Rfc5011Event::KeyPromoted { key_tag: kt } if *kt == key_tag)),
+            "Pending key should be promoted to Valid after observation period"
+        );
+
+        let anchor = manager.get_anchor_by_keytag(key_tag).unwrap();
+        assert_eq!(anchor.state, TrustAnchorState::Valid);
+        assert!(anchor.trust_point > 0);
+    }
+
+    #[test]
+    fn test_pending_not_promoted_before_observation_period() {
+        use tempfile::TempDir;
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test_no_promote.db");
+
+        let config = TrustAnchorConfig {
+            db_path: db_path.to_string_lossy().to_string(),
+            pending_observation_days: 30,
+            ..TrustAnchorConfig::default()
+        };
+        let manager = Arc::new(TrustAnchorManager::new(config));
+
+        let public_key = vec![0x05, 0x06, 0x07, 0x08];
+        let key_tag = crate::dnssec::calculate_key_tag(257, 3, 8, &public_key);
+
+        manager
+            .add_anchor(format!("{}-8", key_tag), key_tag, 8, public_key.clone())
+            .unwrap();
+
+        {
+            let mut anchors = manager.anchors.write();
+            let anchor = anchors.get_mut(&format!("{}-8", key_tag)).unwrap();
+            anchor.state = TrustAnchorState::Pending;
+            anchor.pending_since = Some(synvoid_core::time::current_timestamp_secs());
+        }
+
+        let events = manager.process_rfc5011_updates();
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Rfc5011Event::KeyPromoted { key_tag: kt } if *kt == key_tag)),
+            "Pending key should NOT be promoted before observation period"
+        );
+
+        let anchors = manager.anchors.read();
+        let anchor = anchors.get(&format!("{}-8", key_tag)).unwrap();
+        assert_eq!(anchor.state, TrustAnchorState::Pending);
+    }
+
+    #[test]
+    fn test_revoked_to_removed_lifecycle() {
+        use tempfile::TempDir;
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test_revoked.db");
+
+        let config = TrustAnchorConfig {
+            db_path: db_path.to_string_lossy().to_string(),
+            revocation_grace_days: 30,
+            ..TrustAnchorConfig::default()
+        };
+        let manager = Arc::new(TrustAnchorManager::new(config));
+
+        let public_key = vec![0x09, 0x0A, 0x0B, 0x0C];
+        let key_tag = crate::dnssec::calculate_key_tag(257, 3, 8, &public_key);
+
+        manager
+            .add_anchor(format!("{}-8", key_tag), key_tag, 8, public_key.clone())
+            .unwrap();
+
+        {
+            let mut anchors = manager.anchors.write();
+            let anchor = anchors.get_mut(&format!("{}-8", key_tag)).unwrap();
+            let thirty_one_days_ago = synvoid_core::time::current_timestamp_secs() - (31 * 86400);
+            anchor.state = TrustAnchorState::Revoked;
+            anchor.revoked_at = Some(thirty_one_days_ago);
+        }
+
+        let events = manager.process_rfc5011_updates();
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Rfc5011Event::KeyRemoved { key_tag: kt } if *kt == key_tag)),
+            "Revoked key should be Removed after grace period"
+        );
+    }
+
+    #[test]
+    fn test_revoked_not_removed_before_grace_period() {
+        use tempfile::TempDir;
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test_no_remove.db");
+
+        let config = TrustAnchorConfig {
+            db_path: db_path.to_string_lossy().to_string(),
+            revocation_grace_days: 30,
+            ..TrustAnchorConfig::default()
+        };
+        let manager = Arc::new(TrustAnchorManager::new(config));
+
+        let public_key = vec![0x0D, 0x0E, 0x0F, 0x10];
+        let key_tag = crate::dnssec::calculate_key_tag(257, 3, 8, &public_key);
+
+        manager
+            .add_anchor(format!("{}-8", key_tag), key_tag, 8, public_key.clone())
+            .unwrap();
+
+        {
+            let mut anchors = manager.anchors.write();
+            let anchor = anchors.get_mut(&format!("{}-8", key_tag)).unwrap();
+            anchor.state = TrustAnchorState::Revoked;
+            anchor.revoked_at = Some(synvoid_core::time::current_timestamp_secs());
+        }
+
+        let events = manager.process_rfc5011_updates();
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Rfc5011Event::KeyRemoved { key_tag: kt } if *kt == key_tag)),
+            "Revoked key should NOT be removed before grace period"
+        );
+
+        let anchors = manager.anchors.read();
+        let anchor = anchors.get(&format!("{}-8", key_tag)).unwrap();
+        assert_eq!(anchor.state, TrustAnchorState::Revoked);
+    }
+
+    #[test]
+    fn test_removed_to_purged_lifecycle() {
+        use tempfile::TempDir;
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test_purged.db");
+
+        let config = TrustAnchorConfig {
+            db_path: db_path.to_string_lossy().to_string(),
+            extended_removal_days: 30,
+            ..TrustAnchorConfig::default()
+        };
+        let manager = Arc::new(TrustAnchorManager::new(config));
+
+        let public_key = vec![0x11, 0x12, 0x13, 0x14];
+        let key_tag = crate::dnssec::calculate_key_tag(257, 3, 8, &public_key);
+
+        manager
+            .add_anchor(format!("{}-8", key_tag), key_tag, 8, public_key.clone())
+            .unwrap();
+
+        {
+            let mut anchors = manager.anchors.write();
+            let anchor = anchors.get_mut(&format!("{}-8", key_tag)).unwrap();
+            let thirty_one_days_ago = synvoid_core::time::current_timestamp_secs() - (31 * 86400);
+            anchor.state = TrustAnchorState::Removed;
+            anchor.removed_at = Some(thirty_one_days_ago);
+        }
+
+        let events = manager.process_rfc5011_updates();
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Rfc5011Event::KeyPurged { key_tag: kt } if *kt == key_tag)),
+            "Removed key should be Purged after extended removal period"
+        );
+    }
+
+    #[test]
+    fn test_valid_to_missing_expiry() {
+        use tempfile::TempDir;
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test_missing.db");
+
+        let config = TrustAnchorConfig {
+            db_path: db_path.to_string_lossy().to_string(),
+            trust_anchor_retention_days: 30,
+            ..TrustAnchorConfig::default()
+        };
+        let manager = Arc::new(TrustAnchorManager::new(config));
+
+        let public_key = vec![0x15, 0x16, 0x17, 0x18];
+        let key_tag = crate::dnssec::calculate_key_tag(257, 3, 8, &public_key);
+
+        manager
+            .add_anchor(format!("{}-8", key_tag), key_tag, 8, public_key.clone())
+            .unwrap();
+
+        {
+            let mut anchors = manager.anchors.write();
+            let anchor = anchors.get_mut(&format!("{}-8", key_tag)).unwrap();
+            let thirty_one_days_ago = synvoid_core::time::current_timestamp_secs() - (31 * 86400);
+            anchor.trust_point = thirty_one_days_ago;
+            anchor.last_seen = thirty_one_days_ago;
+        }
+
+        let events = manager.process_rfc5011_updates();
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Rfc5011Event::KeyMissing { key_tag: kt } if *kt == key_tag)),
+            "Valid key should transition to Missing after retention period"
+        );
+    }
+
+    #[test]
+    fn test_valid_not_missing_within_retention() {
+        use tempfile::TempDir;
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test_not_missing.db");
+
+        let config = TrustAnchorConfig {
+            db_path: db_path.to_string_lossy().to_string(),
+            trust_anchor_retention_days: 30,
+            ..TrustAnchorConfig::default()
+        };
+        let manager = Arc::new(TrustAnchorManager::new(config));
+
+        let public_key = vec![0x19, 0x1A, 0x1B, 0x1C];
+        let key_tag = crate::dnssec::calculate_key_tag(257, 3, 8, &public_key);
+
+        manager
+            .add_anchor(format!("{}-8", key_tag), key_tag, 8, public_key.clone())
+            .unwrap();
+
+        let events = manager.process_rfc5011_updates();
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Rfc5011Event::KeyMissing { key_tag: kt } if *kt == key_tag)),
+            "Valid key should NOT be Missing within retention period"
+        );
+
+        let anchors = manager.anchors.read();
+        let anchor = anchors.get(&format!("{}-8", key_tag)).unwrap();
+        assert_eq!(anchor.state, TrustAnchorState::Valid);
+    }
 }

@@ -288,3 +288,196 @@ pub fn base32_encode(input: &[u8]) -> String {
 
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dnssec::{KeyType, ZoneSigningKey};
+
+    fn ed25519_test_key() -> ZoneSigningKey {
+        let mut private_bytes = [0u8; 32];
+        getrandom::getrandom(&mut private_bytes).expect("getrandom failed");
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&private_bytes.into());
+        let verifying_key = signing_key.verifying_key().to_bytes().to_vec();
+        let private_bytes = signing_key.to_bytes().to_vec();
+
+        ZoneSigningKey {
+            key_id: "test-key".to_string(),
+            algorithm: Algorithm::Ed25519,
+            key_type: KeyType::ZSK,
+            created_at: 0,
+            expires_at: u64::MAX,
+            public_key: verifying_key,
+            private_key: private_bytes,
+            key_tag: 12345,
+            flags: 256,
+            key_size: None,
+        }
+    }
+
+    #[test]
+    fn test_sign_data_ed25519() {
+        let key = ed25519_test_key();
+        let data = b"test data to sign";
+        let sig = sign_data(data, &key);
+        assert!(sig.is_ok());
+        let sig_bytes = sig.unwrap();
+        assert_eq!(sig_bytes.len(), 64);
+    }
+
+    #[test]
+    fn test_sign_data_different_messages_differ() {
+        let key = ed25519_test_key();
+        let sig1 = sign_data(b"message one", &key).unwrap();
+        let sig2 = sign_data(b"message two", &key).unwrap();
+        assert_ne!(sig1, sig2);
+    }
+
+    #[test]
+    fn test_sign_data_invalid_key_length() {
+        let mut key = ed25519_test_key();
+        key.private_key = vec![0; 16];
+        let result = sign_data(b"test", &key);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_create_rrsig_record() {
+        let key = ed25519_test_key();
+        let signature = sign_data(b"test data", &key).unwrap();
+        let rrsig = create_rrsig_record(&key, 1, 3600, "example.com.", &signature, 2);
+
+        assert!(rrsig.len() > 0);
+        let type_covered = u16::from_be_bytes([rrsig[0], rrsig[1]]);
+        assert_eq!(type_covered, 1);
+        assert_eq!(rrsig[2], Algorithm::Ed25519.to_u8());
+        assert_eq!(rrsig[3], 2);
+    }
+
+    #[test]
+    fn test_create_nsec_record() {
+        let nsec = create_nsec_record("a.example.com.", "b.example.com.", &[1, 2, 28]);
+        assert!(!nsec.is_empty());
+    }
+
+    #[test]
+    fn test_build_type_bitmap_single_window() {
+        let types = vec![1, 2, 28];
+        let nsec = create_nsec_record("a.example.com.", "b.example.com.", &types);
+        assert!(!nsec.is_empty());
+    }
+
+    #[test]
+    fn test_create_nsec3_record() {
+        let config = Nsec3Config::default();
+        let hash = hash_name_nsec3("example.com.", &config);
+        let owner = create_nsec3_owner_name("example.com.", &hash);
+        let nsec3 = create_nsec3_record(&owner, "next.example.com.", &config, &[1, 2, 28]);
+        assert!(!nsec3.is_empty());
+    }
+
+    #[test]
+    fn test_create_nsec3param_record() {
+        let config = Nsec3Config::default();
+        let param = create_nsec3param_record(&config);
+        assert!(!param.is_empty());
+        assert_eq!(param[0], config.algorithm);
+        assert_eq!(param[1], config.flags);
+    }
+
+    #[test]
+    fn test_hash_name_nsec3_deterministic() {
+        let config = Nsec3Config::default();
+        let hash1 = hash_name_nsec3("example.com.", &config);
+        let hash2 = hash_name_nsec3("example.com.", &config);
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_hash_name_nsec3_different_names() {
+        let config = Nsec3Config::default();
+        let hash1 = hash_name_nsec3("example.com.", &config);
+        let hash2 = hash_name_nsec3("other.com.", &config);
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_hash_name_nsec3_with_salt() {
+        let config = Nsec3Config {
+            algorithm: 1,
+            flags: 0,
+            iterations: 0,
+            salt: vec![0xAB, 0xCD],
+        };
+        let hash_no_salt = hash_name_nsec3(
+            "example.com.",
+            &Nsec3Config {
+                algorithm: 1,
+                flags: 0,
+                iterations: 0,
+                salt: vec![],
+            },
+        );
+        let hash_with_salt = hash_name_nsec3("example.com.", &config);
+        assert_ne!(hash_no_salt, hash_with_salt);
+    }
+
+    #[test]
+    fn test_hash_name_nsec3_with_iterations() {
+        let config0 = Nsec3Config {
+            algorithm: 1,
+            flags: 0,
+            iterations: 0,
+            salt: vec![],
+        };
+        let config1 = Nsec3Config {
+            algorithm: 1,
+            flags: 0,
+            iterations: 1,
+            salt: vec![],
+        };
+        let hash0 = hash_name_nsec3("example.com.", &config0);
+        let hash1 = hash_name_nsec3("example.com.", &config1);
+        assert_ne!(hash0, hash1);
+    }
+
+    #[test]
+    fn test_create_nsec3_owner_name_format() {
+        let config = Nsec3Config::default();
+        let hash = hash_name_nsec3("example.com.", &config);
+        let owner = create_nsec3_owner_name("example.com.", &hash);
+        assert!(owner.ends_with(".example.com."));
+        let parts: Vec<&str> = owner.split('.').collect();
+        assert!(parts[0].parse::<usize>().is_ok());
+    }
+
+    #[test]
+    fn test_base32_encode_empty() {
+        assert_eq!(base32_encode(&[]), "");
+    }
+
+    #[test]
+    fn test_base32_encode_single_byte() {
+        let encoded = base32_encode(&[0xFF]);
+        assert!(!encoded.is_empty());
+    }
+
+    #[test]
+    fn test_base32_encode_multiple_bytes() {
+        let encoded = base32_encode(&[0x48, 0x65, 0x6C, 0x6C, 0x6F]);
+        assert!(!encoded.is_empty());
+        assert!(encoded
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()));
+    }
+
+    #[test]
+    fn test_create_nsec_record_type_bitmap() {
+        let nsec = create_nsec_record(
+            "a.example.com.",
+            "b.example.com.",
+            &[1, 2, 5, 6, 15, 16, 28, 33],
+        );
+        assert!(!nsec.is_empty());
+    }
+}

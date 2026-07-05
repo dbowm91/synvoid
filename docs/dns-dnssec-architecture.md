@@ -60,9 +60,9 @@ For detailed RFC 5011 documentation including state machine diagrams, configurat
 The AD bit is set on responses only when:
 
 1. The zone is DNSSEC-signed (has DNSKEY records).
-2. The RRSIG chain validates successfully (authoritative mode) **or** the upstream resolver set AD (forwarding mode).
+2. The RRSIG chain validates successfully (recursive mode) **or** the upstream resolver set AD (forwarding mode).
 
-In forwarding mode AD is passed through from upstream. In authoritative mode AD is set after local RRSIG verification.
+In forwarding mode AD is passed through from upstream. In authoritative mode AD is **never set** — authoritative servers do not perform validation; AD is a recursive resolver signal (per RFC 4035 §3.1.6).
 
 ## Relevant Source
 

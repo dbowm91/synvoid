@@ -775,11 +775,10 @@ mod zone_tests {
             ],
         );
         assert!(zone.validate_single_soa().is_err());
-        assert!(
-            zone.validate_single_soa()
-                .unwrap_err()
-                .contains("found 2 SOA")
-        );
+        assert!(zone
+            .validate_single_soa()
+            .unwrap_err()
+            .contains("found 2 SOA"));
     }
 
     #[test]
