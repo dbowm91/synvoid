@@ -43,12 +43,10 @@ impl DoqServer {
         &self.config
     }
 
-    pub async fn start(
-        &mut self,
-        bind_addr: SocketAddr,
-        dns_server: DnsServer,
-    ) -> Result<(), String> {
-        *self.dns_server.write() = Some(dns_server);
+    pub async fn start(&mut self) -> Result<(), String> {
+        let bind_addr: SocketAddr = format!("{}:{}", self.config.bind_address, self.config.port)
+            .parse()
+            .map_err(|e| format!("Invalid DoQ bind address: {}", e))?;
 
         let tls_config = self.create_tls_config()?;
 

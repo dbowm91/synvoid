@@ -8,6 +8,7 @@ use hyper::body::Incoming;
 use hyper::server::conn::http2;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
+use metrics::{counter, gauge, histogram};
 use parking_lot::RwLock;
 use tokio_rustls::TlsAcceptor;
 
@@ -73,6 +74,9 @@ impl DohServer {
 
         let io = TokioIo::new(tls_stream);
 
+        counter!("synvoid.doh.connections.total").increment(1);
+        gauge!("synvoid.doh.connections").increment(1.0);
+
         let dns_server_clone = dns_server.clone();
 
         let builder = http2::Builder::new(hyper_util::rt::TokioExecutor::new());
@@ -88,6 +92,8 @@ impl DohServer {
             )
             .await
             .map_err(|e| format!("DoH HTTP/2 error: {}", e))?;
+
+        gauge!("synvoid.doh.connections").decrement(1.0);
 
         Ok(())
     }
@@ -116,6 +122,21 @@ impl DohServer {
         }
 
         let dns_query = if *req.method() == hyper::Method::POST {
+            if let Some(ct) = req.headers().get("content-type") {
+                if ct != "application/dns-message" {
+                    return Ok(hyper::Response::builder()
+                        .status(StatusCode::UNSUPPORTED_MEDIA_TYPE)
+                        .body(Full::new(Bytes::from(
+                            "Content-Type must be application/dns-message",
+                        )))
+                        .expect("response builder should not fail"));
+                }
+            } else {
+                return Ok(hyper::Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(Full::new(Bytes::from("Missing Content-Type header")))
+                    .expect("response builder should not fail"));
+            }
             let body = match req.collect().await {
                 Ok(b) => b.to_bytes(),
                 Err(_e) => {
@@ -160,58 +181,27 @@ impl DohServer {
                 .expect("response builder should not fail"));
         }
 
-        let (zones, zone_trie, cache, ecs_config, acme_dns_challenges) = {
+        counter!("synvoid.doh.queries.total").increment(1);
+
+        let query_start = std::time::Instant::now();
+        let response = {
             let dns_server_guard = dns_server.read();
             let server = dns_server_guard
                 .as_ref()
                 .expect("DNS server not configured");
 
-            (
-                server.get_zones(),
-                server.get_zone_trie(),
-                server.get_cache(),
-                server.get_ecs_filter_config(),
-                server.acme_dns_challenges.clone(),
-            )
-        };
-
-        let ctx = crate::server::QueryContext {
-            zones: &zones,
-            zone_trie: &zone_trie,
-            geoip_lookup: None,
-            min_geo_ttl: 60,
-            negative_cache_ttl: 300,
-            cache: cache.as_ref(),
-            dnssec: None,
-            signer_name: None,
-            query_validator: None,
-            firewall: None,
-            connection_limits: None,
-            max_idle_time: None,
-            zone_transfer: None,
-            ecs_filter_config: &ecs_config,
-            rate_limiter: None,
-            rrl_enabled: false,
-            update_handler: None,
-            notify_handler: None,
-            query_coalescer: None,
-            dns64_translator: None,
-            acme_dns_challenges: acme_dns_challenges.as_ref(),
-            cookie_server: None,
-            #[cfg(feature = "mesh")]
-            mesh_registry: None,
-        };
-
-        let response = if let Some(c) = &ctx.cache {
-            DnsServer::handle_query_with_cache(
-                &ctx,
-                &dns_query,
-                c,
-                crate::cache::TransportClass::Http,
-                Some(client_ip),
-            )
-        } else {
-            DnsServer::handle_query(&ctx, &dns_query, Some(client_ip))
+            let ctx = server.query_context();
+            if let Some(c) = &ctx.cache {
+                DnsServer::handle_query_with_cache(
+                    &ctx,
+                    &dns_query,
+                    c,
+                    crate::cache::TransportClass::Http,
+                    Some(client_ip),
+                )
+            } else {
+                DnsServer::handle_query(&ctx, &dns_query, Some(client_ip))
+            }
         };
 
         match response {
@@ -223,23 +213,34 @@ impl DohServer {
                         "answer": encoded
                     });
                     let body = serde_json::to_string(&json).unwrap_or_default();
+                    let resp_len = body.len();
+                    histogram!("synvoid.doh.query.duration")
+                        .record(query_start.elapsed().as_secs_f64());
                     Ok(hyper::Response::builder()
                         .status(StatusCode::OK)
                         .header("Content-Type", "application/json")
+                        .header("Content-Length", resp_len)
                         .body(Full::new(Bytes::from(body)))
                         .expect("response builder should not fail"))
                 } else {
+                    let resp_len = resp.len();
+                    histogram!("synvoid.doh.query.duration")
+                        .record(query_start.elapsed().as_secs_f64());
                     Ok(hyper::Response::builder()
                         .status(StatusCode::OK)
                         .header("Content-Type", "application/dns-message")
+                        .header("Content-Length", resp_len)
                         .body(Full::new(Bytes::from(resp.as_ref().clone())))
                         .expect("response builder should not fail"))
                 }
             }
-            None => Ok(hyper::Response::builder()
-                .status(500)
-                .body(Full::new(Bytes::new()))
-                .expect("response builder should not fail")),
+            None => {
+                counter!("synvoid.doh.query.errors").increment(1);
+                Ok(hyper::Response::builder()
+                    .status(500)
+                    .body(Full::new(Bytes::new()))
+                    .expect("response builder should not fail"))
+            }
         }
     }
 

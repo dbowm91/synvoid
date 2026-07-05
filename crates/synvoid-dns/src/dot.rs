@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use metrics::{counter, gauge, histogram};
 use parking_lot::RwLock;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -68,110 +69,86 @@ impl DotServer {
 
         let mut tls_stream = tls_stream;
 
-        loop {
+        counter!("synvoid.dot.connections.total").increment(1);
+        gauge!("synvoid.dot.connections").increment(1.0);
+
+        let result: Result<(), String> = loop {
             let client_ip = client_addr.ip();
 
             let mut length_buf = [0u8; 2];
             match tls_stream.read_exact(&mut length_buf).await {
                 Ok(_) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    return Ok(());
+                    break Ok(());
                 }
                 Err(e) => {
-                    return Err(format!("Failed to read length prefix: {}", e));
+                    break Err(format!("Failed to read length prefix: {}", e));
                 }
             };
 
             let length = u16::from_be_bytes(length_buf) as usize;
 
             if length > DOT_MAX_QUERY_SIZE || length == 0 {
-                return Err(format!("Invalid query length: {}", length));
+                break Err(format!("Invalid query length: {}", length));
             }
 
             let mut query_buf = vec![0u8; length];
-            tls_stream
-                .read_exact(&mut query_buf)
-                .await
-                .map_err(|e| format!("Failed to read query: {}", e))?;
+            if let Err(e) = tls_stream.read_exact(&mut query_buf).await {
+                break Err(format!("Failed to read query: {}", e));
+            }
 
-            let (zones, zone_trie, cache, ecs_config, acme_dns_challenges) = {
+            counter!("synvoid.dot.queries.total").increment(1);
+
+            let query_start = std::time::Instant::now();
+            let response = {
                 let dns_server_guard = dns_server.read();
                 let server = match dns_server_guard.as_ref() {
                     Some(s) => s,
                     None => {
-                        return Err("DNS server not configured".to_string());
+                        counter!("synvoid.dot.query.errors").increment(1);
+                        break Err("DNS server not configured".to_string());
                     }
                 };
 
-                (
-                    server.get_zones(),
-                    server.get_zone_trie(),
-                    server.get_cache(),
-                    server.get_ecs_filter_config(),
-                    server.acme_dns_challenges.clone(),
-                )
-            };
-
-            let ctx = crate::server::QueryContext {
-                zones: &zones,
-                zone_trie: &zone_trie,
-                geoip_lookup: None,
-                min_geo_ttl: 60,
-                negative_cache_ttl: 300,
-                cache: cache.as_ref(),
-                dnssec: None,
-                signer_name: None,
-                query_validator: None,
-                firewall: None,
-                connection_limits: None,
-                max_idle_time: None,
-                zone_transfer: None,
-                ecs_filter_config: &ecs_config,
-                rate_limiter: None,
-                rrl_enabled: false,
-                update_handler: None,
-                notify_handler: None,
-                query_coalescer: None,
-                dns64_translator: None,
-                acme_dns_challenges: acme_dns_challenges.as_ref(),
-                cookie_server: None,
-                #[cfg(feature = "mesh")]
-                mesh_registry: None,
-            };
-
-            let response = if let Some(c) = &ctx.cache {
-                DnsServer::handle_query_with_cache(
-                    &ctx,
-                    &query_buf,
-                    c,
-                    crate::cache::TransportClass::Tcp,
-                    Some(client_ip),
-                )
-            } else {
-                DnsServer::handle_query(&ctx, &query_buf, Some(client_ip))
+                let ctx = server.query_context();
+                if let Some(c) = &ctx.cache {
+                    DnsServer::handle_query_with_cache(
+                        &ctx,
+                        &query_buf,
+                        c,
+                        crate::cache::TransportClass::Tcp,
+                        Some(client_ip),
+                    )
+                } else {
+                    DnsServer::handle_query(&ctx, &query_buf, Some(client_ip))
+                }
             };
 
             match response {
                 Some(resp) => {
                     let response_len = resp.len() as u16;
-                    tls_stream
-                        .write_all(&response_len.to_be_bytes())
-                        .await
-                        .map_err(|e| format!("Failed to send response length: {}", e))?;
-                    tls_stream
-                        .write_all(&resp)
-                        .await
-                        .map_err(|e| format!("Failed to send response: {}", e))?;
+                    if let Err(e) = tls_stream.write_all(&response_len.to_be_bytes()).await {
+                        break Err(format!("Failed to send response length: {}", e));
+                    }
+                    if let Err(e) = tls_stream.write_all(&resp).await {
+                        break Err(format!("Failed to send response: {}", e));
+                    }
+                    histogram!("synvoid.dot.query.duration")
+                        .record(query_start.elapsed().as_secs_f64());
                 }
                 None => {
+                    counter!("synvoid.dot.query.errors").increment(1);
                     let empty_response: Vec<u8> = vec![0; 2];
-                    tls_stream
-                        .write_all(&empty_response)
-                        .await
-                        .map_err(|e| format!("Failed to send empty response: {}", e))?;
+                    if let Err(e) = tls_stream.write_all(&empty_response).await {
+                        break Err(format!("Failed to send empty response: {}", e));
+                    }
                 }
             }
-        }
+        };
+
+        gauge!("synvoid.dot.connections").decrement(1.0);
+
+        result
     }
 
     pub fn shutdown(&mut self) {

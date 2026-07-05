@@ -284,7 +284,22 @@ All DNSSEC fields are covered in §1 root table. Key sub-structs:
 
 Source: `crates/synvoid-config/src/dns/dns_encrypted.rs`
 
-All DoT/DoH/DoQ fields are covered in §1 root table.
+All DoT/DoH/DoQ fields are covered in §1 root table. See `architecture/dns.md` § "Encrypted Transport Adapters" for protocol details, transport-class mapping, and shared query pipeline.
+
+### DoT/DoH/DoQ Transport-Class Mapping
+
+| Transport | Config Section | TransportClass | Cache Namespace |
+|-----------|---------------|----------------|-----------------|
+| DoT | `dns.dot.*` | `Tcp` | Shared with TCP |
+| DoH | `dns.doh.*` | `Http` | Separate from TCP |
+| DoQ | `dns.doq.*` | `Quic` | Separate from TCP |
+
+### Known Limitations
+
+| Field | Status | Notes |
+|-------|--------|-------|
+| `dns.doq.bind_address` | partially implemented | Hardcoded to `0.0.0.0:{port}` at `startup.rs:580`; config field not consumed |
+| DoT/DoH/DoQ test coverage | wired, tests added | See `encrypted_transport` test suite and `dot`/`doh`/`doq` unit tests |
 
 ---
 

@@ -86,6 +86,12 @@ cargo test -p synvoid-dns -- store_volatile
 cargo test -p synvoid-dns -- store_atomic_write
 cargo test -p synvoid-dns -- cache_invalidation_axfr
 
+# DNS Milestone 3 Phase 3 tests (encrypted transport adapters: DoT, DoH, DoQ)
+cargo test -p synvoid-dns --test encrypted_transport
+cargo test -p synvoid-dns -- dot
+cargo test -p synvoid-dns -- doh
+cargo test -p synvoid-dns -- doq
+
 # DNS config-runtime matrix
 # See architecture/dns_config_runtime_matrix.md
 

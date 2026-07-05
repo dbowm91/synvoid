@@ -1436,6 +1436,85 @@ pub enum TransportClass {
 
 **Coalescing key impact**: The `QueryKey::from_parsed()` constructor includes `transport_class` in the coalescing key. A UDP query for `example.com A` will not be coalesced with a TCP query for the same name, even though both resolve the same record — because the responses may differ (TC=1 for UDP, full answer for TCP).
 
+### Encrypted Transport Adapters
+
+SynVoid supports three encrypted DNS transport protocols, each implemented as a thin adapter over the core authoritative query engine (`handle_parsed_query_with_cache`). All three share the same query pipeline, ensuring rate limiting, firewall, DNSSEC, coalescing, and cache semantics are applied identically.
+
+| Protocol | RFC | Transport Layer | Default Port | TransportClass | Source File |
+|----------|-----|-----------------|--------------|----------------|-------------|
+| DoT (DNS-over-TLS) | RFC 7858 | TCP + TLS 1.3 | 853 | `TransportClass::Tcp` | `dot.rs` |
+| DoH (DNS-over-HTTPS) | RFC 8484 | HTTP/2 + TLS 1.3 | 443 | `TransportClass::Http` | `doh.rs` |
+| DoQ (DNS-over-QUIC) | RFC 9250 | QUIC + TLS 1.3 | 853 | `TransportClass::Quic` | `doq.rs` |
+
+#### DoT (DNS-over-TLS)
+
+- TCP connection with TLS 1.3 termination
+- Two-byte length-prefixed DNS framing (RFC 1035 §4.2.2, same as TCP)
+- One-query-per-connection policy (aligned with TCP policy from M2 Phase 1)
+- Uses `TransportClass::Tcp` — DoT and TCP share the same cache namespace because the wire-format response is identical
+- Idle timeout and connection limits from `DnsLimitsConfig`
+- TLS certificate and key loaded from `dns.dot.tls_cert_path` / `dns.dot.tls_key_path`
+- System cert store used by default (`use_system_cert_store = true`)
+
+#### DoH (DNS-over-HTTPS)
+
+- HTTP/2 with TLS 1.3
+- POST method: `application/dns-message` content-type enforced; raw DNS wire bytes in request/response body
+- GET method: `dns=` query parameter (base64url-encoded DNS message) if `dns.doh.json_path` is configured
+- RFC 8484 wire format: `Content-Type: application/dns-message` on responses
+- Uses `TransportClass::Http` — separate cache namespace from TCP/DoT (HTTP framing differs)
+- Configurable path (`dns.doh.path`, default `/dns-query`) and optional JSON API path (`dns.doh.json_path`)
+- HTTP body size limits enforced; oversized bodies rejected
+- Client identity from `X-Forwarded-For` only when trusted proxy is configured
+
+#### DoQ (DNS-over-QUIC)
+
+- QUIC transport with TLS 1.3 (ALPN negotiation)
+- Bidirectional QUIC streams carry DNS messages (one query per stream)
+- Uses `TransportClass::Quic` — separate cache namespace from TCP/DoT/DoH
+- Per-stream message size limits and connection limits
+- Configurable max concurrent streams (`dns.doq.max_concurrent_streams`, default 100)
+- QUIC idle timeout (`dns.doq.idle_timeout_secs`, default 30s)
+
+#### Shared Query Pipeline
+
+All three encrypted adapters route queries through the same core pipeline:
+
+```
+Encrypted Adapter (DoT/DoH/DoQ)
+  → parse once (ParsedDnsQuery::parse)
+  → validate/firewall (DnsFirewall, DnsQueryValidator)
+  → rate limit (DnsRateLimiter)
+  → coalescing (QueryCoalescer, with transport-class-aware key)
+  → handle_parsed_query_with_cache (core engine)
+  → cache lookup/insert (7-dimension CacheKey)
+  → response building (ResponsePolicy, byte-size truncation)
+  → transport-specific framing (TCP length-prefix / HTTP body / QUIC stream)
+```
+
+This ensures:
+- No bypass of rate limiting, firewall, or DNSSEC policy
+- Cache keys include transport class (separate entries for Tcp/Http/Quic)
+- Coalescing keys include transport class (DoH queries not coalesced with DoT)
+- AXFR/IXFR/UPDATE/NOTIFY exclusions apply identically
+- Shutdown drains all transport listeners
+
+#### Per-Transport Metrics
+
+Emitted via `DnsMetrics` with transport-label dimension:
+
+| Metric | Description |
+|--------|-------------|
+| `dns_queries_total{transport}` | Queries received per transport (udp, tcp, dot, doh, doq) |
+| `dns_responses_total{transport}` | Responses sent per transport |
+| `dns_errors_total{transport,kind}` | Errors per transport and kind (malformed, oversized, tls) |
+| `dns_active_connections{transport}` | Current active connections per transport |
+| `dns_response_latency_seconds{transport}` | Response latency histogram per transport |
+
+#### Content-Type Enforcement (DoH)
+
+DoH POST requests must include `Content-Type: application/dns-message`. Requests with wrong or missing content type receive HTTP 415 (Unsupported Media Type). GET requests use the `dns=` query parameter per RFC 8484 §6.
+
 ### Coalescing Namespace Policy
 
 The `QueryKey.namespace` field is hardcoded to `CacheNamespace::Authoritative` in all constructors (`QueryKey::from_query`, `QueryKey::from_parsed`). This is **by design** — the query coalescer operates only in the authoritative server path, not the recursive resolver path.
@@ -1557,7 +1636,7 @@ Phase 5 is a verification-only phase. It confirms that transport/runtime, config
 
 | Item | Status | Notes |
 |------|--------|-------|
-| DoT/DoH/DoQ test coverage | Wired, no tests | 28 fields implemented but untested |
+| DoT/DoH/DoQ test coverage | Wired, tests added | `encrypted_transport` test suite + `dot`/`doh`/`doq` unit tests |
 | Rate limiter test coverage | Wired, no tests | 9 fields implemented but untested |
 | Firewall test coverage | Wired, no tests | 3 security controls untested |
 | ECS client subnet | Partial | Full prefix routing not implemented |
@@ -1774,6 +1853,85 @@ Phase 2 addressed critical DNSSEC correctness bugs, hardened key lifecycle manag
 cargo fmt --all --check
 cargo test -p synvoid-dns --lib -- dnssec
 cargo test -p synvoid-dns --test authoritative_negative
+cargo check -p synvoid-dns --all-features
+cargo check --workspace
+```
+
+---
+
+## Milestone 3 Phase 3: Encrypted Transport Adapters (DoT, DoH, DoQ)
+
+Phase 3 hardened the encrypted DNS transport adapters (DoT, DoH, DoQ) to faithfully preserve the DNS core semantics established in Milestones 1 and 2. See `plans/dns_milestone_3_phase_03_encrypted_transport_adapters.md` for the full plan.
+
+### Transport Class Mapping
+
+| Transport | Config | TransportClass | Cache Namespace | Source |
+|-----------|--------|----------------|-----------------|--------|
+| DoT | `dns.dot.*` | `Tcp` | Shared with TCP | `dot.rs` |
+| DoH | `dns.doh.*` | `Http` | Separate from TCP | `doh.rs` |
+| DoQ | `dns.doq.*` | `Quic` | Separate from TCP | `doq.rs` |
+
+### Shared Query Pipeline
+
+All three adapters route through `handle_parsed_query_with_cache`, ensuring identical application of:
+- Rate limiting (`DnsRateLimiter`)
+- Firewall filtering (`DnsFirewall`)
+- DNSSEC policy
+- Query coalescing (`QueryCoalescer` with transport-class-aware keys)
+- Cache lookup/insert (7-dimension `CacheKey` including transport class)
+- Response building (`ResponsePolicy`, byte-size truncation)
+
+### Adapter Characteristics
+
+| Feature | DoT | DoH | DoQ |
+|---------|-----|-----|-----|
+| Protocol | TCP + TLS 1.3 | HTTP/2 + TLS 1.3 | QUIC + TLS 1.3 |
+| Default port | 853 | 443 | 853 |
+| Framing | 2-byte length prefix | HTTP body | QUIC stream |
+| Content-type enforcement | N/A | `application/dns-message` (POST) | N/A |
+| One-query-per-connection | Yes (RFC 7766) | Yes (stateless HTTP) | Yes (one query per stream) |
+| Keep-alive / persistent | No (one query) | N/A (HTTP) | No (one query per stream) |
+
+### Config Fields (28 total)
+
+**DoT** (`DnsDotConfig`): `enabled`, `port` (853), `bind_address`, `tls_cert_path`, `tls_key_path`, `use_system_cert_store`
+
+**DoH** (`DnsDohConfig`): `enabled`, `port` (443), `bind_address`, `path` (`/dns-query`), `json_path`, `tls_cert_path`, `tls_key_path`, `use_system_cert_store`
+
+**DoQ** (`DnsDoqConfig`): `enabled`, `port` (853), `bind_address`, `tls_cert_path`, `tls_key_path`, `use_system_cert_store`, `max_concurrent_streams` (100), `idle_timeout_secs` (30)
+
+### Per-Transport Metrics
+
+| Metric | Labels | Description |
+|--------|--------|-------------|
+| `dns_queries_total` | `transport` | Queries received per transport (udp, tcp, dot, doh, doq) |
+| `dns_responses_total` | `transport` | Responses sent per transport |
+| `dns_errors_total` | `transport`, `kind` | Errors per transport and kind (malformed, oversized, tls) |
+| `dns_active_connections` | `transport` | Current active connections per transport |
+| `dns_response_latency_seconds` | `transport` | Response latency histogram per transport |
+
+### Known Limitations
+
+| Item | Status | Notes |
+|------|--------|-------|
+| DoQ bind address | Partial | Config field exists but `startup.rs:580` hardcodes bind to `0.0.0.0:{port}` |
+
+### Verification Commands
+
+```bash
+# Encrypted transport integration tests
+cargo test -p synvoid-dns --test encrypted_transport
+
+# Per-adapter unit tests
+cargo test -p synvoid-dns -- dot
+cargo test -p synvoid-dns -- doh
+cargo test -p synvoid-dns -- doq
+
+# Transport class separation
+cargo test -p synvoid-dns -- transport
+
+# Full workspace check
+cargo fmt --all --check
 cargo check -p synvoid-dns --all-features
 cargo check --workspace
 ```

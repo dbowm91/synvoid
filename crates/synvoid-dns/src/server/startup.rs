@@ -575,13 +575,7 @@ impl DnsServer {
         if self.config.doq.enabled {
             let mut doq = DoqServer::new(self.config.doq.clone(), self.cert_resolver.clone());
             doq.set_dns_server(self.clone());
-            if let Err(e) = doq
-                .start(
-                    std::net::SocketAddr::from(([0, 0, 0, 0], self.config.doq.port)),
-                    self.clone(),
-                )
-                .await
-            {
+            if let Err(e) = doq.start().await {
                 tracing::warn!("Failed to start DoQ server: {}", e);
             } else {
                 tracing::info!("DoQ server started on port {}", self.config.doq.port);

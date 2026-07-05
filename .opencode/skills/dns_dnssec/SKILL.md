@@ -397,6 +397,24 @@ Keys with `trust_point == 0` (never valid) must use `trust_anchor_check()` with 
 5. **QNAME Privacy and DNS Padding are deferred** - `sanitize_qname()` (`dns_settings.rs:244`) and `DnsPadding` (`edns.rs:540`) exist but are not wired into the query path.
 6. **DoQ bind_address is partially implemented** - Config field exists but `startup.rs:580` hardcodes bind to `0.0.0.0:{port}`.
 
+## Encrypted Transport Adapters (Milestone 3 Phase 3)
+
+DoT, DoH, and DoQ are thin adapters over the core authoritative query engine. All three share the same `handle_parsed_query_with_cache` pipeline, ensuring rate limiting, firewall, DNSSEC, coalescing, and cache semantics are applied identically.
+
+| Protocol | RFC | TransportClass | Default Port | Key Characteristics |
+|----------|-----|----------------|--------------|---------------------|
+| DoT | RFC 7858 | `Tcp` | 853 | TCP+TLS 1.3, length-prefixed framing, shares TCP cache namespace |
+| DoH | RFC 8484 | `Http` | 443 | HTTP/2+TLS 1.3, `application/dns-message` content-type enforced, separate cache namespace |
+| DoQ | RFC 9250 | `Quic` | 853 | QUIC+TLS 1.3, bidirectional streams, separate cache namespace |
+
+**Transport-class propagation**: `TransportClass` is included in `CacheKey` and `QueryKey`, preventing cross-contamination of wire-format responses between transport types.
+
+**DoH content-type enforcement**: POST requests must include `Content-Type: application/dns-message`. Wrong or missing content type returns HTTP 415.
+
+**Per-transport metrics**: `dns_queries_total{transport}`, `dns_responses_total{transport}`, `dns_errors_total{transport,kind}`, `dns_active_connections{transport}`, `dns_response_latency_seconds{transport}`.
+
+See `architecture/dns.md` § "Encrypted Transport Adapters" for the full shared query pipeline diagram and `plans/dns_milestone_3_phase_03_encrypted_transport_adapters.md` for the phase specification.
+
 ## Milestone 2 Phase 2 Changes
 
 ### Open-Resolver Prevention (`dns_recursive.rs`)
@@ -511,6 +529,12 @@ cargo test -p synvoid-dns -- servfail_response
 
 # M2 Phase 1: UDP/EDNS truncation (TC bit, question echoed)
 cargo test -p synvoid-dns -- truncation
+
+# M3 Phase 3: Encrypted transport adapters (DoT, DoH, DoQ)
+cargo test -p synvoid-dns --test encrypted_transport
+cargo test -p synvoid-dns -- dot
+cargo test -p synvoid-dns -- doh
+cargo test -p synvoid-dns -- doq
 ```
 
 ## Milestone 2 Phase 5: Verification & Release Gate
