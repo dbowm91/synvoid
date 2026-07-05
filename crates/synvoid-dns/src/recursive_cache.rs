@@ -90,7 +90,12 @@ impl RecursiveCacheKey {
         }
     }
 
-    pub fn new_with_dnssec(qname: &[u8], qtype: u16, client_subnet: Option<IpAddr>, dnssec_ok: bool) -> Self {
+    pub fn new_with_dnssec(
+        qname: &[u8],
+        qtype: u16,
+        client_subnet: Option<IpAddr>,
+        dnssec_ok: bool,
+    ) -> Self {
         Self {
             qname: qname.to_vec(),
             qtype: RecursiveRecordType::from(qtype),
@@ -218,7 +223,10 @@ impl RecursiveDnsCache {
         }
     }
 
-    pub fn get(&self, key: &RecursiveCacheKey) -> Option<(Vec<CachedRecord>, bool, DnssecValidationState)> {
+    pub fn get(
+        &self,
+        key: &RecursiveCacheKey,
+    ) -> Option<(Vec<CachedRecord>, bool, DnssecValidationState)> {
         let inner = &self.inner;
         let now = Instant::now();
 
@@ -283,7 +291,13 @@ impl RecursiveDnsCache {
         inner.stats.write().insertions += 1;
     }
 
-    pub fn insert_negative(&self, key: RecursiveCacheKey, is_nxdomain: bool, ncache_ttl: u32, validation_state: DnssecValidationState) {
+    pub fn insert_negative(
+        &self,
+        key: RecursiveCacheKey,
+        is_nxdomain: bool,
+        ncache_ttl: u32,
+        validation_state: DnssecValidationState,
+    ) {
         let inner = &self.inner;
         let ttl =
             Duration::from_secs(ncache_ttl.min(inner.config.negative_ttl.as_secs() as u32) as u64);
@@ -393,7 +407,12 @@ mod tests {
             data: vec![8, 8, 8, 8],
         }];
 
-        cache.insert_positive(key.clone(), records.clone(), 300, DnssecValidationState::Unchecked);
+        cache.insert_positive(
+            key.clone(),
+            records.clone(),
+            300,
+            DnssecValidationState::Unchecked,
+        );
 
         let result = cache.get(&key);
         assert!(result.is_some());
@@ -538,7 +557,12 @@ mod tests {
             ttl: 5,
             data: vec![1, 2, 3, 4],
         }];
-        cache.insert_positive(key.clone(), records.clone(), 5, DnssecValidationState::Unchecked);
+        cache.insert_positive(
+            key.clone(),
+            records.clone(),
+            5,
+            DnssecValidationState::Unchecked,
+        );
         let entry = cache.inner.positive_cache.get(&key).unwrap();
         assert_eq!(
             entry.ttl,
@@ -546,7 +570,12 @@ mod tests {
             "Should clamp to min_ttl"
         );
 
-        cache.insert_positive(key.clone(), records.clone(), 9999, DnssecValidationState::Unchecked);
+        cache.insert_positive(
+            key.clone(),
+            records.clone(),
+            9999,
+            DnssecValidationState::Unchecked,
+        );
         let entry = cache.inner.positive_cache.get(&key).unwrap();
         assert_eq!(
             entry.ttl,
@@ -694,8 +723,18 @@ mod tests {
             data: vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
         }];
 
-        cache.insert_positive(a_key.clone(), a_records, 300, DnssecValidationState::Unchecked);
-        cache.insert_positive(aaaa_key.clone(), aaaa_records, 300, DnssecValidationState::Unchecked);
+        cache.insert_positive(
+            a_key.clone(),
+            a_records,
+            300,
+            DnssecValidationState::Unchecked,
+        );
+        cache.insert_positive(
+            aaaa_key.clone(),
+            aaaa_records,
+            300,
+            DnssecValidationState::Unchecked,
+        );
         assert_eq!(cache.positive_len(), 2);
 
         cache.invalidate(b"multi.test");
@@ -876,7 +915,10 @@ mod tests {
         }];
         cache.insert_positive(key_do1.clone(), records, 300, DnssecValidationState::Secure);
 
-        assert!(cache.get(&key_do0).is_none(), "DO=0 should not hit DO=1 entry");
+        assert!(
+            cache.get(&key_do0).is_none(),
+            "DO=0 should not hit DO=1 entry"
+        );
         assert!(cache.get(&key_do1).is_some(), "DO=1 should hit DO=1 entry");
     }
 

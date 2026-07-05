@@ -23,7 +23,9 @@ use crate::parsed_query::ParsedDnsQuery;
 use parking_lot::RwLock;
 use synvoid_config::dns::RecursiveDnsConfig;
 
-use super::recursive_cache::{CachedRecord, DnssecValidationState, RecursiveCacheKey, RecursiveDnsCache};
+use super::recursive_cache::{
+    CachedRecord, DnssecValidationState, RecursiveCacheKey, RecursiveDnsCache,
+};
 use super::resolver::{MxRecord, SrvRecord};
 use super::wire::{
     build_error_response, build_response_header, get_message_id, parse_dns_message, RCODE_REFUSED,
@@ -465,7 +467,13 @@ impl RecursiveDnsServer {
         let dnssec_ok = parsed.edns.as_ref().is_some_and(|e| e.flags().dnssec_ok);
 
         let (response, _) = match self
-            .resolve_upstream(&qname_bytes, question.query_type(), message_id, checking_disabled, dnssec_ok)
+            .resolve_upstream(
+                &qname_bytes,
+                question.query_type(),
+                message_id,
+                checking_disabled,
+                dnssec_ok,
+            )
             .await
         {
             Ok(r) => r,
@@ -690,7 +698,8 @@ impl RecursiveDnsServer {
             return Err(RecursiveDnsError::InvalidQuery);
         }
 
-        if self.config.max_recursion_depth > 0 && recursion_depth >= self.config.max_recursion_depth {
+        if self.config.max_recursion_depth > 0 && recursion_depth >= self.config.max_recursion_depth
+        {
             return Err(RecursiveDnsError::DepthExceeded);
         }
 
@@ -709,7 +718,8 @@ impl RecursiveDnsServer {
         debug!("Recursive query for {} (type {:?})", question.name(), qtype);
 
         let qtype_u16: u16 = qtype.into();
-        let cache_key = RecursiveCacheKey::new_with_dnssec(&qname_bytes, qtype_u16, None, dnssec_ok);
+        let cache_key =
+            RecursiveCacheKey::new_with_dnssec(&qname_bytes, qtype_u16, None, dnssec_ok);
 
         if let Some((records, stale, validation_state)) = self.cache.get(&cache_key) {
             if let Some(metrics) = &self.metrics {
@@ -732,7 +742,13 @@ impl RecursiveDnsServer {
         }
 
         let (response, _validation_state) = self
-            .resolve_upstream(&qname_bytes, question.query_type(), message_id, checking_disabled, dnssec_ok)
+            .resolve_upstream(
+                &qname_bytes,
+                question.query_type(),
+                message_id,
+                checking_disabled,
+                dnssec_ok,
+            )
             .await?;
 
         let authority_ns = self.collect_authority_ns(&qname_bytes).await;
@@ -943,14 +959,26 @@ impl RecursiveDnsServer {
 
         let qtype_u16: u16 = qtype.into();
 
-        let effective_dnssec_validated = if checking_disabled { false } else { is_dnssec_validated };
+        let effective_dnssec_validated = if checking_disabled {
+            false
+        } else {
+            is_dnssec_validated
+        };
 
-        let validation_state = to_validation_state(effective_dnssec_validated, checking_disabled, !self.config.dnssec_validation);
+        let validation_state = to_validation_state(
+            effective_dnssec_validated,
+            checking_disabled,
+            !self.config.dnssec_validation,
+        );
 
         if records.is_empty() {
             let cache_key = RecursiveCacheKey::new_with_dnssec(qname, qtype_u16, None, dnssec_ok);
-            self.cache
-                .insert_negative(cache_key, true, self.config.cache.negative_ttl_secs as u32, validation_state);
+            self.cache.insert_negative(
+                cache_key,
+                true,
+                self.config.cache.negative_ttl_secs as u32,
+                validation_state,
+            );
 
             let flags = crate::wire::MessageFlags {
                 is_response: true,
@@ -978,7 +1006,15 @@ impl RecursiveDnsServer {
             .insert_positive(cache_key, records.clone(), min_ttl, validation_state);
 
         Ok((
-            self.build_cached_response(qname, qtype, records, message_id, validation_state, checking_disabled, dnssec_ok),
+            self.build_cached_response(
+                qname,
+                qtype,
+                records,
+                message_id,
+                validation_state,
+                checking_disabled,
+                dnssec_ok,
+            ),
             validation_state,
         ))
     }
@@ -993,7 +1029,8 @@ impl RecursiveDnsServer {
         checking_disabled: bool,
         dnssec_ok: bool,
     ) -> Vec<u8> {
-        let effective_dnssec_validated = validation_state == DnssecValidationState::Secure && !checking_disabled;
+        let effective_dnssec_validated =
+            validation_state == DnssecValidationState::Secure && !checking_disabled;
         let ad_bit = effective_dnssec_validated && dnssec_ok;
         let qtype_u16: u16 = qtype.into();
 
@@ -1154,7 +1191,11 @@ impl Clone for RecursiveDnsServer {
     }
 }
 
-fn to_validation_state(is_validated: bool, cd_bit: bool, dnssec_disabled: bool) -> DnssecValidationState {
+fn to_validation_state(
+    is_validated: bool,
+    cd_bit: bool,
+    dnssec_disabled: bool,
+) -> DnssecValidationState {
     if dnssec_disabled || cd_bit {
         DnssecValidationState::Unchecked
     } else if is_validated {
@@ -1203,25 +1244,17 @@ pub fn is_in_bailiwick(name: &[u8], zone_origin: &[u8]) -> bool {
     name_lower[name_lower.len() - zone_lower.len() - 1] == b'.'
 }
 
-pub fn validate_authority_bailiwick(
-    authority_ns: &[String],
-    question_name: &[u8],
-) -> bool {
+pub fn validate_authority_bailiwick(authority_ns: &[String], question_name: &[u8]) -> bool {
     for ns in authority_ns {
         let ns_bytes = ns.as_bytes();
-        if !is_in_bailiwick(ns_bytes, question_name)
-            && !is_in_bailiwick(question_name, ns_bytes)
-        {
+        if !is_in_bailiwick(ns_bytes, question_name) && !is_in_bailiwick(question_name, ns_bytes) {
             return false;
         }
     }
     true
 }
 
-pub fn validate_additional_bailiwick(
-    additional_name: &[u8],
-    authority_ns: &[String],
-) -> bool {
+pub fn validate_additional_bailiwick(additional_name: &[u8], authority_ns: &[String]) -> bool {
     for ns in authority_ns {
         let ns_bytes = ns.as_bytes();
         if is_in_bailiwick(additional_name, ns_bytes) {
@@ -1314,7 +1347,12 @@ mod tests {
             vec![93, 184, 216, 34],
         )];
 
-        cache.insert_positive(key.clone(), records.clone(), 300, DnssecValidationState::Unchecked);
+        cache.insert_positive(
+            key.clone(),
+            records.clone(),
+            300,
+            DnssecValidationState::Unchecked,
+        );
 
         let result = cache.get(&key);
         assert!(result.is_some());
@@ -1359,8 +1397,18 @@ mod tests {
         let records1 = vec![create_test_record(b"example.com", 1, 300, vec![1, 1, 1, 1])];
         let records2 = vec![create_test_record(b"test.com", 1, 300, vec![2, 2, 2, 2])];
 
-        cache.insert_positive(key1.clone(), records1, 300, DnssecValidationState::Unchecked);
-        cache.insert_positive(key2.clone(), records2, 300, DnssecValidationState::Unchecked);
+        cache.insert_positive(
+            key1.clone(),
+            records1,
+            300,
+            DnssecValidationState::Unchecked,
+        );
+        cache.insert_positive(
+            key2.clone(),
+            records2,
+            300,
+            DnssecValidationState::Unchecked,
+        );
 
         assert!(cache.get(&key1).is_some());
         assert!(cache.get(&key2).is_some());
@@ -1380,8 +1428,18 @@ mod tests {
         let records1 = vec![create_test_record(b"example.com", 1, 300, vec![1, 1, 1, 1])];
         let records2 = vec![create_test_record(b"test.com", 1, 300, vec![2, 2, 2, 2])];
 
-        cache.insert_positive(key1.clone(), records1, 300, DnssecValidationState::Unchecked);
-        cache.insert_positive(key2.clone(), records2, 300, DnssecValidationState::Unchecked);
+        cache.insert_positive(
+            key1.clone(),
+            records1,
+            300,
+            DnssecValidationState::Unchecked,
+        );
+        cache.insert_positive(
+            key2.clone(),
+            records2,
+            300,
+            DnssecValidationState::Unchecked,
+        );
 
         cache.invalidate_all();
 
@@ -1515,8 +1573,18 @@ mod tests {
             vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
         )];
 
-        cache.insert_positive(key_a.clone(), records_a, 300, DnssecValidationState::Unchecked);
-        cache.insert_positive(key_aaaa.clone(), records_aaaa, 300, DnssecValidationState::Unchecked);
+        cache.insert_positive(
+            key_a.clone(),
+            records_a,
+            300,
+            DnssecValidationState::Unchecked,
+        );
+        cache.insert_positive(
+            key_aaaa.clone(),
+            records_aaaa,
+            300,
+            DnssecValidationState::Unchecked,
+        );
 
         assert_eq!(cache.len(), 2);
 

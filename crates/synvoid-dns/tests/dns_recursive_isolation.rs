@@ -9,8 +9,8 @@ use synvoid_config::dns::{
 };
 use synvoid_dns::edns::EcsFilterConfig;
 use synvoid_dns::recursive::CircuitBreaker;
-use synvoid_dns::recursive_cache::RecursiveDnsCache;
 use synvoid_dns::recursive_cache::DnssecValidationState;
+use synvoid_dns::recursive_cache::RecursiveDnsCache;
 use synvoid_dns::server::RecordType;
 use synvoid_dns::server::{DnsServer, DnsZoneRecord, QueryContext, ShardedZoneStore, Zone};
 use synvoid_dns::zone_trie::ZoneTrie;
@@ -1451,21 +1451,30 @@ const AD_BIT: u16 = 0x0020;
 fn test_cd_bit_parsed_from_query() {
     let q = build_query_with_flags(0x1234, 0x0100 | CD_BIT, "example.com", 1);
     let parsed = synvoid_dns::parsed_query::ParsedDnsQuery::parse(&q).unwrap();
-    assert!(parsed.flags.checking_disabled, "CD bit must be parsed from query flags");
+    assert!(
+        parsed.flags.checking_disabled,
+        "CD bit must be parsed from query flags"
+    );
 }
 
 #[test]
 fn test_do_bit_parsed_from_edns() {
     let q = build_query_with_edns(0x1234, 0x0100, "example.com", 1, true);
     let parsed = synvoid_dns::parsed_query::ParsedDnsQuery::parse(&q).unwrap();
-    assert!(parsed.dnssec_ok, "DO bit must be parsed from EDNS OPT record");
+    assert!(
+        parsed.dnssec_ok,
+        "DO bit must be parsed from EDNS OPT record"
+    );
 }
 
 #[test]
 fn test_do_bit_absent_when_no_edns() {
     let q = build_query_with_flags(0x1234, 0x0100, "example.com", 1);
     let parsed = synvoid_dns::parsed_query::ParsedDnsQuery::parse(&q).unwrap();
-    assert!(!parsed.dnssec_ok, "DO bit must be false when no EDNS present");
+    assert!(
+        !parsed.dnssec_ok,
+        "DO bit must be false when no EDNS present"
+    );
 }
 
 #[test]
@@ -1488,7 +1497,11 @@ fn test_cd_bit_echoed_in_response_header() {
         0,
         0,
     );
-    assert_ne!(response_flags(&flags) & CD_BIT, 0, "CD bit must be set in response when checking_disabled=true");
+    assert_ne!(
+        response_flags(&flags) & CD_BIT,
+        0,
+        "CD bit must be set in response when checking_disabled=true"
+    );
 }
 
 #[test]
@@ -1511,7 +1524,11 @@ fn test_cd_bit_not_set_when_disabled() {
         0,
         0,
     );
-    assert_eq!(response_flags(&flags) & CD_BIT, 0, "CD bit must not be set when checking_disabled=false");
+    assert_eq!(
+        response_flags(&flags) & CD_BIT,
+        0,
+        "CD bit must not be set when checking_disabled=false"
+    );
 }
 
 #[test]
@@ -1534,7 +1551,11 @@ fn test_ad_bit_set_only_when_validated_and_do() {
         0,
         0,
     );
-    assert_ne!(response_flags(&flags) & AD_BIT, 0, "AD bit must be set when authentic_data=true");
+    assert_ne!(
+        response_flags(&flags) & AD_BIT,
+        0,
+        "AD bit must be set when authentic_data=true"
+    );
 }
 
 #[test]
@@ -1557,7 +1578,11 @@ fn test_ad_bit_cleared_when_not_validated() {
         0,
         0,
     );
-    assert_eq!(response_flags(&flags) & AD_BIT, 0, "AD bit must not be set when authentic_data=false");
+    assert_eq!(
+        response_flags(&flags) & AD_BIT,
+        0,
+        "AD bit must not be set when authentic_data=false"
+    );
 }
 
 #[test]
@@ -1567,14 +1592,20 @@ fn test_ad_bit_gated_on_do_bit() {
     assert!(!parsed_no_do.dnssec_ok);
 
     let ad_bit_should_be_set = true && parsed_no_do.dnssec_ok;
-    assert!(!ad_bit_should_be_set, "AD must be gated on DO bit: AD=0 when DO=0");
+    assert!(
+        !ad_bit_should_be_set,
+        "AD must be gated on DO bit: AD=0 when DO=0"
+    );
 
     let q_with_do = build_query_with_edns(0x1234, 0x0100, "example.com", 1, true);
     let parsed_with_do = synvoid_dns::parsed_query::ParsedDnsQuery::parse(&q_with_do).unwrap();
     assert!(parsed_with_do.dnssec_ok);
 
     let ad_bit_when_do = true && parsed_with_do.dnssec_ok;
-    assert!(ad_bit_when_do, "AD can be set when DO=1 and validation succeeds");
+    assert!(
+        ad_bit_when_do,
+        "AD can be set when DO=1 and validation succeeds"
+    );
 }
 
 #[test]
@@ -1584,8 +1615,15 @@ fn test_cd_bit_skips_validation() {
     assert!(parsed.flags.checking_disabled);
 
     let is_dnssec_validated = true;
-    let effective_validated = if parsed.flags.checking_disabled { false } else { is_dnssec_validated };
-    assert!(!effective_validated, "CD=1 must suppress DNSSEC validation result");
+    let effective_validated = if parsed.flags.checking_disabled {
+        false
+    } else {
+        is_dnssec_validated
+    };
+    assert!(
+        !effective_validated,
+        "CD=1 must suppress DNSSEC validation result"
+    );
 }
 
 #[test]
@@ -1596,9 +1634,16 @@ fn test_cd_and_do_interaction() {
     assert!(parsed.dnssec_ok);
 
     let is_dnssec_validated = true;
-    let effective_validated = if parsed.flags.checking_disabled { false } else { is_dnssec_validated };
+    let effective_validated = if parsed.flags.checking_disabled {
+        false
+    } else {
+        is_dnssec_validated
+    };
     let ad_bit = effective_validated && parsed.dnssec_ok;
-    assert!(!ad_bit, "CD=1 must result in AD=0 even when DO=1 and validation would succeed");
+    assert!(
+        !ad_bit,
+        "CD=1 must result in AD=0 even when DO=1 and validation would succeed"
+    );
 }
 
 #[test]
@@ -1626,7 +1671,11 @@ fn test_response_header_roundtrip_cd_bit() {
         0,
     );
     let resp_flags = response_flags(&response_flags_val);
-    assert_ne!(resp_flags & CD_BIT, 0, "CD bit must be echoed from query to response");
+    assert_ne!(
+        resp_flags & CD_BIT,
+        0,
+        "CD bit must be echoed from query to response"
+    );
     assert_ne!(resp_flags & 0x8000, 0, "QR bit must be set");
     assert_ne!(resp_flags & 0x0100, 0, "RD must be echoed");
 }
@@ -1651,7 +1700,10 @@ fn test_recursive_cache_key_dnssec_ok_separation() {
     }];
     cache.insert_positive(key_do1.clone(), records, 300, DnssecValidationState::Secure);
 
-    assert!(cache.get(&key_do0).is_none(), "DO=0 should not hit DO=1 entry");
+    assert!(
+        cache.get(&key_do0).is_none(),
+        "DO=0 should not hit DO=1 entry"
+    );
     assert!(cache.get(&key_do1).is_some(), "DO=1 should hit DO=1 entry");
 }
 
@@ -1895,10 +1947,7 @@ fn test_validate_authority_bailiwick_all_in_bailiwick() {
 
 #[test]
 fn test_validate_authority_bailiwick_one_out() {
-    let ns = vec![
-        "ns1.example.com.".to_string(),
-        "ns1.evil.com.".to_string(),
-    ];
+    let ns = vec!["ns1.example.com.".to_string(), "ns1.evil.com.".to_string()];
     assert!(!synvoid_dns::recursive::validate_authority_bailiwick(
         &ns,
         b"example.com."
@@ -1965,10 +2014,7 @@ fn test_bailiwick_violations_metric_increment() {
 
 #[test]
 fn test_ecs_forwarding_policy_default_is_never() {
-    assert_eq!(
-        EcsForwardingPolicy::default(),
-        EcsForwardingPolicy::Never
-    );
+    assert_eq!(EcsForwardingPolicy::default(), EcsForwardingPolicy::Never);
 }
 
 #[test]
@@ -1990,8 +2036,8 @@ fn test_ecs_recursive_config_includes_ecs_field() {
 
 #[test]
 fn test_ecs_truncate_prefix_v4() {
-    use synvoid_dns::edns::ClientSubnet;
     use std::net::IpAddr;
+    use synvoid_dns::edns::ClientSubnet;
 
     let ecs = ClientSubnet {
         address: IpAddr::from([10, 0, 0, 0]),
@@ -2004,8 +2050,8 @@ fn test_ecs_truncate_prefix_v4() {
 
 #[test]
 fn test_ecs_truncate_prefix_v4_already_less_specific() {
-    use synvoid_dns::edns::ClientSubnet;
     use std::net::IpAddr;
+    use synvoid_dns::edns::ClientSubnet;
 
     let ecs = ClientSubnet {
         address: IpAddr::from([10, 0, 0, 0]),
@@ -2017,8 +2063,8 @@ fn test_ecs_truncate_prefix_v4_already_less_specific() {
 
 #[test]
 fn test_ecs_truncate_prefix_v6() {
-    use synvoid_dns::edns::ClientSubnet;
     use std::net::IpAddr;
+    use synvoid_dns::edns::ClientSubnet;
 
     let ecs = ClientSubnet {
         address: IpAddr::from([0x2001, 0xdb8, 0, 0, 0, 0, 0, 1]),
@@ -2031,8 +2077,8 @@ fn test_ecs_truncate_prefix_v6() {
 
 #[test]
 fn test_ecs_truncate_prefix_no_change() {
-    use synvoid_dns::edns::ClientSubnet;
     use std::net::IpAddr;
+    use synvoid_dns::edns::ClientSubnet;
 
     let ecs = ClientSubnet {
         address: IpAddr::from([192, 168, 1, 0]),
@@ -2044,8 +2090,8 @@ fn test_ecs_truncate_prefix_no_change() {
 
 #[test]
 fn test_ecs_policy_never_strips_ecs() {
-    use synvoid_dns::edns::ClientSubnet;
     use std::net::IpAddr;
+    use synvoid_dns::edns::ClientSubnet;
 
     let subnet = Some(ClientSubnet {
         address: IpAddr::from([8, 8, 8, 0]),
@@ -2060,8 +2106,8 @@ fn test_ecs_policy_never_strips_ecs() {
 
 #[test]
 fn test_ecs_policy_always_forwards_ecs() {
-    use synvoid_dns::edns::ClientSubnet;
     use std::net::IpAddr;
+    use synvoid_dns::edns::ClientSubnet;
 
     let subnet = Some(ClientSubnet {
         address: IpAddr::from([8, 8, 8, 0]),
@@ -2087,8 +2133,8 @@ fn test_ecs_policy_always_without_ecs_returns_none() {
 
 #[test]
 fn test_ecs_policy_if_present_with_ecs() {
-    use synvoid_dns::edns::ClientSubnet;
     use std::net::IpAddr;
+    use synvoid_dns::edns::ClientSubnet;
 
     let subnet = Some(ClientSubnet {
         address: IpAddr::from([8, 8, 8, 0]),
@@ -2113,8 +2159,8 @@ fn test_ecs_policy_if_present_without_ecs() {
 
 #[test]
 fn test_ecs_policy_cdn_only_returns_none() {
-    use synvoid_dns::edns::ClientSubnet;
     use std::net::IpAddr;
+    use synvoid_dns::edns::ClientSubnet;
 
     let subnet = Some(ClientSubnet {
         address: IpAddr::from([8, 8, 8, 0]),

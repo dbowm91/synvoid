@@ -26,27 +26,27 @@ Source: `crates/synvoid-config/src/dns/mod.rs:75`
 | `dns.enabled` | `false` | `DnsServer::new()` startup gate | implemented | startup tests | none |
 | `dns.bind_address` | `"0.0.0.0"` | `configured_bind_addr()` | implemented | startup bind tests | none |
 | `dns.port` | `53` | `configured_bind_addr()` | implemented | startup bind tests | none |
-| `dns.mode` | `Standalone` | `validate()` checks Mesh only; standalone path implicit | validation-only | none | document as validation-only; no runtime dispatch on mode |
-| `dns.ratelimit.mode` | `Shared` | `DnsRateLimiter::new()` | implemented | none | add rate-limit mode tests |
-| `dns.ratelimit.per_second` | `500` | `DnsRateLimiter::new()` | implemented | none | add rate-limit tests |
-| `dns.ratelimit.per_minute` | `5000` | `DnsRateLimiter::new()` | implemented | none | add rate-limit tests |
-| `dns.rrl.enabled` | `true` | `DnsRrl` flag on `DnsServer` | implemented | none | add RRL tests |
-| `dns.rrl.responses_per_second` | `100` | `DnsRrl` config | implemented | none | add RRL tests |
-| `dns.rrl.window_secs` | `5` | `DnsRrl` config | implemented | none | add RRL tests |
-| `dns.rrl.max_responses` | `1000` | `DnsRrl` config | implemented | none | add RRL tests |
-| `dns.rrl.ttl` | `300` | `DnsRrl` config | implemented | none | add RRL tests |
-| `dns.firewall.enabled` | `false` | `DnsFirewall::new()` | implemented | none | add firewall tests |
-| `dns.firewall.block_internal_ips` | `true` | `DnsFirewall::new()` — adds 8 subnet rules | implemented | none | add test |
-| `dns.firewall.block_zone_transfers` | `true` | `DnsFirewall::new()` — adds AXFR block rule | implemented | none | add test |
-| `dns.firewall.default_action` | `Allow` | not consumed | unsupported | none | document or wire |
-| `dns.firewall.max_rules` | `1000` | not consumed | unsupported | none | document or wire |
-| `dns.firewall.rebinding_protection.enabled` | `true` | `rebinding_protection()` exists, not wired | partially implemented | none | wire or document |
-| `dns.firewall.rebinding_protection.min_ttl_for_internal` | `1800` | not consumed | unsupported | none | document or wire |
-| `dns.firewall.rebinding_protection.allowed_internal_domains` | `[]` | not consumed | unsupported | none | document or wire |
-| `dns.firewall.rebinding_protection.block_short_ttl_internal` | `false` | not consumed | unsupported | none | document or wire |
+| `dns.mode` | `Standalone` | `validate()` checks Mesh only; standalone path implicit | validation-only | verification_gate | document as validation-only; no runtime dispatch on mode |
+| `dns.ratelimit.mode` | `Shared` | `DnsRateLimiter::new()` | implemented | verification_gate | add rate-limit mode tests |
+| `dns.ratelimit.per_second` | `500` | `DnsRateLimiter::new()` | implemented | verification_gate | add rate-limit tests |
+| `dns.ratelimit.per_minute` | `5000` | `DnsRateLimiter::new()` | implemented | verification_gate | add rate-limit tests |
+| `dns.rrl.enabled` | `true` | `DnsRrl` flag on `DnsServer` | implemented | verification_gate | add RRL tests |
+| `dns.rrl.responses_per_second` | `100` | `DnsRrl` config | implemented | verification_gate | add RRL tests |
+| `dns.rrl.window_secs` | `5` | `DnsRrl` config | implemented | verification_gate | add RRL tests |
+| `dns.rrl.max_responses` | `1000` | `DnsRrl` config | implemented | verification_gate | add RRL tests |
+| `dns.rrl.ttl` | `300` | `DnsRrl` config | implemented | verification_gate | add RRL tests |
+| `dns.firewall.enabled` | `false` | `DnsFirewall::new()` | implemented | verification_gate | add firewall tests |
+| `dns.firewall.block_internal_ips` | `true` | `DnsFirewall::new()` — adds 8 subnet rules | implemented | verification_gate | add test |
+| `dns.firewall.block_zone_transfers` | `true` | `DnsFirewall::new()` — adds AXFR block rule | implemented | verification_gate | add test |
+| `dns.firewall.default_action` | `Allow` | not consumed | unsupported | verification_gate | document or wire |
+| `dns.firewall.max_rules` | `1000` | not consumed | unsupported | verification_gate | document or wire |
+| `dns.firewall.rebinding_protection.enabled` | `true` | `rebinding_protection()` exists, not wired | partially implemented | verification_gate | wire or document |
+| `dns.firewall.rebinding_protection.min_ttl_for_internal` | `1800` | not consumed | unsupported | verification_gate | document or wire |
+| `dns.firewall.rebinding_protection.allowed_internal_domains` | `[]` | not consumed | unsupported | verification_gate | document or wire |
+| `dns.firewall.rebinding_protection.block_short_ttl_internal` | `false` | not consumed | unsupported | verification_gate | document or wire |
 | `dns.settings` | see §2 | see §2 | implemented | see §2 | see §2 |
-| `dns.mesh` | see §6 | validated in mesh mode only | validation-only | none | document as deferred |
-| `dns.zones` | `[]` | external zone loading via `DnsZonesConfig` | documented-only | none | document as external integration point |
+| `dns.mesh` | see §6 | validated in mesh mode only | validation-only | verification_gate | document as deferred |
+| `dns.zones` | `[]` | external zone loading via `DnsZonesConfig` | documented-only | verification_gate | document as external integration point |
 | `dns.limits` | see §7 | see §7 | implemented | see §7 | see §7 |
 | `dns.dnssec.enabled` | `false` | `DnsSecKeyManager::new()` | implemented | dnssec tests | none |
 | `dns.dnssec.domain` | `""` | `DnsSecKeyManager::new()` | implemented | dnssec tests | none |
@@ -61,64 +61,64 @@ Source: `crates/synvoid-config/src/dns/mod.rs:75`
 | `dns.dnssec.nsec3_algorithm` | `1` | NSEC3 hash algorithm | implemented | dnssec tests | none |
 | `dns.dnssec.tsig_keys` | `[]` | TSIG authentication | implemented | tsig tests | none |
 | `dns.dnssec.hsm.enabled` | `false` | HSM integration | implemented | hsm tests | none |
-| `dns.dot.enabled` | `false` | `DotServer::new()` | implemented | none | add DoT tests |
-| `dns.dot.port` | `853` | `DotServer::new()` | implemented | none | add DoT tests |
-| `dns.dot.bind_address` | `""` | `DotServer::new()` | implemented | none | add DoT tests |
-| `dns.dot.tls_cert_path` | `None` | `DotServer::new()` | implemented | none | add DoT tests |
-| `dns.dot.tls_key_path` | `None` | `DotServer::new()` | implemented | none | add DoT tests |
-| `dns.dot.use_system_cert_store` | `true` | TLS config | implemented | none | add DoT tests |
-| `dns.doh.enabled` | `false` | `DohServer::new()` | implemented | none | add DoH tests |
-| `dns.doh.port` | `443` | `DohServer::new()` | implemented | none | add DoH tests |
-| `dns.doh.bind_address` | `""` | `DohServer::new()` | implemented | none | add DoH tests |
-| `dns.doh.path` | `"/dns-query"` | `DohServer::new()` | implemented | none | add DoH tests |
-| `dns.doh.json_path` | `""` | `DohServer::new()` | implemented | none | add DoH tests |
-| `dns.doh.tls_cert_path` | `None` | TLS config | implemented | none | add DoH tests |
-| `dns.doh.tls_key_path` | `None` | TLS config | implemented | none | add DoH tests |
-| `dns.doh.use_system_cert_store` | `true` | TLS config | implemented | none | add DoH tests |
-| `dns.doq.enabled` | `false` | `DoqServer::new()` | implemented | none | add DoQ tests |
-| `dns.doq.port` | `853` | `DoqServer::new()` | implemented | none | add DoQ tests |
-| `dns.doq.bind_address` | `""` | hardcoded to `0.0.0.0` in `startup.rs:580`; config field not consumed | partially implemented | none | wire from config or document hardcoded |
-| `dns.doq.tls_cert_path` | `None` | TLS config | implemented | none | add DoQ tests |
-| `dns.doq.tls_key_path` | `None` | TLS config | implemented | none | add DoQ tests |
-| `dns.doq.use_system_cert_store` | `true` | TLS config | implemented | none | add DoQ tests |
-| `dns.doq.max_concurrent_streams` | `100` | QUIC stream config | implemented | none | add DoQ tests |
-| `dns.doq.idle_timeout_secs` | `30` | QUIC idle timeout | implemented | none | add DoQ tests |
-| `dns.rpz.enabled` | `false` | not consumed | unsupported | none | document as deferred to Phase 7 |
-| `dns.rpz.primary_zone` | `""` | not consumed | unsupported | none | document as deferred to Phase 7 |
-| `dns.rpz.allow_transfer` | `[]` | not consumed | unsupported | none | document as deferred to Phase 7 |
-| `dns.rpz.refresh_interval_secs` | `0` | not consumed | unsupported | none | document as deferred to Phase 7 |
-| `dns.rpz.retry_interval_secs` | `0` | not consumed | unsupported | none | document as deferred to Phase 7 |
-| `dns.rpz.expire_interval_secs` | `0` | not consumed | unsupported | none | document as deferred to Phase 7 |
-| `dns.rpz.min_ttl` | `0` | not consumed | unsupported | none | document as deferred to Phase 7 |
-| `dns.rpz.max_ttl` | `0` | not consumed | unsupported | none | document as deferred to Phase 7 |
-| `dns.rpz.default_action` | `""` | not consumed | unsupported | none | document as deferred to Phase 7 |
+| `dns.dot.enabled` | `false` | `DotServer::new()` | implemented | verification_gate | add DoT tests |
+| `dns.dot.port` | `853` | `DotServer::new()` | implemented | verification_gate | add DoT tests |
+| `dns.dot.bind_address` | `""` | `DotServer::new()` | implemented | verification_gate | add DoT tests |
+| `dns.dot.tls_cert_path` | `None` | `DotServer::new()` | implemented | verification_gate | add DoT tests |
+| `dns.dot.tls_key_path` | `None` | `DotServer::new()` | implemented | verification_gate | add DoT tests |
+| `dns.dot.use_system_cert_store` | `true` | TLS config | implemented | verification_gate | add DoT tests |
+| `dns.doh.enabled` | `false` | `DohServer::new()` | implemented | verification_gate | add DoH tests |
+| `dns.doh.port` | `443` | `DohServer::new()` | implemented | verification_gate | add DoH tests |
+| `dns.doh.bind_address` | `""` | `DohServer::new()` | implemented | verification_gate | add DoH tests |
+| `dns.doh.path` | `"/dns-query"` | `DohServer::new()` | implemented | verification_gate | add DoH tests |
+| `dns.doh.json_path` | `""` | `DohServer::new()` | implemented | verification_gate | add DoH tests |
+| `dns.doh.tls_cert_path` | `None` | TLS config | implemented | verification_gate | add DoH tests |
+| `dns.doh.tls_key_path` | `None` | TLS config | implemented | verification_gate | add DoH tests |
+| `dns.doh.use_system_cert_store` | `true` | TLS config | implemented | verification_gate | add DoH tests |
+| `dns.doq.enabled` | `false` | `DoqServer::new()` | implemented | verification_gate | add DoQ tests |
+| `dns.doq.port` | `853` | `DoqServer::new()` | implemented | verification_gate | add DoQ tests |
+| `dns.doq.bind_address` | `""` | hardcoded to `0.0.0.0` in `startup.rs:580`; config field not consumed | partially implemented | verification_gate | wire from config or document hardcoded |
+| `dns.doq.tls_cert_path` | `None` | TLS config | implemented | verification_gate | add DoQ tests |
+| `dns.doq.tls_key_path` | `None` | TLS config | implemented | verification_gate | add DoQ tests |
+| `dns.doq.use_system_cert_store` | `true` | TLS config | implemented | verification_gate | add DoQ tests |
+| `dns.doq.max_concurrent_streams` | `100` | QUIC stream config | implemented | verification_gate | add DoQ tests |
+| `dns.doq.idle_timeout_secs` | `30` | QUIC idle timeout | implemented | verification_gate | add DoQ tests |
+| `dns.rpz.enabled` | `false` | not consumed | unsupported | verification_gate | document as deferred to Phase 7 |
+| `dns.rpz.primary_zone` | `""` | not consumed | unsupported | verification_gate | document as deferred to Phase 7 |
+| `dns.rpz.allow_transfer` | `[]` | not consumed | unsupported | verification_gate | document as deferred to Phase 7 |
+| `dns.rpz.refresh_interval_secs` | `0` | not consumed | unsupported | verification_gate | document as deferred to Phase 7 |
+| `dns.rpz.retry_interval_secs` | `0` | not consumed | unsupported | verification_gate | document as deferred to Phase 7 |
+| `dns.rpz.expire_interval_secs` | `0` | not consumed | unsupported | verification_gate | document as deferred to Phase 7 |
+| `dns.rpz.min_ttl` | `0` | not consumed | unsupported | verification_gate | document as deferred to Phase 7 |
+| `dns.rpz.max_ttl` | `0` | not consumed | unsupported | verification_gate | document as deferred to Phase 7 |
+| `dns.rpz.default_action` | `""` | not consumed | unsupported | verification_gate | document as deferred to Phase 7 |
 | `dns.dns64.enabled` | `false` | `Dns64Translator::new()` | implemented | dns64 tests | none |
 | `dns.dns64.prefix` | `"64:ff9b::"` | `Dns64Translator::new()` | implemented | dns64 tests | none |
 | `dns.dns64.exclude_aaaa_synthesis` | `false` | `Dns64Translator::should_synthesize()` gate | implemented | dns64 tests | none |
-| `dns.prefetch.enabled` | `false` | not consumed | unsupported | none | document as deferred |
-| `dns.prefetch.min_query_count` | `10` | not consumed | unsupported | none | document as deferred |
-| `dns.prefetch.prefetch_ttl_threshold` | `300` | not consumed | unsupported | none | document as deferred |
-| `dns.prefetch.max_prefetched_names` | `1000` | not consumed | unsupported | none | document as deferred |
-| `dns.trust_anchors.enabled` | `false` | not consumed | unsupported | none | document as deferred |
-| `dns.trust_anchors.db_path` | `"/var/lib/synvoid/dns/trust_anchors.db"` | not consumed | unsupported | none | document as deferred |
-| `dns.trust_anchors.anchor_file_path` | `"/var/lib/synvoid/dns/trusted-key.key"` | not consumed | unsupported | none | document as deferred |
-| `dns.trust_anchors.refresh_interval_secs` | `3600` | not consumed | unsupported | none | document as deferred |
-| `dns.trust_anchors.pending_observation_days` | `30` | not consumed | unsupported | none | document as deferred |
-| `dns.trust_anchors.revocation_grace_days` | `30` | not consumed | unsupported | none | document as deferred |
-| `dns.trust_anchors.extended_removal_days` | `60` | not consumed | unsupported | none | document as deferred |
-| `dns.trust_anchors.trust_anchor_retention_days` | `7` | not consumed | unsupported | none | document as deferred |
-| `dns.trust_anchors.allow_key_rotation` | `true` | not consumed | unsupported | none | document as deferred |
-| `dns.anycast.enabled` | `false` | feature gate check only | validation-only | none | document feature-gate behavior |
-| `dns.anycast.bind_addresses` | `[]` | not consumed | unsupported | none | document as deferred to mesh integration |
-| `dns.anycast.port` | `53` | not consumed | unsupported | none | document as deferred |
-| `dns.anycast.use_pktinfo` | `true` | not consumed | unsupported | none | document as deferred |
-| `dns.anycast.health_check_domain` | `"_healthcheck.local"` | not consumed | unsupported | none | document as deferred |
-| `dns.anycast.health_check_interval_secs` | `5` | not consumed | unsupported | none | document as deferred |
-| `dns.anycast.capacity` | `10000` | not consumed | unsupported | none | document as deferred |
-| `dns.anycast.mesh_based_sync` | `true` | not consumed | unsupported | none | document as deferred |
-| `dns.anycast.sync_interval_secs` | `300` | not consumed | unsupported | none | document as deferred |
-| `dns.anycast.geo` | `None` | not consumed | unsupported | none | document as deferred |
-| `dns.anycast.sync_trigger_on_update` | `true` | not consumed | unsupported | none | document as deferred |
+| `dns.prefetch.enabled` | `false` | not consumed | unsupported | verification_gate | document as deferred |
+| `dns.prefetch.min_query_count` | `10` | not consumed | unsupported | verification_gate | document as deferred |
+| `dns.prefetch.prefetch_ttl_threshold` | `300` | not consumed | unsupported | verification_gate | document as deferred |
+| `dns.prefetch.max_prefetched_names` | `1000` | not consumed | unsupported | verification_gate | document as deferred |
+| `dns.trust_anchors.enabled` | `false` | not consumed | unsupported | verification_gate | document as deferred |
+| `dns.trust_anchors.db_path` | `"/var/lib/synvoid/dns/trust_anchors.db"` | not consumed | unsupported | verification_gate | document as deferred |
+| `dns.trust_anchors.anchor_file_path` | `"/var/lib/synvoid/dns/trusted-key.key"` | not consumed | unsupported | verification_gate | document as deferred |
+| `dns.trust_anchors.refresh_interval_secs` | `3600` | not consumed | unsupported | verification_gate | document as deferred |
+| `dns.trust_anchors.pending_observation_days` | `30` | not consumed | unsupported | verification_gate | document as deferred |
+| `dns.trust_anchors.revocation_grace_days` | `30` | not consumed | unsupported | verification_gate | document as deferred |
+| `dns.trust_anchors.extended_removal_days` | `60` | not consumed | unsupported | verification_gate | document as deferred |
+| `dns.trust_anchors.trust_anchor_retention_days` | `7` | not consumed | unsupported | verification_gate | document as deferred |
+| `dns.trust_anchors.allow_key_rotation` | `true` | not consumed | unsupported | verification_gate | document as deferred |
+| `dns.anycast.enabled` | `false` | feature gate check only | validation-only | verification_gate | document feature-gate behavior |
+| `dns.anycast.bind_addresses` | `[]` | not consumed | unsupported | verification_gate | document as deferred to mesh integration |
+| `dns.anycast.port` | `53` | not consumed | unsupported | verification_gate | document as deferred |
+| `dns.anycast.use_pktinfo` | `true` | not consumed | unsupported | verification_gate | document as deferred |
+| `dns.anycast.health_check_domain` | `"_healthcheck.local"` | not consumed | unsupported | verification_gate | document as deferred |
+| `dns.anycast.health_check_interval_secs` | `5` | not consumed | unsupported | verification_gate | document as deferred |
+| `dns.anycast.capacity` | `10000` | not consumed | unsupported | verification_gate | document as deferred |
+| `dns.anycast.mesh_based_sync` | `true` | not consumed | unsupported | verification_gate | document as deferred |
+| `dns.anycast.sync_interval_secs` | `300` | not consumed | unsupported | verification_gate | document as deferred |
+| `dns.anycast.geo` | `None` | not consumed | unsupported | verification_gate | document as deferred |
+| `dns.anycast.sync_trigger_on_update` | `true` | not consumed | unsupported | verification_gate | document as deferred |
 | `dns.recursive` | see §5 | see §5 | implemented | see §5 | see §5 |
 
 ---
@@ -129,8 +129,8 @@ Source: `crates/synvoid-config/src/dns/dns_settings.rs:9`
 
 | Config path | Default | Runtime consumer | Status | Tests | Action |
 |---|---|---|---|---|---|
-| `dns.settings.default_ttl` | `300` | `DnsServer::new()` fallback TTL during zone record loading (`server/zone.rs:137`) | implemented | none | none |
-| `dns.settings.min_geo_ttl` | `60` | `DnsHandlerState.min_geo_ttl` | implemented | none | add test |
+| `dns.settings.default_ttl` | `300` | `DnsServer::new()` fallback TTL during zone record loading (`server/zone.rs:137`) | implemented | verification_gate | none |
+| `dns.settings.min_geo_ttl` | `60` | `DnsHandlerState.min_geo_ttl` | implemented | verification_gate | add test |
 | `dns.settings.allow_transfer` | `[]` | `ZoneTransfer` struct exists; `zone_transfer` hardcoded to `None` in `DnsServer::new()` (line 950) | deferred | zone mutation tests (handler-level only) | wire from config or document deferred |
 | `dns.settings.cache_enabled` | `true` | `DnsCache::new()` | implemented | cache tests | none |
 | `dns.settings.cache_size` | `100000` | `DnsCache::new()` capacity | implemented | cache tests | document as weighted byte capacity (moka weigher) |
@@ -143,16 +143,16 @@ Source: `crates/synvoid-config/src/dns/dns_settings.rs:9`
 | `dns.settings.serve_stale.enabled` | `false` | `DnsCache::with_serve_stale()` | implemented | cache tests | none |
 | `dns.settings.serve_stale.max_stale_secs` | `86400` | stale expiry via `DnsCache` | implemented | cache tests | none |
 | `dns.settings.serve_stale.max_stale_count` | `100` | `DnsCache::with_serve_stale()` via `max_stale_count` parameter | implemented | cache tests | none |
-| `dns.settings.ixfr_history_size` | `200` | not consumed | deferred | none | wire from config or document deferred |
+| `dns.settings.ixfr_history_size` | `200` | not consumed | deferred | verification_gate | wire from config or document deferred |
 | `dns.settings.ixfr_enabled` | `true` | IXFR handler exists in `handle_parsed_query_with_cache` but config toggle not consumed | partially implemented | zone mutation tests | wire config toggle or document deferred |
 | `dns.settings.ixfr_fallback_to_axfr` | `true` | `ZoneTransfer::with_security_config()` accepts this; not wired from config | deferred | zone mutation tests (handler-level only) | wire from config or document deferred |
 | `dns.settings.ecs_filtering.enabled` | `false` | `EcsFilterConfig::from_settings()` | implemented | ecs tests | none |
 | `dns.settings.ecs_filtering.prefix_v4` | `24` | ECS filtering | implemented | ecs tests | none |
 | `dns.settings.ecs_filtering.prefix_v6` | `48` | ECS filtering | implemented | ecs tests | none |
 | `dns.settings.ecs_filtering.allow_private_prefix` | `false` | ECS filtering | implemented | ecs tests | none |
-| `dns.settings.padding.enabled` | `false` | `DnsPadding` struct exists in `edns.rs:540`, not wired from config | deferred | none | wire from config or remove |
-| `dns.settings.padding.block_size` | `128` | not consumed | deferred | none | wire from config or remove |
-| `dns.settings.padding.mode` | `Normal` | not consumed | deferred | none | wire from config or remove |
+| `dns.settings.padding.enabled` | `false` | `DnsPadding` struct exists in `edns.rs:540`, not wired from config | deferred | verification_gate | wire from config or remove |
+| `dns.settings.padding.block_size` | `128` | not consumed | deferred | verification_gate | wire from config or remove |
+| `dns.settings.padding.mode` | `Normal` | not consumed | deferred | verification_gate | wire from config or remove |
 | `dns.settings.query_coalescing.enabled` | `false` | `QueryCoalescer::with_config()` | implemented | coalescing tests | none |
 | `dns.settings.query_coalescing.max_wait_ms` | `500` | `QueryCoalescer` | implemented | coalescing tests | none |
 | `dns.settings.query_coalescing.max_entries` | `10000` | `QueryCoalescer` | implemented | coalescing tests | none |
@@ -163,9 +163,9 @@ Source: `crates/synvoid-config/src/dns/dns_settings.rs:9`
 | `dns.settings.dynamic_update.require_tsig` | `false` | `DynamicUpdateHandler::with_config()` accepts this; not wired from config | deferred | zone mutation tests (handler-level only) | wire from config or document deferred |
 | `dns.settings.notify.enabled` | `false` | `NotifyHandler` struct exists; `notify_handler` hardcoded to `None` in `DnsServer::new()` (line 953) | deferred | zone mutation tests (handler-level only) | wire from config or document deferred |
 | `dns.settings.notify.also_notify` | `[]` | `NotifyHandler` struct exists; not wired from config | deferred | zone mutation tests (handler-level only) | wire from config or document deferred |
-| `dns.settings.qname_privacy.enabled` | `false` | `sanitize_qname()` exists in `dns_settings.rs:245`, not called from DNS query path | deferred | none | wire into query path or remove |
-| `dns.settings.qname_privacy.mode` | `ZoneOnly` | not consumed | deferred | none | wire into query path or remove |
-| `dns.settings.qname_privacy.log_level` | `Zone` | not consumed | deferred | none | wire into query path or remove |
+| `dns.settings.qname_privacy.enabled` | `false` | `sanitize_qname()` exists in `dns_settings.rs:245`, not called from DNS query path | deferred | verification_gate | wire into query path or remove |
+| `dns.settings.qname_privacy.mode` | `ZoneOnly` | not consumed | deferred | verification_gate | wire into query path or remove |
+| `dns.settings.qname_privacy.log_level` | `Zone` | not consumed | deferred | verification_gate | wire into query path or remove |
 
 ---
 
@@ -175,15 +175,15 @@ Source: `crates/synvoid-config/src/dns/dns_firewall.rs:131`
 
 | Config path | Default | Runtime consumer | Status | Tests | Action |
 |---|---|---|---|---|---|
-| `dns.firewall.enabled` | `false` | `DnsFirewall::new()` | implemented | none | add firewall tests |
-| `dns.firewall.block_internal_ips` | `true` | adds 8 subnet rules | implemented | none | add test |
-| `dns.firewall.block_zone_transfers` | `true` | adds AXFR block rule | implemented | none | add test |
-| `dns.firewall.default_action` | `Allow` | not consumed | unsupported | none | document or wire |
-| `dns.firewall.max_rules` | `1000` | not consumed | unsupported | none | document or wire |
-| `dns.firewall.rebinding_protection.enabled` | `true` | function exists, not wired | partially implemented | none | wire or document |
-| `dns.firewall.rebinding_protection.min_ttl_for_internal` | `1800` | not consumed | unsupported | none | document or wire |
-| `dns.firewall.rebinding_protection.allowed_internal_domains` | `[]` | not consumed | unsupported | none | document or wire |
-| `dns.firewall.rebinding_protection.block_short_ttl_internal` | `false` | not consumed | unsupported | none | document or wire |
+| `dns.firewall.enabled` | `false` | `DnsFirewall::new()` | implemented | verification_gate | add firewall tests |
+| `dns.firewall.block_internal_ips` | `true` | adds 8 subnet rules | implemented | verification_gate | add test |
+| `dns.firewall.block_zone_transfers` | `true` | adds AXFR block rule | implemented | verification_gate | add test |
+| `dns.firewall.default_action` | `Allow` | not consumed | unsupported | verification_gate | document or wire |
+| `dns.firewall.max_rules` | `1000` | not consumed | unsupported | verification_gate | document or wire |
+| `dns.firewall.rebinding_protection.enabled` | `true` | function exists, not wired | partially implemented | verification_gate | wire or document |
+| `dns.firewall.rebinding_protection.min_ttl_for_internal` | `1800` | not consumed | unsupported | verification_gate | document or wire |
+| `dns.firewall.rebinding_protection.allowed_internal_domains` | `[]` | not consumed | unsupported | verification_gate | document or wire |
+| `dns.firewall.rebinding_protection.block_short_ttl_internal` | `false` | not consumed | unsupported | verification_gate | document or wire |
 
 ---
 
@@ -193,15 +193,15 @@ Source: `crates/synvoid-config/src/dns/dns_firewall.rs:7`
 
 | Config path | Default | Runtime consumer | Status | Tests | Action |
 |---|---|---|---|---|---|
-| `dns.limits.max_tcp_connections` | `500` | TCP listener config | implemented | none | add test |
-| `dns.limits.max_concurrent_queries` | `2500` | semaphore permits | implemented | none | add test |
+| `dns.limits.max_tcp_connections` | `500` | TCP listener config | implemented | verification_gate | add test |
+| `dns.limits.max_concurrent_queries` | `2500` | semaphore permits | implemented | verification_gate | add test |
 | `dns.limits.max_query_size` | `65535` | `DnsQueryValidator` | implemented | validator tests | none |
 | `dns.limits.max_response_size` | `65535` | `DnsQueryValidator` | implemented | validator tests | none |
 | `dns.limits.max_records_per_response` | `1000` | `DnsQueryValidator` | implemented | validator tests | none |
-| `dns.limits.max_tcp_idle_time_secs` | `300` | TCP idle timeout | implemented | none | add test |
-| `dns.limits.max_tcp_query_time_secs` | `30` | TCP query timeout | implemented | none | add test |
+| `dns.limits.max_tcp_idle_time_secs` | `300` | TCP idle timeout | implemented | verification_gate | add test |
+| `dns.limits.max_tcp_query_time_secs` | `30` | TCP query timeout | implemented | verification_gate | add test |
 | `dns.limits.udp_buffer_size` | `65535` | UDP recv buffer | implemented | startup tests | none |
-| `dns.limits.enable_graceful_degradation` | `false` | `ConnectionLimits::enable_graceful_degradation()` wired from config | implemented | none | add test |
+| `dns.limits.enable_graceful_degradation` | `false` | `ConnectionLimits::enable_graceful_degradation()` wired from config | implemented | verification_gate | add test |
 
 ---
 
@@ -227,15 +227,15 @@ Source: `crates/synvoid-config/src/dns/dns_recursive.rs:97`
 | `dns.recursive.query_timeout_secs` | `5` | `HickoryResolver` timeout via `create_resolver()` | implemented | recursive tests | none |
 | `dns.recursive.root_hints_path` | `"root.hints"` | `HickoryRecursor` init | implemented | recursive tests | none |
 | `dns.recursive.trust_anchor_path` | `"trusted-key.key"` | `HickoryRecursor` init | implemented | recursive tests | none |
-| `dns.recursive.ratelimit.mode` | `Shared` | recursive rate limiter | implemented | none | add test |
-| `dns.recursive.ratelimit.per_second` | `500` | recursive rate limiter | implemented | none | add test |
-| `dns.recursive.ratelimit.per_minute` | `5000` | recursive rate limiter | implemented | none | add test |
-| `dns.recursive.firewall.enabled` | `false` | recursive firewall | implemented | none | add test |
-| `dns.recursive.firewall.block_internal_ips` | `true` | recursive firewall | implemented | none | add test |
-| `dns.recursive.firewall.block_zone_transfers` | `true` | recursive firewall | implemented | none | add test |
-| `dns.recursive.firewall.default_action` | `Allow` | not consumed | unsupported | none | document or wire |
-| `dns.recursive.firewall.max_rules` | `1000` | not consumed | unsupported | none | document or wire |
-| `dns.recursive.firewall.rebinding_protection.enabled` | `true` | not consumed | unsupported | none | document or wire |
+| `dns.recursive.ratelimit.mode` | `Shared` | recursive rate limiter | implemented | verification_gate | add test |
+| `dns.recursive.ratelimit.per_second` | `500` | recursive rate limiter | implemented | verification_gate | add test |
+| `dns.recursive.ratelimit.per_minute` | `5000` | recursive rate limiter | implemented | verification_gate | add test |
+| `dns.recursive.firewall.enabled` | `false` | recursive firewall | implemented | verification_gate | add test |
+| `dns.recursive.firewall.block_internal_ips` | `true` | recursive firewall | implemented | verification_gate | add test |
+| `dns.recursive.firewall.block_zone_transfers` | `true` | recursive firewall | implemented | verification_gate | add test |
+| `dns.recursive.firewall.default_action` | `Allow` | not consumed | unsupported | verification_gate | document or wire |
+| `dns.recursive.firewall.max_rules` | `1000` | not consumed | unsupported | verification_gate | document or wire |
+| `dns.recursive.firewall.rebinding_protection.enabled` | `true` | not consumed | unsupported | verification_gate | document or wire |
 | `dns.recursive.client_acl.allowed_clients` | `[]` | `RecursiveDnsServer` — CIDR matching in `handle_packet()`/`handle_tcp_connection()` | implemented | 12 ACL tests | none |
 | `dns.recursive.client_acl.action` | `"reject"` | ACL match action (allow/reject) | implemented | 12 ACL tests | none |
 | `dns.recursive.max_cname_depth` | `10` | `resolve_query_with_depth()` — CNAME chain depth limit | implemented | 9 CNAME/circuit tests | none |
@@ -247,7 +247,7 @@ Source: `crates/synvoid-config/src/dns/dns_recursive.rs:97`
 | `dns.recursive.ecs.forwarding_policy` | `Never` | `evaluate_ecs_forwarding_policy()` — ECS upstream forwarding | implemented | 16 ECS tests | none |
 | `dns.recursive.ecs.prefix_v4` | `24` | `truncate_ecs_prefix()` — IPv4 prefix cap | implemented | 16 ECS tests | none |
 | `dns.recursive.ecs.prefix_v6` | `56` | `truncate_ecs_prefix()` — IPv6 prefix cap | implemented | 16 ECS tests | none |
-| `dns.recursive.ecs.include_scope_in_response` | `false` | scope response in EDNS | validation-only | none | wire in recursive server |
+| `dns.recursive.ecs.include_scope_in_response` | `false` | scope response in EDNS | validation-only | verification_gate | wire in recursive server |
 
 ---
 
@@ -257,15 +257,15 @@ Source: `crates/synvoid-config/src/dns/dns_mesh.rs:9`
 
 | Config path | Default | Runtime consumer | Status | Tests | Action |
 |---|---|---|---|---|---|
-| `dns.mesh.register_to_global` | `true` | validated only (mesh mode) | validation-only | none | document as deferred to mesh integration |
-| `dns.mesh.registration_interval_secs` | `60` | validated only | validation-only | none | document as deferred |
-| `dns.mesh.accept_registrations` | `true` | validated only | validation-only | none | document as deferred |
-| `dns.mesh.sync_interval_secs` | `30` | validated only | validation-only | none | document as deferred |
-| `dns.mesh.upstream_dns_servers` | `[]` | validated only | validation-only | none | document as deferred |
-| `dns.mesh.verification_retry_interval_secs` | `30` | validated only | validation-only | none | document as deferred |
-| `dns.mesh.verification_timeout_secs` | `600` | validated only | validation-only | none | document as deferred |
-| `dns.mesh.qname_minimization` | `true` | validated only | validation-only | none | document as deferred |
-| `dns.mesh.require_cert_chain_verification` | `false` | validated only | validation-only | none | document as deferred |
+| `dns.mesh.register_to_global` | `true` | validated only (mesh mode) | validation-only | verification_gate | document as deferred to mesh integration |
+| `dns.mesh.registration_interval_secs` | `60` | validated only | validation-only | verification_gate | document as deferred |
+| `dns.mesh.accept_registrations` | `true` | validated only | validation-only | verification_gate | document as deferred |
+| `dns.mesh.sync_interval_secs` | `30` | validated only | validation-only | verification_gate | document as deferred |
+| `dns.mesh.upstream_dns_servers` | `[]` | validated only | validation-only | verification_gate | document as deferred |
+| `dns.mesh.verification_retry_interval_secs` | `30` | validated only | validation-only | verification_gate | document as deferred |
+| `dns.mesh.verification_timeout_secs` | `600` | validated only | validation-only | verification_gate | document as deferred |
+| `dns.mesh.qname_minimization` | `true` | validated only | validation-only | verification_gate | document as deferred |
+| `dns.mesh.require_cert_chain_verification` | `false` | validated only | validation-only | verification_gate | document as deferred |
 
 ---
 
