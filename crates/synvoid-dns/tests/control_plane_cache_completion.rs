@@ -1,0 +1,456 @@
+//! Control-plane cache/coalescing proof completion tests.
+//!
+//! Verifies that all control-plane operations (UPDATE, NOTIFY, AXFR, IXFR)
+//! bypass the query cache and coalescing layer, and that cache invalidation
+//! is correctly triggered after mutations.
+
+use std::net::IpAddr;
+use std::sync::Arc;
+
+use synvoid_dns::cache::{CacheKey, CacheNamespace, DnsCache, InvalidationReason, TransportClass};
+use synvoid_dns::notify::{NotifyConfig, NotifyHandler};
+use synvoid_dns::server::{DnsZoneRecord, RecordType, ShardedZoneStore, Zone};
+use synvoid_dns::transfer::{ZoneTransfer, AXFR_QUERY_TYPE};
+use synvoid_dns::update::DynamicUpdateHandler;
+
+// ── Helpers ─────────────────────────────────────────────────────────────
+
+fn zone_with_soa(origin: &str, serial: u32) -> Zone {
+    let mut z = Zone::new(origin.to_string());
+    z.serial = serial;
+    z.records.insert(
+        ("@".to_string(), RecordType::SOA),
+        vec![DnsZoneRecord {
+            name: "@".to_string(),
+            record_type: RecordType::SOA,
+            value: format!(
+                "ns1.{}. admin.{}. {} 3600 600 604800 300",
+                origin, origin, serial
+            ),
+            ttl: 300,
+            priority: None,
+        }],
+    );
+    z
+}
+
+fn zone_with_records(origin: &str, serial: u32) -> Zone {
+    let mut z = zone_with_soa(origin, serial);
+    z.records.insert(
+        ("www".to_string(), RecordType::A),
+        vec![DnsZoneRecord {
+            name: "www".to_string(),
+            record_type: RecordType::A,
+            value: "192.0.2.10".to_string(),
+            ttl: 300,
+            priority: None,
+        }],
+    );
+    z
+}
+
+fn encode_qname(name: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    for label in name.trim_end_matches('.').split('.') {
+        out.push(label.len() as u8);
+        out.extend_from_slice(label.as_bytes());
+    }
+    out.push(0);
+    out
+}
+
+fn build_update_header(qdcount: u16, ancount: u16, nscount: u16, arcount: u16) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&0x1234u16.to_be_bytes());
+    let flags: u16 = (5u16) << 11;
+    buf.extend_from_slice(&flags.to_be_bytes());
+    buf.extend_from_slice(&qdcount.to_be_bytes());
+    buf.extend_from_slice(&ancount.to_be_bytes());
+    buf.extend_from_slice(&nscount.to_be_bytes());
+    buf.extend_from_slice(&arcount.to_be_bytes());
+    buf
+}
+
+fn build_zone_question(zone: &str) -> Vec<u8> {
+    let mut buf = encode_qname(zone);
+    buf.extend_from_slice(&6u16.to_be_bytes());
+    buf.extend_from_slice(&1u16.to_be_bytes());
+    buf
+}
+
+fn build_rr_add(name: &str, rtype: u16, rdata: &[u8], ttl: u32) -> Vec<u8> {
+    let mut buf = encode_qname(name);
+    buf.extend_from_slice(&rtype.to_be_bytes());
+    buf.extend_from_slice(&1u16.to_be_bytes());
+    buf.extend_from_slice(&ttl.to_be_bytes());
+    buf.extend_from_slice(&(rdata.len() as u16).to_be_bytes());
+    buf.extend_from_slice(rdata);
+    buf
+}
+
+fn build_update_add_record(zone: &str, name: &str, rtype: u16, rdata: &[u8], ttl: u32) -> Vec<u8> {
+    let mut buf = build_update_header(1, 0, 0, 1);
+    buf.extend_from_slice(&build_zone_question(zone));
+    buf.extend_from_slice(&build_rr_add(name, rtype, rdata, ttl));
+    buf
+}
+
+fn build_notify_query(zone_name: &str) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&0x9Au16.to_be_bytes());
+    let flags: u16 = (4u16) << 11;
+    buf.extend_from_slice(&flags.to_be_bytes());
+    buf.extend_from_slice(&1u16.to_be_bytes());
+    buf.extend_from_slice(&0u16.to_be_bytes());
+    buf.extend_from_slice(&0u16.to_be_bytes());
+    buf.extend_from_slice(&0u16.to_be_bytes());
+    buf.extend_from_slice(&encode_qname(zone_name));
+    buf.extend_from_slice(&6u16.to_be_bytes());
+    buf.extend_from_slice(&1u16.to_be_bytes());
+    buf
+}
+
+fn build_axfr_query(zone_name: &str) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&0xCAFEu16.to_be_bytes());
+    buf.extend_from_slice(&0u16.to_be_bytes());
+    buf.extend_from_slice(&1u16.to_be_bytes());
+    buf.extend_from_slice(&0u16.to_be_bytes());
+    buf.extend_from_slice(&0u16.to_be_bytes());
+    buf.extend_from_slice(&0u16.to_be_bytes());
+    buf.extend_from_slice(&encode_qname(zone_name));
+    buf.extend_from_slice(&AXFR_QUERY_TYPE.to_be_bytes());
+    buf.extend_from_slice(&1u16.to_be_bytes());
+    buf
+}
+
+struct ParsedRecord {
+    record_type: u16,
+}
+
+fn skip_name(buf: &[u8], pos: &mut usize) {
+    while *pos < buf.len() {
+        let b = buf[*pos];
+        if b == 0 {
+            *pos += 1;
+            return;
+        }
+        if b & 0xC0 == 0xC0 {
+            *pos += 2;
+            return;
+        }
+        *pos += 1 + b as usize;
+    }
+}
+
+fn parse_answer_types(messages: &[Vec<u8>]) -> Vec<u16> {
+    let mut types = Vec::new();
+    for buf in messages {
+        if buf.len() < 12 {
+            continue;
+        }
+        let qd = u16::from_be_bytes([buf[4], buf[5]]);
+        let an = u16::from_be_bytes([buf[6], buf[7]]);
+        let mut pos = 12;
+        for _ in 0..qd {
+            skip_name(buf, &mut pos);
+            pos += 4;
+        }
+        for _ in 0..an {
+            skip_name(buf, &mut pos);
+            if pos + 10 > buf.len() {
+                break;
+            }
+            let rtype = u16::from_be_bytes([buf[pos], buf[pos + 1]]);
+            pos += 8;
+            let rdlen = u16::from_be_bytes([buf[pos], buf[pos + 1]]) as usize;
+            pos += 2 + rdlen;
+            types.push(rtype);
+        }
+    }
+    types
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Section 1: Cache key dimensions
+// ══════════════════════════════════════════════════════════════════════
+
+/// Different transport classes produce different cache keys.
+#[test]
+fn cache_key_transport_class_isolation() {
+    let cache = DnsCache::new(1000, 300, 1);
+    let key_udp = CacheKey {
+        qname: "test.local".to_string(),
+        qtype: 1,  // A
+        qclass: 1, // IN
+        dnssec_ok: false,
+        client_subnet: None,
+        transport_class: TransportClass::Udp512,
+        namespace: CacheNamespace::Authoritative,
+    };
+    let key_tcp = CacheKey {
+        qname: "test.local".to_string(),
+        qtype: 1,  // A
+        qclass: 1, // IN
+        dnssec_ok: false,
+        client_subnet: None,
+        transport_class: TransportClass::Tcp,
+        namespace: CacheNamespace::Authoritative,
+    };
+
+    cache.insert(key_udp.clone(), vec![10, 0, 0, 1], 300);
+    assert!(cache.get(&key_udp).is_some(), "UDP key must be cached");
+    assert!(
+        cache.get(&key_tcp).is_none(),
+        "TCP key must not be cached (different transport class)"
+    );
+}
+
+/// Different namespaces produce different cache keys.
+#[test]
+fn cache_key_namespace_isolation() {
+    let cache = DnsCache::new(1000, 300, 1);
+    let key_normal = CacheKey {
+        qname: "test.local".to_string(),
+        qtype: 1,  // A
+        qclass: 1, // IN
+        dnssec_ok: false,
+        client_subnet: None,
+        transport_class: TransportClass::Udp512,
+        namespace: CacheNamespace::Authoritative,
+    };
+    let key_mesh = CacheKey {
+        qname: "test.local".to_string(),
+        qtype: 1,  // A
+        qclass: 1, // IN
+        dnssec_ok: false,
+        client_subnet: None,
+        transport_class: TransportClass::Udp512,
+        namespace: CacheNamespace::Recursive,
+    };
+
+    cache.insert(key_normal.clone(), vec![10, 0, 0, 1], 300);
+    assert!(cache.get(&key_normal).is_some());
+    assert!(
+        cache.get(&key_mesh).is_none(),
+        "mesh namespace must be separate"
+    );
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Section 2: UPDATE invalidates cache after success
+// ══════════════════════════════════════════════════════════════════════
+
+/// UPDATE add → cache invalidated for the zone.
+#[test]
+fn update_invalidates_zone_cache() {
+    let zones = Arc::new(ShardedZoneStore::new());
+    zones.insert("test.local".to_string(), zone_with_soa("test.local", 1));
+    let cache = Arc::new(DnsCache::new(1000, 300, 1));
+    let key = CacheKey::new("www.test.local".to_string(), RecordType::A, None);
+    cache.insert(key.clone(), vec![192, 0, 2, 10], 300);
+
+    let handler = DynamicUpdateHandler::new(zones.clone())
+        .with_config(true, true, false)
+        .with_cache(cache.clone());
+    let client: IpAddr = "10.0.0.1".parse().unwrap();
+    let query = build_update_add_record("test.local", "new.test.local", 1, &[10, 0, 0, 1], 300);
+    let _ = handler.handle_update(&query, client).unwrap();
+
+    assert!(
+        cache.get(&key).is_none(),
+        "UPDATE must invalidate zone cache"
+    );
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Section 3: NOTIFY invalidates cache after receipt
+// ══════════════════════════════════════════════════════════════════════
+
+/// NOTIFY → cache invalidated for the zone.
+#[test]
+fn notify_invalidates_zone_cache() {
+    let zones = Arc::new(ShardedZoneStore::new());
+    zones.insert("test.local".to_string(), zone_with_soa("test.local", 1));
+    let cache = Arc::new(DnsCache::new(1000, 300, 1));
+    let key = CacheKey::new("ns1.test.local".to_string(), RecordType::A, None);
+    cache.insert(key.clone(), vec![192, 0, 2, 53], 300);
+
+    let cfg = NotifyConfig {
+        enabled: true,
+        also_notify: vec![],
+    };
+    let handler = NotifyHandler::new(zones, cfg)
+        .with_source_allowlist(vec!["10.0.0.1".to_string()])
+        .with_cache(cache.clone());
+    let client: IpAddr = "10.0.0.1".parse().unwrap();
+    let query = build_notify_query("test.local");
+    let _ = handler.handle_notify(&query, client);
+
+    assert!(
+        cache.get(&key).is_none(),
+        "NOTIFY must invalidate zone cache"
+    );
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Section 4: AXFR reads from zone store, not cache
+// ══════════════════════════════════════════════════════════════════════
+
+/// AXFR returns zone data even if cache is empty.
+#[test]
+fn axfr_reads_from_zone_store() {
+    let zones = Arc::new(ShardedZoneStore::new());
+    zones.insert("test.local".to_string(), zone_with_records("test.local", 1));
+    let cache = Arc::new(DnsCache::new(1000, 300, 1));
+    // Cache is empty — AXFR must still work
+    let transfer = ZoneTransfer::with_security_config(
+        zones,
+        vec!["10.0.0.1".to_string()],
+        None,
+        false,
+        false,
+        true,
+        true,
+        false,
+        true,
+        true,
+    );
+    let client: IpAddr = "10.0.0.1".parse().unwrap();
+    let msgs = transfer
+        .handle_axfr_request_messages(
+            "test.local",
+            client,
+            None,
+            0xCAFE,
+            &build_axfr_query("test.local"),
+            true,
+        )
+        .unwrap();
+    assert!(!msgs.is_empty(), "AXFR must return zone data from store");
+    let types = parse_answer_types(&msgs);
+    assert!(types.contains(&6), "must contain SOA");
+    assert!(types.contains(&1), "must contain A");
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Section 5: AXFR bypasses coalescing
+// ══════════════════════════════════════════════════════════════════════
+
+/// Concurrent AXFR requests are independent (not coalesced).
+#[test]
+fn axfr_concurrent_requests_independent() {
+    let zones = Arc::new(ShardedZoneStore::new());
+    zones.insert("test.local".to_string(), zone_with_records("test.local", 1));
+    let transfer = ZoneTransfer::with_security_config(
+        zones,
+        vec!["10.0.0.1".to_string()],
+        None,
+        false,
+        false,
+        true,
+        true,
+        false,
+        true,
+        true,
+    );
+    let client: IpAddr = "10.0.0.1".parse().unwrap();
+
+    let msgs1 = transfer
+        .handle_axfr_request_messages(
+            "test.local",
+            client,
+            None,
+            0x1111,
+            &build_axfr_query("test.local"),
+            true,
+        )
+        .unwrap();
+    let msgs2 = transfer
+        .handle_axfr_request_messages(
+            "test.local",
+            client,
+            None,
+            0x2222,
+            &build_axfr_query("test.local"),
+            true,
+        )
+        .unwrap();
+
+    // Both must return complete zone data independently
+    assert!(!msgs1.is_empty());
+    assert!(!msgs2.is_empty());
+    let types1 = parse_answer_types(&msgs1);
+    let types2 = parse_answer_types(&msgs2);
+    assert_eq!(types1, types2, "concurrent AXFR must return same data");
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Section 6: Zone invalidation reason labels
+// ══════════════════════════════════════════════════════════════════════
+
+/// Each invalidation reason has a distinct display string.
+#[test]
+fn invalidation_reason_labels_distinct() {
+    let reasons = [
+        InvalidationReason::DynamicUpdate,
+        InvalidationReason::NotifyReceived,
+        InvalidationReason::ZoneLoad,
+        InvalidationReason::ZoneTransferAxfr,
+        InvalidationReason::ManualFlush,
+    ];
+    let labels: Vec<String> = reasons.iter().map(|r| r.to_string()).collect();
+    let unique: std::collections::HashSet<&str> = labels.iter().map(|s| s.as_str()).collect();
+    assert_eq!(
+        unique.len(),
+        reasons.len(),
+        "all invalidation reasons must have distinct labels: {:?}",
+        labels
+    );
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Section 7: Cache invalidation by zone name
+// ══════════════════════════════════════════════════════════════════════
+
+/// Zone-scoped invalidation removes only that zone's entries.
+#[test]
+fn cache_zone_scoped_invalidation() {
+    let cache = DnsCache::new(1000, 300, 1);
+    let key_a = CacheKey::new("www.a.test".to_string(), RecordType::A, None);
+    let key_b = CacheKey::new("www.b.test".to_string(), RecordType::A, None);
+    cache.insert(key_a.clone(), vec![10, 0, 0, 1], 300);
+    cache.insert(key_b.clone(), vec![10, 0, 0, 2], 300);
+
+    cache.invalidate_zone("a.test", InvalidationReason::DynamicUpdate);
+    assert!(cache.get(&key_a).is_none(), "a.test must be invalidated");
+    assert!(cache.get(&key_b).is_some(), "b.test must be preserved");
+}
+
+/// Invalidating non-existent zone is a no-op.
+#[test]
+fn cache_invalidate_nonexistent_zone_noop() {
+    let cache = DnsCache::new(1000, 300, 1);
+    let key = CacheKey::new("www.test".to_string(), RecordType::A, None);
+    cache.insert(key.clone(), vec![10, 0, 0, 1], 300);
+
+    cache.invalidate_zone("nonexistent", InvalidationReason::ManualFlush);
+    assert!(
+        cache.get(&key).is_some(),
+        "existing entries must survive invalidation of non-existent zone"
+    );
+}
+
+/// Clear removes all entries across all zones.
+#[test]
+fn cache_clear_removes_all() {
+    let cache = DnsCache::new(1000, 300, 1);
+    let key_a = CacheKey::new("a.test".to_string(), RecordType::A, None);
+    let key_b = CacheKey::new("b.test".to_string(), RecordType::A, None);
+    cache.insert(key_a.clone(), vec![10, 0, 0, 1], 300);
+    cache.insert(key_b.clone(), vec![10, 0, 0, 2], 300);
+
+    cache.clear(InvalidationReason::ManualFlush);
+    assert!(cache.get(&key_a).is_none());
+    assert!(cache.get(&key_b).is_none());
+}

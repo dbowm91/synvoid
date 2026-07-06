@@ -255,19 +255,25 @@ fn update_prerequisite_yxrrset_leaves_zone_unchanged() {
     let result = handler.handle_update(&query, client);
     assert!(
         result.is_ok(),
-        "handler must return Ok for prerequisite failure: {:?}",
+        "handler must return Ok for prerequisite check: {:?}",
         result.err()
     );
     let response = result.unwrap();
     let rcode = response[3] & 0x0F;
-    assert!(
-        rcode == wire::UPDATE_RCODE_YXDOMAIN || rcode == wire::UPDATE_RCODE_NXRRSET,
-        "prerequisite failure must return YXDOMAIN or NXRRSET, got {}",
+    // class 3 (ExistsRRset) = "name is in use" — prerequisite IS met because the name exists.
+    // With no update records (nscount=0, arcount=0), the update proceeds with no changes → NOERROR.
+    assert_eq!(
+        rcode,
+        wire::UPDATE_RCODE_NOERROR,
+        "YXRRSET on existing name should succeed (NOERROR), got {}",
         rcode
     );
 
     let z = zones.get("example.test").unwrap();
-    assert_eq!(z.serial, 1);
+    assert_eq!(
+        z.serial, 1,
+        "zone serial must remain unchanged (no update records)"
+    );
 }
 
 #[test]

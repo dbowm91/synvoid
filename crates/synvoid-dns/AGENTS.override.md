@@ -60,6 +60,24 @@ cargo test -p synvoid-dns -- servfail_response
 
 # UDP/EDNS truncation (TC bit, question echoed)
 cargo test -p synvoid-dns -- truncation
+
+# DNSSEC live signing (Ed25519 roundtrip, RRSIG construction, NSEC chain)
+cargo test -p synvoid-dns --test dnssec_live_signing
+
+# TSIG success fixtures (sign+verify roundtrips, multi-key, add/remove)
+cargo test -p synvoid-dns --test tsig_success_fixtures
+
+# IXFR record-by-record delta validation
+cargo test -p synvoid-dns --test ixfr_record_delta
+
+# UPDATE atomicity and rollback proof
+cargo test -p synvoid-dns --test update_atomicity_rollback
+
+# NOTIFY scheduling and cache invalidation semantics
+cargo test -p synvoid-dns --test notify_scheduling_semantics
+
+# Control-plane cache/coalescing exclusion completion
+cargo test -p synvoid-dns --test control_plane_cache_completion
 ```
 
 ## DNSSEC RFC 5011 Trust Anchor States
@@ -561,3 +579,64 @@ cargo test -p synvoid-dns -- recursive_cache
 # Full recursive DNS test suite
 cargo test -p synvoid-dns --release
 ```
+
+## Milestone 3 Final Validation Hardening (2026-07-06)
+
+### New Integration Test Files (6)
+
+- **`tests/dnssec_live_signing.rs`** (10 tests): Ed25519 live signing roundtrip, RRSIG construction (type_covered/algorithm/labels/original_ttl/sig_expiration>sig_inception/key_tag/signer_name/embedded_signature), NSEC wire format + type bitmap + chain construction, DNSKEY RDATA computation, DS digest determinism, key tag properties, canonical name/rdata (Option<u32> params). Validates that signing produces wire-correct output.
+- **`tests/tsig_success_fixtures.rs`** (19 tests): SHA-256/512/1/384 sign+verify roundtrips, two keys coexist, add_key at runtime, remove_key, UnknownKey error, empty verifier, error codes (BADTIME=15), different algorithms produce different RDATA lengths, key name embedded in RDATA (raw bytes + null, NOT wire format). Validates TSIG success paths end-to-end.
+- **`tests/ixfr_record_delta.rs`** (7 tests): Single add/delete/modification/multi-record IXFR deltas (record-by-record verification), RFC 1982 serial comparison, current serial SOA-only, disabled error. Modification test uses structural assertions (2 messages, SOA-bracketed, total answers ≥3). Validates IXFR delta builder correctness.
+- **`tests/update_atomicity_rollback.rs`** (13 tests): Atomic add/delete, prerequisite failures (NXRRSET/YXRRSET), SOA deletion → NOTAUTH, CNAME coexistence preservation, cache invalidation on success, failed prerequisite preserves cache, TSIG absent preserves serial, unknown zone, multi-record add, delete removes record. Validates UPDATE atomic clone-modify-validate-insert pattern.
+- **`tests/notify_scheduling_semantics.rs`** (7 tests): Response shape (QR=1, AA=1, opcode=4), cache invalidation, unknown zone preserves other cache, source allowlist (empty=allow all, specific IP, wildcard `*`), rate limiting (rapid second still NOERROR, long interval both succeed), disabled handler, TSIG enforcement, multi-zone independence. Validates NOTIFY handler behavior.
+- **`tests/control_plane_cache_completion.rs`** (8 tests): Cache key dimensions (TransportClass::Udp512/Tcp, CacheNamespace::Authoritative/Recursive), UPDATE/NOTIFY invalidation, AXFR reads from zone store not cache, concurrent AXFR independence, invalidation reason labels (DynamicUpdate, NotifyReceived, ZoneLoad, ZoneTransferAxfr, ManualFlush), zone-scoped invalidation, clear removes all. Validates cache/coalescing exclusion completeness.
+
+### Production Bug Fix: `update.rs` Prerequisite Parsing
+
+Fixed 3 bugs in `crates/synvoid-dns/src/update.rs`:
+
+1. **`parse_rr_with_rdata()`**: Was reading everything after CLASS as rdata, but RR wire format has TTL(4)+RDLENGTH(2) before RDATA. Fixed to read rdlength from `end_pos+8..end_pos+10` and return only actual RDATA bytes.
+2. **`skip_rr_with_rdata()`**: Was skipping only NAME+TYPE+CLASS (`end_pos+4`), not the full RR. Fixed to skip `end_pos + 10 + rdlen`.
+3. **`check_prerequisite()` for `Exists`/`ExistsRRset`**: Had inverted logic — returned `Ok(false)` when records existed. Fixed: `Exists` uses match with value comparison; `ExistsRRset` uses `records.is_some_and(|r| !r.is_empty())`.
+
+### Test Totals
+
+- **18 integration test files** in `crates/synvoid-dns/tests/`
+- **1001 tests** pass (unit + integration, `cargo test -p synvoid-dns`)
+- All 6 new test files compile and pass
+- `cargo fmt --all` clean
+- Pre-existing clippy warnings in DNS source (not in test files)
+
+### Test Commands
+
+```bash
+# Final validation hardening (new test files)
+cargo test -p synvoid-dns --test dnssec_live_signing
+cargo test -p synvoid-dns --test tsig_success_fixtures
+cargo test -p synvoid-dns --test ixfr_record_delta
+cargo test -p synvoid-dns --test update_atomicity_rollback
+cargo test -p synvoid-dns --test notify_scheduling_semantics
+cargo test -p synvoid-dns --test control_plane_cache_completion
+
+# All integration tests
+cargo test -p synvoid-dns
+
+# Full suite including unit tests
+cargo test -p synvoid-dns --release --no-fail-fast
+```
+
+### Deferral Lock-Down
+
+| Feature | Status | Reason |
+|---------|--------|--------|
+| NSEC3 closest-encloser proofs | Deferred | Requires NSEC3 chain walking; RFC 5155 compliance partial |
+| Persistent TCP pipelining | Deferred | RFC 7766 §4 compliance requires connection reuse |
+| EDNS keepalive | Deferred | Parsed but not wired into connection management |
+| Trust anchors (RFC 5011) | Deferred | Config fields exist, not consumed at server construction |
+| External DNSSEC tooling | Deferred | dig/ldns-verify-zone not in CI pipeline |
+| Bailiwick enforcement | Deferred | Observability-only (log + metric), not enforced |
+| RPZ (Response Policy Zones) | Deferred | Documented but unsupported |
+| DNS Padding / QNAME Privacy | Deferred | Structures exist, not wired into query path |
+| DoQ production validation | Deferred | ALPN/quinn adapter tested in unit tests only |
+| Prefetch | Deferred | Documented but unsupported |
+| ECDSAP256SHA256 (algorithm 13) | Deferred | Only Ed25519 (15) and RSA-SHA256 (8) supported |

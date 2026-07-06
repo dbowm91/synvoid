@@ -99,6 +99,14 @@ cargo test -p synvoid-dns -- recursive_cache
 # DNS Milestone 3 Phase 5 verification gate tests
 cargo test -p synvoid-dns --test verification_gate
 
+# DNS Milestone 3 final validation hardening (live DNSSEC, TSIG fixtures, IXFR delta, UPDATE atomicity, NOTIFY scheduling, cache completion)
+cargo test -p synvoid-dns --test dnssec_live_signing
+cargo test -p synvoid-dns --test tsig_success_fixtures
+cargo test -p synvoid-dns --test ixfr_record_delta
+cargo test -p synvoid-dns --test update_atomicity_rollback
+cargo test -p synvoid-dns --test notify_scheduling_semantics
+cargo test -p synvoid-dns --test control_plane_cache_completion
+
 # DNS config-runtime matrix
 # See architecture/dns_config_runtime_matrix.md
 
@@ -389,6 +397,8 @@ The `architecture/` directory (87 docs) and `.opencode/skills/` directory contai
 - `wasmtime` 40.0.4 (via yara-x) has known CVEs but only used for YARA compilation, not wasm sandbox — mitigated by `[patch.crates-io]` for direct dep.
 
 ## Recent Completions
+
+- **DNS Milestone 3 Final Validation Hardening** — 6 new integration test files (`dnssec_live_signing.rs`, `tsig_success_fixtures.rs`, `ixfr_record_delta.rs`, `update_atomicity_rollback.rs`, `notify_scheduling_semantics.rs`, `control_plane_cache_completion.rs`), 64 new tests covering DNSSEC live signing, TSIG sign+verify roundtrips, IXFR record-by-record deltas, UPDATE atomicity/rollback, NOTIFY scheduling/cache invalidation, and cache/coalescing exclusion completion. Production bug fix in `update.rs`: corrected `parse_rr_with_rdata()` (TTL+RDLENGTH bytes were included in rdata), `skip_rr_with_rdata()` (was not skipping full RR), and `check_prerequisite()` for `Exists`/`ExistsRRset` (inverted logic + unwrap on None). Documentation updated: `AGENTS.override.md`, `AGENTS.md`. Total: 1001 DNS tests passing. All deferrals locked down. See `plans/dns_milestone_3_final_validation_hardening.md`.
 
 - **DNS Milestone 3 Tightening Follow-up** — 5 workstreams: deepened zone activation validation (17 `ZoneValidationError` variants covering label length, owner-within-zone, TTL bounds, MX/SRV priority, A/AAAA parse, CNAME exclusivity, NULL rejection, SOA field validation, target name validation), AXFR/IXFR response assertions (SOA-bracketed transfer, serial wraparound), UPDATE authorized semantics (add/delete/prerequisite/SOA protection/cache invalidation), NOTIFY behavior (TSIG enforcement, stale serial, unknown zone), DNSSEC known-vectors (key tag, DS digest, canonical rdata, response shape), control-plane exclusion proof (cache/coalescing bypass). 5 new integration test files: `axfr_ixfr_transfer_semantics.rs`, `notify_behavior.rs`, `update_authorized_semantics.rs`, `dnssec_known_vectors.rs`, `control_plane_exclusion.rs`. Documentation reconciled: `dns_zone_lifecycle.md`, `dns.md`, `AGENTS.override.md`, `dns_dnssec/SKILL.md`.
 - **DNS Milestone 3 Corrective Semantics Pass** — 10 workstreams (CI hardening, failed-reload preservation, invalid-zone rejection, UPDATE/NOTIFY/AXFR/IXFR authorization, DNSSEC correctness, encrypted transport proof, recursive safety, verification-gate tests, documentation reconciliation, final verification). New production helpers: `Zone::validate_zone_for_activation()` (unified pre-publish gate: single apex SOA, normalized/printable origin, rejects control chars/NUL/whitespace/`\`/`/`), `DnsServer::replace_zone_with_validation()` (atomic swap-or-preserve, cache invalidation). Dynamic UPDATE re-validates post-mutation (RCODE NOTAUTH on SOA invariant violation). New test files: `control_plane_authorization.rs` (10 deny-by-default tests for UPDATE/NOTIFY/AXFR/IXFR), `verification_gate.rs` (strengthened with 5 atomic-swap/zone-validation behavior tests + 15 protocol-semantics tests across gates 7/8/9). CI now runs `encrypted_transport`, `verification_gate`, `control_plane_authorization` tests and `cargo check --all-features`. Deferred: DoQ experimental, persistent TCP pipelining, EDNS keepalive, NSEC3 closest-encloser proofs, external DNSSEC tooling, bailiwick enforcement. See `plans/dns_milestone_3_corrective_semantics_pass.md`.

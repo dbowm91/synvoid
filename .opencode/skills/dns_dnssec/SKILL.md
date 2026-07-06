@@ -404,6 +404,15 @@ Dynamic UPDATE now re-validates post-mutation invariants. If a crafted UPDATE re
 - **`tests/control_plane_authorization.rs`** (10 tests): Deny-by-default behavior for UPDATE/NOTIFY/AXFR/IXFR. Covers disabled-by-default refusal, malformed message non-mutation, invalid zone error RCODE, unknown NOTIFY source ignored, AXFR/IXFR denied by default, query type constants (251/252), transfer disabled when axfr_enabled=false, allowed-client SOA-bracketed transfer.
 - **`tests/verification_gate.rs`** (strengthened): Replaced documentation-grade tests with behavior tests: `successful_reload_swaps_zone_atomically`, `failed_reload_preserves_previous_active_zone`, `validate_zone_for_activation_rejects_duplicate_soa`, `validate_zone_for_activation_rejects_bad_origin`, `successful_reload_invalidates_cache_for_zone`. Plus 15 new protocol-semantics tests across gates 7/8/9 (DNSSEC flags, RRSIG validity window, DS digest lengths, recursive safety config invariants, ECS default, encrypted transport cache isolation).
 
+### Final Validation Hardening Test Files (Milestone 3 Completion)
+
+- **`tests/dnssec_live_signing.rs`** (10 tests): Ed25519 signing roundtrip, RRSIG construction shape (type_covered/algorithm/labels/original_ttl/sig_expiration>sig_inception/key_tag/signer_name/embedded_signature), NSEC wire format + type bitmap + chain construction, DNSKEY RDATA computation, DS digest determinism, key tag properties, canonical name/rdata (Option<u32> params).
+- **`tests/tsig_success_fixtures.rs`** (19 tests): SHA-256/512/1/384 sign+verify roundtrips, two keys coexist, add_key at runtime, remove_key, UnknownKey error, empty verifier, error codes, different algorithms produce different RDATA lengths, key name embedded in RDATA (raw bytes + null).
+- **`tests/ixfr_record_delta.rs`** (7 tests): Single add/delete/modification/multi-record IXFR deltas (record-by-record verification), RFC 1982 serial comparison, current serial SOA-only, disabled error.
+- **`tests/update_atomicity_rollback.rs`** (13 tests): Atomic add/delete, prerequisite failures (NXRRSET/YXRRSET), SOA deletion → NOTAUTH, CNAME coexistence preservation, cache invalidation on success, failed prerequisite preserves cache, TSIG absent preserves serial, unknown zone, multi-record add, delete removes record.
+- **`tests/notify_scheduling_semantics.rs`** (7 tests): Response shape (QR=1, AA=1, opcode=4), cache invalidation, unknown zone preserves other cache, source allowlist (empty=allow all, specific IP, wildcard `*`), rate limiting, disabled handler, TSIG enforcement, multi-zone independence.
+- **`tests/control_plane_cache_completion.rs`** (8 tests): Cache key dimensions (TransportClass::Udp512/Tcp, CacheNamespace::Authoritative/Recursive), UPDATE/NOTIFY invalidation, AXFR reads from zone store not cache, concurrent AXFR independence, invalidation reason labels, zone-scoped invalidation, clear removes all.
+
 ### Deferred / Known Limitations
 
 - DoQ is wired but not production-validated; ALPN/quinn adapter is tested in unit tests only.

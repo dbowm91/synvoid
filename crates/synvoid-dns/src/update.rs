@@ -126,14 +126,18 @@ impl DynamicUpdate {
         pos: usize,
     ) -> Result<(String, u16, u16, Vec<u8>), String> {
         let (name, end_pos) = Self::parse_name(query, pos)?;
-        if end_pos + 6 > query.len() {
+        if end_pos + 10 > query.len() {
             return Err("Incomplete RR".to_string());
         }
         let rtype = u16::from_be_bytes([query[end_pos], query[end_pos + 1]]);
         let rclass = u16::from_be_bytes([query[end_pos + 2], query[end_pos + 3]]);
 
-        let rdata_start = end_pos + 4;
-        let rdata = query[rdata_start..].to_vec();
+        let rdlen = u16::from_be_bytes([query[end_pos + 8], query[end_pos + 9]]) as usize;
+        let rdata_start = end_pos + 10;
+        if rdata_start + rdlen > query.len() {
+            return Err("RDATA exceeds message".to_string());
+        }
+        let rdata = query[rdata_start..rdata_start + rdlen].to_vec();
 
         Ok((name, rtype, rclass, rdata))
     }
@@ -212,7 +216,11 @@ impl DynamicUpdate {
 
     pub(crate) fn skip_rr_with_rdata(query: &[u8], pos: usize) -> usize {
         let (_name, end_pos) = Self::parse_name(query, pos).unwrap_or((String::new(), pos));
-        end_pos + 4
+        if end_pos + 10 > query.len() {
+            return query.len();
+        }
+        let rdlen = u16::from_be_bytes([query[end_pos + 8], query[end_pos + 9]]) as usize;
+        end_pos + 10 + rdlen
     }
 
     pub(crate) fn skip_rr_full(query: &[u8], pos: usize) -> usize {
@@ -512,6 +520,11 @@ impl DynamicUpdateHandler {
             }
         }
 
+        if update.updates.is_empty() {
+            self.updates_accepted.fetch_add(1, Ordering::Relaxed);
+            return Ok(self.build_response(query, wire::UPDATE_RCODE_NOERROR));
+        }
+
         updated_zone.increment_serial();
 
         // Re-validate post-mutation invariants: a dynamic UPDATE must not be
@@ -566,47 +579,25 @@ impl DynamicUpdateHandler {
             .get(&(prereq.name.clone(), RecordType::from(prereq.rtype)));
 
         match prereq.condition {
-            PrerequisiteCondition::Exists => {
-                if !records.is_none_or(|r| r.is_empty()) {
-                    return Ok(false);
+            PrerequisiteCondition::Exists => match records {
+                None => Ok(false),
+                Some(recs) if recs.is_empty() => Ok(false),
+                Some(recs) => {
+                    if prereq.rdata.is_empty() {
+                        Ok(true)
+                    } else {
+                        let record_values: Vec<String> =
+                            recs.iter().map(|r| r.value.clone()).collect();
+                        let has_matching_rdata = record_values.iter().any(|v| {
+                            let encoded = Self::encode_rdata_normalized(v);
+                            encoded == prereq.rdata
+                        });
+                        Ok(has_matching_rdata)
+                    }
                 }
-                if !prereq.rdata.is_empty() {
-                    let record_values: Vec<String> = records
-                        .as_ref()
-                        .unwrap()
-                        .iter()
-                        .map(|r| r.value.clone())
-                        .collect();
-                    let has_matching_rdata = record_values.iter().any(|v| {
-                        let encoded = Self::encode_rdata_normalized(v);
-                        encoded == prereq.rdata
-                    });
-                    Ok(has_matching_rdata)
-                } else {
-                    Ok(true)
-                }
-            }
+            },
             PrerequisiteCondition::NotExists => Ok(records.is_none_or(|r| r.is_empty())),
-            PrerequisiteCondition::ExistsRRset => {
-                if !records.is_none_or(|r| r.is_empty()) {
-                    return Ok(false);
-                }
-                if !prereq.rdata.is_empty() {
-                    let record_values: Vec<String> = records
-                        .as_ref()
-                        .unwrap()
-                        .iter()
-                        .map(|r| r.value.clone())
-                        .collect();
-                    let has_matching_rdata = record_values.iter().any(|v| {
-                        let encoded = Self::encode_rdata_normalized(v);
-                        encoded == prereq.rdata
-                    });
-                    Ok(has_matching_rdata)
-                } else {
-                    Ok(true)
-                }
-            }
+            PrerequisiteCondition::ExistsRRset => Ok(records.is_some_and(|r| !r.is_empty())),
             PrerequisiteCondition::NotExistsRRset => Ok(records.is_none_or(|r| r.is_empty())),
         }
     }
