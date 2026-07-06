@@ -9,9 +9,9 @@
 
 [dns]
 enabled = true
-bind = "0.0.0.0"
+bind_address = "127.0.0.1"
 port = 53
-mode = "Standalone"
+mode = "standalone"
 
 [dns.settings]
 default_ttl = 300
@@ -23,10 +23,10 @@ cache_min_ttl = 60
 [dns.recursive]
 enabled = true
 # CRITICAL: Bind to localhost only. Binding to 0.0.0.0 creates an open resolver.
-bind = "127.0.0.1"
+bind_address = "127.0.0.1"
 port = 1053
 # Use system resolvers (e.g., /etc/resolv.conf)
-upstream_provider = "System"
+upstream_provider = "system"
 # DNSSEC validation — validates response integrity
 dnssec_validation = true
 # QNAME minimization — reduces privacy leakage to upstream
@@ -43,11 +43,11 @@ recovery_timeout_secs = 30
 success_threshold = 2
 
 [dns.recursive.ecs]
-forwarding_policy = "Never"
+forwarding_policy = "never"
 include_scope_in_response = false
 
-[dns.rate_limit]
-mode = "Shared"
+[dns.ratelimit]
+mode = "shared"
 per_second = 500
 per_minute = 5000
 

@@ -102,7 +102,7 @@ impl CircuitBreaker {
     }
 
     pub fn record_failure(&self) {
-        self.failure_count.fetch_add(1, Ordering::Relaxed);
+        let prior = self.failure_count.fetch_add(1, Ordering::Relaxed);
         self.last_failure_time.store(
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -110,6 +110,9 @@ impl CircuitBreaker {
                 .as_secs(),
             Ordering::Relaxed,
         );
+        if prior + 1 >= self.failure_threshold {
+            metrics::counter!("dns_recursive_circuit_breaker_opens_total").increment(1);
+        }
     }
 }
 

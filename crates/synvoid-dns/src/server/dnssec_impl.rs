@@ -551,6 +551,7 @@ impl DnsServer {
             Ok(sig) => sig,
             Err(e) => {
                 tracing::warn!("Failed to sign record: {}", e);
+                metrics::counter!("dns_dnssec_signing_failures_total").increment(1);
                 return Vec::new();
             }
         };

@@ -1656,6 +1656,11 @@ pub struct DnsServer {
     dns64_translator: Option<super::dns64::Dns64Translator>,
     pub(crate) acme_dns_challenges: Option<Arc<synvoid_tls::AcmeDnsChallenge>>,
     cookie_server: Option<Arc<crate::cookie::DnsCookieServer>>,
+    /// Health checker — reflects real runtime state via setter calls at
+    /// listener startup, zone load/reload, recursive init, encrypted-transport
+    /// startup, and shutdown. Exposed via `health_checker()` for operators
+    /// and admin endpoints.
+    pub health: Arc<crate::health::DnsHealthChecker>,
     #[cfg(feature = "mesh")]
     mesh_registry: Option<Arc<crate::mesh_sync::MeshDnsRegistry>>,
 }
@@ -1695,6 +1700,7 @@ impl Clone for DnsServer {
             dns64_translator: self.dns64_translator.clone(),
             acme_dns_challenges: self.acme_dns_challenges.clone(),
             cookie_server: self.cookie_server.clone(),
+            health: self.health.clone(),
             #[cfg(feature = "mesh")]
             mesh_registry: self.mesh_registry.clone(),
         }
@@ -1989,7 +1995,7 @@ impl DnsServer {
             None
         };
 
-        Self {
+        let server = Self {
             config: Arc::new(config),
             zones: Arc::new(ShardedZoneStore::new()),
             zone_trie: Arc::new(RwLock::new(super::zone_trie::ZoneTrie::new())),
@@ -2022,9 +2028,13 @@ impl DnsServer {
             dns64_translator,
             acme_dns_challenges: None,
             cookie_server: Some(Arc::new(crate::cookie::DnsCookieServer::new())),
+            health: Arc::new(crate::health::DnsHealthChecker::new()),
             #[cfg(feature = "mesh")]
             mesh_registry: None,
-        }
+        };
+
+        server.init_health_state();
+        server
     }
 
     pub fn with_acme_dns_challenges(
@@ -2041,5 +2051,51 @@ impl DnsServer {
     ) -> Self {
         self.cookie_server = Some(cookie_server);
         self
+    }
+
+    /// Access the health checker for read-only snapshots.
+    pub fn health_checker(&self) -> Arc<crate::health::DnsHealthChecker> {
+        self.health.clone()
+    }
+
+    /// Initialize config-derived health state. Called once at the end of
+    /// `DnsServer::new()` so the first snapshot reflects intended operational
+    /// state, even before `start()` binds listeners.
+    fn init_health_state(&self) {
+        // Cache state: if cache_enabled is false, the cache is not created
+        // and the server cannot serve cached responses.
+        self.health
+            .set_cache_operational(self.config.settings.cache_enabled);
+
+        // DNSSEC signing state.
+        self.health
+            .set_dnssec_signing_enabled(self.config.dnssec.enabled);
+
+        // Encrypted transport state.
+        self.health.set_dot_enabled(self.config.dot.enabled);
+        self.health.set_doh_enabled(self.config.doh.enabled);
+        self.health.set_doq_enabled(self.config.doq.enabled);
+
+        // Transfer / update state. AXFR/IXFR handlers are wired in transport;
+        // the control-plane guards (TSIG require, allowlist) live in the
+        // handler. The health flag reflects config intent, not request-time
+        // decisions.
+        self.health.set_axfr_enabled(true);
+        self.health
+            .set_ixfr_enabled(self.config.settings.ixfr_enabled);
+        self.health
+            .set_update_enabled(self.config.settings.dynamic_update.enabled);
+        self.health
+            .set_tsig_required(self.config.settings.require_tsig);
+
+        // Recursive state.
+        if self.config.recursive.enabled {
+            // Optimistic — `start_recursive_server()` will downgrade to
+            // Degraded if initialization fails or the circuit breaker opens.
+            self.health.set_recursive_healthy();
+            self.health.set_circuit_breaker_open(false);
+        } else {
+            self.health.set_recursive_disabled();
+        }
     }
 }

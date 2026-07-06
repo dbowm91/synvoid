@@ -6,6 +6,19 @@ use crate::mesh_sync::MeshDnsRegistry;
 impl DnsServer {
     pub fn load_zones(&self, zone_configs: Vec<DnsZoneEntry>) -> Result<(), String> {
         let zone_origins: Vec<String> = zone_configs.iter().map(|zc| zc.zone.clone()).collect();
+        let loaded_count = self.load_zones_inner(&zone_configs, &zone_origins)?;
+        for _ in 0..loaded_count {
+            metrics::counter!("dns_zones_loaded_total").increment(1);
+            metrics::counter!("dns_zone_reload_successes_total").increment(1);
+        }
+        Ok(())
+    }
+
+    fn load_zones_inner(
+        &self,
+        zone_configs: &[DnsZoneEntry],
+        zone_origins: &[String],
+    ) -> Result<usize, String> {
         for zone_config in zone_configs {
             let mut zone = Zone::new(zone_config.zone.clone());
             zone.dnskey_ttl = Some(3600);
@@ -156,11 +169,14 @@ impl DnsServer {
                     zone = %zone.origin,
                     "Rejecting zone: no SOA record found (RFC 1035 §3.3.13 requires at least one SOA per zone)"
                 );
+                metrics::counter!("dns_zone_reload_failures_total").increment(1);
                 return Err(format!("Zone {}: must contain a SOA record", zone.origin));
             }
 
-            zone.validate_zone_for_activation()
-                .map_err(|e| e.to_string())?;
+            zone.validate_zone_for_activation().map_err(|e| {
+                metrics::counter!("dns_zone_reload_failures_total").increment(1);
+                e.to_string()
+            })?;
 
             tracing::info!("Loaded DNS zone: {} (serial: {})", zone.origin, zone.serial);
             zone.mark_active();
@@ -170,12 +186,12 @@ impl DnsServer {
         self.rebuild_zone_index();
 
         if let Some(ref cache) = self.cache {
-            for origin in &zone_origins {
+            for origin in zone_origins {
                 cache.invalidate_zone(origin, InvalidationReason::ZoneLoad);
             }
         }
 
-        Ok(())
+        Ok(zone_configs.len())
     }
 
     pub fn load_zones_from_store(&self, store: &ZoneStore) -> Result<(), String> {
@@ -189,13 +205,16 @@ impl DnsServer {
                     zone = %origin,
                     "Rejecting zone from store: no SOA record found"
                 );
+                metrics::counter!("dns_zone_reload_failures_total").increment(1);
                 return Err(format!(
                     "Zone {} (from store): must contain a SOA record",
                     origin
                 ));
             }
-            zone.validate_zone_for_activation()
-                .map_err(|e| format!("Zone {} (from store): {}", origin, e))?;
+            zone.validate_zone_for_activation().map_err(|e| {
+                metrics::counter!("dns_zone_reload_failures_total").increment(1);
+                format!("Zone {} (from store): {}", origin, e)
+            })?;
             tracing::info!("Loaded DNS zone from store: {}", origin);
             zone.mark_active();
             self.zones.insert(origin.clone(), zone);

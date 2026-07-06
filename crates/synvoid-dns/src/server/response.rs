@@ -1,6 +1,6 @@
 use super::response_encoder::{
     assemble_packet, build_opt_encoded_record, build_response_flags, encode_rr, DnsSection,
-    EncodeReport, ResponseEnvelope, SkippedRecord,
+    EncodeReport, ResponseEnvelope,
 };
 use super::*;
 
@@ -53,11 +53,7 @@ impl DnsServer {
                         reason = %reason,
                         "DNS encode: record skipped"
                     );
-                    report.skipped.push(SkippedRecord {
-                        name: record.name.clone(),
-                        record_type: record.record_type,
-                        reason,
-                    });
+                    report.record_skip(record.name.clone(), record.record_type, reason);
                 }
             }
         }
@@ -118,11 +114,7 @@ impl DnsServer {
                                     reason = %reason,
                                     "DNS encode: RRSIG record skipped"
                                 );
-                                report.skipped.push(SkippedRecord {
-                                    name: record.name.clone(),
-                                    record_type: RecordType::RRSIG,
-                                    reason,
-                                });
+                                report.record_skip(record.name.clone(), RecordType::RRSIG, reason);
                             }
                         }
                     }
@@ -498,11 +490,7 @@ impl DnsServer {
                     reason = %reason,
                     "DNS encode: ACME TXT record failed"
                 );
-                report.skipped.push(SkippedRecord {
-                    name: qname.to_string(),
-                    record_type: RecordType::TXT,
-                    reason,
-                });
+                report.record_skip(qname.to_string(), RecordType::TXT, reason);
             }
         }
 
@@ -590,11 +578,7 @@ impl DnsServer {
                     reason = %reason,
                     "DNS encode: SOA record failed for NXDOMAIN response, returning SERVFAIL"
                 );
-                report.skipped.push(SkippedRecord {
-                    name: soa_record.name.clone(),
-                    record_type: RecordType::SOA,
-                    reason,
-                });
+                report.record_skip(soa_record.name.clone(), RecordType::SOA, reason);
                 soa_failed = true;
             }
         }
@@ -682,11 +666,7 @@ impl DnsServer {
                     reason = %reason,
                     "DNS encode: SOA record failed for NODATA response, returning SERVFAIL"
                 );
-                report.skipped.push(SkippedRecord {
-                    name: soa_record.name.clone(),
-                    record_type: RecordType::SOA,
-                    reason,
-                });
+                report.record_skip(soa_record.name.clone(), RecordType::SOA, reason);
                 soa_failed = true;
             }
         }

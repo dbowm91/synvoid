@@ -34,6 +34,16 @@ impl EncodeReport {
     pub fn has_skipped(&self) -> bool {
         !self.skipped.is_empty()
     }
+
+    /// Record a skipped record and emit the `dns_encode_failures_total` counter.
+    pub fn record_skip(&mut self, name: String, record_type: RecordType, reason: String) {
+        metrics::counter!("dns_encode_failures_total").increment(1);
+        self.skipped.push(SkippedRecord {
+            name,
+            record_type,
+            reason,
+        });
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1527,5 +1537,26 @@ mod tests {
             !report.has_skipped(),
             "Default report should have no skipped records"
         );
+    }
+
+    #[test]
+    fn test_record_skip_appends_and_tracks() {
+        let mut report = super::EncodeReport::default();
+        assert_eq!(report.skipped.len(), 0);
+        report.record_skip(
+            "a.example.com".to_string(),
+            RecordType::A,
+            "bad rdata".to_string(),
+        );
+        report.record_skip(
+            "b.example.com".to_string(),
+            RecordType::AAAA,
+            "bad rdata".to_string(),
+        );
+        assert_eq!(report.skipped.len(), 2);
+        assert_eq!(report.skipped[0].name, "a.example.com");
+        assert_eq!(report.skipped[0].record_type, RecordType::A);
+        assert_eq!(report.skipped[0].reason, "bad rdata");
+        assert!(report.has_skipped());
     }
 }

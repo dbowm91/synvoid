@@ -20,15 +20,19 @@ mkdir -p "$RESULTS_DIR"
 
 # Record environment info
 record_env() {
+    local commit_sha
+    commit_sha="$(git -C "$PROJECT_ROOT" rev-parse HEAD 2>/dev/null || echo 'unknown')"
     echo "=== DNS Benchmark Run: $(date) ===" | tee "$RESULTS_FILE"
     echo "" | tee -a "$RESULTS_FILE"
     echo "--- Environment ---" | tee -a "$RESULTS_FILE"
+    echo "Commit SHA: $commit_sha" | tee -a "$RESULTS_FILE"
     echo "OS: $(uname -a)" | tee -a "$RESULTS_FILE"
     echo "CPU: $(lscpu 2>/dev/null | grep 'Model name' | head -1 || echo 'unknown')" | tee -a "$RESULTS_FILE"
     echo "RAM: $(free -h 2>/dev/null | awk '/Mem:/{print $2}' || echo 'unknown')" | tee -a "$RESULTS_FILE"
     echo "Rust: $(rustc --version 2>/dev/null || echo 'unknown')" | tee -a "$RESULTS_FILE"
     echo "Cargo: $(cargo --version 2>/dev/null || echo 'unknown')" | tee -a "$RESULTS_FILE"
     echo "Profile: release" | tee -a "$RESULTS_FILE"
+    echo "Bench command: $BENCH_COMMAND" | tee -a "$RESULTS_FILE"
     echo "" | tee -a "$RESULTS_FILE"
 }
 
@@ -60,6 +64,18 @@ for arg in "$@"; do
         *) echo "Unknown argument: $arg"; exit 1 ;;
     esac
 done
+
+# Build the exact cargo bench command string for recording
+BENCH_COMMAND="cargo bench -p synvoid-dns"
+if $RUN_ALL; then
+    BENCH_COMMAND="cargo bench -p synvoid-dns"
+else
+    $RUN_CACHE && BENCH_COMMAND="$BENCH_COMMAND --bench cache_bench"
+    $RUN_WIRE && BENCH_COMMAND="$BENCH_COMMAND --bench wire_bench"
+    $RUN_ZONE && BENCH_COMMAND="$BENCH_COMMAND --bench zone_bench"
+    $RUN_COALESCER && BENCH_COMMAND="$BENCH_COMMAND --bench coalescer_bench"
+    $RUN_LIMITS && BENCH_COMMAND="$BENCH_COMMAND --bench limits_bench"
+fi
 
 record_env
 

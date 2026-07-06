@@ -50,15 +50,21 @@ impl DnsServer {
         if self.config.dnssec.enabled {
             if let Err(e) = self.initialize_dnssec() {
                 tracing::warn!("Failed to initialize DNSSEC: {}", e);
+                self.health.set_dnssec_signing_enabled(false);
             } else {
                 tracing::info!("DNSSEC initialized successfully");
-
+                self.health.set_dnssec_signing_enabled(true);
                 Self::start_key_rotation_task(self.dnssec.clone(), 86400);
             }
         }
 
         if self.config.recursive.enabled {
-            self.start_recursive_server().await?;
+            if let Err(e) = self.start_recursive_server().await {
+                // Recursive init failed — server still functions as
+                // authoritative, but recursive subsystem is degraded.
+                self.health.set_recursive_degraded();
+                return Err(e);
+            }
         }
 
         let (shutdown_watcher_tx, shutdown_watcher_rx) = tokio::sync::watch::channel(false);
@@ -93,6 +99,8 @@ impl DnsServer {
             let _ = watcher.send(true);
         }
         self.connection_limits.initiate_graceful_shutdown();
+        // Liveness is no longer Healthy — listener is no longer bound.
+        self.health.set_listener_bound(false);
     }
 
     async fn start_recursive_server(&mut self) -> Result<(), String> {
@@ -122,6 +130,11 @@ impl DnsServer {
             .map_err(|e| format!("Failed to start recursive DNS server: {}", e))?;
 
         self.recursive_server = Some(server);
+        // Recursive server reached steady state — report healthy. Subsequent
+        // circuit-breaker trips will transition to Degraded via the setter
+        // in the recursive path.
+        self.health.set_recursive_healthy();
+        self.health.set_circuit_breaker_open(false);
 
         Ok(())
     }
@@ -138,6 +151,9 @@ impl DnsServer {
             .map_err(|e| format!("Failed to bind DNS TCP socket: {}", e))?;
 
         tracing::info!("DNS server listening on {} (UDP + TCP)", bind_addr);
+
+        // Listener is bound — liveness is now Healthy.
+        self.health.set_listener_bound(true);
 
         let state = self.build_handler_state();
         let geoip_lookup = self.geoip_lookup.clone();
@@ -489,7 +505,11 @@ impl DnsServer {
 
                                 tokio::spawn(async move {
                                     let _connection_guard = match connection_limits_clone.try_acquire_connection() {
-                                        Ok(guard) => guard,
+                                        Ok(guard) => {
+                                            metrics::counter!("dns_tcp_connections_total").increment(1);
+                                            metrics::gauge!("dns_active_tcp_connections").increment(1.0);
+                                            guard
+                                        },
                                         Err(e) => {
                                             tracing::warn!(
                                                 transport = "tcp",
@@ -555,8 +575,10 @@ impl DnsServer {
             dot.set_dns_server(self.clone());
             if let Err(e) = dot.start().await {
                 tracing::warn!("Failed to start DoT server: {}", e);
+                self.health.set_cert_valid(false);
             } else {
                 tracing::info!("DoT server started on port {}", self.config.dot.port);
+                self.health.set_cert_valid(true);
             }
             self.dot_server = Some(dot);
         }
@@ -566,8 +588,10 @@ impl DnsServer {
             doh.set_dns_server(self.clone());
             if let Err(e) = doh.start().await {
                 tracing::warn!("Failed to start DoH server: {}", e);
+                self.health.set_cert_valid(false);
             } else {
                 tracing::info!("DoH server started on port {}", self.config.doh.port);
+                self.health.set_cert_valid(true);
             }
             self.doh_server = Some(doh);
         }
@@ -577,8 +601,10 @@ impl DnsServer {
             doq.set_dns_server(self.clone());
             if let Err(e) = doq.start().await {
                 tracing::warn!("Failed to start DoQ server: {}", e);
+                self.health.set_cert_valid(false);
             } else {
                 tracing::info!("DoQ server started on port {}", self.config.doq.port);
+                self.health.set_cert_valid(true);
             }
             self.doq_server = Some(doq);
         }

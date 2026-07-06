@@ -9,9 +9,9 @@
 
 [dns]
 enabled = true
-bind = "0.0.0.0"
+bind_address = "0.0.0.0"
 port = 53
-mode = "Standalone"
+mode = "standalone"
 
 [dns.settings]
 default_ttl = 300
@@ -28,10 +28,10 @@ enabled = true
 # Notify secondaries when zones change
 also_notify = ["10.0.0.2:53", "10.0.0.3:53"]
 
-[dns.settings.ixfr]
-enabled = true
-history_size = 200
-fallback_to_axfr = true
+# IXFR settings (flattened at settings level)
+ixfr_enabled = true
+ixfr_history_size = 200
+ixfr_fallback_to_axfr = true
 
 [dns.firewall]
 enabled = true
@@ -39,8 +39,8 @@ enabled = true
 block_zone_transfers = false
 block_internal_ips = true
 
-[dns.rate_limit]
-mode = "Shared"
+[dns.ratelimit]
+mode = "shared"
 per_second = 500
 per_minute = 5000
 
@@ -51,14 +51,12 @@ max_concurrent_queries = 2500
 # TSIG keys for authenticating transfers
 [[dns.dnssec.tsig_keys]]
 name = "transfer-key"
-algorithm = "HmacSha256"
+algorithm = "hmacsha256"
 # Generate with: synvoid dns tsig generate-key
-secret = "<base64-encoded-secret>"
+secret_base64 = "<base64-encoded-secret>"
 
 [[dns.zones.items]]
-origin = "example.com"
-zone_file = "/var/lib/synvoid/dns/zones/example.com.zone"
-enabled = true
+zone = "example.com"
 
 # WARNING: Do NOT enable:
 #   - dns.recursive (open resolver risk)

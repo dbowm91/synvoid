@@ -247,6 +247,7 @@ impl Drop for ConnectionGuard<'_> {
             self.limits
                 .connection_count
                 .fetch_update(Ordering::Release, Ordering::Relaxed, |v| v.checked_sub(1));
+        metrics::gauge!("dns_active_tcp_connections").decrement(1.0);
     }
 }
 

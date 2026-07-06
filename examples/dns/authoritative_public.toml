@@ -7,10 +7,10 @@
 
 [dns]
 enabled = true
-bind = "0.0.0.0"
+bind_address = "0.0.0.0"
 port = 53
 # Standalone mode — no mesh integration
-mode = "Standalone"
+mode = "standalone"
 
 [dns.settings]
 default_ttl = 300
@@ -21,12 +21,12 @@ cache_min_ttl = 60
 negative_cache_ttl = 300
 
 # Rate limiting — protect against query floods
-[dns.rate_limit]
-mode = "Shared"
+[dns.ratelimit]
+mode = "shared"
 per_second = 500
 per_minute = 5000
 
-[dns.rate_limit.rrl]
+[dns.rrl]
 enabled = true
 responses_per_second = 100
 window_secs = 5
@@ -55,10 +55,9 @@ max_tcp_idle_time_secs = 300
 max_tcp_query_time_secs = 30
 
 # Zones — replace with your actual zones
+# NOTE: Zone loading from zone files is not supported via config; use the API or CLI to load zones.
 [[dns.zones.items]]
-origin = "example.com"
-zone_file = "/var/lib/synvoid/dns/zones/example.com.zone"
-enabled = true
+zone = "example.com"
 
 # WARNING: Do NOT enable the following for a public authoritative server:
 #   - dns.recursive (creates an open resolver)

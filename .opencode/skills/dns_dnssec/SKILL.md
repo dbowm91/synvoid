@@ -608,8 +608,9 @@ cargo test -p synvoid-dns -- dot
 cargo test -p synvoid-dns -- doh
 cargo test -p synvoid-dns -- doq
 
-### Interop & Conformance
+### Internal Conformance & External Interop
 ```bash
+# 7 internal conformance suites (in-process, required, part of CI)
 cargo test -p synvoid-dns --test dns_interop_authoritative
 cargo test -p synvoid-dns --test dns_interop_truncation
 cargo test -p synvoid-dns --test dns_interop_dnssec
@@ -617,6 +618,7 @@ cargo test -p synvoid-dns --test dns_interop_transfers
 cargo test -p synvoid-dns --test dns_interop_update_notify
 cargo test -p synvoid-dns --test dns_interop_encrypted
 cargo test -p synvoid-dns --test dns_interop_recursive
+# Combined runner (internal + optional external tool detection)
 ./scripts/dns/conformance.sh
 ```
 
@@ -746,10 +748,10 @@ cargo test -p synvoid-dns --test dns_stress_resource_limits -- --test-threads=1
 cargo test -p synvoid-dns --lib           # 607 unit tests
 cargo test -p synvoid-dns                # 781 tests (unit + integration)
 cargo test -p synvoid-dns --release      # Release mode
-./scripts/dns/conformance.sh             # 14 integration suites
+./scripts/dns/conformance.sh             # 7 internal conformance suites + optional external interop
 ```
 
-Results: 781 tests passing, 14 integration suites, all gate areas verified.
+Results: 781 tests passing, 7 internal conformance suites + optional external interop, all gate areas verified.
 
 ### Security Review
 

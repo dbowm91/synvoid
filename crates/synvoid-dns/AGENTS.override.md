@@ -708,9 +708,9 @@ cargo test -p synvoid-dns --test dns_stress_resource_limits -- --test-threads=1
 ./scripts/dns/stress_tests.sh
 ```
 
-## Interop & Conformance Tests
+## Internal Conformance & External Interop
 
-Conformance tests verify protocol-level interoperability across authoritative, recursive, DNSSEC, zone transfer, dynamic update, encrypted transport, and truncation/TCP fallback.
+7 internal conformance suites verify protocol-level interoperability across authoritative, recursive, DNSSEC, zone transfer, dynamic update, encrypted transport, and truncation/TCP fallback. These run in-process with no external tools and are part of CI. Optional external interop checks (via `dig`, `kdig`, `delv`, etc.) are available when tools are present.
 
 ```bash
 # Run all interop tests
@@ -752,7 +752,7 @@ Location: `examples/dns/` — 5 example configs covering each primary deployment
 cargo test -p synvoid-dns --lib           # 607 unit tests
 cargo test -p synvoid-dns                # 781 tests (unit + integration)
 cargo test -p synvoid-dns --release      # Release mode
-./scripts/dns/conformance.sh             # 14 integration suites
+./scripts/dns/conformance.sh             # 7 internal conformance suites + optional external interop
 ```
 
 ### Security Review Findings

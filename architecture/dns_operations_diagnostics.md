@@ -45,6 +45,8 @@ dig @127.0.0.1 https://dns.example.com/dns-query example.com A +short
 nc -zvu 127.0.0.1 784 -w 2
 ```
 
+Alternatively, run the automated smoke test: `./scripts/dns_diagnostic_smoke.sh 127.0.0.1 53`
+
 ## Zone Health Verification
 
 ### Check Loaded Zones

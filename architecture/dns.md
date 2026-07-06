@@ -2027,9 +2027,9 @@ Sensitive data (TSIG secrets, private keys, full client IPs) is never logged.
 
 See `architecture/dns_operations_diagnostics.md` for the full alerting matrix and troubleshooting flowchart.
 
-### Interop & Conformance
+### Internal Conformance & External Interop
 
-The DNS crate includes interop conformance tests covering:
+The DNS crate includes 7 internal conformance suites that run in-process (no network or external tools) and are part of CI:
 - **Authoritative**: A/AAAA/NS/MX/TXT/SRV/CNAME record lookups, NXDOMAIN SOA, qname handling
 - **Truncation/TCP**: UDP size limits, TC bit, TCP fallback, wire format validity
 - **DNSSEC**: DO bit, NODATA authority, AD/CD flags, NSEC, DS/DNSKEY lookups
@@ -2037,6 +2037,8 @@ The DNS crate includes interop conformance tests covering:
 - **UPDATE/NOTIFY**: Disabled-by-default rejection, prerequisite checks, rate limiting, max size
 - **Encrypted transport**: DoT/DoH/DoQ config roundtrips, TLS cert validation
 - **Recursive**: Safety invariants, depth limits, timeout, ACL, cache bypass
+
+Optionally, external tools (`dig`, `kdig`, `delv`, `ldns-verify-zone`, `named-checkzone`, `curl`) enable live-wire smoke checks against a running DnsServer. These are not in CI.
 
 Run: `./scripts/dns/conformance.sh`
 
@@ -2056,4 +2058,16 @@ Run: `./scripts/dns/conformance.sh`
 - **Milestone 4 Phase 1**: Observability and operations (metrics taxonomy, health checker, structured logging)
 - **Milestone 4 Phase 2**: Performance and load testing (5 benchmark suites, 28 stress tests)
 - **Milestone 4 Phase 4**: Production profiles (8 profiles with support classification), safe defaults audit (60+ fields verified), 5 example configs, release gate (781 tests), security review (all areas safe, bailiwick observability-only warning)
+
+---
+
+## Operational Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/dns/conformance.sh` | Internal conformance tests against a running server |
+| `scripts/dns/run_benchmarks.sh` | Performance baseline benchmarks |
+| `scripts/dns/stress_tests.sh` | Resource-limit verification under load |
+| `scripts/dns_diagnostic_smoke.sh` | Live DNS smoke testing (UDP, TCP, SOA, DNSSEC) |
+| `scripts/dns/benchmark_report.sh` | Benchmark report generator |
 
