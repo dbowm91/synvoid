@@ -137,8 +137,8 @@ impl NotifyHandler {
 
         if !self.is_source_allowed(client_ip) {
             tracing::warn!(
-                "SECURITY: NOTIFY DENIED from {} - source not in allowlist",
-                client_ip
+                client_ip = %client_ip,
+                "NOTIFY denied: source not in allowlist"
             );
             return None;
         }
@@ -149,8 +149,8 @@ impl NotifyHandler {
             let tsig = crate::tsig::parse_tsig_from_query(query, additional_offset);
             if tsig.is_none() {
                 tracing::warn!(
-                    "SECURITY: NOTIFY DENIED from {} - TSIG required but not present",
-                    client_ip
+                    client_ip = %client_ip,
+                    "NOTIFY denied: TSIG required but not present"
                 );
                 return None;
             }
@@ -172,9 +172,9 @@ impl NotifyHandler {
 
         if self.is_rate_limited(&zone_origin) {
             tracing::debug!(
-                "NOTIFY rate-limited for zone {} from {}",
-                zone_origin,
-                client_ip
+                zone = %zone_origin,
+                client_ip = %client_ip,
+                "NOTIFY rate limited, skipping"
             );
             return Some(build_notify_response(query, wire::RCODE_NOERROR));
         }
@@ -208,7 +208,7 @@ impl NotifyHandler {
             let notified = self.notified_secondaries.read();
             if let Some(last_serial) = notified.get(zone_origin) {
                 if *last_serial == new_serial {
-                    tracing::debug!("Serial unchanged for {}, skipping NOTIFY", zone_origin);
+                    tracing::debug!(zone = %zone_origin, serial = %new_serial, "NOTIFY skipped: serial unchanged");
                     return;
                 }
             }
@@ -231,18 +231,18 @@ impl NotifyHandler {
                 match notify_result {
                     Ok(_) => {
                         tracing::info!(
-                            "Sent NOTIFY to {} for zone {} (serial {})",
-                            secondary,
-                            zone_origin,
-                            new_serial
+                            zone = %zone_origin,
+                            target = %secondary,
+                            serial = %new_serial,
+                            "NOTIFY sent"
                         );
                     }
                     Err(e) => {
                         tracing::warn!(
-                            "Failed to send NOTIFY to {} for zone {}: {}",
-                            secondary,
-                            zone_origin,
-                            e
+                            zone = %zone_origin,
+                            target = %secondary,
+                            error = %e,
+                            "NOTIFY send failed"
                         );
                     }
                 }
@@ -302,7 +302,7 @@ impl NotifyHandler {
 
         match socket.send_to(&notify_query, format!("{}:{}", ip, port)) {
             Ok(_) => {
-                tracing::debug!("NOTIFY packet sent to {}:{}", ip, port);
+                tracing::debug!(zone = %zone_origin, target = %ip, "NOTIFY packet sent");
                 Ok(())
             }
             Err(e) => Err(format!("Send error: {}", e)),

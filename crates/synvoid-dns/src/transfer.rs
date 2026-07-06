@@ -65,16 +65,12 @@ impl ZoneTransfer {
     ) -> Self {
         if allowed_transfers.contains(&"*".to_string()) && !allow_wildcard_transfer {
             tracing::warn!(
-                "SECURITY: Zone transfer configuration contains wildcard '*' which is disabled by default. \
-                 Set allow_wildcard_transfer: true in dns.settings to enable."
+                "Zone transfer configuration contains wildcard which is disabled by default"
             );
         }
 
         if allowed_transfers.contains(&"*".to_string()) && wildcard_transfer_requires_tsig {
-            tracing::warn!(
-                "SECURITY: Zone transfer wildcard '*' requires TSIG authentication. \
-                 Ensure TSIG is configured for zone transfers."
-            );
+            tracing::warn!("Zone transfer wildcard requires TSIG authentication");
         }
 
         Self {
@@ -130,10 +126,7 @@ impl ZoneTransfer {
             if allowed == "*" {
                 wildcard_used = true;
                 if !self.is_wildcard_allowed() {
-                    tracing::warn!(
-                        "Zone transfer wildcard '*' is not allowed. \
-                         Set allow_wildcard_transfer: true in dns.settings to enable."
-                    );
+                    tracing::warn!(client_ip = %client_ip, "Zone transfer wildcard denied: not enabled");
                     continue;
                 }
                 return true;
@@ -261,9 +254,9 @@ impl ZoneTransfer {
         // AXFR disabled by default for security
         if !self.axfr_enabled {
             tracing::debug!(
-                "AXFR request for zone={} from {} denied: AXFR not enabled",
-                qname,
-                client_ip
+                zone = %qname,
+                client_ip = %client_ip,
+                "AXFR request denied: AXFR not enabled"
             );
             return Err("AXFR not enabled".to_string());
         }
@@ -271,9 +264,9 @@ impl ZoneTransfer {
         // AXFR requires TCP per RFC 5936 §2
         if self.tcp_only && !is_tcp {
             tracing::warn!(
-                "SECURITY: AXFR request for zone={} from {} denied: TCP required",
-                qname,
-                client_ip
+                zone = %qname,
+                client_ip = %client_ip,
+                "AXFR request denied: TCP required"
             );
             return Err("AXFR requires TCP transport".to_string());
         }
@@ -282,27 +275,27 @@ impl ZoneTransfer {
 
         if !self.is_transfer_allowed(client_ip, origin) {
             tracing::warn!(
-                "SECURITY: AXFR request DENIED for zone={} client={} reason=not_in_allowed_list",
-                origin,
-                client_ip
+                zone = %origin,
+                client_ip = %client_ip,
+                "AXFR request denied: not in allowed list"
             );
             return Err("Zone transfer not allowed".to_string());
         }
 
         if self.is_wildcard_transfer(origin) && self.wildcard_requires_tsig() && tsig.is_none() {
             tracing::warn!(
-                "SECURITY: AXFR request DENIED for zone={} client={} reason=wildcard_requires_tsig",
-                origin,
-                client_ip
+                zone = %origin,
+                client_ip = %client_ip,
+                "AXFR request denied: wildcard requires TSIG"
             );
             return Err("Zone transfer requires TSIG authentication".to_string());
         }
 
         if self.require_tsig && tsig.is_none() {
             tracing::warn!(
-                "SECURITY: AXFR request DENIED for zone={} client={} reason=require_tsig",
-                origin,
-                client_ip
+                zone = %origin,
+                client_ip = %client_ip,
+                "AXFR request denied: TSIG required"
             );
             return Err("Zone transfer requires TSIG authentication".to_string());
         }
@@ -316,10 +309,10 @@ impl ZoneTransfer {
             "unsecured"
         };
         tracing::info!(
-            "AXFR request for zone={} from {} ({})",
-            origin,
-            client_ip,
-            tsig_status
+            zone = %origin,
+            client_ip = %client_ip,
+            tsig_status = %tsig_status,
+            "AXFR transfer started"
         );
 
         if let Some(tsig) = tsig {
@@ -336,10 +329,10 @@ impl ZoneTransfer {
                     tsig.other_len,
                 ) {
                     tracing::warn!(
-                        "SECURITY: TSIG verification FAILED for AXFR zone={} client={} error={}",
-                        origin,
-                        client_ip,
-                        e
+                        zone = %origin,
+                        client_ip = %client_ip,
+                        error = %e,
+                        "TSIG verification failed for AXFR"
                     );
                     return Err(format!("TSIG verification failed: {}", e));
                 }
@@ -387,10 +380,10 @@ impl ZoneTransfer {
         }
 
         tracing::info!(
-            "AXFR transfer completed for {} to {} ({} messages)",
-            origin,
-            client_ip,
-            responses.len()
+            zone = %origin,
+            client_ip = %client_ip,
+            messages = %responses.len(),
+            "AXFR transfer completed"
         );
 
         if let Some(ref cache) = self.cache {
@@ -454,7 +447,7 @@ impl ZoneTransfer {
         message: &[u8],
     ) -> Result<Vec<Vec<u8>>, String> {
         if !self.ixfr_enabled {
-            tracing::debug!("IXFR disabled, returning error");
+            tracing::debug!(zone = %qname, client_ip = %client_ip, "IXFR request denied: IXFR not enabled");
             return Err("IXFR not enabled".to_string());
         }
 
@@ -462,27 +455,27 @@ impl ZoneTransfer {
 
         if !self.is_transfer_allowed(client_ip, origin) {
             tracing::warn!(
-                "IXFR request denied for {} from {} - not in allowed list",
-                origin,
-                client_ip
+                zone = %origin,
+                client_ip = %client_ip,
+                "IXFR request denied: not in allowed list"
             );
             return Err("Zone transfer not allowed".to_string());
         }
 
         if self.is_wildcard_transfer(origin) && self.wildcard_requires_tsig() && tsig.is_none() {
             tracing::warn!(
-                "IXFR request denied for {} from {} - wildcard requires TSIG",
-                origin,
-                client_ip
+                zone = %origin,
+                client_ip = %client_ip,
+                "IXFR request denied: wildcard requires TSIG"
             );
             return Err("Zone transfer requires TSIG authentication".to_string());
         }
 
         if self.require_tsig && tsig.is_none() {
             tracing::warn!(
-                "SECURITY: IXFR request DENIED for zone={} client={} reason=require_tsig",
-                origin,
-                client_ip
+                zone = %origin,
+                client_ip = %client_ip,
+                "IXFR request denied: TSIG required"
             );
             return Err("Zone transfer requires TSIG authentication".to_string());
         }
@@ -496,11 +489,11 @@ impl ZoneTransfer {
             "unsecured"
         };
         tracing::info!(
-            "IXFR request for {} from {} (serial: {:?}) ({})",
-            origin,
-            client_ip,
-            serial,
-            tsig_status
+            zone = %origin,
+            client_ip = %client_ip,
+            serial = ?serial,
+            tsig_status = %tsig_status,
+            "IXFR transfer started"
         );
 
         if let Some(tsig) = tsig {
@@ -516,7 +509,7 @@ impl ZoneTransfer {
                     tsig.tsig_error,
                     tsig.other_len,
                 ) {
-                    tracing::warn!("TSIG verification failed for IXFR: {}", e);
+                    tracing::warn!(zone = %origin, client_ip = %client_ip, error = %e, "TSIG verification failed for IXFR");
                     return Err(format!("TSIG verification failed: {}", e));
                 }
             }
@@ -551,10 +544,10 @@ impl ZoneTransfer {
         };
 
         tracing::info!(
-            "IXFR transfer completed for {} to {} ({} messages)",
-            origin,
-            client_ip,
-            responses.len()
+            zone = %origin,
+            client_ip = %client_ip,
+            messages = %responses.len(),
+            "IXFR transfer completed"
         );
 
         if let Some(ref cache) = self.cache {
@@ -613,7 +606,7 @@ impl ZoneTransfer {
             message_id,
         ));
 
-        tracing::debug!("IXFR full response: {} messages", responses.len());
+        tracing::debug!(zone = %qname, messages = %responses.len(), "IXFR full response built");
         Ok(responses)
     }
 
@@ -686,7 +679,7 @@ impl ZoneTransfer {
             message_id,
         ));
 
-        tracing::debug!("IXFR incremental: {} messages", responses.len());
+        tracing::debug!(zone = %qname, messages = %responses.len(), "IXFR incremental response built");
         Ok(responses)
     }
 
@@ -775,7 +768,7 @@ impl ZoneTransfer {
         response.extend_from_slice(&(soa_data.len() as u16).to_be_bytes());
         response.extend_from_slice(&soa_data);
 
-        tracing::debug!("IXFR sending current SOA for serial {}", zone.serial);
+        tracing::debug!(zone = %qname, serial = %zone.serial, "IXFR sending current SOA");
 
         Ok(response)
     }

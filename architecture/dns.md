@@ -1954,3 +1954,76 @@ cargo check -p synvoid-dns --all-features
 cargo check --workspace
 ```
 
+### Observability and Operations (Milestone 4 Phase 1)
+
+#### Metrics Taxonomy
+
+All DNS metrics use stable, low-cardinality names and labels. High-cardinality fields (per-domain, per-query-type) are removed.
+
+**Core Query Metrics:**
+- `dns_queries_received_total` — Total DNS queries received
+- `dns_queries_validated_total` — Total queries passing validation
+- `dns_responses_sent_total` — Total responses sent
+- `dns_response_code` — Response count by RCODE (label: `code`)
+
+**Cache Metrics:**
+- `dns_cache_hits_total`, `dns_cache_misses_total`, `dns_cache_stale_hits_total`, `dns_cache_negative_hits_total`
+- `dns_cache_insertions_total`, `dns_cache_invalidations_total`
+- `dns_cache_poisoned_rejections_total`, `dns_cache_size_rejections_total`
+- `dns_cache_hit_rate` — Cache hit rate percentage (gauge)
+
+**Security Metrics:**
+- `dns_rate_limited_total`, `dns_rrl_limited_total`
+- `dns_malformed_queries_total`, `dns_encode_failures_total`
+- `dns_firewall_queries_allowed`, `dns_firewall_queries_blocked` (label: `rule`)
+- `dns_bailiwick_violations_total`
+
+**Transport Metrics:**
+- `dns_tcp_connections_total`, `dns_active_tcp_connections` (gauge)
+- `dns_transport_queries` (label: `transport` — udp/tcp/dot/doh/doq)
+- `dns_transport_errors` (label: `transport`)
+
+**Operation Metrics:**
+- `dns_operation_counts` (label: `operation` — query/update/notify/axfr/ixfr)
+
+**Zone Metrics:**
+- `dns_zones_loaded`, `dns_zone_reload_successes`, `dns_zone_reload_failures`
+
+**Recursive Metrics:**
+- `dns_recursive_queries`, `dns_recursive_cache_hits`, `dns_recursive_cache_misses`
+- `dns_recursive_upstream_forwards`, `dns_recursive_upstream_failures`
+- `dns_recursive_circuit_breaker_opens_total`, `dns_recursive_circuit_breaker_closes_total`
+
+**DNSSEC Metrics:**
+- `dnssec_queries`, `dnssec_signed_responses`
+- `dnssec_key_rotations_total`, `dnssec_signing_failures_total`
+
+**Control-Plane Metrics:**
+- `dns_update_accepted`, `dns_update_rejected`
+- `dns_notify_sent`, `dns_notify_received`
+- `dns_axfr_accepted`, `dns_axfr_rejected`
+- `dns_ixfr_accepted`, `dns_ixfr_rejected`
+
+#### Health Status
+
+The DNS subsystem exposes liveness and readiness via `DnsHealthChecker`:
+
+- **Liveness**: Is the DNS server process running and listener bound?
+- **Readiness**: Can the server accept and answer queries? Checks listener bound, zones loaded, cache operational, no recent zone load failures.
+
+Health states: `Healthy`, `Degraded`, `NotReady`.
+
+#### Structured Logging
+
+All DNS operations emit structured logs via `tracing`:
+- `info!` for lifecycle events (server start/stop, zone load, UPDATE accepted)
+- `warn!` for degraded/refused policy events (transfer denied, rate limited)
+- `error!` for failed required operations (zone validation, encoding failures)
+- `debug!` for normal detail (query processing, cache lookups)
+
+Sensitive data (TSIG secrets, private keys, full client IPs) is never logged.
+
+#### Alertable Conditions
+
+See `architecture/dns_operations_diagnostics.md` for the full alerting matrix and troubleshooting flowchart.
+

@@ -142,3 +142,14 @@ cargo check --workspace
 ## Completion criteria
 
 Phase 1 is complete when DNS has stable metrics, health/readiness status, structured audit logs, operational diagnostics, and documentation sufficient for maintainers to diagnose production issues without reading source code first.
+
+## Status: COMPLETE
+
+All 5 workstreams implemented and verified:
+- Workstream 1: Metrics taxonomy overhaul — removed high-cardinality fields, added transport/operation/zone/recursive/DNSSEC/control-plane metrics with `metrics::counter!` emission
+- Workstream 2: Health/readiness — `DnsHealthChecker` with liveness/readiness, zone/cache/DNSSEC/encrypted transport state
+- Workstream 3: Structured logging — dot.rs/doh.rs logging added, transfer.rs/notify.rs/update.rs enhanced with structured fields
+- Workstream 4: Diagnostics docs — `architecture/dns_operations_diagnostics.md` + `scripts/dns_diagnostic_smoke.sh`
+- Workstream 5: Documentation — dns.md, dns_config_runtime_matrix.md, SKILL.md, AGENTS.override.md updated
+
+Verification: 1001 DNS tests passing (607 lib + 394 integration). Formatting clean. DNS crate compiles with all features.

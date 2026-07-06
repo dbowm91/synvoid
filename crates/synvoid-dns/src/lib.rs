@@ -15,6 +15,8 @@ mod dns;
 
 pub use dns::*;
 
+pub mod health;
+
 #[cfg(feature = "mesh")]
 pub mod anycast_sync;
 #[cfg(feature = "mesh")]

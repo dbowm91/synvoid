@@ -392,16 +392,17 @@ impl DynamicUpdateHandler {
 
         if !self.enabled {
             self.updates_rejected.fetch_add(1, Ordering::Relaxed);
+            tracing::warn!(client_ip = %client_ip, "UPDATE denied: not enabled");
             return Err("Dynamic updates not enabled".to_string());
         }
 
         if query.len() > self.max_update_size {
             self.updates_rejected.fetch_add(1, Ordering::Relaxed);
             tracing::warn!(
-                "SECURITY: Dynamic update DENIED from {} - message size {} exceeds max {}",
-                client_ip,
-                query.len(),
-                self.max_update_size
+                client_ip = %client_ip,
+                message_size = %query.len(),
+                max_size = %self.max_update_size,
+                "UPDATE denied: message too large"
             );
             return Err("Update message too large".to_string());
         }
@@ -409,8 +410,8 @@ impl DynamicUpdateHandler {
         if !self.allow_any && !self.is_ip_allowed(client_ip) {
             self.updates_rejected.fetch_add(1, Ordering::Relaxed);
             tracing::warn!(
-                "SECURITY: Dynamic update DENIED for zone update from {} - client IP not in allowed list",
-                client_ip
+                client_ip = %client_ip,
+                "UPDATE denied: client IP not in allowed list"
             );
             return Err("Dynamic updates not allowed from this IP".to_string());
         }
@@ -428,8 +429,8 @@ impl DynamicUpdateHandler {
             if tsig.is_none() {
                 self.updates_rejected.fetch_add(1, Ordering::Relaxed);
                 tracing::warn!(
-                    "SECURITY: Dynamic update DENIED for zone update from {} - TSIG required but not present",
-                    client_ip
+                    client_ip = %client_ip,
+                    "UPDATE denied: TSIG required but not present"
                 );
                 return Err("Dynamic updates require TSIG authentication".to_string());
             }
@@ -448,9 +449,8 @@ impl DynamicUpdateHandler {
                 ) {
                     self.updates_rejected.fetch_add(1, Ordering::Relaxed);
                     tracing::warn!(
-                        "SECURITY: Dynamic update DENIED for zone={} client={} - TSIG verification failed",
-                        "unknown",
-                        client_ip,
+                        client_ip = %client_ip,
+                        "UPDATE denied: TSIG verification failed"
                     );
                     return Err("TSIG verification failed".to_string());
                 }
@@ -461,6 +461,7 @@ impl DynamicUpdateHandler {
 
         let zone = update.zone.ok_or_else(|| {
             self.updates_rejected.fetch_add(1, Ordering::Relaxed);
+            tracing::warn!(client_ip = %client_ip, "UPDATE rejected: no zone in message");
             "No zone in UPDATE".to_string()
         })?;
 
@@ -472,19 +473,25 @@ impl DynamicUpdateHandler {
 
         let mut updated_zone: Zone = self.zones.get(&zone_origin).ok_or_else(|| {
             self.updates_rejected.fetch_add(1, Ordering::Relaxed);
+            tracing::warn!(zone = %zone_origin, client_ip = %client_ip, "UPDATE rejected: zone not found");
             "Zone not found".to_string()
         })?;
 
         tracing::info!(
-            "Dynamic update request from {} for zone={} ({} prerequisites, {} updates)",
-            client_ip,
-            zone_origin,
-            update.prerequisites.len(),
-            update.updates.len()
+            zone = %zone_origin,
+            client_ip = %client_ip,
+            prerequisite_count = %update.prerequisites.len(),
+            update_count = %update.updates.len(),
+            "UPDATE request received"
         );
 
         for prereq in &update.prerequisites {
             if !self.check_prerequisite(&updated_zone, prereq)? {
+                tracing::warn!(
+                    zone = %zone_origin,
+                    client_ip = %client_ip,
+                    "UPDATE rejected: prerequisite not met"
+                );
                 return Ok(self.build_response(query, wire::UPDATE_RCODE_YXDOMAIN));
             }
         }
@@ -535,7 +542,7 @@ impl DynamicUpdateHandler {
             tracing::error!(
                 zone = %zone_origin,
                 error = %e,
-                "Dynamic update refused: post-mutation validation failed"
+                "UPDATE post-mutation validation failed"
             );
             return Ok(self.build_response(query, wire::UPDATE_RCODE_NOTAUTH));
         }
@@ -564,12 +571,19 @@ impl DynamicUpdateHandler {
                     )
                     .await
                 {
-                    tracing::warn!("Failed to trigger zone sync after dynamic update: {}", e);
+                    tracing::warn!(zone = %zone_origin_for_sync, error = %e, "Zone sync after UPDATE failed");
                 }
             });
         }
 
         self.updates_accepted.fetch_add(1, Ordering::Relaxed);
+        tracing::info!(
+            zone = %zone_origin,
+            client_ip = %client_ip,
+            prerequisite_count = %update.prerequisites.len(),
+            update_count = %update.updates.len(),
+            "UPDATE accepted"
+        );
         Ok(self.build_response(query, wire::UPDATE_RCODE_NOERROR))
     }
 

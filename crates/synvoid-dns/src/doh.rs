@@ -53,6 +53,7 @@ impl DohServer {
     pub async fn start(&mut self) -> Result<(), String> {
         let bind_address = self.base.config.bind_address.clone();
         let port = self.base.config.port;
+        tracing::info!(bind_address = %bind_address, port = %port, "DoH server starting");
         self.base
             .start_server(&bind_address, port, "DoH server", Self::handle_connection)
             .await
@@ -70,9 +71,14 @@ impl DohServer {
         )
         .await
         .map_err(|_| "TLS handshake timeout")?
-        .map_err(|e| format!("TLS handshake failed: {}", e))?;
+        .map_err(|e| {
+            tracing::warn!(error = %e, remote_addr = %client_addr, "DoH TLS handshake failed");
+            format!("TLS handshake failed: {}", e)
+        })?;
 
         let io = TokioIo::new(tls_stream);
+
+        tracing::debug!(remote_addr = %client_addr, "DoH connection accepted");
 
         counter!("synvoid.doh.connections.total").increment(1);
         gauge!("synvoid.doh.connections").increment(1.0);
@@ -103,6 +109,7 @@ impl DohServer {
         dns_server: Arc<RwLock<Option<DnsServer>>>,
         client_ip: std::net::IpAddr,
     ) -> Result<hyper::Response<Full<Bytes>>, hyper::Error> {
+        tracing::debug!(client_ip = %client_ip, path = %req.uri().path(), "DoH request received");
         let path = req.uri().path();
         let is_json_api = path == "/dns" || path == "/dns-query/json";
         let is_rfc8484 = path == "/dns-query" || path == "/";
@@ -206,6 +213,7 @@ impl DohServer {
 
         match response {
             Some(resp) => {
+                tracing::debug!(client_ip = %client_ip, "DoH query processed successfully");
                 if is_json_api {
                     let encoded = Self::base64url_encode(&resp);
                     let json = serde_json::json!({
@@ -236,6 +244,7 @@ impl DohServer {
             }
             None => {
                 counter!("synvoid.doh.query.errors").increment(1);
+                tracing::warn!(client_ip = %client_ip, "DoH query failed");
                 Ok(hyper::Response::builder()
                     .status(500)
                     .body(Full::new(Bytes::new()))
@@ -264,6 +273,7 @@ impl DohServer {
     }
 
     pub fn shutdown(&mut self) {
+        tracing::info!("DoH server shutting down");
         self.base.shutdown();
     }
 }

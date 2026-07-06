@@ -640,3 +640,33 @@ cargo test -p synvoid-dns --release --no-fail-fast
 | DoQ production validation | Deferred | ALPN/quinn adapter tested in unit tests only |
 | Prefetch | Deferred | Documented but unsupported |
 | ECDSAP256SHA256 (algorithm 13) | Deferred | Only Ed25519 (15) and RSA-SHA256 (8) supported |
+
+## M4 Phase 1: Observability and Operations
+
+### Metrics Taxonomy
+
+- All metrics use stable, low-cardinality names. No per-domain or per-query-type labels.
+- Transport-labeled: `dns_transport_queries{transport=udp|tcp|dot|doh|doq}`
+- Operation-labeled: `dns_operation_counts{operation=query|update|notify|axfr|ixfr}`
+- Recursive metrics now emit `metrics::counter!` (previously internal-only).
+- High-cardinality fields (`top_queried_domains`, `top_blocked_domains`, `query_types`) removed.
+
+### Health Status
+
+- `DnsHealthChecker` in `health.rs` provides liveness/readiness.
+- Liveness: listener bound. Readiness: listener + zones + cache + no recent failures.
+- Wire into server startup: `health_checker.set_listener_bound(true)` after bind.
+
+### Structured Logging
+
+- `dot.rs` and `doh.rs` now emit `tracing` logs (previously zero).
+- `transfer.rs`, `notify.rs`, `update.rs` enhanced with structured fields.
+- Convention: `info!` lifecycle, `warn!` degraded/refused, `error!` failures, `debug!` detail.
+- Never log TSIG secrets, private keys, full client IPs.
+
+### Testing
+
+```bash
+cargo test -p synvoid-dns metrics
+cargo test -p synvoid-dns health
+```

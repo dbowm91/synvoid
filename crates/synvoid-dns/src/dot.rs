@@ -48,6 +48,7 @@ impl DotServer {
     pub async fn start(&mut self) -> Result<(), String> {
         let bind_address = self.base.config.bind_address.clone();
         let port = self.base.config.port;
+        tracing::info!(bind_address = %bind_address, port = %port, "DoT server starting");
         self.base
             .start_server(&bind_address, port, "DoT server", Self::handle_connection)
             .await
@@ -65,9 +66,14 @@ impl DotServer {
         )
         .await
         .map_err(|_| "TLS handshake timeout")?
-        .map_err(|e| format!("TLS handshake failed: {}", e))?;
+        .map_err(|e| {
+            tracing::warn!(error = %e, remote_addr = %client_addr, "DoT TLS handshake failed");
+            format!("TLS handshake failed: {}", e)
+        })?;
 
         let mut tls_stream = tls_stream;
+
+        tracing::debug!(remote_addr = %client_addr, "DoT connection accepted");
 
         counter!("synvoid.dot.connections.total").increment(1);
         gauge!("synvoid.dot.connections").increment(1.0);
@@ -79,6 +85,7 @@ impl DotServer {
             match tls_stream.read_exact(&mut length_buf).await {
                 Ok(_) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    tracing::debug!(remote_addr = %client_addr, "DoT connection closed by client");
                     break Ok(());
                 }
                 Err(e) => {
@@ -135,6 +142,7 @@ impl DotServer {
                     }
                     histogram!("synvoid.dot.query.duration")
                         .record(query_start.elapsed().as_secs_f64());
+                    tracing::debug!(remote_addr = %client_addr, "DoT query processed");
                 }
                 None => {
                     counter!("synvoid.dot.query.errors").increment(1);
@@ -152,6 +160,7 @@ impl DotServer {
     }
 
     pub fn shutdown(&mut self) {
+        tracing::info!("DoT server shutting down");
         self.base.shutdown();
     }
 }

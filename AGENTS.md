@@ -107,6 +107,10 @@ cargo test -p synvoid-dns --test update_atomicity_rollback
 cargo test -p synvoid-dns --test notify_scheduling_semantics
 cargo test -p synvoid-dns --test control_plane_cache_completion
 
+# DNS Milestone 4 Phase 1 tests (observability and operations: metrics, health, structured logging)
+cargo test -p synvoid-dns -- metrics
+cargo test -p synvoid-dns -- health
+
 # DNS config-runtime matrix
 # See architecture/dns_config_runtime_matrix.md
 
@@ -397,6 +401,8 @@ The `architecture/` directory (87 docs) and `.opencode/skills/` directory contai
 - `wasmtime` 40.0.4 (via yara-x) has known CVEs but only used for YARA compilation, not wasm sandbox — mitigated by `[patch.crates-io]` for direct dep.
 
 ## Recent Completions
+
+- **DNS Milestone 4 Phase 1: Observability and Operations** — Metrics taxonomy overhaul (removed high-cardinality `top_queried_domains`/`top_blocked_domains`/`query_types`/`response_codes` HashMaps; added transport-labeled `dns_transport_queries`/`dns_transport_errors`, operation-labeled `dns_operation_counts`, zone metrics `dns_zones_loaded`/`dns_zone_reload_*`, recursive circuit breaker metrics, DNSSEC key rotation/signing failure metrics, control-plane authorization metrics for UPDATE/NOTIFY/AXFR/IXFR). All recursive counters now emit `metrics::counter!`. New `health.rs` module with `DnsHealthChecker` providing liveness/readiness status (Healthy/Degraded/NotReady) with zone, cache, DNSSEC, encrypted transport, and transfer/update health state. Structured logging added to `dot.rs` and `doh.rs` (previously zero logging) and enhanced in `transfer.rs`, `notify.rs`, `update.rs` with structured fields. New `architecture/dns_operations_diagnostics.md` operator guide with smoke tests, alerting matrix, and troubleshooting flowchart. New `scripts/dns_diagnostic_smoke.sh` smoke test script. Documentation updated: `architecture/dns.md`, `architecture/dns_config_runtime_matrix.md`, `dns_dnssec/SKILL.md`, `AGENTS.override.md`. Total: 1001 DNS tests passing (607 lib + 394 integration). See `plans/dns_milestone_4_phase_01_observability_operations.md`.
 
 - **DNS Milestone 3 Final Validation Hardening** — 6 new integration test files (`dnssec_live_signing.rs`, `tsig_success_fixtures.rs`, `ixfr_record_delta.rs`, `update_atomicity_rollback.rs`, `notify_scheduling_semantics.rs`, `control_plane_cache_completion.rs`), 64 new tests covering DNSSEC live signing, TSIG sign+verify roundtrips, IXFR record-by-record deltas, UPDATE atomicity/rollback, NOTIFY scheduling/cache invalidation, and cache/coalescing exclusion completion. Production bug fix in `update.rs`: corrected `parse_rr_with_rdata()` (TTL+RDLENGTH bytes were included in rdata), `skip_rr_with_rdata()` (was not skipping full RR), and `check_prerequisite()` for `Exists`/`ExistsRRset` (inverted logic + unwrap on None). Documentation updated: `AGENTS.override.md`, `AGENTS.md`. Total: 1001 DNS tests passing. All deferrals locked down. See `plans/dns_milestone_3_final_validation_hardening.md`.
 

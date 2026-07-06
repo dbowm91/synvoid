@@ -774,3 +774,47 @@ All zone mutation paths trigger `cache.invalidate_zone()` with a typed `Invalida
 | ECS client subnet | Partial | Full prefix routing not implemented |
 | DoQ bind address | Partial | Config field ignored, hardcoded to 0.0.0.0 |
 | RPZ, Trust Anchors, Prefetch, Anycast, Padding, QNAME Privacy | Deferred | Config fields exist, no runtime consumer |
+
+---
+
+## Milestone 4 Phase 1: Observability and Operations
+
+### New Health Configuration
+
+The `DnsHealthChecker` provides runtime health status. It is configured automatically based on server state:
+
+| Field | Source | Description |
+|-------|--------|-------------|
+| `listener_bound` | Server startup | UDP/TCP listener successfully bound |
+| `zones_loaded` | Zone load | Number of active zones |
+| `zones_failed` | Zone load | Number of failed zone loads |
+| `recursive_state` | RecursiveDnsServer | Healthy/Degraded/Disabled |
+| `cache_operational` | DnsCache | Cache is accepting queries |
+| `dnssec_state` | DnsSecKeyManager | Key count, signing status |
+| `encrypted_transport_state` | DoT/DoH/DoQ | Cert validity, enabled state |
+| `transfer_update_state` | Config | AXFR/IXFR/UPDATE policy |
+
+### New Metrics Fields
+
+All new metrics are emitted via the `metrics` crate and are available in Prometheus format:
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `dns_transport_queries` | counter | `transport` | Queries by transport protocol |
+| `dns_transport_errors` | counter | `transport` | Errors by transport protocol |
+| `dns_operation_counts` | counter | `operation` | Operations by type |
+| `dns_zones_loaded` | gauge | — | Currently loaded zones |
+| `dns_zone_reload_successes` | counter | — | Successful zone reloads |
+| `dns_zone_reload_failures` | counter | — | Failed zone reloads |
+| `dns_recursive_circuit_breaker_opens_total` | counter | — | Circuit breaker open events |
+| `dns_recursive_circuit_breaker_closes_total` | counter | — | Circuit breaker close events |
+| `dnssec_key_rotations_total` | counter | — | DNSSEC key rotation events |
+| `dnssec_signing_failures_total` | counter | — | DNSSEC signing failures |
+| `dns_update_accepted` | counter | — | Accepted dynamic updates |
+| `dns_update_rejected` | counter | — | Rejected dynamic updates |
+| `dns_notify_sent` | counter | — | NOTIFY messages sent |
+| `dns_notify_received` | counter | — | NOTIFY messages received |
+| `dns_axfr_accepted` | counter | — | Accepted AXFR transfers |
+| `dns_axfr_rejected` | counter | — | Rejected AXFR transfers |
+| `dns_ixfr_accepted` | counter | — | Accepted IXFR transfers |
+| `dns_ixfr_rejected` | counter | — | Rejected IXFR transfers |

@@ -631,3 +631,28 @@ All 8 gate areas verified:
 - Firewall (3 security controls) wired but untested
 - DoQ `bind_address` partially implemented (hardcoded to 0.0.0.0)
 - Full DNSSEC production validation deferred to later milestone
+
+## Milestone 4 Phase 1: Observability and Operations
+
+### Metrics
+
+All DNS metrics use stable names with low-cardinality labels. Key metric groups:
+- **Query/Response**: `dns_queries_received_total`, `dns_responses_sent_total`, `dns_response_code`
+- **Cache**: `dns_cache_hits_total`, `dns_cache_misses_total`, `dns_cache_hit_rate`
+- **Security**: `dns_rate_limited_total`, `dns_firewall_queries_blocked`
+- **Transport**: `dns_transport_queries` (label: `transport`)
+- **Recursive**: `dns_recursive_queries`, `dns_recursive_upstream_failures`
+- **DNSSEC**: `dnssec_queries`, `dnssec_signed_responses`
+- **Control-plane**: `dns_update_accepted`, `dns_axfr_accepted`, `dns_notify_sent`
+
+### Health
+
+`DnsHealthChecker` provides liveness/readiness status. Health states: `Healthy`, `Degraded`, `NotReady`.
+
+### Structured Logging
+
+All operations emit structured `tracing` logs. Sensitive data is never logged. Log levels: debug (detail), info (lifecycle), warn (degraded/refused), error (failures).
+
+### Diagnostics
+
+See `architecture/dns_operations_diagnostics.md` for smoke tests, alerting matrix, and troubleshooting flowchart.
