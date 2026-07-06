@@ -159,7 +159,7 @@ impl DnsServer {
                 return Err(format!("Zone {}: must contain a SOA record", zone.origin));
             }
 
-            zone.validate_single_soa()?;
+            zone.validate_zone_for_activation()?;
 
             tracing::info!("Loaded DNS zone: {} (serial: {})", zone.origin, zone.serial);
             zone.mark_active();
@@ -193,6 +193,8 @@ impl DnsServer {
                     origin
                 ));
             }
+            zone.validate_zone_for_activation()
+                .map_err(|e| format!("Zone {} (from store): {}", origin, e))?;
             tracing::info!("Loaded DNS zone from store: {}", origin);
             zone.mark_active();
             self.zones.insert(origin.clone(), zone);
@@ -207,6 +209,33 @@ impl DnsServer {
             }
         }
 
+        Ok(())
+    }
+
+    /// Atomically replace a zone in the active store after validating the candidate.
+    ///
+    /// This is the production-safe reload API: it guarantees that **the previously
+    /// active zone is preserved if the candidate fails validation**. Validation
+    /// currently enforces:
+    /// - exactly one apex SOA,
+    /// - non-empty, normalized, printable origin.
+    ///
+    /// On success, the candidate is marked active and the cache is invalidated for
+    /// that origin (`InvalidationReason::ZoneLoad`). On failure, the previous zone
+    /// in the store is left untouched and the error is returned.
+    ///
+    /// Use the lower-level `ShardedZoneStore::insert` only for already-validated
+    /// or test-only zones.
+    pub fn replace_zone_with_validation(&self, mut candidate: Zone) -> Result<(), String> {
+        let origin = candidate.origin.clone();
+        candidate.validate_zone_for_activation()?;
+        candidate.mark_active();
+        self.zones.insert(origin.clone(), candidate);
+        self.zone_index_dirty.store(true, Ordering::Release);
+        if let Some(ref cache) = self.cache {
+            cache.invalidate_zone(&origin, InvalidationReason::ZoneLoad);
+        }
+        tracing::info!(zone = %origin, "Zone replaced atomically with validation");
         Ok(())
     }
 

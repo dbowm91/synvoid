@@ -1226,7 +1226,7 @@ Completed 2026-07-03. 390/390 DNS lib tests pass, 30/30 authoritative_negative t
 ### 11.3 DNSSEC Limitations (Partially Resolved in Phase 2)
 
 - **Signed NODATA/NXDOMAIN**: The signed negative response path uses `build_nxdomain_response`/`build_nodata_response` which assemble NSEC/NSEC3 + RRSIG records. These are now routed through `encode_rr` and `ResponseEnvelope`.
-- **NSEC3 closest-encloser**: Phase 2 fixed the next-closer NSEC3 emission (RFC 5155 §7.2.6) and corrected NODATA next_domain hash chain. SHA-256 base32 encoding works in practice but is not rigorously tested against RFC 5155 test vectors.
+- **NSEC3 closest-encloser**: Phase 2 fixed the next-closer NSEC3 emission (RFC 5155 §7.2.6) and corrected NODATA next_domain hash chain. SHA-256 base32 encoding works in practice but is not rigorously tested against RFC 5155 test vectors. **Full NSEC3 closest-encloser proofs remain deferred** — the corrective pass did not close this gap.
 - **RFC 5001 / RFC 5155 compliance**: Partially audited; core denial-of-existence paths tested. Full compliance audit deferred.
 - **DNSSEC signing**: Zones can have KSK/ZSK and generate RRSIGs. Key lifecycle now includes `load_keys_from_disk()` for persistence across restarts, private keys are chmod 0o600, and 97 DNSSEC unit tests cover signing, validation, key management, and trust anchor lifecycle.
 
@@ -1270,7 +1270,7 @@ Milestone 1 is closed. The authoritative DNS wire/query correctness is verified:
 
 **What Milestone 1 is**: Authoritative wire-format correctness, query parsing, response assembly, SOA inclusion, flag semantics, DNSSEC NODATA/NXDOMAIN denial proof scaffolding, and truncation.
 
-**What Milestone 1 is not**: Full DNSSEC production hardening (NSEC3 closest-encloser, RFC 5001/5155 compliance, key lifecycle), recursive resolver transport, or external interoperability validation. These remain deferred to Milestone 3.
+**What Milestone 1 is not**: Full DNSSEC production hardening (NSEC3 closest-encloser proofs remain deferred — see §11.3), recursive resolver transport (now implemented with 109+ tests per Milestone 3 Phase 4), or external interoperability validation. The Milestone 3 Corrective Semantics Pass added production zone-validation gates (`validate_zone_for_activation`, `replace_zone_with_validation`), dynamic UPDATE re-validation, and strengthened verification-gate tests.
 
 ---
 

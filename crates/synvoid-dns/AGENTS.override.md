@@ -368,6 +368,48 @@ cargo test -p synvoid-dns -- store_atomic_write
 cargo test -p synvoid-dns -- cache_invalidation_axfr
 ```
 
+## Milestone 3 Corrective Semantics Pass
+
+### Production Helpers
+
+- **`Zone::validate_zone_for_activation()`** (`server/mod.rs`): Unified pre-publish gate. Enforces: exactly one apex SOA, non-empty/normalized/printable origin (rejects control chars, NUL, whitespace, `/`, `\`). All production code paths (config load, store reload, dynamic UPDATE, zone transfer) MUST pass this gate before a zone becomes `Active`.
+- **`DnsServer::replace_zone_with_validation(candidate: Zone)`** (`server/zone.rs`): Atomic replacement API for production-safe reload. Calls `validate_zone_for_activation()`, marks active, inserts into `ShardedZoneStore`, invalidates cache. On failure, the previous zone in the store is left untouched. `load_zones` and `load_zones_from_store` now call `validate_zone_for_activation()` (was just `validate_single_soa()`).
+
+### Dynamic UPDATE Re-Validation
+
+Dynamic UPDATE re-validates post-mutation invariants. If a crafted UPDATE removes the final SOA or creates a duplicate SOA, it is refused with RCODE NOTAUTH (RCODE 9). State is not committed on failure.
+
+### New Test Files
+
+- **`tests/control_plane_authorization.rs`** (10 tests): Deny-by-default UPDATE/NOTIFY/AXFR/IXFR behavior. Tests: `update_disabled_by_default_refuses_mutation`, `update_malformed_message_does_not_mutate_zone`, `update_enabled_invalid_zone_returns_error_rcode`, `notify_disabled_by_default_refused`, `notify_unknown_source_ignored`, `axfr_denied_by_default_returns_no_zone_data`, `ixfr_denied_by_default_returns_no_data`, `axfr_query_type_is_252_and_ixfr_query_type_is_251`, `transfer_disabled_when_axfr_enabled_false`, `axfr_allowed_client_gets_soa_bracketed_transfer`.
+- **`tests/verification_gate.rs`** (strengthened, ~40 tests): Replaced documentation-grade tests with behavior tests: `successful_reload_swaps_zone_atomically`, `failed_reload_preserves_previous_active_zone`, `validate_zone_for_activation_rejects_duplicate_soa`, `validate_zone_for_activation_rejects_bad_origin`, `successful_reload_invalidates_cache_for_zone`. Plus 15 protocol-semantics tests across gates 7/8/9 (DNSSEC flags, RRSIG validity window, DS digest lengths, recursive safety config invariants, ECS default, encrypted transport cache isolation).
+
+### CI Changes
+
+The `dns-tests` job in `.github/workflows/ci.yml` now also runs:
+- `cargo test -p synvoid-dns --test encrypted_transport --release`
+- `cargo test -p synvoid-dns --test verification_gate --release`
+- `cargo test -p synvoid-dns --test control_plane_authorization --release`
+- `cargo check -p synvoid-dns --all-features`
+
+### Deferred / Known Limitations
+
+- DoQ is wired but not production-validated; ALPN/quinn adapter is tested in unit tests only.
+- Persistent DNS-over-TCP (pipelining) remains deferred.
+- EDNS keepalive remains parsed-only.
+- Full NSEC3 closest-encloser proofs remain deferred.
+- External DNSSEC tooling (dig, ldns-verify-zone, named-checkzone) is not in CI.
+- Bailiwick checks are observability-only (not enforced).
+
+### Test Commands
+
+```bash
+cargo test -p synvoid-dns --test control_plane_authorization
+cargo test -p synvoid-dns --test verification_gate
+cargo test -p synvoid-dns --test encrypted_transport
+cargo check -p synvoid-dns --all-features
+```
+
 ## Milestone 3 Phase 4: Recursive Resolver Isolation (2026-07-05)
 
 ### Client ACL (`RecursiveClientAcl`)

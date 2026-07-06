@@ -524,6 +524,39 @@ impl Zone {
         }
         Ok(())
     }
+
+    /// Single, unified pre-publish gate that every production code path MUST pass
+    /// before a zone becomes `Active` (or replaces an existing active zone).
+    ///
+    /// Currently enforces:
+    /// - Exactly one apex SOA (RFC 1035 §3.3.13).
+    /// - Origin normalization (RFC 1035 §3.1 — trailing dot, lowercase).
+    ///
+    /// Raw store operations (e.g. `ShardedZoneStore::insert`) intentionally do NOT
+    /// call this so that already-validated or synthetic zones can still be added
+    /// in test paths. Production paths must use a helper that calls this first
+    /// (e.g. `DnsServer::replace_zone_with_validation`).
+    pub fn validate_zone_for_activation(&self) -> Result<(), String> {
+        let normalized = Self::normalize_origin(&self.origin);
+        if normalized.is_empty() {
+            return Err(format!(
+                "Zone activation rejected: empty origin after normalization (raw: '{}')",
+                self.origin
+            ));
+        }
+        // Reject control characters / NUL / spaces that would break wire-format
+        if normalized
+            .as_bytes()
+            .iter()
+            .any(|b| b <= &0x20 || b == &b'/' || b == &b'\\')
+        {
+            return Err(format!(
+                "Zone activation rejected: origin '{}' contains illegal characters",
+                normalized
+            ));
+        }
+        self.validate_single_soa()
+    }
 }
 
 #[cfg(test)]

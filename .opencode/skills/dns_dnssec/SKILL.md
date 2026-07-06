@@ -388,6 +388,31 @@ TrustAnchorState::Missing => {
 
 Keys with `trust_point == 0` (never valid) must use `trust_anchor_check()` with a DS digest from CDS/CDNSKEY records to transition to Pending.
 
+## Milestone 3 Corrective Semantics Pass
+
+### Production Helpers
+
+- **`Zone::validate_zone_for_activation()`** (`server/mod.rs`): Unified pre-publish gate enforced by all production code paths before a zone becomes `Active`. Checks: exactly one apex SOA, non-empty/normalized/printable origin (rejects control chars, NUL, whitespace, `/`, `\`).
+- **`DnsServer::replace_zone_with_validation(candidate: Zone)`** (`server/zone.rs`): Atomic zone replacement API. Validates via `validate_zone_for_activation()`, marks active, inserts into store, invalidates cache. On failure, previous zone is left untouched. `load_zones` and `load_zones_from_store` now call `validate_zone_for_activation()` instead of just `validate_single_soa()`.
+
+### Dynamic UPDATE Re-Validation
+
+Dynamic UPDATE now re-validates post-mutation invariants. If a crafted UPDATE removes the final SOA or creates a duplicate, it is refused with RCODE NOTAUTH (9). State is not committed on failure.
+
+### New Test Files
+
+- **`tests/control_plane_authorization.rs`** (10 tests): Deny-by-default behavior for UPDATE/NOTIFY/AXFR/IXFR. Covers disabled-by-default refusal, malformed message non-mutation, invalid zone error RCODE, unknown NOTIFY source ignored, AXFR/IXFR denied by default, query type constants (251/252), transfer disabled when axfr_enabled=false, allowed-client SOA-bracketed transfer.
+- **`tests/verification_gate.rs`** (strengthened): Replaced documentation-grade tests with behavior tests: `successful_reload_swaps_zone_atomically`, `failed_reload_preserves_previous_active_zone`, `validate_zone_for_activation_rejects_duplicate_soa`, `validate_zone_for_activation_rejects_bad_origin`, `successful_reload_invalidates_cache_for_zone`. Plus 15 new protocol-semantics tests across gates 7/8/9 (DNSSEC flags, RRSIG validity window, DS digest lengths, recursive safety config invariants, ECS default, encrypted transport cache isolation).
+
+### Deferred / Known Limitations
+
+- DoQ is wired but not production-validated; ALPN/quinn adapter is tested in unit tests only.
+- Persistent DNS-over-TCP (pipelining) remains deferred.
+- EDNS keepalive remains parsed-only.
+- Full NSEC3 closest-encloser proofs remain deferred.
+- External DNSSEC tooling (dig, ldns-verify-zone, named-checkzone) is not in CI.
+- Bailiwick checks are observability-only (not enforced).
+
 ## Known Limitations
 
 1. **Forwarder mode ignores `dnssec_validation`** - Google/Cloudflare providers don't validate

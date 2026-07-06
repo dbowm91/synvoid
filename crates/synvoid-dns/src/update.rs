@@ -510,6 +510,19 @@ impl DynamicUpdateHandler {
 
         updated_zone.increment_serial();
 
+        // Re-validate post-mutation invariants: a dynamic UPDATE must not be
+        // able to produce an unpublishable zone. If the mutation removed the
+        // final SOA or created a duplicate, refuse to commit and return NOTAUTH.
+        if let Err(e) = updated_zone.validate_zone_for_activation() {
+            self.updates_rejected.fetch_add(1, Ordering::Relaxed);
+            tracing::error!(
+                zone = %zone_origin,
+                error = %e,
+                "Dynamic update refused: post-mutation validation failed"
+            );
+            return Ok(self.build_response(query, wire::UPDATE_RCODE_NOTAUTH));
+        }
+
         let zone_key = zone_origin.clone();
         let zone_value = updated_zone;
         self.zones.insert(zone_key.clone(), zone_value);

@@ -343,6 +343,12 @@ Note: ~45 implemented fields lack dedicated test coverage (DoT/DoH/DoQ, rate lim
 | Anycast | `dns.anycast.*` (11 fields) | Requires mesh integration |
 | Padding | `dns.settings.padding.*` (3 fields) | `DnsPadding` struct exists, not wired |
 | QNAME Privacy | `dns.settings.qname_privacy.*` (3 fields) | `sanitize_qname()` exists, not wired |
+| Persistent DNS-over-TCP (pipelining) | N/A | Requires framing state, per-query idle management, connection pool. One-query-per-connection per RFC 7766 §4. |
+| EDNS keepalive | Parsed only | `EdnsOptions.keepalive` parsed but not wired into connection management (moot without persistent TCP). |
+| Full NSEC3 closest-encloser proofs | N/A | Phase 2 fixed next-closer emission; full closest-encloser proof coverage remains deferred. |
+| DoQ `bind_address` | `dns.doq.bind_address` | Partially implemented: `startup.rs:580` hardcodes bind to `0.0.0.0:{port}`; config field not consumed. DoQ is wired but not production-validated. |
+| Recursive validation limitations | N/A | Bailiwick checks are observability-only (not enforced). CD/AD gating tested but full RFC 4035 compliance deferred. |
+| External DNSSEC tooling | N/A | dig, ldns-verify-zone, named-checkzone not in CI. External smoke tests require live server. |
 
 ---
 

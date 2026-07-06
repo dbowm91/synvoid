@@ -349,6 +349,34 @@ Query `zone.health()` for:
 
 Transition `Failed → Loading` to trigger a zone reload. If the reload succeeds, the zone transitions to `Active`. If it fails again, it returns to `Failed`.
 
+### Zone Activation Gate (`validate_zone_for_activation`)
+
+`Zone::validate_zone_for_activation()` (`server/mod.rs`) is the single, unified pre-publish gate that every production code path MUST pass before a zone becomes `Active`. It enforces:
+
+- Exactly one apex SOA (extends `validate_single_soa()`)
+- Non-empty, normalized, printable origin (rejects control chars, NUL, whitespace, `/`, `\`)
+
+Both `load_zones` and `load_zones_from_store` now call `validate_zone_for_activation()` (previously called only `validate_single_soa()`).
+
+### Atomic Replacement Helper (`replace_zone_with_validation`)
+
+`DnsServer::replace_zone_with_validation(candidate: Zone) -> Result<(), String>` (`server/zone.rs`) atomically replaces a zone in the active store after validating. On failure, the previous zone is left untouched. The helper:
+
+1. Calls `validate_zone_for_activation()` on the candidate
+2. Marks the zone active
+3. Inserts into `ShardedZoneStore`
+4. Invalidates cache for the zone
+
+### Dynamic UPDATE Re-Validation
+
+Dynamic UPDATE re-validates post-mutation invariants. If a crafted UPDATE removes the final SOA or creates a duplicate SOA, it is refused with RCODE NOTAUTH (RCODE 9). State is not committed on failure.
+
+### Control-Plane Authorization Tests
+
+`tests/control_plane_authorization.rs` (10 tests) enforces deny-by-default behavior for UPDATE/NOTIFY/AXFR/IXFR: disabled-by-default refusal, malformed message non-mutation, invalid zone error RCODE, unknown NOTIFY source ignored, AXFR/IXFR denied by default, query type constants, and allowed-client transfer.
+
+`tests/verification_gate.rs` (~40 tests) was strengthened: documentation-grade tests replaced with behavior tests proving atomic swap, failed-reload preservation, zone activation validation, and cache invalidation on reload. Plus 15 protocol-semantics tests across gates 7/8/9.
+
 ---
 
 ## 15. Verification Commands

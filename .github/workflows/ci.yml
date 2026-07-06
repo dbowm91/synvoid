@@ -162,6 +162,12 @@ jobs:
           cargo test -p synvoid-dns --test dns_config_fidelity --release
           cargo test -p synvoid-dns --test dns_recursive_isolation --release
           cargo test -p synvoid-dns --test transport_lifecycle --release
+          cargo test -p synvoid-dns --test encrypted_transport --release
+          cargo test -p synvoid-dns --test verification_gate --release
+          cargo test -p synvoid-dns --test control_plane_authorization --release
+
+      - name: Check DNS all-features compile
+        run: cargo check -p synvoid-dns --all-features
 
   fmt:
     name: Rustfmt
