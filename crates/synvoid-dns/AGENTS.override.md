@@ -707,3 +707,21 @@ cargo bench -p synvoid-dns --bench wire_bench -- --test             # Dry-run (n
 cargo test -p synvoid-dns --test dns_stress_resource_limits -- --test-threads=1
 ./scripts/dns/stress_tests.sh
 ```
+
+## Interop & Conformance Tests
+
+Conformance tests verify protocol-level interoperability across authoritative, recursive, DNSSEC, zone transfer, dynamic update, encrypted transport, and truncation/TCP fallback.
+
+```bash
+# Run all interop tests
+./scripts/dns/conformance.sh
+
+# Individual interop test suites
+cargo test -p synvoid-dns --test dns_interop_authoritative
+cargo test -p synvoid-dns --test dns_interop_truncation
+cargo test -p synvoid-dns --test dns_interop_dnssec
+cargo test -p synvoid-dns --test dns_interop_transfers
+cargo test -p synvoid-dns --test dns_interop_update_notify
+cargo test -p synvoid-dns --test dns_interop_encrypted
+cargo test -p synvoid-dns --test dns_interop_recursive
+```

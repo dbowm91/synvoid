@@ -2027,3 +2027,16 @@ Sensitive data (TSIG secrets, private keys, full client IPs) is never logged.
 
 See `architecture/dns_operations_diagnostics.md` for the full alerting matrix and troubleshooting flowchart.
 
+### Interop & Conformance
+
+The DNS crate includes interop conformance tests covering:
+- **Authoritative**: A/AAAA/NS/MX/TXT/SRV/CNAME record lookups, NXDOMAIN SOA, qname handling
+- **Truncation/TCP**: UDP size limits, TC bit, TCP fallback, wire format validity
+- **DNSSEC**: DO bit, NODATA authority, AD/CD flags, NSEC, DS/DNSKEY lookups
+- **Transfers**: AXFR/IXFR authorization, TCP-only enforcement, disabled-by-default guard
+- **UPDATE/NOTIFY**: Disabled-by-default rejection, prerequisite checks, rate limiting, max size
+- **Encrypted transport**: DoT/DoH/DoQ config roundtrips, TLS cert validation
+- **Recursive**: Safety invariants, depth limits, timeout, ACL, cache bypass
+
+Run: `./scripts/dns/conformance.sh`
+

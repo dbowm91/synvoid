@@ -607,6 +607,17 @@ cargo test -p synvoid-dns --test encrypted_transport
 cargo test -p synvoid-dns -- dot
 cargo test -p synvoid-dns -- doh
 cargo test -p synvoid-dns -- doq
+
+### Interop & Conformance
+```bash
+cargo test -p synvoid-dns --test dns_interop_authoritative
+cargo test -p synvoid-dns --test dns_interop_truncation
+cargo test -p synvoid-dns --test dns_interop_dnssec
+cargo test -p synvoid-dns --test dns_interop_transfers
+cargo test -p synvoid-dns --test dns_interop_update_notify
+cargo test -p synvoid-dns --test dns_interop_encrypted
+cargo test -p synvoid-dns --test dns_interop_recursive
+./scripts/dns/conformance.sh
 ```
 
 ## Milestone 2 Phase 5: Verification & Release Gate

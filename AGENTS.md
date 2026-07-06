@@ -128,6 +128,16 @@ cargo test -p synvoid-dns --test dns_stress_resource_limits -- --test-threads=1
 ./scripts/dns/stress_tests.sh                                       # All stress tests
 ./scripts/dns/run_benchmarks.sh                                     # Full benchmark suite
 
+# DNS interop & conformance tests
+cargo test -p synvoid-dns --test dns_interop_authoritative
+cargo test -p synvoid-dns --test dns_interop_truncation
+cargo test -p synvoid-dns --test dns_interop_dnssec
+cargo test -p synvoid-dns --test dns_interop_transfers
+cargo test -p synvoid-dns --test dns_interop_update_notify
+cargo test -p synvoid-dns --test dns_interop_encrypted
+cargo test -p synvoid-dns --test dns_interop_recursive
+./scripts/dns/conformance.sh
+
 # Supervisor lifecycle (Phase 3)
 cargo test --test supervisor_task_ownership_guard
 cargo test -p synvoid supervisor::task_registry
