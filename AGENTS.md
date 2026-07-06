@@ -114,6 +114,20 @@ cargo test -p synvoid-dns -- health
 # DNS config-runtime matrix
 # See architecture/dns_config_runtime_matrix.md
 
+# DNS Milestone 4 Phase 2 benchmarks (performance and load testing)
+cargo bench -p synvoid-dns                                          # All benchmarks
+cargo bench -p synvoid-dns --bench cache_bench                      # Cache operations
+cargo bench -p synvoid-dns --bench wire_bench                       # Wire format parsing
+cargo bench -p synvoid-dns --bench zone_bench                       # Zone operations
+cargo bench -p synvoid-dns --bench coalescer_bench                  # Query coalescing
+cargo bench -p synvoid-dns --bench limits_bench                     # Connection limits
+cargo bench -p synvoid-dns --bench cache_bench -- --test            # Dry-run (compile check)
+
+# DNS stress and resource limit tests (Workstream 7)
+cargo test -p synvoid-dns --test dns_stress_resource_limits -- --test-threads=1
+./scripts/dns/stress_tests.sh                                       # All stress tests
+./scripts/dns/run_benchmarks.sh                                     # Full benchmark suite
+
 # Supervisor lifecycle (Phase 3)
 cargo test --test supervisor_task_ownership_guard
 cargo test -p synvoid supervisor::task_registry
@@ -401,6 +415,8 @@ The `architecture/` directory (87 docs) and `.opencode/skills/` directory contai
 - `wasmtime` 40.0.4 (via yara-x) has known CVEs but only used for YARA compilation, not wasm sandbox — mitigated by `[patch.crates-io]` for direct dep.
 
 ## Recent Completions
+
+- **DNS Milestone 4 Phase 2: Performance and Load Testing** — 5 criterion benchmark suites (cache_bench, wire_bench, zone_bench, coalescer_bench, limits_bench) with parameterized scaling tests (1K/10K/100K capacity, 10/100/1000 records, multiple transport classes). 28 stress and resource-limit tests covering boundary validation, connection/query limit enforcement, guard drop semantics, graceful degradation activation/deactivation, cache capacity enforcement, large entry rejection, coalescer bounded handling, zone trie 10K insertions, memory stability through 100 insert-lookup-clear cycles, and deterministic rejection under overload. New scripts: `run_benchmarks.sh` (orchestration with env capture), `stress_tests.sh` (CI-safe), `benchmark_report.sh` (markdown report generator). Results template at `benchmarks/dns/RESULTS_TEMPLATE.md`. Total: 1029 DNS tests passing (607 lib + 422 integration). See `plans/dns_milestone_4_phase_02_performance_load_testing.md`.
 
 - **DNS Milestone 4 Phase 1: Observability and Operations** — Metrics taxonomy overhaul (removed high-cardinality `top_queried_domains`/`top_blocked_domains`/`query_types`/`response_codes` HashMaps; added transport-labeled `dns_transport_queries`/`dns_transport_errors`, operation-labeled `dns_operation_counts`, zone metrics `dns_zones_loaded`/`dns_zone_reload_*`, recursive circuit breaker metrics, DNSSEC key rotation/signing failure metrics, control-plane authorization metrics for UPDATE/NOTIFY/AXFR/IXFR). All recursive counters now emit `metrics::counter!`. New `health.rs` module with `DnsHealthChecker` providing liveness/readiness status (Healthy/Degraded/NotReady) with zone, cache, DNSSEC, encrypted transport, and transfer/update health state. Structured logging added to `dot.rs` and `doh.rs` (previously zero logging) and enhanced in `transfer.rs`, `notify.rs`, `update.rs` with structured fields. New `architecture/dns_operations_diagnostics.md` operator guide with smoke tests, alerting matrix, and troubleshooting flowchart. New `scripts/dns_diagnostic_smoke.sh` smoke test script. Documentation updated: `architecture/dns.md`, `architecture/dns_config_runtime_matrix.md`, `dns_dnssec/SKILL.md`, `AGENTS.override.md`. Total: 1001 DNS tests passing (607 lib + 394 integration). See `plans/dns_milestone_4_phase_01_observability_operations.md`.
 

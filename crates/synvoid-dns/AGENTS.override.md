@@ -670,3 +670,40 @@ cargo test -p synvoid-dns --release --no-fail-fast
 cargo test -p synvoid-dns metrics
 cargo test -p synvoid-dns health
 ```
+
+## Milestone 4 Phase 2: Performance and Load Testing
+
+### Benchmark Suites
+
+5 criterion benchmark suites under `crates/synvoid-dns/benches/`:
+- `cache_bench.rs` — DnsCache and ShardedDnsCache: insert, lookup, miss, transport classes, invalidation
+- `wire_bench.rs` — Wire format: parse_query_name, parse_dns_message, ParsedDnsQuery, message ID/flags
+- `zone_bench.rs` — Zone: creation, record insertion, authoritative lookup, NXDOMAIN, serial increment, ZoneTrie
+- `coalescer_bench.rs` — QueryCoalescer: new, with_config, key creation, should_skip_coalescing
+- `limits_bench.rs` — ConnectionLimits: new, try_acquire_connection/query, validate sizes, degradation level
+
+### Running Benchmarks
+
+```bash
+cargo bench -p synvoid-dns                                          # All suites
+cargo bench -p synvoid-dns --bench cache_bench                      # Cache only
+cargo bench -p synvoid-dns --bench wire_bench -- --test             # Dry-run (no baseline save)
+./scripts/dns/run_benchmarks.sh                                     # Orchestration with env capture
+```
+
+### Stress and Resource Limit Tests
+
+28 tests in `tests/dns_stress_resource_limits.rs` (Workstream 7):
+- Query/response/record-count size boundary validation (6 tests)
+- TCP connection and concurrent query limit enforcement with guard drop semantics (4 tests)
+- Graceful degradation activation, deactivation, shutdown flag, load factor (5 tests)
+- Cache capacity enforcement, large entry rejection, clear under load (4 tests)
+- Coalescer bounded entry handling, AXFR/NOTIFY/UPDATE skip rules (3 tests)
+- Zone trie 10K insertions and lookup-miss stability (2 tests)
+- Cache memory stability through 100 insert-lookup-clear cycles, concurrent inserts (2 tests)
+- Deterministic rejection under overload, zero-capacity edge case (2 tests)
+
+```bash
+cargo test -p synvoid-dns --test dns_stress_resource_limits -- --test-threads=1
+./scripts/dns/stress_tests.sh
+```

@@ -62,3 +62,24 @@ zeroize = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 tempfile = "3"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "cache_bench"
+harness = false
+
+[[bench]]
+name = "wire_bench"
+harness = false
+
+[[bench]]
+name = "zone_bench"
+harness = false
+
+[[bench]]
+name = "coalescer_bench"
+harness = false
+
+[[bench]]
+name = "limits_bench"
+harness = false

@@ -656,3 +656,48 @@ All operations emit structured `tracing` logs. Sensitive data is never logged. L
 ### Diagnostics
 
 See `architecture/dns_operations_diagnostics.md` for smoke tests, alerting matrix, and troubleshooting flowchart.
+
+## Milestone 4 Phase 2: Performance and Load Testing
+
+### Benchmark Suites
+
+5 criterion benchmark suites under `crates/synvoid-dns/benches/`:
+
+| Suite | File | Coverage |
+|-------|------|----------|
+| cache_bench | Cache insert/lookup/miss, transport classes, invalidation, sharded cache | Scaling: 1K/10K/100K capacity |
+| wire_bench | Query name parsing, DNS message parsing, ParsedDnsQuery | Short/medium/long names |
+| zone_bench | Zone creation, record insertion, authoritative lookup, NXDOMAIN, serial increment, trie | 10/100/1000 records |
+| coalescer_bench | Coalescer creation, key construction, skip rules | AXFR/NOTIFY/UPDATE exclusion |
+| limits_bench | ConnectionLimits creation, acquire connection/query, validate sizes, degradation | 100/1K/10K capacity |
+
+### Running Benchmarks
+
+```bash
+cargo bench -p synvoid-dns                                          # All
+cargo bench -p synvoid-dns --bench cache_bench                      # Cache only
+cargo bench -p synvoid-dns --bench wire_bench -- --test             # Dry-run
+./scripts/dns/run_benchmarks.sh --all                               # With env capture
+./scripts/dns/benchmark_report.sh                                   # Generate report
+```
+
+### Stress and Resource Limit Tests
+
+28 tests in `tests/dns_stress_resource_limits.rs`:
+- Query/response/record-count size boundary validation
+- TCP connection and concurrent query limit enforcement with guard drop semantics
+- Graceful degradation activation, deactivation, shutdown flag, load factor
+- Cache capacity enforcement, large entry rejection, clear under load
+- Coalescer bounded entry handling, AXFR/NOTIFY/UPDATE skip rules
+- Zone trie 10K insertions and lookup-miss stability
+- Cache memory stability through 100 insert-lookup-clear cycles
+- Deterministic rejection under overload, zero-capacity edge case
+
+```bash
+cargo test -p synvoid-dns --test dns_stress_resource_limits -- --test-threads=1
+./scripts/dns/stress_tests.sh
+```
+
+### Results Template
+
+`benchmarks/dns/RESULTS_TEMPLATE.md` — structured template for recording baselines.
