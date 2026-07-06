@@ -1,0 +1,67 @@
+# SynVoid DNS — Authoritative-Only Public Profile
+#
+# Serving DNS zones to the internet.
+# This is the most common production deployment profile.
+#
+# Support status: Production-Supported
+
+[dns]
+enabled = true
+bind = "0.0.0.0"
+port = 53
+# Standalone mode — no mesh integration
+mode = "Standalone"
+
+[dns.settings]
+default_ttl = 300
+cache_enabled = true
+cache_size = 100000
+cache_max_ttl = 3600
+cache_min_ttl = 60
+negative_cache_ttl = 300
+
+# Rate limiting — protect against query floods
+[dns.rate_limit]
+mode = "Shared"
+per_second = 500
+per_minute = 5000
+
+[dns.rate_limit.rrl]
+enabled = true
+responses_per_second = 100
+window_secs = 5
+max_responses = 1000
+ttl = 300
+
+# Firewall — recommended for production
+[dns.firewall]
+enabled = true
+block_internal_ips = true
+# IMPORTANT: Zone transfers should be blocked for public authoritative servers
+block_zone_transfers = true
+
+[dns.firewall.rebinding_protection]
+enabled = true
+min_ttl_for_internal = 1800
+
+# Connection limits
+[dns.limits]
+max_tcp_connections = 500
+max_concurrent_queries = 2500
+max_query_size = 65535
+max_response_size = 65535
+max_records_per_response = 1000
+max_tcp_idle_time_secs = 300
+max_tcp_query_time_secs = 30
+
+# Zones — replace with your actual zones
+[[dns.zones.items]]
+origin = "example.com"
+zone_file = "/var/lib/synvoid/dns/zones/example.com.zone"
+enabled = true
+
+# WARNING: Do NOT enable the following for a public authoritative server:
+#   - dns.recursive (creates an open resolver)
+#   - dns.dynamic_update (allows unauthenticated zone modifications)
+#   - dns.settings.allow_transfer (exposes zone data)
+#   - dns.doh/dot/doq (unless you have certs and need encrypted transport)

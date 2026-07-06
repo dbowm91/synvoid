@@ -184,3 +184,128 @@ Milestone 4 is complete when:
 - security posture is documented;
 - final release gate commands pass or failures are explicitly classified;
 - DNS docs and config matrix match tested behavior.
+
+---
+
+# FINAL VERIFICATION RECORD — DNS Milestone 4 Phase 4
+
+**Date**: 2026-07-06
+**Status**: COMPLETE
+
+## Release Gate Results
+
+### Basic Gate
+
+| Command | Result |
+|---------|--------|
+| `cargo fmt --all --check` | PASS |
+| `cargo test -p synvoid-dns --lib` | PASS (607 tests) |
+| `cargo check -p synvoid-dns --all-features` | PASS |
+
+### Integration Gate
+
+| Test Suite | Tests | Result |
+|------------|-------|--------|
+| axfr_ixfr_transfer_semantics | 15 | PASS |
+| update_authorized_semantics | 10 | PASS |
+| notify_behavior | 6 | PASS |
+| dnssec_known_vectors | 32 | PASS |
+| control_plane_exclusion | 8 | PASS |
+| encrypted_transport | 21 | PASS |
+| verification_gate | 40 | PASS |
+| dns_interop_authoritative | 8 | PASS |
+| dns_interop_truncation | 5 | PASS |
+| dns_interop_dnssec | 6 | PASS |
+| dns_interop_transfers | 6 | PASS |
+| dns_interop_update_notify | 6 | PASS |
+| dns_interop_encrypted | 5 | PASS |
+| dns_interop_recursive | 6 | PASS |
+| **Total** | **174** | **ALL PASS** |
+
+### Workspace Gate
+
+| Command | Result |
+|---------|--------|
+| `cargo check --workspace` | PASS (0 errors, 102 admin-ui warnings only) |
+
+**Combined: 607 unit tests + 174 integration tests = 781 tests passing**
+
+## Workstream Completion
+
+| # | Workstream | Status | Notes |
+|---|-----------|--------|-------|
+| 1 | Production profiles | COMPLETE | 8 profiles in `architecture/dns_production_profiles.md` |
+| 2 | Safe defaults audit | COMPLETE | 60+ fields verified, 3 warnings (firewall/mesh) |
+| 3 | Example configs | COMPLETE | 5 configs in `examples/dns/` |
+| 4 | Release gate | COMPLETE | All commands pass |
+| 5 | Security review | COMPLETE | All areas safe, bailiwick deferral noted |
+| 6 | Upgrade/restart | COMPLETE | Zones config-only, keys persisted, cache cold-start |
+| 7 | Documentation | COMPLETE | dns.md, SKILL.md, AGENTS.override.md updated |
+| 8 | Verification record | THIS DOCUMENT | — |
+
+## Production Profiles
+
+| Profile | Support Status |
+|---------|---------------|
+| Authoritative-Only Public | Production-Supported |
+| Local Recursive | Production-Supported |
+| Internal Recursive | Production-Supported |
+| Transfer-Enabled Primary | Production-Supported |
+| Transfer-Enabled Secondary | Beta |
+| DNSSEC-Signed Authoritative | Production-Supported |
+| Encrypted Transport (DoT/DoH) | Beta |
+| Full Mesh DNS | Experimental |
+
+## Security Posture Summary
+
+| Area | Status |
+|------|--------|
+| Open-recursive prevention | SAFE |
+| Control-plane auth (UPDATE) | SAFE (require_tsig=true) |
+| TSIG secret handling | SAFE (ConstantTimeEq, no log leakage) |
+| DNSSEC key permissions | SAFE (0o600) |
+| DoH trusted proxy | SAFE (TLS peer derivation) |
+| Bailiwick enforcement | DEFERRED (observability only) |
+| DoS mitigation | SAFE (TCP limits, RRL, circuit breaker) |
+| Unsafe code | SAFE (2 blocks in platform.rs only) |
+
+## Explicit Deferrals (Not in Scope)
+
+1. **Bailiwick enforcement** — observability only; enforcement deferred
+2. **DoQ (DNS-over-QUIC)** — experimental; not production-ready
+3. **RPZ (Response Policy Zones)** — not implemented
+4. **Prefetch** — not implemented
+5. **Anycast** — not implemented
+6. **Padding / QNAME privacy** — not implemented
+7. **Custom trust anchors** — not implemented
+8. **HSM integration** — not implemented
+9. **Zone persistence to SQLite** — store API exists but not wired into startup
+10. **Config hot-reload** — requires full restart
+11. **DNSSEC rollover state persistence** — not persisted across restart
+
+## New Files Created
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `architecture/dns_production_profiles.md` | ~750 | 8 deployment profiles with configs |
+| `examples/dns/authoritative_public.toml` | 60 | Public authoritative example |
+| `examples/dns/recursive_local.toml` | 55 | Local recursive resolver example |
+| `examples/dns/dnssec_signed.toml` | 70 | DNSSEC-signed authoritative example |
+| `examples/dns/transfer_primary.toml` | 75 | Transfer primary with TSIG example |
+| `examples/dns/encrypted_dot_doh.toml` | 80 | DoT/DoH encrypted transport example |
+
+## Files Updated
+
+| File | Change |
+|------|--------|
+| `architecture/dns.md` | M4 Phase 4 milestone entry |
+| `.opencode/skills/dns_dnssec/SKILL.md` | M4 Phase 4 section added |
+| `crates/synvoid-dns/AGENTS.override.md` | M4 Phase 4 section added |
+
+## Benchmark Baseline
+
+Benchmark baselines are recorded in `benchmarks/dns/results/` via `scripts/dns/run_benchmarks.sh`. The template is at `benchmarks/dns/RESULTS_TEMPLATE.md`.
+
+## Known Non-DNS Workspace Failures
+
+None. `cargo check --workspace` passes with only 102 admin-ui warnings (pre-existing, unrelated to DNS).

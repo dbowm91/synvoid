@@ -1,0 +1,66 @@
+# SynVoid DNS — Transfer-Enabled Primary Profile
+#
+# Primary DNS server that serves zone transfers to secondary servers.
+#
+# Support status: Production-Supported
+#
+# WARNING: Zone transfers expose complete zone data.
+# Always require TSIG authentication for transfers.
+
+[dns]
+enabled = true
+bind = "0.0.0.0"
+port = 53
+mode = "Standalone"
+
+[dns.settings]
+default_ttl = 300
+cache_enabled = true
+# Allow transfers from authenticated peers
+allow_transfer = ["10.0.0.2", "10.0.0.3"]
+# TSIG required for all transfers
+require_tsig = true
+# Wildcard transfers require TSIG (safety net)
+wildcard_transfer_requires_tsig = true
+
+[dns.settings.notify]
+enabled = true
+# Notify secondaries when zones change
+also_notify = ["10.0.0.2:53", "10.0.0.3:53"]
+
+[dns.settings.ixfr]
+enabled = true
+history_size = 200
+fallback_to_axfr = true
+
+[dns.firewall]
+enabled = true
+# Allow zone transfers from authenticated peers
+block_zone_transfers = false
+block_internal_ips = true
+
+[dns.rate_limit]
+mode = "Shared"
+per_second = 500
+per_minute = 5000
+
+[dns.limits]
+max_tcp_connections = 500
+max_concurrent_queries = 2500
+
+# TSIG keys for authenticating transfers
+[[dns.dnssec.tsig_keys]]
+name = "transfer-key"
+algorithm = "HmacSha256"
+# Generate with: synvoid dns tsig generate-key
+secret = "<base64-encoded-secret>"
+
+[[dns.zones.items]]
+origin = "example.com"
+zone_file = "/var/lib/synvoid/dns/zones/example.com.zone"
+enabled = true
+
+# WARNING: Do NOT enable:
+#   - dns.recursive (open resolver risk)
+#   - dns.settings.allow_transfer with wildcard "*" without TSIG
+#   - dns.dynamic_update without TSIG (unauthorized zone changes)

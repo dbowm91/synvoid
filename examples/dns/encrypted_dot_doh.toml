@@ -1,0 +1,66 @@
+# SynVoid DNS — Encrypted Transport Profile (DoT / DoH)
+#
+# DNS-over-TLS and DNS-over-HTTPS for encrypted DNS resolution.
+#
+# Support status: Beta
+#
+# WARNING: DoQ (DNS-over-QUIC) is Experimental.
+# WARNING: Invalid certificates cause startup failure.
+
+[dns]
+enabled = true
+bind = "0.0.0.0"
+port = 53
+mode = "Standalone"
+
+[dns.settings]
+default_ttl = 300
+cache_enabled = true
+
+[dns.firewall]
+enabled = true
+block_zone_transfers = true
+block_internal_ips = true
+
+# DNS-over-TLS
+[dns.dot]
+enabled = true
+bind = "0.0.0.0"
+port = 853
+# TLS certificate and key (PEM format)
+cert_path = "/etc/letsencrypt/live/dns.example.com/fullchain.pem"
+key_path = "/etc/letsencrypt/live/dns.example.com/privkey.pem"
+# Minimum TLS version
+min_tls_version = "1.2"
+# Client certificate verification (optional)
+require_client_cert = false
+
+# DNS-over-HTTPS
+[dns.doh]
+enabled = true
+bind = "0.0.0.0"
+port = 443
+cert_path = "/etc/letsencrypt/live/dns.example.com/fullchain.pem"
+key_path = "/etc/letsencrypt/live/dns.example.com/privkey.pem"
+path = "/dns-query"
+# HTTP/2 support
+enable_http2 = true
+
+# DNS-over-QUIC — EXPERIMENTAL, not recommended for production
+# [dns.doq]
+# enabled = false
+# port = 853
+# cert_path = "/etc/letsencrypt/live/dns.example.com/fullchain.pem"
+# key_path = "/etc/letsencrypt/live/dns.example.com/privkey.pem"
+# max_concurrent_streams = 100
+# idle_timeout_secs = 30
+
+[[dns.zones.items]]
+origin = "example.com"
+zone_file = "/var/lib/synvoid/dns/zones/example.com.zone"
+enabled = true
+
+# WARNING: Do NOT enable:
+#   - dns.doq in production (experimental, protocol not finalized)
+#   - dns.recursive (open resolver risk)
+#   - dns.dot/doh without valid certificates (causes startup failure)

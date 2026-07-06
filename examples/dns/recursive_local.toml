@@ -1,0 +1,61 @@
+# SynVoid DNS — Local Recursive Resolver Profile
+#
+# A local DNS resolver for a single host. Binds to localhost only.
+#
+# Support status: Production-Supported
+#
+# WARNING: Do NOT bind to 0.0.0.0 — this creates an open resolver
+# which can be abused for DNS amplification attacks.
+
+[dns]
+enabled = true
+bind = "0.0.0.0"
+port = 53
+mode = "Standalone"
+
+[dns.settings]
+default_ttl = 300
+cache_enabled = true
+cache_size = 100000
+cache_max_ttl = 3600
+cache_min_ttl = 60
+
+[dns.recursive]
+enabled = true
+# CRITICAL: Bind to localhost only. Binding to 0.0.0.0 creates an open resolver.
+bind = "127.0.0.1"
+port = 1053
+# Use system resolvers (e.g., /etc/resolv.conf)
+upstream_provider = "System"
+# DNSSEC validation — validates response integrity
+dnssec_validation = true
+# QNAME minimization — reduces privacy leakage to upstream
+qname_minimization = true
+query_timeout_secs = 5
+max_concurrent_queries = 10000
+max_cname_depth = 10
+max_recursion_depth = 16
+max_per_client_queries = 100
+
+[dns.recursive.circuit_breaker]
+failure_threshold = 5
+recovery_timeout_secs = 30
+success_threshold = 2
+
+[dns.recursive.ecs]
+forwarding_policy = "Never"
+include_scope_in_response = false
+
+[dns.rate_limit]
+mode = "Shared"
+per_second = 500
+per_minute = 5000
+
+[dns.limits]
+max_tcp_connections = 500
+max_concurrent_queries = 2500
+
+# WARNING: Do NOT enable:
+#   - dns.dynamic_update (no zone updates needed for recursive)
+#   - dns.settings.allow_transfer (no transfers for recursive)
+#   - dns.dnssec.enabled (recursive validates, doesn't sign)

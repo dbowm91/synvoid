@@ -1,0 +1,52 @@
+# SynVoid DNS — DNSSEC-Signed Authoritative Profile
+#
+# Authoritative server with DNSSEC signing enabled.
+#
+# Support status: Production-Supported
+#
+# WARNING: DNSSEC requires key generation before activation.
+# Run: synvoid dns dnssec generate-keys --domain example.com
+
+[dns]
+enabled = true
+bind = "0.0.0.0"
+port = 53
+mode = "Standalone"
+
+[dns.settings]
+default_ttl = 300
+cache_enabled = true
+
+[dns.firewall]
+enabled = true
+block_zone_transfers = true
+block_internal_ips = true
+
+[dns.dnssec]
+enabled = true
+# Domain to sign (must match zone origin)
+domain = "example.com"
+# Path to DNSSEC keys — generate with: synvoid dns dnssec generate-keys
+key_path = "/var/lib/synvoid/dns/keys"
+# Ed25519 is recommended (fast, small signatures)
+algorithm = "Ed25519"
+# NSEC3 prevents zone enumeration
+nsec3_enabled = true
+nsec3_iterations = 50
+nsec3_algorithm = 1
+
+# TSIG keys for zone transfers (if needed)
+# [[dns.dnssec.tsig_keys]]
+# name = "transfer-key"
+# algorithm = "HmacSha256"
+# secret = "<base64-encoded-secret>"
+
+[[dns.zones.items]]
+origin = "example.com"
+zone_file = "/var/lib/synvoid/dns/zones/example.com.zone"
+enabled = true
+
+# WARNING: Do NOT enable:
+#   - dns.recursive (authoritative + recursive is unsupported)
+#   - dns.dynamic_update without TSIG (unsigned updates bypass DNSSEC)
+#   - dns.dnssec.hsm without hardware support

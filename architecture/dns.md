@@ -2040,3 +2040,20 @@ The DNS crate includes interop conformance tests covering:
 
 Run: `./scripts/dns/conformance.sh`
 
+### Milestone History
+
+- **Milestone 1**: Authoritative wire correctness, query parsing, response assembly, flag semantics, SOA enforcement, DNSSEC scaffolding (576 tests)
+- **Milestone 2 Phase 1**: Transport lifecycle, bind fail-fast, TCP one-query, UDP/EDNS truncation, shutdown idempotency, transport class separation
+- **Milestone 2 Phase 2**: Config-to-runtime closure (serve-stale, query timeout, open-resolver guard, NOTIMP for disabled ops, graceful degradation)
+- **Milestone 2 Phase 4**: Query coalescing policy closure (7-dimensional keys, metrics correction, exclusions)
+- **Milestone 2 Phase 5**: Verification gate (8 gates, 576 tests)
+- **Milestone 3 Phase 1**: Zone lifecycle, SOA validation, UPDATE/NOTIFY/AXFR/IXFR hardening, store persistence
+- **Milestone 3 Phase 2**: DNSSEC correctness, key lifecycle, NSEC3 fixes, 97 DNSSEC tests
+- **Milestone 3 Phase 3**: Encrypted transport adapters (DoT, DoH, DoQ)
+- **Milestone 3 Phase 4**: Recursive resolver isolation (ACL, circuit breaker, CD/AD, bailiwick, depth limits, ECS)
+- **Milestone 3 Phase 5**: Verification gate (20 new tests, all gate areas verified)
+- **Milestone 3 Final**: Live DNSSEC, TSIG fixtures, IXFR delta, UPDATE atomicity, NOTIFY scheduling, 1001 tests
+- **Milestone 4 Phase 1**: Observability and operations (metrics taxonomy, health checker, structured logging)
+- **Milestone 4 Phase 2**: Performance and load testing (5 benchmark suites, 28 stress tests)
+- **Milestone 4 Phase 4**: Production profiles (8 profiles with support classification), safe defaults audit (60+ fields verified), 5 example configs, release gate (781 tests), security review (all areas safe, bailiwick observability-only warning)
+
