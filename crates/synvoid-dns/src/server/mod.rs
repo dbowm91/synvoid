@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -110,6 +110,171 @@ pub struct DnsZoneRecord {
     pub value: String,
     pub ttl: u32,
     pub priority: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ZoneValidationError {
+    EmptyOrigin {
+        raw: String,
+    },
+    IllegalOriginCharacters {
+        origin: String,
+    },
+    NoSoaRecord,
+    MultipleSoaRecords {
+        count: usize,
+    },
+    OwnerLabelTooLong {
+        name: String,
+        len: usize,
+    },
+    EmptyInteriorLabel {
+        name: String,
+    },
+    NameOutsideZone {
+        name: String,
+        zone: String,
+    },
+    UnsupportedNullRecord {
+        name: String,
+    },
+    InvalidTtl {
+        name: String,
+        ttl: u32,
+    },
+    MxPriorityOutOfRange {
+        name: String,
+        priority: u32,
+    },
+    SrvPriorityOutOfRange {
+        name: String,
+        priority: u32,
+    },
+    InvalidSoaField {
+        name: String,
+        field: String,
+        value: String,
+    },
+    SoaTooFewFields {
+        name: String,
+        count: usize,
+    },
+    InvalidARecordAddress {
+        name: String,
+        value: String,
+    },
+    InvalidAaaaRecordAddress {
+        name: String,
+        value: String,
+    },
+    CnameCoexistsWithOtherData {
+        name: String,
+        conflicting: RecordType,
+    },
+    InvalidTargetName {
+        name: String,
+        record_type: RecordType,
+        target: String,
+    },
+}
+
+impl fmt::Display for ZoneValidationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyOrigin { raw } => write!(
+                f,
+                "Zone activation rejected: empty origin after normalization (raw: '{}')",
+                raw
+            ),
+            Self::IllegalOriginCharacters { origin } => write!(
+                f,
+                "Zone activation rejected: origin '{}' contains illegal characters",
+                origin
+            ),
+            Self::NoSoaRecord => write!(
+                f,
+                "Zone: no SOA record found (RFC 1035 §3.3.13 requires exactly one)"
+            ),
+            Self::MultipleSoaRecords { count } => write!(
+                f,
+                "Zone: found {} SOA records at apex (RFC 1035 §3.3.13 requires exactly one)",
+                count
+            ),
+            Self::OwnerLabelTooLong { name, len } => write!(
+                f,
+                "Zone activation rejected: owner name '{}' has label exceeding 63 bytes (got {})",
+                name, len
+            ),
+            Self::EmptyInteriorLabel { name } => write!(
+                f,
+                "Zone activation rejected: owner name '{}' contains empty interior label",
+                name
+            ),
+            Self::NameOutsideZone { name, zone } => write!(
+                f,
+                "Zone activation rejected: record name '{}' is not within zone '{}'",
+                name, zone
+            ),
+            Self::UnsupportedNullRecord { name } => write!(
+                f,
+                "Zone activation rejected: unsupported NULL record at '{}'",
+                name
+            ),
+            Self::InvalidTtl { name, ttl } => write!(
+                f,
+                "Zone activation rejected: TTL {} for record '{}' is out of bounds (must be 1..=2147483647)",
+                ttl, name
+            ),
+            Self::MxPriorityOutOfRange { name, priority } => write!(
+                f,
+                "Zone activation rejected: MX priority {} for record '{}' exceeds u16::MAX",
+                priority, name
+            ),
+            Self::SrvPriorityOutOfRange { name, priority } => write!(
+                f,
+                "Zone activation rejected: SRV priority {} for record '{}' exceeds u16::MAX",
+                priority, name
+            ),
+            Self::InvalidSoaField {
+                name,
+                field,
+                value,
+            } => write!(
+                f,
+                "Zone activation rejected: SOA {} '{}' is not a valid u32 for record '{}'",
+                field, value, name
+            ),
+            Self::SoaTooFewFields { name, count } => write!(
+                f,
+                "Zone activation rejected: SOA record '{}' requires 7 fields, got {}",
+                name, count
+            ),
+            Self::InvalidARecordAddress { name, value } => write!(
+                f,
+                "Zone activation rejected: A record '{}' has invalid IPv4 address '{}'",
+                name, value
+            ),
+            Self::InvalidAaaaRecordAddress { name, value } => write!(
+                f,
+                "Zone activation rejected: AAAA record '{}' has invalid IPv6 address '{}'",
+                name, value
+            ),
+            Self::CnameCoexistsWithOtherData { name, conflicting } => write!(
+                f,
+                "Zone activation rejected: CNAME at '{}' coexists with {:?}",
+                name, conflicting
+            ),
+            Self::InvalidTargetName {
+                name,
+                record_type,
+                target,
+            } => write!(
+                f,
+                "Zone activation rejected: {:?} record '{}' has invalid target name '{}'",
+                record_type, name, target
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -506,21 +671,58 @@ impl Zone {
         count
     }
 
-    /// Validate that the zone has exactly one SOA record at the apex.
-    /// Returns Ok(()) if valid, Err with description if not.
     pub fn validate_single_soa(&self) -> Result<(), String> {
         let count = self.count_apex_soa();
         if count == 0 {
-            return Err(format!(
-                "Zone {}: no SOA record found (RFC 1035 §3.3.13 requires exactly one)",
-                self.origin
-            ));
+            return Err(ZoneValidationError::NoSoaRecord.to_string());
         }
         if count > 1 {
-            return Err(format!(
-                "Zone {}: found {} SOA records at apex (RFC 1035 §3.3.13 requires exactly one)",
-                self.origin, count
-            ));
+            return Err(ZoneValidationError::MultipleSoaRecords { count }.to_string());
+        }
+        Ok(())
+    }
+
+    pub fn validate_soa_record_value(
+        record_name: &str,
+        value: &str,
+    ) -> Result<(), ZoneValidationError> {
+        let parts: Vec<&str> = value.split_whitespace().collect();
+        if parts.len() < 7 {
+            return Err(ZoneValidationError::SoaTooFewFields {
+                name: record_name.to_string(),
+                count: parts.len(),
+            });
+        }
+        if parts[2].parse::<u32>().is_err() {
+            return Err(ZoneValidationError::InvalidSoaField {
+                name: record_name.to_string(),
+                field: "serial".to_string(),
+                value: parts[2].to_string(),
+            });
+        }
+        for (idx, field_name) in ["refresh", "retry", "expire", "minimum"].iter().enumerate() {
+            if parts[3 + idx].parse::<u32>().is_err() {
+                return Err(ZoneValidationError::InvalidSoaField {
+                    name: record_name.to_string(),
+                    field: field_name.to_string(),
+                    value: parts[3 + idx].to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_target_name(target: &str) -> Result<(), ZoneValidationError> {
+        for label in target.trim_end_matches('.').split('.') {
+            if label.is_empty() {
+                continue;
+            }
+            if label.len() > 63 {
+                return Err(ZoneValidationError::OwnerLabelTooLong {
+                    name: target.to_string(),
+                    len: label.len(),
+                });
+            }
         }
         Ok(())
     }
@@ -528,34 +730,196 @@ impl Zone {
     /// Single, unified pre-publish gate that every production code path MUST pass
     /// before a zone becomes `Active` (or replaces an existing active zone).
     ///
-    /// Currently enforces:
+    /// Enforces:
     /// - Exactly one apex SOA (RFC 1035 §3.3.13).
     /// - Origin normalization (RFC 1035 §3.1 — trailing dot, lowercase).
-    ///
-    /// Raw store operations (e.g. `ShardedZoneStore::insert`) intentionally do NOT
-    /// call this so that already-validated or synthetic zones can still be added
-    /// in test paths. Production paths must use a helper that calls this first
-    /// (e.g. `DnsServer::replace_zone_with_validation`).
-    pub fn validate_zone_for_activation(&self) -> Result<(), String> {
+    /// - Owner name label length and interior label constraints.
+    /// - Records within the zone apex tree.
+    /// - No unsupported NULL records.
+    /// - TTL bounds (1..=2147483647).
+    /// - MX/SRV priority within u16::MAX.
+    /// - SOA field parsing.
+    /// - A/AAAA address parse validity.
+    /// - CNAME exclusivity.
+    /// - NS/MX/SRV/CNAME target name syntax.
+    pub fn validate_zone_for_activation(&self) -> Result<(), ZoneValidationError> {
         let normalized = Self::normalize_origin(&self.origin);
         if normalized.is_empty() {
-            return Err(format!(
-                "Zone activation rejected: empty origin after normalization (raw: '{}')",
-                self.origin
-            ));
+            return Err(ZoneValidationError::EmptyOrigin {
+                raw: self.origin.clone(),
+            });
         }
-        // Reject control characters / NUL / spaces that would break wire-format
         if normalized
             .as_bytes()
             .iter()
             .any(|b| b <= &0x20 || b == &b'/' || b == &b'\\')
         {
-            return Err(format!(
-                "Zone activation rejected: origin '{}' contains illegal characters",
-                normalized
-            ));
+            return Err(ZoneValidationError::IllegalOriginCharacters {
+                origin: normalized.clone(),
+            });
         }
-        self.validate_single_soa()
+
+        let count = self.count_apex_soa();
+        if count == 0 {
+            return Err(ZoneValidationError::NoSoaRecord);
+        }
+        if count > 1 {
+            return Err(ZoneValidationError::MultipleSoaRecords { count });
+        }
+
+        for ((name, rtype), records) in &self.records {
+            for record in records {
+                Self::validate_target_name(name).map_err(|_| {
+                    ZoneValidationError::OwnerLabelTooLong {
+                        name: name.clone(),
+                        len: name.len(),
+                    }
+                })?;
+
+                if name != "@" && !name.is_empty() {
+                    let normalized_name = Self::normalize_origin(name);
+                    let normalized_origin = Self::normalize_origin(&self.origin);
+                    let is_subdomain = normalized_name == normalized_origin
+                        || normalized_name.ends_with(&format!(".{}", normalized_origin));
+                    let is_relative_label = !name.contains('.');
+                    if !is_subdomain && !is_relative_label {
+                        return Err(ZoneValidationError::NameOutsideZone {
+                            name: name.clone(),
+                            zone: self.origin.clone(),
+                        });
+                    }
+                }
+
+                if *rtype == RecordType::NULL {
+                    return Err(ZoneValidationError::UnsupportedNullRecord { name: name.clone() });
+                }
+
+                if record.ttl == 0 || record.ttl > 2147483647 {
+                    return Err(ZoneValidationError::InvalidTtl {
+                        name: name.clone(),
+                        ttl: record.ttl,
+                    });
+                }
+
+                if *rtype == RecordType::MX {
+                    if let Some(pri) = record.priority {
+                        if pri > u16::MAX as u32 {
+                            return Err(ZoneValidationError::MxPriorityOutOfRange {
+                                name: name.clone(),
+                                priority: pri,
+                            });
+                        }
+                    }
+                }
+
+                if *rtype == RecordType::SRV {
+                    if let Some(pri) = record.priority {
+                        if pri > u16::MAX as u32 {
+                            return Err(ZoneValidationError::SrvPriorityOutOfRange {
+                                name: name.clone(),
+                                priority: pri,
+                            });
+                        }
+                    }
+                }
+
+                if *rtype == RecordType::SOA {
+                    Self::validate_soa_record_value(name, &record.value)?;
+                }
+
+                if *rtype == RecordType::A && record.value.parse::<Ipv4Addr>().is_err() {
+                    return Err(ZoneValidationError::InvalidARecordAddress {
+                        name: name.clone(),
+                        value: record.value.clone(),
+                    });
+                }
+
+                if *rtype == RecordType::AAAA && record.value.parse::<Ipv6Addr>().is_err() {
+                    return Err(ZoneValidationError::InvalidAaaaRecordAddress {
+                        name: name.clone(),
+                        value: record.value.clone(),
+                    });
+                }
+
+                if *rtype == RecordType::NS
+                    || *rtype == RecordType::MX
+                    || *rtype == RecordType::CNAME
+                {
+                    let target = if *rtype == RecordType::MX {
+                        record.value.split_whitespace().last().unwrap_or("")
+                    } else if *rtype == RecordType::SRV {
+                        record.value.split_whitespace().nth(3).unwrap_or("")
+                    } else {
+                        record.value.trim()
+                    };
+                    Self::validate_target_name(target).map_err(|_| {
+                        ZoneValidationError::InvalidTargetName {
+                            name: name.clone(),
+                            record_type: *rtype,
+                            target: target.to_string(),
+                        }
+                    })?;
+                }
+
+                if *rtype == RecordType::SRV {
+                    let target = record.value.split_whitespace().nth(3).unwrap_or("");
+                    Self::validate_target_name(target).map_err(|_| {
+                        ZoneValidationError::InvalidTargetName {
+                            name: name.clone(),
+                            record_type: *rtype,
+                            target: target.to_string(),
+                        }
+                    })?;
+                }
+            }
+        }
+
+        let mut owner_types: HashMap<String, Vec<RecordType>> = HashMap::new();
+        for (name, rtype) in self.records.keys() {
+            owner_types.entry(name.clone()).or_default().push(*rtype);
+        }
+        let dnssec_types = [
+            RecordType::DNSKEY,
+            RecordType::DS,
+            RecordType::RRSIG,
+            RecordType::NSEC,
+            RecordType::NSEC3,
+            RecordType::NSEC3PARAM,
+        ];
+        let cname_exclusive_types = [
+            RecordType::A,
+            RecordType::AAAA,
+            RecordType::MX,
+            RecordType::TXT,
+            RecordType::SRV,
+            RecordType::PTR,
+            RecordType::NS,
+            RecordType::SOA,
+            RecordType::CAA,
+            RecordType::TLSA,
+            RecordType::SVCB,
+            RecordType::HTTPS,
+            RecordType::NAPTR,
+            RecordType::SSHFP,
+        ];
+        for (owner, types) in &owner_types {
+            let has_cname = types.contains(&RecordType::CNAME);
+            if has_cname {
+                for t in types {
+                    if *t == RecordType::CNAME || dnssec_types.contains(t) {
+                        continue;
+                    }
+                    if cname_exclusive_types.contains(t) {
+                        return Err(ZoneValidationError::CnameCoexistsWithOtherData {
+                            name: owner.clone(),
+                            conflicting: *t,
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -849,6 +1213,264 @@ mod zone_tests {
     #[test]
     fn test_normalize_origin_combined() {
         assert_eq!(Zone::normalize_origin("EXAMPLE.COM."), "example.com");
+    }
+
+    // ── Zone activation validation tests (WS2) ──
+
+    fn activation_zone_with_soa() -> Zone {
+        let mut zone = Zone::new("example.com".to_string());
+        zone.records.insert(
+            ("@".to_string(), RecordType::SOA),
+            vec![DnsZoneRecord {
+                name: "@".to_string(),
+                record_type: RecordType::SOA,
+                value: "ns1.example.com. admin.example.com. 1 3600 600 86400 300".to_string(),
+                ttl: 3600,
+                priority: None,
+            }],
+        );
+        zone
+    }
+
+    #[test]
+    fn test_activation_rejects_invalid_a_address() {
+        let mut zone = activation_zone_with_soa();
+        zone.records.insert(
+            ("@".to_string(), RecordType::A),
+            vec![DnsZoneRecord {
+                name: "@".to_string(),
+                record_type: RecordType::A,
+                value: "not-an-ip".to_string(),
+                ttl: 3600,
+                priority: None,
+            }],
+        );
+        assert!(matches!(
+            zone.validate_zone_for_activation(),
+            Err(ZoneValidationError::InvalidARecordAddress { .. })
+        ));
+    }
+
+    #[test]
+    fn test_activation_rejects_invalid_aaaa_address() {
+        let mut zone = activation_zone_with_soa();
+        zone.records.insert(
+            ("@".to_string(), RecordType::AAAA),
+            vec![DnsZoneRecord {
+                name: "@".to_string(),
+                record_type: RecordType::AAAA,
+                value: "zzzz::1".to_string(),
+                ttl: 3600,
+                priority: None,
+            }],
+        );
+        assert!(matches!(
+            zone.validate_zone_for_activation(),
+            Err(ZoneValidationError::InvalidAaaaRecordAddress { .. })
+        ));
+    }
+
+    #[test]
+    fn test_activation_rejects_invalid_owner_label_length() {
+        let mut zone = activation_zone_with_soa();
+        let long_label = "a".repeat(64);
+        zone.records.insert(
+            (long_label.clone(), RecordType::A),
+            vec![DnsZoneRecord {
+                name: long_label,
+                record_type: RecordType::A,
+                value: "1.2.3.4".to_string(),
+                ttl: 3600,
+                priority: None,
+            }],
+        );
+        assert!(matches!(
+            zone.validate_zone_for_activation(),
+            Err(ZoneValidationError::OwnerLabelTooLong { .. })
+        ));
+    }
+
+    #[test]
+    fn test_activation_rejects_cname_with_a_same_owner() {
+        let mut zone = activation_zone_with_soa();
+        zone.records.insert(
+            ("www".to_string(), RecordType::CNAME),
+            vec![DnsZoneRecord {
+                name: "www".to_string(),
+                record_type: RecordType::CNAME,
+                value: "other.example.com.".to_string(),
+                ttl: 3600,
+                priority: None,
+            }],
+        );
+        zone.records.insert(
+            ("www".to_string(), RecordType::A),
+            vec![DnsZoneRecord {
+                name: "www".to_string(),
+                record_type: RecordType::A,
+                value: "1.2.3.4".to_string(),
+                ttl: 3600,
+                priority: None,
+            }],
+        );
+        assert!(matches!(
+            zone.validate_zone_for_activation(),
+            Err(ZoneValidationError::CnameCoexistsWithOtherData { .. })
+        ));
+    }
+
+    #[test]
+    fn test_activation_rejects_unsupported_null_record() {
+        let mut zone = activation_zone_with_soa();
+        zone.records.insert(
+            ("@".to_string(), RecordType::NULL),
+            vec![DnsZoneRecord {
+                name: "@".to_string(),
+                record_type: RecordType::NULL,
+                value: "something".to_string(),
+                ttl: 3600,
+                priority: None,
+            }],
+        );
+        assert!(matches!(
+            zone.validate_zone_for_activation(),
+            Err(ZoneValidationError::UnsupportedNullRecord { .. })
+        ));
+    }
+
+    #[test]
+    fn test_activation_rejects_mx_priority_over_u16_max() {
+        let mut zone = activation_zone_with_soa();
+        zone.records.insert(
+            ("@".to_string(), RecordType::MX),
+            vec![DnsZoneRecord {
+                name: "@".to_string(),
+                record_type: RecordType::MX,
+                value: "mail.example.com.".to_string(),
+                ttl: 3600,
+                priority: Some(70000),
+            }],
+        );
+        assert!(matches!(
+            zone.validate_zone_for_activation(),
+            Err(ZoneValidationError::MxPriorityOutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn test_activation_rejects_invalid_soa_field() {
+        let mut zone = Zone::new("example.com".to_string());
+        zone.records.insert(
+            ("@".to_string(), RecordType::SOA),
+            vec![DnsZoneRecord {
+                name: "@".to_string(),
+                record_type: RecordType::SOA,
+                value: "ns1.example.com. admin.example.com. not-a-serial 3600 600 86400 300"
+                    .to_string(),
+                ttl: 3600,
+                priority: None,
+            }],
+        );
+        assert!(matches!(
+            zone.validate_zone_for_activation(),
+            Err(ZoneValidationError::InvalidSoaField { .. })
+        ));
+    }
+
+    #[test]
+    fn test_activation_accepts_valid_subdomain_records() {
+        let mut zone = activation_zone_with_soa();
+        zone.records.insert(
+            ("www".to_string(), RecordType::A),
+            vec![DnsZoneRecord {
+                name: "www".to_string(),
+                record_type: RecordType::A,
+                value: "1.2.3.4".to_string(),
+                ttl: 3600,
+                priority: None,
+            }],
+        );
+        zone.records.insert(
+            ("mail".to_string(), RecordType::A),
+            vec![DnsZoneRecord {
+                name: "mail".to_string(),
+                record_type: RecordType::A,
+                value: "5.6.7.8".to_string(),
+                ttl: 3600,
+                priority: None,
+            }],
+        );
+        zone.records.insert(
+            ("@".to_string(), RecordType::MX),
+            vec![DnsZoneRecord {
+                name: "@".to_string(),
+                record_type: RecordType::MX,
+                value: "10 mail.example.com.".to_string(),
+                ttl: 3600,
+                priority: Some(10),
+            }],
+        );
+        assert!(zone.validate_zone_for_activation().is_ok());
+    }
+
+    #[test]
+    fn test_activation_rejects_name_outside_zone_origin() {
+        let mut zone = activation_zone_with_soa();
+        zone.records.insert(
+            ("other.org".to_string(), RecordType::A),
+            vec![DnsZoneRecord {
+                name: "other.org".to_string(),
+                record_type: RecordType::A,
+                value: "1.2.3.4".to_string(),
+                ttl: 3600,
+                priority: None,
+            }],
+        );
+        assert!(matches!(
+            zone.validate_zone_for_activation(),
+            Err(ZoneValidationError::NameOutsideZone { .. })
+        ));
+    }
+
+    #[test]
+    fn test_activation_rejects_zero_ttl() {
+        let mut zone = activation_zone_with_soa();
+        zone.records.insert(
+            ("@".to_string(), RecordType::A),
+            vec![DnsZoneRecord {
+                name: "@".to_string(),
+                record_type: RecordType::A,
+                value: "1.2.3.4".to_string(),
+                ttl: 0,
+                priority: None,
+            }],
+        );
+        assert!(matches!(
+            zone.validate_zone_for_activation(),
+            Err(ZoneValidationError::InvalidTtl { .. })
+        ));
+    }
+
+    #[test]
+    fn test_activation_shared_soa_helper() {
+        assert!(Zone::validate_soa_record_value(
+            "@",
+            "ns1.example.com. admin.example.com. 1 3600 600 86400 300"
+        )
+        .is_ok());
+
+        assert!(matches!(
+            Zone::validate_soa_record_value("@", "ns1.example.com. admin.example.com. 1"),
+            Err(ZoneValidationError::SoaTooFewFields { .. })
+        ));
+
+        assert!(matches!(
+            Zone::validate_soa_record_value(
+                "@",
+                "ns1.example.com. admin.example.com. not-a-serial 3600 600 86400 300"
+            ),
+            Err(ZoneValidationError::InvalidSoaField { .. })
+        ));
     }
 }
 

@@ -422,6 +422,44 @@ Dynamic UPDATE now re-validates post-mutation invariants. If a crafted UPDATE re
 5. **QNAME Privacy and DNS Padding are deferred** - `sanitize_qname()` (`dns_settings.rs:244`) and `DnsPadding` (`edns.rs:540`) exist but are not wired into the query path.
 6. **DoQ bind_address is partially implemented** - Config field exists but `startup.rs:580` hardcodes bind to `0.0.0.0:{port}`.
 
+## DNSSEC Known-Vector Testing (Tightening Follow-up)
+
+`tests/dnssec_known_vectors.rs` (~430 lines) verifies DNSSEC primitives against IETF-known answer values and RFC 4034 §A example data. Coverage:
+
+### Key Tag (RFC 4034 §A.2)
+- Ed25519 KSK (flags=257, algorithm=15) with well-known 32-byte key: tag = 1313
+- Ed25519 ZSK (flags=256) variant differs by 1
+- All-zeros Ed25519 key: deterministic tag
+- RSA (algorithm 8, 256-byte key): known-answer tag verification
+- Key tag idempotency (deterministic across calls)
+
+### DS Digest Length Enforcement
+- SHA-1 (type 1): exactly 20 bytes per RFC 4034 §5.1.4
+- SHA-256 (type 2): exactly 32 bytes
+- SHA-384 (type 4): exactly 48 bytes (graceful skip if unsupported)
+- Determinism: same inputs produce same digest
+- Different keys produce different digests
+- GOST (type 3) unsupported; unknown type returns error
+
+### Canonical Name and RDATA
+- `canonical_name()`: mixed-case lowercasing, trailing dot stripping, root/empty/single-label handling
+- `canonical_rdata()` for A (4-byte IPv4), AAAA (16-byte IPv6), CNAME (wire-format name), MX (2-byte priority + wire-format name)
+
+### Response Shape Verification
+- AD=0 for unsigned zone
+- CD flag echoed in response (resolver-set CD=1 → response CD=1)
+- AD bit settable in signed response
+- DO=1 + unsigned zone → AD=0 (core DNSSEC invariant)
+- RA flag in recursive response
+- NXDOMAIN (RCODE=3) with AD=0
+- Response header roundtrip: all flags preserved through build→parse cycle
+
+### DNSKEY Canonical Format
+- `compute_dnskey_canonical()` output: flags(2) + protocol(1) + algorithm(1) + public_key
+- Different algorithms produce different RDATA
+
+Run: `cargo test -p synvoid-dns --test dnssec_known_vectors`
+
 ## Encrypted Transport Adapters (Milestone 3 Phase 3)
 
 DoT, DoH, and DoQ are thin adapters over the core authoritative query engine. All three share the same `handle_parsed_query_with_cache` pipeline, ensuring rate limiting, firewall, DNSSEC, coalescing, and cache semantics are applied identically.

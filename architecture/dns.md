@@ -1732,6 +1732,8 @@ RFC 2136 dynamic updates are hardened with multiple security layers:
 
 `DynamicUpdateHandler` validates prerequisites, applies adds/deletes atomically, increments serial, stores history, and triggers cache invalidation.
 
+**UPDATE rdata formatting**: When an UPDATE adds a record, `DynamicUpdateHandler::format_rdata_for_record_type()` converts wire-format rdata to a human-readable string before storing the zone record. A records are formatted as dotted-decimal (`{octet0}.{octet1}.{octet2}.{octet3}`), AAAA records as colon-separated hex groups (`{group0}:{group1}:...:{group7}`). This formatted value is what `validate_zone_for_activation()` sees when re-validating the zone post-mutation. Other record types use `{:?}` debug formatting of the raw bytes.
+
 ### NOTIFY Hardening (`notify.rs`)
 
 | Control | Default | Description |
@@ -1740,7 +1742,9 @@ RFC 2136 dynamic updates are hardened with multiple security layers:
 | `also_notify` | `[]` | Secondary IPs to notify on zone changes |
 | Source allowlist | — | Incoming NOTIFY from unknown sources is silently ignored |
 | Rate-limiting | — | Per-zone cooldown: serial unchanged → skip NOTIFY |
-| TSIG enforcement | optional | TSIG verification on incoming NOTIFY when configured |
+| TSIG enforcement | `false` | TSIG verification on incoming NOTIFY when `require_tsig: true` |
+
+**TSIG enforcement note**: `NotifyHandler::handle_notify()` enforces TSIG when `require_tsig` is true — it parses the TSIG record from the additional section and denies the NOTIFY if absent. This was a gap in earlier milestones where `with_require_tsig(true)` was accepted but not checked in `handle_notify`. The tightening follow-up closed this by adding the TSIG parse-and-reject path at `notify.rs:146`.
 
 ### AXFR Hardening (`transfer.rs`)
 
@@ -1821,6 +1825,18 @@ cargo test -p synvoid-dns -- store_atomic_write
 # Cache invalidation
 cargo test -p synvoid-dns -- cache_invalidation_axfr
 ```
+
+### Tightening Follow-up Test Files
+
+The Milestone 3 tightening follow-up added 5 integration test files covering protocol-level correctness gaps:
+
+| Test file | Lines | Coverage |
+|-----------|-------|----------|
+| `tests/axfr_ixfr_transfer_semantics.rs` | ~650 | SOA-bracketed transfer, TCP-only enforcement, TSIG refusal, IXFR serial comparison (current/old/too-old/wraparound), fallback/refusal |
+| `tests/notify_behavior.rs` | ~233 | Authorized newer serial accepted, stale serial ignored, unknown zone refused, TSIG-required absent refused |
+| `tests/update_authorized_semantics.rs` | ~437 | Add/delete success, prerequisite failure, SOA protection (final/duplicate), TSIG refusal, cache invalidation, serial policy |
+| `tests/dnssec_known_vectors.rs` | ~430 | Key tag (RFC 4034 §A.2), DS digest lengths (SHA-1/256/384), canonical name/rdata, response shape (AD/CD/RA/DO flags), DNSKEY format |
+| `tests/control_plane_exclusion.rs` | ~746 | AXFR/IXFR/UPDATE/NOTIFY bypass cache and coalescer, UPDATE cache invalidation on success/failure |
 
 ---
 

@@ -375,6 +375,58 @@ cargo test -p synvoid-dns -- cache_invalidation_axfr
 - **`Zone::validate_zone_for_activation()`** (`server/mod.rs`): Unified pre-publish gate. Enforces: exactly one apex SOA, non-empty/normalized/printable origin (rejects control chars, NUL, whitespace, `/`, `\`). All production code paths (config load, store reload, dynamic UPDATE, zone transfer) MUST pass this gate before a zone becomes `Active`.
 - **`DnsServer::replace_zone_with_validation(candidate: Zone)`** (`server/zone.rs`): Atomic replacement API for production-safe reload. Calls `validate_zone_for_activation()`, marks active, inserts into `ShardedZoneStore`, invalidates cache. On failure, the previous zone in the store is left untouched. `load_zones` and `load_zones_from_store` now call `validate_zone_for_activation()` (was just `validate_single_soa()`).
 
+## Milestone 3 Tightening Follow-up: Deepened Zone Validation
+
+### `ZoneValidationError` Variants
+
+`validate_zone_for_activation()` returns `ZoneValidationError` (defined in `server/mod.rs:116`) with these variants:
+
+| Variant | Description |
+|---------|-------------|
+| `EmptyOrigin { raw }` | Origin is empty after normalization |
+| `IllegalOriginCharacters { origin }` | Origin contains control chars (≤0x20), NUL, `/`, or `\` |
+| `NoSoaRecord` | Zone has zero apex SOA records |
+| `MultipleSoaRecords { count }` | Zone has more than one apex SOA |
+| `OwnerLabelTooLong { name, len }` | Owner name label exceeds 63 bytes |
+| `EmptyInteriorLabel { name }` | Owner name contains empty interior label (consecutive dots) |
+| `NameOutsideZone { name, zone }` | Owner name is not a subdomain of the zone origin and not a relative label |
+| `UnsupportedNullRecord { name }` | Record type NULL (`Other`) not permitted |
+| `InvalidTtl { name, ttl }` | TTL is 0 or exceeds 2^31-1 |
+| `MxPriorityOutOfRange { name, priority }` | MX priority exceeds u16::MAX |
+| `SrvPriorityOutOfRange { name, priority }` | SRV priority exceeds u16::MAX |
+| `InvalidSoaField { name, field, value }` | SOA numeric field (serial, refresh, retry, expire, minimum) is not parseable as u32 |
+| `SoaTooFewFields { name, count }` | SOA rdata has fewer than 7 whitespace-delimited fields |
+| `InvalidARecordAddress { name, value }` | A record value does not parse as Ipv4Addr |
+| `InvalidAaaaRecordAddress { name, value }` | AAAA record value does not parse as Ipv6Addr |
+| `CnameCoexistsWithOtherData { name, conflicting }` | CNAME coexists with A/AAAA/MX/TXT/SRV/PTR/NS/SOA/CAA/TLSA/SVCB/HTTPS/NAPTR/SSHFP at same owner |
+| `InvalidTargetName { name, record_type, target }` | NS/MX/CNAME/SRV target name has empty labels or labels exceeding 63 bytes |
+
+### CNAME Exclusivity Rules
+
+When an owner has a CNAME record, it cannot coexist with any of: A, AAAA, MX, TXT, SRV, PTR, NS, SOA, CAA, TLSA, SVCB, HTTPS, NAPTR, SSHFP. DNSSEC types (DNSKEY, DS, RRSIG, NSEC, NSEC3, NSEC3PARAM) are exempt from this check.
+
+### SOA Field Validation
+
+`validate_soa_record_value()` (`server/mod.rs:688`) validates that the SOA rdata has at least 7 whitespace-delimited fields and that the serial, refresh, retry, expire, and minimum fields all parse as u32.
+
+### Test Commands
+
+```bash
+# Zone validation error variants
+cargo test -p synvoid-dns -- validate_zone_for_activation
+cargo test -p synvoid-dns -- invalid_a_record_rejected
+cargo test -p synvoid-dns -- invalid_aaaa_record_rejected
+cargo test -p synvoid-dns -- invalid_owner_label_rejected
+cargo test -p synvoid-dns -- cname_coexists_with_other_data
+cargo test -p synvoid-dns -- unsupported_null_record_rejected
+cargo test -p synvoid-dns -- mx_priority_out_of_range
+cargo test -p synvoid-dns -- srv_priority_out_of_range
+cargo test -p synvoid-dns -- name_outside_zone
+cargo test -p synvoid-dns -- invalid_ttl_rejected
+cargo test -p synvoid-dns -- soa_field_validation
+cargo test -p synvoid-dns -- target_name_validation
+```
+
 ### Dynamic UPDATE Re-Validation
 
 Dynamic UPDATE re-validates post-mutation invariants. If a crafted UPDATE removes the final SOA or creates a duplicate SOA, it is refused with RCODE NOTAUTH (RCODE 9). State is not committed on failure.
@@ -383,6 +435,14 @@ Dynamic UPDATE re-validates post-mutation invariants. If a crafted UPDATE remove
 
 - **`tests/control_plane_authorization.rs`** (10 tests): Deny-by-default UPDATE/NOTIFY/AXFR/IXFR behavior. Tests: `update_disabled_by_default_refuses_mutation`, `update_malformed_message_does_not_mutate_zone`, `update_enabled_invalid_zone_returns_error_rcode`, `notify_disabled_by_default_refused`, `notify_unknown_source_ignored`, `axfr_denied_by_default_returns_no_zone_data`, `ixfr_denied_by_default_returns_no_data`, `axfr_query_type_is_252_and_ixfr_query_type_is_251`, `transfer_disabled_when_axfr_enabled_false`, `axfr_allowed_client_gets_soa_bracketed_transfer`.
 - **`tests/verification_gate.rs`** (strengthened, ~40 tests): Replaced documentation-grade tests with behavior tests: `successful_reload_swaps_zone_atomically`, `failed_reload_preserves_previous_active_zone`, `validate_zone_for_activation_rejects_duplicate_soa`, `validate_zone_for_activation_rejects_bad_origin`, `successful_reload_invalidates_cache_for_zone`. Plus 15 protocol-semantics tests across gates 7/8/9 (DNSSEC flags, RRSIG validity window, DS digest lengths, recursive safety config invariants, ECS default, encrypted transport cache isolation).
+
+### Tightening Follow-up Test Files (Milestone 3 Tightening)
+
+- **`tests/axfr_ixfr_transfer_semantics.rs`** (~650 lines): AXFR/IXFR response assertions — SOA-bracketed transfer validation, TCP-only enforcement, require-TSIG refusal, unauthorized client refusal, unknown zone refusal, IXFR current-serial no-op, older-serial ordered deltas, too-old serial fallback/refusal, serial wraparound comparison, malformed IXFR SOA rejection.
+- **`tests/notify_behavior.rs`** (~233 lines): NOTIFY behavior — authorized newer serial accepted, stale serial ignored, unknown zone refused, unauthorized source refused, require-TSIG absent refused.
+- **`tests/update_authorized_semantics.rs`** (~437 lines): UPDATE authorized semantics — add/delete record success, prerequisite NXRRSET/YXRRSET failure, final SOA deletion refusal, duplicate SOA add refusal, invalid record value refusal, TSIG-required absent refusal, successful update cache invalidation, serial policy.
+- **`tests/dnssec_known_vectors.rs`** (~430 lines): DNSSEC known-vector verification — key tag for Ed25519 KSK/ZSK and RSA (RFC 4034 §A.2), DS digest length enforcement (SHA-1=20, SHA-256=32, SHA-384=48), canonical name/rdata for A/AAAA/CNAME/MX, response shape verification (AD/CD/RA/DO flag encoding, NXDOMAIN), DNSKEY canonical format.
+- **`tests/control_plane_exclusion.rs`** (~746 lines): Cache/coalescing exclusion proof — AXFR/IXFR/UPDATE/NOTIFY bypass query cache and coalescer, successful UPDATE invalidates cache, failed update does not invalidate cache, cache invalidation on record creation/deletion.
 
 ### CI Changes
 

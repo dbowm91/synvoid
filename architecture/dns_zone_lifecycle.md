@@ -358,6 +358,26 @@ Transition `Failed → Loading` to trigger a zone reload. If the reload succeeds
 
 Both `load_zones` and `load_zones_from_store` now call `validate_zone_for_activation()` (previously called only `validate_single_soa()`).
 
+### Activation Validation Rules (Tightening Follow-up)
+
+`validate_zone_for_activation()` was deepened to enforce record-level correctness at the activation gate. Invalid authoritative data cannot reach the active store through config, store, transfer, or update paths.
+
+| Rule | Error Variant | Description |
+|------|---------------|-------------|
+| Label length ≤63 bytes | `OwnerLabelTooLong` | Each DNS label in an owner name must be ≤63 octets (RFC 1035 §2.3.4) |
+| No empty interior labels | `EmptyInteriorLabel` | Consecutive dots in owner names produce empty labels — rejected |
+| Owner within zone tree | `NameOutsideZone` | Non-relative owner names must be subdomains of the zone origin |
+| TTL bounds | `InvalidTtl` | TTL must be 1..=2^31-1 (0 and >2^31-1 rejected) |
+| MX/SRV priority ≤ u16::MAX | `MxPriorityOutOfRange` / `SrvPriorityOutOfRange` | Priority must fit in 16 bits |
+| A records parse as Ipv4Addr | `InvalidARecordAddress` | A record value must be valid dotted-decimal IPv4 |
+| AAAA records parse as Ipv6Addr | `InvalidAaaaRecordAddress` | AAAA record value must be valid colon-hex IPv6 |
+| CNAME exclusivity | `CnameCoexistsWithOtherData` | CNAME at an owner cannot coexist with A/AAAA/MX/TXT/SRV/PTR/NS/SOA/CAA/TLSA/SVCB/HTTPS/NAPTR/SSHFP. DNSKEY/DS/RRSIG/NSEC/NSEC3/NSEC3PARAM are exempt. |
+| NULL records rejected | `UnsupportedNullRecord` | Record type NULL (config `Other`) is not permitted in activation |
+| SOA field validation | `InvalidSoaField` / `SoaTooFewFields` | SOA rdata must have ≥7 fields; serial/refresh/retry/expire/minimum must parse as u32 |
+| Target name validation | `InvalidTargetName` | NS/MX/CNAME/SRV target names must have valid labels (no empty labels, no label >63 bytes) |
+
+`ZoneValidationError` (defined in `server/mod.rs:116`) is the error type returned by the gate. It has 17 variants covering all the rules above. Each variant carries the offending name and/or value for operator diagnostics.
+
 ### Atomic Replacement Helper (`replace_zone_with_validation`)
 
 `DnsServer::replace_zone_with_validation(candidate: Zone) -> Result<(), String>` (`server/zone.rs`) atomically replaces a zone in the active store after validating. On failure, the previous zone is left untouched. The helper:

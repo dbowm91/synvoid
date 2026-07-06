@@ -143,6 +143,19 @@ impl NotifyHandler {
             return None;
         }
 
+        if self.require_tsig {
+            let parsed_pre = ParsedDnsQuery::parse(query).ok()?;
+            let additional_offset = parsed_pre.question_end;
+            let tsig = crate::tsig::parse_tsig_from_query(query, additional_offset);
+            if tsig.is_none() {
+                tracing::warn!(
+                    "SECURITY: NOTIFY DENIED from {} - TSIG required but not present",
+                    client_ip
+                );
+                return None;
+            }
+        }
+
         let parsed = ParsedDnsQuery::parse(query).ok()?;
 
         if !parsed.is_notify() || parsed.flags.is_response {

@@ -484,6 +484,10 @@ impl DynamicUpdateHandler {
         for update_record in &update.updates {
             match update_record.rclass {
                 1 => {
+                    let value = Self::format_rdata_for_record_type(
+                        update_record.rtype,
+                        &update_record.rdata,
+                    );
                     updated_zone.records.insert(
                         (
                             update_record.name.clone(),
@@ -492,7 +496,7 @@ impl DynamicUpdateHandler {
                         vec![DnsZoneRecord {
                             name: update_record.name.clone(),
                             record_type: RecordType::from(update_record.rtype),
-                            value: format!("{:?}", update_record.rdata),
+                            value,
                             ttl: update_record.ttl,
                             priority: None,
                         }],
@@ -604,6 +608,25 @@ impl DynamicUpdateHandler {
                 }
             }
             PrerequisiteCondition::NotExistsRRset => Ok(records.is_none_or(|r| r.is_empty())),
+        }
+    }
+
+    fn format_rdata_for_record_type(rtype: u16, rdata: &[u8]) -> String {
+        match RecordType::from(rtype) {
+            RecordType::A if rdata.len() == 4 => {
+                format!("{}.{}.{}.{}", rdata[0], rdata[1], rdata[2], rdata[3])
+            }
+            RecordType::AAAA if rdata.len() == 16 => {
+                let mut groups = Vec::with_capacity(8);
+                for i in 0..8 {
+                    groups.push(format!(
+                        "{:x}",
+                        u16::from_be_bytes([rdata[i * 2], rdata[i * 2 + 1]])
+                    ));
+                }
+                groups.join(":")
+            }
+            _ => format!("{:?}", rdata),
         }
     }
 

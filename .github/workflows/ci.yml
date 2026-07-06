@@ -165,6 +165,11 @@ jobs:
           cargo test -p synvoid-dns --test encrypted_transport --release
           cargo test -p synvoid-dns --test verification_gate --release
           cargo test -p synvoid-dns --test control_plane_authorization --release
+          cargo test -p synvoid-dns --test axfr_ixfr_transfer_semantics --release
+          cargo test -p synvoid-dns --test notify_behavior --release
+          cargo test -p synvoid-dns --test update_authorized_semantics --release
+          cargo test -p synvoid-dns --test dnssec_known_vectors --release
+          cargo test -p synvoid-dns --test control_plane_exclusion --release
 
       - name: Check DNS all-features compile
         run: cargo check -p synvoid-dns --all-features

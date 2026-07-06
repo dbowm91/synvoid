@@ -159,7 +159,8 @@ impl DnsServer {
                 return Err(format!("Zone {}: must contain a SOA record", zone.origin));
             }
 
-            zone.validate_zone_for_activation()?;
+            zone.validate_zone_for_activation()
+                .map_err(|e| e.to_string())?;
 
             tracing::info!("Loaded DNS zone: {} (serial: {})", zone.origin, zone.serial);
             zone.mark_active();
@@ -228,7 +229,9 @@ impl DnsServer {
     /// or test-only zones.
     pub fn replace_zone_with_validation(&self, mut candidate: Zone) -> Result<(), String> {
         let origin = candidate.origin.clone();
-        candidate.validate_zone_for_activation()?;
+        candidate
+            .validate_zone_for_activation()
+            .map_err(|e| e.to_string())?;
         candidate.mark_active();
         self.zones.insert(origin.clone(), candidate);
         self.zone_index_dirty.store(true, Ordering::Release);
