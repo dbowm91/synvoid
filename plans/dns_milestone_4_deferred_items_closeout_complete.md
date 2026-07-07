@@ -8,7 +8,7 @@
 
 | Item | Value |
 |------|-------|
-| Closure commit | TBD (this commit) |
+| Closure commit | `45078801` |
 | Local DNS tests | **1101 passed** (31 suites, ~13.3s release mode) |
 | `cargo clippy -p synvoid-dns --all-targets -- -D warnings` | **Clean** |
 | `cargo fmt --all -- --check` | **Clean** |
