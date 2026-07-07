@@ -280,7 +280,7 @@ fn decode_wire_name(resp: &[u8], start: usize) -> Option<String> {
             if pos + 1 >= resp.len() {
                 return None;
             }
-            let offset = ((len & 0x3F) as usize) << 8 | resp[pos + 1] as usize;
+            let offset = (len & 0x3F) << 8 | resp[pos + 1] as usize;
             if !jumped {
                 jump_pos = Some(pos + 2);
             }
@@ -324,6 +324,7 @@ fn response_nscount(resp: &[u8]) -> u16 {
     u16::from_be_bytes([resp[8], resp[9]])
 }
 
+#[allow(dead_code)]
 fn response_arcount(resp: &[u8]) -> u16 {
     u16::from_be_bytes([resp[10], resp[11]])
 }
@@ -924,11 +925,11 @@ fn negative_response_ttl_is_deterministic() {
 
     // Verify SOA TTL is present and deterministic for both
     for (label, resp) in [("NODATA", &resp_nodata), ("NXDOMAIN", &resp_nxdomain)] {
-        let nscount = response_nscount(&resp) as usize;
-        let mut pos = skip_question_section(&resp);
+        let nscount = response_nscount(resp) as usize;
+        let mut pos = skip_question_section(resp);
         // skip answers
-        for _ in 0..response_ancount(&resp) as usize {
-            pos = skip_wire_name(&resp, pos);
+        for _ in 0..response_ancount(resp) as usize {
+            pos = skip_wire_name(resp, pos);
             if pos + 10 > resp.len() {
                 break;
             }
@@ -936,7 +937,7 @@ fn negative_response_ttl_is_deterministic() {
             pos += 10 + rdlen;
         }
         for _ in 0..nscount {
-            pos = skip_wire_name(&resp, pos);
+            pos = skip_wire_name(resp, pos);
             if pos + 10 > resp.len() {
                 break;
             }
@@ -1359,6 +1360,7 @@ fn flag_ad(resp: &[u8]) -> bool {
     response_flags(resp) & 0x0020 != 0
 }
 
+#[allow(dead_code)]
 fn flag_tc(resp: &[u8]) -> bool {
     response_flags(resp) & 0x0200 != 0
 }

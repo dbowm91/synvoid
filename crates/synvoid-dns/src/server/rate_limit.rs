@@ -111,7 +111,7 @@ impl<K: Eq + std::hash::Hash + Clone> TimedBucketMap<K> {
                 .iter()
                 .map(|(k, v)| (k.clone(), v.last_access_time()))
                 .collect();
-            items.sort_by(|a, b| a.1.cmp(&b.1));
+            items.sort_by_key(|a| a.1);
 
             for (key, _) in items.into_iter().take(excess.min(self.cleanup_batch_size)) {
                 self.buckets.remove(&key);

@@ -322,7 +322,7 @@ mod tests {
         let soa_value = "ns.example.com. hostmaster.example.com. 2024010101 3600 600 604800 86400";
         let result = canonical_rdata(6, soa_value, None, None, None, 3600);
 
-        assert!(result.len() > 0);
+        assert!(!result.is_empty());
 
         // SOA record structure: mname (primary NS) + rname (admin) + serial + refresh + retry + expire + minimum
         // mname: ns.example.com = [2, 'ns', 7, 'example', 3, 'com', 0] = 16 bytes
@@ -419,7 +419,7 @@ mod tests {
         };
 
         let dnskey = compute_dnskey(&key);
-        assert!(dnskey.len() > 0);
+        assert!(!dnskey.is_empty());
         // DNSKEY format: flags (2 bytes) + protocol (1 byte) + algorithm (1 byte) + public key
         assert_eq!(dnskey[0], 1); // flags high byte (257 = 0x0101)
         assert_eq!(dnskey[1], 1); // flags low byte

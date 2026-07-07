@@ -333,7 +333,7 @@ fn test_cache_concurrent_inserts() {
 fn test_limits_deterministic_rejection_under_overload() {
     let limits = limits_no_degrade(2, 2, 4096, 65535, 100, 300, 30);
     let g1 = limits.try_acquire_connection().unwrap();
-    let g2 = limits.try_acquire_connection().unwrap();
+    let _g2 = limits.try_acquire_connection().unwrap();
     for _ in 0..10 {
         assert!(limits.try_acquire_connection().is_err());
     }

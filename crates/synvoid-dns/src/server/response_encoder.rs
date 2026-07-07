@@ -428,7 +428,6 @@ pub(super) fn build_opt_encoded_record(udp_payload_size: u16, dnssec_ok: bool) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parsed_query::build_response_flags as canonical_build_response_flags;
 
     fn make_record(name: &str, rt: RecordType, value: &str, ttl: u32) -> DnsZoneRecord {
         DnsZoneRecord {

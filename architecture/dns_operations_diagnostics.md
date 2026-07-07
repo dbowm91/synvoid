@@ -1,5 +1,9 @@
 # DNS Operations Diagnostics
 
+## Production-Supported Boundary Reminder
+
+All DNS profiles are labeled based on **internal in-process Rust test coverage**. External client interop (`dig`, `delv`, `kdig`, `ldns-verify-zone`, `named-checkzone`) is NOT automatically run in CI — it remains operator-validated. See `architecture/dns_production_profiles.md` → **Release Support Matrix** for the full profile-to-test mapping and deferred external checks. The `scripts/dns/conformance.sh` script documents external tool checks but requires those tools to be installed locally.
+
 ## Quick Health Check
 
 ### UDP Query Smoke Test

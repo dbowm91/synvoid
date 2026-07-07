@@ -746,18 +746,18 @@ impl TrustAnchorManager {
                         }
                     }
                 }
-                TrustAnchorState::Valid => {
-                    if anchor.is_expired(self.config.trust_anchor_retention_days) {
-                        anchor.state = TrustAnchorState::Missing;
-                        tracing::warn!(
-                            "RFC 5011: Key {} expired (not seen for {} days)",
-                            anchor.key_tag,
-                            self.config.trust_anchor_retention_days
-                        );
-                        events.push(Rfc5011Event::KeyMissing {
-                            key_tag: anchor.key_tag,
-                        });
-                    }
+                TrustAnchorState::Valid
+                    if anchor.is_expired(self.config.trust_anchor_retention_days) =>
+                {
+                    anchor.state = TrustAnchorState::Missing;
+                    tracing::warn!(
+                        "RFC 5011: Key {} expired (not seen for {} days)",
+                        anchor.key_tag,
+                        self.config.trust_anchor_retention_days
+                    );
+                    events.push(Rfc5011Event::KeyMissing {
+                        key_tag: anchor.key_tag,
+                    });
                 }
                 _ => {}
             }

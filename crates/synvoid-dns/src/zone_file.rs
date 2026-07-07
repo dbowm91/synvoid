@@ -498,7 +498,7 @@ $ORIGIN example.com.
             .iter()
             .enumerate()
         {
-            let mut fields = vec![
+            let mut fields = [
                 "ns1.example.com",
                 "admin.example.com",
                 "2024030901",

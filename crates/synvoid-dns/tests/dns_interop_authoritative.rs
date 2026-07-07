@@ -328,7 +328,7 @@ fn decode_wire_name(resp: &[u8], start: usize) -> Option<String> {
             if pos + 1 >= resp.len() {
                 return None;
             }
-            let offset = ((len & 0x3F) as usize) << 8 | resp[pos + 1] as usize;
+            let offset = (len & 0x3F) << 8 | resp[pos + 1] as usize;
             if !jumped {
                 jumped = true;
             }

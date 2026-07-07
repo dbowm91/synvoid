@@ -128,6 +128,7 @@ fn build_ixfr_query(zone_name: &str, serial: u32) -> Vec<u8> {
 
 struct ParsedRecord {
     record_type: u16,
+    #[allow(dead_code)]
     rdata: Vec<u8>,
 }
 
@@ -146,6 +147,7 @@ fn skip_name(buf: &[u8], pos: &mut usize) {
     }
 }
 
+#[allow(dead_code)]
 fn extract_soa_serial(rdata: &[u8]) -> u32 {
     let mut pos = 0;
     skip_name(rdata, &mut pos);
@@ -287,7 +289,7 @@ fn axfr_response_includes_expected_records() {
     let mut found_ns = false;
     let mut soa_count = 0;
     for msg in &messages {
-        let parsed = parse_axfr_messages(&[msg.clone()]);
+        let parsed = parse_axfr_messages(std::slice::from_ref(msg));
         for rec in &parsed[0] {
             match rec.record_type {
                 1 => found_a = true,

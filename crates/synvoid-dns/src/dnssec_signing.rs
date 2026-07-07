@@ -297,7 +297,7 @@ mod tests {
     fn ed25519_test_key() -> ZoneSigningKey {
         let mut private_bytes = [0u8; 32];
         getrandom::getrandom(&mut private_bytes).expect("getrandom failed");
-        let signing_key = ed25519_dalek::SigningKey::from_bytes(&private_bytes.into());
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&private_bytes);
         let verifying_key = signing_key.verifying_key().to_bytes().to_vec();
         let private_bytes = signing_key.to_bytes().to_vec();
 
@@ -347,7 +347,7 @@ mod tests {
         let signature = sign_data(b"test data", &key).unwrap();
         let rrsig = create_rrsig_record(&key, 1, 3600, "example.com.", &signature, 2);
 
-        assert!(rrsig.len() > 0);
+        assert!(!rrsig.is_empty());
         let type_covered = u16::from_be_bytes([rrsig[0], rrsig[1]]);
         assert_eq!(type_covered, 1);
         assert_eq!(rrsig[2], Algorithm::Ed25519.to_u8());

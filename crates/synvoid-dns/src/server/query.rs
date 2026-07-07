@@ -899,12 +899,9 @@ impl DnsServer {
         let client_ip_for_log = client_ip.unwrap_or(IpAddr::from([127, 0, 0, 1]));
         if let (Some(cs), Some(edns)) = (ctx.cookie_server, &edns_options) {
             if let Some(ref cookie) = edns.cookie {
-                if cookie.server_cookie.is_some() {
-                    cookie_valid = cs.validate_cookie(
-                        client_ip_for_log,
-                        &cookie.client_cookie,
-                        cookie.server_cookie.as_ref().unwrap(),
-                    );
+                if let Some(ref server_cookie) = cookie.server_cookie {
+                    cookie_valid =
+                        cs.validate_cookie(client_ip_for_log, &cookie.client_cookie, server_cookie);
                 } else {
                     cookie_absent = true;
                 }
@@ -1406,6 +1403,7 @@ impl DnsServer {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn build_nxdomain_response(
         response_id: u16,
         qname: &str,
@@ -1556,6 +1554,7 @@ impl DnsServer {
         Arc::new(packet)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn build_nodata_response(
         response_id: u16,
         qname: &str,

@@ -6,10 +6,11 @@ use synvoid_dns::cache::TransportClass;
 use synvoid_dns::server::DnsServer;
 
 fn make_config(bind: &str, port: u16) -> DnsConfig {
-    let mut c = DnsConfig::default();
-    c.bind_address = bind.to_string();
-    c.port = port;
-    c
+    DnsConfig {
+        bind_address: bind.to_string(),
+        port,
+        ..Default::default()
+    }
 }
 
 /// Find an available ephemeral port by binding to port 0, reading the assigned port,
@@ -192,9 +193,11 @@ fn recursive_server_handle_is_not_leaked() {
     // - Dropping the DnsServer drops the shutdown_tx, causing receivers to error
     // - Tasks exit gracefully on channel closure
 
-    let mut config = DnsConfig::default();
-    config.bind_address = "127.0.0.1".to_string();
-    config.port = ephemeral_port();
+    let mut config = DnsConfig {
+        bind_address: "127.0.0.1".to_string(),
+        port: ephemeral_port(),
+        ..Default::default()
+    };
     config.settings.cache_enabled = false;
 
     let server = DnsServer::new(config, None);

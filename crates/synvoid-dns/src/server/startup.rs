@@ -666,10 +666,11 @@ mod tests {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     fn make_config(bind: &str, port: u16) -> DnsConfig {
-        let mut c = DnsConfig::default();
-        c.bind_address = bind.to_string();
-        c.port = port;
-        c
+        DnsConfig {
+            bind_address: bind.to_string(),
+            port,
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -724,9 +725,11 @@ mod tests {
 
     #[test]
     fn shutdown_runtime_is_idempotent() {
-        let mut config = DnsConfig::default();
-        config.bind_address = "127.0.0.1".to_string();
-        config.port = 5353;
+        let config = DnsConfig {
+            bind_address: "127.0.0.1".to_string(),
+            port: 5353,
+            ..Default::default()
+        };
         let mut server = DnsServer::new(config, None);
         // First call should send the signal
         server.shutdown_runtime();

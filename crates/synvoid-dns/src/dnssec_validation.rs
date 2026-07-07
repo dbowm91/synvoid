@@ -354,7 +354,7 @@ mod tests {
     fn ed25519_test_key() -> ZoneSigningKey {
         let mut private_bytes = [0u8; 32];
         getrandom::getrandom(&mut private_bytes).expect("getrandom failed");
-        let signing_key = ed25519_dalek::SigningKey::from_bytes(&private_bytes.into());
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&private_bytes);
         let verifying_key = signing_key.verifying_key().to_bytes().to_vec();
         let private_bytes = signing_key.to_bytes().to_vec();
 

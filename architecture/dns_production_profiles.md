@@ -14,6 +14,10 @@ SynVoid DNS ships with secure-by-default configuration. Every profile below star
 | **Beta** | Functional but limited real-world validation |
 | **Experimental** | Wired but untested at scale, may change without notice |
 
+### Production-Supported Boundary
+
+Every profile labeled **Production-Supported** means: **verified by the internal in-process Rust test suite; external client interop (`dig`, `delv`, `kdig`, `ldns-verify-zone`, `named-checkzone`) is NOT automatically run in CI and remains operator-validated.** The `scripts/dns/conformance.sh` script documents external tool checks but requires those tools to be installed locally. Profiles that rely on external client compatibility should be validated against the conformance script before production deployment.
+
 ### Global Safe Defaults
 
 These defaults are verified safe and apply to all profiles unless overridden:
@@ -89,6 +93,8 @@ cache_max_ttl = 3600
 ```
 
 ### Safe Defaults (No Override Needed)
+
+> **Production-Supported Boundary**: This profile is verified by internal in-process Rust tests. External client interop (`dig`, `delv`, `kdig`) is NOT run in CI. See the [Production-Supported Boundary](#production-supported-boundary) section above.
 
 - Rate limiting: 500/sec shared, 100/sec RRL
 - Cache: 100K entries, 60–3600s TTL range
@@ -170,6 +176,8 @@ query_timeout_secs = 5
 
 ### Safe Defaults (No Override Needed)
 
+> **Production-Supported Boundary**: This profile is verified by internal in-process Rust tests. External client interop (`dig`, `delv`, `kdig`) is NOT run in CI. See the [Production-Supported Boundary](#production-supported-boundary) section above.
+
 - Binds to `127.0.0.1` — not accessible from the network
 - DNSSEC validation enabled (Recursive provider required for real validation)
 - QNAME minimization enabled for privacy
@@ -195,6 +203,8 @@ query_timeout_secs = 5
 ### Important: Forwarder Mode Limitation
 
 `upstream_provider = "System"` uses `HickoryResolver` which does **not** perform DNSSEC validation. This is by design — the OS resolvers handle their own validation. To get end-to-end DNSSEC validation, use `upstream_provider = "Recursive"`.
+
+The `"Recursive"` provider is what delivers real DNSSEC validation: it performs its own chain-of-trust verification against configured trust anchors. The `"System"` provider only forwards queries to OS resolvers and returns whatever they return — if the OS resolver strips the AD bit or fails validation, SynVoid will not detect it. For production deployments requiring DNSSEC, always use `upstream_provider = "Recursive"` with a valid `root_hints_path`.
 
 ### Verification
 
@@ -256,6 +266,8 @@ cache_size = 100000
 ```
 
 ### Safe Defaults (No Override Needed)
+
+> **Production-Supported Boundary**: This profile is verified by internal in-process Rust tests. External client interop (`dig`, `delv`, `kdig`) is NOT run in CI. See the [Production-Supported Boundary](#production-supported-boundary) section above.
 
 - Cache: 100K entries, 60–3600s TTL range
 - Rate limiting: 500/sec shared
@@ -322,6 +334,8 @@ block_zone_transfers = false
 
 ### Safe Defaults (No Override Needed)
 
+> **Production-Supported Boundary**: This profile is verified by internal in-process Rust tests. External client interop (`dig`, `delv`, `kdig`) is NOT run in CI. See the [Production-Supported Boundary](#production-supported-boundary) section above.
+
 - `require_tsig = true` — transfers require TSIG authentication
 - Firewall blocks zone transfers by default (`block_zone_transfers = true`)
 - Rate limiting active (500/sec shared)
@@ -345,6 +359,12 @@ block_zone_transfers = false
 
 ### Verification
 
+TSIG coverage spans positive and negative paths:
+
+- **Positive TSIG**: `tsig_success_fixtures` — sign+verify roundtrips for HMAC-SHA256, SHA-512, SHA-1, SHA-384; key management (add, remove, coexist, runtime addition); error codes (BADTIME); key name embedding in RDATA.
+- **Negative TSIG / unsigned rejection**: `control_plane_authorization` — AXFR/IXFR denied by default when `require_tsig = true` but no TSIG present; `notify_behavior` — NOTIFY refused when `require_tsig = true` without TSIG; `update_authorized_semantics` — UPDATE refused when `require_tsig = true` without TSIG; `update_atomicity_rollback` — serial unchanged when TSIG absent.
+- **Denied-by-default authorization**: `control_plane_authorization` — 10 deny-by-default tests enforcing that UPDATE/NOTIFY/AXFR/IXFR all require explicit authorization.
+
 ```bash
 # Transfer tests
 cargo test -p synvoid-dns -- axfr_tcp_only
@@ -353,7 +373,7 @@ cargo test -p synvoid-dns -- ixfr_history
 cargo test -p synvoid-dns -- store_volatile
 cargo test -p synvoid-dns -- store_atomic_write
 
-# TSIG tests
+# TSIG positive tests
 cargo test -p synvoid-dns --test tsig_success_fixtures
 
 # IXFR tests
@@ -362,8 +382,14 @@ cargo test -p synvoid-dns --test ixfr_record_delta
 # Interop
 cargo test -p synvoid-dns --test dns_interop_transfers
 
-# Authorization tests
+# Authorization tests (includes TSIG negative / deny-by-default)
 cargo test -p synvoid-dns --test control_plane_authorization
+
+# NOTIFY TSIG enforcement
+cargo test -p synvoid-dns --test notify_behavior
+
+# UPDATE TSIG enforcement
+cargo test -p synvoid-dns --test update_authorized_semantics
 ```
 
 ---
@@ -397,6 +423,8 @@ block_zone_transfers = true
 
 ### Safe Defaults (No Override Needed)
 
+> **Beta Boundary**: This profile relies on Transfer-Enabled Primary's TSIG implementation and the `cache_invalidation_axfr` test path. No separate passive-listener harness exists for the secondary role. See the [Production-Supported Boundary](#production-supported-boundary) section above.
+
 - `require_tsig = true` — validates transfer responses
 - Firewall blocks outgoing transfers (secondary only receives)
 - Cache enabled for serving
@@ -418,11 +446,19 @@ block_zone_transfers = true
 
 ### Verification
 
+This profile reuses the primary's TSIG and IXFR test paths. No separate passive-listener harness exists for the secondary role, which is why this profile is **Beta**. The `cache_invalidation_axfr` test verifies cache invalidation on AXFR receipt — the closest path to secondary-as-receiver behavior.
+
 ```bash
-# Same as Transfer-Enabled Primary
+# TSIG validation (reuses primary's fixtures)
 cargo test -p synvoid-dns --test tsig_success_fixtures
+
+# IXFR record deltas (reuses primary's test path)
 cargo test -p synvoid-dns --test ixfr_record_delta
+
+# Transfer interop (primary sends, secondary receives)
 cargo test -p synvoid-dns --test dns_interop_transfers
+
+# Cache invalidation on AXFR receipt (secondary behavior)
 cargo test -p synvoid-dns -- cache_invalidation_axfr
 ```
 
@@ -459,6 +495,8 @@ block_zone_transfers = true
 
 ### Safe Defaults (No Override Needed)
 
+> **Production-Supported Boundary**: This profile is verified by internal in-process Rust tests. External client interop (`dig`, `delv`, `kdig`, `ldns-verify-zone`) is NOT run in CI. See the [Production-Supported Boundary](#production-supported-boundary) section above.
+
 - Algorithm: Ed25519 (modern, fast, small signatures)
 - NSEC3 enabled (prevents zone walking)
 - Key rollover: 30 days
@@ -479,6 +517,16 @@ block_zone_transfers = true
 | NSEC3 salt rotation | Configurable iterations and algorithm |
 | Clock skew | RRSIG inception set 1 day in the past |
 | Key storage security | `key_path` should have `0o700` permissions |
+
+### Coverage Boundary
+
+DNSSEC coverage is layered across three tiers:
+
+| Tier | What | Status | Example Tests |
+|------|------|--------|---------------|
+| **Known-vector DNSSEC tests** | Primitives (hashes, signatures, key tags, NSEC/NSEC3 wire format, RRSIG encoding) | Covered | `dnssec_known_vectors`, `dns_interop_dnssec` |
+| **Live signed-answer path tests** | End-to-end signing with real key material, RRSIG generation, canonical rdata ordering | Covered | `dnssec_live_signing` |
+| **External delv/ldns-verify-zone/named-checkzone** | Third-party DNSSEC chain-of-trust validation | **NOT run in CI** | Deferred — see [Deferred Features](#deferred-features) |
 
 ### Verification
 
@@ -540,6 +588,8 @@ idle_timeout_secs = 30
 
 ### Safe Defaults (No Override Needed)
 
+> **Beta Boundary**: Internal Rust integration tests verify wire format and config roundtrip. External client live-wire tests (`kdig`, `khost`, `ldns`) are NOT run in CI. See the [Production-Supported Boundary](#production-supported-boundary) section above.
+
 - DoT: port 853, TCP+TLS 1.3
 - DoH: port 443, HTTP/2+TLS 1.3, `application/dns-message` enforced
 - DoQ: port 853, QUIC+TLS 1.3, 100 concurrent streams, 30s idle timeout
@@ -567,6 +617,8 @@ idle_timeout_secs = 30
 | Cross-transport response contamination | TransportClass in cache key |
 
 ### Verification
+
+Internal Rust integration tests (`encrypted_transport`, `dot`, `doh`, `doq`) verify wire format parsing, config roundtrip, TLS cert configuration, and transport class cache namespace separation. The `dns_interop_encrypted` test suite covers additional config validation (disabled-by-default, cert path validation). **No external client live-wire tests** (`kdig`, `khost`, `ldns`) are run in CI. The Beta label reflects internal test coverage only for encrypted mode.
 
 ```bash
 # Encrypted transport tests
@@ -611,6 +663,8 @@ cache_size = 100000
 ```
 
 ### Safe Defaults (No Override Needed)
+
+> **Experimental Boundary**: This profile requires the `mesh` and `dns` feature flags. External client interop is NOT run in CI. See the [Production-Supported Boundary](#production-supported-boundary) section above.
 
 - Cache: 100K entries with namespace separation
 - DNSSEC validation enabled
@@ -734,6 +788,23 @@ cargo test -p synvoid-dns --test encrypted_transport dot doh doq                
 cargo test -p synvoid-dns --test dns_stress_resource_limits -- --test-threads=1                   # Stress
 cargo test -p synvoid-dns --test verification_gate                                                # Gate checks
 ```
+
+---
+
+## Release Support Matrix
+
+| Profile | Internal Tests | External Checks | Benchmark Coverage | Known Deferrals |
+|---------|---------------|-----------------|-------------------|-----------------|
+| **Authoritative-Only Public** | `transport_lifecycle`, `configured_bind_addr`, `tcp_hard_limit`, `truncation`, `dns_interop_authoritative`, `dns_interop_truncation`, `authoritative_negative`, `dns_stress_resource_limits`, `axfr_tcp_only`, `axfr_disabled_by_default`, `phase7_cache_tests` | Not run in CI | `cache_bench`, `wire_bench`, `zone_bench`, `coalescer_bench`, `limits_bench` | RPZ, DNS Prefetch, Anycast |
+| **Local Recursive** | `recursive_cache`, `open_resolver`, `query_timeout`, `dns_recursive_isolation`, `dns_config_fidelity`, `dns_interop_dnssec`, `dns_interop_recursive`, `phase7_cache_tests` | Not run in CI — requires local `dig`/`delv` | `cache_bench`, `wire_bench` | Custom Trust Anchors, HSM Integration |
+| **Internal Recursive** | `dns_recursive_isolation`, `dns_config_fidelity`, `configured_bind_addr`, `dns_interop_recursive` | Not run in CI — requires local `dig`/`delv` | `cache_bench`, `wire_bench` | Custom Trust Anchors, HSM Integration |
+| **Transfer-Enabled Primary** | `axfr_tcp_only`, `axfr_disabled_by_default`, `ixfr_history`, `store_volatile`, `store_atomic_write`, `tsig_success_fixtures`, `ixfr_record_delta`, `dns_interop_transfers`, `control_plane_authorization`, `control_plane_cache_completion`, `notify_behavior`, `update_authorized_semantics` | Not run in CI — requires local `dig` with TSIG | `cache_bench`, `wire_bench`, `zone_bench` | IXFR Config Toggle, IXFR Fallback to AXFR, Persistent TCP Pipelining |
+| **Transfer-Enabled Secondary** | `tsig_success_fixtures`, `ixfr_record_delta`, `dns_interop_transfers`, `cache_invalidation_axfr`, `control_plane_cache_completion` | Not run in CI — requires primary+secondary pair | `cache_bench`, `wire_bench` | No passive-listener harness, Persistent TCP Pipelining |
+| **DNSSEC-Signed Authoritative** | `dnssec_live_signing`, `dnssec_known_vectors`, `dns_interop_dnssec` | Not run in CI — requires `delv`, `ldns-verify-zone`, `named-checkzone` | `cache_bench`, `wire_bench`, `zone_bench` | External DNSSEC Tooling, NSEC3 Closest-Encloser Proofs, Bailiwick Enforcement |
+| **Encrypted Transport** | `encrypted_transport`, `dot`, `doh`, `doq`, `dns_interop_encrypted`, `transport` | Not run in CI — requires `kdig`, `khost`, `ldns` | `wire_bench` | DoQ bind_address hardcoded, EDNS Keepalive, DNS Padding, QNAME Privacy |
+| **Full Mesh DNS** | `mesh_forced_cleanup`, `mesh_task_ownership_guard`, `worker_mesh_supervision_boundary_guard`, `composition_root_behavioral` | Not run in CI — requires multi-node mesh | `cache_bench`, `wire_bench` | Experimental — may change without notice |
+
+**Total cells**: 32 (8 profiles × 4 columns)
 
 ---
 

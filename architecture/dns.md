@@ -2057,7 +2057,10 @@ Run: `./scripts/dns/conformance.sh`
 - **Milestone 3 Final**: Live DNSSEC, TSIG fixtures, IXFR delta, UPDATE atomicity, NOTIFY scheduling, 1001 tests
 - **Milestone 4 Phase 1**: Observability and operations (metrics taxonomy, health checker, structured logging)
 - **Milestone 4 Phase 2**: Performance and load testing (5 benchmark suites, 28 stress tests)
+- **Milestone 4 Phase 3**: Interop & conformance tests (7 internal interop suites; external tool checks deferred)
 - **Milestone 4 Phase 4**: Production profiles (8 profiles with support classification), safe defaults audit (60+ fields verified), 5 example configs, release gate (781 tests), security review (all areas safe, bailiwick observability-only warning)
+- **Milestone 4 Verification Closure**: 9-workstream gap-fixes; CI expanded to 26 suites; `DnsHealthChecker` wired; 5 watchable metrics wired; all 5 example configs parse-tested (1101 tests)
+- **Milestone 4 Deferral Closeout**: 8-workstream closeout. 32 unwired DnsMetrics methods removed (metrics.rs 1128→504 lines). `cargo clippy -p synvoid-dns --all-targets -- -D warnings` clean (10 `#[allow(too_many_arguments)]` for genuine large-fn sites). Local benchmark baseline captured at `benchmarks/dns/results/2026-07-07-baseline.md` (i9-9900K, rustc 1.95.0, 53 criterion timings). External live-wire interop, external DNSSEC tooling, and remote CI status visibility are accepted as non-blocking deferrals. Production-Supported labels mean "verified by internal Rust test suite only; external client interop is operator-validated." See `architecture/dns_production_profiles.md` → Release Support Matrix and `plans/dns_milestone_4_deferred_items_closeout_complete.md`.
 
 ---
 

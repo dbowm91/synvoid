@@ -59,7 +59,7 @@ impl QueryKey {
     ) -> Option<Self> {
         let parsed = ParsedDnsQuery::parse(query).ok()?;
         let client_str = client_ip.map(|ip| ip.to_string());
-        let tc = transport_class.unwrap_or(TransportClass::default());
+        let tc = transport_class.unwrap_or_default();
         Some(Self {
             name: parsed.qname.to_lowercase(),
             qtype: parsed.qtype,
@@ -78,7 +78,7 @@ impl QueryKey {
         transport_class: Option<TransportClass>,
     ) -> Option<Self> {
         let client_str = client_ip.map(|ip| ip.to_string());
-        let tc = transport_class.unwrap_or(TransportClass::default());
+        let tc = transport_class.unwrap_or_default();
         Some(Self {
             name: parsed.qname.to_lowercase(),
             qtype: parsed.qtype,
@@ -152,11 +152,7 @@ impl QueryCoalescer {
         // Extract the receiver outside the lock to avoid Send issues
         let opt_receiver = {
             let in_flight = self.in_flight.read();
-            if let Some(entry) = in_flight.get(&key) {
-                Some(entry.sender.subscribe())
-            } else {
-                None
-            }
+            in_flight.get(&key).map(|entry| entry.sender.subscribe())
         };
 
         // Now await with the receiver, no lock held

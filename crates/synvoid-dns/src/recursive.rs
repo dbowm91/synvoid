@@ -1022,6 +1022,7 @@ impl RecursiveDnsServer {
         ))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build_cached_response(
         &self,
         qname: &[u8],

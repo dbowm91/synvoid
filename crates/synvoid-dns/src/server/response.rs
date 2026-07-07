@@ -5,6 +5,7 @@ use super::response_encoder::{
 use super::*;
 
 impl DnsServer {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn build_response(
         query_id: u16,
         qname: &str,
@@ -174,6 +175,7 @@ impl DnsServer {
         (Arc::new(packet), EncodeReport::default())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn build_truncated_response(
         query_id: u16,
         qname: &str,
@@ -727,7 +729,6 @@ impl DnsServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::server::response_encoder::{build_opt_encoded_record, build_response_flags};
 
     fn make_record(name: &str, rt: RecordType, value: &str, ttl: u32) -> DnsZoneRecord {
         DnsZoneRecord {

@@ -51,6 +51,7 @@ impl ZoneTransfer {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn with_security_config(
         zones: Arc<ShardedZoneStore>,
         allowed_transfers: Vec<String>,
@@ -644,16 +645,15 @@ impl ZoneTransfer {
             match (old_recs, new_recs) {
                 (Some(old), None) => to_delete.push((key.clone(), old.clone())),
                 (None, Some(new)) => to_add.push((key.clone(), new.clone())),
-                (Some(old), Some(new)) => {
+                (Some(old), Some(new))
                     if old.len() != new.len()
                         || old
                             .iter()
                             .zip(new.iter())
-                            .any(|(a, b)| a.value != b.value || a.ttl != b.ttl)
-                    {
-                        to_delete.push((key.clone(), old.clone()));
-                        to_add.push((key.clone(), new.clone()));
-                    }
+                            .any(|(a, b)| a.value != b.value || a.ttl != b.ttl) =>
+                {
+                    to_delete.push((key.clone(), old.clone()));
+                    to_add.push((key.clone(), new.clone()));
                 }
                 _ => {}
             }

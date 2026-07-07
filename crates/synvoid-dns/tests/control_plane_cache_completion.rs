@@ -124,6 +124,7 @@ fn build_axfr_query(zone_name: &str) -> Vec<u8> {
     buf
 }
 
+#[allow(dead_code)]
 struct ParsedRecord {
     record_type: u16,
 }
@@ -302,7 +303,7 @@ fn notify_invalidates_zone_cache() {
 fn axfr_reads_from_zone_store() {
     let zones = Arc::new(ShardedZoneStore::new());
     zones.insert("test.local".to_string(), zone_with_records("test.local", 1));
-    let cache = Arc::new(DnsCache::new(1000, 300, 1));
+    let _cache = Arc::new(DnsCache::new(1000, 300, 1));
     // Cache is empty — AXFR must still work
     let transfer = ZoneTransfer::with_security_config(
         zones,

@@ -18,7 +18,7 @@ use synvoid_dns::server::{DnsZoneRecord, RecordType, Zone};
 fn ed25519_ksk() -> ZoneSigningKey {
     let mut priv_bytes = [0u8; 32];
     getrandom::getrandom(&mut priv_bytes).expect("getrandom");
-    let signing_key = ed25519_dalek::SigningKey::from_bytes(&priv_bytes.into());
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(&priv_bytes);
     let verifying = signing_key.verifying_key().to_bytes().to_vec();
     let private = signing_key.to_bytes().to_vec();
     ZoneSigningKey {
@@ -38,7 +38,7 @@ fn ed25519_ksk() -> ZoneSigningKey {
 fn ed25519_zsk() -> ZoneSigningKey {
     let mut priv_bytes = [0u8; 32];
     getrandom::getrandom(&mut priv_bytes).expect("getrandom");
-    let signing_key = ed25519_dalek::SigningKey::from_bytes(&priv_bytes.into());
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(&priv_bytes);
     let verifying = signing_key.verifying_key().to_bytes().to_vec();
     let private = signing_key.to_bytes().to_vec();
     ZoneSigningKey {
@@ -55,6 +55,7 @@ fn ed25519_zsk() -> ZoneSigningKey {
     }
 }
 
+#[allow(dead_code)]
 fn rsa_test_key() -> ZoneSigningKey {
     // Use a fixed 256-byte RSA public key representation for testing
     // (avoids rand_core version conflicts between rsa and getrandom)

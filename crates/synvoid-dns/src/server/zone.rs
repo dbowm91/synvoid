@@ -307,6 +307,7 @@ impl DnsServer {
         self
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn with_zone_transfer_config(
         mut self,
         allowed_transfers: Vec<String>,
@@ -383,7 +384,7 @@ impl DnsServer {
 
             trie.insert(&origin_lower);
         });
-        index.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        index.sort_by_key(|b| std::cmp::Reverse(b.0.len()));
 
         *self.zone_index.write() = index;
         *self.zone_index_btree.write() = btree_index;

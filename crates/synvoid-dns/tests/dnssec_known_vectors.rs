@@ -68,6 +68,7 @@ fn key_tag_minimal_key() {
 
 // ── Section 2: DS digest length enforcement ─────────────────────────────
 
+#[allow(dead_code)]
 fn test_dnskey_rdata() -> Vec<u8> {
     // Build DNSKEY RDATA: flags(257) + protocol(3) + algorithm(15) + pub_key(32)
     let mut buf = Vec::new();

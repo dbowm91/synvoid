@@ -87,6 +87,7 @@ fn build_ixfr_query(zone_name: &str, serial: u32) -> Vec<u8> {
 
 struct ParsedRecord {
     record_type: u16,
+    #[allow(dead_code)]
     rdata: Vec<u8>,
 }
 
@@ -407,7 +408,7 @@ fn ixfr_multi_record_delta_counts() {
         .unwrap();
 
     assert_eq!(msgs.len(), 2);
-    let parsed = parse_axfr_messages(&msgs);
+    let _parsed = parse_axfr_messages(&msgs);
 
     // First message (delete): old SOA + deleted www A
     let first_ancount = u16::from_be_bytes([msgs[0][6], msgs[0][7]]);

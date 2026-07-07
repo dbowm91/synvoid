@@ -70,9 +70,10 @@ impl fmt::Display for InvalidationReason {
 /// Different transports and EDNS configurations can produce different wire-format
 /// responses (e.g., UDP with 512-byte limit vs. TCP with no limit, or DO-bit
 /// differences). The transport class captures the dimensions that affect response shape.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Ord, PartialOrd)]
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Ord, PartialOrd)]
 pub enum TransportClass {
     /// UDP with standard 512-byte limit (no EDNS)
+    #[default]
     Udp512,
     /// UDP with EDNS payload size (includes 1232-byte default)
     UdpEdns(u16),
@@ -82,12 +83,6 @@ pub enum TransportClass {
     Http,
     /// DNS-over-QUIC
     Quic,
-}
-
-impl Default for TransportClass {
-    fn default() -> Self {
-        Self::Udp512
-    }
 }
 
 impl TransportClass {
@@ -112,18 +107,13 @@ impl TransportClass {
 ///
 /// Authoritative cache entries come from local zone data. Recursive cache entries
 /// come from upstream resolvers. These must never share cache key space.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Ord, PartialOrd)]
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Ord, PartialOrd)]
 pub enum CacheNamespace {
     /// Local authoritative zone data
+    #[default]
     Authoritative,
     /// Recursive resolution results from upstream
     Recursive,
-}
-
-impl Default for CacheNamespace {
-    fn default() -> Self {
-        Self::Authoritative
-    }
 }
 
 /// DNS cache key covering all output-affecting dimensions.

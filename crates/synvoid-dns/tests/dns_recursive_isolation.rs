@@ -1,3 +1,5 @@
+#![allow(clippy::field_reassign_with_default)]
+
 use std::net::IpAddr;
 use std::sync::Arc;
 
@@ -1591,7 +1593,7 @@ fn test_ad_bit_gated_on_do_bit() {
     let parsed_no_do = synvoid_dns::parsed_query::ParsedDnsQuery::parse(&q_no_do).unwrap();
     assert!(!parsed_no_do.dnssec_ok);
 
-    let ad_bit_should_be_set = true && parsed_no_do.dnssec_ok;
+    let ad_bit_should_be_set = parsed_no_do.dnssec_ok;
     assert!(
         !ad_bit_should_be_set,
         "AD must be gated on DO bit: AD=0 when DO=0"
@@ -1601,7 +1603,7 @@ fn test_ad_bit_gated_on_do_bit() {
     let parsed_with_do = synvoid_dns::parsed_query::ParsedDnsQuery::parse(&q_with_do).unwrap();
     assert!(parsed_with_do.dnssec_ok);
 
-    let ad_bit_when_do = true && parsed_with_do.dnssec_ok;
+    let ad_bit_when_do = parsed_with_do.dnssec_ok;
     assert!(
         ad_bit_when_do,
         "AD can be set when DO=1 and validation succeeds"

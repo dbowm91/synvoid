@@ -140,6 +140,7 @@ impl TsigVerifier {
         self.keys.write().remove(name)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn verify(
         &self,
         _tsig_record: &[u8],

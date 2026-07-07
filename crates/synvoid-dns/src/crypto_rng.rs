@@ -51,8 +51,7 @@ mod tests {
 
     #[test]
     fn test_random_u16_generates_valid_value() {
-        let val = random_u16().expect("Crypto RNG should work in tests");
-        assert!(val <= u16::MAX);
+        let _val = random_u16().expect("Crypto RNG should work in tests");
     }
 
     #[test]
@@ -70,14 +69,12 @@ mod tests {
 
     #[test]
     fn test_random_u32_generates_valid_value() {
-        let val = random_u32().expect("Crypto RNG should work in tests");
-        assert!(val <= u32::MAX);
+        let _val = random_u32().expect("Crypto RNG should work in tests");
     }
 
     #[test]
     fn test_random_u64_generates_valid_value() {
-        let val = random_u64().expect("Crypto RNG should work in tests");
-        assert!(val <= u64::MAX);
+        let _val = random_u64().expect("Crypto RNG should work in tests");
     }
 
     #[test]

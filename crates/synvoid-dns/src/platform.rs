@@ -336,7 +336,7 @@ mod tests {
 
         #[test]
         fn test_default_linux_platform() {
-            let platform = crate::platform::linux::LinuxAnycastSocket::default();
+            let platform = crate::platform::linux::LinuxAnycastSocket;
             assert_eq!(platform.platform_name(), "linux");
             assert!(platform.supports_pktinfo());
         }

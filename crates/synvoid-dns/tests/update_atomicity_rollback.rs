@@ -289,7 +289,7 @@ fn atomic_cname_coexistence_preserves_zone() {
     buf.extend_from_slice(&build_rr_add("www", 5, b"target.test.local.", 300)); // CNAME
     buf.extend_from_slice(&build_rr_add("www", 1, &[10, 0, 0, 1], 300)); // A
 
-    let result = handler.handle_update(&buf, client);
+    let _result = handler.handle_update(&buf, client);
     // May succeed or fail depending on validation, but zone must be consistent
     let z = zones.get("test.local").unwrap();
     let www_cname = z.records.get(&("www".to_string(), RecordType::CNAME));
@@ -394,7 +394,7 @@ fn atomic_unknown_zone_returns_error() {
     let client: IpAddr = "10.0.0.1".parse().unwrap();
     let query = build_update_add_record("unknown.test", "new.unknown.test", 1, &[10, 0, 0, 1], 300);
 
-    let result = handler.handle_update(&query, client);
+    let _result = handler.handle_update(&query, client);
     // Unknown zone may return error or NOTAUTH — either way, known zone unchanged
     let z = zones.get("known.test").unwrap();
     assert_eq!(z.serial, 1, "known zone serial must be unchanged");

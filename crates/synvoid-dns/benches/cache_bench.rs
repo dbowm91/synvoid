@@ -69,7 +69,7 @@ fn bench_cache_transport_classes(c: &mut Criterion) {
             qclass: 1,
             dnssec_ok: false,
             client_subnet: None,
-            transport_class: tc.clone(),
+            transport_class: *tc,
             namespace: CacheNamespace::Authoritative,
         };
         cache.insert(key, vec![1u8; 64], 300);
@@ -83,7 +83,7 @@ fn bench_cache_transport_classes(c: &mut Criterion) {
                     qclass: 1,
                     dnssec_ok: false,
                     client_subnet: None,
-                    transport_class: tc.clone(),
+                    transport_class: *tc,
                     namespace: CacheNamespace::Authoritative,
                 };
                 cache.get(black_box(&key));

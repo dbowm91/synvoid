@@ -710,9 +710,11 @@ impl HickoryRecursor {
             hickory_resolver::recursor::DnssecPolicy::SecurityUnaware
         };
 
-        let mut recursor_opts = hickory_resolver::recursor::RecursorOptions::default();
         // Case randomization (0x20) helps mitigate spoofing
-        recursor_opts.case_randomization = true;
+        let recursor_opts = hickory_resolver::recursor::RecursorOptions {
+            case_randomization: true,
+            ..Default::default()
+        };
 
         let recursor = hickory_resolver::recursor::Recursor::new(
             &roots.iter().map(|c| c.ip).collect::<Vec<_>>(),

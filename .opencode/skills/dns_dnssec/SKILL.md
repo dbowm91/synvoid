@@ -649,14 +649,22 @@ All 8 gate areas verified:
 
 ### Metrics
 
-All DNS metrics use stable names with low-cardinality labels. Key metric groups:
-- **Query/Response**: `dns_queries_received_total`, `dns_responses_sent_total`, `dns_response_code`
-- **Cache**: `dns_cache_hits_total`, `dns_cache_misses_total`, `dns_cache_hit_rate`
-- **Security**: `dns_rate_limited_total`, `dns_firewall_queries_blocked`
-- **Transport**: `dns_transport_queries` (label: `transport`)
-- **Recursive**: `dns_recursive_queries`, `dns_recursive_upstream_failures`
-- **DNSSEC**: `dnssec_queries`, `dnssec_signed_responses`
-- **Control-plane**: `dns_update_accepted`, `dns_axfr_accepted`, `dns_notify_sent`
+All DNS metrics use stable names with low-cardinality labels. The `DnsMetrics` struct has 17 production-active `record_*` methods plus 5 watchable metrics emitted directly via `metrics::counter!`/`metrics::gauge!` in production code.
+
+**Production-active wired metrics** (operator-visible):
+- **Query/Response**: `dns_queries_received_total`, `dns_responses_sent_total`, `dns_response_code_total{code}`
+- **Cache**: `dns_cache_hits_total`, `dns_cache_misses_total`, `dns_cache_stale_hits_total`, `dns_cache_invalidations_total`, `dns_cache_insertions_total`, `dns_cache_size_rejections_total`, `dns_cache_poisoned_rejections_total`
+- **Security**: `dns_rate_limited_total`, `dns_firewall_queries_blocked_total{rule}`
+- **Recursive**: `dns_recursive_queries_total`, `dns_recursive_cache_hits_total`, `dns_recursive_cache_misses_total`, `dns_recursive_upstream_forwards_total`, `dns_recursive_upstream_failures_total`, `dns_bailiwick_violations_total`
+
+**Watchable metrics emitted directly** (operator-visible):
+- `dns_active_tcp_connections` (gauge) — `server/startup.rs`, `limits.rs:251`
+- `dns_recursive_circuit_breaker_opens_total` — `recursive.rs:114`
+- `dns_zone_reload_failures_total` — `server/zone.rs`
+- `dns_encode_failures_total` — `server/response_encoder.rs:40`
+- `dns_dnssec_signing_failures_total` — `server/dnssec_impl.rs:554`
+
+**Deferred / not wired**: `dns_update_accepted`, `dns_update_rejected`, `dns_notify_sent`, `dns_notify_received`, `dns_axfr_accepted`, `dns_axfr_rejected`, `dns_ixfr_accepted`, `dns_ixfr_rejected`, `dns_dnssec_key_rotations_total`, `dns_query_latency`, `dns_transport_queries_total`, `dns_transport_errors_total`, `dns_operation_counts_total`, `dns_cache_negative_hits_total`, `dnssec_queries_total`, `dnssec_signed_responses_total`, `dns_rrl_limited_total`, `dns_malformed_queries_total`, `dns_nxdomain_responses_total`, `dns_queries_blocked`, `dns_queries_validated`, `dns_firewall_queries_allowed_total`, `dns_firewall_rule_matches_total`, `dns_zone_reload_successes_total`, `dns_zones_loaded_total`, `dns_recursive_circuit_breaker_closes_total`, `dns_tcp_connections_total`, `dns_response_latency_seconds`. These are intentionally not registered or are reserved for future features.
 
 ### Health
 
@@ -669,6 +677,48 @@ All operations emit structured `tracing` logs. Sensitive data is never logged. L
 ### Diagnostics
 
 See `architecture/dns_operations_diagnostics.md` for smoke tests, alerting matrix, and troubleshooting flowchart.
+
+## Milestone 4 Deferral Closeout (2026-07-07)
+
+**Status**: Closed with accepted deferrals.
+
+### Production Profiles & Support Matrix
+
+`architecture/dns_production_profiles.md` defines 8 profiles (Authoritative-Only Public, Local Recursive, Internal Recursive, Transfer-Enabled Primary, Transfer-Enabled Secondary, DNSSEC-Signed Authoritative, Encrypted Transport, Full Mesh DNS) and a Release Support Matrix mapping each profile to internal tests, external checks (deferred), benchmark coverage, and known deferrals.
+
+### Production-Supported Boundary
+
+All "Production-Supported" labels mean: **verified by the internal in-process Rust test suite; external client interop (`dig`, `delv`, `kdig`, `ldns-verify-zone`, `named-checkzone`) is NOT automatically run in CI and remains operator-validated.**
+
+### Local Recursive DNSSEC Caveat
+
+`upstream_provider = "System"` uses `HickoryResolver` which does NOT perform DNSSEC validation. To get end-to-end DNSSEC validation, use `upstream_provider = "Recursive"` (HickoryRecursor with `ValidateWithStaticKey`).
+
+### DNSSEC Coverage Boundary
+
+- **Known-vector tests** (`dnssec_known_vectors.rs`): primitives, hashes, signatures, key tags — covered.
+- **Live signed-answer path** (`dnssec_live_signing.rs`): Ed25519 roundtrip, RRSIG construction, NSEC wire format — covered.
+- **External `delv`/`ldns-verify-zone`/`named-checkzone` execution**: NOT in CI; deferred.
+
+### Encrypted Transport Scope
+
+Internal Rust tests (`encrypted_transport`, `dot`, `doh`, `doq`) verify wire format and config roundtrip. They do NOT run external client (kdig, khost, ldns) live-wire tests.
+
+### Benchmark Baseline
+
+Local reference: `benchmarks/dns/results/2026-07-07-baseline.md` (commit 4a76cc74, i9-9900K, rustc 1.95.0). 53 criterion timings. Benchmarks are reference-only, not a CI gate.
+
+### Scripts
+
+All 5 DNS scripts pass `bash -n`. `scripts/dns/conformance.sh` distinguishes internal in-process interop (7 suites, run in CI) from optional external tool checks (operator-validated, deferred).
+
+### Deferred Items (Non-Blocking)
+
+- External live-wire interop (`dig`, `kdig`, `delv`, `curl` DoH)
+- External DNSSEC tooling (`ldns-verify-zone`, `named-checkzone`)
+- Remote CI status visibility (current connector does not surface direct-push workflow status)
+
+See `plans/dns_milestone_4_deferred_items_closeout_complete.md` for the full closeout record.
 
 ## Milestone 4 Phase 2: Performance and Load Testing
 

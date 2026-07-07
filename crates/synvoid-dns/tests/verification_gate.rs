@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use synvoid_config::dns::{
     DnsConfig, DnsDohConfig, DnsDoqConfig, DnsDotConfig, RecursiveDnsConfig,
 };
@@ -10,7 +8,7 @@ use synvoid_dns::recursive_cache::DnssecValidationState;
 use synvoid_dns::recursive_cache::RecursiveCacheKey;
 use synvoid_dns::recursive_cache::RecursiveDnsCache;
 use synvoid_dns::server::RecordType;
-use synvoid_dns::server::{DnsServer, DnsZoneRecord, Zone};
+use synvoid_dns::server::{DnsZoneRecord, Zone};
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -71,7 +69,7 @@ fn build_test_zone() -> Zone {
 fn ed25519_test_key() -> ZoneSigningKey {
     let mut private_bytes = [0u8; 32];
     getrandom::getrandom(&mut private_bytes).expect("getrandom failed");
-    let signing_key = ed25519_dalek::SigningKey::from_bytes(&private_bytes.into());
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(&private_bytes);
     let verifying_key = signing_key.verifying_key().to_bytes().to_vec();
     let private_bytes = signing_key.to_bytes().to_vec();
 
@@ -791,8 +789,10 @@ fn cname_depth_limit_enforced() {
 #[test]
 fn recursive_config_validation() {
     // Valid config
-    let mut config = RecursiveDnsConfig::default();
-    config.enabled = true;
+    let mut config = RecursiveDnsConfig {
+        enabled: true,
+        ..Default::default()
+    };
     assert!(
         config.validate().is_ok(),
         "default enabled config must validate: {:?}",
@@ -1179,9 +1179,11 @@ fn recursive_mode_disabled_and_loopback_by_default() {
 #[test]
 fn recursive_config_rejects_wildcard_bind() {
     use synvoid_config::dns::RecursiveDnsConfig;
-    let mut cfg = RecursiveDnsConfig::default();
-    cfg.enabled = true;
-    cfg.bind_address = "0.0.0.0".to_string();
+    let mut cfg = RecursiveDnsConfig {
+        enabled: true,
+        bind_address: "0.0.0.0".to_string(),
+        ..Default::default()
+    };
     assert!(
         cfg.validate().is_err(),
         "0.0.0.0 recursive bind must fail (open resolver)"
@@ -1217,8 +1219,10 @@ fn recursive_depth_limit_config_invariants() {
         cfg.max_recursion_depth, 16,
         "default max_recursion_depth = 16"
     );
-    let mut cfg = RecursiveDnsConfig::default();
-    cfg.max_recursion_depth = 0;
+    let cfg = RecursiveDnsConfig {
+        max_recursion_depth: 0,
+        ..Default::default()
+    };
     assert!(cfg.validate().is_ok(), "0 = unlimited must be valid");
 }
 
@@ -1231,8 +1235,10 @@ fn recursive_per_client_limit_config_invariants() {
         cfg.max_per_client_queries, 100,
         "default max_per_client_queries = 100"
     );
-    let mut cfg = RecursiveDnsConfig::default();
-    cfg.max_per_client_queries = 0;
+    let cfg = RecursiveDnsConfig {
+        max_per_client_queries: 0,
+        ..Default::default()
+    };
     assert!(cfg.validate().is_ok(), "0 = unlimited must be valid");
 }
 

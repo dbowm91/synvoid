@@ -20,6 +20,7 @@ pub struct ConnectionLimits {
 }
 
 impl ConnectionLimits {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         max_tcp_connections: usize,
         max_concurrent_queries: usize,

@@ -3,7 +3,6 @@
 //! Verifies that TsigVerifier sign/verify produces correct HMAC for each
 //! algorithm, supports multiple keys, and handles replay cache correctly.
 
-use base64::Engine;
 use synvoid_config::dns::{TsigAlgorithm, TsigKeyConfig};
 use synvoid_dns::tsig::{TsigError, TsigVerifier};
 
@@ -62,7 +61,7 @@ fn tsig_sha256_sign_verify_roundtrip() {
     let tsig_rdata = verifier.sign("mykey", message, 0).unwrap();
     assert!(!tsig_rdata.is_empty(), "TSIG RDATA must not be empty");
 
-    let fudge: u16 = 300;
+    let _fudge: u16 = 300;
 }
 
 /// SHA-512: sign produces non-empty output.

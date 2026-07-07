@@ -1023,8 +1023,8 @@ mod tests {
         assert_eq!(ksk.key_type, KeyType::KSK);
         assert_eq!(ksk.flags, 257);
         assert_eq!(ksk.key_size, Some(2048));
-        assert!(ksk.public_key.len() > 0);
-        assert!(ksk.private_key.len() > 0);
+        assert!(!ksk.public_key.is_empty());
+        assert!(!ksk.private_key.is_empty());
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1222,7 +1222,7 @@ mod tests {
             "key_size": null,
         });
         std::fs::write(
-            &key_file.path(),
+            key_file.path(),
             serde_json::to_string_pretty(&meta).unwrap(),
         )
         .unwrap();
@@ -1323,7 +1323,7 @@ mod tests {
             })
             .unwrap();
         let key_path = key_file_entry.path();
-        let stem = key_path.file_stem().unwrap().to_str().unwrap();
+        let _stem = key_path.file_stem().unwrap().to_str().unwrap();
 
         let meta = serde_json::json!({
             "key_id": "ksk",
