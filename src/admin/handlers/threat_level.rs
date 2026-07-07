@@ -81,7 +81,7 @@ pub struct SetLevelRequest {
 
 #[utoipa::path(
     get,
-    path = "/threat-level/status",
+    path = "/threat-level",
     responses(
         (status = 200, description = "Threat level status", body = ThreatLevelStatusResponse),
         (status = 401, description = "Unauthorized"),
@@ -219,7 +219,7 @@ pub async fn get_baseline(
 
 #[utoipa::path(
     post,
-    path = "/threat-level/baseline/reset",
+    path = "/threat-level/reset",
     responses(
         (status = 200, description = "Baseline reset", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
@@ -265,8 +265,8 @@ pub async fn reset_baseline(
 }
 
 #[utoipa::path(
-    put,
-    path = "/threat-level/level/{level}",
+    post,
+    path = "/threat-level/set/{level}",
     params(
         ("level" = u8, Path, description = "Threat level (1-5)")
     ),
@@ -370,7 +370,7 @@ pub struct BackupsListResponse {
 
 #[utoipa::path(
     post,
-    path = "/threat-level/backup",
+    path = "/threat-level/history/backup",
     responses(
         (status = 200, description = "Backup created", body = AdminMutationResult<String>),
         (status = 401, description = "Unauthorized"),
@@ -433,7 +433,7 @@ pub async fn create_backup(
 
 #[utoipa::path(
     get,
-    path = "/threat-level/backups",
+    path = "/threat-level/history/backups",
     responses(
         (status = 200, description = "List of backups", body = BackupsListResponse),
         (status = 401, description = "Unauthorized"),
@@ -470,7 +470,7 @@ pub struct DeleteBackupQuery {
 
 #[utoipa::path(
     delete,
-    path = "/threat-level/backup",
+    path = "/threat-level/history/backups",
     params(
         ("path" = String, Query, description = "Backup path to delete")
     ),

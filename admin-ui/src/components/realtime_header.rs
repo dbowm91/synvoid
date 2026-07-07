@@ -43,7 +43,7 @@ pub fn RealtimeHeader() -> Html {
         let req_history = req_history.clone();
         let blocked_history = blocked_history.clone();
 
-        use_effect_with((), move |_| match ws_state {
+        use_effect_with(ws_state.clone(), move |state| match state {
             UseWebSocketState::Connected(metrics) => {
                 set_current_metrics.set(Some(metrics.clone()));
                 let now = chrono_lite();

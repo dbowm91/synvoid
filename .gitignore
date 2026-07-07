@@ -34,7 +34,9 @@ node_modules/
 npm-debug.log*
 yarn-error.log
 yarn.lock
+# Lockfile for admin-ui is tracked to keep npm build reproducible
 package-lock.json
+!admin-ui/package-lock.json
 
 # Python
 __pycache__/
@@ -70,8 +72,9 @@ logs/
 coverage/
 *.profraw
 
-# WebAssembly
+# WebAssembly (allow checked-in release bundles like admin-ui/dist/*.wasm)
 *.wasm
+!admin-ui/dist/*.wasm
 
 # Temporary files
 *.tmp

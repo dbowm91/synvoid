@@ -148,20 +148,27 @@ pub fn Dashboard() -> Html {
         });
     }
 
-    if let UseWebSocketState::Connected(metrics) = &ws_state {
-        let mut new_history = (*history).clone();
-        new_history.push(metrics.clone());
-        if new_history.len() > 60 {
-            new_history.remove(0);
-        }
-        history.set(new_history);
+    {
+        let history = history.clone();
+        let blocking_history = blocking_history.clone();
+        use_effect_with(ws_state.clone(), move |state| {
+            if let UseWebSocketState::Connected(metrics) = state {
+                let mut new_history = (*history).clone();
+                new_history.push(metrics.clone());
+                if new_history.len() > 60 {
+                    new_history.remove(0);
+                }
+                history.set(new_history);
 
-        let mut new_blocking = (*blocking_history).clone();
-        new_blocking.push(metrics.blocked_by_type.clone());
-        if new_blocking.len() > 60 {
-            new_blocking.remove(0);
-        }
-        blocking_history.set(new_blocking);
+                let mut new_blocking = (*blocking_history).clone();
+                new_blocking.push(metrics.blocked_by_type.clone());
+                if new_blocking.len() > 60 {
+                    new_blocking.remove(0);
+                }
+                blocking_history.set(new_blocking);
+            }
+            || {}
+        });
     }
 
     {

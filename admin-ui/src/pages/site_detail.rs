@@ -100,11 +100,19 @@ pub fn SiteDetail(props: &SiteDetailProps) -> Html {
         });
     }
 
-    if let UseWebSocketState::Connected(_metrics) = &ws_state {
-        let sites = (*sites_list).clone();
-        if let Some(site) = sites.iter().find(|s| s.site_id == site_id) {
-            site_stats.set(Some(site.clone()));
-        }
+    {
+        let site_stats = site_stats.clone();
+        let sites_list = sites_list.clone();
+        let site_id = site_id.clone();
+        use_effect_with(ws_state.clone(), move |state| {
+            if matches!(state, UseWebSocketState::Connected(_)) {
+                let sites = (*sites_list).clone();
+                if let Some(site) = sites.iter().find(|s| s.site_id == site_id) {
+                    site_stats.set(Some(site.clone()));
+                }
+            }
+            || {}
+        });
     }
 
     let current = site_stats.as_ref();

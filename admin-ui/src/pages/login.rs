@@ -1,19 +1,7 @@
 use crate::components::forms::Input;
-use serde::{Deserialize, Serialize};
+use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct LoginRequest {
-    pub token: String,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct LoginResponse {
-    pub success: bool,
-    pub token: Option<String>,
-    pub expires_at: Option<String>,
-}
 
 enum LoginState {
     Idle,
@@ -48,39 +36,75 @@ pub fn Login() -> Html {
 
             login_state.set(LoginState::Loading);
 
-            let token_input = token_input.clone();
             let login_state = login_state.clone();
             let error_msg = error_msg.clone();
 
             spawn_local(async move {
-                let api = crate::services::api::ApiService::new();
-                match api
-                    .post::<LoginResponse, _>(
-                        "/auth/login",
-                        &LoginRequest {
-                            token: token.clone(),
-                        },
-                    )
+                let url = "/api/auth/session";
+                let mut opts = web_sys::RequestInit::new();
+                opts.set_method("POST");
+                opts.set_mode(web_sys::RequestMode::SameOrigin);
+                opts.set_credentials(web_sys::RequestCredentials::Include);
+                let _ = opts.set_body(&JsValue::NULL);
+
+                let request = match web_sys::Request::new_with_str_and_init(url, &opts) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let msg = format!("Failed to build request: {:?}", e);
+                        login_state.set(LoginState::Error(msg.clone()));
+                        error_msg.set(msg);
+                        return;
+                    }
+                };
+                let _ = request
+                    .headers()
+                    .set("Authorization", &format!("Bearer {}", token));
+
+                let window = match web_sys::window() {
+                    Some(w) => w,
+                    None => {
+                        let msg = "No window available".to_string();
+                        login_state.set(LoginState::Error(msg.clone()));
+                        error_msg.set(msg);
+                        return;
+                    }
+                };
+
+                match wasm_bindgen_futures::JsFuture::from(window.fetch_with_request(&request))
                     .await
                 {
-                    Ok(response) => {
-                        if response.success {
-                            if let Some(jwt) = response.token {
-                                if let Some(window) = web_sys::window() {
-                                    if let Ok(Some(storage)) = window.local_storage() {
-                                        let _ = storage.set_item("admin_token", &jwt);
-                                    }
-                                    let _ = window.location().set_href("/");
+                    Ok(resp_value) => {
+                        let resp: web_sys::Response = match resp_value.dyn_into() {
+                            Ok(r) => r,
+                            Err(_) => {
+                                let msg = "Invalid response".to_string();
+                                login_state.set(LoginState::Error(msg.clone()));
+                                error_msg.set(msg);
+                                return;
+                            }
+                        };
+                        if resp.ok() {
+                            if let Some(window) = web_sys::window() {
+                                if let Ok(Some(storage)) = window.local_storage() {
+                                    let _ = storage.set_item("admin_token", &token);
                                 }
+                                let cookie = format!(
+                                    "synvoid_ws_token={}; Path=/; SameSite=Strict; Max-Age=3600",
+                                    token
+                                );
+                                let _ = js_sys::eval(&format!("document.cookie = {:?};", cookie));
+                                let _ = window.location().set_href("/");
                             }
                         } else {
-                            login_state.set(LoginState::Error("Invalid token".to_string()));
-                            error_msg.set("Invalid token".to_string());
+                            let msg = format!("Login failed (HTTP {})", resp.status());
+                            login_state.set(LoginState::Error(msg.clone()));
+                            error_msg.set(msg);
                         }
                     }
                     Err(e) => {
-                        login_state.set(LoginState::Error(e.clone()));
-                        error_msg.set(e);
+                        let msg = format!("Request failed: {:?}", e);
+                        login_state.set(LoginState::Error(msg.clone()));
+                        error_msg.set(msg);
                     }
                 }
             });

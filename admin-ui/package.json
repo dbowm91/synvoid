@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "build:css": "tailwindcss -i ./src/styles.css -o ./src/styles.css --minify",
+    "build:css": "tailwindcss -i ./src/tailwind.css -o ./src/styles.css --minify",
     "copy:css": "cp src/styles.css dist/",
     "build": "npm run build:css && npm run copy:css",
-    "watch:css": "tailwindcss -i ./src/styles.css -o ./src/styles.css --watch"
+    "watch:css": "tailwindcss -i ./src/tailwind.css -o ./src/styles.css --watch"
   },
   "devDependencies": {
     "@fontsource/inter": "^5.2.8",

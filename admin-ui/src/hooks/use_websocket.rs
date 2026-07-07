@@ -23,16 +23,18 @@ impl<T: Clone> Clone for UseWebSocketState<T> {
     }
 }
 
-fn build_ws_url(path: &str, token: Option<&str>) -> String {
-    if let Some(token) = token {
-        if path.contains('?') {
-            format!("{}&token={}", path, token)
-        } else {
-            format!("{}?token={}", path, token)
+fn build_ws_url(path: &str) -> String {
+    if let Some(window) = web_sys::window() {
+        if let Some(location) = window.location().href().ok() {
+            if let Some(idx) = location.find("://") {
+                let rest = &location[idx + 3..];
+                if let Some(path_start) = rest.find('/') {
+                    return format!("ws://{}{}", &rest[..path_start], path);
+                }
+            }
         }
-    } else {
-        path.to_string()
     }
+    path.to_string()
 }
 
 #[hook]
@@ -45,7 +47,7 @@ pub fn use_websocket<T: DeserializeOwned + Clone + 'static>(path: &str) -> UseWe
         let path = path.to_string();
 
         use_effect_with((), move |_| {
-            let ws_url = build_ws_url(&path, None);
+            let ws_url = build_ws_url(&path);
             let ws = match WebSocket::new(&ws_url) {
                 Ok(ws) => ws,
                 Err(e) => {
@@ -122,7 +124,7 @@ pub fn use_websocket<T: DeserializeOwned + Clone + 'static>(path: &str) -> UseWe
 #[hook]
 pub fn use_websocket_with_token<T: DeserializeOwned + Clone + 'static>(
     path: &str,
-    token: &str,
+    _token: &str,
 ) -> UseWebSocketState<T> {
     let state = use_state(|| UseWebSocketState::<T>::Connecting);
     let ws_ref = use_mut_ref(|| None::<WebSocket>);
@@ -130,10 +132,9 @@ pub fn use_websocket_with_token<T: DeserializeOwned + Clone + 'static>(
     {
         let state = state.clone();
         let path = path.to_string();
-        let token = token.to_string();
 
         use_effect_with((), move |_| {
-            let ws_url = build_ws_url(&path, Some(&token));
+            let ws_url = build_ws_url(&path);
             let ws = match WebSocket::new(&ws_url) {
                 Ok(ws) => ws,
                 Err(e) => {
@@ -221,7 +222,7 @@ pub fn use_websocket_or_poll_with_token<T: DeserializeOwned + Clone + 'static>(
     ws_path: &str,
     poll_path: &str,
     poll_interval_ms: u32,
-    token: Option<&str>,
+    _token: Option<&str>,
 ) -> (UseWebSocketState<T>, Callback<()>) {
     let state = use_state(|| UseWebSocketState::<T>::Connecting);
     let ws_ref = use_mut_ref(|| None::<WebSocket>);
@@ -252,10 +253,9 @@ pub fn use_websocket_or_poll_with_token<T: DeserializeOwned + Clone + 'static>(
         let ws_path = ws_path.to_string();
         let poll_path = poll_path.to_string();
         let refresh = refresh.clone();
-        let token = token.map(|t| t.to_string());
 
         use_effect_with((), move |_| {
-            let ws_url = build_ws_url(&ws_path, token.as_deref());
+            let ws_url = build_ws_url(&ws_path);
             let ws = match WebSocket::new(&ws_url) {
                 Ok(ws) => ws,
                 Err(_) => {
@@ -305,6 +305,7 @@ pub fn use_websocket_or_poll_with_token<T: DeserializeOwned + Clone + 'static>(
                 let closure = wasm_bindgen::closure::Closure::<dyn FnMut(_)>::new(
                     move |_: web_sys::Event| {
                         state.set(UseWebSocketState::Disconnected);
+                        *interval_ref.borrow_mut() = None;
                         let refresh = refresh_for_close.clone();
                         let interval = Interval::new(poll_interval_ms, move || {
                             refresh.emit(());
@@ -323,6 +324,7 @@ pub fn use_websocket_or_poll_with_token<T: DeserializeOwned + Clone + 'static>(
                 let closure = wasm_bindgen::closure::Closure::<dyn FnMut(_)>::new(
                     move |_: web_sys::ErrorEvent| {
                         state.set(UseWebSocketState::Error("WebSocket error".to_string()));
+                        *interval_ref.borrow_mut() = None;
                         let refresh = refresh_for_error.clone();
                         let interval = Interval::new(poll_interval_ms, move || {
                             refresh.emit(());
@@ -337,8 +339,10 @@ pub fn use_websocket_or_poll_with_token<T: DeserializeOwned + Clone + 'static>(
             *ws_ref.borrow_mut() = Some(ws.clone());
 
             let ws_close = ws.clone();
+            let interval_cleanup = interval_ref.clone();
             Box::new(move || {
                 let _ = ws_close.close();
+                *interval_cleanup.borrow_mut() = None;
             }) as Box<dyn FnOnce()>
         });
     }

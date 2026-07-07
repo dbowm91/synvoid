@@ -6,6 +6,14 @@ use crate::types::{MasterStatus, OverseerStatus, SystemInfo, WorkerStatus};
 
 pub use crate::types::{MasterStatus as MasterStatusResponse, SystemInfo as SystemInfoResponse};
 
+fn load_admin_token() -> Option<String> {
+    web_sys::window()
+        .and_then(|w| w.local_storage().ok())
+        .flatten()
+        .and_then(|storage| storage.get_item("admin_token").ok())
+        .flatten()
+}
+
 pub struct ApiService {
     base_url: String,
     token: Option<String>,
@@ -21,7 +29,7 @@ impl ApiService {
     pub fn new() -> Self {
         Self {
             base_url: "/api".to_string(),
-            token: None,
+            token: load_admin_token(),
         }
     }
 
@@ -323,7 +331,7 @@ impl ApiService {
     }
 
     pub async fn get_threat_level_status(&self) -> Result<crate::types::ThreatLevelStatus, String> {
-        self.get("/threat-level/status").await
+        self.get("/threat-level").await
     }
 
     pub async fn get_threat_level_history(
@@ -339,13 +347,13 @@ impl ApiService {
     }
 
     pub async fn reset_threat_level_baseline(&self) -> Result<serde_json::Value, String> {
-        self.post("/threat-level/baseline/reset", &serde_json::json!({}))
+        self.post("/threat-level/reset", &serde_json::json!({}))
             .await
     }
 
     pub async fn set_threat_level(&self, level: u8) -> Result<serde_json::Value, String> {
         self.post(
-            &format!("/threat-level/level/{}", level),
+            &format!("/threat-level/set/{}", level),
             &serde_json::json!({}),
         )
         .await
@@ -359,31 +367,25 @@ impl ApiService {
     pub async fn list_threat_level_backups(
         &self,
     ) -> Result<crate::types::BackupsListResponse, String> {
-        self.get("/threat-level/backups").await
+        self.get("/threat-level/history/backups").await
     }
 
     pub async fn create_threat_level_backup(
         &self,
         _name: Option<&str>,
     ) -> Result<crate::types::BackupInfo, String> {
-        self.post("/threat-level/backup", &serde_json::json!({}))
+        self.post("/threat-level/history/backup", &serde_json::json!({}))
             .await
     }
 
     pub async fn delete_threat_level_backup(&self, backup_id: &str) -> Result<bool, String> {
-        #[derive(serde::Serialize)]
-        struct DeleteQuery {
-            path: String,
+        let url = format!("/threat-level/history/backups?path={}", backup_id);
+        let response = self.request("DELETE", &url).await?;
+        if response.ok() {
+            Ok(true)
+        } else {
+            Err(format!("HTTP error: {}", response.status()))
         }
-        let _: serde_json::Value = self
-            .post(
-                "/threat-level/backup",
-                &DeleteQuery {
-                    path: backup_id.to_string(),
-                },
-            )
-            .await?;
-        Ok(true)
     }
 
     pub async fn list_sites(&self) -> Result<Vec<crate::types::SiteInfo>, String> {
