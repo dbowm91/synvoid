@@ -25,6 +25,7 @@ pub fn build_yara_scanner_from_main_config(
         3,
         100 * 1024 * 1024,
         defaults.yara_max_concurrent_scans,
+        defaults.yara_max_queued_scans,
         defaults.yara_queue_timeout_ms,
     ) {
         Ok(scanner) => Some(Arc::new(scanner)),

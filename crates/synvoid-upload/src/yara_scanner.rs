@@ -1121,6 +1121,8 @@ impl YaraMatch {
             namespace: self.namespace.clone(),
             tags: self.tags.clone(),
             meta,
+            source: crate::MatchSource::Yara,
+            confidence: crate::MatchConfidence::High,
         }
     }
 }

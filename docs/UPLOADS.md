@@ -350,6 +350,72 @@ location /upload {
 }
 ```
 
+## Native Malware Detector
+
+SynVoid includes a built-in native heuristic malware detector as defense-in-depth alongside YARA-X. The native detector provides lightweight pattern-based scanning without requiring YARA rule compilation or loading.
+
+### How It Works
+
+Uploads are scanned in two layers:
+
+1. **Native heuristics run first** — fast pattern matching using built-in rules
+2. **YARA-X runs second** — full YARA rule matching (if enabled)
+
+Both layers run independently. A match from either layer flags the upload. Native detection never replaces YARA scanning.
+
+### Native Rules
+
+| Native Rule | Category | Confidence | Detection Method |
+|-------------|----------|------------|------------------|
+| executable_pe | executable | High | MZ magic at offset 0 |
+| executable_elf | executable | High | ELF magic (`\x7FELF`) |
+| executable_macho | executable | High | Mach-O magic (`0xFEEDFACE`/`0xFEEDFACF`/`0xBEBAFECA`) |
+| suspicious_polyglot | evasion | High | MZ at offset 0 + PK after offset 4 (bounded 1MB) |
+| suspicious_office_macro_autoopen | macro | Medium | Auto-trigger keywords + shell execution patterns |
+| suspicious_script_obfuscation | script | Medium | `eval`, `fromCharCode`, `unescape` patterns |
+| suspicious_php_webshell | webshell | Medium | PHP exec function + user input |
+| suspicious_jsp_webshell | webshell | Medium | `Runtime.exec` + parameter access |
+| suspicious_asp_webshell | webshell | Medium | Shell execute + request object |
+| suspicious_archive_bomb | archive | Medium | High density of archive signatures |
+| suspicious_embedded_exe | embedded | Medium | MZ+PE in first 64 bytes of non-PE file |
+| suspicious_double_extension | social_engineering | Low | Filename: `.pdf.exe`, `.doc.exe`, etc. |
+| suspicious_hta_script | script | Medium | HTA tag + shell keywords |
+| suspicious_shortcut_exploit | exploit | Medium | LNK magic + shell keywords |
+| high_entropy_binary | entropy | Low | Shannon entropy > 7.5 |
+
+### YARA Error Propagation
+
+YARA errors now propagate as `MalwareError::YaraScanError` instead of being silently consumed. Under production defaults (`quarantine_on_error`), this results in `UploadScanStatus::Indeterminate` and the upload is quarantined/rejected. Scan errors are **never** treated as clean.
+
+### Filename-Aware Scanning
+
+Some detections (like `suspicious_double_extension`) depend on the uploaded filename. Use `scan_bytes_with_context()` for filename-aware scanning:
+
+```rust
+use synvoid_upload::malware::{ScanContext, MalwareScanner};
+
+let context = ScanContext {
+    filename: Some("report.pdf.exe".to_string()),
+    declared_mime: None,
+    detected_mime: None,
+    size: Some(data.len() as u64),
+};
+
+let matches = scanner.scan_bytes_with_context(data, &context);
+```
+
+Without a filename in the `ScanContext`, filename-dependent rules are skipped.
+
+### Match Metadata
+
+Each `MalwareMatch` includes:
+
+- `source`: `Native` or `Yara` — which layer detected the match
+- `confidence`: `Low`, `Medium`, or `High` — detection confidence level
+- `rule_name`, `category`, `description` — rule details
+
+Results are deduplicated by `(rule_name, category)` and sorted by severity, then category, then rule name, then source (Native before Yara).
+
 ## See Also
 
 - [ATTACK_DETECTION.md](./ATTACK_DETECTION.md) - Attack detection details

@@ -174,13 +174,15 @@ pub enum UploadValidationError {
 
 ## 7. Scan Failure Semantics
 
-YARA scan errors (timeout, panic, rule deserialization failure, scanner unavailable) are **never** silently treated as clean uploads under production defaults. The `yara_failure_policy` config field controls behavior:
+YARA scan errors (timeout, panic, rule deserialization failure, scanner unavailable) are **never** silently treated as clean uploads under production defaults. Errors propagate through `MalwareError::YaraScanError`, which is surfaced to the caller and classified by the failure policy. The `yara_failure_policy` config field controls behavior:
 
 | Policy | Behavior on scan error |
 |--------|----------------------|
 | `quarantine_on_error` (default) | Quarantine if possible, reject with `ScanIndeterminate` |
 | `fail_closed` | Reject immediately with `ScanIndeterminate` |
 | `fail_open` | Allow upload, mark `Indeterminate`, emit warning metrics (opt-in only) |
+
+Under production defaults (`quarantine_on_error`), a YARA error produces `UploadScanStatus::Indeterminate` and the upload is quarantined/rejected per the failure policy. Previously, some YARA errors were silently consumed; they now always surface as `MalwareError::YaraScanError`.
 
 Scan statuses are reported in `ValidationResult.scan_status` and tracked via metrics (`UPLOAD_SCAN_CLEAN`, `UPLOAD_SCAN_MALICIOUS`, `UPLOAD_SCAN_DISABLED`, `UPLOAD_SCAN_UNAVAILABLE`, `UPLOAD_SCAN_INDETERMINATE`, `UPLOAD_SCAN_FAIL_OPEN_ALLOWED`, `UPLOAD_SCAN_QUARANTINE_ON_ERROR`).
 
@@ -353,3 +355,103 @@ let error = scanner.get_last_reload_error();     // last error (None if clean)
 | `yara_max_rule_files` | 256 | Maximum rule files per directory |
 | `yara_max_rule_source_bytes` | 8388608 (8MB) | Maximum aggregate source bytes |
 | `yara_allow_rule_symlinks` | false | Whether to follow symlinks |
+
+## 12. Native Malware Detector
+
+The native malware detector is a **fallback/defense-in-depth layer**, not a replacement for YARA-X. It provides lightweight heuristic scanning without requiring YARA rule compilation or loading.
+
+### Two-Layer Scanning
+
+Uploads are scanned in two layers:
+
+1. **Native heuristics first**: Fast pattern-based detection using built-in rules
+2. **YARA-X second**: Full YARA rule matching (if enabled and rules are loaded)
+
+Both layers run independently. A match from either layer flags the upload. Native detection never disables or replaces YARA scanning.
+
+### YARA Error Propagation
+
+YARA errors now propagate as `MalwareError::YaraScanError` instead of being silently consumed. Under production defaults (`quarantine_on_error`), this results in `UploadScanStatus::Indeterminate` and the upload is quarantined/rejected per the failure policy. This ensures scan failures are never treated as clean.
+
+### Match Metadata Normalization
+
+`MalwareMatch` now carries normalized metadata:
+
+```rust
+pub struct MalwareMatch {
+    pub rule_name: String,
+    pub category: String,
+    pub description: String,
+    pub source: MatchSource,       // Native | Yara
+    pub confidence: MatchConfidence, // Low | Medium | High
+}
+
+pub enum MatchSource {
+    Native,
+    Yara,
+}
+
+pub enum MatchConfidence {
+    Low,
+    Medium,
+    High,
+}
+```
+
+### Filename-Aware Detection
+
+Some detections depend on the uploaded filename (e.g., `DoubleExtension`). These require a `ScanContext` with a filename:
+
+```rust
+pub struct ScanContext {
+    pub filename: Option<String>,
+    pub declared_mime: Option<String>,
+    pub detected_mime: Option<String>,
+    pub size: Option<u64>,
+}
+```
+
+Byte-only scans (without context) do **not** emit filename-dependent matches. Use `scan_bytes_with_context()` for filename-aware scanning:
+
+```rust
+let context = ScanContext {
+    filename: Some("report.pdf.exe".to_string()),
+    declared_mime: None,
+    detected_mime: None,
+    size: Some(data.len() as u64),
+};
+let matches = scanner.scan_bytes_with_context(data, &context);
+```
+
+### PE/ZIP Polyglot Detection
+
+The `suspicious_polyglot` rule correctly searches for the ZIP magic bytes (`PK`) **after** the PE header (offset 4+), not at offset 0. The search is bounded to the first 1MB to prevent CPU exhaustion on large files.
+
+### Native Rule Table
+
+| Native Rule | Category | Confidence | Detection Method |
+|-------------|----------|------------|------------------|
+| executable_pe | executable | High | MZ magic at offset 0 |
+| executable_elf | executable | High | ELF magic (`\x7FELF`) |
+| executable_macho | executable | High | Mach-O magic (`0xFEEDFACE`/`0xFEEDFACF`/`0xBEBAFECA`) |
+| suspicious_polyglot | evasion | High | MZ at offset 0 + PK signature after offset 4 (bounded 1MB) |
+| suspicious_office_macro_autoopen | macro | Medium | Heuristic: auto-trigger keywords + shell execution patterns |
+| suspicious_script_obfuscation | script | Medium | Heuristic: `eval`, `fromCharCode`, `unescape` patterns |
+| suspicious_php_webshell | webshell | Medium | Heuristic: PHP exec function + user input access |
+| suspicious_jsp_webshell | webshell | Medium | Heuristic: `Runtime.exec` + parameter access |
+| suspicious_asp_webshell | webshell | Medium | Heuristic: shell execute + request object |
+| suspicious_archive_bomb | archive | Medium | High density of archive signatures (nested headers) |
+| suspicious_embedded_exe | embedded | Medium | MZ+PE in first 64 bytes of a non-PE file |
+| suspicious_double_extension | social_engineering | Low | Filename context: `.pdf.exe`, `.doc.exe`, `.jpg.exe`, etc. |
+| suspicious_hta_script | script | Medium | HTA tag + suspicious shell keywords |
+| suspicious_shortcut_exploit | exploit | Medium | LNK magic + shell keywords |
+| high_entropy_binary | entropy | Low | Shannon entropy > 7.5 (binary packing indicator) |
+
+### Deduplication and Ordering
+
+Matches are deduplicated by `(rule_name, category)` — only the first occurrence is kept. Results are sorted by:
+
+1. **Severity**: critical > high > medium > low
+2. **Category**: alphabetical
+3. **Rule name**: alphabetical
+4. **Source**: Native before Yara (within same severity/category/rule)

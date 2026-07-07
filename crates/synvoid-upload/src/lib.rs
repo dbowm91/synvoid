@@ -11,7 +11,7 @@ pub use config::{
     AllowedTypesConfig, AllowedTypesMode, EffectiveUploadConfig, PathUploadConfig, UploadConfig,
     UploadScanFailurePolicy, YaraLargeFileScanMode,
 };
-pub use malware_scanner::MalwareMatch;
+pub use malware_scanner::{MalwareMatch, MatchConfidence, MatchSource, ScanContext};
 pub use sandbox::{QuarantineEntry, Sandbox, SandboxConfig, SandboxError, SandboxHandle};
 pub use signature::{FileCategory, FileSignature, SignatureRegistry};
 pub use yara_rule_feed::{ParsedYaraRules, YaraRuleFeedManager, YaraRuleSource};
@@ -2430,26 +2430,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_real_validate_bytes_scan_error_swallowed_by_malware_scanner() {
-        // MalwareScanner::scan_bytes swallows YARA errors (logs warning, returns Ok).
-        // This means YaraScanner timeout/error paths are unreachable through
-        // validate_bytes → execute_scan. Only the Unavailable path (None scanner)
-        // and Clean/Malicious results are exercised through the real entry points.
-        //
-        // This is a known design property: YARA scan errors at the scanner level
-        // are degraded to "clean" at the MalwareScanner boundary. The Indeterminate
-        // path in execute_scan's Err branch is only reachable if MalwareScanner
-        // itself returns Err (currently only via IO errors in scan_file).
-        //
-        // This test verifies that a scanner with a failing YARA rule (bad syntax
-        // after reload) still returns a clean result through validate_bytes.
+    async fn test_real_validate_bytes_yara_error_propagates() {
+        // Milestone B Phase 1: YARA errors now propagate through MalwareError::YaraScanError
+        // instead of being silently consumed. A valid YARA rule that doesn't match returns Clean.
         let yara = make_test_yara_scanner("rule noop { condition: false }");
         let scanner = MalwareScanner::with_yara(Some(yara));
         let config = test_config(true, UploadScanFailurePolicy::FailClosed);
         let validator = UploadValidator::with_scanner(config, Some(scanner));
         let data = b"hello world";
         let result = validator.validate_bytes(data, "/upload").await.unwrap();
-        // Scanner returned clean (YARA error swallowed by MalwareScanner)
         assert_eq!(result.scan_status, UploadScanStatus::Clean);
         assert!(result.is_clean());
     }
