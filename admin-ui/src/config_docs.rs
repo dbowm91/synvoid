@@ -613,6 +613,12 @@ pub const FIELDS: &[(&str, &str, ConfigFieldDoc)] = &[
         impact: Some("Provides malware protection with small performance overhead."),
         default: "true",
     }),
+    ("upload", "yara_failure_policy", ConfigFieldDoc {
+        label: "YARA Scan Failure Policy",
+        description: "Policy when YARA scanner fails: 'fail_closed' rejects uploads, 'quarantine_on_error' quarantines and rejects, 'fail_open' allows through (unsafe).",
+        impact: Some("'fail_open' must only be used for low-risk internal paths."),
+        default: "quarantine_on_error",
+    }),
     ("upload", "sandbox_enabled", ConfigFieldDoc {
         label: "Sandbox Dangerous Files",
         description: "Execute potentially dangerous files in sandbox before allowing.",

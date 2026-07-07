@@ -7,6 +7,13 @@ pub static UPLOAD_SIZE_REJECTED: AtomicU64 = AtomicU64::new(0);
 pub static UPLOAD_TYPE_REJECTED: AtomicU64 = AtomicU64::new(0);
 pub static UPLOAD_TOTAL: AtomicU64 = AtomicU64::new(0);
 pub static UPLOAD_TOTAL_BYTES: AtomicU64 = AtomicU64::new(0);
+pub static UPLOAD_SCAN_CLEAN: AtomicU64 = AtomicU64::new(0);
+pub static UPLOAD_SCAN_MALICIOUS: AtomicU64 = AtomicU64::new(0);
+pub static UPLOAD_SCAN_DISABLED: AtomicU64 = AtomicU64::new(0);
+pub static UPLOAD_SCAN_UNAVAILABLE: AtomicU64 = AtomicU64::new(0);
+pub static UPLOAD_SCAN_INDETERMINATE: AtomicU64 = AtomicU64::new(0);
+pub static UPLOAD_SCAN_FAIL_OPEN_ALLOWED: AtomicU64 = AtomicU64::new(0);
+pub static UPLOAD_SCAN_QUARANTINE_ON_ERROR: AtomicU64 = AtomicU64::new(0);
 
 pub fn increment_rate_limit_exceeded() {
     UPLOAD_RATE_LIMIT_EXCEEDED.fetch_add(1, Ordering::Relaxed);
@@ -62,4 +69,60 @@ pub fn get_upload_total() -> u64 {
 
 pub fn get_upload_total_bytes() -> u64 {
     UPLOAD_TOTAL_BYTES.load(Ordering::Relaxed)
+}
+
+pub fn increment_scan_clean() {
+    UPLOAD_SCAN_CLEAN.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn increment_scan_malicious() {
+    UPLOAD_SCAN_MALICIOUS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn increment_scan_disabled() {
+    UPLOAD_SCAN_DISABLED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn increment_scan_unavailable() {
+    UPLOAD_SCAN_UNAVAILABLE.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn increment_scan_indeterminate() {
+    UPLOAD_SCAN_INDETERMINATE.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn increment_scan_fail_open_allowed() {
+    UPLOAD_SCAN_FAIL_OPEN_ALLOWED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn increment_scan_quarantine_on_error() {
+    UPLOAD_SCAN_QUARANTINE_ON_ERROR.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_scan_clean() -> u64 {
+    UPLOAD_SCAN_CLEAN.load(Ordering::Relaxed)
+}
+
+pub fn get_scan_malicious() -> u64 {
+    UPLOAD_SCAN_MALICIOUS.load(Ordering::Relaxed)
+}
+
+pub fn get_scan_disabled() -> u64 {
+    UPLOAD_SCAN_DISABLED.load(Ordering::Relaxed)
+}
+
+pub fn get_scan_unavailable() -> u64 {
+    UPLOAD_SCAN_UNAVAILABLE.load(Ordering::Relaxed)
+}
+
+pub fn get_scan_indeterminate() -> u64 {
+    UPLOAD_SCAN_INDETERMINATE.load(Ordering::Relaxed)
+}
+
+pub fn get_scan_fail_open_allowed() -> u64 {
+    UPLOAD_SCAN_FAIL_OPEN_ALLOWED.load(Ordering::Relaxed)
+}
+
+pub fn get_scan_quarantine_on_error() -> u64 {
+    UPLOAD_SCAN_QUARANTINE_ON_ERROR.load(Ordering::Relaxed)
 }

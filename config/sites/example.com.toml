@@ -286,6 +286,10 @@ memory_threshold = "10MB"
 # Scan uploaded files with YARA for malware detection
 scan_with_yara = true
 
+# How to handle YARA scan errors (timeout, panic, unavailable scanner)
+# Options: "quarantine_on_error" (default), "fail_closed", "fail_open" (unsafe, opt-in only)
+yara_failure_policy = "quarantine_on_error"
+
 # Sandbox files before forwarding to upstream
 sandbox_enabled = true
 
@@ -319,6 +323,7 @@ mime_types = [
 pattern = "/api/avatars/.*"
 max_size = "5MB"
 scan_with_yara = true
+yara_failure_policy = "fail_closed"
 
 [upload.paths.allowed_types]
 mode = "allowlist"

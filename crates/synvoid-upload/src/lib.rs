@@ -1,5 +1,6 @@
 pub mod config;
 pub mod malware_scanner;
+pub mod metrics;
 pub mod rate_limit;
 pub mod sandbox;
 pub mod signature;
@@ -8,6 +9,7 @@ pub mod yara_scanner;
 
 pub use config::{
     AllowedTypesConfig, AllowedTypesMode, EffectiveUploadConfig, PathUploadConfig, UploadConfig,
+    UploadScanFailurePolicy,
 };
 pub use malware_scanner::MalwareMatch;
 pub use sandbox::{QuarantineEntry, Sandbox, SandboxConfig, SandboxError, SandboxHandle};
@@ -67,6 +69,27 @@ pub enum UploadValidationError {
 
     #[error("MIME type mismatch: declared '{declared}' but detected '{detected}'")]
     MimeMismatch { declared: String, detected: String },
+
+    #[error("Scan indeterminate: {reason}")]
+    ScanIndeterminate { reason: String },
+
+    #[error("Malware scanner unavailable")]
+    ScannerUnavailable,
+}
+
+/// Status of a YARA scan after execution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UploadScanStatus {
+    /// Scan completed, no matches found.
+    Clean,
+    /// Scan completed, one or more matches found.
+    Malicious,
+    /// Scanning was disabled by effective config.
+    Disabled,
+    /// Scan was requested but no scanner was available.
+    Unavailable,
+    /// Scan was attempted but did not complete successfully.
+    Indeterminate,
 }
 
 #[derive(Debug, Clone)]
@@ -75,11 +98,17 @@ pub struct ValidationResult {
     pub size: u64,
     pub scanned: bool,
     pub yara_matches: Vec<String>,
+    pub scan_status: UploadScanStatus,
+    pub scan_error: Option<String>,
 }
 
 impl ValidationResult {
     pub fn is_clean(&self) -> bool {
         self.yara_matches.is_empty()
+            && matches!(
+                self.scan_status,
+                UploadScanStatus::Clean | UploadScanStatus::Disabled
+            )
     }
 }
 
@@ -164,6 +193,80 @@ impl UploadValidator {
         })
     }
 
+    /// Centralized scan invocation. Returns (scan_status, matches, error_message).
+    /// Applies the configured failure policy on scanner errors.
+    async fn execute_scan(
+        &self,
+        data: &[u8],
+        effective_config: &EffectiveUploadConfig,
+    ) -> (UploadScanStatus, Vec<String>, Option<String>) {
+        if !effective_config.scan_with_yara {
+            return (UploadScanStatus::Disabled, Vec::new(), None);
+        }
+
+        let scanner = match &self.malware_scanner {
+            Some(s) => s,
+            None => {
+                return match effective_config.yara_failure_policy {
+                    UploadScanFailurePolicy::FailClosed
+                    | UploadScanFailurePolicy::QuarantineOnError => (
+                        UploadScanStatus::Unavailable,
+                        Vec::new(),
+                        Some("no malware scanner available".into()),
+                    ),
+                    UploadScanFailurePolicy::FailOpen => {
+                        metrics::increment_scan_fail_open_allowed();
+                        (
+                            UploadScanStatus::Unavailable,
+                            Vec::new(),
+                            Some("no malware scanner available (fail_open)".into()),
+                        )
+                    }
+                };
+            }
+        };
+
+        match scanner.scan_bytes(data).await {
+            Ok(scan_result) => {
+                let matched_names: Vec<String> = scan_result
+                    .matches
+                    .iter()
+                    .map(|m| m.rule_name.clone())
+                    .collect();
+                if matched_names.is_empty() {
+                    metrics::increment_scan_clean();
+                    (UploadScanStatus::Clean, matched_names, None)
+                } else {
+                    metrics::increment_scan_malicious();
+                    (UploadScanStatus::Malicious, matched_names, None)
+                }
+            }
+            Err(e) => {
+                let error_msg = format!("{}", e);
+                metrics::increment_scan_indeterminate();
+
+                match effective_config.yara_failure_policy {
+                    UploadScanFailurePolicy::FailClosed => {
+                        (UploadScanStatus::Indeterminate, Vec::new(), Some(error_msg))
+                    }
+                    UploadScanFailurePolicy::QuarantineOnError => {
+                        metrics::increment_scan_quarantine_on_error();
+                        (UploadScanStatus::Indeterminate, Vec::new(), Some(error_msg))
+                    }
+                    UploadScanFailurePolicy::FailOpen => {
+                        metrics::increment_scan_fail_open_allowed();
+                        tracing::warn!(
+                            error = %e,
+                            policy = "fail_open",
+                            "YARA scan failed but fail_open policy allows upload"
+                        );
+                        (UploadScanStatus::Indeterminate, Vec::new(), Some(error_msg))
+                    }
+                }
+            }
+        }
+    }
+
     pub fn reload_yara_rules_if_needed(&self) -> Result<(), YaraError> {
         #[cfg(feature = "mesh")]
         {
@@ -242,28 +345,8 @@ impl UploadValidator {
             });
         }
 
-        let (scanned, yara_matches) = if effective_config.scan_with_yara {
-            if let Some(scanner) = &self.malware_scanner {
-                match scanner.scan_bytes(data).await {
-                    Ok(scan_result) => {
-                        let matched_names: Vec<String> = scan_result
-                            .matches
-                            .iter()
-                            .map(|m| m.rule_name.clone())
-                            .collect();
-                        (true, matched_names)
-                    }
-                    Err(e) => {
-                        tracing::warn!("Malware scan error: {}", e);
-                        (true, Vec::new())
-                    }
-                }
-            } else {
-                (false, Vec::new())
-            }
-        } else {
-            (false, Vec::new())
-        };
+        let (scan_status, yara_matches, scan_error) =
+            self.execute_scan(data, &effective_config).await;
 
         if !yara_matches.is_empty() {
             debug!(
@@ -276,11 +359,33 @@ impl UploadValidator {
             });
         }
 
+        if scan_status == UploadScanStatus::Indeterminate
+            || scan_status == UploadScanStatus::Unavailable
+        {
+            match effective_config.yara_failure_policy {
+                UploadScanFailurePolicy::FailClosed
+                | UploadScanFailurePolicy::QuarantineOnError => {
+                    return Err(UploadValidationError::ScanIndeterminate {
+                        reason: scan_error.unwrap_or_else(|| "scan failed".into()),
+                    });
+                }
+                UploadScanFailurePolicy::FailOpen => {
+                    tracing::warn!(
+                        scan_error = ?scan_error,
+                        policy = "fail_open",
+                        "Upload allowed despite scan failure"
+                    );
+                }
+            }
+        }
+
         Ok(ValidationResult {
             mime_type,
             size: data.len() as u64,
-            scanned,
+            scanned: scan_status != UploadScanStatus::Disabled,
             yara_matches,
+            scan_status,
+            scan_error,
         })
     }
 
@@ -355,28 +460,8 @@ impl UploadValidator {
             }
         }
 
-        let (scanned, yara_matches) = if effective_config.scan_with_yara {
-            if let Some(scanner) = &self.malware_scanner {
-                match scanner.scan_bytes(data).await {
-                    Ok(scan_result) => {
-                        let matched_names: Vec<String> = scan_result
-                            .matches
-                            .iter()
-                            .map(|m| m.rule_name.clone())
-                            .collect();
-                        (true, matched_names)
-                    }
-                    Err(e) => {
-                        tracing::warn!("Malware scan error: {}", e);
-                        (true, Vec::new())
-                    }
-                }
-            } else {
-                (false, Vec::new())
-            }
-        } else {
-            (false, Vec::new())
-        };
+        let (scan_status, yara_matches, scan_error) =
+            self.execute_scan(data, &effective_config).await;
 
         if !yara_matches.is_empty() {
             debug!(
@@ -389,11 +474,33 @@ impl UploadValidator {
             });
         }
 
+        if scan_status == UploadScanStatus::Indeterminate
+            || scan_status == UploadScanStatus::Unavailable
+        {
+            match effective_config.yara_failure_policy {
+                UploadScanFailurePolicy::FailClosed
+                | UploadScanFailurePolicy::QuarantineOnError => {
+                    return Err(UploadValidationError::ScanIndeterminate {
+                        reason: scan_error.unwrap_or_else(|| "scan failed".into()),
+                    });
+                }
+                UploadScanFailurePolicy::FailOpen => {
+                    tracing::warn!(
+                        scan_error = ?scan_error,
+                        policy = "fail_open",
+                        "Upload allowed despite scan failure"
+                    );
+                }
+            }
+        }
+
         Ok(ValidationResult {
             mime_type,
             size: data.len() as u64,
-            scanned,
+            scanned: scan_status != UploadScanStatus::Disabled,
             yara_matches,
+            scan_status,
+            scan_error,
         })
     }
 
@@ -426,28 +533,8 @@ impl UploadValidator {
             });
         }
 
-        let (scanned, yara_matches) = if effective_config.scan_with_yara {
-            if let Some(scanner) = &self.malware_scanner {
-                match scanner.scan_bytes(data).await {
-                    Ok(scan_result) => {
-                        let matched_names: Vec<String> = scan_result
-                            .matches
-                            .iter()
-                            .map(|m| m.rule_name.clone())
-                            .collect();
-                        (true, matched_names)
-                    }
-                    Err(e) => {
-                        tracing::warn!("Malware scan error: {}", e);
-                        (true, Vec::new())
-                    }
-                }
-            } else {
-                (false, Vec::new())
-            }
-        } else {
-            (false, Vec::new())
-        };
+        let (scan_status, yara_matches, scan_error) =
+            self.execute_scan(data, &effective_config).await;
 
         if !yara_matches.is_empty() {
             warn!(
@@ -476,12 +563,35 @@ impl UploadValidator {
             });
         }
 
+        if scan_status == UploadScanStatus::Indeterminate
+            || scan_status == UploadScanStatus::Unavailable
+        {
+            match effective_config.yara_failure_policy {
+                UploadScanFailurePolicy::FailClosed
+                | UploadScanFailurePolicy::QuarantineOnError => {
+                    metrics::increment_scan_quarantine_on_error();
+                    return Err(UploadValidationError::ScanIndeterminate {
+                        reason: scan_error.unwrap_or_else(|| "scan failed".into()),
+                    });
+                }
+                UploadScanFailurePolicy::FailOpen => {
+                    tracing::warn!(
+                        scan_error = ?scan_error,
+                        policy = "fail_open",
+                        "Upload allowed despite scan failure"
+                    );
+                }
+            }
+        }
+
         Ok((
             ValidationResult {
                 mime_type,
                 size: data.len() as u64,
-                scanned,
+                scanned: scan_status != UploadScanStatus::Disabled,
                 yara_matches,
+                scan_status,
+                scan_error,
             },
             None,
         ))
@@ -534,28 +644,8 @@ impl UploadValidator {
             });
         }
 
-        let (scanned, yara_matches) = if effective_config.scan_with_yara {
-            if let Some(scanner) = &self.malware_scanner {
-                match scanner.scan_bytes(&header).await {
-                    Ok(scan_result) => {
-                        let matched_names: Vec<String> = scan_result
-                            .matches
-                            .iter()
-                            .map(|m| m.rule_name.clone())
-                            .collect();
-                        (true, matched_names)
-                    }
-                    Err(e) => {
-                        tracing::warn!("Malware scan error: {}", e);
-                        (true, Vec::new())
-                    }
-                }
-            } else {
-                (false, Vec::new())
-            }
-        } else {
-            (false, Vec::new())
-        };
+        let (scan_status, yara_matches, scan_error) =
+            self.execute_scan(&header, &effective_config).await;
 
         if !yara_matches.is_empty() {
             warn!(
@@ -580,11 +670,34 @@ impl UploadValidator {
             });
         }
 
+        if scan_status == UploadScanStatus::Indeterminate
+            || scan_status == UploadScanStatus::Unavailable
+        {
+            match effective_config.yara_failure_policy {
+                UploadScanFailurePolicy::FailClosed
+                | UploadScanFailurePolicy::QuarantineOnError => {
+                    metrics::increment_scan_quarantine_on_error();
+                    return Err(UploadValidationError::ScanIndeterminate {
+                        reason: scan_error.unwrap_or_else(|| "scan failed".into()),
+                    });
+                }
+                UploadScanFailurePolicy::FailOpen => {
+                    tracing::warn!(
+                        scan_error = ?scan_error,
+                        policy = "fail_open",
+                        "Upload allowed despite scan failure"
+                    );
+                }
+            }
+        }
+
         Ok(ValidationResult {
             mime_type,
             size,
-            scanned,
+            scanned: scan_status != UploadScanStatus::Disabled,
             yara_matches,
+            scan_status,
+            scan_error,
         })
     }
 }
@@ -983,5 +1096,190 @@ mod tests {
 
         let header = "form-data; name=\"field\"";
         assert_eq!(parse_content_disposition_filename(header), None);
+    }
+
+    // --- YARA failure semantics tests ---
+
+    #[test]
+    fn test_upload_scan_failure_policy_default() {
+        let policy = UploadScanFailurePolicy::default();
+        assert_eq!(policy, UploadScanFailurePolicy::QuarantineOnError);
+    }
+
+    #[test]
+    fn test_upload_scan_failure_policy_deserialize() {
+        let policy: UploadScanFailurePolicy = serde_json::from_str(r#""fail_closed""#).unwrap();
+        assert_eq!(policy, UploadScanFailurePolicy::FailClosed);
+
+        let policy: UploadScanFailurePolicy =
+            serde_json::from_str(r#""quarantine_on_error""#).unwrap();
+        assert_eq!(policy, UploadScanFailurePolicy::QuarantineOnError);
+
+        let policy: UploadScanFailurePolicy = serde_json::from_str(r#""fail_open""#).unwrap();
+        assert_eq!(policy, UploadScanFailurePolicy::FailOpen);
+    }
+
+    #[test]
+    fn test_validation_result_is_clean_scan_status() {
+        let clean = ValidationResult {
+            mime_type: "text/plain".into(),
+            size: 100,
+            scanned: true,
+            yara_matches: Vec::new(),
+            scan_status: UploadScanStatus::Clean,
+            scan_error: None,
+        };
+        assert!(clean.is_clean());
+
+        let disabled = ValidationResult {
+            mime_type: "text/plain".into(),
+            size: 100,
+            scanned: false,
+            yara_matches: Vec::new(),
+            scan_status: UploadScanStatus::Disabled,
+            scan_error: None,
+        };
+        assert!(disabled.is_clean());
+
+        let indeterminate = ValidationResult {
+            mime_type: "text/plain".into(),
+            size: 100,
+            scanned: true,
+            yara_matches: Vec::new(),
+            scan_status: UploadScanStatus::Indeterminate,
+            scan_error: Some("timeout".into()),
+        };
+        assert!(!indeterminate.is_clean());
+
+        let unavailable = ValidationResult {
+            mime_type: "text/plain".into(),
+            size: 100,
+            scanned: true,
+            yara_matches: Vec::new(),
+            scan_status: UploadScanStatus::Unavailable,
+            scan_error: Some("no scanner".into()),
+        };
+        assert!(!unavailable.is_clean());
+
+        let malicious = ValidationResult {
+            mime_type: "text/plain".into(),
+            size: 100,
+            scanned: true,
+            yara_matches: vec!["test_rule".into()],
+            scan_status: UploadScanStatus::Malicious,
+            scan_error: None,
+        };
+        assert!(!malicious.is_clean());
+    }
+
+    #[test]
+    fn test_config_with_yara_failure_policy() {
+        let config = UploadConfig::default();
+        assert_eq!(
+            config.yara_failure_policy,
+            UploadScanFailurePolicy::QuarantineOnError
+        );
+    }
+
+    #[test]
+    fn test_config_path_override_failure_policy() {
+        let config = UploadConfig {
+            paths: vec![PathUploadConfig {
+                pattern: "/api/upload".to_string(),
+                max_size: None,
+                scan_with_yara: None,
+                yara_rules_dir: None,
+                yara_timeout_ms: None,
+                verify_signature: None,
+                signature_strict_mode: None,
+                rate_limit_enabled: None,
+                max_uploads_per_minute: None,
+                max_uploads_per_hour: None,
+                max_bytes_per_minute: None,
+                burst_allowance: None,
+                allowed_types: AllowedTypesConfig::default(),
+                reject_mime_mismatch: None,
+                yara_failure_policy: Some(UploadScanFailurePolicy::FailClosed),
+            }],
+            ..Default::default()
+        };
+
+        let effective = config.effective_config_for_path("/api/upload");
+        assert_eq!(
+            effective.yara_failure_policy,
+            UploadScanFailurePolicy::FailClosed
+        );
+
+        let effective_default = config.effective_config_for_path("/other");
+        assert_eq!(
+            effective_default.yara_failure_policy,
+            UploadScanFailurePolicy::QuarantineOnError
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_bytes_disabled_scan() {
+        let config = UploadConfig {
+            scan_with_yara: false,
+            sandbox_enabled: false,
+            ..Default::default()
+        };
+
+        let validator = UploadValidator::new(config).unwrap();
+        let data = b"hello world";
+        let result = validator.validate_bytes(data, "/upload").await.unwrap();
+        assert_eq!(result.scan_status, UploadScanStatus::Disabled);
+        assert!(!result.scanned);
+        assert!(result.is_clean());
+        assert!(result.scan_error.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_validate_with_sandbox_disabled_scan() {
+        let config = UploadConfig {
+            scan_with_yara: false,
+            sandbox_enabled: false,
+            ..Default::default()
+        };
+
+        let validator = UploadValidator::new(config).unwrap();
+        let data = b"hello world";
+        let (result, _quarantine) = validator
+            .validate_with_sandbox(data, "/upload", Some("test.txt"))
+            .await
+            .unwrap();
+        assert_eq!(result.scan_status, UploadScanStatus::Disabled);
+        assert!(!result.scanned);
+        assert!(result.is_clean());
+    }
+
+    #[tokio::test]
+    async fn test_validate_bytes_with_declared_type_disabled_scan() {
+        let config = UploadConfig {
+            scan_with_yara: false,
+            sandbox_enabled: false,
+            ..Default::default()
+        };
+
+        let validator = UploadValidator::new(config).unwrap();
+        let data = b"hello world";
+        let result = validator
+            .validate_bytes_with_declared_type(data, "/upload", Some("text/plain"))
+            .await
+            .unwrap();
+        assert_eq!(result.scan_status, UploadScanStatus::Disabled);
+        assert!(!result.scanned);
+        assert!(result.is_clean());
+    }
+
+    #[test]
+    fn test_scan_indeterminate_error_display() {
+        let err = UploadValidationError::ScanIndeterminate {
+            reason: "timeout".into(),
+        };
+        assert!(err.to_string().contains("timeout"));
+
+        let err = UploadValidationError::ScannerUnavailable;
+        assert!(err.to_string().contains("unavailable"));
     }
 }

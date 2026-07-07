@@ -1279,6 +1279,23 @@ impl HttpsServer {
                                                 );
                                                 (403, "Upload blocked: malware detected")
                                             }
+                                            synvoid_upload::UploadValidationError::ScanIndeterminate { reason } => {
+                                                tracing::warn!(
+                                                    path = %path,
+                                                    client_ip = %client_ip,
+                                                    reason = %reason,
+                                                    "Upload scan indeterminate, blocking"
+                                                );
+                                                (403, "Upload blocked: scan indeterminate")
+                                            }
+                                            synvoid_upload::UploadValidationError::ScannerUnavailable => {
+                                                tracing::warn!(
+                                                    path = %path,
+                                                    client_ip = %client_ip,
+                                                    "Malware scanner unavailable, blocking upload"
+                                                );
+                                                (403, "Upload blocked: scanner unavailable")
+                                            }
                                             _ => (
                                                 400,
                                                 "Upload validation failed",

@@ -88,6 +88,23 @@ pub async fn maybe_handle_upload_validation<W: UploadValidationWaf>(
                     );
                     (403, "Upload blocked: malware detected")
                 }
+                UploadValidationError::ScanIndeterminate { reason } => {
+                    tracing::warn!(
+                        path = %path,
+                        client_ip = %client_ip,
+                        reason = %reason,
+                        "Upload scan indeterminate, blocking"
+                    );
+                    (403, "Upload blocked: scan indeterminate")
+                }
+                UploadValidationError::ScannerUnavailable => {
+                    tracing::warn!(
+                        path = %path,
+                        client_ip = %client_ip,
+                        "Malware scanner unavailable, blocking upload"
+                    );
+                    (403, "Upload blocked: scanner unavailable")
+                }
                 _ => (400, "Upload validation failed"),
             };
             tracing::warn!(path = %path, error = %e, "Upload validation failed");

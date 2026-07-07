@@ -14,6 +14,8 @@ pub struct SiteUploadConfig {
     #[serde(default)]
     pub scan_with_yara: Option<bool>,
     #[serde(default)]
+    pub yara_failure_policy: Option<String>,
+    #[serde(default)]
     pub sandbox_enabled: Option<bool>,
     #[serde(default)]
     pub allowed_types: SiteAllowedTypesConfig,
@@ -36,6 +38,8 @@ pub struct SitePathUploadConfig {
     pub max_size: Option<String>,
     #[serde(default)]
     pub scan_with_yara: Option<bool>,
+    #[serde(default)]
+    pub yara_failure_policy: Option<String>,
     #[serde(default)]
     pub allowed_types: SiteAllowedTypesConfig,
 }

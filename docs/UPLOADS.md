@@ -35,16 +35,14 @@ types = [
 ### YARA Malware Scanning
 
 ```toml
-[defaults.upload.scan_with_yara]
-enabled = true
-rules_dir = "rules/"
-quarantine_dir = "/var/lib/synvoid/quarantine"
+[defaults.upload]
+scan_with_yara = true
+yara_failure_policy = "quarantine_on_error"  # default
+# Other options: "fail_closed", "fail_open" (unsafe, opt-in only)
 
-# Scanning options
-[defaults.upload.scan_with_yara.options]
-scan_content = true
-max_scan_size_mb = 50
-timeout_secs = 30
+yara_rules_dir = "rules/"
+quarantine_dir = "/var/lib/synvoid/quarantine"
+yara_timeout_ms = 30000
 ```
 
 ### Per-Site Configuration
@@ -84,12 +82,19 @@ types = [
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `enabled` | `false` | Enable YARA scanning |
-| `rules_dir` | `"rules/"` | Directory containing YARA rules |
+| `scan_with_yara` | `true` | Enable YARA scanning |
+| `yara_failure_policy` | `"quarantine_on_error"` | How to handle scan errors: `quarantine_on_error`, `fail_closed`, or `fail_open` |
+| `yara_rules_dir` | - | Directory containing YARA rules |
 | `quarantine_dir` | - | Directory for quarantined files |
-| `scan_content` | `true` | Scan file content vs just extension |
-| `max_scan_size_mb` | `50` | Maximum file size to scan |
-| `timeout_secs` | `30` | Scan timeout |
+| `yara_timeout_ms` | `30000` | Scan timeout in milliseconds |
+
+### Scan Failure Policies
+
+| Policy | Production Safe | Description |
+|--------|----------------|-------------|
+| `quarantine_on_error` | Yes | Quarantine file and reject upload on scan error (default) |
+| `fail_closed` | Yes | Reject upload immediately on scan error |
+| `fail_open` | **No** | Allow upload on scan error, mark as indeterminate. Opt-in only — never use on public upload endpoints. |
 
 ## YARA Rules Setup
 
@@ -144,11 +149,17 @@ Client Upload Request
         v
    [YARA Scan] (if enabled)
         |
-        +--> Clean -----> Allow Upload
+        +--> Clean ---------> Allow Upload
         |
-        +--> Malware ---> Quarantine
+        +--> Malicious -----> Quarantine + Block (403)
         |
-        +--> Error ----> Log & Allow
+        +--> Scan Error ----> Apply yara_failure_policy:
+        |       |
+        |       +--> quarantine_on_error (default): Quarantine + Block (403)
+        |       +--> fail_closed: Block (403)
+        |       +--> fail_open: Allow + Log Warning (opt-in only)
+        |
+        +--> Scanner Unavailable --> Block (403)
 ```
 
 ## Admin API
@@ -188,7 +199,7 @@ ls -la /var/lib/synvoid/quarantine/ | wc -l
 
 **Internal Metrics Available:**
 
-The following upload statistics are tracked internally but not yet exported to Prometheus:
+The following upload statistics are tracked internally:
 
 - `UPLOAD_TOTAL` - Total uploads processed
 - `UPLOAD_RATE_LIMIT_EXCEEDED` - Uploads blocked by rate limiting
@@ -196,6 +207,13 @@ The following upload statistics are tracked internally but not yet exported to P
 - `UPLOAD_TYPE_REJECTED` - Uploads rejected due to disallowed MIME type
 - `UPLOAD_MALWARE_DETECTED` - Files flagged by YARA scanning
 - `UPLOAD_TOTAL_BYTES` - Total bytes processed
+- `UPLOAD_SCAN_CLEAN` - Scans completed with no matches
+- `UPLOAD_SCAN_MALICIOUS` - Scans that found malware
+- `UPLOAD_SCAN_DISABLED` - Uploads where scanning was disabled by config
+- `UPLOAD_SCAN_UNAVAILABLE` - Uploads where scanner was not available
+- `UPLOAD_SCAN_INDETERMINATE` - Scans that failed to complete
+- `UPLOAD_SCAN_FAIL_OPEN_ALLOWED` - Uploads allowed despite scan failure (fail_open policy)
+- `UPLOAD_SCAN_QUARANTINE_ON_ERROR` - Uploads quarantined on scan failure
 
 ## Security Considerations
 

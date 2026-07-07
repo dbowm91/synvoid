@@ -31,6 +31,7 @@ pub struct UploadConfig {
     pub max_size: String,
     pub memory_threshold: String,
     pub scan_with_yara: bool,
+    pub yara_failure_policy: UploadScanFailurePolicy,
     pub sandbox_enabled: bool,
     pub sandbox_dir: String,
     pub quarantine_dir: String,
@@ -56,10 +57,26 @@ pub struct EffectiveUploadConfig {
 }
 
 pub struct ValidationResult {
-    pub mime_type: Option<String>,
-    pub size: usize,
+    pub mime_type: String,
+    pub size: u64,
     pub scanned: bool,
+    pub scan_status: UploadScanStatus,
+    pub scan_error: Option<String>,
     pub yara_matches: Vec<String>,
+}
+
+pub enum UploadScanStatus {
+    Clean,
+    Malicious,
+    Disabled,
+    Unavailable,
+    Indeterminate,
+}
+
+pub enum UploadScanFailurePolicy {
+    FailClosed,
+    QuarantineOnError,  // default
+    FailOpen,
 }
 
 pub struct MultipartPart {
@@ -73,6 +90,8 @@ pub enum UploadValidationError {
     SizeExceeded { max: u64, actual: u64 },
     TypeNotAllowed { detected: String, allowed: Vec<String> },
     MalwareDetected { matches: Vec<String> },
+    ScanIndeterminate { reason: String },
+    ScannerUnavailable,
     IoError(#[from] std::io::Error),
     YaraError(#[from] YaraError),
     SandboxError(#[from] SandboxError),
@@ -132,3 +151,16 @@ pub enum UploadValidationError {
 - **Malware Scanning**: YARA rules for known malicious patterns
 - **Quarantine**: Suspicious files isolated before processing
 - **Rate Limiting**: Per-IP upload rate limits
+- **Scan Failure Semantics**: Scanner errors never silently treated as clean
+
+## 7. Scan Failure Semantics
+
+YARA scan errors (timeout, panic, rule deserialization failure, scanner unavailable) are **never** silently treated as clean uploads under production defaults. The `yara_failure_policy` config field controls behavior:
+
+| Policy | Behavior on scan error |
+|--------|----------------------|
+| `quarantine_on_error` (default) | Quarantine if possible, reject with `ScanIndeterminate` |
+| `fail_closed` | Reject immediately with `ScanIndeterminate` |
+| `fail_open` | Allow upload, mark `Indeterminate`, emit warning metrics (opt-in only) |
+
+Scan statuses are reported in `ValidationResult.scan_status` and tracked via metrics (`UPLOAD_SCAN_CLEAN`, `UPLOAD_SCAN_MALICIOUS`, `UPLOAD_SCAN_DISABLED`, `UPLOAD_SCAN_UNAVAILABLE`, `UPLOAD_SCAN_INDETERMINATE`, `UPLOAD_SCAN_FAIL_OPEN_ALLOWED`, `UPLOAD_SCAN_QUARANTINE_ON_ERROR`).

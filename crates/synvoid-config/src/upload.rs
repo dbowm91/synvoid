@@ -14,6 +14,8 @@ pub struct UploadDefaults {
     pub memory_threshold: String,
     #[serde(default = "default_scan_with_yara")]
     pub scan_with_yara: bool,
+    #[serde(default = "default_yara_failure_policy")]
+    pub yara_failure_policy: String,
     #[serde(default = "default_sandbox_enabled")]
     pub sandbox_enabled: bool,
     #[serde(default = "default_sandbox_dir")]
@@ -39,6 +41,7 @@ impl Default for UploadDefaults {
             max_size: "100MB".to_string(),
             memory_threshold: "10MB".to_string(),
             scan_with_yara: true,
+            yara_failure_policy: "quarantine_on_error".to_string(),
             sandbox_enabled: true,
             sandbox_dir: "/var/lib/synvoid/sandbox".to_string(),
             quarantine_dir: "/var/lib/synvoid/quarantine".to_string(),
@@ -92,6 +95,9 @@ fn default_memory_threshold() -> String {
 }
 fn default_scan_with_yara() -> bool {
     true
+}
+fn default_yara_failure_policy() -> String {
+    "quarantine_on_error".to_string()
 }
 fn default_sandbox_enabled() -> bool {
     true

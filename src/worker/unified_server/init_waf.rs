@@ -43,6 +43,11 @@ pub async fn init_upload_validator(config: &Arc<RwLock<ConfigManager>>) {
             },
             paths: Vec::new(),
             reject_mime_mismatch: false,
+            yara_failure_policy: match defaults.yara_failure_policy.as_str() {
+                "fail_closed" => synvoid_upload::UploadScanFailurePolicy::FailClosed,
+                "fail_open" => synvoid_upload::UploadScanFailurePolicy::FailOpen,
+                _ => synvoid_upload::UploadScanFailurePolicy::QuarantineOnError,
+            },
         }
     };
 

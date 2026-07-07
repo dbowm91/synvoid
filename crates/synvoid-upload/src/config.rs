@@ -2,6 +2,21 @@ use regex::Regex;
 use serde::Deserialize;
 use std::sync::OnceLock;
 
+/// Policy for handling YARA scanner failures during upload validation.
+///
+/// - `FailClosed`: Reject upload on scanner error, timeout, panic, or unavailable scanner.
+/// - `QuarantineOnError`: Quarantine the upload if possible, then reject with scan-indeterminate error.
+/// - `FailOpen`: Allow upload on scan failure, but mark result as scan-indeterminate.
+///   **Must be opt-in; never the production default.**
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum UploadScanFailurePolicy {
+    FailClosed,
+    #[default]
+    QuarantineOnError,
+    FailOpen,
+}
+
 static DEFAULT_SAFE_MIME_TYPES: &[&str] = &[
     "image/jpeg",
     "image/png",
@@ -99,6 +114,9 @@ pub struct UploadConfig {
 
     #[serde(default = "default_reject_mime_mismatch")]
     pub reject_mime_mismatch: bool,
+
+    #[serde(default)]
+    pub yara_failure_policy: UploadScanFailurePolicy,
 }
 
 impl Default for UploadConfig {
@@ -123,6 +141,7 @@ impl Default for UploadConfig {
             allowed_types: AllowedTypesConfig::default(),
             paths: Vec::new(),
             reject_mime_mismatch: default_reject_mime_mismatch(),
+            yara_failure_policy: UploadScanFailurePolicy::default(),
         }
     }
 }
@@ -282,6 +301,10 @@ impl UploadConfig {
                 reject_mime_mismatch: path_cfg
                     .reject_mime_mismatch
                     .unwrap_or(self.reject_mime_mismatch),
+                yara_failure_policy: path_cfg
+                    .yara_failure_policy
+                    .clone()
+                    .unwrap_or_else(|| self.yara_failure_policy.clone()),
             }
         } else {
             EffectiveUploadConfig {
@@ -301,6 +324,7 @@ impl UploadConfig {
                     .unwrap_or(100 * 1024 * 1024),
                 burst_allowance: self.burst_allowance,
                 reject_mime_mismatch: self.reject_mime_mismatch,
+                yara_failure_policy: self.yara_failure_policy.clone(),
             }
         }
     }
@@ -323,6 +347,7 @@ pub struct EffectiveUploadConfig {
     pub max_bytes_per_minute: u64,
     pub burst_allowance: u32,
     pub reject_mime_mismatch: bool,
+    pub yara_failure_policy: UploadScanFailurePolicy,
 }
 
 impl EffectiveUploadConfig {
@@ -432,6 +457,9 @@ pub struct PathUploadConfig {
 
     #[serde(default)]
     pub reject_mime_mismatch: Option<bool>,
+
+    #[serde(default)]
+    pub yara_failure_policy: Option<UploadScanFailurePolicy>,
 }
 
 fn parse_size(s: &str) -> Option<u64> {
