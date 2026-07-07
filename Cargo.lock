@@ -8813,6 +8813,7 @@ dependencies = [
 name = "synvoid-upload"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
  "base64",
  "chrono",
  "ed25519-dalek",

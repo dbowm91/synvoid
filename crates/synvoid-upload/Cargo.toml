@@ -28,4 +28,5 @@ ed25519-dalek = "2"
 base64 = "0.22"
 tempfile = "3"
 uuid = { version = "1", features = ["v4"] }
+arc-swap = "1"
 yara-x = { version = "1.15", default-features = false, features = ["default-modules", "linkme"] }

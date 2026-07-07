@@ -41,6 +41,9 @@ pub struct UploadConfig {
     pub yara_window_size_bytes: u64,
     pub yara_max_window_count: u32,
     pub yara_magic_scan_limit_bytes: u64,
+    pub yara_max_concurrent_scans: u32,
+    pub yara_max_queued_scans: u32,
+    pub yara_queue_timeout_ms: u64,
     pub verify_signature: bool,
     pub signature_strict_mode: bool,
     pub rate_limit_enabled: bool,
@@ -210,6 +213,9 @@ yara_large_file_scan_mode = "windowed"  # "full", "windowed", or "header_only"
 yara_window_size_bytes = 1048576        # 1MB per window
 yara_max_window_count = 8               # Maximum windows to scan
 yara_magic_scan_limit_bytes = 16777216  # 16MB magic scan region
+yara_max_concurrent_scans = 4           # Max simultaneous YARA scan tasks
+yara_max_queued_scans = 64              # Max queued scan requests
+yara_queue_timeout_ms = 1000            # Timeout waiting for a scan slot (ms)
 ```
 
 ### Coverage Metadata
@@ -222,3 +228,53 @@ yara_magic_scan_limit_bytes = 16777216  # 16MB magic scan region
 - `coverage_ratio`: `scanned_bytes / total_bytes` (1.0 = full coverage)
 - `window_count`: Number of windows scanned (0 for full/header_only)
 - `duration_ms`: Scan wall-clock time
+
+## 9. Bounded YARA Execution
+
+The scan executor uses a semaphore-based bounded admission model to prevent hostile load from exhausting CPU/memory:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `yara_max_concurrent_scans` | 4 | Maximum simultaneously executing scan tasks |
+| `yara_max_queued_scans` | 64 | Maximum requests waiting for a scan slot |
+| `yara_queue_timeout_ms` | 1000 | Timeout (ms) to wait for a scan permit before rejecting |
+
+When all scan slots are occupied and the queue is full, new scans are rejected with `YaraError::QueueFull`. When a scan waits longer than `queue_timeout_ms`, it is rejected with `YaraError::QueueTimeout`. Both flow through the standard failure policy (`yara_failure_policy`).
+
+### Admission Flow
+
+```
+scan_bytes() / scan_file_windows()
+  → acquire_scan_permit()  // semaphore + timeout
+  → clone input data       // AFTER admission, not before
+  → load generation Arc    // lock-free via ArcSwap
+  → spawn_blocking(scan)   // YARA runs outside tokio runtime
+  → drop permit            // releases slot
+```
+
+Key properties:
+- **No global lock held during scan**: `ArcSwap` provides lock-free generation loading; the `Rules` object is immutable within a generation
+- **Input cloned after admission**: Large buffers are only cloned when a scan slot is available, preventing memory amplification under pressure
+- **Permit dropped on timeout**: Timed-out scans do not hold permits; the permit is dropped when the scan completes or errors
+
+## 10. Atomic Rule Reloads
+
+Rule reloads use a prepare-then-swap pattern via `ArcSwap<YaraRuleGeneration>`:
+
+1. **Compile off-path**: New rules are compiled on a dedicated thread (not holding any shared state)
+2. **Atomic store**: `generation.store(Arc::new(new_generation))` makes the new rules visible to all concurrent scanners instantly
+3. **Last-known-good**: If compilation fails, the previous generation continues serving scans unchanged
+4. **Metrics**: Reload success/failure counts tracked via `YARA_RELOAD_SUCCESS` / `YARA_RELOAD_FAILURE`
+
+### Generation Lifecycle
+
+```rust
+struct YaraRuleGeneration {
+    rules: Rules,              // compiled YARA rules (immutable)
+    version: Option<String>,   // human-readable version tag
+    hash: String,              // SHA-256 of source rules text
+    loaded_at: DateTime<Utc>,  // timestamp for diagnostics
+}
+```
+
+Scanners hold an `Arc` to the current generation, so reloads never block in-flight scans.

@@ -15,6 +15,12 @@ pub static UPLOAD_SCAN_INDETERMINATE: AtomicU64 = AtomicU64::new(0);
 pub static UPLOAD_SCAN_FAIL_OPEN_ALLOWED: AtomicU64 = AtomicU64::new(0);
 pub static UPLOAD_SCAN_QUARANTINE_ON_ERROR: AtomicU64 = AtomicU64::new(0);
 
+pub static YARA_SCAN_QUEUE_TIMEOUT: AtomicU64 = AtomicU64::new(0);
+pub static YARA_SCAN_QUEUE_FULL: AtomicU64 = AtomicU64::new(0);
+pub static YARA_SCAN_TIMEOUT: AtomicU64 = AtomicU64::new(0);
+pub static YARA_RELOAD_SUCCESS: AtomicU64 = AtomicU64::new(0);
+pub static YARA_RELOAD_FAILURE: AtomicU64 = AtomicU64::new(0);
+
 pub fn increment_rate_limit_exceeded() {
     UPLOAD_RATE_LIMIT_EXCEEDED.fetch_add(1, Ordering::Relaxed);
 }
@@ -125,4 +131,44 @@ pub fn get_scan_fail_open_allowed() -> u64 {
 
 pub fn get_scan_quarantine_on_error() -> u64 {
     UPLOAD_SCAN_QUARANTINE_ON_ERROR.load(Ordering::Relaxed)
+}
+
+pub fn increment_scan_queue_timeout() {
+    YARA_SCAN_QUEUE_TIMEOUT.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn increment_scan_queue_full() {
+    YARA_SCAN_QUEUE_FULL.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn increment_scan_timeout() {
+    YARA_SCAN_TIMEOUT.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn increment_yara_reload_success() {
+    YARA_RELOAD_SUCCESS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn increment_yara_reload_failure() {
+    YARA_RELOAD_FAILURE.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_scan_queue_timeout() -> u64 {
+    YARA_SCAN_QUEUE_TIMEOUT.load(Ordering::Relaxed)
+}
+
+pub fn get_scan_queue_full() -> u64 {
+    YARA_SCAN_QUEUE_FULL.load(Ordering::Relaxed)
+}
+
+pub fn get_scan_timeout() -> u64 {
+    YARA_SCAN_TIMEOUT.load(Ordering::Relaxed)
+}
+
+pub fn get_yara_reload_success() -> u64 {
+    YARA_RELOAD_SUCCESS.load(Ordering::Relaxed)
+}
+
+pub fn get_yara_reload_failure() -> u64 {
+    YARA_RELOAD_FAILURE.load(Ordering::Relaxed)
 }

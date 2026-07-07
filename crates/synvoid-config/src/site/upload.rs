@@ -33,6 +33,15 @@ pub struct SiteUploadConfig {
     /// Maximum offset for magic marker probing in windowed mode.
     #[serde(default)]
     pub yara_magic_scan_limit_bytes: Option<u64>,
+    /// Maximum concurrent YARA scan tasks.
+    #[serde(default)]
+    pub yara_max_concurrent_scans: Option<u32>,
+    /// Maximum queued YARA scan requests before rejecting.
+    #[serde(default)]
+    pub yara_max_queued_scans: Option<u32>,
+    /// Timeout in ms to wait for a scan permit before rejecting.
+    #[serde(default)]
+    pub yara_queue_timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
@@ -62,6 +71,15 @@ pub struct SitePathUploadConfig {
     pub yara_max_window_count: Option<u32>,
     #[serde(default)]
     pub yara_magic_scan_limit_bytes: Option<u64>,
+    /// Maximum concurrent YARA scan tasks.
+    #[serde(default)]
+    pub yara_max_concurrent_scans: Option<u32>,
+    /// Maximum queued YARA scan requests before rejecting.
+    #[serde(default)]
+    pub yara_max_queued_scans: Option<u32>,
+    /// Timeout in ms to wait for a scan permit before rejecting.
+    #[serde(default)]
+    pub yara_queue_timeout_ms: Option<u64>,
 }
 
 impl SiteUploadConfig {

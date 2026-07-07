@@ -44,6 +44,15 @@ pub struct UploadDefaults {
     /// Maximum offset for magic marker probing in windowed mode. Default: 16 MiB.
     #[serde(default = "default_yara_magic_scan_limit_bytes")]
     pub yara_magic_scan_limit_bytes: u64,
+    /// Maximum concurrent YARA scan tasks. Default: 4.
+    #[serde(default = "default_yara_max_concurrent_scans")]
+    pub yara_max_concurrent_scans: u32,
+    /// Maximum queued YARA scan requests before rejecting. Default: 64.
+    #[serde(default = "default_yara_max_queued_scans")]
+    pub yara_max_queued_scans: u32,
+    /// Timeout in ms to wait for a scan permit before rejecting. Default: 1000.
+    #[serde(default = "default_yara_queue_timeout_ms")]
+    pub yara_queue_timeout_ms: u64,
 }
 
 impl Default for UploadDefaults {
@@ -66,6 +75,9 @@ impl Default for UploadDefaults {
             yara_window_size_bytes: 1048576,
             yara_max_window_count: 8,
             yara_magic_scan_limit_bytes: 16 * 1024 * 1024,
+            yara_max_concurrent_scans: 4,
+            yara_max_queued_scans: 64,
+            yara_queue_timeout_ms: 1000,
         }
     }
 }
@@ -150,6 +162,15 @@ fn default_yara_max_window_count() -> u32 {
 
 fn default_yara_magic_scan_limit_bytes() -> u64 {
     16 * 1024 * 1024
+}
+fn default_yara_max_concurrent_scans() -> u32 {
+    4
+}
+fn default_yara_max_queued_scans() -> u32 {
+    64
+}
+fn default_yara_queue_timeout_ms() -> u64 {
+    1000
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]

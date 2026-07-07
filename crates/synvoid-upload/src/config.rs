@@ -43,6 +43,15 @@ const DEFAULT_MAX_WINDOW_COUNT: u32 = 8;
 /// Default magic scan limit: offsets beyond this are not probed for magic markers.
 const DEFAULT_MAGIC_SCAN_LIMIT_BYTES: u64 = 16 * 1024 * 1024;
 
+/// Default maximum concurrent YARA scans.
+const DEFAULT_MAX_CONCURRENT_SCANS: u32 = 4;
+
+/// Default maximum queued YARA scan requests.
+const DEFAULT_MAX_QUEUED_SCANS: u32 = 64;
+
+/// Default queue timeout in milliseconds.
+const DEFAULT_QUEUE_TIMEOUT_MS: u64 = 1000;
+
 static DEFAULT_SAFE_MIME_TYPES: &[&str] = &[
     "image/jpeg",
     "image/png",
@@ -159,6 +168,18 @@ pub struct UploadConfig {
     /// Maximum offset (in bytes) for magic marker probing in windowed mode.
     #[serde(default = "default_yara_magic_scan_limit_bytes")]
     pub yara_magic_scan_limit_bytes: u64,
+
+    /// Maximum concurrent YARA scans allowed.
+    #[serde(default = "default_yara_max_concurrent_scans")]
+    pub yara_max_concurrent_scans: u32,
+
+    /// Maximum number of scan requests that can queue while all concurrent slots are occupied.
+    #[serde(default = "default_yara_max_queued_scans")]
+    pub yara_max_queued_scans: u32,
+
+    /// Timeout in milliseconds waiting for a scan queue slot.
+    #[serde(default = "default_yara_queue_timeout_ms")]
+    pub yara_queue_timeout_ms: u64,
 }
 
 impl Default for UploadConfig {
@@ -188,6 +209,9 @@ impl Default for UploadConfig {
             yara_window_size_bytes: default_yara_window_size_bytes(),
             yara_max_window_count: default_yara_max_window_count(),
             yara_magic_scan_limit_bytes: default_yara_magic_scan_limit_bytes(),
+            yara_max_concurrent_scans: default_yara_max_concurrent_scans(),
+            yara_max_queued_scans: default_yara_max_queued_scans(),
+            yara_queue_timeout_ms: default_yara_queue_timeout_ms(),
         }
     }
 }
@@ -266,6 +290,18 @@ fn default_yara_max_window_count() -> u32 {
 
 fn default_yara_magic_scan_limit_bytes() -> u64 {
     DEFAULT_MAGIC_SCAN_LIMIT_BYTES
+}
+
+fn default_yara_max_concurrent_scans() -> u32 {
+    DEFAULT_MAX_CONCURRENT_SCANS
+}
+
+fn default_yara_max_queued_scans() -> u32 {
+    DEFAULT_MAX_QUEUED_SCANS
+}
+
+fn default_yara_queue_timeout_ms() -> u64 {
+    DEFAULT_QUEUE_TIMEOUT_MS
 }
 
 impl UploadConfig {
@@ -376,6 +412,15 @@ impl UploadConfig {
                 yara_magic_scan_limit_bytes: path_cfg
                     .yara_magic_scan_limit_bytes
                     .unwrap_or(self.yara_magic_scan_limit_bytes),
+                yara_max_concurrent_scans: path_cfg
+                    .yara_max_concurrent_scans
+                    .unwrap_or(self.yara_max_concurrent_scans),
+                yara_max_queued_scans: path_cfg
+                    .yara_max_queued_scans
+                    .unwrap_or(self.yara_max_queued_scans),
+                yara_queue_timeout_ms: path_cfg
+                    .yara_queue_timeout_ms
+                    .unwrap_or(self.yara_queue_timeout_ms),
             }
         } else {
             EffectiveUploadConfig {
@@ -400,6 +445,9 @@ impl UploadConfig {
                 yara_window_size_bytes: self.yara_window_size_bytes,
                 yara_max_window_count: self.yara_max_window_count,
                 yara_magic_scan_limit_bytes: self.yara_magic_scan_limit_bytes,
+                yara_max_concurrent_scans: self.yara_max_concurrent_scans,
+                yara_max_queued_scans: self.yara_max_queued_scans,
+                yara_queue_timeout_ms: self.yara_queue_timeout_ms,
             }
         }
     }
@@ -427,6 +475,9 @@ pub struct EffectiveUploadConfig {
     pub yara_window_size_bytes: u64,
     pub yara_max_window_count: u32,
     pub yara_magic_scan_limit_bytes: u64,
+    pub yara_max_concurrent_scans: u32,
+    pub yara_max_queued_scans: u32,
+    pub yara_queue_timeout_ms: u64,
 }
 
 impl EffectiveUploadConfig {
@@ -551,6 +602,15 @@ pub struct PathUploadConfig {
 
     #[serde(default)]
     pub yara_magic_scan_limit_bytes: Option<u64>,
+
+    #[serde(default)]
+    pub yara_max_concurrent_scans: Option<u32>,
+
+    #[serde(default)]
+    pub yara_max_queued_scans: Option<u32>,
+
+    #[serde(default)]
+    pub yara_queue_timeout_ms: Option<u64>,
 }
 
 fn parse_size(s: &str) -> Option<u64> {
@@ -642,6 +702,9 @@ mod tests {
                 yara_window_size_bytes: Some(512 * 1024),
                 yara_max_window_count: Some(4),
                 yara_magic_scan_limit_bytes: Some(8 * 1024 * 1024),
+                yara_max_concurrent_scans: None,
+                yara_max_queued_scans: None,
+                yara_queue_timeout_ms: None,
             }],
             ..Default::default()
         };
@@ -680,5 +743,59 @@ mod tests {
             effective.yara_magic_scan_limit_bytes,
             DEFAULT_MAGIC_SCAN_LIMIT_BYTES
         );
+    }
+
+    #[test]
+    fn test_default_executor_config() {
+        let config = UploadConfig::default();
+        assert_eq!(config.yara_max_concurrent_scans, DEFAULT_MAX_CONCURRENT_SCANS);
+        assert_eq!(config.yara_max_queued_scans, DEFAULT_MAX_QUEUED_SCANS);
+        assert_eq!(config.yara_queue_timeout_ms, DEFAULT_QUEUE_TIMEOUT_MS);
+
+        let effective = config.effective_config_for_path("/any");
+        assert_eq!(effective.yara_max_concurrent_scans, DEFAULT_MAX_CONCURRENT_SCANS);
+        assert_eq!(effective.yara_max_queued_scans, DEFAULT_MAX_QUEUED_SCANS);
+        assert_eq!(effective.yara_queue_timeout_ms, DEFAULT_QUEUE_TIMEOUT_MS);
+    }
+
+    #[test]
+    fn test_path_override_executor_config() {
+        let config = UploadConfig {
+            paths: vec![PathUploadConfig {
+                pattern: "/api/upload".to_string(),
+                max_size: None,
+                scan_with_yara: None,
+                yara_rules_dir: None,
+                yara_timeout_ms: None,
+                verify_signature: None,
+                signature_strict_mode: None,
+                rate_limit_enabled: None,
+                max_uploads_per_minute: None,
+                max_uploads_per_hour: None,
+                max_bytes_per_minute: None,
+                burst_allowance: None,
+                allowed_types: AllowedTypesConfig::default(),
+                reject_mime_mismatch: None,
+                yara_failure_policy: None,
+                yara_large_file_scan_mode: None,
+                yara_window_size_bytes: None,
+                yara_max_window_count: None,
+                yara_magic_scan_limit_bytes: None,
+                yara_max_concurrent_scans: Some(8),
+                yara_max_queued_scans: Some(128),
+                yara_queue_timeout_ms: Some(2000),
+            }],
+            ..Default::default()
+        };
+
+        let effective = config.effective_config_for_path("/api/upload");
+        assert_eq!(effective.yara_max_concurrent_scans, 8);
+        assert_eq!(effective.yara_max_queued_scans, 128);
+        assert_eq!(effective.yara_queue_timeout_ms, 2000);
+
+        let effective_default = config.effective_config_for_path("/other");
+        assert_eq!(effective_default.yara_max_concurrent_scans, DEFAULT_MAX_CONCURRENT_SCANS);
+        assert_eq!(effective_default.yara_max_queued_scans, DEFAULT_MAX_QUEUED_SCANS);
+        assert_eq!(effective_default.yara_queue_timeout_ms, DEFAULT_QUEUE_TIMEOUT_MS);
     }
 }

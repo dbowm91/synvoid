@@ -48,6 +48,17 @@ pub async fn init_upload_validator(config: &Arc<RwLock<ConfigManager>>) {
                 "fail_open" => synvoid_upload::UploadScanFailurePolicy::FailOpen,
                 _ => synvoid_upload::UploadScanFailurePolicy::QuarantineOnError,
             },
+            yara_large_file_scan_mode: match defaults.yara_large_file_scan_mode.as_str() {
+                "windowed" => synvoid_upload::YaraLargeFileScanMode::Windowed,
+                "header_only" => synvoid_upload::YaraLargeFileScanMode::HeaderOnly,
+                _ => synvoid_upload::YaraLargeFileScanMode::Full,
+            },
+            yara_window_size_bytes: defaults.yara_window_size_bytes,
+            yara_max_window_count: defaults.yara_max_window_count,
+            yara_magic_scan_limit_bytes: defaults.yara_magic_scan_limit_bytes,
+            yara_max_concurrent_scans: defaults.yara_max_concurrent_scans,
+            yara_max_queued_scans: defaults.yara_max_queued_scans,
+            yara_queue_timeout_ms: defaults.yara_queue_timeout_ms,
         }
     };
 

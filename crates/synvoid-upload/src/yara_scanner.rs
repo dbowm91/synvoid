@@ -1,4 +1,5 @@
-use parking_lot::RwLock;
+use arc_swap::ArcSwap;
+use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::sync::Arc;
@@ -206,16 +207,50 @@ pub enum YaraError {
     Timeout,
     #[error("No rules available")]
     NoRules,
+    #[error("Scan queue full: {0} active, {1} queued")]
+    QueueFull(u32, u32),
+    #[error("Scan queue timeout: waited {0}ms for admission")]
+    QueueTimeout(u64),
+    #[error("Scan executor closed")]
+    ExecutorClosed,
 }
 
-#[derive(Clone)]
+/// An immutable generation of compiled YARA rules.
+///
+/// Scans clone the `Arc` to the current generation and hold it for the duration
+/// of the scan. Reloads atomically swap the pointer, leaving in-flight scans
+/// on the previous generation until they complete.
+pub struct YaraRuleGeneration {
+    pub rules: Rules,
+    pub version: Option<String>,
+    pub hash: String,
+    pub loaded_at: DateTime<Utc>,
+}
+
 pub struct YaraScanner {
-    rules: Arc<RwLock<Rules>>,
+    generation: ArcSwap<YaraRuleGeneration>,
     rules_source: YaraRulesSource,
-    current_version: Arc<RwLock<Option<String>>>,
+    scan_semaphore: Arc<tokio::sync::Semaphore>,
+    max_concurrent_scans: usize,
+    queue_timeout: Duration,
     timeout_ms: u64,
     archive_max_depth: u32,
     archive_max_size: u64,
+}
+
+impl Clone for YaraScanner {
+    fn clone(&self) -> Self {
+        Self {
+            generation: ArcSwap::from(self.generation.load_full()),
+            rules_source: self.rules_source.clone(),
+            scan_semaphore: Arc::clone(&self.scan_semaphore),
+            max_concurrent_scans: self.max_concurrent_scans,
+            queue_timeout: self.queue_timeout,
+            timeout_ms: self.timeout_ms,
+            archive_max_depth: self.archive_max_depth,
+            archive_max_size: self.archive_max_size,
+        }
+    }
 }
 
 impl YaraScanner {
@@ -225,14 +260,23 @@ impl YaraScanner {
             30000,
             DEFAULT_ARCHIVE_MAX_DEPTH,
             DEFAULT_ARCHIVE_MAX_SIZE,
+            4,
+            1000,
         )
     }
 
+    /// Create a new scanner with configurable timeout and executor parameters.
+    ///
+    /// * `timeout_ms` — per-scan timeout in milliseconds.
+    /// * `max_concurrent_scans` — maximum simultaneously executing scans.
+    /// * `queue_timeout_ms` — how long to wait for a scan slot before rejecting.
     pub fn with_timeout(
         rules_source: YaraRulesSource,
         timeout_ms: u64,
         archive_max_depth: u32,
         archive_max_size: u64,
+        max_concurrent_scans: u32,
+        queue_timeout_ms: u64,
     ) -> Result<Self, YaraError> {
         let rules_content = Self::compile_rules(&rules_source)?;
 
@@ -242,16 +286,39 @@ impl YaraScanner {
         let mut hasher = Sha256::new();
         hasher.update(rules_content.as_bytes());
         let hash = format!("{:x}", hasher.finalize());
-        let initial_version = Some(format!("init-{}", &hash[..16]));
+        let version = Some(format!("init-{}", &hash[..16]));
+
+        let generation = Arc::new(YaraRuleGeneration {
+            rules,
+            version,
+            hash,
+            loaded_at: Utc::now(),
+        });
+
+        let scan_semaphore = Arc::new(tokio::sync::Semaphore::new(
+            max_concurrent_scans as usize,
+        ));
 
         Ok(Self {
-            rules: Arc::new(RwLock::new(rules)),
+            generation: ArcSwap::from(generation),
             rules_source,
-            current_version: Arc::new(RwLock::new(initial_version)),
+            scan_semaphore,
+            max_concurrent_scans: max_concurrent_scans as usize,
+            queue_timeout: Duration::from_millis(queue_timeout_ms),
             timeout_ms,
             archive_max_depth,
             archive_max_size,
         })
+    }
+
+    /// Maximum number of concurrent scans this executor permits.
+    pub fn max_concurrent_scans(&self) -> usize {
+        self.max_concurrent_scans
+    }
+
+    /// Queue timeout duration.
+    pub fn queue_timeout(&self) -> Duration {
+        self.queue_timeout
     }
 
     pub fn archive_max_depth(&self) -> u32 {
@@ -302,36 +369,31 @@ impl YaraScanner {
         }
     }
 
+    /// Reload rules from the configured source (file/directory/inline).
+    ///
+    /// Compiles new rules off-path, then atomically swaps the active generation.
+    /// On failure, the previous generation is retained (last-known-good).
     pub fn reload(&self) -> Result<(), YaraError> {
         let rules_content = Self::compile_rules(&self.rules_source)?;
-
-        let new_rules = yara_x::compile(rules_content.as_str())
-            .map_err(|e| YaraError::CompilationError(e.to_string()))?;
-
-        let mut rules = self.rules.write();
-        *rules = new_rules;
-        *self.current_version.write() = Some(format!("reload-{}", chrono::Utc::now().timestamp()));
-
-        tracing::info!("YARA-X rules reloaded successfully");
-        Ok(())
+        self.reload_from_source(&rules_content, None)
     }
 
+    /// Reload with externally-provided source rules.
+    ///
+    /// Compiles new rules, then atomically swaps the active generation.
+    /// On failure, the previous generation is retained.
     pub fn reload_with_rules(
         &self,
         rules_content: &str,
         version: Option<String>,
     ) -> Result<(), YaraError> {
-        let new_rules = yara_x::compile(rules_content)
-            .map_err(|e| YaraError::CompilationError(e.to_string()))?;
-
-        let mut rules = self.rules.write();
-        *rules = new_rules;
-        *self.current_version.write() = version;
-
-        tracing::info!("YARA-X rules reloaded from external source");
-        Ok(())
+        self.reload_from_source(rules_content, version)
     }
 
+    /// Reload with pre-compiled binary rules.
+    ///
+    /// Deserializes the compiled rules, then atomically swaps the active generation.
+    /// On failure, the previous generation is retained.
     pub fn reload_with_compiled_rules(
         &self,
         compiled_rules: &[u8],
@@ -340,16 +402,55 @@ impl YaraScanner {
         let new_rules = yara_x::Rules::deserialize(compiled_rules)
             .map_err(|e| YaraError::CompilationError(format!("Failed to deserialize: {}", e)))?;
 
-        let mut rules = self.rules.write();
-        *rules = new_rules;
-        *self.current_version.write() = version;
+        let mut hasher = Sha256::new();
+        hasher.update(compiled_rules);
+        let hash = format!("{:x}", hasher.finalize());
 
+        let generation = Arc::new(YaraRuleGeneration {
+            rules: new_rules,
+            version,
+            hash,
+            loaded_at: Utc::now(),
+        });
+
+        self.generation.store(generation);
+        crate::metrics::increment_yara_reload_success();
         tracing::info!("YARA-X rules reloaded from compiled binary source");
         Ok(())
     }
 
+    fn reload_from_source(
+        &self,
+        rules_content: &str,
+        version: Option<String>,
+    ) -> Result<(), YaraError> {
+        let new_rules = yara_x::compile(rules_content)
+            .map_err(|e| YaraError::CompilationError(e.to_string()))?;
+
+        let mut hasher = Sha256::new();
+        hasher.update(rules_content.as_bytes());
+        let hash = format!("{:x}", hasher.finalize());
+
+        let generation = Arc::new(YaraRuleGeneration {
+            rules: new_rules,
+            version,
+            hash,
+            loaded_at: Utc::now(),
+        });
+
+        self.generation.store(generation);
+        crate::metrics::increment_yara_reload_success();
+        tracing::info!("YARA-X rules reloaded successfully");
+        Ok(())
+    }
+
     pub fn get_version(&self) -> Option<String> {
-        self.current_version.read().clone()
+        self.generation.load().version.clone()
+    }
+
+    /// Get the hash of the currently active rule generation.
+    pub fn get_generation_hash(&self) -> String {
+        self.generation.load().hash.clone()
     }
 
     fn load_rules_from_directory(dir_path: &Path) -> Result<String, YaraError> {
@@ -381,13 +482,45 @@ impl YaraScanner {
         Ok(combined_rules)
     }
 
+    /// Acquire a scan permit with timeout. Returns the guard, or an error if
+    /// the queue is full or the timeout expires.
+    async fn acquire_scan_permit(
+        &self,
+    ) -> Result<tokio::sync::OwnedSemaphorePermit, YaraError> {
+        let start = std::time::Instant::now();
+        match tokio::time::timeout(self.queue_timeout, Arc::clone(&self.scan_semaphore).acquire_owned()).await {
+            Ok(Ok(permit)) => {
+                let wait_ms = start.elapsed().as_millis() as u64;
+                if wait_ms > 100 {
+                    tracing::debug!(wait_ms, "YARA scan queue wait");
+                }
+                Ok(permit)
+            }
+            Ok(Err(_)) => {
+                crate::metrics::increment_scan_queue_full();
+                let active = self.max_concurrent_scans as u32
+                    - self.scan_semaphore.available_permits() as u32;
+                Err(YaraError::QueueFull(
+                    active,
+                    self.max_concurrent_scans as u32,
+                ))
+            }
+            Err(_) => {
+                crate::metrics::increment_scan_queue_timeout();
+                Err(YaraError::QueueTimeout(self.queue_timeout.as_millis() as u64))
+            }
+        }
+    }
+
     pub async fn scan_bytes(
         &self,
         data: &[u8],
         excluded_categories: &[&str],
     ) -> Result<Vec<YaraMatch>, YaraError> {
+        let _permit = self.acquire_scan_permit().await?;
+
         let timeout_ms = self.timeout_ms;
-        let rules = Arc::clone(&self.rules);
+        let generation = self.generation.load_full();
         let data = data.to_vec();
         let excluded: Vec<String> = excluded_categories
             .iter()
@@ -398,8 +531,7 @@ impl YaraScanner {
         let (tx, rx) = tokio::sync::oneshot::channel();
 
         runtime.spawn_blocking(move || {
-            let rules_guard = rules.read();
-            let mut scanner = Scanner::new(&rules_guard);
+            let mut scanner = Scanner::new(&generation.rules);
 
             let result = match scanner.scan(&data) {
                 Ok(results) => {
@@ -457,6 +589,7 @@ impl YaraScanner {
             Ok(Ok(result)) => result,
             Ok(Err(_)) => Err(YaraError::ScanError("scan task panicked".into())),
             Err(_) => {
+                crate::metrics::increment_scan_timeout();
                 tracing::warn!(
                     timeout_ms,
                     "YARA scan timed out; scan task continues in background"
@@ -488,8 +621,10 @@ impl YaraScanner {
     ) -> Result<WindowedScanResult, YaraError> {
         use std::io::{Read, Seek, SeekFrom};
 
+        let _permit = self.acquire_scan_permit().await?;
+
         let timeout_ms = self.timeout_ms;
-        let rules = Arc::clone(&self.rules);
+        let generation = self.generation.load_full();
         let excluded: Vec<String> = excluded_categories
             .iter()
             .map(|s| (*s).to_string())
@@ -505,8 +640,6 @@ impl YaraScanner {
             let mut seen_rules: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
             let mut total_scanned: u64 = 0;
-
-            let rules_guard = rules.read();
 
             for (offset, length) in &windows {
                 let mut file = match std::fs::File::open(&path) {
@@ -532,7 +665,7 @@ impl YaraScanner {
                 buf.truncate(bytes_read);
                 total_scanned += bytes_read as u64;
 
-                let mut scanner = Scanner::new(&rules_guard);
+                let mut scanner = Scanner::new(&generation.rules);
                 if let Ok(results) = scanner.scan(&buf) {
                     for rule in results.matching_rules() {
                         let mut category = "unknown".to_string();
@@ -590,6 +723,7 @@ impl YaraScanner {
             Ok(Ok(result)) => result,
             Ok(Err(_)) => Err(YaraError::ScanError("scan task panicked".into())),
             Err(_) => {
+                crate::metrics::increment_scan_timeout();
                 tracing::warn!(
                     timeout_ms,
                     "YARA windowed scan timed out; scan task continues in background"
@@ -682,18 +816,42 @@ pub fn create_yara_scanner(
     archive_max_depth: u32,
     archive_max_size: u64,
 ) -> Result<Option<YaraScanner>, YaraError> {
-    let source = YaraRulesSource::from_config(yara_rules_dir, scan_with_yara);
+    YaraScanner::with_scan_executor(yara_rules_dir, scan_with_yara, archive_max_depth, archive_max_size, 4, 1000)
+}
 
-    match source {
-        Some(source) => {
-            let scanner =
-                YaraScanner::with_timeout(source, 30000, archive_max_depth, archive_max_size)?;
-            tracing::info!("YARA-X malware scanner initialized");
-            Ok(Some(scanner))
-        }
-        None => {
-            tracing::debug!("YARA-X malware scanning disabled");
-            Ok(None)
+impl YaraScanner {
+    /// Factory that accepts scan executor parameters.
+    pub fn with_scan_executor(
+        yara_rules_dir: Option<std::path::PathBuf>,
+        scan_with_yara: bool,
+        archive_max_depth: u32,
+        archive_max_size: u64,
+        max_concurrent_scans: u32,
+        queue_timeout_ms: u64,
+    ) -> Result<Option<YaraScanner>, YaraError> {
+        let source = YaraRulesSource::from_config(yara_rules_dir, scan_with_yara);
+
+        match source {
+            Some(source) => {
+                let scanner = YaraScanner::with_timeout(
+                    source,
+                    30000,
+                    archive_max_depth,
+                    archive_max_size,
+                    max_concurrent_scans,
+                    queue_timeout_ms,
+                )?;
+                tracing::info!(
+                    max_concurrent = max_concurrent_scans,
+                    queue_timeout_ms,
+                    "YARA-X malware scanner initialized"
+                );
+                Ok(Some(scanner))
+            }
+            None => {
+                tracing::debug!("YARA-X malware scanning disabled");
+                Ok(None)
+            }
         }
     }
 }
@@ -755,5 +913,132 @@ mod tests {
             .unwrap();
         assert_eq!(result.window_count, 2);
         assert_eq!(result.scanned_bytes, 2048);
+    }
+
+    #[tokio::test]
+    async fn test_concurrency_limit() {
+        let scanner = YaraScanner::with_timeout(
+            YaraRulesSource::Inline("rule dummy { condition: false }".to_string()),
+            30000,
+            DEFAULT_ARCHIVE_MAX_DEPTH,
+            DEFAULT_ARCHIVE_MAX_SIZE,
+            2, // max 2 concurrent
+            5000,
+        )
+        .expect("should compile");
+
+        assert_eq!(scanner.max_concurrent_scans(), 2);
+
+        // Fill both slots
+        let p1 = scanner.acquire_scan_permit().await.unwrap();
+        let p2 = scanner.acquire_scan_permit().await.unwrap();
+
+        // Third acquisition should timeout (queue timeout is 5s, but we use a short timeout)
+        let scanner2 = YaraScanner::with_timeout(
+            YaraRulesSource::Inline("rule dummy { condition: false }".to_string()),
+            30000,
+            DEFAULT_ARCHIVE_MAX_DEPTH,
+            DEFAULT_ARCHIVE_MAX_SIZE,
+            1, // max 1 concurrent
+            100, // 100ms queue timeout
+        )
+        .expect("should compile");
+
+        let _p = scanner2.acquire_scan_permit().await.unwrap();
+        let result = tokio::time::timeout(
+            Duration::from_millis(200),
+            scanner2.acquire_scan_permit(),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        match result.unwrap() {
+            Err(YaraError::QueueTimeout(_)) => {} // expected
+            other => panic!("expected QueueTimeout, got {:?}", other),
+        }
+
+        drop(p1);
+        drop(p2);
+    }
+
+    #[tokio::test]
+    async fn test_reload_preserves_generation() {
+        let scanner = YaraScanner::new(YaraRulesSource::Inline(
+            "rule detect_pe { meta: description = \"test\" severity = \"high\" category = \"test\" strings: $mz = { 4D 5A } condition: $mz at 0 }".to_string(),
+        ))
+        .expect("should compile");
+
+        let version_before = scanner.get_version();
+
+        // Reload with invalid rules — should fail and preserve old generation
+        let result = scanner.reload_with_rules("invalid rule syntax !!!!", Some("bad-version".into()));
+        assert!(result.is_err());
+        assert_eq!(scanner.get_version(), version_before);
+
+        // Reload with valid rules — should succeed
+        let result = scanner.reload_with_rules(
+            "rule clean { condition: false }",
+            Some("v2".into()),
+        );
+        assert!(result.is_ok());
+        assert_eq!(scanner.get_version(), Some("v2".into()));
+    }
+
+    #[tokio::test]
+    async fn test_compiled_rules_deserialization_failure_preserves_generation() {
+        let scanner = YaraScanner::new(YaraRulesSource::Inline(
+            "rule detect_pe { meta: description = \"test\" severity = \"high\" category = \"test\" strings: $mz = { 4D 5A } condition: $mz at 0 }".to_string(),
+        ))
+        .expect("should compile");
+
+        let version_before = scanner.get_version();
+        let hash_before = scanner.get_generation_hash();
+
+        // Try to reload with garbage compiled rules
+        let result = scanner.reload_with_compiled_rules(b"not-valid-compiled-rules", Some("bad".into()));
+        assert!(result.is_err());
+        assert_eq!(scanner.get_version(), version_before);
+        assert_eq!(scanner.get_generation_hash(), hash_before);
+    }
+
+    #[tokio::test]
+    async fn test_scan_uses_generation_after_reload() {
+        let scanner = YaraScanner::new(YaraRulesSource::Inline(
+            "rule detect_pe { meta: description = \"test\" severity = \"high\" category = \"test\" strings: $mz = { 4D 5A } condition: $mz at 0 }".to_string(),
+        ))
+        .expect("should compile");
+
+        // Should detect PE header
+        let pe_data = b"MZ\x90\x00\x03\x00";
+        let matches = scanner.scan_bytes(pe_data, &[]).await.unwrap();
+        assert!(!matches.is_empty());
+
+        // Reload with non-matching rules
+        scanner
+            .reload_with_rules("rule clean { condition: false }", Some("v2".into()))
+            .unwrap();
+
+        // Should no longer detect
+        let matches = scanner.scan_bytes(pe_data, &[]).await.unwrap();
+        assert!(matches.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_generation_hash() {
+        let scanner = YaraScanner::new(YaraRulesSource::Inline(
+            "rule dummy { condition: false }".to_string(),
+        ))
+        .expect("should compile");
+
+        let hash1 = scanner.get_generation_hash();
+        assert!(!hash1.is_empty());
+
+        // Reload with different rules — hash should change
+        scanner
+            .reload_with_rules("rule dummy2 { condition: true }", None)
+            .unwrap();
+        let hash2 = scanner.get_generation_hash();
+        assert!(!hash2.is_empty());
+        assert_ne!(hash1, hash2);
     }
 }

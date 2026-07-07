@@ -282,7 +282,7 @@ impl UploadValidator {
             )
             .unwrap_or(YaraRulesSource::Bundled);
             let scanner =
-                YaraScanner::with_timeout(source, config.yara_timeout_ms, 3, 100 * 1024 * 1024)?;
+                YaraScanner::with_timeout(source, config.yara_timeout_ms, 3, 100 * 1024 * 1024, config.yara_max_concurrent_scans, config.yara_queue_timeout_ms)?;
             Some(Arc::new(MalwareScanner::with_yara(Some(scanner))))
         } else {
             Some(Arc::new(MalwareScanner::with_yara(None)))
@@ -312,7 +312,7 @@ impl UploadValidator {
             )
             .unwrap_or(YaraRulesSource::Bundled);
             let scanner =
-                YaraScanner::with_timeout(source, config.yara_timeout_ms, 3, 100 * 1024 * 1024)?;
+                YaraScanner::with_timeout(source, config.yara_timeout_ms, 3, 100 * 1024 * 1024, config.yara_max_concurrent_scans, config.yara_queue_timeout_ms)?;
             Some(Arc::new(MalwareScanner::with_yara(Some(scanner))))
         } else {
             Some(Arc::new(MalwareScanner::with_yara(None)))
@@ -1647,6 +1647,9 @@ mod tests {
                 yara_window_size_bytes: None,
                 yara_max_window_count: None,
                 yara_magic_scan_limit_bytes: None,
+                yara_max_concurrent_scans: None,
+                yara_max_queued_scans: None,
+                yara_queue_timeout_ms: None,
             }],
             ..Default::default()
         };
