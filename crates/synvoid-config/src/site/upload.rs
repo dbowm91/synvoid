@@ -21,6 +21,18 @@ pub struct SiteUploadConfig {
     pub allowed_types: SiteAllowedTypesConfig,
     #[serde(default)]
     pub paths: Vec<SitePathUploadConfig>,
+    /// Large file scan mode: `full`, `windowed`, or `header_only`.
+    #[serde(default)]
+    pub yara_large_file_scan_mode: Option<String>,
+    /// Window size in bytes for windowed scanning.
+    #[serde(default)]
+    pub yara_window_size_bytes: Option<u64>,
+    /// Maximum number of windows for windowed scanning.
+    #[serde(default)]
+    pub yara_max_window_count: Option<u32>,
+    /// Maximum offset for magic marker probing in windowed mode.
+    #[serde(default)]
+    pub yara_magic_scan_limit_bytes: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
@@ -42,6 +54,14 @@ pub struct SitePathUploadConfig {
     pub yara_failure_policy: Option<String>,
     #[serde(default)]
     pub allowed_types: SiteAllowedTypesConfig,
+    #[serde(default)]
+    pub yara_large_file_scan_mode: Option<String>,
+    #[serde(default)]
+    pub yara_window_size_bytes: Option<u64>,
+    #[serde(default)]
+    pub yara_max_window_count: Option<u32>,
+    #[serde(default)]
+    pub yara_magic_scan_limit_bytes: Option<u64>,
 }
 
 impl SiteUploadConfig {

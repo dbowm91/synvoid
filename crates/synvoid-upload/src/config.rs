@@ -1,5 +1,5 @@
 use regex::Regex;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 
 /// Policy for handling YARA scanner failures during upload validation.
@@ -16,6 +16,32 @@ pub enum UploadScanFailurePolicy {
     QuarantineOnError,
     FailOpen,
 }
+
+/// Scan mode for large file YARA scanning.
+///
+/// - `Full`: Read and scan the entire file up to configured upload size limit.
+///   Safest option; recommended default for production upload endpoints.
+/// - `Windowed`: Scan bounded windows (header, footer, middle, around magic offsets).
+///   Resource-efficient tradeoff; not equivalent to full malware coverage.
+/// - `HeaderOnly`: Scan only the first 8 KiB header. **Low assurance — opt-in only,
+///   not recommended for public executable/archive/document upload surfaces.**
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum YaraLargeFileScanMode {
+    #[default]
+    Full,
+    Windowed,
+    HeaderOnly,
+}
+
+/// Default window size for windowed scanning (1 MiB).
+const DEFAULT_WINDOW_SIZE_BYTES: u64 = 1048576;
+
+/// Default maximum number of windows for windowed scanning.
+const DEFAULT_MAX_WINDOW_COUNT: u32 = 8;
+
+/// Default magic scan limit: offsets beyond this are not probed for magic markers.
+const DEFAULT_MAGIC_SCAN_LIMIT_BYTES: u64 = 16 * 1024 * 1024;
 
 static DEFAULT_SAFE_MIME_TYPES: &[&str] = &[
     "image/jpeg",
@@ -117,6 +143,22 @@ pub struct UploadConfig {
 
     #[serde(default)]
     pub yara_failure_policy: UploadScanFailurePolicy,
+
+    /// Large file scan mode: `full`, `windowed`, or `header_only`.
+    #[serde(default)]
+    pub yara_large_file_scan_mode: YaraLargeFileScanMode,
+
+    /// Window size in bytes for windowed scanning.
+    #[serde(default = "default_yara_window_size_bytes")]
+    pub yara_window_size_bytes: u64,
+
+    /// Maximum number of windows for windowed scanning.
+    #[serde(default = "default_yara_max_window_count")]
+    pub yara_max_window_count: u32,
+
+    /// Maximum offset (in bytes) for magic marker probing in windowed mode.
+    #[serde(default = "default_yara_magic_scan_limit_bytes")]
+    pub yara_magic_scan_limit_bytes: u64,
 }
 
 impl Default for UploadConfig {
@@ -142,6 +184,10 @@ impl Default for UploadConfig {
             paths: Vec::new(),
             reject_mime_mismatch: default_reject_mime_mismatch(),
             yara_failure_policy: UploadScanFailurePolicy::default(),
+            yara_large_file_scan_mode: YaraLargeFileScanMode::default(),
+            yara_window_size_bytes: default_yara_window_size_bytes(),
+            yara_max_window_count: default_yara_max_window_count(),
+            yara_magic_scan_limit_bytes: default_yara_magic_scan_limit_bytes(),
         }
     }
 }
@@ -208,6 +254,18 @@ fn default_burst_allowance() -> u32 {
 
 fn default_reject_mime_mismatch() -> bool {
     false
+}
+
+fn default_yara_window_size_bytes() -> u64 {
+    DEFAULT_WINDOW_SIZE_BYTES
+}
+
+fn default_yara_max_window_count() -> u32 {
+    DEFAULT_MAX_WINDOW_COUNT
+}
+
+fn default_yara_magic_scan_limit_bytes() -> u64 {
+    DEFAULT_MAGIC_SCAN_LIMIT_BYTES
 }
 
 impl UploadConfig {
@@ -305,6 +363,19 @@ impl UploadConfig {
                     .yara_failure_policy
                     .clone()
                     .unwrap_or_else(|| self.yara_failure_policy.clone()),
+                yara_large_file_scan_mode: path_cfg
+                    .yara_large_file_scan_mode
+                    .clone()
+                    .unwrap_or_else(|| self.yara_large_file_scan_mode.clone()),
+                yara_window_size_bytes: path_cfg
+                    .yara_window_size_bytes
+                    .unwrap_or(self.yara_window_size_bytes),
+                yara_max_window_count: path_cfg
+                    .yara_max_window_count
+                    .unwrap_or(self.yara_max_window_count),
+                yara_magic_scan_limit_bytes: path_cfg
+                    .yara_magic_scan_limit_bytes
+                    .unwrap_or(self.yara_magic_scan_limit_bytes),
             }
         } else {
             EffectiveUploadConfig {
@@ -325,6 +396,10 @@ impl UploadConfig {
                 burst_allowance: self.burst_allowance,
                 reject_mime_mismatch: self.reject_mime_mismatch,
                 yara_failure_policy: self.yara_failure_policy.clone(),
+                yara_large_file_scan_mode: self.yara_large_file_scan_mode.clone(),
+                yara_window_size_bytes: self.yara_window_size_bytes,
+                yara_max_window_count: self.yara_max_window_count,
+                yara_magic_scan_limit_bytes: self.yara_magic_scan_limit_bytes,
             }
         }
     }
@@ -348,6 +423,10 @@ pub struct EffectiveUploadConfig {
     pub burst_allowance: u32,
     pub reject_mime_mismatch: bool,
     pub yara_failure_policy: UploadScanFailurePolicy,
+    pub yara_large_file_scan_mode: YaraLargeFileScanMode,
+    pub yara_window_size_bytes: u64,
+    pub yara_max_window_count: u32,
+    pub yara_magic_scan_limit_bytes: u64,
 }
 
 impl EffectiveUploadConfig {
@@ -460,6 +539,18 @@ pub struct PathUploadConfig {
 
     #[serde(default)]
     pub yara_failure_policy: Option<UploadScanFailurePolicy>,
+
+    #[serde(default)]
+    pub yara_large_file_scan_mode: Option<YaraLargeFileScanMode>,
+
+    #[serde(default)]
+    pub yara_window_size_bytes: Option<u64>,
+
+    #[serde(default)]
+    pub yara_max_window_count: Option<u32>,
+
+    #[serde(default)]
+    pub yara_magic_scan_limit_bytes: Option<u64>,
 }
 
 fn parse_size(s: &str) -> Option<u64> {
@@ -500,5 +591,94 @@ mod tests {
         assert_eq!(config.max_size_bytes(), 100 * 1024 * 1024);
         assert_eq!(config.memory_threshold_bytes(), 10 * 1024 * 1024);
         assert!(config.scan_with_yara);
+        assert_eq!(
+            config.yara_large_file_scan_mode,
+            YaraLargeFileScanMode::Full
+        );
+        assert_eq!(config.yara_window_size_bytes, DEFAULT_WINDOW_SIZE_BYTES);
+        assert_eq!(config.yara_max_window_count, DEFAULT_MAX_WINDOW_COUNT);
+        assert_eq!(
+            config.yara_magic_scan_limit_bytes,
+            DEFAULT_MAGIC_SCAN_LIMIT_BYTES
+        );
+    }
+
+    #[test]
+    fn test_scan_mode_deserialize() {
+        let mode: YaraLargeFileScanMode = serde_json::from_str(r#""full""#).unwrap();
+        assert_eq!(mode, YaraLargeFileScanMode::Full);
+        let mode: YaraLargeFileScanMode = serde_json::from_str(r#""windowed""#).unwrap();
+        assert_eq!(mode, YaraLargeFileScanMode::Windowed);
+        let mode: YaraLargeFileScanMode = serde_json::from_str(r#""header_only""#).unwrap();
+        assert_eq!(mode, YaraLargeFileScanMode::HeaderOnly);
+    }
+
+    #[test]
+    fn test_scan_mode_default_is_full() {
+        let mode = YaraLargeFileScanMode::default();
+        assert_eq!(mode, YaraLargeFileScanMode::Full);
+    }
+
+    #[test]
+    fn test_path_override_scan_mode() {
+        let config = UploadConfig {
+            paths: vec![PathUploadConfig {
+                pattern: "/api/upload".to_string(),
+                max_size: None,
+                scan_with_yara: None,
+                yara_rules_dir: None,
+                yara_timeout_ms: None,
+                verify_signature: None,
+                signature_strict_mode: None,
+                rate_limit_enabled: None,
+                max_uploads_per_minute: None,
+                max_uploads_per_hour: None,
+                max_bytes_per_minute: None,
+                burst_allowance: None,
+                allowed_types: AllowedTypesConfig::default(),
+                reject_mime_mismatch: None,
+                yara_failure_policy: None,
+                yara_large_file_scan_mode: Some(YaraLargeFileScanMode::Windowed),
+                yara_window_size_bytes: Some(512 * 1024),
+                yara_max_window_count: Some(4),
+                yara_magic_scan_limit_bytes: Some(8 * 1024 * 1024),
+            }],
+            ..Default::default()
+        };
+
+        let effective = config.effective_config_for_path("/api/upload");
+        assert_eq!(
+            effective.yara_large_file_scan_mode,
+            YaraLargeFileScanMode::Windowed
+        );
+        assert_eq!(effective.yara_window_size_bytes, 512 * 1024);
+        assert_eq!(effective.yara_max_window_count, 4);
+        assert_eq!(effective.yara_magic_scan_limit_bytes, 8 * 1024 * 1024);
+
+        let effective_default = config.effective_config_for_path("/other");
+        assert_eq!(
+            effective_default.yara_large_file_scan_mode,
+            YaraLargeFileScanMode::Full
+        );
+        assert_eq!(
+            effective_default.yara_window_size_bytes,
+            DEFAULT_WINDOW_SIZE_BYTES
+        );
+    }
+
+    #[test]
+    fn test_effective_config_scan_mode_fields() {
+        let config = UploadConfig::default();
+        let effective = config.effective_config_for_path("/any");
+        assert_eq!(
+            effective.yara_large_file_scan_mode,
+            YaraLargeFileScanMode::Full
+        );
+        assert_eq!(effective.yara_window_size_bytes, DEFAULT_WINDOW_SIZE_BYTES);
+        assert_eq!(effective.yara_max_window_count, DEFAULT_MAX_WINDOW_COUNT);
+        assert_eq!(
+            effective.yara_magic_scan_limit_bytes,
+            DEFAULT_MAGIC_SCAN_LIMIT_BYTES
+        );
     }
 }

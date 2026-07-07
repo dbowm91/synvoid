@@ -9,7 +9,7 @@ pub mod yara_scanner;
 
 pub use config::{
     AllowedTypesConfig, AllowedTypesMode, EffectiveUploadConfig, PathUploadConfig, UploadConfig,
-    UploadScanFailurePolicy,
+    UploadScanFailurePolicy, YaraLargeFileScanMode,
 };
 pub use malware_scanner::MalwareMatch;
 pub use sandbox::{QuarantineEntry, Sandbox, SandboxConfig, SandboxError, SandboxHandle};
@@ -31,6 +31,13 @@ const RESERVED_WINDOWS_NAMES: &[&str] = &[
 ];
 
 const HEADER_READ_SIZE: usize = 8192;
+
+/// A byte range to scan within a large file during windowed scanning.
+#[derive(Debug, Clone)]
+struct ScanWindow {
+    offset: u64,
+    length: u32,
+}
 
 #[derive(Debug, Error)]
 pub enum UploadValidationError {
@@ -100,6 +107,18 @@ pub struct ValidationResult {
     pub yara_matches: Vec<String>,
     pub scan_status: UploadScanStatus,
     pub scan_error: Option<String>,
+    /// Number of bytes actually scanned by YARA.
+    pub scanned_bytes: u64,
+    /// Total file size in bytes.
+    pub total_bytes: u64,
+    /// Scan mode used for this validation.
+    pub scan_mode: YaraLargeFileScanMode,
+    /// Coverage ratio: scanned_bytes / total_bytes (0.0 to 1.0).
+    pub coverage_ratio: f64,
+    /// Number of windows scanned (0 for non-windowed modes).
+    pub window_count: u32,
+    /// Scan duration in milliseconds.
+    pub duration_ms: u64,
 }
 
 impl ValidationResult {
@@ -109,6 +128,120 @@ impl ValidationResult {
                 self.scan_status,
                 UploadScanStatus::Clean | UploadScanStatus::Disabled
             )
+    }
+
+    /// Build a result for in-memory byte scanning (full coverage).
+    pub fn for_bytes(
+        mime_type: String,
+        data_len: u64,
+        scan_status: UploadScanStatus,
+        yara_matches: Vec<String>,
+        scan_error: Option<String>,
+        duration_ms: u64,
+    ) -> Self {
+        Self {
+            scanned: scan_status != UploadScanStatus::Disabled,
+            scanned_bytes: data_len,
+            total_bytes: data_len,
+            scan_mode: YaraLargeFileScanMode::Full,
+            coverage_ratio: 1.0,
+            window_count: 0,
+            duration_ms,
+            mime_type,
+            size: data_len,
+            yara_matches,
+            scan_status,
+            scan_error,
+        }
+    }
+
+    /// Build a result for header-only scanning of large files.
+    pub fn for_header_only(
+        mime_type: String,
+        size: u64,
+        header_bytes: u64,
+        scan_status: UploadScanStatus,
+        yara_matches: Vec<String>,
+        scan_error: Option<String>,
+        duration_ms: u64,
+    ) -> Self {
+        let coverage_ratio = if size > 0 {
+            (header_bytes as f64) / (size as f64)
+        } else {
+            1.0
+        };
+        Self {
+            scanned: scan_status != UploadScanStatus::Disabled,
+            scanned_bytes: header_bytes,
+            total_bytes: size,
+            scan_mode: YaraLargeFileScanMode::HeaderOnly,
+            coverage_ratio,
+            window_count: 0,
+            duration_ms,
+            mime_type,
+            size,
+            yara_matches,
+            scan_status,
+            scan_error,
+        }
+    }
+
+    /// Build a result for windowed scanning of large files.
+    #[allow(clippy::too_many_arguments)]
+    pub fn for_windowed(
+        mime_type: String,
+        size: u64,
+        scanned_bytes: u64,
+        window_count: u32,
+        scan_status: UploadScanStatus,
+        yara_matches: Vec<String>,
+        scan_error: Option<String>,
+        duration_ms: u64,
+    ) -> Self {
+        let coverage_ratio = if size > 0 {
+            (scanned_bytes as f64) / (size as f64)
+        } else {
+            1.0
+        };
+        Self {
+            scanned: scan_status != UploadScanStatus::Disabled,
+            scanned_bytes,
+            total_bytes: size,
+            scan_mode: YaraLargeFileScanMode::Windowed,
+            coverage_ratio,
+            window_count,
+            duration_ms,
+            mime_type,
+            size,
+            yara_matches,
+            scan_status,
+            scan_error,
+        }
+    }
+
+    /// Build a result for full-file scanning of large files.
+    pub fn for_full_file(
+        mime_type: String,
+        size: u64,
+        scan_status: UploadScanStatus,
+        yara_matches: Vec<String>,
+        scan_error: Option<String>,
+        duration_ms: u64,
+    ) -> Self {
+        Self {
+            scanned: scan_status != UploadScanStatus::Disabled,
+            scanned_bytes: size,
+            total_bytes: size,
+            scan_mode: YaraLargeFileScanMode::Full,
+            coverage_ratio: 1.0,
+            window_count: 0,
+            duration_ms,
+            mime_type,
+            size,
+            yara_matches,
+            scan_status,
+            scan_error,
+        }
     }
 }
 
@@ -379,14 +512,14 @@ impl UploadValidator {
             }
         }
 
-        Ok(ValidationResult {
+        Ok(ValidationResult::for_bytes(
             mime_type,
-            size: data.len() as u64,
-            scanned: scan_status != UploadScanStatus::Disabled,
-            yara_matches,
+            data.len() as u64,
             scan_status,
+            yara_matches,
             scan_error,
-        })
+            0,
+        ))
     }
 
     pub async fn validate_bytes_async(
@@ -494,14 +627,14 @@ impl UploadValidator {
             }
         }
 
-        Ok(ValidationResult {
+        Ok(ValidationResult::for_bytes(
             mime_type,
-            size: data.len() as u64,
-            scanned: scan_status != UploadScanStatus::Disabled,
-            yara_matches,
+            data.len() as u64,
             scan_status,
+            yara_matches,
             scan_error,
-        })
+            0,
+        ))
     }
 
     pub async fn validate_with_sandbox(
@@ -585,14 +718,14 @@ impl UploadValidator {
         }
 
         Ok((
-            ValidationResult {
+            ValidationResult::for_bytes(
                 mime_type,
-                size: data.len() as u64,
-                scanned: scan_status != UploadScanStatus::Disabled,
-                yara_matches,
+                data.len() as u64,
                 scan_status,
+                yara_matches,
                 scan_error,
-            },
+                0,
+            ),
             None,
         ))
     }
@@ -633,6 +766,7 @@ impl UploadValidator {
             tracing::warn!("Failed to reload YARA rules: {}", e);
         }
 
+        // Always read header for MIME detection
         let header = sandbox_handle.read_header(HEADER_READ_SIZE)?;
         let mime_info = synvoid_app_handlers::mime::detect_from_bytes_with_fallback(&header, "bin");
         let mime_type = mime_info.mime_type.clone();
@@ -644,14 +778,228 @@ impl UploadValidator {
             });
         }
 
-        let (scan_status, yara_matches, scan_error) =
-            self.execute_scan(&header, &effective_config).await;
+        let scan_mode = effective_config.yara_large_file_scan_mode.clone();
+        let start = std::time::Instant::now();
+
+        let (scan_status, yara_matches, scan_error, scanned_bytes, window_count) = match scan_mode {
+            crate::config::YaraLargeFileScanMode::HeaderOnly => {
+                // Scan only the header bytes (legacy behavior)
+                let (status, matches, err) = self.execute_scan(&header, &effective_config).await;
+                let scanned = if effective_config.scan_with_yara {
+                    header.len() as u64
+                } else {
+                    0
+                };
+                (status, matches, err, scanned, 0u32)
+            }
+            crate::config::YaraLargeFileScanMode::Full => {
+                // Read entire file and scan with built-in + YARA rules
+                let full_data = sandbox_handle.read_bytes()?;
+                let full_len = full_data.len() as u64;
+
+                match &self.malware_scanner {
+                    Some(scanner) => match scanner.scan_bytes(&full_data).await {
+                        Ok(scan_result) => {
+                            let matched_names: Vec<String> = scan_result
+                                .matches
+                                .iter()
+                                .map(|m| m.rule_name.clone())
+                                .collect();
+                            if matched_names.is_empty() {
+                                metrics::increment_scan_clean();
+                                (UploadScanStatus::Clean, matched_names, None, full_len, 0u32)
+                            } else {
+                                metrics::increment_scan_malicious();
+                                (
+                                    UploadScanStatus::Malicious,
+                                    matched_names,
+                                    None,
+                                    full_len,
+                                    0u32,
+                                )
+                            }
+                        }
+                        Err(e) => {
+                            let error_msg = format!("{}", e);
+                            metrics::increment_scan_indeterminate();
+                            match effective_config.yara_failure_policy {
+                                UploadScanFailurePolicy::FailClosed
+                                | UploadScanFailurePolicy::QuarantineOnError => {
+                                    metrics::increment_scan_quarantine_on_error();
+                                    (
+                                        UploadScanStatus::Indeterminate,
+                                        Vec::new(),
+                                        Some(error_msg),
+                                        full_len,
+                                        0u32,
+                                    )
+                                }
+                                UploadScanFailurePolicy::FailOpen => {
+                                    metrics::increment_scan_fail_open_allowed();
+                                    tracing::warn!(
+                                        error = %e,
+                                        policy = "fail_open",
+                                        "Full-file scan failed but fail_open policy allows upload"
+                                    );
+                                    (
+                                        UploadScanStatus::Indeterminate,
+                                        Vec::new(),
+                                        Some(error_msg),
+                                        full_len,
+                                        0u32,
+                                    )
+                                }
+                            }
+                        }
+                    },
+                    None => {
+                        let err = "no malware scanner available".into();
+                        match effective_config.yara_failure_policy {
+                            UploadScanFailurePolicy::FailClosed
+                            | UploadScanFailurePolicy::QuarantineOnError => (
+                                UploadScanStatus::Unavailable,
+                                Vec::new(),
+                                Some(err),
+                                0,
+                                0u32,
+                            ),
+                            UploadScanFailurePolicy::FailOpen => {
+                                metrics::increment_scan_fail_open_allowed();
+                                (
+                                    UploadScanStatus::Unavailable,
+                                    Vec::new(),
+                                    Some(err),
+                                    0,
+                                    0u32,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            crate::config::YaraLargeFileScanMode::Windowed => {
+                // Compute window offsets: header, footer, middle chunks, optional magic region
+                let windows = Self::compute_scan_windows(
+                    size,
+                    effective_config.yara_window_size_bytes as u32,
+                    effective_config.yara_max_window_count,
+                    effective_config.yara_magic_scan_limit_bytes,
+                );
+
+                match &self.malware_scanner {
+                    Some(scanner) => {
+                        // Build full data for windowed heuristic scan
+                        let full_data = match sandbox_handle.read_bytes() {
+                            Ok(d) => d,
+                            Err(e) => {
+                                return Err(UploadValidationError::SandboxError(
+                                    SandboxError::IoError(e.to_string()),
+                                ));
+                            }
+                        };
+
+                        let window_specs: Vec<(u64, u32)> =
+                            windows.iter().map(|w| (w.offset, w.length)).collect();
+
+                        match scanner.scan_bytes_windowed(&full_data, &window_specs).await {
+                            Ok(scan_result) => {
+                                let matched_names: Vec<String> = scan_result
+                                    .matches
+                                    .iter()
+                                    .map(|m| m.rule_name.clone())
+                                    .collect();
+                                let scanned: u64 = windows.iter().map(|w| w.length as u64).sum();
+                                if matched_names.is_empty() {
+                                    metrics::increment_scan_clean();
+                                    (
+                                        UploadScanStatus::Clean,
+                                        matched_names,
+                                        None,
+                                        scanned,
+                                        windows.len() as u32,
+                                    )
+                                } else {
+                                    metrics::increment_scan_malicious();
+                                    (
+                                        UploadScanStatus::Malicious,
+                                        matched_names,
+                                        None,
+                                        scanned,
+                                        windows.len() as u32,
+                                    )
+                                }
+                            }
+                            Err(e) => {
+                                let error_msg = format!("{}", e);
+                                let scanned: u64 = windows.iter().map(|w| w.length as u64).sum();
+                                metrics::increment_scan_indeterminate();
+                                match effective_config.yara_failure_policy {
+                                    UploadScanFailurePolicy::FailClosed
+                                    | UploadScanFailurePolicy::QuarantineOnError => {
+                                        metrics::increment_scan_quarantine_on_error();
+                                        (
+                                            UploadScanStatus::Indeterminate,
+                                            Vec::new(),
+                                            Some(error_msg),
+                                            scanned,
+                                            windows.len() as u32,
+                                        )
+                                    }
+                                    UploadScanFailurePolicy::FailOpen => {
+                                        metrics::increment_scan_fail_open_allowed();
+                                        tracing::warn!(
+                                            error = %e,
+                                            policy = "fail_open",
+                                            "Windowed scan failed but fail_open policy allows upload"
+                                        );
+                                        (
+                                            UploadScanStatus::Indeterminate,
+                                            Vec::new(),
+                                            Some(error_msg),
+                                            scanned,
+                                            windows.len() as u32,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    None => {
+                        let err = "no malware scanner available".into();
+                        let scanned: u64 = windows.iter().map(|w| w.length as u64).sum();
+                        match effective_config.yara_failure_policy {
+                            UploadScanFailurePolicy::FailClosed
+                            | UploadScanFailurePolicy::QuarantineOnError => (
+                                UploadScanStatus::Unavailable,
+                                Vec::new(),
+                                Some(err),
+                                scanned,
+                                windows.len() as u32,
+                            ),
+                            UploadScanFailurePolicy::FailOpen => {
+                                metrics::increment_scan_fail_open_allowed();
+                                (
+                                    UploadScanStatus::Unavailable,
+                                    Vec::new(),
+                                    Some(err),
+                                    scanned,
+                                    windows.len() as u32,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        let duration_ms = start.elapsed().as_millis() as u64;
 
         if !yara_matches.is_empty() {
             warn!(
                 mime_type = %mime_type,
                 filename = ?original_filename,
                 matches = ?yara_matches,
+                scan_mode = ?scan_mode,
                 "Malware detected in large file, quarantining"
             );
 
@@ -691,14 +1039,109 @@ impl UploadValidator {
             }
         }
 
-        Ok(ValidationResult {
-            mime_type,
-            size,
-            scanned: scan_status != UploadScanStatus::Disabled,
-            yara_matches,
-            scan_status,
-            scan_error,
+        Ok(match scan_mode {
+            crate::config::YaraLargeFileScanMode::HeaderOnly => ValidationResult::for_header_only(
+                mime_type,
+                size,
+                HEADER_READ_SIZE as u64,
+                scan_status,
+                yara_matches,
+                scan_error,
+                duration_ms,
+            ),
+            crate::config::YaraLargeFileScanMode::Full => ValidationResult::for_full_file(
+                mime_type,
+                size,
+                scan_status,
+                yara_matches,
+                scan_error,
+                duration_ms,
+            ),
+            crate::config::YaraLargeFileScanMode::Windowed => ValidationResult::for_windowed(
+                mime_type,
+                size,
+                scanned_bytes,
+                window_count,
+                scan_status,
+                yara_matches,
+                scan_error,
+                duration_ms,
+            ),
         })
+    }
+
+    /// Compute window offsets for windowed scanning.
+    /// Returns a list of `ScanWindow { offset, length }` to scan.
+    fn compute_scan_windows(
+        file_size: u64,
+        window_size: u32,
+        max_windows: u32,
+        magic_scan_limit: u64,
+    ) -> Vec<ScanWindow> {
+        let mut windows = Vec::new();
+        let ws = window_size as u64;
+
+        // Window 1: Header (offset 0)
+        let header_len = ws.min(file_size);
+        windows.push(ScanWindow {
+            offset: 0,
+            length: header_len as u32,
+        });
+
+        if windows.len() as u32 >= max_windows {
+            return windows;
+        }
+
+        // Window 2: Footer (last window_size bytes)
+        if file_size > ws {
+            let footer_offset = file_size.saturating_sub(ws);
+            windows.push(ScanWindow {
+                offset: footer_offset,
+                length: ws as u32,
+            });
+        }
+
+        if windows.len() as u32 >= max_windows {
+            return windows;
+        }
+
+        // Window 3: Magic byte scan region (bytes 0..magic_scan_limit)
+        // Only if magic_scan_limit > header and we have budget
+        if magic_scan_limit > header_len && magic_scan_limit < file_size {
+            let remaining_budget = max_windows.saturating_sub(windows.len() as u32);
+            if remaining_budget > 0 {
+                let magic_start = header_len;
+                let magic_len = (magic_scan_limit - magic_start).min(ws);
+                windows.push(ScanWindow {
+                    offset: magic_start,
+                    length: magic_len as u32,
+                });
+            }
+        }
+
+        if windows.len() as u32 >= max_windows {
+            return windows;
+        }
+
+        // Fill remaining windows with evenly-spaced middle chunks
+        let middle_start = ws.max(magic_scan_limit.min(file_size));
+        let middle_end = file_size.saturating_sub(ws);
+        if middle_end > middle_start {
+            let middle_range = middle_end - middle_start;
+            let remaining = max_windows.saturating_sub(windows.len() as u32);
+            if remaining > 0 {
+                let step = middle_range / remaining as u64;
+                for i in 0..remaining {
+                    let offset = middle_start + (step * i as u64);
+                    let length = ws.min(file_size - offset) as u32;
+                    if length > 0 {
+                        windows.push(ScanWindow { offset, length });
+                    }
+                }
+            }
+        }
+
+        windows
     }
 }
 
@@ -1121,54 +1564,54 @@ mod tests {
 
     #[test]
     fn test_validation_result_is_clean_scan_status() {
-        let clean = ValidationResult {
-            mime_type: "text/plain".into(),
-            size: 100,
-            scanned: true,
-            yara_matches: Vec::new(),
-            scan_status: UploadScanStatus::Clean,
-            scan_error: None,
-        };
+        let clean = ValidationResult::for_bytes(
+            "text/plain".into(),
+            100,
+            UploadScanStatus::Clean,
+            Vec::new(),
+            None,
+            0,
+        );
         assert!(clean.is_clean());
 
-        let disabled = ValidationResult {
-            mime_type: "text/plain".into(),
-            size: 100,
-            scanned: false,
-            yara_matches: Vec::new(),
-            scan_status: UploadScanStatus::Disabled,
-            scan_error: None,
-        };
+        let disabled = ValidationResult::for_bytes(
+            "text/plain".into(),
+            100,
+            UploadScanStatus::Disabled,
+            Vec::new(),
+            None,
+            0,
+        );
         assert!(disabled.is_clean());
 
-        let indeterminate = ValidationResult {
-            mime_type: "text/plain".into(),
-            size: 100,
-            scanned: true,
-            yara_matches: Vec::new(),
-            scan_status: UploadScanStatus::Indeterminate,
-            scan_error: Some("timeout".into()),
-        };
+        let indeterminate = ValidationResult::for_bytes(
+            "text/plain".into(),
+            100,
+            UploadScanStatus::Indeterminate,
+            Vec::new(),
+            Some("timeout".into()),
+            0,
+        );
         assert!(!indeterminate.is_clean());
 
-        let unavailable = ValidationResult {
-            mime_type: "text/plain".into(),
-            size: 100,
-            scanned: true,
-            yara_matches: Vec::new(),
-            scan_status: UploadScanStatus::Unavailable,
-            scan_error: Some("no scanner".into()),
-        };
+        let unavailable = ValidationResult::for_bytes(
+            "text/plain".into(),
+            100,
+            UploadScanStatus::Unavailable,
+            Vec::new(),
+            Some("no scanner".into()),
+            0,
+        );
         assert!(!unavailable.is_clean());
 
-        let malicious = ValidationResult {
-            mime_type: "text/plain".into(),
-            size: 100,
-            scanned: true,
-            yara_matches: vec!["test_rule".into()],
-            scan_status: UploadScanStatus::Malicious,
-            scan_error: None,
-        };
+        let malicious = ValidationResult::for_bytes(
+            "text/plain".into(),
+            100,
+            UploadScanStatus::Malicious,
+            vec!["test_rule".into()],
+            None,
+            0,
+        );
         assert!(!malicious.is_clean());
     }
 
@@ -1200,6 +1643,10 @@ mod tests {
                 allowed_types: AllowedTypesConfig::default(),
                 reject_mime_mismatch: None,
                 yara_failure_policy: Some(UploadScanFailurePolicy::FailClosed),
+                yara_large_file_scan_mode: None,
+                yara_window_size_bytes: None,
+                yara_max_window_count: None,
+                yara_magic_scan_limit_bytes: None,
             }],
             ..Default::default()
         };
@@ -1281,5 +1728,128 @@ mod tests {
 
         let err = UploadValidationError::ScannerUnavailable;
         assert!(err.to_string().contains("unavailable"));
+    }
+
+    // --- Scan mode / coverage metadata tests ---
+
+    #[test]
+    fn test_validation_result_for_header_only() {
+        let result = ValidationResult::for_header_only(
+            "application/pdf".into(),
+            1_000_000,
+            8192,
+            UploadScanStatus::Clean,
+            Vec::new(),
+            None,
+            5,
+        );
+        assert_eq!(result.scan_mode, YaraLargeFileScanMode::HeaderOnly);
+        assert_eq!(result.scanned_bytes, 8192);
+        assert_eq!(result.total_bytes, 1_000_000);
+        assert!((result.coverage_ratio - 0.008192).abs() < 0.0001);
+        assert_eq!(result.window_count, 0);
+        assert!(result.is_clean());
+    }
+
+    #[test]
+    fn test_validation_result_for_windowed() {
+        let result = ValidationResult::for_windowed(
+            "video/mp4".into(),
+            50_000_000,
+            4_000_000,
+            4,
+            UploadScanStatus::Clean,
+            Vec::new(),
+            None,
+            120,
+        );
+        assert_eq!(result.scan_mode, YaraLargeFileScanMode::Windowed);
+        assert_eq!(result.scanned_bytes, 4_000_000);
+        assert_eq!(result.total_bytes, 50_000_000);
+        assert!((result.coverage_ratio - 0.08).abs() < 0.001);
+        assert_eq!(result.window_count, 4);
+        assert_eq!(result.duration_ms, 120);
+    }
+
+    #[test]
+    fn test_validation_result_for_full_file() {
+        let result = ValidationResult::for_full_file(
+            "application/zip".into(),
+            5_000_000,
+            UploadScanStatus::Clean,
+            Vec::new(),
+            None,
+            200,
+        );
+        assert_eq!(result.scan_mode, YaraLargeFileScanMode::Full);
+        assert_eq!(result.scanned_bytes, 5_000_000);
+        assert_eq!(result.total_bytes, 5_000_000);
+        assert_eq!(result.coverage_ratio, 1.0);
+        assert_eq!(result.window_count, 0);
+    }
+
+    #[test]
+    fn test_compute_scan_windows_small_file() {
+        let windows = UploadValidator::compute_scan_windows(4096, 1048576, 8, 16 * 1024 * 1024);
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].offset, 0);
+        assert_eq!(windows[0].length, 4096);
+    }
+
+    #[test]
+    fn test_compute_scan_windows_medium_file() {
+        let windows =
+            UploadValidator::compute_scan_windows(5 * 1024 * 1024, 1048576, 8, 16 * 1024 * 1024);
+        assert!(windows.len() >= 2);
+        assert_eq!(windows[0].offset, 0);
+        assert_eq!(windows[0].length, 1048576);
+        let last = windows.last().unwrap();
+        assert_eq!(last.offset + last.length as u64, 5 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_compute_scan_windows_large_file_with_magic_region() {
+        let windows =
+            UploadValidator::compute_scan_windows(50 * 1024 * 1024, 1048576, 8, 16 * 1024 * 1024);
+        assert!(windows.len() >= 3);
+        assert_eq!(windows[0].offset, 0);
+        assert_eq!(windows[0].length, 1048576);
+        assert_eq!(windows.len() as u32, 8);
+    }
+
+    #[test]
+    fn test_compute_scan_windows_max_windows_cap() {
+        let windows =
+            UploadValidator::compute_scan_windows(100 * 1024 * 1024, 1048576, 3, 16 * 1024 * 1024);
+        assert!(windows.len() <= 3);
+    }
+
+    #[test]
+    fn test_compute_scan_windows_header_only_max_windows_1() {
+        let windows =
+            UploadValidator::compute_scan_windows(50 * 1024 * 1024, 1048576, 1, 16 * 1024 * 1024);
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].offset, 0);
+    }
+
+    #[test]
+    fn test_compute_scan_windows_empty_file() {
+        let windows = UploadValidator::compute_scan_windows(0, 1048576, 8, 16 * 1024 * 1024);
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].length, 0);
+    }
+
+    #[test]
+    fn test_yara_large_file_scan_mode_serde_roundtrip() {
+        let modes = vec![
+            YaraLargeFileScanMode::Full,
+            YaraLargeFileScanMode::Windowed,
+            YaraLargeFileScanMode::HeaderOnly,
+        ];
+        for mode in modes {
+            let json = serde_json::to_string(&mode).unwrap();
+            let deserialized: YaraLargeFileScanMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(mode, deserialized);
+        }
     }
 }

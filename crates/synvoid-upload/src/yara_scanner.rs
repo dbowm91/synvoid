@@ -474,6 +474,130 @@ impl YaraScanner {
         let data = std::fs::read(path)?;
         self.scan_bytes(&data, excluded_categories).await
     }
+
+    /// Scan a file in multiple windows (header, footer, middle chunks).
+    ///
+    /// `windows` is a list of `(offset, length)` byte ranges to scan.
+    /// Each window is read and scanned independently. Matches are deduplicated
+    /// by rule_name (first match wins).
+    pub async fn scan_file_windows(
+        &self,
+        path: &Path,
+        windows: &[(u64, u32)],
+        excluded_categories: &[&str],
+    ) -> Result<WindowedScanResult, YaraError> {
+        use std::io::{Read, Seek, SeekFrom};
+
+        let timeout_ms = self.timeout_ms;
+        let rules = Arc::clone(&self.rules);
+        let excluded: Vec<String> = excluded_categories
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        let windows = windows.to_vec();
+        let path = path.to_path_buf();
+
+        let runtime = tokio::runtime::Handle::current();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+
+        runtime.spawn_blocking(move || {
+            let mut all_matches: Vec<YaraMatch> = Vec::new();
+            let mut seen_rules: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            let mut total_scanned: u64 = 0;
+
+            let rules_guard = rules.read();
+
+            for (offset, length) in &windows {
+                let mut file = match std::fs::File::open(&path) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        let _ = tx.send(Err(YaraError::IoError(e)));
+                        return;
+                    }
+                };
+
+                if file.seek(SeekFrom::Start(*offset)).is_err() {
+                    continue;
+                }
+
+                let mut buf = vec![0u8; *length as usize];
+                let bytes_read = match file.read(&mut buf) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        let _ = tx.send(Err(YaraError::IoError(e)));
+                        return;
+                    }
+                };
+                buf.truncate(bytes_read);
+                total_scanned += bytes_read as u64;
+
+                let mut scanner = Scanner::new(&rules_guard);
+                if let Ok(results) = scanner.scan(&buf) {
+                    for rule in results.matching_rules() {
+                        let mut category = "unknown".to_string();
+                        let mut severity = "medium".to_string();
+                        let mut description = String::new();
+
+                        for (key, value) in rule.metadata() {
+                            match key {
+                                "category" => {
+                                    if let yara_x::MetaValue::String(s) = value {
+                                        category = s.to_string();
+                                    }
+                                }
+                                "severity" => {
+                                    if let yara_x::MetaValue::String(s) = value {
+                                        severity = s.to_string();
+                                    }
+                                }
+                                "description" => {
+                                    if let yara_x::MetaValue::String(s) = value {
+                                        description = s.to_string();
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+
+                        if excluded.contains(&category) {
+                            continue;
+                        }
+
+                        let rule_id = rule.identifier().to_string();
+                        if seen_rules.insert(rule_id.clone()) {
+                            all_matches.push(YaraMatch {
+                                rule_name: rule_id,
+                                namespace: rule.namespace().to_string(),
+                                tags: vec![],
+                                category,
+                                severity,
+                                description,
+                            });
+                        }
+                    }
+                }
+            }
+
+            let _ = tx.send(Ok(WindowedScanResult {
+                matches: all_matches,
+                scanned_bytes: total_scanned,
+                window_count: windows.len() as u32,
+            }));
+        });
+
+        match tokio::time::timeout(Duration::from_millis(timeout_ms), rx).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err(YaraError::ScanError("scan task panicked".into())),
+            Err(_) => {
+                tracing::warn!(
+                    timeout_ms,
+                    "YARA windowed scan timed out; scan task continues in background"
+                );
+                Err(YaraError::Timeout)
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -484,6 +608,17 @@ pub struct YaraMatch {
     pub category: String,
     pub severity: String,
     pub description: String,
+}
+
+/// Result of a windowed scan across multiple file regions.
+#[derive(Debug)]
+pub struct WindowedScanResult {
+    /// All YARA matches found across all windows.
+    pub matches: Vec<YaraMatch>,
+    /// Total number of bytes scanned across all windows.
+    pub scanned_bytes: u64,
+    /// Number of windows scanned.
+    pub window_count: u32,
 }
 
 impl YaraMatch {
@@ -560,5 +695,65 @@ pub fn create_yara_scanner(
             tracing::debug!("YARA-X malware scanning disabled");
             Ok(None)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[tokio::test]
+    async fn test_scan_file_windows_clean() {
+        let scanner = YaraScanner::new(YaraRulesSource::Inline(
+            "rule dummy { condition: false }".to_string(),
+        ))
+        .expect("inline rules should compile");
+        let mut tmp = NamedTempFile::new().unwrap();
+        tmp.write_all(b"Hello, World! This is a clean file.")
+            .unwrap();
+        let windows = vec![(0, 35)];
+        let result = scanner
+            .scan_file_windows(tmp.path(), &windows, &[])
+            .await
+            .unwrap();
+        assert!(result.matches.is_empty());
+        assert_eq!(result.window_count, 1);
+        assert_eq!(result.scanned_bytes, 35);
+    }
+
+    #[tokio::test]
+    async fn test_scan_file_windows_empty_file() {
+        let scanner = YaraScanner::new(YaraRulesSource::Inline(
+            "rule dummy { condition: false }".to_string(),
+        ))
+        .expect("inline rules should compile");
+        let tmp = NamedTempFile::new().unwrap();
+        let windows = vec![(0, 0)];
+        let result = scanner
+            .scan_file_windows(tmp.path(), &windows, &[])
+            .await
+            .unwrap();
+        assert!(result.matches.is_empty());
+        assert_eq!(result.window_count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_scan_file_windows_multiple_windows() {
+        let scanner = YaraScanner::new(YaraRulesSource::Inline(
+            "rule dummy { condition: false }".to_string(),
+        ))
+        .expect("inline rules should compile");
+        let mut tmp = NamedTempFile::new().unwrap();
+        let data = vec![0u8; 4096];
+        tmp.write_all(&data).unwrap();
+        let windows = vec![(0, 1024), (2048, 1024)];
+        let result = scanner
+            .scan_file_windows(tmp.path(), &windows, &[])
+            .await
+            .unwrap();
+        assert_eq!(result.window_count, 2);
+        assert_eq!(result.scanned_bytes, 2048);
     }
 }

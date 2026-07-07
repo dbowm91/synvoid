@@ -142,6 +142,18 @@ impl SandboxHandle {
         Ok(buf)
     }
 
+    /// Read a specific byte window from the sandboxed file.
+    /// Returns up to `length` bytes starting at `offset`.
+    pub fn read_window(&self, offset: u64, length: u32) -> std::io::Result<Vec<u8>> {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut file = self.temp_file.reopen()?;
+        file.seek(SeekFrom::Start(offset))?;
+        let mut buf = vec![0u8; length as usize];
+        let bytes_read = file.read(&mut buf)?;
+        buf.truncate(bytes_read);
+        Ok(buf)
+    }
+
     pub fn write_sync(&mut self, data: &[u8]) -> std::io::Result<()> {
         use std::io::Write;
         self.temp_file.write_all(data)?;

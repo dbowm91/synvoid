@@ -43,6 +43,12 @@ yara_failure_policy = "quarantine_on_error"  # default
 yara_rules_dir = "rules/"
 quarantine_dir = "/var/lib/synvoid/quarantine"
 yara_timeout_ms = 30000
+
+# Large file scanning (for sandbox-backed streaming uploads)
+yara_large_file_scan_mode = "windowed"  # "full", "windowed", or "header_only"
+yara_window_size_bytes = 1048576        # 1MB per window
+yara_max_window_count = 8               # Maximum windows to scan
+yara_magic_scan_limit_bytes = 16777216  # 16MB magic scan region
 ```
 
 ### Per-Site Configuration
@@ -87,6 +93,15 @@ types = [
 | `yara_rules_dir` | - | Directory containing YARA rules |
 | `quarantine_dir` | - | Directory for quarantined files |
 | `yara_timeout_ms` | `30000` | Scan timeout in milliseconds |
+
+### Large File Scanning Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `yara_large_file_scan_mode` | `"full"` | Scan mode for large files: `full`, `windowed`, or `header_only` |
+| `yara_window_size_bytes` | `1048576` | Size of each scan window in bytes (1MB) |
+| `yara_max_window_count` | `8` | Maximum number of windows to scan |
+| `yara_magic_scan_limit_bytes` | `16777216` | Maximum bytes to scan for magic byte patterns (16MB) |
 
 ### Scan Failure Policies
 
@@ -160,6 +175,55 @@ Client Upload Request
         |       +--> fail_open: Allow + Log Warning (opt-in only)
         |
         +--> Scanner Unavailable --> Block (403)
+```
+
+## Large File Scanning
+
+For large file uploads (sandbox-backed streaming), SynVoid supports three scan modes to balance security and performance:
+
+| Mode | Description | Security | Performance |
+|------|-------------|----------|-------------|
+| `full` | Scan entire file | Maximum | Memory-intensive |
+| `windowed` | Scan strategic windows | High | Balanced |
+| `header_only` | Scan first 8KB only | Low | Fast |
+
+### Windowed Mode
+
+The default `windowed` mode scans up to 8 strategic regions of the file:
+
+1. **Header**: First 1MB — catches header-embedded malware
+2. **Footer**: Last 1MB — catches appended payloads
+3. **Magic region**: Up to 16MB — catches complex magic byte patterns
+4. **Middle windows**: Evenly spaced — catches payload injection in large files
+
+### Coverage Metadata
+
+Each validation result includes coverage metadata for audit trails:
+
+```json
+{
+  "scanned_bytes": 4194304,
+  "total_bytes": 52428800,
+  "scan_mode": "windowed",
+  "coverage_ratio": 0.08,
+  "window_count": 4,
+  "duration_ms": 127
+}
+```
+
+### Per-Path Configuration
+
+Override scan mode per path pattern:
+
+```toml
+[defaults.upload.paths]
+pattern = "^/api/uploads/documents/.*"
+yara_large_file_scan_mode = "full"
+yara_max_window_count = 12
+
+[defaults.upload.paths]
+pattern = "^/api/uploads/images/.*"
+yara_large_file_scan_mode = "header_only"
 ```
 
 ## Admin API

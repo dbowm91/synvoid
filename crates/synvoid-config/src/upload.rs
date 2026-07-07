@@ -32,6 +32,18 @@ pub struct UploadDefaults {
     pub archive_max_size: u64,
     #[serde(default)]
     pub allowed_types: UploadAllowedTypesDefaults,
+    /// Large file scan mode: `full`, `windowed`, or `header_only`.
+    #[serde(default = "default_yara_large_file_scan_mode")]
+    pub yara_large_file_scan_mode: String,
+    /// Window size in bytes for windowed scanning. Default: 1 MiB.
+    #[serde(default = "default_yara_window_size_bytes")]
+    pub yara_window_size_bytes: u64,
+    /// Maximum number of windows for windowed scanning. Default: 8.
+    #[serde(default = "default_yara_max_window_count")]
+    pub yara_max_window_count: u32,
+    /// Maximum offset for magic marker probing in windowed mode. Default: 16 MiB.
+    #[serde(default = "default_yara_magic_scan_limit_bytes")]
+    pub yara_magic_scan_limit_bytes: u64,
 }
 
 impl Default for UploadDefaults {
@@ -50,6 +62,10 @@ impl Default for UploadDefaults {
             archive_max_depth: 3,
             archive_max_size: 100 * 1024 * 1024,
             allowed_types: UploadAllowedTypesDefaults::default(),
+            yara_large_file_scan_mode: "full".to_string(),
+            yara_window_size_bytes: 1048576,
+            yara_max_window_count: 8,
+            yara_magic_scan_limit_bytes: 16 * 1024 * 1024,
         }
     }
 }
@@ -118,6 +134,22 @@ fn default_archive_max_depth() -> u32 {
 
 fn default_archive_max_size() -> u64 {
     100 * 1024 * 1024
+}
+
+fn default_yara_large_file_scan_mode() -> String {
+    "full".to_string()
+}
+
+fn default_yara_window_size_bytes() -> u64 {
+    1048576
+}
+
+fn default_yara_max_window_count() -> u32 {
+    8
+}
+
+fn default_yara_magic_scan_limit_bytes() -> u64 {
+    16 * 1024 * 1024
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]

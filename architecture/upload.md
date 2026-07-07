@@ -37,6 +37,10 @@ pub struct UploadConfig {
     pub quarantine_dir: String,
     pub yara_rules_dir: Option<String>,
     pub yara_timeout_ms: u64,
+    pub yara_large_file_scan_mode: YaraLargeFileScanMode,
+    pub yara_window_size_bytes: u64,
+    pub yara_max_window_count: u32,
+    pub yara_magic_scan_limit_bytes: u64,
     pub verify_signature: bool,
     pub signature_strict_mode: bool,
     pub rate_limit_enabled: bool,
@@ -63,6 +67,12 @@ pub struct ValidationResult {
     pub scan_status: UploadScanStatus,
     pub scan_error: Option<String>,
     pub yara_matches: Vec<String>,
+    pub scanned_bytes: u64,
+    pub total_bytes: u64,
+    pub scan_mode: YaraLargeFileScanMode,
+    pub coverage_ratio: f64,
+    pub window_count: u32,
+    pub duration_ms: u64,
 }
 
 pub enum UploadScanStatus {
@@ -77,6 +87,12 @@ pub enum UploadScanFailurePolicy {
     FailClosed,
     QuarantineOnError,  // default
     FailOpen,
+}
+
+pub enum YaraLargeFileScanMode {
+    Full,       // scan entire file
+    Windowed,   // scan strategic windows (header, footer, middle)
+    HeaderOnly, // scan only first 8KB (legacy behavior)
 }
 
 pub struct MultipartPart {
@@ -164,3 +180,45 @@ YARA scan errors (timeout, panic, rule deserialization failure, scanner unavaila
 | `fail_open` | Allow upload, mark `Indeterminate`, emit warning metrics (opt-in only) |
 
 Scan statuses are reported in `ValidationResult.scan_status` and tracked via metrics (`UPLOAD_SCAN_CLEAN`, `UPLOAD_SCAN_MALICIOUS`, `UPLOAD_SCAN_DISABLED`, `UPLOAD_SCAN_UNAVAILABLE`, `UPLOAD_SCAN_INDETERMINATE`, `UPLOAD_SCAN_FAIL_OPEN_ALLOWED`, `UPLOAD_SCAN_QUARANTINE_ON_ERROR`).
+
+## 8. Large File Scanning
+
+For sandbox-backed streaming uploads (`validate_large_file`), the scan mode determines how much of the file is examined:
+
+| Mode | Behavior | Coverage | Use Case |
+|------|----------|----------|----------|
+| `full` (default) | Read entire file, scan all bytes | 100% | Maximum security; memory-intensive for large files |
+| `windowed` | Scan strategic windows (header, footer, middle) | ~20-40% | Balance between coverage and memory usage |
+| `header_only` | Scan first 8KB only | <1% | Legacy behavior; only detects header-embedded malware |
+
+### Windowed Scan Strategy
+
+The windowed mode computes up to `yara_max_window_count` (default: 8) windows:
+
+1. **Header window**: First `yara_window_size_bytes` (default: 1MB) — catches header-embedded payloads
+2. **Footer window**: Last `yara_window_size_bytes` — catches appended payloads (polyglots, appended shells)
+3. **Magic scan region**: Scans up to `yara_magic_scan_limit_bytes` (default: 16MB) for files with complex magic byte patterns
+4. **Middle windows**: Evenly spaced across remaining bytes — catches payload injection in large files
+
+Windows are deduplicated by YARA rule name across all scanned regions.
+
+### Configuration
+
+```toml
+[defaults.upload]
+yara_large_file_scan_mode = "windowed"  # "full", "windowed", or "header_only"
+yara_window_size_bytes = 1048576        # 1MB per window
+yara_max_window_count = 8               # Maximum windows to scan
+yara_magic_scan_limit_bytes = 16777216  # 16MB magic scan region
+```
+
+### Coverage Metadata
+
+`ValidationResult` includes coverage metadata for audit trails:
+
+- `scanned_bytes`: Total bytes actually scanned
+- `total_bytes`: Total file size
+- `scan_mode`: Which mode was used
+- `coverage_ratio`: `scanned_bytes / total_bytes` (1.0 = full coverage)
+- `window_count`: Number of windows scanned (0 for full/header_only)
+- `duration_ms`: Scan wall-clock time

@@ -467,6 +467,12 @@ types = ["image/jpeg", "image/png", "image/gif", "application/pdf"]
 enabled = true
 rules_dir = "rules/"
 quarantine_dir = "/var/lib/synvoid/quarantine"
+
+# Large file scanning
+yara_large_file_scan_mode = "windowed"  # "full", "windowed", or "header_only"
+yara_window_size_bytes = 1048576        # 1MB per window
+yara_max_window_count = 8               # Maximum windows to scan
+yara_magic_scan_limit_bytes = 16777216  # 16MB magic scan region
 ```
 
 **Why these defaults:**
@@ -474,6 +480,7 @@ quarantine_dir = "/var/lib/synvoid/quarantine"
 - `max_size_mb = 10` suits most image/document uploads; larger files should use dedicated upload services with their own scanning
 - Whitelist mode ensures only expected file types are accepted—more secure than blacklist mode
 - YARA scanning is enabled by default to detect malware in uploaded files
+- `windowed` scan mode provides good coverage without excessive memory usage for large files
 
 ## FastCGI Configuration
 

@@ -625,6 +625,30 @@ pub const FIELDS: &[(&str, &str, ConfigFieldDoc)] = &[
         impact: Some("Additional protection against zero-day malware."),
         default: "true",
     }),
+    ("upload", "yara_large_file_scan_mode", ConfigFieldDoc {
+        label: "Large File Scan Mode",
+        description: "YARA scan mode for large files: 'full' scans entire file (safest), 'windowed' samples key regions, 'header_only' scans first 8KiB (low assurance).",
+        impact: Some("'header_only' should not be used for public upload surfaces."),
+        default: "full",
+    }),
+    ("upload", "yara_window_size_bytes", ConfigFieldDoc {
+        label: "Windowed Scan Window Size",
+        description: "Size of each scan window in bytes for windowed scan mode.",
+        impact: Some("Larger windows improve detection but use more memory."),
+        default: "1048576",
+    }),
+    ("upload", "yara_max_window_count", ConfigFieldDoc {
+        label: "Windowed Scan Max Windows",
+        description: "Maximum number of windows to scan in windowed mode.",
+        impact: Some("More windows improve coverage but increase scan time."),
+        default: "8",
+    }),
+    ("upload", "yara_magic_scan_limit_bytes", ConfigFieldDoc {
+        label: "Magic Marker Scan Limit",
+        description: "Maximum offset for magic marker probing in windowed mode (bytes).",
+        impact: Some("Higher values probe deeper into the file for suspicious signatures."),
+        default: "16777216",
+    }),
 
     ("bandwidth", "ingress_max_mb_s", ConfigFieldDoc {
         label: "Ingress Bandwidth (MB/s)",
