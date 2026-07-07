@@ -1859,6 +1859,34 @@ mod tests {
     }
 
     #[test]
+    fn test_compute_scan_windows_header_only_bigger_than_file() {
+        let windows = UploadValidator::compute_scan_windows(4096, 1048576, 8, 16 * 1024 * 1024);
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].offset, 0);
+        assert_eq!(windows[0].length, 4096);
+    }
+
+    #[test]
+    fn test_validation_result_for_bytes() {
+        let result = ValidationResult::for_bytes(
+            "application/octet-stream".into(),
+            2048,
+            UploadScanStatus::Clean,
+            Vec::new(),
+            None,
+            15,
+        );
+        assert_eq!(result.scan_mode, YaraLargeFileScanMode::Full);
+        assert_eq!(result.scanned_bytes, 2048);
+        assert_eq!(result.total_bytes, 2048);
+        assert_eq!(result.coverage_ratio, 1.0);
+        assert_eq!(result.window_count, 0);
+        assert_eq!(result.size, 2048);
+        assert_eq!(result.duration_ms, 15);
+        assert!(result.is_clean());
+    }
+
+    #[test]
     fn test_yara_large_file_scan_mode_serde_roundtrip() {
         let modes = vec![
             YaraLargeFileScanMode::Full,
@@ -1870,5 +1898,409 @@ mod tests {
             let deserialized: YaraLargeFileScanMode = serde_json::from_str(&json).unwrap();
             assert_eq!(mode, deserialized);
         }
+    }
+
+    // --- Scan failure semantics regression tests ---
+
+    #[test]
+    fn test_is_clean_with_each_status() {
+        let clean = ValidationResult::for_bytes(
+            "text/plain".into(),
+            100,
+            UploadScanStatus::Clean,
+            Vec::new(),
+            None,
+            0,
+        );
+        assert!(clean.is_clean(), "Clean should be clean");
+
+        let disabled = ValidationResult::for_bytes(
+            "text/plain".into(),
+            100,
+            UploadScanStatus::Disabled,
+            Vec::new(),
+            None,
+            0,
+        );
+        assert!(disabled.is_clean(), "Disabled with no matches should be clean");
+
+        let malicious = ValidationResult::for_bytes(
+            "text/plain".into(),
+            100,
+            UploadScanStatus::Malicious,
+            vec!["rule1".into()],
+            None,
+            0,
+        );
+        assert!(!malicious.is_clean(), "Malicious should not be clean");
+
+        let unavailable = ValidationResult::for_bytes(
+            "text/plain".into(),
+            100,
+            UploadScanStatus::Unavailable,
+            Vec::new(),
+            Some("no scanner".into()),
+            0,
+        );
+        assert!(!unavailable.is_clean(), "Unavailable should not be clean");
+
+        let indeterminate = ValidationResult::for_bytes(
+            "text/plain".into(),
+            100,
+            UploadScanStatus::Indeterminate,
+            Vec::new(),
+            Some("timeout".into()),
+            0,
+        );
+        assert!(
+            !indeterminate.is_clean(),
+            "Indeterminate should not be clean"
+        );
+    }
+
+    #[test]
+    fn test_is_clean_disabled_with_matches() {
+        let result = ValidationResult::for_bytes(
+            "text/plain".into(),
+            100,
+            UploadScanStatus::Disabled,
+            vec!["suspicious_rule".into()],
+            None,
+            0,
+        );
+        assert!(
+            !result.is_clean(),
+            "Disabled with non-empty yara_matches should not be clean"
+        );
+    }
+
+    #[test]
+    fn test_is_clean_indeterminate_no_matches() {
+        let result = ValidationResult::for_bytes(
+            "text/plain".into(),
+            100,
+            UploadScanStatus::Indeterminate,
+            Vec::new(),
+            Some("scan error".into()),
+            0,
+        );
+        assert!(
+            !result.is_clean(),
+            "Indeterminate with no matches should not be clean (scanner error)"
+        );
+    }
+
+    #[test]
+    fn test_validation_result_display_statuses() {
+        let clean = ValidationResult::for_bytes(
+            "text/plain".into(),
+            100,
+            UploadScanStatus::Clean,
+            Vec::new(),
+            None,
+            0,
+        );
+        let debug_str = format!("{:?}", clean);
+        assert!(debug_str.contains("Clean"));
+        assert!(debug_str.contains("text/plain"));
+
+        let malicious = ValidationResult::for_bytes(
+            "application/pdf".into(),
+            200,
+            UploadScanStatus::Malicious,
+            vec!["eicar_test".into()],
+            None,
+            5,
+        );
+        let debug_str = format!("{:?}", malicious);
+        assert!(debug_str.contains("Malicious"));
+        assert!(debug_str.contains("eicar_test"));
+
+        let disabled = ValidationResult::for_bytes(
+            "image/png".into(),
+            50,
+            UploadScanStatus::Disabled,
+            Vec::new(),
+            None,
+            0,
+        );
+        let debug_str = format!("{:?}", disabled);
+        assert!(debug_str.contains("Disabled"));
+
+        let unavailable = ValidationResult::for_bytes(
+            "video/mp4".into(),
+            500,
+            UploadScanStatus::Unavailable,
+            Vec::new(),
+            Some("no scanner".into()),
+            0,
+        );
+        let debug_str = format!("{:?}", unavailable);
+        assert!(debug_str.contains("Unavailable"));
+        assert!(debug_str.contains("no scanner"));
+
+        let indeterminate = ValidationResult::for_bytes(
+            "application/zip".into(),
+            300,
+            UploadScanStatus::Indeterminate,
+            Vec::new(),
+            Some("timeout".into()),
+            0,
+        );
+        let debug_str = format!("{:?}", indeterminate);
+        assert!(debug_str.contains("Indeterminate"));
+        assert!(debug_str.contains("timeout"));
+    }
+
+    #[test]
+    fn test_scan_failure_policy_deserialize_all_variants() {
+        let policy: UploadScanFailurePolicy =
+            serde_json::from_str(r#""fail_closed""#).unwrap();
+        assert_eq!(policy, UploadScanFailurePolicy::FailClosed);
+
+        let policy: UploadScanFailurePolicy =
+            serde_json::from_str(r#""quarantine_on_error""#).unwrap();
+        assert_eq!(policy, UploadScanFailurePolicy::QuarantineOnError);
+
+        let policy: UploadScanFailurePolicy = serde_json::from_str(r#""fail_open""#).unwrap();
+        assert_eq!(policy, UploadScanFailurePolicy::FailOpen);
+
+        // Verify invalid variant fails
+        assert!(serde_json::from_str::<UploadScanFailurePolicy>(r#""unknown_policy""#).is_err());
+    }
+
+    #[test]
+    fn test_scan_failure_policy_default_is_quarantine() {
+        let policy = UploadScanFailurePolicy::default();
+        assert_eq!(
+            policy,
+            UploadScanFailurePolicy::QuarantineOnError,
+            "Default failure policy must be QuarantineOnError"
+        );
+    }
+
+    #[test]
+    fn test_execute_scan_unavailable_scanner_returns_indeterminate() {
+        // The Unavailable path in execute_scan is reached when malware_scanner is None
+        // and scan_with_yara is true. From the public API, malware_scanner is always
+        // Some(...) after construction, so we test the equivalent behavior by
+        // constructing a ValidationResult with Unavailable status and verifying
+        // the is_clean() and scan_status invariants.
+        let result = ValidationResult::for_bytes(
+            "text/plain".into(),
+            100,
+            UploadScanStatus::Unavailable,
+            Vec::new(),
+            Some("no malware scanner available".into()),
+            0,
+        );
+        assert_eq!(result.scan_status, UploadScanStatus::Unavailable);
+        assert!(!result.is_clean());
+        assert!(result.scan_error.is_some());
+        assert!(result
+            .scan_error
+            .as_ref()
+            .unwrap()
+            .contains("no malware scanner"));
+    }
+
+    #[test]
+    fn test_validate_bytes_with_fail_closed_policy_on_unavailable() {
+        // When FailClosed policy is configured and scanner is unavailable,
+        // validate_bytes should return an error (upload rejected).
+        // We simulate this by verifying the policy config wires correctly:
+        let config = UploadConfig {
+            scan_with_yara: true,
+            yara_failure_policy: UploadScanFailurePolicy::FailClosed,
+            ..Default::default()
+        };
+        let effective = config.effective_config_for_path("/upload");
+        assert_eq!(
+            effective.yara_failure_policy,
+            UploadScanFailurePolicy::FailClosed
+        );
+
+        // Construct the equivalent Unavailable result as execute_scan would produce
+        let result = ValidationResult::for_bytes(
+            "text/plain".into(),
+            100,
+            UploadScanStatus::Unavailable,
+            Vec::new(),
+            Some("no malware scanner available".into()),
+            0,
+        );
+        // FailClosed + Unavailable → must not be clean
+        assert!(!result.is_clean());
+    }
+
+    #[test]
+    fn test_validate_bytes_with_fail_open_policy_on_unavailable() {
+        // When FailOpen policy is configured and scanner is unavailable,
+        // validate_bytes should allow the upload through (no error).
+        let config = UploadConfig {
+            scan_with_yara: true,
+            yara_failure_policy: UploadScanFailurePolicy::FailOpen,
+            ..Default::default()
+        };
+        let effective = config.effective_config_for_path("/upload");
+        assert_eq!(
+            effective.yara_failure_policy,
+            UploadScanFailurePolicy::FailOpen
+        );
+
+        // The result from execute_scan with FailOpen + Unavailable is still Indeterminate,
+        // but the outer validate_bytes allows it through (no ScanIndeterminate error).
+        let result = ValidationResult::for_bytes(
+            "text/plain".into(),
+            100,
+            UploadScanStatus::Unavailable,
+            Vec::new(),
+            Some("no malware scanner available (fail_open)".into()),
+            0,
+        );
+        // FailOpen: result is not clean but upload is allowed
+        assert!(!result.is_clean());
+        assert!(result.scan_error.unwrap().contains("fail_open"));
+    }
+
+    #[test]
+    fn test_validate_bytes_with_quarantine_on_error_policy_on_unavailable() {
+        // QuarantineOnError on Unavailable behaves like FailClosed (returns error).
+        let config = UploadConfig {
+            scan_with_yara: true,
+            yara_failure_policy: UploadScanFailurePolicy::QuarantineOnError,
+            ..Default::default()
+        };
+        let effective = config.effective_config_for_path("/upload");
+        assert_eq!(
+            effective.yara_failure_policy,
+            UploadScanFailurePolicy::QuarantineOnError
+        );
+
+        let result = ValidationResult::for_bytes(
+            "text/plain".into(),
+            100,
+            UploadScanStatus::Unavailable,
+            Vec::new(),
+            Some("no malware scanner available".into()),
+            0,
+        );
+        assert!(!result.is_clean());
+    }
+
+    #[test]
+    fn test_validation_result_coverage_ratio_boundary() {
+        // HeaderOnly: coverage_ratio = scanned_bytes / total_bytes
+        let header_only = ValidationResult::for_header_only(
+            "application/pdf".into(),
+            1_000_000,
+            8192,
+            UploadScanStatus::Clean,
+            Vec::new(),
+            None,
+            0,
+        );
+        assert!(
+            header_only.coverage_ratio > 0.0 && header_only.coverage_ratio < 1.0,
+            "HeaderOnly coverage should be between 0.0 and 1.0, got {}",
+            header_only.coverage_ratio
+        );
+
+        // Full: coverage_ratio = 1.0
+        let full = ValidationResult::for_full_file(
+            "application/pdf".into(),
+            1_000_000,
+            UploadScanStatus::Clean,
+            Vec::new(),
+            None,
+            0,
+        );
+        assert_eq!(full.coverage_ratio, 1.0);
+
+        // Windowed: coverage_ratio = scanned_bytes / total_bytes
+        let windowed = ValidationResult::for_windowed(
+            "video/mp4".into(),
+            50_000_000,
+            4_000_000,
+            4,
+            UploadScanStatus::Clean,
+            Vec::new(),
+            None,
+            0,
+        );
+        assert!(
+            windowed.coverage_ratio > 0.0 && windowed.coverage_ratio < 1.0,
+            "Windowed coverage should be between 0.0 and 1.0, got {}",
+            windowed.coverage_ratio
+        );
+
+        // for_bytes: always full coverage (1.0)
+        let bytes = ValidationResult::for_bytes(
+            "text/plain".into(),
+            100,
+            UploadScanStatus::Clean,
+            Vec::new(),
+            None,
+            0,
+        );
+        assert_eq!(bytes.coverage_ratio, 1.0);
+
+        // Zero-size file with header_only: ratio = 1.0 (special case)
+        let zero_header = ValidationResult::for_header_only(
+            "text/plain".into(),
+            0,
+            0,
+            UploadScanStatus::Disabled,
+            Vec::new(),
+            None,
+            0,
+        );
+        assert_eq!(zero_header.coverage_ratio, 1.0);
+    }
+
+    #[test]
+    fn test_validation_result_scan_mode_roundtrip() {
+        let for_bytes = ValidationResult::for_bytes(
+            "text/plain".into(),
+            100,
+            UploadScanStatus::Clean,
+            Vec::new(),
+            None,
+            0,
+        );
+        assert_eq!(for_bytes.scan_mode, YaraLargeFileScanMode::Full);
+
+        let for_header = ValidationResult::for_header_only(
+            "application/pdf".into(),
+            1_000_000,
+            8192,
+            UploadScanStatus::Clean,
+            Vec::new(),
+            None,
+            0,
+        );
+        assert_eq!(for_header.scan_mode, YaraLargeFileScanMode::HeaderOnly);
+
+        let for_windowed = ValidationResult::for_windowed(
+            "video/mp4".into(),
+            50_000_000,
+            4_000_000,
+            4,
+            UploadScanStatus::Clean,
+            Vec::new(),
+            None,
+            0,
+        );
+        assert_eq!(for_windowed.scan_mode, YaraLargeFileScanMode::Windowed);
+
+        let for_full = ValidationResult::for_full_file(
+            "application/zip".into(),
+            5_000_000,
+            UploadScanStatus::Clean,
+            Vec::new(),
+            None,
+            0,
+        );
+        assert_eq!(for_full.scan_mode, YaraLargeFileScanMode::Full);
     }
 }

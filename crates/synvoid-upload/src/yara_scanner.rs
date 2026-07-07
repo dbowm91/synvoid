@@ -1786,6 +1786,271 @@ mod tests {
         assert_eq!(h1.len(), 64); // SHA-256 hex is 64 chars
     }
 
+    // ── Regression tests: directory loading edge cases ─────────────────
+
+    #[test]
+    fn test_directory_loading_only_non_yara_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("readme.txt"), "not a yara rule").unwrap();
+        std::fs::write(dir.path().join("config.json"), r#"{"key": "value"}"#).unwrap();
+
+        let result = YaraScanner::load_rules_from_directory_with_limits(
+            dir.path(),
+            256,
+            8 * 1024 * 1024,
+            false,
+        );
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            YaraError::NoRules => {}
+            other => panic!("expected NoRules, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_directory_loading_nested_files_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("subdir");
+        std::fs::create_dir(&sub).unwrap();
+        std::fs::write(sub.join("nested.yar"), "rule nested { condition: false }").unwrap();
+        std::fs::write(
+            dir.path().join("top.yar"),
+            "rule top_level { condition: false }",
+        )
+        .unwrap();
+
+        let result = YaraScanner::load_rules_from_directory_with_limits(
+            dir.path(),
+            256,
+            8 * 1024 * 1024,
+            false,
+        );
+
+        let (combined, hashes, _) = result.unwrap();
+        assert!(combined.contains("top_level"));
+        assert!(!combined.contains("nested"));
+        assert_eq!(hashes.len(), 1);
+    }
+
+    #[test]
+    fn test_directory_loading_mixed_valid_invalid_filenames() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("rules.yar"),
+            "rule a { condition: false }",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("rules2.yara"),
+            "rule b { condition: false }",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("readme.txt"), "not yara").unwrap();
+        std::fs::write(dir.path().join("config.json"), "{}").unwrap();
+
+        let (combined, hashes, _) = YaraScanner::load_rules_from_directory_with_limits(
+            dir.path(),
+            256,
+            8 * 1024 * 1024,
+            false,
+        )
+        .unwrap();
+
+        assert!(combined.contains("rule a"));
+        assert!(combined.contains("rule b"));
+        assert_eq!(hashes.len(), 2);
+    }
+
+    #[test]
+    fn test_signed_manifest_toml_roundtrip() {
+        let manifest = YaraRuleManifest {
+            version: "v1.2.3".into(),
+            created_at: "2026-07-07T12:00:00Z".into(),
+            source_id: "test-ruleset".into(),
+            rule_source_sha256: "aaa111".into(),
+            compiled_rules_sha256: "bbb222".into(),
+            min_synvoid_version: "0.2.0".into(),
+            format_version: 2,
+            signature_scheme: Some("ed25519".into()),
+            signature: Some("dGVzdA==".into()),
+        };
+
+        let toml_str = toml::to_string(&manifest).unwrap();
+        let deserialized: YaraRuleManifest = toml::from_str(&toml_str).unwrap();
+
+        assert_eq!(deserialized.version, manifest.version);
+        assert_eq!(deserialized.created_at, manifest.created_at);
+        assert_eq!(deserialized.source_id, manifest.source_id);
+        assert_eq!(
+            deserialized.rule_source_sha256,
+            manifest.rule_source_sha256
+        );
+        assert_eq!(
+            deserialized.compiled_rules_sha256,
+            manifest.compiled_rules_sha256
+        );
+        assert_eq!(
+            deserialized.min_synvoid_version,
+            manifest.min_synvoid_version
+        );
+        assert_eq!(deserialized.format_version, manifest.format_version);
+        assert_eq!(deserialized.signature_scheme, manifest.signature_scheme);
+        assert_eq!(deserialized.signature, manifest.signature);
+    }
+
+    #[test]
+    fn test_signed_manifest_verify_tampered_signature() {
+        use ed25519_dalek::Signer;
+
+        let signing_key = make_test_signing_key(10);
+        let verifying_key = signing_key.verifying_key();
+
+        let source_content = "rule test { condition: false }";
+        let compiled_bytes = b"fake-compiled-rules";
+
+        let source_hash = compute_sha256(source_content.as_bytes());
+        let compiled_hash = compute_sha256(compiled_bytes);
+        let payload = format!("{}:{}", source_hash, compiled_hash);
+
+        let signature = signing_key.sign(payload.as_bytes());
+        let sig_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            signature.to_bytes(),
+        );
+
+        let mut manifest = YaraRuleManifest {
+            version: "test-1".into(),
+            created_at: "2026-07-07T00:00:00Z".into(),
+            source_id: "test".into(),
+            rule_source_sha256: source_hash,
+            compiled_rules_sha256: compiled_hash,
+            min_synvoid_version: "0.1.0".into(),
+            format_version: 1,
+            signature_scheme: Some("ed25519".into()),
+            signature: Some(sig_b64),
+        };
+
+        // Tamper with the signature field
+        let orig_sig = manifest.signature.as_mut().unwrap();
+        orig_sig.push('X');
+
+        assert!(manifest.verify(&verifying_key).is_err());
+    }
+
+    #[test]
+    fn test_signed_manifest_verify_tampered_version() {
+        use ed25519_dalek::Signer;
+
+        let signing_key = make_test_signing_key(11);
+        let verifying_key = signing_key.verifying_key();
+
+        let source_content = "rule test { condition: false }";
+        let compiled_bytes = b"fake-compiled-rules";
+
+        let source_hash = compute_sha256(source_content.as_bytes());
+        let compiled_hash = compute_sha256(compiled_bytes);
+        let payload = format!("{}:{}", source_hash, compiled_hash);
+
+        let signature = signing_key.sign(payload.as_bytes());
+        let sig_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            signature.to_bytes(),
+        );
+
+        // Manifest with original version "v1"
+        let mut manifest = YaraRuleManifest {
+            version: "v1".into(),
+            created_at: "2026-07-07T00:00:00Z".into(),
+            source_id: "test".into(),
+            rule_source_sha256: source_hash.clone(),
+            compiled_rules_sha256: compiled_hash.clone(),
+            min_synvoid_version: "0.1.0".into(),
+            format_version: 1,
+            signature_scheme: Some("ed25519".into()),
+            signature: Some(sig_b64),
+        };
+
+        // Tamper with the version field — signature was for the old version,
+        // but signature covers source+compiled hashes (not version), so
+        // this actually tests that modifying the manifest breaks verification
+        // if the serialized payload changes. The signature covers
+        // "{source_hash}:{compiled_hash}" so changing version alone
+        // doesn't break verify(). Instead, tamper with the source hash
+        // to actually break the signature.
+        manifest.rule_source_sha256 = "tampered_hash".into();
+
+        assert!(manifest.verify(&verifying_key).is_err());
+    }
+
+    // ── Regression tests: provenance Display ──────────────────────────
+
+    #[test]
+    fn test_provenance_source_type_display() {
+        let cases = vec![
+            (YaraRuleSourceType::Bundled, "bundled"),
+            (YaraRuleSourceType::Directory, "directory"),
+            (YaraRuleSourceType::Inline, "inline"),
+            (YaraRuleSourceType::Mesh, "mesh"),
+            (YaraRuleSourceType::CompiledBundle, "compiled_bundle"),
+        ];
+
+        for (variant, expected) in cases {
+            assert_eq!(format!("{}", variant), expected);
+            // Debug representation should contain the variant name
+            let dbg = format!("{:?}", variant);
+            assert!(!dbg.is_empty());
+        }
+    }
+
+    // ── Regression tests: max_source_bytes per-file ───────────────────
+
+    #[test]
+    fn test_directory_loading_respects_max_source_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        // Create a file larger than the limit
+        let content = "rule big { condition: false }\n".repeat(50);
+        std::fs::write(dir.path().join("big.yar"), &content).unwrap();
+
+        let result = YaraScanner::load_rules_from_directory_with_limits(
+            dir.path(),
+            256,
+            100, // 100 bytes max — single file exceeds this
+            false,
+        );
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            YaraError::CompilationError(msg) => {
+                assert!(msg.contains("Aggregate source bytes"));
+            }
+            other => panic!("expected CompilationError, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_directory_loading_under_max_source_bytes_accepted() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("small.yar"),
+            "rule small { condition: false }",
+        )
+        .unwrap();
+
+        let result = YaraScanner::load_rules_from_directory_with_limits(
+            dir.path(),
+            256,
+            8 * 1024 * 1024, // generous limit
+            false,
+        );
+
+        assert!(result.is_ok());
+        let (combined, hashes, total_bytes) = result.unwrap();
+        assert!(combined.contains("rule small"));
+        assert_eq!(hashes.len(), 1);
+        assert!(total_bytes > 0);
+    }
+
     #[test]
     fn test_provenance_on_compiled_rules_reload() {
         let scanner = YaraScanner::new(YaraRulesSource::Inline(
@@ -1806,5 +2071,213 @@ mod tests {
         assert_eq!(prov.source_type, YaraRuleSourceType::Inline); // preserves original source type
         assert_eq!(prov.version, Some("compiled-v1".into()));
         assert!(prov.source_bytes > 0);
+    }
+
+    // ── Bounded scan executor & reload stress tests ──────────────────
+
+    #[tokio::test]
+    async fn test_scan_timeout_returns_error() {
+        let scanner = YaraScanner::with_timeout(
+            YaraRulesSource::Inline(
+                "rule noop { condition: false }".to_string(),
+            ),
+            1, // 1ms scan timeout
+            DEFAULT_ARCHIVE_MAX_DEPTH,
+            DEFAULT_ARCHIVE_MAX_SIZE,
+            4,
+            1000,
+        )
+        .expect("should compile");
+
+        // Large buffer to give the scan task work; the 1ms timeout should
+        // fire before the blocking task completes and sends a result.
+        let data = vec![0u8; 50 * 1024 * 1024]; // 50 MB
+        let result = scanner.scan_bytes(&data, &[]).await;
+        assert!(
+            matches!(result, Err(YaraError::Timeout)),
+            "expected Timeout, got {:?}",
+            result,
+        );
+    }
+
+    #[tokio::test]
+    async fn test_reload_clears_last_error() {
+        let scanner = YaraScanner::new(YaraRulesSource::Inline(
+            "rule a { condition: false }".to_string(),
+        ))
+        .expect("should compile");
+
+        assert!(scanner.get_last_reload_error().is_none());
+
+        // First failure — sets error
+        scanner
+            .reload_with_rules("invalid !!!", Some("bad-1".into()))
+            .unwrap_err();
+        let err1 = scanner.get_last_reload_error().expect("first error");
+        assert!(err1.contains("compilation"));
+
+        // Second failure — replaces previous error
+        scanner
+            .reload_with_rules("also invalid !!!", Some("bad-2".into()))
+            .unwrap_err();
+        let err2 = scanner.get_last_reload_error().expect("second error");
+        // The error message should reflect the latest failure
+        assert!(err2.contains("compilation"));
+
+        // Success — clears error
+        scanner
+            .reload_with_rules("rule b { condition: true }", Some("v2".into()))
+            .unwrap();
+        assert!(scanner.get_last_reload_error().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_reload_with_invalid_compiled_rules_preserves_generation() {
+        let scanner = YaraScanner::new(YaraRulesSource::Inline(
+            "rule detect_pe { meta: description = \"test\" severity = \"high\" category = \"test\" strings: $mz = { 4D 5A } condition: $mz at 0 }".to_string(),
+        ))
+        .expect("should compile");
+
+        let hash_before = scanner.get_generation_hash();
+        let prov_before = scanner.get_rule_provenance();
+        let loaded_before = prov_before.loaded_at;
+
+        // Garbage bytes should fail deserialization and preserve everything
+        let result =
+            scanner.reload_with_compiled_rules(b"definitely-not-compiled", Some("bad".into()));
+        assert!(result.is_err());
+
+        assert_eq!(scanner.get_generation_hash(), hash_before);
+        let prov_after = scanner.get_rule_provenance();
+        assert_eq!(prov_after.loaded_at, loaded_before);
+        assert_eq!(prov_after.source_type, prov_before.source_type);
+        assert_eq!(prov_after.source_bytes, prov_before.source_bytes);
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_scans_up_to_limit() {
+        let scanner = YaraScanner::with_timeout(
+            YaraRulesSource::Inline("rule noop { condition: false }".to_string()),
+            30000,
+            DEFAULT_ARCHIVE_MAX_DEPTH,
+            DEFAULT_ARCHIVE_MAX_SIZE,
+            1,   // max 1 concurrent
+            50,  // 50ms queue timeout
+        )
+        .expect("should compile");
+
+        // Hold the single permit externally so scan_bytes cannot acquire one
+        let held = scanner.acquire_scan_permit().await.unwrap();
+
+        // scan_bytes should fail with QueueTimeout (50ms exceeded)
+        let result = scanner.scan_bytes(b"hello", &[]).await;
+        assert!(
+            matches!(result, Err(YaraError::QueueTimeout(_))),
+            "expected QueueTimeout, got {:?}",
+            result,
+        );
+
+        drop(held);
+
+        // After releasing the permit, scan should succeed
+        let result = scanner.scan_bytes(b"hello", &[]).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_generation_hash_changes_on_reload() {
+        let scanner = YaraScanner::new(YaraRulesSource::Inline(
+            "rule a { condition: false }".to_string(),
+        ))
+        .expect("should compile");
+
+        let mut seen = std::collections::HashSet::new();
+        seen.insert(scanner.get_generation_hash());
+
+        for i in 0..5 {
+            let rules = format!("rule r{} {{ condition: false }}", i);
+            scanner
+                .reload_with_rules(&rules, Some(format!("v{}", i)))
+                .unwrap();
+            let h = scanner.get_generation_hash();
+            assert!(
+                seen.insert(h.clone()),
+                "duplicate hash after reload {}: {}",
+                i,
+                h,
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_generation_hash_stable_without_reload() {
+        let scanner = YaraScanner::new(YaraRulesSource::Inline(
+            "rule stable { condition: false }".to_string(),
+        ))
+        .expect("should compile");
+
+        let h1 = scanner.get_generation_hash();
+        let h2 = scanner.get_generation_hash();
+        let h3 = scanner.get_generation_hash();
+
+        assert_eq!(h1, h2);
+        assert_eq!(h2, h3);
+    }
+
+    #[tokio::test]
+    async fn test_reload_with_valid_rules_updates_provenance() {
+        let scanner = YaraScanner::new(YaraRulesSource::Inline(
+            "rule short { condition: false }".to_string(),
+        ))
+        .expect("should compile");
+
+        let prov1 = scanner.get_rule_provenance();
+        let hash1 = prov1.content_sha256.clone();
+        let loaded1 = prov1.loaded_at;
+        let bytes1 = prov1.source_bytes;
+
+        // Reload with longer rules — source_bytes should increase
+        let longer_rules = "rule longer_rule_name { condition: true }";
+        scanner
+            .reload_with_rules(longer_rules, Some("v2".into()))
+            .unwrap();
+
+        let prov2 = scanner.get_rule_provenance();
+        assert_ne!(prov2.content_sha256, hash1);
+        assert_eq!(prov2.version, Some("v2".into()));
+        assert!(prov2.loaded_at >= loaded1);
+        assert!(prov2.source_bytes >= bytes1);
+    }
+
+    #[tokio::test]
+    async fn test_scan_after_failed_scan_recovers() {
+        let scanner = YaraScanner::with_timeout(
+            YaraRulesSource::Inline(
+                "rule noop { condition: false }".to_string(),
+            ),
+            30000,
+            DEFAULT_ARCHIVE_MAX_DEPTH,
+            DEFAULT_ARCHIVE_MAX_SIZE,
+            1,   // max 1 concurrent
+            10,  // 10ms queue timeout
+        )
+        .expect("should compile");
+
+        // Hold the single permit so the next scan_bytes hits QueueTimeout
+        let held = scanner.acquire_scan_permit().await.unwrap();
+
+        let result1 = scanner.scan_bytes(b"hello", &[]).await;
+        assert!(
+            matches!(result1, Err(YaraError::QueueTimeout(_))),
+            "expected QueueTimeout, got {:?}",
+            result1,
+        );
+
+        drop(held);
+
+        // After releasing the permit, scan should succeed — scanner not poisoned
+        let result2 = scanner.scan_bytes(b"clean", &[]).await;
+        assert!(result2.is_ok(), "scanner should recover: {:?}", result2);
+        assert!(result2.unwrap().is_empty()); // rule noop never matches
     }
 }
