@@ -59,6 +59,9 @@ pub async fn init_upload_validator(config: &Arc<RwLock<ConfigManager>>) {
             yara_max_concurrent_scans: defaults.yara_max_concurrent_scans,
             yara_max_queued_scans: defaults.yara_max_queued_scans,
             yara_queue_timeout_ms: defaults.yara_queue_timeout_ms,
+            yara_max_rule_files: defaults.yara_max_rule_files,
+            yara_max_rule_source_bytes: defaults.yara_max_rule_source_bytes,
+            yara_allow_rule_symlinks: defaults.yara_allow_rule_symlinks,
         }
     };
 

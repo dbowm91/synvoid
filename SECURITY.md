@@ -159,6 +159,63 @@ The following vulnerabilities exist in transitive dependencies and are documente
 
 ---
 
+## YARA Rule Provenance & Trust (Phase 4)
+
+Active YARA rules carry provenance metadata tracking their source, verification state, and identity.
+
+### Rule Source Types
+
+| Source | Trust Level | Description |
+|--------|------------|-------------|
+| `Bundled` | Low | Default malware rules shipped with the binary |
+| `Directory` | Operator-controlled | Rules loaded from a local filesystem directory |
+| `DirectoryWithFallback` | Operator-controlled | Directory rules with bundled fallback on failure |
+| `Inline` | High | Rules provided directly via config or admin API |
+| `Mesh` | Network-trusted | Rules received from mesh peers, Ed25519-verified |
+| `CompiledBundle` | Operator-controlled | Pre-compiled YARA-X binary rules |
+
+### Directory Loading Hardening
+
+Directory-based rule loading enforces:
+- **Sorted file order**: Rules loaded alphabetically for deterministic compilation
+- **Symlink rejection**: Symlinks are rejected by default (`yara_allow_rule_symlinks = false`)
+- **File count limit**: Maximum rule files per directory (`yara_max_rule_files = 256`)
+- **Aggregate size limit**: Maximum total source bytes (`yara_max_rule_source_bytes = 8MB`)
+- **Canonical path enforcement**: Directory is canonicalized to prevent traversal
+
+### Signed Bundle Format
+
+YARA rule bundles can be signed with Ed25519 keys via `YaraRuleManifest`:
+- Content SHA-256 hashes for source and compiled rules
+- Ed25519 signature over `source_hash:compiled_hash`
+- Base64-encoded signature in TOML manifest
+- Verification via `manifest.verify()` and `manifest.verify_content()`
+
+### Mesh Rule Trust
+
+Mesh-delivered rules are verified against trusted signers (`require_signature = true` by default). Unsigned mesh updates are rejected in production mode. The mesh trust model uses Ed25519 signatures, not RSA.
+
+### Operator Inspection
+
+```rust
+// Get active rule provenance
+let provenance = scanner.get_rule_provenance();
+// provenance.source_type, .version, .content_sha256, .verified, .loaded_at
+
+// Get last reload error (None if last reload succeeded)
+let error = scanner.get_last_reload_error();
+```
+
+### Dependency Policy
+
+`deny.toml` enforces:
+- Yanked crate denial (`yanked = "deny"`)
+- Documented rationale and review dates for all ignored advisories
+- Known-vulnerable wasmtime versions blocked
+- RSA exposure assessed as low (transitive via yara-x, never invoked)
+
+---
+
 ## Dependency Patches
 
 ### quinn-proto (RUSTSEC-2026-0037)

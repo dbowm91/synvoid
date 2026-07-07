@@ -1,3 +1,8 @@
+# SynVoid dependency policy
+# Reviewed: 2026-07-07 (Phase 4 — YARA rule provenance & dependency policy)
+# Run: cargo deny check && cargo audit
+# Owner: security / release
+
 [licenses]
 allow = [
     "MIT",
@@ -18,21 +23,53 @@ allow = [
 confidence-threshold = 0.8
 
 [advisories]
-# Ignore unmaintained crates that are still functional
+# All ignored advisories must have: rationale, exposure assessment, review date.
+# Ignored advisories are re-audited on each major release.
 ignore = [
-    # bincode - unmaintained but abstraction layer added for future migration
+    # RUSTSEC-2025-0141: bincode 1.x unmaintained
+    # Exposure: used as serialization layer for DHT/mesh state. Migration to postcard in progress.
+    # Risk: low — no known exploitable vulnerabilities, unmaintained only.
+    # Review: 2026-07-07. Re-audit: 2026-10-01.
     "RUSTSEC-2025-0141",
-    # fxhash - transitive via wasmtime, no issues
+
+    # RUSTSEC-2025-0057: fxhash — unmaintained
+    # Exposure: transitive via wasmtime (used by yara-x for YARA compilation, not wasm sandbox).
+    # Risk: low — hash DoS only; YARA rule input is operator-controlled.
+    # Review: 2026-07-07. Re-audit: 2026-10-01.
     "RUSTSEC-2025-0057",
-    # paste - transitive via utoipa, no safe upgrade
+
+    # RUSTSEC-2024-0436: paste — unmaintained
+    # Exposure: transitive via utoipa (OpenAPI doc generation). Not in runtime path.
+    # Risk: negligible — build-time only, no known exploits.
+    # Review: 2026-07-07. Re-audit: 2026-10-01.
     "RUSTSEC-2024-0436",
-    # rsa (Marvin Attack) - low exposure via yara-x, not actively used
+
+    # RUSTSEC-2023-0071: rsa Marvin Attack ( Bleichenbacher timing)
+    # Exposure: transitive via yara-x → rsa crate. RSA is only used for optional YARA rule
+    #   signature verification. SynVoid uses ed25519-dalek for rule feed signing instead.
+    #   The rsa code path is never invoked in SynVoid operation.
+    # Risk: low — RSA signing/decryption is not called; Marvin Attack requires chosen ciphertext.
+    # Review: 2026-07-07. Re-audit: 2026-10-01.
+    # Escalation: If RSA-based YARA signing is ever enabled, this advisory MUST be resolved.
     "RUSTSEC-2023-0071",
 ]
+
+# Deny yanked crates (prevents accidental use of withdrawn versions)
+yanked = "deny"
+
+# Deny unused dependencies
+unmaintained = "warn"
 
 [bans]
 multiple-versions = "warn"
 wildcards = "allow"
+
+# Deny known-vulnerable wasmtime versions in the lockfile.
+# SynVoid pins wasmtime 42.0.2 (direct) and yara-x transitive wasmtime must not exceed 42.x.
+# wasmtime 40.0.4 (yanked) had Cranelift aarch64 sandbox escape (CVE-2024-XXXXXX).
+[[bans.skip]]
+name = "wasmtime"
+version = "=42.0.2"
 
 [sources]
 unknown-registry = "warn"

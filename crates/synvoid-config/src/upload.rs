@@ -53,6 +53,15 @@ pub struct UploadDefaults {
     /// Timeout in ms to wait for a scan permit before rejecting. Default: 1000.
     #[serde(default = "default_yara_queue_timeout_ms")]
     pub yara_queue_timeout_ms: u64,
+    /// Maximum number of YARA rule files to load from a directory. Default: 256.
+    #[serde(default = "default_yara_max_rule_files")]
+    pub yara_max_rule_files: u32,
+    /// Maximum aggregate source bytes for YARA rules loaded from a directory. Default: 8 MiB.
+    #[serde(default = "default_yara_max_rule_source_bytes")]
+    pub yara_max_rule_source_bytes: u64,
+    /// Whether to allow symlinks when loading YARA rules from a directory. Default: false.
+    #[serde(default = "default_yara_allow_rule_symlinks")]
+    pub yara_allow_rule_symlinks: bool,
 }
 
 impl Default for UploadDefaults {
@@ -78,6 +87,9 @@ impl Default for UploadDefaults {
             yara_max_concurrent_scans: 4,
             yara_max_queued_scans: 64,
             yara_queue_timeout_ms: 1000,
+            yara_max_rule_files: 256,
+            yara_max_rule_source_bytes: 8 * 1024 * 1024,
+            yara_allow_rule_symlinks: false,
         }
     }
 }
@@ -171,6 +183,15 @@ fn default_yara_max_queued_scans() -> u32 {
 }
 fn default_yara_queue_timeout_ms() -> u64 {
     1000
+}
+fn default_yara_max_rule_files() -> u32 {
+    256
+}
+fn default_yara_max_rule_source_bytes() -> u64 {
+    8 * 1024 * 1024
+}
+fn default_yara_allow_rule_symlinks() -> bool {
+    false
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]

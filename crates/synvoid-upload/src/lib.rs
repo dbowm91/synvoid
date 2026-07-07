@@ -16,7 +16,8 @@ pub use sandbox::{QuarantineEntry, Sandbox, SandboxConfig, SandboxError, Sandbox
 pub use signature::{FileCategory, FileSignature, SignatureRegistry};
 pub use yara_rule_feed::{ParsedYaraRules, YaraRuleFeedManager, YaraRuleSource};
 pub use yara_scanner::{
-    YaraError, YaraMatch, YaraRulesSource, YaraScanner, NO_EXCLUDED_CATEGORIES,
+    compute_sha256, YaraDirectoryConfig, YaraError, YaraMatch, YaraRuleManifest,
+    YaraRuleProvenance, YaraRuleSourceType, YaraRulesSource, YaraScanner, NO_EXCLUDED_CATEGORIES,
 };
 
 use std::sync::Arc;
@@ -281,8 +282,14 @@ impl UploadValidator {
                 true,
             )
             .unwrap_or(YaraRulesSource::Bundled);
-            let scanner =
-                YaraScanner::with_timeout(source, config.yara_timeout_ms, 3, 100 * 1024 * 1024, config.yara_max_concurrent_scans, config.yara_queue_timeout_ms)?;
+            let scanner = YaraScanner::with_timeout(
+                source,
+                config.yara_timeout_ms,
+                3,
+                100 * 1024 * 1024,
+                config.yara_max_concurrent_scans,
+                config.yara_queue_timeout_ms,
+            )?;
             Some(Arc::new(MalwareScanner::with_yara(Some(scanner))))
         } else {
             Some(Arc::new(MalwareScanner::with_yara(None)))
@@ -311,8 +318,14 @@ impl UploadValidator {
                 true,
             )
             .unwrap_or(YaraRulesSource::Bundled);
-            let scanner =
-                YaraScanner::with_timeout(source, config.yara_timeout_ms, 3, 100 * 1024 * 1024, config.yara_max_concurrent_scans, config.yara_queue_timeout_ms)?;
+            let scanner = YaraScanner::with_timeout(
+                source,
+                config.yara_timeout_ms,
+                3,
+                100 * 1024 * 1024,
+                config.yara_max_concurrent_scans,
+                config.yara_queue_timeout_ms,
+            )?;
             Some(Arc::new(MalwareScanner::with_yara(Some(scanner))))
         } else {
             Some(Arc::new(MalwareScanner::with_yara(None)))
@@ -1650,6 +1663,9 @@ mod tests {
                 yara_max_concurrent_scans: None,
                 yara_max_queued_scans: None,
                 yara_queue_timeout_ms: None,
+                yara_max_rule_files: None,
+                yara_max_rule_source_bytes: None,
+                yara_allow_rule_symlinks: None,
             }],
             ..Default::default()
         };

@@ -49,6 +49,11 @@ yara_large_file_scan_mode = "windowed"  # "full", "windowed", or "header_only"
 yara_window_size_bytes = 1048576        # 1MB per window
 yara_max_window_count = 8               # Maximum windows to scan
 yara_magic_scan_limit_bytes = 16777216  # 16MB magic scan region
+
+# Directory rule loading hardening (Phase 4)
+yara_max_rule_files = 256               # Maximum rule files per directory
+yara_max_rule_source_bytes = 8388608    # Maximum aggregate source bytes (8MB)
+yara_allow_rule_symlinks = false        # Reject symlinks by default
 ```
 
 ### Per-Site Configuration
@@ -102,6 +107,14 @@ types = [
 | `yara_window_size_bytes` | `1048576` | Size of each scan window in bytes (1MB) |
 | `yara_max_window_count` | `8` | Maximum number of windows to scan |
 | `yara_magic_scan_limit_bytes` | `16777216` | Maximum bytes to scan for magic byte patterns (16MB) |
+
+### Directory Rule Loading Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `yara_max_rule_files` | `256` | Maximum number of rule files per directory |
+| `yara_max_rule_source_bytes` | `8388608` | Maximum aggregate source bytes (8MB) |
+| `yara_allow_rule_symlinks` | `false` | Whether to follow symlinks (rejected by default) |
 
 ### Scan Failure Policies
 

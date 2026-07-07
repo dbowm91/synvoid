@@ -42,6 +42,15 @@ pub struct SiteUploadConfig {
     /// Timeout in ms to wait for a scan permit before rejecting.
     #[serde(default)]
     pub yara_queue_timeout_ms: Option<u64>,
+    /// Maximum number of YARA rule files to load from a directory.
+    #[serde(default)]
+    pub yara_max_rule_files: Option<u32>,
+    /// Maximum aggregate source bytes for YARA rules loaded from a directory.
+    #[serde(default)]
+    pub yara_max_rule_source_bytes: Option<u64>,
+    /// Whether to allow symlinks when loading YARA rules from a directory.
+    #[serde(default)]
+    pub yara_allow_rule_symlinks: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default, JsonSchema)]
@@ -80,6 +89,15 @@ pub struct SitePathUploadConfig {
     /// Timeout in ms to wait for a scan permit before rejecting.
     #[serde(default)]
     pub yara_queue_timeout_ms: Option<u64>,
+    /// Maximum number of YARA rule files to load from a directory.
+    #[serde(default)]
+    pub yara_max_rule_files: Option<u32>,
+    /// Maximum aggregate source bytes for YARA rules loaded from a directory.
+    #[serde(default)]
+    pub yara_max_rule_source_bytes: Option<u64>,
+    /// Whether to allow symlinks when loading YARA rules from a directory.
+    #[serde(default)]
+    pub yara_allow_rule_symlinks: Option<bool>,
 }
 
 impl SiteUploadConfig {

@@ -274,7 +274,82 @@ struct YaraRuleGeneration {
     version: Option<String>,   // human-readable version tag
     hash: String,              // SHA-256 of source rules text
     loaded_at: DateTime<Utc>,  // timestamp for diagnostics
+    provenance: YaraRuleProvenance,  // source tracking and verification state
 }
 ```
 
 Scanners hold an `Arc` to the current generation, so reloads never block in-flight scans.
+
+## 11. YARA Rule Provenance (Phase 4)
+
+Every rule generation carries `YaraRuleProvenance` metadata:
+
+```rust
+struct YaraRuleProvenance {
+    source_type: YaraRuleSourceType,  // Bundled/Directory/Inline/Mesh/CompiledBundle
+    version: Option<String>,          // human-readable version tag
+    content_sha256: String,           // SHA-256 of combined source text
+    manifest_sha256: Option<String>,  // SHA-256 of signed manifest (if available)
+    signer: Option<String>,           // signer identity (if signed)
+    verified: bool,                   // whether signature was verified
+    loaded_at: DateTime<Utc>,         // when this generation was loaded
+    source_count: usize,              // number of rule files merged
+    source_bytes: u64,                // total source bytes
+}
+```
+
+### Source Types
+
+| Type | Trust | Description |
+|------|-------|-------------|
+| `Bundled` | Low | Default rules shipped with binary |
+| `Directory` | Operator | Loaded from local directory (strict mode) |
+| `Inline` | High | Provided directly via config/admin |
+| `Mesh` | Network | Ed25519-verified mesh peer delivery |
+| `CompiledBundle` | Operator | Pre-compiled YARA-X binary |
+
+### Directory Loading Hardening
+
+`load_rules_from_directory_with_limits()` replaces the old `load_rules_from_directory()`:
+
+- **Canonicalized paths**: Directory must resolve to a real path
+- **Sorted file order**: Files sorted alphabetically for deterministic compilation
+- **Symlink control**: Symlinks rejected by default (`yara_allow_rule_symlinks = false`)
+- **File count limit**: Rejects directories with more than `yara_max_rule_files` (default 256) files
+- **Aggregate size limit**: Rejects directories exceeding `yara_max_rule_source_bytes` (default 8MB)
+- **Strict mode**: `Directory` returns `NoRules` when empty; `DirectoryWithFallback` falls back to bundled
+
+### Signed Bundle Verification
+
+`YaraRuleManifest` provides Ed25519 signature verification for rule bundles:
+
+```rust
+struct YaraRuleManifest {
+    version: String,
+    created_at: String,
+    source_id: String,
+    rule_source_sha256: String,      // SHA-256 of source text
+    compiled_rules_sha256: String,   // SHA-256 of compiled binary
+    min_synvoid_version: String,
+    format_version: u32,
+    signature_scheme: Option<String>, // "ed25519"
+    signature: Option<String>,        // base64-encoded Ed25519 signature
+}
+```
+
+Signing payload: `"{source_sha256}:{compiled_sha256}"`. Verification via `manifest.verify()` (key check) and `manifest.verify_content()` (content integrity).
+
+### Operator Inspection
+
+```rust
+let provenance = scanner.get_rule_provenance();  // current provenance
+let error = scanner.get_last_reload_error();     // last error (None if clean)
+```
+
+### Directory Config Fields
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `yara_max_rule_files` | 256 | Maximum rule files per directory |
+| `yara_max_rule_source_bytes` | 8388608 (8MB) | Maximum aggregate source bytes |
+| `yara_allow_rule_symlinks` | false | Whether to follow symlinks |

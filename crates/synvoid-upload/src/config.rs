@@ -52,6 +52,12 @@ const DEFAULT_MAX_QUEUED_SCANS: u32 = 64;
 /// Default queue timeout in milliseconds.
 const DEFAULT_QUEUE_TIMEOUT_MS: u64 = 1000;
 
+/// Default maximum number of YARA rule files to load from a directory.
+const DEFAULT_YARA_MAX_RULE_FILES: u32 = 256;
+
+/// Default maximum aggregate source bytes for YARA rules loaded from a directory.
+const DEFAULT_YARA_MAX_RULE_SOURCE_BYTES: u64 = 8 * 1024 * 1024; // 8MB
+
 static DEFAULT_SAFE_MIME_TYPES: &[&str] = &[
     "image/jpeg",
     "image/png",
@@ -180,6 +186,18 @@ pub struct UploadConfig {
     /// Timeout in milliseconds waiting for a scan queue slot.
     #[serde(default = "default_yara_queue_timeout_ms")]
     pub yara_queue_timeout_ms: u64,
+
+    /// Maximum number of YARA rule files to load from a directory.
+    #[serde(default = "default_yara_max_rule_files")]
+    pub yara_max_rule_files: u32,
+
+    /// Maximum aggregate source bytes for YARA rules loaded from a directory.
+    #[serde(default = "default_yara_max_rule_source_bytes")]
+    pub yara_max_rule_source_bytes: u64,
+
+    /// Whether to allow symlinks when loading YARA rules from a directory.
+    #[serde(default = "default_yara_allow_rule_symlinks")]
+    pub yara_allow_rule_symlinks: bool,
 }
 
 impl Default for UploadConfig {
@@ -212,6 +230,9 @@ impl Default for UploadConfig {
             yara_max_concurrent_scans: default_yara_max_concurrent_scans(),
             yara_max_queued_scans: default_yara_max_queued_scans(),
             yara_queue_timeout_ms: default_yara_queue_timeout_ms(),
+            yara_max_rule_files: default_yara_max_rule_files(),
+            yara_max_rule_source_bytes: default_yara_max_rule_source_bytes(),
+            yara_allow_rule_symlinks: default_yara_allow_rule_symlinks(),
         }
     }
 }
@@ -302,6 +323,18 @@ fn default_yara_max_queued_scans() -> u32 {
 
 fn default_yara_queue_timeout_ms() -> u64 {
     DEFAULT_QUEUE_TIMEOUT_MS
+}
+
+fn default_yara_max_rule_files() -> u32 {
+    DEFAULT_YARA_MAX_RULE_FILES
+}
+
+fn default_yara_max_rule_source_bytes() -> u64 {
+    DEFAULT_YARA_MAX_RULE_SOURCE_BYTES
+}
+
+fn default_yara_allow_rule_symlinks() -> bool {
+    false
 }
 
 impl UploadConfig {
@@ -421,6 +454,15 @@ impl UploadConfig {
                 yara_queue_timeout_ms: path_cfg
                     .yara_queue_timeout_ms
                     .unwrap_or(self.yara_queue_timeout_ms),
+                yara_max_rule_files: path_cfg
+                    .yara_max_rule_files
+                    .unwrap_or(self.yara_max_rule_files),
+                yara_max_rule_source_bytes: path_cfg
+                    .yara_max_rule_source_bytes
+                    .unwrap_or(self.yara_max_rule_source_bytes),
+                yara_allow_rule_symlinks: path_cfg
+                    .yara_allow_rule_symlinks
+                    .unwrap_or(self.yara_allow_rule_symlinks),
             }
         } else {
             EffectiveUploadConfig {
@@ -448,6 +490,9 @@ impl UploadConfig {
                 yara_max_concurrent_scans: self.yara_max_concurrent_scans,
                 yara_max_queued_scans: self.yara_max_queued_scans,
                 yara_queue_timeout_ms: self.yara_queue_timeout_ms,
+                yara_max_rule_files: self.yara_max_rule_files,
+                yara_max_rule_source_bytes: self.yara_max_rule_source_bytes,
+                yara_allow_rule_symlinks: self.yara_allow_rule_symlinks,
             }
         }
     }
@@ -478,6 +523,9 @@ pub struct EffectiveUploadConfig {
     pub yara_max_concurrent_scans: u32,
     pub yara_max_queued_scans: u32,
     pub yara_queue_timeout_ms: u64,
+    pub yara_max_rule_files: u32,
+    pub yara_max_rule_source_bytes: u64,
+    pub yara_allow_rule_symlinks: bool,
 }
 
 impl EffectiveUploadConfig {
@@ -611,6 +659,15 @@ pub struct PathUploadConfig {
 
     #[serde(default)]
     pub yara_queue_timeout_ms: Option<u64>,
+
+    #[serde(default)]
+    pub yara_max_rule_files: Option<u32>,
+
+    #[serde(default)]
+    pub yara_max_rule_source_bytes: Option<u64>,
+
+    #[serde(default)]
+    pub yara_allow_rule_symlinks: Option<bool>,
 }
 
 fn parse_size(s: &str) -> Option<u64> {
@@ -705,6 +762,9 @@ mod tests {
                 yara_max_concurrent_scans: None,
                 yara_max_queued_scans: None,
                 yara_queue_timeout_ms: None,
+                yara_max_rule_files: None,
+                yara_max_rule_source_bytes: None,
+                yara_allow_rule_symlinks: None,
             }],
             ..Default::default()
         };
@@ -748,12 +808,18 @@ mod tests {
     #[test]
     fn test_default_executor_config() {
         let config = UploadConfig::default();
-        assert_eq!(config.yara_max_concurrent_scans, DEFAULT_MAX_CONCURRENT_SCANS);
+        assert_eq!(
+            config.yara_max_concurrent_scans,
+            DEFAULT_MAX_CONCURRENT_SCANS
+        );
         assert_eq!(config.yara_max_queued_scans, DEFAULT_MAX_QUEUED_SCANS);
         assert_eq!(config.yara_queue_timeout_ms, DEFAULT_QUEUE_TIMEOUT_MS);
 
         let effective = config.effective_config_for_path("/any");
-        assert_eq!(effective.yara_max_concurrent_scans, DEFAULT_MAX_CONCURRENT_SCANS);
+        assert_eq!(
+            effective.yara_max_concurrent_scans,
+            DEFAULT_MAX_CONCURRENT_SCANS
+        );
         assert_eq!(effective.yara_max_queued_scans, DEFAULT_MAX_QUEUED_SCANS);
         assert_eq!(effective.yara_queue_timeout_ms, DEFAULT_QUEUE_TIMEOUT_MS);
     }
@@ -784,6 +850,9 @@ mod tests {
                 yara_max_concurrent_scans: Some(8),
                 yara_max_queued_scans: Some(128),
                 yara_queue_timeout_ms: Some(2000),
+                yara_max_rule_files: None,
+                yara_max_rule_source_bytes: None,
+                yara_allow_rule_symlinks: None,
             }],
             ..Default::default()
         };
@@ -794,8 +863,17 @@ mod tests {
         assert_eq!(effective.yara_queue_timeout_ms, 2000);
 
         let effective_default = config.effective_config_for_path("/other");
-        assert_eq!(effective_default.yara_max_concurrent_scans, DEFAULT_MAX_CONCURRENT_SCANS);
-        assert_eq!(effective_default.yara_max_queued_scans, DEFAULT_MAX_QUEUED_SCANS);
-        assert_eq!(effective_default.yara_queue_timeout_ms, DEFAULT_QUEUE_TIMEOUT_MS);
+        assert_eq!(
+            effective_default.yara_max_concurrent_scans,
+            DEFAULT_MAX_CONCURRENT_SCANS
+        );
+        assert_eq!(
+            effective_default.yara_max_queued_scans,
+            DEFAULT_MAX_QUEUED_SCANS
+        );
+        assert_eq!(
+            effective_default.yara_queue_timeout_ms,
+            DEFAULT_QUEUE_TIMEOUT_MS
+        );
     }
 }
