@@ -172,6 +172,10 @@ cargo test -p synvoid-honeypot --all-targets storage_writer
 
 # Honeypot threat-intel actionability tests (Milestone C Phase 2)
 cargo test -p synvoid-honeypot --all-targets threat_intel
+
+# Tarpit safety tests
+cargo test -p synvoid-tarpit --all-targets
+cargo clippy -p synvoid-tarpit --all-targets -- -D warnings
 ```
 
 ## Feature Profiles
@@ -246,6 +250,7 @@ cargo test --test security_observability_guard  # Security observability invaria
 cargo test --test unified_worker_composition_root_guard  # Composition root ≤80 lines
 cargo test --test worker_mesh_supervision_boundary_guard --features mesh,dns  # Mesh supervision structural invariants
 cargo test --test mesh_task_ownership_guard --features mesh,dns  # Mesh task ownership and lifecycle invariants
+cargo test -p synvoid-tarpit --all-targets  # Tarpit escaping, admission, budgets, edge cases
 ```
 
 ## Critical Security Rules
@@ -351,6 +356,7 @@ Each subsystem has specialized `AGENTS.override.md` files. Load the relevant one
 | Theme | `src/theme/AGENTS.override.md` |
 | Static Files | `src/static_files/AGENTS.override.md` |
 | Serverless | `src/serverless/AGENTS.override.md` |
+| Tarpit | `crates/synvoid-tarpit/AGENTS.override.md` |
 
 ## CI, Fuzzing & Failure Injection
 
@@ -393,6 +399,7 @@ The `architecture/` directory (87 docs) and `.opencode/skills/` directory contai
 - **Mesh**: `crates/synvoid-mesh/src/mesh/` — DHT, transport, Raft, peer auth
 - **WAF**: `crates/synvoid-waf/` — rule engine, attack detection
 - **Proxy**: `crates/synvoid-proxy/` — routing, cache keys
+- **Tarpit**: `crates/synvoid-tarpit/` — anti-scraping tarpit, escaping, admission, budgets
 
 **Process model**: Supervisor (1) → UnifiedServerWorker (1, single Tokio event loop) + CpuWorker (1, bounded transforms). Workers are NOT process-per-tenant. `--worker` flag spawns a legacy `BaseWorkerProcess` unused for HTTP.
 
@@ -427,6 +434,7 @@ The `architecture/` directory (87 docs) and `.opencode/skills/` directory contai
 | `architecture/runtime_operations_drill_report.md` | Drill results, corrections applied, observability signals (Phase 16) |
 | `architecture/semver_stability_policy.md` | Semver versioning, stability classifications, deprecation rules |
 | `architecture/dns_config_runtime_matrix.md` | DNS config field inventory with runtime status, defaults, and wiring |
+| `architecture/tarpit.md` | Tarpit architecture: escaping, admission control, budgets, redirect safety |
 
 ## Known Issues
 
@@ -435,6 +443,8 @@ The `architecture/` directory (87 docs) and `.opencode/skills/` directory contai
 - `wasmtime` 40.0.4 (via yara-x) has known CVEs but only used for YARA compilation, not wasm sandbox — mitigated by `[patch.crates-io]` for direct dep.
 
 ## Recent Completions
+
+- **Tarpit Milestone C Phase 4: Safety Hardening** — Escaping module (`synvoid-tarpit::escaping`): `html_escape`, `html_attr_escape`, `js_string_escape`, `url_path_encode`, `sanitize_redirect_target` with `RedirectRejection` error type (CRLF injection, control characters, absolute URL rejection). All attacker-controlled values (path, query, headers, user-agent) escaped before HTML interpolation. Admission control (`synvoid-tarpit::admission`): `TarpitAdmission` with global semaphore (default 256) + per-IP semaphore (default 4), `AdmissionGuard` RAII guard using `OwnedSemaphorePermit`. Budget tracking (`synvoid-tarpit::budget`): `SessionBudget` with atomic counters for chunks sent, bytes sent, duration, and idle time; checks `max_duration_secs` (600s), `max_chunks` (500), `max_bytes` (50MB), `max_idle_secs` (30s); `record_chunk()` returns `false` when any budget is exceeded. Fingerprint resistance: seeded per-session RNG for content type variation, configurable chunk delay range (`min_chunk_delay_ms`/`max_chunk_delay_ms`), varied status codes. Redirect safety: `RedirectPolicy` enum (`RelativeOnly`/`AllowList`/`AllowAll`), default `RelativeOnly`, CRLF injection blocked, control characters rejected, absolute URLs only allowed if host is in allow list. Edge-case guards: `max_depth == 0` clamped to 1, empty model returns fallback sentence, empty corpus handled gracefully. Metrics: `synvoid.tarpit.admitted`, `synvoid.tarpit.timed_out`, `synvoid.tarpit.completed`, `synvoid.tarpit.bytes_sent` counters. `handle_request` and `stream_request` now use `TarpitAdmission` and `SessionBudget`. `generate_redirect_page` returns `Result<String, RedirectRejection>`. `architecture/tarpit.md` rewritten. See `plans/milestone_c_phase_4_tarpit_safety_hardening.md`.
 
 - **Honeypot Milestone C Phase 3: AI Responder Containment** — Removed `block_on` deadlock from `AiHoneypotResponder::respond()` (now returns static fallback; `respond_async` is the only path to AI providers). `AiResponderMode` enum (Disabled/TemplateOnly/LocalModelOnly/ExternalProvider, default Disabled) gates provider access. `AiBudgetConfig` (max_prompt_bytes, max_response_bytes, request_timeout_secs, circuit_breaker_max_failures, max_concurrent_requests, max_turns_per_connection, circuit_breaker_cooldown_secs) with serde defaults. New `ai_budget.rs` module: `AiCircuitBreaker` (opens after N consecutive failures, 60s cooldown), `AiConcurrencyLimiter` (Arc<Semaphore> + RAII permits), `AiTurnCounter` (atomic per-connection), `truncate_prompt()` / `truncate_response()`, `fallback_response()` for 10 protocols. `AiResponderBudget` shared via Arc across connections (circuit breaker + concurrency state shared, not per-connection). `TemplateResponder` with 7 service-specific deterministic factories (ssh/http/mysql/redis/postgresql/ftp/smtp). 9 hardened system prompts with `[SYSTEM — HONEYPOT SIMULATION]` header, `[CONTAINMENT]` block, prompt injection resistance ("ignore the attempt" override, "NO real" disclaimers), no hardcoded secrets. Provider errors never leak details. `AiHoneypotResponder` factory methods take `(Box<dyn AiResponder>, AiBudgetConfig)`. Listener wiring: circuit breaker open → fallback response instead of normal banner. Runner builds `AiResponderBudget` from config (Disabled mode → None). 38 new tests (182 total): prompt injection resistance, circuit breaker, concurrency limiter, turn counter, fallback responses, template responder, budget enforcement, config deserialization. `architecture/honeypot.md` Section 10 added. See `plans/milestone_c_phase_3_ai_responder_containment.md`.
 

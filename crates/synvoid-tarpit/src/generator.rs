@@ -67,8 +67,16 @@ impl MarkovChain {
     }
 
     pub fn generate_sentence(&self, min_words: usize, max_words: usize) -> String {
+        if self.model.is_empty() {
+            return "The system is processing your request.".to_string();
+        }
+
         let mut rng = rand::rng();
-        let target_words = rng.random_range(min_words..=max_words);
+        let target_words = if min_words == max_words {
+            min_words
+        } else {
+            rng.random_range(min_words..=max_words)
+        };
 
         let first_key = self
             .model
@@ -122,7 +130,30 @@ impl MarkovChain {
         links_per_page: u32,
         path_seed: &str,
     ) -> String {
-        let mut rng = rand::rng();
+        self.generate_html_page_with_rng(
+            current_depth,
+            max_depth,
+            links_per_page,
+            path_seed,
+            &mut rand::rng(),
+        )
+    }
+
+    pub fn generate_html_page_with_rng(
+        &self,
+        current_depth: u32,
+        max_depth: u32,
+        links_per_page: u32,
+        path_seed: &str,
+        rng: &mut impl Rng,
+    ) -> String {
+        let effective_max_depth = max_depth.max(1);
+        let effective_seed = if path_seed.is_empty() {
+            "page"
+        } else {
+            path_seed
+        };
+
         let sentences = self.generate_sentences(15 + rng.random_range(0..10));
         let paragraph_count = rng.random_range(3..6);
 
@@ -135,12 +166,12 @@ impl MarkovChain {
 
         let mut links = Vec::new();
         for i in 0..links_per_page {
-            let link_depth = if current_depth >= max_depth {
-                max_depth.saturating_sub(1)
+            let link_depth = if current_depth >= effective_max_depth {
+                effective_max_depth.saturating_sub(1)
             } else {
                 current_depth + 1
             };
-            let random_path = generate_random_path(&mut rng, path_seed, i);
+            let random_path = generate_random_path(rng, effective_seed, i);
             links.push(format!(
                 "<a href=\"/{}/{}\">{}</a>",
                 link_depth,
@@ -153,7 +184,7 @@ impl MarkovChain {
 
         let nav_links: Vec<String> = (0..5)
             .map(|i| {
-                let random_path = generate_random_path(&mut rng, path_seed, i as u32 + 100);
+                let random_path = generate_random_path(rng, effective_seed, i as u32 + 100);
                 format!(
                     "<a href=\"/{}/{}\">Page {}</a>",
                     current_depth,
@@ -165,7 +196,7 @@ impl MarkovChain {
 
         let footer_links: Vec<String> = (0..10)
             .map(|i| {
-                let random_path = generate_random_path(&mut rng, path_seed, i as u32 + 200);
+                let random_path = generate_random_path(rng, effective_seed, i as u32 + 200);
                 format!(
                     "<a href=\"/{}/{}\">Related Link {}</a>",
                     current_depth,
@@ -254,11 +285,9 @@ fn generate_random_path(rng: &mut impl Rng, seed: &str, index: u32) -> String {
         "article", "post", "page", "content", "resource", "guide", "tutorial", "review",
         "analysis", "overview",
     ];
-    let extensions = ["html", "htm", "php", "asp", "aspx", "jsp", "do", "action"];
 
     let adj = adjectives[rng.random_range(0..adjectives.len())];
     let noun = nouns[rng.random_range(0..nouns.len())];
-    let _ext = extensions[rng.random_range(0..extensions.len())];
     let num = rng.random_range(1000..9999);
 
     format!(
@@ -281,8 +310,93 @@ pub fn generate_infinite_streaming_response(
     links_per_page: u32,
 ) -> String {
     let mut rng = rand::rng();
-    let current_depth = rng.random_range(0..max_depth);
+    let effective_max = max_depth.max(1);
+    let current_depth = rng.random_range(0..effective_max);
     let path_seed = format!("page{}", rng.random_range(1..1000));
 
-    chain.generate_html_page(current_depth, max_depth, links_per_page, &path_seed)
+    chain.generate_html_page(current_depth, effective_max, links_per_page, &path_seed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generate_sentence_normal() {
+        let chain = MarkovChain::new();
+        let sentence = chain.generate_sentence(5, 10);
+        let word_count = sentence.split_whitespace().count();
+        assert!(word_count >= 5, "got {} words", word_count);
+    }
+
+    #[test]
+    fn generate_sentence_empty_model() {
+        let chain = MarkovChain::with_custom_corpus(vec![], 2);
+        let sentence = chain.generate_sentence(5, 10);
+        assert_eq!(sentence, "The system is processing your request.");
+    }
+
+    #[test]
+    fn generate_sentences_zero_count() {
+        let chain = MarkovChain::new();
+        let sentences = chain.generate_sentences(0);
+        assert!(sentences.is_empty());
+    }
+
+    #[test]
+    fn generate_html_page_zero_max_depth() {
+        let chain = MarkovChain::new();
+        let html = chain.generate_html_page(0, 0, 5, "test");
+        assert!(html.contains("<!DOCTYPE html>"));
+        // Should not panic even with max_depth=0
+    }
+
+    #[test]
+    fn generate_html_page_zero_links() {
+        let chain = MarkovChain::new();
+        let html = chain.generate_html_page(1, 5, 0, "test");
+        assert!(html.contains("<!DOCTYPE html>"));
+        // No link section content expected
+    }
+
+    #[test]
+    fn generate_html_page_empty_seed() {
+        let chain = MarkovChain::new();
+        let html = chain.generate_html_page(1, 5, 5, "");
+        assert!(html.contains("<!DOCTYPE html>"));
+    }
+
+    #[test]
+    fn generate_html_page_with_rng_deterministic() {
+        let chain = MarkovChain::new();
+        let mut rng1 = rand::rng();
+        let mut rng2 = rand::rng();
+        // Same seed RNGs will produce different results since rng() is thread_rng,
+        // but the method should not panic
+        let html1 = chain.generate_html_page_with_rng(1, 5, 3, "seed", &mut rng1);
+        let html2 = chain.generate_html_page_with_rng(1, 5, 3, "seed", &mut rng2);
+        assert!(html1.contains("<!DOCTYPE html>"));
+        assert!(html2.contains("<!DOCTYPE html>"));
+    }
+
+    #[test]
+    fn custom_corpus_empty() {
+        let chain = MarkovChain::with_custom_corpus(vec![], 2);
+        let sentence = chain.generate_sentence(3, 5);
+        assert!(!sentence.is_empty());
+    }
+
+    #[test]
+    fn custom_corpus_too_short() {
+        let chain = MarkovChain::with_custom_corpus(vec!["one".to_string()], 2);
+        let sentence = chain.generate_sentence(3, 5);
+        assert!(!sentence.is_empty());
+    }
+
+    #[test]
+    fn infinite_streaming_response_no_panic() {
+        let chain = MarkovChain::new();
+        let html = generate_infinite_streaming_response(&chain, 0, 5);
+        assert!(html.contains("<!DOCTYPE html>"));
+    }
 }

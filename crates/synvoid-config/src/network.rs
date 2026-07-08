@@ -264,6 +264,24 @@ pub struct TarpitDefaults {
     pub scraper_user_agents: Vec<String>,
     #[serde(default)]
     pub content_templates: Vec<String>,
+    #[serde(default = "default_tarpit_max_concurrent")]
+    pub max_concurrent_sessions: usize,
+    #[serde(default = "default_tarpit_max_per_ip")]
+    pub max_sessions_per_ip: usize,
+    #[serde(default = "default_tarpit_max_duration_secs")]
+    pub max_duration_secs: u64,
+    #[serde(default = "default_tarpit_max_chunks")]
+    pub max_chunks: u64,
+    #[serde(default = "default_tarpit_max_bytes")]
+    pub max_bytes: u64,
+    #[serde(default = "default_tarpit_max_idle_secs")]
+    pub max_idle_secs: u64,
+    #[serde(default = "default_tarpit_write_timeout_ms")]
+    pub write_timeout_ms: u64,
+    #[serde(default = "default_tarpit_min_chunk_delay_ms")]
+    pub min_chunk_delay_ms: u64,
+    #[serde(default = "default_tarpit_max_chunk_delay_ms")]
+    pub max_chunk_delay_ms: u64,
 }
 
 impl Default for TarpitDefaults {
@@ -296,6 +314,15 @@ impl Default for TarpitDefaults {
                 "Screaming Frog".to_string(),
             ],
             content_templates: vec![],
+            max_concurrent_sessions: default_tarpit_max_concurrent(),
+            max_sessions_per_ip: default_tarpit_max_per_ip(),
+            max_duration_secs: default_tarpit_max_duration_secs(),
+            max_chunks: default_tarpit_max_chunks(),
+            max_bytes: default_tarpit_max_bytes(),
+            max_idle_secs: default_tarpit_max_idle_secs(),
+            write_timeout_ms: default_tarpit_write_timeout_ms(),
+            min_chunk_delay_ms: default_tarpit_min_chunk_delay_ms(),
+            max_chunk_delay_ms: default_tarpit_max_chunk_delay_ms(),
         }
     }
 }
@@ -311,4 +338,31 @@ fn default_tarpit_links() -> u32 {
 }
 fn default_tarpit_delay() -> u64 {
     100
+}
+fn default_tarpit_max_concurrent() -> usize {
+    256
+}
+fn default_tarpit_max_per_ip() -> usize {
+    4
+}
+fn default_tarpit_max_duration_secs() -> u64 {
+    600
+}
+fn default_tarpit_max_chunks() -> u64 {
+    500
+}
+fn default_tarpit_max_bytes() -> u64 {
+    50 * 1024 * 1024
+}
+fn default_tarpit_max_idle_secs() -> u64 {
+    30
+}
+fn default_tarpit_write_timeout_ms() -> u64 {
+    5000
+}
+fn default_tarpit_min_chunk_delay_ms() -> u64 {
+    5
+}
+fn default_tarpit_max_chunk_delay_ms() -> u64 {
+    30
 }

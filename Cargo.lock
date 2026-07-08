@@ -8685,6 +8685,8 @@ dependencies = [
  "parking_lot",
  "rand 0.9.4",
  "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

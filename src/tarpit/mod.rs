@@ -8,7 +8,11 @@
 pub mod handler;
 
 pub use handler::TarpitHandler;
-pub use synvoid_tarpit::{MarkovChain, TarpitConfig};
+pub use synvoid_tarpit::{
+    admission::{AdmissionGuard, TarpitAdmission},
+    budget::{BudgetState, SessionBudget},
+    escaping, MarkovChain, TarpitConfig,
+};
 
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -27,9 +31,10 @@ impl TarpitManager {
 
     pub fn generate_page(&self, current_depth: u32, path_seed: &str) -> String {
         let chain = self.chain.read();
+        let effective_max = self.config.max_depth.max(1);
         chain.generate_html_page(
             current_depth,
-            self.config.max_depth,
+            effective_max,
             self.config.links_per_page,
             path_seed,
         )

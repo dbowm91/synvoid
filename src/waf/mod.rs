@@ -795,6 +795,24 @@ impl WafCore {
             links_per_page: self.tarpit_defaults.links_per_page,
             response_delay_ms: self.tarpit_defaults.response_delay_ms,
             scraper_patterns: self.tarpit_defaults.scraper_user_agents.clone(),
+            redirect_policy: synvoid_tarpit::config::RedirectPolicy::RelativeOnly,
+            admission: synvoid_tarpit::config::AdmissionConfig {
+                max_concurrent: self.tarpit_defaults.max_concurrent_sessions,
+                max_per_ip: self.tarpit_defaults.max_sessions_per_ip,
+            },
+            budget: synvoid_tarpit::config::BudgetConfig {
+                max_duration_secs: self.tarpit_defaults.max_duration_secs,
+                max_chunks: self.tarpit_defaults.max_chunks,
+                max_bytes: self.tarpit_defaults.max_bytes,
+                max_idle_secs: self.tarpit_defaults.max_idle_secs,
+                write_timeout_ms: self.tarpit_defaults.write_timeout_ms,
+            },
+            fingerprint: synvoid_tarpit::config::FingerprintConfig {
+                min_chunk_delay_ms: self.tarpit_defaults.min_chunk_delay_ms,
+                max_chunk_delay_ms: self.tarpit_defaults.max_chunk_delay_ms,
+                vary_content_type: true,
+                vary_status_code: true,
+            },
         };
         let handler = crate::tarpit::TarpitHandler::new(tarpit_config);
         handler.stream_request(path, user_agent)
