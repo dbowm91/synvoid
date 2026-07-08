@@ -356,6 +356,7 @@ Each subsystem has specialized `AGENTS.override.md` files. Load the relevant one
 | Theme | `src/theme/AGENTS.override.md` |
 | Static Files | `src/static_files/AGENTS.override.md` |
 | Serverless | `src/serverless/AGENTS.override.md` |
+| Honeypot | `crates/synvoid-honeypot/AGENTS.override.md` |
 | Tarpit | `crates/synvoid-tarpit/AGENTS.override.md` |
 
 ## CI, Fuzzing & Failure Injection
