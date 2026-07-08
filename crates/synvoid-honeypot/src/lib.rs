@@ -13,7 +13,7 @@ pub mod threat_intel;
 
 pub use config::{
     AiConfig, PayloadRetentionMode, PortHoneypotConfig, ResponseModeConfig, StablePortConfig,
-    StorageWriterConfig,
+    StorageWriterConfig, ThreatIntelConfig,
 };
 pub use controller::PortHoneypotController;
 pub use listener::PortHoneypotListener;
@@ -33,7 +33,10 @@ pub use rotation::{PortInfo, PortManager, PortMode, StablePort};
 pub use runner::PortHoneypotRunner;
 pub use storage::HoneypotStorage;
 pub use storage_writer::HoneypotWriter;
-pub use threat_intel::{HoneypotIndicator, HoneypotIntelExtractor, IndicatorType, SeverityLevel};
+pub use threat_intel::{
+    HoneypotIndicator, HoneypotIntelExtractor, HoneypotSignalScore, IndicatorActionClass,
+    IndicatorType, ScoringConfig, SeverityLevel, SignalClass,
+};
 
 #[cfg(test)]
 mod listener_tests;

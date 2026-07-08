@@ -234,3 +234,89 @@ Listener availability is prioritized over perfect storage retention.
 ### Batch Writes
 
 The writer accumulates up to `batch_size` records and flushes in a single SQLite transaction. Flushing occurs when batch size is reached or on the `flush_interval_ms` timer, whichever comes first.
+
+## 9. Threat-Intel Actionability and Mesh Propagation Policy (Milestone C Phase 2)
+
+### Purpose
+
+Convert honeypot observations into controlled, confidence-aware indicators with explicit action classes. Low-confidence single events cannot trigger aggressive block/mesh actions. Mesh propagation is thresholded, deduped, and TTL-bound.
+
+### Signal Classes
+
+Honeypot events are classified by evidence type:
+
+| Signal Class | Description |
+|-------------|-------------|
+| `ProtocolProbe` | Protocol-only first packet, no attack content |
+| `KnownAttackPattern` | `detected_pattern` present in the record |
+| `RepeatedHit` | Repeated hits across ports (computed externally) |
+| `ExploitPayload` | Payload contains exploit markers (attack vectors) |
+| `CredentialAttempt` | Credential-theft patterns (AWS keys, etc.) |
+| `ScannerFingerprint` | Known scanner fingerprint |
+| `MalwareCorrelation` | Webshell/malware upload correlation (future use) |
+
+### Action Classes
+
+Indicators are assigned an action class based on computed score:
+
+| Action Class | Description | Mesh Propagation |
+|-------------|-------------|-----------------|
+| `Observe` | Default for unknown/low-confidence single event | No |
+| `LocalRateLimitCandidate` | Repeated low/medium confidence events | No |
+| `LocalBlockCandidate` | High-confidence malicious event or repeated medium evidence | No |
+| `MeshShareCandidate` | Local block candidate with stable evidence | Yes |
+| `MeshBlockCandidate` | Repeated high-confidence evidence or multiple independent indicators | Yes |
+
+### Scoring Model
+
+Bounded scoring (0.0–1.0) with configurable weights:
+
+1. **Base score** from signal class (e.g., ProtocolProbe=0.1, ExploitPayload=0.7)
+2. **Confidence multiplier** (High=1.0, Medium=0.8, Low=0.5)
+3. **Repeat bonus** with diminishing returns (capped at `repeat_max_bonus`)
+4. **Distinct port bonus** (capped at `distinct_port_max_bonus`)
+5. **Attack pattern bonus** (capped at `attack_pattern_max_bonus`)
+6. **Truncation penalty** if payload was truncated (reduces confidence in content-specific evidence)
+
+Score is clamped to [0.0, 1.0] and mapped to action class via configurable thresholds.
+
+### Decay
+
+Scores decay exponentially over time with configurable half-life (`decay_half_life_secs`, default 3600s). This ensures old events reduce in severity and do not perpetually trigger actions.
+
+### Mesh Propagation Guardrails
+
+Mesh propagation requires ALL of:
+- Action class of `MeshShareCandidate` or `MeshBlockCandidate`
+- Minimum confidence (configurable, default `Medium`)
+- Minimum event count (configurable, default 3)
+- Deduplication key (type:value format) to prevent duplicate announcements
+- TTL/expiry (configurable, default 86400s / 24h)
+- Provenance metadata (LocalHoneypot block provenance)
+
+### Configuration
+
+`ThreatIntelConfig` (nested under `PortHoneypotConfig.threat_intel`):
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `enabled` | `true` | Enable threat-intel extraction |
+| `mesh_enabled` | `false` | Enable mesh propagation |
+| `scoring` | `ScoringConfig::default()` | Scoring and threshold parameters |
+
+`ScoringConfig` fields control base scores, bonuses, penalties, thresholds, and mesh guardrails. All thresholds are configurable with safe defaults.
+
+### Metadata Minimization
+
+Threat-intel metadata includes:
+- Payload hash (SHA-256), not raw payload
+- Retained/truncated flags
+- Protocol, confidence, evidence string
+- Event count and time window
+- Local site scope
+
+Raw payload bytes are never propagated via mesh.
+
+### Tests
+
+27 tests covering: scoring config defaults, signal class base scores, action classification thresholds, exponential decay, compute_score with various inputs, truncation penalty, repeat bonus diminishing returns, mesh propagation gating, score_indicator integration, and deduplication key generation.

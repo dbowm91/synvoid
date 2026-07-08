@@ -161,6 +161,7 @@ impl PortHoneypotRunner {
         let storage = self.storage.clone();
         let threat_intel = threat_intel.clone();
         let site_scope = self.config.site_scope.clone();
+        let scoring_config = self.config.threat_intel.scoring.clone();
 
         tokio::spawn(async move {
             let mut interval = time::interval(Duration::from_secs(publish_interval_secs));
@@ -171,6 +172,9 @@ impl PortHoneypotRunner {
                 .and_then(|s| s.parse::<i64>().ok())
                 .unwrap_or(0);
 
+            let mut announced_keys: std::collections::HashSet<String> =
+                storage.get_announced_indicator_keys().unwrap_or_default();
+
             loop {
                 interval.tick().await;
 
@@ -179,26 +183,65 @@ impl PortHoneypotRunner {
                         continue;
                     }
 
-                    let mut announced_ips: std::collections::HashSet<String> =
-                        storage.get_announced_indicator_keys().unwrap_or_default();
                     let mut records_processed = 0i64;
+                    let mut indicators_published = 0u64;
+                    let mut indicators_skipped = 0u64;
 
                     for record in &records {
                         records_processed += 1;
                         let indicators = HoneypotIntelExtractor::extract_indicators(record);
 
                         for indicator in indicators {
-                            let threat_type = match indicator.indicator_type {
-                                crate::threat_intel::IndicatorType::SourceIp => ThreatType::IpBlock,
+                            let signal_class = match indicator.indicator_type {
+                                crate::threat_intel::IndicatorType::SourceIp => {
+                                    crate::threat_intel::SignalClass::ProtocolProbe
+                                }
                                 crate::threat_intel::IndicatorType::AttackPattern => {
-                                    ThreatType::SuspiciousActivity
+                                    crate::threat_intel::SignalClass::KnownAttackPattern
                                 }
                                 crate::threat_intel::IndicatorType::AttackVector => {
-                                    ThreatType::SuspiciousActivity
+                                    crate::threat_intel::SignalClass::ExploitPayload
                                 }
                                 crate::threat_intel::IndicatorType::Payload => {
-                                    ThreatType::SuspiciousActivity
+                                    crate::threat_intel::SignalClass::ExploitPayload
                                 }
+                            };
+
+                            let dedupe_key =
+                                crate::threat_intel::HoneypotIntelExtractor::compute_dedupe_key(
+                                    &indicator.indicator_type,
+                                    &indicator.value,
+                                );
+
+                            if announced_keys.contains(&dedupe_key) {
+                                indicators_skipped += 1;
+                                continue;
+                            }
+
+                            let score =
+                                crate::threat_intel::HoneypotIntelExtractor::score_indicator(
+                                    &scoring_config,
+                                    record,
+                                    &signal_class,
+                                    1,
+                                    1,
+                                    0,
+                                );
+
+                            if !score.action_class.allows_mesh_propagation() {
+                                indicators_skipped += 1;
+                                tracing::debug!(
+                                    "Honeypot indicator {} scored {:.2} action={:?}, skipping mesh publish",
+                                    dedupe_key,
+                                    score.score,
+                                    score.action_class
+                                );
+                                continue;
+                            }
+
+                            let threat_type = match indicator.indicator_type {
+                                crate::threat_intel::IndicatorType::SourceIp => ThreatType::IpBlock,
+                                _ => ThreatType::SuspiciousActivity,
                             };
 
                             let severity = match indicator.severity {
@@ -224,13 +267,9 @@ impl PortHoneypotRunner {
                             };
 
                             if let Some(ip) = publish_ip {
-                                let ip_str = ip.to_string();
-                                if announced_ips.contains(&ip_str) {
-                                    continue;
-                                }
-                                announced_ips.insert(ip_str.clone());
+                                announced_keys.insert(dedupe_key.clone());
 
-                                if let Err(e) = storage.mark_indicator_announced(&ip_str) {
+                                if let Err(e) = storage.mark_indicator_announced(&dedupe_key) {
                                     tracing::warn!("Failed to persist announced indicator: {}", e);
                                 }
 
@@ -239,8 +278,16 @@ impl PortHoneypotRunner {
                                     threat_type,
                                     severity,
                                     indicator.description,
-                                    Some(3600 * 24),
+                                    Some(scoring_config.mesh_ttl_secs),
                                     &site_scope,
+                                );
+
+                                indicators_published += 1;
+                                tracing::debug!(
+                                    "Published honeypot indicator: key={} score={:.2} action={:?}",
+                                    dedupe_key,
+                                    score.score,
+                                    score.action_class
                                 );
                             }
                         }
@@ -255,13 +302,11 @@ impl PortHoneypotRunner {
                     }
 
                     tracing::debug!(
-                        "Published honeypot indicators: {} unique IPs, {} records processed",
-                        announced_ips.len(),
-                        records_processed
+                        "Honeypot mesh publishing: {} records, {} published, {} skipped",
+                        records_processed,
+                        indicators_published,
+                        indicators_skipped
                     );
-
-                    tracing::debug!("honeypot_indicators_published: {}", announced_ips.len());
-                    tracing::debug!("honeypot_records_processed: {}", records_processed);
                 }
             }
         });

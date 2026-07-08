@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
+use serde::{Deserialize, Serialize};
+
 /// Detection confidence level.
 ///
 /// - High: strong magic/prefix (SSH banner, TLS record header, SMB marker, HTTP method with request syntax)
 /// - Medium: recognizable text command with common protocol token
 /// - Low: weak shape-only binary checks
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Confidence {
     Low,
     Medium,

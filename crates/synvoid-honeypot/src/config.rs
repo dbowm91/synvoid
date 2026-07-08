@@ -1,6 +1,33 @@
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 
+fn default_true() -> bool {
+    true
+}
+fn default_mesh_enabled() -> bool {
+    false
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreatIntelConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_mesh_enabled")]
+    pub mesh_enabled: bool,
+    #[serde(default)]
+    pub scoring: crate::threat_intel::ScoringConfig,
+}
+
+impl Default for ThreatIntelConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            mesh_enabled: false,
+            scoring: crate::threat_intel::ScoringConfig::default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortHoneypotConfig {
     pub enabled: bool,
@@ -22,6 +49,7 @@ pub struct PortHoneypotConfig {
     pub stable_ports: Vec<StablePortConfig>,
     pub ai_config: Option<AiConfig>,
     pub site_scope: String,
+    pub threat_intel: ThreatIntelConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,6 +161,7 @@ impl Default for PortHoneypotConfig {
             stable_ports: Vec::new(),
             ai_config: None,
             site_scope: "global".to_string(),
+            threat_intel: ThreatIntelConfig::default(),
         }
     }
 }
