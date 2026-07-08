@@ -1,3 +1,4 @@
+pub mod archive;
 pub mod config;
 pub mod malware_scanner;
 pub mod metrics;
@@ -7,6 +8,9 @@ pub mod signature;
 pub mod yara_rule_feed;
 pub mod yara_scanner;
 
+pub use archive::{
+    ArchiveEntryMatch, ArchiveInspectionConfig, ArchiveInspectionError, ArchiveInspectionResult,
+};
 pub use config::{
     AllowedTypesConfig, AllowedTypesMode, EffectiveUploadConfig, PathUploadConfig, UploadConfig,
     UploadScanFailurePolicy, YaraLargeFileScanMode,
@@ -32,6 +36,14 @@ const RESERVED_WINDOWS_NAMES: &[&str] = &[
 ];
 
 const HEADER_READ_SIZE: usize = 8192;
+
+/// Check if the given bytes are a ZIP archive by magic bytes.
+fn is_zip_archive(data: &[u8]) -> bool {
+    data.len() >= 4
+        && data[0] == b'P'
+        && data[1] == b'K'
+        && (data[2] == 3 || data[2] == 5 || data[2] == 7)
+}
 
 /// A byte range to scan within a large file during windowed scanning.
 #[derive(Debug, Clone)]
@@ -120,6 +132,12 @@ pub struct ValidationResult {
     pub window_count: u32,
     /// Scan duration in milliseconds.
     pub duration_ms: u64,
+    /// Number of archive entries scanned (0 if not an archive or inspection disabled).
+    pub archive_entries_scanned: u32,
+    /// Number of nested archives found during inspection.
+    pub archive_nested_archives: u32,
+    /// Whether archive inspection was truncated due to limits.
+    pub archive_truncated: bool,
 }
 
 impl ValidationResult {
@@ -129,6 +147,19 @@ impl ValidationResult {
                 self.scan_status,
                 UploadScanStatus::Clean | UploadScanStatus::Disabled
             )
+    }
+
+    /// Set archive inspection metadata on the result.
+    pub fn with_archive_metadata(
+        mut self,
+        entries_scanned: u32,
+        nested_archives: u32,
+        truncated: bool,
+    ) -> Self {
+        self.archive_entries_scanned = entries_scanned;
+        self.archive_nested_archives = nested_archives;
+        self.archive_truncated = truncated;
+        self
     }
 
     /// Build a result for in-memory byte scanning (full coverage).
@@ -153,6 +184,9 @@ impl ValidationResult {
             yara_matches,
             scan_status,
             scan_error,
+            archive_entries_scanned: 0,
+            archive_nested_archives: 0,
+            archive_truncated: false,
         }
     }
 
@@ -184,6 +218,9 @@ impl ValidationResult {
             yara_matches,
             scan_status,
             scan_error,
+            archive_entries_scanned: 0,
+            archive_nested_archives: 0,
+            archive_truncated: false,
         }
     }
 
@@ -217,6 +254,9 @@ impl ValidationResult {
             yara_matches,
             scan_status,
             scan_error,
+            archive_entries_scanned: 0,
+            archive_nested_archives: 0,
+            archive_truncated: false,
         }
     }
 
@@ -242,6 +282,9 @@ impl ValidationResult {
             yara_matches,
             scan_status,
             scan_error,
+            archive_entries_scanned: 0,
+            archive_nested_archives: 0,
+            archive_truncated: false,
         }
     }
 }
@@ -527,6 +570,72 @@ impl UploadValidator {
             }
         }
 
+        // Archive inspection: if the file is a ZIP archive and inspection is enabled,
+        // scan individual entries for malware.
+        let (mut archive_entries_scanned, mut archive_nested_archives, mut archive_truncated) =
+            (0u32, 0u32, false);
+        if effective_config.archive_inspection_enabled && is_zip_archive(data) {
+            let archive_config =
+                crate::archive::ArchiveInspectionConfig::from_effective_config(&effective_config);
+            if let Some(scanner) = &self.malware_scanner {
+                metrics::increment_archive_inspection();
+                match crate::archive::inspect_zip_archive(data, &archive_config, scanner, 0, None)
+                    .await
+                {
+                    Ok(archive_result) => {
+                        archive_entries_scanned = archive_result.entries_scanned;
+                        archive_nested_archives = archive_result.nested_archives_seen;
+                        archive_truncated = archive_result.truncated;
+                        metrics::add_archive_entries_scanned(archive_result.entries_scanned);
+
+                        let archive_match_names: Vec<String> = archive_result
+                            .matches
+                            .iter()
+                            .map(|m| format!("{}:{}", m.entry_path, m.malware_match.rule_name))
+                            .collect();
+                        if !archive_match_names.is_empty() {
+                            metrics::increment_archive_malware_detected();
+                            debug!(
+                                archive_matches = ?archive_match_names,
+                                "Malware detected in archive entries"
+                            );
+                            return Err(UploadValidationError::MalwareDetected {
+                                matches: archive_match_names,
+                            });
+                        }
+                    }
+                    Err(crate::archive::ArchiveInspectionError::Disabled) => {}
+                    Err(e) => {
+                        let error_msg = format!("archive inspection: {e}");
+                        if matches!(e, crate::archive::ArchiveInspectionError::InvalidZip(_)) {
+                            metrics::increment_archive_malformed();
+                        } else {
+                            metrics::increment_archive_limit_violation();
+                        }
+                        match effective_config.yara_failure_policy {
+                            UploadScanFailurePolicy::FailClosed => {
+                                return Err(UploadValidationError::ScanIndeterminate {
+                                    reason: error_msg,
+                                });
+                            }
+                            UploadScanFailurePolicy::QuarantineOnError => {
+                                return Err(UploadValidationError::ScanIndeterminate {
+                                    reason: error_msg,
+                                });
+                            }
+                            UploadScanFailurePolicy::FailOpen => {
+                                tracing::warn!(
+                                    archive_error = %e,
+                                    policy = "fail_open",
+                                    "Archive inspection failed but fail_open allows upload"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(ValidationResult::for_bytes(
             mime_type,
             data.len() as u64,
@@ -534,6 +643,11 @@ impl UploadValidator {
             yara_matches,
             scan_error,
             0,
+        )
+        .with_archive_metadata(
+            archive_entries_scanned,
+            archive_nested_archives,
+            archive_truncated,
         ))
     }
 
@@ -642,6 +756,71 @@ impl UploadValidator {
             }
         }
 
+        // Archive inspection
+        let (mut archive_entries_scanned, mut archive_nested_archives, mut archive_truncated) =
+            (0u32, 0u32, false);
+        if effective_config.archive_inspection_enabled && is_zip_archive(data) {
+            let archive_config =
+                crate::archive::ArchiveInspectionConfig::from_effective_config(&effective_config);
+            if let Some(scanner) = &self.malware_scanner {
+                metrics::increment_archive_inspection();
+                match crate::archive::inspect_zip_archive(data, &archive_config, scanner, 0, None)
+                    .await
+                {
+                    Ok(archive_result) => {
+                        archive_entries_scanned = archive_result.entries_scanned;
+                        archive_nested_archives = archive_result.nested_archives_seen;
+                        archive_truncated = archive_result.truncated;
+                        metrics::add_archive_entries_scanned(archive_result.entries_scanned);
+
+                        let archive_match_names: Vec<String> = archive_result
+                            .matches
+                            .iter()
+                            .map(|m| format!("{}:{}", m.entry_path, m.malware_match.rule_name))
+                            .collect();
+                        if !archive_match_names.is_empty() {
+                            metrics::increment_archive_malware_detected();
+                            debug!(
+                                archive_matches = ?archive_match_names,
+                                "Malware detected in archive entries"
+                            );
+                            return Err(UploadValidationError::MalwareDetected {
+                                matches: archive_match_names,
+                            });
+                        }
+                    }
+                    Err(crate::archive::ArchiveInspectionError::Disabled) => {}
+                    Err(e) => {
+                        let error_msg = format!("archive inspection: {e}");
+                        if matches!(e, crate::archive::ArchiveInspectionError::InvalidZip(_)) {
+                            metrics::increment_archive_malformed();
+                        } else {
+                            metrics::increment_archive_limit_violation();
+                        }
+                        match effective_config.yara_failure_policy {
+                            UploadScanFailurePolicy::FailClosed => {
+                                return Err(UploadValidationError::ScanIndeterminate {
+                                    reason: error_msg,
+                                });
+                            }
+                            UploadScanFailurePolicy::QuarantineOnError => {
+                                return Err(UploadValidationError::ScanIndeterminate {
+                                    reason: error_msg,
+                                });
+                            }
+                            UploadScanFailurePolicy::FailOpen => {
+                                tracing::warn!(
+                                    archive_error = %e,
+                                    policy = "fail_open",
+                                    "Archive inspection failed but fail_open allows upload"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(ValidationResult::for_bytes(
             mime_type,
             data.len() as u64,
@@ -649,6 +828,11 @@ impl UploadValidator {
             yara_matches,
             scan_error,
             0,
+        )
+        .with_archive_metadata(
+            archive_entries_scanned,
+            archive_nested_archives,
+            archive_truncated,
         ))
     }
 
@@ -732,6 +916,87 @@ impl UploadValidator {
             }
         }
 
+        // Archive inspection
+        let (mut archive_entries_scanned, mut archive_nested_archives, mut archive_truncated) =
+            (0u32, 0u32, false);
+        if effective_config.archive_inspection_enabled && is_zip_archive(data) {
+            let archive_config =
+                crate::archive::ArchiveInspectionConfig::from_effective_config(&effective_config);
+            if let Some(scanner) = &self.malware_scanner {
+                metrics::increment_archive_inspection();
+                match crate::archive::inspect_zip_archive(data, &archive_config, scanner, 0, None)
+                    .await
+                {
+                    Ok(archive_result) => {
+                        archive_entries_scanned = archive_result.entries_scanned;
+                        archive_nested_archives = archive_result.nested_archives_seen;
+                        archive_truncated = archive_result.truncated;
+                        metrics::add_archive_entries_scanned(archive_result.entries_scanned);
+
+                        let archive_match_names: Vec<String> = archive_result
+                            .matches
+                            .iter()
+                            .map(|m| format!("{}:{}", m.entry_path, m.malware_match.rule_name))
+                            .collect();
+                        if !archive_match_names.is_empty() {
+                            metrics::increment_archive_malware_detected();
+                            warn!(
+                                filename = ?original_filename,
+                                archive_matches = ?archive_match_names,
+                                "Malware detected in archive entries, quarantining file"
+                            );
+
+                            let mut sandbox_handle = self.sandbox.create_handle().await?;
+                            sandbox_handle.write_sync(data)?;
+                            sandbox_handle.flush()?;
+
+                            let _quarantine_entry = self
+                                .sandbox
+                                .quarantine(
+                                    sandbox_handle.path(),
+                                    original_filename,
+                                    Some(&mime_type),
+                                    &archive_match_names,
+                                )
+                                .await?;
+
+                            return Err(UploadValidationError::MalwareDetected {
+                                matches: archive_match_names,
+                            });
+                        }
+                    }
+                    Err(crate::archive::ArchiveInspectionError::Disabled) => {}
+                    Err(e) => {
+                        let error_msg = format!("archive inspection: {e}");
+                        if matches!(e, crate::archive::ArchiveInspectionError::InvalidZip(_)) {
+                            metrics::increment_archive_malformed();
+                        } else {
+                            metrics::increment_archive_limit_violation();
+                        }
+                        match effective_config.yara_failure_policy {
+                            UploadScanFailurePolicy::FailClosed => {
+                                return Err(UploadValidationError::ScanIndeterminate {
+                                    reason: error_msg,
+                                });
+                            }
+                            UploadScanFailurePolicy::QuarantineOnError => {
+                                return Err(UploadValidationError::ScanIndeterminate {
+                                    reason: error_msg,
+                                });
+                            }
+                            UploadScanFailurePolicy::FailOpen => {
+                                tracing::warn!(
+                                    archive_error = %e,
+                                    policy = "fail_open",
+                                    "Archive inspection failed but fail_open allows upload"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Ok((
             ValidationResult::for_bytes(
                 mime_type,
@@ -740,6 +1005,11 @@ impl UploadValidator {
                 yara_matches,
                 scan_error,
                 0,
+            )
+            .with_archive_metadata(
+                archive_entries_scanned,
+                archive_nested_archives,
+                archive_truncated,
             ),
             None,
         ))
@@ -1688,6 +1958,13 @@ mod tests {
                 yara_max_rule_files: None,
                 yara_max_rule_source_bytes: None,
                 yara_allow_rule_symlinks: None,
+                archive_inspection_enabled: None,
+                archive_max_depth: None,
+                archive_max_entries: None,
+                archive_max_total_uncompressed_bytes: None,
+                archive_max_entry_uncompressed_bytes: None,
+                archive_max_compression_ratio: None,
+                archive_max_nested_archives: None,
             }],
             ..Default::default()
         };

@@ -30,6 +30,7 @@ tempfile = "3"
 uuid = { version = "1", features = ["v4"] }
 arc-swap = "1"
 yara-x = { version = "1.15", default-features = false, features = ["default-modules", "linkme"] }
+zip = "2"
 
 [dev-dependencies]
 toml = "0.8"

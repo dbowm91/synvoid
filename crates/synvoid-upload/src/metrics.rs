@@ -21,6 +21,12 @@ pub static YARA_SCAN_TIMEOUT: AtomicU64 = AtomicU64::new(0);
 pub static YARA_RELOAD_SUCCESS: AtomicU64 = AtomicU64::new(0);
 pub static YARA_RELOAD_FAILURE: AtomicU64 = AtomicU64::new(0);
 
+pub static ARCHIVE_INSPECTIONS: AtomicU64 = AtomicU64::new(0);
+pub static ARCHIVE_ENTRIES_SCANNED: AtomicU64 = AtomicU64::new(0);
+pub static ARCHIVE_MALWARE_DETECTED: AtomicU64 = AtomicU64::new(0);
+pub static ARCHIVE_LIMIT_VIOLATIONS: AtomicU64 = AtomicU64::new(0);
+pub static ARCHIVE_MALFORMED: AtomicU64 = AtomicU64::new(0);
+
 pub fn increment_rate_limit_exceeded() {
     UPLOAD_RATE_LIMIT_EXCEEDED.fetch_add(1, Ordering::Relaxed);
 }
@@ -171,4 +177,44 @@ pub fn get_yara_reload_success() -> u64 {
 
 pub fn get_yara_reload_failure() -> u64 {
     YARA_RELOAD_FAILURE.load(Ordering::Relaxed)
+}
+
+pub fn increment_archive_inspection() {
+    ARCHIVE_INSPECTIONS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn add_archive_entries_scanned(count: u32) {
+    ARCHIVE_ENTRIES_SCANNED.fetch_add(count as u64, Ordering::Relaxed);
+}
+
+pub fn increment_archive_malware_detected() {
+    ARCHIVE_MALWARE_DETECTED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn increment_archive_limit_violation() {
+    ARCHIVE_LIMIT_VIOLATIONS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn increment_archive_malformed() {
+    ARCHIVE_MALFORMED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn get_archive_inspections() -> u64 {
+    ARCHIVE_INSPECTIONS.load(Ordering::Relaxed)
+}
+
+pub fn get_archive_entries_scanned() -> u64 {
+    ARCHIVE_ENTRIES_SCANNED.load(Ordering::Relaxed)
+}
+
+pub fn get_archive_malware_detected() -> u64 {
+    ARCHIVE_MALWARE_DETECTED.load(Ordering::Relaxed)
+}
+
+pub fn get_archive_limit_violations() -> u64 {
+    ARCHIVE_LIMIT_VIOLATIONS.load(Ordering::Relaxed)
+}
+
+pub fn get_archive_malformed() -> u64 {
+    ARCHIVE_MALFORMED.load(Ordering::Relaxed)
 }

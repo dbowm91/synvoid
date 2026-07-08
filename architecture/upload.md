@@ -455,3 +455,82 @@ Matches are deduplicated by `(rule_name, category)` — only the first occurrenc
 2. **Category**: alphabetical
 3. **Rule name**: alphabetical
 4. **Source**: Native before Yara (within same severity/category/rule)
+
+---
+
+## 13. Bounded Archive Inspection
+
+ZIP uploads are inspected **in-memory** without disk extraction. Entry contents are scanned for malware, paths are sanitized to reject traversal, and multiple limits prevent archive bomb abuse.
+
+### Design Constraints
+
+- **No disk extraction**: Entries are read from the in-memory ZIP archive; no files are written to disk.
+- **Path sanitization**: Entry paths are validated against traversal (`..`), absolute paths, UNC paths, Windows drive letters, null bytes, and symlinks.
+- **Bounded iteration**: Entry count, total uncompressed bytes, per-entry size, and compression ratio are all capped.
+- **Nested archive detection**: ZIP entries that are themselves archives (`.zip`, `.jar`, `.war`, `.ear`, `.docx`, `.xlsx`, `.pptx`, etc.) are counted but not recursively inspected (depth-0 by default).
+- **Failure semantics preserved**: Malformed ZIPs and limit violations are classified per `yara_failure_policy` (FailClosed/QuarantineOnError/FailOpen). Malformed ZIPs are never silently treated as clean.
+
+### Configuration
+
+```toml
+[site.upload]
+archive_inspection_enabled = true   # default: true
+archive_max_depth = 3               # max nested inspection depth (default: 3)
+archive_max_entries = 1000          # max entries per archive (default: 1000)
+archive_max_total_uncompressed_bytes = 536870912  # 512 MB (default)
+archive_max_entry_uncompressed_bytes = 104857600  # 100 MB (default)
+archive_max_compression_ratio = 100.0             # default: 100.0
+archive_max_nested_archives = 5     # max nested archive entries (default: 5)
+```
+
+### Path Sanitization
+
+Entry paths from ZIP archives are normalized and validated:
+
+| Check | Action |
+|-------|--------|
+| `..` component | Rejected (`PathTraversal`) |
+| Absolute path (`/foo`) | Rejected (`AbsolutePath`) |
+| Windows drive (`C:\foo`) | Rejected (`UncPath`) |
+| UNC path (`\\server\share`) | Rejected (`UncPath`) |
+| Null byte (`\x00`) | Rejected |
+| Backslash | Normalized to `/` |
+
+### Limits
+
+| Limit | Default | Error Type |
+|-------|---------|-----------|
+| Entry count | 1000 | `TooManyEntries` |
+| Total uncompressed bytes | 512 MB | `TotalSizeExceeded` |
+| Per-entry uncompressed bytes | 100 MB | `EntryTooLarge` |
+| Compression ratio | 100.0 | `CompressionRatioTooHigh` |
+| Nested archive count | 5 | `TooManyNestedArchives` |
+| Depth | 3 | `DepthExceeded` |
+
+### Metrics
+
+| Counter | Description |
+|---------|-------------|
+| `archive_inspections` | ZIP archives inspected |
+| `archive_entries_scanned` | Total entries scanned across all archives |
+| `archive_malware_detected` | Malware found in archive entries |
+| `archive_limit_violations` | Limit exceeded errors (entries, size, ratio, depth) |
+| `archive_malformed` | Malformed ZIP archives encountered |
+
+### Integration
+
+Archive inspection runs **after** the outer YARA scan on the raw bytes. The flow is:
+
+1. Outer bytes scanned by native heuristics + YARA-X (as before).
+2. If the file is a ZIP (`PK` magic bytes) and `archive_inspection_enabled = true`:
+   - `ArchiveInspectionConfig` is built from `EffectiveUploadConfig`.
+   - `inspect_zip_archive()` iterates entries, sanitizes paths, enforces limits, and scans each entry's content with `MalwareScanner`.
+3. Archive matches are folded into the outer match set.
+4. If any matches are found, `MalwareDetected` is returned (with quarantine in `validate_with_sandbox`).
+5. Limit violations and malformed ZIPs apply `yara_failure_policy`.
+
+### Limitations
+
+- Only ZIP is supported. TAR/GZIP/BZIP2/7z are not inspected at this time (detected by MIME but not opened).
+- Nested archives are detected by filename but not recursively inspected by default.
+- Symlink detection uses `is_dir()` which may have platform-specific behavior on ZIP entries.

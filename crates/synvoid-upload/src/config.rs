@@ -58,6 +58,24 @@ const DEFAULT_YARA_MAX_RULE_FILES: u32 = 256;
 /// Default maximum aggregate source bytes for YARA rules loaded from a directory.
 const DEFAULT_YARA_MAX_RULE_SOURCE_BYTES: u64 = 8 * 1024 * 1024; // 8MB
 
+/// Default maximum archive inspection depth (nested archives).
+const DEFAULT_ARCHIVE_MAX_DEPTH: u32 = 3;
+
+/// Default maximum number of entries in an archive.
+const DEFAULT_ARCHIVE_MAX_ENTRIES: u32 = 1000;
+
+/// Default maximum total uncompressed bytes across all archive entries.
+const DEFAULT_ARCHIVE_MAX_TOTAL_UNCOMPRESSED_BYTES: u64 = 512 * 1024 * 1024; // 512MB
+
+/// Default maximum uncompressed bytes for a single archive entry.
+const DEFAULT_ARCHIVE_MAX_ENTRY_UNCOMPRESSED_BYTES: u64 = 100 * 1024 * 1024; // 100MB
+
+/// Default maximum compression ratio (uncompressed / compressed).
+const DEFAULT_ARCHIVE_MAX_COMPRESSION_RATIO: f64 = 100.0;
+
+/// Default maximum number of nested archives within an archive.
+const DEFAULT_ARCHIVE_MAX_NESTED_ARCHIVES: u32 = 5;
+
 static DEFAULT_SAFE_MIME_TYPES: &[&str] = &[
     "image/jpeg",
     "image/png",
@@ -198,6 +216,34 @@ pub struct UploadConfig {
     /// Whether to allow symlinks when loading YARA rules from a directory.
     #[serde(default = "default_yara_allow_rule_symlinks")]
     pub yara_allow_rule_symlinks: bool,
+
+    /// Enable archive inspection for ZIP uploads.
+    #[serde(default = "default_archive_inspection_enabled")]
+    pub archive_inspection_enabled: bool,
+
+    /// Maximum nested archive inspection depth.
+    #[serde(default = "default_archive_max_depth")]
+    pub archive_max_depth: u32,
+
+    /// Maximum number of entries allowed in an archive.
+    #[serde(default = "default_archive_max_entries")]
+    pub archive_max_entries: u32,
+
+    /// Maximum total uncompressed bytes across all archive entries.
+    #[serde(default = "default_archive_max_total_uncompressed_bytes")]
+    pub archive_max_total_uncompressed_bytes: u64,
+
+    /// Maximum uncompressed bytes for a single archive entry.
+    #[serde(default = "default_archive_max_entry_uncompressed_bytes")]
+    pub archive_max_entry_uncompressed_bytes: u64,
+
+    /// Maximum compression ratio (uncompressed / compressed).
+    #[serde(default = "default_archive_max_compression_ratio")]
+    pub archive_max_compression_ratio: f64,
+
+    /// Maximum number of nested archives within an archive.
+    #[serde(default = "default_archive_max_nested_archives")]
+    pub archive_max_nested_archives: u32,
 }
 
 impl Default for UploadConfig {
@@ -233,6 +279,13 @@ impl Default for UploadConfig {
             yara_max_rule_files: default_yara_max_rule_files(),
             yara_max_rule_source_bytes: default_yara_max_rule_source_bytes(),
             yara_allow_rule_symlinks: default_yara_allow_rule_symlinks(),
+            archive_inspection_enabled: default_archive_inspection_enabled(),
+            archive_max_depth: default_archive_max_depth(),
+            archive_max_entries: default_archive_max_entries(),
+            archive_max_total_uncompressed_bytes: default_archive_max_total_uncompressed_bytes(),
+            archive_max_entry_uncompressed_bytes: default_archive_max_entry_uncompressed_bytes(),
+            archive_max_compression_ratio: default_archive_max_compression_ratio(),
+            archive_max_nested_archives: default_archive_max_nested_archives(),
         }
     }
 }
@@ -335,6 +388,34 @@ fn default_yara_max_rule_source_bytes() -> u64 {
 
 fn default_yara_allow_rule_symlinks() -> bool {
     false
+}
+
+fn default_archive_inspection_enabled() -> bool {
+    true
+}
+
+fn default_archive_max_depth() -> u32 {
+    DEFAULT_ARCHIVE_MAX_DEPTH
+}
+
+fn default_archive_max_entries() -> u32 {
+    DEFAULT_ARCHIVE_MAX_ENTRIES
+}
+
+fn default_archive_max_total_uncompressed_bytes() -> u64 {
+    DEFAULT_ARCHIVE_MAX_TOTAL_UNCOMPRESSED_BYTES
+}
+
+fn default_archive_max_entry_uncompressed_bytes() -> u64 {
+    DEFAULT_ARCHIVE_MAX_ENTRY_UNCOMPRESSED_BYTES
+}
+
+fn default_archive_max_compression_ratio() -> f64 {
+    DEFAULT_ARCHIVE_MAX_COMPRESSION_RATIO
+}
+
+fn default_archive_max_nested_archives() -> u32 {
+    DEFAULT_ARCHIVE_MAX_NESTED_ARCHIVES
 }
 
 impl UploadConfig {
@@ -463,6 +544,25 @@ impl UploadConfig {
                 yara_allow_rule_symlinks: path_cfg
                     .yara_allow_rule_symlinks
                     .unwrap_or(self.yara_allow_rule_symlinks),
+                archive_inspection_enabled: path_cfg
+                    .archive_inspection_enabled
+                    .unwrap_or(self.archive_inspection_enabled),
+                archive_max_depth: path_cfg.archive_max_depth.unwrap_or(self.archive_max_depth),
+                archive_max_entries: path_cfg
+                    .archive_max_entries
+                    .unwrap_or(self.archive_max_entries),
+                archive_max_total_uncompressed_bytes: path_cfg
+                    .archive_max_total_uncompressed_bytes
+                    .unwrap_or(self.archive_max_total_uncompressed_bytes),
+                archive_max_entry_uncompressed_bytes: path_cfg
+                    .archive_max_entry_uncompressed_bytes
+                    .unwrap_or(self.archive_max_entry_uncompressed_bytes),
+                archive_max_compression_ratio: path_cfg
+                    .archive_max_compression_ratio
+                    .unwrap_or(self.archive_max_compression_ratio),
+                archive_max_nested_archives: path_cfg
+                    .archive_max_nested_archives
+                    .unwrap_or(self.archive_max_nested_archives),
             }
         } else {
             EffectiveUploadConfig {
@@ -493,6 +593,13 @@ impl UploadConfig {
                 yara_max_rule_files: self.yara_max_rule_files,
                 yara_max_rule_source_bytes: self.yara_max_rule_source_bytes,
                 yara_allow_rule_symlinks: self.yara_allow_rule_symlinks,
+                archive_inspection_enabled: self.archive_inspection_enabled,
+                archive_max_depth: self.archive_max_depth,
+                archive_max_entries: self.archive_max_entries,
+                archive_max_total_uncompressed_bytes: self.archive_max_total_uncompressed_bytes,
+                archive_max_entry_uncompressed_bytes: self.archive_max_entry_uncompressed_bytes,
+                archive_max_compression_ratio: self.archive_max_compression_ratio,
+                archive_max_nested_archives: self.archive_max_nested_archives,
             }
         }
     }
@@ -526,6 +633,13 @@ pub struct EffectiveUploadConfig {
     pub yara_max_rule_files: u32,
     pub yara_max_rule_source_bytes: u64,
     pub yara_allow_rule_symlinks: bool,
+    pub archive_inspection_enabled: bool,
+    pub archive_max_depth: u32,
+    pub archive_max_entries: u32,
+    pub archive_max_total_uncompressed_bytes: u64,
+    pub archive_max_entry_uncompressed_bytes: u64,
+    pub archive_max_compression_ratio: f64,
+    pub archive_max_nested_archives: u32,
 }
 
 impl EffectiveUploadConfig {
@@ -668,6 +782,27 @@ pub struct PathUploadConfig {
 
     #[serde(default)]
     pub yara_allow_rule_symlinks: Option<bool>,
+
+    #[serde(default)]
+    pub archive_inspection_enabled: Option<bool>,
+
+    #[serde(default)]
+    pub archive_max_depth: Option<u32>,
+
+    #[serde(default)]
+    pub archive_max_entries: Option<u32>,
+
+    #[serde(default)]
+    pub archive_max_total_uncompressed_bytes: Option<u64>,
+
+    #[serde(default)]
+    pub archive_max_entry_uncompressed_bytes: Option<u64>,
+
+    #[serde(default)]
+    pub archive_max_compression_ratio: Option<f64>,
+
+    #[serde(default)]
+    pub archive_max_nested_archives: Option<u32>,
 }
 
 fn parse_size(s: &str) -> Option<u64> {
@@ -718,6 +853,25 @@ mod tests {
             config.yara_magic_scan_limit_bytes,
             DEFAULT_MAGIC_SCAN_LIMIT_BYTES
         );
+        assert!(config.archive_inspection_enabled);
+        assert_eq!(config.archive_max_depth, DEFAULT_ARCHIVE_MAX_DEPTH);
+        assert_eq!(config.archive_max_entries, DEFAULT_ARCHIVE_MAX_ENTRIES);
+        assert_eq!(
+            config.archive_max_total_uncompressed_bytes,
+            DEFAULT_ARCHIVE_MAX_TOTAL_UNCOMPRESSED_BYTES
+        );
+        assert_eq!(
+            config.archive_max_entry_uncompressed_bytes,
+            DEFAULT_ARCHIVE_MAX_ENTRY_UNCOMPRESSED_BYTES
+        );
+        assert_eq!(
+            config.archive_max_compression_ratio,
+            DEFAULT_ARCHIVE_MAX_COMPRESSION_RATIO
+        );
+        assert_eq!(
+            config.archive_max_nested_archives,
+            DEFAULT_ARCHIVE_MAX_NESTED_ARCHIVES
+        );
     }
 
     #[test]
@@ -765,6 +919,13 @@ mod tests {
                 yara_max_rule_files: None,
                 yara_max_rule_source_bytes: None,
                 yara_allow_rule_symlinks: None,
+                archive_inspection_enabled: None,
+                archive_max_depth: None,
+                archive_max_entries: None,
+                archive_max_total_uncompressed_bytes: None,
+                archive_max_entry_uncompressed_bytes: None,
+                archive_max_compression_ratio: None,
+                archive_max_nested_archives: None,
             }],
             ..Default::default()
         };
@@ -853,6 +1014,13 @@ mod tests {
                 yara_max_rule_files: None,
                 yara_max_rule_source_bytes: None,
                 yara_allow_rule_symlinks: None,
+                archive_inspection_enabled: None,
+                archive_max_depth: None,
+                archive_max_entries: None,
+                archive_max_total_uncompressed_bytes: None,
+                archive_max_entry_uncompressed_bytes: None,
+                archive_max_compression_ratio: None,
+                archive_max_nested_archives: None,
             }],
             ..Default::default()
         };
