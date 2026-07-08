@@ -62,6 +62,30 @@ pub struct UploadDefaults {
     /// Whether to allow symlinks when loading YARA rules from a directory. Default: false.
     #[serde(default = "default_yara_allow_rule_symlinks")]
     pub yara_allow_rule_symlinks: bool,
+
+    /// Enable archive inspection for ZIP uploads. Default: false.
+    #[serde(default = "default_archive_inspection_enabled")]
+    pub archive_inspection_enabled: bool,
+
+    /// Maximum number of entries allowed in an archive. Default: 1000.
+    #[serde(default = "default_archive_max_entries")]
+    pub archive_max_entries: u32,
+
+    /// Maximum total uncompressed bytes across all archive entries. Default: 512 MiB.
+    #[serde(default = "default_archive_max_total_uncompressed_bytes")]
+    pub archive_max_total_uncompressed_bytes: u64,
+
+    /// Maximum uncompressed bytes for a single archive entry. Default: 100 MiB.
+    #[serde(default = "default_archive_max_entry_uncompressed_bytes")]
+    pub archive_max_entry_uncompressed_bytes: u64,
+
+    /// Maximum compression ratio (uncompressed / compressed). Default: 100.0.
+    #[serde(default = "default_archive_max_compression_ratio")]
+    pub archive_max_compression_ratio: f64,
+
+    /// Maximum number of nested archives within an archive. Default: 5.
+    #[serde(default = "default_archive_max_nested_archives")]
+    pub archive_max_nested_archives: u32,
 }
 
 impl Default for UploadDefaults {
@@ -90,6 +114,12 @@ impl Default for UploadDefaults {
             yara_max_rule_files: 256,
             yara_max_rule_source_bytes: 8 * 1024 * 1024,
             yara_allow_rule_symlinks: false,
+            archive_inspection_enabled: false,
+            archive_max_entries: 1000,
+            archive_max_total_uncompressed_bytes: 512 * 1024 * 1024,
+            archive_max_entry_uncompressed_bytes: 100 * 1024 * 1024,
+            archive_max_compression_ratio: 100.0,
+            archive_max_nested_archives: 5,
         }
     }
 }
@@ -192,6 +222,30 @@ fn default_yara_max_rule_source_bytes() -> u64 {
 }
 fn default_yara_allow_rule_symlinks() -> bool {
     false
+}
+
+fn default_archive_inspection_enabled() -> bool {
+    false
+}
+
+fn default_archive_max_entries() -> u32 {
+    1000
+}
+
+fn default_archive_max_total_uncompressed_bytes() -> u64 {
+    512 * 1024 * 1024
+}
+
+fn default_archive_max_entry_uncompressed_bytes() -> u64 {
+    100 * 1024 * 1024
+}
+
+fn default_archive_max_compression_ratio() -> f64 {
+    100.0
+}
+
+fn default_archive_max_nested_archives() -> u32 {
+    5
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, ToSchema)]

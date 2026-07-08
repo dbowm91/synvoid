@@ -3,7 +3,6 @@
 //! This module provides a unified interface for PQC operations
 //! using pqc_kyber as the backend for ML-KEM-768 (Kyber-768).
 
-use pqc_kyber_edit::*;
 use serde::{Deserialize, Serialize};
 
 pub const PUBLIC_KEY_SIZE: usize = 1184; // KYBER768

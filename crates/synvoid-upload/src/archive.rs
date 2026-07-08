@@ -181,6 +181,19 @@ fn is_directory(entry_name: &str) -> bool {
     entry_name.ends_with('/')
 }
 
+/// An entry collected from a ZIP archive, with owned content bytes.
+///
+/// This struct is used to decouple synchronous ZIP reading from async
+/// malware scanning. The `zip` crate's `ZipArchive`/`ZipFile` types are
+/// `!Send` (they contain `&mut dyn Read`), so we must fully read all
+/// entry data before crossing any `.await` boundary.
+struct CollectedEntry {
+    entry_name: String,
+    entry_index: u32,
+    uncompressed_size: u64,
+    content: Vec<u8>,
+}
+
 /// Inspect a ZIP archive from in-memory bytes.
 ///
 /// This iterates ZIP entries without extracting to disk. For each entry:
@@ -190,6 +203,17 @@ fn is_directory(entry_name: &str) -> bool {
 /// - Nested archive detection via filename extension
 ///
 /// Returns `Err` for limits violations or malformed archives.
+///
+/// # Send safety
+///
+/// The `zip` crate's `ZipArchive` and `ZipFile` types are `!Send` (they
+/// contain `&mut dyn Read`). This function is split into two phases:
+/// 1. **Sync**: Read all entry metadata and content into owned `CollectedEntry`
+///    values, then drop the `ZipArchive`.
+/// 2. **Async**: Scan the collected content for malware.
+///
+/// This ensures no `ZipArchive`/`ZipFile` state is live across `.await`
+/// points, making the returned future `Send`-safe.
 #[allow(clippy::too_many_arguments)]
 pub async fn inspect_zip_archive(
     data: &[u8],
@@ -209,157 +233,178 @@ pub async fn inspect_zip_archive(
         });
     }
 
-    let cursor = Cursor::new(data);
-    let mut archive = ZipArchive::new(cursor)
-        .map_err(|e| ArchiveInspectionError::InvalidZip(format!("failed to open ZIP: {e}")))?;
+    // ── Phase 1 (sync): Read all entries into owned data ──────────────
+    // This scope drops `archive` before we touch any `.await`.
+    let (collected, mut result, entry_count) = {
+        let cursor = Cursor::new(data);
+        let mut archive = ZipArchive::new(cursor)
+            .map_err(|e| ArchiveInspectionError::InvalidZip(format!("failed to open ZIP: {e}")))?;
 
-    let mut result = ArchiveInspectionResult {
-        inspected: true,
-        archive_type: "zip".to_string(),
-        entries_seen: 0,
-        entries_scanned: 0,
-        nested_archives_seen: 0,
-        max_depth_reached: current_depth,
-        total_uncompressed_bytes_seen: 0,
-        truncated: false,
-        matches: Vec::new(),
-        warnings: Vec::new(),
-        recursive_inspection_enabled: false,
-        archive_error: None,
-    };
+        let mut result = ArchiveInspectionResult {
+            inspected: true,
+            archive_type: "zip".to_string(),
+            entries_seen: 0,
+            entries_scanned: 0,
+            nested_archives_seen: 0,
+            max_depth_reached: current_depth,
+            total_uncompressed_bytes_seen: 0,
+            truncated: false,
+            matches: Vec::new(),
+            warnings: Vec::new(),
+            recursive_inspection_enabled: false,
+            archive_error: None,
+        };
 
-    let entry_count = archive.len() as u32;
-    if entry_count > config.max_entries {
-        return Err(ArchiveInspectionError::TooManyEntries {
-            count: entry_count,
-            limit: config.max_entries,
-        });
-    }
+        let entry_count = archive.len() as u32;
+        if entry_count > config.max_entries {
+            return Err(ArchiveInspectionError::TooManyEntries {
+                count: entry_count,
+                limit: config.max_entries,
+            });
+        }
 
-    for i in 0..archive.len() {
-        let mut entry = match archive.by_index(i) {
-            Ok(e) => e,
-            Err(e) => {
+        let mut collected: Vec<CollectedEntry> = Vec::new();
+
+        for i in 0..archive.len() {
+            let mut entry = match archive.by_index(i) {
+                Ok(e) => e,
+                Err(e) => {
+                    warn!(
+                        entry_index = i,
+                        error = %e,
+                        "Failed to read ZIP entry, skipping"
+                    );
+                    result.warnings.push(format!("entry {i}: read error: {e}"));
+                    continue;
+                }
+            };
+
+            let entry_name = entry.name().to_string();
+            let uncompressed_size = entry.size();
+            let compressed_size = entry.compressed_size();
+            result.entries_seen += 1;
+
+            // Sanitize path
+            let _sanitized_path = sanitize_entry_path(&entry_name)?;
+
+            // Skip directories
+            if is_directory(&entry_name) {
+                continue;
+            }
+
+            // Check for symlinks via Unix external attributes
+            if let Some(mode) = entry.unix_mode() {
+                if mode & 0o170000 == 0o120000 {
+                    return Err(ArchiveInspectionError::SymlinkRejected(entry_name));
+                }
+            }
+
+            // Check individual entry size
+            if uncompressed_size > config.max_entry_uncompressed_bytes {
+                return Err(ArchiveInspectionError::EntryTooLarge {
+                    size: uncompressed_size,
+                    limit: config.max_entry_uncompressed_bytes,
+                });
+            }
+
+            // Check compression ratio
+            if compressed_size > 0 {
+                let ratio = uncompressed_size as f64 / compressed_size as f64;
+                if ratio > config.max_compression_ratio {
+                    return Err(ArchiveInspectionError::CompressionRatioTooHigh {
+                        ratio,
+                        limit: config.max_compression_ratio,
+                    });
+                }
+            } else if uncompressed_size > 0 {
+                result.warnings.push(format!(
+                    "entry {i}: stored without compression: {entry_name}"
+                ));
+            }
+
+            // Track totals
+            result.total_uncompressed_bytes_seen = result
+                .total_uncompressed_bytes_seen
+                .saturating_add(uncompressed_size);
+
+            if result.total_uncompressed_bytes_seen > config.max_total_uncompressed_bytes {
+                return Err(ArchiveInspectionError::TotalSizeExceeded {
+                    total: result.total_uncompressed_bytes_seen,
+                    limit: config.max_total_uncompressed_bytes,
+                });
+            }
+
+            // Detect nested archives by filename
+            if is_nested_archive_filename(&entry_name) {
+                result.nested_archives_seen += 1;
+                if result.nested_archives_seen > config.max_nested_archives {
+                    return Err(ArchiveInspectionError::TooManyNestedArchives {
+                        count: result.nested_archives_seen,
+                        limit: config.max_nested_archives,
+                    });
+                }
+            }
+
+            // Read entry content into owned bytes
+            let mut entry_content = Vec::new();
+            if let Err(e) = std::io::Read::read_to_end(&mut entry, &mut entry_content) {
                 warn!(
                     entry_index = i,
                     error = %e,
-                    "Failed to read ZIP entry, skipping"
+                    "Failed to read ZIP entry content"
                 );
-                result.warnings.push(format!("entry {i}: read error: {e}"));
+                result
+                    .warnings
+                    .push(format!("entry {i}: content read error: {e}"));
                 continue;
             }
-        };
 
-        let entry_name = entry.name().to_string();
-        let uncompressed_size = entry.size();
-        let compressed_size = entry.compressed_size();
-        result.entries_seen += 1;
-
-        // Sanitize path
-        let _sanitized_path = sanitize_entry_path(&entry_name)?;
-
-        // Skip directories
-        if is_directory(&entry_name) {
-            continue;
-        }
-
-        // Check for symlinks via Unix external attributes
-        if let Some(mode) = entry.unix_mode() {
-            if mode & 0o170000 == 0o120000 {
-                return Err(ArchiveInspectionError::SymlinkRejected(entry_name));
+            // Update max depth reached
+            if current_depth > result.max_depth_reached {
+                result.max_depth_reached = current_depth;
             }
-        }
 
-        // Check individual entry size
-        if uncompressed_size > config.max_entry_uncompressed_bytes {
-            return Err(ArchiveInspectionError::EntryTooLarge {
-                size: uncompressed_size,
-                limit: config.max_entry_uncompressed_bytes,
+            collected.push(CollectedEntry {
+                entry_name,
+                entry_index: i as u32,
+                uncompressed_size,
+                content: entry_content,
             });
         }
 
-        // Check compression ratio
-        if compressed_size > 0 {
-            let ratio = uncompressed_size as f64 / compressed_size as f64;
-            if ratio > config.max_compression_ratio {
-                return Err(ArchiveInspectionError::CompressionRatioTooHigh {
-                    ratio,
-                    limit: config.max_compression_ratio,
-                });
-            }
-        } else if uncompressed_size > 0 {
-            result.warnings.push(format!(
-                "entry {i}: stored without compression: {entry_name}"
-            ));
-        }
+        // `archive` and all `ZipFile` borrows are dropped here, before any
+        // `.await` point. This is critical for `Send`-safety.
+        (collected, result, entry_count)
+    };
 
-        // Track totals
-        result.total_uncompressed_bytes_seen = result
-            .total_uncompressed_bytes_seen
-            .saturating_add(uncompressed_size);
-
-        if result.total_uncompressed_bytes_seen > config.max_total_uncompressed_bytes {
-            return Err(ArchiveInspectionError::TotalSizeExceeded {
-                total: result.total_uncompressed_bytes_seen,
-                limit: config.max_total_uncompressed_bytes,
-            });
-        }
-
-        // Detect nested archives by filename
-        if is_nested_archive_filename(&entry_name) {
-            result.nested_archives_seen += 1;
-            if result.nested_archives_seen > config.max_nested_archives {
-                return Err(ArchiveInspectionError::TooManyNestedArchives {
-                    count: result.nested_archives_seen,
-                    limit: config.max_nested_archives,
-                });
-            }
-        }
-
-        // Read entry content and scan for malware
-        let mut entry_content = Vec::new();
-        if let Err(e) = std::io::Read::read_to_end(&mut entry, &mut entry_content) {
-            warn!(
-                entry_index = i,
-                error = %e,
-                "Failed to read ZIP entry content"
-            );
-            result
-                .warnings
-                .push(format!("entry {i}: content read error: {e}"));
-            continue;
-        }
-
-        // Scan entry content for malware
+    // ── Phase 2 (async): Scan collected entry content for malware ─────
+    for ce in collected {
         let scan_context = ScanContext {
-            filename: Some(entry_name.clone()),
+            filename: Some(ce.entry_name.clone()),
             declared_mime: None,
             detected_mime: None,
-            size: Some(uncompressed_size),
+            size: Some(ce.uncompressed_size),
         };
 
         match scanner
-            .scan_bytes_with_context(&entry_content, &scan_context)
+            .scan_bytes_with_context(&ce.content, &scan_context)
             .await
         {
             Ok(scan_result) => {
                 result.entries_scanned += 1;
                 for m in scan_result.matches {
                     result.matches.push(ArchiveEntryMatch {
+                        entry_index: ce.entry_index,
+                        entry_path: ce.entry_name.clone(),
                         malware_match: m,
-                        entry_path: entry_name.clone(),
-                        entry_index: i as u32,
                     });
                 }
             }
             Err(e) => {
-                result.warnings.push(format!("entry {i}: scan error: {e}"));
+                result
+                    .warnings
+                    .push(format!("entry {}: scan error: {e}", ce.entry_index));
             }
-        }
-
-        // Update max depth reached
-        if current_depth > result.max_depth_reached {
-            result.max_depth_reached = current_depth;
         }
     }
 

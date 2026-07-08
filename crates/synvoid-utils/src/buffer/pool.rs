@@ -1052,7 +1052,7 @@ mod tests {
         let mut buf = BufferPool::acquire(5);
         buf.as_mut_slice().copy_from_slice(b"hello");
 
-        let slice: &[u8] = &*buf;
+        let slice: &[u8] = &buf;
         assert_eq!(slice, b"hello");
 
         let as_ref: &[u8] = buf.as_ref();

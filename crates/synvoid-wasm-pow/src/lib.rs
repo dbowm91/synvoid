@@ -539,10 +539,7 @@ pub async fn report_signature_failure(global_node_url: String, _details_json: St
 
     let fetch_promise = window.fetch_with_request(&request);
 
-    match JsFuture::from(fetch_promise).await {
-        Ok(_) => true,
-        Err(_) => false,
-    }
+    JsFuture::from(fetch_promise).await.is_ok()
 }
 
 fn generate_x25519_key_pair() -> X25519KeyPair {

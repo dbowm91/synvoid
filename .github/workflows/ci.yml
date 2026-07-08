@@ -216,6 +216,31 @@ jobs:
       - name: Check upload all-features compile
         run: cargo check -p synvoid-upload --all-features
 
+  honeypot-tests:
+    name: Honeypot Crate Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt -p synvoid-honeypot -- --check
+
+      - name: Clippy honeypot crate
+        run: cargo clippy -p synvoid-honeypot --all-targets -- -D warnings
+
+      - name: Run honeypot unit tests
+        run: cargo test -p synvoid-honeypot --release
+
+      - name: Check honeypot all-features compile
+        run: cargo check -p synvoid-honeypot --all-features
+
   fmt:
     name: Rustfmt
     runs-on: ubuntu-latest
@@ -612,7 +637,7 @@ jobs:
 
   summary:
     name: CI Summary
-    needs: [build, clippy, unsafe-dns, dns-tests, upload-tests, fmt, docs, security-audit, dependency-audit, outdated-deps, core-profile, import-check, miri-test, security-regression, profile-matrix, guard-suite, plugin-runtime-guardrails, docs-link-guard, fuzz-smoke]
+    needs: [build, clippy, unsafe-dns, dns-tests, upload-tests, honeypot-tests, fmt, docs, security-audit, dependency-audit, outdated-deps, core-profile, import-check, miri-test, security-regression, profile-matrix, guard-suite, plugin-runtime-guardrails, docs-link-guard, fuzz-smoke]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -627,6 +652,7 @@ jobs:
           echo "| unsafe-dns | ${{ needs.unsafe-dns.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| dns-tests | ${{ needs.dns-tests.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| upload-tests | ${{ needs.upload-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| honeypot-tests | ${{ needs.honeypot-tests.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| fmt | ${{ needs.fmt.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| docs | ${{ needs.docs.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| security-audit | ${{ needs.security-audit.result }} |" >> $GITHUB_STEP_SUMMARY

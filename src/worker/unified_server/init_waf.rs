@@ -62,6 +62,13 @@ pub async fn init_upload_validator(config: &Arc<RwLock<ConfigManager>>) {
             yara_max_rule_files: defaults.yara_max_rule_files,
             yara_max_rule_source_bytes: defaults.yara_max_rule_source_bytes,
             yara_allow_rule_symlinks: defaults.yara_allow_rule_symlinks,
+            archive_inspection_enabled: defaults.archive_inspection_enabled,
+            archive_max_depth: defaults.archive_max_depth,
+            archive_max_entries: defaults.archive_max_entries,
+            archive_max_total_uncompressed_bytes: defaults.archive_max_total_uncompressed_bytes,
+            archive_max_entry_uncompressed_bytes: defaults.archive_max_entry_uncompressed_bytes,
+            archive_max_compression_ratio: defaults.archive_max_compression_ratio,
+            archive_max_nested_archives: defaults.archive_max_nested_archives,
         }
     };
 
