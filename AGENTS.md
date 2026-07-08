@@ -162,6 +162,10 @@ cargo test -p synvoid-plugin-runtime -- test_manifest_validate_trust
 # Unsafe native extension tests (Phase 8)
 cargo test -p synvoid-plugin-runtime -- unsafe_native
 cargo test -p synvoid-plugin-runtime -- test_unsafe_native
+
+# Honeypot listener tests (Milestone B Phase 3)
+cargo test -p synvoid-honeypot --all-targets
+cargo test -p synvoid-honeypot -- listener_tests
 ```
 
 ## Feature Profiles
@@ -448,3 +452,5 @@ The `architecture/` directory (87 docs) and `.opencode/skills/` directory contai
 - **DNS Milestone 1 Corrective Pass** — Response flag semantics (RA=false authoritative, RD echoed), byte-size truncation, parser propagation (parse-once), authoritative NODATA/NXDOMAIN with SOA, encoder strictness (MX/CAA/TLSA validation, EncodeReport), query coalescing broadcast, runtime correctness (bind address, DNS64 pass-through, TCP guard). All phases (A–G) complete. See `plans/dns_milestone_1_corrective_pass.md`.
 - **DNS Milestone 3 Phase 1** — Zone lifecycle management, SOA validation, dynamic update hardening (max size, metrics), NOTIFY rate limiting and source allowlist, AXFR TCP-only enforcement and disabled-by-default guard, IXFR history tracking, volatile/atomic store writes, and cache invalidation on AXFR. All items in `plans/dns_milestone_3_phase_01_zone_lifecycle.md` addressed.
 - **DNS Milestone 3 Phase 5 Verification Gate** — 20 new verification gate tests covering zone lifecycle atomicity, DNSSEC type constants/NSEC/DNSKEY/RRSIG, encrypted transport config roundtrips, recursive resolver safety invariants, and cache isolation. All gate areas (2-6) verified. See `plans/dns_milestone_3_phase_05_verification_gate.md`.
+
+- **Honeypot Milestone B Phase 3: Listener Concurrency and Accounting** — Race-free global admission via tokio::Semaphore, per-IP RAII guard with automatic cleanup at zero-count, enforced max_payload_size read loop with truncation flag, corrected byte accounting (total received/sent across all reads), timeout semantics documented (connection_timeout_ms for initial data, read_timeout_ms for subsequent reads), protocol/service normalization (lowercase protocol for banner lookup), 8 metrics counters (accepted, rejected-global, rejected-per-ip, timeout-initial, timeout-read, truncated, errors, storage-failures), structured logging with all connection fields, 12 new tests covering admission guards, payload truncation, multi-read accounting, byte sent tracking, and timeout permit release. 50 tests total passing. See `plans/milestone_b_phase_3_honeypot_listener_concurrency_accounting.md`.

@@ -8294,6 +8294,7 @@ dependencies = [
  "hex",
  "http 1.4.1",
  "http-body-util",
+ "metrics 0.22.4",
  "parking_lot",
  "rand 0.9.4",
  "regex",
@@ -8836,6 +8837,7 @@ dependencies = [
  "uuid",
  "walkdir",
  "yara-x",
+ "zip 2.4.2",
 ]
 
 [[package]]

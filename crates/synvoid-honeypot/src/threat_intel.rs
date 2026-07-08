@@ -193,6 +193,7 @@ mod tests {
             bytes_sent: 0,
             duration_ms: 100,
             connection_info: "192.168.1.100:12345".to_string(),
+            payload_truncated: false,
         }
     }
 

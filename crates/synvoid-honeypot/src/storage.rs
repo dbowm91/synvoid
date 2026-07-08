@@ -21,6 +21,7 @@ pub struct HoneypotRecord {
     pub bytes_sent: u32,
     pub duration_ms: u32,
     pub connection_info: String,
+    pub payload_truncated: bool,
 }
 
 pub struct HoneypotStorage {
@@ -70,7 +71,8 @@ impl HoneypotStorage {
                 bytes_received INTEGER NOT NULL DEFAULT 0,
                 bytes_sent INTEGER NOT NULL DEFAULT 0,
                 duration_ms INTEGER NOT NULL DEFAULT 0,
-                connection_info TEXT
+                connection_info TEXT,
+                payload_truncated INTEGER NOT NULL DEFAULT 0
             )",
             [],
         )?;
@@ -122,8 +124,8 @@ impl HoneypotStorage {
             "INSERT INTO honeypot_connections 
              (timestamp, remote_ip, remote_port, local_port, protocol, service, 
               payload, payload_hex, detected_pattern, bytes_received, bytes_sent, 
-              duration_ms, connection_info)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+              duration_ms, connection_info, payload_truncated)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 record.timestamp,
                 record.remote_ip,
@@ -138,6 +140,7 @@ impl HoneypotStorage {
                 record.bytes_sent,
                 record.duration_ms,
                 record.connection_info,
+                record.payload_truncated as i32,
             ],
         )?;
 
@@ -205,7 +208,7 @@ impl HoneypotStorage {
         let mut stmt = conn.prepare(
             "SELECT id, timestamp, remote_ip, remote_port, local_port, protocol, service,
                     payload, payload_hex, detected_pattern, bytes_received, bytes_sent,
-                    duration_ms, connection_info
+                    duration_ms, connection_info, payload_truncated
              FROM honeypot_connections 
              WHERE timestamp > ?1
              ORDER BY timestamp DESC
@@ -228,6 +231,7 @@ impl HoneypotStorage {
                 bytes_sent: row.get(11)?,
                 duration_ms: row.get(12)?,
                 connection_info: row.get(13).unwrap_or_default(),
+                payload_truncated: row.get::<_, i32>(14).unwrap_or(0) != 0,
             })
         })?;
 
