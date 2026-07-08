@@ -124,3 +124,60 @@ All connection fields (src_ip, src_port, dst_port, protocol, bytes_received, byt
 ### Tests
 
 12 new tests covering: global admission guard, per-IP guard with drop cleanup, multi-read byte accounting, byte sent tracking, payload truncation, timeout permit release, and protocol normalization.
+
+## 7. Protocol Detection Correctness (Milestone B Phase 4)
+
+### Detection Model
+
+Protocol detection is **lightweight first-packet classification**, not full protocol parsing. The detector operates on raw bytes without requiring valid UTF-8 conversion for binary protocols.
+
+### Detection Order
+
+1. **Binary fixed-prefix and structural checks** — pure byte-level, no UTF-8 dependency
+2. **ASCII/text protocol method checks** — bounded text path for common text protocols
+3. **Fallback/unknown** — unrecognized payloads return `None`
+
+### Binary-Safe Protocols
+
+| Protocol | Detection Signature | Confidence |
+|----------|-------------------|------------|
+| TLS/SSL | `0x16 0x03 0x00..0x04` record header with length sanity | High |
+| SSH | `SSH-` prefix | High |
+| VNC | `RFB ` prefix | High |
+| SMB | `\xffSMB` or `\xfeSMB` marker | High |
+| MySQL | `0x0a` first byte (protocol v10 handshake) | Medium |
+| PostgreSQL | SSLRequest: `0x00 0x00 0x00 0x08 0x04 0xd2` | High |
+| RDP | TPKT: `0x03 0x00` header | Low |
+| Redis | RESP array: `*N\r\n` or inline commands | High/Medium |
+| DNS | 12-byte header with standard query flags | Low |
+| MongoDB | `0x3a 0x00` opmsg header or JSON ismaster | Low |
+
+### Text Protocols
+
+| Protocol | Detection Signature | Confidence |
+|----------|-------------------|------------|
+| HTTP | `GET `, `POST `, etc. with request syntax; or `HTTP/` response | High |
+| SMTP | `EHLO`, `HELO`, `MAIL FROM:`, `220 *SMTP` | High |
+| FTP | `USER `, `PASS `, `QUIT`, `220 *FTP` | High/Medium |
+| POP3 | `+OK` response | High |
+| IMAP | `* OK` greeting | Medium |
+
+### Confidence Levels
+
+- **High**: Strong magic/prefix (SSH banner, TLS record header, SMB marker, HTTP method with request syntax)
+- **Medium**: Recognizable text command with common protocol token
+- **Low**: Weak shape-only binary checks (RDP TPKT, DNS header, MongoDB)
+
+Low-confidence detections should not produce aggressive threat-intel actions by themselves. Confidence is exposed for downstream scoring in Milestone C.
+
+### Banner Lookup
+
+Banner lookup uses a static `LazyLock<HashMap>` keyed by **normalized lowercase protocol identifiers** (e.g., `http`, `ssh`, `tls`). This avoids per-call HashMap allocation and eliminates case-mismatch failures. The `Confidence` enum and `evidence` field are available on `ProtocolMatch` for downstream consumers.
+
+### Key Invariants
+
+- Binary protocols do not require valid UTF-8
+- `protocol` field is always lowercase (normalized identifier)
+- `service` field is the display label (e.g., "HTTP", "PostgreSQL")
+- `evidence` field provides a short non-payload reason string
+- TLS normal records are detected with positive tests (no more `None` tolerance)

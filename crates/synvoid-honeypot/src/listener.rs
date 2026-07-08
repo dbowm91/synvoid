@@ -59,6 +59,7 @@ pub struct ConnectionEvent {
     pub protocol: String,
     pub detected_pattern: Option<String>,
     pub payload_hex: String,
+    pub confidence: crate::protocol::Confidence,
 }
 
 impl PortHoneypotListener {
@@ -359,7 +360,12 @@ pub(crate) async fn handle_connection(
         service: service.clone(),
         payload: payload.clone(),
         payload_hex: hex::encode(&payload),
-        detected_pattern: detection.as_ref().and_then(|d| d.matched_pattern.clone()),
+        detected_pattern: Some(
+            detection
+                .as_ref()
+                .map(|d| d.evidence.clone())
+                .unwrap_or_default(),
+        ),
         bytes_received: total_bytes_received as u32,
         bytes_sent: total_bytes_sent as u32,
         duration_ms: duration.as_millis() as u32,

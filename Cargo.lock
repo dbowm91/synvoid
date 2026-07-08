@@ -8288,7 +8288,6 @@ dependencies = [
 name = "synvoid-honeypot"
 version = "0.1.0"
 dependencies = [
- "aho-corasick 1.1.4",
  "async-trait",
  "bytes",
  "hex",

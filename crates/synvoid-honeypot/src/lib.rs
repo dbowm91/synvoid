@@ -16,7 +16,7 @@ pub use listener::PortHoneypotListener;
 pub use mesh_control::{
     HoneypotControlCommand, HoneypotControlError, HoneypotMeshController, HoneypotStatus,
 };
-pub use protocol::{ProtocolDetector, ProtocolMatch, ServiceBanner};
+pub use protocol::{Confidence, ProtocolDetector, ProtocolMatch, ServiceBanner};
 pub use responders::{
     default_ssh_system_prompt, http_system_prompt, mysql_system_prompt, redis_system_prompt,
     AiHoneypotResponder, AiProvider, AiResponder, AnthropicResponder, OllamaResponder,
