@@ -166,6 +166,7 @@ impl AttackDetector {
             r#"(?i)insert\s+into"#,                 // SQL insert
             r#"(?i)update\s+.*\s+set"#,             // SQL update
             r#"(?i)alter\s+"#,                      // SQL alter
+            r#"(?i)'\s+OR\s+'"#,                    // SQL OR injection (e.g. OR '1'='1)
             r#"<script"#,                           // XSS
             r#"javascript:"#,                       // XSS JS protocol
             r#"onload="#,                           // XSS event handler
@@ -197,6 +198,7 @@ impl AttackDetector {
             r#"<!DOCTYPE"#,                         // XXE
             r#"<!ENTITY"#,                          // XXE
             r#"<!\[CDATA\["#,                       // XXE
+            r#"%xxe"#,                              // XXE parameter entity injection
             r#"transfer-encoding"#,                 // Request smuggling
             r#"content-length"#,                    // Request smuggling
         ];

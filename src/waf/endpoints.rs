@@ -294,7 +294,7 @@ mod tests {
         );
         assert_eq!(
             ErrorPageManager::status_text(500),
-            "Internal Server Server Error"
+            "Internal Server Error"
         );
         assert_eq!(ErrorPageManager::status_text(501), "Not Implemented");
         assert_eq!(ErrorPageManager::status_text(502), "Bad Gateway");

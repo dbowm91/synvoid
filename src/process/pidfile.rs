@@ -118,7 +118,10 @@ impl PidFileManager {
 
         let path = self.pid_file_path();
 
-        let mut file = OpenOptions::new().write(true).create(true).open(&path)?;
+        // NOTE: Intentionally no .truncate(true) — we preserve existing content
+        // until the flock is acquired, then truncate via set_len(0) + seek + write.
+        #[allow(clippy::suspicious_open_options)]
+        let mut file = OpenOptions::new().read(true).write(true).create(true).open(&path)?;
 
         let fd = file.as_raw_fd();
 

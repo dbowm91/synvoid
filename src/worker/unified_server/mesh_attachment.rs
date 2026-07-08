@@ -63,6 +63,16 @@ struct RequiredMeshStartOutput {
 }
 
 #[cfg(feature = "mesh")]
+struct OptionalMeshStartInput<'a> {
+    state: &'a UnifiedServerWorkerState,
+    mesh_status: Arc<tokio::sync::RwLock<crate::worker::mesh_supervision::WorkerMeshStatus>>,
+    mesh_transport: Arc<synvoid_mesh::MeshTransport>,
+    event_tx: tokio::sync::mpsc::Sender<crate::worker::mesh_supervision::MeshSupervisionEvent>,
+    support_tasks: Option<super::MeshSupportTasks>,
+    readiness: &'a WorkerReadinessPlan,
+}
+
+#[cfg(feature = "mesh")]
 struct OptionalMeshStartOutput {
     startup_failure: Option<crate::worker::task_registry::WorkerShutdownCause>,
     active_mesh_support: Option<MeshGenerationSupport>,

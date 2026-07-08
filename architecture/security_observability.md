@@ -67,6 +67,8 @@ Observability makes security-relevant state transitions visible for diagnostics 
 | `synvoid.connection_limiter.*` | Connection limiter |
 | `synvoid.upstream.*` | Upstream health |
 | `synvoid.doq.*` | DNS-over-QUIC |
+| `synvoid.doh.*` | DNS-over-HTTPS |
+| `synvoid.dot.*` | DNS-over-TLS |
 | `synvoid.honeypot.*` | Honeypot |
 | `synvoid.static.*` | Static file serving |
 | `synvoid.serverless.*` | Serverless WASM |

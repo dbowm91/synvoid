@@ -1296,14 +1296,15 @@ mod tests {
     #[tokio::test]
     async fn test_panic_is_reported() {
         let mut registry = WorkerTaskRegistry::new();
+
+        let panics_before = registry.metrics.tasks_panicked.load(Ordering::Relaxed);
+
         registry.spawn_critical("panicking_task", async {
             panic!("test panic");
         });
 
         // Give the spawned task time to run and record metrics
         tokio::time::sleep(Duration::from_millis(50)).await;
-
-        let panics_before = registry.metrics.tasks_panicked.load(Ordering::Relaxed);
 
         let exits = registry
             .shutdown_and_join(Duration::from_secs(5), Duration::from_secs(5))

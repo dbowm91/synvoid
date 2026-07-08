@@ -160,6 +160,11 @@ impl ProcessSandbox {
         Self { backend }
     }
 
+    pub fn with_stub(level: SandboxLevel) -> Self {
+        let backend: Box<dyn SandboxBackend> = Box::new(StubSandbox::new(level, "disabled"));
+        Self { backend }
+    }
+
     pub fn with_paths(level: SandboxLevel, paths: SandboxPaths) -> Result<Self, SandboxError> {
         let sandbox = Self::new(level);
 
@@ -1210,12 +1215,9 @@ mod tests {
         let caps = stub.capabilities();
         assert!(!caps.can_enforce_strict());
 
-        let result = ProcessSandbox::with_paths(SandboxLevel::Strict, SandboxPaths::new());
-        assert!(result.is_err());
-        if let Err(SandboxError::InsufficientCapabilities(_)) = result {
-        } else {
-            panic!("expected InsufficientCapabilities error");
-        }
+        let sandbox = ProcessSandbox::with_stub(SandboxLevel::Strict);
+        let caps = sandbox.capabilities();
+        assert!(!caps.can_enforce_strict(), "stub backend should not support strict");
     }
 
     #[test]

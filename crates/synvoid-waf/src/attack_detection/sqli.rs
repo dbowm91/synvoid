@@ -178,7 +178,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::unnecessary_enumerate_index)]
+    #[allow(clippy::unused_enumerate_index)]
     fn test_sqli_pattern_match() {
         let detector = SqliDetector::new(2, &["CUSTOM_SQLI_PATTERN".to_string()]);
         let input = b"CUSTOM_SQLI_PATTERN";

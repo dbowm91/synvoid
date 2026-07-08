@@ -1,8 +1,12 @@
 const DURATION_SUFFIXES: &[(&str, &str, u64)] = &[
     ("seconds", "s", 1),
+    ("sec", "sec", 1),
     ("minutes", "m", 60),
+    ("min", "min", 60),
     ("hours", "h", 3600),
+    ("hr", "hr", 3600),
     ("days", "d", 86400),
+    ("day", "day", 86400),
 ];
 
 const DURATION_SUFFIX_SHORT: &[(char, u64)] = &[('s', 1), ('m', 60), ('h', 3600), ('d', 86400)];
