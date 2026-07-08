@@ -2,6 +2,7 @@
 name = "synvoid-http-client"
 version = "0.1.0"
 edition = "2021"
+license.workspace = true
 
 [dependencies]
 bytes = "1"

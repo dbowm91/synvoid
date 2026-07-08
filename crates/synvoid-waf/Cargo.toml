@@ -2,6 +2,7 @@
 name = "synvoid-waf"
 version = "0.1.0"
 edition = "2021"
+license.workspace = true
 
 [dependencies]
 synvoid-core = { path = "../synvoid-core" }

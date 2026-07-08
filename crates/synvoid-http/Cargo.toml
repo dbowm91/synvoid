@@ -2,6 +2,7 @@
 name = "synvoid-http"
 version = "0.1.0"
 edition = "2021"
+license.workspace = true
 
 [features]
 mesh = ["synvoid-config/mesh", "dep:synvoid-mesh", "synvoid-mesh/mesh"]

@@ -2,6 +2,7 @@
 name = "synvoid-block-store"
 version = "0.1.0"
 edition = "2021"
+license.workspace = true
 description = "Persistent IP block store with LRU eviction and disk persistence"
 
 [features]

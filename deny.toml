@@ -1,5 +1,5 @@
 # SynVoid dependency policy
-# Reviewed: 2026-07-08 (Milestone B residual hardening — cargo deny config fix)
+# Reviewed: 2026-07-08 (Milestone B release cleanup — license metadata + BSL-1.0 allowlist)
 # Run: cargo deny check && cargo audit
 # Owner: security / release
 
@@ -14,10 +14,8 @@ allow = [
     "MPL-2.0",
     "CC0-1.0",
     "Unicode-3.0",
-    "Unicode-DFS-2016",
     "Zlib",
-    "WTFPL",
-    "OpenSSL",
+    "BSL-1.0",
     "CDLA-Permissive-2.0",
     "IJG",
 ]
