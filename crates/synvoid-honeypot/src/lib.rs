@@ -1,3 +1,6 @@
+pub mod ai_budget;
+#[cfg(test)]
+mod ai_responder_containment_tests;
 pub mod config;
 pub mod controller;
 pub mod listener;
@@ -11,9 +14,12 @@ pub mod storage;
 pub mod storage_writer;
 pub mod threat_intel;
 
+pub use ai_budget::{
+    AiCircuitBreaker, AiConcurrencyLimiter, AiConcurrencyPermit, AiTurnCounter, BudgetExceeded,
+};
 pub use config::{
-    AiConfig, PayloadRetentionMode, PortHoneypotConfig, ResponseModeConfig, StablePortConfig,
-    StorageWriterConfig, ThreatIntelConfig,
+    AiBudgetConfig, AiConfig, AiResponderMode, PayloadRetentionMode, PortHoneypotConfig,
+    ResponseModeConfig, StablePortConfig, StorageWriterConfig, ThreatIntelConfig,
 };
 pub use controller::PortHoneypotController;
 pub use listener::PortHoneypotListener;
@@ -23,8 +29,8 @@ pub use mesh_control::{
 pub use protocol::{Confidence, ProtocolDetector, ProtocolMatch, ServiceBanner};
 pub use responders::{
     default_ssh_system_prompt, http_system_prompt, mysql_system_prompt, redis_system_prompt,
-    AiHoneypotResponder, AiProvider, AiResponder, AnthropicResponder, OllamaResponder,
-    OpenAIResponder, StaticResponder, VulnerableAppResponder,
+    AiHoneypotResponder, AiProvider, AiResponder, AiResponderBudget, AnthropicResponder,
+    OllamaResponder, OpenAIResponder, StaticResponder, TemplateResponder, VulnerableAppResponder,
 };
 pub use responses::{
     HoneypotContext, HoneypotResponder, HoneypotResponderRegistry, HoneypotResponse, ResponseType,

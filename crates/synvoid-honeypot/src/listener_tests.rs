@@ -154,6 +154,7 @@ mod tests {
             &detector,
             permit,
             guard,
+            None,
         )
         .await;
 
@@ -207,6 +208,7 @@ mod tests {
             &detector,
             permit,
             guard,
+            None,
         )
         .await;
 
@@ -258,6 +260,7 @@ mod tests {
             &detector,
             permit,
             guard,
+            None,
         )
         .await;
 
@@ -310,6 +313,7 @@ mod tests {
             &detector,
             permit,
             guard,
+            None,
         )
         .await;
 
@@ -353,6 +357,7 @@ mod tests {
             &detector,
             permit,
             guard,
+            None,
         )
         .await;
 

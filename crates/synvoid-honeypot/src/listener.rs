@@ -11,6 +11,7 @@ use tokio::time;
 
 use crate::config::PortHoneypotConfig;
 use crate::protocol::{Confidence, ProtocolDetector};
+use crate::responders::AiResponderBudget;
 use crate::storage::HoneypotRecord;
 use crate::storage_writer::HoneypotWriter;
 use synvoid_utils::current_timestamp;
@@ -49,6 +50,7 @@ pub struct PortHoneypotListener {
     shutdown_tx: broadcast::Sender<()>,
     ip_connection_counts: Arc<RwLock<HashMap<String, usize>>>,
     global_semaphore: Arc<Semaphore>,
+    ai_budget: Option<Arc<AiResponderBudget>>,
 }
 
 #[derive(Debug, Clone)]
@@ -64,7 +66,11 @@ pub struct ConnectionEvent {
 }
 
 impl PortHoneypotListener {
-    pub fn new(config: PortHoneypotConfig, writer: HoneypotWriter) -> Arc<Self> {
+    pub fn new(
+        config: PortHoneypotConfig,
+        writer: HoneypotWriter,
+        ai_budget: Option<Arc<AiResponderBudget>>,
+    ) -> Arc<Self> {
         let (shutdown_tx, _) = broadcast::channel(1);
         let max_concurrent = config.max_concurrent_connections;
 
@@ -77,6 +83,7 @@ impl PortHoneypotListener {
             shutdown_tx,
             ip_connection_counts: Arc::new(RwLock::new(HashMap::new())),
             global_semaphore: Arc::new(Semaphore::new(max_concurrent)),
+            ai_budget,
         })
     }
 
@@ -191,6 +198,7 @@ impl PortHoneypotListener {
                             let writer = self.writer.clone();
                             let detector = self.detector.clone();
                             let active = self.active_connections.clone();
+                            let ai_budget = self.ai_budget.clone();
 
                             metrics::counter!("honeypot_connections_accepted").increment(1);
 
@@ -205,6 +213,7 @@ impl PortHoneypotListener {
                                     &detector,
                                     global_permit,
                                     ip_guard,
+                                    ai_budget.as_ref(),
                                 )
                                 .await;
                                 active.fetch_sub(1, Ordering::Relaxed);
@@ -239,6 +248,7 @@ pub(crate) async fn handle_connection(
     detector: &ProtocolDetector,
     _global_permit: OwnedSemaphorePermit,
     _ip_guard: IpConnGuard,
+    ai_budget: Option<&Arc<AiResponderBudget>>,
 ) {
     let start = Instant::now();
     let max_payload = config.max_payload_size;
@@ -293,8 +303,26 @@ pub(crate) async fn handle_connection(
     // Banner lookup uses normalized protocol (lowercase)
     let banner = detector.get_banner_for_service(&protocol, local_port);
 
+    // When AI budget is active, check circuit breaker before sending banner.
+    // If circuit is open (too many failures), use fallback_response to avoid
+    // wasting AI resources on a potentially unproductive connection.
+    let effective_banner = if let Some(budget) = ai_budget {
+        if budget.circuit_breaker.is_open() {
+            let fallback = crate::ai_budget::fallback_response(&protocol);
+            Some(crate::protocol::ServiceBanner {
+                service: service.clone(),
+                banner: fallback,
+                response_for_payload: None,
+            })
+        } else {
+            banner
+        }
+    } else {
+        banner
+    };
+
     // Send banner + response_for_payload
-    if let Some(ref banner_data) = banner {
+    if let Some(ref banner_data) = effective_banner {
         let mut write_buf = banner_data.banner.clone();
 
         if !payload.is_empty() {

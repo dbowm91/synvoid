@@ -7,6 +7,24 @@ fn default_true() -> bool {
 fn default_mesh_enabled() -> bool {
     false
 }
+fn default_max_prompt_bytes() -> usize {
+    4096
+}
+fn default_max_response_bytes() -> usize {
+    2048
+}
+fn default_max_generation_secs() -> u64 {
+    10
+}
+fn default_max_turns() -> usize {
+    5
+}
+fn default_max_concurrent_ai() -> usize {
+    4
+}
+fn default_max_provider_failures() -> usize {
+    3
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreatIntelConfig {
@@ -24,6 +42,59 @@ impl Default for ThreatIntelConfig {
             enabled: true,
             mesh_enabled: false,
             scoring: crate::threat_intel::ScoringConfig::default(),
+        }
+    }
+}
+
+/// AI responder operational mode. Default is `Disabled`.
+///
+/// - `Disabled`: No AI responses; template/vulnerable-app only.
+/// - `TemplateOnly`: Deterministic protocol banners, no external calls.
+/// - `LocalModelOnly`: Local model (e.g. Ollama) with strict budgets.
+/// - `ExternalProvider`: External API (OpenAI/Anthropic) — experimental, opt-in.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AiResponderMode {
+    #[default]
+    Disabled,
+    TemplateOnly,
+    LocalModelOnly,
+    ExternalProvider,
+}
+
+/// Hard budgets for AI responder behavior. Prevents unbounded cost, prompt
+/// injection amplification, and provider abuse.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiBudgetConfig {
+    /// Maximum prompt bytes sent to provider (token approximation via bytes).
+    #[serde(default = "default_max_prompt_bytes")]
+    pub max_prompt_bytes: usize,
+    /// Maximum response bytes retained from provider.
+    #[serde(default = "default_max_response_bytes")]
+    pub max_response_bytes: usize,
+    /// Maximum generation duration in seconds before timeout.
+    #[serde(default = "default_max_generation_secs")]
+    pub max_generation_duration_secs: u64,
+    /// Maximum AI turns per connection.
+    #[serde(default = "default_max_turns")]
+    pub max_turns_per_connection: usize,
+    /// Maximum concurrent AI responder requests globally.
+    #[serde(default = "default_max_concurrent_ai")]
+    pub max_concurrent_requests: usize,
+    /// Provider failures before circuit breaker opens.
+    #[serde(default = "default_max_provider_failures")]
+    pub max_provider_failures: usize,
+}
+
+impl Default for AiBudgetConfig {
+    fn default() -> Self {
+        Self {
+            max_prompt_bytes: default_max_prompt_bytes(),
+            max_response_bytes: default_max_response_bytes(),
+            max_generation_duration_secs: default_max_generation_secs(),
+            max_turns_per_connection: default_max_turns(),
+            max_concurrent_requests: default_max_concurrent_ai(),
+            max_provider_failures: default_max_provider_failures(),
         }
     }
 }
@@ -67,12 +138,19 @@ pub struct ResponseModeConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiConfig {
+    /// AI responder mode. Default: `Disabled`.
+    #[serde(default)]
+    pub mode: AiResponderMode,
+    /// Provider identifier: "ollama", "openai", or "anthropic".
     pub provider: String,
     pub endpoint: Option<String>,
     pub api_key: Option<String>,
     pub model: String,
     pub timeout_secs: u64,
     pub system_prompt: Option<String>,
+    /// Hard budgets for prompt/response sizes, concurrency, and circuit breaker.
+    #[serde(default)]
+    pub budget: AiBudgetConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

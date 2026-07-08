@@ -7,6 +7,7 @@ use tokio::time;
 
 use crate::config::PortHoneypotConfig;
 use crate::listener::PortHoneypotListener;
+use crate::responders::AiResponderBudget;
 use crate::storage::HoneypotStorage;
 use crate::storage_writer::HoneypotWriter;
 #[cfg(feature = "mesh")]
@@ -30,8 +31,15 @@ impl PortHoneypotRunner {
         let storage = HoneypotStorage::new(&config.storage)?;
         let writer = HoneypotWriter::new(storage.clone(), config.storage.writer.clone());
 
+        // Build AI responder budget when mode is not Disabled
+        let ai_budget = config
+            .ai_config
+            .as_ref()
+            .filter(|c| c.mode != crate::config::AiResponderMode::Disabled)
+            .map(|c| Arc::new(AiResponderBudget::new(c.budget.clone())));
+
         let config = Arc::new(config);
-        let listener = PortHoneypotListener::new((*config).clone(), writer.clone());
+        let listener = PortHoneypotListener::new((*config).clone(), writer.clone(), ai_budget);
 
         let (shutdown_tx, _) = broadcast::channel(1);
 
