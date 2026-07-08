@@ -13,8 +13,6 @@ use super::config::{WireGuardConfig, WireGuardPeerConfig};
 use super::session::{WgConnectionStats, WgPeerSession, WgSessionManager};
 #[allow(unused_imports)]
 use crate::tun::{is_tun_available, TunConfig, TunInterface};
-#[cfg(feature = "tun-rs")]
-use crate::tun::{TunReader, TunWriter};
 use crate::{PeerInfo, TunnelStats, TunnelTransport, TunnelType};
 
 const MAX_PACKET_SIZE: usize = 65535;
@@ -134,7 +132,6 @@ impl UserspaceWireGuard {
 
     #[cfg(feature = "wireguard")]
     async fn start_boringtun(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        use defguard_boringtun::noise::{Tunn, TunnResult};
         use defguard_boringtun::x25519::StaticSecret;
 
         tracing::info!("Starting boringtun userspace WireGuard");
@@ -266,58 +263,6 @@ impl UserspaceWireGuard {
 
     pub fn session_manager(&self) -> &WgSessionManager {
         &self.sessions
-    }
-
-    #[cfg(feature = "tun-rs")]
-    fn spawn_packet_handler(&mut self, device: Arc<crate::tun::AsyncTunDevice>) {
-        let shutdown_rx = self.shutdown_tx.subscribe();
-        let sessions = self.sessions.clone();
-        let tx_queue_rx = self.tx_queue_rx.take();
-
-        tokio::spawn(async move {
-            let mut shutdown_rx = shutdown_rx;
-            let mut rx_buf = vec![0u8; MAX_PACKET_SIZE];
-
-            if let Some(mut tx_queue) = tx_queue_rx {
-                loop {
-                    tokio::select! {
-                        result = device.read_packet(&mut rx_buf) => {
-                            match result {
-                                Ok(n) if n > 0 => {
-                                    let packet = TunPacket::new(rx_buf[..n].to_vec());
-
-                                    if let Some(src) = packet.src_addr() {
-                                        tracing::trace!("Received packet from TUN: {} bytes, src={}", n, src);
-                                    }
-
-                                    counter!("synvoid.tunnel.wireguard.packets.received").increment(1);
-                                    counter!("synvoid.tunnel.wireguard.bytes.received").increment(n as u64);
-                                }
-                                Ok(_) => {}
-                                Err(e) => {
-                                    tracing::trace!("TUN read error: {}", e);
-                                }
-                            }
-                        }
-                        Some(data) = tx_queue.recv() => {
-                            let packet = TunPacket::new(data);
-                            match device.write_packet(packet.data()).await {
-                                Ok(_n) => {
-                                    counter!("synvoid.tunnel.wireguard.packets.sent").increment(1);
-                                }
-                                Err(e) => {
-                                    tracing::trace!("TUN write error: {}", e);
-                                }
-                            }
-                        }
-                        _ = shutdown_rx.recv() => {
-                            tracing::debug!("Packet handler shutting down");
-                            break;
-                        }
-                    }
-                }
-            }
-        });
     }
 }
 

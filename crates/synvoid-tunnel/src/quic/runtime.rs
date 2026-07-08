@@ -239,6 +239,7 @@ impl QuicRuntime {
         Ok(rx)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn accept_loop(
         endpoint: Endpoint,
         tx: mpsc::Sender<IncomingConnection>,

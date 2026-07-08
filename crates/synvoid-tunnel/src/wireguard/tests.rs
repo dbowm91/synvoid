@@ -97,8 +97,10 @@ peer: CLIENT2_PUB
     assert_eq!(iface.listen_port, 51820);
     assert_eq!(iface.peers.len(), 2);
 
-    assert_eq!(iface.total_rx(), 20500000);
-    assert_eq!(iface.total_tx(), 11250000);
+    // 15.50 MiB + 5.00 MiB = 20.50 MiB in bytes
+    assert_eq!(iface.total_rx(), (20.50_f64 * 1024.0 * 1024.0) as u64);
+    // 8.25 MiB + 3.00 MiB = 11.25 MiB in bytes
+    assert_eq!(iface.total_tx(), (11.25_f64 * 1024.0 * 1024.0) as u64);
     assert_eq!(iface.connected_peers(), 2);
 }
 

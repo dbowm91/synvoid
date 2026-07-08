@@ -1,6 +1,6 @@
 # Tunnel Support
 
-> **Note:** WireGuard VPN has been removed from the codebase. QUIC Tunnels are now the primary transport for site-to-site connectivity.
+> **Note:** WireGuard support is feature-gated (`wireguard` feature) but currently stubbed. The kernel WireGuard backend requires `wireguard-control` which has an incompatible API, and the userspace backend (boringtun) is compiled but packet handling is incomplete. QUIC Tunnels are the primary production transport for site-to-site connectivity.
 
 SynVoid supports multiple tunnel types for site-to-site connectivity and WAF clustering:
 
@@ -94,6 +94,16 @@ synvoid_tunnel_quic_sessions            # Active sessions
 synvoid_tcp_quic_tunnel_streams_opened
 synvoid_tcp_quic_tunnel_streams_closed
 ```
+
+## WireGuard (Feature-Gated, Stubbed)
+
+WireGuard support is behind the `wireguard` Cargo feature. Currently **stubbed** — the feature compiles but does not provide functional WireGuard tunnels:
+
+- **Kernel backend** (`wireguard/kernel.rs`): Requires `wireguard-control` crate (netlink). The crate's v2.0.0 API is incompatible with the current code. `is_kernel_wireguard_available()` always returns `false`.
+- **Userspace backend** (`wireguard/userspace.rs`): Uses `defguard_boringtun` for Noise protocol framing, but packet handler is disabled pending TUN device integration.
+- **TUN device** (`tun.rs`): Platform stubs return `io::ErrorKind::Unsupported`. The `tun-rs` feature is a no-op.
+
+To compile with WireGuard stubs: `cargo check -p synvoid-tunnel --features wireguard`
 
 ## Use Cases
 

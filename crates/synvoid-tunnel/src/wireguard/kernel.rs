@@ -2,36 +2,26 @@
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_trait::async_trait;
 
 use dashmap::DashMap;
 use metrics::{counter, gauge};
-use tokio::process::Command;
-use tokio::sync::{broadcast, RwLock};
-
-#[cfg(all(target_os = "linux", feature = "wireguard"))]
-use wireguard_control::{
-    AllowedIp, Backend, DeviceUpdate, Error as WgError, InterfaceName, PeerConfigBuilder,
-};
+use tokio::sync::broadcast;
 
 use super::config::{WireGuardConfig, WireGuardPeerConfig};
 use super::session::{WgConnectionStats, WgPeerSession, WgSessionManager};
-use super::stats::{WgInterfaceStats, WgStatsCollector};
-use super::tun::{is_tun_available, TunInterface};
+use super::stats::WgStatsCollector;
 use crate::{PeerInfo, TunnelStats, TunnelTransport, TunnelType};
 
 pub struct KernelWireGuard {
     config: WireGuardConfig,
     sessions: Arc<WgSessionManager>,
     stats: Arc<DashMap<String, WgConnectionStats>>,
-    stats_collector: Arc<RwLock<Option<WgStatsCollector>>>,
-    tun: Option<Arc<TunInterface>>,
+    stats_collector: Arc<tokio::sync::RwLock<Option<WgStatsCollector>>>,
     shutdown_tx: broadcast::Sender<()>,
     running: bool,
     interface_name: String,
-    interface_created: bool,
 }
 
 impl KernelWireGuard {
@@ -39,7 +29,7 @@ impl KernelWireGuard {
         let (shutdown_tx, _) = broadcast::channel(1);
         let sessions = Arc::new(WgSessionManager::new());
         let stats = Arc::new(DashMap::new());
-        let stats_collector = Arc::new(RwLock::new(None));
+        let stats_collector = Arc::new(tokio::sync::RwLock::new(None));
         let interface_name = config.interface_name.clone();
 
         tracing::info!(
@@ -53,252 +43,10 @@ impl KernelWireGuard {
             sessions,
             stats,
             stats_collector,
-            tun: None,
             shutdown_tx,
             running: false,
             interface_name,
-            interface_created: false,
         })
-    }
-
-    #[cfg(all(target_os = "linux", feature = "wireguard"))]
-    async fn setup_interface(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let iface = InterfaceName::from(&self.interface_name);
-
-        let private_key = base64::engine::general_purpose::STANDARD
-            .decode(&self.config.private_key)
-            .map_err(|e| format!("Failed to decode private key: {}", e))?;
-
-        let key_array: [u8; 32] = private_key
-            .try_into()
-            .map_err(|_| "Invalid private key length")?;
-
-        let mut update = DeviceUpdate::new(iface);
-        update.set_private_key(key_array.into());
-        update.set_listen_port(self.config.listen_port);
-
-        if let Some(fwmark) = self.config.fwmark {
-            update.set_fwmark(Some(fwmark));
-        }
-
-        match update.apply(&Backend::Kernel) {
-            Ok(_) => {
-                tracing::debug!(
-                    "Created/configured WireGuard interface: {}",
-                    self.interface_name
-                );
-                self.interface_created = true;
-            }
-            Err(WgError::InterfaceExists) => {
-                tracing::info!("WireGuard interface {} already exists", self.interface_name);
-                self.interface_created = false;
-            }
-            Err(e) => {
-                return Err(format!("Failed to configure WireGuard interface: {}", e).into());
-            }
-        }
-
-        let output = Command::new("ip")
-            .args(&[
-                "link",
-                "set",
-                "dev",
-                &self.interface_name,
-                "mtu",
-                &self.config.mtu.to_string(),
-            ])
-            .output()
-            .await
-            .map_err(|e| format!("Failed to set MTU: {}", e))?;
-
-        tracing::info!("WireGuard interface {} configured", self.interface_name);
-        Ok(())
-    }
-
-    #[cfg(not(all(target_os = "linux", feature = "wireguard")))]
-    async fn setup_interface(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        Err("Kernel WireGuard requires Linux with wireguard feature".into())
-    }
-
-    async fn configure_interface_address(
-        &self,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let iface = &self.interface_name;
-
-        let address = if !self.config.peers.is_empty() {
-            let peer = &self.config.peers[0];
-            if let Some(endpoint) = &peer.endpoint {
-                let _endpoint_port = endpoint
-                    .parse::<SocketAddr>()
-                    .map(|a| a.port())
-                    .unwrap_or(51820);
-                "10.0.0.2/24".to_string()
-            } else {
-                "10.0.0.1/24".to_string()
-            }
-        } else {
-            "10.0.0.1/24".to_string()
-        };
-
-        let result = Command::new("ip")
-            .args(["addr", "add", &address, "dev", iface])
-            .output()
-            .await;
-
-        match result {
-            Ok(output) if output.status.success() => {
-                tracing::debug!("Assigned address {} to {}", address, iface);
-            }
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                if stderr.contains("already exists") {
-                    tracing::debug!("Address {} already assigned to {}", address, iface);
-                } else {
-                    tracing::warn!("Failed to assign address (non-fatal): {}", stderr);
-                }
-            }
-            Err(e) => {
-                tracing::warn!("Failed to assign address (non-fatal): {}", e);
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn bring_interface_up(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let iface = &self.interface_name;
-
-        Command::new("ip")
-            .args(["link", "set", "dev", iface, "up"])
-            .output()
-            .await
-            .map_err(|e| format!("Failed to bring interface up: {}", e))?;
-
-        tracing::info!("Interface {} is up", iface);
-        Ok(())
-    }
-
-    #[cfg(all(target_os = "linux", feature = "wireguard"))]
-    async fn add_peer_kernel(
-        &self,
-        peer: &WireGuardPeerConfig,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let public_key = base64::engine::general_purpose::STANDARD
-            .decode(&peer.public_key)
-            .map_err(|e| format!("Failed to decode peer public key: {}", e))?;
-
-        let public_key_array: [u8; 32] = public_key
-            .try_into()
-            .map_err(|_| "Invalid peer public key length")?;
-
-        let mut peer_config = PeerConfigBuilder::new(public_key_array.into());
-
-        if let Some(endpoint) = &peer.endpoint {
-            let addr: SocketAddr = endpoint
-                .parse()
-                .map_err(|e| format!("Invalid endpoint: {}", e))?;
-            peer_config.set_endpoint(addr);
-        }
-
-        if !peer.allowed_ips.is_empty() {
-            let allowed_ips: Result<Vec<AllowedIp>, _> = peer
-                .allowed_ips
-                .iter()
-                .map(|ip_str| {
-                    let (ip, prefix) = ip_str.split_once('/').ok_or("Invalid allowed IP format")?;
-                    let ip: IpAddr = ip.parse().map_err(|_| "Invalid IP address")?;
-                    let prefix: u8 = prefix.parse().map_err(|_| "Invalid prefix length")?;
-                    Ok(AllowedIp::new(ip, prefix))
-                })
-                .collect();
-            peer_config.set_allowed_ips(allowed_ips?);
-        }
-
-        if peer.persistent_keepalive > 0 {
-            peer_config.set_persistent_keepalive(peer.persistent_keepalive);
-        }
-
-        let iface = InterfaceName::from(&self.interface_name);
-        let mut update = DeviceUpdate::new(iface);
-        update.add_peer(peer_config.build());
-
-        update
-            .apply(&Backend::Kernel)
-            .map_err(|e| format!("Failed to add peer: {}", e))?;
-
-        tracing::debug!("Added peer {} via netlink", peer.public_key);
-        Ok(())
-    }
-
-    #[cfg(not(all(target_os = "linux", feature = "wireguard")))]
-    async fn add_peer_kernel(
-        &self,
-        peer: &WireGuardPeerConfig,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        Err("Kernel WireGuard peer addition requires Linux with wireguard feature".into())
-    }
-
-    #[cfg(all(target_os = "linux", feature = "wireguard"))]
-    async fn remove_peer_kernel(
-        &self,
-        public_key: &str,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let public_key = base64::engine::general_purpose::STANDARD
-            .decode(public_key)
-            .map_err(|e| format!("Failed to decode peer public key: {}", e))?;
-
-        let public_key_array: [u8; 32] = public_key
-            .try_into()
-            .map_err(|_| "Invalid peer public key length")?;
-
-        let iface = InterfaceName::from(&self.interface_name);
-        let mut update = DeviceUpdate::new(iface);
-        update.add_peer(
-            PeerConfigBuilder::new(public_key_array.into())
-                .remove()
-                .build(),
-        );
-
-        update
-            .apply(&Backend::Kernel)
-            .map_err(|e| format!("Failed to remove peer: {}", e))?;
-
-        tracing::debug!("Removed peer via netlink");
-        Ok(())
-    }
-
-    #[cfg(not(all(target_os = "linux", feature = "wireguard")))]
-    async fn remove_peer_kernel(
-        &self,
-        _public_key: &str,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        Err("Kernel WireGuard peer removal requires Linux with wireguard feature".into())
-    }
-
-    async fn teardown_interface(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        if self.interface_created {
-            #[cfg(all(target_os = "linux", feature = "wireguard"))]
-            {
-                use wireguard_control::Error as WgError;
-                let iface = InterfaceName::from(&self.interface_name);
-                match wireguard_control::delete_interface(iface, &Backend::Kernel) {
-                    Ok(_) => {
-                        tracing::info!("WireGuard interface {} removed", self.interface_name);
-                    }
-                    Err(WgError::InterfaceNotFound) => {
-                        tracing::debug!(
-                            "WireGuard interface {} already removed",
-                            self.interface_name
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to remove interface: {}", e);
-                    }
-                }
-            }
-            self.interface_created = false;
-        }
-        Ok(())
     }
 
     pub fn add_peer(
@@ -324,49 +72,6 @@ impl KernelWireGuard {
         }
         Ok(())
     }
-
-    #[cfg(target_os = "linux")]
-    async fn start_stats_collector(&self) {
-        let collector = self.stats_collector.clone();
-        let interface = self.interface_name.clone();
-        let shutdown_rx = self.shutdown_tx.subscribe();
-
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(5));
-            let mut shutdown_rx = shutdown_rx;
-
-            loop {
-                tokio::select! {
-                    _ = interval.tick() => {
-                        let mut guard = collector.write().await;
-                        if let Some(ref mut c) = *guard {
-                            match c.refresh().await {
-                                Ok(stats) => {
-                                    for peer in &stats.peers {
-                                        if let Some(handshake) = peer.latest_handshake {
-                                            gauge!("synvoid.tunnel.wireguard.peer.handshake")
-                                                .set(handshake as f64);
-                                        }
-                                        counter!("synvoid.tunnel.wireguard.peer.rx")
-                                            .absolute(peer.transfer_rx);
-                                        counter!("synvoid.tunnel.wireguard.peer.tx")
-                                            .absolute(peer.transfer_tx);
-                                    }
-                                }
-                                Err(e) => {
-                                    tracing::trace!("Stats collection error: {}", e);
-                                }
-                            }
-                        }
-                    }
-                    _ = shutdown_rx.recv() => {
-                        tracing::debug!("Stats collector shutting down");
-                        break;
-                    }
-                }
-            }
-        });
-    }
 }
 
 #[async_trait]
@@ -376,52 +81,35 @@ impl TunnelTransport for KernelWireGuard {
     }
 
     async fn start(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.setup_interface().await?;
+        tracing::warn!(
+            "Kernel WireGuard backend not yet available — \
+             interface {} will not be configured",
+            self.interface_name
+        );
 
         for peer_config in &self.config.peers {
-            match self.add_peer_kernel(peer_config).await {
-                Ok(_) => {
-                    let peer_session = WgPeerSession::new(
-                        peer_config.public_key.clone(),
-                        peer_config.allowed_ips.clone(),
-                    )
-                    .with_endpoint(peer_config.endpoint.clone().unwrap_or_default());
+            let peer_session = WgPeerSession::new(
+                peer_config.public_key.clone(),
+                peer_config.allowed_ips.clone(),
+            )
+            .with_endpoint(peer_config.endpoint.clone().unwrap_or_default());
 
-                    self.sessions.add_session(peer_session);
-                    counter!("synvoid.tunnel.wireguard.peers.added").increment(1);
-                }
-                Err(e) => {
-                    tracing::error!("Failed to add peer {}: {}", peer_config.public_key, e);
-                }
-            }
+            self.sessions.add_session(peer_session);
+            counter!("synvoid.tunnel.wireguard.peers.added").increment(1);
         }
-
-        self.configure_interface_address().await?;
-        self.bring_interface_up().await?;
-
-        #[cfg(target_os = "linux")]
-        {
-            let mut guard = self.stats_collector.write().await;
-            *guard = Some(WgStatsCollector::new(&self.interface_name));
-        }
-
-        #[cfg(target_os = "linux")]
-        self.start_stats_collector().await;
 
         self.running = true;
         gauge!("synvoid.tunnel.wireguard.running").set(1.0);
 
         counter!("synvoid.tunnel.wireguard.started").increment(1);
         tracing::info!(
-            "Kernel WireGuard started with {} peers",
+            "Kernel WireGuard started (stub) with {} peers",
             self.config.peers.len()
         );
         Ok(())
     }
 
     async fn stop(&mut self) {
-        let _ = self.teardown_interface().await;
-
         self.running = false;
         gauge!("synvoid.tunnel.wireguard.running").set(0.0);
 
@@ -487,35 +175,11 @@ impl TunnelTransport for KernelWireGuard {
 }
 
 pub async fn is_kernel_wireguard_available() -> bool {
-    if !is_tun_available() {
-        return false;
-    }
-
-    #[cfg(all(target_os = "linux", feature = "wireguard"))]
-    {
-        match wireguard_control::get_interfaces() {
-            Ok(interfaces) => !interfaces.is_empty() || true,
-            Err(_) => true,
-        }
-    }
-
-    #[cfg(not(all(target_os = "linux", feature = "wireguard")))]
-    {
-        false
-    }
+    false
 }
 
-pub async fn get_wireguard_stats(interface: &str) -> Result<WgInterfaceStats, String> {
-    #[cfg(target_os = "linux")]
-    {
-        super::stats::get_interface_stats(interface)
-            .await
-            .map_err(|e| e.to_string())
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = interface;
-        Err("WireGuard stats only available on Linux".to_string())
-    }
+pub async fn get_wireguard_stats(
+    _interface: &str,
+) -> Result<super::stats::WgInterfaceStats, String> {
+    Err("Kernel WireGuard stats not available".to_string())
 }

@@ -138,408 +138,6 @@ pub enum TunProtocol {
     IPv6,
 }
 
-#[cfg(feature = "tun-rs")]
-pub mod platform {
-    use super::*;
-    use std::io;
-    use std::pin::Pin;
-    use std::task::{Context, Poll};
-
-    use pin_project_lite::pin_project;
-    use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-    use tun_rs::{Device, DeviceBuilder, TunReader, TunWriter};
-
-    pin_project! {
-        pub struct AsyncTunDevice {
-            device: Device,
-            name: String,
-        }
-    }
-
-    impl AsyncTunDevice {
-        pub fn create(config: TunConfig) -> Result<Self, io::Error> {
-            let mut builder = DeviceBuilder::new();
-
-            builder.name(&config.name);
-
-            match config.address {
-                IpAddr::V4(addr) => {
-                    let prefix_len = Self::netmask_to_prefix_len(config.netmask);
-                    builder.ipv4(addr, prefix_len, None);
-                }
-                IpAddr::V6(addr) => {
-                    let prefix_len = Self::netmask_to_prefix_len(config.netmask);
-                    builder.ipv6(addr, prefix_len, None);
-                }
-            }
-
-            builder.mtu(config.mtu);
-
-            if config.up {
-                builder.up(true);
-            }
-
-            let device = builder.build_sync()?;
-
-            let name = device.name().to_string();
-
-            tracing::info!("Created TUN interface: {} (mtu: {})", name, config.mtu);
-
-            Ok(Self { device, name })
-        }
-
-        pub async fn create_async(config: TunConfig) -> Result<Self, io::Error> {
-            let mut builder = DeviceBuilder::new();
-
-            builder.name(&config.name);
-
-            match config.address {
-                IpAddr::V4(addr) => {
-                    let prefix_len = Self::netmask_to_prefix_len(config.netmask);
-                    builder.ipv4(addr, prefix_len, None);
-                }
-                IpAddr::V6(addr) => {
-                    let prefix_len = Self::netmask_to_prefix_len(config.netmask);
-                    builder.ipv6(addr, prefix_len, None);
-                }
-            }
-
-            builder.mtu(config.mtu);
-
-            if config.up {
-                builder.up(true);
-            }
-
-            let device = builder.build_async().await?;
-
-            let name = device.name().to_string();
-
-            tracing::info!(
-                "Created async TUN interface: {} (mtu: {})",
-                name,
-                config.mtu
-            );
-
-            Ok(Self { device, name })
-        }
-
-        fn netmask_to_prefix_len(netmask: IpAddr) -> u8 {
-            match netmask {
-                IpAddr::V4(ipv4) => {
-                    let bits = ipv4.octets();
-                    bits.iter()
-                        .fold(0u8, |acc, &octet| acc + octet.count_ones() as u8)
-                }
-                IpAddr::V6(ipv6) => {
-                    let bits = ipv6.segments();
-                    bits.iter()
-                        .fold(0u8, |acc, &seg| acc + seg.count_ones() as u8)
-                }
-            }
-        }
-
-        pub fn name(&self) -> &str {
-            &self.name
-        }
-
-        pub fn reader(&self) -> TunReader {
-            self.device.reader()
-        }
-
-        pub fn writer(&self) -> TunWriter {
-            self.device.writer()
-        }
-    }
-
-    impl AsyncRead for AsyncTunDevice {
-        fn poll_read(
-            self: Pin<&mut Self>,
-            cx: &mut Context<'_>,
-            buf: &mut ReadBuf<'_>,
-        ) -> Poll<io::Result<()>> {
-            let this = self.project();
-            this.device.poll_read_packet(cx, buf)
-        }
-    }
-
-    impl AsyncWrite for AsyncTunDevice {
-        fn poll_write(
-            self: Pin<&mut Self>,
-            cx: &mut Context<'_>,
-            buf: &[u8],
-        ) -> Poll<io::Result<usize>> {
-            let this = self.project();
-            this.device.poll_write_packet(cx, buf)
-        }
-
-        fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-            let this = self.project();
-            this.device.poll_flush(cx)
-        }
-
-        fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-            let this = self.project();
-            this.device.poll_shutdown(cx)
-        }
-    }
-
-    impl Drop for AsyncTunDevice {
-        fn drop(&mut self) {
-            tracing::debug!("TUN interface {} being dropped", self.name);
-        }
-    }
-
-    pub struct TunInterface {
-        name: String,
-        config: TunConfig,
-        shutdown_tx: broadcast::Sender<()>,
-    }
-
-    impl TunInterface {
-        pub fn create(config: TunConfig) -> Result<(Self, AsyncTunDevice), io::Error> {
-            let (shutdown_tx, _) = broadcast::channel(1);
-
-            let device = AsyncTunDevice::create(config.clone())?;
-            let name = device.name().to_string();
-
-            let interface = Self {
-                name: name.clone(),
-                config,
-                shutdown_tx,
-            };
-
-            tracing::info!("Created TUN interface: {}", name);
-
-            Ok((interface, device))
-        }
-
-        pub fn name(&self) -> &str {
-            &self.name
-        }
-
-        pub fn config(&self) -> &TunConfig {
-            &self.config
-        }
-
-        pub fn add_route(&self, destination: &str) -> io::Result<()> {
-            #[cfg(target_os = "linux")]
-            {
-                let output = std::process::Command::new("ip")
-                    .args(["route", "add", destination])
-                    .output()?;
-
-                if !output.status.success() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!(
-                            "ip route add failed: {}",
-                            String::from_utf8_lossy(&output.stderr)
-                        ),
-                    ));
-                }
-                Ok(())
-            }
-
-            #[cfg(target_os = "macos")]
-            {
-                let output = std::process::Command::new("route")
-                    .args(["-n", "add", "-net", destination, "-interface", &self.name])
-                    .output()?;
-
-                if !output.status.success() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!(
-                            "route add failed: {}",
-                            String::from_utf8_lossy(&output.stderr)
-                        ),
-                    ));
-                }
-                Ok(())
-            }
-
-            #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
-            {
-                let output = std::process::Command::new("route")
-                    .args(["add", "-net", destination, "-interface", &self.name])
-                    .output()?;
-
-                if !output.status.success() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!(
-                            "route add failed: {}",
-                            String::from_utf8_lossy(&output.stderr)
-                        ),
-                    ));
-                }
-                Ok(())
-            }
-
-            #[cfg(target_os = "windows")]
-            {
-                let output = std::process::Command::new("netsh")
-                    .args([
-                        "interface",
-                        "ipv4",
-                        "add",
-                        "route",
-                        destination,
-                        &self.name,
-                        "metric=1",
-                        "store=active",
-                    ])
-                    .output()?;
-
-                if !output.status.success() {
-                    let err = String::from_utf8_lossy(&output.stderr);
-                    // Ignore if route already exists
-                    if !err.contains("already exists") && !err.contains("0x80070050") {
-                        return Err(io::Error::new(
-                            io::ErrorKind::Other,
-                            format!("netsh add route failed: {}", err),
-                        ));
-                    }
-                }
-                Ok(())
-            }
-        }
-
-        pub fn delete_route(&self, destination: &str) -> io::Result<()> {
-            #[cfg(target_os = "linux")]
-            {
-                let output = std::process::Command::new("ip")
-                    .args(["route", "del", destination])
-                    .output()?;
-
-                if !output.status.success() {
-                    tracing::warn!(
-                        "ip route del failed: {}",
-                        String::from_utf8_lossy(&output.stderr)
-                    );
-                }
-                Ok(())
-            }
-
-            #[cfg(not(target_os = "linux"))]
-            {
-                let _ = (self, destination);
-                Ok(())
-            }
-        }
-
-        pub fn shutdown(&self) {
-            let _ = self.shutdown_tx.send(());
-        }
-
-        pub fn subscribe_shutdown(&self) -> broadcast::Receiver<()> {
-            self.shutdown_tx.subscribe()
-        }
-    }
-
-    impl Drop for TunInterface {
-        fn drop(&mut self) {
-            tracing::debug!("TUN interface {} being destroyed", self.name);
-        }
-    }
-
-    pub struct TunReader {
-        device: Arc<AsyncTunDevice>,
-        shutdown_rx: broadcast::Receiver<()>,
-    }
-
-    impl TunReader {
-        pub fn new(device: Arc<AsyncTunDevice>, shutdown_rx: broadcast::Receiver<()>) -> Self {
-            Self {
-                device,
-                shutdown_rx,
-            }
-        }
-
-        pub async fn read_packet(&mut self) -> io::Result<Option<TunPacket>> {
-            let mut buf = vec![0u8; TUN_MTU];
-
-            tokio::select! {
-                result = self.device.reader().read_packet(&mut buf) => {
-                    match result {
-                        Ok(n) if n > 0 => {
-                            buf.truncate(n);
-                            Ok(Some(TunPacket::new(buf)))
-                        }
-                        Ok(_) => Ok(None),
-                        Err(e) if e.kind() == io::ErrorKind::WouldBlock => Ok(None),
-                        Err(e) => Err(e),
-                    }
-                }
-                _ = self.shutdown_rx.recv() => {
-                    Ok(None)
-                }
-            }
-        }
-    }
-
-    pub struct TunWriter {
-        device: Arc<AsyncTunDevice>,
-        shutdown_rx: broadcast::Receiver<()>,
-    }
-
-    impl TunWriter {
-        pub fn new(device: Arc<AsyncTunDevice>, shutdown_rx: broadcast::Receiver<()>) -> Self {
-            Self {
-                device,
-                shutdown_rx,
-            }
-        }
-
-        pub async fn write_packet(&mut self, packet: &TunPacket) -> io::Result<()> {
-            tokio::select! {
-                result = self.device.writer().write_packet(packet.data()) => {
-                    result.map(|_| ())
-                }
-                _ = self.shutdown_rx.recv() => {
-                    Ok(())
-                }
-            }
-        }
-    }
-
-    pub fn is_tun_available() -> bool {
-        #[cfg(target_os = "linux")]
-        {
-            std::path::Path::new("/dev/net/tun").exists()
-                || std::path::Path::new("/dev/tun").exists()
-        }
-
-        #[cfg(target_os = "macos")]
-        {
-            true
-        }
-
-        #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
-        {
-            std::path::Path::new("/dev/tun").exists()
-        }
-
-        #[cfg(target_os = "windows")]
-        {
-            true
-        }
-
-        #[cfg(not(any(
-            target_os = "linux",
-            target_os = "macos",
-            target_os = "freebsd",
-            target_os = "openbsd",
-            target_os = "netbsd",
-            target_os = "windows"
-        )))]
-        {
-            false
-        }
-    }
-}
-
-#[cfg(not(feature = "tun-rs"))]
 pub mod platform {
     use super::*;
     use std::io;
@@ -552,14 +150,14 @@ pub mod platform {
         pub fn create(_config: TunConfig) -> Result<Self, io::Error> {
             Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "TUN support requires the 'tun-rs' feature",
+                "TUN support requires platform-specific dependencies (not yet available)",
             ))
         }
 
         pub async fn create_async(_config: TunConfig) -> Result<Self, io::Error> {
             Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "TUN support requires the 'tun-rs' feature",
+                "TUN support requires platform-specific dependencies (not yet available)",
             ))
         }
 
@@ -577,7 +175,7 @@ pub mod platform {
         pub fn create(_config: TunConfig) -> Result<(Self, AsyncTunDevice), io::Error> {
             Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "TUN support requires the 'tun-rs' feature",
+                "TUN support requires platform-specific dependencies (not yet available)",
             ))
         }
 
@@ -592,7 +190,7 @@ pub mod platform {
         pub fn add_route(&self, _destination: &str) -> io::Result<()> {
             Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "TUN support requires the 'tun-rs' feature",
+                "TUN support requires platform-specific dependencies (not yet available)",
             ))
         }
 
@@ -618,7 +216,7 @@ pub mod platform {
         pub async fn read_packet(&mut self) -> io::Result<Option<TunPacket>> {
             Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "TUN support requires the 'tun-rs' feature",
+                "TUN support requires platform-specific dependencies (not yet available)",
             ))
         }
     }
@@ -633,7 +231,7 @@ pub mod platform {
         pub async fn write_packet(&mut self, _packet: &TunPacket) -> io::Result<()> {
             Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "TUN support requires the 'tun-rs' feature",
+                "TUN support requires platform-specific dependencies (not yet available)",
             ))
         }
     }

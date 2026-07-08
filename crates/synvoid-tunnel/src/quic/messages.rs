@@ -281,7 +281,7 @@ impl DatagramMessage {
     }
 
     pub fn encoded_size(&self) -> usize {
-        crate::serialization::serialized_size(self) as usize
+        crate::serialization::serialized_size(self)
     }
 
     pub fn is_fragmented(&self) -> bool {

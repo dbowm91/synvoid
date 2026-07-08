@@ -55,6 +55,41 @@ impl WgInterfaceStats {
 }
 
 #[cfg(target_os = "linux")]
+fn parse_transfer_bytes(s: &str) -> u64 {
+    let s = s.trim();
+
+    // Extract the numeric part (including decimal point)
+    let num_str: String = s
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    let num: f64 = num_str.parse().unwrap_or(0.0);
+
+    // Determine the multiplier from the unit
+    let multiplier = if s.contains("TiB") {
+        1024u64 * 1024 * 1024 * 1024
+    } else if s.contains("GiB") {
+        1024u64 * 1024 * 1024
+    } else if s.contains("MiB") {
+        1024u64 * 1024
+    } else if s.contains("KiB") {
+        1024u64
+    } else if s.contains("TB") {
+        1000u64 * 1000 * 1000 * 1000
+    } else if s.contains("GB") {
+        1000u64 * 1000 * 1000
+    } else if s.contains("MB") {
+        1000u64 * 1000
+    } else if s.contains("KB") {
+        1000u64
+    } else {
+        1u64
+    };
+
+    (num * multiplier as f64) as u64
+}
+
+#[cfg(target_os = "linux")]
 pub fn parse_wg_show_output(output: &str) -> Result<Vec<WgInterfaceStats>, WgStatsError> {
     let mut interfaces = Vec::new();
     let mut current_interface: Option<WgInterfaceStats> = None;
@@ -163,11 +198,9 @@ pub fn parse_wg_show_output(output: &str) -> Result<Vec<WgInterfaceStats>, WgSta
                     for part in parts {
                         let part = part.trim();
                         if part.ends_with(" received") || part.starts_with("received") {
-                            let num: String = part.chars().filter(|c| c.is_ascii_digit()).collect();
-                            peer.transfer_rx = num.parse().unwrap_or(0);
+                            peer.transfer_rx = parse_transfer_bytes(part);
                         } else if part.ends_with(" sent") || part.starts_with("sent") {
-                            let num: String = part.chars().filter(|c| c.is_ascii_digit()).collect();
-                            peer.transfer_tx = num.parse().unwrap_or(0);
+                            peer.transfer_tx = parse_transfer_bytes(part);
                         }
                     }
                 }
@@ -199,9 +232,12 @@ fn parse_handshake_time(value: &str) -> Option<u64> {
     let mut seconds = 0u64;
     let parts: Vec<&str> = value.split_whitespace().collect();
 
-    for i in 0..parts.len() - 1 {
-        let num: u64 = parts[i].parse().ok()?;
-        let unit = parts[i + 1].to_lowercase();
+    for i in 0..parts.len().saturating_sub(1) {
+        let Some(num) = parts[i].parse::<u64>().ok() else {
+            continue;
+        };
+        let unit: String = parts[i + 1].chars().filter(|c| c.is_alphabetic()).collect();
+        let unit = unit.to_lowercase();
 
         match unit.as_str() {
             "second" | "seconds" => seconds += num,
@@ -216,7 +252,7 @@ fn parse_handshake_time(value: &str) -> Option<u64> {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
 
-    Some(now.as_secs() - seconds)
+    Some(now.as_secs().saturating_sub(seconds))
 }
 
 #[derive(Debug, thiserror::Error)]
