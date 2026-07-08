@@ -14,6 +14,7 @@ pub struct HoneypotRecord {
     pub local_port: u16,
     pub protocol: String,
     pub service: String,
+    pub confidence: f32,
     pub payload: Vec<u8>,
     pub payload_hex: String,
     pub detected_pattern: Option<String>,
@@ -64,6 +65,7 @@ impl HoneypotStorage {
                 local_port INTEGER NOT NULL,
                 protocol TEXT NOT NULL,
                 service TEXT NOT NULL,
+                confidence REAL NOT NULL DEFAULT 0.5,
                 payload BLOB,
                 payload_hex TEXT,
                 detected_pattern TEXT,
@@ -120,10 +122,10 @@ impl HoneypotStorage {
 
         conn.execute(
             "INSERT INTO honeypot_connections 
-             (timestamp, remote_ip, remote_port, local_port, protocol, service, 
+             (timestamp, remote_ip, remote_port, local_port, protocol, service, confidence,
               payload, payload_hex, detected_pattern, bytes_received, bytes_sent, 
               duration_ms, connection_info)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 record.timestamp,
                 record.remote_ip,
@@ -131,6 +133,7 @@ impl HoneypotStorage {
                 record.local_port,
                 record.protocol,
                 record.service,
+                record.confidence,
                 record.payload,
                 record.payload_hex,
                 record.detected_pattern,
@@ -204,8 +207,8 @@ impl HoneypotStorage {
 
         let mut stmt = conn.prepare(
             "SELECT id, timestamp, remote_ip, remote_port, local_port, protocol, service,
-                    payload, payload_hex, detected_pattern, bytes_received, bytes_sent,
-                    duration_ms, connection_info
+                    confidence, payload, payload_hex, detected_pattern, bytes_received,
+                    bytes_sent, duration_ms, connection_info
              FROM honeypot_connections 
              WHERE timestamp > ?1
              ORDER BY timestamp DESC
@@ -221,13 +224,14 @@ impl HoneypotStorage {
                 local_port: row.get(4)?,
                 protocol: row.get(5)?,
                 service: row.get(6)?,
-                payload: row.get(7).unwrap_or_default(),
-                payload_hex: row.get(8).unwrap_or_default(),
-                detected_pattern: row.get(9)?,
-                bytes_received: row.get(10)?,
-                bytes_sent: row.get(11)?,
-                duration_ms: row.get(12)?,
-                connection_info: row.get(13).unwrap_or_default(),
+                confidence: row.get::<_, f32>(7).unwrap_or(0.5),
+                payload: row.get(8).unwrap_or_default(),
+                payload_hex: row.get(9).unwrap_or_default(),
+                detected_pattern: row.get(10)?,
+                bytes_received: row.get(11)?,
+                bytes_sent: row.get(12)?,
+                duration_ms: row.get(13)?,
+                connection_info: row.get(14).unwrap_or_default(),
             })
         })?;
 

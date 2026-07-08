@@ -1,5 +1,6 @@
 use std::sync::LazyLock;
 
+use crate::protocol::Confidence;
 use crate::storage::HoneypotRecord;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -41,7 +42,10 @@ impl HoneypotIntelExtractor {
         indicators.push(HoneypotIndicator {
             indicator_type: IndicatorType::SourceIp,
             value: record.remote_ip.clone(),
-            severity: SeverityLevel::from_service(&record.service),
+            severity: SeverityLevel::cap_by_confidence(
+                SeverityLevel::from_service(&record.service),
+                record.confidence,
+            ),
             description: format!(
                 "Honeypot connection from {} to {} on port {}",
                 record.remote_ip, record.service, record.local_port
@@ -53,7 +57,7 @@ impl HoneypotIntelExtractor {
             indicators.push(HoneypotIndicator {
                 indicator_type: IndicatorType::AttackPattern,
                 value: pattern.clone(),
-                severity: SeverityLevel::High,
+                severity: SeverityLevel::cap_by_confidence(SeverityLevel::High, record.confidence),
                 description: format!("Detected attack pattern: {}", pattern),
                 metadata: Some(record.payload_hex.clone()),
             });
@@ -65,7 +69,10 @@ impl HoneypotIntelExtractor {
                 indicators.push(HoneypotIndicator {
                     indicator_type: IndicatorType::AttackVector,
                     value: attack.clone(),
-                    severity: SeverityLevel::High,
+                    severity: SeverityLevel::cap_by_confidence(
+                        SeverityLevel::High,
+                        record.confidence,
+                    ),
                     description: format!("Attack vector detected: {}", attack),
                     metadata: Some(record.payload_hex.clone()),
                 });
@@ -170,6 +177,22 @@ impl SeverityLevel {
             _ => SeverityLevel::Low,
         }
     }
+
+    /// Cap severity based on detection confidence.
+    /// Low confidence: max Medium; High confidence: no cap.
+    pub fn cap_by_confidence(severity: Self, confidence: Confidence) -> Self {
+        match confidence {
+            Confidence::Low => match severity {
+                SeverityLevel::Critical | SeverityLevel::High => SeverityLevel::Medium,
+                other => other,
+            },
+            Confidence::Medium => match severity {
+                SeverityLevel::Critical => SeverityLevel::High,
+                other => other,
+            },
+            Confidence::High => severity,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -186,6 +209,7 @@ mod tests {
             local_port: 22,
             protocol: "tcp".to_string(),
             service: service.to_string(),
+            confidence: Confidence::High,
             payload: payload.to_vec(),
             payload_hex: hex::encode(payload),
             detected_pattern: pattern,
@@ -288,5 +312,90 @@ mod tests {
 
         // Should detect multiple attack types
         assert!(indicators.len() >= 3);
+    }
+
+    #[test]
+    fn test_low_confidence_caps_high_severity_to_medium() {
+        let mut record = make_record("ssh", b"", None);
+        record.confidence = Confidence::Low;
+        let indicators = HoneypotIntelExtractor::extract_indicators(&record);
+
+        // SSH service maps to High, but Low confidence caps to Medium
+        let source_ip = indicators
+            .iter()
+            .find(|i| i.indicator_type == IndicatorType::SourceIp)
+            .unwrap();
+        assert_eq!(source_ip.severity, SeverityLevel::Medium);
+    }
+
+    #[test]
+    fn test_low_confidence_caps_attack_pattern_to_medium() {
+        let mut record = make_record("ssh", b"", Some("ssh_banner_prefix".to_string()));
+        record.confidence = Confidence::Low;
+        let indicators = HoneypotIntelExtractor::extract_indicators(&record);
+
+        let pattern = indicators
+            .iter()
+            .find(|i| i.indicator_type == IndicatorType::AttackPattern)
+            .unwrap();
+        assert_eq!(pattern.severity, SeverityLevel::Medium);
+    }
+
+    #[test]
+    fn test_high_confidence_preserves_service_severity() {
+        let mut record = make_record("ssh", b"", None);
+        record.confidence = Confidence::High;
+        let indicators = HoneypotIntelExtractor::extract_indicators(&record);
+
+        let source_ip = indicators
+            .iter()
+            .find(|i| i.indicator_type == IndicatorType::SourceIp)
+            .unwrap();
+        assert_eq!(source_ip.severity, SeverityLevel::High);
+    }
+
+    #[test]
+    fn test_medium_confidence_caps_critical_to_high() {
+        let severity =
+            SeverityLevel::cap_by_confidence(SeverityLevel::Critical, Confidence::Medium);
+        assert_eq!(severity, SeverityLevel::High);
+    }
+
+    #[test]
+    fn test_medium_confidence_preserves_high() {
+        let severity = SeverityLevel::cap_by_confidence(SeverityLevel::High, Confidence::Medium);
+        assert_eq!(severity, SeverityLevel::High);
+    }
+
+    #[test]
+    fn test_low_confidence_caps_critical_to_medium() {
+        let severity = SeverityLevel::cap_by_confidence(SeverityLevel::Critical, Confidence::Low);
+        assert_eq!(severity, SeverityLevel::Medium);
+    }
+
+    #[test]
+    fn test_low_confidence_preserves_low() {
+        let severity = SeverityLevel::cap_by_confidence(SeverityLevel::Low, Confidence::Low);
+        assert_eq!(severity, SeverityLevel::Low);
+    }
+
+    #[test]
+    fn test_high_confidence_preserves_all() {
+        assert_eq!(
+            SeverityLevel::cap_by_confidence(SeverityLevel::Critical, Confidence::High),
+            SeverityLevel::Critical
+        );
+        assert_eq!(
+            SeverityLevel::cap_by_confidence(SeverityLevel::High, Confidence::High),
+            SeverityLevel::High
+        );
+        assert_eq!(
+            SeverityLevel::cap_by_confidence(SeverityLevel::Medium, Confidence::High),
+            SeverityLevel::Medium
+        );
+        assert_eq!(
+            SeverityLevel::cap_by_confidence(SeverityLevel::Low, Confidence::High),
+            SeverityLevel::Low
+        );
     }
 }

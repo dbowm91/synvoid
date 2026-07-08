@@ -4,6 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::config::StorageConfig;
+use super::protocol::Confidence;
 
 #[derive(Debug, Clone)]
 pub struct HoneypotRecord {
@@ -14,6 +15,7 @@ pub struct HoneypotRecord {
     pub local_port: u16,
     pub protocol: String,
     pub service: String,
+    pub confidence: Confidence,
     pub payload: Vec<u8>,
     pub payload_hex: String,
     pub detected_pattern: Option<String>,
@@ -65,6 +67,7 @@ impl HoneypotStorage {
                 local_port INTEGER NOT NULL,
                 protocol TEXT NOT NULL,
                 service TEXT NOT NULL,
+                confidence TEXT NOT NULL DEFAULT 'low',
                 payload BLOB,
                 payload_hex TEXT,
                 detected_pattern TEXT,
@@ -76,6 +79,25 @@ impl HoneypotStorage {
             )",
             [],
         )?;
+
+        // Migration: add confidence column if missing (existing databases)
+        let has_confidence: bool = conn
+            .prepare("PRAGMA table_info(honeypot_connections)")
+            .ok()
+            .and_then(|mut stmt| {
+                stmt.query_map([], |row| {
+                    let name: String = row.get(1)?;
+                    Ok(name)
+                })
+                .ok()
+                .map(|rows| rows.filter_map(|c| c.ok()).any(|c| c == "confidence"))
+            })
+            .unwrap_or(false);
+        if !has_confidence {
+            let _ = conn.execute_batch(
+                "ALTER TABLE honeypot_connections ADD COLUMN confidence TEXT NOT NULL DEFAULT 'low'",
+            );
+        }
 
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_honeypot_timestamp ON honeypot_connections(timestamp)",
@@ -122,10 +144,10 @@ impl HoneypotStorage {
 
         conn.execute(
             "INSERT INTO honeypot_connections 
-             (timestamp, remote_ip, remote_port, local_port, protocol, service, 
+             (timestamp, remote_ip, remote_port, local_port, protocol, service, confidence,
               payload, payload_hex, detected_pattern, bytes_received, bytes_sent, 
               duration_ms, connection_info, payload_truncated)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 record.timestamp,
                 record.remote_ip,
@@ -133,6 +155,7 @@ impl HoneypotStorage {
                 record.local_port,
                 record.protocol,
                 record.service,
+                record.confidence.to_string(),
                 record.payload,
                 record.payload_hex,
                 record.detected_pattern,
@@ -207,7 +230,7 @@ impl HoneypotStorage {
 
         let mut stmt = conn.prepare(
             "SELECT id, timestamp, remote_ip, remote_port, local_port, protocol, service,
-                    payload, payload_hex, detected_pattern, bytes_received, bytes_sent,
+                    confidence, payload, payload_hex, detected_pattern, bytes_received, bytes_sent,
                     duration_ms, connection_info, payload_truncated
              FROM honeypot_connections 
              WHERE timestamp > ?1
@@ -216,6 +239,12 @@ impl HoneypotStorage {
         )?;
 
         let records = stmt.query_map(params![since_timestamp, limit as i64], |row| {
+            let conf_str: String = row.get(7).unwrap_or_else(|_| "low".to_string());
+            let confidence = match conf_str.as_str() {
+                "high" => Confidence::High,
+                "medium" => Confidence::Medium,
+                _ => Confidence::Low,
+            };
             Ok(HoneypotRecord {
                 id: row.get(0)?,
                 timestamp: row.get(1)?,
@@ -224,14 +253,15 @@ impl HoneypotStorage {
                 local_port: row.get(4)?,
                 protocol: row.get(5)?,
                 service: row.get(6)?,
-                payload: row.get(7).unwrap_or_default(),
-                payload_hex: row.get(8).unwrap_or_default(),
-                detected_pattern: row.get(9)?,
-                bytes_received: row.get(10)?,
-                bytes_sent: row.get(11)?,
-                duration_ms: row.get(12)?,
-                connection_info: row.get(13).unwrap_or_default(),
-                payload_truncated: row.get::<_, i32>(14).unwrap_or(0) != 0,
+                confidence,
+                payload: row.get(8).unwrap_or_default(),
+                payload_hex: row.get(9).unwrap_or_default(),
+                detected_pattern: row.get(10)?,
+                bytes_received: row.get(11)?,
+                bytes_sent: row.get(12)?,
+                duration_ms: row.get(13)?,
+                connection_info: row.get(14).unwrap_or_default(),
+                payload_truncated: row.get::<_, i32>(15).unwrap_or(0) != 0,
             })
         })?;
 

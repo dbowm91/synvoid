@@ -2783,6 +2783,120 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // Archive inspection error propagation tests
+    // -----------------------------------------------------------------------
+
+    /// Create a minimal invalid ZIP: starts with PK magic but is otherwise garbage.
+    /// This triggers `ArchiveInspectionError::InvalidZip` during inspection.
+    fn invalid_zip_bytes() -> Vec<u8> {
+        let mut data = vec![0x50, 0x4B, 0x03, 0x04]; // PK\x03\x04 magic
+        data.extend_from_slice(&[0xFF; 20]); // garbage, not a valid ZIP end-of-central-dir
+        data
+    }
+
+    #[tokio::test]
+    async fn test_archive_error_fail_closed_rejects() {
+        // Invalid ZIP + FailClosed → ScanIndeterminate error.
+        let config = test_config(true, UploadScanFailurePolicy::FailClosed);
+        let scanner = MalwareScanner::with_yara(None);
+        let validator = UploadValidator::with_scanner(config, Some(scanner));
+        let data = invalid_zip_bytes();
+        let err = validator
+            .validate_bytes(&data, "/upload")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, UploadValidationError::ScanIndeterminate { ref reason } if reason.contains("archive")),
+            "expected ScanIndeterminate with archive reason, got: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_archive_error_fail_open_allows() {
+        // Invalid ZIP + FailOpen → upload allowed despite archive error.
+        let config = test_config(true, UploadScanFailurePolicy::FailOpen);
+        let scanner = MalwareScanner::with_yara(None);
+        let validator = UploadValidator::with_scanner(config, Some(scanner));
+        let data = invalid_zip_bytes();
+        let result = validator.validate_bytes(&data, "/upload").await.unwrap();
+        // Scan status is Clean (no YARA scan run because scanner has no rules).
+        assert_eq!(result.scan_status, UploadScanStatus::Clean);
+    }
+
+    #[tokio::test]
+    async fn test_archive_error_quarantine_on_error_rejects() {
+        // Invalid ZIP + QuarantineOnError → ScanIndeterminate (same as FailClosed).
+        let config = test_config(true, UploadScanFailurePolicy::QuarantineOnError);
+        let scanner = MalwareScanner::with_yara(None);
+        let validator = UploadValidator::with_scanner(config, Some(scanner));
+        let data = invalid_zip_bytes();
+        let err = validator
+            .validate_bytes(&data, "/upload")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, UploadValidationError::ScanIndeterminate { .. }),
+            "expected ScanIndeterminate, got: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_validate_with_sandbox_unavailable_scanner_fail_open() {
+        // validate_with_sandbox + FailOpen + no scanner → upload allowed (no quarantine).
+        let mut config = test_config(true, UploadScanFailurePolicy::FailOpen);
+        let tmp = tempfile::tempdir().unwrap();
+        config.sandbox_dir = tmp.path().join("sandbox").to_string_lossy().to_string();
+        config.quarantine_dir = tmp.path().join("quarantine").to_string_lossy().to_string();
+        let validator = UploadValidator::with_scanner(config, None);
+        validator.ensure_directories().await.unwrap();
+
+        let data = b"benign data";
+        let (result, quarantine) = validator
+            .validate_with_sandbox(data, "/upload", Some("test.txt"))
+            .await
+            .unwrap();
+        assert_eq!(result.scan_status, UploadScanStatus::Unavailable);
+        assert!(quarantine.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_validate_with_sandbox_unavailable_scanner_fail_closed() {
+        // validate_with_sandbox + FailClosed + no scanner → ScanIndeterminate.
+        let mut config = test_config(true, UploadScanFailurePolicy::FailClosed);
+        let tmp = tempfile::tempdir().unwrap();
+        config.sandbox_dir = tmp.path().join("sandbox").to_string_lossy().to_string();
+        config.quarantine_dir = tmp.path().join("quarantine").to_string_lossy().to_string();
+        let validator = UploadValidator::with_scanner(config, None);
+        validator.ensure_directories().await.unwrap();
+
+        let data = b"benign data";
+        let err = validator
+            .validate_with_sandbox(data, "/upload", Some("test.txt"))
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            UploadValidationError::ScanIndeterminate { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_validate_bytes_with_declared_type_unavailable_scanner() {
+        // validate_bytes_with_declared_type + FailClosed + no scanner → ScanIndeterminate.
+        let config = test_config(true, UploadScanFailurePolicy::FailClosed);
+        let validator = UploadValidator::with_scanner(config, None);
+        let data = b"hello world";
+        let err = validator
+            .validate_bytes_with_declared_type(data, "/upload", Some("text/plain"))
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            UploadValidationError::ScanIndeterminate { .. }
+        ));
+    }
+
+    // -----------------------------------------------------------------------
     // Mesh rule reload E2E tests
     // -----------------------------------------------------------------------
 

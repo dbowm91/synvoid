@@ -245,6 +245,7 @@ async fn handle_connection(
         local_port,
         protocol: protocol.clone(),
         service: service.clone(),
+        confidence: detection.as_ref().map(|d| d.confidence).unwrap_or(0.5),
         payload: payload.clone(),
         payload_hex: hex::encode(&payload),
         detected_pattern: detection.as_ref().and_then(|d| d.matched_pattern.clone()),

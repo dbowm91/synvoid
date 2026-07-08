@@ -10,7 +10,7 @@ use tokio::sync::{broadcast, OwnedSemaphorePermit, Semaphore};
 use tokio::time;
 
 use crate::config::PortHoneypotConfig;
-use crate::protocol::ProtocolDetector;
+use crate::protocol::{Confidence, ProtocolDetector};
 use crate::storage::{HoneypotRecord, HoneypotStorage};
 use synvoid_utils::current_timestamp;
 
@@ -358,6 +358,10 @@ pub(crate) async fn handle_connection(
         local_port,
         protocol: protocol.clone(),
         service: service.clone(),
+        confidence: detection
+            .as_ref()
+            .map(|d| d.confidence)
+            .unwrap_or(Confidence::Low),
         payload: payload.clone(),
         payload_hex: hex::encode(&payload),
         detected_pattern: Some(

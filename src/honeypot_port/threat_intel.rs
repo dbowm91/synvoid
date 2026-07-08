@@ -37,11 +37,15 @@ pub struct HoneypotIntelExtractor;
 impl HoneypotIntelExtractor {
     pub fn extract_indicators(record: &HoneypotRecord) -> Vec<HoneypotIndicator> {
         let mut indicators = Vec::new();
+        let confidence = record.confidence;
 
         indicators.push(HoneypotIndicator {
             indicator_type: IndicatorType::SourceIp,
             value: record.remote_ip.clone(),
-            severity: SeverityLevel::from_service(&record.service),
+            severity: SeverityLevel::cap_by_confidence(
+                SeverityLevel::from_service(&record.service),
+                confidence,
+            ),
             description: format!(
                 "Honeypot connection from {} to {} on port {}",
                 record.remote_ip, record.service, record.local_port
@@ -53,7 +57,7 @@ impl HoneypotIntelExtractor {
             indicators.push(HoneypotIndicator {
                 indicator_type: IndicatorType::AttackPattern,
                 value: pattern.clone(),
-                severity: SeverityLevel::High,
+                severity: SeverityLevel::cap_by_confidence(SeverityLevel::High, confidence),
                 description: format!("Detected attack pattern: {}", pattern),
                 metadata: Some(record.payload_hex.clone()),
             });
@@ -65,7 +69,7 @@ impl HoneypotIntelExtractor {
                 indicators.push(HoneypotIndicator {
                     indicator_type: IndicatorType::AttackVector,
                     value: attack.clone(),
-                    severity: SeverityLevel::High,
+                    severity: SeverityLevel::cap_by_confidence(SeverityLevel::High, confidence),
                     description: format!("Attack vector detected: {}", attack),
                     metadata: Some(record.payload_hex.clone()),
                 });
@@ -170,6 +174,22 @@ impl SeverityLevel {
             _ => SeverityLevel::Low,
         }
     }
+
+    pub fn cap_by_confidence(severity: Self, confidence: f32) -> Self {
+        if confidence < 0.67 {
+            match severity {
+                SeverityLevel::Critical | SeverityLevel::High => SeverityLevel::Medium,
+                other => other,
+            }
+        } else if confidence < 0.85 {
+            match severity {
+                SeverityLevel::Critical => SeverityLevel::High,
+                other => other,
+            }
+        } else {
+            severity
+        }
+    }
 }
 
 #[cfg(test)]
@@ -186,6 +206,7 @@ mod tests {
             local_port: 22,
             protocol: "tcp".to_string(),
             service: service.to_string(),
+            confidence: 0.95,
             payload: payload.to_vec(),
             payload_hex: hex::encode(payload),
             detected_pattern: pattern,

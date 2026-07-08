@@ -168,7 +168,7 @@ Protocol detection is **lightweight first-packet classification**, not full prot
 - **Medium**: Recognizable text command with common protocol token
 - **Low**: Weak shape-only binary checks (RDP TPKT, DNS header, MongoDB)
 
-Low-confidence detections should not produce aggressive threat-intel actions by themselves. Confidence is exposed for downstream scoring in Milestone C.
+Low-confidence detections are capped by `SeverityLevel::cap_by_confidence()` in the threat-intel extraction path: Low confidence caps Critical/High severity to Medium; Medium confidence caps Critical to High; High confidence passes through unchanged. This prevents low-confidence detections (RDP TPKT, DNS header, MongoDB) from triggering mesh IP blocks, since the block-store gate only acts on High/Critical severity.
 
 ### Banner Lookup
 
