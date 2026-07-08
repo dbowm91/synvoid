@@ -407,3 +407,43 @@ Deterministic template-only mode. Factory methods for 7 services (SSH, HTTP, MyS
 ### Tests
 
 38 tests covering: prompt injection resistance (6 payloads), circuit breaker state transitions, concurrency limiter permits, turn counter exhaustion, fallback response correctness, TemplateResponder for 7 services, AiHoneypotResponder sync path safety, budget config deserialization, prompt hardening verification, and AiResponderBudget integration.
+
+## 11. Validation and Operator Documentation (Milestone C Phase 5)
+
+**Date:** 2026-07-08
+
+### Validation Results
+
+- **182 honeypot tests passing**, clippy clean, format clean
+- All Milestone C phases (1–5) complete
+
+### Operator Documentation
+
+| Document | Scope |
+|----------|-------|
+| `docs/HONEYPOT.md` | Comprehensive operator guide |
+| `docs/CONFIGURATION.md` | Full honeypot config reference |
+
+### Metrics Inventory
+
+12 counters across connections, storage, and AI:
+
+| Category | Counters |
+|----------|----------|
+| Connections | `accepted`, `rejected_global`, `rejected_per_ip`, `timeout_initial`, `timeout_read`, `truncated`, `errors` |
+| Storage | `storage_failures`, `honeypot_storage_drops`, `honeypot_storage_write_errors` |
+| AI | `ai_requests`, `ai_fallbacks` |
+
+### Production Defaults
+
+| Setting | Default |
+|---------|---------|
+| Payload retention | `Truncated` (no raw storage by default) |
+| AI responder | `Disabled` |
+| Threat-intel mesh propagation | Disabled (requires Medium+ confidence, 3+ events) |
+
+### Closure Classification
+
+Closed with tracked exceptions:
+- `synvoid-http` clippy warnings (non-blocking)
+- Tarpit admission in single-shot mode (known limitation, not a safety issue)

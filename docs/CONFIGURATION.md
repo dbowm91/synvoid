@@ -25,6 +25,8 @@ Complete configuration reference for SynVoid.
 - [Process Management](#process-management)
 - [CPU Offload IPC Pool Environment Overrides](#cpu-offload-ipc-pool-environment-overrides)
 - [Security](#security-configuration)
+- [Tarpit System](#tarpit-system)
+- [Honeypot Port Deception Layer](#honeypot-port-deception-layer)
 
 ## Main Configuration (`config/main.toml`)
 
@@ -584,13 +586,122 @@ Operational guidance:
 
 ## Tarpit System
 
+Anti-scraping tarpit that traps automated crawlers by serving infinitely expanding pages with randomized delays, fingerprint-resistant response variation, and configurable resource budgets.
+
 ```toml
 [tarpit]
 enabled = true
-max_depth = 10
-links_per_page = 50
-response_delay_ms = 100
+max_depth = 10                       # Maximum crawl depth before loop
+links_per_page = 50                  # Fake links generated per page
+response_delay_ms = 100              # Delay between chunks (ms)
+scraper_patterns = [                 # User-agent patterns that trigger tarpitting
+  "scrapy", "curl", "wget", "python-requests",
+  "python-urllib", "aiohttp", "httpx"
+]
+
+[tarpit.admission]
+max_concurrent = 256                 # Global concurrent tarpit sessions
+max_per_ip = 4                       # Per-IP concurrent session limit
+
+[tarpit.budget]
+max_duration_secs = 600              # Max connection duration (10 min)
+max_chunks = 500                     # Max HTML segments sent per response
+max_bytes = 52428800                 # Max total bytes sent (50 MB)
+max_idle_secs = 30                   # Idle timeout (no client activity)
+write_timeout_ms = 5000              # Per-chunk write timeout (ms)
+
+[tarpit.fingerprint]
+min_chunk_delay_ms = 5               # Min delay between chunks (randomized)
+max_chunk_delay_ms = 30              # Max delay between chunks (randomized)
+vary_content_type = true             # Vary Content-Type across responses
+vary_status_code = true              # Vary HTTP status codes across responses
+
+[tarpit.redirect_policy]
+policy = "RelativeOnly"              # RelativeOnly | AllowList | AllowAll
+allow_list = []                      # Hostnames for AllowList policy
 ```
+
+## Honeypot Port Deception Layer
+
+The port honeypot creates fake listening services (SSH, MySQL, Redis, FTP, etc.) on configurable port ranges to detect unauthorized internal port scanning, lateral movement, and reconnaissance. Disabled by default — enable when you want to detect attackers already inside your network. AI responses are disabled by default; raw payloads are truncated by default (only SHA-256 hashes stored).
+
+```toml
+[honeypot]
+enabled = false                              # Enable port honeypot deception layer
+bind_address = "0.0.0.0"                     # Bind address for honeypot ports
+min_port = 10000                             # Minimum port number in range
+max_port = 60000                             # Maximum port number in range
+num_honeypot_ports = 3                       # Number of simultaneous fake ports
+rotation_interval_secs = 1800                # Port rotation interval (seconds)
+min_rotation_interval_secs = 600             # Minimum rotation interval (randomized)
+max_rotation_interval_secs = 3600            # Maximum rotation interval (randomized)
+connection_timeout_ms = 5000                 # Initial connection timeout (ms)
+read_timeout_ms = 10000                      # Subsequent read timeout (ms)
+max_payload_size = 8192                      # Max bytes to read per connection
+max_concurrent_connections = 256             # Global concurrent connection limit
+max_connections_per_ip = 10                  # Per-IP concurrent connection limit
+site_scope = "global"                        # Site scope for multi-tenant isolation
+
+[honeypot.storage]
+database_path = "/var/lib/synvoid/honeypot.db"  # SQLite database path
+max_records = 1000000                        # Max records before pruning (oldest deleted)
+retention_days = 90                          # Days to retain records
+flush_interval_secs = 60                     # Storage flush interval
+
+[honeypot.storage.writer]
+queue_capacity = 4096                        # Bounded channel capacity between listener and writer
+batch_size = 64                              # Records per batch flush
+flush_interval_ms = 1000                     # Periodic flush interval (ms)
+write_timeout_ms = 500                       # Per-record write timeout (ms)
+payload_retention_mode = "Truncated"         # None | HashOnly | Truncated | Full
+max_stored_payload_bytes = 256               # Max payload bytes stored (Truncated mode)
+max_stored_payload_hex_bytes = 512           # Max payload hex bytes stored (Truncated mode)
+
+[honeypot.response_mode]
+mode = "cycling"                             # Response cycling mode
+responder_type = "vulnerable"                # Default responder type
+
+[honeypot.ai]
+mode = "Disabled"                            # Disabled | TemplateOnly | LocalModelOnly | ExternalProvider
+provider = "ollama"                          # AI provider name
+model = "llama3"                             # Model identifier
+timeout_secs = 30                            # Provider request timeout
+
+[honeypot.ai.budget]
+max_prompt_bytes = 4096                      # Max prompt bytes sent to provider
+max_response_bytes = 2048                    # Max response bytes from provider
+max_generation_duration_secs = 10            # Max generation time
+max_turns_per_connection = 5                 # Max AI turns per connection
+max_concurrent_requests = 4                  # Max concurrent AI requests
+max_provider_failures = 3                    # Circuit breaker failure threshold
+
+[honeypot.threat_intel]
+enabled = true                               # Enable threat intel extraction
+mesh_enabled = false                         # Enable mesh propagation (requires minimum confidence/events)
+
+[honeypot.threat_intel.scoring]
+base_score_protocol_probe = 0.1              # Base score for protocol probes
+base_score_attack_pattern = 0.5              # Base score for known attack patterns
+base_score_exploit_payload = 0.7             # Base score for exploit payloads
+base_score_credential_attempt = 0.6          # Base score for credential attempts
+base_score_scanner_fingerprint = 0.3         # Base score for scanner fingerprints
+repeat_bonus_factor = 0.1                    # Bonus per repeat event
+repeat_max_bonus = 0.3                       # Maximum repeat bonus
+threshold_rate_limit = 0.3                   # Score threshold for rate-limit candidate
+threshold_local_block = 0.6                  # Score threshold for local block candidate
+threshold_mesh_share = 0.75                  # Score threshold for mesh share candidate
+threshold_mesh_block = 0.9                   # Score threshold for mesh block candidate
+min_events_for_mesh = 3                      # Minimum events before mesh propagation
+min_confidence_for_mesh = "Medium"           # Minimum confidence for mesh propagation
+mesh_ttl_secs = 86400                        # Mesh indicator TTL (24 hours)
+decay_half_life_secs = 3600                  # Score decay half-life (1 hour)
+```
+
+**Safety notes:**
+- `mode = "Disabled"` (default) means no AI provider calls are made — only deterministic protocol banners and template responses
+- `payload_retention_mode = "Truncated"` (default) stores only truncated payload bytes; `"HashOnly"` stores SHA-256 hashes with zero raw content
+- `mesh_enabled = false` (default) prevents any honeypot signals from being shared across the mesh network
+- `max_concurrent_connections = 256` and `max_connections_per_ip = 10` prevent resource exhaustion from legitimate or malicious connection storms
 
 ## Threat Level System
 

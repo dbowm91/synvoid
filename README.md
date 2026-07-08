@@ -96,6 +96,7 @@ Explore our documentation for deeper technical insights:
 | [STATIC_FILES.md](docs/STATIC_FILES.md) | Static file serving |
 | [UPLOADS.md](docs/UPLOADS.md) | File upload handling |
 | [HONEYPOT.md](docs/HONEYPOT.md) | Honeypot listener and deception |
+| [TARPIT.md](docs/TARPIT.md) | Anti-scraping tarpit and trapping |
 | [SERVERLESS.md](docs/SERVERLESS.md) | Serverless WASM functions |
 | [PLUGINS.md](docs/PLUGINS.md) | Plugin system |
 | [TUNNELS.md](docs/TUNNELS.md) | Tunnel backend routing |

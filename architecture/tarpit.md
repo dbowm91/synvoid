@@ -24,18 +24,19 @@ pub fn html_escape(input: &str) -> String;
 pub fn html_attr_escape(input: &str) -> String;
 pub fn js_string_escape(input: &str) -> String;
 pub fn url_path_encode(input: &str) -> String;
-pub fn sanitize_redirect_target(target: &str) -> Result<String, RedirectRejection>;
+pub fn sanitize_redirect_target(target: &str, allowed_hosts: &[String]) -> Result<String, RedirectRejection>;
 
 pub enum RedirectRejection {
     CrlfInjection,
     ControlCharacter,
-    AbsoluteUrlNotAllowed { host: String },
+    HostNotAllowed(String),
+    InvalidRelativePath,
 }
 
 // Admission control: synvoid-tarpit::admission
 pub struct TarpitAdmission {
     global_semaphore: Arc<Semaphore>,
-    per_ip_semaphores: DashMap<IpAddr, Arc<Semaphore>>,
+    per_ip_semaphores: Mutex<HashMap<IpAddr, Arc<Semaphore>>>,
 }
 
 pub struct AdmissionGuard {
@@ -48,7 +49,7 @@ pub struct SessionBudget {
     chunks_sent: AtomicU64,
     bytes_sent: AtomicU64,
     start_time: Instant,
-    last_activity: AtomicU64,
+    last_activity: Mutex<Instant>,
 }
 
 // Redirect policy: synvoid-tarpit::redirect
@@ -94,7 +95,7 @@ pub struct MarkovChain {
 | `html_attr_escape(input)` | `escaping` | Escape for use inside HTML attributes |
 | `js_string_escape(input)` | `escaping` | Escape for safe JS string interpolation |
 | `url_path_encode(input)` | `escaping` | Encode for URL path segments |
-| `sanitize_redirect_target(target)` | `escaping` | Validate and sanitize redirect target; rejects CRLF, control chars, absolute URLs not in allow list |
+| `sanitize_redirect_target(target, allowed_hosts)` | `escaping` | Validate and sanitize redirect target; rejects CRLF, control chars, absolute URLs not in allow list, invalid relative paths |
 | `TarpitAdmission::try_acquire(ip)` | `admission` | Attempt to acquire global + per-IP permit; returns `AdmissionGuard` RAII on success |
 | `TarpitAdmission::new(max_concurrent, max_per_ip)` | `admission` | Constructor with configurable limits |
 | `SessionBudget::new(config)` | `budget` | Create budget with configured limits |
@@ -181,3 +182,35 @@ All modes block CRLF injection and control characters in redirect targets.
 - Each page contains links to deeper pages (configurable density via `links_per_page`)
 - Depth limiting via configurable `max_depth` prevents runaway recursion
 - User-agent pattern matching identifies known scrapers (scrapy, curl, wget, python-requests)
+
+## 6. Validation and Operator Documentation (Milestone C Phase 5)
+
+**Date:** 2026-07-08
+
+### Validation Results
+
+- **54 tarpit tests passing**, clippy clean, format clean
+
+### Operator Documentation
+
+| Document | Scope |
+|----------|-------|
+| `docs/TARPIT.md` | Operator guide |
+| `docs/CONFIGURATION.md` | Full tarpit config reference |
+
+### Metrics Inventory
+
+| Counter | Description |
+|---------|-------------|
+| `synvoid.tarpit.requests` | Total incoming tarpit requests |
+| `synvoid.tarpit.admitted` | Sessions accepted through admission control |
+| `synvoid.tarpit.timed_out` | Sessions terminated by budget exhaustion |
+| `synvoid.tarpit.completed` | Sessions that finished naturally |
+| `synvoid.tarpit.bytes_sent` | Total bytes sent across all sessions |
+| `synvoid.tarpit.response_time` | Response time histogram |
+
+### Closure Classification
+
+Closed with tracked exceptions:
+- `synvoid-http` clippy warnings (non-blocking)
+- Tarpit admission in single-shot mode (known limitation, not a safety issue)

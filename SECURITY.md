@@ -56,6 +56,12 @@ SynVoid includes several security features:
 - Socket FD passing for zero-downtime upgrades
 - Graceful connection draining
 
+### Deception Layer
+
+**Port Honeypot**: Deploys fake service endpoints (SSH, HTTP, MySQL, Redis, FTP, PostgreSQL, SMB, RDP, VNC, SMTP) to detect and study attacker behavior. Disabled by default. AI responder disabled by default. Raw payload storage disabled by default. Threat-intel mesh propagation disabled by default, requires Medium+ confidence and 3+ events. See [`docs/HONEYPOT.md`](docs/HONEYPOT.md).
+
+**Tarpit**: Anti-scraping trap that generates infinite HTML pages via Markov chains. Escapes all attacker-controlled values before HTML interpolation. Redirect safety blocks CRLF injection and absolute URL redirects. Admission control limits concurrent sessions (256 global, 4 per-IP). Session budgets enforce duration (600s), chunks (500), bytes (50MB), and idle (30s) limits. See [`docs/TARPIT.md`](docs/TARPIT.md).
+
 ## Configuration Recommendations
 
 For production deployments:
