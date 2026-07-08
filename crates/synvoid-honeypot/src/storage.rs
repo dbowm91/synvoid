@@ -24,6 +24,8 @@ pub struct HoneypotRecord {
     pub duration_ms: u32,
     pub connection_info: String,
     pub payload_truncated: bool,
+    pub payload_hash: Option<String>,
+    pub payload_length: Option<usize>,
 }
 
 pub struct HoneypotStorage {
@@ -41,6 +43,10 @@ impl Clone for HoneypotStorage {
 }
 
 impl HoneypotStorage {
+    pub fn conn(&self) -> parking_lot::MutexGuard<'_, Connection> {
+        self.conn.lock()
+    }
+
     pub fn new(config: &StorageConfig) -> Result<Self, rusqlite::Error> {
         let db_path = Path::new(&config.database_path);
 
@@ -99,6 +105,26 @@ impl HoneypotStorage {
             );
         }
 
+        // Migration: add payload_hash and payload_length columns if missing
+        let has_payload_hash: bool = conn
+            .prepare("PRAGMA table_info(honeypot_connections)")
+            .ok()
+            .and_then(|mut stmt| {
+                stmt.query_map([], |row| {
+                    let name: String = row.get(1)?;
+                    Ok(name)
+                })
+                .ok()
+                .map(|rows| rows.filter_map(|c| c.ok()).any(|c| c == "payload_hash"))
+            })
+            .unwrap_or(false);
+        if !has_payload_hash {
+            let _ = conn.execute_batch(
+                "ALTER TABLE honeypot_connections ADD COLUMN payload_hash TEXT;
+                 ALTER TABLE honeypot_connections ADD COLUMN payload_length INTEGER NOT NULL DEFAULT 0",
+            );
+        }
+
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_honeypot_timestamp ON honeypot_connections(timestamp)",
             [],
@@ -146,8 +172,8 @@ impl HoneypotStorage {
             "INSERT INTO honeypot_connections 
              (timestamp, remote_ip, remote_port, local_port, protocol, service, confidence,
               payload, payload_hex, detected_pattern, bytes_received, bytes_sent, 
-              duration_ms, connection_info, payload_truncated)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+              duration_ms, connection_info, payload_truncated, payload_hash, payload_length)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 record.timestamp,
                 record.remote_ip,
@@ -164,6 +190,8 @@ impl HoneypotStorage {
                 record.duration_ms,
                 record.connection_info,
                 record.payload_truncated as i32,
+                record.payload_hash,
+                record.payload_length.map(|l| l as i64),
             ],
         )?;
 
@@ -231,7 +259,7 @@ impl HoneypotStorage {
         let mut stmt = conn.prepare(
             "SELECT id, timestamp, remote_ip, remote_port, local_port, protocol, service,
                     confidence, payload, payload_hex, detected_pattern, bytes_received, bytes_sent,
-                    duration_ms, connection_info, payload_truncated
+                    duration_ms, connection_info, payload_truncated, payload_hash, payload_length
              FROM honeypot_connections 
              WHERE timestamp > ?1
              ORDER BY timestamp DESC
@@ -262,6 +290,8 @@ impl HoneypotStorage {
                 duration_ms: row.get(13)?,
                 connection_info: row.get(14).unwrap_or_default(),
                 payload_truncated: row.get::<_, i32>(15).unwrap_or(0) != 0,
+                payload_hash: row.get(16).ok(),
+                payload_length: row.get::<_, i64>(17).ok().map(|l| l as usize),
             })
         })?;
 

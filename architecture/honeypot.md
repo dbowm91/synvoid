@@ -181,3 +181,56 @@ Banner lookup uses a static `LazyLock<HashMap>` keyed by **normalized lowercase 
 - `service` field is the display label (e.g., "HTTP", "PostgreSQL")
 - `evidence` field provides a short non-payload reason string
 - TLS normal records are detected with positive tests (no more `None` tolerance)
+
+## 8. Storage Writer, Retention, and Backpressure (Milestone C Phase 1)
+
+### Async Storage Pipeline
+
+Listener tasks no longer write to SQLite directly. Instead they submit records through a bounded `tokio::mpsc` channel to a background `HoneypotWriter` task that owns the SQLite writes. This prevents listener tasks from blocking on storage I/O.
+
+### Configuration
+
+`StorageWriterConfig` (nested under `StorageConfig.writer`) controls the pipeline:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `queue_capacity` | 4096 | Channel buffer between listeners and writer |
+| `batch_size` | 64 | Max records per transaction |
+| `flush_interval_ms` | 1000 | Timer-based flush interval |
+| `write_timeout_ms` | 500 | Bounded send timeout for listeners |
+| `payload_retention_mode` | `Truncated` | Controls raw payload storage |
+| `max_stored_payload_bytes` | 256 | Max raw payload bytes retained |
+| `max_stored_payload_hex_bytes` | 512 | Max hex payload bytes retained |
+
+### Payload Retention Modes
+
+| Mode | Raw Payload | Payload Hex | Payload Hash | Payload Length |
+|------|-------------|-------------|--------------|----------------|
+| `None` | Not stored | Not stored | SHA-256 | Original length |
+| `HashOnly` | Not stored | Not stored | SHA-256 | Original length |
+| `Truncated` | Up to `max_stored_payload_bytes` | Up to `max_stored_payload_hex_bytes` | SHA-256 | Original length |
+| `Full` | Full payload | Full hex | SHA-256 | Original length |
+
+Default mode is `Truncated`, which minimizes sensitive raw payload storage while preserving enough for forensic analysis.
+
+### Schema Migration
+
+Two new columns are added idempotently to `honeypot_connections`:
+- `payload_hash TEXT` — SHA-256 hash of original payload
+- `payload_length INTEGER NOT NULL DEFAULT 0` — original payload length before truncation
+
+Migrations are idempotent and tolerate existing databases.
+
+### Backpressure Behavior
+
+| Condition | Behavior | Metric |
+|-----------|----------|--------|
+| Queue full | Record dropped, listener continues | `honeypot_storage_drops` |
+| Write failure | Record lost, batch continues | `honeypot_storage_write_errors` |
+| Shutdown | Remaining queue flushed before exit | — |
+
+Listener availability is prioritized over perfect storage retention.
+
+### Batch Writes
+
+The writer accumulates up to `batch_size` records and flushes in a single SQLite transaction. Flushing occurs when batch size is reached or on the `flush_interval_ms` timer, whichever comes first.

@@ -11,7 +11,8 @@ use tokio::time;
 
 use crate::config::PortHoneypotConfig;
 use crate::protocol::{Confidence, ProtocolDetector};
-use crate::storage::{HoneypotRecord, HoneypotStorage};
+use crate::storage::HoneypotRecord;
+use crate::storage_writer::HoneypotWriter;
 use synvoid_utils::current_timestamp;
 
 /// RAII guard that decrements per-IP connection count on drop.
@@ -41,7 +42,7 @@ impl Drop for IpConnGuard {
 
 pub struct PortHoneypotListener {
     config: Arc<PortHoneypotConfig>,
-    storage: Arc<HoneypotStorage>,
+    writer: Arc<HoneypotWriter>,
     detector: Arc<ProtocolDetector>,
     current_port: Arc<RwLock<u16>>,
     active_connections: Arc<AtomicUsize>,
@@ -63,13 +64,13 @@ pub struct ConnectionEvent {
 }
 
 impl PortHoneypotListener {
-    pub fn new(config: PortHoneypotConfig, storage: HoneypotStorage) -> Arc<Self> {
+    pub fn new(config: PortHoneypotConfig, writer: HoneypotWriter) -> Arc<Self> {
         let (shutdown_tx, _) = broadcast::channel(1);
         let max_concurrent = config.max_concurrent_connections;
 
         Arc::new(Self {
             config: Arc::new(config),
-            storage: Arc::new(storage),
+            writer: Arc::new(writer),
             detector: Arc::new(ProtocolDetector::new()),
             current_port: Arc::new(RwLock::new(0)),
             active_connections: Arc::new(AtomicUsize::new(0)),
@@ -187,7 +188,7 @@ impl PortHoneypotListener {
                             );
 
                             let config = self.config.clone();
-                            let storage = self.storage.clone();
+                            let writer = self.writer.clone();
                             let detector = self.detector.clone();
                             let active = self.active_connections.clone();
 
@@ -200,7 +201,7 @@ impl PortHoneypotListener {
                                     remote_addr,
                                     port,
                                     &config,
-                                    &storage,
+                                    &writer,
                                     &detector,
                                     global_permit,
                                     ip_guard,
@@ -234,7 +235,7 @@ pub(crate) async fn handle_connection(
     remote_addr: SocketAddr,
     local_port: u16,
     config: &PortHoneypotConfig,
-    storage: &HoneypotStorage,
+    writer: &HoneypotWriter,
     detector: &ProtocolDetector,
     _global_permit: OwnedSemaphorePermit,
     _ip_guard: IpConnGuard,
@@ -375,11 +376,13 @@ pub(crate) async fn handle_connection(
         duration_ms: duration.as_millis() as u32,
         connection_info: format!("{}:{}", remote_addr.ip(), remote_addr.port()),
         payload_truncated,
+        payload_hash: None,
+        payload_length: None,
     };
 
-    if let Err(e) = storage.record_connection(record) {
-        tracing::error!("Failed to record honeypot connection: {}", e);
-        metrics::counter!("honeypot_storage_insert_failures").increment(1);
+    if let Err(e) = writer.try_write_record(record) {
+        tracing::warn!("Honeypot record dropped (queue full): {}", e);
+        metrics::counter!("honeypot_storage_drops").increment(1);
     }
 
     tracing::debug!(

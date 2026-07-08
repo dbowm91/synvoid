@@ -63,12 +63,49 @@ pub struct ResponsePattern {
     pub next_protocol: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PayloadRetentionMode {
+    None,
+    HashOnly,
+    #[default]
+    Truncated,
+    Full,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageWriterConfig {
+    pub queue_capacity: usize,
+    pub batch_size: usize,
+    pub flush_interval_ms: u64,
+    pub write_timeout_ms: u64,
+    pub payload_retention_mode: PayloadRetentionMode,
+    pub max_stored_payload_bytes: usize,
+    pub max_stored_payload_hex_bytes: usize,
+}
+
+impl Default for StorageWriterConfig {
+    fn default() -> Self {
+        Self {
+            queue_capacity: 4096,
+            batch_size: 64,
+            flush_interval_ms: 1000,
+            write_timeout_ms: 500,
+            payload_retention_mode: PayloadRetentionMode::Truncated,
+            max_stored_payload_bytes: 256,
+            max_stored_payload_hex_bytes: 512,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageConfig {
     pub database_path: String,
     pub max_records: u64,
     pub retention_days: u32,
     pub flush_interval_secs: u32,
+    #[serde(default)]
+    pub writer: StorageWriterConfig,
 }
 
 impl Default for PortHoneypotConfig {
@@ -107,6 +144,7 @@ impl Default for StorageConfig {
             max_records: 1_000_000,
             retention_days: 90,
             flush_interval_secs: 60,
+            writer: StorageWriterConfig::default(),
         }
     }
 }

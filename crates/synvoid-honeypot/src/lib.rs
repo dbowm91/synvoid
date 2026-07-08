@@ -8,9 +8,13 @@ pub mod responses;
 pub mod rotation;
 pub mod runner;
 pub mod storage;
+pub mod storage_writer;
 pub mod threat_intel;
 
-pub use config::{AiConfig, PortHoneypotConfig, ResponseModeConfig, StablePortConfig};
+pub use config::{
+    AiConfig, PayloadRetentionMode, PortHoneypotConfig, ResponseModeConfig, StablePortConfig,
+    StorageWriterConfig,
+};
 pub use controller::PortHoneypotController;
 pub use listener::PortHoneypotListener;
 pub use mesh_control::{
@@ -28,7 +32,10 @@ pub use responses::{
 pub use rotation::{PortInfo, PortManager, PortMode, StablePort};
 pub use runner::PortHoneypotRunner;
 pub use storage::HoneypotStorage;
+pub use storage_writer::HoneypotWriter;
 pub use threat_intel::{HoneypotIndicator, HoneypotIntelExtractor, IndicatorType, SeverityLevel};
 
 #[cfg(test)]
 mod listener_tests;
+#[cfg(test)]
+mod storage_writer_tests;

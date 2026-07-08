@@ -8,6 +8,7 @@ use tokio::time;
 use crate::config::PortHoneypotConfig;
 use crate::listener::PortHoneypotListener;
 use crate::storage::HoneypotStorage;
+use crate::storage_writer::HoneypotWriter;
 #[cfg(feature = "mesh")]
 use crate::threat_intel::HoneypotIntelExtractor;
 #[cfg(feature = "mesh")]
@@ -18,6 +19,7 @@ use synvoid_mesh::threat_intel::ThreatIntelligenceManager;
 pub struct PortHoneypotRunner {
     config: Arc<PortHoneypotConfig>,
     storage: Arc<HoneypotStorage>,
+    writer: Arc<HoneypotWriter>,
     listener: Arc<PortHoneypotListener>,
     running: Arc<RwLock<bool>>,
     shutdown_tx: broadcast::Sender<()>,
@@ -25,16 +27,18 @@ pub struct PortHoneypotRunner {
 
 impl PortHoneypotRunner {
     pub fn new(config: PortHoneypotConfig) -> Result<Arc<Self>, Box<dyn std::error::Error>> {
-        let storage = Arc::new(HoneypotStorage::new(&config.storage)?);
+        let storage = HoneypotStorage::new(&config.storage)?;
+        let writer = HoneypotWriter::new(storage.clone(), config.storage.writer.clone());
 
         let config = Arc::new(config);
-        let listener = PortHoneypotListener::new((*config).clone(), (*storage).clone());
+        let listener = PortHoneypotListener::new((*config).clone(), writer.clone());
 
         let (shutdown_tx, _) = broadcast::channel(1);
 
         Ok(Arc::new(Self {
             config,
-            storage,
+            storage: Arc::new(storage),
+            writer: Arc::new(writer),
             listener,
             running: Arc::new(RwLock::new(false)),
             shutdown_tx,
@@ -43,6 +47,10 @@ impl PortHoneypotRunner {
 
     pub fn storage(&self) -> &Arc<HoneypotStorage> {
         &self.storage
+    }
+
+    pub fn writer(&self) -> &Arc<HoneypotWriter> {
+        &self.writer
     }
 
     pub fn listener(&self) -> &Arc<PortHoneypotListener> {
@@ -138,6 +146,10 @@ impl PortHoneypotRunner {
         let _ = self.shutdown_tx.send(());
         let mut running = self.running.write();
         *running = false;
+        let writer = self.writer.clone();
+        tokio::spawn(async move {
+            writer.shutdown().await;
+        });
     }
 
     #[cfg(feature = "mesh")]

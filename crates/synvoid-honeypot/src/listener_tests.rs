@@ -4,6 +4,7 @@ mod tests {
     use crate::listener::{handle_connection, IpConnGuard};
     use crate::protocol::ProtocolDetector;
     use crate::storage::*;
+    use crate::storage_writer::HoneypotWriter;
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::time::Duration;
@@ -17,6 +18,20 @@ mod tests {
             ..Default::default()
         };
         HoneypotStorage::new(&cfg).unwrap()
+    }
+
+    fn test_writer() -> (HoneypotWriter, Arc<HoneypotStorage>) {
+        let storage = test_storage();
+        let writer = HoneypotWriter::new(
+            storage.clone(),
+            StorageWriterConfig {
+                queue_capacity: 256,
+                batch_size: 16,
+                flush_interval_ms: 10,
+                ..Default::default()
+            },
+        );
+        (writer, Arc::new(storage))
     }
 
     #[tokio::test]
@@ -112,7 +127,7 @@ mod tests {
             max_payload_size: 10,
             ..Default::default()
         };
-        let storage = test_storage();
+        let (writer, storage) = test_writer();
         let detector = ProtocolDetector::new();
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -135,12 +150,14 @@ mod tests {
             addr,
             addr.port(),
             &config,
-            &storage,
+            &writer,
             &detector,
             permit,
             guard,
         )
         .await;
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
         let records = storage.get_records_since(0, 10).unwrap();
         assert_eq!(records.len(), 1);
@@ -159,7 +176,7 @@ mod tests {
             max_payload_size: 8192,
             ..Default::default()
         };
-        let storage = test_storage();
+        let (writer, storage) = test_writer();
         let detector = ProtocolDetector::new();
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -186,16 +203,19 @@ mod tests {
             addr,
             addr.port(),
             &config,
-            &storage,
+            &writer,
             &detector,
             permit,
             guard,
         )
         .await;
 
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // After read timeout, permit should be released
+        assert!(Arc::clone(&sem).try_acquire_owned().is_ok());
         let records = storage.get_records_since(0, 10).unwrap();
         assert_eq!(records.len(), 1);
-        // total bytes from both reads: "GET /" (5) + " HTTP/1.1\r\nHost: test\r\n\r\n" (22) = 27
         assert!(records[0].bytes_received > 5);
     }
 
@@ -209,7 +229,7 @@ mod tests {
             max_payload_size: 8192,
             ..Default::default()
         };
-        let storage = test_storage();
+        let (writer, storage) = test_writer();
         let detector = ProtocolDetector::new();
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -234,12 +254,14 @@ mod tests {
             addr,
             addr.port(),
             &config,
-            &storage,
+            &writer,
             &detector,
             permit,
             guard,
         )
         .await;
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
         let records = storage.get_records_since(0, 10).unwrap();
         assert_eq!(records.len(), 1);
@@ -265,7 +287,7 @@ mod tests {
             max_payload_size: 1024,
             ..Default::default()
         };
-        let storage = test_storage();
+        let (writer, storage) = test_writer();
         let detector = ProtocolDetector::new();
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -284,7 +306,7 @@ mod tests {
             addr,
             addr.port(),
             &config,
-            &storage,
+            &writer,
             &detector,
             permit,
             guard,
@@ -306,7 +328,7 @@ mod tests {
             max_payload_size: 1024,
             ..Default::default()
         };
-        let storage = test_storage();
+        let (writer, storage) = test_writer();
         let detector = ProtocolDetector::new();
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -315,7 +337,6 @@ mod tests {
         let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
         let (server_stream, _) = listener.accept().await.unwrap();
 
-        // Send initial data so we pass the initial timeout
         client.write_all(b"hello").await.unwrap();
 
         let sem = Arc::new(Semaphore::new(1));
@@ -328,14 +349,15 @@ mod tests {
             addr,
             addr.port(),
             &config,
-            &storage,
+            &writer,
             &detector,
             permit,
             guard,
         )
         .await;
 
-        // After read timeout, permit should be released
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
         assert!(Arc::clone(&sem).try_acquire_owned().is_ok());
         let records = storage.get_records_since(0, 10).unwrap();
         assert_eq!(records.len(), 1);

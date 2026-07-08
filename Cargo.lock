@@ -8260,6 +8260,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "synvoid-config",
  "synvoid-http-client",
  "synvoid-mesh",

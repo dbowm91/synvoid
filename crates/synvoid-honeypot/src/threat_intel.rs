@@ -218,6 +218,8 @@ mod tests {
             duration_ms: 100,
             connection_info: "192.168.1.100:12345".to_string(),
             payload_truncated: false,
+            payload_hash: None,
+            payload_length: None,
         }
     }
 
