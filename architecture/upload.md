@@ -465,17 +465,18 @@ ZIP uploads are inspected **in-memory** without disk extraction. Entry contents 
 ### Design Constraints
 
 - **No disk extraction**: Entries are read from the in-memory ZIP archive; no files are written to disk.
-- **Path sanitization**: Entry paths are validated against traversal (`..`), absolute paths, UNC paths, Windows drive letters, null bytes, and symlinks.
+- **Path sanitization**: Entry paths are validated against traversal (`..`), absolute paths, UNC paths, Windows drive letters, and null bytes. Structural violations return `ArchiveInspectionError` variants, not synthetic malware matches.
+- **Symlink rejection**: ZIP entries with Unix symlink mode bits (`S_IFLNK = 0o120000`) are rejected via `SymlinkRejected` error. Detection uses `ZipFile::unix_mode()` which works cross-platform (returns `None` on non-Unix, skipping the check).
 - **Bounded iteration**: Entry count, total uncompressed bytes, per-entry size, and compression ratio are all capped.
-- **Nested archive detection**: ZIP entries that are themselves archives (`.zip`, `.jar`, `.war`, `.ear`, `.docx`, `.xlsx`, `.pptx`, etc.) are counted but not recursively inspected (depth-0 by default).
-- **Failure semantics preserved**: Malformed ZIPs and limit violations are classified per `yara_failure_policy` (FailClosed/QuarantineOnError/FailOpen). Malformed ZIPs are never silently treated as clean.
+- **Nested archive detection**: ZIP entries that are themselves archives (`.zip`, `.jar`, `.war`, `.ear`, `.docx`, `.xlsx`, `.pptx`, etc.) are counted but **not** recursively inspected. The `archive_max_depth` field is reserved for future recursive inspection.
+- **Failure semantics preserved**: Structural violations (path traversal, symlink, limits) and malformed ZIPs are classified per `yara_failure_policy` (FailClosed/QuarantineOnError/FailOpen). These are never silently treated as clean.
 
 ### Configuration
 
 ```toml
 [site.upload]
 archive_inspection_enabled = true   # default: true
-archive_max_depth = 3               # max nested inspection depth (default: 3)
+archive_max_depth = 3               # reserved for future recursive inspection (default: 3)
 archive_max_entries = 1000          # max entries per archive (default: 1000)
 archive_max_total_uncompressed_bytes = 536870912  # 512 MB (default)
 archive_max_entry_uncompressed_bytes = 104857600  # 100 MB (default)
@@ -483,17 +484,20 @@ archive_max_compression_ratio = 100.0             # default: 100.0
 archive_max_nested_archives = 5     # max nested archive entries (default: 5)
 ```
 
+> **Note**: `archive_max_depth` is currently reserved for future recursive nested inspection. Nested archives are detected and counted but not recursively opened. The field exists for forward compatibility.
+
 ### Path Sanitization
 
 Entry paths from ZIP archives are normalized and validated:
 
 | Check | Action |
 |-------|--------|
-| `..` component | Rejected (`PathTraversal`) |
-| Absolute path (`/foo`) | Rejected (`AbsolutePath`) |
-| Windows drive (`C:\foo`) | Rejected (`UncPath`) |
-| UNC path (`\\server\share`) | Rejected (`UncPath`) |
-| Null byte (`\x00`) | Rejected |
+| `..` component | Rejected (`PathTraversal` error) |
+| Absolute path (`/foo`) | Rejected (`AbsolutePath` error) |
+| Windows drive (`C:\foo`) | Rejected (`AbsolutePath` error) |
+| UNC path (`\\server\share`) | Rejected (`UncPath` error) |
+| Null byte (`\x00`) | Rejected (`PathTraversal` error) |
+| Symlink (Unix mode bits) | Rejected (`SymlinkRejected` error) |
 | Backslash | Normalized to `/` |
 
 ### Limits
@@ -525,12 +529,32 @@ Archive inspection runs **after** the outer YARA scan on the raw bytes. The flow
 2. If the file is a ZIP (`PK` magic bytes) and `archive_inspection_enabled = true`:
    - `ArchiveInspectionConfig` is built from `EffectiveUploadConfig`.
    - `inspect_zip_archive()` iterates entries, sanitizes paths, enforces limits, and scans each entry's content with `MalwareScanner`.
-3. Archive matches are folded into the outer match set.
-4. If any matches are found, `MalwareDetected` is returned (with quarantine in `validate_with_sandbox`).
-5. Limit violations and malformed ZIPs apply `yara_failure_policy`.
+3. Structural violations (path traversal, symlink, UNC path) return `ArchiveInspectionError` variants. These are mapped through `yara_failure_policy`.
+4. Malware matches from entry content scanning are folded into the outer match set.
+5. If any malware matches are found, `MalwareDetected` is returned (with quarantine in `validate_with_sandbox`).
+6. Limit violations and malformed ZIPs apply `yara_failure_policy` as `ScanIndeterminate`.
+
+### Validation Result Metadata
+
+`ValidationResult` includes archive inspection metadata for operators:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `archive_detected` | `bool` | Whether an archive format was detected (PK magic bytes) |
+| `archive_type` | `Option<String>` | Archive format detected (e.g., `"zip"`) |
+| `archive_supported` | `bool` | Whether the archive format is supported for inspection |
+| `archive_inspected` | `bool` | Whether archive inspection was performed |
+| `archive_entries_seen` | `u32` | Total entries encountered in the archive |
+| `archive_entries_scanned` | `u32` | Entries whose contents were scanned for malware |
+| `archive_nested_seen` | `u32` | Nested archives detected (not recursively inspected) |
+| `archive_nested_archives` | `u32` | Alias for nested archives count |
+| `archive_recursive_inspection` | `bool` | Whether recursive inspection was enabled (currently always `false`) |
+| `archive_truncated` | `bool` | Whether inspection was truncated due to limits |
+| `archive_error` | `Option<String>` | Archive inspection error message if any |
 
 ### Limitations
 
-- Only ZIP is supported. TAR/GZIP/BZIP2/7z are not inspected at this time (detected by MIME but not opened).
-- Nested archives are detected by filename but not recursively inspected by default.
-- Symlink detection uses `is_dir()` which may have platform-specific behavior on ZIP entries.
+- Only ZIP is structurally inspected. TAR/GZIP/BZIP2/7z are detected by MIME but not opened.
+- Nested archives are detected by filename extension and counted, but not recursively inspected. `archive_max_depth` is reserved for future recursive inspection.
+- Symlink detection uses `ZipFile::unix_mode()` external attributes. On non-Unix platforms, `unix_mode()` returns `None` and the symlink check is skipped (entries without mode bits are not rejected).
+- Structural violations (path traversal, symlink, limits) return `ArchiveInspectionError` and are mapped through `yara_failure_policy`. They are not represented as synthetic malware matches.

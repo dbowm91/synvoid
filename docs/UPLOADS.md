@@ -301,7 +301,7 @@ ZIP uploads are inspected in-memory without disk extraction. Entry contents are 
 ```toml
 [site.upload]
 archive_inspection_enabled = true   # Enable archive inspection (default: true)
-archive_max_depth = 3               # Max nested inspection depth (default: 3)
+archive_max_depth = 3               # Reserved for future recursive inspection (default: 3)
 archive_max_entries = 1000          # Max entries per archive (default: 1000)
 archive_max_total_uncompressed_bytes = 536870912  # 512 MB total (default)
 archive_max_entry_uncompressed_bytes = 104857600  # 100 MB per entry (default)
@@ -309,21 +309,25 @@ archive_max_compression_ratio = 100.0             # Max compression ratio (defau
 archive_max_nested_archives = 5     # Max nested archive entries (default: 5)
 ```
 
+> **Note**: `archive_max_depth` is reserved for future recursive nested inspection. Nested archives are detected and counted but not recursively opened.
+
 ### What Gets Checked
 
-1. **Path sanitization** — Rejects `..` traversal, absolute paths, UNC paths, Windows drive letters, null bytes, and backslashes (normalized to `/`)
-2. **Entry content scanning** — Each entry's uncompressed content is scanned by the native heuristic rules and YARA-X
-3. **Nested archive detection** — ZIP entries that are themselves archives (`.zip`, `.jar`, `.war`, `.ear`, `.docx`, `.xlsx`, `.pptx`, etc.) are counted
-4. **Archive bomb protection** — Entry count, total size, per-entry size, and compression ratio limits
+1. **Path sanitization** — Rejects `..` traversal, absolute paths, UNC paths, Windows drive letters, and null bytes. Structural violations return `ArchiveInspectionError` (not synthetic malware matches).
+2. **Symlink rejection** — ZIP entries with Unix symlink mode bits are rejected via `SymlinkRejected` error.
+3. **Entry content scanning** — Each entry's uncompressed content is scanned by the native heuristic rules and YARA-X
+4. **Nested archive detection** — ZIP entries that are themselves archives (`.zip`, `.jar`, `.war`, `.ear`, `.docx`, `.xlsx`, `.pptx`, etc.) are counted but not recursively inspected
+5. **Archive bomb protection** — Entry count, total size, per-entry size, and compression ratio limits
 
 ### How It Works
 
 1. Upload bytes are scanned by native heuristics + YARA-X (as before)
 2. If the file is a ZIP archive and inspection is enabled, entries are iterated in-memory
-3. Each entry's path is sanitized; unsafe paths are rejected
-4. Entry content is scanned for malware
-5. Matches from archive entries are combined with outer-scan matches
-6. Limit violations and malformed archives apply your `yara_failure_policy`
+3. Each entry's path is sanitized; structural violations return `ArchiveInspectionError` and are mapped through `yara_failure_policy`
+4. Symlink entries (Unix mode bits) are rejected as `SymlinkRejected` error
+5. Entry content is scanned for malware
+6. Malware matches from archive entries are combined with outer-scan matches
+7. Limit violations and malformed archives apply your `yara_failure_policy` as `ScanIndeterminate`
 
 ### Archive Metrics
 
@@ -335,8 +339,10 @@ archive_max_nested_archives = 5     # Max nested archive entries (default: 5)
 
 ### Limitations
 
-- Only ZIP archives are inspected. TAR/GZIP/BZIP2/7z are detected by MIME but not opened.
-- Nested archives are detected by filename but not recursively inspected by default.
+- Only ZIP archives are structurally inspected. TAR/GZIP/BZIP2/7z are detected by MIME but not opened.
+- Nested archives are detected by filename extension and counted, but not recursively inspected.
+- Symlink detection uses `ZipFile::unix_mode()` external attributes. On non-Unix platforms, `unix_mode()` returns `None` and the check is skipped.
+- Structural violations (path traversal, symlink, limits) return `ArchiveInspectionError` and are not represented as malware signature matches.
 
 ## Security Considerations
 

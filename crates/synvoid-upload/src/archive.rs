@@ -1,5 +1,5 @@
 use crate::config::EffectiveUploadConfig;
-use crate::malware_scanner::{MalwareMatch, MatchConfidence, MatchSource, ScanContext};
+use crate::malware_scanner::{MalwareMatch, ScanContext};
 use crate::MalwareScanner;
 use std::io::Cursor;
 use thiserror::Error;
@@ -55,6 +55,10 @@ pub struct ArchiveInspectionResult {
     pub matches: Vec<ArchiveEntryMatch>,
     /// Warnings generated during inspection.
     pub warnings: Vec<String>,
+    /// Whether recursive inspection is enabled (currently always false).
+    pub recursive_inspection_enabled: bool,
+    /// Whether the archive was truncated.
+    pub archive_error: Option<String>,
 }
 
 /// A malware match with entry context.
@@ -220,6 +224,8 @@ pub async fn inspect_zip_archive(
         truncated: false,
         matches: Vec::new(),
         warnings: Vec::new(),
+        recursive_inspection_enabled: false,
+        archive_error: None,
     };
 
     let entry_count = archive.len() as u32;
@@ -250,71 +256,17 @@ pub async fn inspect_zip_archive(
         result.entries_seen += 1;
 
         // Sanitize path
-        let _sanitized_path = match sanitize_entry_path(&entry_name) {
-            Ok(p) => p,
-            Err(e) => {
-                result.warnings.push(format!("entry {i}: {e}"));
-                result.matches.push(ArchiveEntryMatch {
-                    malware_match: MalwareMatch {
-                        rule_name: "archive_path_suspicious".to_string(),
-                        namespace: "default".to_string(),
-                        tags: vec!["archive".to_string(), "traversal".to_string()],
-                        meta: [
-                            ("severity".to_string(), "high".to_string()),
-                            ("category".to_string(), "archive".to_string()),
-                            (
-                                "description".to_string(),
-                                format!("Rejected entry path: {entry_name}"),
-                            ),
-                        ]
-                        .into_iter()
-                        .collect(),
-                        source: MatchSource::Native,
-                        confidence: MatchConfidence::High,
-                    },
-                    entry_path: entry_name,
-                    entry_index: i as u32,
-                });
-                continue;
-            }
-        };
+        let _sanitized_path = sanitize_entry_path(&entry_name)?;
 
         // Skip directories
         if is_directory(&entry_name) {
             continue;
         }
 
-        // Check for symlinks
-        #[cfg(unix)]
-        {
-            if let Some(mode) = entry.unix_mode() {
-                if mode & 0o170000 == 0o120000 {
-                    result
-                        .warnings
-                        .push(format!("entry {i}: symlink rejected: {entry_name}"));
-                    result.matches.push(ArchiveEntryMatch {
-                        malware_match: MalwareMatch {
-                            rule_name: "archive_symlink_rejected".to_string(),
-                            namespace: "default".to_string(),
-                            tags: vec!["archive".to_string(), "symlink".to_string()],
-                            meta: [
-                                ("severity".to_string(), "medium".to_string()),
-                                ("category".to_string(), "archive".to_string()),
-                                (
-                                    "description".to_string(),
-                                    format!("Symlink entry rejected: {entry_name}"),
-                                ),
-                            ]
-                            .into_iter()
-                            .collect(),
-                            source: MatchSource::Native,
-                            confidence: MatchConfidence::Medium,
-                        },
-                        entry_path: entry_name,
-                        entry_index: i as u32,
-                    });
-                    continue;
-                }
+        // Check for symlinks via Unix external attributes
+        if let Some(mode) = entry.unix_mode() {
+            if mode & 0o170000 == 0o120000 {
+                return Err(ArchiveInspectionError::SymlinkRejected(entry_name));
             }
         }
 
@@ -537,16 +489,12 @@ mod tests {
         let data = create_test_zip(&[("../escape.txt", b"bad")]);
         let config = test_config();
         let scanner = test_scanner();
-        let result = inspect_zip_archive(&data, &config, &scanner, 0, None)
-            .await
-            .unwrap();
-
-        // Path traversal entries produce matches (not errors)
-        assert!(!result.matches.is_empty());
-        assert!(result
-            .matches
-            .iter()
-            .any(|m| m.malware_match.rule_name == "archive_path_suspicious"));
+        let result = inspect_zip_archive(&data, &config, &scanner, 0, None).await;
+        assert!(result.is_err());
+        matches!(
+            result.unwrap_err(),
+            ArchiveInspectionError::PathTraversal(_)
+        );
     }
 
     #[tokio::test]
@@ -554,15 +502,9 @@ mod tests {
         let data = create_test_zip(&[("/etc/passwd", b"root:x:0:0:root:/root:/bin/bash")]);
         let config = test_config();
         let scanner = test_scanner();
-        let result = inspect_zip_archive(&data, &config, &scanner, 0, None)
-            .await
-            .unwrap();
-
-        assert!(!result.matches.is_empty());
-        assert!(result
-            .matches
-            .iter()
-            .any(|m| m.malware_match.rule_name == "archive_path_suspicious"));
+        let result = inspect_zip_archive(&data, &config, &scanner, 0, None).await;
+        assert!(result.is_err());
+        matches!(result.unwrap_err(), ArchiveInspectionError::AbsolutePath(_));
     }
 
     #[tokio::test]
@@ -696,5 +638,69 @@ mod tests {
 
         assert_eq!(result.entries_seen, 2);
         assert_eq!(result.entries_scanned, 1);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_inspect_zip_symlink_rejected() {
+        let mut buf = Vec::new();
+        {
+            let mut writer = ZipWriter::new(Cursor::new(&mut buf));
+            let options =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            writer
+                .add_symlink("link.txt", "/etc/passwd", options)
+                .unwrap();
+            writer.finish().unwrap();
+        }
+        let config = test_config();
+        let scanner = test_scanner();
+        let result = inspect_zip_archive(&buf, &config, &scanner, 0, None).await;
+        assert!(result.is_err());
+        matches!(
+            result.unwrap_err(),
+            ArchiveInspectionError::SymlinkRejected(_)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_inspect_zip_directory_not_symlink() {
+        let mut buf = Vec::new();
+        {
+            let mut writer = ZipWriter::new(Cursor::new(&mut buf));
+            let options =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            writer.start_file("dir/", options).unwrap();
+            writer.write_all(b"").unwrap();
+            writer.start_file("dir/file.txt", options).unwrap();
+            writer.write_all(b"content").unwrap();
+            writer.finish().unwrap();
+        }
+        let config = test_config();
+        let scanner = test_scanner();
+        let result = inspect_zip_archive(&buf, &config, &scanner, 0, None).await;
+        assert!(result.is_ok());
+        let result = result.unwrap();
+        assert_eq!(result.entries_seen, 2);
+        assert_eq!(result.entries_scanned, 1);
+    }
+
+    #[tokio::test]
+    async fn test_inspect_zip_nested_archive_detected_not_inspected() {
+        let inner_zip = create_test_zip(&[("inner.txt", b"inner content")]);
+        let outer_zip =
+            create_test_zip(&[("data.txt", b"outer content"), ("nested.zip", &inner_zip)]);
+        let config = test_config();
+        let scanner = test_scanner();
+        let result = inspect_zip_archive(&outer_zip, &config, &scanner, 0, None)
+            .await
+            .unwrap();
+
+        assert!(result.inspected);
+        assert_eq!(result.entries_seen, 2);
+        assert_eq!(result.entries_scanned, 2);
+        assert_eq!(result.nested_archives_seen, 1);
+        assert_eq!(result.max_depth_reached, 0);
+        assert!(result.warnings.is_empty() || result.warnings.iter().all(|w| w.contains("nested")));
     }
 }
