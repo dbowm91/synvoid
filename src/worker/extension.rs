@@ -114,9 +114,16 @@ impl ExtensionRegistry {
     }
 
     pub async fn start_all(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        for ext in self.extensions.read().unwrap().iter() {
-            if let Err(e) = ext.runtime.start().await {
-                tracing::error!("Failed to start extension {}: {}", ext.name, e);
+        let runtimes: Vec<_> = self
+            .extensions
+            .read()
+            .unwrap()
+            .iter()
+            .map(|e| (e.name, e.runtime.clone()))
+            .collect();
+        for (name, runtime) in &runtimes {
+            if let Err(e) = runtime.start().await {
+                tracing::error!("Failed to start extension {}: {}", name, e);
                 return Err(e);
             }
         }
@@ -124,9 +131,16 @@ impl ExtensionRegistry {
     }
 
     pub async fn stop_all(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        for ext in self.extensions.read().unwrap().iter() {
-            if let Err(e) = ext.runtime.stop().await {
-                tracing::error!("Failed to stop extension {}: {}", ext.name, e);
+        let runtimes: Vec<_> = self
+            .extensions
+            .read()
+            .unwrap()
+            .iter()
+            .map(|e| (e.name, e.runtime.clone()))
+            .collect();
+        for (name, runtime) in &runtimes {
+            if let Err(e) = runtime.stop().await {
+                tracing::error!("Failed to stop extension {}: {}", name, e);
             }
         }
         Ok(())

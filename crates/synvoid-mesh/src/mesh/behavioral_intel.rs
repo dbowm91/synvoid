@@ -188,9 +188,7 @@ impl BehavioralIntelligenceManager {
         }
 
         let mut collectors = self.sample_collectors.write();
-        let collector = collectors
-            .entry(request_id.to_string())
-            .or_insert_with(Vec::new);
+        let collector = collectors.entry(request_id.to_string()).or_default();
         collector.push(features);
 
         if collector.len() >= self.config.min_samples_for_fingerprint as usize {
@@ -526,7 +524,7 @@ impl BehavioralIntelligenceManager {
             .fingerprints
             .read()
             .values()
-            .filter(|fp| fp.last_seen > from_version as u64)
+            .filter(|fp| fp.last_seen > from_version)
             .map(|fp| fp.anonymized())
             .take(100)
             .collect();

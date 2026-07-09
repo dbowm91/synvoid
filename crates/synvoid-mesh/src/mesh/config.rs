@@ -1764,9 +1764,11 @@ mod tests {
     #[test]
     fn test_mesh_validate_rejects_unbounded_unsigned_sync_compat() {
         let mut cfg = MeshConfig::default();
-        let mut dht = MeshDhtConfig::default();
-        dht.require_signed_sync_requests = false;
-        dht.unsigned_sync_compat_until_unix = None;
+        let dht = MeshDhtConfig {
+            require_signed_sync_requests: false,
+            unsigned_sync_compat_until_unix: None,
+            ..Default::default()
+        };
         cfg.dht = Some(dht);
 
         let err = cfg.validate().expect_err("validation should fail");
@@ -1776,10 +1778,13 @@ mod tests {
     #[test]
     fn test_mesh_validate_rejects_expired_unsigned_sync_compat_window() {
         let mut cfg = MeshConfig::default();
-        let mut dht = MeshDhtConfig::default();
-        dht.require_signed_sync_requests = false;
-        dht.unsigned_sync_compat_until_unix =
-            Some(synvoid_utils::safe_unix_timestamp().saturating_sub(1));
+        let dht = MeshDhtConfig {
+            require_signed_sync_requests: false,
+            unsigned_sync_compat_until_unix: Some(
+                synvoid_utils::safe_unix_timestamp().saturating_sub(1),
+            ),
+            ..Default::default()
+        };
         cfg.dht = Some(dht);
 
         let err = cfg.validate().expect_err("validation should fail");
@@ -1789,10 +1794,13 @@ mod tests {
     #[test]
     fn test_mesh_validate_allows_future_bounded_unsigned_sync_compat_window() {
         let mut cfg = MeshConfig::default();
-        let mut dht = MeshDhtConfig::default();
-        dht.require_signed_sync_requests = false;
-        dht.unsigned_sync_compat_until_unix =
-            Some(synvoid_utils::safe_unix_timestamp().saturating_add(3600));
+        let dht = MeshDhtConfig {
+            require_signed_sync_requests: false,
+            unsigned_sync_compat_until_unix: Some(
+                synvoid_utils::safe_unix_timestamp().saturating_add(3600),
+            ),
+            ..Default::default()
+        };
         cfg.dht = Some(dht);
 
         cfg.validate().expect("validation should pass");
@@ -1801,9 +1809,11 @@ mod tests {
     #[test]
     fn test_mesh_validate_rejects_unbounded_unsigned_anti_entropy_compat() {
         let mut cfg = MeshConfig::default();
-        let mut dht = MeshDhtConfig::default();
-        dht.require_signed_anti_entropy_requests = false;
-        dht.unsigned_anti_entropy_compat_until_unix = None;
+        let dht = MeshDhtConfig {
+            require_signed_anti_entropy_requests: false,
+            unsigned_anti_entropy_compat_until_unix: None,
+            ..Default::default()
+        };
         cfg.dht = Some(dht);
 
         let err = cfg.validate().expect_err("validation should fail");
@@ -1813,10 +1823,13 @@ mod tests {
     #[test]
     fn test_mesh_validate_rejects_expired_unsigned_anti_entropy_compat_window() {
         let mut cfg = MeshConfig::default();
-        let mut dht = MeshDhtConfig::default();
-        dht.require_signed_anti_entropy_requests = false;
-        dht.unsigned_anti_entropy_compat_until_unix =
-            Some(synvoid_utils::safe_unix_timestamp().saturating_sub(1));
+        let dht = MeshDhtConfig {
+            require_signed_anti_entropy_requests: false,
+            unsigned_anti_entropy_compat_until_unix: Some(
+                synvoid_utils::safe_unix_timestamp().saturating_sub(1),
+            ),
+            ..Default::default()
+        };
         cfg.dht = Some(dht);
 
         let err = cfg.validate().expect_err("validation should fail");
@@ -1826,10 +1839,13 @@ mod tests {
     #[test]
     fn test_mesh_validate_allows_future_bounded_unsigned_anti_entropy_compat_window() {
         let mut cfg = MeshConfig::default();
-        let mut dht = MeshDhtConfig::default();
-        dht.require_signed_anti_entropy_requests = false;
-        dht.unsigned_anti_entropy_compat_until_unix =
-            Some(synvoid_utils::safe_unix_timestamp().saturating_add(3600));
+        let dht = MeshDhtConfig {
+            require_signed_anti_entropy_requests: false,
+            unsigned_anti_entropy_compat_until_unix: Some(
+                synvoid_utils::safe_unix_timestamp().saturating_add(3600),
+            ),
+            ..Default::default()
+        };
         cfg.dht = Some(dht);
 
         cfg.validate().expect("validation should pass");
@@ -1838,9 +1854,11 @@ mod tests {
     #[test]
     fn test_mesh_validate_rejects_unbounded_unsigned_record_push_compat() {
         let mut cfg = MeshConfig::default();
-        let mut dht = MeshDhtConfig::default();
-        dht.require_signed_record_push = false;
-        dht.unsigned_record_push_compat_until_unix = None;
+        let dht = MeshDhtConfig {
+            require_signed_record_push: false,
+            unsigned_record_push_compat_until_unix: None,
+            ..Default::default()
+        };
         cfg.dht = Some(dht);
 
         let err = cfg.validate().expect_err("validation should fail");
@@ -1850,10 +1868,13 @@ mod tests {
     #[test]
     fn test_mesh_validate_rejects_expired_unsigned_record_push_compat_window() {
         let mut cfg = MeshConfig::default();
-        let mut dht = MeshDhtConfig::default();
-        dht.require_signed_record_push = false;
-        dht.unsigned_record_push_compat_until_unix =
-            Some(synvoid_utils::safe_unix_timestamp().saturating_sub(1));
+        let dht = MeshDhtConfig {
+            require_signed_record_push: false,
+            unsigned_record_push_compat_until_unix: Some(
+                synvoid_utils::safe_unix_timestamp().saturating_sub(1),
+            ),
+            ..Default::default()
+        };
         cfg.dht = Some(dht);
 
         let err = cfg.validate().expect_err("validation should fail");
@@ -1863,10 +1884,13 @@ mod tests {
     #[test]
     fn test_mesh_validate_allows_future_bounded_unsigned_record_push_compat_window() {
         let mut cfg = MeshConfig::default();
-        let mut dht = MeshDhtConfig::default();
-        dht.require_signed_record_push = false;
-        dht.unsigned_record_push_compat_until_unix =
-            Some(synvoid_utils::safe_unix_timestamp().saturating_add(3600));
+        let dht = MeshDhtConfig {
+            require_signed_record_push: false,
+            unsigned_record_push_compat_until_unix: Some(
+                synvoid_utils::safe_unix_timestamp().saturating_add(3600),
+            ),
+            ..Default::default()
+        };
         cfg.dht = Some(dht);
 
         cfg.validate().expect("validation should pass");

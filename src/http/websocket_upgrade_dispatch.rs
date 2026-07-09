@@ -10,6 +10,7 @@ use crate::waf::WafCore;
 
 use synvoid_http::maybe_handle_websocket_upgrade as maybe_handle_websocket_upgrade_impl;
 
+#[allow(clippy::type_complexity)] // reason: nested Arc<RwLock<HashMap<...>>> composition root type
 pub async fn maybe_handle_websocket_upgrade<AppServerFn, AppServerFut, TunnelFn, TunnelFut>(
     on_upgrade: Option<hyper::upgrade::OnUpgrade>,
     app_servers: &Option<Arc<RwLock<HashMap<String, Arc<crate::app_server::GranianSupervisor>>>>>,

@@ -170,7 +170,7 @@ where
             let cookie = format_secure_http_only_cookie(
                 &session_cookie_name,
                 &session_cookie_value,
-                session_cookie_max_age as u64,
+                session_cookie_max_age,
             );
             on_challenged(html.len() as u64);
             on_log(200, elapsed_ms());

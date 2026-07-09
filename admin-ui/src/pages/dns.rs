@@ -13,7 +13,7 @@ pub fn Dns() -> Html {
     let save_success = use_state(|| None as Option<String>);
     let save_error = use_state(|| None as Option<String>);
 
-    let edited_config = use_state(|| DnsConfig::default());
+    let edited_config = use_state(DnsConfig::default);
 
     let edited_config_for_render = edited_config.clone();
     let edited_config_for_save = edited_config.clone();
@@ -132,7 +132,7 @@ pub fn Dns() -> Html {
             let saving = saving.clone();
             let save_success = save_success.clone();
             let save_error = save_error.clone();
-            let dns_config = dns_config.clone();
+            let _dns_config = dns_config.clone();
 
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();

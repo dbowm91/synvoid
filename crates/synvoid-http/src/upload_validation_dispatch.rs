@@ -20,6 +20,7 @@ pub trait UploadValidationWaf {
     ) -> String;
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn maybe_handle_upload_validation<W: UploadValidationWaf>(
     waf: Arc<W>,
     target_site_id: String,

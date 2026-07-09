@@ -307,8 +307,8 @@ impl WafCore {
         );
 
         let sensitive_endpoint_manager =
-            SensitiveEndpointManager::from_file(&"honeypot_endpoints.txt".to_string()); // dummy path
-        let error_page_manager = ErrorPageManager::new(&"error_pages".to_string(), None, true);
+            SensitiveEndpointManager::from_file("honeypot_endpoints.txt"); // dummy path
+        let error_page_manager = ErrorPageManager::new("error_pages", None, true);
         let challenge_manager = ChallengeManager::new(ChallengeConfig {
             cookie_name: bot_config.challenge_cookie_name.clone(),
             pow_enabled: false, // from separate config usually

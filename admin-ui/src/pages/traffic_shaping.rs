@@ -38,7 +38,7 @@ pub fn TrafficShaping() -> Html {
 
     let global_enabled = use_state(|| false);
     let global_max_connections = use_state(|| "10000".to_string());
-    let global_max_connection_age = use_state(|| "3600".to_string());
+    let _global_max_connection_age = use_state(|| "3600".to_string());
     let global_connection_timeout = use_state(|| "30".to_string());
     let global_idle_timeout = use_state(|| "120".to_string());
     let global_read_timeout = use_state(|| "30".to_string());
@@ -155,7 +155,7 @@ pub fn TrafficShaping() -> Html {
 
     let on_save = {
         let saving = saving.clone();
-        let enabled = (*global_enabled).clone();
+        let enabled = *global_enabled;
         let max_conn = (*global_max_connections).clone();
         let conn_timeout = (*global_connection_timeout).clone();
         let idle_timeout = (*global_idle_timeout).clone();
@@ -189,7 +189,7 @@ pub fn TrafficShaping() -> Html {
             });
             let saving = saving.clone();
             saving.set(true);
-            let og_enabled = enabled.clone();
+            let og_enabled = enabled;
             let og_max_conn = max_conn.clone();
             let og_conn_timeout = conn_timeout.clone();
             let og_idle_timeout = idle_timeout.clone();

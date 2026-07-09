@@ -200,7 +200,7 @@ fn parse_http_request(raw: &str) -> CapturedRequest {
     }
 
     let body = if body_start < raw.len() {
-        raw[body_start..].as_bytes().to_vec()
+        raw.as_bytes()[body_start..].to_vec()
     } else {
         Vec::new()
     };

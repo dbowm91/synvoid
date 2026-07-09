@@ -267,7 +267,7 @@ mod tests {
         query.init(peers);
 
         assert_eq!(query.closest.len(), 3);
-        assert!(query.next_peers_to_query().len() > 0);
+        assert!(!query.next_peers_to_query().is_empty());
     }
 
     #[test]

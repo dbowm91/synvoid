@@ -1098,9 +1098,11 @@ pub async fn run_key_exchange_server(
     let tls_acceptor = if let (Some(ref cert_path), Some(ref key_path)) =
         (&config.tls.cert_path, &config.tls.key_path)
     {
-        let mut tls_config = synvoid_tls::InternalTlsConfig::default();
-        tls_config.cert_path = Some(PathBuf::from(cert_path));
-        tls_config.key_path = Some(PathBuf::from(key_path));
+        let tls_config = synvoid_tls::InternalTlsConfig {
+            cert_path: Some(PathBuf::from(cert_path)),
+            key_path: Some(PathBuf::from(key_path)),
+            ..Default::default()
+        };
 
         let resolver = synvoid_tls::CertResolver::new(tls_config);
         resolver.load_certificates()?;
@@ -1309,7 +1311,7 @@ mod tests {
         assert_eq!(combined.len(), 32);
 
         // Different inputs should produce different outputs
-        let combined2 = combine_secrets(&vec![2u8; 32], &vec![3u8; 32]);
+        let combined2 = combine_secrets(&[2u8; 32], &[3u8; 32]);
         assert_ne!(combined, combined2);
     }
 
@@ -1434,9 +1436,9 @@ mod tests {
             .is_ok());
 
         // Wrong message should fail
-        assert!(!server_verifying_key
+        assert!(server_verifying_key
             .verify("wrong message".as_bytes(), &server_signature)
-            .is_ok());
+            .is_err());
     }
 
     #[tokio::test]

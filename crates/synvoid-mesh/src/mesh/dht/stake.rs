@@ -571,8 +571,10 @@ mod tests {
 
     #[test]
     fn test_stake_calculation() {
-        let mut config = StakeConfig::default();
-        config.stake_grace_period_secs = 0;
+        let config = StakeConfig {
+            stake_grace_period_secs: 0,
+            ..Default::default()
+        };
         let manager = StakeManager::new(config, "local-node".to_string(), true);
 
         manager.register_node("global-1".to_string(), 80, MeshNodeRole::GLOBAL, None);
@@ -592,8 +594,10 @@ mod tests {
 
     #[test]
     fn test_slashing() {
-        let mut config = StakeConfig::default();
-        config.stake_grace_period_secs = 0;
+        let config = StakeConfig {
+            stake_grace_period_secs: 0,
+            ..Default::default()
+        };
         let manager = StakeManager::new(config, "global-1".to_string(), true);
 
         manager.register_node("malicious".to_string(), 50, MeshNodeRole::EDGE, None);

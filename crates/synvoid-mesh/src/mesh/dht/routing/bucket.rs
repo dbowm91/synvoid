@@ -126,7 +126,7 @@ impl KBucket {
             .map(|p| (p, target.xor_distance(&p.node_id)))
             .collect();
 
-        peers_with_distance.sort_by(|a, b| a.1.cmp(&b.1));
+        peers_with_distance.sort_by_key(|a| a.1);
 
         peers_with_distance
             .into_iter()

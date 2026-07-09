@@ -81,6 +81,7 @@ pub struct StatusResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct LogEntry {
     pub timestamp: String,
     pub level: String,
@@ -92,6 +93,7 @@ pub struct LogEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct ConfigFieldSchema {
     pub path: String,
     pub label: String,
@@ -103,11 +105,6 @@ pub struct ConfigFieldSchema {
 }
 
 pub mod presets;
-
-pub use presets::{
-    get_presets, get_presets_by_category, PresetCategory, PresetConfig, ServerPreset,
-    SettingSuggestion,
-};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemInfo {
@@ -206,6 +203,7 @@ pub struct RealtimeMetrics {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct AttackStats {
     pub total_blocked: u64,
     #[serde(default)]
@@ -524,6 +522,7 @@ pub struct SupervisorConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[allow(dead_code)]
 pub struct HttpConfig {
     #[serde(rename = "request_timeout_secs")]
     pub request_timeout_secs: Option<u64>,
@@ -548,6 +547,7 @@ pub struct HttpConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[allow(dead_code)]
 pub struct LoggingConfig {
     #[serde(rename = "level")]
     pub level: Option<String>,
@@ -564,6 +564,7 @@ pub struct LoggingConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[allow(dead_code)]
 pub struct SecurityConfig {
     #[serde(rename = "cors_enabled")]
     pub cors_enabled: Option<bool>,
@@ -586,6 +587,7 @@ pub struct SecurityConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[allow(dead_code)]
 pub struct TrafficShapingConfig {
     #[serde(rename = "enabled")]
     pub enabled: Option<bool>,
@@ -598,6 +600,7 @@ pub struct TrafficShapingConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[allow(dead_code)]
 pub struct RateLimitsConfig {
     #[serde(rename = "mode")]
     pub mode: Option<String>,
@@ -616,6 +619,7 @@ pub struct RateLimitsConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[allow(dead_code)]
 pub struct BotDetectionConfig {
     #[serde(rename = "enabled")]
     pub enabled: Option<bool>,
@@ -634,6 +638,7 @@ pub struct BotDetectionConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[allow(dead_code)]
 pub struct IpFeedsConfig {
     #[serde(rename = "enabled")]
     pub enabled: Option<bool>,
@@ -646,6 +651,7 @@ pub struct IpFeedsConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[allow(dead_code)]
 pub struct IpFeedEntry {
     #[serde(rename = "name")]
     pub name: Option<String>,
@@ -660,6 +666,7 @@ pub struct IpFeedEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[allow(dead_code)]
 pub struct TlsConfig {
     #[serde(rename = "enabled")]
     pub enabled: Option<bool>,
@@ -722,6 +729,7 @@ pub struct MeshConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[allow(dead_code)]
 pub struct TunnelConfig {
     #[serde(rename = "enabled")]
     pub enabled: Option<bool>,
@@ -736,6 +744,7 @@ pub struct TunnelConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[allow(dead_code)]
 pub struct PluginsConfig {
     #[serde(rename = "enabled")]
     pub enabled: Option<bool>,
@@ -748,6 +757,7 @@ pub struct PluginsConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[allow(dead_code)]
 pub struct HoneypotStatus {
     #[serde(rename = "running")]
     pub running: Option<bool>,
@@ -762,6 +772,7 @@ pub struct HoneypotStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[allow(dead_code)]
 pub struct IcmpStatus {
     #[serde(rename = "enabled")]
     pub enabled: Option<bool>,
@@ -774,6 +785,7 @@ pub struct IcmpStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[allow(dead_code)]
 pub struct IcmpConfig {
     #[serde(rename = "enabled")]
     pub enabled: Option<bool>,

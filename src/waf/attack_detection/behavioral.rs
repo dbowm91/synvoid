@@ -12,6 +12,12 @@ pub struct IpBehavioralStats {
     pub request_count: u64,
 }
 
+impl Default for IpBehavioralStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IpBehavioralStats {
     pub fn new() -> Self {
         Self {
@@ -56,6 +62,12 @@ impl IpBehavioralStats {
 
 pub struct BehavioralEngine {
     pub ip_stats_cache: Cache<IpAddr, Arc<RwLock<IpBehavioralStats>>>,
+}
+
+impl Default for BehavioralEngine {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl BehavioralEngine {

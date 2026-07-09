@@ -302,9 +302,9 @@ mod tests {
     #[test]
     fn upstream_tls_config_default_preserves_defaults() {
         let cfg = UpstreamTlsConfig::default();
-        assert_eq!(cfg.verify, true);
-        assert_eq!(cfg.skip_verify, false);
-        assert_eq!(cfg.allow_plaintext, false);
+        assert!(cfg.verify);
+        assert!(!cfg.skip_verify);
+        assert!(!cfg.allow_plaintext);
         assert!(cfg.ca_cert_path.is_none());
         assert!(cfg.server_name.is_none());
         assert!(cfg.skip_verify_reason.is_none());
@@ -328,8 +328,8 @@ mod tests {
             ..Default::default()
         };
         let cfg = upstream_tls_from_site_config(&site_cfg).unwrap();
-        assert_eq!(cfg.skip_verify, true);
-        assert_eq!(cfg.verify, false);
+        assert!(cfg.skip_verify);
+        assert!(!cfg.verify);
         assert_eq!(cfg.skip_verify_reason.as_deref(), Some("test reason"));
         assert!(cfg.ca_cert_path.is_none());
         assert!(cfg.server_name.is_none());

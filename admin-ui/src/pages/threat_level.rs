@@ -296,7 +296,7 @@ fn chronoformat(timestamp: i64) -> String {
 
 #[function_component]
 fn ThreatBackupsTab() -> Html {
-    let backups = use_state(|| Vec::<BackupInfo>::new());
+    let backups = use_state(Vec::<BackupInfo>::new);
     let loading = use_state(|| true);
     let error = use_state(|| None as Option<String>);
 
@@ -519,7 +519,7 @@ fn ThreatSettingsTab() -> Html {
                         <h3 class="text-lg font-semibold mb-4">{ "Manual Level Control" }</h3>
                         <div class="flex gap-2">
                             { for (1..=5).map(|level| {
-                                let is_active = current_status.as_ref().map_or(false, |s| s.level == level);
+                                let is_active = current_status.as_ref().is_some_and(|s| s.level == level);
                                 let on_set = on_set_level.clone();
                                 let base_class = if is_active { "bg-primary text-white border-primary" } else { "bg-tertiary text-primary border-default hover:border-primary" };
                                 html! {
@@ -548,7 +548,7 @@ fn ThreatSettingsTab() -> Html {
                             </div>
                             <button
                                 onclick={let on_toggle = on_toggle_auto.clone(); let status = current_status.clone(); move |_| {
-                                    let enabled = status.as_ref().map_or(false, |s| s.is_learning);
+                                    let enabled = status.as_ref().is_some_and(|s| s.is_learning);
                                     on_toggle.emit(!enabled);
                                 }}
                                 class={classes!(
@@ -557,7 +557,7 @@ fn ThreatSettingsTab() -> Html {
                                     "h-6",
                                     "rounded-full",
                                     "transition-colors",
-                                    if current_status.as_ref().map_or(false, |s| s.is_learning) { "bg-green-500" } else { "bg-gray-600" }
+                                    if current_status.as_ref().is_some_and(|s| s.is_learning) { "bg-green-500" } else { "bg-gray-600" }
                                 )}
                             >
                                 <span class={classes!(
@@ -568,7 +568,7 @@ fn ThreatSettingsTab() -> Html {
                                     "bg-white",
                                     "rounded-full",
                                     "transition-transform",
-                                    if current_status.as_ref().map_or(false, |s| s.is_learning) { "translate-x-7" } else { "translate-x-1" }
+                                    if current_status.as_ref().is_some_and(|s| s.is_learning) { "translate-x-7" } else { "translate-x-1" }
                                 )} />
                             </button>
                         </div>

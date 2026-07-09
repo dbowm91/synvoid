@@ -25,7 +25,7 @@ thread_local! {
     static NORMALIZE_BUFFER: RefCell<String> = RefCell::new(String::with_capacity(4096));
     static NORMALIZE_CHARS: RefCell<Vec<char>> = RefCell::new(Vec::with_capacity(4096));
     static FRAGMENT_MERGE_BUFFER: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(8192));
-    static NORMALIZATION_FLAGS: RefCell<NormalizationFlags> = RefCell::new(NormalizationFlags::NONE);
+    static NORMALIZATION_FLAGS: RefCell<NormalizationFlags> = const { RefCell::new(NormalizationFlags::NONE) };
 }
 
 #[inline]
@@ -574,7 +574,7 @@ pub enum NormalizedData<'a> {
 impl<'a> Clone for NormalizedData<'a> {
     fn clone(&self) -> Self {
         match self {
-            Self::Borrowed(s) => Self::Borrowed(*s),
+            Self::Borrowed(s) => Self::Borrowed(s),
             Self::Owned(s) => Self::Owned(s.clone()),
             Self::Pooled(p) => {
                 let mut new_buf = BufferPool::acquire(p.len());

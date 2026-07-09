@@ -38,6 +38,7 @@ pub trait ChallengePathWaf {
     fn css_window_secs(&self) -> u64;
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn maybe_handle_challenge_paths<W>(
     path: &str,
     client_ip: IpAddr,

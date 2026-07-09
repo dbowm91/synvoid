@@ -1,6 +1,7 @@
 use yew::prelude::*;
 
 #[derive(Properties, PartialEq)]
+#[allow(dead_code)]
 pub struct ConfirmDialogProps {
     pub show: bool,
     pub title: String,
@@ -13,12 +14,14 @@ pub struct ConfirmDialogProps {
 }
 
 #[derive(Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum ConfirmType {
     Danger,
     Warning,
     Primary,
 }
 
+#[allow(dead_code)]
 impl ConfirmType {
     fn class(&self) -> &str {
         match self {

@@ -8,4 +8,4 @@ pub mod tables;
 pub mod toast;
 pub mod tooltip;
 
-pub use toast::{toast_error, toast_info, toast_success, toast_warning, ToastContainer};
+pub use toast::{toast_error, toast_success, ToastContainer};

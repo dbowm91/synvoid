@@ -339,6 +339,7 @@ impl DhtRoutingManager {
             .unwrap_or_default()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn add_peer(
         &self,
         peer_node_id: String,
@@ -379,6 +380,7 @@ impl DhtRoutingManager {
     /// Checked variant of `add_peer` for startup paths. Returns an error if
     /// the routing table has not been initialized, preventing silent no-ops
     /// during bootstrap (Iteration 87, Phase 5).
+    #[allow(clippy::too_many_arguments)]
     pub async fn add_peer_checked(
         &self,
         peer_node_id: String,
@@ -408,6 +410,7 @@ impl DhtRoutingManager {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn add_peer_inner(
         &self,
         table: &mut RoutingTable,

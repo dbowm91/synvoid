@@ -11,6 +11,7 @@ pub struct SidebarProps {
 }
 
 pub struct Sidebar {
+    #[allow(dead_code)]
     current_route: String,
 }
 

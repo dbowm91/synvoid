@@ -30,8 +30,8 @@ pub struct IcmpConfig {
 #[function_component]
 pub fn Icmp() -> Html {
     let status = use_state(|| None as Option<IcmpStatus>);
-    let config = use_state(|| None as Option<IcmpConfig>);
-    let backends = use_state(|| Vec::<IcmpBackend>::new());
+    let _config = use_state(|| None as Option<IcmpConfig>);
+    let backends = use_state(Vec::<IcmpBackend>::new);
     let error = use_state(|| None as Option<String>);
 
     {
@@ -122,7 +122,7 @@ pub fn Icmp() -> Html {
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
                 if api.enable_icmp().await.is_ok() {
-                    let mut s = (*status).clone().unwrap_or_else(|| IcmpStatus {
+                    let mut s = (*status).clone().unwrap_or(IcmpStatus {
                         enabled: true,
                         active: true,
                         backends_count: 0,
@@ -143,7 +143,7 @@ pub fn Icmp() -> Html {
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
                 if api.disable_icmp().await.is_ok() {
-                    let mut s = (*status).clone().unwrap_or_else(|| IcmpStatus {
+                    let mut s = (*status).clone().unwrap_or(IcmpStatus {
                         enabled: false,
                         active: false,
                         backends_count: 0,

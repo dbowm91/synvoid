@@ -9,7 +9,7 @@ pub fn SystemStatus() -> Html {
     let mesh_status = use_state(|| None as Option<MeshAdminStatus>);
     let error = use_state(|| None as Option<String>);
     let show_genesis_modal = use_state(|| false);
-    let genesis_key_input = use_state(|| String::new());
+    let genesis_key_input = use_state(String::new);
     let deriving_key = use_state(|| false);
     let derive_error = use_state(|| None as Option<String>);
     let derive_success = use_state(|| None as Option<String>);
@@ -34,9 +34,8 @@ pub fn SystemStatus() -> Html {
                     Ok(status) => master_status.set(Some(status)),
                     Err(e) => error.set(Some(e)),
                 }
-                match api.get_mesh_status().await {
-                    Ok(status) => mesh_status.set(Some(status)),
-                    Err(_) => {}
+                if let Ok(status) = api.get_mesh_status().await {
+                    mesh_status.set(Some(status));
                 }
             });
         });
@@ -67,9 +66,8 @@ pub fn SystemStatus() -> Html {
                             derive_success.set(Some(response.message));
                             genesis_key_input.set(String::new());
                             show_genesis_modal.set(false);
-                            match api.get_mesh_status().await {
-                                Ok(status) => mesh_status.set(Some(status)),
-                                Err(_) => {}
+                            if let Ok(status) = api.get_mesh_status().await {
+                                mesh_status.set(Some(status));
                             }
                         } else {
                             derive_error.set(Some(response.message));

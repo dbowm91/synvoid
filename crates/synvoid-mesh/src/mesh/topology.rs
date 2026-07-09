@@ -340,10 +340,10 @@ impl MeshTopology {
         let eligible: Vec<PeerState> = {
             let mut result = Vec::new();
             self.peer_store.for_each_peer(|_, peer| {
-                if peer.status == PeerStatus::Healthy {
-                    if exclude.map(|e| peer.node_id.as_str() != e).unwrap_or(true) {
-                        result.push(peer.clone());
-                    }
+                if peer.status == PeerStatus::Healthy
+                    && exclude.map(|e| peer.node_id.as_str() != e).unwrap_or(true)
+                {
+                    result.push(peer.clone());
                 }
             });
             result
@@ -781,7 +781,7 @@ impl MeshTopology {
         self.peer_store.for_each_peer(|_, peer| {
             if peer.is_global && peer.is_healthy() {
                 let latency = peer.latency_ms.unwrap_or(u32::MAX);
-                if best.as_ref().map_or(true, |(_, l)| latency < *l) {
+                if best.as_ref().is_none_or(|(_, l)| latency < *l) {
                     best = Some((peer.node_id.clone(), latency));
                 }
             }
@@ -892,65 +892,61 @@ impl MeshTopology {
                         if let Ok(verified) =
                             serde_json::from_slice::<crate::dht::VerifiedUpstream>(&record.value)
                         {
-                            if verified.upstream_id == site_clone {
-                                if !verified.global_node_signature.is_empty() {
-                                    let sign_data = format!(
-                                        "{}:{}:{}:{}",
-                                        verified.upstream_id,
-                                        verified.origin_node_id,
-                                        verified.upstream_url,
-                                        verified.registered_at
-                                    );
+                            if verified.upstream_id == site_clone
+                                && !verified.global_node_signature.is_empty()
+                            {
+                                let sign_data = format!(
+                                    "{}:{}:{}:{}",
+                                    verified.upstream_id,
+                                    verified.origin_node_id,
+                                    verified.upstream_url,
+                                    verified.registered_at
+                                );
 
-                                    let key =
-                                        format!("global_node_key:{}", verified.global_node_id);
-                                    if let Some(key_record) = rs.get_record(&key) {
-                                        if let Ok(key_json) =
-                                            serde_json::from_slice::<serde_json::Value>(
-                                                &key_record.value,
-                                            )
+                                let key = format!("global_node_key:{}", verified.global_node_id);
+                                if let Some(key_record) = rs.get_record(&key) {
+                                    if let Ok(key_json) = serde_json::from_slice::<serde_json::Value>(
+                                        &key_record.value,
+                                    ) {
+                                        if let Some(pubkey_str) = key_json
+                                            .get("public_key")
+                                            .and_then(|v| v.as_str().map(|s| s.to_string()))
                                         {
-                                            if let Some(pubkey_str) = key_json
-                                                .get("public_key")
-                                                .and_then(|v| v.as_str().map(|s| s.to_string()))
-                                            {
-                                                use base64::{
-                                                    engine::general_purpose::STANDARD, Engine,
-                                                };
-                                                let sig_bytes =
-                                                    verified.global_node_signature.clone();
-                                                if let Ok(pubkey_bytes) =
-                                                    STANDARD.decode(pubkey_str)
+                                            use base64::{
+                                                engine::general_purpose::STANDARD, Engine,
+                                            };
+                                            let sig_bytes = verified.global_node_signature.clone();
+                                            if let Ok(pubkey_bytes) = STANDARD.decode(pubkey_str) {
+                                                if pubkey_bytes.len() == 32 && sig_bytes.len() == 64
                                                 {
-                                                    if pubkey_bytes.len() == 32
-                                                        && sig_bytes.len() == 64
-                                                    {
-                                                        let mut pk_array = [0u8; 32];
-                                                        pk_array.copy_from_slice(&pubkey_bytes);
-                                                        let mut sig_array = [0u8; 64];
-                                                        sig_array.copy_from_slice(&sig_bytes);
+                                                    let mut pk_array = [0u8; 32];
+                                                    pk_array.copy_from_slice(&pubkey_bytes);
+                                                    let mut sig_array = [0u8; 64];
+                                                    sig_array.copy_from_slice(&sig_bytes);
 
-                                                        if let Ok(pk) =
-                                                            ed25519_dalek::VerifyingKey::from_bytes(
-                                                                &pk_array,
-                                                            )
+                                                    if let Ok(pk) =
+                                                        ed25519_dalek::VerifyingKey::from_bytes(
+                                                            &pk_array,
+                                                        )
+                                                    {
+                                                        let sig =
+                                                            ed25519_dalek::Signature::from_bytes(
+                                                                &sig_array,
+                                                            );
+                                                        if pk
+                                                            .verify(sign_data.as_bytes(), &sig)
+                                                            .is_ok()
                                                         {
-                                                            let sig = ed25519_dalek::Signature::from_bytes(&sig_array);
-                                                            if pk
-                                                                .verify(sign_data.as_bytes(), &sig)
-                                                                .is_ok()
-                                                            {
-                                                                new_results.push(verified);
-                                                                continue;
-                                                            }
+                                                            new_results.push(verified);
+                                                            continue;
                                                         }
                                                     }
                                                 }
                                             }
                                         }
                                     }
-                                    continue;
                                 }
+                                continue;
                             }
                         }
                     }

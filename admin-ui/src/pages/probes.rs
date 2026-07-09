@@ -83,7 +83,7 @@ struct HoneypotProbe {
 
 #[function_component]
 fn HoneypotProbes() -> Html {
-    let probes = use_state(|| Vec::<HoneypotProbe>::new());
+    let probes = use_state(Vec::<HoneypotProbe>::new);
     let stats = use_state(|| None as Option<HoneypotProbeStats>);
     let loading = use_state(|| true);
 
@@ -237,7 +237,7 @@ struct SuspiciousWordRecord {
 
 #[function_component]
 fn SuspiciousWordsTab() -> Html {
-    let records = use_state(|| Vec::<SuspiciousWordRecord>::new());
+    let records = use_state(Vec::<SuspiciousWordRecord>::new);
     let stats = use_state(|| None as Option<SuspiciousWordStats>);
     let loading = use_state(|| true);
 
@@ -373,7 +373,7 @@ struct UpstreamErrorRecord {
 
 #[function_component]
 fn UpstreamErrorsTab() -> Html {
-    let records = use_state(|| Vec::<UpstreamErrorRecord>::new());
+    let records = use_state(Vec::<UpstreamErrorRecord>::new);
     let stats = use_state(|| None as Option<UpstreamErrorStats>);
     let loading = use_state(|| true);
 

@@ -172,8 +172,7 @@ impl RecordStoreManager {
                             self.node_role.bits(),
                             timestamp
                         );
-                        let pk_bytes = if signer_public_key.as_ref().map_or(true, |s| s.is_empty())
-                        {
+                        let pk_bytes = if signer_public_key.as_ref().is_none_or(|s| s.is_empty()) {
                             Vec::new()
                         } else {
                             base64::engine::general_purpose::URL_SAFE_NO_PAD
@@ -274,12 +273,12 @@ impl RecordStoreManager {
                     );
                 } else {
                     if !crate::dht::signed::verify_dht_sync_request_envelope_signature(
-                        &request_id,
-                        &node_id,
+                        request_id,
+                        node_id,
                         *from_version,
                         *timestamp,
-                        &nonce,
-                        &signature,
+                        nonce,
+                        signature,
                         signer_public_key.as_deref(),
                     ) {
                         tracing::warn!(
@@ -290,7 +289,7 @@ impl RecordStoreManager {
                     }
 
                     if !self.verify_dht_envelope_binding_for_peer(
-                        &node_id,
+                        node_id,
                         signer_public_key.as_deref(),
                         signed::SourceClassification::GlobalNode,
                     ) {
@@ -457,12 +456,12 @@ impl RecordStoreManager {
                     );
                 } else {
                     if !crate::dht::signed::verify_dht_anti_entropy_request_envelope_signature(
-                        &request_id,
-                        &node_id,
-                        &local_root_hash,
+                        request_id,
+                        node_id,
+                        local_root_hash,
                         *timestamp,
-                        &nonce,
-                        &signature,
+                        nonce,
+                        signature,
                         signer_public_key.as_deref(),
                     ) {
                         tracing::warn!(
@@ -612,13 +611,13 @@ impl RecordStoreManager {
                     );
                 } else {
                     if !crate::dht::signed::verify_dht_record_push_envelope_signature_bytes(
-                        &request_id,
+                        request_id,
                         from_node,
-                        &records,
+                        records,
                         *hop_count,
-                        &nonce,
+                        nonce,
                         *timestamp,
-                        &signature,
+                        signature,
                         signer_public_key.as_deref(),
                     ) {
                         tracing::warn!(
@@ -1142,7 +1141,7 @@ impl RecordStoreManager {
                         .into_iter()
                         .map(|(k, v)| (k, v.version))
                         .collect();
-                    entries.sort_by(|a, b| b.1.cmp(&a.1));
+                    entries.sort_by_key(|b| std::cmp::Reverse(b.1));
                     entries.into_iter().take(100).map(|(k, _)| k).collect()
                 };
 

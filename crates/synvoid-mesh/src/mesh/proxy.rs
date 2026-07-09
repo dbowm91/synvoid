@@ -262,6 +262,7 @@ pub struct TieredTransformCache {
 }
 
 impl TieredTransformCache {
+    #[allow(clippy::new_without_default)] // reason: builder uses custom Cache weigher/TTL, no meaningful Default
     pub fn new() -> Self {
         let l2 = Cache::builder()
             .max_capacity(L2_CACHE_SIZE as u64)
@@ -1024,6 +1025,7 @@ impl MeshProxy {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn proxy_to_peer_with_fallback<B>(
         &self,
         upstream_id: &str,

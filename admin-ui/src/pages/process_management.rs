@@ -298,7 +298,7 @@ pub fn ProcessManagement() -> Html {
         })
     };
 
-    let toggle_overseer_auto_restart = {
+    let _toggle_overseer_auto_restart = {
         let overseer_config = overseer_config.clone();
         Callback::from(move |_: yew::MouseEvent| {
             if let Some(mut c) = (*overseer_config).clone() {

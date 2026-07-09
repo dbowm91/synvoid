@@ -4,7 +4,7 @@ use yew::prelude::*;
 
 #[function_component]
 pub fn Workers() -> Html {
-    let workers = use_state(|| Vec::<WorkerStatus>::new());
+    let workers = use_state(Vec::<WorkerStatus>::new);
     let overseer = use_state(|| None as Option<OverseerStatus>);
     let worker_count = use_state(|| None as Option<WorkerCountResponse>);
     let error = use_state(|| None as Option<String>);

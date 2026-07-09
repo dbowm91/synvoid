@@ -101,7 +101,7 @@ where
             let cookie = format_secure_http_only_cookie(
                 &session_cookie_name,
                 &session_cookie_value,
-                session_cookie_max_age as u64,
+                session_cookie_max_age,
             );
             Some(build_response_with_cookie(
                 200,
@@ -137,10 +137,11 @@ mod tests {
     use synvoid_config::HttpConfig;
 
     fn test_http_config(max_stalled: u32) -> HttpConfig {
-        let mut config = HttpConfig::default();
-        config.max_stalled_requests = max_stalled;
-        config.waf_stall_timeout_secs = 0;
-        config
+        HttpConfig {
+            max_stalled_requests: max_stalled,
+            waf_stall_timeout_secs: 0,
+            ..Default::default()
+        }
     }
 
     fn noop_drop() {}

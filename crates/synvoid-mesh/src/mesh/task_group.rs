@@ -781,7 +781,7 @@ mod tests {
     // contract that rollback/recovery/shutdown rely on.
     #[tokio::test]
     async fn test_join_all_zero_budget_aborts_and_awaits() {
-        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::atomic::AtomicBool;
         use std::sync::Arc;
 
         let mut group = MeshTaskGroup::new();

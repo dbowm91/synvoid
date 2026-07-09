@@ -732,7 +732,7 @@ impl EdgeReplicaManager {
 
         let generated_at_unix = self
             .get_last_replica_refresh_unix()
-            .unwrap_or_else(|| synvoid_utils::safe_unix_timestamp());
+            .unwrap_or_else(synvoid_utils::safe_unix_timestamp);
 
         crate::canonical::CanonicalTrustSnapshot {
             generated_at_unix,
@@ -769,7 +769,7 @@ mod tests {
         (manager, temp_dir)
     }
 
-    fn create_org_key_value(org_id: &str, key_id: &str) -> Vec<u8> {
+    fn create_org_key_value(org_id: &str, _key_id: &str) -> Vec<u8> {
         let key = OrgPublicKey {
             org_id: org_id.to_string(),
             public_key: vec![1, 2, 3, 4],
@@ -964,9 +964,7 @@ mod tests {
                     || msg.contains("permission")
                     || msg.contains("disk")
                     || msg.contains("space")
-                {
-                    return;
-                }
+                {}
             }
         }
     }

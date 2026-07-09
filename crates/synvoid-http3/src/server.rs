@@ -220,7 +220,7 @@ impl Http3Server {
         )
         .await
         {
-            Ok(synvoid_http::Http3RequestDispatchOutcome::Continue(flow)) => flow,
+            Ok(synvoid_http::Http3RequestDispatchOutcome::Continue(flow)) => *flow,
             Ok(synvoid_http::Http3RequestDispatchOutcome::Respond) => {
                 return Ok(());
             }

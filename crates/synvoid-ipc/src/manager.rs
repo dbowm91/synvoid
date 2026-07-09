@@ -2405,9 +2405,11 @@ mod tests {
 
     #[test]
     fn test_process_manager_config_validation() {
-        let mut config = ProcessManagerConfig::default();
-        config.min_workers = 10;
-        config.max_workers = 2;
+        let config = ProcessManagerConfig {
+            min_workers: 10,
+            max_workers: 2,
+            ..Default::default()
+        };
         // Config allows min > max; validation should be done by caller
         assert!(config.min_workers > config.max_workers);
     }

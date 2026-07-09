@@ -339,9 +339,9 @@ async fn register_mesh_generation_support(
             let wrapped = async move {
                 tokio::select! {
                     biased;
-                    _ = gen_cancel.changed() => { return; }
-                    _ = worker_shutdown.changed() => { return; }
-                    result = loop_fut => { let _ = result; }
+                    _ = gen_cancel.changed() => {}
+                    _ = worker_shutdown.changed() => {}
+                    _ = loop_fut => {}
                 }
             };
             let id = registry.spawn_background(

@@ -16,6 +16,7 @@ pub struct Toast {
 }
 
 #[derive(Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum ToastType {
     Success,
     Error,
@@ -42,10 +43,12 @@ impl Toast {
         Self::new(message.to_string(), ToastType::Error)
     }
 
+    #[allow(dead_code)]
     pub fn warning(message: &str) -> Self {
         Self::new(message.to_string(), ToastType::Warning)
     }
 
+    #[allow(dead_code)]
     pub fn info(message: &str) -> Self {
         Self::new(message.to_string(), ToastType::Info)
     }
@@ -65,6 +68,7 @@ pub fn toast_error(msg: &str) {
     notify_toasts_changed();
 }
 
+#[allow(dead_code)]
 pub fn toast_warning(msg: &str) {
     TOAST_STATE.with(|state| {
         state.borrow_mut().push(Toast::warning(msg));
@@ -72,6 +76,7 @@ pub fn toast_warning(msg: &str) {
     notify_toasts_changed();
 }
 
+#[allow(dead_code)]
 pub fn toast_info(msg: &str) {
     TOAST_STATE.with(|state| {
         state.borrow_mut().push(Toast::info(msg));

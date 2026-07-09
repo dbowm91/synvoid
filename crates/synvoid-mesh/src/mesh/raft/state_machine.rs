@@ -1050,7 +1050,7 @@ impl RaftSnapshotBuilder<GlobalRegistryConfig> for GlobalRegistrySnapshotBuilder
         let last_membership = self
             .state_machine
             .get_applied_membership()
-            .unwrap_or_else(openraft::StoredMembership::default);
+            .unwrap_or_default();
 
         let meta = SnapshotMetaOf::<GlobalRegistryConfig> {
             snapshot_id: format!("snapshot-{}-{}", last_applied, uuid::Uuid::new_v4()),
@@ -1157,9 +1157,7 @@ impl RaftStateMachine<GlobalRegistryConfig> for GlobalRegistryStateMachine {
             openraft::log_id::LogId::new(leader_id, index)
         });
 
-        let membership = self
-            .get_applied_membership()
-            .unwrap_or_else(openraft::StoredMembership::default);
+        let membership = self.get_applied_membership().unwrap_or_default();
 
         Ok((last_applied, membership))
     }
@@ -1271,9 +1269,7 @@ impl RaftStateMachine<GlobalRegistryConfig> for GlobalRegistryStateMachine {
         let committed_leader_id = CommittedLeaderIdOfConfig::new(last_log_term, 0);
         let log_id = openraft::log_id::LogId::new(committed_leader_id, last_applied);
 
-        let last_membership = self
-            .get_applied_membership()
-            .unwrap_or_else(openraft::StoredMembership::default);
+        let last_membership = self.get_applied_membership().unwrap_or_default();
 
         let meta = SnapshotMetaOf::<GlobalRegistryConfig> {
             snapshot_id: format!("snapshot-{}-{}", last_applied, uuid::Uuid::new_v4()),

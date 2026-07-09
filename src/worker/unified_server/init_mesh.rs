@@ -590,7 +590,7 @@ pub async fn init_mesh_and_threat_intel(
             );
         }
 
-        return MeshInit {
+        MeshInit {
             transport_manager: Some(transport_manager),
             threat_intel: Some(threat_intel),
             mesh_signer: Some(Arc::new(crate::mesh::protocol::MeshMessageSigner::new(
@@ -603,7 +603,7 @@ pub async fn init_mesh_and_threat_intel(
             yara_broadcast,
             #[cfg(feature = "mesh")]
             topology: Some(topology),
-        };
+        }
     }
 
     #[cfg(not(feature = "mesh"))]

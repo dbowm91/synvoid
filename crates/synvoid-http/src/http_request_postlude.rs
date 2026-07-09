@@ -91,6 +91,7 @@ impl BackendDispatchMetrics for RequestMetricsAdapter {
     }
 }
 
+#[allow(clippy::type_complexity)] // reason: nested Arc<RwLock<HashMap<...>>> composition root type
 pub struct HttpRequestPostludeContext<W> {
     pub prepared: PreparedRequest,
     pub client_ip: IpAddr,

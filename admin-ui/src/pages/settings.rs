@@ -1,7 +1,7 @@
 use crate::components::forms::{Input, Select};
 use crate::components::skeleton::LoadingSpinner;
 use crate::components::{toast_error, toast_success};
-use crate::config_docs::{get_section_doc, ConfigSectionDoc};
+use crate::config_docs::get_section_doc;
 use crate::services::ApiService;
 use crate::types::{ThemeResponse, UpdateThemeRequest};
 use wasm_bindgen::JsCast;
@@ -56,7 +56,7 @@ pub fn Settings() -> Html {
     let active_section = use_state(|| "server".to_string());
     let exporting = use_state(|| false);
     let importing = use_state(|| false);
-    let search_query = use_state(|| String::new());
+    let search_query = use_state(String::new);
     let show_search_results = use_state(|| false);
 
     let settings_search_index: std::collections::HashMap<
@@ -298,27 +298,27 @@ pub fn Settings() -> Html {
         let mut results: Vec<(String, String)> = Vec::new();
         for (section, keywords) in &settings_search_index {
             for (keyword, _) in keywords {
-                if keyword.to_lowercase().contains(&query) || query.contains(keyword) {
-                    if !results.iter().any(|(s, _)| *s == *section) {
-                        let label: String = match section.as_str() {
-                            "server" => "Server".to_string(),
-                            "http" => "HTTP".to_string(),
-                            "logging" => "Logging".to_string(),
-                            "metrics" => "Metrics".to_string(),
-                            "ratelimits" => "Rate Limits".to_string(),
-                            "bandwidth" => "Bandwidth".to_string(),
-                            "bot" => "Bot Defaults".to_string(),
-                            "tarpit" => "Tarpit".to_string(),
-                            "ip_feeds" => "IP Feeds".to_string(),
-                            "tls" => "TLS".to_string(),
-                            "acme" => "ACME".to_string(),
-                            "http3" => "HTTP/3".to_string(),
-                            "upload" => "Upload".to_string(),
-                            "theme" => "Theme".to_string(),
-                            _ => section.clone(),
-                        };
-                        results.push((section.clone(), label));
-                    }
+                if (keyword.to_lowercase().contains(&query) || query.contains(keyword))
+                    && !results.iter().any(|(s, _)| *s == *section)
+                {
+                    let label: String = match section.as_str() {
+                        "server" => "Server".to_string(),
+                        "http" => "HTTP".to_string(),
+                        "logging" => "Logging".to_string(),
+                        "metrics" => "Metrics".to_string(),
+                        "ratelimits" => "Rate Limits".to_string(),
+                        "bandwidth" => "Bandwidth".to_string(),
+                        "bot" => "Bot Defaults".to_string(),
+                        "tarpit" => "Tarpit".to_string(),
+                        "ip_feeds" => "IP Feeds".to_string(),
+                        "tls" => "TLS".to_string(),
+                        "acme" => "ACME".to_string(),
+                        "http3" => "HTTP/3".to_string(),
+                        "upload" => "Upload".to_string(),
+                        "theme" => "Theme".to_string(),
+                        _ => section.clone(),
+                    };
+                    results.push((section.clone(), label));
                 }
             }
         }
@@ -752,7 +752,7 @@ fn ServerSection() -> Html {
         let host = host.clone();
         let port = port.clone();
         let trusted_proxies = trusted_proxies.clone();
-        let server_config = server_config.clone();
+        let _server_config = server_config.clone();
         let original_host = original_host.clone();
         let original_port = original_port.clone();
         let original_proxies = original_proxies.clone();
@@ -1517,10 +1517,10 @@ fn IpFeedsSection() -> Html {
             });
             let saving = saving.clone();
             saving.set(true);
-            let enabled = enabled.clone();
-            let url = url.clone();
-            let update_interval = update_interval.clone();
-            let max_blocks = max_blocks.clone();
+            let _enabled = enabled.clone();
+            let _url = url.clone();
+            let _update_interval = update_interval.clone();
+            let _max_blocks = max_blocks.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
                 let _ = api.update_ip_feeds_config(&config).await;
@@ -1664,7 +1664,7 @@ fn TlsSection() -> Html {
         return html! { <LoadingSpinner /> };
     }
 
-    let is_dirty = !cert_path.is_empty() || !key_path.is_empty() || *port != "443";
+    let _is_dirty = !cert_path.is_empty() || !key_path.is_empty() || *port != "443";
 
     let on_toggle_enabled = {
         let enabled = enabled.clone();
@@ -2538,14 +2538,14 @@ fn BandwidthSection() -> Html {
     let monthly_cap_egress = use_state(|| "0".to_string());
     let action_on_limit = use_state(|| "block".to_string());
     let reset_mode = use_state(|| "rolling_30_days".to_string());
-    let fixed_day = use_state(|| String::new());
+    let fixed_day = use_state(String::new);
     let data_dir = use_state(|| "/var/lib/synvoid".to_string());
 
     let original_monthly_cap_ingress = use_state(|| "0".to_string());
     let original_monthly_cap_egress = use_state(|| "0".to_string());
     let original_action_on_limit = use_state(|| "block".to_string());
     let original_reset_mode = use_state(|| "rolling_30_days".to_string());
-    let original_fixed_day = use_state(|| String::new());
+    let original_fixed_day = use_state(String::new);
     let original_data_dir = use_state(|| "/var/lib/synvoid".to_string());
 
     let is_dirty = *monthly_cap_ingress != *original_monthly_cap_ingress
@@ -3003,15 +3003,15 @@ fn TarpitSection() -> Html {
     let max_depth = use_state(|| "10".to_string());
     let links_per_page = use_state(|| "50".to_string());
     let response_delay_ms = use_state(|| "100".to_string());
-    let scraper_user_agents = use_state(|| String::new());
-    let content_templates = use_state(|| String::new());
+    let scraper_user_agents = use_state(String::new);
+    let content_templates = use_state(String::new);
 
     let original_enabled = use_state(|| true);
     let original_max_depth = use_state(|| "10".to_string());
     let original_links_per_page = use_state(|| "50".to_string());
     let original_response_delay_ms = use_state(|| "100".to_string());
-    let original_scraper_user_agents = use_state(|| String::new());
-    let original_content_templates = use_state(|| String::new());
+    let original_scraper_user_agents = use_state(String::new);
+    let original_content_templates = use_state(String::new);
 
     let is_dirty = *enabled != *original_enabled
         || *max_depth != *original_max_depth
@@ -3462,7 +3462,7 @@ fn ThemeSection() -> Html {
     let theme_data = use_state(|| None::<ThemeResponse>);
     let selected_preset = use_state(|| "default".to_string());
     let selected_mode = use_state(|| "auto".to_string());
-    let preview_html = use_state(|| String::new());
+    let preview_html = use_state(String::new);
     let preview_light = use_state(|| false);
     let saving = use_state(|| false);
     let loading = use_state(|| true);
@@ -3518,7 +3518,7 @@ fn ThemeSection() -> Html {
                 .unwrap_or_default();
             selected_preset.set(value.clone());
 
-            if let Some(ref data) = *theme_data {
+            if let Some(ref _data) = *theme_data {
                 let colors = get_preset_colors(&value);
                 let use_light = *preview_light;
                 let html = generate_preview_html("", &colors, use_light);
@@ -3548,7 +3548,7 @@ fn ThemeSection() -> Html {
             let new_value = !*preview_light;
             preview_light.set(new_value);
 
-            if let Some(ref data) = *theme_data {
+            if let Some(ref _data) = *theme_data {
                 let colors = get_preset_colors(&selected_preset);
                 let html = generate_preview_html("", &colors, new_value);
                 preview_html.set(html);
@@ -3624,7 +3624,7 @@ fn ThemeSection() -> Html {
             selected_preset.set("default".to_string());
             selected_mode.set("auto".to_string());
 
-            if let Some(ref data) = *theme_data {
+            if let Some(ref _data) = *theme_data {
                 let colors = get_preset_colors("default");
                 let use_light = *preview_light;
                 let html = generate_preview_html("", &colors, use_light);
@@ -3653,7 +3653,7 @@ fn ThemeSection() -> Html {
         })
     };
 
-    let presets = vec![
+    let presets = [
         ("default", "Default"),
         ("dark", "Dark"),
         ("light", "Light"),
@@ -3662,7 +3662,7 @@ fn ThemeSection() -> Html {
         ("sunset", "Sunset"),
     ];
 
-    let modes = vec![
+    let modes = [
         ("auto", "Auto (System)"),
         ("dark", "Dark"),
         ("light", "Light"),
@@ -3683,7 +3683,7 @@ fn ThemeSection() -> Html {
                 >
                     { for presets.iter().map(|(value, label)| {
                         html! {
-                            <option value={value.clone()}>{label.clone()}</option>
+                            <option value={*value}>{*label}</option>
                         }
                     }) }
                 </select>
@@ -3699,7 +3699,7 @@ fn ThemeSection() -> Html {
                 >
                     { for modes.iter().map(|(value, label)| {
                         html! {
-                            <option value={value.clone()}>{label.clone()}</option>
+                            <option value={*value}>{*label}</option>
                         }
                     }) }
                 </select>
@@ -3759,13 +3759,13 @@ fn SecuritySection() -> Html {
     let sanitize_forwarded_headers = use_state(|| true);
     let ipc_enforce_signing = use_state(|| true);
     let allow_insecure_ipc_key = use_state(|| false);
-    let more_clear_headers = use_state(|| String::new());
+    let more_clear_headers = use_state(String::new);
 
     let original_global_security_headers = use_state(|| true);
     let original_sanitize_forwarded_headers = use_state(|| true);
     let original_ipc_enforce_signing = use_state(|| true);
     let original_allow_insecure_ipc_key = use_state(|| false);
-    let original_more_clear_headers = use_state(|| String::new());
+    let original_more_clear_headers = use_state(String::new);
 
     let is_dirty = *global_security_headers != *original_global_security_headers
         || *sanitize_forwarded_headers != *original_sanitize_forwarded_headers
@@ -3847,11 +3847,11 @@ fn SecuritySection() -> Html {
         let ipc_enforce_signing = ipc_enforce_signing.clone();
         let allow_insecure_ipc_key = allow_insecure_ipc_key.clone();
         let more_clear_headers = more_clear_headers.clone();
-        let original_global_security_headers = original_global_security_headers.clone();
-        let original_sanitize_forwarded_headers = original_sanitize_forwarded_headers.clone();
-        let original_ipc_enforce_signing = original_ipc_enforce_signing.clone();
-        let original_allow_insecure_ipc_key = original_allow_insecure_ipc_key.clone();
-        let original_more_clear_headers = original_more_clear_headers.clone();
+        let _original_global_security_headers = original_global_security_headers.clone();
+        let _original_sanitize_forwarded_headers = original_sanitize_forwarded_headers.clone();
+        let _original_ipc_enforce_signing = original_ipc_enforce_signing.clone();
+        let _original_allow_insecure_ipc_key = original_allow_insecure_ipc_key.clone();
+        let _original_more_clear_headers = original_more_clear_headers.clone();
         Callback::from(move |_| {
             let headers: Vec<String> = more_clear_headers
                 .split(',')
@@ -4731,7 +4731,7 @@ fn ProcessSection() -> Html {
 #[function_component]
 fn DefaultsSection() -> Html {
     let loading = use_state(|| true);
-    let saving = use_state(|| false);
+    let _saving = use_state(|| false);
 
     let defaults_data = use_state(|| None::<serde_json::Value>);
 
@@ -4783,7 +4783,7 @@ fn DefaultsSection() -> Html {
 #[function_component]
 fn DnsSection() -> Html {
     let loading = use_state(|| true);
-    let saving = use_state(|| false);
+    let _saving = use_state(|| false);
 
     let dns_config = use_state(|| None::<serde_json::Value>);
 
@@ -5436,10 +5436,10 @@ fn FallbackSection() -> Html {
     let saving = use_state(|| false);
 
     let mode = use_state(|| "return_404".to_string());
-    let upstream = use_state(|| String::new());
+    let upstream = use_state(String::new);
 
     let original_mode = use_state(|| "return_404".to_string());
-    let original_upstream = use_state(|| String::new());
+    let original_upstream = use_state(String::new);
 
     let is_dirty = *mode != *original_mode || *upstream != *original_upstream;
 
@@ -5586,8 +5586,8 @@ fn UpgradeSection() -> Html {
     let drain_check_interval_ms = use_state(|| "100".to_string());
     let port_swap_cutover_timeout_ms = use_state(|| "500".to_string());
     let keep_old_versions = use_state(|| "2".to_string());
-    let staged_dir = use_state(|| String::new());
-    let bin_dir = use_state(|| String::new());
+    let staged_dir = use_state(String::new);
+    let bin_dir = use_state(String::new);
 
     let original_health_check_path = use_state(|| "/health".to_string());
     let original_health_check_timeout_secs = use_state(|| "5".to_string());
@@ -5597,8 +5597,8 @@ fn UpgradeSection() -> Html {
     let original_drain_check_interval_ms = use_state(|| "100".to_string());
     let original_port_swap_cutover_timeout_ms = use_state(|| "500".to_string());
     let original_keep_old_versions = use_state(|| "2".to_string());
-    let original_staged_dir = use_state(|| String::new());
-    let original_bin_dir = use_state(|| String::new());
+    let original_staged_dir = use_state(String::new);
+    let original_bin_dir = use_state(String::new);
 
     let is_dirty = *health_check_path != *original_health_check_path
         || *health_check_timeout_secs != *original_health_check_timeout_secs

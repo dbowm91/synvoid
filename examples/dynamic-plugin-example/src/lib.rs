@@ -37,10 +37,12 @@ pub extern "C" fn create_router() -> *mut Router<()> {
 }
 
 #[no_mangle]
+// SAFETY: FFI boundary — caller guarantees `router` is a valid pointer from `create_router`.
+#[allow(clippy::not_unsafe_ptr_arg_deref)] // FFI: caller-owned pointer, validity is contract
 pub extern "C" fn destroy_router(router: *mut Router<()>) {
     if !router.is_null() {
         unsafe {
-            Box::from_raw(router);
+            drop(Box::from_raw(router));
         }
     }
 }

@@ -161,8 +161,10 @@ mod tests {
         let features = BehavioralFeatures::default();
         let bucket1 = features.compute_lsh_bucket();
 
-        let mut different_features = BehavioralFeatures::default();
-        different_features.header_timing_variance_ms = 10000;
+        let different_features = BehavioralFeatures {
+            header_timing_variance_ms: 10000,
+            ..Default::default()
+        };
         let bucket2 = different_features.compute_lsh_bucket();
 
         assert_ne!(

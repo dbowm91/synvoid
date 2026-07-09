@@ -25,7 +25,7 @@ impl<T: Clone> Clone for UseWebSocketState<T> {
 
 fn build_ws_url(path: &str) -> String {
     if let Some(window) = web_sys::window() {
-        if let Some(location) = window.location().href().ok() {
+        if let Ok(location) = window.location().href() {
             if let Some(idx) = location.find("://") {
                 let rest = &location[idx + 3..];
                 if let Some(path_start) = rest.find('/') {
@@ -75,11 +75,8 @@ pub fn use_websocket<T: DeserializeOwned + Clone + 'static>(path: &str) -> UseWe
                     wasm_bindgen::closure::Closure::<dyn FnMut(_)>::new(move |e: MessageEvent| {
                         if let Ok(txt) = e.data().dyn_into::<js_sys::JsString>() {
                             let msg = String::from(txt);
-                            match serde_json::from_str::<T>(&msg) {
-                                Ok(data) => {
-                                    state.set(UseWebSocketState::Connected(data));
-                                }
-                                Err(_) => {}
+                            if let Ok(data) = serde_json::from_str::<T>(&msg) {
+                                state.set(UseWebSocketState::Connected(data));
                             }
                         }
                     });
@@ -162,11 +159,8 @@ pub fn use_websocket_with_token<T: DeserializeOwned + Clone + 'static>(
                     wasm_bindgen::closure::Closure::<dyn FnMut(_)>::new(move |e: MessageEvent| {
                         if let Ok(txt) = e.data().dyn_into::<js_sys::JsString>() {
                             let msg = String::from(txt);
-                            match serde_json::from_str::<T>(&msg) {
-                                Ok(data) => {
-                                    state.set(UseWebSocketState::Connected(data));
-                                }
-                                Err(_) => {}
+                            if let Ok(data) = serde_json::from_str::<T>(&msg) {
+                                state.set(UseWebSocketState::Connected(data));
                             }
                         }
                     });
@@ -251,7 +245,7 @@ pub fn use_websocket_or_poll_with_token<T: DeserializeOwned + Clone + 'static>(
     {
         let state = state.clone();
         let ws_path = ws_path.to_string();
-        let poll_path = poll_path.to_string();
+        let _poll_path = poll_path.to_string();
         let refresh = refresh.clone();
 
         use_effect_with((), move |_| {
@@ -286,11 +280,8 @@ pub fn use_websocket_or_poll_with_token<T: DeserializeOwned + Clone + 'static>(
                     wasm_bindgen::closure::Closure::<dyn FnMut(_)>::new(move |e: MessageEvent| {
                         if let Ok(txt) = e.data().dyn_into::<js_sys::JsString>() {
                             let msg = String::from(txt);
-                            match serde_json::from_str::<T>(&msg) {
-                                Ok(data) => {
-                                    state.set(UseWebSocketState::Connected(data));
-                                }
-                                Err(_) => {}
+                            if let Ok(data) = serde_json::from_str::<T>(&msg) {
+                                state.set(UseWebSocketState::Connected(data));
                             }
                         }
                     });

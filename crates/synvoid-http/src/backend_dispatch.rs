@@ -43,6 +43,7 @@ pub trait BackendDispatchMetrics: Send + Sync {
     fn record_egress(&self, bytes: u64, direction: EgressDirection);
 }
 
+#[allow(clippy::type_complexity)] // reason: nested Arc<RwLock<HashMap<...>>> composition root type
 pub struct BackendDispatchContext<W> {
     pub is_appserver: bool,
     pub appserver_socket_path: Option<PathBuf>,

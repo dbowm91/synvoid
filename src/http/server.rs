@@ -310,7 +310,7 @@ impl HttpServer {
 
         let client_ip = flow.client_ip;
         let prepared = match flow.outcome {
-            RequestPreparationOutcome::Continue(prepared) => prepared,
+            RequestPreparationOutcome::Continue(prepared) => *prepared,
             RequestPreparationOutcome::Respond(response) => {
                 return Ok(response);
             }

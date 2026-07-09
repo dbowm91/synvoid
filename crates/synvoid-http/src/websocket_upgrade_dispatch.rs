@@ -11,6 +11,7 @@ use synvoid_config::site::SiteWebSocketConfig;
 
 use crate::response_helpers::build_websocket_response;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn maybe_handle_websocket_upgrade<
     TTarget,
     WafT,

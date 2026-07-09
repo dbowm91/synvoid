@@ -1151,7 +1151,7 @@ mod tests {
         );
 
         pool.mark_unhealthy("http://127.0.0.1:8080");
-        assert!(!pool.select_backend().is_some());
+        assert!(pool.select_backend().is_none());
 
         pool.mark_healthy("http://127.0.0.1:8080");
         assert!(pool.select_backend().is_some());

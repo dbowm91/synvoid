@@ -12,6 +12,8 @@ use synvoid_app_server::GranianSupervisor;
 use synvoid_config::MainConfig;
 use synvoid_proxy::{BackendType, RouteTarget};
 
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::type_complexity)] // reason: nested Arc<RwLock<HashMap<...>>> composition root type
 pub async fn maybe_handle_app_server_backend(
     app_servers: Option<Arc<RwLock<HashMap<String, Arc<GranianSupervisor>>>>>,
     target: RouteTarget,

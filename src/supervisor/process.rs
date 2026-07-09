@@ -272,10 +272,7 @@ impl SupervisorProcess {
             .graceful_shutdown_timeout_secs;
         let drain_id = self.drain_manager.start_drain(timeout_secs);
 
-        let worker_ids: Vec<WorkerId> = {
-            let unified_workers = self.process_manager.get_all_unified_server_worker_ids();
-            unified_workers
-        };
+        let worker_ids: Vec<WorkerId> = self.process_manager.get_all_unified_server_worker_ids();
 
         for worker_id in &worker_ids {
             self.drain_manager.register_worker(*worker_id, 0, 0);

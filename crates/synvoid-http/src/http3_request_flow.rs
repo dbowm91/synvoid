@@ -22,7 +22,7 @@ pub struct Http3RequestDispatchContext<W> {
 }
 
 pub enum Http3RequestDispatchOutcome<W> {
-    Continue(Http3RequestDispatchContext<W>),
+    Continue(Box<Http3RequestDispatchContext<W>>),
     Respond,
 }
 
@@ -79,11 +79,11 @@ where
         over_bandwidth_limit,
     ) {
         Http3RequestPreludeOutcome::Continue(prelude) => Ok(Http3RequestDispatchOutcome::Continue(
-            Http3RequestDispatchContext {
-                prelude,
+            Box::new(Http3RequestDispatchContext {
+                prelude: *prelude,
                 request_stream,
                 connection_guard,
-            },
+            }),
         )),
         Http3RequestPreludeOutcome::Respond => Ok(Http3RequestDispatchOutcome::Respond),
     }

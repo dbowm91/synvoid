@@ -181,9 +181,7 @@ impl VerificationTaskManager {
         provider_node_id: &str,
     ) -> Option<OriginPenalty> {
         let record_store_opt = self.record_store.read().clone();
-        let Some(record_store) = record_store_opt else {
-            return None;
-        };
+        let record_store = record_store_opt?;
 
         let key = DhtKey::origin_penalty(upstream_id, provider_node_id);
         let key_str = key.as_str();
@@ -248,9 +246,7 @@ impl VerificationTaskManager {
 
     pub fn get_penalty(&self, upstream_id: &str, provider_node_id: &str) -> Option<OriginPenalty> {
         let record_store_opt = self.record_store.read().clone();
-        let Some(record_store) = record_store_opt else {
-            return None;
-        };
+        let record_store = record_store_opt?;
 
         let key = DhtKey::origin_penalty(upstream_id, provider_node_id);
         let key_str = key.as_str();

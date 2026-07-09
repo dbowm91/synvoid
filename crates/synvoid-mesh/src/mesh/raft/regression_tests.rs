@@ -674,7 +674,7 @@ mod mesh_message_raft_tests {
 
         assert_eq!(decoded.request_id, "snap-456");
         assert_eq!(decoded.offset, 512);
-        assert_eq!(decoded.is_last, false);
+        assert!(!decoded.is_last);
         assert_eq!(decoded.data.len(), 256);
     }
 }
@@ -1078,11 +1078,12 @@ mod streaming_snapshot_tests {
 }
 
 #[cfg(test)]
+#[allow(clippy::module_inception)] // reason: test module matches file name, standard Rust test pattern
 mod regression_tests {
     #[test]
     fn test_regression_raft_snapshot_framing_by_length_heuristic_is_wrong() {
-        let header_payload = vec![0u8; 50];
-        let chunk_payload = vec![0u8; 100];
+        let header_payload = [0u8; 50];
+        let chunk_payload = [0u8; 100];
 
         let is_header_50 = header_payload.len() < 100;
         let is_header_100 = chunk_payload.len() < 100;
@@ -1096,8 +1097,8 @@ mod regression_tests {
             "A 100-byte chunk would be incorrectly identified as a header because >= 100 is treated as chunk boundary"
         );
 
-        let small_header = vec![0u8; 99];
-        let small_chunk = vec![0u8; 100];
+        let small_header = [0u8; 99];
+        let small_chunk = [0u8; 100];
 
         assert!(
             small_header.len() < 100,
@@ -1214,7 +1215,7 @@ mod regression_tests {
         assert!(snapshot
             .sender_node_id
             .as_ref()
-            .map_or(false, |s| s == "authorized-node"));
+            .is_some_and(|s| s == "authorized-node"));
     }
 
     #[test]
@@ -1450,11 +1451,11 @@ mod client_proposal_authorization_tests {
         let signature = wrong_signer.sign(&signable_content);
 
         assert!(
-            signer.verify(
+            !signer.verify(
                 &signable_content,
                 &signature,
                 &signer.get_public_key_bytes()
-            ) == false,
+            ),
             "Signature created with wrong key should not verify with correct key"
         );
 
@@ -1482,7 +1483,7 @@ mod client_proposal_authorization_tests {
             RaftCommand::Set {
                 signature: None, ..
             } => {
-                assert!(true, "Set command correctly identifies missing signature");
+                // Set command correctly identifies missing signature
             }
             _ => panic!("Expected Set command"),
         }
@@ -1498,10 +1499,7 @@ mod client_proposal_authorization_tests {
             RaftCommand::Delete {
                 signature: None, ..
             } => {
-                assert!(
-                    true,
-                    "Delete command correctly identifies missing signature"
-                );
+                // Delete command correctly identifies missing signature
             }
             _ => panic!("Expected Delete command"),
         }

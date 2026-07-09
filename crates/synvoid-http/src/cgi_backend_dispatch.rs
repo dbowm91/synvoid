@@ -12,6 +12,7 @@ use synvoid_app_handlers::cgi::{CgiError, CgiHandler};
 use synvoid_config::MainConfig;
 use synvoid_proxy::{BackendType, RouteTarget};
 
+#[allow(clippy::too_many_arguments)]
 pub async fn maybe_handle_cgi_backend(
     target: RouteTarget,
     site_id: String,

@@ -542,6 +542,7 @@ pub fn verify_dht_sync_request_envelope_signature(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn verify_dht_sync_response_envelope_signature(
     request_id: &str,
     from_peer: &str,
@@ -566,6 +567,7 @@ pub fn verify_dht_sync_response_envelope_signature(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn verify_dht_sync_response_envelope_signature_bytes(
     request_id: &str,
     from_peer: &str,
@@ -616,6 +618,7 @@ pub fn verify_dht_sync_response_envelope_signature_bytes(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn verify_dht_record_push_envelope_signature_bytes(
     request_id: &str,
     node_id: &str,
@@ -758,6 +761,7 @@ pub fn verify_dht_anti_entropy_response_envelope_signature(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn verify_dht_anti_entropy_response_envelope_signature_bytes(
     request_id: &str,
     responder_node_id: &str,
@@ -2216,7 +2220,6 @@ mod tests {
     #[test]
     fn test_malicious_node_gossip_without_quorum_proof_rejected() {
         use crate::config::MeshConfig;
-        use crate::config::MeshNodeRole;
         use crate::dht::DhtAccessControl;
 
         let mesh_config = MeshConfig::default();
@@ -2809,7 +2812,7 @@ mod tests {
         let signable_content = get_quorum_proof_signable_content("", &record, "add");
         let sig = signer.sign(&signable_content);
 
-        let mut malicious_record = crate::protocol::DhtRecord {
+        let malicious_record = crate::protocol::DhtRecord {
             key: "verified_upstream:example.com".to_string(),
             value: b"test_value".to_vec(),
             timestamp: 1000,
@@ -2877,7 +2880,7 @@ mod tests {
         let signable_content = get_quorum_proof_signable_content("", &record, "add");
         let sig1 = signer1.sign(&signable_content);
         let sig2 = signer2.sign(&signable_content);
-        let sig3 = signer3.sign(&signable_content);
+        let _sig3 = signer3.sign(&signable_content);
 
         let record = crate::protocol::DhtRecord {
             key: "verified_upstream:example.com".to_string(),
@@ -3724,7 +3727,7 @@ mod tests {
     #[test]
     fn test_verify_envelope_signer_binding_correct_key() {
         let key_bytes = [0x42u8; 32];
-        let key_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&key_bytes);
+        let key_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key_bytes);
         let mut registry = std::collections::HashMap::new();
         registry.insert("node1".to_string(), key_b64.clone());
         let result = verify_envelope_signer_binding("node1", &key_b64, &registry);
@@ -3733,8 +3736,8 @@ mod tests {
 
     #[test]
     fn test_verify_envelope_signer_binding_wrong_key() {
-        let key1 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&[0x42u8; 32]);
-        let key2 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&[0x99u8; 32]);
+        let key1 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([0x42u8; 32]);
+        let key2 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([0x99u8; 32]);
         let mut registry = std::collections::HashMap::new();
         registry.insert("node1".to_string(), key1);
         let result = verify_envelope_signer_binding("node1", &key2, &registry);
@@ -3747,7 +3750,7 @@ mod tests {
 
     #[test]
     fn test_verify_envelope_signer_binding_node_not_in_registry() {
-        let key_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&[0x42u8; 32]);
+        let key_b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([0x42u8; 32]);
         let registry = std::collections::HashMap::new();
         let result = verify_envelope_signer_binding("unknown_node", &key_b64, &registry);
         assert!(result.is_err());

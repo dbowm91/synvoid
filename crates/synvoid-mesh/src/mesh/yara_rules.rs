@@ -1042,14 +1042,12 @@ impl YaraRulesManager {
                                         signature_content.as_bytes(),
                                         &sig_record.signature,
                                         &pk_arr,
-                                    ) {
-                                        if self
-                                            .config
-                                            .trusted_signers
-                                            .contains(&sig_record.public_key)
-                                        {
-                                            valid_count += 1;
-                                        }
+                                    ) && self
+                                        .config
+                                        .trusted_signers
+                                        .contains(&sig_record.public_key)
+                                    {
+                                        valid_count += 1;
                                     }
                                 }
                             }
@@ -1997,7 +1995,7 @@ impl YaraRulesManager {
 
                 // Verify signature if the sender provided one and we have a signer
                 if !signature.is_empty()
-                    && signer_public_key.as_ref().map_or(false, |s| !s.is_empty())
+                    && signer_public_key.as_ref().is_some_and(|s| !s.is_empty())
                 {
                     if let Some(ref signer) = self.signer {
                         let sign_content = format!("{}:{}", version, rules);
@@ -2135,7 +2133,7 @@ impl YaraRulesManager {
                 }
 
                 if !signature.is_empty()
-                    && signer_public_key.as_ref().map_or(false, |s| !s.is_empty())
+                    && signer_public_key.as_ref().is_some_and(|s| !s.is_empty())
                 {
                     if let Some(ref signer) = self.signer {
                         let sign_content = if !compiled_rules.is_empty() {
@@ -2309,7 +2307,7 @@ impl YaraRulesManager {
 
                 if self.config.require_signature {
                     if !signature.is_empty()
-                        && signer_public_key.as_ref().map_or(false, |s| !s.is_empty())
+                        && signer_public_key.as_ref().is_some_and(|s| !s.is_empty())
                     {
                         if let Some(ref signer) = self.signer {
                             let sign_content = format!("{}:{}", version, rules);

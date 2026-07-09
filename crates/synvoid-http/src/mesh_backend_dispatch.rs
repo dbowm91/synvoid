@@ -25,6 +25,7 @@ use synvoid_proxy::{
 };
 
 #[cfg(feature = "mesh")]
+#[allow(clippy::too_many_arguments)]
 pub async fn maybe_handle_mesh_backend(
     mesh_backend_pool: &Option<Arc<MeshBackendPool>>,
     target: &RouteTarget,

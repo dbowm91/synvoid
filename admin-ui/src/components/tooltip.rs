@@ -10,18 +10,15 @@ pub struct TooltipProps {
     pub title: Option<String>,
 }
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(PartialEq, Clone, Copy, Default)]
 pub enum TooltipPosition {
+    #[default]
     Top,
+    #[allow(dead_code)]
     Bottom,
+    #[allow(dead_code)]
     Left,
     Right,
-}
-
-impl Default for TooltipPosition {
-    fn default() -> Self {
-        Self::Top
-    }
 }
 
 #[function_component]

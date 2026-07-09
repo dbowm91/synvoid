@@ -62,6 +62,7 @@ impl MeshTransport {
         let _ = self.send_datagram_to_peer(peer_id, &response).await;
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle_global_node_announce(
         &self,
         from_peer: &str,
@@ -738,6 +739,7 @@ impl MeshTransport {
         tracing::error!("Key exchange error for session {}: {}", session_id, error);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle_key_signed(
         &self,
         from_peer: &str,

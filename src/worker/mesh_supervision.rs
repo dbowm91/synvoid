@@ -30,6 +30,12 @@ pub struct MeshSupervisionMetrics {
     pub shutdown_incomplete_total: AtomicU64,
 }
 
+impl Default for MeshSupervisionMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MeshSupervisionMetrics {
     pub const fn new() -> Self {
         Self {
@@ -690,17 +696,14 @@ impl MeshSupervisionCoordinator {
             // Generation-based race avoidance: startup failure events from a
             // previous startup attempt (before a restart incremented generation)
             // are stale and should not trigger a new shutdown decision.
-            match &event {
-                MeshSupervisionEvent::StartupFailed(_) => {
-                    MESH_SUPERVISION_METRICS
-                        .startup_failures_total
-                        .fetch_add(1, Ordering::Relaxed);
-                    // Startup failures are always from the current generation
-                    // because the mesh startup task is spawned fresh at each
-                    // startup. No stale-filtering needed here, but the
-                    // generation counter is available for future restart logic.
-                }
-                _ => {}
+            if let MeshSupervisionEvent::StartupFailed(_) = &event {
+                MESH_SUPERVISION_METRICS
+                    .startup_failures_total
+                    .fetch_add(1, Ordering::Relaxed);
+                // Startup failures are always from the current generation
+                // because the mesh startup task is spawned fresh at each
+                // startup. No stale-filtering needed here, but the
+                // generation counter is available for future restart logic.
             }
 
             // Apply event-level status transitions before policy classification

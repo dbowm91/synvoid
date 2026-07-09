@@ -145,7 +145,7 @@ pub async fn start_metrics_publisher(
                 let mut total_unhealthy_backends: usize = 0;
                 let mut total_backends: usize = 0;
                 for (_worker_id, worker_metrics) in &worker_metrics {
-                    for (_site_id, site_payload) in &worker_metrics.per_site {
+                    for site_payload in worker_metrics.per_site.values() {
                         total_healthy_backends = total_healthy_backends.saturating_add(site_payload.healthy_backends);
                         total_unhealthy_backends = total_unhealthy_backends.saturating_add(site_payload.unhealthy_backends);
                         total_backends = total_backends.saturating_add(site_payload.total_backends);

@@ -20,7 +20,7 @@ pub fn SiteEditor(props: &SiteEditorProps) -> Html {
     let selected_preset = use_state(|| Option::<ServerPreset>::None);
     let site_config = use_state(|| None::<serde_json::Value>);
     let loading = use_state(|| true);
-    let saving = use_state(|| false);
+    let _saving = use_state(|| false);
     let site_id = props.id.clone();
 
     use_effect_with((), {
@@ -174,7 +174,7 @@ fn BasicTab(props: &BasicTabProps) -> Html {
 
     let domains = use_state(|| "".to_string());
     let upstream = use_state(|| "".to_string());
-    let routes = use_state(|| Vec::<(String, String)>::new());
+    let routes = use_state(Vec::<(String, String)>::new);
 
     use_effect_with((), {
         let domains = domains.clone();
@@ -207,7 +207,7 @@ fn BasicTab(props: &BasicTabProps) -> Html {
         }
     });
 
-    let on_domains_change = {
+    let _on_domains_change = {
         let domains = domains.clone();
         Callback::from(move |e: Event| {
             let target = e.target().unwrap();
@@ -219,7 +219,7 @@ fn BasicTab(props: &BasicTabProps) -> Html {
         })
     };
 
-    let on_upstream_change = {
+    let _on_upstream_change = {
         let upstream = upstream.clone();
         Callback::from(move |e: Event| {
             let target = e.target().unwrap();
@@ -303,7 +303,7 @@ struct AttacksTabProps {
 }
 
 #[function_component]
-fn AttacksTab(props: &AttacksTabProps) -> Html {
+fn AttacksTab(_props: &AttacksTabProps) -> Html {
     html! {
         <div class="space-y-6">
             <div>
@@ -607,12 +607,12 @@ pub struct ErrorPagesTabProps {
 #[function_component]
 fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
     let selected_preset = use_state(|| "default".to_string());
-    let preview_html = use_state(|| String::new());
+    let preview_html = use_state(String::new);
     let preview_light = use_state(|| false);
     let saving = use_state(|| false);
     let inherit = use_state(|| true);
     let mode = use_state(|| "static".to_string());
-    let custom_directory = use_state(|| String::new());
+    let custom_directory = use_state(String::new);
 
     {
         let selected_preset = selected_preset.clone();
@@ -775,7 +775,7 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
         })
     };
 
-    let presets = vec![
+    let presets = [
         ("default", "Default (Use Global)"),
         ("dark", "Dark"),
         ("light", "Light"),
@@ -784,7 +784,7 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
         ("sunset", "Sunset"),
     ];
 
-    let modes = vec![
+    let modes = [
         ("static", "Static (Return HTML)"),
         ("dynamic", "Dynamic (Execute template)"),
         ("redirect", "Redirect to URL"),
@@ -818,7 +818,7 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
                         >
                             { for modes.iter().map(|(value, label)| {
                                 html! {
-                                    <option value={value.clone()}>{label.clone()}</option>
+                                    <option value={*value}>{*label}</option>
                                 }
                             }) }
                         </select>
@@ -851,7 +851,7 @@ fn ErrorPagesTab(props: &ErrorPagesTabProps) -> Html {
                     >
                         { for presets.iter().map(|(value, label)| {
                             html! {
-                                <option value={value.clone()}>{label.clone()}</option>
+                                <option value={*value}>{*label}</option>
                             }
                         }) }
                     </select>
@@ -1147,7 +1147,7 @@ struct RateLimitTabProps {
 }
 
 #[function_component]
-fn RateLimitTab(props: &RateLimitTabProps) -> Html {
+fn RateLimitTab(_props: &RateLimitTabProps) -> Html {
     html! {
         <div class="space-y-6">
             <div>
@@ -1181,12 +1181,12 @@ struct BlockingTabProps {
 
 #[function_component]
 fn BlockingTab(props: &BlockingTabProps) -> Html {
-    let whitelist_ips = use_state(|| String::new());
-    let whitelist_networks = use_state(|| String::new());
-    let whitelist_user_agents = use_state(|| String::new());
+    let whitelist_ips = use_state(String::new);
+    let whitelist_networks = use_state(String::new);
+    let whitelist_user_agents = use_state(String::new);
     let geoip_enabled = use_state(|| false);
-    let blocked_countries = use_state(|| String::new());
-    let allowed_countries = use_state(|| String::new());
+    let blocked_countries = use_state(String::new);
+    let allowed_countries = use_state(String::new);
     let saving = use_state(|| false);
 
     use_effect_with((), {

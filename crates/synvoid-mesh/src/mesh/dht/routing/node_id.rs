@@ -261,7 +261,7 @@ mod tests {
 
     #[test]
     fn test_ordering() {
-        let mut ids = vec![
+        let mut ids = [
             NodeId::from_bytes(&[0x02; 32]).unwrap(),
             NodeId::from_bytes(&[0x01; 32]).unwrap(),
             NodeId::from_bytes(&[0x03; 32]).unwrap(),

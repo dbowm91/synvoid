@@ -144,8 +144,8 @@ impl WorkerShutdownContext {
 /// 2. Stop accepting new connections
 /// 3. Graceful drain (if requested and nonzero timeout)
 /// 4. Stop app servers (Granian supervisors)
-/// 4.5. Shutdown mesh transport (if running)
-/// 4.6. Stop active mesh support bundle explicitly (Iteration 94)
+///    4.5. Shutdown mesh transport (if running)
+///    4.6. Stop active mesh support bundle explicitly (Iteration 94)
 /// 5. Clear running flag
 /// 6. Broadcast registry cancellation
 /// 7. Bandwidth persist (handled by background task)

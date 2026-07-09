@@ -79,6 +79,7 @@ impl From<&Http3RequestPrelude> for Http3RequestMetadata {
 }
 
 #[async_trait]
+#[allow(clippy::too_many_arguments)]
 pub trait Http3RequestWaf: Send + Sync {
     async fn check_request_full(
         &self,

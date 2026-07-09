@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use yew::prelude::*;
 use yew_router::prelude::*;
 
@@ -39,6 +38,7 @@ fn format_bytes(n: u64) -> String {
     }
 }
 
+#[allow(dead_code)]
 fn format_uptime(secs: u64) -> String {
     let days = secs / 86400;
     let hours = (secs % 86400) / 3600;
@@ -61,7 +61,7 @@ pub struct SiteDetailProps {
 pub fn SiteDetail(props: &SiteDetailProps) -> Html {
     let site_id = props.id.clone();
     let site_stats = use_state(|| None::<SiteStats>);
-    let sites_list = use_state(|| Vec::<SiteStats>::new());
+    let sites_list = use_state(Vec::<SiteStats>::new);
     let error = use_state(|| None as Option<String>);
 
     let (ws_state, _) = use_websocket_or_poll::<RealtimeMetrics>(

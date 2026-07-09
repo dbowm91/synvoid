@@ -545,9 +545,9 @@ mod tests {
         let filtered = filter_response_headers(&headers, &AHashSet::new());
         let names: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
         assert!(names.contains(&"content-type"));
-        assert!(!names.iter().any(|n| *n == "connection"));
-        assert!(!names.iter().any(|n| *n == "keep-alive"));
-        assert!(!names.iter().any(|n| *n == "transfer-encoding"));
+        assert!(!names.contains(&"connection"));
+        assert!(!names.contains(&"keep-alive"));
+        assert!(!names.contains(&"transfer-encoding"));
     }
 
     #[test]
@@ -580,7 +580,7 @@ mod tests {
         let filtered = filter_response_headers(&headers, &filter_set);
         let names: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
         assert!(names.contains(&"content-type"));
-        assert!(!names.iter().any(|n| *n == "x-custom"));
+        assert!(!names.contains(&"x-custom"));
     }
 
     #[test]
@@ -727,8 +727,10 @@ mod tests {
         headers.insert("content-type", "application/json".parse().unwrap());
         headers.insert("x-custom", "value".parse().unwrap());
 
-        let mut config = ProxyHeadersConfig::default();
-        config.forward = vec!["content-type".to_string()];
+        let config = ProxyHeadersConfig {
+            forward: vec!["content-type".to_string()],
+            ..Default::default()
+        };
 
         let result = build_forward_headers(client_ip, &headers, &config, ForwardedProtocol::Https);
 
@@ -744,8 +746,10 @@ mod tests {
         headers.insert("authorization", "Bearer token".parse().unwrap());
         headers.insert("x-custom", "value".parse().unwrap());
 
-        let mut config = ProxyHeadersConfig::default();
-        config.clear = vec!["x-custom".to_string()];
+        let config = ProxyHeadersConfig {
+            clear: vec!["x-custom".to_string()],
+            ..Default::default()
+        };
 
         let result = build_forward_headers(client_ip, &headers, &config, ForwardedProtocol::Https);
 
@@ -760,8 +764,10 @@ mod tests {
         headers.insert("authorization", "Bearer token".parse().unwrap());
         headers.insert("x-sensitive", "secret".parse().unwrap());
 
-        let mut config = ProxyHeadersConfig::default();
-        config.hide = vec!["x-sensitive".to_string()];
+        let config = ProxyHeadersConfig {
+            hide: vec!["x-sensitive".to_string()],
+            ..Default::default()
+        };
 
         let result = build_forward_headers(client_ip, &headers, &config, ForwardedProtocol::Https);
 

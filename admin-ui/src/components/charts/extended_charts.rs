@@ -48,7 +48,7 @@ pub fn MultiSeriesLineChart(props: &MultiSeriesLineChartProps) -> Html {
         .data_series
         .iter()
         .enumerate()
-        .map(|(idx, (name, data))| {
+        .map(|(idx, (_name, data))| {
             if data.is_empty() {
                 return html! {};
             }
@@ -159,7 +159,7 @@ pub fn StackedAreaChart(props: &StackedAreaChartProps) -> Html {
         .data_series
         .iter()
         .enumerate()
-        .map(|(idx, (name, data))| {
+        .map(|(idx, (_name, data))| {
             let color = COLORS[idx % COLORS.len()];
 
             let points: Vec<(f64, f64, f64)> = data

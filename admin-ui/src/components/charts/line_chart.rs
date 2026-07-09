@@ -1,6 +1,7 @@
 use yew::prelude::*;
 
 #[derive(Properties, PartialEq)]
+#[allow(dead_code)]
 pub struct LineChartProps {
     pub data: Vec<f64>,
     pub labels: Vec<String>,

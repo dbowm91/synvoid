@@ -17,7 +17,7 @@ use std::sync::Arc;
 use crate::raft::edge_replica::EdgeReplicaManager;
 
 /// Freshness classification for a canonical read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CanonicalFreshness {
     /// Data is live from authoritative source.
     Live,
@@ -26,13 +26,8 @@ pub enum CanonicalFreshness {
     /// Data is stale beyond grace but was accepted under policy.
     Stale { age_ms: u64 },
     /// No canonical snapshot or source available.
+    #[default]
     Unavailable,
-}
-
-impl Default for CanonicalFreshness {
-    fn default() -> Self {
-        CanonicalFreshness::Unavailable
-    }
 }
 
 /// Outcome of a canonical trust query.
@@ -67,19 +62,15 @@ pub enum CanonicalTrustReason {
     Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum CanonicalSnapshotStaleMode {
     /// Stale snapshots cause deferred/canonical-unavailable behavior.
+    #[default]
     FailOpenDefer,
     /// Stale snapshots cause not-actionable/rejected behavior.
     FailClosedNotActionable,
     /// Stale snapshots are accepted with a warning log.
     AllowStaleWithWarning,
-}
-
-impl Default for CanonicalSnapshotStaleMode {
-    fn default() -> Self {
-        CanonicalSnapshotStaleMode::FailOpenDefer
-    }
 }
 
 /// Freshness policy for canonical snapshots exported via IPC.
@@ -780,7 +771,7 @@ mod tests {
         postcard::to_stdvec(&node).unwrap()
     }
 
-    fn make_org_key_value(org_id: &str, key_id: &str) -> Vec<u8> {
+    fn make_org_key_value(org_id: &str, _key_id: &str) -> Vec<u8> {
         let key = OrgPublicKey {
             org_id: org_id.to_string(),
             public_key: vec![1, 2, 3],
@@ -1522,10 +1513,12 @@ mod tests {
     // Explicit config values convert correctly
     #[test]
     fn authority_freshness_config_explicit_values_convert() {
-        let mut cfg = crate::config::AuthorityFreshnessConfig::default();
-        cfg.canonical_snapshot_fresh_max_age_ms = 120_000;
-        cfg.canonical_snapshot_stale_grace_max_age_ms = 600_000;
-        cfg.canonical_snapshot_stale_mode = CanonicalSnapshotStaleMode::FailClosedNotActionable;
+        let cfg = crate::config::AuthorityFreshnessConfig {
+            canonical_snapshot_fresh_max_age_ms: 120_000,
+            canonical_snapshot_stale_grace_max_age_ms: 600_000,
+            canonical_snapshot_stale_mode: CanonicalSnapshotStaleMode::FailClosedNotActionable,
+            ..Default::default()
+        };
         let policy = crate::canonical::CanonicalSnapshotFreshnessPolicy::from(&cfg);
         assert_eq!(policy.fresh_max_age_ms, 120_000);
         assert_eq!(policy.stale_grace_max_age_ms, 600_000);
@@ -1538,9 +1531,11 @@ mod tests {
     // Invalid config where stale grace < fresh threshold is normalized
     #[test]
     fn authority_freshness_config_stale_less_than_fresh_is_normalized() {
-        let mut cfg = crate::config::AuthorityFreshnessConfig::default();
-        cfg.canonical_snapshot_fresh_max_age_ms = 120_000;
-        cfg.canonical_snapshot_stale_grace_max_age_ms = 60_000; // stale < fresh
+        let cfg = crate::config::AuthorityFreshnessConfig {
+            canonical_snapshot_fresh_max_age_ms: 120_000,
+            canonical_snapshot_stale_grace_max_age_ms: 60_000,
+            ..Default::default()
+        }; // stale < fresh
         let policy = crate::canonical::CanonicalSnapshotFreshnessPolicy::from(&cfg);
         // stale_grace should be clamped to fresh_max_age
         assert_eq!(policy.fresh_max_age_ms, 120_000);
@@ -1667,10 +1662,12 @@ mod tests {
     // Verify the full lifecycle path: config → policy → classification → reader
     #[test]
     fn config_to_reader_lifecycle_path() {
-        let mut cfg = crate::config::AuthorityFreshnessConfig::default();
-        cfg.canonical_snapshot_fresh_max_age_ms = 5_000;
-        cfg.canonical_snapshot_stale_grace_max_age_ms = 15_000;
-        cfg.canonical_snapshot_stale_mode = CanonicalSnapshotStaleMode::FailClosedNotActionable;
+        let cfg = crate::config::AuthorityFreshnessConfig {
+            canonical_snapshot_fresh_max_age_ms: 5_000,
+            canonical_snapshot_stale_grace_max_age_ms: 15_000,
+            canonical_snapshot_stale_mode: CanonicalSnapshotStaleMode::FailClosedNotActionable,
+            ..Default::default()
+        };
 
         let policy = crate::canonical::CanonicalSnapshotFreshnessPolicy::from(&cfg);
         assert_eq!(policy.fresh_max_age_ms, 5_000);

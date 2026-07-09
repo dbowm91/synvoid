@@ -63,6 +63,7 @@ struct RequiredMeshStartOutput {
 }
 
 #[cfg(feature = "mesh")]
+#[allow(dead_code)]
 struct OptionalMeshStartInput<'a> {
     state: &'a UnifiedServerWorkerState,
     mesh_status: Arc<tokio::sync::RwLock<crate::worker::mesh_supervision::WorkerMeshStatus>>,

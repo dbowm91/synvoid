@@ -15,6 +15,7 @@ use synvoid_plugin_runtime::spin::handler::{
 };
 use synvoid_proxy::{BackendType, RouteTarget};
 
+#[allow(clippy::too_many_arguments)]
 pub async fn maybe_handle_spin_backend(
     target: RouteTarget,
     site_id: String,

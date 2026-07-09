@@ -262,7 +262,7 @@ mod tests {
         {
             let can_load = can_load_ebpf();
             let is_root = unsafe { libc::getuid() == 0 || libc::geteuid() == 0 };
-            let can_admin = is_admin();
+            let _can_admin = is_admin();
 
             if !is_root {
                 if let Ok(content) =

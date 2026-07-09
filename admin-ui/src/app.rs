@@ -64,10 +64,10 @@ pub enum Route {
 
 #[function_component]
 pub fn App() -> Html {
-    let (theme_data, update_theme) = use_api_theme();
+    let (_theme_data, update_theme) = use_api_theme();
     let theme = use_state(|| Theme::Dark);
 
-    let current_theme = (*theme).clone();
+    let current_theme = *theme;
 
     let toggle_theme = {
         let theme = theme.clone();

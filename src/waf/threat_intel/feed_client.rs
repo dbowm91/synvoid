@@ -127,6 +127,7 @@ impl ThreatFeedClient {
     ///
     /// Returns `Ok(())` if the task was started, or `Err(())` if it was
     /// already running (idempotent guard).
+    #[allow(clippy::result_unit_err)] // reason: idempotent guard, Err means already running; changing signature is a larger refactor
     pub fn start_background_fetching(self: &Arc<Self>) -> Result<(), ()> {
         if !self.config.enabled {
             tracing::info!("Threat feed client is disabled");

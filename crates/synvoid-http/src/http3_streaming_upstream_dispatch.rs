@@ -207,7 +207,7 @@ where
     drop(tx);
 
     if streamed_body_len > 0 {
-        if let Some(ref bw) = bandwidth {
+        if let Some(bw) = bandwidth {
             bw.record_ingress(streamed_body_len as u64, BandwidthProtocol::Http3);
             bw.record_site_ingress(host, streamed_body_len as u64);
         }
@@ -235,7 +235,7 @@ where
                 let response = build_plain_error_response(StatusCode::BAD_GATEWAY, "text/plain");
                 send_response_with_body(request_stream, response, Bytes::from("Bad Gateway"))
                     .await?;
-                if let Some(ref metrics) = metrics {
+                if let Some(metrics) = metrics {
                     metrics.record_site_upstream_failure(&route_target.site_id);
                 }
             } else {
@@ -268,7 +268,7 @@ where
                                     .map_err(|e| Box::new(e) as BoxError)?;
 
                                 let data_len = data.len() as u64;
-                                if let Some(ref bw) = bandwidth {
+                                if let Some(bw) = bandwidth {
                                     bw.record_egress(
                                         data_len,
                                         BandwidthProtocol::Http3,
@@ -285,7 +285,7 @@ where
                     }
                 }
 
-                if let Some(ref metrics) = metrics {
+                if let Some(metrics) = metrics {
                     metrics.record_site_upstream_success(&route_target.site_id);
                 }
             }
@@ -306,7 +306,7 @@ where
                 }
             }
             tracing::error!("Upstream error over HTTP/3 streaming: {}", e);
-            if let Some(ref metrics) = metrics {
+            if let Some(metrics) = metrics {
                 metrics.record_site_upstream_failure(&route_target.site_id);
             }
             let response = build_plain_error_response(StatusCode::BAD_GATEWAY, "text/plain");

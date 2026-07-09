@@ -94,7 +94,7 @@ where
     }
 
     let fcgi_config = target.site_config.proxy.fastcgi.clone().unwrap_or_default();
-    let pool = get_pool(&socket.to_string(), &fcgi_config);
+    let pool = get_pool(socket.as_ref(), &fcgi_config);
     match pool
         .execute(
             &method,
@@ -153,16 +153,17 @@ where
                 }
                 let in_range = body_len >= img_settings.min_size;
 
-                if is_image && in_range {
-                    if !is_whitelisted_path(img_settings.whitelist_patterns, &path) {
-                        body = mark_image_rights(
-                            body,
-                            site_id.clone(),
-                            None,
-                            Some(image_rights_config.clone()),
-                        )
-                        .await;
-                    }
+                if is_image
+                    && in_range
+                    && !is_whitelisted_path(img_settings.whitelist_patterns, &path)
+                {
+                    body = mark_image_rights(
+                        body,
+                        site_id.clone(),
+                        None,
+                        Some(image_rights_config.clone()),
+                    )
+                    .await;
                 }
             }
 

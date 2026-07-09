@@ -27,6 +27,7 @@ use synvoid_serverless::{
 };
 
 #[cfg(feature = "mesh")]
+#[allow(clippy::too_many_arguments)]
 pub async fn maybe_handle_serverless_backend(
     serverless_manager: &Option<Arc<ServerlessManager>>,
     mesh_transport: &Option<Arc<MeshTransportManager>>,

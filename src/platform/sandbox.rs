@@ -1217,7 +1217,10 @@ mod tests {
 
         let sandbox = ProcessSandbox::with_stub(SandboxLevel::Strict);
         let caps = sandbox.capabilities();
-        assert!(!caps.can_enforce_strict(), "stub backend should not support strict");
+        assert!(
+            !caps.can_enforce_strict(),
+            "stub backend should not support strict"
+        );
     }
 
     #[test]

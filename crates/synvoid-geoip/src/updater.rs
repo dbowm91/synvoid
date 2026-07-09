@@ -595,10 +595,12 @@ mod tests {
 
     #[test]
     fn test_download_source_from_config_url() {
-        let mut config = GeoIpConfig::default();
-        config.update_url = Some("https://custom.url/db".to_string());
-        config.account_id = Some("123".to_string());
-        config.license_key = Some("key".to_string());
+        let config = GeoIpConfig {
+            update_url: Some("https://custom.url/db".to_string()),
+            account_id: Some("123".to_string()),
+            license_key: Some("key".to_string()),
+            ..Default::default()
+        };
 
         let source = DownloadSource::from_config(&config).unwrap();
         assert!(matches!(source, DownloadSource::PresignedUrl(_)));
@@ -606,9 +608,11 @@ mod tests {
 
     #[test]
     fn test_download_source_from_config_maxmind() {
-        let mut config = GeoIpConfig::default();
-        config.account_id = Some("123".to_string());
-        config.license_key = Some("key".to_string());
+        let config = GeoIpConfig {
+            account_id: Some("123".to_string()),
+            license_key: Some("key".to_string()),
+            ..Default::default()
+        };
 
         let source = DownloadSource::from_config(&config).unwrap();
         assert!(matches!(source, DownloadSource::MaxMind { .. }));

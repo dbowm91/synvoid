@@ -474,9 +474,7 @@ impl OrgKeyManager {
 
         // Only sign if we are a global node
         let transport = self.transport.read();
-        let Some(ref transport) = *transport else {
-            return None;
-        };
+        let transport = (*transport).as_ref()?;
 
         let signer = transport.mesh_signer.as_ref()?;
         let signable = org_public_key.get_signable_data();

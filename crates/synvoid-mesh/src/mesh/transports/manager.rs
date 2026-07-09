@@ -865,6 +865,7 @@ impl MeshTransportManager {
         None
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn fetch_cached_config<T: Clone>(
         &self,
         upstream_id: &str,
@@ -970,9 +971,7 @@ impl MeshTransportManager {
             }
         };
 
-        let Some(config) = parse_json(parsed) else {
-            return None;
-        };
+        let config = parse_json(parsed)?;
 
         // Cache the result
         {

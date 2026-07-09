@@ -268,6 +268,7 @@ impl MeshTransport {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle_route_response(
         &self,
         query_id: &str,

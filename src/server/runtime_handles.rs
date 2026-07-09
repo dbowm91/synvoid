@@ -42,6 +42,12 @@ pub struct UnifiedServerRuntimeHandles {
     handles: Vec<NamedRuntimeHandle>,
 }
 
+impl Default for UnifiedServerRuntimeHandles {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl UnifiedServerRuntimeHandles {
     pub fn new() -> Self {
         Self {

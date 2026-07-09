@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use yew::prelude::*;
 
 #[derive(Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
 pub struct RequestLogsResponse {
     pub entries: Vec<RequestLogEntry>,
     pub total: usize,
@@ -44,8 +45,8 @@ fn get_method_class(method: &str) -> &'static str {
 
 #[function_component]
 pub fn RequestLogs() -> Html {
-    let logs = use_state(|| Vec::<RequestLogEntry>::new());
-    let sites = use_state(|| Vec::<SiteInfo>::new());
+    let logs = use_state(Vec::<RequestLogEntry>::new);
+    let sites = use_state(Vec::<SiteInfo>::new);
     let loading = use_state(|| true);
     let total = use_state(|| 0);
     let has_more = use_state(|| false);
@@ -64,9 +65,8 @@ pub fn RequestLogs() -> Html {
             let sites = sites.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let api = ApiService::new();
-                match api.list_sites().await {
-                    Ok(s) => sites.set(s),
-                    Err(_) => {}
+                if let Ok(s) = api.list_sites().await {
+                    sites.set(s)
                 }
             });
             || {}
@@ -129,7 +129,7 @@ pub fn RequestLogs() -> Html {
                     };
                     let current_offset = *offset;
 
-                    match api
+                    if let Ok(resp) = api
                         .get_request_logs(
                             site_id,
                             method,
@@ -140,12 +140,9 @@ pub fn RequestLogs() -> Html {
                         )
                         .await
                     {
-                        Ok(resp) => {
-                            logs.set(resp.entries);
-                            total.set(resp.total);
-                            has_more.set(resp.has_more);
-                        }
-                        Err(_) => {}
+                        logs.set(resp.entries);
+                        total.set(resp.total);
+                        has_more.set(resp.has_more);
                     }
                     loading.set(false);
                 });

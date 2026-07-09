@@ -3,6 +3,7 @@ use wasm_bindgen::JsCast;
 use web_sys::{ErrorEvent, MessageEvent, WebSocket};
 use yew::Callback;
 
+#[allow(dead_code)]
 pub struct WebSocketService {
     ws: Option<WebSocket>,
 }
@@ -13,6 +14,7 @@ impl Default for WebSocketService {
     }
 }
 
+#[allow(dead_code)]
 impl WebSocketService {
     pub fn new() -> Self {
         Self { ws: None }
@@ -70,7 +72,7 @@ impl WebSocketService {
     pub fn is_connected(&self) -> bool {
         self.ws
             .as_ref()
-            .map_or(false, |ws| ws.ready_state() == WebSocket::OPEN)
+            .is_some_and(|ws| ws.ready_state() == WebSocket::OPEN)
     }
 }
 

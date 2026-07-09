@@ -19,7 +19,7 @@ pub struct Http3RequestPrelude {
 }
 
 pub enum Http3RequestPreludeOutcome {
-    Continue(Http3RequestPrelude),
+    Continue(Box<Http3RequestPrelude>),
     Respond,
 }
 
@@ -60,7 +60,7 @@ pub fn prepare_http3_request_prelude<B>(
     let user_agent = extract_user_agent(&parts.headers);
     let route_result = router.route(&host, &path);
 
-    Http3RequestPreludeOutcome::Continue(Http3RequestPrelude {
+    Http3RequestPreludeOutcome::Continue(Box::new(Http3RequestPrelude {
         parts,
         route_result,
         client_ip,
@@ -68,5 +68,5 @@ pub fn prepare_http3_request_prelude<B>(
         host,
         query_string,
         user_agent,
-    })
+    }))
 }

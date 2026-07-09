@@ -24,6 +24,7 @@ pub struct StreamingUpstreamDispatchPlan {
     pub client: Arc<StreamingHttpClient>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn prepare_upstream_proxy_dispatch_plan(
     target: &RouteTarget,
     path: &str,

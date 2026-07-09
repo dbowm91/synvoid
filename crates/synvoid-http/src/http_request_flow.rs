@@ -223,7 +223,7 @@ where
         host,
         user_agent,
         skip_waf,
-    } = preflight;
+    } = *preflight;
 
     let site_id = target.site_id.to_string();
     let method_for_log = method.clone();

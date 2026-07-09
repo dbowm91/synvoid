@@ -453,7 +453,7 @@ impl UnifiedServer {
             ));
             owner.load_configured_plugins(&main_config.plugins.wasm.plugins);
 
-            if let Some(ref plugin_cfg) = main_config.plugins.wasm.plugins.first() {
+            if let Some(plugin_cfg) = main_config.plugins.wasm.plugins.first() {
                 let plugin_dir = std::path::Path::new(&plugin_cfg.path)
                     .parent()
                     .unwrap_or(std::path::Path::new("/opt/synvoid/plugins"))

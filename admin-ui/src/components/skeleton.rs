@@ -1,6 +1,7 @@
 use yew::prelude::*;
 
 #[derive(Properties, PartialEq)]
+#[allow(dead_code)]
 pub struct SkeletonProps {
     #[prop_or_default]
     pub width: String,
@@ -24,6 +25,7 @@ pub fn Skeleton(props: &SkeletonProps) -> Html {
 }
 
 #[derive(Properties, PartialEq)]
+#[allow(dead_code)]
 pub struct SkeletonCardProps {
     #[prop_or_default]
     pub lines: usize,
@@ -51,6 +53,7 @@ pub fn SkeletonCard(props: &SkeletonCardProps) -> Html {
 }
 
 #[derive(Properties, PartialEq)]
+#[allow(dead_code)]
 pub struct SkeletonTableProps {
     #[prop_or_default]
     pub rows: usize,

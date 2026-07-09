@@ -292,10 +292,7 @@ mod tests {
             ErrorPageManager::status_text(431),
             "Request Header Fields Too Large"
         );
-        assert_eq!(
-            ErrorPageManager::status_text(500),
-            "Internal Server Error"
-        );
+        assert_eq!(ErrorPageManager::status_text(500), "Internal Server Error");
         assert_eq!(ErrorPageManager::status_text(501), "Not Implemented");
         assert_eq!(ErrorPageManager::status_text(502), "Bad Gateway");
         assert_eq!(ErrorPageManager::status_text(503), "Service Unavailable");

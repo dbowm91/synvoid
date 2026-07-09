@@ -38,7 +38,7 @@ fn record_bandwidth_egress(
     body_len: u64,
     direction: EgressDirection,
 ) {
-    if let Some(ref bw) = bandwidth {
+    if let Some(bw) = bandwidth {
         bw.record_egress(body_len, BandwidthProtocol::Http3, direction);
         bw.record_site_egress(host, body_len);
     }

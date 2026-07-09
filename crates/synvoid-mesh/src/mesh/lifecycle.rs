@@ -55,14 +55,8 @@ impl Default for MeshTaskIdGenerator {
 ///
 /// IDs are globally unique across task-group generations when allocated
 /// via `MeshTaskIdGenerator`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct MeshTaskId(pub u64);
-
-impl Default for MeshTaskId {
-    fn default() -> Self {
-        Self(0)
-    }
-}
 
 impl fmt::Display for MeshTaskId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -275,7 +269,7 @@ impl MeshLifecycleState {
 }
 
 /// Report generated after a mesh transport shutdown sequence.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MeshShutdownReport {
     /// Number of tasks that exited cleanly.
     pub clean_tasks: usize,
@@ -300,25 +294,8 @@ pub struct MeshShutdownReport {
     pub stream_handler_drain: PeerStreamDrainReport,
 }
 
-impl Default for MeshShutdownReport {
-    fn default() -> Self {
-        Self {
-            clean_tasks: 0,
-            failed_tasks: Vec::new(),
-            aborted_tasks: Vec::new(),
-            accept_loop_report: None,
-            remaining_peers: 0,
-            peers_at_shutdown_start: 0,
-            drained_peer_sessions: 0,
-            aborted_peer_sessions: 0,
-            failed_peer_sessions: 0,
-            stream_handler_drain: PeerStreamDrainReport::default(),
-        }
-    }
-}
-
 /// Policy for classifying bootstrap failures during mesh startup.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MeshStartupPolicy {
     /// If true, seed bootstrap failure is fatal (required for non-genesis nodes).
     pub require_seed_connectivity: bool,
@@ -329,17 +306,6 @@ pub struct MeshStartupPolicy {
     /// If true, DHT routing initialization failure is fatal (required when
     /// DHT routing is enabled and the node depends on DHT for operation).
     pub require_dht_initialization: bool,
-}
-
-impl Default for MeshStartupPolicy {
-    fn default() -> Self {
-        Self {
-            require_seed_connectivity: false,
-            require_configured_peers: false,
-            require_dht_bootstrap: false,
-            require_dht_initialization: false,
-        }
-    }
 }
 
 /// Report of mesh startup outcomes.
@@ -608,7 +574,7 @@ pub enum DhtPeerMutation {
     Created,
     /// The peer was present before; the previous contact is preserved for restoration.
     /// Covers both replacement and in-place update semantics (Iteration 74).
-    Previous(DhtPeerSnapshot),
+    Previous(Box<DhtPeerSnapshot>),
 }
 
 /// Complete snapshot of a DHT peer's routing state before mutation.
@@ -1178,7 +1144,7 @@ mod tests {
         .with_trusted(true)
         .with_pow(42, vec![1, 2, 3]);
         let snapshot = DhtPeerSnapshot { contact };
-        let previous = DhtPeerMutation::Previous(snapshot.clone());
+        let previous = DhtPeerMutation::Previous(Box::new(snapshot.clone()));
         assert!(matches!(previous, DhtPeerMutation::Previous(_)));
 
         if let DhtPeerMutation::Previous(s) = previous {

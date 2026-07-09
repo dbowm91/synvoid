@@ -283,21 +283,15 @@ pub fn evaluate_threat_intel_policy(
     match advisory_lookup {
         // Advisory unavailable — defer regardless of canonical state.
         AdvisoryRecordLookup::Unavailable => {
-            return ThreatIntelPolicyDecision::Deferred(
-                ThreatIntelPolicyDeferReason::AdvisoryUnavailable,
-            );
+            ThreatIntelPolicyDecision::Deferred(ThreatIntelPolicyDeferReason::AdvisoryUnavailable)
         }
         // Advisory missing — not actionable.
         AdvisoryRecordLookup::Missing => {
-            return ThreatIntelPolicyDecision::NotActionable(
-                ThreatIntelPolicyRejectReason::AdvisoryMissing,
-            );
+            ThreatIntelPolicyDecision::NotActionable(ThreatIntelPolicyRejectReason::AdvisoryMissing)
         }
         // Advisory expired — not actionable.
         AdvisoryRecordLookup::Expired => {
-            return ThreatIntelPolicyDecision::NotActionable(
-                ThreatIntelPolicyRejectReason::AdvisoryExpired,
-            );
+            ThreatIntelPolicyDecision::NotActionable(ThreatIntelPolicyRejectReason::AdvisoryExpired)
         }
         // Advisory present — continue to canonical check.
         AdvisoryRecordLookup::Present(record) => {
@@ -306,49 +300,41 @@ pub fn evaluate_threat_intel_policy(
 
             match canonical_decision {
                 CanonicalTrustDecision::Trusted { freshness } => {
-                    return ThreatIntelPolicyDecision::Actionable(ThreatIntelPolicyEvidence {
+                    ThreatIntelPolicyDecision::Actionable(ThreatIntelPolicyEvidence {
                         intel_id: intel_id.to_string(),
                         advisory_key: advisory_key.to_string(),
                         advisory_status: AdvisoryRecordStatus::Present,
                         advisory_freshness: record.freshness,
                         canonical_freshness: freshness,
                         record_signature_valid: record.record_signature_valid,
-                    });
+                    })
                 }
                 CanonicalTrustDecision::NotTrusted {
                     freshness: CanonicalFreshness::Unavailable,
                     ..
-                } => {
-                    return ThreatIntelPolicyDecision::Deferred(
-                        ThreatIntelPolicyDeferReason::CanonicalUnavailable,
-                    );
-                }
+                } => ThreatIntelPolicyDecision::Deferred(
+                    ThreatIntelPolicyDeferReason::CanonicalUnavailable,
+                ),
                 CanonicalTrustDecision::NotTrusted {
                     reason: super::canonical::CanonicalTrustReason::NotPresentInCanonicalState,
                     ..
-                } => {
-                    return ThreatIntelPolicyDecision::Deferred(
-                        ThreatIntelPolicyDeferReason::CanonicalUnknown,
-                    );
-                }
+                } => ThreatIntelPolicyDecision::Deferred(
+                    ThreatIntelPolicyDeferReason::CanonicalUnknown,
+                ),
                 CanonicalTrustDecision::NotTrusted { .. } => {
-                    return ThreatIntelPolicyDecision::NotActionable(
+                    ThreatIntelPolicyDecision::NotActionable(
                         ThreatIntelPolicyRejectReason::CanonicalNotTrusted,
-                    );
+                    )
                 }
                 CanonicalTrustDecision::Unknown {
                     freshness: CanonicalFreshness::Unavailable,
                     ..
-                } => {
-                    return ThreatIntelPolicyDecision::Deferred(
-                        ThreatIntelPolicyDeferReason::CanonicalUnavailable,
-                    );
-                }
-                CanonicalTrustDecision::Unknown { .. } => {
-                    return ThreatIntelPolicyDecision::Deferred(
-                        ThreatIntelPolicyDeferReason::CanonicalUnknown,
-                    );
-                }
+                } => ThreatIntelPolicyDecision::Deferred(
+                    ThreatIntelPolicyDeferReason::CanonicalUnavailable,
+                ),
+                CanonicalTrustDecision::Unknown { .. } => ThreatIntelPolicyDecision::Deferred(
+                    ThreatIntelPolicyDeferReason::CanonicalUnknown,
+                ),
             }
         }
     }

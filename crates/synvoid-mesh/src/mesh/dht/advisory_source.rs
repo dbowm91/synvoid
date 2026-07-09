@@ -26,7 +26,7 @@ use std::sync::Arc;
 use super::record_store::RecordStoreManager;
 
 /// Freshness classification for an advisory record observation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AdvisoryFreshness {
     /// Record is live from authoritative DHT source.
     Live,
@@ -35,13 +35,8 @@ pub enum AdvisoryFreshness {
     /// Record is stale beyond grace but was accepted under policy.
     Stale { age_ms: u64 },
     /// No freshness information available.
+    #[default]
     Unknown,
-}
-
-impl Default for AdvisoryFreshness {
-    fn default() -> Self {
-        AdvisoryFreshness::Unknown
-    }
 }
 
 /// Status of an advisory record lookup.
@@ -479,7 +474,7 @@ mod tests {
         };
         let age = record.age_ms();
         assert!(
-            age >= 9000 && age <= 11000,
+            (9000..=11000).contains(&age),
             "age_ms should be ~10s: {}",
             age
         );

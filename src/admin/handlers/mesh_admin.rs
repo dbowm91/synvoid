@@ -988,7 +988,7 @@ pub async fn list_bans(
 
     let total = bans.len();
 
-    bans.sort_by(|a, b| b.blocked_at.cmp(&a.blocked_at));
+    bans.sort_by_key(|b| std::cmp::Reverse(b.blocked_at));
 
     let bans: Vec<BanRecord> = bans.into_iter().skip(offset).take(limit).collect();
 

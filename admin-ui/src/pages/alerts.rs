@@ -410,7 +410,7 @@ pub fn Alerts() -> Html {
                                             checked={rule.enabled}
                                             onchange={{
                                                 let config = config.clone();
-                                                let rule_name = rule.name.clone();
+                            let _rule_name = rule.name.clone();
                                                 Callback::from(move |_| {
                                                     let config = config.clone();
                                                     if let Some(c) = (*config).clone() {

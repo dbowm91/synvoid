@@ -518,9 +518,7 @@ impl RecordStoreManager {
         drop(routing);
 
         let get_authorized_key = move |node_id: &str| -> Option<String> {
-            let Some(ref cm) = cert_manager else {
-                return None;
-            };
+            let cm = cert_manager.as_ref()?;
             let cm = cm.read();
             cm.get_global_node_key(node_id)
                 .map(|pk| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&pk))

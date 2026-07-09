@@ -1,6 +1,7 @@
 use yew::prelude::*;
 
 #[derive(Properties, PartialEq)]
+#[allow(dead_code)]
 pub struct FieldHelpProps {
     pub description: String,
     #[prop_or_default]

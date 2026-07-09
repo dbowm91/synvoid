@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use pqc::{Ciphertext, MlKem768, PublicKey, SecretKey, SharedSecret};
+use pqc::MlKem768;
 
 fn keygen_benchmark(c: &mut Criterion) {
     c.bench_function("ml-kem-768 keygen", |b| {

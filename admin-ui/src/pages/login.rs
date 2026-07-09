@@ -6,14 +6,15 @@ use yew::prelude::*;
 enum LoginState {
     Idle,
     Loading,
+    #[allow(dead_code)]
     Error(String),
 }
 
 #[function_component]
 pub fn Login() -> Html {
-    let token_input = use_state(|| String::new());
+    let token_input = use_state(String::new);
     let login_state = use_state(|| LoginState::Idle);
-    let error_msg = use_state(|| String::new());
+    let error_msg = use_state(String::new);
 
     let on_token_change = {
         let token_input = token_input.clone();
@@ -41,11 +42,11 @@ pub fn Login() -> Html {
 
             spawn_local(async move {
                 let url = "/api/auth/session";
-                let mut opts = web_sys::RequestInit::new();
+                let opts = web_sys::RequestInit::new();
                 opts.set_method("POST");
                 opts.set_mode(web_sys::RequestMode::SameOrigin);
                 opts.set_credentials(web_sys::RequestCredentials::Include);
-                let _ = opts.set_body(&JsValue::NULL);
+                opts.set_body(&JsValue::NULL);
 
                 let request = match web_sys::Request::new_with_str_and_init(url, &opts) {
                     Ok(r) => r,

@@ -2655,8 +2655,7 @@ impl ThreatIntelligenceManager {
                             timestamp,
                             hex::encode(merkle_root)
                         );
-                        let pk_bytes = if signer_public_key.as_ref().map_or(true, |s| s.is_empty())
-                        {
+                        let pk_bytes = if signer_public_key.as_ref().is_none_or(|s| s.is_empty()) {
                             Vec::new()
                         } else {
                             base64::engine::general_purpose::URL_SAFE_NO_PAD
@@ -3131,6 +3130,7 @@ mod tests {
             Self::default()
         }
 
+        #[allow(dead_code)]
         fn unavailable() -> Self {
             Self {
                 unavailable: true,
@@ -4241,13 +4241,9 @@ mod tests {
 
     #[test]
     fn iteration33_shadow_helper_reports_actionable_with_context() {
-        use crate::canonical::{
-            CanonicalFreshness, CanonicalTrustDecision, CanonicalTrustReader,
-            StaticCanonicalTrustReader,
-        };
+        use crate::canonical::{CanonicalFreshness, StaticCanonicalTrustReader};
         use crate::dht::advisory_source::{
-            AdvisoryFreshness, AdvisoryRecord, AdvisoryRecordLookup, AdvisoryRecordSource,
-            AdvisoryRecordStatus, StaticAdvisoryRecordSource,
+            AdvisoryFreshness, AdvisoryRecord, AdvisoryRecordStatus, StaticAdvisoryRecordSource,
         };
 
         let mut canonical = StaticCanonicalTrustReader::new(CanonicalFreshness::Live);

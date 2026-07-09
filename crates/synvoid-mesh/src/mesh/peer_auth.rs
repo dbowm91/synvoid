@@ -342,7 +342,7 @@ pub fn validate_member_certificate_with_raft_attestation(
             if att.protocol_version >= 2 {
                 if let Some(ref attested_value_hash) = att.attestation.value_hash {
                     let actual_value_hash = RaftAttestation::compute_value_hash(
-                        &org_pub_key.get_signable_data().as_bytes(),
+                        org_pub_key.get_signable_data().as_bytes(),
                     );
                     if attested_value_hash != &actual_value_hash {
                         return false;
@@ -372,6 +372,7 @@ pub fn validate_member_certificate_with_raft_attestation(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn validate_peer_role(
     role: &crate::config::MeshNodeRole,
     authorized_global_pubkeys: &[String],
@@ -606,6 +607,7 @@ pub fn validate_peer_canonical_status(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_edge_node(
     peer_node_id: &str,
     peer_public_key: Option<&str>,
@@ -832,6 +834,7 @@ pub fn validate_edge_node_pow(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_origin_node(
     peer_node_id: &str,
     peer_public_key: Option<&str>,
@@ -1139,7 +1142,7 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL_EDGE,
-            &[public.clone()],
+            std::slice::from_ref(&public),
             "test-node",
             Some(&public),
             Some(&signature),
@@ -1166,7 +1169,7 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL,
-            &[public.clone()],
+            std::slice::from_ref(&public),
             "test-global-node",
             Some(&public),
             Some(&signature),
@@ -1196,7 +1199,7 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL,
-            &[public.clone()],
+            std::slice::from_ref(&public),
             "test-global-node",
             Some(&public),
             Some(&signature),
@@ -1274,7 +1277,7 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL,
-            &[public.clone()],
+            std::slice::from_ref(&public),
             "test-node",
             Some(&public),
             Some(&signature),
@@ -1357,7 +1360,7 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL,
-            &[public.clone()],
+            std::slice::from_ref(&public),
             "test-node",
             Some(&public),
             Some(&corrupted_sig),
@@ -1394,7 +1397,7 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::ORIGIN,
-            &[global_public.clone()],
+            std::slice::from_ref(&global_public),
             "origin-node",
             Some(&origin_public),
             Some(&origin_signature),
@@ -1427,7 +1430,7 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::ORIGIN,
-            &[global_public.clone()],
+            std::slice::from_ref(&global_public),
             "origin-node",
             Some(&origin_public),
             Some(&origin_signature),
@@ -1511,7 +1514,7 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::ORIGIN,
-            &[global_public.clone()],
+            std::slice::from_ref(&global_public),
             "origin-node",
             Some(&origin_public),
             Some(&origin_signature),
@@ -1657,7 +1660,7 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL_EDGE,
-            &[public.clone()],
+            std::slice::from_ref(&public),
             "composite-node",
             Some(&public),
             Some(&signature),
@@ -1694,7 +1697,7 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL_ORIGIN,
-            &[global_public.clone()],
+            std::slice::from_ref(&global_public),
             "composite-origin",
             Some(&origin_public),
             Some(&origin_signature),
@@ -1723,7 +1726,7 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL,
-            &[public.clone()],
+            std::slice::from_ref(&public),
             "test-node",
             Some(&public),
             Some(&signature),
@@ -1811,7 +1814,7 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL,
-            &[public.clone()],
+            std::slice::from_ref(&public),
             "revoked-global",
             Some(&public),
             Some(&signature),
@@ -1880,7 +1883,7 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL,
-            &[public.clone()],
+            std::slice::from_ref(&public),
             node_id,
             Some(&public),
             Some(&signature),
@@ -1930,7 +1933,7 @@ mod tests {
 
         let result = validate_peer_role(
             &crate::config::MeshNodeRole::EDGE_ORIGIN,
-            &[global_public.clone()],
+            std::slice::from_ref(&global_public),
             "edge-origin-node",
             Some(&origin_public),
             Some(&origin_signature),
@@ -1964,7 +1967,7 @@ mod tests {
 
         let result_with_pow_only = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL_EDGE,
-            &[public.clone()],
+            std::slice::from_ref(&public),
             "global-edge-node",
             Some(&public),
             None,
@@ -1990,7 +1993,7 @@ mod tests {
 
         let result_with_signature_only = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL_EDGE,
-            &[public.clone()],
+            std::slice::from_ref(&public),
             "global-edge-node",
             Some(&public),
             Some(&signature),
@@ -2016,7 +2019,7 @@ mod tests {
 
         let result_with_both = validate_peer_role(
             &crate::config::MeshNodeRole::GLOBAL_EDGE,
-            &[public.clone()],
+            std::slice::from_ref(&public),
             "global-edge-node",
             Some(&public),
             Some(&signature),
@@ -2102,7 +2105,7 @@ mod tests {
 
         let global_signing_key = ed25519_dalek::SigningKey::from_bytes(&global_secret);
         let value_hash =
-            RaftAttestation::compute_value_hash(&org_pub_key.get_signable_data().as_bytes());
+            RaftAttestation::compute_value_hash(org_pub_key.get_signable_data().as_bytes());
 
         let attestation = RaftAttestation {
             leader_id: "leader-1".to_string(),
@@ -2503,7 +2506,7 @@ mod tests {
 
         let global_signing_key = ed25519_dalek::SigningKey::from_bytes(&global_secret);
         let value_hash =
-            RaftAttestation::compute_value_hash(&org_pub_key.get_signable_data().as_bytes());
+            RaftAttestation::compute_value_hash(org_pub_key.get_signable_data().as_bytes());
 
         let attestation = RaftAttestation {
             leader_id: "leader-1".to_string(),
@@ -2683,7 +2686,7 @@ mod tests {
 
         let global_signing_key = ed25519_dalek::SigningKey::from_bytes(&global_secret);
         let expected_value_hash =
-            RaftAttestation::compute_value_hash(&org_pub_key.get_signable_data().as_bytes());
+            RaftAttestation::compute_value_hash(org_pub_key.get_signable_data().as_bytes());
 
         let attestation = RaftAttestation {
             leader_id: "leader-1".to_string(),
@@ -3021,7 +3024,7 @@ mod tests {
     ) -> SignedRaftAttestation {
         let global_signing_key = ed25519_dalek::SigningKey::from_bytes(global_secret);
         let value_hash =
-            RaftAttestation::compute_value_hash(&org_pub_key.get_signable_data().as_bytes());
+            RaftAttestation::compute_value_hash(org_pub_key.get_signable_data().as_bytes());
         let attestation = RaftAttestation {
             leader_id: "leader-1".to_string(),
             commit_index: 42,

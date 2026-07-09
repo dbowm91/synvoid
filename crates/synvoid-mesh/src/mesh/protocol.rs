@@ -1762,16 +1762,14 @@ impl DhtRecord {
             }
         }
 
-        if ctx.is_immutable_key() || access_control.requires_immutability_trust_anchor(&self.key) {
-            if self.signer_public_key.is_none() {
-                return Err(DhtRecordVerificationError::MissingSignerPublicKey);
-            }
+        if (ctx.is_immutable_key() || access_control.requires_immutability_trust_anchor(&self.key))
+            && self.signer_public_key.is_none()
+        {
+            return Err(DhtRecordVerificationError::MissingSignerPublicKey);
         }
 
-        if ctx.requires_quorum_proof() {
-            if self.quorum_proof.is_empty() {
-                return Err(DhtRecordVerificationError::MissingQuorumProof);
-            }
+        if ctx.requires_quorum_proof() && self.quorum_proof.is_empty() {
+            return Err(DhtRecordVerificationError::MissingQuorumProof);
         }
 
         Ok(())

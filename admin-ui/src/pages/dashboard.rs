@@ -113,16 +113,16 @@ fn window_to_seconds(window: &str) -> u64 {
 #[function_component]
 pub fn Dashboard() -> Html {
     let selected_window = use_state(|| "5m".to_string());
-    let show_custom_picker = use_state(|| false);
-    let custom_start = use_state(|| String::new());
-    let custom_end = use_state(|| String::new());
+    let _show_custom_picker = use_state(|| false);
+    let _custom_start = use_state(String::new);
+    let _custom_end = use_state(String::new);
     let stats = use_state(|| None::<SystemStats>);
-    let sites = use_state(|| Vec::<SiteStats>::new());
-    let history = use_state(|| Vec::<RealtimeMetrics>::new());
+    let sites = use_state(Vec::<SiteStats>::new);
+    let history = use_state(Vec::<RealtimeMetrics>::new);
     let historical_data = use_state(|| None::<Vec<RealtimeMetrics>>);
     let cache_stats = use_state(|| None::<crate::types::CacheStats>);
     let bandwidth = use_state(|| None::<crate::types::BandwidthPayload>);
-    let blocking_history = use_state(|| Vec::<std::collections::HashMap<String, u64>>::new());
+    let blocking_history = use_state(Vec::<std::collections::HashMap<String, u64>>::new);
 
     let (ws_state, _) = use_websocket_or_poll::<RealtimeMetrics>(
         "ws://localhost:8081/api/ws/metrics",

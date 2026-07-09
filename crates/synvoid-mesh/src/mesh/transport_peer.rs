@@ -521,10 +521,8 @@ fn parse_http_response_framing(
                     te_lower,
                 ));
             }
-        } else if name.eq_ignore_ascii_case("connection") {
-            if header_contains_token(value, "close") {
-                connection_close = true;
-            }
+        } else if name.eq_ignore_ascii_case("connection") && header_contains_token(value, "close") {
+            connection_close = true;
         }
     }
 
@@ -2874,34 +2872,33 @@ impl MeshTransport {
 
                 let sign_data = format!("{}:{:?}:{}", upstream_id_str, action, peer_id);
 
-                let signature_valid = if !origin_signature.is_empty()
-                    && !origin_ed25519_pubkey.is_empty()
-                {
-                    let pk_bytes = hex::decode(&origin_pk_str);
-                    let sig_bytes: Vec<u8> = origin_signature.clone();
-                    if pk_bytes.as_ref().map_or(false, |b| b.len() == 32) && sig_bytes.len() == 64 {
-                        let pk_bytes = pk_bytes.unwrap();
-                        let mut pk_array = [0u8; 32];
-                        pk_array.copy_from_slice(&pk_bytes);
+                let signature_valid =
+                    if !origin_signature.is_empty() && !origin_ed25519_pubkey.is_empty() {
+                        let pk_bytes = hex::decode(&origin_pk_str);
+                        let sig_bytes: Vec<u8> = origin_signature.clone();
+                        if pk_bytes.as_ref().is_ok_and(|b| b.len() == 32) && sig_bytes.len() == 64 {
+                            let pk_bytes = pk_bytes.unwrap();
+                            let mut pk_array = [0u8; 32];
+                            pk_array.copy_from_slice(&pk_bytes);
 
-                        let mut sig_array = [0u8; 64];
-                        sig_array.copy_from_slice(&sig_bytes);
+                            let mut sig_array = [0u8; 64];
+                            sig_array.copy_from_slice(&sig_bytes);
 
-                        match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
-                            Ok(pk) => pk
-                                .verify(
-                                    sign_data.as_bytes(),
-                                    &ed25519_dalek::Signature::from_bytes(&sig_array),
-                                )
-                                .is_ok(),
-                            Err(_) => false,
+                            match ed25519_dalek::VerifyingKey::from_bytes(&pk_array) {
+                                Ok(pk) => pk
+                                    .verify(
+                                        sign_data.as_bytes(),
+                                        &ed25519_dalek::Signature::from_bytes(&sig_array),
+                                    )
+                                    .is_ok(),
+                                Err(_) => false,
+                            }
+                        } else {
+                            false
                         }
                     } else {
                         false
-                    }
-                } else {
-                    false
-                };
+                    };
 
                 if !signature_valid {
                     tracing::warn!(
@@ -3393,6 +3390,7 @@ impl MeshTransport {
         self.update_threat_intel_global_nodes().await;
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle_site_config_sync(
         &self,
         _from_peer: &str,
@@ -3879,6 +3877,7 @@ impl MeshTransport {
         self.verification_manager.read().clone()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle_upstream_ownership_challenge(
         &self,
         _peer_id: &str,
@@ -6161,6 +6160,7 @@ impl MeshTransport {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle_join_request(
         &self,
         peer_id: &str,
@@ -6420,7 +6420,7 @@ mod tests {
     /// encodings are eligible for transforms.
     #[tokio::test]
     async fn body_encoding_detection_matches_transform_skip_invariant() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::io::AsyncWriteExt;
 
         // Helper: parse a response and return its body_encoding.
         async fn detect_encoding(response: &[u8]) -> HttpResponseBodyEncoding {
@@ -6519,8 +6519,8 @@ mod tests {
 
     #[test]
     fn malformed_header_line_rejected() {
-        let mut buffer = b"HTTP/1.1 200 OK\r\nBadHeader\r\n\r\n".to_vec();
-        let result = try_parse_http_response_head(&mut buffer, 4096);
+        let buffer = b"HTTP/1.1 200 OK\r\nBadHeader\r\n\r\n".to_vec();
+        let result = try_parse_http_response_head(&buffer, 4096);
         assert!(result.is_err());
         match result.unwrap_err() {
             HttpResponseFramingError::MalformedHeaderLine(line) => {
@@ -6535,8 +6535,8 @@ mod tests {
 
     #[test]
     fn folded_header_line_rejected() {
-        let mut buffer = b"HTTP/1.1 200 OK\r\nX-Header: value\r\n folded-value\r\n\r\n".to_vec();
-        let result = try_parse_http_response_head(&mut buffer, 4096);
+        let buffer = b"HTTP/1.1 200 OK\r\nX-Header: value\r\n folded-value\r\n\r\n".to_vec();
+        let result = try_parse_http_response_head(&buffer, 4096);
         assert!(result.is_err());
         match result.unwrap_err() {
             HttpResponseFramingError::MalformedHeaderLine(line) => {
@@ -6552,8 +6552,8 @@ mod tests {
     #[test]
     fn empty_header_lines_are_skipped() {
         // Status line + bare \r\n (the header terminator) — should succeed.
-        let mut buffer = b"HTTP/1.1 200 OK\r\n\r\n".to_vec();
-        let result = try_parse_http_response_head(&mut buffer, 4096);
+        let buffer = b"HTTP/1.1 200 OK\r\n\r\n".to_vec();
+        let result = try_parse_http_response_head(&buffer, 4096);
         assert!(result.is_ok());
         let (head, _consumed) = result.unwrap().expect("should parse successfully");
         assert_eq!(head.status_code, 200);
@@ -6561,9 +6561,9 @@ mod tests {
 
     #[test]
     fn pure_parser_enforces_header_limit() {
-        let mut buffer = b"HTTP/1.1 200 OK\r\nX-Long: aaaaabbbbcccccdddddeeeee\r\n\r\n".to_vec();
+        let buffer = b"HTTP/1.1 200 OK\r\nX-Long: aaaaabbbbcccccdddddeeeee\r\n\r\n".to_vec();
         // max_header_bytes=10 is less than the actual header size.
-        let result = try_parse_http_response_head(&mut buffer, 10);
+        let result = try_parse_http_response_head(&buffer, 10);
         assert!(result.is_err());
         assert!(
             matches!(
@@ -6576,9 +6576,9 @@ mod tests {
 
     #[test]
     fn valid_headers_accepted() {
-        let mut buffer =
+        let buffer =
             b"HTTP/1.1 200 OK\r\nContent-Length: 42\r\nContent-Type: text/plain\r\n\r\n".to_vec();
-        let result = try_parse_http_response_head(&mut buffer, 4096);
+        let result = try_parse_http_response_head(&buffer, 4096);
         assert!(result.is_ok());
         let (head, _consumed) = result.unwrap().expect("should parse successfully");
         assert_eq!(head.status_code, 200);
@@ -6587,9 +6587,9 @@ mod tests {
 
     #[test]
     fn conflicting_content_length_rejected() {
-        let mut buffer =
+        let buffer =
             b"HTTP/1.1 200 OK\r\nContent-Length: 42\r\nContent-Length: 100\r\n\r\n".to_vec();
-        let result = try_parse_http_response_head(&mut buffer, 4096);
+        let result = try_parse_http_response_head(&buffer, 4096);
         assert!(result.is_err());
         assert!(
             matches!(
@@ -6602,9 +6602,9 @@ mod tests {
 
     #[test]
     fn duplicate_equal_content_length_accepted() {
-        let mut buffer =
+        let buffer =
             b"HTTP/1.1 200 OK\r\nContent-Length: 42\r\nContent-Length: 42\r\n\r\n".to_vec();
-        let result = try_parse_http_response_head(&mut buffer, 4096);
+        let result = try_parse_http_response_head(&buffer, 4096);
         assert!(result.is_ok());
         let (head, _consumed) = result.unwrap().expect("should parse successfully");
         assert_eq!(head.content_length, Some(42));
@@ -6612,9 +6612,9 @@ mod tests {
 
     #[test]
     fn chunked_and_content_length_rejected() {
-        let mut buffer =
+        let buffer =
             b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 10\r\n\r\n".to_vec();
-        let result = try_parse_http_response_head(&mut buffer, 4096);
+        let result = try_parse_http_response_head(&buffer, 4096);
         assert!(result.is_err());
         assert!(
             matches!(
@@ -6627,8 +6627,8 @@ mod tests {
 
     #[test]
     fn unsupported_transfer_encoding_rejected() {
-        let mut buffer = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\n".to_vec();
-        let result = try_parse_http_response_head(&mut buffer, 4096);
+        let buffer = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\n".to_vec();
+        let result = try_parse_http_response_head(&buffer, 4096);
         assert!(result.is_err());
         assert!(
             matches!(
@@ -6641,8 +6641,8 @@ mod tests {
 
     #[test]
     fn invalid_status_line_rejected() {
-        let mut buffer = b"HTTP/1.1 2000 OK\r\n\r\n".to_vec();
-        let result = try_parse_http_response_head(&mut buffer, 4096);
+        let buffer = b"HTTP/1.1 2000 OK\r\n\r\n".to_vec();
+        let result = try_parse_http_response_head(&buffer, 4096);
         assert!(result.is_err());
         assert!(
             matches!(
@@ -6655,8 +6655,8 @@ mod tests {
 
     #[test]
     fn malformed_status_line_rejected() {
-        let mut buffer = b"NOTHTTP 200 OK\r\n\r\n".to_vec();
-        let result = try_parse_http_response_head(&mut buffer, 4096);
+        let buffer = b"NOTHTTP 200 OK\r\n\r\n".to_vec();
+        let result = try_parse_http_response_head(&buffer, 4096);
         assert!(result.is_err());
         assert!(
             matches!(
@@ -6670,8 +6670,8 @@ mod tests {
     #[test]
     fn informational_1xx_returns_empty_body_prefix() {
         // 103 Early Hints — informational, body_prefix should be empty.
-        let mut buffer = b"HTTP/1.1 103 Early Hints\r\nLink: </style.css>; rel=preload\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello".to_vec();
-        let result = try_parse_http_response_head(&mut buffer, 4096);
+        let buffer = b"HTTP/1.1 103 Early Hints\r\nLink: </style.css>; rel=preload\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello".to_vec();
+        let result = try_parse_http_response_head(&buffer, 4096);
         assert!(result.is_ok());
         let (head, consumed) = result.unwrap().expect("should parse successfully");
         assert_eq!(head.status_code, 103);
@@ -6685,8 +6685,8 @@ mod tests {
 
     #[test]
     fn body_prefix_present_for_final_response() {
-        let mut buffer = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhelloworld".to_vec();
-        let result = try_parse_http_response_head(&mut buffer, 4096);
+        let buffer = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhelloworld".to_vec();
+        let result = try_parse_http_response_head(&buffer, 4096);
         assert!(result.is_ok());
         let (head, consumed) = result.unwrap().expect("should parse successfully");
         assert_eq!(head.status_code, 200);
@@ -6701,16 +6701,16 @@ mod tests {
     fn header_limit_at_exact_boundary_accepted() {
         // Header exactly at the limit should be accepted.
         let header = b"HTTP/1.1 200 OK\r\nX-Header: short\r\n\r\n";
-        let mut buffer = header.to_vec();
-        let result = try_parse_http_response_head(&mut buffer, header.len());
+        let buffer = header.to_vec();
+        let result = try_parse_http_response_head(&buffer, header.len());
         assert!(result.is_ok());
     }
 
     #[test]
     fn header_limit_one_byte_over_rejected() {
         let header = b"HTTP/1.1 200 OK\r\nX-Header: short\r\n\r\n";
-        let mut buffer = header.to_vec();
-        let result = try_parse_http_response_head(&mut buffer, header.len() - 1);
+        let buffer = header.to_vec();
+        let result = try_parse_http_response_head(&buffer, header.len() - 1);
         assert!(result.is_err());
         assert!(
             matches!(
@@ -6723,8 +6723,8 @@ mod tests {
 
     #[test]
     fn connection_close_detected() {
-        let mut buffer = b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n".to_vec();
-        let result = try_parse_http_response_head(&mut buffer, 4096);
+        let buffer = b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n".to_vec();
+        let result = try_parse_http_response_head(&buffer, 4096);
         assert!(result.is_ok());
         let (head, _consumed) = result.unwrap().expect("should parse successfully");
         assert!(head.connection_close);
@@ -6733,8 +6733,8 @@ mod tests {
 
     #[test]
     fn http10_default_close_delimited() {
-        let mut buffer = b"HTTP/1.0 200 OK\r\n\r\n".to_vec();
-        let result = try_parse_http_response_head(&mut buffer, 4096);
+        let buffer = b"HTTP/1.0 200 OK\r\n\r\n".to_vec();
+        let result = try_parse_http_response_head(&buffer, 4096);
         assert!(result.is_ok());
         let (head, _consumed) = result.unwrap().expect("should parse successfully");
         assert_eq!(head.http_version, HttpVersion::Http10);
@@ -6743,8 +6743,8 @@ mod tests {
 
     #[test]
     fn chunked_encoding_detected() {
-        let mut buffer = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
-        let result = try_parse_http_response_head(&mut buffer, 4096);
+        let buffer = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
+        let result = try_parse_http_response_head(&buffer, 4096);
         assert!(result.is_ok());
         let (head, _consumed) = result.unwrap().expect("should parse successfully");
         assert!(head.chunked);
@@ -6753,8 +6753,8 @@ mod tests {
 
     #[test]
     fn no_body_response_none_encoding() {
-        let mut buffer = b"HTTP/1.1 204 No Content\r\n\r\n".to_vec();
-        let result = try_parse_http_response_head(&mut buffer, 4096);
+        let buffer = b"HTTP/1.1 204 No Content\r\n\r\n".to_vec();
+        let result = try_parse_http_response_head(&buffer, 4096);
         assert!(result.is_ok());
         let (head, _consumed) = result.unwrap().expect("should parse successfully");
         assert_eq!(head.status_code, 204);

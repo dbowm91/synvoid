@@ -149,7 +149,7 @@ mod tests {
         );
 
         // Timer with interval 0 fires immediately
-        let mut entry2 = TimerEntry::new(0, "test2".to_string(), "topic".to_string());
+        let entry2 = TimerEntry::new(0, "test2".to_string(), "topic".to_string());
         assert!(
             entry2.should_fire(),
             "Timer with interval 0 should fire immediately"

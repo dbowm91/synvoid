@@ -1,6 +1,7 @@
 use yew::prelude::*;
 
 #[derive(Properties, PartialEq)]
+#[allow(dead_code, unpredictable_function_pointer_comparisons)]
 pub struct DataTableProps<T: PartialEq + Clone + 'static>
 where
     T: PartialEq + Clone,
@@ -12,6 +13,7 @@ where
 }
 
 #[derive(Clone, PartialEq)]
+#[allow(dead_code)]
 pub struct ColumnDef {
     pub key: String,
     pub label: String,
@@ -49,7 +51,7 @@ where
                         </tr>
                     } else {
                         { for props.data.iter().map(|row| {
-                            let key = (props.row_key)(row);
+                            let _key = (props.row_key)(row);
                             html! {
                                 <tr class="border-b border-default hover:bg-tertiary last:border-b-0">
                                     { for props.columns.iter().map(|col| {

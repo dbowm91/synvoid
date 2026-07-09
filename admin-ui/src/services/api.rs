@@ -4,8 +4,6 @@ use serde_json;
 
 use crate::types::{MasterStatus, OverseerStatus, SystemInfo, WorkerStatus};
 
-pub use crate::types::{MasterStatus as MasterStatusResponse, SystemInfo as SystemInfoResponse};
-
 fn load_admin_token() -> Option<String> {
     web_sys::window()
         .and_then(|w| w.local_storage().ok())
@@ -25,6 +23,7 @@ impl Default for ApiService {
     }
 }
 
+#[allow(dead_code)]
 impl ApiService {
     pub fn new() -> Self {
         Self {
@@ -33,11 +32,13 @@ impl ApiService {
         }
     }
 
+    #[allow(dead_code)]
     pub fn with_token(mut self, token: String) -> Self {
         self.token = Some(token);
         self
     }
 
+    #[allow(dead_code)]
     pub fn set_token(&mut self, token: String) {
         self.token = Some(token);
     }
@@ -89,6 +90,7 @@ impl ApiService {
             .map_err(|e| format!("Text parse error: {}", e))
     }
 
+    #[allow(dead_code)]
     pub async fn health_check(&self) -> Result<bool, String> {
         match self.get_text("/health").await {
             Ok(_) => Ok(true),

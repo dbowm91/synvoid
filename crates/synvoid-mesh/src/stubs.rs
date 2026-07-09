@@ -773,6 +773,7 @@ pub mod static_files_stub {
                 ImageRightsClient
             }
 
+            #[allow(clippy::too_many_arguments)]
             pub async fn mark_image_rights(
                 &self,
                 _site_id: &str,
@@ -792,6 +793,7 @@ pub mod static_files_stub {
     pub mod minifier {
         pub struct MinifierGenerator;
 
+        #[allow(clippy::new_without_default)] // reason: test-only stub, zero-size struct with no meaningful default config
         impl MinifierGenerator {
             pub fn new() -> Self {
                 MinifierGenerator

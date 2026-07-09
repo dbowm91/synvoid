@@ -3,8 +3,9 @@ use yew::prelude::*;
 
 const STORAGE_KEY: &str = "synvoid-theme";
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Default)]
 pub enum Theme {
+    #[default]
     Dark,
     Light,
     Ocean,
@@ -43,6 +44,7 @@ impl Theme {
         }
     }
 
+    #[allow(clippy::wrong_self_convention)] // reason: 'to_' returns borrowed &str, not a consuming conversion
     pub fn to_preset(&self) -> &'static str {
         match self {
             Theme::Dark => "dark",
@@ -86,12 +88,6 @@ impl Theme {
     }
 }
 
-impl Default for Theme {
-    fn default() -> Self {
-        Theme::Dark
-    }
-}
-
 fn apply_theme_class(theme: Theme) {
     let document = match web_sys::window().and_then(|w| w.document()) {
         Some(d) => d,
@@ -100,7 +96,7 @@ fn apply_theme_class(theme: Theme) {
 
     if let Some(root) = document.document_element() {
         let class = theme.class();
-        let _ = root.set_class_name(class);
+        root.set_class_name(class);
     }
 }
 
@@ -109,7 +105,7 @@ pub fn use_api_theme() -> (Option<ThemeResponse>, Callback<UpdateThemeRequest>) 
     let theme_data = use_state(|| None::<ThemeResponse>);
     let theme = use_state(|| Theme::from_storage().unwrap_or_default());
 
-    let initial_theme = (*theme).clone();
+    let initial_theme = *theme;
 
     apply_theme_class(initial_theme);
 

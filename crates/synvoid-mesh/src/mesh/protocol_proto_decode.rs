@@ -1807,13 +1807,13 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
                         .entries
                         .iter()
                         .map(|e| crate::raft::RaftCommitNotification {
-                            leader_id: e.leader_id.clone().into(),
+                            leader_id: e.leader_id.clone(),
                             commit_index: e.commit_index,
                             namespace: crate::raft::state_machine::Namespace::try_from_str(
                                 &e.namespace,
                             )
                             .unwrap_or(crate::raft::state_machine::Namespace::Org),
-                            key_id: e.key_id.clone().into(),
+                            key_id: e.key_id.clone(),
                             timestamp: e.timestamp,
                         })
                         .collect(),
@@ -1822,9 +1822,7 @@ impl TryFrom<proto::MeshMessage> for MeshMessage {
             proto::mesh_message::Payload::MeshLoadUpdate(r) => Ok(MeshMessage::MeshLoadUpdate {
                 request_id: r.request_id.into(),
                 record: match r.record {
-                    Some(rec) => rec.try_into().map_err(|e| {
-                        ProtocolError::DecodeError(format!("Invalid DhtRecord: {}", e))
-                    })?,
+                    Some(rec) => rec.into(),
                     None => {
                         return Err(ProtocolError::DecodeError(
                             "Missing DhtRecord in MeshLoadUpdate".to_string(),

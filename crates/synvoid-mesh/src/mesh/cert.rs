@@ -1492,7 +1492,7 @@ mod tests {
 
         let mgr = MeshCertManager::new(&cfg);
         let result = mgr.verify_peer_certificate("peer-1.mesh", b"irrelevant", None);
-        assert_eq!(result.unwrap(), true);
+        assert!(result.unwrap());
     }
 
     #[test]
@@ -1505,7 +1505,7 @@ mod tests {
         mgr.revoke_certificate("peer-revoked.mesh").unwrap();
 
         let result = mgr.verify_peer_certificate("peer-revoked.mesh", b"irrelevant", None);
-        assert_eq!(result.unwrap(), false);
+        assert!(!result.unwrap());
     }
 
     #[test]
@@ -1522,7 +1522,7 @@ mod tests {
 
         let untrusted = generate_simple_self_signed(vec!["peer-unknown.mesh".to_string()]).unwrap();
         let result = mgr.verify_peer_certificate("peer-unknown.mesh", untrusted.cert.der(), None);
-        assert_eq!(result.unwrap(), false);
+        assert!(!result.unwrap());
     }
 
     #[test]
@@ -1541,7 +1541,7 @@ mod tests {
             .sign_certificate("peer-cert.mesh", vec!["peer-cert.mesh".to_string()])
             .unwrap();
         let result = mgr.verify_peer_certificate("peer-expected.mesh", &cert_der, None);
-        assert_eq!(result.unwrap(), false);
+        assert!(!result.unwrap());
     }
 
     #[test]

@@ -76,28 +76,25 @@ where
             let end = std::cmp::min(offset + CHUNK_WAF_SCAN_SIZE, body_len);
             let chunk = &full_body[offset..end];
             let (_, body_decision) = waf.check_request_body(chunk);
-            if let Some(decision) = body_decision {
-                match decision {
-                    synvoid_waf::WafDecision::Drop | synvoid_waf::WafDecision::Block(_, _) => {
-                        tracing::warn!(
-                            client_ip = %client_ip,
-                            offset = offset,
-                            size = body_len,
-                            "Large request body blocked by WAF at offset {}",
-                            offset
-                        );
-                        counter!("synvoid.http.large_body_blocked").increment(1);
-                        return Err(BodyPolicyError::BlockedByWaf);
-                    }
-                    _ => {}
-                }
+            if let Some(synvoid_waf::WafDecision::Drop | synvoid_waf::WafDecision::Block(_, _)) =
+                body_decision
+            {
+                tracing::warn!(
+                    client_ip = %client_ip,
+                    offset = offset,
+                    size = body_len,
+                    "Large request body blocked by WAF at offset {}",
+                    offset
+                );
+                counter!("synvoid.http.large_body_blocked").increment(1);
+                return Err(BodyPolicyError::BlockedByWaf);
             }
         }
         tracing::debug!(
             client_ip = %client_ip,
             size = body_len,
             "Large request body scanned by WAF ({} chunks)",
-            (body_len + CHUNK_WAF_SCAN_SIZE - 1) / CHUNK_WAF_SCAN_SIZE
+            body_len.div_ceil(CHUNK_WAF_SCAN_SIZE)
         );
     }
 

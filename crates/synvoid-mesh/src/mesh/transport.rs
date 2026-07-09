@@ -102,20 +102,11 @@ pub(crate) const MAX_SNAPSHOT_RECORDS: usize = 10000;
 pub(crate) const MAX_BLOCK_DURATION_SECS: u64 = 86400;
 
 #[allow(dead_code)]
+#[derive(Default)]
 pub(crate) struct AuxiliarySubmissionTestHooks {
     pub after_lock: Option<std::sync::Arc<tokio::sync::Barrier>>,
     pub before_insert: Option<std::sync::Arc<tokio::sync::Barrier>>,
     pub before_gate_release: Option<std::sync::Arc<tokio::sync::Barrier>>,
-}
-
-impl Default for AuxiliarySubmissionTestHooks {
-    fn default() -> Self {
-        Self {
-            after_lock: None,
-            before_insert: None,
-            before_gate_release: None,
-        }
-    }
 }
 
 pub struct MeshTransport {
@@ -691,6 +682,7 @@ impl MeshTransport {
         (member_cert, org_pub_key)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: Arc<MeshConfig>,
         topology: Arc<MeshTopology>,
@@ -914,11 +906,13 @@ impl MeshTransport {
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn set_auxiliary_test_hooks(&self, hooks: AuxiliarySubmissionTestHooks) {
         *self.auxiliary_test_hooks.blocking_lock() = Some(hooks);
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn clear_auxiliary_test_hooks(&self) {
         *self.auxiliary_test_hooks.blocking_lock() = None;
     }
@@ -1825,7 +1819,7 @@ impl MeshTransport {
             let current_node_id = current_node_id.clone();
             let node_id = origin_node_id.clone();
             let signer = self.mesh_signer.clone();
-            let config_version = config_version;
+            // config_version already in scope
             let proxy_cache_prefs = proxy_cache_prefs.clone();
             futures.push(async move {
                 let request_id = MeshMessage::generate_nonce();
@@ -1839,10 +1833,7 @@ impl MeshTransport {
                         config_json.len(),
                         timestamp
                     );
-                    (
-                        signer.sign(msg.as_bytes()),
-                        Some(signer.get_public_key().into()),
-                    )
+                    (signer.sign(msg.as_bytes()), Some(signer.get_public_key()))
                 } else {
                     (Vec::new(), None)
                 };
@@ -2251,7 +2242,7 @@ impl MeshTransport {
     ) -> Result<(), MeshTransportError> {
         let hook = self.startup_failure_hook.lock().await;
         if let Some(ref f) = *hook {
-            f(point).map_err(|e| MeshTransportError::StartupFailed(e))
+            f(point).map_err(MeshTransportError::StartupFailed)
         } else {
             Ok(())
         }
@@ -3113,7 +3104,7 @@ impl MeshTransport {
         if let Some(ref dk) = dedup_key {
             let stale_ids: Vec<_> = aux
                 .iter()
-                .filter(|(_id, entry)| entry.dedup_key().as_deref() == Some(dk.as_str()))
+                .filter(|(_id, entry)| entry.dedup_key() == Some(dk.as_str()))
                 .map(|(id, _)| *id)
                 .collect();
             for id in stale_ids {
@@ -3499,7 +3490,7 @@ impl MeshTransport {
         // Cancel auxiliary tasks for this session first — they may be
         // performing topology/DHT reads or writes.
         if let Some(ref _task_id) = peer.session_task_id {
-            self.cancel_auxiliary_tasks_for_sessions(&[peer.session_id.clone()])
+            self.cancel_auxiliary_tasks_for_sessions(std::slice::from_ref(&peer.session_id))
                 .await;
         }
 
@@ -3577,14 +3568,14 @@ impl MeshTransport {
     async fn stop_peer_session_task(
         handle: tokio::task::JoinHandle<()>,
         budget: std::time::Duration,
-        mut report: Option<&mut RollbackReport>,
+        report: Option<&mut RollbackReport>,
     ) -> PeerSessionStopOutcome {
         let mut handle = handle;
 
         if budget.is_zero() {
             // No cooperative budget remaining — forced abort (Iteration 77,
             // Phase 11). Use the shared helper for consistent classification.
-            if let Some(r) = report.as_deref_mut() {
+            if let Some(r) = report {
                 r.peer_sessions_aborted += 1;
                 r.tasks_aborted += 1;
             }
@@ -3604,19 +3595,19 @@ impl MeshTransport {
 
         match result {
             Ok(Ok(())) => {
-                if let Some(r) = report.as_deref_mut() {
+                if let Some(r) = report {
                     r.peer_sessions_drained += 1;
                 }
                 PeerSessionStopOutcome::Drained(crate::lifecycle::PeerSessionExitReason::Cancelled)
             }
             Ok(Err(err)) if err.is_panic() => {
-                if let Some(r) = report.as_deref_mut() {
+                if let Some(r) = report {
                     r.peer_sessions_failed += 1;
                 }
                 PeerSessionStopOutcome::Failed("parent panic".to_string())
             }
             Ok(Err(_)) => {
-                if let Some(r) = report.as_deref_mut() {
+                if let Some(r) = report {
                     r.peer_sessions_failed += 1;
                 }
                 PeerSessionStopOutcome::Failed("parent cancelled".to_string())
@@ -3625,7 +3616,7 @@ impl MeshTransport {
                 // Cooperative return did not complete in the budget; forced
                 // parent abort (Iteration 77, Phase 12). Use the shared
                 // helper for consistent classification.
-                if let Some(r) = report.as_deref_mut() {
+                if let Some(r) = report {
                     r.peer_sessions_aborted += 1;
                     r.tasks_aborted += 1;
                 }
@@ -4528,21 +4519,23 @@ impl MeshTransport {
         };
 
         // Build report
-        let mut report = MeshShutdownReport::default();
-        report.peers_at_shutdown_start = peers_at_shutdown_start;
-        report.remaining_peers = self.peer_connections.len();
-        report.drained_peer_sessions = drained;
-        report.aborted_peer_sessions = aborted;
-        report.failed_peer_sessions = failed;
-        report.stream_handler_drain = crate::lifecycle::PeerStreamDrainReport {
-            drained: self.aggregate_handler_drained.swap(0, Ordering::Relaxed),
-            aborted: self.aggregate_handler_aborted.swap(0, Ordering::Relaxed),
-            failed: self.aggregate_handler_failed.swap(0, Ordering::Relaxed),
-        };
-        report.accept_loop_report = if report_is_fresh {
-            Some(accept_report.clone())
-        } else {
-            None
+        let mut report = MeshShutdownReport {
+            peers_at_shutdown_start,
+            remaining_peers: self.peer_connections.len(),
+            drained_peer_sessions: drained,
+            aborted_peer_sessions: aborted,
+            failed_peer_sessions: failed,
+            stream_handler_drain: crate::lifecycle::PeerStreamDrainReport {
+                drained: self.aggregate_handler_drained.swap(0, Ordering::Relaxed),
+                aborted: self.aggregate_handler_aborted.swap(0, Ordering::Relaxed),
+                failed: self.aggregate_handler_failed.swap(0, Ordering::Relaxed),
+            },
+            accept_loop_report: if report_is_fresh {
+                Some(accept_report.clone())
+            } else {
+                None
+            },
+            ..Default::default()
         };
         for exit in &exits {
             match exit.reason {
@@ -5062,7 +5055,7 @@ impl MeshTransport {
 
                 let upstreams: Vec<String> = upstreams.keys().cloned().collect();
 
-                let peer_capabilities = peer_capabilities;
+                // peer_capabilities already in scope
                 let dns_serving_healthy = peer_capabilities.can_serve_dns;
 
                 self.verify_peer_connection_certificate_if_available(&node_id, &connection)?;
@@ -5263,7 +5256,7 @@ impl MeshTransport {
                 if rm.is_enabled() {
                     match dht_snapshot_before {
                         None => DhtPeerMutation::Created,
-                        Some(snapshot) => DhtPeerMutation::Previous(snapshot),
+                        Some(snapshot) => DhtPeerMutation::Previous(Box::new(snapshot)),
                     }
                 } else {
                     DhtPeerMutation::None
@@ -6159,7 +6152,7 @@ mod tests {
     };
     use crate::mesh::cert::MeshCertManager;
     use crate::mesh::config::MeshConfig;
-    use crate::mesh::lifecycle::{AuxiliaryTaskKind, MeshLifecycleState, MeshTaskExitReason};
+    use crate::mesh::lifecycle::{AuxiliaryTaskKind, MeshTaskExitReason};
     use crate::mesh::topology::MeshTopology;
     use crate::mesh::transport::MeshTransport;
     use std::sync::Arc;
@@ -6407,10 +6400,9 @@ mod tests {
         // Clean up: abort all handles.
         let entries: Vec<_> = aux.drain().collect();
         for (_id, entry) in entries {
-            if let AuxiliaryRegistryEntry::Running(t) = entry {
-                t.handle.abort();
-                let _ = t.handle.await;
-            }
+            let AuxiliaryRegistryEntry::Running(t) = entry;
+            t.handle.abort();
+            let _ = t.handle.await;
         }
     }
 
@@ -6481,10 +6473,7 @@ mod tests {
 
         // Step 4: Handle must be joinable (no zombie).
         let entry = removed.unwrap();
-        let task = match entry {
-            AuxiliaryRegistryEntry::Running(t) => t,
-            _ => panic!("expected Running entry"),
-        };
+        let AuxiliaryRegistryEntry::Running(task) = entry;
         let task_exit = task.handle.await.unwrap();
         assert!(
             matches!(&task_exit.reason, MeshTaskExitReason::CleanCompletion),
@@ -6719,12 +6708,9 @@ mod tests {
 
         // Now wait for the future to finish.
         let entry = map.remove(&id).unwrap();
-        if let AuxiliaryRegistryEntry::Running(task) = entry {
-            let exit = task.handle.await.unwrap();
-            assert!(matches!(exit.reason, MeshTaskExitReason::CleanCompletion));
-        } else {
-            panic!("expected Running entry");
-        }
+        let AuxiliaryRegistryEntry::Running(task) = entry;
+        let exit = task.handle.await.unwrap();
+        assert!(matches!(exit.reason, MeshTaskExitReason::CleanCompletion));
         assert!(map.is_empty());
     }
 
@@ -6883,7 +6869,7 @@ mod tests {
             rejections > 0,
             "some submissions must be rejected when at capacity"
         );
-        assert!(successes <= extras - 1, "not all extras can succeed");
+        assert!(successes < extras, "not all extras can succeed");
 
         // Verify map never exceeds capacity.
         let map = map.lock().await;
@@ -6969,10 +6955,9 @@ mod tests {
 
         // Handle must be joinable.
         let entry = removed.unwrap();
-        if let AuxiliaryRegistryEntry::Running(task) = entry {
-            let task_exit = task.handle.await.unwrap();
-            assert!(matches!(task_exit.reason, MeshTaskExitReason::Cancelled));
-        }
+        let AuxiliaryRegistryEntry::Running(task) = entry;
+        let task_exit = task.handle.await.unwrap();
+        assert!(matches!(task_exit.reason, MeshTaskExitReason::Cancelled));
         assert!(map.is_empty());
     }
 
@@ -7287,7 +7272,7 @@ mod tests {
             .await;
 
         // Submit a long-running task.
-        let task_id = transport
+        let _task_id = transport
             .spawn_auxiliary_task(
                 AuxiliaryTaskKind::EdgeReplicaRefresh,
                 "test-race-recovery",

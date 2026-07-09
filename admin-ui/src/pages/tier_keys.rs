@@ -245,7 +245,7 @@ impl Component for TierKeys {
                                     };
 
                                     let bound_to = key.bound_to.clone().unwrap_or_else(|| "None".to_string());
-                                    let key_id = key.key_id.clone();
+                                    let _key_id = key.key_id.clone();
                                     let bound_for_revoke = key.bound_to.clone().unwrap_or_default();
                                     let key_id_for_revoke = key.key_id.clone();
                                     let bound_for_unbind = key.bound_to.clone().unwrap_or_default();

@@ -255,7 +255,7 @@ mod tests {
 
     #[test]
     fn test_ml_dsa_verify_fails_wrong_key() {
-        let (verifying_key, signing_key) =
+        let (_verifying_key, signing_key) =
             MlDsa44::generate_keypair().expect("Key generation failed");
         let (wrong_vk, _) = MlDsa44::generate_keypair().expect("Key generation failed");
 

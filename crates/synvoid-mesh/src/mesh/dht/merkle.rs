@@ -188,7 +188,7 @@ impl MerkleTree {
             .collect();
         levels.push(leaf_level);
 
-        while levels.last().map_or(false, |l| l.len() > 1) {
+        while levels.last().is_some_and(|l| l.len() > 1) {
             let current = levels.last().unwrap();
             let mut next: Vec<Vec<u8>> = Vec::new();
             for chunk in current.chunks(MERKLE_TREE_DEGREE) {

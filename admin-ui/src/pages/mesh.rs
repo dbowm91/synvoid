@@ -14,7 +14,7 @@ pub fn Mesh() -> Html {
     let save_success = use_state(|| None as Option<String>);
     let save_error = use_state(|| None as Option<String>);
 
-    let edited_config = use_state(|| MeshConfig::default());
+    let edited_config = use_state(MeshConfig::default);
 
     let edited_config_for_save = edited_config.clone();
     let edited_config_for_render = edited_config.clone();

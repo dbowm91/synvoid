@@ -8,8 +8,8 @@ use crate::types::{SiteInfo, SiteStats};
 
 #[function_component]
 pub fn Sites() -> Html {
-    let sites = use_state(|| Vec::<SiteInfo>::new());
-    let site_stats = use_state(|| Vec::<SiteStats>::new());
+    let sites = use_state(Vec::<SiteInfo>::new);
+    let site_stats = use_state(Vec::<SiteStats>::new);
     let loading = use_state(|| true);
     let error = use_state(|| None as Option<String>);
     let filter = use_state(String::new);

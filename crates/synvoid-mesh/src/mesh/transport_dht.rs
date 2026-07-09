@@ -24,9 +24,9 @@ fn classify_dht_sync_auth_mode(
     let has_auth = !signature.is_empty() && signer_public_key.is_some_and(|s| !s.is_empty());
     if has_auth {
         DhtSyncAuthMode::Signed
-    } else if unsigned_sync_compat_until_unix.is_some_and(|deadline| now_unix >= deadline) {
-        DhtSyncAuthMode::UnsignedRejected
-    } else if require_signed_sync_requests {
+    } else if unsigned_sync_compat_until_unix.is_some_and(|deadline| now_unix >= deadline)
+        || require_signed_sync_requests
+    {
         DhtSyncAuthMode::UnsignedRejected
     } else {
         DhtSyncAuthMode::UnsignedAllowed
@@ -152,7 +152,7 @@ impl MeshTransport {
         let window = Duration::from_secs(crate::transport::SNAPSHOT_REQUEST_RATE_LIMIT_WINDOW_SECS);
         {
             let mut times = self.snapshot_request_times.write();
-            let peer_times = times.entry(from_peer.to_string()).or_insert_with(Vec::new);
+            let peer_times = times.entry(from_peer.to_string()).or_default();
             peer_times.retain(|&t| now.duration_since(t) < window);
             if peer_times.len() >= crate::transport::MAX_SNAPSHOT_REQUESTS_PER_WINDOW {
                 tracing::warn!(
@@ -235,6 +235,7 @@ impl MeshTransport {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle_dht_snapshot_response(
         &self,
         from_peer: &str,
@@ -359,6 +360,7 @@ impl MeshTransport {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle_dht_sync_request(
         &self,
         from_peer: &str,
@@ -474,14 +476,14 @@ impl MeshTransport {
         }
 
         // MESH-14: If require_pki_binding, verify node has a cert binding
-        if self.config.tls.require_pki_binding {
-            if self.cert_manager.read().get_cert_binding(node_id).is_none() {
-                tracing::warn!(
-                    "DHT sync request from {} rejected: no cert binding for node {} (require_pki_binding=true)",
-                    from_peer, node_id
-                );
-                return;
-            }
+        if self.config.tls.require_pki_binding
+            && self.cert_manager.read().get_cert_binding(node_id).is_none()
+        {
+            tracing::warn!(
+                "DHT sync request from {} rejected: no cert binding for node {} (require_pki_binding=true)",
+                from_peer, node_id
+            );
+            return;
         }
 
         if let Some(ref record_store) = self.record_store {
@@ -493,6 +495,7 @@ impl MeshTransport {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle_dht_sync_response(
         &self,
         from_peer: &str,
@@ -510,12 +513,12 @@ impl MeshTransport {
             signer_public_key
         );
 
-        if signature.is_empty() || signer_public_key.map_or(true, |s| s.is_empty()) {
+        if signature.is_empty() || signer_public_key.is_none_or(|s| s.is_empty()) {
             tracing::warn!(
                 "DHT sync response from {} rejected: missing signature ({}) or public key ({})",
                 from_peer,
                 signature.is_empty(),
-                signer_public_key.map_or(true, |s| s.is_empty())
+                signer_public_key.is_none_or(|s| s.is_empty())
             );
             return;
         }
@@ -581,6 +584,7 @@ impl MeshTransport {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle_dht_anti_entropy_request(
         &self,
         from_peer: &str,
@@ -686,14 +690,14 @@ impl MeshTransport {
         }
 
         // MESH-14: If require_pki_binding, verify node has a cert binding
-        if self.config.tls.require_pki_binding {
-            if self.cert_manager.read().get_cert_binding(node_id).is_none() {
-                tracing::warn!(
-                    "DHT anti-entropy request from {} rejected: no cert binding for node {} (require_pki_binding=true)",
-                    from_peer, node_id
-                );
-                return;
-            }
+        if self.config.tls.require_pki_binding
+            && self.cert_manager.read().get_cert_binding(node_id).is_none()
+        {
+            tracing::warn!(
+                "DHT anti-entropy request from {} rejected: no cert binding for node {} (require_pki_binding=true)",
+                from_peer, node_id
+            );
+            return;
         }
 
         if let Some(ref record_store) = self.record_store {

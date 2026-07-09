@@ -111,7 +111,7 @@ where
                 send_response_with_body(request_stream, response, Bytes::from("Bad Gateway"))
                     .await
                     .map_err(|e| Box::new(e) as BoxError)?;
-                if let Some(ref metrics) = metrics {
+                if let Some(metrics) = metrics {
                     metrics.record_site_upstream_failure(&route_target.site_id);
                 }
                 finalize_http3_request(request_stream, start).await?;
@@ -154,7 +154,7 @@ where
                                 .map_err(|e| Box::new(e) as BoxError)?;
 
                             let data_len = data.len() as u64;
-                            if let Some(ref bw) = bandwidth {
+                            if let Some(bw) = bandwidth {
                                 bw.record_egress(
                                     data_len,
                                     BandwidthProtocol::Http3,
@@ -171,14 +171,14 @@ where
                 }
             }
 
-            if let Some(ref metrics) = metrics {
+            if let Some(metrics) = metrics {
                 metrics.record_site_upstream_success(&route_target.site_id);
             }
             finalize_http3_request(request_stream, start).await?;
         }
         Err(e) => {
             tracing::error!("Upstream error over HTTP/3: {}", e);
-            if let Some(ref metrics) = metrics {
+            if let Some(metrics) = metrics {
                 metrics.record_site_upstream_failure(&route_target.site_id);
             }
 

@@ -22,7 +22,7 @@ pub struct HoneypotConnection {
 #[function_component]
 pub fn Honeypot() -> Html {
     let status = use_state(|| None as Option<HoneypotStatus>);
-    let connections = use_state(|| Vec::<HoneypotConnection>::new());
+    let connections = use_state(Vec::<HoneypotConnection>::new);
     let error = use_state(|| None as Option<String>);
     let loading = use_state(|| false);
 
@@ -33,7 +33,7 @@ pub fn Honeypot() -> Html {
 
         use_effect_with((), move |_| {
             let status = status.clone();
-            let connections = connections.clone();
+            let _connections = connections.clone();
             let error = error.clone();
 
             wasm_bindgen_futures::spawn_local(async move {
@@ -56,7 +56,6 @@ pub fn Honeypot() -> Html {
                             let connections_count = value
                                 .get("connections_count")
                                 .and_then(|v| v.as_u64())
-                                .map(|n| n as u64)
                                 .unwrap_or(0);
                             let last_connection =
                                 value.get("last_connection").and_then(|v| v.as_u64());

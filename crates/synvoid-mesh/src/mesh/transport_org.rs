@@ -207,6 +207,7 @@ impl MeshTransport {
         tracing::info!("Auto-approved organization: {} ({})", org_name, org_id);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn send_org_registration_response(
         &self,
         to_peer: &str,
@@ -551,6 +552,7 @@ impl MeshTransport {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn handle_org_invitation_request(
         &self,
         _from_peer: &str,

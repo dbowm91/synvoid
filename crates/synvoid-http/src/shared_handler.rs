@@ -291,10 +291,9 @@ where
                     Poll::Ready(Some(Ok(frame)))
                 }
             }
-            Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("{:?}", e),
-            )))),
+            Poll::Ready(Some(Err(e))) => {
+                Poll::Ready(Some(Err(std::io::Error::other(format!("{:?}", e)))))
+            }
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
         }

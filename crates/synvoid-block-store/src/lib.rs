@@ -176,10 +176,11 @@ impl LastAppliedBlocklistEvent {
             }
         }
         // 3. HLC/logical_time
-        if self.logical_time.is_some() && other.logical_time.is_some() {
-            if self.logical_time != other.logical_time {
-                return "logical_time";
-            }
+        if self.logical_time.is_some()
+            && other.logical_time.is_some()
+            && self.logical_time != other.logical_time
+        {
+            return "logical_time";
         }
         // 4. Timestamp fallback
         "timestamp"
@@ -2294,10 +2295,8 @@ impl BlockStore {
         if is_new {
             let max_entries = self.config.max_entries;
             let current = self.total_entries.load(Ordering::Relaxed);
-            if current >= max_entries {
-                if !self.evict_lru() {
-                    return false;
-                }
+            if current >= max_entries && !self.evict_lru() {
+                return false;
             }
         }
 
@@ -7277,7 +7276,7 @@ mod tests {
         assert!(chunk.next_page_token.is_none());
         assert_eq!(chunk.ip_blocks.len(), 1);
         assert!(
-            chunk.target_state_records.len() >= 1,
+            !chunk.target_state_records.is_empty(),
             "Should have at least 1 target-state record"
         );
     }
@@ -7547,7 +7546,7 @@ mod tests {
         assert_eq!(chunk.ip_blocks.len(), 1);
         assert_eq!(chunk.mesh_blocks.len(), 1);
         assert!(
-            chunk.target_state_records.len() >= 1,
+            !chunk.target_state_records.is_empty(),
             "Should have at least 1 target-state record"
         );
         assert_eq!(chunk.ip_blocks[0].identifier, "10.0.0.1");
@@ -7603,7 +7602,7 @@ mod tests {
         );
         assert_eq!(chunk.ip_blocks.len(), 1);
         assert_eq!(chunk.mesh_blocks.len(), 1);
-        assert!(chunk.target_state_records.len() >= 1);
+        assert!(!chunk.target_state_records.is_empty());
     }
 
     #[test]
@@ -7639,8 +7638,10 @@ mod tests {
         use tempfile::TempDir;
         let tmp = TempDir::new().unwrap();
         let data_dir = Some(tmp.path().to_path_buf());
-        let mut config = synvoid_config::DenyListLimitsConfig::default();
-        config.target_state_persist = true;
+        let config = synvoid_config::DenyListLimitsConfig {
+            target_state_persist: true,
+            ..Default::default()
+        };
 
         // Create store, add a peer cursor, persist, drop.
         {
@@ -7677,8 +7678,10 @@ mod tests {
         use tempfile::TempDir;
         let tmp = TempDir::new().unwrap();
         let data_dir = Some(tmp.path().to_path_buf());
-        let mut config = synvoid_config::DenyListLimitsConfig::default();
-        config.target_state_persist = true;
+        let config = synvoid_config::DenyListLimitsConfig {
+            target_state_persist: true,
+            ..Default::default()
+        };
 
         // Create store with an expired cursor.
         {
@@ -8007,8 +8010,10 @@ mod tests {
         use tempfile::TempDir;
         let tmp = TempDir::new().unwrap();
         let data_dir = Some(tmp.path().to_path_buf());
-        let mut config = synvoid_config::DenyListLimitsConfig::default();
-        config.target_state_persist = true;
+        let config = synvoid_config::DenyListLimitsConfig {
+            target_state_persist: true,
+            ..Default::default()
+        };
 
         let store = BlockStore::new(true, data_dir.clone(), config.clone());
         let now = synvoid_utils::safe_unix_timestamp();

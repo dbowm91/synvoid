@@ -103,7 +103,7 @@ mod tests {
     #[test]
     fn http3_waf_backend_does_not_use_concrete_waf_core() {
         use std::any::type_name;
-        let waf: Arc<dyn Http3WafBackend> = Arc::new(MockWaf);
+        let _waf: Arc<dyn Http3WafBackend> = Arc::new(MockWaf);
         // The concrete type behind the trait object must NOT be WafCore.
         // If someone accidentally wires WafCore directly, this assertion
         // will catch it because type_name returns the concrete type.

@@ -94,7 +94,7 @@ impl AuditState {
             .map_err(|e| format!("Failed to open audit log file: {}", e))?;
         let reader = std::io::BufReader::new(file);
         let mut logs = self.logs.write();
-        for line in reader.lines().flatten() {
+        for line in reader.lines().map_while(Result::ok) {
             if let Ok(entry) = serde_json::from_str::<AuditLog>(&line) {
                 if logs.len() >= MAX_AUDIT_LOGS {
                     logs.pop_front();
@@ -413,7 +413,7 @@ impl ConfigVersionManager {
             .filter_map(|r: std::result::Result<ConfigVersion, std::io::Error>| r.ok())
             .collect();
 
-        versions.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        versions.sort_by_key(|a| a.timestamp);
 
         let mut versions_lock = self.versions.write();
         for v in versions.into_iter().rev().take(MAX_CONFIG_VERSIONS) {

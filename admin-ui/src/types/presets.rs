@@ -376,6 +376,7 @@ pub fn get_presets() -> Vec<ServerPreset> {
     ]
 }
 
+#[allow(dead_code)]
 pub fn get_presets_by_category(category: &PresetCategory) -> Vec<ServerPreset> {
     get_presets()
         .into_iter()

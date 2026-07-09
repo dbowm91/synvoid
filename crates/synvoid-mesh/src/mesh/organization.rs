@@ -1450,7 +1450,7 @@ mod tests {
 
         assert_eq!(org_key.key_id.len(), 36); // UUID format
         assert_eq!(org_key.private_key.len(), 32);
-        assert!(org_key.public_key.len() > 0);
+        assert!(!org_key.public_key.is_empty());
         assert!(org_key.issued_by.is_some());
     }
 

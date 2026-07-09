@@ -2699,10 +2699,10 @@ mod tests {
     }
 
     #[test]
-    fn test_worker_id_clone() {
+    fn test_worker_id_copy() {
         let id = WorkerId(42);
-        let cloned = id.clone();
-        assert_eq!(id.0, cloned.0);
+        let copied = id;
+        assert_eq!(id.0, copied.0);
     }
 
     #[test]

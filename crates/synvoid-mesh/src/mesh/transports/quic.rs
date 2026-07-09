@@ -14,6 +14,7 @@ pub struct QuicMeshTransport {
 }
 
 impl QuicMeshTransport {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: Arc<MeshConfig>,
         topology: Arc<MeshTopology>,

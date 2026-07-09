@@ -45,7 +45,7 @@ pub struct RequestPreflight {
 }
 
 pub enum RequestPreflightOutcome {
-    Continue(RequestPreflight),
+    Continue(Box<RequestPreflight>),
     Respond(Response<BoxBody<Bytes, Infallible>>),
 }
 
@@ -115,7 +115,7 @@ where
             let cookie = format_secure_http_only_cookie(
                 &session_cookie_name,
                 &session_cookie_value,
-                session_cookie_max_age as u64,
+                session_cookie_max_age,
             );
             on_log(
                 200,
@@ -225,17 +225,19 @@ where
         }
     };
 
-    Ok(RequestPreflightOutcome::Continue(RequestPreflight {
-        on_upgrade,
-        target,
-        parts,
-        body,
-        method,
-        path,
-        host,
-        user_agent,
-        skip_waf,
-    }))
+    Ok(RequestPreflightOutcome::Continue(Box::new(
+        RequestPreflight {
+            on_upgrade,
+            target,
+            parts,
+            body,
+            method,
+            path,
+            host,
+            user_agent,
+            skip_waf,
+        },
+    )))
 }
 
 pub struct PreparedRequest {
@@ -252,11 +254,12 @@ pub struct PreparedRequest {
 }
 
 pub enum RequestPreparationOutcome {
-    Continue(PreparedRequest),
+    Continue(Box<PreparedRequest>),
     Respond(Response<BoxBody<Bytes, Infallible>>),
 }
 
 #[async_trait]
+#[allow(clippy::too_many_arguments)]
 pub trait BufferedRequestWaf:
     crate::EarlyWafHooks + RequestBodyWaf + ChallengePathWaf + Send + Sync
 {
@@ -402,18 +405,20 @@ where
         return Ok(RequestPreparationOutcome::Respond(response));
     }
 
-    Ok(RequestPreparationOutcome::Continue(PreparedRequest {
-        on_upgrade,
-        target,
-        parts,
-        method,
-        path,
-        user_agent,
-        skip_waf,
-        full_body_arc,
-        request_body_size,
-        body_slice,
-    }))
+    Ok(RequestPreparationOutcome::Continue(Box::new(
+        PreparedRequest {
+            on_upgrade,
+            target,
+            parts,
+            method,
+            path,
+            user_agent,
+            skip_waf,
+            full_body_arc,
+            request_body_size,
+            body_slice,
+        },
+    )))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -672,7 +677,7 @@ where
     };
 
     let outcome = prepare_request_after_preflight(
-        preflight,
+        *preflight,
         client_ip,
         router_for_after,
         waf_for_after,

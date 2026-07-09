@@ -29,6 +29,7 @@ pub trait WafErrorPageRenderer {
     fn render_page(&self, status: u16, message: Option<&str>) -> String;
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn maybe_handle_wasm_request_filter(
     plugin_backend: Option<&(dyn WasmFilterBackend + Send + Sync)>,
     target: &RouteTarget,

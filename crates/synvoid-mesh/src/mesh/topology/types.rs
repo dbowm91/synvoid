@@ -77,11 +77,13 @@ impl ShardedPeerStore {
         let node_id = peer.node_id.clone();
         let mut shard = self.shard(&node_id).write();
         shard.peers.insert(node_id.clone(), peer);
-        shard.peer_scores.entry(node_id.clone()).or_insert_with(|| {
-            let mut s = PeerScore::default();
-            s.node_id = node_id.clone();
-            s
-        });
+        shard
+            .peer_scores
+            .entry(node_id.clone())
+            .or_insert_with(|| PeerScore {
+                node_id: node_id.clone(),
+                ..Default::default()
+            });
         shard
             .connection_failures
             .entry(node_id.clone())
@@ -90,10 +92,7 @@ impl ShardedPeerStore {
             .connection_successes
             .entry(node_id.clone())
             .or_insert(0);
-        shard
-            .latency_history
-            .entry(node_id.clone())
-            .or_insert_with(Vec::new);
+        shard.latency_history.entry(node_id.clone()).or_default();
         shard.peer_versions.entry(node_id.clone()).or_insert(0);
     }
 
@@ -159,7 +158,7 @@ impl ShardedPeerStore {
         let entry = shard
             .latency_history
             .entry(node_id.to_string())
-            .or_insert_with(Vec::new);
+            .or_default();
         entry.push((Instant::now(), latency_ms));
         if entry.len() > 20 {
             entry.remove(0);
@@ -242,7 +241,7 @@ impl ShardedPeerStore {
         let stats = shard
             .bandwidth_trackers
             .entry(upstream_id.to_string())
-            .or_insert_with(BandwidthStats::default);
+            .or_default();
         f(stats);
     }
 
@@ -922,10 +921,10 @@ impl ServerlessRouteInfo {
                 if path.starts_with(prefix) {
                     return true;
                 }
-            } else if route.ends_with('/') {
-                if path.starts_with(route) || path == &route[..route.len() - 1] {
-                    return true;
-                }
+            } else if route.ends_with('/')
+                && (path.starts_with(route) || path == &route[..route.len() - 1])
+            {
+                return true;
             }
         }
         false
