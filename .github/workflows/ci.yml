@@ -241,6 +241,47 @@ jobs:
       - name: Check honeypot all-features compile
         run: cargo check -p synvoid-honeypot --all-features
 
+  tarpit-tests:
+    name: Tarpit Crate Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Clippy tarpit crate
+        run: cargo clippy -p synvoid-tarpit --all-targets -- -D warnings
+
+      - name: Run tarpit tests
+        run: cargo test -p synvoid-tarpit --all-targets
+
+  mesh-tests:
+    name: Mesh Crate Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check mesh crate compiles
+        run: cargo check -p synvoid-mesh --features mesh --all-targets
+
+      - name: Clippy mesh crate
+        run: cargo clippy -p synvoid-mesh --features mesh --all-targets -- -D warnings
+
+      - name: Run mesh tests
+        run: cargo test -p synvoid-mesh --features mesh --all-targets
+
   fmt:
     name: Rustfmt
     runs-on: ubuntu-latest
@@ -637,7 +678,7 @@ jobs:
 
   summary:
     name: CI Summary
-    needs: [build, clippy, unsafe-dns, dns-tests, upload-tests, honeypot-tests, fmt, docs, security-audit, dependency-audit, outdated-deps, core-profile, import-check, miri-test, security-regression, profile-matrix, guard-suite, plugin-runtime-guardrails, docs-link-guard, fuzz-smoke]
+    needs: [build, clippy, unsafe-dns, dns-tests, upload-tests, honeypot-tests, tarpit-tests, mesh-tests, fmt, docs, security-audit, dependency-audit, outdated-deps, core-profile, import-check, miri-test, security-regression, profile-matrix, guard-suite, plugin-runtime-guardrails, docs-link-guard, fuzz-smoke]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -653,6 +694,8 @@ jobs:
           echo "| dns-tests | ${{ needs.dns-tests.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| upload-tests | ${{ needs.upload-tests.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| honeypot-tests | ${{ needs.honeypot-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| tarpit-tests | ${{ needs.tarpit-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| mesh-tests | ${{ needs.mesh-tests.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| fmt | ${{ needs.fmt.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| docs | ${{ needs.docs.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| security-audit | ${{ needs.security-audit.result }} |" >> $GITHUB_STEP_SUMMARY

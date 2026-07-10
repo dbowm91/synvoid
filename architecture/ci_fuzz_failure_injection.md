@@ -28,7 +28,7 @@ Architecture doc for Phase 8: profile CI matrix, fuzz target inventory, and fail
 - **cargo-fuzz**: Installed (v0.13.2) via `cargo install cargo-fuzz`.
 - **Nightly toolchain**: Required for ASAN instrumentation; `nightly-x86_64-unknown-linux-gnu` installed.
 - **Compilation**: Fuzz targets require nightly + ASAN; initial compilation is slow for large workspace.
-- **CI integration**: Not yet integrated; smoke runs are manual/nightly.
+- **CI integration**: Fuzz smoke tests integrated in CI (`fuzz-smoke` job). Dedicated tarpit and mesh test jobs added in Milestone D Phase 4.
 - **Smoke command**: `cargo +nightly fuzz run <target> -- -runs=1000` for bounded smoke.
 
 ### High-Value Targets Not Yet Implemented

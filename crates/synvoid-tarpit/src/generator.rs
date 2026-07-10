@@ -107,7 +107,7 @@ impl MarkovChain {
                 if let Some(k) = random_key {
                     words = k.split_whitespace().map(|s| s.to_string()).collect();
                 }
-                break;
+                continue;
             }
         }
 

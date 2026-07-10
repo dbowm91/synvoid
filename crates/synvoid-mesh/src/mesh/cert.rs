@@ -1240,7 +1240,7 @@ pub fn extract_public_key_from_cert(cert_der: &[u8]) -> Option<Vec<u8>> {
 
     let (_, cert) = X509Certificate::from_der(cert_der).ok()?;
     let public_key = cert.public_key();
-    Some(public_key.raw.to_vec())
+    Some(public_key.subject_public_key.as_ref().to_vec())
 }
 
 pub fn sign_message(data: &[u8], key: &[u8]) -> Result<Vec<u8>, String> {
@@ -1717,7 +1717,7 @@ mod mesh_pki_tests {
     /// Generate a self-signed CA cert and key pair for testing.
     /// Returns (rcgen_cert, rcgen_key_pair, cert_der_bytes, raw_public_key).
     fn generate_test_ca() -> (rcgen::Certificate, rcgen::KeyPair, Vec<u8>, Vec<u8>) {
-        let key_pair = rcgen::KeyPair::generate().unwrap();
+        let key_pair = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519).unwrap();
         let mut params = rcgen::CertificateParams::new(vec!["test-ca.mesh".to_string()]).unwrap();
         params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
         let cert = params.self_signed(&key_pair).unwrap();
@@ -1733,7 +1733,7 @@ mod mesh_pki_tests {
         ca_key: &rcgen::KeyPair,
         node_id: &str,
     ) -> (Vec<u8>, Vec<u8>) {
-        let leaf_key = rcgen::KeyPair::generate().unwrap();
+        let leaf_key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519).unwrap();
         let mut params = rcgen::CertificateParams::new(vec![format!("{}.mesh", node_id)]).unwrap();
         params.is_ca = rcgen::IsCa::NoCa;
         let leaf_cert = params.signed_by(&leaf_key, ca_cert, ca_key).unwrap();
