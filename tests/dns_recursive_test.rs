@@ -5,9 +5,10 @@ use synvoid::dns::firewall::{
     DnsFirewall, DnsFirewallAction, DnsFirewallRule, DnsFirewallRuleType,
 };
 use synvoid::dns::recursive_cache::{
-    CachedRecord, RecursiveCacheKey, RecursiveDnsCache, RecursiveRecordType,
+    CachedRecord, DnssecValidationState, RecursiveCacheKey, RecursiveDnsCache, RecursiveRecordType,
 };
 use synvoid::dns::server::{DnsRateLimiter, RecordType};
+use synvoid::dns::parsed_query::ParsedDnsQuery;
 use synvoid::dns::wire::{
     build_error_response, build_question, get_message_flags, get_message_id, RCODE_FORMERR,
     RCODE_NOERROR, RCODE_NXDOMAIN, RCODE_REFUSED, RCODE_SERVFAIL,
@@ -35,14 +36,17 @@ fn test_cache_positive_insert_retrieve() {
     let key = RecursiveCacheKey::new(b"example.com.", 1, None);
     let records = vec![make_record(b"example.com.", 1, 300, vec![93, 184, 216, 34])];
 
-    cache.insert_positive(key.clone(), records, 300, false);
+    cache.insert_positive(key.clone(), records, 300, DnssecValidationState::Unchecked);
 
     let result = cache.get(&key);
     assert!(result.is_some());
     let (retrieved, stale, validated) = result.unwrap();
     assert_eq!(retrieved.len(), 1);
     assert!(!stale);
-    assert!(!validated);
+    assert!(matches!(
+        validated,
+        DnssecValidationState::Bogus | DnssecValidationState::Unchecked
+    ));
 }
 
 #[test]
@@ -50,7 +54,7 @@ fn test_cache_negative_nxdomain() {
     let cache = create_cache(100);
     let key = RecursiveCacheKey::new(b"nonexistent.example.com.", 1, None);
 
-    cache.insert_negative(key.clone(), true, 300);
+    cache.insert_negative(key.clone(), true, 300, DnssecValidationState::Unchecked);
 
     let result = cache.get(&key);
     assert!(result.is_some());
@@ -63,7 +67,7 @@ fn test_cache_negative_nodata() {
     let cache = create_cache(100);
     let key = RecursiveCacheKey::new(b"example.com.", 28, None);
 
-    cache.insert_negative(key.clone(), false, 300);
+    cache.insert_negative(key.clone(), false, 300, DnssecValidationState::Unchecked);
 
     let result = cache.get(&key);
     assert!(result.is_some());
@@ -88,7 +92,7 @@ fn test_cache_different_types_same_name() {
         key_a.clone(),
         vec![make_record(b"example.com.", 1, 300, vec![1, 2, 3, 4])],
         300,
-        false,
+        DnssecValidationState::Unchecked,
     );
     cache.insert_positive(
         key_aaaa.clone(),
@@ -101,7 +105,7 @@ fn test_cache_different_types_same_name() {
             ],
         )],
         300,
-        false,
+        DnssecValidationState::Unchecked,
     );
 
     assert!(cache.get(&key_a).is_some());
@@ -122,19 +126,19 @@ fn test_cache_invalidation_by_name() {
         key_a.clone(),
         vec![make_record(b"evict.com.", 1, 300, vec![1, 1, 1, 1])],
         300,
-        false,
+        DnssecValidationState::Unchecked,
     );
     cache.insert_positive(
         key_aaaa.clone(),
         vec![make_record(b"evict.com.", 28, 600, vec![0; 16])],
         600,
-        false,
+        DnssecValidationState::Unchecked,
     );
     cache.insert_positive(
         key_other.clone(),
         vec![make_record(b"keep.com.", 1, 300, vec![2, 2, 2, 2])],
         300,
-        false,
+        DnssecValidationState::Unchecked,
     );
 
     cache.invalidate(b"evict.com.");
@@ -155,14 +159,14 @@ fn test_cache_invalidation_all() {
         k1.clone(),
         vec![make_record(b"a.com.", 1, 300, vec![1])],
         300,
-        false,
+        DnssecValidationState::Unchecked,
     );
-    cache.insert_negative(k2.clone(), true, 300);
+    cache.insert_negative(k2.clone(), true, 300, DnssecValidationState::Unchecked);
     cache.insert_positive(
         k3.clone(),
         vec![make_record(b"c.com.", 1, 300, vec![3])],
         300,
-        false,
+        DnssecValidationState::Unchecked,
     );
 
     assert_eq!(cache.len(), 3);
@@ -184,9 +188,14 @@ fn test_cache_stats_tracking() {
         key.clone(),
         vec![make_record(b"stats.com.", 1, 300, vec![1, 2, 3, 4])],
         300,
-        false,
+        DnssecValidationState::Unchecked,
     );
-    cache.insert_negative(RecursiveCacheKey::new(b"nx.com.", 1, None), true, 60);
+    cache.insert_negative(
+        RecursiveCacheKey::new(b"nx.com.", 1, None),
+        true,
+        60,
+        DnssecValidationState::Unchecked,
+    );
 
     let stats = cache.stats();
     assert_eq!(stats.insertions, 2);
@@ -200,14 +209,19 @@ fn test_cache_positive_negative_separation() {
         RecursiveCacheKey::new(b"pos.com.", 1, None),
         vec![make_record(b"pos.com.", 1, 300, vec![1, 1, 1, 1])],
         300,
-        false,
+        DnssecValidationState::Unchecked,
     );
-    cache.insert_negative(RecursiveCacheKey::new(b"neg.com.", 1, None), true, 300);
+    cache.insert_negative(
+        RecursiveCacheKey::new(b"neg.com.", 1, None),
+        true,
+        300,
+        DnssecValidationState::Unchecked,
+    );
     cache.insert_positive(
         RecursiveCacheKey::new(b"pos2.com.", 28, None),
         vec![make_record(b"pos2.com.", 28, 600, vec![0; 16])],
         600,
-        true,
+        DnssecValidationState::Secure,
     );
 
     assert_eq!(cache.positive_len(), 2);
@@ -224,11 +238,11 @@ fn test_cache_dnssec_validation_flag() {
         key.clone(),
         vec![make_record(b"secure.com.", 1, 300, vec![1, 2, 3, 4])],
         300,
-        true,
+        DnssecValidationState::Secure,
     );
 
     let result = cache.get(&key).unwrap();
-    assert!(result.2);
+    assert!(matches!(result.2, DnssecValidationState::Secure));
 }
 
 #[test]
@@ -242,19 +256,19 @@ fn test_cache_lru_eviction() {
         k1.clone(),
         vec![make_record(b"a.com.", 1, 300, vec![1])],
         300,
-        false,
+        DnssecValidationState::Unchecked,
     );
     cache.insert_positive(
         k2.clone(),
         vec![make_record(b"b.com.", 1, 300, vec![2])],
         300,
-        false,
+        DnssecValidationState::Unchecked,
     );
     cache.insert_positive(
         k3.clone(),
         vec![make_record(b"c.com.", 1, 300, vec![3])],
         300,
-        false,
+        DnssecValidationState::Unchecked,
     );
 
     assert!(
@@ -484,7 +498,8 @@ fn test_firewall_block_domain() {
     })
     .unwrap();
 
-    let query = build_question("malware.example.com.", 1, 1);
+    let query_bytes = build_question("malware.example.com.", 1, 1);
+    let query = ParsedDnsQuery::parse(&query_bytes).unwrap();
     let ip: std::net::IpAddr = "10.0.0.1".parse().unwrap();
     let decision = fw
         .evaluate_query(&query, ip, "malware.example.com.")
@@ -507,7 +522,8 @@ fn test_firewall_allow_non_matching() {
     })
     .unwrap();
 
-    let query = build_question("safe.example.com.", 1, 1);
+    let query_bytes = build_question("safe.example.com.", 1, 1);
+    let query = ParsedDnsQuery::parse(&query_bytes).unwrap();
     let ip: std::net::IpAddr = "10.0.0.1".parse().unwrap();
     let decision = fw.evaluate_query(&query, ip, "safe.example.com.").unwrap();
     assert_ne!(decision.action, DnsFirewallAction::Block);

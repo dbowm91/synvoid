@@ -362,7 +362,7 @@ mod cache_tests {
         cache.insert(key.clone(), vec![0; 16], 3600);
         assert!(cache.get(&key).is_some());
 
-        cache.clear();
+        cache.clear(synvoid::dns::InvalidationReason::ManualFlush);
         assert!(cache.get(&key).is_none());
     }
 
@@ -399,7 +399,7 @@ mod cache_tests {
         cache.insert(key2.clone(), vec![5, 6, 7, 8], 3600);
         cache.insert(key3.clone(), vec![9, 10, 11, 12], 3600);
 
-        cache.invalidate_zone("example.com");
+        cache.invalidate_zone("example.com", synvoid::dns::InvalidationReason::ManualFlush);
 
         assert!(cache.get(&key1).is_none());
         assert!(cache.get(&key2).is_none());
@@ -440,6 +440,17 @@ mod cache_tests {
 
 #[cfg(test)]
 mod firewall_tests {
+    fn make_test_query() -> Vec<u8> {
+        vec![
+            0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x01, 0x00, 0x01,
+        ]
+    }
+
+    fn parse_query(query_bytes: &[u8]) -> synvoid::dns::parsed_query::ParsedDnsQuery<'_> {
+        synvoid::dns::parsed_query::ParsedDnsQuery::parse(query_bytes).unwrap()
+    }
+
     #[test]
     fn test_firewall_action_variants() {
         use std::time::Duration;
@@ -476,13 +487,14 @@ mod firewall_tests {
         let fw = DnsFirewall::new();
         let ip: IpAddr = "192.168.1.1".parse().unwrap();
 
-        let query = vec![
+        let query_bytes = vec![
             0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, b'e',
             b'x', b'a', b'm', b'p', b'l', b'e', 0x03, b'c', b'o', b'm', 0x00, 0x00, 0x01, 0x00,
             0x01,
         ];
+        let parsed = parse_query(&query_bytes);
 
-        let decision = fw.evaluate_query(&query, ip, "example.com").unwrap();
+        let decision = fw.evaluate_query(&parsed, ip, "example.com").unwrap();
         assert!(matches!(decision.action, DnsFirewallAction::Allow));
         assert_eq!(decision.rule_id, "default");
     }
@@ -530,15 +542,16 @@ mod firewall_tests {
         fw.add_rule(rule).unwrap();
 
         let ip: IpAddr = "10.0.0.1".parse().unwrap();
-        let query = vec![0; 28];
+        let query_bytes = make_test_query();
+        let parsed = parse_query(&query_bytes);
 
-        let decision = fw.evaluate_query(&query, ip, "evil.com").unwrap();
+        let decision = fw.evaluate_query(&parsed, ip, "evil.com").unwrap();
         assert!(matches!(decision.action, DnsFirewallAction::Block));
 
-        let decision_sub = fw.evaluate_query(&query, ip, "sub.evil.com").unwrap();
+        let decision_sub = fw.evaluate_query(&parsed, ip, "sub.evil.com").unwrap();
         assert!(matches!(decision_sub.action, DnsFirewallAction::Block));
 
-        let decision_other = fw.evaluate_query(&query, ip, "safe.com").unwrap();
+        let decision_other = fw.evaluate_query(&parsed, ip, "safe.com").unwrap();
         assert!(matches!(decision_other.action, DnsFirewallAction::Allow));
     }
 
@@ -561,12 +574,13 @@ mod firewall_tests {
         fw.add_rule(rule).unwrap();
 
         let blocked_ip: IpAddr = "10.1.2.3".parse().unwrap();
-        let query = vec![0; 28];
-        let decision = fw.evaluate_query(&query, blocked_ip, "test.com").unwrap();
+        let query_bytes = make_test_query();
+        let parsed = parse_query(&query_bytes);
+        let decision = fw.evaluate_query(&parsed, blocked_ip, "test.com").unwrap();
         assert!(matches!(decision.action, DnsFirewallAction::Block));
 
         let allowed_ip: IpAddr = "192.168.1.1".parse().unwrap();
-        let decision = fw.evaluate_query(&query, allowed_ip, "test.com").unwrap();
+        let decision = fw.evaluate_query(&parsed, allowed_ip, "test.com").unwrap();
         assert!(matches!(decision.action, DnsFirewallAction::Allow));
     }
 
@@ -589,8 +603,9 @@ mod firewall_tests {
         fw.add_rule(rule).unwrap();
 
         let ip: IpAddr = "1.2.3.4".parse().unwrap();
-        let query = vec![0; 28];
-        let decision = fw.evaluate_query(&query, ip, "disabled.com").unwrap();
+        let query_bytes = make_test_query();
+        let parsed = parse_query(&query_bytes);
+        let decision = fw.evaluate_query(&parsed, ip, "disabled.com").unwrap();
         assert!(matches!(decision.action, DnsFirewallAction::Allow));
     }
 }

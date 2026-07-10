@@ -38,10 +38,6 @@ mod tests {
         assert_eq!(id.as_usize(), 42);
     }
 
-    #[test]
-    #[ignore = "OverseerConfig was removed during overseer->supervisor refactor"]
-    fn test_overseer_config_serialization() {}
-
     #[tokio::test]
     async fn test_drain_state_transitions() {
         use synvoid::worker::drain_state::WorkerDrainState;
@@ -56,14 +52,6 @@ mod tests {
         let drain_id_value = state.get_drain_id();
         assert!(drain_id_value > 0);
     }
-
-    #[test]
-    #[ignore = "MasterHealth was removed during overseer->supervisor refactor"]
-    fn test_master_health_check() {}
-
-    #[test]
-    #[ignore = "MasterHealth was removed during overseer->supervisor refactor"]
-    fn test_master_health_partial_failure() {}
 
     #[test]
     fn test_ipc_socket_path_generation() {
@@ -245,10 +233,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "OverseerConfig was removed during overseer->supervisor refactor"]
-    fn test_overseer_config_defaults() {}
-
-    #[test]
     fn test_drain_manager_basic() {
         use synvoid::supervisor::drain_manager::DrainManager;
 
@@ -260,18 +244,6 @@ mod tests {
         let status = manager.get_drain_status();
         assert!(status.drain_id > 0);
     }
-
-    #[test]
-    #[ignore = "ConnectionTracker was removed during overseer->supervisor refactor"]
-    fn test_connection_tracker() {}
-
-    #[test]
-    #[ignore = "EnhancedHealthConfig was removed during overseer->supervisor refactor"]
-    fn test_health_check_config() {}
-
-    #[test]
-    #[ignore = "SpawnConfig/ProcessMode were removed during overseer->supervisor refactor"]
-    fn test_spawn_config() {}
 
     #[test]
     fn test_verbose_request_logging_config() {
@@ -310,10 +282,6 @@ mod tests {
         assert!(!config.log_internal);
         assert_eq!(config.max_logs_per_second, 100);
     }
-
-    #[test]
-    #[ignore = "UpgradeMode/detect_upgrade_mode were removed during overseer->supervisor refactor"]
-    fn test_upgrade_mode_detection() {}
 
     #[allow(dead_code)]
     mod waf_body_inspection_tests {

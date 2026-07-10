@@ -935,7 +935,7 @@ fn topology_snapshot_existing_peer_preserves_state() {
         previous_topology: Some(snapshot),
         connection_inserted: true,
         session_task_id: Some("sess-2".to_string()),
-        dht_mutation: DhtPeerMutation::Previous(DhtPeerSnapshot {
+        dht_mutation: DhtPeerMutation::Previous(Box::new(DhtPeerSnapshot {
             contact: PeerContact::new(
                 NodeId::from_node_id_string("node-2"),
                 "node-2".to_string(),
@@ -943,7 +943,7 @@ fn topology_snapshot_existing_peer_preserves_state() {
                 443,
             )
             .with_global(true),
-        }),
+        })),
         session_generation: 2,
     };
 
@@ -1001,7 +1001,7 @@ fn dht_mutation_previous_preserves_prior_state() {
         previous_topology: None,
         connection_inserted: true,
         session_task_id: Some("sess-1".to_string()),
-        dht_mutation: DhtPeerMutation::Previous(snapshot.clone()),
+        dht_mutation: DhtPeerMutation::Previous(Box::new(snapshot.clone())),
         session_generation: 1,
     };
     match &resource.dht_mutation {
@@ -1034,7 +1034,7 @@ fn dht_mutation_previous_in_place_preserves_state() {
         previous_topology: None,
         connection_inserted: true,
         session_task_id: Some("sess-2".to_string()),
-        dht_mutation: DhtPeerMutation::Previous(snapshot),
+        dht_mutation: DhtPeerMutation::Previous(Box::new(snapshot)),
         session_generation: 2,
     };
     assert!(matches!(

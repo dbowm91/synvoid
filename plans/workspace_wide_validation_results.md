@@ -72,11 +72,9 @@
 | 2 | `synvoid-ipc` clippy in test code (`clone_on_copy`, `field_reassign_with_default`) | IPC test helpers | Pre-existing debt |
 | 3 | `synvoid-tunnel` missing `wireguard_control` dep (undeclared) | WireGuard feature gate | Pre-existing, only fails with `--features wireguard` |
 | 4 | 3 mesh-profile warnings (unused import/mut/variable) | `mesh_attachment.rs`, `shutdown_executor.rs` | Only with `mesh` without `dns` (uncommon combo) |
-| 5 | 34 ignored tests (overseer→supervisor refactor orphans) | `tests/integration_test.rs`, `upgrade_flow_test.rs`, etc. | Dead stubs — recommended for deletion |
-| 6 | 2 ignored tests (bidirectional proxy deadlock) | `crates/synvoid-proxy/src/bidirectional.rs` | Known bug, tracked |
-| 7 | `cargo-deny` / `cargo-audit` not installed locally | Tooling | CI runs these; local check deferred |
-| 8 | No CI job for `synvoid-tarpit` tests | `.github/workflows/ci.yml` | Tarpit tests run locally but not in CI |
-| 9 | No dedicated mesh integration test job in CI | `.github/workflows/ci.yml` | Mesh tested via profile-matrix compile only |
+| 5 | `cargo-deny` / `cargo-audit` not installed locally | Tooling | CI runs these; local check deferred |
+| 6 | No CI job for `synvoid-tarpit` tests | `.github/workflows/ci.yml` | Tarpit tests run locally but not in CI |
+| 7 | No dedicated mesh integration test job in CI | `.github/workflows/ci.yml` | Mesh tested via profile-matrix compile only |
 
 ## 4. Fixes Applied
 
@@ -100,7 +98,6 @@ None are Milestone C regressions. All remaining issues are pre-existing workspac
 
 - `synvoid-tunnel` clippy debt (2 lints)
 - `synvoid-ipc` test clippy debt (2 lints)
-- 34 dead ignored tests recommend deletion
 - `cargo-deny`/`cargo-audit` not installed locally (CI covers these)
 - No CI job for tarpit or dedicated mesh integration tests
 
@@ -115,17 +112,19 @@ None are Milestone C regressions. All remaining issues are pre-existing workspac
 - All 4 feature profiles compile
 - Remaining failures are pre-existing workspace debt in `synvoid-tunnel` (not Milestone C scope)
 - `cargo-deny`/`cargo-audit` not locally installed but CI covers them
-- 34 dead ignored tests are recommend-delete, not release-blocking
+- Zero ignored tests remain (34 dead stubs deleted, 2 deadlock tests rewritten and unignored)
 
 **Milestone C readiness:** All Milestone C deliverables (A/B/C phases for honeypot, tarpit, upload) are verified clean.
 
 ## 7. Ignored Test Inventory
 
-| Category | Count | Action |
-|----------|-------|--------|
-| Overseer→Supervisor refactor orphans (empty stubs) | 34 | Recommended: delete |
-| Bidirectional proxy deadlock (real bodies) | 2 | Keep ignored — known bug |
-| **Total** | **36** | |
+All 36 previously ignored tests have been resolved:
+
+| Category | Count | Resolution |
+|----------|-------|------------|
+| Overseer→Supervisor refactor orphans (dead stubs) | 34 | Deleted (3 files deleted entirely, 12 tests removed from 3 files) |
+| Bidirectional proxy deadlock (real bodies) | 2 | Rewritten to use project's own functions, unignored |
+| **Total resolved** | **36** | **0 ignored tests remaining** |
 
 ## 8. CI Workflow Status
 

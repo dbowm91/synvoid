@@ -251,6 +251,7 @@ mod tests {
             recursion_desired: false,
             recursion_available: false,
             authentic_data: false,
+            checking_disabled: false,
             response_code: 0,
         };
 

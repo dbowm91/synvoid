@@ -388,18 +388,38 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::io::{duplex, AsyncReadExt, AsyncWriteExt};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
 
     #[tokio::test(flavor = "multi_thread")]
-    #[ignore = "Deadlocks due to tokio::io::copy_bidirectional using try_join! on shared duplex buffer"]
     async fn test_copy_bidirectional() {
-        let (mut client_a, mut upstream_a) = duplex(1024);
-        let (mut client_b, mut upstream_b) = duplex(1024);
+        let client_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client_addr = client_listener.local_addr().unwrap();
+        let upstream_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream_addr = upstream_listener.local_addr().unwrap();
+
+        let mut client_b = TcpStream::connect(client_addr).await.unwrap();
+        let (client_a, _) = client_listener.accept().await.unwrap();
+        let mut upstream_b = TcpStream::connect(upstream_addr).await.unwrap();
+        let (upstream_a, _) = upstream_listener.accept().await.unwrap();
+
+        let (mut client_read, mut client_write) = client_a.into_split();
+        let (mut upstream_read, mut upstream_write) = upstream_a.into_split();
+
+        let config = ProxyConfig {
+            flush_interval_bytes: 1,
+            ..Default::default()
+        };
 
         let proxy_handle = tokio::spawn(async move {
-            tokio::io::copy_bidirectional(&mut client_a, &mut upstream_a)
-                .await
-                .map_err(|e| ProxyError::Other(e.to_string()))
+            copy_bidirectional_with_config(
+                &mut client_read,
+                &mut client_write,
+                &mut upstream_read,
+                &mut upstream_write,
+                config,
+            )
+            .await
         });
 
         client_b.write_all(b"hello upstream").await.unwrap();
@@ -419,15 +439,29 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    #[ignore = "Deadlocks due to tokio::io::copy_bidirectional using try_join! on shared duplex buffer"]
-    async fn test_copy_bidirectional_with_config() {
-        let (mut client_a, mut upstream_a) = duplex(64 * 1024);
-        let (mut client_b, mut upstream_b) = duplex(64 * 1024);
+    async fn test_copy_bidirectional_zero_copy() {
+        let client_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client_addr = client_listener.local_addr().unwrap();
+        let upstream_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream_addr = upstream_listener.local_addr().unwrap();
+
+        let mut client_b = TcpStream::connect(client_addr).await.unwrap();
+        let (client_a, _) = client_listener.accept().await.unwrap();
+        let mut upstream_b = TcpStream::connect(upstream_addr).await.unwrap();
+        let (upstream_a, _) = upstream_listener.accept().await.unwrap();
+
+        let (mut client_read, mut client_write) = client_a.into_split();
+        let (mut upstream_read, mut upstream_write) = upstream_a.into_split();
 
         let proxy_handle = tokio::spawn(async move {
-            tokio::io::copy_bidirectional(&mut client_a, &mut upstream_a)
-                .await
-                .map_err(|e| ProxyError::Other(e.to_string()))
+            copy_bidirectional_zero_copy(
+                &mut client_read,
+                &mut client_write,
+                &mut upstream_read,
+                &mut upstream_write,
+                64 * 1024,
+            )
+            .await
         });
 
         let test_data = vec![0xABu8; 16 * 1024];

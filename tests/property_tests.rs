@@ -24,6 +24,7 @@ proptest! {
             recursion_desired: true,
             recursion_available: true,
             authentic_data: false,
+            checking_disabled: false,
             response_code: 0,
         };
         let response = synvoid::dns::wire::build_response_header(id, flags, 1, 0, 0, 0);
@@ -86,6 +87,7 @@ proptest! {
             recursion_desired: true,
             recursion_available: true,
             authentic_data: false,
+            checking_disabled: false,
             response_code: rcode,
         };
         prop_assert_eq!(flags.is_nxdomain(), rcode == 3);
@@ -103,6 +105,7 @@ proptest! {
             recursion_desired: true,
             recursion_available: false,
             authentic_data: false,
+            checking_disabled: false,
             response_code: 0,
         };
         prop_assert_eq!(flags.is_standard_query(), opcode == 0);

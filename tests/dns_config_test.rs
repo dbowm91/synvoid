@@ -212,7 +212,12 @@ mod dns_config_tests {
             data: vec![8, 8, 8, 8],
         }];
 
-        cache.insert_positive(key.clone(), records.clone(), 300, false);
+        cache.insert_positive(
+            key.clone(),
+            records.clone(),
+            300,
+            synvoid::dns::recursive_cache::DnssecValidationState::Unchecked,
+        );
 
         let result = cache.get(&key);
         assert!(result.is_some());
@@ -230,7 +235,12 @@ mod dns_config_tests {
         let cache = RecursiveDnsCache::new(1000, &config);
 
         let key = RecursiveCacheKey::new(b"nonexistent.com", 1, None);
-        cache.insert_negative(key.clone(), true, 300);
+        cache.insert_negative(
+            key.clone(),
+            true,
+            300,
+            synvoid::dns::recursive_cache::DnssecValidationState::Unchecked,
+        );
 
         // Negative cache hit returns Some with empty records (not None, which would mean cache miss)
         let result = cache.get(&key);
@@ -256,7 +266,12 @@ mod dns_config_tests {
             data: vec![8, 8, 8, 8],
         }];
 
-        cache.insert_positive(key.clone(), records, 300, false);
+        cache.insert_positive(
+            key.clone(),
+            records,
+            300,
+            synvoid::dns::recursive_cache::DnssecValidationState::Unchecked,
+        );
 
         // Check stats incremented
         let stats = cache.stats();
@@ -285,7 +300,12 @@ mod dns_config_tests {
             data: vec![8, 8, 8, 8],
         }];
 
-        cache.insert_positive(key.clone(), records, 300, false);
+        cache.insert_positive(
+            key.clone(),
+            records,
+            300,
+            synvoid::dns::recursive_cache::DnssecValidationState::Unchecked,
+        );
 
         // Verify it's cached
         assert!(cache.get(&key).is_some());
@@ -319,6 +339,7 @@ mod dns_config_tests {
             recursion_desired: true,
             recursion_available: true,
             authentic_data: true,
+            checking_disabled: false,
             response_code: 0,
         };
 
@@ -444,6 +465,7 @@ mod dns_config_tests {
             recursion_desired: true,
             recursion_available: true,
             authentic_data: true,
+            checking_disabled: false,
             response_code: 0,
         };
 
@@ -466,6 +488,7 @@ mod dns_config_tests {
             recursion_desired: true,
             recursion_available: true,
             authentic_data: false,
+            checking_disabled: false,
             response_code: 0,
         };
 
@@ -777,7 +800,12 @@ mod dns_config_tests {
             data: vec![1, 2, 3, 4],
         };
 
-        cache.insert_positive(key.clone(), vec![record], 300, false);
+        cache.insert_positive(
+            key.clone(),
+            vec![record],
+            300,
+            synvoid::dns::recursive_cache::DnssecValidationState::Unchecked,
+        );
 
         let stats = cache.stats();
         assert_eq!(stats.insertions, 1);
@@ -805,6 +833,7 @@ mod dns_config_tests {
             firewall: Default::default(),
             root_hints_path: String::new(),
             trust_anchor_path: String::new(),
+            ..Default::default()
         };
 
         let server = RecursiveDnsServer::new(config, None, None, None)
@@ -878,8 +907,18 @@ mod dns_config_tests {
             data: vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
         };
 
-        cache.insert_positive(key_a.clone(), vec![record_a], 300, false);
-        cache.insert_positive(key_aaaa.clone(), vec![record_aaaa], 300, false);
+        cache.insert_positive(
+            key_a.clone(),
+            vec![record_a],
+            300,
+            synvoid::dns::recursive_cache::DnssecValidationState::Unchecked,
+        );
+        cache.insert_positive(
+            key_aaaa.clone(),
+            vec![record_aaaa],
+            300,
+            synvoid::dns::recursive_cache::DnssecValidationState::Unchecked,
+        );
 
         assert_eq!(cache.len(), 2);
 
@@ -911,7 +950,12 @@ mod dns_config_tests {
             data: vec![1, 2, 3, 4],
         };
 
-        cache.insert_positive(key.clone(), vec![record], 300, false);
+        cache.insert_positive(
+            key.clone(),
+            vec![record],
+            300,
+            synvoid::dns::recursive_cache::DnssecValidationState::Unchecked,
+        );
 
         assert!(!cache.is_empty());
         assert_eq!(cache.len(), 1);
