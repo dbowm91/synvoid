@@ -6,7 +6,7 @@ license.workspace = true
 
 [features]
 default = []
-icmp-ebpf = []
+icmp-ebpf = ["dep:aya"]
 icmp-pf = []
 icmp-winfw = []
 icmp-wfp = []
@@ -17,6 +17,7 @@ thiserror = "2"
 metrics = "0.22"
 tracing = "0.1"
 libc = "0.2"
+aya = { version = "0.13", optional = true }
 
 [dev-dependencies]
 serde_json = "1"

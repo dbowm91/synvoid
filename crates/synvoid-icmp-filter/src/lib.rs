@@ -127,6 +127,7 @@ impl IcmpFilterManager {
                         return Ok(Box::new(EbpfFilter::new(config)?));
                     }
                     tracing::warn!("eBPF requested but not available, falling back to nftables");
+                    Ok(Box::new(NftablesFilter::new(config)?))
                 }
                 #[cfg(not(feature = "icmp-ebpf"))]
                 {

@@ -437,14 +437,17 @@ The `architecture/` directory (87 docs) and `.opencode/skills/` directory contai
 | `architecture/dns_config_runtime_matrix.md` | DNS config field inventory with runtime status, defaults, and wiring |
 | `architecture/tarpit.md` | Tarpit architecture: escaping, admission control, budgets, redirect safety |
 | `architecture/honeypot.md` | Honeypot architecture: protocol detection, admission, storage writer, threat-intel scoring, AI containment |
+| `architecture/release_profile_matrix.md` | Compilation profiles, feature gate classifications, platform coverage, release support matrix |
 
 ## Known Issues
 
 - `src/admin/alerting/mod.rs:349` — Email alerting is a stub (logs, returns Ok).
 - `spin` idle instance eviction never cleans up old UUID entries (plan DOC-L7).
-- `wasmtime` 40.0.4 (via yara-x) has known CVEs but only used for YARA compilation, not wasm sandbox — mitigated by `[patch.crates-io]` for direct dep.
+- `wasmtime` 40.0.4 (via yara-x) has known CVEs but only used for YARA compilation, not wasm sandbox — mitigated by `[patch.crates-io]` for direct dep. 11 advisory ignores in `deny.toml` with re-audit dates 2026-10-01.
 
 ## Recent Completions
+
+- **Post-Milestone D Corrective Closure** — 5-workstream closure pass. (1) synvoid-icmp-filter eBPF: fixed 10 compilation errors (aya optional dep, stale paths, missing return, Pod trait impls, borrow conflicts, aya 0.13 API changes, clippy), all 4 check commands now pass (default + all-features × check + clippy). Classified as **Beta** — compiles cleanly, runtime returns explicit error when eBPF unavailable. (2) Created `architecture/release_profile_matrix.md` — 5 compilation profiles, 17 feature gates (13 Supported, 4 Beta), 8 platforms, release support matrix. (3) Dependency audit: `cargo-deny` passes, 12 advisory ignores documented, 199 duplicate crates (non-pathological), wasmtime 40/42 tracked. (4) CI: 26 jobs, summary references all release-critical jobs (added alpine-test, freebsd-test, platform-compat). (5) Final release-polish note at `plans/post_milestone_d_closure_results.md`. Classification: **State B** — release-ready for all supported profiles. See `plans/post_milestone_d_corrective_closure_polish_plan.md`.
 
 - **Milestone D Phase 5: Full Workspace Release Validation and Closure** — Full 7-workstream validation pass: metadata/formatting (PASS), compile profiles (8/8 pass, `--all-features` fails on `synvoid-icmp-filter` eBPF dependency — pre-existing), clippy (workspace clean after 80+ lint fixes across test/bench/fuzz/source files), tests (2,760 passed across 9 targeted crates, 0 failed), ignored tests (zero `#[ignore]` annotations remain), dependency audit (`cargo-deny` passes, 3 non-pathological duplicates), CI parity (24 jobs, tarpit/mesh/audit all present). Fixed production bug in `ipc_signed::deserialize_signed` (missing 4-byte length prefix handling). Fixed formatting drift in `dns_recursive_test.rs`. Classification: **State B** — release-ready for all supported profiles; tracked exception: `synvoid-icmp-filter` eBPF compilation (feature-gated, not in default profile). See `plans/milestone_d_validation_results.md`.
 

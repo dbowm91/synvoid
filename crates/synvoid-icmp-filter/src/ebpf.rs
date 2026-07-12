@@ -4,7 +4,7 @@ use crate::{
     traits::{FilterBackend, FilterStatus, IcmpFilter},
 };
 use aya::{
-    maps::{Array, HashMap, PerCpuArray},
+    maps::{Array, HashMap, MapData, PerCpuArray},
     programs::{
         tc::{SchedClassifier, TcAttachType},
         xdp::Xdp,
@@ -31,6 +31,9 @@ mod maps {
         pub _pad: [u8; 3],
     }
 
+    // SAFETY: All fields are plain Pod-compatible types (u8/u32) in a #[repr(C)] struct.
+    unsafe impl aya::Pod for Config {}
+
     #[repr(C)]
     #[derive(Clone, Copy, Default)]
     pub struct IcmpStats {
@@ -41,17 +44,26 @@ mod maps {
         pub type_rule_blocked: u64,
     }
 
+    // SAFETY: All fields are plain Pod-compatible types (u64) in a #[repr(C)] struct.
+    unsafe impl aya::Pod for IcmpStats {}
+
     #[repr(C)]
     #[derive(Clone, Copy)]
     pub struct Ipv4Key {
         pub addr: u32,
     }
 
+    // SAFETY: Single u32 field in a #[repr(C)] struct.
+    unsafe impl aya::Pod for Ipv4Key {}
+
     #[repr(C)]
     #[derive(Clone, Copy)]
     pub struct Ipv6Key {
         pub addr: [u8; 16],
     }
+
+    // SAFETY: [u8; 16] is Pod in a #[repr(C)] struct.
+    unsafe impl aya::Pod for Ipv6Key {}
 
     #[repr(C)]
     #[derive(Clone, Copy, Default)]
@@ -60,6 +72,9 @@ mod maps {
         pub icmp_code: u8,
         pub action: u8,
     }
+
+    // SAFETY: All fields are u8 in a #[repr(C)] struct.
+    unsafe impl aya::Pod for IcmpTypeRule {}
 
     impl IcmpTypeRule {
         pub const ACTION_ALLOW: u8 = 0;
@@ -107,7 +122,7 @@ impl EbpfFilter {
 
     fn get_interfaces(&self) -> Vec<String> {
         match &self.config.interfaces {
-            crate::icmp_filter::config::InterfaceSpec::All => {
+            crate::config::InterfaceSpec::All => {
                 let mut interfaces = Vec::new();
                 if let Ok(entries) = std::fs::read_dir("/sys/class/net") {
                     for entry in entries.flatten() {
@@ -121,7 +136,7 @@ impl EbpfFilter {
                 }
                 interfaces
             }
-            crate::icmp_filter::config::InterfaceSpec::Specific(ifaces) => ifaces.clone(),
+            crate::config::InterfaceSpec::Specific(ifaces) => ifaces.clone(),
         }
     }
 
@@ -168,8 +183,8 @@ impl EbpfFilter {
             .as_mut()
             .ok_or_else(|| IcmpFilterError::Ebpf("eBPF program not loaded".to_string()))?;
 
-        let mut config_map: Array<_, maps::Config> = ebpf
-            .map("CONFIG_MAP")
+        let mut config_map: Array<MapData, maps::Config> = ebpf
+            .take_map("CONFIG_MAP")
             .ok_or_else(|| IcmpFilterError::Ebpf("CONFIG_MAP not found".to_string()))?
             .try_into()
             .map_err(|e| IcmpFilterError::Ebpf(format!("Failed to access CONFIG_MAP: {}", e)))?;
@@ -214,17 +229,17 @@ impl EbpfFilter {
         };
 
         config_map
-            .set(&maps::CONFIG_KEY, config, 0)
+            .set(maps::CONFIG_KEY, config, 0)
             .map_err(|e| IcmpFilterError::Ebpf(format!("Failed to set config: {}", e)))?;
 
-        let mut exempt_ipv4: HashMap<_, maps::Ipv4Key, u8> = ebpf
-            .map("EXEMPT_IPV4")
+        let mut exempt_ipv4: HashMap<MapData, maps::Ipv4Key, u8> = ebpf
+            .take_map("EXEMPT_IPV4")
             .ok_or_else(|| IcmpFilterError::Ebpf("EXEMPT_IPV4 map not found".to_string()))?
             .try_into()
             .map_err(|e| IcmpFilterError::Ebpf(format!("Failed to access EXEMPT_IPV4: {}", e)))?;
 
-        let mut exempt_ipv6: HashMap<_, maps::Ipv6Key, u8> = ebpf
-            .map("EXEMPT_IPV6")
+        let mut exempt_ipv6: HashMap<MapData, maps::Ipv6Key, u8> = ebpf
+            .take_map("EXEMPT_IPV6")
             .ok_or_else(|| IcmpFilterError::Ebpf("EXEMPT_IPV6 map not found".to_string()))?
             .try_into()
             .map_err(|e| IcmpFilterError::Ebpf(format!("Failed to access EXEMPT_IPV6: {}", e)))?;
@@ -250,31 +265,30 @@ impl EbpfFilter {
             }
         }
 
-        self.update_icmp_type_rules(ebpf)?;
+        Self::update_icmp_type_rules(&self.config, ebpf)?;
 
         Ok(())
     }
 
-    fn update_icmp_type_rules(&self, ebpf: &mut Ebpf) -> Result<()> {
-        let mut rules_v4: Array<_, maps::IcmpTypeRule> = ebpf
-            .map("ICMP_TYPE_RULES_V4")
+    fn update_icmp_type_rules(config: &IcmpFilterConfig, ebpf: &mut Ebpf) -> Result<()> {
+        let mut rules_v4: Array<MapData, maps::IcmpTypeRule> = ebpf
+            .take_map("ICMP_TYPE_RULES_V4")
             .ok_or_else(|| IcmpFilterError::Ebpf("ICMP_TYPE_RULES_V4 map not found".to_string()))?
             .try_into()
             .map_err(|e| {
                 IcmpFilterError::Ebpf(format!("Failed to access ICMP_TYPE_RULES_V4: {}", e))
             })?;
 
-        let mut rules_v6: Array<_, maps::IcmpTypeRule> = ebpf
-            .map("ICMP_TYPE_RULES_V6")
+        let mut rules_v6: Array<MapData, maps::IcmpTypeRule> = ebpf
+            .take_map("ICMP_TYPE_RULES_V6")
             .ok_or_else(|| IcmpFilterError::Ebpf("ICMP_TYPE_RULES_V6 map not found".to_string()))?
             .try_into()
             .map_err(|e| {
                 IcmpFilterError::Ebpf(format!("Failed to access ICMP_TYPE_RULES_V6: {}", e))
             })?;
 
-        let mut idx = 0;
-        for rule in &self.config.icmp_type_rules {
-            if idx >= maps::MAX_TYPE_RULES {
+        for (idx, rule) in config.icmp_type_rules.iter().enumerate() {
+            if idx >= maps::MAX_TYPE_RULES as usize {
                 tracing::warn!(
                     "Max ICMPv4 type rules ({}) reached, ignoring extra rules",
                     maps::MAX_TYPE_RULES
@@ -293,15 +307,12 @@ impl EbpfFilter {
             };
 
             rules_v4
-                .set(&idx, ebpf_rule, 0)
+                .set(idx as u32, ebpf_rule, 0)
                 .map_err(|e| IcmpFilterError::Ebpf(format!("Failed to set ICMPv4 rule: {}", e)))?;
-
-            idx += 1;
         }
 
-        let mut idx = 0;
-        for rule in &self.config.icmpv6_type_rules {
-            if idx >= maps::MAX_TYPE_RULES {
+        for (idx, rule) in config.icmpv6_type_rules.iter().enumerate() {
+            if idx >= maps::MAX_TYPE_RULES as usize {
                 tracing::warn!(
                     "Max ICMPv6 type rules ({}) reached, ignoring extra rules",
                     maps::MAX_TYPE_RULES
@@ -320,10 +331,8 @@ impl EbpfFilter {
             };
 
             rules_v6
-                .set(&idx, ebpf_rule, 0)
+                .set(idx as u32, ebpf_rule, 0)
                 .map_err(|e| IcmpFilterError::Ebpf(format!("Failed to set ICMPv6 rule: {}", e)))?;
-
-            idx += 1;
         }
 
         Ok(())
@@ -340,15 +349,21 @@ impl EbpfFilter {
 
         self.load_ebpf_program()?;
 
-        let ebpf = self
-            .ebpf
-            .as_mut()
-            .ok_or_else(|| IcmpFilterError::Ebpf("eBPF program not loaded".to_string()))?;
-
         let filter_inbound =
             self.config.direction == Direction::Both || self.config.direction == Direction::Inbound;
         let filter_outbound = self.config.direction == Direction::Both
             || self.config.direction == Direction::Outbound;
+
+        if filter_outbound {
+            for iface in &interfaces {
+                self.setup_tc_qdisc(iface)?;
+            }
+        }
+
+        let ebpf = self
+            .ebpf
+            .as_mut()
+            .ok_or_else(|| IcmpFilterError::Ebpf("eBPF program not loaded".to_string()))?;
 
         if filter_inbound {
             let xdp_program: &mut Xdp = ebpf
@@ -389,8 +404,6 @@ impl EbpfFilter {
                 .map_err(|e| IcmpFilterError::Ebpf(format!("Failed to load TC program: {}", e)))?;
 
             for iface in &interfaces {
-                self.setup_tc_qdisc(iface)?;
-
                 tc_program
                     .attach(iface, TcAttachType::Egress)
                     .map_err(|e| {
@@ -471,7 +484,7 @@ impl EbpfFilter {
             .map_err(|e| IcmpFilterError::Ebpf(format!("Failed to get stats: {}", e)))?;
 
         let mut total = maps::IcmpStats::default();
-        for stats in per_cpu_stats {
+        for stats in per_cpu_stats.iter() {
             total.packets_seen += stats.packets_seen;
             total.packets_dropped += stats.packets_dropped;
             total.rate_limited += stats.rate_limited;

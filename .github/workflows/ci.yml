@@ -678,7 +678,7 @@ jobs:
 
   summary:
     name: CI Summary
-    needs: [build, clippy, unsafe-dns, dns-tests, upload-tests, honeypot-tests, tarpit-tests, mesh-tests, fmt, docs, security-audit, dependency-audit, outdated-deps, core-profile, import-check, miri-test, security-regression, profile-matrix, guard-suite, plugin-runtime-guardrails, docs-link-guard, fuzz-smoke]
+    needs: [build, clippy, unsafe-dns, dns-tests, upload-tests, honeypot-tests, tarpit-tests, mesh-tests, fmt, docs, security-audit, dependency-audit, outdated-deps, core-profile, import-check, miri-test, security-regression, profile-matrix, guard-suite, plugin-runtime-guardrails, docs-link-guard, fuzz-smoke, alpine-test, freebsd-test, platform-compat]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -710,3 +710,6 @@ jobs:
           echo "| plugin-runtime-guardrails | ${{ needs.plugin-runtime-guardrails.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| docs-link-guard | ${{ needs.docs-link-guard.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| fuzz-smoke | ${{ needs.fuzz-smoke.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| alpine-test | ${{ needs.alpine-test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| freebsd-test | ${{ needs.freebsd-test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| platform-compat | ${{ needs.platform-compat.result }} |" >> $GITHUB_STEP_SUMMARY

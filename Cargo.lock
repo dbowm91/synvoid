@@ -8378,6 +8378,7 @@ dependencies = [
 name = "synvoid-icmp-filter"
 version = "0.1.0"
 dependencies = [
+ "aya",
  "libc",
  "metrics 0.22.4",
  "serde",
