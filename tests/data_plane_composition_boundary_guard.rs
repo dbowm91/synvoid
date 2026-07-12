@@ -41,7 +41,7 @@ fn collect_rs_files(dir: &Path) -> Vec<PathBuf> {
         let path = entry.path();
         if path.is_dir() {
             files.extend(collect_rs_files(&path));
-        } else if path.extension().map_or(false, |e| e == "rs") {
+        } else if path.extension().is_some_and(|e| e == "rs") {
             files.push(path);
         }
     }
@@ -763,7 +763,7 @@ fn request_path_no_raft_or_dht_imports() {
 fn unified_server_is_in_boundary_scan_roots() {
     let roots = boundary_scan_roots();
     assert!(
-        roots.iter().any(|r| *r == "src/worker/unified_server"),
+        roots.contains(&"src/worker/unified_server"),
         "boundary_scan_roots() must include src/worker/unified_server, got: {:?}",
         roots
     );
@@ -781,7 +781,7 @@ fn every_unified_server_file_is_explicitly_classified() {
 
     for file in &files {
         let role = classify_path(file);
-        let rel = file.strip_prefix(&root).unwrap_or(&file);
+        let rel = file.strip_prefix(&root).unwrap_or(file);
         assert_ne!(
             role,
             BoundaryRole::Unclassified,
@@ -982,8 +982,8 @@ fn startup_plan_delegates_data_plane_cross_wiring() {
     );
 
     // Must not manually call the individual cross-wiring methods inline
-    let has_inline_apply = stripped.contains("apply_threat_intel_policy_context");
-    let has_inline_cross_wire = stripped.contains("cross_wire_mesh_services");
+    let _has_inline_apply = stripped.contains("apply_threat_intel_policy_context");
+    let _has_inline_cross_wire = stripped.contains("cross_wire_mesh_services");
 
     // These methods may appear in comments or in the builder module, but
     // startup_plan.rs should not call them directly on the data_plane instance.

@@ -1,9 +1,7 @@
 #[cfg(test)]
 mod waf_anomaly_scoring_tests {
     use http::{HeaderMap, Method};
-    use synvoid::waf::attack_detection::{
-        AnomalyScoringConfig, AttackDetectionConfig, AttackDetector,
-    };
+    use synvoid::waf::attack_detection::{AttackDetectionConfig, AttackDetector};
 
     #[test]
     fn test_anomaly_scoring_default_disabled() {
@@ -35,8 +33,10 @@ mod waf_anomaly_scoring_tests {
 
     #[tokio::test]
     async fn test_anomaly_scoring_body_size_exceeded() {
-        let mut config = AttackDetectionConfig::default();
-        config.max_request_body_size = Some(100);
+        let config = AttackDetectionConfig {
+            max_request_body_size: Some(100),
+            ..Default::default()
+        };
         let detector = AttackDetector::new(config);
         let headers = HeaderMap::new();
 
@@ -188,8 +188,10 @@ mod waf_anomaly_scoring_tests {
 
     #[tokio::test]
     async fn test_anomaly_scoring_disabled_detector() {
-        let mut config = AttackDetectionConfig::default();
-        config.enabled = false;
+        let config = AttackDetectionConfig {
+            enabled: false,
+            ..Default::default()
+        };
         let detector = AttackDetector::new(config);
         let headers = HeaderMap::new();
         let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
@@ -216,7 +218,7 @@ mod waf_anomaly_scoring_tests {
         headers.insert("x-forwarded-for", "127.0.0.1".parse().unwrap());
         let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
 
-        let (_, score) = detector
+        let (_, _score) = detector
             .check_request(
                 client_ip,
                 &Method::GET,
@@ -226,8 +228,6 @@ mod waf_anomaly_scoring_tests {
                 None,
             )
             .await;
-
-        assert!(score >= 0);
     }
 
     #[tokio::test]
@@ -1303,6 +1303,7 @@ mod wasm_pool_contention_tests {
 
     #[derive(Clone)]
     struct WasmInstance {
+        #[allow(dead_code)]
         id: u64,
     }
 
@@ -1629,8 +1630,6 @@ mod entropy_calculation_tests {
 
 #[cfg(test)]
 mod overseer_lifecycle_tests {
-    use parking_lot::RwLock;
-    use std::sync::Arc;
     use synvoid::process::WorkerId;
     use synvoid::supervisor::drain_manager::DrainManager;
 

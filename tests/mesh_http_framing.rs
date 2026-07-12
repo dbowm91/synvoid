@@ -1913,8 +1913,6 @@ async fn trailer_oversized_entirely_in_prefix() {
 
 #[tokio::test]
 async fn trailer_oversized_slow_drip_bounded_by_total_deadline() {
-    use tokio::io::AsyncReadExt;
-
     // Initial chunk + zero chunk prefix sent immediately.
     let initial = b"3\r\nabc\r\n0\r\n";
     // Trailer byte + terminator sent slowly (one byte at a time).

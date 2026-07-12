@@ -72,5 +72,6 @@ mod tests {
 
         // Cleanup
         let _ = overseer.kill();
+        let _ = overseer.wait();
     }
 }

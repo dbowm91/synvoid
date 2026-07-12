@@ -35,7 +35,7 @@ fn collect_rs_files(dir: &Path) -> Vec<PathBuf> {
         let path = entry.path();
         if path.is_dir() {
             files.extend(collect_rs_files(&path));
-        } else if path.extension().map_or(false, |e| e == "rs") {
+        } else if path.extension().is_some_and(|e| e == "rs") {
             files.push(path);
         }
     }
@@ -121,7 +121,7 @@ fn strip_cfg_test_modules(content: &str) -> String {
                         let remaining: String = chars.clone().take(20).collect();
                         let trimmed = remaining.trim_start();
                         if trimmed.starts_with("#[") {
-                            while let Some(c) = chars.next() {
+                            for c in chars.by_ref() {
                                 if c == ']' {
                                     break;
                                 }

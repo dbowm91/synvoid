@@ -348,7 +348,7 @@ mod e2e_process_tests {
         let mut worker_handles = Vec::new();
 
         for i in 0..worker_count {
-            let endpoint_clone = IpcEndpoint::new(&endpoint.name().to_string());
+            let endpoint_clone = IpcEndpoint::new(endpoint.name());
             let handle = tokio::spawn(async move {
                 let mut stream = endpoint_clone.connect().await.unwrap();
                 let msg = Message::WorkerStarted {

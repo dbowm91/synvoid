@@ -631,10 +631,12 @@ fn test_shutdown_report_extended_fields() {
     assert_eq!(report.drained_peer_sessions, 0);
     assert_eq!(report.aborted_peer_sessions, 0);
 
-    let mut report = MeshShutdownReport::default();
-    report.peers_at_shutdown_start = 5;
-    report.drained_peer_sessions = 4;
-    report.aborted_peer_sessions = 1;
+    let report = MeshShutdownReport {
+        peers_at_shutdown_start: 5,
+        drained_peer_sessions: 4,
+        aborted_peer_sessions: 1,
+        ..Default::default()
+    };
     assert_eq!(report.peers_at_shutdown_start, 5);
     assert_eq!(report.drained_peer_sessions, 4);
     assert_eq!(report.aborted_peer_sessions, 1);
@@ -690,8 +692,8 @@ async fn test_peer_sessions_drained_on_shutdown() {
     assert_eq!(report.drained_peer_sessions, 0);
     // aborted_peer_sessions should be 0 (nothing to abort)
     assert_eq!(report.aborted_peer_sessions, 0);
-    // clean_tasks should be >= 0
-    assert!(report.clean_tasks >= 0);
+    // clean_tasks is u32, verify it was set
+    let _ = report.clean_tasks;
 }
 
 #[tokio::test]

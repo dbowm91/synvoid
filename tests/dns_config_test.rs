@@ -1,4 +1,5 @@
 #![cfg(feature = "dns")]
+#![allow(clippy::field_reassign_with_default)]
 
 #[cfg(test)]
 mod dns_config_tests {
@@ -20,7 +21,7 @@ mod dns_config_tests {
             let mut config = AdminConfig::default();
             config.port = 8081;
             config.token = token.to_string();
-            let result = config.validate();
+            let _result = config.validate();
             // These should either warn or be rejected
             // Currently they generate warnings, so we check the token resolution works
             let resolved = config.resolve_token();
@@ -379,9 +380,7 @@ mod dns_config_tests {
     #[test]
     fn test_rfc5011_trust_anchor_state_machine() {
         use synvoid::dns::dnssec::compute_ds_digest;
-        use synvoid::dns::trust_anchor::{
-            Rfc5011Event, TrustAnchor, TrustAnchorConfig, TrustAnchorManager, TrustAnchorState,
-        };
+        use synvoid::dns::trust_anchor::{Rfc5011Event, TrustAnchorConfig, TrustAnchorManager};
         use tempfile::TempDir;
 
         let temp_dir = TempDir::new().unwrap();
@@ -605,9 +604,7 @@ mod dns_config_tests {
 
     #[test]
     fn test_rfc5011_trust_anchor_full_flow() {
-        use synvoid::dns::trust_anchor::{
-            Rfc5011Event, TrustAnchorConfig, TrustAnchorManager, TrustAnchorState,
-        };
+        use synvoid::dns::trust_anchor::{Rfc5011Event, TrustAnchorConfig, TrustAnchorManager};
         use tempfile::TempDir;
 
         let temp_dir = TempDir::new().unwrap();
@@ -1016,8 +1013,9 @@ mod dns_config_tests {
 
         let id = (now & 0xFFFF) as u16;
 
-        assert!(id <= 0xFFFF);
-        assert!(id > 0 || id == 0);
+        // id is u16, so it's always <= 0xFFFF and either > 0 or == 0.
+        // These assertions document the invariant.
+        let _ = id;
     }
 
     #[test]
@@ -1025,7 +1023,7 @@ mod dns_config_tests {
         use synvoid::dns::dnssec::Algorithm;
 
         let algorithm = Algorithm::RSA;
-        let key_bytes = vec![
+        let _key_bytes = vec![
             0x04, 0x8F, 0xF1, 0xBE, 0x04, 0x1F, 0x9E, 0x4A, 0x22, 0xD5, 0x6E, 0xE8, 0x0A, 0x5C,
             0x9D, 0xE5,
         ];
@@ -1052,7 +1050,7 @@ mod dns_config_tests {
     fn test_rfc5011_state_machine_concepts() {
         use synvoid::dns::trust_anchor::Rfc5011Event;
 
-        let events = vec![
+        let events = [
             Rfc5011Event::NewKeySeen { key_tag: 12345 },
             Rfc5011Event::KeyPending { key_tag: 12345 },
             Rfc5011Event::KeyWaiting {

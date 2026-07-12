@@ -234,7 +234,7 @@ mod tests {
         use synvoid::dns::wire::build_question;
 
         let question = build_question("example.com", 1, 1); // A record, IN class
-        assert!(question.len() > 0);
+        assert!(!question.is_empty());
         // Verify format: [len label][label bytes][0][qtype 2 bytes][qclass 2 bytes]
         assert_eq!(question[0], 7); // "example" length
     }

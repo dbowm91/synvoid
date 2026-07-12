@@ -113,8 +113,7 @@ fn periodic_loops_have_cancellation() {
             let mut brace_depth = 0i32;
             let mut found_open = false;
             let block_start_line = i;
-            for j in i..lines.len().min(i + 200) {
-                let (_, bl) = lines[j];
+            for (_, bl) in lines.iter().take(lines.len().min(i + 200)).skip(i) {
                 block.push_str(bl);
                 block.push('\n');
                 for ch in bl.chars() {
@@ -366,8 +365,8 @@ fn transport_connection_loops_have_shutdown() {
             // Check if this loop has a tokio::select! within the next 5 lines
             let mut has_select = false;
             let mut has_shutdown = false;
-            for j in (i + 1)..lines.len().min(i + 10) {
-                let inner = lines[j].trim();
+            for inner_line in lines.iter().take(lines.len().min(i + 10)).skip(i + 1) {
+                let inner = inner_line.trim();
                 if inner.contains("tokio::select!") {
                     has_select = true;
                 }
@@ -511,8 +510,8 @@ fn bare_spawns_in_transport_are_one_shots() {
         let mut is_long_lived = false;
         let mut brace_depth = 0i32;
         let mut found_open = false;
-        for j in i..lines.len().min(i + 40) {
-            let ahead = lines[j].trim();
+        for ahead_line in lines.iter().take(lines.len().min(i + 40)).skip(i) {
+            let ahead = ahead_line.trim();
             for ch in ahead.chars() {
                 match ch {
                     '{' => {
@@ -1077,8 +1076,8 @@ fn dht_mutation_not_from_is_enabled() {
         {
             // Look backwards up to 10 lines for the guard pattern
             let mut found_snapshot_check = false;
-            for j in i.saturating_sub(10)..i {
-                if lines[j].1.contains("dht_snapshot_before") {
+            for line in lines.iter().take(i).skip(i.saturating_sub(10)) {
+                if line.1.contains("dht_snapshot_before") {
                     found_snapshot_check = true;
                     break;
                 }
@@ -1141,8 +1140,8 @@ fn abort_awaited_after_handle() {
         if trimmed.contains(".abort()") && !trimmed.starts_with("//") {
             // Look ahead up to 5 lines for .await
             let mut found_await = false;
-            for j in (i + 1)..lines.len().min(i + 6) {
-                if lines[j].contains(".await") {
+            for ahead_line in lines.iter().take(lines.len().min(i + 6)).skip(i + 1) {
+                if ahead_line.contains(".await") {
                     found_await = true;
                     break;
                 }
@@ -1184,8 +1183,8 @@ fn no_bare_preflight_spawn() {
             // Check if this is the steady-state preflight path
             // It should be followed by auxiliary_tasks registration
             let mut found_aux_register = false;
-            for j in (i + 1)..lines.len().min(i + 20) {
-                if lines[j].1.contains("auxiliary_tasks") || lines[j].1.contains("aux.insert") {
+            for ahead_line in lines.iter().take(lines.len().min(i + 20)).skip(i + 1) {
+                if ahead_line.1.contains("auxiliary_tasks") || ahead_line.1.contains("aux.insert") {
                     found_aux_register = true;
                     break;
                 }
@@ -2494,7 +2493,7 @@ fn iter77_timeout_naming_is_truthful() {
     // Verify the read timeout is NOT used to wrap the complete handler
     // (it should only appear inside handle_peer_message at read sites)
     let handler_sig = source.find("async fn handle_peer_message");
-    if let Some(sig_pos) = handler_sig {
+    if let Some(_sig_pos) = handler_sig {
         // The read_timeout parameter should only appear in handle_peer_message
         // and its inner helpers, not wrapping the entire handler in peer_message_loop
         let loop_section = &loop_body[..loop_body.len().min(2000)];

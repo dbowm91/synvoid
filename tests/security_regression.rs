@@ -233,7 +233,6 @@ mod tests {
         #[cfg(not(feature = "icmp-filter"))]
         {
             println!("icmp-filter feature not enabled - skipping test");
-            return;
         }
 
         #[cfg(feature = "icmp-filter")]
@@ -428,7 +427,6 @@ mod tests {
     #[test]
     fn test_cache_key_construction_uses_sanitized_ip() {
         use std::net::IpAddr;
-        use synvoid::proxy_cache::CacheKey;
 
         let client_ip: IpAddr = "1.2.3.4".parse().unwrap();
 

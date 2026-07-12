@@ -291,8 +291,10 @@ async fn iter77_drain_enforces_deadline_on_hung_handler() {
     // The deadline enforcement is verified structurally by the guardrail
     // test `iter77_drain_uses_timeout_around_join_next`. This behavioral
     // test verifies the PeerStreamDrainReport accounts for all outcomes.
-    let mut report = synvoid_mesh::lifecycle::PeerStreamDrainReport::default();
-    report.aborted = 1;
+    let report = synvoid_mesh::lifecycle::PeerStreamDrainReport {
+        aborted: 1,
+        ..Default::default()
+    };
     assert_eq!(report.aborted, 1, "hung handler must be counted as aborted");
     assert_eq!(report.drained, 0, "no handlers should have drained");
 }

@@ -7,10 +7,12 @@ use std::path::Path;
 #[derive(Debug, Clone, Deserialize)]
 pub struct RequestFixture {
     pub id: String,
+    #[allow(dead_code)]
     pub description: String,
     pub entry_point: String,
     pub expected_result: ExpectedResult,
     pub attack_type: FixtureAttackType,
+    #[allow(dead_code)]
     pub notes: String,
     pub request: RequestSpec,
 }
@@ -169,6 +171,7 @@ impl RequestFixture {
         }
     }
 
+    #[allow(dead_code)]
     pub fn entry_point_location(&self) -> &'static str {
         if self.entry_point.starts_with("header:") {
             "header"
@@ -183,6 +186,7 @@ impl RequestFixture {
     }
 }
 
+#[allow(dead_code)]
 pub fn waf_decision_to_expected(detected: bool, expected: ExpectedResult) -> bool {
     match expected {
         ExpectedResult::Detect => detected,

@@ -23,16 +23,17 @@ fn parse_ns_from_line(line: &str) -> Option<u64> {
     if let Some(pos) = line.find("time:") {
         let rest = &line[pos + 5..];
         let rest = rest.trim();
-        if rest.ends_with("ns") {
-            rest[..rest.len() - 2].parse().ok()
-        } else if rest.ends_with("µs") || rest.ends_with("us") {
-            let val: f64 = rest[..rest.len() - 2].parse().ok()?;
+        if let Some(stripped) = rest.strip_suffix("ns") {
+            stripped.parse().ok()
+        } else if let Some(stripped) = rest.strip_suffix("µs").or_else(|| rest.strip_suffix("us"))
+        {
+            let val: f64 = stripped.parse().ok()?;
             Some((val * 1000.0) as u64)
-        } else if rest.ends_with("ms") {
-            let val: f64 = rest[..rest.len() - 2].parse().ok()?;
+        } else if let Some(stripped) = rest.strip_suffix("ms") {
+            let val: f64 = stripped.parse().ok()?;
             Some((val * 1_000_000.0) as u64)
-        } else if rest.ends_with("s") {
-            let val: f64 = rest[..rest.len() - 1].parse().ok()?;
+        } else if let Some(stripped) = rest.strip_suffix("s") {
+            let val: f64 = stripped.parse().ok()?;
             Some((val * 1_000_000_000.0) as u64)
         } else {
             rest.parse().ok()
@@ -43,8 +44,10 @@ fn parse_ns_from_line(line: &str) -> Option<u64> {
 }
 
 struct BenchmarkResult {
+    #[allow(dead_code)]
     name: String,
     ns_per_op: u64,
+    #[allow(dead_code)]
     threshold_ns: u64,
     passed: bool,
     error: Option<String>,
@@ -110,23 +113,23 @@ fn run_benchmark(name: &str, threshold_ns: u64) -> BenchmarkResult {
             }
 
             println!("FAILED TO PARSE");
-            return BenchmarkResult {
+            BenchmarkResult {
                 name: name.to_string(),
                 ns_per_op: u64::MAX,
                 threshold_ns,
                 passed: false,
                 error: Some("parse error".to_string()),
-            };
+            }
         }
         Err(e) => {
             println!("ERROR - {}", e);
-            return BenchmarkResult {
+            BenchmarkResult {
                 name: name.to_string(),
                 ns_per_op: u64::MAX,
                 threshold_ns,
                 passed: false,
                 error: Some(e.to_string()),
-            };
+            }
         }
     }
 }
@@ -189,7 +192,7 @@ fn main() {
         passed, failed, skipped
     );
     println!("  \"benchmarks\": [");
-    for (i, (name, threshold)) in benchmarks.iter().enumerate() {
+    for (name, threshold) in benchmarks.iter() {
         let result = run_benchmark(name, *threshold);
         let error_str = result
             .error

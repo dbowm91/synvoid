@@ -1345,10 +1345,8 @@ mod tests {
             &headers,
             body,
         ));
-        let result = result.expect(&format!(
-            "Expected {:?} to be detected in: {}",
-            expected, path
-        ));
+        let result =
+            result.unwrap_or_else(|| panic!("Expected {:?} to be detected in: {}", expected, path));
         assert_eq!(result.attack_type, expected);
     }
 

@@ -102,7 +102,7 @@ fn admin_mutation_response_guard() {
             }
 
             // Only scan .rs files
-            if !path.extension().map_or(false, |e| e == "rs") {
+            if path.extension().is_none_or(|e| e != "rs") {
                 continue;
             }
 
@@ -263,7 +263,7 @@ fn read_only_diagnostics_do_not_require_mutation_result() {
                 continue;
             }
 
-            if !path.extension().map_or(false, |e| e == "rs") {
+            if path.extension().is_none_or(|e| e != "rs") {
                 continue;
             }
 

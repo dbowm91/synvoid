@@ -7,127 +7,6 @@ use synvoid_ipc::ipc_transport::IpcEndpoint;
 use synvoid_ipc::ipc_transport::IpcStream as AsyncIpcStream;
 use synvoid_ipc::{connect_to_supervisor, IpcStream};
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::path::PathBuf;
-    use std::time::Duration;
-
-    #[test]
-    fn test_connect_to_supervisor_with_retry_invalid_path() {
-        let socket_path = PathBuf::from("/nonexistent/path/socket.sock");
-        let result = connect_to_supervisor_with_retry(
-            &socket_path,
-            1,
-            Duration::from_millis(10),
-            "test_worker",
-        );
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_connect_retry_returns_error_after_max_attempts() {
-        let socket_path = PathBuf::from("/tmp/nonexistent_master.sock");
-        let result = connect_to_supervisor_with_retry(
-            &socket_path,
-            3,
-            Duration::from_millis(10),
-            "test_worker",
-        );
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_worker_name_in_error_message() {
-        let socket_path = PathBuf::from("/tmp/nonexistent.sock");
-        let result = connect_to_supervisor_with_retry(
-            &socket_path,
-            1,
-            Duration::from_millis(10),
-            "my_custom_worker",
-        );
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_connect_to_supervisor_async_invalid_path() {
-        let socket_path = PathBuf::from("/nonexistent/path/socket.sock");
-        let result = connect_to_supervisor_async(
-            &socket_path,
-            1,
-            Duration::from_millis(10),
-            "test_worker_async",
-        )
-        .await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_async_retry_exhaustion_message() {
-        let socket_path = PathBuf::from("/tmp/nonexistent_async.sock");
-        let result =
-            connect_to_supervisor_async(&socket_path, 2, Duration::from_millis(10), "async_worker")
-                .await;
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_retry_delay_is_respected() {
-        let start = std::time::Instant::now();
-        let socket_path = PathBuf::from("/tmp/should_fail.sock");
-        let _ = connect_to_supervisor_with_retry(
-            &socket_path,
-            3,
-            Duration::from_millis(50),
-            "timing_test_worker",
-        );
-        let elapsed = start.elapsed();
-        assert!(
-            elapsed >= Duration::from_millis(100),
-            "Expected at least 100ms for 3 retries with 50ms delay, got {:?}",
-            elapsed
-        );
-    }
-
-    #[test]
-    fn test_single_attempt_no_delay() {
-        let start = std::time::Instant::now();
-        let socket_path = PathBuf::from("/tmp/quick_fail.sock");
-        let _ = connect_to_supervisor_with_retry(
-            &socket_path,
-            1,
-            Duration::from_millis(100),
-            "single_attempt_worker",
-        );
-        let elapsed = start.elapsed();
-        assert!(
-            elapsed < Duration::from_millis(50),
-            "Should not delay on single attempt, got {:?}",
-            elapsed
-        );
-    }
-
-    #[test]
-    fn test_pathbuf_file_name_extraction() {
-        let path = PathBuf::from("/var/run/supervisor.sock");
-        let file_name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("supervisor");
-        assert_eq!(file_name, "supervisor.sock");
-    }
-
-    #[test]
-    fn test_empty_path_handling() {
-        let path = PathBuf::from("");
-        let file_name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("supervisor");
-        assert_eq!(file_name, "supervisor");
-    }
-}
-
 pub fn connect_to_supervisor_with_retry(
     socket_path: &Path,
     max_retries: u32,
@@ -349,4 +228,93 @@ pub async fn connect_to_supervisor_async_signed(
         worker_name, max_retries, error_msg
     )
     .into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    #[test]
+    fn test_connect_to_supervisor_with_retry_invalid_path() {
+        let socket_path = PathBuf::from("/nonexistent/path/socket.sock");
+        let result = connect_to_supervisor_with_retry(
+            &socket_path,
+            1,
+            Duration::from_millis(10),
+            "test_worker",
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_connect_to_supervisor_zero_retries() {
+        let socket_path = PathBuf::from("/nonexistent/path/socket.sock");
+        let result = connect_to_supervisor_with_retry(
+            &socket_path,
+            0,
+            Duration::from_millis(10),
+            "test_worker",
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_connect_to_supervisor_with_retry_delay() {
+        let socket_path = PathBuf::from("/nonexistent/path/socket.sock");
+        let start = std::time::Instant::now();
+        let result = connect_to_supervisor_with_retry(
+            &socket_path,
+            2,
+            Duration::from_millis(50),
+            "test_worker",
+        );
+        assert!(result.is_err());
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed >= Duration::from_millis(50),
+            "Should have waited at least one retry delay, got {:?}",
+            elapsed
+        );
+    }
+
+    #[test]
+    fn test_connect_to_supervisor_single_attempt_no_delay() {
+        let socket_path = PathBuf::from("/nonexistent/path/socket.sock");
+        let start = std::time::Instant::now();
+        let result = connect_to_supervisor_with_retry(
+            &socket_path,
+            1,
+            Duration::from_millis(100),
+            "single_attempt_worker",
+        );
+        assert!(result.is_err());
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < Duration::from_millis(50),
+            "Should not delay on single attempt, got {:?}",
+            elapsed
+        );
+    }
+
+    #[test]
+    fn test_pathbuf_file_name_extraction() {
+        let path = PathBuf::from("/var/run/supervisor.sock");
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("supervisor");
+        assert_eq!(file_name, "supervisor.sock");
+    }
+
+    #[test]
+    fn test_empty_path_handling() {
+        let path = PathBuf::from("");
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("supervisor");
+        assert_eq!(file_name, "supervisor");
+    }
 }

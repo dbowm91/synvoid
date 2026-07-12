@@ -95,7 +95,7 @@ fn strip_cfg_test_modules(content: &str) -> String {
                         let remaining: String = chars.clone().take(20).collect();
                         let trimmed = remaining.trim_start();
                         if trimmed.starts_with("#[") {
-                            while let Some(c) = chars.next() {
+                            for c in chars.by_ref() {
                                 if c == ']' {
                                     break;
                                 }

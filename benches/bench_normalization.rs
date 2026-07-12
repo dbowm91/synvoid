@@ -84,14 +84,15 @@ fn benchmark_normalize_all_small(c: &mut Criterion) {
             );
         }
         b.iter(|| {
-            let _ = detector.check_request(
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(detector.check_request(
                 std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
                 &http::Method::GET,
                 request.path,
                 request.query,
                 &headers,
                 None,
-            );
+            ));
         });
     });
 
@@ -123,14 +124,15 @@ fn benchmark_normalize_all_with_body(c: &mut Criterion) {
             );
         }
         b.iter(|| {
-            let _ = detector.check_request(
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(detector.check_request(
                 std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
                 &http::Method::POST,
                 request.path,
                 request.query,
                 &headers,
                 request.body.map(|b| b.as_bytes()),
-            );
+            ));
         });
     });
 
@@ -152,14 +154,15 @@ fn benchmark_normalize_large_body(c: &mut Criterion) {
             http::HeaderValue::from_static("application/x-www-form-urlencoded"),
         );
         b.iter(|| {
-            let _ = detector.check_request(
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(detector.check_request(
                 std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
                 &http::Method::POST,
                 "/api/submit",
                 None,
                 &headers,
                 Some(large_body.as_bytes()),
-            );
+            ));
         });
     });
 

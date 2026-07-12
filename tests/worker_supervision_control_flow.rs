@@ -2,6 +2,13 @@
 //!
 //! Tests the supervision loop behavior: non-fatal exits don't stop the worker,
 //! critical exits do, receiver lag is handled, etc.
+#![allow(
+    unused_mut,
+    unused_variables,
+    dead_code,
+    unused_imports,
+    unused_assignments
+)]
 
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -486,9 +493,9 @@ async fn test_lifecycle_channel_master_shutdown_classifies_cleanly() {
 /// Verify that lifecycle channel closure during shutdown is handled gracefully.
 #[tokio::test]
 async fn test_lifecycle_channel_closure_during_shutdown() {
-    use synvoid::worker::unified_server::lifecycle::{LifecycleRequest, WorkerLifecycleEvent};
+    use synvoid::worker::unified_server::lifecycle::LifecycleRequest;
 
-    let mut registry = WorkerTaskRegistry::new();
+    let _registry = WorkerTaskRegistry::new();
     let (_lifecycle_tx, mut lifecycle_rx) = tokio::sync::mpsc::channel::<LifecycleRequest>(4);
 
     // Drop the sender to simulate channel closure.

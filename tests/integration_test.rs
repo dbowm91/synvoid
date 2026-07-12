@@ -534,7 +534,7 @@ mod tests {
         #[test]
         fn test_threat_type_variants() {
             use synvoid::mesh::protocol::ThreatType;
-            let variants = vec![
+            let variants = [
                 ThreatType::IpBlock,
                 ThreatType::IpThrottle,
                 ThreatType::AsnBlock,
@@ -1069,12 +1069,14 @@ mod mesh_transport_tests {
 
     #[test]
     fn test_timestamp_constants() {
-        assert!(MIN_REASONABLE_TIMESTAMP > 0);
-        assert!(MAX_REASONABLE_TIMESTAMP > MIN_REASONABLE_TIMESTAMP);
-        assert!(
-            MAX_REASONABLE_TIMESTAMP - MIN_REASONABLE_TIMESTAMP >= 31536000,
-            "Timestamp window should be at least 1 year"
-        );
+        const {
+            assert!(MIN_REASONABLE_TIMESTAMP > 0);
+            assert!(MAX_REASONABLE_TIMESTAMP > MIN_REASONABLE_TIMESTAMP);
+            assert!(
+                MAX_REASONABLE_TIMESTAMP - MIN_REASONABLE_TIMESTAMP >= 31536000,
+                "Timestamp window should be at least 1 year"
+            );
+        }
     }
 
     #[test]
@@ -2377,7 +2379,6 @@ mod yara_manager_lifecycle_tests {
             enabled: true,
             rules_dir: None,
             mesh_broadcast_enabled: true,
-            ..Default::default()
         };
         YaraRulesManager::new(config, "test-node".to_string(), role, None, None, None)
     }
@@ -2400,7 +2401,7 @@ mod yara_manager_lifecycle_tests {
     fn test_yara_manager_local_rules_empty_initially() {
         let manager = create_test_manager(MeshNodeRole::GLOBAL);
         let rules = manager.get_current_rules();
-        assert!(rules.is_none() || rules.as_ref().map_or(true, |r| r.is_empty()));
+        assert!(rules.is_none() || rules.as_ref().is_none_or(|r| r.is_empty()));
     }
 
     #[test]
@@ -2620,12 +2621,12 @@ mod proxy_pipeline_tests {
         let names: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
 
         assert!(names.contains(&"content-type"));
-        assert!(!names.iter().any(|n| *n == "connection"));
-        assert!(!names.iter().any(|n| *n == "keep-alive"));
-        assert!(!names.iter().any(|n| *n == "transfer-encoding"));
-        assert!(!names.iter().any(|n| *n == "upgrade"));
-        assert!(!names.iter().any(|n| *n == "te"));
-        assert!(!names.iter().any(|n| *n == "trailers"));
+        assert!(!names.contains(&"connection"));
+        assert!(!names.contains(&"keep-alive"));
+        assert!(!names.contains(&"transfer-encoding"));
+        assert!(!names.contains(&"upgrade"));
+        assert!(!names.contains(&"te"));
+        assert!(!names.contains(&"trailers"));
     }
 
     #[test]
@@ -2646,10 +2647,10 @@ mod proxy_pipeline_tests {
         let names: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
 
         assert!(names.contains(&"content-type"));
-        assert!(!names.iter().any(|n| *n == "server"));
-        assert!(!names.iter().any(|n| *n == "x-powered-by"));
-        assert!(names.iter().any(|n| *n == "x-aspnet-version"));
-        assert!(!names.iter().any(|n| *n == "x-runtime"));
+        assert!(!names.contains(&"server"));
+        assert!(!names.contains(&"x-powered-by"));
+        assert!(names.contains(&"x-aspnet-version"));
+        assert!(!names.contains(&"x-runtime"));
     }
 
     #[test]
@@ -2667,8 +2668,8 @@ mod proxy_pipeline_tests {
         let names: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
 
         assert!(names.contains(&"content-type"));
-        assert!(!names.iter().any(|n| *n == "x-custom-secret"));
-        assert!(!names.iter().any(|n| *n == "x-internal"));
+        assert!(!names.contains(&"x-custom-secret"));
+        assert!(!names.contains(&"x-internal"));
     }
 
     #[test]
@@ -3384,9 +3385,11 @@ mod http_security_header_tests {
 
     #[test]
     fn test_inject_cors_headers_wildcard_with_flag() {
-        let mut config = SiteCorsConfig::default();
-        config.allow_origin = Some("*".to_string());
-        config.allow_wildcard_cors = true;
+        let config = SiteCorsConfig {
+            allow_origin: Some("*".to_string()),
+            allow_wildcard_cors: true,
+            ..Default::default()
+        };
 
         let builder = Response::builder();
         let resp = inject_cors_headers(builder, &config).body(()).unwrap();
@@ -3399,10 +3402,12 @@ mod http_security_header_tests {
 
     #[test]
     fn test_inject_cors_headers_specific_origin() {
-        let mut config = SiteCorsConfig::default();
-        config.allow_origin = Some("https://example.com".to_string());
-        config.allow_methods = Some(vec!["GET".to_string(), "POST".to_string()]);
-        config.allow_headers = Some(vec!["Content-Type".to_string()]);
+        let config = SiteCorsConfig {
+            allow_origin: Some("https://example.com".to_string()),
+            allow_methods: Some(vec!["GET".to_string(), "POST".to_string()]),
+            allow_headers: Some(vec!["Content-Type".to_string()]),
+            ..Default::default()
+        };
 
         let builder = Response::builder();
         let resp = inject_cors_headers(builder, &config).body(()).unwrap();
@@ -4048,8 +4053,10 @@ mod waf_attack_detection_tests {
 
     #[tokio::test]
     async fn test_body_size_limit() {
-        let mut config = AttackDetectionConfig::default();
-        config.max_request_body_size = Some(10);
+        let config = AttackDetectionConfig {
+            max_request_body_size: Some(10),
+            ..Default::default()
+        };
         let detector = AttackDetector::new(config);
 
         let client_ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
@@ -4097,8 +4104,10 @@ mod waf_attack_detection_tests {
 
     #[tokio::test]
     async fn test_disabled_attack_detection() {
-        let mut config = AttackDetectionConfig::default();
-        config.enabled = false;
+        let config = AttackDetectionConfig {
+            enabled: false,
+            ..Default::default()
+        };
         let detector = AttackDetector::new(config);
 
         let result = detector

@@ -207,7 +207,7 @@ fn no_legacy_block_ip_in_production_paths() {
             };
 
             let production = strip_test_modules(&content);
-            let production = strip_comments(&production);
+            let production = strip_comments(production);
 
             let lines = find_legacy_block_ip_calls(&production);
             if !lines.is_empty() {
@@ -264,7 +264,7 @@ fn no_explicit_legacy_unknown_provenance_in_production() {
             };
 
             let production = strip_test_modules(&content);
-            let production = strip_comments(&production);
+            let production = strip_comments(production);
 
             let lines = find_legacy_unknown_usages(&production);
             if !lines.is_empty() {
@@ -491,7 +491,7 @@ fn no_unconditional_supervisor_sync_in_blocklist_ingestion() {
             };
 
             let production = strip_test_modules(&content);
-            let production = strip_comments(&production);
+            let production = strip_comments(production);
 
             let lines = find_unconditional_supervisor_sync(&production);
             if !lines.is_empty() {

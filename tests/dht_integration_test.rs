@@ -39,7 +39,7 @@ fn test_node_id_equality() {
 
 #[test]
 fn test_node_id_ordering() {
-    let mut ids = vec![
+    let mut ids = [
         NodeId::from_bytes(&[0x02u8; 32]).unwrap(),
         NodeId::from_bytes(&[0x01u8; 32]).unwrap(),
         NodeId::from_bytes(&[0x03u8; 32]).unwrap(),

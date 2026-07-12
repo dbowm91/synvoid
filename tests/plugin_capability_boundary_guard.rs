@@ -168,8 +168,7 @@ fn plugin_runtime_host_functions_have_capability_gates() {
                 let mut block_lines: Vec<(usize, &str)> = Vec::new();
 
                 // Scan forward from the func_wrap line to find and track the closure
-                for j in i..(i + 5).min(lines.len()) {
-                    let line = lines[j];
+                for line in lines.iter().take((i + 5).min(lines.len())).skip(i) {
                     for ch in line.chars() {
                         if ch == '{' {
                             brace_depth += 1;
@@ -183,8 +182,7 @@ fn plugin_runtime_host_functions_have_capability_gates() {
                 if found_open && brace_depth > 0 {
                     // We're inside an unclosed closure — collect lines until it closes
                     block_lines.push((block_start + 1, lines[block_start]));
-                    for j in (block_start + 1)..lines.len() {
-                        let line = lines[j];
+                    for (j, line) in lines.iter().enumerate().skip(block_start + 1) {
                         for ch in line.chars() {
                             if ch == '{' {
                                 brace_depth += 1;
@@ -317,7 +315,7 @@ fn no_mem_forget_in_plugin_runtime() {
         };
         let cleaned = strip_comments_and_strings(&text);
         let relative = file
-            .strip_prefix(&repo.join("crates").join("synvoid-plugin-runtime"))
+            .strip_prefix(repo.join("crates").join("synvoid-plugin-runtime"))
             .unwrap_or(&file)
             .display()
             .to_string();
@@ -366,16 +364,15 @@ fn hot_reload_watcher_not_detached() {
                 if line.contains("hot_reload") || line.contains("HotReload") {
                     in_hot_reload = true;
                 }
-                if in_hot_reload {
-                    if line.contains("tokio::spawn(")
-                        && !line.contains("let ")
-                        && !line.contains("let _ =")
-                    {
-                        violations.push(format!(
-                            "{}:{}: tokio::spawn in hot-reload without capturing handle",
-                            relative, line_num
-                        ));
-                    }
+                if in_hot_reload
+                    && line.contains("tokio::spawn(")
+                    && !line.contains("let ")
+                    && !line.contains("let _ =")
+                {
+                    violations.push(format!(
+                        "{}:{}: tokio::spawn in hot-reload without capturing handle",
+                        relative, line_num
+                    ));
                 }
             }
         }
@@ -578,8 +575,13 @@ fn test_no_pooled_instance_returned_after_trap() {
     for (i, line) in lines.iter().enumerate() {
         if line.contains("result.is_err()") {
             // Look for drop(inst) within the next 5 lines (inside the if block)
-            for j in (i + 1)..(i + 6).min(lines.len()) {
-                if lines[j].contains("drop(inst)") || lines[j].contains("drop(pooled)") {
+            for (_j, line) in lines
+                .iter()
+                .enumerate()
+                .take((i + 6).min(lines.len()))
+                .skip(i + 1)
+            {
+                if line.contains("drop(inst)") || line.contains("drop(pooled)") {
                     drop_after_error_count += 1;
                     break;
                 }

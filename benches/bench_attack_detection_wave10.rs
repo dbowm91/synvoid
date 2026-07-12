@@ -11,7 +11,7 @@ fn benchmark_attack_detection_common(c: &mut Criterion) {
     let detector = Arc::new(AttackDetector::new(config));
     let headers = HeaderMap::new();
 
-    let benign_inputs = vec![
+    let benign_inputs = [
         "/api/users/123",
         "/api/v1/posts",
         "/static/css/style.css",
@@ -23,7 +23,14 @@ fn benchmark_attack_detection_common(c: &mut Criterion) {
     for input in &benign_inputs {
         group.bench_with_input(BenchmarkId::new("benign", input), input, |b, path| {
             b.iter(|| {
-                let _ = detector.check_request(TEST_IP, &Method::GET, path, None, &headers, None);
+                futures::executor::block_on(detector.check_request(
+                    TEST_IP,
+                    &Method::GET,
+                    path,
+                    None,
+                    &headers,
+                    None,
+                ));
             });
         });
     }
@@ -36,7 +43,7 @@ fn benchmark_attack_detection_sqli(c: &mut Criterion) {
     let detector = Arc::new(AttackDetector::new(config));
     let headers = HeaderMap::new();
 
-    let sqli_inputs = vec![
+    let sqli_inputs = [
         "1' OR '1'='1",
         "admin'--",
         "1 UNION SELECT password FROM users",
@@ -48,14 +55,14 @@ fn benchmark_attack_detection_sqli(c: &mut Criterion) {
     for (i, input) in sqli_inputs.iter().enumerate() {
         group.bench_with_input(BenchmarkId::new("query", i), input, |b, query| {
             b.iter(|| {
-                let _ = detector.check_request(
+                futures::executor::block_on(detector.check_request(
                     TEST_IP,
                     &Method::GET,
                     "/search",
                     Some(query),
                     &headers,
                     None,
-                );
+                ));
             });
         });
     }
@@ -68,7 +75,7 @@ fn benchmark_attack_detection_xss(c: &mut Criterion) {
     let detector = Arc::new(AttackDetector::new(config));
     let headers = HeaderMap::new();
 
-    let xss_inputs = vec![
+    let xss_inputs = [
         "<script>alert(1)</script>",
         "<img src=x onerror=alert(1)>",
         "javascript:alert(1)",
@@ -80,14 +87,14 @@ fn benchmark_attack_detection_xss(c: &mut Criterion) {
     for (i, input) in xss_inputs.iter().enumerate() {
         group.bench_with_input(BenchmarkId::new("query", i), input, |b, query| {
             b.iter(|| {
-                let _ = detector.check_request(
+                futures::executor::block_on(detector.check_request(
                     TEST_IP,
                     &Method::GET,
                     "/search",
                     Some(query),
                     &headers,
                     None,
-                );
+                ));
             });
         });
     }

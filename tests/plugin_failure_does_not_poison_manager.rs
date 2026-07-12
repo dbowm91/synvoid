@@ -5,7 +5,6 @@
 //! plugin manager state is unaffected.
 
 use std::path::Path;
-use std::time::Duration;
 
 use synvoid_plugin_runtime::sandbox::types::{
     PluginCapabilities, PluginCapability, PluginInvocationGuard, PluginLimits, PluginManifest,

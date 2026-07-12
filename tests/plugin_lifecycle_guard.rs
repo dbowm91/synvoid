@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 
 // ─── Helpers (shared with other guardrail tests) ──────────────────────────────
 
+#[allow(dead_code)]
 fn rust_files_under(dir: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     if !dir.is_dir() {
@@ -79,6 +80,7 @@ fn strip_comments_and_strings(content: &str) -> String {
     result
 }
 
+#[allow(dead_code)]
 fn cleaned_lines(cleaned: &str) -> Vec<(usize, &str)> {
     cleaned
         .lines()
@@ -214,7 +216,6 @@ fn duplicate_name_check_in_all_load_paths() {
             .map(|p| method_start + p)
             .unwrap_or(method_start);
         let mut brace_depth = 0i32;
-        let mut method_body = String::new();
         let mut end = body_start;
 
         for (i, ch) in raw[body_start..].char_indices() {
@@ -230,7 +231,7 @@ fn duplicate_name_check_in_all_load_paths() {
                 _ => {}
             }
         }
-        method_body = raw[body_start..end].to_string();
+        let method_body = raw[body_start..end].to_string();
 
         // Check 1: The method must contain "duplicate name" in a string literal
         let has_duplicate_string = method_body.contains("duplicate name");
@@ -585,7 +586,7 @@ fn plugin_reload_outcome_variants() {
             if let Some(variant) = trimmed
                 .split('{')
                 .next()
-                .and_then(|s| s.trim().split_whitespace().last())
+                .and_then(|s| s.split_whitespace().last())
             {
                 let clean = variant.trim_end_matches(',').trim_end_matches('}').trim();
                 if !clean.is_empty()
@@ -640,7 +641,7 @@ fn plugin_replace_policy_variants() {
             if let Some(variant) = trimmed
                 .split('{')
                 .next()
-                .and_then(|s| s.trim().split_whitespace().last())
+                .and_then(|s| s.split_whitespace().last())
             {
                 let clean = variant.trim_end_matches(',').trim_end_matches('}').trim();
                 if !clean.is_empty()
@@ -1338,7 +1339,7 @@ enabled = false
     #[test]
     fn prepare_reload_candidate_accepts_stability_policy() {
         use std::time::Duration;
-        use synvoid_plugin_runtime::{FileStabilityPolicy, WasmRuntime};
+        use synvoid_plugin_runtime::FileStabilityPolicy;
 
         let mgr = WasmPluginManager::new();
         let bytes = minimal_wasm_bytes();

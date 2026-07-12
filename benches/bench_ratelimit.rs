@@ -8,6 +8,7 @@ pub struct AtomicBucketWindow {
     buckets: Vec<AtomicU32>,
     bucket_count: usize,
     bucket_duration_ms: u64,
+    #[allow(dead_code)]
     current_bucket: AtomicU64,
     start_ms: u64,
 }

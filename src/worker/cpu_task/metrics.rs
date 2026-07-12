@@ -394,10 +394,11 @@ mod tests {
     #[test]
     fn test_snapshot_static_cpu_offload_stats_includes_new_fields() {
         let stats = snapshot_static_cpu_offload_stats(2048);
-        assert!(stats.queued_wasm_execute == 0 || stats.queued_wasm_execute > 0);
-        assert!(stats.active_wasm_execute == 0 || stats.active_wasm_execute > 0);
-        assert!(stats.queued_serverless_invoke == 0 || stats.queued_serverless_invoke > 0);
-        assert!(stats.active_serverless_invoke == 0 || stats.active_serverless_invoke > 0);
+        // These fields are u64 and can't be negative, just verify they exist
+        let _ = stats.queued_wasm_execute;
+        let _ = stats.active_wasm_execute;
+        let _ = stats.queued_serverless_invoke;
+        let _ = stats.active_serverless_invoke;
         assert_eq!(stats.worker_rss_bytes, 2048);
     }
 

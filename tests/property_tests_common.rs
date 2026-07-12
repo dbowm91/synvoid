@@ -1,6 +1,5 @@
 use proptest::prelude::*;
 
-/// URL encoding roundtrip: decode(encode(x)) == x for ASCII-safe strings
 proptest! {
     #[test]
     fn url_decode_encode_roundtrip(input in "[a-zA-Z0-9 _.-]{1,50}") {

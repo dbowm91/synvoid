@@ -1,7 +1,5 @@
 use ahash::AHashSet;
-use std::collections::{HashMap, HashSet};
-use std::net::SocketAddr;
-use std::sync::Arc;
+use std::collections::HashMap;
 
 use http::HeaderMap;
 use synvoid::config::site::ProxyHeadersConfig;
@@ -14,7 +12,6 @@ use synvoid::proxy::retry::{
 use synvoid::proxy::{
     apply_response_size_limit, build_forward_headers, filter_response_headers,
     is_hop_by_hop_header, join_upstream_url, sanitize_request_path, ForwardedProtocol,
-    ResponseSizeError,
 };
 use synvoid::router::{BackendType, RouteResult, Router};
 use synvoid::upstream::{Backend, LoadBalanceAlgorithm, UpstreamPool};
@@ -302,8 +299,8 @@ mod header_preservation_tests {
         let names: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
 
         assert!(names.contains(&"content-type"));
-        assert!(!names.iter().any(|n| *n == "server"));
-        assert!(!names.iter().any(|n| *n == "x-powered-by"));
+        assert!(!names.contains(&"server"));
+        assert!(!names.contains(&"x-powered-by"));
     }
 
     #[test]
@@ -327,8 +324,10 @@ mod header_preservation_tests {
         headers.insert("authorization", "Bearer token".parse().unwrap());
         headers.insert("x-internal-secret", "secret123".parse().unwrap());
 
-        let mut config = ProxyHeadersConfig::default();
-        config.hide = vec!["x-internal-secret".to_string()];
+        let config = ProxyHeadersConfig {
+            hide: vec!["x-internal-secret".to_string()],
+            ..Default::default()
+        };
 
         let forward = build_forward_headers(client_ip, &headers, &config, ForwardedProtocol::Https);
 
@@ -344,8 +343,10 @@ mod header_preservation_tests {
         headers.insert("x-custom", "value".parse().unwrap());
         headers.insert("accept", "*/*".parse().unwrap());
 
-        let mut config = ProxyHeadersConfig::default();
-        config.forward = vec!["accept".to_string()];
+        let config = ProxyHeadersConfig {
+            forward: vec!["accept".to_string()],
+            ..Default::default()
+        };
 
         let forward = build_forward_headers(client_ip, &headers, &config, ForwardedProtocol::Https);
 

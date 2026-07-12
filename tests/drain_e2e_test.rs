@@ -234,7 +234,7 @@ mod drain_e2e_tests {
         let mut worker_handles = Vec::new();
 
         for i in 0..worker_count {
-            let endpoint_clone = IpcEndpoint::new(&endpoint.name().to_string());
+            let endpoint_clone = IpcEndpoint::new(endpoint.name());
             let handle = tokio::spawn(async move {
                 let mut stream = endpoint_clone.connect().await.unwrap();
 
@@ -289,9 +289,7 @@ mod drain_e2e_tests {
             let _: Message = stream.recv().await.unwrap().unwrap();
         }
 
-        for i in 0..worker_count {
-            let stream = &mut master_streams[i];
-
+        for (i, stream) in master_streams.iter_mut().enumerate().take(worker_count) {
             stream
                 .send(&Message::WorkerDrain {
                     id: WorkerId(i),

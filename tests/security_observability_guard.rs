@@ -130,7 +130,7 @@ fn extract_label_keys(macro_line: &str) -> Vec<String> {
                     }
                     chars.next(); // consume opening quote
                     let mut key = String::new();
-                    while let Some(ch) = chars.next() {
+                    for ch in chars.by_ref() {
                         if ch == '"' {
                             break;
                         }
@@ -153,7 +153,7 @@ fn extract_label_keys(macro_line: &str) -> Vec<String> {
                     }
                     // Skip the value expression (up to next comma or closing paren).
                     let mut depth = 0i32;
-                    while let Some(ch) = chars.next() {
+                    for ch in chars.by_ref() {
                         match ch {
                             '(' | '[' | '{' => depth += 1,
                             ')' | ']' | '}' => {
@@ -180,8 +180,7 @@ fn extract_label_keys(macro_line: &str) -> Vec<String> {
 fn extract_metric_name(macro_line: &str) -> Option<String> {
     if let Some(start) = macro_line.find('(') {
         let rest = &macro_line[start + 1..];
-        if rest.starts_with('"') {
-            let after_quote = &rest[1..];
+        if let Some(after_quote) = rest.strip_prefix('"') {
             if let Some(end) = after_quote.find('"') {
                 return Some(after_quote[..end].to_string());
             }
@@ -552,8 +551,7 @@ fn observability_doc_covers_all_metric_prefixes() {
             for macro_name in METRIC_MACROS {
                 if let Some(pos) = cleaned.find(macro_name) {
                     let after_macro = &cleaned[pos + macro_name.len()..];
-                    if after_macro.starts_with('"') {
-                        let name_start = &after_macro[1..];
+                    if let Some(name_start) = after_macro.strip_prefix('"') {
                         if let Some(end) = name_start.find('"') {
                             let name = name_start[..end].to_string();
                             if name.starts_with("synvoid") {

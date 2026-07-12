@@ -3,6 +3,7 @@
 //! This test enforces that:
 //! 1. Enforcement files/functions cannot call raw lookup helpers directly.
 //! 2. Raw lookup helpers are allowlisted only for diagnostic/admin/shadow/docs paths.
+#![allow(clippy::needless_range_loop, clippy::manual_contains)]
 //! 3. Blocklist mutation from threat-intel files must be near a policy-composed actionability call.
 //! 4. ShadowOnly paths cannot call block/unblock APIs.
 //! 5. LegacyUnknown is not used for new threat-intel blocklist writes.

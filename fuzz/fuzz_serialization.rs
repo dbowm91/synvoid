@@ -50,6 +50,6 @@ fuzz_target!(|data: &[u8]| {
 mod tests {
     #[test]
     fn test_fuzz_target_compiles() {
-        assert!(true);
+        // Fuzz target compile check; no-op assertion needed.
     }
 }

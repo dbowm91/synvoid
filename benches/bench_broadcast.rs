@@ -4,6 +4,7 @@ use std::time::Instant;
 
 struct MockPeer {
     id: String,
+    #[allow(dead_code)]
     latency_us: u64,
 }
 
@@ -39,6 +40,7 @@ impl BroadcastMetrics {
         self.total_acked.fetch_add(1, Ordering::Relaxed);
     }
 
+    #[allow(dead_code)]
     fn record_failure(&self) {
         self.total_failed.fetch_add(1, Ordering::Relaxed);
     }
@@ -74,7 +76,7 @@ fn benchmark_broadcast_latency(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::from_parameter(peer_count),
             peer_count,
-            |b, &peer_count| {
+            |b, &_peer_count| {
                 b.iter(|| {
                     broadcast_to_peers(&peers, &metrics, 0.5);
                 });

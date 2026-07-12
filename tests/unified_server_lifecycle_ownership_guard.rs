@@ -12,7 +12,7 @@ fn rust_files_under(dirs: &[PathBuf]) -> Vec<PathBuf> {
             let path = entry.path();
             if path.is_dir() {
                 files.extend(rust_files_under(&[path]));
-            } else if path.extension().map_or(false, |e| e == "rs") {
+            } else if path.extension().is_some_and(|e| e == "rs") {
                 files.push(path);
             }
         }
@@ -75,6 +75,7 @@ fn strip_comments_and_strings(content: &str) -> String {
 }
 
 /// Collect lines with their 1-indexed line numbers from cleaned text.
+#[allow(dead_code)]
 fn cleaned_lines(cleaned: &str) -> Vec<(usize, &str)> {
     cleaned
         .lines()
@@ -206,7 +207,7 @@ fn unified_server_runtime_handles_are_integrated() {
 /// - plugin_runtime.rs (short-lived callback spawns)
 /// - waf_handler.rs (short-lived request processing)
 /// - Test modules
-/// All other direct tokio::spawn calls in src/server/ are rejected.
+///   All other direct tokio::spawn calls in src/server/ are rejected.
 #[test]
 fn server_long_lived_spawns_go_through_registration() {
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

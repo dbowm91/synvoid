@@ -472,10 +472,23 @@ impl SignedIpcMessage {
         data: &[u8],
         signer: &IpcSigner,
     ) -> io::Result<T> {
-        // The framing (4 bytes length) is already stripped by the caller in current implementation
-        // but wait, serialize_signed added it back. Let's see how it's used.
+        if data.len() < 4 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "signed message too short",
+            ));
+        }
+        let frame_len = u32::from_be_bytes(data[..4].try_into().unwrap()) as usize;
 
-        let envelope: IpcEnvelope = synvoid_utils::serialization::deserialize(data)?;
+        if frame_len > MAX_IPC_MESSAGE_SIZE {
+            increment_oversized_rejected();
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "signed message too large",
+            ));
+        }
+
+        let envelope: IpcEnvelope = synvoid_utils::serialization::deserialize(&data[4..])?;
 
         if !verify_timestamp(envelope.timestamp) {
             return Err(io::Error::new(

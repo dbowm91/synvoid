@@ -468,7 +468,7 @@ mod minifier_tests {
         let _misses = cache.cache_misses();
 
         let rate = cache.cache_hit_rate();
-        assert!(rate >= 0.0 && rate <= 100.0);
+        assert!((0.0..=100.0).contains(&rate));
     }
 
     #[test]

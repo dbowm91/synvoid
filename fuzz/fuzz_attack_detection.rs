@@ -34,20 +34,20 @@ fuzz_target!(|data: &[u8]| {
     let config = AttackDetectionConfig::default();
     let detector = AttackDetector::new(config);
 
-    let _ = detector.check_request(
+    drop(detector.check_request(
         "127.0.0.1".parse::<IpAddr>().unwrap(),
         &method,
         &path,
         query.as_deref(),
         &http::HeaderMap::new(),
         None,
-    );
+    ));
 });
 
 #[cfg(test)]
 mod tests {
     #[test]
     fn test_fuzz_target_compiles() {
-        assert!(true);
+        // Fuzz target compile check; no-op assertion needed.
     }
 }

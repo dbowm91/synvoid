@@ -1115,10 +1115,12 @@ fn abort_always_followed_by_await() {
 
 #[test]
 fn rollback_report_session_fields_separated() {
-    let mut report = RollbackReport::default();
-    report.peer_sessions_drained = 3;
-    report.peer_sessions_aborted = 1;
-    report.peer_sessions_failed = 2;
+    let report = RollbackReport {
+        peer_sessions_drained: 3,
+        peer_sessions_aborted: 1,
+        peer_sessions_failed: 2,
+        ..Default::default()
+    };
 
     assert_eq!(report.peer_sessions_drained, 3);
     assert_eq!(report.peer_sessions_aborted, 1);
@@ -1131,10 +1133,12 @@ fn rollback_report_session_fields_separated() {
 
 #[test]
 fn shutdown_report_has_failed_peer_sessions() {
-    let mut report = MeshShutdownReport::default();
-    report.drained_peer_sessions = 5;
-    report.aborted_peer_sessions = 2;
-    report.failed_peer_sessions = 1;
+    let report = MeshShutdownReport {
+        drained_peer_sessions: 5,
+        aborted_peer_sessions: 2,
+        failed_peer_sessions: 1,
+        ..Default::default()
+    };
 
     assert_eq!(report.drained_peer_sessions, 5);
     assert_eq!(report.aborted_peer_sessions, 2);
@@ -2471,8 +2475,6 @@ async fn dht_add_peer_checked_rejects_uninitialized() {
 
 #[test]
 fn dht_hook_fires_after_initialization_before_peers() {
-    use std::sync::atomic::{AtomicBool, Ordering};
-
     let config = Arc::new(MeshConfig::default());
     let rm = Arc::new(DhtRoutingManager::new(config.clone()));
 
