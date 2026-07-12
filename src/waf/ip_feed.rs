@@ -27,7 +27,7 @@ impl BlockedNetwork {
             (BlockedNetwork::Ipv4(net, prefix), IpAddr::V4(target)) => {
                 let network = u32::from(*net);
                 let target_bits = u32::from(*target);
-                let mask = !((1u32 << (32 - *prefix)) - 1);
+                let mask = synvoid_core::net::ipv4_prefix_mask(*prefix);
                 (network & mask) == (target_bits & mask)
             }
             (BlockedNetwork::Ipv6(net, prefix), IpAddr::V6(target)) => {

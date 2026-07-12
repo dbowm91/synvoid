@@ -26,6 +26,19 @@ End-to-end handling of proxied HTTP/HTTPS requests including upstream selection,
 | `governor.rs` | `GlobalCacheGovernor` - memory limiter for concurrent cache buffering (512MB default) |
 | `client_registry.rs` | Per-site HTTP client caching to avoid recreating clients |
 
+### Security boundary notes
+
+- Forwarded-header and mesh-upstream validation share the restricted-address
+  classifier in `synvoid-core`. It rejects private, link-local, unique-local,
+  multicast, shared-address, benchmarking, unspecified, and reserved ranges,
+  including the full `fd00::/8` and `225.0.0.0/8` subranges that are easy to
+  miss with exact-prefix comparisons.
+- IPv4 CIDR matching treats `/0` as a valid prefix. Prefix helpers must not
+  shift by 32 when processing operator-supplied proxy or feed configuration.
+- `X-Forwarded-For` is rebuilt from validated public addresses and is bounded
+  to `MAX_XFF_CHAIN_LENGTH`; client-supplied forwarding headers are never
+  trusted as-is.
+
 ### Main Structs
 
 **`ProxyServer`** (mod.rs:73-94)

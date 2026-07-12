@@ -1,9 +1,6 @@
 use std::io::{self, Read, Write};
 use std::sync::{Arc, LazyLock};
 
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
-
 use dashmap::DashMap;
 use hmac::{Hmac, Mac};
 use sha3::Sha3_256;
@@ -72,29 +69,19 @@ const REPLAY_WINDOW_SECS: u64 = 60;
 fn check_and_insert_nonce(signer_id: u64, nonce: &[u8; 16], timestamp: u64) -> bool {
     let key = (signer_id, *nonce);
 
-    if NONCE_CACHE.get(&key).is_some() {
-        return false;
-    }
+    let cutoff = timestamp.saturating_sub(REPLAY_WINDOW_SECS);
+    NONCE_CACHE.retain(|_, cached_timestamp| *cached_timestamp > cutoff);
 
-    if NONCE_CACHE.len() >= MAX_NONCE_CACHE_SIZE {
-        let now = timestamp;
-        let oldest_key = NONCE_CACHE
-            .iter()
-            .filter(|entry| *entry.value() <= now.saturating_sub(REPLAY_WINDOW_SECS))
-            .min_by_key(|entry| *entry.value())
-            .map(|entry| entry.key().clone());
-        if let Some(key_to_remove) = oldest_key {
-            NONCE_CACHE.remove(&key_to_remove);
-        } else {
-            let first_key = NONCE_CACHE.iter().next().map(|e| e.key().clone());
-            if let Some(key_to_remove) = first_key {
-                NONCE_CACHE.remove(&key_to_remove);
-            }
+    use dashmap::mapref::entry::Entry;
+    let cache_full = NONCE_CACHE.len() >= MAX_NONCE_CACHE_SIZE;
+    match NONCE_CACHE.entry(key) {
+        Entry::Occupied(_) => false,
+        Entry::Vacant(_entry) if cache_full => false,
+        Entry::Vacant(entry) => {
+            entry.insert(timestamp);
+            true
         }
     }
-
-    NONCE_CACHE.insert(key, timestamp);
-    true
 }
 
 fn generate_nonce() -> [u8; 16] {
@@ -109,6 +96,26 @@ fn verify_timestamp(timestamp: u64) -> bool {
     let now = crate::utils::current_timestamp();
     let diff = now.abs_diff(timestamp);
     diff <= REPLAY_WINDOW_SECS
+}
+
+#[cfg(unix)]
+fn open_secure_key_file(path: &std::path::Path) -> Option<std::fs::File> {
+    use libc::{O_CLOEXEC, O_NOFOLLOW, O_RDONLY};
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        .open(path)
+        .ok()?;
+    let metadata = file.metadata().ok()?;
+    if !metadata.is_file()
+        || metadata.mode() & 0o022 != 0
+        || metadata.uid() != unsafe { libc::getuid() } as u32
+    {
+        return None;
+    }
+    Some(file)
 }
 
 pub struct IpcSigner {
@@ -149,28 +156,9 @@ impl IpcSigner {
     pub fn try_from_env() -> Option<Self> {
         #[cfg(unix)]
         {
-            use libc::O_NOFOLLOW;
             if let Ok(key_file) = std::env::var("SYNVOID_IPC_KEY_FILE") {
                 let path = std::path::Path::new(&key_file);
-
-                if let Ok(meta) = path.metadata() {
-                    use std::os::unix::fs::MetadataExt;
-                    if meta.mode() & 0o222 != 0 {
-                        return None;
-                    }
-                    if meta.uid() != unsafe { libc::getuid() } as u32 {
-                        return None;
-                    }
-                }
-
-                let file = match std::fs::OpenOptions::new()
-                    .read(true)
-                    .custom_flags(libc::O_RDONLY | O_NOFOLLOW | libc::O_CLOEXEC)
-                    .open(path)
-                {
-                    Ok(f) => f,
-                    Err(_) => return None,
-                };
+                let file = open_secure_key_file(path)?;
 
                 let mut key_hex = String::new();
                 std::io::Read::read_to_string(&mut std::io::BufReader::new(&file), &mut key_hex)
@@ -267,6 +255,13 @@ impl<W> SignedWriter<W> {
 
 impl<W: Write> Write for SignedWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let max_payload = MAX_IPC_MESSAGE_SIZE - SIGNED_MESSAGE_OVERHEAD;
+        if buf.len() > max_payload.saturating_sub(self.buffer.len()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "signed message payload too large",
+            ));
+        }
         self.buffer.extend_from_slice(buf);
         Ok(buf.len())
     }
@@ -456,6 +451,13 @@ impl SignedIpcMessage {
         };
 
         let mut result = crate::serialization::serialize(&envelope)?;
+        if result.len() > MAX_IPC_MESSAGE_SIZE {
+            increment_oversized_rejected();
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "signed message too large",
+            ));
+        }
 
         // We still need to prefix with length for the framing layer if we want to stay compatible
         // with the existing read_message logic, OR we change read_message to handle postcard's
@@ -472,10 +474,26 @@ impl SignedIpcMessage {
         data: &[u8],
         signer: &IpcSigner,
     ) -> io::Result<T> {
-        // The framing (4 bytes length) is already stripped by the caller in current implementation
-        // but wait, serialize_signed added it back. Let's see how it's used.
+        if data.len() < 4 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "signed message too short",
+            ));
+        }
+        let frame_len = u32::from_be_bytes(
+            data[..4]
+                .try_into()
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "bad frame length"))?,
+        ) as usize;
+        if frame_len > MAX_IPC_MESSAGE_SIZE || frame_len != data.len() - 4 {
+            increment_oversized_rejected();
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "signed message frame length mismatch",
+            ));
+        }
 
-        let envelope: IpcEnvelope = crate::serialization::deserialize(data)?;
+        let envelope: IpcEnvelope = crate::serialization::deserialize(&data[4..])?;
 
         if !verify_timestamp(envelope.timestamp) {
             return Err(io::Error::new(
@@ -529,7 +547,10 @@ impl SignedIpcMessage {
         let mut raw = vec![0u8; total_len];
         stream.read_exact(&mut raw).map_err(io::Error::other)?;
 
-        Self::deserialize_signed(&raw, signer).map(Some)
+        let mut framed = Vec::with_capacity(4 + raw.len());
+        framed.extend_from_slice(&(total_len as u32).to_be_bytes());
+        framed.extend_from_slice(&raw);
+        Self::deserialize_signed(&framed, signer).map(Some)
     }
 }
 
@@ -543,26 +564,7 @@ pub fn generate_session_key() -> [u8; 32] {
 
 #[cfg(unix)]
 fn read_ipc_key_file_impl(path: &std::path::Path) -> Option<Arc<IpcSigner>> {
-    use libc::O_NOFOLLOW;
-
-    if let Ok(meta) = path.metadata() {
-        use std::os::unix::fs::MetadataExt;
-        if meta.mode() & 0o222 != 0 {
-            return None;
-        }
-        if meta.uid() != unsafe { libc::getuid() } as u32 {
-            return None;
-        }
-    }
-
-    let file = match std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_RDONLY | O_NOFOLLOW | libc::O_CLOEXEC)
-        .open(path)
-    {
-        Ok(f) => f,
-        Err(_) => return None,
-    };
+    let file = open_secure_key_file(path)?;
 
     let mut key_hex = String::new();
     std::io::Read::read_to_string(&mut std::io::BufReader::new(&file), &mut key_hex).ok()?;

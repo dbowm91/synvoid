@@ -19,7 +19,7 @@ impl TrustedProxy {
             (TrustedProxy::IPv4(net, prefix), IpAddr::V4(ip)) => {
                 let network = u32::from(*net);
                 let ip_bits = u32::from(ip);
-                let mask = !((1u32 << (32 - prefix)) - 1);
+                let mask = synvoid_core::net::ipv4_prefix_mask(*prefix);
                 (network & mask) == (ip_bits & mask)
             }
             (TrustedProxy::IPv6(net, prefix), IpAddr::V6(ip)) => {
@@ -198,25 +198,7 @@ impl RequestSanitizer {
     }
 
     fn is_private_ip(&self, ip: &IpAddr) -> bool {
-        match ip {
-            IpAddr::V4(ipv4) => {
-                let octets = ipv4.octets();
-                octets[0] == 10
-                    || (octets[0] == 172 && (16..=31).contains(&octets[1]))
-                    || (octets[0] == 192 && octets[1] == 168)
-                    || octets[0] == 127
-                    || octets[0] == 0
-            }
-            IpAddr::V6(ipv6) => {
-                let segments = ipv6.segments();
-                segments[0] == 0xfc00
-                    || segments[0] == 0xfe00
-                    || (segments[0] & 0xffc0) == 0xfe80
-                    || segments == [0, 0, 0, 0, 0, 0, 0, 1]
-                    || segments == [0, 0, 0, 0, 0, 0, 0, 0]
-                    || (segments[0] & 0xff00) == 0xff00
-            }
-        }
+        synvoid_core::net::is_restricted_ip(ip)
     }
 }
 
@@ -373,5 +355,23 @@ mod tests {
         let client_ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 10));
         let result = sanitizer.get_real_ip(&headers, client_ip);
         assert_eq!(result, Some(client_ip));
+    }
+
+    #[test]
+    fn test_trusted_proxy_zero_prefix_does_not_panic() {
+        let sanitizer = RequestSanitizer::new(vec!["0.0.0.0/0".to_string()], true);
+        assert!(sanitizer.is_trusted_proxy("203.0.113.10".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_restricted_ipv6_and_multicast_addresses_are_not_client_ips() {
+        let sanitizer = RequestSanitizer::new(vec!["10.0.0.10".to_string()], true);
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "fd00::1, 10.0.0.10".parse().unwrap());
+        let client_ip = "10.0.0.10".parse().unwrap();
+        assert_eq!(sanitizer.get_real_ip(&headers, client_ip), Some(client_ip));
+
+        headers.insert("x-forwarded-for", "225.1.1.1, 10.0.0.10".parse().unwrap());
+        assert_eq!(sanitizer.get_real_ip(&headers, client_ip), Some(client_ip));
     }
 }

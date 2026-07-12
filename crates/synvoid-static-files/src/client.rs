@@ -530,7 +530,10 @@ where
             .read_exact(&mut raw)
             .await
             .map_err(io::Error::other)?;
-        synvoid_ipc::SignedIpcMessage::deserialize_signed(&raw, signer).map(Some)
+        let mut framed = Vec::with_capacity(4 + raw.len());
+        framed.extend_from_slice(&len_buf);
+        framed.extend_from_slice(&raw);
+        synvoid_ipc::SignedIpcMessage::deserialize_signed(&framed, signer).map(Some)
     } else {
         synvoid_ipc::ipc_framing::read_message(reader, buffer).await
     }

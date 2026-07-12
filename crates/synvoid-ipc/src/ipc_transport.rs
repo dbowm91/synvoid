@@ -421,7 +421,10 @@ impl IpcStream {
                 .await
                 .map_err(io::Error::other)?;
 
-            match SignedIpcMessage::deserialize_signed(&data, signer) {
+            let mut framed = Vec::with_capacity(4 + data.len());
+            framed.extend_from_slice(&len_buf);
+            framed.extend_from_slice(&data);
+            match SignedIpcMessage::deserialize_signed(&framed, signer) {
                 Ok(msg) => Ok(Some(msg)),
                 Err(e) => Err(e),
             }

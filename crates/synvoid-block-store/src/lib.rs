@@ -11,7 +11,7 @@
 
 use ahash::AHashMap;
 use metrics::counter;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashSet, VecDeque};
 use std::net::IpAddr;
@@ -501,7 +501,7 @@ impl BlockEntry {
             return false;
         }
         let now = synvoid_utils::safe_unix_timestamp();
-        now > self.blocked_at + self.ban_expire_seconds
+        now > self.blocked_at.saturating_add(self.ban_expire_seconds)
     }
 
     pub fn key(site_scope: &str, ip: &IpAddr) -> String {
@@ -510,7 +510,7 @@ impl BlockEntry {
 
     pub fn update_access(&mut self) {
         let now = synvoid_utils::safe_unix_timestamp();
-        self.access_count += 1;
+        self.access_count = self.access_count.saturating_add(1);
         self.last_access = now;
     }
 }
@@ -524,6 +524,8 @@ pub struct BlockStore {
     config: DenyListLimitsConfig,
     total_entries: AtomicUsize,
     total_mesh_entries: AtomicUsize,
+    capacity_lock: Mutex<()>,
+    mesh_capacity_lock: Mutex<()>,
     persist_tx: Option<mpsc::Sender<PersistRequest>>,
     shutdown_tx: Option<mpsc::Sender<()>>,
     mitigation_provider: arc_swap::ArcSwapOption<SizedMitigationProvider>,
@@ -582,6 +584,12 @@ impl BlockStore {
         } else {
             DEFAULT_MAX_ENTRIES
         };
+        // Keep the effective default in the stored config as well. Several
+        // mutation paths consult the config directly; leaving a zero value
+        // there made one path reject every entry while another used the
+        // default correctly.
+        let mut config = config;
+        config.max_entries = max_entries;
 
         let mut shards = Vec::with_capacity(NUM_SHARDS);
         for _ in 0..NUM_SHARDS {
@@ -599,7 +607,7 @@ impl BlockStore {
                     Ok(content) => match serde_json::from_str::<Vec<BlockEntry>>(&content) {
                         Ok(entries) => {
                             let mut parse_errors = 0;
-                            for e in entries {
+                            for e in entries.into_iter().take(max_entries) {
                                 match e.ip.parse::<IpAddr>() {
                                     Ok(ip) => {
                                         if !e.is_expired() {
@@ -652,7 +660,7 @@ impl BlockStore {
                 match std::fs::read_to_string(mesh_path) {
                     Ok(content) => match serde_json::from_str::<Vec<MeshBlockEntry>>(&content) {
                         Ok(entries) => {
-                            for e in entries {
+                            for e in entries.into_iter().take(max_entries) {
                                 if !e.is_expired() {
                                     let key = MeshBlockEntry::key(&e.site_scope, &e.mesh_id);
                                     let idx = Self::shard_index(&key);
@@ -881,6 +889,8 @@ impl BlockStore {
             config,
             total_entries: AtomicUsize::new(initial_count),
             total_mesh_entries: AtomicUsize::new(initial_mesh_count),
+            capacity_lock: Mutex::new(()),
+            mesh_capacity_lock: Mutex::new(()),
             persist_tx,
             shutdown_tx,
             mitigation_provider: arc_swap::ArcSwapOption::const_empty(),
@@ -1253,6 +1263,35 @@ impl BlockStore {
         }
     }
 
+    /// Evict the least recently accessed mesh-ID entry.
+    fn evict_lru_mesh(&self) -> bool {
+        let mut min_key: Option<String> = None;
+        let mut min_shard_idx: Option<usize> = None;
+        let mut min_last_access = u64::MAX;
+
+        for (idx, shard) in self.mesh_shards.iter().enumerate() {
+            let store = shard.read();
+            if let Some((key, entry)) = store.iter().min_by_key(|(_, entry)| entry.last_access) {
+                if entry.last_access < min_last_access {
+                    min_last_access = entry.last_access;
+                    min_key = Some(key.clone());
+                    min_shard_idx = Some(idx);
+                }
+            }
+        }
+
+        if let Some((key, idx)) = min_key.zip(min_shard_idx) {
+            self.mesh_shards[idx].write().remove(&key);
+            let _ =
+                self.total_mesh_entries
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
+            tracing::debug!("Evicted LRU mesh block entry: {}", key);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Block an IP address.
     ///
     /// Adds an IP to the blocklist with the given reason and duration.
@@ -1287,28 +1326,34 @@ impl BlockStore {
         let key = BlockEntry::key(site_scope, &ip);
         let idx = Self::shard_index(&key);
 
-        let is_new = !self.shards[idx].read().contains_key(&key);
+        {
+            // Capacity admission and insertion must be serialized. Otherwise
+            // concurrent requests can all observe free capacity and exceed the
+            // configured global limit.
+            let _capacity_guard = self.capacity_lock.lock();
+            let is_new = !self.shards[idx].read().contains_key(&key);
 
-        if is_new {
-            let max_entries = self.config.max_entries;
-            let current = self.total_entries.load(Ordering::Relaxed);
-            if current >= max_entries {
-                tracing::info!(
-                    "Block store at capacity ({} >= {}), evicting LRU entry",
-                    current,
-                    max_entries
-                );
-                if !self.evict_lru() {
-                    tracing::warn!("Failed to evict LRU entry, cannot add new block");
-                    return false;
+            if is_new {
+                let max_entries = self.config.max_entries;
+                let current = self.total_entries.load(Ordering::Relaxed);
+                if current >= max_entries {
+                    tracing::info!(
+                        "Block store at capacity ({} >= {}), evicting LRU entry",
+                        current,
+                        max_entries
+                    );
+                    if !self.evict_lru() {
+                        tracing::warn!("Failed to evict LRU entry, cannot add new block");
+                        return false;
+                    }
                 }
             }
-        }
 
-        self.shards[idx].write().insert(key, entry);
+            self.shards[idx].write().insert(key, entry);
 
-        if is_new {
-            self.total_entries.fetch_add(1, Ordering::Relaxed);
+            if is_new {
+                self.total_entries.fetch_add(1, Ordering::Relaxed);
+            }
         }
 
         tracing::info!("Blocked IP {} for {} (scope: {})", ip, reason, site_scope);
@@ -1356,28 +1401,31 @@ impl BlockStore {
         let key = BlockEntry::key(site_scope, &ip);
         let idx = Self::shard_index(&key);
 
-        let is_new = !self.shards[idx].read().contains_key(&key);
+        {
+            let _capacity_guard = self.capacity_lock.lock();
+            let is_new = !self.shards[idx].read().contains_key(&key);
 
-        if is_new {
-            let max_entries = self.config.max_entries;
-            let current = self.total_entries.load(Ordering::Relaxed);
-            if current >= max_entries {
-                tracing::info!(
-                    "Block store at capacity ({} >= {}), evicting LRU entry",
-                    current,
-                    max_entries
-                );
-                if !self.evict_lru() {
-                    tracing::warn!("Failed to evict LRU entry, cannot add new block");
-                    return false;
+            if is_new {
+                let max_entries = self.config.max_entries;
+                let current = self.total_entries.load(Ordering::Relaxed);
+                if current >= max_entries {
+                    tracing::info!(
+                        "Block store at capacity ({} >= {}), evicting LRU entry",
+                        current,
+                        max_entries
+                    );
+                    if !self.evict_lru() {
+                        tracing::warn!("Failed to evict LRU entry, cannot add new block");
+                        return false;
+                    }
                 }
             }
-        }
 
-        self.shards[idx].write().insert(key, entry);
+            self.shards[idx].write().insert(key, entry);
 
-        if is_new {
-            self.total_entries.fetch_add(1, Ordering::Relaxed);
+            if is_new {
+                self.total_entries.fetch_add(1, Ordering::Relaxed);
+            }
         }
 
         tracing::info!("Blocked IP {} for {} (scope: {})", ip, reason, site_scope);
@@ -1569,53 +1617,20 @@ impl BlockStore {
         ban_expire_seconds: u64,
         site_scope: &str,
     ) -> bool {
-        if !self.enabled {
+        let Ok(ip_addr) = ip.parse::<IpAddr>() else {
             return false;
-        }
+        };
 
-        if let Ok(ip_addr) = ip.parse::<IpAddr>() {
-            let key = BlockEntry::key(site_scope, &ip_addr);
-            let idx = Self::shard_index(&key);
-
-            let mut store = self.shards[idx].write();
-            let is_new = !store.contains_key(&key);
-
-            if is_new && store.len() >= self.config.max_entries {
-                tracing::warn!(
-                    "BlockStore max entries reached, cannot add new block for {}",
-                    ip
-                );
-                return false;
-            }
-
-            let entry = BlockEntry::new(
-                ip_addr,
-                reason.to_string(),
-                ban_expire_seconds,
-                site_scope.to_string(),
-            );
-
-            store.insert(key, entry);
-
-            if is_new {
-                self.total_entries.fetch_add(1, Ordering::Relaxed);
-            }
-
-            // Record target state so stale replay protection survives restarts.
-            self.record_target_state_from_direct_op(
-                BlockTargetKind::Ip,
-                site_scope,
-                ip,
-                BlocklistOperation::Block,
-                synvoid_utils::safe_unix_timestamp(),
-                None,
-                BlockProvenance::default(),
-            );
-
-            return true;
-        }
-
-        false
+        // Keep this compatibility API on the same globally bounded path as
+        // the newer provenance-aware API. The former used a shard-local limit,
+        // allowing up to NUM_SHARDS times the configured number of entries.
+        self.block_ip_with_provenance(
+            ip_addr,
+            reason,
+            ban_expire_seconds,
+            site_scope,
+            BlockProvenance::default(),
+        )
     }
 
     pub fn get_all_mesh_entries(&self) -> Vec<MeshBlockEntry> {
@@ -1685,13 +1700,24 @@ impl BlockStore {
         let key = MeshBlockEntry::key(site_scope, mesh_id);
         let idx = Self::shard_index(&key);
 
-        let mut store = self.mesh_shards[idx].write();
-        let is_new = !store.contains_key(&key);
-        store.insert(key, entry);
-        if is_new {
-            self.total_mesh_entries.fetch_add(1, Ordering::Relaxed);
+        {
+            let _capacity_guard = self.mesh_capacity_lock.lock();
+            let is_new = !self.mesh_shards[idx].read().contains_key(&key);
+
+            if is_new {
+                let max_entries = self.config.max_entries;
+                let current = self.total_mesh_entries.load(Ordering::Relaxed);
+                if current >= max_entries && !self.evict_lru_mesh() {
+                    tracing::warn!("Mesh block store at capacity, cannot add new block");
+                    return false;
+                }
+            }
+
+            self.mesh_shards[idx].write().insert(key, entry);
+            if is_new {
+                self.total_mesh_entries.fetch_add(1, Ordering::Relaxed);
+            }
         }
-        drop(store);
 
         tracing::info!(
             "Blocked mesh_id {} for {} (scope: {})",
@@ -2290,20 +2316,23 @@ impl BlockStore {
         let key = BlockEntry::key(&record.site_scope, &ip);
         let idx = Self::shard_index(&key);
 
-        let is_new = !self.shards[idx].read().contains_key(&key);
+        {
+            let _capacity_guard = self.capacity_lock.lock();
+            let is_new = !self.shards[idx].read().contains_key(&key);
 
-        if is_new {
-            let max_entries = self.config.max_entries;
-            let current = self.total_entries.load(Ordering::Relaxed);
-            if current >= max_entries && !self.evict_lru() {
-                return false;
+            if is_new {
+                let max_entries = self.config.max_entries;
+                let current = self.total_entries.load(Ordering::Relaxed);
+                if current >= max_entries && !self.evict_lru() {
+                    return false;
+                }
             }
-        }
 
-        self.shards[idx].write().insert(key, entry);
+            self.shards[idx].write().insert(key, entry);
 
-        if is_new {
-            self.total_entries.fetch_add(1, Ordering::Relaxed);
+            if is_new {
+                self.total_entries.fetch_add(1, Ordering::Relaxed);
+            }
         }
 
         if record.site_scope == "global" {
@@ -2365,13 +2394,22 @@ impl BlockStore {
         let key = MeshBlockEntry::key(&record.site_scope, &record.identifier);
         let idx = Self::shard_index(&key);
 
-        let mut store = self.mesh_shards[idx].write();
-        let is_new = !store.contains_key(&key);
-        store.insert(key, entry);
-        if is_new {
-            self.total_mesh_entries.fetch_add(1, Ordering::Relaxed);
+        {
+            let _capacity_guard = self.mesh_capacity_lock.lock();
+            let is_new = !self.mesh_shards[idx].read().contains_key(&key);
+            if is_new {
+                let max_entries = self.config.max_entries;
+                let current = self.total_mesh_entries.load(Ordering::Relaxed);
+                if current >= max_entries && !self.evict_lru_mesh() {
+                    return false;
+                }
+            }
+
+            self.mesh_shards[idx].write().insert(key, entry);
+            if is_new {
+                self.total_mesh_entries.fetch_add(1, Ordering::Relaxed);
+            }
         }
-        drop(store);
 
         // Record target state using the snapshot's blocked_at timestamp, not local time.
         {
@@ -3318,6 +3356,94 @@ mod tests {
         // (since is_blocked updates last_access and makes the other more recently used)
         // But due to second-level timestamp precision, this is not guaranteed
         // So we just verify exactly 2 entries remain and ip3 is one of them
+    }
+
+    #[test]
+    fn test_expiration_does_not_overflow() {
+        let entry = BlockEntry {
+            ip: "10.0.0.1".to_string(),
+            reason: "overflow-test".to_string(),
+            blocked_at: u64::MAX - 1,
+            ban_expire_seconds: 10,
+            site_scope: "global".to_string(),
+            access_count: 0,
+            last_access: u64::MAX - 1,
+            provenance: BlockProvenance::default(),
+        };
+        assert!(!entry.is_expired());
+    }
+
+    #[tokio::test]
+    async fn test_block_store_capacity_is_global_for_compatibility_api() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(
+            true,
+            Some(temp_dir.path().to_path_buf()),
+            DenyListLimitsConfig {
+                max_entries: 2,
+                ..default_config()
+            },
+        );
+
+        for octet in 1..=32 {
+            assert!(store.add_block(&format!("10.0.0.{octet}"), "capacity-test", 3600, "global"));
+        }
+        assert_eq!(store.get_stats().total_entries, 2);
+    }
+
+    #[tokio::test]
+    async fn test_block_store_capacity_is_global_under_concurrency() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = Arc::new(BlockStore::new(
+            true,
+            Some(temp_dir.path().to_path_buf()),
+            DenyListLimitsConfig {
+                max_entries: 4,
+                ..default_config()
+            },
+        ));
+
+        let mut handles = Vec::new();
+        for octet in 1..=32u8 {
+            let store = Arc::clone(&store);
+            handles.push(tokio::task::spawn_blocking(move || {
+                store.block_ip(
+                    IpAddr::V4(std::net::Ipv4Addr::new(10, 1, 0, octet)),
+                    "concurrency-test",
+                    3600,
+                    "global",
+                )
+            }));
+        }
+        for handle in handles {
+            handle.await.unwrap();
+        }
+
+        assert!(store.get_stats().total_entries <= 4);
+    }
+
+    #[tokio::test]
+    async fn test_mesh_block_store_obeys_capacity() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = BlockStore::new(
+            true,
+            Some(temp_dir.path().to_path_buf()),
+            DenyListLimitsConfig {
+                max_entries: 2,
+                ..default_config()
+            },
+        );
+
+        for id in 1..=16 {
+            assert!(store.block_mesh_id_with_provenance(
+                &format!("node-{id}"),
+                "capacity-test",
+                3600,
+                "global",
+                BlockProvenance::default(),
+            ));
+        }
+        assert_eq!(store.get_mesh_stats(), 2);
     }
 
     #[test]

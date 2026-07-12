@@ -132,32 +132,9 @@ impl SsrfDetector {
     }
 
     fn check_is_private_ip(ip_str: &str) -> bool {
-        ip_str.parse::<IpAddr>().is_ok_and(|addr| match addr {
-            IpAddr::V4(v4) => {
-                let octets = v4.octets();
-                octets[0] == 10
-                    || (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31)
-                    || (octets[0] == 192 && octets[1] == 168)
-                    || (octets[0] == 169 && octets[1] == 254)
-                    || octets[0] == 127
-            }
-            IpAddr::V6(v6) => {
-                if let Some(ipv4) = v6.to_ipv4_mapped() {
-                    let octets = ipv4.octets();
-                    octets[0] == 10
-                        || (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31)
-                        || (octets[0] == 192 && octets[1] == 168)
-                        || (octets[0] == 169 && octets[1] == 254)
-                        || octets[0] == 127
-                } else {
-                    let segments = v6.segments();
-                    segments[0] == 0xFE80
-                        || (segments[0] & 0xFE80) == 0xFC00
-                        || segments[0] == 0xFF00
-                        || segments == [0, 0, 0, 0, 0, 0, 0, 1]
-                }
-            }
-        })
+        ip_str
+            .parse::<IpAddr>()
+            .is_ok_and(|addr| synvoid_core::net::is_restricted_ip(&addr))
     }
 
     fn extract_ips_from_url(input_lower: &str) -> Vec<String> {

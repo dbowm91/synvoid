@@ -206,6 +206,17 @@ The IPC session key secures communication between the Supervisor and worker proc
    └── Deletes temp file immediately after reading
 ```
 
+The file handoff is accepted when the file is regular, owned by the current
+Unix user, and not group- or world-writable; the supervisor's owner-only
+`0600` mode is valid. The loader applies `O_NOFOLLOW` and checks the opened
+file descriptor's metadata to prevent symlink and replacement races.
+
+Signed IPC uses one big-endian `u32` length prefix around each postcard
+envelope. Receivers verify that the prefix exactly matches the bytes received,
+then enforce the timestamp window, HMAC, and nonce replay cache. Transport
+adapters that read the prefix before decoding restore it before invoking the
+signed decoder.
+
 ## State Machine
 
 The supervisor maintains a state machine to coordinate worker rotations and upgrades.

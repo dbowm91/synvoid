@@ -480,18 +480,7 @@ pub fn filter_ecs(edns: &mut EdnsOptions, config: &EcsFilterConfig) {
     }
 
     if let Some(ref mut subnet) = edns.client_subnet {
-        let is_private = match subnet.address {
-            IpAddr::V4(ipv4) => {
-                let octets = ipv4.octets();
-                octets[0] == 10
-                    || (octets[0] == 172 && (16..=31).contains(&octets[1]))
-                    || (octets[0] == 192 && octets[1] == 168)
-            }
-            IpAddr::V6(ipv6) => {
-                let segments = ipv6.segments();
-                segments[0] & 0xfe00 == 0xfc00 || segments[0] & 0xffc0 == 0xfe80
-            }
-        };
+        let is_private = synvoid_core::net::is_restricted_ip(&subnet.address);
 
         if is_private && !config.allow_private_prefix {
             edns.client_subnet = None;
@@ -508,7 +497,7 @@ pub fn filter_ecs(edns: &mut EdnsOptions, config: &EcsFilterConfig) {
             match subnet.address {
                 IpAddr::V4(ref mut ip) => {
                     let ip_val = u32::from_be_bytes(ip.octets());
-                    let mask = !((1u32 << (32 - new_prefix)) - 1);
+                    let mask = synvoid_core::net::ipv4_prefix_mask(new_prefix);
                     let masked = ip_val & mask;
                     *ip = std::net::Ipv4Addr::from(masked);
                 }

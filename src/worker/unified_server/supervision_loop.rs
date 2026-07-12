@@ -44,7 +44,7 @@ pub struct WorkerSupervisionResult {
 /// This function does NOT perform ordered teardown — that is the
 /// responsibility of `shutdown_executor::execute_worker_shutdown()`.
 #[cfg_attr(not(feature = "mesh"), allow(unused_mut, unused_variables))]
-#[cfg_attr(not(all(feature = "mesh", feature = "dns")), allow(unused_mut))]
+#[cfg_attr(all(feature = "mesh", not(feature = "dns")), allow(unused_mut))]
 pub async fn run_worker_supervision(
     state: &UnifiedServerWorkerState,
     mut lifecycle_rx: tokio::sync::mpsc::Receiver<

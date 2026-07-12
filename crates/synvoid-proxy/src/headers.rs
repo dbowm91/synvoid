@@ -88,32 +88,7 @@ pub fn is_hop_by_hop_header_name(name: &http::header::HeaderName) -> bool {
 }
 
 pub fn is_private_ip(ip: &IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(ipv4) => {
-            let octets = ipv4.octets();
-            octets[0] == 10
-                || (octets[0] == 172 && (16..=31).contains(&octets[1]))
-                || (octets[0] == 192 && octets[1] == 168)
-                || octets[0] == 127
-                || (octets[0] == 169 && octets[1] == 254)
-                || (octets[0] == 224 && octets[1] <= 239)
-                || octets[0] == 0
-        }
-        IpAddr::V6(ipv6) => {
-            let segments = ipv6.segments();
-            segments[0] == 0xfc00
-                || segments[0] == 0xfe80
-                || segments[0] == 0xff00
-                || (segments[0] == 0
-                    && segments[1] == 0
-                    && segments[2] == 0
-                    && segments[3] == 0
-                    && segments[4] == 0
-                    && segments[5] == 0
-                    && segments[6] == 0
-                    && segments[7] == 1)
-        }
-    }
+    synvoid_core::net::is_restricted_ip(ip)
 }
 
 fn is_public_ip(s: &str) -> Option<bool> {

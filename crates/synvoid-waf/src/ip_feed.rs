@@ -27,7 +27,7 @@ impl BlockedNetwork {
             (BlockedNetwork::Ipv4(net, prefix), IpAddr::V4(target)) => {
                 let network = u32::from(*net);
                 let target_bits = u32::from(*target);
-                let mask = !((1u32 << (32 - *prefix)) - 1);
+                let mask = synvoid_core::net::ipv4_prefix_mask(*prefix);
                 (network & mask) == (target_bits & mask)
             }
             (BlockedNetwork::Ipv6(net, prefix), IpAddr::V6(target)) => {
@@ -294,6 +294,15 @@ mod tests {
         test_contains(&network, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), true);
         test_contains(&network, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 255)), true);
         test_contains(&network, IpAddr::V4(Ipv4Addr::new(192, 168, 2, 1)), false);
+    }
+
+    #[test]
+    fn test_blocked_network_ipv4_zero_prefix() {
+        let network = super::BlockedNetwork::Ipv4(
+            "0.0.0.0".parse().unwrap(),
+            0,
+        );
+        assert!(network.contains(&"203.0.113.10".parse().unwrap()));
     }
 
     #[test]

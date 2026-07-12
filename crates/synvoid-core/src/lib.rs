@@ -10,6 +10,7 @@ pub mod drain;
 pub mod error;
 pub mod ids;
 pub mod metrics;
+pub mod net;
 pub mod request;
 pub mod routing;
 pub mod streaming_waf;

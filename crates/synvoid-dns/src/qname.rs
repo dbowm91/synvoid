@@ -1,7 +1,6 @@
 use std::net::IpAddr;
 
 pub struct RebindingChecker {
-    private_ip_ranges: Vec<(IpAddr, u8)>,
     min_ttl: u32,
     allowed_domains: Vec<String>,
 }
@@ -9,39 +8,13 @@ pub struct RebindingChecker {
 impl RebindingChecker {
     pub fn new(min_ttl: u32, allowed_domains: Vec<String>) -> Self {
         Self {
-            private_ip_ranges: vec![
-                (IpAddr::from([10, 0, 0, 0]), 8),
-                (IpAddr::from([172, 16, 0, 0]), 12),
-                (IpAddr::from([192, 168, 0, 0]), 16),
-                (IpAddr::from([127, 0, 0, 0]), 8),
-                (IpAddr::from([169, 254, 0, 0]), 16),
-            ],
             min_ttl,
             allowed_domains,
         }
     }
 
     pub fn is_private_ip(&self, ip: &IpAddr) -> bool {
-        for (network, prefix) in &self.private_ip_ranges {
-            if let (IpAddr::V4(client), IpAddr::V4(net)) = (ip, network) {
-                if self.ipv4_in_prefix(client, net, *prefix) {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    fn ipv4_in_prefix(
-        &self,
-        ip: &std::net::Ipv4Addr,
-        network: &std::net::Ipv4Addr,
-        prefix: u8,
-    ) -> bool {
-        let ip_bits = u32::from_be_bytes(ip.octets());
-        let net_bits = u32::from_be_bytes(network.octets());
-        let mask = !((1u32 << (32 - prefix)) - 1);
-        (ip_bits & mask) == (net_bits & mask)
+        synvoid_core::net::is_restricted_ip(ip)
     }
 
     pub fn check(&self, qname: &str, ttl: u32) -> Result<(), String> {

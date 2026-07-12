@@ -467,23 +467,7 @@ impl DnsQueryValidator {
     }
 
     pub fn is_internal_ip(ip: IpAddr) -> bool {
-        match ip {
-            IpAddr::V4(addr) => {
-                addr.octets()[0] == 10 || // 10.0.0.0/8
-                (addr.octets()[0] == 172 && (addr.octets()[1] & 0xF0) == 16) || // 172.16.0.0/12
-                (addr.octets()[0] == 192 && addr.octets()[1] == 168) || // 192.168.0.0/16
-                (addr.octets()[0] == 169 && addr.octets()[1] == 254) || // 169.254.0.0/16
-                ((addr.octets()[0] & 0xFE) == 0xFC) // 224.0.0.0/3
-            }
-            IpAddr::V6(addr) => {
-                addr.segments()[0] == 0xFE80 || // fe80::/10
-                addr.segments()[0] == 0xFC00 || // fc00::/7
-                addr.segments()[0] == 0xFF00 || // ff00::/8
-                addr.segments()[0] == 0xFE80 || // fe80::/10
-                addr.segments()[0] == 0x0000 || // ::/128
-                addr.segments()[0] == 0x2001 && addr.segments()[1] == 0xDB8 // 2001:db8::/32
-            }
-        }
+        synvoid_core::net::is_restricted_ip(&ip)
     }
 
     pub fn is_reserved_name(name: &str) -> bool {

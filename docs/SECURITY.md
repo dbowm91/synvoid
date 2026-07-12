@@ -83,6 +83,11 @@ Generate a key:
 xxd -l 32 -p /dev/urandom
 ```
 
+For process handoff, prefer the supervisor-managed temporary key file. It is
+created with `0600`, consumed once, and rejected if it is not a regular file,
+is not owned by the current Unix user, or is group/world-writable. Signed
+frames are length-checked before HMAC and nonce replay validation.
+
 ## TLS Configuration
 
 ### Use Strong Ciphers
