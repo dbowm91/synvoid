@@ -305,3 +305,88 @@ cargo audit
 ```
 
 To add automated checking, consider integrating [cargo-deny](https://cargo-deny.readthedocs.io/) in CI.
+
+---
+
+## Security Posture for Release 1.1.0
+
+### Production Security Defaults
+
+The following security measures are enabled by default in production builds:
+
+- **Constant-time comparison** for all secrets, keys, MACs, and auth tokens via `subtle::ConstantTimeEq`
+- **HMAC-signed IPC** with replay protection between supervisor and workers
+- **Plugin sandbox (WASM)** with capability-based access control and default-deny policy
+- **TLS enforcement** on all external listeners (HTTP/1, HTTP/2, HTTP/3, DNS-over-TLS)
+- **Block store with provenance tracking** — every block write is attributed to a `BlockProvenanceKind`
+- **Admin auth boundary** — mutating admin endpoints require authenticated sessions and return typed `AdminMutationResult`
+- **Plugin ABI memory boundary** — `write_to_guest_memory` requires `guest_alloc`/`guest_free`; fixed-offset fallback removed
+- **Plugin lifecycle hardening** — prepare-then-commit reload with generation-aware atomic swaps; failed reloads never replace a working plugin
+- **Unsafe native extensions disabled by default** — production loading requires explicit risk acknowledgement, path allowlist, and optional SHA-256 verification
+
+### Feature Gate Security Classification
+
+| Feature Gate | Status | Security Implication |
+|-------------|--------|---------------------|
+| `mesh` | Supported | Ed25519 peer auth, TLS transport, DHT record signing |
+| `dns` | Supported | DNSSEC validation, TSIG authentication, zone signing |
+| `socket-handoff` | Supported | Graceful connection migration via FD passing |
+| `erased_pool` | Supported | Type-erased HTTP/2 connection pooling |
+| `swagger-ui` | Supported | API documentation UI (dev only, disable in production) |
+| `wireguard` | Supported | WireGuard VPN tunnel for mesh transport |
+| `icmp-filter` | Supported | ICMP flood filtering (nftables/pf/winfw) |
+| `origin_key_exchange` | Supported | Signed HTTP integrity verification |
+| `audit` | Supported | Audit logging for admin mutations |
+| `tun-rs` | Supported | TUN device support |
+| `buffer` | Supported | Sharded buffer pool with ABA-safe design |
+| `rkyv` | Supported | Zero-copy serialization for DNS/DHT types |
+| `macos-sandbox` | Supported | macOS sandbox enforcement |
+| `test-utils` | Supported | Test utilities (not for production) |
+| `fastcgi_streaming` | Supported | Streaming FastCGI proxy |
+| `icmp-ebpf` | Beta | Requires root, kernel BTF; eBPF XDP/TC ICMP filtering (Linux only) |
+| `post-quantum` | Beta | Hybrid ML-KEM-768 + Ed25519 key exchange (experimental) |
+| `verify-pq` | Beta | Post-quantum signature verification (experimental) |
+
+### Known Security Limitations
+
+- **eBPF features require root** and Linux kernel 5.8+ with BTF support; falls back to nftables when unavailable
+- **Post-quantum features are experimental** — functional but limited real-world validation
+- **YARA compilation uses wasmtime** (40.0.4 via yara-x) with known CVEs; mitigated by `[patch.crates-io]` for the direct dependency, yanked version only in transitive path
+- **External DNSSEC tooling deferred** — zone signing is internal but external key management tooling is not yet shipped
+- **`pqc_kyber` has no fix** for RUSTSEC-2023-0079; used only in wasm-pow for Proof-of-Work challenges (not in TLS path)
+
+### Security Verification Commands
+
+Operators can verify the security posture of a deployment with:
+
+```bash
+# Dependency audit — checks for known vulnerabilities
+cargo deny check
+
+# Lint — catches unsafe patterns, unwrap abuse, and common mistakes
+cargo clippy --all-targets --all-features -- -D warnings
+
+# Security regression tests — validates cryptographic and auth invariants
+cargo test --test security_regression -- --test-threads=1
+
+# Security observability guard — validates metric labels, doc coverage, registry signals
+cargo test --test security_observability_guard
+
+# Plugin capability boundary — validates plugin isolation and sandbox enforcement
+cargo test --test plugin_capability_boundary_guard
+
+# Plugin failure isolation — one plugin failure does not poison others
+cargo test --test plugin_failure_does_not_poison_manager
+
+# Plugin signature policy — strict verification enforcement
+cargo test --test plugin_signature_policy_guard
+
+# ABI memory boundary — guest allocation and checked arithmetic
+cargo test --test abi_memory_boundary_guard
+
+# Admin mutation response guard — typed mutation results
+cargo test --test admin_mutation_response_guard
+
+# Full test suite (release mode, no fail-fast)
+cargo test --release --no-fail-fast
+```

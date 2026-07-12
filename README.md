@@ -37,7 +37,11 @@ Linux offers the best support for CPU affinity and kernel networking primitives.
 ```bash
 git clone https://github.com/synvoid/synvoid.git
 cd synvoid
+
+# Default build (includes mesh, DNS, socket-handoff, erased_pool, swagger-ui)
 cargo build --release
+
+# Or choose a profile — see Build Profiles below
 ```
 
 ### 2. Run
@@ -51,9 +55,49 @@ The system initializes:
 - **gRPC Control API**: 127.0.0.1:50051 (Supervisor)
 - **Admin UI / Metrics**: http://localhost:8081 | http://localhost:9090
 
-## Documentation
+## Build Profiles
 
-Explore our documentation for deeper technical insights:
+SynVoid ships five tested compilation profiles. Choose the one that matches your deployment.
+
+| Profile | Command | Use Case |
+|---------|---------|----------|
+| **Core** | `cargo build --release --no-default-features` | Minimal reverse proxy, no DNS or mesh |
+| **Mesh-only** | `cargo build --release --no-default-features --features mesh` | Mesh networking without DNS |
+| **DNS-only** | `cargo build --release --no-default-features --features dns` | DNS server without mesh |
+| **Default** | `cargo build --release` | Production WAF + mesh + DNS |
+| **Full** | `cargo build --release --all-features` | All features including Beta (see below) |
+
+All profiles must compile cleanly on every CI run. The `profile-matrix` CI job and `scripts/verify_architecture.sh` enforce this. See `architecture/release_profile_matrix.md` for the full matrix.
+
+## Beta Features
+
+The following features are functional and compile cleanly, but have limited real-world validation or hard runtime constraints. They are **not** in the default build profile.
+
+| Feature | Flag | Notes |
+|---------|------|-------|
+| `icmp-ebpf` | `--features icmp-ebpf` | eBPF SYN-level blocking (Linux only, requires kernel BTF + root). Falls back to nftables when unavailable |
+| `post-quantum` | `--features post-quantum` | Hybrid ML-KEM-768 post-quantum TLS key exchange |
+| `verify-pq` | `--features verify-pq` | Post-quantum signature verification |
+
+To build with all features including Beta:
+
+```bash
+cargo build --release --all-features
+```
+
+## Platform Support
+
+| Platform | Support Level | CI Tested | Notes |
+|----------|--------------|-----------|-------|
+| Linux x86_64 (glibc) | Full | Yes | Primary target, full socket/affinity/eBPF support |
+| Linux x86_64 (musl) | Full | Yes | Full feature support |
+| macOS (x86_64/aarch64) | Full | Yes | Full support except eBPF |
+| Windows 10+ | Full | Yes | Full support except eBPF, uses Named Pipes for IPC |
+| FreeBSD x86_64 | Full | Yes | Full support except eBPF, native `SO_REUSEPORT_LB` |
+
+See `docs/PLATFORM_SUPPORT.md` for detailed per-platform feature availability.
+
+## Documentation
 
 ### Core
 
@@ -63,6 +107,7 @@ Explore our documentation for deeper technical insights:
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Current data-plane architecture |
 | [CONFIGURATION.md](docs/CONFIGURATION.md) | Complete main.toml reference |
 | [DEVELOPER.md](docs/DEVELOPER.md) | Developer guide and codebase orientation |
+| [PLATFORM_SUPPORT.md](docs/PLATFORM_SUPPORT.md) | Platform support matrix and per-OS details |
 
 ### Operations
 
@@ -73,6 +118,7 @@ Explore our documentation for deeper technical insights:
 | [PERFORMANCE.md](docs/PERFORMANCE.md) | Tuning `worker_threads`, `tcp.worker_pool_size`, and CPU offload workers |
 | [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Logs, IPC, and common issues |
 | [UPGRADE.md](docs/UPGRADE.md) | Upgrade procedures |
+| [RELEASE.md](docs/RELEASE.md) | Release process, versioning, hotfix, deprecation |
 
 ### Security
 
@@ -99,6 +145,8 @@ Explore our documentation for deeper technical insights:
 | [TARPIT.md](docs/TARPIT.md) | Anti-scraping tarpit and trapping |
 | [SERVERLESS.md](docs/SERVERLESS.md) | Serverless WASM functions |
 | [PLUGINS.md](docs/PLUGINS.md) | Plugin system |
+| [PLUGIN_OPERATOR_RUNBOOK.md](docs/PLUGIN_OPERATOR_RUNBOOK.md) | Plugin operations and troubleshooting |
+| [PLUGIN_CONFIG_REFERENCE.md](docs/PLUGIN_CONFIG_REFERENCE.md) | Plugin configuration reference |
 | [TUNNELS.md](docs/TUNNELS.md) | Tunnel backend routing |
 | [FASTCGI.md](docs/FASTCGI.md) | FastCGI handler |
 | [TRAFFIC_SHAPING.md](docs/TRAFFIC_SHAPING.md) | Traffic shaping and throttling |
@@ -112,6 +160,18 @@ Explore our documentation for deeper technical insights:
 | [ADMIN_UI.md](docs/ADMIN_UI.md) | Admin UI guide |
 | [FAQ.md](docs/FAQ.md) | Frequently asked questions |
 | [RFC5011_TRUST_ANCHOR.md](docs/RFC5011_TRUST_ANCHOR.md) | RFC5011 trust anchor management |
+| [SIGNED_RULE_FEED.md](docs/SIGNED_RULE_FEED.md) | Signed WAF rule feed distribution |
+
+### Architecture
+
+| Document | Description |
+|----------|-------------|
+| [release_profile_matrix.md](architecture/release_profile_matrix.md) | Compilation profiles, feature gates, platform coverage |
+| [release_hardening_report.md](architecture/release_hardening_report.md) | Release hardening checklist and guard results |
+| [final_surface_audit.md](architecture/final_surface_audit.md) | Public surface classification and stability audit |
+| [root_module_ledger.md](architecture/root_module_ledger.md) | Root module ownership (keep_app_root / split_required) |
+| [worker_data_plane_composition_root.md](architecture/worker_data_plane_composition_root.md) | Composition boundary rules for request-path vs root |
+| [runtime_operations_drill.md](architecture/runtime_operations_drill.md) | Runtime operations readiness drill |
 
 ## Why Linux?
 

@@ -438,6 +438,9 @@ The `architecture/` directory (87 docs) and `.opencode/skills/` directory contai
 | `architecture/tarpit.md` | Tarpit architecture: escaping, admission control, budgets, redirect safety |
 | `architecture/honeypot.md` | Honeypot architecture: protocol detection, admission, storage writer, threat-intel scoring, AI containment |
 | `architecture/release_profile_matrix.md` | Compilation profiles, feature gate classifications, platform coverage, release support matrix |
+| `docs/RELEASE.md` | Release lifecycle, versioning policy, build profiles, hotfix, deprecation |
+| `plans/release_validation_results.md` | Formal release gate results: format, compile, clippy, deny, tests, guards |
+| `plans/release_handoff_note.md` | Release handoff: executive summary, process steps, operator quick reference, sign-off |
 
 ## Known Issues
 
