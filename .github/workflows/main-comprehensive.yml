@@ -1,0 +1,275 @@
+name: Main Comprehensive
+
+on:
+  push:
+    branches: [main, master, develop]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            test: true
+            features: "wireguard,icmp-filter"
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            test: false
+            features: "wireguard"
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            test: false
+            cross: true
+            features: "wireguard"
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            test: false
+            cross: true
+            features: "wireguard"
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            test: true
+            features: "wireguard"
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            test: true
+            features: "wireguard"
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            test: true
+            features: "wireguard"
+          - target: x86_64-unknown-freebsd
+            os: ubuntu-latest
+            test: false
+            cross: true
+            features: "wireguard"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        run: |
+          FEATURES="${{ matrix.features }}"
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --target ${{ matrix.target }} --release --features "${FEATURES:-default}"
+          else
+            cargo build --target ${{ matrix.target }} --release --features "${FEATURES:-default}"
+          fi
+        shell: bash
+
+      - name: Run tests
+        if: matrix.test && !matrix.cross
+        run: cargo test --target ${{ matrix.target }} --release --no-fail-fast
+
+      - name: Run tests (cross)
+        if: matrix.test && matrix.cross
+        run: cross test --target ${{ matrix.target }} --release --no-fail-fast
+
+  dns-tests:
+    name: DNS Crate Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt -p synvoid-dns -- --check
+
+      - name: Clippy DNS crate
+        run: cargo clippy -p synvoid-dns --all-targets -- -D warnings
+
+      - name: Run DNS tests (all)
+        run: cargo test -p synvoid-dns --profile ci
+
+      - name: Check DNS all-features compile
+        run: cargo check -p synvoid-dns --all-features
+
+  plugin-runtime-guardrails:
+    name: Plugin Runtime Guardrails
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy plugin runtime
+        run: cargo clippy -p synvoid-plugin-runtime --all-targets -- -D warnings
+
+      - name: Plugin runtime unit tests
+        run: cargo test -p synvoid-plugin-runtime --profile ci
+
+      - name: ABI memory boundary guard
+        run: cargo test --test abi_memory_boundary_guard
+
+      - name: Plugin capability boundary guard
+        run: cargo test --test plugin_capability_boundary_guard
+
+      - name: Plugin signature policy guard
+        run: cargo test --test plugin_signature_policy_guard
+
+      - name: Manifest authority wiring
+        run: cargo test --test manifest_authority_wiring
+
+      - name: Manifest authority load path guard
+        run: cargo test --test manifest_authority_load_path_guard
+
+      - name: Plugin failure isolation
+        run: cargo test --test plugin_failure_does_not_poison_manager
+
+  profile-matrix:
+    name: Profile Matrix (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: default
+            command: cargo check
+          - name: no-default
+            command: cargo check --no-default-features
+          - name: mesh
+            command: cargo check --no-default-features --features mesh
+          - name: dns
+            command: cargo check --no-default-features --features dns
+          - name: mesh-dns
+            command: cargo check --no-default-features --features mesh,dns
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: profile-${{ matrix.name }}
+
+      - name: Run profile check
+        run: ${{ matrix.command }}
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build documentation
+        run: cargo doc --no-deps --release
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  security-audit:
+    name: Security Audit (cargo-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: Run security audit
+        run: cargo audit
+
+  dependency-audit:
+    name: Dependency Audit (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: Run dependency audit
+        run: cargo deny check
+
+  summary:
+    name: Comprehensive CI Summary
+    needs: [build, dns-tests, plugin-runtime-guardrails, profile-matrix, docs, security-audit, dependency-audit]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        run: |
+          echo "## Main Comprehensive CI Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| build | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| dns-tests | ${{ needs.dns-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| plugin-runtime-guardrails | ${{ needs.plugin-runtime-guardrails.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| profile-matrix | ${{ needs.profile-matrix.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| docs | ${{ needs.docs.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| security-audit | ${{ needs.security-audit.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| dependency-audit | ${{ needs.dependency-audit.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          FAILED=0
+          for result in \
+            "${{ needs.build.result }}" \
+            "${{ needs.dns-tests.result }}" \
+            "${{ needs.plugin-runtime-guardrails.result }}" \
+            "${{ needs.profile-matrix.result }}" \
+            "${{ needs.docs.result }}" \
+            "${{ needs.security-audit.result }}" \
+            "${{ needs.dependency-audit.result }}"; do
+            if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
+              FAILED=1
+              break
+            fi
+          done
+          if [ "$FAILED" -eq 1 ]; then
+            echo "::error::Main Comprehensive CI has failures"
+            exit 1
+          fi
+          echo "All required jobs passed."

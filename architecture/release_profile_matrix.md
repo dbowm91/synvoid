@@ -4,17 +4,18 @@ This document defines the supported compilation profiles, platform coverage, fea
 
 ## Compilation Profiles
 
-Five compilation profiles are tested in CI and locally:
+Six compilation profiles are tested in CI and locally:
 
 | Profile | Command | Description |
 |---------|---------|-------------|
+| **CI** | `cargo test --profile ci` | Routine correctness testing — inherits dev, opt-level=1, debug=line-tables-only, incremental=false |
 | **Default** | `cargo check` | All default features (mesh, dns, socket-handoff, erased_pool, swagger-ui) |
 | **Core** | `cargo check --no-default-features` | Minimal build — no DNS, no mesh |
 | **Mesh** | `cargo check --no-default-features --features mesh` | Mesh networking only |
 | **DNS** | `cargo check --no-default-features --features dns` | DNS server only |
 | **Full** | `cargo check --no-default-features --features mesh,dns` | All features |
 
-All five profiles must compile cleanly on every CI run. The `profile-matrix` CI job and `scripts/verify_architecture.sh` enforce this.
+The **CI profile** is used for routine correctness testing across all lanes. It avoids expensive LTO settings used by `--release`, providing fast feedback without sacrificing coverage. The five feature profiles must compile cleanly on every CI run. The `profile-matrix` CI job and `scripts/verify_architecture.sh` enforce this.
 
 ## Feature Gate Classification
 
@@ -71,6 +72,7 @@ The `icmp-ebpf` feature is classified as **Beta** (not Supported):
 
 | Profile | CI Compile | CI Tests | Guard Suite | Fuzz Smoke | Release Gate |
 |---------|-----------|----------|-------------|------------|--------------|
+| CI | ✅ | ✅ | ✅ | — | — |
 | Default | ✅ | ✅ | ✅ | ✅ | Required |
 | Core | ✅ | ✅ | ✅ | — | Required |
 | Mesh | ✅ | ✅ | ✅ | — | Required |

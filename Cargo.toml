@@ -283,6 +283,13 @@ chrono = "0.4"
 opt-level = 0
 debug = true
 
+[profile.ci]
+inherits = "dev"
+opt-level = 1
+debug = "line-tables-only"
+incremental = false
+panic = "unwind"
+
 [profile.release]
 lto = true
 codegen-units = 1

@@ -19,7 +19,10 @@ cargo test --lib --no-run
 cargo test --lib <test_name>
 cargo test --test <integration_test_name>
 
-# Full test suite (CI uses --release --no-fail-fast)
+# Full test suite (CI uses --profile ci --no-fail-fast)
+cargo test --profile ci --no-fail-fast
+
+# Full test suite (release mode — only for release qualification)
 cargo test --release --no-fail-fast
 
 # Security regression tests (must run single-threaded)
@@ -40,6 +43,25 @@ cargo test -p synvoid-dns -- parsed_query
 
 # DNS authoritative negative response tests
 cargo test --test authoritative_negative
+
+## CI Testing Infrastructure
+
+SynVoid CI uses four validation lanes with a dedicated `[profile.ci]` for routine correctness testing. See `docs/testing/ci-lane-policy.md` for the full policy.
+
+| Lane | Trigger | Purpose |
+|------|---------|---------|
+| PR Fast | Pull requests | Fast feedback (<10 min target) |
+| Main Comprehensive | Push to main | Full validation after merge |
+| Scheduled Qualification | Nightly 4 AM UTC | Expensive portability/safety checks |
+| Release Qualification | Version tags / dispatch | Production artifact validation |
+
+**CI profile** (routine tests): `cargo test --profile ci`
+**Release profile** (production artifacts): `cargo test --release`
+
+Key docs:
+- `docs/testing/ci-performance-baseline.md` — Timing baseline and before/after results
+- `docs/testing/test-suite-ownership.md` — Every test target's owner, lane, and profile
+- `docs/testing/ci-lane-policy.md` — Four-lane CI policy and branch protection
 
 # DNS config fidelity tests (Phase 5 + Phase 2 closure)
 cargo test -p synvoid-dns --test dns_config_fidelity
@@ -438,6 +460,9 @@ The `architecture/` directory (87 docs) and `.opencode/skills/` directory contai
 | `architecture/tarpit.md` | Tarpit architecture: escaping, admission control, budgets, redirect safety |
 | `architecture/honeypot.md` | Honeypot architecture: protocol detection, admission, storage writer, threat-intel scoring, AI containment |
 | `architecture/release_profile_matrix.md` | Compilation profiles, feature gate classifications, platform coverage, release support matrix |
+| `docs/testing/ci-lane-policy.md` | CI lane policy: PR fast, main comprehensive, scheduled qualification, release |
+| `docs/testing/test-suite-ownership.md` | Test suite ownership manifest |
+| `docs/testing/ci-performance-baseline.md` | CI timing baseline and performance results |
 | `docs/RELEASE.md` | Release lifecycle, versioning policy, build profiles, hotfix, deprecation |
 | `plans/release_validation_results.md` | Formal release gate results: format, compile, clippy, deny, tests, guards |
 | `plans/release_handoff_note.md` | Release handoff: executive summary, process steps, operator quick reference, sign-off |
@@ -449,6 +474,8 @@ The `architecture/` directory (87 docs) and `.opencode/skills/` directory contai
 - `wasmtime` 40.0.4 (via yara-x) has known CVEs but only used for YARA compilation, not wasm sandbox — mitigated by `[patch.crates-io]` for direct dep. 11 advisory ignores in `deny.toml` with re-audit dates 2026-10-01.
 
 ## Recent Completions
+
+- **Testing Infrastructure Milestone A: Measure and Stop Obvious Waste** — 10-workstream CI optimization pass. (1) Added `[profile.ci]` (inherits dev, opt-level=1, debug=line-tables-only, incremental=false) — routine tests no longer use production LTO settings. (2) Split monolithic `ci.yml` (25 jobs) into 4 lane-specific workflows: `pr-fast.yml` (PR fast lane with concurrency cancellation), `main-comprehensive.yml` (push-to-main full validation), `nightly-qualification.yml` (scheduled portability/safety), `release-qualification.yml` (tag/dispatch release builds). (3) Removed 26 redundant DNS integration test reruns (blanket `cargo test -p synvoid-dns` already covers all). (4) Removed 6 duplicate plugin guard tests between `guard-suite` and `plugin-runtime-guardrails` (plugin-runtime-guardrails owns them). (5) Migrated routine tests from `--release` to `--profile ci` across all lanes. (6) Added PR concurrency cancellation (`cancel-in-progress: true`). (7) Created `docs/testing/ci-performance-baseline.md`, `docs/testing/test-suite-ownership.md`, `docs/testing/ci-lane-policy.md`. (8) Created `scripts/ci/summarize-test-costs.py` for timing analysis. Total: 32 redundant Cargo invocations eliminated (24% reduction). See `plans/testing_milestone_a_measure_and_stop_obvious_waste.md`.
 
 - **Post-Milestone D Corrective Closure** — 5-workstream closure pass. (1) synvoid-icmp-filter eBPF: fixed 10 compilation errors (aya optional dep, stale paths, missing return, Pod trait impls, borrow conflicts, aya 0.13 API changes, clippy), all 4 check commands now pass (default + all-features × check + clippy). Classified as **Beta** — compiles cleanly, runtime returns explicit error when eBPF unavailable. (2) Created `architecture/release_profile_matrix.md` — 5 compilation profiles, 17 feature gates (13 Supported, 4 Beta), 8 platforms, release support matrix. (3) Dependency audit: `cargo-deny` passes, 12 advisory ignores documented, 199 duplicate crates (non-pathological), wasmtime 40/42 tracked. (4) CI: 26 jobs, summary references all release-critical jobs (added alpine-test, freebsd-test, platform-compat). (5) Final release-polish note at `plans/post_milestone_d_closure_results.md`. Classification: **State B** — release-ready for all supported profiles. See `plans/post_milestone_d_corrective_closure_polish_plan.md`.
 

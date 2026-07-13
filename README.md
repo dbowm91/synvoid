@@ -121,6 +121,19 @@ cargo build --release --all-features
 
 See `architecture/release_profile_matrix.md` for detailed per-platform feature availability.
 
+## CI Testing
+
+SynVoid uses a four-lane CI system with a dedicated `[profile.ci]` for fast routine correctness testing. PRs get fast feedback; comprehensive validation runs on main; qualification runs nightly.
+
+| Lane | Trigger | Duration Target |
+|------|---------|----------------|
+| PR Fast | Pull requests | <10 minutes |
+| Main Comprehensive | Push to main | Full suite |
+| Scheduled Qualification | Nightly | Expensive checks |
+| Release Qualification | Version tags | Production validation |
+
+See [`docs/testing/ci-lane-policy.md`](docs/testing/ci-lane-policy.md) for the full policy.
+
 ## Documentation
 
 ### Core
@@ -132,6 +145,7 @@ See `architecture/release_profile_matrix.md` for detailed per-platform feature a
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Production deployment guide |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Configuration reference |
 | [SECURITY.md](SECURITY.md) | Security model and advisory policy |
+| [docs/testing/ci-lane-policy.md](docs/testing/ci-lane-policy.md) | CI testing lanes and policy |
 
 ### Subsystem Guides
 

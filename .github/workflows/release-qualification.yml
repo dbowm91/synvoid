@@ -1,0 +1,298 @@
+name: Release Qualification
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build:
+    name: Release Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            test: true
+            features: "wireguard,icmp-filter"
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            test: false
+            features: "wireguard"
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            test: false
+            cross: true
+            features: "wireguard"
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            test: false
+            cross: true
+            features: "wireguard"
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            test: true
+            features: "wireguard"
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            test: true
+            features: "wireguard"
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            test: true
+            features: "wireguard"
+          - target: x86_64-unknown-freebsd
+            os: ubuntu-latest
+            test: false
+            cross: true
+            features: "wireguard"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Build
+        run: |
+          FEATURES="${{ matrix.features }}"
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --target ${{ matrix.target }} --release --features "${FEATURES:-default}"
+          else
+            cargo build --target ${{ matrix.target }} --release --features "${FEATURES:-default}"
+          fi
+        shell: bash
+
+      - name: Run tests
+        if: matrix.test && !matrix.cross
+        run: cargo test --target ${{ matrix.target }} --release --no-fail-fast
+
+      - name: Run tests (cross)
+        if: matrix.test && matrix.cross
+        run: cross test --target ${{ matrix.target }} --release --no-fail-fast
+
+      - name: Upload release artifact
+        if: "!matrix.cross"
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/synvoid
+          if-no-files-found: ignore
+
+  full-test-suite:
+    name: Full Test Suite (${{ matrix.suite }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: default
+            command: cargo test --release --no-fail-fast
+          - suite: mesh
+            command: cargo test --release --no-fail-fast --features mesh
+          - suite: dns
+            command: cargo test -p synvoid-dns --release --no-fail-fast
+          - suite: plugin-runtime
+            command: cargo test -p synvoid-plugin-runtime --release --no-fail-fast
+          - suite: honeypot
+            command: cargo test -p synvoid-honeypot --release --no-fail-fast
+          - suite: tarpit
+            command: cargo test -p synvoid-tarpit --release --no-fail-fast
+          - suite: mesh-crate
+            command: cargo test -p synvoid-mesh --features mesh --release --no-fail-fast
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-suite-${{ matrix.suite }}
+
+      - name: Run test suite
+        run: ${{ matrix.command }}
+
+  security-regression:
+    name: Security Regression Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run security regression tests
+        run: cargo test --test security_regression --release -- --test-threads=1
+
+  guard-suite:
+    name: Architecture Guard Tests (Release)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run guard tests
+        run: |
+          cargo test --test root_facade_boundary_guard
+          cargo test --test root_module_ledger_guard
+          cargo test --test root_dependency_ownership_guard
+          cargo test --test unified_server_lifecycle_ownership_guard
+          cargo test --test supervisor_task_ownership_guard
+          cargo test --test request_path_capability_boundary_guard
+          cargo test --test data_plane_composition_boundary_guard
+          cargo test --test http_request_pipeline_boundary_guard
+          cargo test --test http3_waf_boundary_guard
+          cargo test --test mesh_id_boundary_guard
+          cargo test --test threat_intel_boundary_guard
+          cargo test --test threat_intel_consumer_actionability_guard --features mesh,dns
+          cargo test --test plugin_capability_boundary_guard
+          cargo test --test plugin_failure_does_not_poison_manager
+          cargo test --test abi_memory_boundary_guard
+          cargo test --test manifest_authority_wiring
+          cargo test --test manifest_authority_load_path_guard
+          cargo test --test plugin_signature_policy_guard
+          cargo test --test admin_mutation_response_guard
+          cargo test --test admin_mutation_blocklist
+          cargo test --test admin_auth_boundary
+          cargo test --test mesh_admin_edge_cases
+          cargo test --test security_observability_guard
+          cargo test --test failure_injection
+          cargo test --test worker_mesh_supervision_boundary_guard --features mesh,dns
+          cargo test --test mesh_task_ownership_guard --features mesh,dns
+          cargo test --test cli_command_dispatch_guard
+          cargo test --test manual_enforcement_provenance_guard
+          cargo test --test background_task_ownership_guard
+          cargo test --test unified_worker_composition_root_guard
+          cargo test --test plugin_lifecycle_guard
+          cargo test --test unsafe_native_sandbox_language_guard
+
+  clippy:
+    name: Clippy (all features)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build documentation
+        run: cargo doc --no-deps --release
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  security-audit:
+    name: Security Audit (cargo-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: Run security audit
+        run: cargo audit
+
+  dependency-audit:
+    name: Dependency Audit (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: Run dependency audit
+        run: cargo deny check
+
+  summary:
+    name: Release Qualification Summary
+    needs: [build, full-test-suite, security-regression, guard-suite, clippy, docs, security-audit, dependency-audit]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        run: |
+          echo "## Release Qualification Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| build | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| full-test-suite | ${{ needs.full-test-suite.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| security-regression | ${{ needs.security-regression.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| guard-suite | ${{ needs.guard-suite.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| clippy | ${{ needs.clippy.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| docs | ${{ needs.docs.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| security-audit | ${{ needs.security-audit.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| dependency-audit | ${{ needs.dependency-audit.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          FAILED=0
+          for result in \
+            "${{ needs.build.result }}" \
+            "${{ needs.full-test-suite.result }}" \
+            "${{ needs.security-regression.result }}" \
+            "${{ needs.guard-suite.result }}" \
+            "${{ needs.clippy.result }}" \
+            "${{ needs.docs.result }}" \
+            "${{ needs.security-audit.result }}" \
+            "${{ needs.dependency-audit.result }}"; do
+            if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
+              FAILED=1
+              break
+            fi
+          done
+          if [ "$FAILED" -eq 1 ]; then
+            echo "::error::Release Qualification has failures"
+            exit 1
+          fi
+          echo "All required jobs passed."

@@ -1,0 +1,257 @@
+name: PR Fast
+
+on:
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  fmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy (default features)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Run clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+  unsafe-dns:
+    name: No Unsafe in DNS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for unsafe in crates/synvoid-dns/src/
+        run: |
+          UNSAFE_COUNT=$(grep -r "unsafe {" crates/synvoid-dns/src/ --include="*.rs" | wc -l)
+          if [ "$UNSAFE_COUNT" -gt 0 ]; then
+            echo "Found $UNSAFE_COUNT unsafe block(s) in crates/synvoid-dns/src/:"
+            grep -r "unsafe {" crates/synvoid-dns/src/ --include="*.rs"
+            echo "::error::Found $UNSAFE_COUNT unsafe block(s) in crates/synvoid-dns/src/ - these should be eliminated"
+            exit 1
+          else
+            echo "No unsafe blocks found in crates/synvoid-dns/src/"
+          fi
+
+  core-profile:
+    name: Core Profile (No Default Features)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Check core profile compilation
+        run: cargo check --no-default-features
+
+  import-check:
+    name: Forbidden Import Patterns
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Check forbidden imports
+        run: python scripts/check_imports.py
+
+  security-regression:
+    name: Security Regression Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Run security regression tests
+        run: cargo test --test security_regression -- --test-threads=1
+
+  guard-suite:
+    name: Architecture Guard Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run guard tests
+        run: |
+          cargo test --test root_facade_boundary_guard
+          cargo test --test root_module_ledger_guard
+          cargo test --test root_dependency_ownership_guard
+          cargo test --test unified_server_lifecycle_ownership_guard
+          cargo test --test supervisor_task_ownership_guard
+          cargo test --test request_path_capability_boundary_guard
+          cargo test --test data_plane_composition_boundary_guard
+          cargo test --test http_request_pipeline_boundary_guard
+          cargo test --test http3_waf_boundary_guard
+          cargo test --test mesh_id_boundary_guard
+          cargo test --test threat_intel_boundary_guard
+          cargo test --test threat_intel_consumer_actionability_guard --features mesh,dns
+          cargo test --test admin_mutation_response_guard
+          cargo test --test admin_mutation_blocklist
+          cargo test --test admin_auth_boundary
+          cargo test --test mesh_admin_edge_cases
+          cargo test --test security_observability_guard
+          cargo test --test failure_injection
+          cargo test --test worker_mesh_supervision_boundary_guard --features mesh,dns
+          cargo test --test mesh_task_ownership_guard --features mesh,dns
+          cargo test --test cli_command_dispatch_guard
+          cargo test --test manual_enforcement_provenance_guard
+          cargo test --test background_task_ownership_guard
+          cargo test --test unified_worker_composition_root_guard
+          cargo test --test plugin_lifecycle_guard
+          cargo test --test unsafe_native_sandbox_language_guard
+
+  docs-link-guard:
+    name: Docs Path Reference Guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Run docs path guard
+        run: cargo test --test docs_path_reference_guard
+        continue-on-error: true
+
+  upload-tests:
+    name: Upload Crate Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Check formatting
+        run: cargo fmt -p synvoid-upload -- --check
+      - name: Clippy upload crate
+        run: cargo clippy -p synvoid-upload --all-targets -- -D warnings
+      - name: Run upload unit tests
+        run: cargo test -p synvoid-upload --profile ci
+      - name: Run upload tests with mesh feature
+        run: cargo test -p synvoid-upload --features mesh --profile ci
+      - name: Check upload all-features compile
+        run: cargo check -p synvoid-upload --all-features
+
+  honeypot-tests:
+    name: Honeypot Crate Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Check formatting
+        run: cargo fmt -p synvoid-honeypot -- --check
+      - name: Clippy honeypot crate
+        run: cargo clippy -p synvoid-honeypot --all-targets -- -D warnings
+      - name: Run honeypot unit tests
+        run: cargo test -p synvoid-honeypot --profile ci
+      - name: Check honeypot all-features compile
+        run: cargo check -p synvoid-honeypot --all-features
+
+  tarpit-tests:
+    name: Tarpit Crate Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy tarpit crate
+        run: cargo clippy -p synvoid-tarpit --all-targets -- -D warnings
+      - name: Run tarpit tests
+        run: cargo test -p synvoid-tarpit --all-targets --profile ci
+
+  mesh-tests:
+    name: Mesh Crate Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Check mesh crate compiles
+        run: cargo check -p synvoid-mesh --features mesh --all-targets
+      - name: Clippy mesh crate
+        run: cargo clippy -p synvoid-mesh --features mesh --all-targets -- -D warnings
+      - name: Run mesh tests
+        run: cargo test -p synvoid-mesh --features mesh --all-targets --profile ci
+
+  summary:
+    name: PR Fast Summary
+    needs: [fmt, clippy, unsafe-dns, core-profile, import-check, security-regression, guard-suite, docs-link-guard, upload-tests, honeypot-tests, tarpit-tests, mesh-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        run: |
+          echo "## PR Fast CI Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| fmt | ${{ needs.fmt.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| clippy | ${{ needs.clippy.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| unsafe-dns | ${{ needs.unsafe-dns.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| core-profile | ${{ needs.core-profile.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| import-check | ${{ needs.import-check.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| security-regression | ${{ needs.security-regression.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| guard-suite | ${{ needs.guard-suite.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| docs-link-guard | ${{ needs.docs-link-guard.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| upload-tests | ${{ needs.upload-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| honeypot-tests | ${{ needs.honeypot-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| tarpit-tests | ${{ needs.tarpit-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| mesh-tests | ${{ needs.mesh-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          FAILED=0
+          for result in \
+            "${{ needs.fmt.result }}" \
+            "${{ needs.clippy.result }}" \
+            "${{ needs.unsafe-dns.result }}" \
+            "${{ needs.core-profile.result }}" \
+            "${{ needs.import-check.result }}" \
+            "${{ needs.security-regression.result }}" \
+            "${{ needs.guard-suite.result }}" \
+            "${{ needs.upload-tests.result }}" \
+            "${{ needs.honeypot-tests.result }}" \
+            "${{ needs.tarpit-tests.result }}" \
+            "${{ needs.mesh-tests.result }}"; do
+            if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
+              FAILED=1
+              break
+            fi
+          done
+          if [ "$FAILED" -eq 1 ]; then
+            echo "::error::PR Fast CI has failures"
+            exit 1
+          fi
+          echo "All required jobs passed."

@@ -1,0 +1,225 @@
+name: Nightly Qualification
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  alpine-test:
+    name: Alpine Linux Test
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    steps:
+      - name: Install dependencies
+        run: |
+          apk add --no-cache curl git build-base musl-dev
+
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --target x86_64-unknown-linux-musl
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Run basic tests
+        run: cargo test --release -- --test-threads=1
+
+  freebsd-test:
+    name: FreeBSD Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test on FreeBSD
+        uses: vmactions/freebsd-vm@v1
+        with:
+          usesh: true
+          prepare: |
+            pkg install -y curl git
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          run: |
+            . $HOME/.cargo/env
+            cargo build --release
+            cargo test --release -- --test-threads=1
+
+  platform-compat:
+    name: Platform Compatibility Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu,x86_64-unknown-linux-musl,x86_64-apple-darwin,x86_64-pc-windows-msvc,x86_64-unknown-freebsd
+
+      - name: Check compilation for all targets
+        run: |
+          for target in x86_64-unknown-linux-gnu x86_64-unknown-linux-musl x86_64-apple-darwin x86_64-pc-windows-msvc x86_64-unknown-freebsd; do
+            echo "=== Checking $target ==="
+            cargo check --target $target || echo "::warning::$target check failed"
+          done
+
+  miri-test:
+    name: Miri Test (synvoid-utils)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust nightly with miri
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+
+      - name: Run miri tests on synvoid-utils
+        run: cargo miri test -p synvoid-utils
+        continue-on-error: true
+
+  fuzz-smoke:
+    name: Fuzz Smoke Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust nightly toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo-fuzz
+        id: cache-fuzz
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-fuzz
+          key: ${{ runner.os }}-cargo-fuzz-0.13.2
+
+      - name: Install cargo-fuzz
+        if: steps.cache-fuzz.outputs.cache-hit != 'true'
+        run: cargo install cargo-fuzz
+
+      - name: Run fuzz smoke tests
+        run: |
+          FUZZ_TARGETS=(
+            dns_message_decode
+            http_path_normalization
+            plugin_manifest
+            fuzz_attack_detection
+            fuzz_early_parse
+            fuzz_ipc
+            fuzz_protocol_proto_decode
+            fuzz_raft_commit_notification
+            fuzz_raft_response
+            fuzz_serialization
+            fuzz_serialization_new
+            blocklist_event_decode
+            blocklist_snapshot_decode
+            admin_mutation_result_decode
+            http_header_normalization
+            mesh_protocol_compressed_decode
+          )
+          FAILED=0
+          for target in "${FUZZ_TARGETS[@]}"; do
+            echo "::group::$target"
+            cargo +nightly fuzz run "$target" -- -runs=1000 || FAILED=1
+            echo "::endgroup::"
+          done
+          if [ "$FAILED" -eq 1 ]; then
+            echo "::error::Fuzz smoke tests failed"
+            exit 1
+          fi
+          echo "All fuzz smoke tests passed"
+
+  outdated-deps:
+    name: Outdated Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Install cargo-outdated
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-outdated
+
+      - name: Check for outdated dependencies
+        run: cargo outdated --release --exit-code 2 || true
+        continue-on-error: true
+
+  profile-matrix:
+    name: Profile Matrix (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: default
+            command: cargo check
+          - name: no-default
+            command: cargo check --no-default-features
+          - name: mesh
+            command: cargo check --no-default-features --features mesh
+          - name: dns
+            command: cargo check --no-default-features --features dns
+          - name: mesh-dns
+            command: cargo check --no-default-features --features mesh,dns
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: profile-${{ matrix.name }}
+
+      - name: Run profile check
+        run: ${{ matrix.command }}
+
+  summary:
+    name: Nightly Qualification Summary
+    needs: [alpine-test, freebsd-test, platform-compat, miri-test, fuzz-smoke, outdated-deps, profile-matrix]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        run: |
+          echo "## Nightly Qualification Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| alpine-test | ${{ needs.alpine-test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| freebsd-test | ${{ needs.freebsd-test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| platform-compat | ${{ needs.platform-compat.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| miri-test | ${{ needs.miri-test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| fuzz-smoke | ${{ needs.fuzz-smoke.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| outdated-deps | ${{ needs.outdated-deps.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| profile-matrix | ${{ needs.profile-matrix.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          FAILED=0
+          for result in \
+            "${{ needs.alpine-test.result }}" \
+            "${{ needs.freebsd-test.result }}" \
+            "${{ needs.platform-compat.result }}" \
+            "${{ needs.fuzz-smoke.result }}" \
+            "${{ needs.profile-matrix.result }}"; do
+            if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
+              FAILED=1
+              break
+            fi
+          done
+          if [ "$FAILED" -eq 1 ]; then
+            echo "::error::Nightly Qualification has failures"
+            exit 1
+          fi
+          echo "All required jobs passed."
