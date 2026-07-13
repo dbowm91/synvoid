@@ -118,13 +118,13 @@ The following vulnerabilities exist in transitive dependencies and are documente
 
 | Vulnerability | Crate | ID | Status | Notes |
 |---------------|-------|-----|--------|-------|
-| Marvin Attack | `rsa` | RUSTSEC-2023-0071 | **Low exposure** | Transitive via yara-x, not actively used |
+| Marvin Attack | `rsa` | RUSTSEC-2023-0071 | **Low exposure** | Direct + transitive (yara-x); assessed low exposure — not actively invoked in current code paths |
 
 ### Unmaintained Dependencies (Warnings)
 
 | Crate | Alternative | Status | Notes |
 |-------|-------------|--------|-------|
-| ~~`bincode`~~ | ~~`postcard`~~ | **Removed** | Dead dependency — postcard shim handles serialization |
+| `bincode` | `postcard` | **Partial** | Still a direct dependency in root, synvoid-dns, synvoid-tunnel, synvoid-mesh; postcard handles primary serialization |
 | `paste` | None | Acceptable | Transitive via utoipa |
 | `proc-macro-error` | None | Acceptable | Transitive via yew |
 | `atomic-polyfill` | None | Acceptable | Transitive via postcard/heapless |
@@ -245,12 +245,12 @@ let error = scanner.get_last_reload_error();
 
 ### bincode → postcard Migration
 - **Issue**: bincode unmaintained (RUSTSEC-2025-0141)
-- **Fix**: Migrated to `postcard` for serialization
+- **Fix**: Migrated primary serialization to `postcard`; bincode retained in root, synvoid-dns, synvoid-tunnel, synvoid-mesh for backward compatibility
 - **Benefits**: 
   - Actively maintained
   - 30% smaller serialized output
   - No dependency conflicts
-- **Completed**: 2025-03-11
+- **Status**: Partial — primary paths migrated, legacy paths retained
 
 ### rkyv for High-Performance Paths
 - **Purpose**: Zero-copy serialization for DNS and DHT operations
@@ -343,7 +343,7 @@ The following security measures are enabled by default in production builds:
 | `macos-sandbox` | Supported | macOS sandbox enforcement |
 | `test-utils` | Supported | Test utilities (not for production) |
 | `fastcgi_streaming` | Supported | Streaming FastCGI proxy |
-| `icmp-ebpf` | Beta | Requires root, kernel BTF; eBPF XDP/TC ICMP filtering (Linux only) |
+| `flood-ebpf` | Beta | Requires root, kernel BTF; eBPF XDP/TC ICMP filtering (Linux only) |
 | `post-quantum` | Beta | Hybrid ML-KEM-768 + Ed25519 key exchange (experimental) |
 | `verify-pq` | Beta | Post-quantum signature verification (experimental) |
 
@@ -354,6 +354,7 @@ The following security measures are enabled by default in production builds:
 - **YARA compilation uses wasmtime** (40.0.4 via yara-x) with known CVEs; mitigated by `[patch.crates-io]` for the direct dependency, yanked version only in transitive path
 - **External DNSSEC tooling deferred** — zone signing is internal but external key management tooling is not yet shipped
 - **`pqc_kyber` has no fix** for RUSTSEC-2023-0079; used only in wasm-pow for Proof-of-Work challenges (not in TLS path)
+- **Archive inspection is ZIP-only and non-recursive** — TAR/GZIP/BZIP2/7z are detected by MIME but not opened; nested archives are counted but not recursively scanned
 
 ### Security Verification Commands
 

@@ -179,6 +179,31 @@ The 1.1.0 release adds a production-grade DNS authoritative server with DNSSEC s
 - DNS: DoQ is experimental. Persistent TCP pipelining, EDNS keepalive, NSEC3 closest-encloser proofs, external DNSSEC tooling, and bailiwick enforcement are deferred.
 - DNS: `--all-features` profile fails on `synvoid-icmp-filter` eBPF dependency.
 
+### Validation Summary
+
+- **Test count**: 2,760+ tests across 43 workspace members (release mode)
+- **cargo-deny**: Passes (12 advisory ignores documented with re-audit dates 2026-10-01)
+- **Ignored tests**: Zero `#[ignore]` annotations remain (34 dead stubs deleted, 2 deadlock tests rewritten)
+- **Compilation profiles**: 5 profiles verified (Default, Core, Mesh, DNS, Full mesh+DNS)
+- **CI jobs**: 25 jobs including build matrix (8 targets), clippy, fmt, tests, security audit, dependency audit, profile matrix, guard suite (33 guards), fuzz smoke (16 targets)
+- **Platform tested**: Linux x86_64 (glibc/musl), macOS (x86_64/aarch64), Windows x86_64, FreeBSD x86_64
+- **Security**: cargo-audit passes, constant-time comparison enforced, IPC signing supported, plugin ABI memory boundary hardened
+
+### Migration Notes (from 1.0.0)
+
+- **Honeypot storage**: New columns `payload_hash` and `payload_length` added idempotently via schema migration
+- **Honeypot AI responder**: Disabled by default; requires explicit opt-in via `AiResponderMode`
+- **Honeypot mesh propagation**: Disabled by default; requires Medium+ confidence and 3+ events
+- **Payload retention**: Defaults to `HashOnly` mode (raw payloads not stored by default)
+- **Tarpit admission**: Global semaphore defaults to 256 concurrent sessions, per-IP defaults to 4
+- **Tarpit budgets**: Session limits enforced (600s duration, 500 chunks, 50MB bytes, 30s idle)
+- **Archive inspection**: ZIP-only, non-recursive (does not inspect nested archives)
+- **WireGuard**: Feature-gated (`--features wireguard`), requires runtime configuration
+- **eBPF ICMP filter**: Beta feature, requires Linux with kernel BTF and root; falls back to nftables
+- **Plugin WASM sandbox**: Capability-based access control with default-deny policy
+- **DNS AXFR**: TCP-only and disabled by default
+- **DNS cache**: Key dimensions expanded (qclass, DO bit, transport class, namespace)
+
 ## [1.1.0-rc.1] - 2026-07-12
 
 Pre-release candidate. See [1.1.0] entry above for full details.
@@ -225,8 +250,8 @@ No pending changes. All planned work for 1.1.0 is complete.
 - Initial feature planning
 - Early proof of concept
 
-[Unreleased]: https://github.com/synvoid/synvoid/compare/v1.1.0...HEAD
-[1.1.0]: https://github.com/synvoid/synvoid/releases/tag/v1.1.0
-[1.0.0]: https://github.com/synvoid/synvoid/releases/tag/v1.0.0
-[0.9.0]: https://github.com/synvoid/synvoid/releases/tag/v0.9.0
-[0.1.0]: https://github.com/synvoid/synvoid/releases/tag/v0.1.0
+[Unreleased]: https://github.com/dbowm91/synvoid/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/dbowm91/synvoid/releases/tag/v1.1.0
+[1.0.0]: https://github.com/dbowm91/synvoid/releases/tag/v1.0.0
+[0.9.0]: https://github.com/dbowm91/synvoid/releases/tag/v0.9.0
+[0.1.0]: https://github.com/dbowm91/synvoid/releases/tag/v0.1.0

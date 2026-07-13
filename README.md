@@ -35,7 +35,7 @@ Linux offers the best support for CPU affinity and kernel networking primitives.
 
 ### 1. Build from Source
 ```bash
-git clone https://github.com/synvoid/synvoid.git
+git clone https://github.com/dbowm91/synvoid.git
 cd synvoid
 
 # Default build (includes mesh, DNS, socket-handoff, erased_pool, swagger-ui)
@@ -55,6 +55,8 @@ The system initializes:
 - **gRPC Control API**: 127.0.0.1:50051 (Supervisor)
 - **Admin UI / Metrics**: http://localhost:8081 | http://localhost:9090
 
+> **First Release**: This is SynVoid's first release candidate (`v1.1.0-rc.1`). See [`CHANGELOG.md`](CHANGELOG.md) for the full list of features, known limitations, and migration notes.
+
 ## Build Profiles
 
 SynVoid ships five tested compilation profiles. Choose the one that matches your deployment.
@@ -68,6 +70,8 @@ SynVoid ships five tested compilation profiles. Choose the one that matches your
 | **Full** | `cargo build --release --all-features` | All features including Beta (see below) |
 
 All profiles must compile cleanly on every CI run. The `profile-matrix` CI job and `scripts/verify_architecture.sh` enforce this. See `architecture/release_profile_matrix.md` for the full matrix.
+
+> **Supported profiles** compile and pass tests in CI. The **Full** profile includes Beta features that have limited real-world validation — see [Beta Features](#beta-features) below.
 
 ## Beta Features
 
@@ -85,6 +89,26 @@ To build with all features including Beta:
 cargo build --release --all-features
 ```
 
+## Deployment Recommendations
+
+| Scenario | Recommended Profile | Key Features |
+|----------|-------------------|--------------|
+| Minimal reverse proxy | Core | No DNS, no mesh |
+| DNS server | DNS-only | DNS without mesh |
+| Mesh networking | Mesh-only | Mesh without DNS |
+| General production | Default | WAF + mesh + DNS |
+| Full-featured | Full (mesh+DNS) | All supported features |
+
+### Production Defaults
+
+- **AI honeypot responder**: Disabled by default (requires explicit opt-in)
+- **Honeypot listeners**: Disabled by default unless configured
+- **Mesh threat-intel propagation**: Disabled by default (requires threshold configuration)
+- **Raw payload retention**: Minimized by default (HashOnly mode)
+- **Tarpit admission**: Enabled with sensible defaults (256 global, 4 per-IP)
+- **Archive inspection**: ZIP-only, non-recursive
+- **eBPF ICMP filter**: Beta; falls back to nftables when unavailable
+
 ## Platform Support
 
 | Platform | Support Level | CI Tested | Notes |
@@ -95,7 +119,7 @@ cargo build --release --all-features
 | Windows 10+ | Full | Yes | Full support except eBPF, uses Named Pipes for IPC |
 | FreeBSD x86_64 | Full | Yes | Full support except eBPF, native `SO_REUSEPORT_LB` |
 
-See `docs/PLATFORM_SUPPORT.md` for detailed per-platform feature availability.
+See `architecture/release_profile_matrix.md` for detailed per-platform feature availability.
 
 ## Documentation
 
@@ -103,75 +127,35 @@ See `docs/PLATFORM_SUPPORT.md` for detailed per-platform feature availability.
 
 | Guide | Description |
 |-------|-------------|
-| [GETTING_STARTED.md](docs/GETTING_STARTED.md) | Installation and first run |
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Current data-plane architecture |
-| [CONFIGURATION.md](docs/CONFIGURATION.md) | Complete main.toml reference |
-| [DEVELOPER.md](docs/DEVELOPER.md) | Developer guide and codebase orientation |
-| [PLATFORM_SUPPORT.md](docs/PLATFORM_SUPPORT.md) | Platform support matrix and per-OS details |
+| [CHANGELOG.md](CHANGELOG.md) | Release history and migration notes |
+| [docs/RELEASE.md](docs/RELEASE.md) | Release process, versioning, hotfix, deprecation |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Production deployment guide |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Configuration reference |
+| [SECURITY.md](SECURITY.md) | Security model and advisory policy |
 
-### Operations
-
-| Guide | Description |
-|-------|-------------|
-| [PROCESS_MANAGEMENT.md](docs/PROCESS_MANAGEMENT.md) | Supervisor and worker lifecycle |
-| [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Deployment patterns and Docker |
-| [PERFORMANCE.md](docs/PERFORMANCE.md) | Tuning `worker_threads`, `tcp.worker_pool_size`, and CPU offload workers |
-| [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Logs, IPC, and common issues |
-| [UPGRADE.md](docs/UPGRADE.md) | Upgrade procedures |
-| [RELEASE.md](docs/RELEASE.md) | Release process, versioning, hotfix, deprecation |
-
-### Security
+### Subsystem Guides
 
 | Guide | Description |
 |-------|-------------|
-| [SECURITY.md](docs/SECURITY.md) | Security model and hardening |
-| [SANDBOXING.md](docs/SANDBOXING.md) | OS sandboxing (Windows/macOS/Linux/BSD) |
-| [ATTACK_DETECTION.md](docs/ATTACK_DETECTION.md) | SQLi, XSS, SSRF, command injection |
-| [BOT_PROTECTION.md](docs/BOT_PROTECTION.md) | Bot detection and mitigation |
-| [RATE_LIMITING.md](docs/RATE_LIMITING.md) | Rate limiting configuration |
-| [REQUEST_SANITIZATION.md](docs/REQUEST_SANITIZATION.md) | Input sanitization |
-| [FLOOD_PROTECTION.md](docs/FLOOD_PROTECTION.md) | Flood/DDoS protection |
-
-### Features
-
-| Guide | Description |
-|-------|-------------|
-| [WAF_MESH.md](docs/WAF_MESH.md) | Distributed WAF mesh setup |
-| [THREAT_INTEL.md](docs/THREAT_INTEL.md) | Threat intelligence integration |
-| [HTTP3.md](docs/HTTP3.md) | HTTP/3 (QUIC) configuration |
-| [STATIC_FILES.md](docs/STATIC_FILES.md) | Static file serving |
-| [UPLOADS.md](docs/UPLOADS.md) | File upload handling |
-| [HONEYPOT.md](docs/HONEYPOT.md) | Honeypot listener and deception |
-| [TARPIT.md](docs/TARPIT.md) | Anti-scraping tarpit and trapping |
-| [SERVERLESS.md](docs/SERVERLESS.md) | Serverless WASM functions |
-| [PLUGINS.md](docs/PLUGINS.md) | Plugin system |
-| [PLUGIN_OPERATOR_RUNBOOK.md](docs/PLUGIN_OPERATOR_RUNBOOK.md) | Plugin operations and troubleshooting |
-| [PLUGIN_CONFIG_REFERENCE.md](docs/PLUGIN_CONFIG_REFERENCE.md) | Plugin configuration reference |
-| [TUNNELS.md](docs/TUNNELS.md) | Tunnel backend routing |
-| [FASTCGI.md](docs/FASTCGI.md) | FastCGI handler |
-| [TRAFFIC_SHAPING.md](docs/TRAFFIC_SHAPING.md) | Traffic shaping and throttling |
-| [UPSTREAM_HEALTH.md](docs/UPSTREAM_HEALTH.md) | Upstream health checks |
-
-### Reference
-
-| Guide | Description |
-|-------|-------------|
-| [API_REFERENCE.md](docs/API_REFERENCE.md) | REST API reference |
-| [ADMIN_UI.md](docs/ADMIN_UI.md) | Admin UI guide |
-| [FAQ.md](docs/FAQ.md) | Frequently asked questions |
-| [RFC5011_TRUST_ANCHOR.md](docs/RFC5011_TRUST_ANCHOR.md) | RFC5011 trust anchor management |
-| [SIGNED_RULE_FEED.md](docs/SIGNED_RULE_FEED.md) | Signed WAF rule feed distribution |
+| [docs/HONEYPOT.md](docs/HONEYPOT.md) | Honeypot listener and deception layer |
+| [docs/TARPIT.md](docs/TARPIT.md) | Anti-scraping tarpit and trapping |
+| [docs/TUNNELS.md](docs/TUNNELS.md) | Tunnel backend routing |
 
 ### Architecture
 
 | Document | Description |
 |----------|-------------|
-| [release_profile_matrix.md](architecture/release_profile_matrix.md) | Compilation profiles, feature gates, platform coverage |
-| [release_hardening_report.md](architecture/release_hardening_report.md) | Release hardening checklist and guard results |
-| [final_surface_audit.md](architecture/final_surface_audit.md) | Public surface classification and stability audit |
-| [root_module_ledger.md](architecture/root_module_ledger.md) | Root module ownership (keep_app_root / split_required) |
-| [worker_data_plane_composition_root.md](architecture/worker_data_plane_composition_root.md) | Composition boundary rules for request-path vs root |
-| [runtime_operations_drill.md](architecture/runtime_operations_drill.md) | Runtime operations readiness drill |
+| [architecture/release_profile_matrix.md](architecture/release_profile_matrix.md) | Compilation profiles, feature gates, platform coverage |
+| [architecture/release_hardening_report.md](architecture/release_hardening_report.md) | Release hardening checklist and guard results |
+| [architecture/final_surface_audit.md](architecture/final_surface_audit.md) | Public surface classification and stability audit |
+| [architecture/root_module_ledger.md](architecture/root_module_ledger.md) | Root module ownership |
+| [architecture/worker_data_plane_composition_root.md](architecture/worker_data_plane_composition_root.md) | Composition boundary rules |
+
+### Plans
+
+| Document | Description |
+|----------|-------------|
+| [plans/roadmap.md](plans/roadmap.md) | Full development roadmap |
 
 ## Why Linux?
 
