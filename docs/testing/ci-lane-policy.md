@@ -103,6 +103,23 @@ Superseded PR runs are automatically cancelled.
 - Release qualification jobs
 - Summary jobs
 
+### Manual Action Required
+
+**Branch protection rules must be updated by a repository admin.** The old `ci.yml` workflow has been replaced with 4 targeted workflows. Branch protection currently references the old workflow job names and must be migrated:
+
+1. **Remove** old required status checks referencing `ci.yml` job names
+2. **Add** new required status checks referencing `pr-fast.yml` job IDs:
+   - `pr-fast / fmt`
+   - `pr-fast / clippy`
+   - `pr-fast / security-regression`
+   - `pr-fast / guard-suite`
+   - `pr-fast / plugin-runtime-guardrails`
+   - At least one of: `pr-fast / dns-tests`, `pr-fast / upload-tests`, `pr-fast / honeypot-tests`, `pr-fast / tarpit-tests`, `pr-fast / mesh-tests`
+3. **Verify** that the old `ci.yml` redirect no longer triggers on PRs (fixed: triggers removed, only `workflow_dispatch` remains)
+4. **Test** by opening a PR and confirming only `pr-fast.yml` runs
+
+**Until branch protection is updated**, the old `ci.yml` checks may still appear as required. The redirect workflow now only triggers on `workflow_dispatch`, so it will not produce passing checks for PRs — this will **block merging** until branch protection is updated.
+
 ## Migration Notes
 
 ### From the legacy ci.yml:
