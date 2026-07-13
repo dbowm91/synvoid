@@ -108,3 +108,9 @@ pub enum StaticError {
 - **Range Requests**: HTTP 206 partial content support
 - **Zero-Copy**: sendfile(2) on Linux/macOS for large files
 - **Directory Listing**: Sortable, paginated, filterable listings
+
+The root-owned file-manager adapter resolves mutation paths by normalizing
+relative components and canonicalizing the nearest existing ancestor. This
+allows safe creation of new files/directories while retaining root-prefix and
+symlink-escape checks. TAR/TAR.GZ extraction rejects symbolic and hard-link
+entries; archive paths are checked before writing.

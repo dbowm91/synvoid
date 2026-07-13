@@ -21,7 +21,7 @@ use std::task::{Context, Poll};
 ///
 /// Without this, `Box<dyn ErasedBody>` cannot satisfy `http_body::Body` bounds
 /// because traits don't support extension.
-impl http_body::Body for Box<dyn ErasedBody> {
+impl http_body::Body for Box<dyn ErasedBody + '_> {
     type Data = Bytes;
     type Error = std::io::Error;
 
@@ -108,9 +108,17 @@ impl Http1PooledConnection {
         authority: http::uri::Authority,
     ) -> Result<Self, std::io::Error> {
         let io = TokioIo::new(stream);
-        let (sender, _conn) = http1_client::handshake(io)
+        let (sender, conn) = http1_client::handshake(io)
             .await
             .map_err(|e| std::io::Error::other(format!("handshake failed: {}", e)))?;
+        // The sender is only a handle; the connection future must remain
+        // polled to drive socket I/O. Dropping it here makes every checked-out
+        // connection look healthy while requests cannot complete reliably.
+        tokio::spawn(async move {
+            if let Err(error) = conn.await {
+                tracing::debug!(%error, "upstream HTTP/1 connection ended");
+            }
+        });
         Ok(Self {
             authority,
             sender: Some(sender),
@@ -188,8 +196,8 @@ impl ErasedConnectionPool {
     ///
     /// Returns an error in the following cases:
     /// - `InvalidInput` (kind): The authority string in `PoolKey` is malformed (e.g., "not-a-valid-authority")
-    /// - `InvalidInput` (kind): The host/port in the authority cannot be parsed as a valid socket address
-    /// - `Other`: TCP connection to the upstream failed (includes underlying OS error details)
+    /// - `Other`: DNS resolution or TCP connection to the upstream failed
+    ///   (includes underlying OS error details)
     /// - `TimedOut`: Connection handshake did not complete within `connect_timeout`
     ///
     /// # Checkout Flow
@@ -217,21 +225,16 @@ impl ErasedConnectionPool {
             )
         })?;
         let port = authority.port_u16().unwrap_or(80);
-        let connect_addr: std::net::SocketAddr = format!("{}:{}", authority.host(), port)
-            .parse()
-            .map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!("invalid address: {}", e),
-            )
-        })?;
-        let stream = tokio::net::TcpStream::connect(connect_addr)
-            .await
-            .map_err(|e| std::io::Error::other(format!("connect failed: {}", e)))?;
-        let conn = tokio::time::timeout(
-            self.connect_timeout,
-            Http1PooledConnection::new(stream, authority),
-        )
+        let host = authority.host().to_string();
+        let conn = tokio::time::timeout(self.connect_timeout, async move {
+            // Tokio resolves hostnames asynchronously and handles IPv4,
+            // IPv6, and bracket formatting without constructing a
+            // `host:port` string by hand.
+            let stream = tokio::net::TcpStream::connect((host.as_str(), port))
+                .await
+                .map_err(|e| std::io::Error::other(format!("connect failed: {}", e)))?;
+            Http1PooledConnection::new(stream, authority).await
+        })
         .await
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "connection timeout"))??;
         Ok(conn)
@@ -317,7 +320,10 @@ mod integration_tests {
         let result = pool.checkout(key).await;
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(matches!(
+            err.kind(),
+            std::io::ErrorKind::InvalidInput | std::io::ErrorKind::Other
+        ));
     }
 
     #[tokio::test]
@@ -378,9 +384,13 @@ impl ErasedHttpClient {
             conn.send_request(request).await
         };
 
-        self.pool.checkin(key, conn).await;
-
-        result
+        match result {
+            Ok(response) => {
+                self.pool.checkin(key, conn).await;
+                Ok(response)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub fn pool(&self) -> &ErasedConnectionPool {
@@ -590,7 +600,10 @@ mod tests {
         let result = pool.checkout(key).await;
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(matches!(
+            err.kind(),
+            std::io::ErrorKind::InvalidInput | std::io::ErrorKind::Other
+        ));
     }
 
     #[tokio::test]

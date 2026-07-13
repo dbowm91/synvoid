@@ -616,6 +616,11 @@ mod retry_behavior_tests {
     }
 
     #[test]
+    fn test_backoff_saturates_before_cap() {
+        assert_eq!(calculate_backoff(5, u64::MAX), 30000);
+    }
+
+    #[test]
     fn test_backoff_zero_base() {
         assert_eq!(calculate_backoff(5, 0), 0);
     }

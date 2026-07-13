@@ -29,7 +29,8 @@ use synvoid_http_client::{
 use crate::cache::{
     build_cached_response as build_cached_response_impl,
     filter_cacheable_headers as filter_cacheable_headers_impl,
-    get_cache_max_age_static as get_cache_max_age_static_impl, join_upstream_url,
+    get_cache_max_age_static as get_cache_max_age_static_impl, is_safe_for_shared_cache,
+    join_upstream_url, should_bypass_shared_cache,
 };
 use crate::headers::{build_forward_headers, ForwardedProtocol};
 use crate::retry::{
@@ -854,14 +855,7 @@ impl<W: WafProcessor> ProxyServer<W> {
     }
 
     fn should_bypass_cache(&self, headers: &http::HeaderMap) -> bool {
-        if let Some(cc) = headers.get("cache-control") {
-            if let Ok(cc_str) = cc.to_str() {
-                return cc_str.contains("no-cache")
-                    || cc_str.contains("no-store")
-                    || cc_str.contains("private");
-            }
-        }
-        false
+        should_bypass_shared_cache(headers)
     }
 
     fn get_cache_max_age(&self, headers: &http::HeaderMap) -> Option<std::time::Duration> {
@@ -900,8 +894,11 @@ impl<W: WafProcessor> ProxyServer<W> {
                 let headers = response.headers.clone();
                 let body = response.body.clone();
 
-                if cache.is_status_cacheable(status) {
-                    let allowed_headers = cache.settings().allowed_headers.clone();
+                let settings = cache.settings();
+                if cache.is_status_cacheable(status)
+                    && is_safe_for_shared_cache(&headers, &settings.vary_by)
+                {
+                    let allowed_headers = settings.allowed_headers.clone();
                     let filtered_headers =
                         filter_cacheable_headers_impl(&headers, &allowed_headers);
                     let max_age = get_cache_max_age_static_impl(&filtered_headers);
@@ -931,9 +928,15 @@ impl<W: WafProcessor> ProxyServer<W> {
         let retry_config = self.retry_config.as_ref();
         let retry_enabled = retry_config.map(|c| c.enabled).unwrap_or(false);
         let max_retries = retry_config.map(|c| c.max_retries).unwrap_or(3);
-        let should_retry_method = retry_config
-            .map(|c| should_retry_request_impl(&method, c))
-            .unwrap_or(true);
+        // `ErasedBody` is a one-shot stream. Retrying after it has been
+        // consumed would silently send an empty body to the next backend.
+        // Restrict this loop to bodyless requests until a replayable body
+        // abstraction is available.
+        let body_is_replayable = body.is_none();
+        let should_retry_method = body_is_replayable
+            && retry_config
+                .map(|c| should_retry_request_impl(&method, c))
+                .unwrap_or(true);
 
         let mut current_backend: Option<Backend> = None;
         let mut last_error: Option<String> = None;
@@ -988,7 +991,7 @@ impl<W: WafProcessor> ProxyServer<W> {
                     if retry_enabled
                         && should_retry_method
                         && is_retryable_status_impl(status, retry_config.unwrap())
-                        && attempt < max_retries
+                        && attempt <= max_retries
                     {
                         if let Some(ref be) = current_backend {
                             pool.mark_failed(&be.url);
@@ -1036,10 +1039,6 @@ impl<W: WafProcessor> ProxyServer<W> {
                         pool.mark_failed(&be.url);
                     }
 
-                    if retry_enabled && should_retry_method && attempt < max_retries {
-                        continue;
-                    }
-
                     break;
                 }
             }
@@ -1059,17 +1058,12 @@ impl<W: WafProcessor> ProxyServer<W> {
         headers: &http::HeaderMap,
     ) -> bool {
         if let Some(ref cache) = self.cache {
+            let settings = cache.settings();
             let status_u16 = status.as_u16();
-            if !cache.settings().valid_status.contains(&status_u16) {
+            if !settings.valid_status.contains(&status_u16)
+                || !is_safe_for_shared_cache(headers, &settings.vary_by)
+            {
                 return false;
-            }
-
-            if let Some(cc) = headers.get("cache-control") {
-                if let Ok(cc_str) = cc.to_str() {
-                    if cc_str.contains("no-store") || cc_str.contains("private") {
-                        return false;
-                    }
-                }
             }
 
             return true;

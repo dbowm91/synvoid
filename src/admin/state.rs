@@ -313,7 +313,11 @@ const MAX_REQUEST_LOGS: usize = 10000;
 const MAX_HISTORY_SIZE: usize = 3600;
 const MAX_CSRF_TOKENS_PER_SESSION: usize = 10;
 
-const MAX_SESSION_ID_LENGTH: usize = 32;
+// A 32-byte URL-safe base64 token without padding is 43 bytes long. Keep the
+// validation bound aligned with `SESSION_ID_BYTES`; a 32-byte token must not
+// be rejected merely because its encoded representation is longer than its
+// entropy source.
+const MAX_SESSION_ID_LENGTH: usize = 43;
 const SESSION_ID_BYTES: usize = 32;
 const SESSION_TTL_SECS: u64 = 3600;
 
@@ -1192,6 +1196,15 @@ mod tests {
         let token = state.generate_csrf_token(session_id.to_string());
         assert!(!token.is_empty());
         assert_eq!(token.len(), 36);
+    }
+
+    #[test]
+    fn test_created_session_can_be_validated() {
+        let state = create_test_state();
+        let session_id = state.create_session();
+
+        assert_eq!(session_id.len(), 43);
+        assert!(state.validate_session(&session_id));
     }
 
     #[test]

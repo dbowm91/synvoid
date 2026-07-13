@@ -45,7 +45,7 @@ pub fn is_timeout_error(error: &(dyn std::error::Error + Send + Sync + 'static))
 }
 
 pub fn calculate_backoff(attempt: u32, base_timeout_ms: u64) -> u64 {
-    let delay = base_timeout_ms * 2u64.saturating_pow(attempt.min(5));
+    let delay = base_timeout_ms.saturating_mul(2u64.saturating_pow(attempt.min(5)));
     delay.min(30000)
 }
 

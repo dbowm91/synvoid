@@ -110,7 +110,9 @@ fn open_secure_key_file(path: &std::path::Path) -> Option<std::fs::File> {
         .ok()?;
     let metadata = file.metadata().ok()?;
     if !metadata.is_file()
-        || metadata.mode() & 0o022 != 0
+        // IPC keys are bearer secrets: group/world-readable permissions are
+        // unsafe even when the file is not writable.
+        || metadata.mode() & 0o077 != 0
         || metadata.uid() != unsafe { libc::getuid() } as u32
     {
         return None;

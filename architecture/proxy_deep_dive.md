@@ -248,6 +248,21 @@ The erased pool is used for true streaming at 1M RPS scale to avoid per-request 
 - Circuit breaker after `revalidation_failure_threshold` failures (default 10), with cooldown period
 - Returns stale content immediately, updates in background
 
+### Shared-cache safety
+- Requests carrying `Authorization`, `Proxy-Authorization`, or `Cookie` bypass
+  the shared cache because those values are not part of the default cache key.
+- Responses with `Set-Cookie`, `Cache-Control: private/no-store`, `Vary: *`, or
+  a `Vary` field not represented by configured `vary_by` headers are not stored.
+- Background revalidation applies the same response checks as the foreground
+  cache path.
+
+### Retry body safety
+- Retries are limited to bodyless requests until the upstream body abstraction
+  provides a replayable stream. A consumed one-shot body is never silently
+  replaced by an empty body on a retry.
+- Error retries only occur when the configured connection-error or timeout
+  switch matches the classified error.
+
 ---
 
 ## Related Documentation
@@ -272,13 +287,13 @@ The erased pool is used for true streaming at 1M RPS scale to avoid per-request 
 // available for future typed client management but is not currently required.
 
 // Decision: ProxyHeadersConfig (proxy_headers field) is not passed through send_single_request
-// at proxy/mod.rs:1225-1238. The forward_headers are cloned from the incoming request headers.
+// in crates/synvoid-proxy/src/server.rs. The forward_headers are cloned from the incoming request headers.
 // Custom proxy headers per upstream are not currently supported; this can be addressed in a
 // future enhancement by extending send_request_erased_streaming to accept a ProxyHeadersConfig
 // parameter. Tracking: [PR-6] - Enhancement tracking ticket needed.
 
 // BUG-PROXY-1 Regression: retry_config was not being applied in send_single_request flow.
-// Fixed at proxy/mod.rs:303 - now uses the parameter value instead of None. This fix ensures
-// that retry configuration (max_retries, retryable_methods, retry_on_status) is properly
+// Fixed in crates/synvoid-proxy/src/server.rs - now uses the parameter value instead of None.
+// This ensures that retry configuration (max_retries, retry_non_idempotent, retry_on_status) is properly
 // passed to the retry logic. Test coverage added via integration tests validating the
 // retry_config flow end-to-end.

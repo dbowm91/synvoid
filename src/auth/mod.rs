@@ -168,26 +168,16 @@ impl AuthManager {
         if stores.is_empty() {
             return AuthStore::default();
         }
-        if stores.len() == 1 {
-            return stores[0].clone();
-        }
-        let mut merged = stores.last().unwrap().clone();
-        for store in stores.iter().take(stores.len() - 1) {
-            merged.login_logs.extend(store.login_logs.iter().cloned());
-            for (k, v) in store.users.iter() {
-                merged.users.insert(k.clone(), v.clone());
-            }
-            for (k, v) in store.sessions.iter() {
-                merged.sessions.insert(k.clone(), v.clone());
-            }
-        }
-        let mut seen = std::collections::HashSet::new();
-        merged.login_logs.retain(|log| seen.insert(log.id.clone()));
-        const MAX_LOGIN_LOGS: usize = 10_000;
-        if merged.login_logs.len() > MAX_LOGIN_LOGS {
-            merged.login_logs.truncate(MAX_LOGIN_LOGS);
-        }
-        merged
+
+        // Each queued value is a complete snapshot taken while holding the
+        // store lock. The newest snapshot therefore already contains every
+        // mutation represented by older snapshots. Merging older maps back
+        // into it can resurrect deleted users/sessions or overwrite a newer
+        // password/site update with stale data.
+        stores
+            .last()
+            .cloned()
+            .expect("non-empty store snapshot list")
     }
 
     fn load_store(data_dir: &std::path::Path) -> AuthStore {
@@ -557,7 +547,7 @@ impl AuthManager {
 
         let mut store = self.store.write().await;
 
-        if let Some(user) = store.users.get_mut(user_id) {
+        if let Some(user) = store.users.values_mut().find(|user| user.id == user_id) {
             user.password_hash = password_hash;
         } else {
             return Err(AuthError::UserNotFound);
@@ -1051,6 +1041,61 @@ mod tests {
         let users = manager.list_users().await;
         assert_eq!(users.len(), 1);
         assert_eq!(users[0].sites, vec!["site1", "site2"]);
+    }
+
+    #[tokio::test]
+    async fn test_update_password_uses_user_id_not_username_key() {
+        let temp_dir = TempDir::new().unwrap();
+        let manager = AuthManager::new(temp_dir.path().to_path_buf(), 3600, 3, 300);
+
+        let user = manager
+            .create_user(
+                "testuser".to_string(),
+                "old-password".to_string(),
+                UserRole::User,
+                vec![],
+            )
+            .await
+            .unwrap();
+
+        manager
+            .update_password(&user.id, "new-password")
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            manager
+                .verify_login("testuser", "old-password", None, None)
+                .await,
+            Err(AuthError::InvalidCredentials)
+        ));
+        assert!(manager
+            .verify_login("testuser", "new-password", None, None)
+            .await
+            .is_ok());
+    }
+
+    #[test]
+    fn test_merge_stores_keeps_newest_complete_snapshot() {
+        let mut old = AuthStore::default();
+        old.users.insert(
+            "old-user".to_string(),
+            User {
+                id: "old-id".to_string(),
+                username: "old-user".to_string(),
+                password_hash: "hash".to_string(),
+                role: UserRole::User,
+                sites: vec![],
+                created_at: Utc::now(),
+                last_login: None,
+                failed_attempts: 0,
+                locked_until: None,
+            },
+        );
+        let newest = AuthStore::default();
+
+        let merged = AuthManager::merge_stores(&[old, newest]);
+        assert!(merged.users.is_empty());
     }
 
     #[tokio::test]

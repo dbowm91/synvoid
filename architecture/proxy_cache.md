@@ -2,7 +2,7 @@
 
 ## 1. Purpose and Responsibility
 
-The Proxy Cache module (`src/proxy_cache/`) provides an **LRU cache for proxied HTTP responses** with disk persistence, cache key generation, TTL-based expiration, stale-while-revalidate, and circuit breaker for revalidation.
+The Proxy Cache module (`crates/synvoid-proxy-cache/`) provides an **LRU cache for proxied HTTP responses** with disk persistence, cache key generation, TTL-based expiration, stale-while-revalidate, and circuit breaker for revalidation.
 
 **Core Responsibilities:**
 - In-memory (moka) + disk response caching
@@ -17,7 +17,7 @@ The Proxy Cache module (`src/proxy_cache/`) provides an **LRU cache for proxied 
 
 ## 2. Key Data Structures
 
-### ProxyCacheEntry (`src/proxy_cache/store.rs:32-43`)
+### ProxyCacheEntry (`crates/synvoid-proxy-cache/src/store.rs:32-43`)
 
 ```rust
 pub struct ProxyCacheEntry {
@@ -34,7 +34,7 @@ pub struct ProxyCacheEntry {
 }
 ```
 
-### CacheKey (`src/proxy_cache/key.rs:4-12`)
+### CacheKey (`crates/synvoid-proxy-cache/src/key.rs:4-12`)
 
 ```rust
 pub struct CacheKey {
@@ -51,7 +51,7 @@ pub struct CacheKey {
 (`"<ahash_hex>:<path_and_query>"`) to ensure uniqueness when the same path has different
 pattern or vary values.
 
-### CacheHit (`src/proxy_cache/store.rs:110-117`)
+### CacheHit (`crates/synvoid-proxy-cache/src/store.rs:110-117`)
 
 ```rust
 pub enum CacheHit {
@@ -65,7 +65,7 @@ pub enum CacheHit {
 
 Note: `CacheHit` variants do NOT carry `ProxyCacheEntry` data. They are status-only enums.
 
-### ProxyCacheSettings (`src/proxy_cache/config.rs:4-24`)
+### ProxyCacheSettings (`crates/synvoid-proxy-cache/src/config.rs:4-24`)
 
 ```rust
 pub struct ProxyCacheSettings {
@@ -90,7 +90,7 @@ pub struct ProxyCacheSettings {
 }
 ```
 
-### ProxyCache (`src/proxy_cache/store.rs:138-155`)
+### ProxyCache (`crates/synvoid-proxy-cache/src/store.rs:138-155`)
 
 ```rust
 pub struct ProxyCache {

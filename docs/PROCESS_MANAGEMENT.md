@@ -207,7 +207,7 @@ The IPC session key secures communication between the Supervisor and worker proc
 ```
 
 The file handoff is accepted when the file is regular, owned by the current
-Unix user, and not group- or world-writable; the supervisor's owner-only
+Unix user, and has no group/world permission bits; the supervisor's owner-only
 `0600` mode is valid. The loader applies `O_NOFOLLOW` and checks the opened
 file descriptor's metadata to prevent symlink and replacement races.
 

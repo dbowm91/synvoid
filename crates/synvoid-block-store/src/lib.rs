@@ -321,7 +321,7 @@ impl BlocklistEventLog {
             self.seen_ids.insert(eid.clone());
         }
         let seq = self.next_sequence;
-        self.next_sequence += 1;
+        self.next_sequence = self.next_sequence.saturating_add(1);
         self.events.push_back(event);
         // Evict oldest events when over capacity.
         while self.events.len() > self.max_events {
@@ -381,7 +381,7 @@ impl BlocklistEventLog {
             Some(since) => {
                 // Check for gap: requested cursor is before our oldest retained
                 // event, meaning some history has been evicted.
-                let evicted_gap = since + 1 < oldest_seq && oldest_seq > 0;
+                let evicted_gap = since.saturating_add(1) < oldest_seq && oldest_seq > 0;
 
                 // Compute the index of the first event with sequence > since.
                 let first_idx = if since < oldest_seq {
@@ -1470,6 +1470,20 @@ impl BlockStore {
     ///
     /// # Returns
     /// `Some(BlockEntry)` if blocked, `None` otherwise
+    fn remove_expired_ip_if_present(&self, idx: usize, key: &str) {
+        // Capacity admission, explicit removal, and expiry removal must use
+        // the same lock. Re-check after taking it because a concurrent block
+        // may have replaced the expired entry with a fresh one.
+        let _capacity_guard = self.capacity_lock.lock();
+        let mut store = self.shards[idx].write();
+        if store.get(key).is_some_and(BlockEntry::is_expired) {
+            store.remove(key);
+            let _ = self
+                .total_entries
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
+        }
+    }
+
     pub fn is_blocked(&self, ip: &IpAddr, site_scope: &str) -> Option<BlockEntry> {
         if !self.enabled {
             return None;
@@ -1478,36 +1492,38 @@ impl BlockStore {
         let key = BlockEntry::key(site_scope, ip);
         let idx = Self::shard_index(&key);
 
-        let mut store = self.shards[idx].write();
-
-        if let Some(entry) = store.get_mut(&key) {
-            if !entry.is_expired() {
-                entry.update_access();
-                return Some(entry.clone());
-            } else {
-                store.remove(&key);
-                let _ =
-                    self.total_entries
-                        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
+        let local_expired = {
+            let mut store = self.shards[idx].write();
+            match store.get_mut(&key) {
+                Some(entry) if !entry.is_expired() => {
+                    entry.update_access();
+                    return Some(entry.clone());
+                }
+                Some(_) => true,
+                None => false,
             }
+        };
+        if local_expired {
+            self.remove_expired_ip_if_present(idx, &key);
         }
 
         if site_scope != "global" {
             let global_key = BlockEntry::key("global", ip);
             let global_idx = Self::shard_index(&global_key);
 
-            if let Some(entry) = self.shards[global_idx].write().get_mut(&global_key) {
-                if !entry.is_expired() {
-                    entry.update_access();
-                    return Some(entry.clone());
-                } else {
-                    self.shards[global_idx].write().remove(&global_key);
-                    let _ = self.total_entries.fetch_update(
-                        Ordering::Relaxed,
-                        Ordering::Relaxed,
-                        |v| v.checked_sub(1),
-                    );
+            let global_expired = {
+                let mut store = self.shards[global_idx].write();
+                match store.get_mut(&global_key) {
+                    Some(entry) if !entry.is_expired() => {
+                        entry.update_access();
+                        return Some(entry.clone());
+                    }
+                    Some(_) => true,
+                    None => false,
                 }
+            };
+            if global_expired {
+                self.remove_expired_ip_if_present(global_idx, &global_key);
             }
         }
 
@@ -1529,27 +1545,31 @@ impl BlockStore {
             return false;
         }
 
-        let mut removed_count = 0u32;
+        let removed_count = {
+            let _capacity_guard = self.capacity_lock.lock();
+            let mut removed_count = 0u32;
 
-        let key = BlockEntry::key(site_scope, ip);
-        let idx = Self::shard_index(&key);
-        if self.shards[idx].write().remove(&key).is_some() {
-            removed_count += 1;
-        }
-
-        if site_scope != "global" {
-            let global_key = BlockEntry::key("global", ip);
-            let idx = Self::shard_index(&global_key);
-            if self.shards[idx].write().remove(&global_key).is_some() {
+            let key = BlockEntry::key(site_scope, ip);
+            let idx = Self::shard_index(&key);
+            if self.shards[idx].write().remove(&key).is_some() {
                 removed_count += 1;
             }
-        }
 
-        for _ in 0..removed_count {
-            let _ = self
-                .total_entries
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
-        }
+            if site_scope != "global" {
+                let global_key = BlockEntry::key("global", ip);
+                let idx = Self::shard_index(&global_key);
+                if self.shards[idx].write().remove(&global_key).is_some() {
+                    removed_count += 1;
+                }
+            }
+
+            for _ in 0..removed_count {
+                let _ =
+                    self.total_entries
+                        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
+            }
+            removed_count
+        };
         if removed_count > 0 {
             self.trigger_persist();
         }
@@ -1750,42 +1770,57 @@ impl BlockStore {
         let key = MeshBlockEntry::key(site_scope, mesh_id);
         let idx = Self::shard_index(&key);
 
-        let mut store = self.mesh_shards[idx].write();
-
-        if let Some(entry) = store.get_mut(&key) {
-            if !entry.is_expired() {
-                let now = synvoid_utils::safe_unix_timestamp();
-                entry.access_count += 1;
-                entry.last_access = now;
-                return Some(entry.clone());
-            } else {
-                store.remove(&key);
+        let remove_expired = |store: &mut AHashMap<String, MeshBlockEntry>, key: &str| {
+            if store.get(key).is_some_and(MeshBlockEntry::is_expired) {
+                store.remove(key);
                 let _ = self.total_mesh_entries.fetch_update(
                     Ordering::Relaxed,
                     Ordering::Relaxed,
                     |v| v.checked_sub(1),
                 );
             }
+        };
+
+        let local_expired = {
+            let mut store = self.mesh_shards[idx].write();
+            match store.get_mut(&key) {
+                Some(entry) if !entry.is_expired() => {
+                    let now = synvoid_utils::safe_unix_timestamp();
+                    entry.access_count = entry.access_count.saturating_add(1);
+                    entry.last_access = now;
+                    return Some(entry.clone());
+                }
+                Some(_) => true,
+                None => false,
+            }
+        };
+        if local_expired {
+            let _capacity_guard = self.mesh_capacity_lock.lock();
+            let mut store = self.mesh_shards[idx].write();
+            remove_expired(&mut store, &key);
         }
 
         if site_scope != "global" {
             let global_key = MeshBlockEntry::key("global", mesh_id);
             let global_idx = Self::shard_index(&global_key);
 
-            if let Some(entry) = self.mesh_shards[global_idx].write().get_mut(&global_key) {
-                if !entry.is_expired() {
-                    let now = synvoid_utils::safe_unix_timestamp();
-                    entry.access_count += 1;
-                    entry.last_access = now;
-                    return Some(entry.clone());
-                } else {
-                    self.mesh_shards[global_idx].write().remove(&global_key);
-                    let _ = self.total_mesh_entries.fetch_update(
-                        Ordering::Relaxed,
-                        Ordering::Relaxed,
-                        |v| v.checked_sub(1),
-                    );
+            let global_expired = {
+                let mut store = self.mesh_shards[global_idx].write();
+                match store.get_mut(&global_key) {
+                    Some(entry) if !entry.is_expired() => {
+                        let now = synvoid_utils::safe_unix_timestamp();
+                        entry.access_count = entry.access_count.saturating_add(1);
+                        entry.last_access = now;
+                        return Some(entry.clone());
+                    }
+                    Some(_) => true,
+                    None => false,
                 }
+            };
+            if global_expired {
+                let _capacity_guard = self.mesh_capacity_lock.lock();
+                let mut store = self.mesh_shards[global_idx].write();
+                remove_expired(&mut store, &global_key);
             }
         }
 
@@ -1797,27 +1832,34 @@ impl BlockStore {
             return false;
         }
 
-        let mut removed_count = 0u32;
+        let removed_count = {
+            let _capacity_guard = self.mesh_capacity_lock.lock();
+            let mut removed_count = 0u32;
 
-        let key = MeshBlockEntry::key(site_scope, mesh_id);
-        let idx = Self::shard_index(&key);
-        if self.mesh_shards[idx].write().remove(&key).is_some() {
-            removed_count += 1;
-        }
-
-        if site_scope != "global" {
-            let global_key = MeshBlockEntry::key("global", mesh_id);
-            let idx = Self::shard_index(&global_key);
-            if self.mesh_shards[idx].write().remove(&global_key).is_some() {
+            let key = MeshBlockEntry::key(site_scope, mesh_id);
+            let idx = Self::shard_index(&key);
+            if self.mesh_shards[idx].write().remove(&key).is_some() {
                 removed_count += 1;
             }
-        }
 
-        for _ in 0..removed_count {
-            let _ =
-                self.total_mesh_entries
-                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_sub(1));
-        }
+            if site_scope != "global" {
+                let global_key = MeshBlockEntry::key("global", mesh_id);
+                let idx = Self::shard_index(&global_key);
+                if self.mesh_shards[idx].write().remove(&global_key).is_some() {
+                    removed_count += 1;
+                }
+            }
+
+            for _ in 0..removed_count {
+                let _ = self.total_mesh_entries.fetch_update(
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                    |v| v.checked_sub(1),
+                );
+            }
+            removed_count
+        };
+
         if removed_count > 0 {
             self.trigger_persist();
         }
@@ -3240,6 +3282,48 @@ mod tests {
         let ip: IpAddr = "8.8.8.8".parse().unwrap();
         assert!(store.block_ip(ip, "global_block", 3600, "global"));
         assert!(store.is_blocked(&ip, "site_a").is_some());
+    }
+
+    #[tokio::test]
+    async fn expired_global_lookup_does_not_deadlock() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = Arc::new(BlockStore::new(
+            true,
+            Some(temp_dir.path().to_path_buf()),
+            default_config(),
+        ));
+        let ip: IpAddr = "192.0.2.10".parse().unwrap();
+        let key = BlockEntry::key("global", &ip);
+        let idx = BlockStore::shard_index(&key);
+        let now = synvoid_utils::safe_unix_timestamp();
+        store.shards[idx].write().insert(
+            key,
+            BlockEntry {
+                ip: ip.to_string(),
+                reason: "expired".to_string(),
+                blocked_at: now.saturating_sub(10),
+                ban_expire_seconds: 1,
+                site_scope: "global".to_string(),
+                access_count: 0,
+                last_access: now,
+                provenance: BlockProvenance::default(),
+            },
+        );
+        store.total_entries.store(1, Ordering::Relaxed);
+
+        let checked = tokio::time::timeout(
+            Duration::from_secs(1),
+            tokio::task::spawn_blocking({
+                let store = Arc::clone(&store);
+                move || store.is_blocked(&ip, "site-a")
+            }),
+        )
+        .await
+        .expect("expired lookup timed out")
+        .expect("lookup task panicked");
+
+        assert!(checked.is_none());
+        assert_eq!(store.get_stats().total_entries, 0);
     }
 
     #[tokio::test]
@@ -5003,6 +5087,18 @@ mod tests {
             max_events: 10,
         });
         assert_eq!(result.events.len(), 0);
+        assert!(result.history_complete);
+    }
+
+    #[test]
+    fn blocklist_event_log_rejects_extreme_cursor_without_overflow() {
+        let log = BlocklistEventLog::new(3);
+        let result = log.query_since(&BlocklistEventCursor {
+            since_sequence: Some(u64::MAX),
+            max_events: 10,
+        });
+
+        assert!(result.events.is_empty());
         assert!(result.history_complete);
     }
 

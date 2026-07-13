@@ -140,6 +140,8 @@ pub struct BlockRecord {
 - **Legacy Migration**: `migrate_legacy_sentinel_entries()` converts sentinel `0.0.0.0` entries to first-class mesh blocks. **Auto-called** by `BlockStore::new` after loading both IP and mesh files from disk.
 - **Counter Correctness**: `block_ip`, `block_ip_with_provenance`, and `add_block` only increment `total_entries` on new key insertion. Overwriting an existing `(site_scope, ip)` entry updates the entry without changing the count.
 - **Overflow Safety**: Expiration deadlines and access counters use saturating arithmetic; malformed or extreme TTL values cannot wrap into an immediately expired entry.
+- **Expiry/Removal Locking**: Explicit unblocks and lazy expiry removal share the capacity lock with admission/eviction. Expired global fallback checks release shard guards before checking the global key, preventing lock-order deadlocks.
+- **Catchup Cursor Safety**: Remote sequence cursors use saturating arithmetic; an extreme `u64` cursor cannot panic the query path.
 - **Mesh-ID Deadlock Fix**: `block_mesh_id_with_provenance` drops the shard write lock before calling `trigger_persist()`, preventing deadlock where the persist path tries to read the same shard.
 - **BlocklistEvent Propagation**: Admin ban/unban handlers emit structured `BlocklistEvent` debug logs (target `blocklist_event`). Admin unban also gossips `BlocklistEventGossip` to mesh peers and pushes `BlocklistEventUpdate` IPC to workers. Apply pipeline uses FIFO dedup (`SeenEventCache`) and per-target stale suppression (`TargetStateCache`). See `architecture/blocklist_remove_consistency.md`.
 

@@ -94,6 +94,10 @@ SynVoid supports two fundamentally different authentication systems that serve d
 4. Client includes CSRF token in `x-csrf-token` header for mutating requests
 5. Session expires after 1 hour (3600 seconds), configurable
 
+The session ID is generated from 32 random bytes and encoded as 43 URL-safe
+base64 characters without padding. Validation accepts that encoded length so
+freshly-created sessions remain usable.
+
 **Timing Normalization (ADMIN-5):**
 To prevent session enumeration attacks, admin auth includes timing normalization:
 - `verify_dummy_admin_token()` at `src/admin/handlers/auth.rs:14-22` performs a dummy bcrypt verify

@@ -20,7 +20,9 @@ pub mod server;
 pub mod streaming;
 
 pub use cache::{
-    build_cached_response, filter_cacheable_headers, get_cache_max_age_static, join_upstream_url,
+    build_cached_response, filter_cacheable_headers, get_cache_max_age_static,
+    has_cache_control_directive, is_safe_for_shared_cache, join_upstream_url,
+    should_bypass_shared_cache,
 };
 pub use client_registry::UpstreamClientRegistry;
 pub use dispatch::{dispatch_to_upstream, DispatchParams, UpstreamDispatchError};

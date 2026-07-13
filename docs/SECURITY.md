@@ -68,6 +68,15 @@ port = 8081
 
 For remote admin, use VPN or mesh tunnel.
 
+### Shared Proxy Cache
+
+The shared proxy cache is intentionally conservative. Requests with
+`Authorization`, `Proxy-Authorization`, or `Cookie` bypass cache lookup, and
+responses with `Set-Cookie`, `private`/`no-store`, `Vary: *`, or unsupported
+`Vary` fields are not stored. If a site needs caching for personalized traffic,
+configure an explicit, reviewed cache-key policy rather than relying on the
+shared default.
+
 ## IPC Security
 
 ### Enable IPC Signing
@@ -85,8 +94,9 @@ xxd -l 32 -p /dev/urandom
 
 For process handoff, prefer the supervisor-managed temporary key file. It is
 created with `0600`, consumed once, and rejected if it is not a regular file,
-is not owned by the current Unix user, or is group/world-writable. Signed
-frames are length-checked before HMAC and nonce replay validation.
+is not owned by the current Unix user, or has any group/world permission bits
+(including read-only access). Signed frames are length-checked before HMAC and
+nonce replay validation.
 
 ## TLS Configuration
 

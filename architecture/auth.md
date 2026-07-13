@@ -312,7 +312,12 @@ create (verify_login)     validate (with refresh)     destroy (explicit)
 
 - In-memory `Arc<RwLock<AuthStore>>` for fast access
 - Async persistence to `{data_dir}/auth/store.json` every 5 seconds
-- Batched writes merge multiple updates before flushing
+- Batched writes persist the newest complete snapshot; older queued snapshots
+  are never merged back over newer user/session state
+
+The password-update path locates users by their stable `User.id` value (the
+store map itself is keyed by lowercase username). Session refresh returns a
+new session ID, so callers must replace the session cookie when refresh occurs.
 
 ### Persistence Architecture
 

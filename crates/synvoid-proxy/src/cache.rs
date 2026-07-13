@@ -4,6 +4,60 @@ use std::time::Duration;
 
 use synvoid_proxy_cache::ProxyCacheEntry;
 
+/// Return whether a Cache-Control header contains a directive, matching the
+/// directive name case-insensitively and ignoring an optional value.
+pub fn has_cache_control_directive(headers: &http::HeaderMap, directive: &str) -> bool {
+    headers
+        .get_all(http::header::CACHE_CONTROL)
+        .iter()
+        .any(|value| {
+            value.to_str().ok().is_some_and(|value| {
+                value.split(',').any(|part| {
+                    let name = part.split_once('=').map_or(part, |(name, _)| name);
+                    name.trim().eq_ignore_ascii_case(directive)
+                })
+            })
+        })
+}
+
+/// Shared-cache request guard. Cookies and authorization headers are
+/// deliberately bypassed because the cache key does not include their full
+/// values. This prevents an authenticated or personalized response from
+/// being served to another client.
+pub fn should_bypass_shared_cache(headers: &http::HeaderMap) -> bool {
+    headers.contains_key(http::header::AUTHORIZATION)
+        || headers.contains_key(http::header::PROXY_AUTHORIZATION)
+        || headers.contains_key(http::header::COOKIE)
+        || has_cache_control_directive(headers, "no-cache")
+        || has_cache_control_directive(headers, "no-store")
+        || has_cache_control_directive(headers, "private")
+}
+
+/// Response-side shared-cache safety checks. `Vary: *` and unsupported Vary
+/// fields cannot be represented by the configured cache key, and `Set-Cookie`
+/// responses are private by definition for this shared cache.
+pub fn is_safe_for_shared_cache(headers: &http::HeaderMap, vary_by: &[String]) -> bool {
+    if headers.contains_key(http::header::SET_COOKIE)
+        || has_cache_control_directive(headers, "no-store")
+        || has_cache_control_directive(headers, "private")
+    {
+        return false;
+    }
+
+    headers.get_all(http::header::VARY).iter().all(|value| {
+        let Ok(vary) = value.to_str() else {
+            return false;
+        };
+        vary.split(',').all(|field| {
+            let field = field.trim();
+            field != "*"
+                && vary_by
+                    .iter()
+                    .any(|configured| configured.eq_ignore_ascii_case(field))
+        })
+    })
+}
+
 pub fn get_cache_max_age_static(headers: &http::HeaderMap) -> Option<Duration> {
     if let Some(cc) = headers.get("cache-control") {
         if let Ok(cc_str) = cc.to_str() {
@@ -157,5 +211,66 @@ pub fn join_upstream_url(upstream: impl AsRef<str>, path: impl AsRef<str>) -> St
         format!("{}{}", upstream, path)
     } else {
         format!("{}/{}", upstream, path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_cache_bypasses_credentials_and_cookies() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            http::header::AUTHORIZATION,
+            "Bearer secret".parse().unwrap(),
+        );
+        assert!(should_bypass_shared_cache(&headers));
+
+        headers.remove(http::header::AUTHORIZATION);
+        headers.insert(http::header::COOKIE, "session=secret".parse().unwrap());
+        assert!(should_bypass_shared_cache(&headers));
+    }
+
+    #[test]
+    fn shared_cache_rejects_private_and_unrepresented_vary_responses() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(http::header::SET_COOKIE, "session=secret".parse().unwrap());
+        assert!(!is_safe_for_shared_cache(&headers, &[]));
+
+        headers.remove(http::header::SET_COOKIE);
+        headers.insert(http::header::VARY, "User-Agent".parse().unwrap());
+        assert!(!is_safe_for_shared_cache(&headers, &[]));
+        assert!(is_safe_for_shared_cache(
+            &headers,
+            &["user-agent".to_string()]
+        ));
+    }
+
+    #[test]
+    fn cache_control_directives_are_case_insensitive_and_tokenized() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            http::header::CACHE_CONTROL,
+            "max-age=60, No-StOrE".parse().unwrap(),
+        );
+        assert!(has_cache_control_directive(&headers, "no-store"));
+        assert!(!has_cache_control_directive(&headers, "no-store-extra"));
+    }
+
+    #[test]
+    fn shared_cache_checks_duplicate_control_headers() {
+        let mut request_headers = http::HeaderMap::new();
+        request_headers.append(http::header::CACHE_CONTROL, "max-age=60".parse().unwrap());
+        request_headers.append(http::header::CACHE_CONTROL, "no-store".parse().unwrap());
+        assert!(should_bypass_shared_cache(&request_headers));
+
+        let mut response_headers = http::HeaderMap::new();
+        response_headers.append(http::header::VARY, "Accept-Encoding".parse().unwrap());
+        response_headers.append(http::header::VARY, "*".parse().unwrap());
+        assert!(!is_safe_for_shared_cache(
+            &response_headers,
+            &["accept-encoding".to_string()]
+        ));
     }
 }

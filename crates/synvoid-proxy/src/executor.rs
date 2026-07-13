@@ -15,7 +15,10 @@ use synvoid_proxy_cache::{CacheHit, CacheKey, CacheKeyBuilder, ProxyCache};
 use synvoid_utils;
 
 use crate::cache::join_upstream_url;
-use crate::cache::{build_cached_response, filter_cacheable_headers, get_cache_max_age_static};
+use crate::cache::{
+    build_cached_response, filter_cacheable_headers, get_cache_max_age_static,
+    is_safe_for_shared_cache, should_bypass_shared_cache,
+};
 use crate::headers::{build_forward_headers, ForwardedProtocol};
 
 #[derive(Debug)]
@@ -255,31 +258,17 @@ impl ProxyExecutor {
     }
 
     fn should_bypass_cache(&self, headers: &HeaderMap) -> bool {
-        if let Some(cc) = headers.get("cache-control") {
-            if let Ok(cc_str) = cc.to_str() {
-                let cc_lower = cc_str.to_ascii_lowercase();
-                return cc_lower.contains("no-cache")
-                    || cc_lower.contains("no-store")
-                    || cc_lower.contains("private");
-            }
-        }
-        false
+        should_bypass_shared_cache(headers)
     }
 
     fn is_response_cacheable(&self, response: &Response<Bytes>) -> bool {
         if let Some(ref cache) = self.cache {
+            let settings = cache.settings();
             let status = response.status().as_u16();
-            if !cache.settings().valid_status.contains(&status) {
+            if !settings.valid_status.contains(&status)
+                || !is_safe_for_shared_cache(response.headers(), &settings.vary_by)
+            {
                 return false;
-            }
-
-            if let Some(cc) = response.headers().get("cache-control") {
-                if let Ok(cc_str) = cc.to_str() {
-                    let cc_lower = cc_str.to_ascii_lowercase();
-                    if cc_lower.contains("no-store") || cc_lower.contains("private") {
-                        return false;
-                    }
-                }
             }
 
             return true;
@@ -334,8 +323,11 @@ impl ProxyExecutor {
                 Ok(resp) => {
                     let hyper_resp =
                         synvoid_http_client::HttpResponse::from_hyper(resp, None).await;
-                    if cache_clone.is_status_cacheable(hyper_resp.status.as_u16()) {
-                        let allowed_headers = cache_clone.settings().allowed_headers.clone();
+                    let settings = cache_clone.settings();
+                    if cache_clone.is_status_cacheable(hyper_resp.status.as_u16())
+                        && is_safe_for_shared_cache(&hyper_resp.headers, &settings.vary_by)
+                    {
+                        let allowed_headers = settings.allowed_headers.clone();
                         let filtered_headers =
                             filter_cacheable_headers(&hyper_resp.headers, &allowed_headers);
                         let max_age = get_cache_max_age_static(&filtered_headers);

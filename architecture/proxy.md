@@ -169,7 +169,7 @@ loop {
     backend.record_latency(elapsed)
     backend.decrement_connections()
 
-    if retry_enabled && should_retry && attempt < max_retries {
+    if retry_enabled && should_retry && attempt <= max_retries {
         pool.mark_failed(&backend.url)
         sleep(calculate_backoff(attempt, timeout))
         continue
@@ -184,7 +184,7 @@ loop {
 ```rust
 CacheKeyBuilder::new(key_pattern, vary_by)
 // Default pattern: "{scheme}://{host}:{port}{path}"
-// Vary-by: cookies, query params, etc.
+// Vary-by: selected request headers (for example, Accept-Encoding)
 ```
 
 ### Cache Hit Flow
@@ -198,6 +198,10 @@ handle_request_with_cache()
     │   └── MISS → forward_request()
     │               └── If response is cacheable: TeeBody wraps and stores
 ```
+
+Shared-cache requests carrying `Authorization`, `Proxy-Authorization`, or
+`Cookie` bypass lookup. Responses with `Set-Cookie`, private/no-store cache
+directives, or unsupported `Vary` fields are not stored.
 
 ### Stale-While-Revalidate
 ```rust
@@ -217,12 +221,18 @@ if is_swr {
 2. Method is idempotent (GET, HEAD, OPTIONS, TRACE)
 3. Error type matches config (connection error / timeout)
 4. Or status code is retryable (502, 503, 504)
-5. Attempt count < max_retries
+5. Attempt count is within the configured retry budget (`max_retries` means
+   retries after the initial attempt)
+
+Retries are currently limited to bodyless requests because proxied request
+bodies are one-shot streams. This avoids replaying an empty body to a failover
+backend. Error retries also honor the configured connection-error and timeout
+switches; unrelated transport errors are not retried implicitly.
 
 ### Backoff Calculation
 ```rust
 pub fn calculate_backoff(attempt: u32, base_timeout_ms: u64) -> u64 {
-    let delay = base_timeout_ms * 2u64.saturating_pow(attempt.min(5));
+    let delay = base_timeout_ms.saturating_mul(2u64.saturating_pow(attempt.min(5)));
     delay.min(30000)  // Cap at 30 seconds
 }
 ```
@@ -293,7 +303,7 @@ Each worker has `max_backends` connection counters (one per backend).
 
 ### CacheKey URI Hashing (DOC-H20)
 
-In `src/proxy_cache/key.rs:43-52`, `CacheKey::new()` produces a hash-prefixed URI:
+In `crates/synvoid-proxy-cache/src/key.rs:43-52`, `CacheKey::new()` produces a hash-prefixed URI:
 
 ```rust
 let mut hasher = AHasher::default();
@@ -312,14 +322,14 @@ This ensures cache key uniqueness when the same path has different pattern or va
 
 ### ErasedHttpClient Pool Size (DOC-H21)
 
-In `src/proxy/mod.rs:311`, `ErasedHttpClient::new(100)` hardcodes the pool size to 100
+In `crates/synvoid-proxy/src/server.rs`, `ErasedHttpClient::new(100)` hardcodes the pool size to 100
 max idle connections per host, ignoring any configurable parameter:
 
 ```rust
 erased_client: crate::http_client::ErasedHttpClient::new(100),
 ```
 
-The `ErashedHttpClient::new(max_idle_per_host: usize)` constructor accepts a parameter,
+The `ErasedHttpClient::new(max_idle_per_host: usize)` constructor accepts a parameter,
 but `ProxyServer` always passes 100. This is a known limitation.
 
 ## 12. Related Documentation

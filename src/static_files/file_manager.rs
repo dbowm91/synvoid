@@ -314,36 +314,67 @@ impl FileManager {
             ));
         }
 
-        let user_path_clean = user_path.trim_start_matches('/');
-        let full_path = self.config.root_path.join(user_path_clean);
-
         let canonical = tokio::fs::canonicalize(&self.config.root_path)
             .await
             .map_err(FileManagerError::IoError)?;
 
-        if user_path_clean.is_empty() {
+        let mut relative = PathBuf::new();
+        for component in Path::new(user_path.trim_start_matches('/')).components() {
+            match component {
+                std::path::Component::CurDir => {}
+                std::path::Component::Normal(name) => relative.push(name),
+                std::path::Component::ParentDir => {
+                    if !relative.pop() {
+                        return Err(FileManagerError::PathTraversal);
+                    }
+                }
+                std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                    return Err(FileManagerError::InvalidPath(
+                        "absolute path component is not allowed".to_string(),
+                    ));
+                }
+            }
+        }
+
+        if relative.as_os_str().is_empty() {
             return Ok(canonical);
         }
 
-        let target_canonical = tokio::fs::canonicalize(&full_path)
-            .await
-            .or_else(|_| {
-                if self.config.allow_symlinks {
-                    Ok(full_path.clone())
-                } else {
-                    Err(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        "not found",
-                    ))
+        let full_path = canonical.join(&relative);
+        let target_canonical = match tokio::fs::canonicalize(&full_path).await {
+            Ok(path) => path,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                // Mutating operations may legitimately address a new leaf.
+                // Canonicalize the nearest existing ancestor so a missing
+                // suffix is still checked against the real root (including
+                // symlinked ancestors) before it is returned to the caller.
+                let mut ancestor = full_path.clone();
+                let mut missing_components = Vec::new();
+                while tokio::fs::metadata(&ancestor).await.is_err() {
+                    let Some(name) = ancestor.file_name().map(|name| name.to_os_string()) else {
+                        return Err(FileManagerError::NotFound(user_path.to_string()));
+                    };
+                    missing_components.push(name);
+                    if !ancestor.pop() {
+                        return Err(FileManagerError::NotFound(user_path.to_string()));
+                    }
                 }
-            })
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    FileManagerError::NotFound(user_path.to_string())
-                } else {
-                    FileManagerError::IoError(e)
+
+                let ancestor_canonical = tokio::fs::canonicalize(&ancestor)
+                    .await
+                    .map_err(FileManagerError::IoError)?;
+                if !ancestor_canonical.starts_with(&canonical) {
+                    return Err(FileManagerError::PathTraversal);
                 }
-            })?;
+
+                let mut candidate = ancestor_canonical;
+                for component in missing_components.iter().rev() {
+                    candidate.push(component);
+                }
+                candidate
+            }
+            Err(error) => return Err(FileManagerError::IoError(error)),
+        };
 
         if !target_canonical.starts_with(&canonical) {
             tracing::warn!(
@@ -355,7 +386,7 @@ impl FileManager {
             return Err(FileManagerError::PathTraversal);
         }
 
-        let depth = user_path_clean.matches('/').count();
+        let depth = user_path.trim_start_matches('/').matches('/').count();
         if depth > MAX_PATH_DEPTH {
             return Err(FileManagerError::InvalidPath(format!(
                 "path depth exceeds maximum of {}",
@@ -1064,6 +1095,13 @@ impl FileManager {
         {
             let mut entry = entry.map_err(FileManagerError::IoError)?;
 
+            let entry_type = entry.header().entry_type();
+            if entry_type.is_symlink() || entry_type.is_hard_link() {
+                return Err(FileManagerError::InvalidPath(
+                    "symbolic and hard links are not allowed in extracted archives".to_string(),
+                ));
+            }
+
             let entry_path = entry
                 .path()
                 .map_err(FileManagerError::IoError)?
@@ -1150,6 +1188,13 @@ impl FileManager {
             .map_err(|e| FileManagerError::InvalidPath(format!("invalid tar.gz: {}", e)))?
         {
             let mut entry = entry.map_err(FileManagerError::IoError)?;
+
+            let entry_type = entry.header().entry_type();
+            if entry_type.is_symlink() || entry_type.is_hard_link() {
+                return Err(FileManagerError::InvalidPath(
+                    "symbolic and hard links are not allowed in extracted archives".to_string(),
+                ));
+            }
 
             let entry_path = entry
                 .path()
@@ -1358,5 +1403,45 @@ mod tests {
         assert!(!config.is_extension_blocked("txt"));
         assert!(!config.is_extension_blocked("md"));
         assert!(config.is_extension_blocked("exe"));
+    }
+
+    #[tokio::test]
+    async fn test_new_mutation_paths_resolve_under_root() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = FileManagerConfig {
+            enabled: true,
+            root_path: temp_dir.path().to_path_buf(),
+            ..FileManagerConfig::default()
+        };
+        let manager = FileManager::new(config);
+
+        manager.create_directory("/new/nested").await.unwrap();
+        manager
+            .write_file("/new/nested/file.txt", b"safe".to_vec())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            manager.read_file("/new/nested/file.txt").await.unwrap(),
+            b"safe"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_new_mutation_path_rejects_parent_escape() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = FileManagerConfig {
+            enabled: true,
+            root_path: temp_dir.path().to_path_buf(),
+            ..FileManagerConfig::default()
+        };
+        let manager = FileManager::new(config);
+
+        assert!(matches!(
+            manager
+                .write_file("/../outside.txt", b"blocked".to_vec())
+                .await,
+            Err(FileManagerError::PathTraversal)
+        ));
     }
 }
