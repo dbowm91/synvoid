@@ -68,9 +68,20 @@ jobs:
         id: normalize
         shell: bash
         run: |
-          # If the select step failed or produced invalid output, fall back to full mode
-          MODE="${{ steps.select.outputs.mode }}"
-          PACKAGES="${{ steps.select.outputs.packages }}"
+          # Read directly from the selector's JSON output file instead of
+          # relying on step output expressions (which may not propagate with
+          # continue-on-error at the step level).
+          if [ -f /tmp/affected.json ]; then
+            MODE=$(python3 -c "import sys,json; print(json.load(open('/tmp/affected.json'))['mode'])" 2>/dev/null || true)
+            PACKAGES=$(python3 -c "import sys,json; print(json.dumps(json.load(open('/tmp/affected.json'))['changed_packages']))" 2>/dev/null || true)
+            ROOT_TESTS=$(python3 -c "import sys,json; print(json.dumps(json.load(open('/tmp/affected.json'))['root_tests']))" 2>/dev/null || true)
+            FEATURE_CLASSES=$(python3 -c "import sys,json; print(json.dumps(json.load(open('/tmp/affected.json'))['feature_classes']))" 2>/dev/null || true)
+          else
+            MODE=""
+            PACKAGES="[]"
+            ROOT_TESTS="[]"
+            FEATURE_CLASSES="[]"
+          fi
           
           if [ -z "$MODE" ] || [ "$MODE" = "" ]; then
             echo "mode=full" >> "$GITHUB_OUTPUT"
@@ -84,8 +95,6 @@ jobs:
           else
             echo "mode=$MODE" >> "$GITHUB_OUTPUT"
             echo "packages=$PACKAGES" >> "$GITHUB_OUTPUT"
-            ROOT_TESTS="${{ steps.select.outputs.root-tests }}"
-            FEATURE_CLASSES="${{ steps.select.outputs.feature-classes }}"
             echo "root-tests=$ROOT_TESTS" >> "$GITHUB_OUTPUT"
             echo "feature-classes=$FEATURE_CLASSES" >> "$GITHUB_OUTPUT"
           fi
