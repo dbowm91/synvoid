@@ -128,7 +128,7 @@ pub fn create_admin_router(
     let config_dir = config.blocking_read().config_dir.clone();
     let config_versions = ConfigVersionManager::new(config_dir);
 
-    let mut state_builder = AdminState::new(config, token_hash)
+    let state_builder = AdminState::new(config, token_hash)
         .with_config_versions(config_versions)
         .with_probe_tracker(probe_tracker)
         .with_suspicious_word_tracker(suspicious_word_tracker)
@@ -139,9 +139,7 @@ pub fn create_admin_router(
         .with_org_key_manager(mesh_transport.as_ref().map(|m| m.get_org_key_manager()));
 
     #[cfg(feature = "icmp-filter")]
-    {
-        state_builder = state_builder.with_icmp_filter(icmp_filter);
-    }
+    let state_builder = state_builder.with_icmp_filter(icmp_filter);
 
     let state = Arc::new(state_builder);
 

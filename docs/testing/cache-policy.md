@@ -10,7 +10,7 @@ SynVoid CI uses a layered caching strategy to minimize compilation time across 4
 |-------|------|------|----------------|-----------|
 | 1 | Cargo source caches | `Swatinem/rust-cache@v2` (built-in) | ~200 MB | Cargo.lock hash |
 | 2 | Tool binaries | `actions/cache@v4` / `taiki-e/install-action` | ~50 MB | Tool + version |
-| 3 | Compiler outputs | sccache (via `Swatinem/rust-cache` wrapper) | ~2 GB | sccache key |
+| 3 | Compiler outputs | sccache (dormant — deferred) | ~2 GB | sccache key |
 | 4 | Cargo target metadata | `Swatinem/rust-cache@v2` | ~500 MB | Profile + features + target |
 
 ### Layer 1: Cargo Source Caches
@@ -32,21 +32,13 @@ Tool binaries are cached individually to avoid repeated `cargo install`:
 | `cross` | `taiki-e/install-action@v2` | tool + version | `~/.cargo/bin/cross` |
 | `sccache` | `Swatinem/rust-cache@v2` (via sccache setup) | see Layer 3 | `~/.cargo/bin/sccache` |
 
-### Layer 3: Compiler Outputs (sccache)
+### Layer 3: Compiler Outputs (sccache) — Dormant
 
-sccache wraps `rustc` and caches compilation artifacts across jobs sharing the same sccache key. This provides the largest speedup for repeated incremental compilations.
+**Status: Deferred.** The GitHub Actions cache backend for sccache was unavailable in the current runner context. sccache support remains in the shared `setup-rust-ci` action as an optional dormant capability (`sccache: 'true'` input), but no workflow currently enables it. `Swatinem/rust-cache@v2` remains the active cache mechanism for all lanes.
 
-**Setup (planned — not yet in workflows):**
+When a supported sccache backend is verified (e.g., self-hosted runners, S3, or Redis), re-enable by setting `sccache: 'true'` on eligible jobs and verifying cache store/retrieve succeeds. Do not re-enable sccache merely because installation succeeds — the backend must store and retrieve artifacts successfully.
 
-```yaml
-- name: Setup sccache
-  uses: mozilla-actions/sccache-action@v0.0.6
-  env:
-    SCCACHE_GHA_ENABLED: "true"
-    RUSTC_WRAPPER: "sccache"
-```
-
-**sccache key dimensions:**
+**sccache key dimensions (for future use):**
 
 ```
 {toolchain}-{target}-{profile}-{features}
@@ -63,7 +55,7 @@ Example keys:
 | Release qualification / full-test-suite (dns) | `stable-x86_64-unknown-linux-gnu-ci-dns` |
 | Nightly qualification / miri | `nightly-x86_64-unknown-linux-gnu-dev-default` |
 
-**sccache backend:** GitHub Actions cache (`SCCACHE_GHA_ENABLED=true`). Each unique key gets its own cache entry (up to 10 GB total per repository, shared across all workflows).
+**sccache backend:** Dormant. Previously planned as GitHub Actions cache (`SCCACHE_GHA_ENABLED=true`). Each unique key would get its own cache entry (up to 10 GB total per repository, shared across all workflows). Currently no backend is active.
 
 ### Layer 4: Cargo Target Metadata
 
@@ -178,9 +170,9 @@ All cache layers are **best-effort**. Cache failures never block CI.
 
 ## Measurement Requirements
 
-### sccache Stats
+### sccache Stats (Dormant)
 
-After each job using sccache, emit compilation statistics:
+sccache is currently deferred. When re-enabled, emit compilation statistics after each job using sccache:
 
 ```yaml
 - name: sccache stats
@@ -223,29 +215,29 @@ Cache performance should be reported monthly in the CI performance baseline (`do
 
 | Job | Layers used | Expected cache benefit |
 |-----|-------------|----------------------|
-| clippy | 1, 3, 4 | High (incremental clippy on 50 crates) |
-| security-regression | 1, 3, 4 | Medium (test compilation) |
-| guard-suite | 1, 3, 4 | Medium (test compilation) |
-| upload-tests | 1, 3, 4 | High (per-crate tests) |
-| honeypot-tests | 1, 3, 4 | High (per-crate tests) |
-| tarpit-tests | 1, 3, 4 | High (per-crate tests) |
-| mesh-tests | 1, 3, 4 | High (per-crate tests) |
-| core-profile | 1, 3, 4 | Low (check-only, fast) |
+| clippy | 1, 4 | High (incremental clippy on 50 crates) |
+| security-regression | 1, 4 | Medium (test compilation) |
+| guard-suite | 1, 4 | Medium (test compilation) |
+| upload-tests | 1, 4 | High (per-crate tests) |
+| honeypot-tests | 1, 4 | High (per-crate tests) |
+| tarpit-tests | 1, 4 | High (per-crate tests) |
+| mesh-tests | 1, 4 | High (per-crate tests) |
+| core-profile | 1, 4 | Low (check-only, fast) |
 
 ### Main Comprehensive Lane
 
 | Job | Layers used | Expected cache benefit |
 |-----|-------------|----------------------|
-| build (8 targets) | 1, 2, 3, 4 | High (release builds across targets) |
-| dns-tests | 1, 3, 4 | High (1100+ tests) |
-| plugin-runtime-guardrails | 1, 3, 4 | High (plugin tests + guards) |
-| profile-matrix (5 jobs) | 1, 3, 4 | Medium (check-only, fast) |
+| build (8 targets) | 1, 2, 4 | High (release builds across targets) |
+| dns-tests | 1, 4 | High (1100+ tests) |
+| plugin-runtime-guardrails | 1, 4 | High (plugin tests + guards) |
+| profile-matrix (5 jobs) | 1, 4 | Medium (check-only, fast) |
 
 ### Nightly Qualification Lane
 
 | Job | Layers used | Expected cache benefit |
 |-----|-------------|----------------------|
-| profile-matrix | 1, 3, 4 | Medium |
+| profile-matrix | 1, 4 | Medium |
 | fuzz-smoke | 1, 2 (cargo-fuzz only) | Low (nightly toolchain, different key) |
 | miri-test | None (nightly + miri) | None (unique toolchain) |
 
@@ -253,10 +245,10 @@ Cache performance should be reported monthly in the CI performance baseline (`do
 
 | Job | Layers used | Expected cache benefit |
 |-----|-------------|----------------------|
-| build (8 targets) | 1, 2, 4 (no sccache) | Medium (source + metadata only) |
-| full-test-suite (7 suites) | 1, 3, 4 | High |
-| security-regression | 1, 3, 4 | Medium |
-| guard-suite | 1, 3, 4 | Medium |
+| build (8 targets) | 1, 2, 4 | Medium (source + metadata only) |
+| full-test-suite (7 suites) | 1, 4 | High |
+| security-regression | 1, 4 | Medium |
+| guard-suite | 1, 4 | Medium |
 
 ## Maximum Expected Cache Size
 
@@ -264,15 +256,15 @@ Cache performance should be reported monthly in the CI performance baseline (`do
 |-------|--------------|-------------------|
 | Cargo source (registry) | ~200 MB | ~200 MB (shared) |
 | Tool binaries | ~50 MB | ~100 MB (nextest + fuzz + audit + deny) |
-| sccache outputs | ~2 GB per key | ~10 GB (GitHub Actions limit) |
+| sccache outputs | ~2 GB per key | ~0 GB (dormant — no active backend) |
 | Cargo target metadata | ~500 MB per key | ~3 GB (multiple profiles × targets) |
-| **Total** | **~2.7 GB** | **~13 GB** |
+| **Total** | **~0.7 GB** | **~3.3 GB** |
 
-GitHub Actions provides 10 GB of cache storage per repository. The sccache and target metadata layers are the primary consumers. LRU eviction ensures the most-recently-used keys are retained.
+GitHub Actions provides 10 GB of cache storage per repository. With sccache dormant, the primary consumers are Cargo source caches and target metadata. LRU eviction ensures the most-recently-used keys are retained.
 
 ## Future Considerations
 
-- **sccache integration** (complete): sccache is active for PR fast lane compilation jobs via the shared `setup-rust-ci` composite action. Stats are reported in CI summaries.
+- **sccache integration** (deferred): The GitHub Actions cache backend was unavailable. sccache support remains dormant in the shared `setup-rust-ci` composite action. Re-evaluate when a supported backend (self-hosted runners, S3, Redis) is available. No active sccache use in any workflow.
 - **Shared setup action** (complete): `.github/actions/setup-rust-ci/action.yml` is adopted by 6 eligible PR jobs, eliminating 25 duplicate setup steps.
 - **Cache partitioning by feature class**: Currently, `Swatinem/rust-cache` keys include profile/feature suffixes to avoid cross-contamination. With sccache, this becomes automatic (sccache keys include features).
 - **Persistent cache for nightly**: Nightly toolchain changes frequently, invalidating all caches. Consider `Swatinem/rust-cache` with `shared-key: nightly` to at least share source caches across nightly runs.

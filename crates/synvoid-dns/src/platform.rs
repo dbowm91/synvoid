@@ -330,6 +330,21 @@ mod tests {
     mod fallback_tests {
         use super::*;
 
+        fn loopback_tcp_stream() -> std::net::TcpStream {
+            use std::net::TcpListener;
+            use std::thread;
+
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+            let addr = listener.local_addr().expect("listener address");
+            let accept = thread::spawn(move || listener.accept().map(|(stream, _)| stream));
+            let client = std::net::TcpStream::connect(addr).expect("connect loopback stream");
+            let _server = accept
+                .join()
+                .expect("accept thread")
+                .expect("accept stream");
+            client
+        }
+
         #[test]
         fn test_fallback_platform_name() {
             let platform = super::fallback::FallbackAnycastSocket::new();
@@ -385,7 +400,7 @@ mod tests {
         #[test]
         fn test_fallback_enable_tcp_pktinfo_returns_error() {
             let platform = super::fallback::FallbackAnycastSocket::new();
-            let stream = std::net::TcpStream::bind("127.0.0.1:0").unwrap();
+            let stream = loopback_tcp_stream();
             let result = platform.enable_tcp_pktinfo(&stream);
             assert!(result.is_err());
         }
@@ -407,7 +422,7 @@ mod tests {
         #[test]
         fn test_fallback_error_message_mentions_tcp() {
             let platform = super::fallback::FallbackAnycastSocket::new();
-            let stream = std::net::TcpStream::bind("127.0.0.1:0").unwrap();
+            let stream = loopback_tcp_stream();
             let result = platform.enable_tcp_pktinfo(&stream);
             assert!(result.unwrap_err().contains("IP_PKTINFO"));
         }

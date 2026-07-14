@@ -128,11 +128,11 @@ From `Cargo.toml`:
 | N2 | alpine-test | `cargo test --release -- --test-threads=1` | x86_64-linux-musl | default | release | Tests | Alpine/musl test (serial) |
 | N3 | freebsd-test | `cargo build --release` | x86_64-freebsd | default | release | Compile-only | FreeBSD build |
 | N4 | freebsd-test | `cargo test --release -- --test-threads=1` | x86_64-freebsd | default | release | Tests | FreeBSD test (serial) |
-| N5 | platform-compat | `cargo check --target x86_64-unknown-linux-gnu` | x86_64-linux-gnu | default | dev | Compile-only | Linux glibc compat |
-| N6 | platform-compat | `cargo check --target x86_64-unknown-linux-musl` | x86_64-linux-musl | default | dev | Compile-only | Linux musl compat |
-| N7 | platform-compat | `cargo check --target x86_64-apple-darwin` | x86_64-apple-darwin | default | dev | Compile-only | macOS Intel compat |
-| N8 | platform-compat | `cargo check --target x86_64-pc-windows-msvc` | x86_64-pc-windows-msvc | default | dev | Compile-only | Windows compat |
-| N9 | platform-compat | `cargo check --target x86_64-unknown-freebsd` | x86_64-freebsd | default | dev | Compile-only | FreeBSD compat |
+| N5 | platform-compat | `cargo check --tests --target x86_64-unknown-linux-gnu` | x86_64-linux-gnu | default | dev | Compile-only | Linux glibc compat |
+| N6 | platform-compat | `cargo check --tests --target x86_64-unknown-linux-musl` | x86_64-linux-musl | default | dev | Compile-only | Linux musl compat |
+| N7 | platform-compat | `cargo check --tests --target x86_64-apple-darwin` | x86_64-apple-darwin | default | dev | Compile-only | macOS Intel compat |
+| N8 | platform-compat | `cargo check --tests --target x86_64-pc-windows-msvc` | x86_64-pc-windows-msvc | default | dev | Compile-only | Windows compat |
+| N9 | platform-compat | `cargo check --tests --target x86_64-unknown-freebsd` | x86_64-freebsd | default | dev | Compile-only | FreeBSD compat |
 | N10 | miri-test | `cargo miri test -p synvoid-utils` | native | default | nightly | Tests | Memory safety (Miri) |
 | N11 | fuzz-smoke | `cargo +nightly fuzz run <target> -- -runs=1000` (16 targets) | native | default | nightly | Tests | Fuzz correctness (16 targets) |
 | N12 | outdated-deps | `cargo outdated --release --exit-code 2` | native | — | — | N/A | Dependency freshness |
@@ -332,7 +332,7 @@ Audit:     cargo audit + cargo deny check
 ```
 Alpine:    cargo build --release + cargo test --release --test-threads=1 (musl container)
 FreeBSD:   cargo build --release + cargo test --release --test-threads=1 (VM)
-Compat:    cargo check × 5 targets (linux-gnu, musl, darwin, windows, freebsd)
+Compat:    cargo check --tests × 5 targets (linux-gnu, musl, darwin, windows, freebsd)
 Miri:      cargo miri test -p synvoid-utils (continue-on-error)
 Fuzz:      cargo +nightly fuzz run × 16 targets (--runs=1000)
 Deps:      cargo outdated --release (continue-on-error)

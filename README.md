@@ -149,7 +149,7 @@ bash scripts/test-affected.sh origin/main --full
 
 ### CI Caching
 
-SynVoid CI uses `sccache` for compiler output caching and `Swatinem/rust-cache` for target metadata. See [`docs/testing/cache-policy.md`](docs/testing/cache-policy.md) for the full cache architecture.
+SynVoid CI uses `Swatinem/rust-cache` for Cargo source and target metadata caching. `sccache` compiler output caching is dormant (deferred pending backend verification). See [`docs/testing/cache-policy.md`](docs/testing/cache-policy.md) for the full cache architecture.
 
 See [`docs/testing/ci-lane-policy.md`](docs/testing/ci-lane-policy.md) for the full CI policy.
 

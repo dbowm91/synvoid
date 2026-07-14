@@ -17,6 +17,9 @@ This corrective pass fixes the inverted affected-package predicate logic that pr
 | WS9: Regression guards | Complete | 3 new repo-guard tests (polarity, structure, normalization) |
 | WS10: Local validation | Complete | All 90 selector tests, 36 guard tests, formatting, clippy pass |
 | WS11: Documentation | Complete | This file + AGENTS.md updates |
+| Final Closure: sccache deferral | Complete | Stale `SCCACHE_GHA_ENABLED` removed from `pr-fast.yml`; `cache-policy.md` updated to reflect dormant status |
+| Final Closure: DNS fallback fix | Complete | `TcpStream::bind` replaced with loopback TCP pair helper in `platform.rs` |
+| Final Closure: cross-platform guard | Complete | `platform-compat` job in `nightly-qualification.yml` now uses `--tests` to verify test code compiles on all targets |
 
 ## Predicate Defect and Root Cause
 
@@ -140,6 +143,7 @@ Removed 23 redundant entries from `release-qualification.yml`:
 2. **Shadow comparison** — Requires accumulated CI data from real PRs.
 3. **Cache performance measurement** — Requires hosted-runner timing data.
 4. **Branch protection admin update** — Must be performed by a repository admin.
+5. **sccache backend** — Formally deferred. GitHub Actions cache backend was unavailable. Re-evaluate when a supported backend is available.
 
 ## Go/No-Go Recommendation
 
