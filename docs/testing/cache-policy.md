@@ -272,7 +272,8 @@ GitHub Actions provides 10 GB of cache storage per repository. The sccache and t
 
 ## Future Considerations
 
-- **sccache integration** (current milestone): Adding `mozilla-actions/sccache-action@v0.0.6` to compilation jobs. This is the highest-impact cache improvement.
+- **sccache integration** (complete): sccache is active for PR fast lane compilation jobs via the shared `setup-rust-ci` composite action. Stats are reported in CI summaries.
+- **Shared setup action** (complete): `.github/actions/setup-rust-ci/action.yml` is adopted by 6 eligible PR jobs, eliminating 25 duplicate setup steps.
 - **Cache partitioning by feature class**: Currently, `Swatinem/rust-cache` keys include profile/feature suffixes to avoid cross-contamination. With sccache, this becomes automatic (sccache keys include features).
 - **Persistent cache for nightly**: Nightly toolchain changes frequently, invalidating all caches. Consider `Swatinem/rust-cache` with `shared-key: nightly` to at least share source caches across nightly runs.
 - **Cache monitoring**: Add a weekly CI job that reports cache sizes and hit rates to track degradation.

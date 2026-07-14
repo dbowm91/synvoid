@@ -121,6 +121,20 @@ Superseded PR runs are automatically cancelled.
 
 **Until branch protection is updated**, the old `ci.yml` checks may still appear as required. The redirect workflow now only triggers on `workflow_dispatch`, so it will not produce passing checks for PRs — this will **block merging** until branch protection is updated.
 
+### Predicate Polarity (Milestone D Corrective)
+
+The affected-package selector gates per-crate test jobs in the PR fast lane. The correct predicate pattern is:
+```yaml
+needs.select-affected.outputs.mode == 'full' || contains(needs.select-affected.outputs.packages, '"package-name"')
+```
+
+Repository guards enforce this pattern:
+- `selector_predicate_polarity_guard` — rejects inverted `mode != 'full'` patterns
+- `selector_gated_job_predicate_structure_guard` — verifies correct predicate structure
+- `selector_normalization_step_guard` — ensures fail-closed fallback to full mode
+
+The normalization step in `select-affected` falls back to `mode=full` when the selector fails or produces invalid output, ensuring no tests are silently skipped.
+
 ## Migration Notes
 
 ### From the legacy ci.yml:
