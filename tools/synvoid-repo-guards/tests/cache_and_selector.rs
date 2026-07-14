@@ -324,3 +324,217 @@ fn test_affected_script_exists_guard() {
         "test_affected_script_exists_guard: scripts/test-affected.sh must not be empty"
     );
 }
+
+// ---------------------------------------------------------------------------
+// selector_predicate_polarity_guard
+// ---------------------------------------------------------------------------
+
+/// Detect inverted predicate polarity in selector-gated workflow jobs.
+///
+/// The correct pattern is: `mode == 'full' || package-selected`
+/// The inverted (wrong) pattern is: `mode != 'full' || package-selected`
+///
+/// When the inverted pattern is used, affected mode runs every gated job
+/// regardless of whether its package was selected, defeating the purpose
+/// of the affected-package selector.
+#[test]
+fn selector_predicate_polarity_guard() {
+    let root = workspace_root();
+    let workflows_dir = root.join(".github/workflows");
+
+    if !workflows_dir.exists() {
+        return;
+    }
+
+    let mut violations = Vec::new();
+
+    let entries = std::fs::read_dir(&workflows_dir).expect("read .github/workflows");
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let ext = path.extension().and_then(|e| e.to_str());
+        if ext != Some("yml") && ext != Some("yaml") {
+            continue;
+        }
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+
+        // Scan for the inverted pattern: mode != 'full' || or mode != "full" ||
+        for (i, line) in content.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.contains("mode != 'full'") || trimmed.contains(r#"mode != "full""#) {
+                violations.push(format!(
+                    "  {}:{}: inverted predicate 'mode != \"full\"' detected: {}",
+                    file_name,
+                    i + 1,
+                    trimmed
+                ));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "selector_predicate_polarity_guard found {} violations (inverted predicate pattern):\n{}\n\n\
+         The correct pattern is: mode == 'full' || package-selected\n\
+         The inverted pattern defeats affected-package selection — every gated job runs regardless of selection.",
+        violations.len(),
+        violations.join("\n")
+    );
+}
+
+// ---------------------------------------------------------------------------
+// selector_gated_job_predicate_structure_guard
+// ---------------------------------------------------------------------------
+
+/// Verify that selector-gated jobs use the approved predicate structure.
+///
+/// Every gated job must use: `mode == 'full' || contains(packages, '"package-name"')`
+/// This guard ensures the structure is correct and prevents ad-hoc variations.
+#[test]
+fn selector_gated_job_predicate_structure_guard() {
+    let root = workspace_root();
+    let pr_fast = root.join(".github/workflows/pr-fast.yml");
+
+    if !pr_fast.exists() {
+        return;
+    }
+
+    let content = std::fs::read_to_string(&pr_fast).unwrap_or_default();
+    let mut violations = Vec::new();
+
+    // Known gated job names and their expected package identifiers
+    let gated_jobs = [
+        ("upload-tests", "synvoid-upload"),
+        ("honeypot-tests", "synvoid-honeypot"),
+        ("tarpit-tests", "synvoid-tarpit"),
+        ("mesh-tests", "synvoid-mesh"),
+    ];
+
+    for (job_name, package_id) in &gated_jobs {
+        // Find the if: block for this job
+        let mut found_job = false;
+        let mut found_if = false;
+        let mut if_block = String::new();
+
+        for line in content.lines() {
+            let stripped = line.trim();
+            if stripped == format!("{job_name}:") || stripped == format!("  {job_name}:") {
+                found_job = true;
+                continue;
+            }
+            if found_job {
+                if stripped.starts_with("if:") {
+                    found_if = true;
+                    if_block.push_str(line);
+                    if_block.push('\n');
+                    continue;
+                }
+                if found_if {
+                    if line.starts_with("    ") || line.starts_with('\t') {
+                        if_block.push_str(line);
+                        if_block.push('\n');
+                    } else {
+                        break;
+                    }
+                }
+                // Stop at next job
+                if found_job && !found_if && stripped.starts_with("needs:")
+                    || (found_job
+                        && !found_if
+                        && line.starts_with("  ")
+                        && !line.starts_with("   ")
+                        && stripped.ends_with(":"))
+                {
+                    break;
+                }
+            }
+        }
+
+        if found_if && !if_block.is_empty() {
+            // Must contain mode == 'full'
+            if !if_block.contains("mode == 'full'") && !if_block.contains(r#"mode == "full""#) {
+                violations.push(format!(
+                    "  job '{job_name}' does not use mode == 'full' predicate"
+                ));
+            }
+            // Must contain package check
+            if !if_block.contains(&format!("\"{package_id}\"")) {
+                violations.push(format!(
+                    "  job '{job_name}' does not check for package '{package_id}'"
+                ));
+            }
+            // Must NOT contain the inverted pattern
+            if if_block.contains("mode != 'full'") || if_block.contains(r#"mode != "full""#) {
+                violations.push(format!(
+                    "  job '{job_name}' contains inverted predicate (mode != 'full')"
+                ));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "selector_gated_job_predicate_structure_guard found {} violations:\n{}",
+        violations.len(),
+        violations.join("\n")
+    );
+}
+
+// ---------------------------------------------------------------------------
+// selector_normalization_step_guard
+// ---------------------------------------------------------------------------
+
+/// Verify that the normalize step exists and falls back to full mode.
+///
+/// The select-affected job must have a normalization step that:
+/// 1. Runs with `if: always()`
+/// 2. Falls back to mode=full when selector output is missing
+#[test]
+fn selector_normalization_step_guard() {
+    let root = workspace_root();
+    let pr_fast = root.join(".github/workflows/pr-fast.yml");
+
+    if !pr_fast.exists() {
+        return;
+    }
+
+    let content = std::fs::read_to_string(&pr_fast).unwrap_or_default();
+
+    // Must have a normalize step
+    assert!(
+        content.contains("Normalize selector output") || content.contains("normalize"),
+        "selector_normalization_step_guard: select-affected job must have a normalization step \
+         that falls back to full mode on selector failure"
+    );
+
+    // Must emit mode=full as fallback
+    assert!(
+        content.contains("mode=full"),
+        "selector_normalization_step_guard: normalization step must emit 'mode=full' as fallback"
+    );
+
+    // Must use if: always() for the normalize step
+    // Look for "- name: Normalize" (the step definition) rather than just "normalize"
+    // which could match the outputs references
+    let lines: Vec<&str> = content.lines().collect();
+    let mut found_step = false;
+    for (i, line) in lines.iter().enumerate() {
+        if line.contains("- name: Normalize") || line.contains("name: Normalize") {
+            // Look for if: always() in surrounding lines (step definition includes if: on the line before)
+            let start = i.saturating_sub(2);
+            let end = (i + 5).min(lines.len());
+            let window: String = lines[start..end].join("\n");
+            assert!(
+                window.contains("always()"),
+                "selector_normalization_step_guard: normalize step must use 'if: always()' — found in lines {}-{}: {}",
+                start, end, window
+            );
+            found_step = true;
+            break;
+        }
+    }
+    assert!(
+        found_step,
+        "selector_normalization_step_guard: could not find '- name: Normalize' step in pr-fast.yml"
+    );
+}

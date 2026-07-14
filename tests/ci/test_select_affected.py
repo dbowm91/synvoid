@@ -1195,5 +1195,197 @@ def _parse_ownership() -> list[dict[str, Any]]:
     return entries
 
 
+# ---------------------------------------------------------------------------
+# Workflow predicate regression tests (WS3)
+# ---------------------------------------------------------------------------
+
+
+class TestWorkflowPredicateRegression(unittest.TestCase):
+    """Test that pr-fast.yml uses correct predicate polarity.
+
+    The bug was: mode != 'full' || package-selected
+    The fix is:  mode == 'full' || package-selected
+
+    This test prevents regression to the inverted pattern.
+    """
+
+    def setUp(self):
+        self.workflow_path = _REPO_ROOT / ".github" / "workflows" / "pr-fast.yml"
+        if self.workflow_path.exists():
+            self.content = self.workflow_path.read_text()
+        else:
+            self.content = ""
+
+    def test_no_inverted_predicate_pattern(self):
+        """The inverted pattern mode != 'full' || must not exist."""
+        if not self.content:
+            self.skipTest("pr-fast.yml not found")
+        self.assertNotIn(
+            "mode != 'full'",
+            self.content,
+            "Inverted predicate 'mode != \"full\"' found in pr-fast.yml — "
+            "this is the known regression pattern. Use 'mode == \"full\"' instead."
+        )
+
+    def test_all_gated_jobs_use_correct_pattern(self):
+        """Every gated job should use mode == 'full' || package-selected."""
+        if not self.content:
+            self.skipTest("pr-fast.yml not found")
+        gated_jobs = ["upload-tests", "honeypot-tests", "tarpit-tests", "mesh-tests"]
+        for job in gated_jobs:
+            # Find the if: block for this job
+            job_section = self._extract_job_if_block(job)
+            if job_section:
+                self.assertIn(
+                    "mode == 'full'",
+                    job_section,
+                    f"Job '{job}' should use mode == 'full' pattern"
+                )
+
+    def test_selector_has_normalization_step(self):
+        """The select-affected job must have a normalization step for fail-closed behavior."""
+        if not self.content:
+            self.skipTest("pr-fast.yml not found")
+        self.assertIn(
+            "normalize",
+            self.content.lower(),
+            "select-affected job must have a normalization step"
+        )
+
+    def test_normalize_step_has_always_condition(self):
+        """The normalize step must run with if: always() to catch failures."""
+        if not self.content:
+            self.skipTest("pr-fast.yml not found")
+        # Find the normalize step and check its condition
+        in_normalize = False
+        for line in self.content.splitlines():
+            if "normalize" in line.lower() and "name:" in line.lower():
+                in_normalize = True
+            if in_normalize and "if:" in line:
+                self.assertIn(
+                    "always()",
+                    line,
+                    "Normalize step must use if: always()"
+                )
+                break
+
+    def test_outputs_reference_normalize_step(self):
+        """Job outputs must reference steps.normalize.outputs, not steps.select.outputs."""
+        if not self.content:
+            self.skipTest("pr-fast.yml not found")
+        # Check the outputs section of select-affected job
+        in_select_job = False
+        in_outputs = False
+        for line in self.content.splitlines():
+            if "select-affected:" in line and "jobs:" not in line:
+                in_select_job = True
+            if in_select_job and "outputs:" in line:
+                in_outputs = True
+            if in_outputs and "steps.select.outputs" in line:
+                self.fail(
+                    "Job outputs reference steps.select.outputs directly — "
+                    "should reference steps.normalize.outputs after fail-closed normalization"
+                )
+            if in_outputs and line.strip() and not line.strip().startswith("#") and not line.strip().startswith("mode:") and not line.strip().startswith("packages:") and not line.strip().startswith("root-tests:") and not line.strip().startswith("feature-classes:"):
+                if not line.strip().startswith("steps."):
+                    break
+
+    def _extract_job_if_block(self, job_name):
+        """Extract the if: condition block for a given job."""
+        lines = self.content.splitlines()
+        in_job = False
+        if_block = []
+        in_if = False
+        indent_level = 0
+
+        for i, line in enumerate(lines):
+            # Detect job start
+            stripped = line.rstrip()
+            if stripped == f"  {job_name}:" or stripped == f"  {job_name} :":
+                in_job = True
+                continue
+            if in_job:
+                # Detect next job (not indented enough)
+                if line and not line.startswith(" ") and line.strip():
+                    break
+                if stripped.strip().startswith("if:") or stripped.strip().startswith("if: >-"):
+                    in_if = True
+                    if_block.append(line)
+                    continue
+                if in_if:
+                    if line.startswith("    ") or line.startswith("\t"):
+                        if_block.append(line)
+                    else:
+                        in_if = False
+                        break
+
+        return "\n".join(if_block) if if_block else ""
+
+
+class TestForceFullDispatch(unittest.TestCase):
+    """Test that force-full override triggers full validation mode."""
+
+    def test_compute_affected_with_full_override(self):
+        """The full_override parameter should force full mode."""
+        result = _run_compute(
+            ["crates/synvoid-filter/src/lib.rs"],
+            full_override=True,
+        )
+        self.assertEqual(result["mode"], "full")
+        self.assertTrue(result["full_fallback"])
+
+    def test_full_override_selects_all_root_tests(self):
+        """Full override should select every root test."""
+        result = _run_compute(
+            ["crates/synvoid-filter/src/lib.rs"],
+            full_override=True,
+        )
+        ownership = _parse_ownership()
+        expected_all = sorted(e["name"] for e in ownership if e["name"])
+        self.assertEqual(result["root_tests"], expected_all)
+
+    def test_full_override_selects_all_feature_classes(self):
+        """Full override should select all feature classes."""
+        result = _run_compute(
+            ["crates/synvoid-filter/src/lib.rs"],
+            full_override=True,
+        )
+        expected = sorted(sa.FEATURE_CLASS_PACKAGES.keys())
+        self.assertEqual(result["feature_classes"], expected)
+
+
+class TestSelectorFailureFallback(unittest.TestCase):
+    """Test that selector failure normalization produces full mode.
+
+    In the workflow, the normalize step falls back to mode=full when
+    the selector produces no output. This test verifies the expected
+    behavior contract.
+    """
+
+    def test_empty_mode_normalizes_to_full_in_workflow(self):
+        """The workflow normalize step must emit mode=full when MODE is empty.
+
+        This is a contract test — it verifies the expected behavior that
+        the normalize step in pr-fast.yml implements. If the workflow changes,
+        this test documents the expected contract.
+        """
+        workflow_path = _REPO_ROOT / ".github" / "workflows" / "pr-fast.yml"
+        if not workflow_path.exists():
+            self.skipTest("pr-fast.yml not found")
+
+        content = workflow_path.read_text()
+        # Verify the normalize step contains the fallback logic
+        self.assertIn(
+            "mode=full",
+            content,
+            "Normalize step must emit mode=full as fallback"
+        )
+        self.assertIn(
+            "falling back to full validation",
+            content.lower(),
+            "Normalize step must log fallback reason"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
