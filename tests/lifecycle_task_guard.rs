@@ -1597,10 +1597,11 @@ fn plugin_runtime_owner_is_stored_for_runtime_lifetime() {
     let cleaned = strip_comments_and_strings(&text);
 
     // Check that plugin_owner is created and not immediately dropped
-    // The pattern: `let mut plugin_owner = ...` must appear
+    // The pattern: `let plugin_owner = ...` must appear (mut not required —
+    // the inner block uses its own `let mut owner` for mutable operations)
     assert!(
-        cleaned.contains("let mut plugin_owner ="),
-        "PluginRuntimeOwner must be created as a mutable variable in run(), not immediately dropped"
+        cleaned.contains("let plugin_owner ="),
+        "PluginRuntimeOwner must be created as a local variable in run(), not immediately dropped"
     );
 
     // Check that it's dropped after shutdown_and_join

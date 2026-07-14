@@ -387,8 +387,7 @@ fn docs_link_guard_detects_broken_markdown_link() {
 
     for cap in re.captures_iter(&content) {
         let url = cap[2].trim();
-        if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("mailto:")
-        {
+        if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("mailto:") {
             continue;
         }
         let clean = if let Some(pos) = url.find('#') {
@@ -491,7 +490,10 @@ fn comments_in_strings_do_not_trigger_violations() {
         for (line_no, line) in scanned.lines().enumerate() {
             let trimmed = line.trim();
             if trimmed.starts_with("use ") && trimmed.contains("BlockStore") {
-                violations.push(format!("line {}: false positive in comment/string", line_no + 1));
+                violations.push(format!(
+                    "line {}: false positive in comment/string",
+                    line_no + 1
+                ));
             }
         }
     }
