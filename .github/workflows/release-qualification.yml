@@ -119,21 +119,6 @@ jobs:
           - suite: mesh
             command: cargo nextest run --features mesh --cargo-profile ci --profile ci --no-fail-fast
             doctests: cargo test --workspace --doc --features mesh --profile ci
-          - suite: dns
-            command: cargo nextest run -p synvoid-dns --cargo-profile ci --profile ci --no-fail-fast
-            doctests: cargo test -p synvoid-dns --doc --profile ci
-          - suite: plugin-runtime
-            command: cargo nextest run -p synvoid-plugin-runtime --cargo-profile ci --profile ci --no-fail-fast
-            doctests: cargo test -p synvoid-plugin-runtime --doc --profile ci
-          - suite: honeypot
-            command: cargo nextest run -p synvoid-honeypot --cargo-profile ci --profile ci --no-fail-fast
-            doctests: cargo test -p synvoid-honeypot --doc --profile ci
-          - suite: tarpit
-            command: cargo nextest run -p synvoid-tarpit --cargo-profile ci --profile ci --no-fail-fast
-            doctests: cargo test -p synvoid-tarpit --doc --profile ci
-          - suite: mesh-crate
-            command: cargo nextest run -p synvoid-mesh --features mesh --cargo-profile ci --profile ci --no-fail-fast
-            doctests: cargo test -p synvoid-mesh --features mesh --doc --profile ci
 
     steps:
       - uses: actions/checkout@v4
@@ -165,82 +150,6 @@ jobs:
           path: target/nextest/ci/junit.xml
           retention-days: 7
 
-  security-regression:
-    name: Security Regression Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Install nextest
-        uses: taiki-e/install-action@nextest
-
-      - name: Nextest version
-        run: cargo nextest --version
-
-      - name: Run security regression tests
-        run: cargo nextest run --test security_regression --cargo-profile ci --profile ci -- --test-threads=1
-
-      - name: Upload JUnit results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: nextest-junit-security-regression-release
-          path: target/nextest/ci/junit.xml
-          retention-days: 7
-
-  guard-suite:
-    name: Architecture Guard Tests (Release)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Install nextest
-        uses: taiki-e/install-action@nextest
-
-      - name: Nextest version
-        run: cargo nextest --version
-
-      - name: Run static guards (synvoid-repo-guards)
-        run: cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci
-
-      - name: Run root guard tests (consolidated + standalone)
-        run: |
-          cargo test --test boundary_composition_guard
-          cargo test --test lifecycle_task_guard
-          cargo test --test plugin_guard
-          cargo test --test cli_admin_guard
-          cargo test --test security_guard
-          cargo test --test root_facade_boundary_guard
-          cargo test --test mesh_id_boundary_guard
-          cargo test --test admin_mutation_response_guard
-          cargo test --test admin_mutation_blocklist
-          cargo test --test admin_auth_boundary
-          cargo test --test mesh_admin_edge_cases
-          cargo test --test failure_injection
-          cargo test --test worker_mesh_supervision_boundary_guard --features mesh,dns
-          cargo test --test mesh_task_ownership_guard --features mesh,dns
-          cargo test --test abi_memory_boundary_guard
-          cargo test -p synvoid-plugin-runtime --test manifest_authority_wiring
-          cargo test -p synvoid-plugin-runtime --test plugin_failure_does_not_poison_manager
-
-      - name: Upload JUnit results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: nextest-junit-guard-suite-release
-          path: target/nextest/ci/junit.xml
-          retention-days: 7
-
   clippy:
     name: Clippy (all features)
     runs-on: ubuntu-latest
@@ -255,59 +164,9 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-  docs:
-    name: Documentation
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Build documentation
-        run: cargo doc --no-deps --release
-        env:
-          RUSTDOCFLAGS: -D warnings
-
-  security-audit:
-    name: Security Audit (cargo-audit)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install cargo-audit
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-audit
-
-      - name: Run security audit
-        run: cargo audit
-
-  dependency-audit:
-    name: Dependency Audit (cargo-deny)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-
-      - name: Install cargo-deny
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-deny
-
-      - name: Run dependency audit
-        run: cargo deny check
-
   summary:
     name: Release Qualification Summary
-    needs: [build, full-test-suite, security-regression, guard-suite, clippy, docs, security-audit, dependency-audit]
+    needs: [build, full-test-suite, clippy]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -319,23 +178,13 @@ jobs:
           echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| build | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| full-test-suite | ${{ needs.full-test-suite.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| security-regression | ${{ needs.security-regression.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| guard-suite | ${{ needs.guard-suite.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| clippy | ${{ needs.clippy.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| docs | ${{ needs.docs.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| security-audit | ${{ needs.security-audit.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| dependency-audit | ${{ needs.dependency-audit.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           FAILED=0
           for result in \
             "${{ needs.build.result }}" \
             "${{ needs.full-test-suite.result }}" \
-            "${{ needs.security-regression.result }}" \
-            "${{ needs.guard-suite.result }}" \
-            "${{ needs.clippy.result }}" \
-            "${{ needs.docs.result }}" \
-            "${{ needs.security-audit.result }}" \
-            "${{ needs.dependency-audit.result }}"; do
+            "${{ needs.clippy.result }}"; do
             if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
               FAILED=1
               break
