@@ -8,8 +8,7 @@ Every new test target must declare an owner, lane, and profile before merge. Uno
 | Test Target | Owning Crate | Lane | Profile | Features | Platform | Serialization | Notes |
 |-------------|-------------|------|---------|----------|----------|---------------|-------|
 | root_facade_boundary_guard | synvoid (root) | PR | ci | default | any | None | Architecture guard |
-| root_module_ledger_guard | synvoid (root) | PR | ci | default | any | None | Architecture guard |
-| root_dependency_ownership_guard | synvoid (root) | PR | ci | default | any | None | Architecture guard |
+
 | unified_server_lifecycle_ownership_guard | synvoid (root) | PR | ci | default | any | None | Architecture guard |
 | supervisor_task_ownership_guard | synvoid (root) | PR | ci | default | any | None | Architecture guard |
 | request_path_capability_boundary_guard | synvoid (root) | PR | ci | default | any | None | Architecture guard |
@@ -32,7 +31,7 @@ Every new test target must declare an owner, lane, and profile before merge. Uno
 | background_task_ownership_guard | synvoid (root) | PR | ci | default | any | None | Architecture guard |
 | unified_worker_composition_root_guard | synvoid (root) | PR | ci | default | any | None | Architecture guard |
 | plugin_lifecycle_guard | synvoid (root) | PR | ci | default | any | None | Plugin guard (owned by guard-suite) |
-| unsafe_native_sandbox_language_guard | synvoid (root) | PR | ci | default | any | None | Plugin guard (owned by guard-suite) |
+
 | abi_memory_boundary_guard | synvoid-plugin-runtime | PR | ci | default | any | None | Plugin guard (owned by plugin-runtime-guardrails) |
 | plugin_capability_boundary_guard | synvoid-plugin-runtime | PR | ci | default | any | None | Plugin guard (owned by plugin-runtime-guardrails) |
 | plugin_signature_policy_guard | synvoid-plugin-runtime | PR | ci | default | any | None | Plugin guard (owned by plugin-runtime-guardrails) |
@@ -40,7 +39,7 @@ Every new test target must declare an owner, lane, and profile before merge. Uno
 | manifest_authority_load_path_guard | synvoid-plugin-runtime | PR | ci | default | any | None | Plugin guard (owned by plugin-runtime-guardrails) |
 | plugin_failure_does_not_poison_manager | synvoid-plugin-runtime | PR | ci | default | any | None | Plugin guard (owned by plugin-runtime-guardrails) |
 | security_regression | synvoid (root) | PR | ci | default | linux | full binary | Serial execution required |
-| docs_path_reference_guard | synvoid (root) | PR | ci | default | any | None | continue-on-error |
+
 
 ## Per-Crate Test Suites
 
@@ -63,9 +62,9 @@ Every new test target must declare an owner, lane, and profile before merge. Uno
 | core-profile | PR | CI infrastructure | Feature profile check |
 | import-check | PR | CI infrastructure | Python script |
 | security-regression | PR | Security | Serial execution |
-| guard-suite | PR | Architecture | 24 structural guards |
+| guard-suite | PR | Architecture | 23 structural guards |
 | plugin-runtime-guardrails | PR | Plugin team | 6 plugin guards + unit tests + clippy |
-| docs-link-guard | PR | Documentation | continue-on-error |
+
 | dns-tests | Main | DNS team | Full DNS suite |
 | build | Main/Release | Release | 8-target matrix |
 | upload-tests | PR | Upload team | Per-crate tests |

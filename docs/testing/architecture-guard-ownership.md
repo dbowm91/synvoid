@@ -1,97 +1,111 @@
 # Architecture Guard Test Classification
 
-Every guardrail test in `tests/` is classified as **STATIC** (source/manifest inspection only), **RUNTIME** (tests actual behavior), or **COMPLEX** (static but too many domain-specific assertions to extract cleanly). This determines whether the guard can be moved to the lightweight `synvoid-repo-guards` crate or must remain in root integration tests.
+Every guardrail test in `tests/` is classified by its coverage model:
 
-## Milestone B Changes
-
-As of Milestone B, the simplest STATIC guards were extracted to `tools/synvoid-repo-guards/`, a dedicated crate with minimal dependencies (`regex`, `std::fs`). The remaining guards are split into two categories:
-
-- **RUNTIME** guards that require instantiating core types, calling runtime methods, or spawning tasks.
-- **COMPLEX** guards that perform source inspection but depend on many domain-specific type names, assertion patterns, or feature gates, making extraction non-trivial.
+| Classification | Description | Location |
+|---------------|-------------|----------|
+| **STATIC (Fully Replicated)** | Source/manifest inspection only. Guard crate provides complete equivalent coverage; old root file removed. | `tools/synvoid-repo-guards/tests/` |
+| **STATIC (Partial)** | Source/manifest inspection only. Guard crate provides a simplified "smoke test" (1 test), but the old root file has detailed assertions (25-37+ tests) that provide full-depth coverage. Both must run. | Guard crate + root `tests/` |
+| **COMPLEX** | Static source inspection, but too many domain-specific assertions, type allowlists, or feature gates to extract cleanly. | Root `tests/` |
+| **RUNTIME** | Tests actual behavior — instantiates core types, calls runtime methods, spawns tasks, or tests serialization roundtrips. | Root `tests/` |
 
 ## Classification Table
 
 | Guard | Classification | Reason | Location |
 |-------|---------------|--------|----------|
-| `root_module_ledger_guard.rs` | STATIC | Parses `src/lib.rs` module declarations and checks against `architecture/root_module_ledger.md` | Moved |
-| `root_facade_boundary_guard.rs` | STATIC | Scans `crates/` for forbidden `use synvoid::` imports | Moved |
-| `root_dependency_ownership_guard.rs` | STATIC | Parses `Cargo.toml` and ownership ledger for missing entries | Moved |
-| `data_plane_composition_boundary_guard.rs` | STATIC | Scans request-path `.rs` files for forbidden concrete infrastructure imports | Moved |
-| `request_path_capability_boundary_guard.rs` | STATIC | Scans request-path `.rs` files for forbidden control-plane imports | Moved |
-| `http_request_pipeline_boundary_guard.rs` | STATIC | Scans HTTP handler `.rs` files for forbidden worker lifecycle imports | Moved |
-| `http3_waf_boundary_guard.rs` | STATIC | Scans `crates/synvoid-http3/` for forbidden concrete app-service imports | Moved |
-| `background_task_ownership_guard.rs` | STATIC | Scans `src/` for `tokio::spawn` calls, checks allowlist and registry usage patterns | Moved |
-| `supervisor_task_ownership_guard.rs` | STATIC | Scans `src/supervisor/` for `tokio::spawn` calls, checks allowlist and registry usage | Moved |
-| `unified_server_lifecycle_ownership_guard.rs` | STATIC | Scans `src/server/` and `src/plugin/` for `mem::forget`, missing `reason` comments, unregistered spawns | Moved |
-| `unified_worker_composition_root_guard.rs` | STATIC | Reads `unified_server/mod.rs`, checks `run_unified_server_worker` line count and delegation structure | Moved |
-| `cli_command_dispatch_guard.rs` | STATIC | Reads `src/main.rs`, checks line count and forbidden command-implementation tokens | Moved |
-| `docs_path_reference_guard.rs` | STATIC | Scans markdown files for broken relative links | Moved |
-| `unsafe_native_sandbox_language_guard.rs` | STATIC | Scans markdown docs for forbidden sandbox language patterns | Remains (root) |
-| `abi_memory_boundary_guard.rs` | COMPLEX | Reads source via `include_str!`, checks for removed patterns and required structs/functions; 20+ specific type/pattern assertions tied to ABI memory model | Root |
-| `admin_mutation_response_guard.rs` | COMPLEX | Scans admin handler `.rs` files for forbidden ad-hoc JSON response patterns; exception lists and pass-through tokens are tightly coupled to admin crate structure | Root |
-| `manifest_authority_load_path_guard.rs` | COMPLEX | Scans `wasm_runtime.rs` for direct `WasmRuntime::load` calls bypassing manifest enforcement; assertions reference specific loader function signatures | Root |
-| `manual_enforcement_provenance_guard.rs` | COMPLEX | Scans source files for legacy `.block_ip()` calls instead of `block_ip_with_provenance`; exception lists track specific allowed legacy sites | Root |
-| `mesh_id_boundary_guard.rs` | COMPLEX | Scans source files for forbidden `is_mesh_id_blocked()` calls; exception lists and pass-through tokens are tightly coupled to mesh crate structure | Root |
-| `mesh_task_ownership_guard.rs` | COMPLEX | Scans mesh `transport.rs` for spawn patterns, `select!` with shutdown, task group usage; 117K of assertions covering 20+ task types with specific allowlists | Root |
-| `plugin_capability_boundary_guard.rs` | COMPLEX | Scans `wasm_runtime.rs` for capability-gated host function wrappers, `mem::forget`; assertions reference specific WASM host API function signatures | Root |
-| `plugin_lifecycle_guard.rs` | COMPLEX | Scans plugin source files for lifecycle invariants (duplicate name checks, generation tracking, hot-reload gates); 47K of assertions across multiple plugin modules | Root |
-| `plugin_signature_policy_guard.rs` | COMPLEX | Scans plugin source files for `enforce_plugin_load_policy`, trust-tier enforcement, key material leakage; assertions reference specific crypto type paths | Root |
-| `security_observability_guard.rs` | COMPLEX | Scans source files for forbidden metric label keys, raw threat-intel lookups in metric functions, doc coverage; exception lists track 50+ allowed patterns | Root |
-| `threat_intel_boundary_guard.rs` | COMPLEX | Scans enforcement-sensitive paths for forbidden raw lookup calls; exception lists track diagnostic-only call sites across multiple crates | Root |
-| `threat_intel_consumer_actionability_guard.rs` | COMPLEX | Scans threat-intel files for forbidden raw lookups, `LegacyUnknown` provenance, admin-supervisor authority misuse; 42K of assertions covering 46 consumer types | Root |
-| `worker_mesh_supervision_boundary_guard.rs` | COMPLEX | Scans mesh/worker source files for required struct/function existence and delegation patterns; requires `mesh` feature gate and covers 62K of assertions | Root |
-| `admin_auth_boundary.rs` | RUNTIME | Instantiates `AdminActor`, `AdminAuditEvent`, `AdminMutationResult` structs, tests serialization roundtrips | Root |
-| `admin_mutation_blocklist.rs` | RUNTIME | Creates `BlockStore`, calls `block_ip_with_provenance`/`unblock_ip`, verifies mutation result semantics | Root |
-| `failure_injection.rs` | RUNTIME | Spawns `tokio::spawn` tasks, tests supervisor shutdown reports, blocklist catchup, plugin guard failure isolation | Root |
-| `manifest_authority_wiring.rs` | RUNTIME | Creates `PluginManifest`, `PluginInvocationGuard`, tests capability checking and `invoke_with_limits` | Root |
-| `mesh_admin_edge_cases.rs` | RUNTIME | Constructs `AdminMutationResult`/`BlockMutationTarget`, tests serialization and status semantics | Root |
-| `plugin_failure_does_not_poison_manager.rs` | RUNTIME | Creates `PluginInvocationGuard` instances, tests failure isolation and repeated timeout behavior | Root |
+| `root_module_ledger_guard` | STATIC (Fully Replicated) | Parses `src/lib.rs` module declarations and checks against ledger; fully replicated in `module_ownership.rs` | Removed from root |
+| `root_dependency_ownership_guard` | STATIC (Fully Replicated) | Parses `Cargo.toml` and ownership ledger; fully replicated in `module_ownership.rs` | Removed from root |
+| `docs_path_reference_guard` | STATIC (Fully Replicated) | Scans markdown files for broken links; fully replicated in `docs_and_misc.rs` | Removed from root |
+| `unsafe_native_sandbox_language_guard` | STATIC (Fully Replicated) | Scans markdown docs for misleading sandbox phrases; fully replicated in `docs_and_misc.rs` | Removed from root |
+| `root_facade_boundary_guard` | STATIC (Partial) | Guard crate only checks `use synvoid::`; old file also checks bare `synvoid::` paths | Guard crate + root |
+| `data_plane_composition_boundary_guard` | STATIC (Partial) | Guard crate has 1 test; old file has 25+ tests with `BoundaryRole` classification, simulated violations, unified server file classification | Guard crate + root |
+| `request_path_capability_boundary_guard` | STATIC (Partial) | Guard crate has 1 test; old file has raw lookup detection, mesh-ID block detection, trait existence checks | Guard crate + root |
+| `http_request_pipeline_boundary_guard` | STATIC (Partial) | Guard crate has 1 test; old file has context struct checks, documentation assertions | Guard crate + root |
+| `http3_waf_boundary_guard` | STATIC (Partial) | Guard crate has 1 test; old file has Cargo.toml dependency check, trait object safety check | Guard crate + root |
+| `background_task_ownership_guard` | STATIC (Partial) | Guard crate has 1 test; old file has 37+ tests covering cancellation, registry, supervision, lifecycle channels | Guard crate + root |
+| `supervisor_task_ownership_guard` | STATIC (Partial) | Guard crate has 1 test; old file has allowlist liveness checks, `process_run` check | Guard crate + root |
+| `unified_server_lifecycle_ownership_guard` | STATIC (Partial) | Guard crate has 1 test (more permissive — allows `mem::forget` with reason comment); old file has 6 tests with stricter enforcement | Guard crate + root |
+| `unified_worker_composition_root_guard` | STATIC (Partial) | Guard crate has 1 test; old file has 28 tests covering module existence, delegation patterns, mesh attachment | Guard crate + root |
+| `cli_command_dispatch_guard` | STATIC (Partial) | Guard crate has 1 test; old file has 36 tests covering `execute.rs`, `supervisor_control.rs`, `runtime_launch.rs`, `one_shot.rs` | Guard crate + root |
+| `abi_memory_boundary_guard` | COMPLEX | 20+ specific ABI type/pattern assertions tied to `GuestAbiPolicy` and guest memory model | Root |
+| `admin_mutation_response_guard` | COMPLEX | Exception lists track specific admin handler paths; pass-through tokens coupled to admin crate structure | Root |
+| `manifest_authority_load_path_guard` | COMPLEX | Assertions reference specific loader function signatures in `wasm_runtime.rs` | Root |
+| `manual_enforcement_provenance_guard` | COMPLEX | Exception lists track specific allowed legacy `.block_ip()` sites across multiple crates | Root |
+| `mesh_id_boundary_guard` | COMPLEX | Exception lists and pass-through tokens tightly coupled to mesh crate structure | Root |
+| `mesh_task_ownership_guard` | COMPLEX | 117K of assertions covering 20+ task types with specific allowlists | Root |
+| `plugin_capability_boundary_guard` | COMPLEX | Assertions reference specific WASM host API function signatures | Root |
+| `plugin_lifecycle_guard` | COMPLEX | 47K of assertions across multiple plugin modules covering lifecycle states | Root |
+| `plugin_signature_policy_guard` | COMPLEX | Assertions reference specific crypto type paths and trust-tier enums | Root |
+| `security_observability_guard` | COMPLEX | 50+ allowed patterns in exception lists; metric label checks tied to observability crate | Root |
+| `threat_intel_boundary_guard` | COMPLEX | Exception lists track diagnostic-only call sites across multiple crates | Root |
+| `threat_intel_consumer_actionability_guard` | COMPLEX | 42K of assertions covering 46 consumer types with specific enforcement patterns | Root |
+| `worker_mesh_supervision_boundary_guard` | COMPLEX | 62K of assertions; requires `mesh` feature gate; covers struct/function existence checks across mesh/worker | Root |
+| `admin_auth_boundary` | RUNTIME | Instantiates `AdminActor`, `AdminAuditEvent`, `AdminMutationResult` structs; tests serialization roundtrips | Root |
+| `admin_mutation_blocklist` | RUNTIME | Creates `BlockStore`, calls `block_ip_with_provenance`/`unblock_ip`; verifies mutation result semantics | Root |
+| `failure_injection` | RUNTIME | Spawns `tokio::spawn` tasks; tests supervisor shutdown reports, blocklist catchup, plugin guard failure isolation | Root |
+| `manifest_authority_wiring` | RUNTIME | Creates `PluginManifest`, `PluginInvocationGuard`; tests capability checking and `invoke_with_limits` | Root |
+| `mesh_admin_edge_cases` | RUNTIME | Constructs `AdminMutationResult`/`BlockMutationTarget`; tests serialization and status semantics | Root |
+| `plugin_failure_does_not_poison_manager` | RUNTIME | Creates `PluginInvocationGuard` instances; tests failure isolation and repeated timeout behavior | Root |
 
 ## Summary
 
 | Classification | Count | Location |
 |---------------|-------|----------|
-| STATIC (Moved) | 14 | `tools/synvoid-repo-guards/tests/` |
-| COMPLEX (Root) | 13 | Root `tests/` |
-| RUNTIME (Root) | 6 | Root `tests/` |
+| STATIC (Fully Replicated) | 4 | Removed from root `tests/`; fully covered by `tools/synvoid-repo-guards/tests/` |
+| STATIC (Partial) | 10 | Guard crate + root `tests/` (both must run for full coverage) |
+| COMPLEX | 13 | Root `tests/` |
+| RUNTIME | 6 | Root `tests/` |
 
-## Moved Guards: Original → New Paths
+**Total guard test functions**: 16 across 4 modules in the guard crate + 23 old root files (10 partial + 13 complex) + 6 runtime files.
 
-All 14 moved guards were source/manifest inspection only, with no runtime dependencies. They share common patterns: reading `.rs` files via `std::fs::read_to_string` or `include_str!`, parsing `Cargo.toml` manifests, scanning markdown documentation, and using `regex` for pattern matching.
+## Moved Guards: Fully Replicated (Removed from Root)
+
+These 4 guards were fully replicated in the guard crate. The old root files have been deleted.
 
 ### `module_ownership.rs`
 
-| Guard | Original Path | New Path | Why Moveable |
-|-------|--------------|----------|--------------|
-| `root_module_ledger_guard` | `tests/root_module_ledger_guard.rs` | `tools/synvoid-repo-guards/tests/module_ownership.rs` | Parses `src/lib.rs` and a markdown ledger; no runtime deps |
-| `root_facade_boundary_guard` | `tests/root_facade_boundary_guard.rs` | `tools/synvoid-repo-guards/tests/module_ownership.rs` | Scans `crates/` for import patterns; no runtime deps |
-| `root_dependency_ownership_guard` | `tests/root_dependency_ownership_guard.rs` | `tools/synvoid-repo-guards/tests/module_ownership.rs` | Parses `Cargo.toml` and a markdown ledger; no runtime deps |
-
-### `composition_boundary.rs`
-
-| Guard | Original Path | New Path | Why Moveable |
-|-------|--------------|----------|--------------|
-| `data_plane_composition_boundary_guard` | `tests/data_plane_composition_boundary_guard.rs` | `tools/synvoid-repo-guards/tests/composition_boundary.rs` | Scans request-path `.rs` files for forbidden imports; no runtime deps |
-| `request_path_capability_boundary_guard` | `tests/request_path_capability_boundary_guard.rs` | `tools/synvoid-repo-guards/tests/composition_boundary.rs` | Scans request-path `.rs` files for control-plane imports; no runtime deps |
-| `http_request_pipeline_boundary_guard` | `tests/http_request_pipeline_boundary_guard.rs` | `tools/synvoid-repo-guards/tests/composition_boundary.rs` | Scans HTTP handler `.rs` files for lifecycle imports; no runtime deps |
-| `http3_waf_boundary_guard` | `tests/http3_waf_boundary_guard.rs` | `tools/synvoid-repo-guards/tests/composition_boundary.rs` | Scans `crates/synvoid-http3/` for concrete type imports; no runtime deps |
-
-### `lifecycle_ownership.rs`
-
-| Guard | Original Path | New Path | Why Moveable |
-|-------|--------------|----------|--------------|
-| `background_task_ownership_guard` | `tests/background_task_ownership_guard.rs` | `tools/synvoid-repo-guards/tests/lifecycle_ownership.rs` | Scans `src/` for spawn patterns; no runtime deps |
-| `supervisor_task_ownership_guard` | `tests/supervisor_task_ownership_guard.rs` | `tools/synvoid-repo-guards/tests/lifecycle_ownership.rs` | Scans `src/supervisor/` for spawn patterns; no runtime deps |
-| `unified_server_lifecycle_ownership_guard` | `tests/unified_server_lifecycle_ownership_guard.rs` | `tools/synvoid-repo-guards/tests/lifecycle_ownership.rs` | Scans `src/server/` and `src/plugin/` for `mem::forget`; no runtime deps |
-| `unified_worker_composition_root_guard` | `tests/unified_worker_composition_root_guard.rs` | `tools/synvoid-repo-guards/tests/lifecycle_ownership.rs` | Reads `unified_server/mod.rs` line count; no runtime deps |
-| `cli_command_dispatch_guard` | `tests/cli_command_dispatch_guard.rs` | `tools/synvoid-repo-guards/tests/lifecycle_ownership.rs` | Reads `src/main.rs` line count; no runtime deps |
+| Guard | Original Path | Guard Coverage |
+|-------|--------------|----------------|
+| `root_module_ledger_guard` | `tests/root_module_ledger_guard.rs` | 1 test — checks `src/lib.rs` pub modules against `architecture/root_module_ledger.md` |
+| `root_dependency_ownership_guard` | `tests/root_dependency_ownership_guard.rs` | 4 tests — manifest deps vs ledger, stale entries, valid classifications |
 
 ### `docs_and_misc.rs`
 
-| Guard | Original Path | New Path | Why Moveable |
-|-------|--------------|----------|--------------|
-| `docs_path_reference_guard` | `tests/docs_path_reference_guard.rs` | `tools/synvoid-repo-guards/tests/docs_and_misc.rs` | Scans markdown files for broken links; no runtime deps |
-| `unsafe_native_sandbox_language_guard` | `tests/unsafe_native_sandbox_language_guard.rs` | `tools/synvoid-repo-guards/tests/docs_and_misc.rs` | Scans markdown docs for misleading phrases; no runtime deps |
+| Guard | Original Path | Guard Coverage |
+|-------|--------------|----------------|
+| `docs_path_reference_guard` | `tests/docs_path_reference_guard.rs` | 1 test — scans markdown files for broken relative links |
+| `unsafe_native_sandbox_language_guard` | `tests/unsafe_native_sandbox_language_guard.rs` | 1 test — scans markdown docs for misleading sandbox phrases |
+
+## Partially Replicated Guards (Guard Crate + Root Tests)
+
+These 10 guards have a simplified "smoke test" in the guard crate (1 test each, lightweight pattern scan without linking synvoid) **and** the full-depth old root file with detailed assertions. The guard crate provides fast CI feedback; the root file provides full coverage.
+
+**CI runs both.** The guard crate catches regressions quickly; the root file catches domain-specific violations the simplified scan misses.
+
+### `module_ownership.rs` (partial coverage)
+
+| Guard | Guard Test | Root File | Why Both |
+|-------|-----------|-----------|----------|
+| `root_facade_boundary_guard` | `domain_crates_do_not_import_root_facade` — checks `use synvoid::` in `crates/` | `tests/root_facade_boundary_guard.rs` | Old file also checks bare `synvoid::` paths (not just `use` imports) |
+
+### `composition_boundary.rs` (partial coverage)
+
+| Guard | Guard Test | Root File | Why Both |
+|-------|-----------|-----------|----------|
+| `data_plane_composition_boundary_guard` | `request_path_does_not_import_concrete_infrastructure` — scans 4 dirs for 8 forbidden types | `tests/data_plane_composition_boundary_guard.rs` | Old file has 25+ tests: `BoundaryRole` classification, simulated violations, unified server file classification |
+| `request_path_capability_boundary_guard` | `request_path_avoids_control_plane_imports` — scans 4 dirs for 4 forbidden crate paths | `tests/request_path_capability_boundary_guard.rs` | Old file has raw lookup detection, mesh-ID block detection, trait existence checks |
+| `http_request_pipeline_boundary_guard` | `http_handlers_avoid_lifecycle_imports` — scans HTTP dirs for 6 forbidden tokens | `tests/http_request_pipeline_boundary_guard.rs` | Old file has context struct checks, documentation assertions |
+| `http3_waf_boundary_guard` | `http3_crate_avoids_forbidden_imports` — scans HTTP/3 dirs for 8 forbidden types | `tests/http3_waf_boundary_guard.rs` | Old file has Cargo.toml dependency check, trait object safety check |
+
+### `lifecycle_ownership.rs` (partial coverage)
+
+| Guard | Guard Test | Root File | Why Both |
+|-------|-----------|-----------|----------|
+| `background_task_ownership_guard` | `background_spawns_are_registered_or_documented` — scans 2 dirs for unregistered spawns | `tests/background_task_ownership_guard.rs` | Old file has 37+ tests covering cancellation patterns, registry usage, supervision loops, lifecycle channels |
+| `supervisor_task_ownership_guard` | `supervisor_spawns_have_ownership` — scans `src/supervisor/` for unregistered spawns | `tests/supervisor_task_ownership_guard.rs` | Old file has allowlist liveness checks, `process_run` check |
+| `unified_server_lifecycle_ownership_guard` | `no_memforget_in_lifecycle_code` — scans `src/server/` and `src/plugin/` for `mem::forget` without reason comment | `tests/unified_server_lifecycle_ownership_guard.rs` | Old file has 6 tests with stricter enforcement; guard crate is more permissive (allows `mem::forget` with reason comment) |
+| `unified_worker_composition_root_guard` | `run_unified_server_worker_remains_thin` — checks `run_unified_server_worker` line count ≤80 | `tests/unified_worker_composition_root_guard.rs` | Old file has 28 tests covering module existence, delegation patterns, mesh attachment |
+| `cli_command_dispatch_guard` | `main_rs_is_thin_dispatch` — checks `src/main.rs` line count ≤50, no business logic tokens | `tests/cli_command_dispatch_guard.rs` | Old file has 36 tests covering `execute.rs`, `supervisor_control.rs`, `runtime_launch.rs`, `one_shot.rs`, architecture doc checks |
 
 ## Guard Crate Structure
 
@@ -158,7 +172,7 @@ These guards cannot be moved because they:
 
 ## Feature Requirements
 
-One guard has an explicit feature gate:
+One COMPLEX guard has an explicit feature gate:
 
 - `worker_mesh_supervision_boundary_guard.rs` — requires `mesh`
 
@@ -166,17 +180,35 @@ The runtime guards (`admin_auth_boundary`, `admin_mutation_blocklist`, `mesh_adm
 
 ## How to Run
 
-### Static guards (moved to guard crate)
+### Guard crate (lightweight smoke tests)
 
 ```bash
 cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci
 ```
 
-This runs all 14 STATIC guards in the `synvoid-repo-guards` crate using the CI profile (fast, no LTO).
+This runs all 16 test functions across 4 modules in the `synvoid-repo-guards` crate using the CI profile (fast, no LTO). These catch regressions quickly but are simplified scans.
 
-### Complex and runtime guards (root tests/)
+### Partially replicated guards (root tests/)
 
-Run individual guards by name:
+Run these to get full-depth coverage the guard crate's simplified scan misses:
+
+```bash
+# Composition boundary guards
+cargo test --test root_facade_boundary_guard
+cargo test --test data_plane_composition_boundary_guard
+cargo test --test request_path_capability_boundary_guard
+cargo test --test http_request_pipeline_boundary_guard
+cargo test --test http3_waf_boundary_guard
+
+# Lifecycle ownership guards
+cargo test --test background_task_ownership_guard
+cargo test --test supervisor_task_ownership_guard
+cargo test --test unified_server_lifecycle_ownership_guard
+cargo test --test unified_worker_composition_root_guard
+cargo test --test cli_command_dispatch_guard
+```
+
+### COMPLEX and RUNTIME guards (root tests/)
 
 ```bash
 # COMPLEX guards (source inspection, many assertions)
@@ -203,21 +235,26 @@ cargo test --test mesh_admin_edge_cases
 cargo test --test plugin_failure_does_not_poison_manager
 ```
 
-### All guards at once
+### All root guards at once
 
 ```bash
-cargo test --test abi_memory_boundary_guard --test admin_auth_boundary --test admin_mutation_blocklist --test admin_mutation_response_guard --test failure_injection --test manifest_authority_load_path_guard --test manifest_authority_wiring --test manual_enforcement_provenance_guard --test mesh_admin_edge_cases --test mesh_id_boundary_guard --test mesh_task_ownership_guard --test plugin_capability_boundary_guard --test plugin_failure_does_not_poison_manager --test plugin_lifecycle_guard --test plugin_signature_policy_guard --test security_observability_guard --test threat_intel_boundary_guard --test threat_intel_consumer_actionability_guard --test worker_mesh_supervision_boundary_guard --features mesh
+cargo test --test root_facade_boundary_guard --test data_plane_composition_boundary_guard --test request_path_capability_boundary_guard --test http_request_pipeline_boundary_guard --test http3_waf_boundary_guard --test background_task_ownership_guard --test supervisor_task_ownership_guard --test unified_server_lifecycle_ownership_guard --test unified_worker_composition_root_guard --test cli_command_dispatch_guard --test abi_memory_boundary_guard --test admin_mutation_response_guard --test manifest_authority_load_path_guard --test manual_enforcement_provenance_guard --test mesh_id_boundary_guard --test mesh_task_ownership_guard --test plugin_capability_boundary_guard --test plugin_lifecycle_guard --test plugin_signature_policy_guard --test security_observability_guard --test threat_intel_boundary_guard --test threat_intel_consumer_actionability_guard --test worker_mesh_supervision_boundary_guard --test admin_auth_boundary --test admin_mutation_blocklist --test failure_injection --test manifest_authority_wiring --test mesh_admin_edge_cases --test plugin_failure_does_not_poison_manager --features mesh
 ```
 
 ## Migration Notes
 
-**14 STATIC guards** were extracted to `tools/synvoid-repo-guards/` because they only:
-- Read `.rs` source files via `std::fs::read_to_string` or `include_str!`
-- Parse `Cargo.toml` manifests
-- Scan markdown documentation
-- Use `regex` for pattern matching
-- Have zero runtime behavior
-- Have no domain-specific type dependencies
+**4 STATIC guards fully replicated** (removed from root `tests/`):
+- `root_module_ledger_guard` → `module_ownership.rs` (1 test)
+- `root_dependency_ownership_guard` → `module_ownership.rs` (4 tests)
+- `docs_path_reference_guard` → `docs_and_misc.rs` (1 test)
+- `unsafe_native_sandbox_language_guard` → `docs_and_misc.rs` (1 test)
+
+These were removed because the guard crate provides complete equivalent coverage. No depth is lost.
+
+**10 STATIC guards partially replicated** (old root files retained):
+- The guard crate provides a lightweight smoke test (1 test each) that compiles without linking synvoid.
+- The old root files provide full-depth coverage (25-37+ tests each) with domain-specific assertions.
+- CI runs both: guard crate for fast regression detection, root tests for full coverage.
 
 **13 COMPLEX guards** remain in root `tests/` because they:
 - Reference 20+ domain-specific type names in assertions

@@ -213,11 +213,9 @@ jobs:
       - name: Run static guards (synvoid-repo-guards)
         run: cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci
 
-      - name: Run runtime guards
+      - name: Run root guard tests (COMPLEX + RUNTIME)
         run: |
           cargo test --test root_facade_boundary_guard
-          cargo test --test root_module_ledger_guard
-          cargo test --test root_dependency_ownership_guard
           cargo test --test unified_server_lifecycle_ownership_guard
           cargo test --test supervisor_task_ownership_guard
           cargo test --test request_path_capability_boundary_guard
@@ -246,7 +244,6 @@ jobs:
           cargo test --test background_task_ownership_guard
           cargo test --test unified_worker_composition_root_guard
           cargo test --test plugin_lifecycle_guard
-          cargo test --test unsafe_native_sandbox_language_guard
 
       - name: Upload JUnit results
         if: always()

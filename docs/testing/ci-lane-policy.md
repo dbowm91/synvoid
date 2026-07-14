@@ -16,10 +16,9 @@ SynVoid CI is organized into four validation lanes, each with a specific purpose
 - `cargo check --no-default-features` (core profile)
 - `python scripts/check_imports.py` (forbidden imports)
 - `cargo test --test security_regression -- --test-threads=1`
-- Architecture guard tests (24 structural guards)
+- Architecture guard tests (guard crate + 23 structural guards)
 - Plugin runtime guardrails (6 plugin guards + unit tests + clippy)
 - Per-crate tests: synvoid-dns, synvoid-plugin-runtime, synvoid-upload, synvoid-honeypot, synvoid-tarpit, synvoid-mesh (all with `--profile ci`)
-- `cargo test --test docs_path_reference_guard` (continue-on-error)
 - DNS unsafe check (grep only)
 
 ### Not permitted:

@@ -20,3 +20,13 @@ threads-required = "num-cpus"
 [[profile.ci.overrides]]
 filter = 'test(/stress|interop|live_signing|recursion/)'
 slow-timeout = { period = "120s", terminate-after = 1 }
+
+# Security regression tests use process-global state (blockstore, IPC mocks)
+[[profile.ci.overrides]]
+filter = 'test(security_regression)'
+threads-required = "num-cpus"
+
+# DNS integration tests bind to fixed ports (port 53 alternatives)
+[[profile.ci.overrides]]
+filter = 'package(synvoid-dns) and test(/server_test|config_fidelity|recursive_isolation/)'
+slow-timeout = { period = "60s", terminate-after = 2 }

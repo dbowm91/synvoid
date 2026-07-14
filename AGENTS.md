@@ -225,8 +225,7 @@ These enforce architectural invariants. Run them after touching relevant areas:
 ```bash
 cargo test --test data_plane_composition_boundary_guard  # Request-path vs composition-root
 cargo test --test root_facade_boundary_guard             # Domain crates can't import root
-cargo test --test root_module_ledger_guard               # Root modules must be in ledger
-cargo test --test root_dependency_ownership_guard         # Root deps must have ownership entries
+cargo nextest run -p synvoid-repo-guards                 # Static guards (lightweight crate)
 cargo test --test mesh_id_boundary_guard                 # Mesh-ID blocks: admin only, not WAF
 cargo test --test threat_intel_boundary_guard            # Threat-intel consumer enforcement
 cargo test --test threat_intel_consumer_actionability_guard
@@ -249,7 +248,6 @@ cargo test --test manifest_authority_wiring        # Manifest-to-runtime authori
 cargo test --test manifest_authority_load_path_guard  # All load paths use PreparedPluginLoad, not raw default_limits
 cargo test --test abi_memory_boundary_guard  # ABI memory boundary hardening: GuestAbiPolicy, guest_alloc+guest_free required, single-frame allocation, checked arithmetic
 cargo test --test plugin_lifecycle_guard  # Lifecycle state transitions, generation tracking, hot-reload gates, replace policy
-cargo test --test unsafe_native_sandbox_language_guard  # Docs must not imply native plugins are sandboxed
 cargo test -p synvoid-plugin-runtime -- test_plugin_failure       # Failure policy defaults and failure class classification
 cargo test -p synvoid-plugin-runtime -- test_classify_failure     # Error-to-failure-class mapping
 cargo test -p synvoid-plugin-runtime -- test_guard_               # Guard state, quarantine, blocking invoke
@@ -273,7 +271,7 @@ cargo test -p synvoid-plugin-runtime -- test_host_api_failure_class     # HostAp
 cargo test -p synvoid-plugin-runtime -- test_manifest_toml_parses_mesh  # TOML mesh sub-policy parsing
 cargo test -p synvoid-plugin-runtime -- test_signing_payload_includes   # Signing payload covers sub-policies
 cargo test -p synvoid-plugin-runtime -- test_manifest_validate_trust    # Trust consistency mesh sub-policy
-cargo test --test docs_path_reference_guard  # Stale markdown link detection
+cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci  # Static guards (lightweight crate)
 cargo test --test failure_injection  # Failure-injection tests for lifecycle, convergence, plugin, startup
 cargo test --test security_observability_guard  # Security observability invariants: metric labels, doc coverage, registry signals
 cargo test --test unified_worker_composition_root_guard  # Composition root ≤80 lines
@@ -390,14 +388,14 @@ Each subsystem has specialized `AGENTS.override.md` files. Load the relevant one
 
 ## CI, Fuzzing & Failure Injection
 
-Phase 8 added profile CI, fuzz targets, failure-injection tests, and a docs link guard. Phase 11 fixed the CI workflow summary job (broken dynamic expressions prevented all jobs from running) and aligned `scripts/verify_architecture.sh` with the CI guard-suite (added missing `docs_path_reference_guard`). Phase 14 added 5 new parser boundary fuzz targets (16 total). Milestone D Phase 4 added dedicated tarpit and mesh CI jobs, fixed tarpit non-deterministic sentence generation and mesh Ed25519 test key generation. See `architecture/ci_fuzz_failure_injection.md` for the full profile matrix and fuzz target inventory.
+Phase 8 added profile CI, fuzz targets, failure-injection tests, and a docs link guard. Phase 11 fixed the CI workflow summary job (broken dynamic expressions prevented all jobs from running) and aligned `scripts/verify_architecture.sh` with the CI guard-suite (added `docs_path_reference_guard`, now in `synvoid-repo-guards` crate). Phase 14 added 5 new parser boundary fuzz targets (16 total). Milestone D Phase 4 added dedicated tarpit and mesh CI jobs, fixed tarpit non-deterministic sentence generation and mesh Ed25519 test key generation. See `architecture/ci_fuzz_failure_injection.md` for the full profile matrix and fuzz target inventory.
 
 ```bash
 # Local verification script (profile checks + guard suite)
 ./scripts/verify_architecture.sh
 
-# Docs path reference guard (catches stale markdown links)
-cargo test --test docs_path_reference_guard
+# Docs path reference guard (catches stale markdown links) — now in guard crate
+cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci
 
 # Failure-injection tests
 cargo test --test failure_injection

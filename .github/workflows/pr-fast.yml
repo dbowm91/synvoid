@@ -113,11 +113,9 @@ jobs:
         run: cargo nextest --version
       - name: Run static guards (synvoid-repo-guards)
         run: cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci
-      - name: Run runtime guards
+      - name: Run root guard tests (COMPLEX + RUNTIME)
         run: |
           cargo test --test root_facade_boundary_guard
-          cargo test --test root_module_ledger_guard
-          cargo test --test root_dependency_ownership_guard
           cargo test --test unified_server_lifecycle_ownership_guard
           cargo test --test supervisor_task_ownership_guard
           cargo test --test request_path_capability_boundary_guard
@@ -140,7 +138,47 @@ jobs:
           cargo test --test background_task_ownership_guard
           cargo test --test unified_worker_composition_root_guard
           cargo test --test plugin_lifecycle_guard
-          cargo test --test unsafe_native_sandbox_language_guard
+      - name: Test summary
+        if: always()
+        run: |
+          JUNIT="target/nextest/ci/junit.xml"
+          if [ -f "$JUNIT" ]; then
+            python3 -c "
+          import xml.etree.ElementTree as ET
+          import sys
+          tree = ET.parse('$JUNIT')
+          root = tree.getroot()
+          ts = root.find('testsuite')
+          if ts is None:
+              sys.exit(0)
+          tests = int(ts.get('tests', 0))
+          failures = int(ts.get('failures', 0))
+          errors = int(ts.get('errors', 0))
+          skipped = int(ts.get('skipped', 0))
+          time_s = float(ts.get('time', 0))
+          passed = tests - failures - errors - skipped
+          lines = ['## Guard Suite Test Results', '', '| Metric | Value |', '|--------|-------|']
+          lines.append(f'| Guard crate tests (nextest) | {tests} |')
+          lines.append(f'| Passed | {passed} |')
+          lines.append(f'| Failed | {failures} |')
+          if skipped: lines.append(f'| Skipped | {skipped} |')
+          lines.append(f'| Execution time | {time_s:.1f}s |')
+          slow = []
+          for tc in ts.findall('testcase'):
+              t = float(tc.get('time', 0))
+              if t > 5:
+                  slow.append((tc.get('name', '?'), t))
+          if slow:
+              lines += ['', '### Slow Tests (>5s)', '', '| Test | Time |', '|------|------|']
+              for name, t in sorted(slow, key=lambda x: -x[1]):
+                  lines.append(f'| {name} | {t:.1f}s |')
+          print('\n'.join(lines))
+          " >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## Guard Suite Test Results" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "No JUnit XML found (guard crate may not have run)." >> $GITHUB_STEP_SUMMARY
+          fi
       - name: Upload JUnit results
         if: always()
         uses: actions/upload-artifact@v4
@@ -148,17 +186,6 @@ jobs:
           name: nextest-junit-guard-suite
           path: target/nextest/ci/junit.xml
           retention-days: 7
-
-  docs-link-guard:
-    name: Docs Path Reference Guard
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-      - name: Run docs path guard
-        run: cargo test --test docs_path_reference_guard
-        continue-on-error: true
 
   upload-tests:
     name: Upload Crate Tests
@@ -278,7 +305,7 @@ jobs:
 
   summary:
     name: PR Fast Summary
-    needs: [fmt, clippy, unsafe-dns, core-profile, import-check, security-regression, guard-suite, docs-link-guard, upload-tests, honeypot-tests, tarpit-tests, mesh-tests]
+    needs: [fmt, clippy, unsafe-dns, core-profile, import-check, security-regression, guard-suite, upload-tests, honeypot-tests, tarpit-tests, mesh-tests]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -295,7 +322,6 @@ jobs:
           echo "| import-check | ${{ needs.import-check.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| security-regression | ${{ needs.security-regression.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| guard-suite | ${{ needs.guard-suite.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| docs-link-guard | ${{ needs.docs-link-guard.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| upload-tests | ${{ needs.upload-tests.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| honeypot-tests | ${{ needs.honeypot-tests.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| tarpit-tests | ${{ needs.tarpit-tests.result }} |" >> $GITHUB_STEP_SUMMARY

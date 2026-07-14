@@ -2,20 +2,26 @@
 
 ## Pinned Version
 
-cargo-nextest 0.9.x (latest stable as of Milestone B).
+cargo-nextest **0.9.140** (pinned as of Milestone B).
 
-### Installation
+### Local Installation
 
 ```bash
-cargo install cargo-nextest
+cargo install cargo-nextest@0.9.140
 ```
 
 ### CI Installation
 
-Use `taiki-e/install-action` with pinned version:
+Use `taiki-e/install-action` (installs the pinned latest stable by default):
 
 ```yaml
 - uses: taiki-e/install-action@nextest
+```
+
+### Version Verification
+
+```bash
+cargo nextest --version
 ```
 
 ## Profiles
@@ -43,11 +49,23 @@ No retries are configured for any suite at this time.
 
 ## Serialization Policy
 
-Tests are serialized only when they have documented conflicts:
-- Fixed ports or network globals: `threads-required = "num-cpus"`
-- Stress/interop/live tests: extended slow-timeout (120s)
+Tests are serialized only when they have documented conflicts. All other tests run at full nextest concurrency.
 
-All other tests run at full nextest concurrency.
+### Current Overrides
+
+| Override | Filter | Reason | Action |
+|----------|--------|--------|--------|
+| Global state | `test(/fixed_port\|global_state\|process_global/)` | Tests use process-global resources | `threads-required = "num-cpus"` |
+| Stress/interop | `test(/stress\|interop\|live_signing\|recursion/)` | Long-running tests need extended timeout | `slow-timeout = 120s × 1` |
+| Security regression | `test(security_regression)` | Uses process-global blockstore and IPC mocks | `threads-required = "num-cpus"` |
+| DNS integration | `package(synvoid-dns) and test(/server_test\|config_fidelity\|recursive_isolation/)` | Bind to fixed ports | `slow-timeout = 60s × 2` |
+
+### How to Add a Serialization Exception
+
+1. Identify the test and its conflict (fixed port, global state, etc.)
+2. Add a `[[profile.ci.overrides]]` entry in `.config/nextest.toml`
+3. Document the reason in this file under "Current Overrides"
+4. File a Milestone E issue to remove the constraint if possible
 
 ## Doctests
 
