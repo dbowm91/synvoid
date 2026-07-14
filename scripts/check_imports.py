@@ -42,6 +42,30 @@ def find_rust_files(directory: Path) -> List[Path]:
     return list(directory.glob("**/*.rs"))
 
 
+def _is_feature_gated(lines: list, line_idx: int) -> bool:
+    """Check if a line is behind a #[cfg(feature = ...)] gate.
+
+    Checks both:
+    1. The immediate preceding non-empty, non-comment line for #[cfg(feature = ...)]
+    2. The file-level inner attribute #![cfg(feature = ...)] at the top of the file
+    """
+    # Check preceding line for #[cfg(feature = ...)]
+    for i in range(line_idx - 1, -1, -1):
+        prev = lines[i].strip()
+        if not prev or prev.startswith("//"):
+            continue
+        if prev.startswith("#[cfg(feature =") and ")]" in prev:
+            return True
+        break
+
+    # Check file-level #![cfg(feature = ...)]
+    for i in range(min(5, line_idx)):
+        if lines[i].strip().startswith("#![cfg(feature ="):
+            return True
+
+    return False
+
+
 def check_file_forbidden_imports(
     file_path: Path,
     forbidden_patterns: List[ForbiddenPattern],
@@ -62,15 +86,18 @@ def check_file_forbidden_imports(
     lines = content.split("\n")
 
     for line_num, line in enumerate(lines, 1):
-        line = line.strip()
+        stripped = line.strip()
 
-        if not line.startswith("use "):
+        if not stripped.startswith("use "):
             continue
 
         for module_prefix, forbidden_import, reason in forbidden_patterns:
             if module_prefix in str(file_path):
-                if forbidden_import in line:
-                    violations.append((f"{file_path}:{line_num}", line, reason))
+                if forbidden_import in stripped:
+                    # Skip if the import is behind a feature gate
+                    if _is_feature_gated(lines, line_num - 1):
+                        continue
+                    violations.append((f"{file_path}:{line_num}", stripped, reason))
 
     return violations
 

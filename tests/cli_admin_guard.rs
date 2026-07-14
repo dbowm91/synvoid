@@ -98,10 +98,8 @@ fn find_legacy_block_ip_calls(content: &str) -> Vec<usize> {
             continue;
         }
 
-        if line.contains(".block_ip(") {
-            if !line.contains(".block_ip_with_provenance(") {
-                violations.push(idx + 1);
-            }
+        if line.contains(".block_ip(") && !line.contains(".block_ip_with_provenance(") {
+            violations.push(idx + 1);
         }
     }
     violations

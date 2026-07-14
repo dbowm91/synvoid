@@ -128,7 +128,7 @@ pub fn create_admin_router(
     let config_dir = config.blocking_read().config_dir.clone();
     let config_versions = ConfigVersionManager::new(config_dir);
 
-    let state_builder = AdminState::new(config, token_hash)
+    let mut state_builder = AdminState::new(config, token_hash)
         .with_config_versions(config_versions)
         .with_probe_tracker(probe_tracker)
         .with_suspicious_word_tracker(suspicious_word_tracker)
@@ -939,7 +939,7 @@ pub async fn start_admin_server(
 
     tracing::info!("Admin API server starting on http://{}", addr);
 
-    let admin_state_builder = AdminState::new(config, token.clone())
+    let mut admin_state_builder = AdminState::new(config, token.clone())
         .with_probe_tracker(probe_tracker)
         .with_suspicious_word_tracker(suspicious_word_tracker)
         .with_upstream_error_tracker(upstream_error_tracker)
@@ -951,10 +951,12 @@ pub async fn start_admin_server(
         .with_yara_rate_limiter(yara_rate_limiter);
 
     #[cfg(feature = "mesh")]
-    let admin_state_builder = admin_state_builder
-        .with_yara_rules(yara_rules)
-        .with_mesh_transport(mesh_transport.clone())
-        .with_org_key_manager(mesh_transport.as_ref().map(|m| m.get_org_key_manager()));
+    {
+        admin_state_builder = admin_state_builder
+            .with_yara_rules(yara_rules)
+            .with_mesh_transport(mesh_transport.clone())
+            .with_org_key_manager(mesh_transport.as_ref().map(|m| m.get_org_key_manager()));
+    }
 
     #[cfg(feature = "icmp-filter")]
     {

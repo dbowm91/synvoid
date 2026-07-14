@@ -24,12 +24,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::dht::routing::bucket::{ForceRestoreError, KBucket, K_SIZE};
-use crate::dht::routing::contact::PeerContact;
-use crate::dht::routing::node_id::NodeId;
-use crate::dht::routing::table::{ForceRestoreContactError, RoutingTable};
-use crate::lifecycle::{PeerSessionExitReason, PeerSessionStopOutcome};
-use crate::task_group::MeshTaskGroup;
+use synvoid_mesh::dht::routing::bucket::{ForceRestoreError, KBucket, K_SIZE};
+use synvoid_mesh::dht::routing::contact::PeerContact;
+use synvoid_mesh::dht::routing::node_id::NodeId;
+use synvoid_mesh::dht::routing::table::{ForceRestoreContactError, RoutingTable};
+use synvoid_mesh::lifecycle::{PeerSessionExitReason, PeerSessionStopOutcome};
+use synvoid_mesh::task_group::MeshTaskGroup;
 
 // ── Part A: Always Finalize `MeshTaskGroup` ────────────────────────────────
 
@@ -56,7 +56,7 @@ async fn zero_budget_join_all_aborts_and_awaits_every_task() {
     assert_eq!(exits[0].name, "never_exits");
     assert_eq!(
         exits[0].reason,
-        crate::lifecycle::MeshTaskExitReason::Aborted
+        synvoid_mesh::lifecycle::MeshTaskExitReason::Aborted
     );
     assert!(
         group.is_empty(),
@@ -77,7 +77,10 @@ async fn zero_budget_join_all_drains_critical_background_and_child() {
     let exits = group.join_all(Duration::ZERO).await;
     assert_eq!(exits.len(), 3, "all three tasks must be finalized");
     for e in &exits {
-        assert_eq!(e.reason, crate::lifecycle::MeshTaskExitReason::Aborted);
+        assert_eq!(
+            e.reason,
+            synvoid_mesh::lifecycle::MeshTaskExitReason::Aborted
+        );
     }
     assert!(group.is_empty());
 }
@@ -259,7 +262,7 @@ fn dht_snapshot_is_logical_not_temporal() {
     contact.last_seen = Instant::now() - Duration::from_secs(3600);
 
     // Capture the contact into a snapshot.
-    let snapshot = crate::lifecycle::DhtPeerSnapshot {
+    let snapshot = synvoid_mesh::lifecycle::DhtPeerSnapshot {
         contact: contact.clone(),
     };
     assert_eq!(snapshot.contact.address, "1.2.3.4");
@@ -288,7 +291,7 @@ async fn iter77_drain_enforces_deadline_on_hung_handler() {
     // The deadline enforcement is verified structurally by the guardrail
     // test `iter77_drain_uses_timeout_around_join_next`. This behavioral
     // test verifies the PeerStreamDrainReport accounts for all outcomes.
-    let report = crate::lifecycle::PeerStreamDrainReport {
+    let report = synvoid_mesh::lifecycle::PeerStreamDrainReport {
         aborted: 1,
         ..Default::default()
     };
@@ -398,13 +401,13 @@ async fn iter77_read_timeout_does_not_kill_long_lived_work() {
         tokio::time::sleep(Duration::from_millis(10)).await;
         // Long-lived post-framing work
         tokio::time::sleep(Duration::from_millis(200)).await;
-        Ok::<(), crate::MeshTransportError>(())
+        Ok::<(), synvoid_mesh::MeshTransportError>(())
     };
 
     let result = if let Some(total) = total_timeout {
         tokio::time::timeout(total, handler)
             .await
-            .unwrap_or(Err(crate::MeshTransportError::Timeout))
+            .unwrap_or(Err(synvoid_mesh::MeshTransportError::Timeout))
     } else {
         handler.await
     };
@@ -545,8 +548,8 @@ async fn iter78_recovery_error_aggregation_real_pattern() {
 /// and is properly classified distinct from other kinds.
 #[tokio::test]
 async fn iter78_edge_replica_auxiliary_task_exists() {
-    use crate::lifecycle::{AuxiliaryTask, AuxiliaryTaskKind, MeshTaskId};
-    use crate::lifecycle::{MeshTaskClass, MeshTaskExit, MeshTaskExitReason};
+    use synvoid_mesh::lifecycle::{AuxiliaryTask, AuxiliaryTaskKind, MeshTaskId};
+    use synvoid_mesh::lifecycle::{MeshTaskClass, MeshTaskExit, MeshTaskExitReason};
 
     let kind = AuxiliaryTaskKind::EdgeReplicaRefresh;
     assert_eq!(kind, AuxiliaryTaskKind::EdgeReplicaRefresh);

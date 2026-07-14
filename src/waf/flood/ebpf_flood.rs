@@ -1,17 +1,13 @@
 use crate::waf::flood::{FloodConfig, FloodDecision, SynFloodProtector, SynFloodStats};
 use aya::{
-    maps::{Array, PerCpuArray},
+    maps::{Array, HashMap as AyaHashMap, PerCpuArray},
     programs::xdp::Xdp,
     Ebpf,
 };
 use std::collections::HashSet;
 use std::net::IpAddr;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::time::Instant;
 
 pub mod maps {
-    use std::net::Ipv4Addr;
-
     pub const CONFIG_KEY: u32 = 0;
 
     #[repr(C)]
@@ -26,17 +22,27 @@ pub mod maps {
         pub _pad: [u8; 3],
     }
 
+    // SAFETY: FloodConfig is a plain C-repr struct with no pointers or references.
+    // All fields are POD integers suitable for eBPF map transfer.
+    unsafe impl aya::Pod for FloodConfig {}
+
     #[repr(C)]
     #[derive(Clone, Copy)]
     pub struct Ipv4Key {
         pub addr: u32,
     }
 
+    // SAFETY: Ipv4Key is a plain C-repr struct containing a single u32.
+    unsafe impl aya::Pod for Ipv4Key {}
+
     #[repr(C)]
     #[derive(Clone, Copy)]
     pub struct Ipv6Key {
         pub addr: [u8; 16],
     }
+
+    // SAFETY: Ipv6Key is a plain C-repr struct containing a fixed-size byte array.
+    unsafe impl aya::Pod for Ipv6Key {}
 
     #[repr(C)]
     #[derive(Clone, Copy, Default, Debug)]
@@ -48,6 +54,9 @@ pub mod maps {
         pub connections_tracked: u64,
         pub packets_passed: u64,
     }
+
+    // SAFETY: FloodStats is a plain C-repr struct with all u64 fields.
+    unsafe impl aya::Pod for FloodStats {}
 
     #[repr(C)]
     #[derive(Clone, Copy, Default, Debug)]
@@ -142,33 +151,26 @@ impl EbpfSynFloodProtector {
     fn load_ebpf_program(&mut self) -> Result<(), EbpfFloodError> {
         let bytecode = Self::load_ebpf_bytecode()?;
 
-        let ebpf = Ebpf::load(&bytecode).map_err(|e| {
+        let mut ebpf = Ebpf::load(&bytecode).map_err(|e| {
             EbpfFloodError::LoadError(format!("Failed to load eBPF program: {}", e))
         })?;
 
+        // Push config to the eBPF CONFIG_MAP
+        {
+            let map_data = ebpf
+                .map_mut("CONFIG_MAP")
+                .ok_or_else(|| EbpfFloodError::MapNotFound("CONFIG_MAP".to_string()))?;
+            let mut config_map: Array<&mut aya::maps::MapData, maps::FloodConfig> =
+                Array::try_from(map_data).map_err(|e| {
+                    EbpfFloodError::MapError(format!("Failed to access CONFIG_MAP: {}", e))
+                })?;
+            let config_val = maps::FloodConfig::from(&self.config);
+            config_map
+                .set(maps::CONFIG_KEY, config_val, 0)
+                .map_err(|e| EbpfFloodError::MapError(format!("Failed to set config: {}", e)))?;
+        }
+
         self.ebpf = Some(ebpf);
-        self.update_config()?;
-
-        Ok(())
-    }
-
-    fn update_config(&self) -> Result<(), EbpfFloodError> {
-        let ebpf = self
-            .ebpf
-            .as_ref()
-            .ok_or_else(|| EbpfFloodError::NotLoaded)?;
-
-        let mut config_map: Array<_, maps::FloodConfig> = ebpf
-            .map("CONFIG_MAP")
-            .ok_or_else(|| EbpfFloodError::MapNotFound("CONFIG_MAP".to_string()))?
-            .try_into()
-            .map_err(|e| EbpfFloodError::MapError(format!("Failed to access CONFIG_MAP: {}", e)))?;
-
-        let config = maps::FloodConfig::from(&self.config);
-        config_map
-            .set(&maps::CONFIG_KEY, config, 0)
-            .map_err(|e| EbpfFloodError::MapError(format!("Failed to set config: {}", e)))?;
-
         Ok(())
     }
 
@@ -179,10 +181,10 @@ impl EbpfSynFloodProtector {
 
         self.load_ebpf_program()?;
 
-        let ebpf = self
-            .ebpf
-            .as_mut()
-            .ok_or_else(|| EbpfFloodError::NotLoaded)?;
+        // Collect interfaces before mutable borrow of self.ebpf
+        let interfaces = self.get_interfaces();
+
+        let ebpf = self.ebpf.as_mut().ok_or(EbpfFloodError::NotLoaded)?;
 
         let xdp_program: &mut Xdp = ebpf
             .program_mut("filter_syn")
@@ -196,7 +198,6 @@ impl EbpfSynFloodProtector {
             EbpfFloodError::ProgramError(format!("Failed to load XDP program: {}", e))
         })?;
 
-        let interfaces = self.get_interfaces();
         for iface in &interfaces {
             xdp_program
                 .attach(iface, aya::programs::xdp::XdpFlags::default())
@@ -205,7 +206,9 @@ impl EbpfSynFloodProtector {
                 })?;
 
             tracing::info!("Attached XDP SYN flood filter to interface: {}", iface);
-            self.attached_interfaces.insert(iface.clone());
+        }
+        for iface in interfaces {
+            self.attached_interfaces.insert(iface);
         }
 
         tracing::info!("eBPF SYN flood protection enabled");
@@ -263,29 +266,31 @@ impl EbpfSynFloodProtector {
         }
     }
 
-    pub fn get_stats(&self) -> super::SynFloodStats {
+    pub fn get_stats(&self) -> SynFloodStats {
         if let Some(ebpf) = self.ebpf.as_ref() {
-            if let Ok(stats_map) = ebpf.map::<PerCpuArray<_, maps::FloodStats>>("STATS") {
-                if let Ok(per_cpu_stats) = stats_map.get(&0, 0) {
-                    let mut total = maps::FloodStats::default();
-                    for stats in per_cpu_stats {
-                        total.syn_seen += stats.syn_seen;
-                        total.syn_dropped_global_rate += stats.syn_dropped_global_rate;
-                        total.syn_dropped_per_ip_rate += stats.syn_dropped_per_ip_rate;
-                        total.half_open_exceeded += stats.half_open_exceeded;
-                        total.connections_tracked += stats.connections_tracked;
-                        total.packets_passed += stats.packets_passed;
+            if let Some(map_ref) = ebpf.map("STATS") {
+                if let Ok(stats_map) = PerCpuArray::<_, maps::FloodStats>::try_from(map_ref) {
+                    if let Ok(values) = stats_map.get(&0, 0) {
+                        let mut total = maps::FloodStats::default();
+                        for cpu_val in values.iter() {
+                            total.syn_seen += cpu_val.syn_seen;
+                            total.syn_dropped_global_rate += cpu_val.syn_dropped_global_rate;
+                            total.syn_dropped_per_ip_rate += cpu_val.syn_dropped_per_ip_rate;
+                            total.half_open_exceeded += cpu_val.half_open_exceeded;
+                            total.connections_tracked += cpu_val.connections_tracked;
+                            total.packets_passed += cpu_val.packets_passed;
+                        }
+                        return SynFloodStats {
+                            global_syn_rate: total.syn_seen,
+                            half_open_connections: total.connections_tracked as u32,
+                            unique_half_open_ips: 0,
+                        };
                     }
-                    return super::SynFloodStats {
-                        global_syn_rate: total.syn_seen,
-                        half_open_connections: total.connections_tracked as u32,
-                        unique_half_open_ips: 0,
-                    };
                 }
             }
         }
 
-        super::SynFloodStats {
+        SynFloodStats {
             global_syn_rate: 0,
             half_open_connections: 0,
             unique_half_open_ips: 0,
@@ -308,38 +313,35 @@ impl EbpfSynFloodProtector {
         Ok(())
     }
 
-    pub fn block_ip(&self, ip: IpAddr) -> Result<(), EbpfFloodError> {
-        let ebpf = self
-            .ebpf
-            .as_ref()
-            .ok_or_else(|| EbpfFloodError::NotLoaded)?;
+    pub fn block_ip(&mut self, ip: IpAddr) -> Result<(), EbpfFloodError> {
+        let ebpf = self.ebpf.as_mut().ok_or(EbpfFloodError::NotLoaded)?;
 
         match ip {
             IpAddr::V4(v4) => {
-                let mut blocklist: HashMap<_, maps::Ipv4Key, u8> = ebpf
-                    .map("IP_BLOCKLIST_V4")
-                    .ok_or_else(|| EbpfFloodError::MapNotFound("IP_BLOCKLIST_V4".to_string()))?
-                    .try_into()
-                    .map_err(|e| {
+                let map_data = ebpf
+                    .map_mut("IP_BLOCKLIST_V4")
+                    .ok_or_else(|| EbpfFloodError::MapNotFound("IP_BLOCKLIST_V4".to_string()))?;
+                let mut blocklist: AyaHashMap<&mut aya::maps::MapData, maps::Ipv4Key, u8> =
+                    AyaHashMap::try_from(map_data).map_err(|e| {
                         EbpfFloodError::MapError(format!("Failed to access IP_BLOCKLIST_V4: {}", e))
                     })?;
 
                 let key = maps::Ipv4Key { addr: v4.into() };
-                blocklist.insert(key, 1, 0).map_err(|e| {
+                blocklist.insert(key, 1u8, 0).map_err(|e| {
                     EbpfFloodError::MapError(format!("Failed to block IPv4: {}", e))
                 })?;
             }
             IpAddr::V6(v6) => {
-                let mut blocklist: HashMap<_, maps::Ipv6Key, u8> = ebpf
-                    .map("IP_BLOCKLIST_V6")
-                    .ok_or_else(|| EbpfFloodError::MapNotFound("IP_BLOCKLIST_V6".to_string()))?
-                    .try_into()
-                    .map_err(|e| {
+                let map_data = ebpf
+                    .map_mut("IP_BLOCKLIST_V6")
+                    .ok_or_else(|| EbpfFloodError::MapNotFound("IP_BLOCKLIST_V6".to_string()))?;
+                let mut blocklist: AyaHashMap<&mut aya::maps::MapData, maps::Ipv6Key, u8> =
+                    AyaHashMap::try_from(map_data).map_err(|e| {
                         EbpfFloodError::MapError(format!("Failed to access IP_BLOCKLIST_V6: {}", e))
                     })?;
 
                 let key = maps::Ipv6Key { addr: v6.octets() };
-                blocklist.insert(key, 1, 0).map_err(|e| {
+                blocklist.insert(key, 1u8, 0).map_err(|e| {
                     EbpfFloodError::MapError(format!("Failed to block IPv6: {}", e))
                 })?;
             }
@@ -348,19 +350,16 @@ impl EbpfSynFloodProtector {
         Ok(())
     }
 
-    pub fn unblock_ip(&self, ip: IpAddr) -> Result<(), EbpfFloodError> {
-        let ebpf = self
-            .ebpf
-            .as_ref()
-            .ok_or_else(|| EbpfFloodError::NotLoaded)?;
+    pub fn unblock_ip(&mut self, ip: IpAddr) -> Result<(), EbpfFloodError> {
+        let ebpf = self.ebpf.as_mut().ok_or(EbpfFloodError::NotLoaded)?;
 
         match ip {
             IpAddr::V4(v4) => {
-                let mut blocklist: HashMap<_, maps::Ipv4Key, u8> = ebpf
-                    .map("IP_BLOCKLIST_V4")
-                    .ok_or_else(|| EbpfFloodError::MapNotFound("IP_BLOCKLIST_V4".to_string()))?
-                    .try_into()
-                    .map_err(|e| {
+                let map_data = ebpf
+                    .map_mut("IP_BLOCKLIST_V4")
+                    .ok_or_else(|| EbpfFloodError::MapNotFound("IP_BLOCKLIST_V4".to_string()))?;
+                let mut blocklist: AyaHashMap<&mut aya::maps::MapData, maps::Ipv4Key, u8> =
+                    AyaHashMap::try_from(map_data).map_err(|e| {
                         EbpfFloodError::MapError(format!("Failed to access IP_BLOCKLIST_V4: {}", e))
                     })?;
 
@@ -370,11 +369,11 @@ impl EbpfSynFloodProtector {
                 })?;
             }
             IpAddr::V6(v6) => {
-                let mut blocklist: HashMap<_, maps::Ipv6Key, u8> = ebpf
-                    .map("IP_BLOCKLIST_V6")
-                    .ok_or_else(|| EbpfFloodError::MapNotFound("IP_BLOCKLIST_V6".to_string()))?
-                    .try_into()
-                    .map_err(|e| {
+                let map_data = ebpf
+                    .map_mut("IP_BLOCKLIST_V6")
+                    .ok_or_else(|| EbpfFloodError::MapNotFound("IP_BLOCKLIST_V6".to_string()))?;
+                let mut blocklist: AyaHashMap<&mut aya::maps::MapData, maps::Ipv6Key, u8> =
+                    AyaHashMap::try_from(map_data).map_err(|e| {
                         EbpfFloodError::MapError(format!("Failed to access IP_BLOCKLIST_V6: {}", e))
                     })?;
 
@@ -386,6 +385,10 @@ impl EbpfSynFloodProtector {
         }
 
         Ok(())
+    }
+
+    pub fn is_ebpf_loaded(&self) -> bool {
+        self.ebpf.is_some()
     }
 }
 

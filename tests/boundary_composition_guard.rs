@@ -1825,7 +1825,7 @@ fn http3_boundary_no_concrete_imports() {
     for file in &files {
         let relative = file
             .strip_prefix(&root)
-            .unwrap_or(&file)
+            .unwrap_or(file)
             .to_string_lossy()
             .into_owned();
 

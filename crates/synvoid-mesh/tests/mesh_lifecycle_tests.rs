@@ -1,18 +1,18 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::cert::MeshCertManager;
-use crate::config::MeshConfig;
-use crate::dht::routing::DhtRoutingManager;
-use crate::lifecycle::{
+use parking_lot::RwLock;
+use synvoid_mesh::cert::MeshCertManager;
+use synvoid_mesh::config::MeshConfig;
+use synvoid_mesh::dht::routing::DhtRoutingManager;
+use synvoid_mesh::lifecycle::{
     MeshBackgroundTaskSpec, MeshLifecycleState, MeshShutdownReport, MeshStartupPolicy,
     MeshStartupReport, MeshTaskClass, MeshTaskExit, MeshTaskExitReason, MeshTaskId,
     PeerSessionExitReason,
 };
-use crate::task_group::MeshTaskGroup;
-use crate::topology::MeshTopology;
-use crate::transport::MeshTransport;
-use parking_lot::RwLock;
+use synvoid_mesh::task_group::MeshTaskGroup;
+use synvoid_mesh::topology::MeshTopology;
+use synvoid_mesh::transport::MeshTransport;
 
 // ── Lifecycle State Machine Tests ────────────────────────────────────────────
 
@@ -772,7 +772,7 @@ fn peer_session_exit_reason_variants() {
 
 #[test]
 fn peer_stream_drain_report_defaults() {
-    use crate::lifecycle::PeerStreamDrainReport;
+    use synvoid_mesh::lifecycle::PeerStreamDrainReport;
 
     let report = PeerStreamDrainReport::default();
     assert_eq!(report.drained, 0);
@@ -782,7 +782,7 @@ fn peer_stream_drain_report_defaults() {
 
 #[test]
 fn peer_stream_drain_report_fields() {
-    use crate::lifecycle::PeerStreamDrainReport;
+    use synvoid_mesh::lifecycle::PeerStreamDrainReport;
 
     let report = PeerStreamDrainReport {
         drained: 10,
@@ -796,7 +796,7 @@ fn peer_stream_drain_report_fields() {
 
 #[test]
 fn mesh_connection_config_has_stream_limits() {
-    use crate::config::MeshConnectionConfig;
+    use synvoid_mesh::config::MeshConnectionConfig;
 
     let config = MeshConnectionConfig::default();
     // Phase 25: Capacity limit defaults
@@ -807,7 +807,7 @@ fn mesh_connection_config_has_stream_limits() {
 
 #[test]
 fn mesh_connection_config_custom_stream_limits() {
-    use crate::config::MeshConnectionConfig;
+    use synvoid_mesh::config::MeshConnectionConfig;
 
     let config = MeshConnectionConfig {
         max_concurrent_peer_streams: 128,
@@ -820,7 +820,7 @@ fn mesh_connection_config_custom_stream_limits() {
 
 #[test]
 fn drain_report_is_clone() {
-    use crate::lifecycle::PeerStreamDrainReport;
+    use synvoid_mesh::lifecycle::PeerStreamDrainReport;
 
     let report = PeerStreamDrainReport {
         drained: 5,
@@ -842,8 +842,8 @@ fn drain_report_is_clone() {
 /// rely on for clean cleanup.
 #[tokio::test]
 async fn cooperative_shutdown_signal_yields_cancelled_exit() {
-    use crate::lifecycle::{PeerSessionStopOutcome, PeerSessionTask};
     use std::sync::atomic::{AtomicBool, Ordering};
+    use synvoid_mesh::lifecycle::{PeerSessionStopOutcome, PeerSessionTask};
     use tokio::sync::watch;
 
     struct SessionGuard(Arc<AtomicBool>);

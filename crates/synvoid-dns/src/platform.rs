@@ -8,7 +8,7 @@ pub trait AnycastSocketPlatform: Send + Sync {
     fn supports_pktinfo(&self) -> bool;
     fn platform_name(&self) -> &'static str;
 
-    fn enable_tcp_pktinfo(&self, socket: std::os::fd::RawFd) -> Result<(), String>;
+    fn enable_tcp_pktinfo(&self, stream: &std::net::TcpStream) -> Result<(), String>;
     fn supports_tcp_pktinfo(&self) -> bool;
 }
 
@@ -41,23 +41,14 @@ mod linux {
         }
 
         fn get_destination_ip(&self, cmsg_data: &[u8]) -> Option<IpAddr> {
-            use std::mem::size_of;
-
-            if cmsg_data.len() < size_of::<nix::libc::in_pktinfo>() {
+            // in_pktinfo layout: [ipi_ifindex: 4][ipi_spec_dst: 4][ipi_addr: 4]
+            // We only need ipi_addr at offset 8 (4 bytes for the IPv4 address)
+            if cmsg_data.len() < 12 {
                 return None;
             }
 
-            let pktinfo_bytes = &cmsg_data[..size_of::<nix::libc::in_pktinfo>()];
-            // SAFETY: cmsg_data is guaranteed by the kernel to contain at least size_of::<in_pktinfo>() bytes
-            // at the position we're reading from. The pointer is valid for reading that many bytes.
-            let pktinfo: nix::libc::in_pktinfo =
-                unsafe { (pktinfo_bytes.as_ptr() as *const nix::libc::in_pktinfo).read() };
-
-            let addr = std::net::IpAddr::from(std::net::Ipv4Addr::from(
-                pktinfo.ipi_addr.s_addr.to_ne_bytes(),
-            ));
-
-            Some(addr)
+            let addr_bytes: [u8; 4] = cmsg_data[8..12].try_into().ok()?;
+            Some(IpAddr::from(std::net::Ipv4Addr::from(addr_bytes)))
         }
 
         fn supports_pktinfo(&self) -> bool {
@@ -68,24 +59,11 @@ mod linux {
             "linux"
         }
 
-        fn enable_tcp_pktinfo(&self, fd: std::os::fd::RawFd) -> Result<(), String> {
-            // SAFETY: fd is a valid TCP socket file descriptor owned by the caller.
-            // setsockopt syscall is always safe if the fd is valid.
-            let ret = unsafe {
-                libc::setsockopt(
-                    fd,
-                    libc::IPPROTO_IP,
-                    libc::IP_PKTINFO,
-                    &1 as *const i32 as *const libc::c_void,
-                    std::mem::size_of::<libc::c_int>() as libc::socklen_t,
-                )
-            };
-            if ret != 0 {
-                return Err(format!(
-                    "IP_PKTINFO for TCP: {}",
-                    std::io::Error::last_os_error()
-                ));
-            }
+        fn enable_tcp_pktinfo(&self, stream: &std::net::TcpStream) -> Result<(), String> {
+            use std::os::fd::AsFd;
+            let fd = stream.as_fd();
+            setsockopt(&fd, sockopt::Ipv4PacketInfo, &true)
+                .map_err(|e| format!("IP_PKTINFO for TCP: {}", e))?;
 
             tracing::debug!("Enabled IP_PKTINFO on TCP socket");
             Ok(())
@@ -139,7 +117,7 @@ mod fallback {
             "fallback"
         }
 
-        fn enable_tcp_pktinfo(&self, _: std::os::fd::RawFd) -> Result<(), String> {
+        fn enable_tcp_pktinfo(&self, _: &std::net::TcpStream) -> Result<(), String> {
             Err("IP_PKTINFO not supported on this platform for TCP.".into())
         }
 
@@ -407,7 +385,8 @@ mod tests {
         #[test]
         fn test_fallback_enable_tcp_pktinfo_returns_error() {
             let platform = super::fallback::FallbackAnycastSocket::new();
-            let result = platform.enable_tcp_pktinfo(0);
+            let stream = std::net::TcpStream::bind("127.0.0.1:0").unwrap();
+            let result = platform.enable_tcp_pktinfo(&stream);
             assert!(result.is_err());
         }
 
@@ -428,7 +407,8 @@ mod tests {
         #[test]
         fn test_fallback_error_message_mentions_tcp() {
             let platform = super::fallback::FallbackAnycastSocket::new();
-            let result = platform.enable_tcp_pktinfo(0);
+            let stream = std::net::TcpStream::bind("127.0.0.1:0").unwrap();
+            let result = platform.enable_tcp_pktinfo(&stream);
             assert!(result.unwrap_err().contains("IP_PKTINFO"));
         }
 

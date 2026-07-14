@@ -66,6 +66,7 @@ fn root_test_ownership_manifest_no_domain_tests() {
 
     let mut domain_tests = Vec::new();
     let mut current_name = String::new();
+    #[allow(unused_assignments)]
     let mut current_class = String::new();
 
     for line in manifest.lines() {

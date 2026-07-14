@@ -4,6 +4,8 @@ use super::ws::broadcaster::Broadcaster;
 use crate::config::ConfigManager;
 
 pub const SESSION_COOKIE_NAME: &str = "synvoid_session";
+#[cfg(feature = "icmp-filter")]
+use crate::icmp_filter::IcmpFilterManager;
 #[cfg(feature = "mesh")]
 use crate::mesh::transport::MeshTransport;
 use crate::metrics::SiteMetricsPayload;

@@ -34,7 +34,7 @@ pub struct IcmpConfigResponse {
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateIcmpConfigRequest {
-    pub _config: serde_json::Value,
+    pub config: serde_json::Value,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -102,11 +102,9 @@ pub async fn get_status(
             ("disabled".to_string(), None)
         };
 
-        let backend = match filter.config() {
-            Some(cfg) => Some(format!("{:?}", cfg.filter_type)),
-            None => None,
-        };
+        let backend = filter.config().map(|cfg| format!("{:?}", cfg.filter_type));
 
+        #[allow(clippy::needless_return)]
         return Ok(Json(IcmpStatusResponse {
             enabled: is_enabled,
             status: status_str,
@@ -147,6 +145,7 @@ pub async fn get_config(
     {
         let icmp_config = &config.main.icmp_filter;
         let json = serde_json::to_value(icmp_config).unwrap_or(serde_json::Value::Null);
+        #[allow(clippy::needless_return)]
         return Ok(Json(IcmpConfigResponse { config: json }));
     }
 
@@ -237,10 +236,28 @@ pub async fn update_config(
             let mut config = state.process.config.write().await;
             let icmp_cfg = icmp_filter.read().await;
             if let Some(cfg) = icmp_cfg.config() {
-                config.main.icmp_filter = cfg.clone();
+                // Convert between the two IcmpFilterConfig types via JSON
+                // synvoid_icmp_filter::IcmpFilterConfig -> synvoid_config::IcmpFilterConfig
+                match serde_json::to_value(cfg) {
+                    Ok(val) => match serde_json::from_value::<
+                        synvoid_config::icmp_filter::IcmpFilterConfig,
+                    >(val)
+                    {
+                        Ok(converted) => {
+                            config.main.icmp_filter = converted;
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to convert ICMP filter config: {}", e);
+                        }
+                    },
+                    Err(e) => {
+                        tracing::warn!("Failed to serialize ICMP filter config: {}", e);
+                    }
+                }
             }
         }
 
+        #[allow(clippy::needless_return)]
         return Ok(Json(AdminMutationResult {
             status: AdminMutationStatus::Applied,
             target: "icmp_config".to_string(),
