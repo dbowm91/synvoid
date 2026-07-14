@@ -4,6 +4,12 @@ on:
   pull_request:
     branches: [main, master]
   workflow_dispatch:
+    inputs:
+      force-full:
+        description: 'Force full validation (ignore affected selector)'
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -12,8 +18,60 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  SCCACHE_GHA_ENABLED: "true"
 
 jobs:
+  select-affected:
+    name: Select Affected Packages
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    outputs:
+      mode: ${{ steps.select.outputs.mode }}
+      packages: ${{ steps.select.outputs.packages }}
+      root-tests: ${{ steps.select.outputs.root-tests }}
+      feature-classes: ${{ steps.select.outputs.feature-classes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Run affected package selector
+        id: select
+        run: |
+          FORCE_FULL=""
+          if [ "${{ inputs.force-full }}" = "true" ]; then
+            FORCE_FULL="--full"
+          fi
+          RESULT=$(python3 scripts/ci/select-affected.py \
+            --base "${{ github.event.pull_request.base.sha || 'origin/main' }}" \
+            --head "${{ github.sha }}" \
+            --format json \
+            $FORCE_FULL)
+          echo "$RESULT" > /tmp/affected.json
+          MODE=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['mode'])")
+          PACKAGES=$(echo "$RESULT" | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin)['changed_packages']))")
+          ROOT_TESTS=$(echo "$RESULT" | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin)['root_tests']))")
+          FEATURE_CLASSES=$(echo "$RESULT" | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin)['feature_classes']))")
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "packages=$PACKAGES" >> "$GITHUB_OUTPUT"
+          echo "root-tests=$ROOT_TESTS" >> "$GITHUB_OUTPUT"
+          echo "feature-classes=$FEATURE_CLASSES" >> "$GITHUB_OUTPUT"
+          echo "### Affected Package Selector" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          echo "$RESULT" | python3 -m json.tool >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload selector output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: affected-packages
+          path: /tmp/affected.json
+          retention-days: 7
+
   fmt:
     name: Rustfmt
     runs-on: ubuntu-latest
@@ -85,6 +143,15 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Install sccache
+        uses: taiki-e/install-action@v2
+        with:
+          tool: sccache
+      - name: Configure sccache
+        run: |
+          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+          sccache --start-server || true
+          sccache --zero-stats || true
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Nextest version
@@ -98,6 +165,9 @@ jobs:
           name: nextest-junit-security-regression
           path: target/nextest/ci/junit.xml
           retention-days: 7
+      - name: Report sccache stats
+        if: always()
+        run: sccache --show-stats
 
   guard-suite:
     name: Architecture Guard Tests
@@ -107,6 +177,15 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Install sccache
+        uses: taiki-e/install-action@v2
+        with:
+          tool: sccache
+      - name: Configure sccache
+        run: |
+          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+          sccache --start-server || true
+          sccache --zero-stats || true
       - name: Install nextest
         uses: taiki-e/install-action@nextest
       - name: Nextest version
@@ -178,9 +257,18 @@ jobs:
           name: nextest-junit-guard-suite
           path: target/nextest/ci/junit.xml
           retention-days: 7
+      - name: Report sccache stats
+        if: always()
+        run: sccache --show-stats
 
   upload-tests:
     name: Upload Crate Tests
+    needs: [select-affected]
+    if: >-
+      always() &&
+      !cancelled() &&
+      (needs.select-affected.outputs.mode != 'full' ||
+       contains(needs.select-affected.outputs.packages, '"synvoid-upload"'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -213,6 +301,12 @@ jobs:
 
   honeypot-tests:
     name: Honeypot Crate Tests
+    needs: [select-affected]
+    if: >-
+      always() &&
+      !cancelled() &&
+      (needs.select-affected.outputs.mode != 'full' ||
+       contains(needs.select-affected.outputs.packages, '"synvoid-honeypot"'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -243,6 +337,12 @@ jobs:
 
   tarpit-tests:
     name: Tarpit Crate Tests
+    needs: [select-affected]
+    if: >-
+      always() &&
+      !cancelled() &&
+      (needs.select-affected.outputs.mode != 'full' ||
+       contains(needs.select-affected.outputs.packages, '"synvoid-tarpit"'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -269,6 +369,12 @@ jobs:
 
   mesh-tests:
     name: Mesh Crate Tests
+    needs: [select-affected]
+    if: >-
+      always() &&
+      !cancelled() &&
+      (needs.select-affected.outputs.mode != 'full' ||
+       contains(needs.select-affected.outputs.packages, '"synvoid-mesh"'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -297,7 +403,7 @@ jobs:
 
   summary:
     name: PR Fast Summary
-    needs: [fmt, clippy, unsafe-dns, core-profile, import-check, security-regression, guard-suite, upload-tests, honeypot-tests, tarpit-tests, mesh-tests]
+    needs: [select-affected, fmt, clippy, unsafe-dns, core-profile, import-check, security-regression, guard-suite, upload-tests, honeypot-tests, tarpit-tests, mesh-tests]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -307,6 +413,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| select-affected | ${{ needs.select-affected.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| fmt | ${{ needs.fmt.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| clippy | ${{ needs.clippy.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| unsafe-dns | ${{ needs.unsafe-dns.result }} |" >> $GITHUB_STEP_SUMMARY

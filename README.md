@@ -132,7 +132,26 @@ SynVoid uses a four-lane CI system with a dedicated `[profile.ci]` for fast rout
 | Scheduled Qualification | Nightly | Expensive checks |
 | Release Qualification | Version tags | Production validation |
 
-See [`docs/testing/ci-lane-policy.md`](docs/testing/ci-lane-policy.md) for the full policy.
+### Developer Testing
+
+Run tests for only the packages affected by your changes:
+
+```bash
+# Preview what would be tested
+bash scripts/test-affected.sh origin/main --dry-run
+
+# Run affected tests
+bash scripts/test-affected.sh origin/main
+
+# Force full validation
+bash scripts/test-affected.sh origin/main --full
+```
+
+### CI Caching
+
+SynVoid CI uses `sccache` for compiler output caching and `Swatinem/rust-cache` for target metadata. See [`docs/testing/cache-policy.md`](docs/testing/cache-policy.md) for the full cache architecture.
+
+See [`docs/testing/ci-lane-policy.md`](docs/testing/ci-lane-policy.md) for the full CI policy.
 
 ## Documentation
 

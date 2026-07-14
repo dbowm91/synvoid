@@ -21,6 +21,8 @@ SynVoid CI is organized into four validation lanes, each with a specific purpose
 - Per-crate tests: synvoid-dns, synvoid-plugin-runtime, synvoid-upload, synvoid-honeypot, synvoid-tarpit, synvoid-mesh (all with `--profile ci`)
 - DNS unsafe check (grep only)
 
+**Affected Selection (Milestone D)**: PRs use the affected package selector (`scripts/ci/select-affected.py`) to gate per-crate test jobs. The selector computes changed packages, transitive reverse dependents, and relevant root tests. Required checks (fmt, clippy, security-regression, guard-suite) always run regardless of selection. See `docs/testing/cache-policy.md` for cache architecture.
+
 ### Not permitted:
 - FreeBSD VM testing
 - Alpine/musl full test

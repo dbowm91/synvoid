@@ -1,0 +1,99 @@
+name: Setup Rust CI
+description: Standardized Rust CI setup for SynVoid workflows
+
+inputs:
+  toolchain:
+    description: Rust toolchain to install
+    required: false
+    default: stable
+  components:
+    description: Comma-separated rustup components to install
+    required: false
+    default: ''
+  targets:
+    description: Comma-separated compilation targets to add
+    required: false
+    default: ''
+  cache:
+    description: Whether to enable Swatinem/rust-cache
+    required: false
+    default: 'true'
+  cache-key:
+    description: Additional cache key suffix for rust-cache shared-key
+    required: false
+    default: ''
+  nextest:
+    description: Whether to install cargo-nextest
+    required: false
+    default: 'false'
+  sccache:
+    description: Whether to enable sccache compiler caching
+    required: false
+    default: 'false'
+  cross:
+    description: Whether to install cross for cross-compilation
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: ${{ inputs.toolchain }}
+        components: ${{ inputs.components }}
+        targets: ${{ inputs.targets }}
+
+    - name: Enable Rust cache
+      if: inputs.cache == 'true'
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: ${{ inputs.cache-key }}
+
+    - name: Install sccache
+      if: inputs.sccache == 'true'
+      uses: taiki-e/install-action@v2
+      with:
+        tool: sccache
+
+    - name: Configure sccache
+      if: inputs.sccache == 'true'
+      shell: bash
+      run: |
+        echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+        echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+        sccache --start-server || true
+        sccache --zero-stats || true
+
+    - name: Install cargo-nextest
+      if: inputs.nextest == 'true'
+      uses: taiki-e/install-action@nextest
+
+    - name: Install cross
+      if: inputs.cross == 'true'
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cross
+
+    - name: Print CI configuration
+      if: always()
+      shell: bash
+      run: |
+        echo "## Rust CI Setup" >> "$GITHUB_STEP_SUMMARY"
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+        echo "| Setting | Value |" >> "$GITHUB_STEP_SUMMARY"
+        echo "|---------|-------|" >> "$GITHUB_STEP_SUMMARY"
+        echo "| Toolchain | \`${{ inputs.toolchain }}\` |" >> "$GITHUB_STEP_SUMMARY"
+        echo "| Components | \`${{ inputs.components || '(none)' }}\` |" >> "$GITHUB_STEP_SUMMARY"
+        echo "| Targets | \`${{ inputs.targets || '(none)' }}\` |" >> "$GITHUB_STEP_SUMMARY"
+        echo "| Cache | ${{ inputs.cache }} |" >> "$GITHUB_STEP_SUMMARY"
+        echo "| Cache key suffix | \`${{ inputs.cache-key || '(none)' }}\` |" >> "$GITHUB_STEP_SUMMARY"
+        echo "| Nextest | ${{ inputs.nextest }} |" >> "$GITHUB_STEP_SUMMARY"
+        echo "| sccache | ${{ inputs.sccache }} |" >> "$GITHUB_STEP_SUMMARY"
+        echo "| Cross | ${{ inputs.cross }} |" >> "$GITHUB_STEP_SUMMARY"
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+        echo '```' >> "$GITHUB_STEP_SUMMARY"
+        rustc --version >> "$GITHUB_STEP_SUMMARY"
+        cargo --version >> "$GITHUB_STEP_SUMMARY"
+        echo '```' >> "$GITHUB_STEP_SUMMARY"

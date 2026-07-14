@@ -43,6 +43,15 @@ cargo test --test mesh_task_ownership_guard --features mesh,dns
 cargo test --test worker_supervision_control_flow --features mesh,dns
 cargo test --test composition_root_behavioral --features mesh,dns
 
+# Affected package tests (runs only packages changed since base ref)
+bash scripts/test-affected.sh origin/main
+bash scripts/test-affected.sh origin/main --dry-run  # preview only
+bash scripts/test-affected.sh origin/main --full      # force full validation
+
+# Affected package selector (standalone)
+python3 scripts/ci/select-affected.py --base HEAD~1 --head HEAD --format text
+python3 scripts/ci/select-affected.py --base HEAD~1 --head HEAD --format json --dry-run
+
 # DNS response encoder tests (now in synvoid-dns crate)
 cargo test -p synvoid-dns -- response_encoder
 
@@ -70,6 +79,7 @@ Key docs:
 - `docs/testing/ci-performance-baseline.md` — Timing baseline and before/after results
 - `docs/testing/test-suite-ownership.md` — Every test target's owner, lane, and profile
 - `docs/testing/ci-lane-policy.md` — Four-lane CI policy and branch protection
+- `docs/testing/cache-policy.md` — Cache architecture, layers, and invalidation rules
 
 # DNS config fidelity tests (Phase 5 + Phase 2 closure)
 cargo test -p synvoid-dns --test dns_config_fidelity
@@ -227,6 +237,7 @@ These enforce architectural invariants. Run them after touching relevant areas:
 cargo test --test boundary_composition_guard     # Request-path vs composition-root, HTTP pipeline, HTTP/3 WAF, manifest authority
 cargo test --test root_facade_boundary_guard     # Domain crates can't import root
 cargo nextest run -p synvoid-repo-guards         # Static guards (lightweight crate)
+cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci  # includes cache/selector guards
 cargo test --test mesh_id_boundary_guard         # Mesh-ID blocks: admin only, not WAF
 cargo test --test security_guard                 # Threat-intel boundary, consumer actionability, security observability
 cargo test --test lifecycle_task_guard           # Background task ownership, supervisor spawns, unified server lifecycle
