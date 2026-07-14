@@ -26,10 +26,10 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     outputs:
-      mode: ${{ steps.select.outputs.mode }}
-      packages: ${{ steps.select.outputs.packages }}
-      root-tests: ${{ steps.select.outputs.root-tests }}
-      feature-classes: ${{ steps.select.outputs.feature-classes }}
+      mode: ${{ steps.normalize.outputs.mode }}
+      packages: ${{ steps.normalize.outputs.packages }}
+      root-tests: ${{ steps.normalize.outputs.root-tests }}
+      feature-classes: ${{ steps.normalize.outputs.feature-classes }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -64,6 +64,32 @@ jobs:
           echo '```json' >> "$GITHUB_STEP_SUMMARY"
           echo "$RESULT" | python3 -m json.tool >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+      - name: Normalize selector output on failure
+        if: always()
+        id: normalize
+        shell: bash
+        run: |
+          # If the select step failed or produced invalid output, fall back to full mode
+          MODE="${{ steps.select.outputs.mode }}"
+          PACKAGES="${{ steps.select.outputs.packages }}"
+          
+          if [ -z "$MODE" ] || [ "$MODE" = "" ]; then
+            echo "mode=full" >> "$GITHUB_OUTPUT"
+            echo "packages=[]" >> "$GITHUB_OUTPUT"
+            echo "root-tests=[]" >> "$GITHUB_OUTPUT"
+            echo "feature-classes=[]" >> "$GITHUB_OUTPUT"
+            echo "::warning::Selector output missing or invalid — falling back to full validation"
+            echo "### Selector Fallback" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Selector produced no output. Falling back to **full** validation mode." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+            echo "packages=$PACKAGES" >> "$GITHUB_OUTPUT"
+            ROOT_TESTS="${{ steps.select.outputs.root-tests }}"
+            FEATURE_CLASSES="${{ steps.select.outputs.feature-classes }}"
+            echo "root-tests=$ROOT_TESTS" >> "$GITHUB_OUTPUT"
+            echo "feature-classes=$FEATURE_CLASSES" >> "$GITHUB_OUTPUT"
+          fi
       - name: Upload selector output
         if: always()
         uses: actions/upload-artifact@v4
@@ -140,20 +166,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Install sccache
-        uses: taiki-e/install-action@v2
+      - uses: ./.github/actions/setup-rust-ci
         with:
-          tool: sccache
-      - name: Configure sccache
-        run: |
-          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
-          sccache --start-server || true
-          sccache --zero-stats || true
-      - name: Install nextest
-        uses: taiki-e/install-action@nextest
+          nextest: 'true'
+          sccache: 'true'
+          cache-key: pr-security-regression
       - name: Nextest version
         run: cargo nextest --version
       - name: Run security regression tests
@@ -174,20 +191,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Install sccache
-        uses: taiki-e/install-action@v2
+      - uses: ./.github/actions/setup-rust-ci
         with:
-          tool: sccache
-      - name: Configure sccache
-        run: |
-          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
-          sccache --start-server || true
-          sccache --zero-stats || true
-      - name: Install nextest
-        uses: taiki-e/install-action@nextest
+          nextest: 'true'
+          sccache: 'true'
+          cache-key: pr-guard-suite
       - name: Nextest version
         run: cargo nextest --version
       - name: Run static guards (synvoid-repo-guards)
@@ -267,24 +275,20 @@ jobs:
     if: >-
       always() &&
       !cancelled() &&
-      (needs.select-affected.outputs.mode != 'full' ||
+      (needs.select-affected.outputs.mode == 'full' ||
        contains(needs.select-affected.outputs.packages, '"synvoid-upload"'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/setup-rust-ci
         with:
-          components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
+          components: clippy,rustfmt
+          nextest: 'true'
+          cache-key: pr-upload
       - name: Check formatting
         run: cargo fmt -p synvoid-upload -- --check
       - name: Clippy upload crate
         run: cargo clippy -p synvoid-upload --all-targets -- -D warnings
-      - name: Install nextest
-        uses: taiki-e/install-action@nextest
-      - name: Nextest version
-        run: cargo nextest --version
       - name: Run upload unit tests
         run: cargo nextest run -p synvoid-upload --cargo-profile ci --profile ci
       - name: Run upload tests with mesh feature
@@ -305,24 +309,20 @@ jobs:
     if: >-
       always() &&
       !cancelled() &&
-      (needs.select-affected.outputs.mode != 'full' ||
+      (needs.select-affected.outputs.mode == 'full' ||
        contains(needs.select-affected.outputs.packages, '"synvoid-honeypot"'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/setup-rust-ci
         with:
-          components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
+          components: clippy,rustfmt
+          nextest: 'true'
+          cache-key: pr-honeypot
       - name: Check formatting
         run: cargo fmt -p synvoid-honeypot -- --check
       - name: Clippy honeypot crate
         run: cargo clippy -p synvoid-honeypot --all-targets -- -D warnings
-      - name: Install nextest
-        uses: taiki-e/install-action@nextest
-      - name: Nextest version
-        run: cargo nextest --version
       - name: Run honeypot unit tests
         run: cargo nextest run -p synvoid-honeypot --cargo-profile ci --profile ci
       - name: Check honeypot all-features compile
@@ -341,22 +341,18 @@ jobs:
     if: >-
       always() &&
       !cancelled() &&
-      (needs.select-affected.outputs.mode != 'full' ||
+      (needs.select-affected.outputs.mode == 'full' ||
        contains(needs.select-affected.outputs.packages, '"synvoid-tarpit"'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/setup-rust-ci
         with:
-          components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
+          components: clippy,rustfmt
+          nextest: 'true'
+          cache-key: pr-tarpit
       - name: Clippy tarpit crate
         run: cargo clippy -p synvoid-tarpit --all-targets -- -D warnings
-      - name: Install nextest
-        uses: taiki-e/install-action@nextest
-      - name: Nextest version
-        run: cargo nextest --version
       - name: Run tarpit tests
         run: cargo nextest run -p synvoid-tarpit --all-targets --cargo-profile ci --profile ci
       - name: Upload JUnit results
@@ -373,24 +369,20 @@ jobs:
     if: >-
       always() &&
       !cancelled() &&
-      (needs.select-affected.outputs.mode != 'full' ||
+      (needs.select-affected.outputs.mode == 'full' ||
        contains(needs.select-affected.outputs.packages, '"synvoid-mesh"'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/setup-rust-ci
         with:
-          components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
+          components: clippy,rustfmt
+          nextest: 'true'
+          cache-key: pr-mesh
       - name: Check mesh crate compiles
         run: cargo check -p synvoid-mesh --features mesh --all-targets
       - name: Clippy mesh crate
         run: cargo clippy -p synvoid-mesh --features mesh --all-targets -- -D warnings
-      - name: Install nextest
-        uses: taiki-e/install-action@nextest
-      - name: Nextest version
-        run: cargo nextest --version
       - name: Run mesh tests
         run: cargo nextest run -p synvoid-mesh --features mesh --all-targets --cargo-profile ci --profile ci
       - name: Upload JUnit results
@@ -413,7 +405,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| select-affected | ${{ needs.select-affected.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| select-affected | ${{ needs.select-affected.result }} (mode: ${{ needs.select-affected.outputs.mode }}) |" >> $GITHUB_STEP_SUMMARY
           echo "| fmt | ${{ needs.fmt.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| clippy | ${{ needs.clippy.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| unsafe-dns | ${{ needs.unsafe-dns.result }} |" >> $GITHUB_STEP_SUMMARY
