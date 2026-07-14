@@ -169,7 +169,6 @@ jobs:
       - uses: ./.github/actions/setup-rust-ci
         with:
           nextest: 'true'
-          sccache: 'true'
           cache-key: pr-security-regression
       - name: Nextest version
         run: cargo nextest --version
@@ -182,9 +181,6 @@ jobs:
           name: nextest-junit-security-regression
           path: target/nextest/ci/junit.xml
           retention-days: 7
-      - name: Report sccache stats
-        if: always()
-        run: sccache --show-stats
 
   guard-suite:
     name: Architecture Guard Tests
@@ -194,7 +190,6 @@ jobs:
       - uses: ./.github/actions/setup-rust-ci
         with:
           nextest: 'true'
-          sccache: 'true'
           cache-key: pr-guard-suite
       - name: Nextest version
         run: cargo nextest --version
@@ -265,9 +260,6 @@ jobs:
           name: nextest-junit-guard-suite
           path: target/nextest/ci/junit.xml
           retention-days: 7
-      - name: Report sccache stats
-        if: always()
-        run: sccache --show-stats
 
   upload-tests:
     name: Upload Crate Tests
