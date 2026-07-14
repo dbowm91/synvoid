@@ -15,3 +15,4 @@ utoipa = { version = "5", optional = true }
 utoipa = ["dep:utoipa"]
 
 [dev-dependencies]
+serde_json = "1"

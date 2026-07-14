@@ -217,3 +217,30 @@ No routine/PR test uses `--release`. The architecture correctly separates routin
 | Test | Profile | Status | Notes |
 |------|---------|--------|-------|
 | `platform::sandbox::tests::test_basic_sandbox_succeeds_with_stub` | ci | FAILING | Pre-existing; assertion at `src/platform/sandbox.rs:1247` |
+
+## Post-Milestone C Counts
+
+After migrating 19 domain test files to owning crates (16 in initial pass + 3 in closure pass):
+
+| Metric | Before (pre-Milestone A) | After Milestone A | After Milestone C |
+|--------|--------------------------|-------------------|-------------------|
+| Root integration test files | 43 | 43 | 26 |
+| Root test functions | ~621 | ~621 | ~180 (estimated) |
+| DNS test files at root | 5 | 5 | 0 (all in synvoid-dns) |
+| WAF test files at root | 3 | 3 | 0 (all in synvoid-waf) |
+| IPC test files at root | 2 | 2 | 0 (all in synvoid-ipc) |
+| Mesh test files at root | 3 | 3 | 0 (all in synvoid-mesh) |
+| Plugin-runtime test files at root | 2 | 2 | 0 (all in synvoid-plugin-runtime) |
+| Platform test files at root | 1 | 1 | 0 (all in synvoid-platform) |
+| Core test files at root | 0 | 0 | 0 (admin tests moved to synvoid-core) |
+| Proxy test files at root | 1 (traffic_regression) | 1 | 1 (echo server only; proxy functions moved to synvoid-proxy) |
+
+Feature/target matrix: see `docs/testing/feature-target-matrix.md`
+
+### Timing Impact
+
+Root test binary count reduced from ~43 to ~26 integration targets. Estimated compile/link savings:
+- Each eliminated root integration target saves ~2-5s linking time
+- Estimated total root compile reduction: ~40-80s on cold build
+- Localized domain changes no longer rebuild unrelated root integration targets
+- Per-crate test suites (synvoid-dns, synvoid-core, etc.) compile independently without root dependency graph

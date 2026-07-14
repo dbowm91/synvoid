@@ -1,10 +1,3 @@
-//! Root-test ownership: COMPOSITION
-//! Rationale: validates mesh+admin composition edge cases
-//!
-//! Tests for mesh admin edge cases.
-//!
-//! These tests verify block/unblock mesh ID behavior and edge cases.
-
 use synvoid_core::admin_mutation::{
     AdminMutationResult, AdminMutationStatus, BlockMutationTarget, PropagationStatus,
 };

@@ -10,12 +10,6 @@ owners = ["synvoid-plugin-runtime"]
 reason = "validates ABI memory boundary across workspace plugin boundary"
 
 [[test]]
-name = "admin_auth_boundary"
-class = "composition"
-owners = ["synvoid-core", "synvoid-admin"]
-reason = "validates cross-crate admin authority boundary"
-
-[[test]]
 name = "admin_mutation_blocklist"
 class = "composition"
 owners = ["synvoid-block-store", "synvoid-core"]
@@ -94,12 +88,6 @@ owners = ["synvoid-worker", "synvoid-supervisor"]
 reason = "validates lifecycle task ownership across worker and supervisor"
 
 [[test]]
-name = "mesh_admin_edge_cases"
-class = "composition"
-owners = ["synvoid-mesh", "synvoid-admin"]
-reason = "validates mesh+admin composition edge cases"
-
-[[test]]
 name = "mesh_id_boundary_guard"
 class = "static_policy"
 owners = ["synvoid-block-store", "synvoid-mesh"]
@@ -156,8 +144,8 @@ reason = "validates cross-crate security regression"
 [[test]]
 name = "traffic_regression_test"
 class = "composition"
-owners = ["synvoid-proxy", "synvoid-upstream"]
-reason = "validates proxy+upstream traffic regression"
+owners = ["synvoid-testkit"]
+reason = "validates echo server test utility (test_utils::echo) used by proxy and integration tests"
 
 [[test]]
 name = "worker_mesh_supervision_boundary_guard"
@@ -170,9 +158,3 @@ name = "worker_supervision_control_flow"
 class = "composition"
 owners = ["synvoid-worker", "synvoid-mesh"]
 reason = "validates worker+mesh supervision control flow composition"
-
-[[test]]
-name = "overseer_lifecycle_test"
-class = "composition"
-owners = ["synvoid-worker", "synvoid-supervisor"]
-reason = "validates supervisor lifecycle across worker and supervisor"

@@ -43,3 +43,4 @@ uuid = { version = "1", features = ["v4", "serde"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+synvoid-upstream = { path = "../synvoid-upstream" }

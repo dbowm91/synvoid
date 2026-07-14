@@ -128,3 +128,4 @@ Superseded PR runs are automatically cancelled.
 - Qualification-only jobs now have conditions to skip on PRs
 - `--release` replaced with `--profile ci` for routine correctness tests
 - Concurrency cancellation added for PR iteration
+- Feature/target matrix documented in `docs/testing/feature-target-matrix.md`

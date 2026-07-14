@@ -1,13 +1,3 @@
-//! Root-test ownership: COMPOSITION
-//! Rationale: validates cross-crate admin authority boundary between synvoid-core and admin
-//!
-//! Guardrail: Admin auth authority boundary tests.
-//!
-//! These tests verify that:
-//! 1. All mutating admin endpoints use `AdminMutationAuthority` variants
-//! 2. Raw session tokens are never stored in audit events
-//! 3. Compatibility paths use `CompatibilityLegacy` authority
-
 use synvoid_core::admin_mutation::{
     AdminActor, AdminAuditEvent, AdminMutationAuthority, AdminMutationResult, AdminMutationStatus,
     PropagationStatus,
@@ -18,12 +8,9 @@ fn admin_actor_never_stores_raw_session_token() {
     let actor = AdminActor::new(AdminMutationAuthority::AdminManual)
         .with_session_id_hash("abc123def456".to_string());
 
-    // The session_id_hash field should be present
     assert!(actor.session_id_hash.is_some());
 
-    // The hash should not look like a raw UUID (which would be a token leak)
     let hash = actor.session_id_hash.as_ref().unwrap();
-    // UUIDs have the format 8-4-4-4-12 hex chars; a hash should not match this pattern
     let looks_like_uuid = hash.len() == 36
         && hash.chars().filter(|c| *c == '-').count() == 4
         && hash.chars().all(|c| c.is_ascii_hexdigit() || c == '-');
@@ -87,7 +74,6 @@ fn all_authority_variants_serialize_deserialize() {
 
 #[test]
 fn compatibility_legacy_authority_is_explicitly_nameable() {
-    // Compatibility paths MUST use CompatibilityLegacy, not default to AdminManual
     let authority = AdminMutationAuthority::CompatibilityLegacy;
     let json = serde_json::to_value(&authority).unwrap();
     assert!(
@@ -108,12 +94,10 @@ fn mutation_result_with_audit_id_links_to_event() {
 
 #[test]
 fn mutation_result_status_propagation_combinations() {
-    // Applied + NotApplicable (local config change)
     let r1 = AdminMutationResult::<String>::applied("t".to_string(), "msg");
     assert_eq!(r1.status, AdminMutationStatus::Applied);
     assert_eq!(r1.propagation, PropagationStatus::NotApplicable);
 
-    // Applied + QueuedBestEffort (mesh propagation)
     let r2 = AdminMutationResult::<String>::applied_with_propagation(
         "t".to_string(),
         PropagationStatus::QueuedBestEffort,
@@ -122,22 +106,18 @@ fn mutation_result_status_propagation_combinations() {
     assert_eq!(r2.status, AdminMutationStatus::Applied);
     assert_eq!(r2.propagation, PropagationStatus::QueuedBestEffort);
 
-    // InvalidRejected
     let r3 = AdminMutationResult::<String>::invalid("t".to_string(), "bad input");
     assert_eq!(r3.status, AdminMutationStatus::InvalidRejected);
 
-    // Failed
     let r4 = AdminMutationResult::<String>::failed("t".to_string(), "oops");
     assert_eq!(r4.status, AdminMutationStatus::Failed);
 
-    // NoOpAlreadyPresent
     let r5 = AdminMutationResult::<String>::noop("t".to_string(), "already gone");
     assert_eq!(r5.status, AdminMutationStatus::NoOpAlreadyPresent);
 }
 
 #[test]
 fn propagation_status_non_guarantee_semantics() {
-    // QueuedBestEffort means queued, NOT delivered
     let result = AdminMutationResult::<String>::applied_with_propagation(
         "t".to_string(),
         PropagationStatus::QueuedBestEffort,
@@ -145,7 +125,6 @@ fn propagation_status_non_guarantee_semantics() {
     );
     assert_eq!(result.propagation, PropagationStatus::QueuedBestEffort);
 
-    // FailedToQueue means queuing failed
     let result2 = AdminMutationResult {
         status: AdminMutationStatus::Applied,
         target: "t".to_string(),
