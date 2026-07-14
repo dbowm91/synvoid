@@ -8628,6 +8628,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "synvoid-repo-guards"
+version = "0.1.0"
+dependencies = [
+ "regex",
+]
+
+[[package]]
 name = "synvoid-serverless"
 version = "0.1.0"
 dependencies = [

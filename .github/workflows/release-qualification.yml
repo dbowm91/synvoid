@@ -82,9 +82,17 @@ jobs:
           fi
         shell: bash
 
+      - name: Install nextest
+        if: matrix.test && !matrix.cross
+        uses: taiki-e/install-action@nextest
+
       - name: Run tests
         if: matrix.test && !matrix.cross
-        run: cargo test --target ${{ matrix.target }} --release --no-fail-fast
+        run: cargo nextest run --target ${{ matrix.target }} --cargo-profile ci --profile ci --no-fail-fast
+
+      - name: Run doctests
+        if: matrix.test && !matrix.cross
+        run: cargo test --workspace --doc --profile ci
 
       - name: Run tests (cross)
         if: matrix.test && matrix.cross
@@ -106,19 +114,26 @@ jobs:
       matrix:
         include:
           - suite: default
-            command: cargo test --release --no-fail-fast
+            command: cargo nextest run --cargo-profile ci --profile ci --no-fail-fast
+            doctests: cargo test --workspace --doc --profile ci
           - suite: mesh
-            command: cargo test --release --no-fail-fast --features mesh
+            command: cargo nextest run --features mesh --cargo-profile ci --profile ci --no-fail-fast
+            doctests: cargo test --workspace --doc --features mesh --profile ci
           - suite: dns
-            command: cargo test -p synvoid-dns --release --no-fail-fast
+            command: cargo nextest run -p synvoid-dns --cargo-profile ci --profile ci --no-fail-fast
+            doctests: cargo test -p synvoid-dns --doc --profile ci
           - suite: plugin-runtime
-            command: cargo test -p synvoid-plugin-runtime --release --no-fail-fast
+            command: cargo nextest run -p synvoid-plugin-runtime --cargo-profile ci --profile ci --no-fail-fast
+            doctests: cargo test -p synvoid-plugin-runtime --doc --profile ci
           - suite: honeypot
-            command: cargo test -p synvoid-honeypot --release --no-fail-fast
+            command: cargo nextest run -p synvoid-honeypot --cargo-profile ci --profile ci --no-fail-fast
+            doctests: cargo test -p synvoid-honeypot --doc --profile ci
           - suite: tarpit
-            command: cargo test -p synvoid-tarpit --release --no-fail-fast
+            command: cargo nextest run -p synvoid-tarpit --cargo-profile ci --profile ci --no-fail-fast
+            doctests: cargo test -p synvoid-tarpit --doc --profile ci
           - suite: mesh-crate
-            command: cargo test -p synvoid-mesh --features mesh --release --no-fail-fast
+            command: cargo nextest run -p synvoid-mesh --features mesh --cargo-profile ci --profile ci --no-fail-fast
+            doctests: cargo test -p synvoid-mesh --features mesh --doc --profile ci
 
     steps:
       - uses: actions/checkout@v4
@@ -130,8 +145,25 @@ jobs:
         with:
           key: release-suite-${{ matrix.suite }}
 
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Nextest version
+        run: cargo nextest --version
+
       - name: Run test suite
         run: ${{ matrix.command }}
+
+      - name: Run doctests
+        run: ${{ matrix.doctests }}
+
+      - name: Upload JUnit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-junit-release-${{ matrix.suite }}
+          path: target/nextest/ci/junit.xml
+          retention-days: 7
 
   security-regression:
     name: Security Regression Tests
@@ -142,8 +174,24 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Nextest version
+        run: cargo nextest --version
+
       - name: Run security regression tests
-        run: cargo test --test security_regression --release -- --test-threads=1
+        run: cargo nextest run --test security_regression --cargo-profile ci --profile ci -- --test-threads=1
+
+      - name: Upload JUnit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-junit-security-regression-release
+          path: target/nextest/ci/junit.xml
+          retention-days: 7
 
   guard-suite:
     name: Architecture Guard Tests (Release)
@@ -156,7 +204,16 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Run guard tests
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Nextest version
+        run: cargo nextest --version
+
+      - name: Run static guards (synvoid-repo-guards)
+        run: cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci
+
+      - name: Run runtime guards
         run: |
           cargo test --test root_facade_boundary_guard
           cargo test --test root_module_ledger_guard
@@ -190,6 +247,14 @@ jobs:
           cargo test --test unified_worker_composition_root_guard
           cargo test --test plugin_lifecycle_guard
           cargo test --test unsafe_native_sandbox_language_guard
+
+      - name: Upload JUnit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-junit-guard-suite-release
+          path: target/nextest/ci/junit.xml
+          retention-days: 7
 
   clippy:
     name: Clippy (all features)

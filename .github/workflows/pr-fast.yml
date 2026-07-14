@@ -84,8 +84,20 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Nextest version
+        run: cargo nextest --version
       - name: Run security regression tests
-        run: cargo test --test security_regression -- --test-threads=1
+        run: cargo nextest run --test security_regression --cargo-profile ci --profile ci -- --test-threads=1
+      - name: Upload JUnit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-junit-security-regression
+          path: target/nextest/ci/junit.xml
+          retention-days: 7
 
   guard-suite:
     name: Architecture Guard Tests
@@ -95,7 +107,13 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Run guard tests
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Nextest version
+        run: cargo nextest --version
+      - name: Run static guards (synvoid-repo-guards)
+        run: cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci
+      - name: Run runtime guards
         run: |
           cargo test --test root_facade_boundary_guard
           cargo test --test root_module_ledger_guard
@@ -123,6 +141,13 @@ jobs:
           cargo test --test unified_worker_composition_root_guard
           cargo test --test plugin_lifecycle_guard
           cargo test --test unsafe_native_sandbox_language_guard
+      - name: Upload JUnit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-junit-guard-suite
+          path: target/nextest/ci/junit.xml
+          retention-days: 7
 
   docs-link-guard:
     name: Docs Path Reference Guard
@@ -149,12 +174,23 @@ jobs:
         run: cargo fmt -p synvoid-upload -- --check
       - name: Clippy upload crate
         run: cargo clippy -p synvoid-upload --all-targets -- -D warnings
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Nextest version
+        run: cargo nextest --version
       - name: Run upload unit tests
-        run: cargo test -p synvoid-upload --profile ci
+        run: cargo nextest run -p synvoid-upload --cargo-profile ci --profile ci
       - name: Run upload tests with mesh feature
-        run: cargo test -p synvoid-upload --features mesh --profile ci
+        run: cargo nextest run -p synvoid-upload --features mesh --cargo-profile ci --profile ci
       - name: Check upload all-features compile
         run: cargo check -p synvoid-upload --all-features
+      - name: Upload JUnit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-junit-upload-tests
+          path: target/nextest/ci/junit.xml
+          retention-days: 7
 
   honeypot-tests:
     name: Honeypot Crate Tests
@@ -170,10 +206,21 @@ jobs:
         run: cargo fmt -p synvoid-honeypot -- --check
       - name: Clippy honeypot crate
         run: cargo clippy -p synvoid-honeypot --all-targets -- -D warnings
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Nextest version
+        run: cargo nextest --version
       - name: Run honeypot unit tests
-        run: cargo test -p synvoid-honeypot --profile ci
+        run: cargo nextest run -p synvoid-honeypot --cargo-profile ci --profile ci
       - name: Check honeypot all-features compile
         run: cargo check -p synvoid-honeypot --all-features
+      - name: Upload JUnit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-junit-honeypot-tests
+          path: target/nextest/ci/junit.xml
+          retention-days: 7
 
   tarpit-tests:
     name: Tarpit Crate Tests
@@ -187,8 +234,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Clippy tarpit crate
         run: cargo clippy -p synvoid-tarpit --all-targets -- -D warnings
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Nextest version
+        run: cargo nextest --version
       - name: Run tarpit tests
-        run: cargo test -p synvoid-tarpit --all-targets --profile ci
+        run: cargo nextest run -p synvoid-tarpit --all-targets --cargo-profile ci --profile ci
+      - name: Upload JUnit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-junit-tarpit-tests
+          path: target/nextest/ci/junit.xml
+          retention-days: 7
 
   mesh-tests:
     name: Mesh Crate Tests
@@ -204,8 +262,19 @@ jobs:
         run: cargo check -p synvoid-mesh --features mesh --all-targets
       - name: Clippy mesh crate
         run: cargo clippy -p synvoid-mesh --features mesh --all-targets -- -D warnings
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: Nextest version
+        run: cargo nextest --version
       - name: Run mesh tests
-        run: cargo test -p synvoid-mesh --features mesh --all-targets --profile ci
+        run: cargo nextest run -p synvoid-mesh --features mesh --all-targets --cargo-profile ci --profile ci
+      - name: Upload JUnit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-junit-mesh-tests
+          path: target/nextest/ci/junit.xml
+          retention-days: 7
 
   summary:
     name: PR Fast Summary

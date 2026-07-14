@@ -1,0 +1,22 @@
+[profile.default]
+fail-fast = false
+
+[profile.ci]
+fail-fast = false
+status-level = "pass"
+final-status-level = "slow"
+slow-timeout = { period = "30s", terminate-after = 2 }
+retries = 0
+
+[profile.ci.junit]
+path = "target/nextest/ci/junit.xml"
+
+# Serial execution for tests with global state or fixed ports
+[[profile.ci.overrides]]
+filter = 'test(/fixed_port|global_state|process_global/)'
+threads-required = "num-cpus"
+
+# Longer timeouts for stress/interop/live tests
+[[profile.ci.overrides]]
+filter = 'test(/stress|interop|live_signing|recursion/)'
+slow-timeout = { period = "120s", terminate-after = 1 }

@@ -22,6 +22,13 @@ cargo test --test <integration_test_name>
 # Full test suite (CI uses --profile ci --no-fail-fast)
 cargo test --profile ci --no-fail-fast
 
+# Full test suite with nextest (preferred for CI — better concurrency and diagnostics)
+cargo nextest run --workspace --cargo-profile ci --profile ci --exclude synvoid-fuzz
+cargo test --workspace --doc --profile ci  # doctests (nextest doesn't run these)
+
+# Repository guard tests (lightweight crate, no root dependency)
+cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci
+
 # Full test suite (release mode — only for release qualification)
 cargo test --release --no-fail-fast
 

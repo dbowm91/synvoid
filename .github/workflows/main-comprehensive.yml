@@ -81,9 +81,17 @@ jobs:
           fi
         shell: bash
 
+      - name: Install nextest
+        if: matrix.test && !matrix.cross
+        uses: taiki-e/install-action@nextest
+
       - name: Run tests
         if: matrix.test && !matrix.cross
-        run: cargo test --target ${{ matrix.target }} --release --no-fail-fast
+        run: cargo nextest run --target ${{ matrix.target }} --cargo-profile ci --profile ci --no-fail-fast
+
+      - name: Run doctests
+        if: matrix.test && !matrix.cross
+        run: cargo test --workspace --doc --profile ci
 
       - name: Run tests (cross)
         if: matrix.test && matrix.cross
@@ -108,11 +116,28 @@ jobs:
       - name: Clippy DNS crate
         run: cargo clippy -p synvoid-dns --all-targets -- -D warnings
 
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Nextest version
+        run: cargo nextest --version
+
       - name: Run DNS tests (all)
-        run: cargo test -p synvoid-dns --profile ci
+        run: cargo nextest run -p synvoid-dns --cargo-profile ci --profile ci
+
+      - name: Run DNS doctests
+        run: cargo test -p synvoid-dns --doc --profile ci
 
       - name: Check DNS all-features compile
         run: cargo check -p synvoid-dns --all-features
+
+      - name: Upload JUnit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-junit-dns-tests
+          path: target/nextest/ci/junit.xml
+          retention-days: 7
 
   plugin-runtime-guardrails:
     name: Plugin Runtime Guardrails
@@ -133,26 +158,34 @@ jobs:
       - name: Clippy plugin runtime
         run: cargo clippy -p synvoid-plugin-runtime --all-targets -- -D warnings
 
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Nextest version
+        run: cargo nextest --version
+
       - name: Plugin runtime unit tests
-        run: cargo test -p synvoid-plugin-runtime --profile ci
+        run: cargo nextest run -p synvoid-plugin-runtime --cargo-profile ci --profile ci
 
-      - name: ABI memory boundary guard
-        run: cargo test --test abi_memory_boundary_guard
+      - name: Run static guards (synvoid-repo-guards)
+        run: cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci
 
-      - name: Plugin capability boundary guard
-        run: cargo test --test plugin_capability_boundary_guard
+      - name: Run plugin runtime guard tests
+        run: |
+          cargo test --test abi_memory_boundary_guard
+          cargo test --test plugin_capability_boundary_guard
+          cargo test --test plugin_signature_policy_guard
+          cargo test --test manifest_authority_wiring
+          cargo test --test manifest_authority_load_path_guard
+          cargo test --test plugin_failure_does_not_poison_manager
 
-      - name: Plugin signature policy guard
-        run: cargo test --test plugin_signature_policy_guard
-
-      - name: Manifest authority wiring
-        run: cargo test --test manifest_authority_wiring
-
-      - name: Manifest authority load path guard
-        run: cargo test --test manifest_authority_load_path_guard
-
-      - name: Plugin failure isolation
-        run: cargo test --test plugin_failure_does_not_poison_manager
+      - name: Upload JUnit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-junit-plugin-runtime
+          path: target/nextest/ci/junit.xml
+          retention-days: 7
 
   profile-matrix:
     name: Profile Matrix (${{ matrix.name }})

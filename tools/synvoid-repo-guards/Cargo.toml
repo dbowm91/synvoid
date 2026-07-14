@@ -1,0 +1,10 @@
+[package]
+name = "synvoid-repo-guards"
+version = "0.1.0"
+edition = "2021"
+description = "Lightweight static architecture guard tests for the SynVoid repository"
+
+[dependencies]
+
+[dev-dependencies]
+regex = "1"
