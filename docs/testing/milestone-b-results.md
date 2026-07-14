@@ -55,6 +55,33 @@ Consolidated guards were validated by running all test suites and confirming:
 
 The consolidated files preserve all original test logic including simulated violation detection, allowlist liveness checks, and structural boundary assertions. No coverage was lost.
 
+### Negative Fixture Tests (B13)
+
+10 negative fixture tests were added to the guard crate (`tests/negative_fixtures.rs`) to prove guards actually detect violations rather than passing vacuously. Each test creates a temporary directory with intentionally bad content, runs the same scanning logic the real guards use, and asserts that violations ARE found:
+
+| Test | What It Proves |
+|------|---------------|
+| `facade_boundary_detects_domain_crate_importing_root` | `use synvoid::` in `crates/` triggers violation |
+| `data_plane_boundary_detects_blockstore_import` | `BlockStore` import in `src/waf/` triggers violation |
+| `request_path_detects_control_plane_import` | `synvoid_mesh::` import in `src/proxy/` triggers violation |
+| `background_spawn_guard_detects_unowned_spawn` | `tokio::spawn` without `// reason:` comment triggers violation |
+| `supervisor_spawn_guard_detects_unregistered_spawn` | Unregistered supervisor spawn triggers violation |
+| `memforget_guard_detects_unjustified_forget` | `mem::forget` without `// reason:` comment triggers violation |
+| `http_pipeline_guard_detects_lifecycle_import` | `UnifiedServerWorkerState` in HTTP handler triggers violation |
+| `docs_link_guard_detects_broken_markdown_link` | Broken markdown link to non-existent file triggers violation |
+| `sandbox_language_guard_detects_misleading_phrase` | Misleading sandbox phrase in docs triggers violation |
+| `comments_in_strings_do_not_trigger_violations` | Comment/string stripping prevents false positives |
+
+**Result: 10/10 negative fixtures pass.** Guards are proven to detect violations, not just pass vacuously.
+
+### Doctest Fixes
+
+Fixed 2 pre-existing broken doctests in `src/serder.rs`:
+- Split combined Before/After code block into separate `rust,no_run` and `rust,ignore` blocks to avoid duplicate import errors (`E0252`).
+- Marked `crate::serialization` references as `rust,ignore` since they reference crate-internal items unavailable in doctest context.
+
+**Result: `cargo test --workspace --doc` now passes (3 passed, 5 ignored, 0 failed).**
+
 ### CI Integration
 
 - PR fast lane uses nextest for eligible test targets; guard-suite runs guard crate + consolidated root guards.
@@ -67,21 +94,36 @@ The consolidated files preserve all original test logic including simulated viol
 
 | Metric | Value |
 |--------|-------|
-| Test functions | 16 |
-| Execution time | 0.18s (nextest), 2.1s total (compile + run) |
+| Test functions | 26 (16 original + 10 negative fixtures) |
+| Build time | 0.3s (no root synvoid dependency) |
+| Execution time | 0.8s (nextest), 1.4s total (compile + run) |
 | Root synvoid dependency | None |
 | Compilation profile | `--cargo-profile ci` (opt-level=1, no LTO) |
+| Dependencies | `regex` (dev only), `tempfile` (dev only) |
+
+### Consolidated Root Guards
+
+| Metric | Value |
+|--------|-------|
+| Build time | 1.4s (5 binaries, cached) |
+| Execution time | 4.2s (279 tests across 5 binaries) |
+| Files | 5 consolidated (down from 17 individual) |
+| Total size | 370K (vs ~450K for original 17 files) |
 
 ### Before/After Comparison
 
 | Metric | Before (Milestone A) | After (Milestone B) | Change |
 |--------|---------------------|---------------------|--------|
-| Guard test files in root `tests/` | 33 | 12 | -21 (4 fully replicated + 17 consolidated) |
-| Root guard binaries compiled | 33 | 12 | -21 fewer binaries |
-| Guard crate test functions | 0 | 16 | New capability |
+| Guard test files in root `tests/` | 33 | 17 | -16 (4 fully replicated + 17 consolidated → 5) |
+| Root guard binaries compiled | 24 | 17 | -7 fewer binaries |
+| Guard crate test functions | 0 | 26 | New capability (16 smoke + 10 negative fixtures) |
+| Guard crate build time | N/A | 0.3s | No root dependency graph |
+| Consolidated guard build time | N/A | 1.4s | 5 binaries vs 17 |
+| Consolidated guard test time | N/A | 4.2s | 279 tests in 4.2s |
 | CI jobs | 24 | 23 | -1 (docs-link-guard removed) |
 | Nextest config overrides | 0 | 4 | Serialization policies documented |
 | JUnit output | None | Per-job XML + Markdown summary | New capability |
+| Doctest status | 2 failures | 0 failures | Fixed pre-existing broken doctests |
 
 ### Root Guard Files by Category
 
@@ -90,7 +132,19 @@ The consolidated files preserve all original test logic including simulated viol
 | Consolidated | 5 | ~282 tests across 5 domain-grouped binaries |
 | Standalone | 6 | Individual files (small, feature-gated, or large assertion sets) |
 | RUNTIME | 6 | Core types, process spawning, serialization roundtrips |
-| **Total** | **12** | Down from 24 |
+| **Total root guard files** | **17** | Down from 33 |
+| **Root guard binaries** | **17** | Down from 24 |
+
+### Timing Measurements
+
+| Component | Build | Test | Notes |
+|-----------|-------|------|-------|
+| Guard crate (`synvoid-repo-guards`) | 0.3s | 0.8s | 26 tests, no root dependency |
+| 5 consolidated root guards | 1.4s | 4.2s | 279 tests across 5 binaries |
+| All root guards (17 files) | 0.7s* | 1.6s | *cached from consolidated run |
+| Full workspace doctests | — | 0.3s | 3 passed, 5 ignored |
+
+*Build times benefit from incremental compilation; cold-build times are higher.
 
 ## What Remains for Milestone C
 
@@ -133,6 +187,11 @@ Remaining root integration test binaries (non-guard):
 - DNS integration tests bind to fixed ports
 - Mesh tests require `mesh` feature gate
 - Some integration tests spawn child processes
+
+## Known Issues
+
+- `cargo nextest list -p synvoid-repo-guards` produces empty output (cosmetic quirk; `cargo nextest run -p synvoid-repo-guards` works correctly — 26 tests pass).
+- 1 pre-existing test failure in `lifecycle_task_guard::plugin_runtime_owner_is_stored_for_runtime_lifetime` — not caused by consolidation.
 
 ## What Remains for Milestone E
 

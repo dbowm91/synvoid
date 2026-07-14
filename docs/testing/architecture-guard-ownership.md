@@ -58,7 +58,8 @@ In Milestone B Phase 12, 17 individual root guard test files were consolidated i
 | STANDALONE | 6 | Root `tests/` (individual files) |
 | RUNTIME | 6 | Root `tests/` |
 
-**Total root guard test files: 12** (5 consolidated + 1 standalone + 6 runtime).
+**Total root guard test files: 17** (5 consolidated + 6 standalone + 6 runtime).
+**Guard crate tests: 26** (16 smoke tests + 10 negative fixtures).
 
 ## Guard Crate Structure
 
@@ -75,7 +76,8 @@ tools/synvoid-repo-guards/
     │                       # http_pipeline, http3_waf
     ├── lifecycle_ownership.rs  # background_spawns, supervisor_spawns,
     │                       # no_memforget, composition_root_thin, cli_dispatch
-    └── docs_and_misc.rs    # docs_path_reference, unsafe_native_sandbox_language
+    ├── docs_and_misc.rs    # docs_path_reference, unsafe_native_sandbox_language
+    └── negative_fixtures.rs # 10 tests proving guards detect violations
 ```
 
 **Shared helpers** (`src/lib.rs`):

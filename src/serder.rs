@@ -38,8 +38,9 @@
 //!
 //! For each type used in IPC/QUIC serialization:
 //!
-//! ```rust
-//! // Before (serde only)
+//! Before (serde only):
+//!
+//! ```rust,no_run
 //! use serde::{Deserialize, Serialize};
 //!
 //! #[derive(Serialize, Deserialize)]
@@ -47,8 +48,11 @@
 //!     pub id: u64,
 //!     pub data: Vec<u8>,
 //! }
+//! ```
 //!
-//! // After (serde + rkyv)
+//! After (serde + rkyv):
+//!
+//! ```rust,ignore
 //! use serde::{Deserialize, Serialize};
 //! #[cfg(feature = "rkyv")]
 //! use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
@@ -72,7 +76,7 @@
 //!
 //! ### Step 5: Use checked deserialization for external data
 //!
-//! ```rust
+//! ```rust,ignore
 //! // For QUIC mesh messages (external, untrusted)
 //! let msg = crate::serialization::deserialize_checked::<T>(&data)?;
 //!

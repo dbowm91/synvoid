@@ -8,3 +8,4 @@ description = "Lightweight static architecture guard tests for the SynVoid repos
 
 [dev-dependencies]
 regex = "1"
+tempfile = "3"
