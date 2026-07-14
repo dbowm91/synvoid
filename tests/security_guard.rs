@@ -1,3 +1,6 @@
+//! Root-test ownership: STATIC_POLICY
+//! Rationale: validates security observability boundary across workspace
+//!
 //! Consolidated security observability and threat-intel boundary guards.
 //!
 //! This file merges three separate guard test files into one:

@@ -178,7 +178,7 @@ cargo test --test security_observability_guard
 cargo test --test admin_mutation_blocklist
 cargo test --test admin_auth_boundary
 cargo test --test mesh_admin_edge_cases
-cargo test --test plugin_failure_does_not_poison_manager
+cargo test -p synvoid-plugin-runtime --test plugin_failure_does_not_poison_manager
 cargo test --test background_task_ownership_guard
 cargo test --test cli_command_dispatch_guard
 cargo test --test manual_enforcement_provenance_guard

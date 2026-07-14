@@ -1,13 +1,11 @@
-#![cfg(feature = "dns")]
 #![allow(clippy::field_reassign_with_default)]
 
 #[cfg(test)]
 mod dns_config_tests {
     #[test]
     fn test_admin_token_validation_rejects_weak_tokens() {
-        use synvoid::config::admin::AdminConfig;
+        use synvoid_config::admin::AdminConfig;
 
-        // Test weak tokens are rejected
         let weak_tokens = vec![
             "short",
             "password123",
@@ -22,13 +20,10 @@ mod dns_config_tests {
             config.port = 8081;
             config.token = token.to_string();
             let _result = config.validate();
-            // These should either warn or be rejected
-            // Currently they generate warnings, so we check the token resolution works
             let resolved = config.resolve_token();
             assert!(!resolved.is_empty());
         }
 
-        // Test strong token is accepted
         let strong_token = "ThisIsAveryLongSecureTokenThatIsHardToGuessABCDEF!@#$%";
         let mut config = AdminConfig::default();
         config.port = 8081;
@@ -43,7 +38,7 @@ mod dns_config_tests {
 
     #[test]
     fn test_recursive_cache_config_defaults() {
-        use synvoid::config::dns::RecursiveCacheConfig;
+        use synvoid_config::dns::RecursiveCacheConfig;
 
         let config = RecursiveCacheConfig::default();
 
@@ -56,7 +51,7 @@ mod dns_config_tests {
 
     #[test]
     fn test_recursive_dns_config_defaults() {
-        use synvoid::config::dns::{RecursiveDnsConfig, RecursiveUpstreamProvider};
+        use synvoid_config::dns::{RecursiveDnsConfig, RecursiveUpstreamProvider};
 
         let config = RecursiveDnsConfig::default();
 
@@ -72,14 +67,13 @@ mod dns_config_tests {
 
     #[test]
     fn test_recursive_dns_config_validation() {
-        use synvoid::config::dns::{RecursiveDnsConfig, RecursiveUpstreamProvider};
+        use synvoid_config::dns::{RecursiveDnsConfig, RecursiveUpstreamProvider};
 
         let mut config = RecursiveDnsConfig::default();
         config.enabled = true;
         config.upstream_provider = RecursiveUpstreamProvider::Custom;
         config.upstream_servers = vec![];
 
-        // Should fail validation with custom provider but no servers
         let result = config.validate();
         assert!(result.is_err());
     }
@@ -87,7 +81,7 @@ mod dns_config_tests {
     #[test]
     fn test_recursive_dns_config_upstream_ips_google() {
         use std::net::IpAddr;
-        use synvoid::config::dns::{RecursiveDnsConfig, RecursiveUpstreamProvider};
+        use synvoid_config::dns::{RecursiveDnsConfig, RecursiveUpstreamProvider};
 
         let mut config = RecursiveDnsConfig::default();
         config.upstream_provider = RecursiveUpstreamProvider::Google;
@@ -102,7 +96,7 @@ mod dns_config_tests {
 
     #[test]
     fn test_recursive_dns_config_upstream_ips_cloudflare() {
-        use synvoid::config::dns::{RecursiveDnsConfig, RecursiveUpstreamProvider};
+        use synvoid_config::dns::{RecursiveDnsConfig, RecursiveUpstreamProvider};
 
         let mut config = RecursiveDnsConfig::default();
         config.upstream_provider = RecursiveUpstreamProvider::Cloudflare;
@@ -115,7 +109,7 @@ mod dns_config_tests {
     #[test]
     fn test_recursive_dns_config_custom_servers() {
         use std::net::IpAddr;
-        use synvoid::config::dns::{
+        use synvoid_config::dns::{
             RecursiveDnsConfig, RecursiveUpstreamProvider, RecursiveUpstreamServer,
         };
 
@@ -133,7 +127,7 @@ mod dns_config_tests {
 
     #[test]
     fn test_recursive_dns_config_recursive_provider() {
-        use synvoid::config::dns::{RecursiveDnsConfig, RecursiveUpstreamProvider};
+        use synvoid_config::dns::{RecursiveDnsConfig, RecursiveUpstreamProvider};
 
         let mut config = RecursiveDnsConfig::default();
         config.upstream_provider = RecursiveUpstreamProvider::Recursive;
@@ -148,7 +142,7 @@ mod dns_config_tests {
 
     #[test]
     fn test_recursive_dns_config_default_paths() {
-        use synvoid::config::dns::RecursiveDnsConfig;
+        use synvoid_config::dns::RecursiveDnsConfig;
 
         let config = RecursiveDnsConfig::default();
 
@@ -158,7 +152,7 @@ mod dns_config_tests {
 
     #[test]
     fn test_recursive_dns_config_validation_timeout() {
-        use synvoid::config::dns::RecursiveDnsConfig;
+        use synvoid_config::dns::RecursiveDnsConfig;
 
         let mut config = RecursiveDnsConfig::default();
         config.enabled = true;
@@ -171,7 +165,7 @@ mod dns_config_tests {
     #[test]
     fn test_recursive_cache_key_equality() {
         use std::net::IpAddr;
-        use synvoid::dns::recursive_cache::RecursiveCacheKey;
+        use synvoid_dns::recursive_cache::RecursiveCacheKey;
 
         let key1 = RecursiveCacheKey::new(b"example.com", 1, None);
         let key2 = RecursiveCacheKey::new(b"example.com", 1, None);
@@ -185,7 +179,7 @@ mod dns_config_tests {
 
     #[test]
     fn test_recursive_cache_stats_default() {
-        use synvoid::dns::recursive_cache::RecursiveCacheStats;
+        use synvoid_dns::recursive_cache::RecursiveCacheStats;
 
         let stats = RecursiveCacheStats::default();
 
@@ -199,8 +193,8 @@ mod dns_config_tests {
 
     #[tokio::test]
     async fn test_recursive_cache_insert_and_retrieve() {
-        use synvoid::config::dns::RecursiveCacheConfig;
-        use synvoid::dns::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache};
+        use synvoid_config::dns::RecursiveCacheConfig;
+        use synvoid_dns::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache};
 
         let config = RecursiveCacheConfig::default();
         let cache = RecursiveDnsCache::new(1000, &config);
@@ -217,7 +211,7 @@ mod dns_config_tests {
             key.clone(),
             records.clone(),
             300,
-            synvoid::dns::recursive_cache::DnssecValidationState::Unchecked,
+            synvoid_dns::recursive_cache::DnssecValidationState::Unchecked,
         );
 
         let result = cache.get(&key);
@@ -229,8 +223,8 @@ mod dns_config_tests {
 
     #[tokio::test]
     async fn test_recursive_cache_negative() {
-        use synvoid::config::dns::RecursiveCacheConfig;
-        use synvoid::dns::recursive_cache::{RecursiveCacheKey, RecursiveDnsCache};
+        use synvoid_config::dns::RecursiveCacheConfig;
+        use synvoid_dns::recursive_cache::{RecursiveCacheKey, RecursiveDnsCache};
 
         let config = RecursiveCacheConfig::default();
         let cache = RecursiveDnsCache::new(1000, &config);
@@ -240,10 +234,9 @@ mod dns_config_tests {
             key.clone(),
             true,
             300,
-            synvoid::dns::recursive_cache::DnssecValidationState::Unchecked,
+            synvoid_dns::recursive_cache::DnssecValidationState::Unchecked,
         );
 
-        // Negative cache hit returns Some with empty records (not None, which would mean cache miss)
         let result = cache.get(&key);
         assert!(result.is_some());
         let (records, is_stale, _is_validated) = result.unwrap();
@@ -253,8 +246,8 @@ mod dns_config_tests {
 
     #[tokio::test]
     async fn test_recursive_cache_stats() {
-        use synvoid::config::dns::RecursiveCacheConfig;
-        use synvoid::dns::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache};
+        use synvoid_config::dns::RecursiveCacheConfig;
+        use synvoid_dns::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache};
 
         let config = RecursiveCacheConfig::default();
         let cache = RecursiveDnsCache::new(1000, &config);
@@ -271,14 +264,12 @@ mod dns_config_tests {
             key.clone(),
             records,
             300,
-            synvoid::dns::recursive_cache::DnssecValidationState::Unchecked,
+            synvoid_dns::recursive_cache::DnssecValidationState::Unchecked,
         );
 
-        // Check stats incremented
         let stats = cache.stats();
         assert_eq!(stats.insertions, 1);
 
-        // Hit the cache
         let _ = cache.get(&key);
         let stats = cache.stats();
         assert_eq!(stats.hits, 1);
@@ -287,8 +278,8 @@ mod dns_config_tests {
 
     #[tokio::test]
     async fn test_recursive_cache_invalidation() {
-        use synvoid::config::dns::RecursiveCacheConfig;
-        use synvoid::dns::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache};
+        use synvoid_config::dns::RecursiveCacheConfig;
+        use synvoid_dns::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache};
 
         let config = RecursiveCacheConfig::default();
         let cache = RecursiveDnsCache::new(1000, &config);
@@ -305,22 +296,19 @@ mod dns_config_tests {
             key.clone(),
             records,
             300,
-            synvoid::dns::recursive_cache::DnssecValidationState::Unchecked,
+            synvoid_dns::recursive_cache::DnssecValidationState::Unchecked,
         );
 
-        // Verify it's cached
         assert!(cache.get(&key).is_some());
 
-        // Invalidate
         cache.invalidate(b"example.com");
 
-        // Should be gone
         assert!(cache.get(&key).is_none());
     }
 
     #[test]
     fn test_dns_config_includes_recursive() {
-        use synvoid::config::dns::DnsConfig;
+        use synvoid_config::dns::DnsConfig;
 
         let config = DnsConfig::default();
 
@@ -330,7 +318,7 @@ mod dns_config_tests {
 
     #[test]
     fn test_dnssec_message_flags_authentic_data() {
-        use synvoid::dns::wire::MessageFlags;
+        use synvoid_dns::wire::MessageFlags;
 
         let flags = MessageFlags {
             is_response: true,
@@ -379,8 +367,8 @@ mod dns_config_tests {
 
     #[test]
     fn test_rfc5011_trust_anchor_state_machine() {
-        use synvoid::dns::dnssec::compute_ds_digest;
-        use synvoid::dns::trust_anchor::{Rfc5011Event, TrustAnchorConfig, TrustAnchorManager};
+        use synvoid_dns::dnssec::compute_ds_digest;
+        use synvoid_dns::trust_anchor::{Rfc5011Event, TrustAnchorConfig, TrustAnchorManager};
         use tempfile::TempDir;
 
         let temp_dir = TempDir::new().unwrap();
@@ -430,7 +418,7 @@ mod dns_config_tests {
 
     #[test]
     fn test_rfc5011_key_id_consistency() {
-        use synvoid::dns::trust_anchor::TrustAnchor;
+        use synvoid_dns::trust_anchor::TrustAnchor;
 
         let key_id_1 = TrustAnchor::generate_key_id(20326, 8);
         let key_id_2 = TrustAnchor::generate_key_id(20326, 8);
@@ -444,7 +432,7 @@ mod dns_config_tests {
 
     #[test]
     fn test_dnssec_config_validation() {
-        use synvoid::config::dns::RecursiveDnsConfig;
+        use synvoid_config::dns::RecursiveDnsConfig;
 
         let mut config = RecursiveDnsConfig::default();
         config.dnssec_validation = true;
@@ -454,7 +442,7 @@ mod dns_config_tests {
 
     #[test]
     fn test_dnssec_build_response_with_ad_flag() {
-        use synvoid::dns::wire::{build_response_header, MessageFlags};
+        use synvoid_dns::wire::{build_response_header, MessageFlags};
 
         let flags = MessageFlags {
             is_response: true,
@@ -477,7 +465,7 @@ mod dns_config_tests {
 
     #[test]
     fn test_dnssec_build_response_without_ad_flag() {
-        use synvoid::dns::wire::{build_response_header, MessageFlags};
+        use synvoid_dns::wire::{build_response_header, MessageFlags};
 
         let flags = MessageFlags {
             is_response: true,
@@ -500,7 +488,7 @@ mod dns_config_tests {
 
     #[tokio::test]
     async fn test_dnssec_recursive_config_with_dnssec_enabled() {
-        use synvoid::config::dns::RecursiveDnsConfig;
+        use synvoid_config::dns::RecursiveDnsConfig;
 
         let mut config = RecursiveDnsConfig::default();
         config.enabled = true;
@@ -512,7 +500,7 @@ mod dns_config_tests {
 
     #[tokio::test]
     async fn test_dnssec_recursive_config_with_dnssec_disabled() {
-        use synvoid::config::dns::RecursiveDnsConfig;
+        use synvoid_config::dns::RecursiveDnsConfig;
 
         let mut config = RecursiveDnsConfig::default();
         config.enabled = true;
@@ -585,7 +573,7 @@ mod dns_config_tests {
 
     #[test]
     fn test_rfc5011_config_timeouts() {
-        use synvoid::config::dns::TrustAnchorConfig;
+        use synvoid_config::dns::TrustAnchorConfig;
 
         let config = TrustAnchorConfig {
             enabled: true,
@@ -604,7 +592,7 @@ mod dns_config_tests {
 
     #[test]
     fn test_rfc5011_trust_anchor_full_flow() {
-        use synvoid::dns::trust_anchor::{Rfc5011Event, TrustAnchorConfig, TrustAnchorManager};
+        use synvoid_dns::trust_anchor::{Rfc5011Event, TrustAnchorConfig, TrustAnchorManager};
         use tempfile::TempDir;
 
         let temp_dir = TempDir::new().unwrap();
@@ -625,7 +613,7 @@ mod dns_config_tests {
         let manager = TrustAnchorManager::new(config);
 
         let public_key = vec![0x01, 0x02, 0x03, 0x04];
-        let key_tag = synvoid::dns::dnssec::calculate_key_tag(257, 3, 8, &public_key);
+        let key_tag = synvoid_dns::dnssec::calculate_key_tag(257, 3, 8, &public_key);
 
         let event1 = manager.observe_dnskey_at_root(key_tag, 8, &public_key, false);
         assert!(matches!(event1, Rfc5011Event::NewKeySeen { key_tag: kt } if kt == key_tag));
@@ -633,7 +621,7 @@ mod dns_config_tests {
         let event2 = manager.observe_dnskey_at_root(key_tag, 8, &public_key, false);
         assert!(matches!(event2, Rfc5011Event::KeySeen { key_tag: kt } if kt == key_tag));
 
-        let digest = synvoid::dns::dnssec::compute_ds_digest(2, 257, 3, 8, &public_key)
+        let digest = synvoid_dns::dnssec::compute_ds_digest(2, 257, 3, 8, &public_key)
             .expect("digest computation should succeed");
 
         let event3 = manager.trust_anchor_check(key_tag, 8, 2, &digest, None);
@@ -645,7 +633,7 @@ mod dns_config_tests {
 
     #[test]
     fn test_rfc5011_revocation_flow() {
-        use synvoid::dns::trust_anchor::{Rfc5011Event, TrustAnchorConfig, TrustAnchorManager};
+        use synvoid_dns::trust_anchor::{Rfc5011Event, TrustAnchorConfig, TrustAnchorManager};
         use tempfile::TempDir;
 
         let temp_dir = TempDir::new().unwrap();
@@ -662,7 +650,7 @@ mod dns_config_tests {
         let manager = TrustAnchorManager::new(config);
 
         let public_key = vec![0x01, 0x02, 0x03, 0x04];
-        let key_tag = synvoid::dns::dnssec::calculate_key_tag(257, 3, 8, &public_key);
+        let key_tag = synvoid_dns::dnssec::calculate_key_tag(257, 3, 8, &public_key);
 
         manager.observe_dnskey_at_root(key_tag, 8, &public_key, false);
 
@@ -672,7 +660,7 @@ mod dns_config_tests {
 
     #[test]
     fn test_dnssec_trust_anchor_status() {
-        use synvoid::dns::trust_anchor::{TrustAnchorConfig, TrustAnchorManager};
+        use synvoid_dns::trust_anchor::{TrustAnchorConfig, TrustAnchorManager};
         use tempfile::TempDir;
 
         let temp_dir = TempDir::new().unwrap();
@@ -702,7 +690,7 @@ mod dns_config_tests {
         let public_key = vec![0x01, 0x02, 0x03, 0x04];
 
         let canonical =
-            synvoid::dns::dnssec::compute_dnskey_canonical(flags, protocol, algorithm, &public_key);
+            synvoid_dns::dnssec::compute_dnskey_canonical(flags, protocol, algorithm, &public_key);
 
         assert_eq!(canonical.len(), 4 + public_key.len());
         assert_eq!(u16::from_be_bytes([canonical[0], canonical[1]]), 257);
@@ -723,16 +711,16 @@ mod dns_config_tests {
             0xE1, 0xE5, 0x8E, 0x5B, 0x6B, 0x7F, 0xA6, 0xE8, 0xE0, 0xF9, 0x89, 0x5D,
         ];
 
-        let digest = synvoid::dns::dnssec::compute_ds_digest(2, 257, 3, 8, &public_key)
+        let digest = synvoid_dns::dnssec::compute_ds_digest(2, 257, 3, 8, &public_key)
             .expect("digest computation should succeed");
 
-        let result = synvoid::dns::dnssec::verify_ds_digest(2, 257, 3, 8, &public_key, &digest)
+        let result = synvoid_dns::dnssec::verify_ds_digest(2, 257, 3, 8, &public_key, &digest)
             .expect("verification should succeed");
         assert!(result);
 
         let wrong_digest = vec![0xFF; 32];
         let result =
-            synvoid::dns::dnssec::verify_ds_digest(2, 257, 3, 8, &public_key, &wrong_digest)
+            synvoid_dns::dnssec::verify_ds_digest(2, 257, 3, 8, &public_key, &wrong_digest)
                 .expect("verification should succeed");
         assert!(!result);
     }
@@ -740,7 +728,7 @@ mod dns_config_tests {
     #[test]
     fn test_recursive_cache_key_with_subnet() {
         use std::net::IpAddr;
-        use synvoid::dns::recursive_cache::RecursiveCacheKey;
+        use synvoid_dns::recursive_cache::RecursiveCacheKey;
 
         let ip_v4: IpAddr = "192.168.1.100".parse().unwrap();
         let ip_v6: IpAddr = "2001:db8::1".parse().unwrap();
@@ -760,7 +748,7 @@ mod dns_config_tests {
 
     #[test]
     fn test_recursive_cache_key_different_record_types() {
-        use synvoid::dns::recursive_cache::RecursiveCacheKey;
+        use synvoid_dns::recursive_cache::RecursiveCacheKey;
 
         let key_a = RecursiveCacheKey::new(b"example.com", 1, None);
         let key_aaaa = RecursiveCacheKey::new(b"example.com", 28, None);
@@ -777,8 +765,8 @@ mod dns_config_tests {
 
     #[test]
     fn test_recursive_cache_stats_tracking() {
-        use synvoid::config::dns::RecursiveCacheConfig;
-        use synvoid::dns::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache};
+        use synvoid_config::dns::RecursiveCacheConfig;
+        use synvoid_dns::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache};
 
         let config = RecursiveCacheConfig::default();
         let cache = RecursiveDnsCache::new(100, &config);
@@ -801,7 +789,7 @@ mod dns_config_tests {
             key.clone(),
             vec![record],
             300,
-            synvoid::dns::recursive_cache::DnssecValidationState::Unchecked,
+            synvoid_dns::recursive_cache::DnssecValidationState::Unchecked,
         );
 
         let stats = cache.stats();
@@ -810,10 +798,10 @@ mod dns_config_tests {
 
     #[tokio::test]
     async fn test_recursive_server_creation() {
-        use synvoid::config::dns::{
+        use synvoid_config::dns::{
             RecursiveCacheConfig, RecursiveDnsConfig, RecursiveUpstreamProvider,
         };
-        use synvoid::dns::recursive::RecursiveDnsServer;
+        use synvoid_dns::recursive::RecursiveDnsServer;
 
         let config = RecursiveDnsConfig {
             enabled: true,
@@ -843,7 +831,7 @@ mod dns_config_tests {
 
     #[test]
     fn test_recursive_record_type_conversions() {
-        use synvoid::dns::recursive_cache::RecursiveRecordType;
+        use synvoid_dns::recursive_cache::RecursiveRecordType;
 
         assert_eq!(u16::from(RecursiveRecordType::A), 1);
         assert_eq!(u16::from(RecursiveRecordType::Aaaa), 28);
@@ -865,7 +853,7 @@ mod dns_config_tests {
 
     #[test]
     fn test_recursive_cached_record_structure() {
-        use synvoid::dns::recursive_cache::CachedRecord;
+        use synvoid_dns::recursive_cache::CachedRecord;
 
         let record = CachedRecord {
             name: b"test.example.com".to_vec(),
@@ -882,8 +870,8 @@ mod dns_config_tests {
 
     #[test]
     fn test_recursive_cache_invalidation_by_name() {
-        use synvoid::config::dns::RecursiveCacheConfig;
-        use synvoid::dns::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache};
+        use synvoid_config::dns::RecursiveCacheConfig;
+        use synvoid_dns::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache};
 
         let config = RecursiveCacheConfig::default();
         let cache = RecursiveDnsCache::new(100, &config);
@@ -908,13 +896,13 @@ mod dns_config_tests {
             key_a.clone(),
             vec![record_a],
             300,
-            synvoid::dns::recursive_cache::DnssecValidationState::Unchecked,
+            synvoid_dns::recursive_cache::DnssecValidationState::Unchecked,
         );
         cache.insert_positive(
             key_aaaa.clone(),
             vec![record_aaaa],
             300,
-            synvoid::dns::recursive_cache::DnssecValidationState::Unchecked,
+            synvoid_dns::recursive_cache::DnssecValidationState::Unchecked,
         );
 
         assert_eq!(cache.len(), 2);
@@ -928,8 +916,8 @@ mod dns_config_tests {
 
     #[test]
     fn test_recursive_cache_len_operations() {
-        use synvoid::config::dns::RecursiveCacheConfig;
-        use synvoid::dns::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache};
+        use synvoid_config::dns::RecursiveCacheConfig;
+        use synvoid_dns::recursive_cache::{CachedRecord, RecursiveCacheKey, RecursiveDnsCache};
 
         let config = RecursiveCacheConfig::default();
         let cache = RecursiveDnsCache::new(100, &config);
@@ -951,7 +939,7 @@ mod dns_config_tests {
             key.clone(),
             vec![record],
             300,
-            synvoid::dns::recursive_cache::DnssecValidationState::Unchecked,
+            synvoid_dns::recursive_cache::DnssecValidationState::Unchecked,
         );
 
         assert!(!cache.is_empty());
@@ -1013,14 +1001,12 @@ mod dns_config_tests {
 
         let id = (now & 0xFFFF) as u16;
 
-        // id is u16, so it's always <= 0xFFFF and either > 0 or == 0.
-        // These assertions document the invariant.
         let _ = id;
     }
 
     #[test]
     fn test_dnssec_dnskey_record_parsing() {
-        use synvoid::dns::dnssec::Algorithm;
+        use synvoid_dns::dnssec::Algorithm;
 
         let algorithm = Algorithm::RSA;
         let _key_bytes = vec![
@@ -1034,7 +1020,7 @@ mod dns_config_tests {
 
     #[test]
     fn test_trust_anchor_config_defaults() {
-        use synvoid::dns::trust_anchor::TrustAnchorConfig;
+        use synvoid_dns::trust_anchor::TrustAnchorConfig;
 
         let config = TrustAnchorConfig::default();
 
@@ -1048,7 +1034,7 @@ mod dns_config_tests {
 
     #[test]
     fn test_rfc5011_state_machine_concepts() {
-        use synvoid::dns::trust_anchor::Rfc5011Event;
+        use synvoid_dns::trust_anchor::Rfc5011Event;
 
         let events = [
             Rfc5011Event::NewKeySeen { key_tag: 12345 },

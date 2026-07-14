@@ -1,3 +1,6 @@
+//! Root-test ownership: COMPOSITION
+//! Rationale: validates cross-crate admin authority boundary between synvoid-core and admin
+//!
 //! Guardrail: Admin auth authority boundary tests.
 //!
 //! These tests verify that:

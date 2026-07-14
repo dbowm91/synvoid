@@ -1,3 +1,6 @@
+//! Root-test ownership: COMPOSITION
+//! Rationale: validates IPC drain end-to-end across process and IPC crates
+
 #[cfg(unix)]
 mod drain_e2e_tests {
     use synvoid::process::{IpcEndpoint, IpcListener, Message, WorkerId};

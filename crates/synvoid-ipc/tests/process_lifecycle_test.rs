@@ -1,10 +1,10 @@
 #[cfg(unix)]
 mod process_lifecycle_tests {
-    use synvoid::process::ipc::{
+    use synvoid_ipc::ipc::{
         ErrorCode, ErrorSeverity, Message, MessageCategory, ThreatIndicatorType,
         ThreatSeverityLevel, UpgradeModePayload, WorkerId,
     };
-    use synvoid::process::IpcEndpoint;
+    use synvoid_ipc::IpcEndpoint;
 
     #[test]
     fn test_worker_id_display() {

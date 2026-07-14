@@ -1,3 +1,6 @@
+//! Root-test ownership: STATIC_POLICY
+//! Rationale: validates lifecycle task ownership across worker and supervisor
+//!
 //! Guardrail test: Lifecycle and task ownership guards (consolidated).
 //!
 //! Consolidates the following three guard test files into one:

@@ -1,0 +1,178 @@
+# Root integration test ownership manifest.
+# Each entry records why a test must remain at root.
+# Categories: static_policy, composition, facade, executable, platform, qualification
+# Domain tests should NOT appear here — they belong in their owning crate.
+
+[[test]]
+name = "abi_memory_boundary_guard"
+class = "static_policy"
+owners = ["synvoid-plugin-runtime"]
+reason = "validates ABI memory boundary across workspace plugin boundary"
+
+[[test]]
+name = "admin_auth_boundary"
+class = "composition"
+owners = ["synvoid-core", "synvoid-admin"]
+reason = "validates cross-crate admin authority boundary"
+
+[[test]]
+name = "admin_mutation_blocklist"
+class = "composition"
+owners = ["synvoid-block-store", "synvoid-core"]
+reason = "validates block-store + core mutation interaction"
+
+[[test]]
+name = "admin_mutation_response_guard"
+class = "static_policy"
+owners = ["synvoid-admin"]
+reason = "validates admin mutation response contract across workspace"
+
+[[test]]
+name = "architecture_test"
+class = "static_policy"
+owners = []
+reason = "validates architecture boundary constraints across workspace"
+
+[[test]]
+name = "boundary_composition_guard"
+class = "static_policy"
+owners = ["synvoid-waf", "synvoid-proxy", "synvoid-http", "synvoid-http3"]
+reason = "validates composition boundary between request-path and root"
+
+[[test]]
+name = "cli_admin_guard"
+class = "static_policy"
+owners = ["synvoid-cli", "synvoid-admin"]
+reason = "validates CLI/admin dispatch boundary across workspace"
+
+[[test]]
+name = "composition_root_behavioral"
+class = "composition"
+owners = ["synvoid-worker", "synvoid-mesh"]
+reason = "validates worker+mesh composition root dataflow"
+
+[[test]]
+name = "dht_integration_test"
+class = "composition"
+owners = ["synvoid-mesh"]
+reason = "validates mesh DHT integration across multiple mesh subsystems"
+
+[[test]]
+name = "drain_e2e_test"
+class = "composition"
+owners = ["synvoid-ipc"]
+reason = "validates IPC drain end-to-end"
+
+[[test]]
+name = "e2e_process_test"
+class = "composition"
+owners = ["synvoid-ipc"]
+reason = "validates IPC end-to-end"
+
+[[test]]
+name = "failure_injection"
+class = "composition"
+owners = ["synvoid-supervisor", "synvoid-block-store", "synvoid-plugin-runtime"]
+reason = "validates fault injection across supervisor, block-store, and plugin"
+
+[[test]]
+name = "fault_injection_test"
+class = "composition"
+owners = ["synvoid-supervisor", "synvoid-block-store", "synvoid-plugin-runtime"]
+reason = "validates fault injection across supervisor, block-store, and plugin"
+
+[[test]]
+name = "integration_test"
+class = "composition"
+owners = ["synvoid-http", "synvoid-waf", "synvoid-proxy", "synvoid-dns", "synvoid-mesh"]
+reason = "validates full-stack composition across all major subsystems"
+
+[[test]]
+name = "lifecycle_task_guard"
+class = "static_policy"
+owners = ["synvoid-worker", "synvoid-supervisor"]
+reason = "validates lifecycle task ownership across worker and supervisor"
+
+[[test]]
+name = "mesh_admin_edge_cases"
+class = "composition"
+owners = ["synvoid-mesh", "synvoid-admin"]
+reason = "validates mesh+admin composition edge cases"
+
+[[test]]
+name = "mesh_id_boundary_guard"
+class = "static_policy"
+owners = ["synvoid-block-store", "synvoid-mesh"]
+reason = "validates mesh-id boundary between block-store, mesh, and admin"
+
+[[test]]
+name = "mesh_startup_rollback"
+class = "composition"
+owners = ["synvoid-mesh"]
+reason = "validates mesh startup composition across transport, lifecycle, cert, topology"
+
+[[test]]
+name = "mesh_task_ownership_guard"
+class = "static_policy"
+owners = ["synvoid-mesh"]
+reason = "validates mesh task ownership across transport, lifecycle, and worker"
+
+[[test]]
+name = "overseer_lifecycle_test"
+class = "composition"
+owners = ["synvoid-worker", "synvoid-supervisor"]
+reason = "validates supervisor lifecycle across worker and supervisor"
+
+[[test]]
+name = "plugin_guard"
+class = "static_policy"
+owners = ["synvoid-plugin-runtime"]
+reason = "validates plugin capability boundary across workspace"
+
+[[test]]
+name = "root_test_ownership_guard"
+class = "static_policy"
+owners = []
+reason = "enforces root test ownership manifest completeness"
+
+[[test]]
+name = "root_facade_boundary_guard"
+class = "static_policy"
+owners = []
+reason = "validates root facade boundary against domain crate imports"
+
+[[test]]
+name = "security_guard"
+class = "static_policy"
+owners = []
+reason = "validates security observability boundary across workspace"
+
+[[test]]
+name = "security_regression"
+class = "composition"
+owners = ["synvoid-ipc", "synvoid-proxy", "synvoid-platform"]
+reason = "validates cross-crate security regression"
+
+[[test]]
+name = "traffic_regression_test"
+class = "composition"
+owners = ["synvoid-proxy", "synvoid-upstream"]
+reason = "validates proxy+upstream traffic regression"
+
+[[test]]
+name = "worker_mesh_supervision_boundary_guard"
+class = "static_policy"
+owners = ["synvoid-worker", "synvoid-mesh"]
+reason = "validates worker-mesh supervision boundary across workspace"
+
+[[test]]
+name = "worker_supervision_control_flow"
+class = "composition"
+owners = ["synvoid-worker", "synvoid-mesh"]
+reason = "validates worker+mesh supervision control flow composition"
+
+[[test]]
+name = "overseer_lifecycle_test"
+class = "composition"
+owners = ["synvoid-worker", "synvoid-supervisor"]
+reason = "validates supervisor lifecycle across worker and supervisor"

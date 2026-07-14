@@ -1,3 +1,6 @@
+//! Root-test ownership: COMPOSITION
+//! Rationale: validates worker+mesh supervision control flow composition
+//!
 //! Integration tests for the worker supervision control flow (Iteration 63).
 //!
 //! Tests the supervision loop behavior: non-fatal exits don't stop the worker,

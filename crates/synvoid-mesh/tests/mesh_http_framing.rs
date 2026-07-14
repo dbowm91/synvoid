@@ -7,13 +7,13 @@
 //! it to the header buffer internally. The stream must NOT contain the
 //! first byte — write `&req[1..]` instead of `req`.
 
-use std::time::Duration;
-use synvoid_mesh::mesh::transport_peer::{
+use crate::mesh::transport_peer::{
     parse_http_request_meta, read_chunked_http_response_body,
     read_close_delimited_http_response_body, read_fixed_http_body, read_fixed_http_response_body,
     read_http_request_head, read_http_response_head, read_http_response_sequence, HttpFramingError,
     HttpResponseBodyEncoding, HttpResponseFramingError, HttpVersion,
 };
+use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
 const IDLE_TIMEOUT: Duration = Duration::from_secs(5);

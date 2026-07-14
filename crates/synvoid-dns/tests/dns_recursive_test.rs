@@ -1,15 +1,11 @@
-#![cfg(feature = "dns")]
-
-use synvoid::config::dns::{RecursiveCacheConfig, RecursiveDnsConfig};
-use synvoid::dns::firewall::{
-    DnsFirewall, DnsFirewallAction, DnsFirewallRule, DnsFirewallRuleType,
-};
-use synvoid::dns::parsed_query::ParsedDnsQuery;
-use synvoid::dns::recursive_cache::{
+use synvoid_config::dns::{RecursiveCacheConfig, RecursiveDnsConfig};
+use synvoid_dns::firewall::{DnsFirewall, DnsFirewallAction, DnsFirewallRule, DnsFirewallRuleType};
+use synvoid_dns::parsed_query::ParsedDnsQuery;
+use synvoid_dns::recursive_cache::{
     CachedRecord, DnssecValidationState, RecursiveCacheKey, RecursiveDnsCache, RecursiveRecordType,
 };
-use synvoid::dns::server::{DnsRateLimiter, RecordType};
-use synvoid::dns::wire::{
+use synvoid_dns::server::{DnsRateLimiter, RecordType};
+use synvoid_dns::wire::{
     build_error_response, build_question, get_message_flags, get_message_id, RCODE_FORMERR,
     RCODE_NOERROR, RCODE_NXDOMAIN, RCODE_REFUSED, RCODE_SERVFAIL,
 };

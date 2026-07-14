@@ -1,3 +1,6 @@
+//! Root-test ownership: STATIC_POLICY
+//! Rationale: validates ABI memory boundary across workspace plugin boundary
+//!
 //! Guardrail test for ABI Memory Boundary Hardening (M1 Phase 4).
 //!
 //! Verifies that:

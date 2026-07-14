@@ -1,3 +1,6 @@
+//! Root-test ownership: STATIC_POLICY
+//! Rationale: validates plugin capability boundary across workspace
+//!
 //! Consolidated plugin guardrail tests.
 //!
 //! This file merges the following three original guard test files into one:

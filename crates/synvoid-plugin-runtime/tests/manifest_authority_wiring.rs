@@ -280,8 +280,6 @@ fn effective_policy_matches_manifest() {
 fn test_zero_fuel_rejected_for_sandboxed_tiers() {
     let src = std::fs::read_to_string(
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("crates")
-            .join("synvoid-plugin-runtime")
             .join("src")
             .join("sandbox")
             .join("policy.rs"),
@@ -305,8 +303,6 @@ fn test_zero_fuel_rejected_for_sandboxed_tiers() {
 fn test_limits_from_manifest_returns_result() {
     let src = std::fs::read_to_string(
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("crates")
-            .join("synvoid-plugin-runtime")
             .join("src")
             .join("sandbox")
             .join("policy.rs"),

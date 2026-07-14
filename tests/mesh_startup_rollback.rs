@@ -1,3 +1,6 @@
+//! Root-test ownership: COMPOSITION
+//! Rationale: validates mesh startup composition across transport, lifecycle, cert, topology
+//!
 //! Behavioral tests for mesh startup rollback (Iteration 69, Phase 21).
 //!
 //! These tests use failure-injection hooks to verify that `MeshTransport::start()`

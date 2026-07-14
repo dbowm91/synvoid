@@ -1,3 +1,6 @@
+//! Root-test ownership: COMPOSITION
+//! Rationale: validates mesh DHT integration across multiple mesh subsystems
+
 #![cfg(feature = "mesh")]
 
 use std::collections::HashMap;

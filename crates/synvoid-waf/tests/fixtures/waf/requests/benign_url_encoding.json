@@ -1,0 +1,17 @@
+{
+  "id": "benign_url_encoding",
+  "description": "Normal URL-encoded content - should not trigger",
+  "entry_point": "query_string",
+  "expected_result": "pass",
+  "attack_type": "none",
+  "notes": "Normal URL-encoded parameters with special chars",
+  "request": {
+    "method": "GET",
+    "path": "/api/data",
+    "headers": [
+      ["Host", "example.com"]
+    ],
+    "query_string": "name=John%20Doe&city=New%20York&filter=price%3C100",
+    "body": null
+  }
+}

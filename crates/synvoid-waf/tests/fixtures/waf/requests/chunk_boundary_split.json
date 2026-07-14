@@ -1,0 +1,19 @@
+{
+  "id": "chunk_boundary_split",
+  "description": "HTTP Response Splitting via chunked encoding manipulation",
+  "entry_point": "header:Transfer-Encoding",
+  "expected_result": "pass",
+  "attack_type": "none",
+  "notes": "Chunk-boundary splitting - known bypass case to track",
+  "request": {
+    "method": "POST",
+    "path": "/api/data",
+    "headers": [
+      ["Host", "example.com"],
+      ["Transfer-Encoding", "chunked"],
+      ["Content-Type", "application/x-www-form-urlencoded"]
+    ],
+    "query_string": null,
+    "body_file": "../bodies/chunk_boundary_split.txt"
+  }
+}

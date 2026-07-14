@@ -1,11 +1,12 @@
 #[cfg(unix)]
 mod ipc_tests {
-    use synvoid::process::ipc::{
+    use synvoid_ipc::ipc::{
         BlockEntryData, ErrorCode, ErrorSeverity, Message, RequestLogPayload, RulePatternData,
         ThreatIndicatorData, ThreatIndicatorType, ThreatSeverityLevel, UpgradeModePayload,
         WorkerId, WorkerMetricsPayload, WorkerStatusInfo,
     };
-    use synvoid::process::{ipc_transport::IpcStream, IpcEndpoint};
+    use synvoid_ipc::ipc_transport::IpcStream;
+    use synvoid_ipc::IpcEndpoint;
     use tempfile::TempDir;
     use tokio::net::UnixListener;
 
@@ -117,8 +118,8 @@ mod ipc_tests {
         let msg = Message::WorkerError {
             id: WorkerId(3),
             error: "connection timeout".to_string(),
-            severity: synvoid::process::ErrorSeverity::Error,
-            error_code: synvoid::process::ErrorCode::Unknown,
+            severity: ErrorSeverity::Error,
+            error_code: ErrorCode::Unknown,
         };
         let json = serde_json::to_string(&msg).unwrap();
         let decoded: Message = serde_json::from_str(&json).unwrap();
@@ -131,8 +132,8 @@ mod ipc_tests {
             } => {
                 assert_eq!(id, WorkerId(3));
                 assert_eq!(error, "connection timeout");
-                assert_eq!(severity, synvoid::process::ErrorSeverity::Error);
-                assert_eq!(error_code, synvoid::process::ErrorCode::Unknown);
+                assert_eq!(severity, ErrorSeverity::Error);
+                assert_eq!(error_code, ErrorCode::Unknown);
             }
             _ => panic!("Expected WorkerError"),
         }
@@ -468,7 +469,7 @@ mod ipc_tests {
 
     #[test]
     fn test_ipc_message_validation_rejects_long_strings() {
-        use synvoid::process::{ErrorCode, ErrorSeverity, Message, WorkerId};
+        use synvoid_ipc::{ErrorCode, ErrorSeverity, Message, WorkerId};
 
         let long_error = "x".repeat(100_000);
         let msg = Message::WorkerError {
@@ -491,7 +492,7 @@ mod ipc_tests {
 
     #[test]
     fn test_ipc_message_validation_rejects_long_paths() {
-        use synvoid::process::Message;
+        use synvoid_ipc::Message;
 
         let long_path = "/".repeat(5000);
         let msg = Message::MasterConfigReload {
@@ -508,7 +509,7 @@ mod ipc_tests {
 
     #[test]
     fn test_ipc_signed_message_hmac_verification() {
-        use synvoid::process::ipc_signed::{generate_session_key, IpcSigner, SignedIpcMessage};
+        use synvoid_ipc::{generate_session_key, IpcSigner, SignedIpcMessage};
 
         let key = generate_session_key();
         let signer = IpcSigner::new(&key);
@@ -535,7 +536,7 @@ mod ipc_tests {
 
     #[test]
     fn test_hmac_signature_verification_empty_data() {
-        use synvoid::process::ipc_signed::{generate_session_key, IpcSigner};
+        use synvoid_ipc::{generate_session_key, IpcSigner};
 
         let key = generate_session_key();
         let signer = IpcSigner::new(&key);
@@ -546,7 +547,7 @@ mod ipc_tests {
 
     #[test]
     fn test_hmac_signature_verification_very_long_data() {
-        use synvoid::process::ipc_signed::{generate_session_key, IpcSigner};
+        use synvoid_ipc::{generate_session_key, IpcSigner};
 
         let key = generate_session_key();
         let signer = IpcSigner::new(&key);
@@ -558,7 +559,7 @@ mod ipc_tests {
 
     #[test]
     fn test_hmac_signature_verification_all_zero_data() {
-        use synvoid::process::ipc_signed::{generate_session_key, IpcSigner};
+        use synvoid_ipc::{generate_session_key, IpcSigner};
 
         let key = generate_session_key();
         let signer = IpcSigner::new(&key);
@@ -570,7 +571,7 @@ mod ipc_tests {
 
     #[test]
     fn test_hmac_signature_verification_all_ones_data() {
-        use synvoid::process::ipc_signed::{generate_session_key, IpcSigner};
+        use synvoid_ipc::{generate_session_key, IpcSigner};
 
         let key = generate_session_key();
         let signer = IpcSigner::new(&key);
@@ -582,7 +583,7 @@ mod ipc_tests {
 
     #[test]
     fn test_hmac_signature_verification_partial_tamper() {
-        use synvoid::process::ipc_signed::{generate_session_key, IpcSigner, SignedIpcMessage};
+        use synvoid_ipc::{generate_session_key, IpcSigner, SignedIpcMessage};
 
         let key = generate_session_key();
         let signer = IpcSigner::new(&key);
@@ -599,7 +600,7 @@ mod ipc_tests {
 
     #[test]
     fn test_hmac_signature_verification_duplicate_nonce_rejected() {
-        use synvoid::process::ipc_signed::{generate_session_key, IpcSigner, SignedIpcMessage};
+        use synvoid_ipc::{generate_session_key, IpcSigner, SignedIpcMessage};
 
         let key = generate_session_key();
         let signer = IpcSigner::new(&key);
@@ -614,7 +615,7 @@ mod ipc_tests {
 
     #[test]
     fn test_hmac_signature_verification_wrong_key_rejected() {
-        use synvoid::process::ipc_signed::{generate_session_key, IpcSigner, SignedIpcMessage};
+        use synvoid_ipc::{generate_session_key, IpcSigner, SignedIpcMessage};
 
         let key1 = generate_session_key();
         let key2 = generate_session_key();
@@ -630,7 +631,7 @@ mod ipc_tests {
 
     #[test]
     fn test_hmac_signature_verification_single_bit_change_rejected() {
-        use synvoid::process::ipc_signed::{generate_session_key, IpcSigner, SignedIpcMessage};
+        use synvoid_ipc::{generate_session_key, IpcSigner, SignedIpcMessage};
 
         let key = generate_session_key();
         let signer = IpcSigner::new(&key);
@@ -647,10 +648,10 @@ mod ipc_tests {
 
     #[test]
     fn test_hmac_signature_verification_truncated_message() {
-        use synvoid::process::ipc_signed::{generate_session_key, SignedIpcMessage};
+        use synvoid_ipc::{generate_session_key, SignedIpcMessage};
 
         let key = generate_session_key();
-        let signer = synvoid::process::ipc_signed::IpcSigner::new(&key);
+        let signer = synvoid_ipc::IpcSigner::new(&key);
 
         let short_data = vec![0x00; 10];
         let result: Result<Vec<u8>, _> = SignedIpcMessage::deserialize_signed(&short_data, &signer);
@@ -659,7 +660,7 @@ mod ipc_tests {
 
     #[test]
     fn test_hmac_signature_verification_zero_hmac_rejected() {
-        use synvoid::process::ipc_signed::{generate_session_key, IpcSigner};
+        use synvoid_ipc::{generate_session_key, IpcSigner};
 
         let key = generate_session_key();
         let signer = IpcSigner::new(&key);
@@ -671,7 +672,7 @@ mod ipc_tests {
 
     #[test]
     fn test_hmac_signature_verification_message_with_null_bytes() {
-        use synvoid::process::ipc_signed::{generate_session_key, IpcSigner, SignedIpcMessage};
+        use synvoid_ipc::{generate_session_key, IpcSigner, SignedIpcMessage};
 
         let key = generate_session_key();
         let signer = IpcSigner::new(&key);
@@ -794,7 +795,7 @@ mod ipc_tests {
             timestamp: 1000,
             static_cache_hits: 500,
             static_cache_misses: 50,
-            cpu_offload_stats: synvoid::process::ipc::CpuOffloadStats::default(),
+            cpu_offload_stats: synvoid_ipc::CpuOffloadStats::default(),
         }
     );
 
@@ -1595,13 +1596,13 @@ mod ipc_tests {
 
     #[test]
     fn test_ipc_message_validation_edge_cases() {
-        use synvoid::process::Message;
+        use synvoid_ipc::Message;
 
         let empty_error = Message::WorkerError {
             id: WorkerId(1),
             error: String::new(),
-            severity: synvoid::process::ErrorSeverity::Warning,
-            error_code: synvoid::process::ErrorCode::Unknown,
+            severity: ErrorSeverity::Warning,
+            error_code: ErrorCode::Unknown,
         };
         assert!(empty_error.validate().is_ok());
 
@@ -1671,7 +1672,7 @@ mod ipc_tests {
 
     #[test]
     fn test_mesh_block_entry_data_preserves_provenance_roundtrip() {
-        let entry = synvoid::process::ipc::MeshBlockEntryData {
+        let entry = synvoid_ipc::ipc::MeshBlockEntryData {
             mesh_id: "node-abc".to_string(),
             reason: "threat intel".to_string(),
             blocked_at: 2000,

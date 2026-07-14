@@ -1,3 +1,6 @@
+//! Root-test ownership: STATIC_POLICY
+//! Rationale: validates root facade boundary against domain crate imports
+//!
 //! Guard test preventing domain crates from importing the root `synvoid` crate.
 //!
 //! Domain crates should import dedicated `synvoid-*` crates directly rather than

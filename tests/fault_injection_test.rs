@@ -1,3 +1,6 @@
+//! Root-test ownership: COMPOSITION
+//! Rationale: validates fault injection across supervisor, block-store, and plugin crates
+
 #[cfg(unix)]
 mod tests {
     use std::process::{Command, Stdio};

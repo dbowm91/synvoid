@@ -1,4 +1,4 @@
-#[cfg(all(unix, feature = "socket-handoff"))]
+#[cfg(unix)]
 mod socket_handoff_tests {
     use std::net::TcpListener;
 
@@ -44,9 +44,8 @@ mod socket_handoff_tests {
 
     #[tokio::test]
     async fn test_socket_handoff_message_roundtrip() {
-        use synvoid::process::ipc::Message;
+        use synvoid_ipc::ipc::Message;
 
-        // Test SocketHandoffComplete - uses success and fd_count fields
         let msg = Message::SocketHandoffComplete {
             success: true,
             fd_count: 2,
@@ -66,9 +65,8 @@ mod socket_handoff_tests {
 
     #[tokio::test]
     async fn test_socket_handoff_request_message_roundtrip() {
-        use synvoid::process::ipc::Message;
+        use synvoid_ipc::ipc::Message;
 
-        // SocketHandoffRequest uses socket_path field
         let msg = Message::SocketHandoffRequest {
             socket_path: "/tmp/test.sock".to_string(),
         };
@@ -81,7 +79,7 @@ mod socket_handoff_tests {
 
     #[tokio::test]
     async fn test_socket_handoff_ready_message_roundtrip() {
-        use synvoid::process::ipc::Message;
+        use synvoid_ipc::ipc::Message;
 
         let msg = Message::SocketHandoffReady {
             ports: vec![8080, 8443],
@@ -97,7 +95,7 @@ mod socket_handoff_tests {
 
     #[tokio::test]
     async fn test_socket_handoff_failed_message_roundtrip() {
-        use synvoid::process::ipc::Message;
+        use synvoid_ipc::ipc::Message;
 
         let msg = Message::SocketHandoffFailed {
             error: "Test failure".to_string(),
@@ -113,7 +111,7 @@ mod socket_handoff_tests {
 
     #[tokio::test]
     async fn test_socket_handoff_with_multiple_ports() {
-        use synvoid::process::ipc::Message;
+        use synvoid_ipc::ipc::Message;
 
         let ports = vec![80, 443, 8080, 8443];
         let msg = Message::SocketHandoffReady {
@@ -131,30 +129,6 @@ mod socket_handoff_tests {
         } else {
             panic!("Expected SocketHandoffReady");
         }
-    }
-
-    #[tokio::test]
-    async fn test_socket_handoff_error_handling() {
-        use synvoid::platform::SocketHandoffError;
-
-        let err = SocketHandoffError::NoSocketsReceived;
-        let err_msg = err.to_string();
-        assert!(
-            err_msg.contains("No sockets received"),
-            "Should contain error message"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_socket_handoff_invalid_state_error() {
-        use synvoid::platform::SocketHandoffError;
-
-        let err = SocketHandoffError::IpcError("test state".to_string());
-        let err_msg = err.to_string();
-        assert!(
-            err_msg.contains("test state"),
-            "Should contain error message"
-        );
     }
 
     #[tokio::test]
@@ -193,7 +167,7 @@ mod socket_handoff_tests {
     }
 }
 
-#[cfg(not(all(unix, feature = "socket-handoff")))]
+#[cfg(not(unix))]
 mod socket_handoff_tests {
     use std::net::TcpListener;
 

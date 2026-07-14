@@ -1,3 +1,6 @@
+//! Root-test ownership: STATIC_POLICY
+//! Rationale: validates worker-mesh supervision boundary across workspace
+//!
 //! Guardrails for worker mesh supervision integration (Iterations 82-86).
 //!
 //! Verifies structural invariants via source-text scanning without I/O.

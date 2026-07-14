@@ -1,18 +1,18 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use parking_lot::RwLock;
-use synvoid_mesh::cert::MeshCertManager;
-use synvoid_mesh::config::MeshConfig;
-use synvoid_mesh::dht::routing::DhtRoutingManager;
-use synvoid_mesh::lifecycle::{
+use crate::cert::MeshCertManager;
+use crate::config::MeshConfig;
+use crate::dht::routing::DhtRoutingManager;
+use crate::lifecycle::{
     MeshBackgroundTaskSpec, MeshLifecycleState, MeshShutdownReport, MeshStartupPolicy,
     MeshStartupReport, MeshTaskClass, MeshTaskExit, MeshTaskExitReason, MeshTaskId,
     PeerSessionExitReason,
 };
-use synvoid_mesh::task_group::MeshTaskGroup;
-use synvoid_mesh::topology::MeshTopology;
-use synvoid_mesh::transport::MeshTransport;
+use crate::task_group::MeshTaskGroup;
+use crate::topology::MeshTopology;
+use crate::transport::MeshTransport;
+use parking_lot::RwLock;
 
 // ── Lifecycle State Machine Tests ────────────────────────────────────────────
 
@@ -772,7 +772,7 @@ fn peer_session_exit_reason_variants() {
 
 #[test]
 fn peer_stream_drain_report_defaults() {
-    use synvoid_mesh::lifecycle::PeerStreamDrainReport;
+    use crate::lifecycle::PeerStreamDrainReport;
 
     let report = PeerStreamDrainReport::default();
     assert_eq!(report.drained, 0);
@@ -782,7 +782,7 @@ fn peer_stream_drain_report_defaults() {
 
 #[test]
 fn peer_stream_drain_report_fields() {
-    use synvoid_mesh::lifecycle::PeerStreamDrainReport;
+    use crate::lifecycle::PeerStreamDrainReport;
 
     let report = PeerStreamDrainReport {
         drained: 10,
@@ -796,7 +796,7 @@ fn peer_stream_drain_report_fields() {
 
 #[test]
 fn mesh_connection_config_has_stream_limits() {
-    use synvoid_mesh::config::MeshConnectionConfig;
+    use crate::config::MeshConnectionConfig;
 
     let config = MeshConnectionConfig::default();
     // Phase 25: Capacity limit defaults
@@ -807,7 +807,7 @@ fn mesh_connection_config_has_stream_limits() {
 
 #[test]
 fn mesh_connection_config_custom_stream_limits() {
-    use synvoid_mesh::config::MeshConnectionConfig;
+    use crate::config::MeshConnectionConfig;
 
     let config = MeshConnectionConfig {
         max_concurrent_peer_streams: 128,
@@ -820,7 +820,7 @@ fn mesh_connection_config_custom_stream_limits() {
 
 #[test]
 fn drain_report_is_clone() {
-    use synvoid_mesh::lifecycle::PeerStreamDrainReport;
+    use crate::lifecycle::PeerStreamDrainReport;
 
     let report = PeerStreamDrainReport {
         drained: 5,
@@ -842,8 +842,8 @@ fn drain_report_is_clone() {
 /// rely on for clean cleanup.
 #[tokio::test]
 async fn cooperative_shutdown_signal_yields_cancelled_exit() {
+    use crate::lifecycle::{PeerSessionStopOutcome, PeerSessionTask};
     use std::sync::atomic::{AtomicBool, Ordering};
-    use synvoid_mesh::lifecycle::{PeerSessionStopOutcome, PeerSessionTask};
     use tokio::sync::watch;
 
     struct SessionGuard(Arc<AtomicBool>);
@@ -1106,7 +1106,6 @@ fn restartable_background_error_is_not_fatal() {
 
 // ── Iteration 87 Phases 18-20: Real builder tests ────────────────────────────
 
-#[cfg(feature = "mesh")]
 #[test]
 fn topology_build_background_tasks_returns_specs() {
     let config = Arc::new(MeshConfig::default());
@@ -1120,7 +1119,6 @@ fn topology_build_background_tasks_returns_specs() {
     );
 }
 
-#[cfg(feature = "mesh")]
 #[tokio::test]
 async fn dht_routing_build_background_tasks_returns_specs() {
     let config = Arc::new(MeshConfig::default());
@@ -1147,7 +1145,6 @@ async fn dht_routing_build_background_tasks_returns_specs() {
     );
 }
 
-#[cfg(feature = "mesh")]
 #[test]
 fn topology_build_background_tasks_uses_shutdown_signal() {
     let config = Arc::new(MeshConfig::default());
@@ -1162,7 +1159,6 @@ fn topology_build_background_tasks_uses_shutdown_signal() {
     );
 }
 
-#[cfg(feature = "mesh")]
 #[tokio::test]
 async fn dht_build_background_tasks_returns_three_specs() {
     let config = Arc::new(MeshConfig::default());
@@ -1173,7 +1169,6 @@ async fn dht_build_background_tasks_returns_three_specs() {
     assert_eq!(specs.len(), 3, "DHT routing must return exactly 3 specs");
 }
 
-#[cfg(feature = "mesh")]
 #[test]
 fn topology_build_background_tasks_disabled_returns_empty() {
     let config: MeshConfig = serde_json::from_value(serde_json::json!({
@@ -1192,7 +1187,6 @@ fn topology_build_background_tasks_disabled_returns_empty() {
     );
 }
 
-#[cfg(feature = "mesh")]
 #[test]
 fn mesh_background_task_spec_has_name_and_class_fields() {
     let config = Arc::new(MeshConfig::default());

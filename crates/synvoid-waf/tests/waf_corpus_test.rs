@@ -6,7 +6,7 @@ use std::path::PathBuf;
 mod waf_corpus_tests {
     use super::*;
     use http::HeaderMap;
-    use synvoid::waf::attack_detection::{AttackDetectionConfig, AttackDetector};
+    use synvoid_waf::attack_detection::{AttackDetectionConfig, AttackDetector};
 
     fn fixtures_dir() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/waf")
@@ -24,7 +24,7 @@ mod waf_corpus_tests {
         query_string: Option<&str>,
         headers: &http::HeaderMap,
         body: Option<&[u8]>,
-    ) -> Option<synvoid::waf::attack_detection::AttackDetectionResult> {
+    ) -> Option<synvoid_waf::attack_detection::AttackDetectionResult> {
         detector
             .check_request(client_ip, method, path, query_string, headers, body)
             .await
@@ -32,7 +32,7 @@ mod waf_corpus_tests {
     }
 
     fn check_result_matches_expected(
-        result: Option<&synvoid::waf::attack_detection::AttackDetectionResult>,
+        result: Option<&synvoid_waf::attack_detection::AttackDetectionResult>,
         expected: ExpectedResult,
     ) -> bool {
         match expected {
@@ -444,7 +444,7 @@ mod waf_corpus_tests {
 
     #[tokio::test]
     async fn test_waf_full_request_path() {
-        use synvoid::waf::attack_detection::{AttackDetectionConfig, AttackDetector};
+        use synvoid_waf::attack_detection::{AttackDetectionConfig, AttackDetector};
 
         let fixtures = RequestFixture::load_all(&fixtures_dir());
         let detector = AttackDetector::new(AttackDetectionConfig::default());

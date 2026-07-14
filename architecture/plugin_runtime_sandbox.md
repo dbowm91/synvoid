@@ -563,8 +563,8 @@ The `plugin_capability_boundary_guard` test suite (`tests/plugin_capability_boun
 ```bash
 cargo test --test plugin_capability_boundary_guard
 cargo test --test plugin_signature_policy_guard
-cargo test --test manifest_authority_wiring
-cargo test --test manifest_authority_load_path_guard
+cargo test -p synvoid-plugin-runtime --test manifest_authority_wiring
+cargo test -p synvoid-plugin-runtime --test manifest_authority_load_path_guard
 cargo test --test abi_memory_boundary_guard
 ```
 

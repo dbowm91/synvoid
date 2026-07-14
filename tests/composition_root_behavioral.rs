@@ -1,3 +1,6 @@
+//! Root-test ownership: COMPOSITION
+//! Rationale: validates worker+mesh composition root dataflow
+//!
 //! Composition-root behavioral tests (Iteration 89, Phases 21-23).
 //!
 //! These tests exercise the actual composition-root dataflow for optional

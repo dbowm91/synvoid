@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 license.workspace = true
 
+[dev-dependencies]
+proptest = "1.5"
+proptest-derive = "0.4"
+synvoid-mesh = { path = "../synvoid-mesh", features = ["mesh"] }
+
 [dependencies]
 synvoid-core = { path = "../synvoid-core" }
 synvoid-utils = { path = "../synvoid-utils", features = ["buffer"] }

@@ -1,3 +1,6 @@
+//! Root-test ownership: COMPOSITION
+//! Rationale: validates cross-crate security regression across process, proxy, and platform
+
 #[cfg(test)]
 mod tests {
     use std::fs;

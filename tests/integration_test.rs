@@ -1,3 +1,6 @@
+//! Root-test ownership: COMPOSITION
+//! Rationale: validates full-stack composition across all major subsystems
+
 use std::path::PathBuf;
 use synvoid::process::WorkerId;
 

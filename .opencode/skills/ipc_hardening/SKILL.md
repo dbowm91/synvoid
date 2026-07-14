@@ -134,5 +134,6 @@ fn test_key_file_symlink_rejected() {
 ```bash
 cargo test --lib ipc_signed
 cargo test --lib ipc_framing
-cargo test --test ipc_test
+cargo test -p synvoid-ipc --test ipc_test
+cargo test -p synvoid-ipc --test process_lifecycle_test
 ```

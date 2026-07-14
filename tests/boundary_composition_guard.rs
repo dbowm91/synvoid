@@ -1,3 +1,6 @@
+//! Root-test ownership: STATIC_POLICY
+//! Rationale: validates composition boundary between request-path and root across WAF/proxy/HTTP
+//!
 //! Consolidated boundary and composition guard tests.
 //!
 //! This file merges the following guard tests into a single compilation unit:

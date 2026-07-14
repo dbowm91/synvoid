@@ -1,0 +1,17 @@
+{
+  "id": "query_string_proxy_path",
+  "description": "Attack payload hidden in proxy path portion before query string",
+  "entry_point": "path",
+  "expected_result": "detect",
+  "attack_type": "sqli",
+  "notes": "Query string attack routed through proxy path",
+  "request": {
+    "method": "GET",
+    "path": "/proxy/http://evil.example.com/search?q=SELECT * FROM users",
+    "headers": [
+      ["Host", "example.com"]
+    ],
+    "query_string": null,
+    "body": null
+  }
+}

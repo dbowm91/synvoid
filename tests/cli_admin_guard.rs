@@ -1,3 +1,6 @@
+//! Root-test ownership: STATIC_POLICY
+//! Rationale: validates CLI/admin dispatch boundary across workspace
+//!
 //! Consolidated guard tests for CLI command dispatch, enforcement provenance,
 //! and worker composition root boundaries.
 //!

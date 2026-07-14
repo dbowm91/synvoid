@@ -47,10 +47,10 @@ run "Unit tests (synvoid-plugin-runtime)" cargo test -p synvoid-plugin-runtime
 # 4. Guard tests (plugin-specific)
 run "Guard: plugin_capability_boundary_guard" cargo test --test plugin_capability_boundary_guard
 run "Guard: plugin_signature_policy_guard" cargo test --test plugin_signature_policy_guard
-run "Guard: plugin_failure_does_not_poison_manager" cargo test --test plugin_failure_does_not_poison_manager
+run "Guard: plugin_failure_does_not_poison_manager" cargo test -p synvoid-plugin-runtime --test plugin_failure_does_not_poison_manager
 run "Guard: plugin_lifecycle_guard" cargo test --test plugin_lifecycle_guard
 run "Guard: unsafe_native_sandbox_language_guard" cargo test --test unsafe_native_sandbox_language_guard
-run "Guard: manifest_authority_wiring" cargo test --test manifest_authority_wiring
+run "Guard: manifest_authority_wiring" cargo test -p synvoid-plugin-runtime --test manifest_authority_wiring
 run "Guard: manifest_authority_load_path_guard" cargo test --test manifest_authority_load_path_guard
 
 # 5. Feature profile checks

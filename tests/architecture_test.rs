@@ -1,3 +1,6 @@
+//! Root-test ownership: STATIC_POLICY
+//! Rationale: validates architecture boundary constraints across workspace
+//!
 //! Architecture Tests for SynVoid Multi-Process Design
 //!
 //! These tests verify critical architectural constraints:

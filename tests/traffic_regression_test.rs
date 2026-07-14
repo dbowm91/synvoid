@@ -1,3 +1,6 @@
+//! Root-test ownership: COMPOSITION
+//! Rationale: validates proxy+upstream traffic regression across config, proxy, router, upstream
+
 use ahash::AHashSet;
 use std::collections::HashMap;
 

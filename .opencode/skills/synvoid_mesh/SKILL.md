@@ -1176,12 +1176,12 @@ The worker-owned `dht_routing_init` one-shot task has been removed. DHT routing 
 > **Note**: The mesh transport and lifecycle subsystem is closed as of Iteration 81. Worker mesh supervision is config-driven as of Iteration 84. All HTTP response framing, auxiliary task ownership, and lock ordering invariants are complete. Guardrail tests enforce the boundaries below.
 
 ```bash
-# Run integration tests
-cargo test --test mesh_lifecycle_tests --features mesh,dns
+# Run integration tests (now in synvoid-mesh crate)
+cargo test -p synvoid-mesh --test mesh_lifecycle_tests --features mesh
 cargo test --test mesh_startup_rollback --features mesh,dns
 cargo test --test mesh_task_ownership_guard --features mesh,dns
-cargo test --test mesh_forced_cleanup --features mesh,dns
-cargo test --test mesh_http_framing --features mesh,dns
+cargo test -p synvoid-mesh --test mesh_forced_cleanup --features mesh
+cargo test -p synvoid-mesh --test mesh_http_framing --features mesh
 cargo test --test worker_supervision_control_flow --features mesh,dns
 cargo test --test worker_mesh_supervision_boundary_guard --features mesh,dns  # includes iter88_* guardrails
 

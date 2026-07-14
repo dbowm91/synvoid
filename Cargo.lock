@@ -8177,6 +8177,7 @@ dependencies = [
  "moka",
  "nix 0.29.0",
  "parking_lot",
+ "proptest",
  "quinn",
  "rand 0.9.4",
  "rand_core 0.6.4",
@@ -8431,6 +8432,7 @@ dependencies = [
  "synvoid-tls",
  "synvoid-utils",
  "sysinfo 0.30.13",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -8539,8 +8541,12 @@ name = "synvoid-platform"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "serde_json",
  "socket2 0.6.4",
+ "synvoid-ipc",
+ "tempfile",
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
 ]
 
@@ -8876,6 +8882,8 @@ dependencies = [
  "metrics 0.22.4",
  "moka",
  "parking_lot",
+ "proptest",
+ "proptest-derive",
  "rand 0.9.4",
  "regex",
  "serde",
@@ -8885,6 +8893,7 @@ dependencies = [
  "synvoid-challenge",
  "synvoid-config",
  "synvoid-core",
+ "synvoid-mesh",
  "synvoid-utils",
  "tokio",
  "tracing",

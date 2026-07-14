@@ -42,7 +42,7 @@ cargo check                                   # PASS (32 warnings)
 ```bash
 cargo test --test failure_injection                              # 10/10 PASS
 cargo test --test admin_mutation_blocklist                        # 10/10 PASS
-cargo test --test plugin_failure_does_not_poison_manager          # 6/6 PASS
+cargo test -p synvoid-plugin-runtime --test plugin_failure_does_not_poison_manager          # 6/6 PASS
 cargo test --test security_observability_guard                    # 24/24 PASS
 cargo test --test plugin_capability_boundary_guard                # 8/8 PASS (after fix)
 cargo test --test plugin_signature_policy_guard                   # 10/10 PASS
@@ -50,7 +50,7 @@ cargo test --test admin_mutation_response_guard                   # 4/4 PASS
 cargo test --test admin_auth_boundary                             # 8/8 PASS
 cargo test --test unified_server_lifecycle_ownership_guard        # 6/6 PASS
 cargo test --test request_path_capability_boundary_guard          # 11/11 PASS
-cargo test --test mesh_forced_cleanup --features mesh,dns         # 18/18 PASS
+cargo test -p synvoid-mesh --test mesh_forced_cleanup --features mesh         # 18/18 PASS
 cargo test --test mesh_task_ownership_guard --features mesh,dns   # 164/164 PASS
 cargo test --test mesh_admin_edge_cases --features mesh,dns       # 8/8 PASS
 cargo test --test worker_mesh_supervision_boundary_guard --features mesh,dns  # 106/106 PASS

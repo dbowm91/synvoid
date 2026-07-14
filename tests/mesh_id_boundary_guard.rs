@@ -1,3 +1,6 @@
+//! Root-test ownership: STATIC_POLICY
+//! Rationale: validates mesh-id boundary between block-store, mesh, and admin
+//!
 //! Mesh-ID enforcement boundary guard tests (Iteration 51).
 //!
 //! Outcome A: Mesh-ID blocks are control-plane/admin scoped only. This guard

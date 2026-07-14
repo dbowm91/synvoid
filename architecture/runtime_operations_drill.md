@@ -159,7 +159,7 @@ curl -X POST http://127.0.0.1:18081/api/admin/block \
 ### Steps
 
 ```bash
-cargo test --test plugin_failure_does_not_poison_manager
+cargo test -p synvoid-plugin-runtime --test plugin_failure_does_not_poison_manager
 cargo test --test plugin_capability_boundary_guard
 cargo test --test plugin_signature_policy_guard
 ```
@@ -184,7 +184,7 @@ cargo test --test plugin_signature_policy_guard
 ### Steps (Single-Node)
 
 ```bash
-cargo test --test mesh_forced_cleanup --features mesh,dns
+cargo test -p synvoid-mesh --test mesh_forced_cleanup --features mesh
 cargo test --test mesh_task_ownership_guard --features mesh,dns
 cargo test --test mesh_admin_edge_cases --features mesh,dns
 ```
@@ -279,13 +279,13 @@ cargo check
 # Drill-specific tests
 cargo test --test failure_injection
 cargo test --test admin_mutation_blocklist
-cargo test --test plugin_failure_does_not_poison_manager
+cargo test -p synvoid-plugin-runtime --test plugin_failure_does_not_poison_manager
 cargo test --test security_observability_guard
 cargo test --test plugin_capability_boundary_guard
 cargo test --test plugin_signature_policy_guard
 
-# Mesh drills (require mesh,dns features)
-cargo test --test mesh_forced_cleanup --features mesh,dns
+# Mesh drills (require mesh features)
+cargo test -p synvoid-mesh --test mesh_forced_cleanup --features mesh
 cargo test --test mesh_task_ownership_guard --features mesh,dns
 ```
 

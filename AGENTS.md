@@ -35,21 +35,22 @@ cargo test --release --no-fail-fast
 # Security regression tests (must run single-threaded)
 cargo test --test security_regression -- --test-threads=1
 
+# Root test ownership guard (enforces OWNERSHIP.toml manifest)
+cargo test --test root_test_ownership_guard
+
 # Mesh/DNS features required for many tests
-cargo test --test mesh_forced_cleanup --features mesh,dns
 cargo test --test mesh_task_ownership_guard --features mesh,dns
 cargo test --test worker_supervision_control_flow --features mesh,dns
 cargo test --test composition_root_behavioral --features mesh,dns
-cargo test --test mesh_http_framing --features mesh,dns
 
-# DNS response encoder tests
+# DNS response encoder tests (now in synvoid-dns crate)
 cargo test -p synvoid-dns -- response_encoder
 
-# DNS canonical query parser tests
+# DNS canonical query parser tests (now in synvoid-dns crate)
 cargo test -p synvoid-dns -- parsed_query
 
-# DNS authoritative negative response tests
-cargo test --test authoritative_negative
+# DNS authoritative negative response tests (now in synvoid-dns crate)
+cargo test -p synvoid-dns --test authoritative_negative
 
 ## CI Testing Infrastructure
 
@@ -237,8 +238,8 @@ cargo test --test admin_mutation_response_guard  # Mutating admin endpoints must
 cargo test --test admin_mutation_blocklist       # Blocklist mutation behavior tests
 cargo test --test admin_auth_boundary            # Auth authority boundary tests
 cargo test --test mesh_admin_edge_cases          # Mesh admin edge case tests
-cargo test --test plugin_failure_does_not_poison_manager  # Plugin failure isolation: one plugin's failure doesn't poison others
-cargo test --test manifest_authority_wiring        # Manifest-to-runtime authority differentiation (M1 Phase 01)
+cargo test -p synvoid-plugin-runtime --test plugin_failure_does_not_poison_manager  # Plugin failure isolation: one plugin's failure doesn't poison others
+cargo test -p synvoid-plugin-runtime --test manifest_authority_wiring        # Manifest-to-runtime authority differentiation (M1 Phase 01)
 cargo test --test abi_memory_boundary_guard  # ABI memory boundary hardening: GuestAbiPolicy, guest_alloc+guest_free required, single-frame allocation, checked arithmetic
 cargo test -p synvoid-plugin-runtime -- test_plugin_failure       # Failure policy defaults and failure class classification
 cargo test -p synvoid-plugin-runtime -- test_classify_failure     # Error-to-failure-class mapping
@@ -267,6 +268,7 @@ cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci  # Stat
 cargo test --test failure_injection  # Failure-injection tests for lifecycle, convergence, plugin, startup
 cargo test --test worker_mesh_supervision_boundary_guard --features mesh,dns  # Mesh supervision structural invariants
 cargo test --test mesh_task_ownership_guard --features mesh,dns  # Mesh task ownership and lifecycle invariants
+cargo test --test root_test_ownership_guard  # Enforces root test ownership manifest (OWNERSHIP.toml)
 cargo test -p synvoid-tarpit --all-targets  # Tarpit escaping, admission, budgets, edge cases
 ```
 
@@ -469,6 +471,8 @@ The `architecture/` directory (87 docs) and `.opencode/skills/` directory contai
 - `wasmtime` 40.0.4 (via yara-x) has known CVEs but only used for YARA compilation, not wasm sandbox — mitigated by `[patch.crates-io]` for direct dep. 11 advisory ignores in `deny.toml` with re-audit dates 2026-10-01.
 
 ## Recent Completions
+
+- **Testing Infrastructure Milestone C: Reduce Compilation Scope** — Migrated 16 single-domain test files from root `tests/` to their owning crates (5 DNS → synvoid-dns, 3 WAF → synvoid-waf, 2 IPC → synvoid-ipc, 2 plugin-runtime → synvoid-plugin-runtime, 3 mesh → synvoid-mesh, 1 platform → synvoid-platform). Added ownership rationale headers to all retained root tests. Created `tests/OWNERSHIP.toml` manifest with automated guard (`root_test_ownership_guard`). Root integration test count reduced from 43 to 28 files. See `plans/testing_milestone_c_results.md`.
 
 - **Testing Infrastructure Milestone A: Measure and Stop Obvious Waste** — 10-workstream CI optimization pass. (1) Added `[profile.ci]` (inherits dev, opt-level=1, debug=line-tables-only, incremental=false) — routine tests no longer use production LTO settings. (2) Split monolithic `ci.yml` (25 jobs) into 4 lane-specific workflows: `pr-fast.yml` (PR fast lane with concurrency cancellation), `main-comprehensive.yml` (push-to-main full validation), `nightly-qualification.yml` (scheduled portability/safety), `release-qualification.yml` (tag/dispatch release builds). (3) Removed 26 redundant DNS integration test reruns (blanket `cargo test -p synvoid-dns` already covers all). (4) Removed 6 duplicate plugin guard tests between `guard-suite` and `plugin-runtime-guardrails` (plugin-runtime-guardrails owns them). (5) Migrated routine tests from `--release` to `--profile ci` across all lanes. (6) Added PR concurrency cancellation (`cancel-in-progress: true`). (7) Created `docs/testing/ci-performance-baseline.md`, `docs/testing/test-suite-ownership.md`, `docs/testing/ci-lane-policy.md`. (8) Created `scripts/ci/summarize-test-costs.py` for timing analysis. Total: 32 redundant Cargo invocations eliminated (24% reduction). See `plans/testing_milestone_a_measure_and_stop_obvious_waste.md`.
 

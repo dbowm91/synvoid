@@ -693,7 +693,7 @@ cache_size = 100000
 cargo build --release --features mesh,dns
 
 # Mesh DNS tests
-cargo test --test mesh_forced_cleanup --features mesh,dns
+cargo test -p synvoid-mesh --test mesh_forced_cleanup --features mesh
 cargo test --test mesh_task_ownership_guard --features mesh,dns
 cargo test --test worker_mesh_supervision_boundary_guard --features mesh,dns
 cargo test --test composition_root_behavioral --features mesh,dns
@@ -802,7 +802,7 @@ cargo test -p synvoid-dns --test verification_gate                              
 | **Transfer-Enabled Secondary** | `tsig_success_fixtures`, `ixfr_record_delta`, `dns_interop_transfers`, `cache_invalidation_axfr`, `control_plane_cache_completion` | Not run in CI — requires primary+secondary pair | `cache_bench`, `wire_bench` | No passive-listener harness, Persistent TCP Pipelining |
 | **DNSSEC-Signed Authoritative** | `dnssec_live_signing`, `dnssec_known_vectors`, `dns_interop_dnssec` | Not run in CI — requires `delv`, `ldns-verify-zone`, `named-checkzone` | `cache_bench`, `wire_bench`, `zone_bench` | External DNSSEC Tooling, NSEC3 Closest-Encloser Proofs, Bailiwick Enforcement |
 | **Encrypted Transport** | `encrypted_transport`, `dot`, `doh`, `doq`, `dns_interop_encrypted`, `transport` | Not run in CI — requires `kdig`, `khost`, `ldns` | `wire_bench` | DoQ bind_address hardcoded, EDNS Keepalive, DNS Padding, QNAME Privacy |
-| **Full Mesh DNS** | `mesh_forced_cleanup`, `mesh_task_ownership_guard`, `worker_mesh_supervision_boundary_guard`, `composition_root_behavioral` | Not run in CI — requires multi-node mesh | `cache_bench`, `wire_bench` | Experimental — may change without notice |
+| **Full Mesh DNS** | `mesh_forced_cleanup` (in synvoid-mesh), `mesh_task_ownership_guard`, `worker_mesh_supervision_boundary_guard`, `composition_root_behavioral` | Not run in CI — requires multi-node mesh | `cache_bench`, `wire_bench` | Experimental — may change without notice |
 
 **Total cells**: 32 (8 profiles × 4 columns)
 

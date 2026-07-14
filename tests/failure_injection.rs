@@ -1,3 +1,6 @@
+//! Root-test ownership: COMPOSITION
+//! Rationale: validates fault injection across supervisor, block-store, and plugin crates
+//!
 //! Failure-injection tests for SynVoid subsystems.
 //!
 //! Each test injects a specific failure into a subsystem and verifies

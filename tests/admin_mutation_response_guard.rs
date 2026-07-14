@@ -1,3 +1,6 @@
+//! Root-test ownership: STATIC_POLICY
+//! Rationale: validates admin mutation response contract across workspace
+//!
 //! Guardrail: mutating admin endpoints must not return generic `{"success": true}` responses.
 //!
 //! This test scans admin handler source files for generic success tokens that

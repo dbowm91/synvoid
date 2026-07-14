@@ -133,5 +133,8 @@ yara-x = { version = "1.15", default-features = false, features = ["default-modu
 # Raft consensus (optional, behind mesh feature)
 openraft = { version = "0.10.0-alpha.18", features = ["serde"], optional = true }
 
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "sync"] }
+
 [build-dependencies]
 tonic-prost-build = "0.14"

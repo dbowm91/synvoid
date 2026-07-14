@@ -1,3 +1,6 @@
+//! Root-test ownership: COMPOSITION
+//! Rationale: validates IPC end-to-end across process and IPC crates
+
 #[cfg(unix)]
 mod e2e_process_tests {
     use std::sync::Arc;

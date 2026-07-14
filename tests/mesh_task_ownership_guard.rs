@@ -1,3 +1,6 @@
+//! Root-test ownership: STATIC_POLICY
+//! Rationale: validates mesh task ownership across transport, lifecycle, and worker
+//!
 //! Mesh task ownership guardrail tests (Phase 17).
 //!
 //! Verifies that mesh transport runtime files follow the task-ownership

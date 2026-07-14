@@ -1,3 +1,6 @@
+//! Root-test ownership: COMPOSITION
+//! Rationale: validates block-store + core mutation interaction through root composition
+//!
 //! Tests for admin blocklist mutation semantics.
 //!
 //! These tests verify that block/unblock operations produce correct

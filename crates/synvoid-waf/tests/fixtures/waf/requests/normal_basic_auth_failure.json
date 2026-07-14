@@ -1,0 +1,18 @@
+{
+  "id": "normal_basic_auth_failure",
+  "description": "Normal Basic Auth failure - should not trigger detection",
+  "entry_point": "header:Authorization",
+  "expected_result": "pass",
+  "attack_type": "none",
+  "notes": "Normal Basic Auth with wrong credentials",
+  "request": {
+    "method": "GET",
+    "path": "/admin",
+    "headers": [
+      ["Host", "example.com"],
+      ["Authorization", "Basic dXNlcm5hbWU6cGFzc3dvcmQ="]
+    ],
+    "query_string": null,
+    "body": null
+  }
+}
