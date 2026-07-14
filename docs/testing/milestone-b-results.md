@@ -34,7 +34,7 @@ Milestone B modernized SynVoid's test execution infrastructure by adopting cargo
 | Consolidated File | Original Files | Tests |
 |-------------------|---------------|-------|
 | `boundary_composition_guard.rs` | `data_plane_composition_boundary_guard`, `request_path_capability_boundary_guard`, `http_request_pipeline_boundary_guard`, `http3_waf_boundary_guard`, `manifest_authority_load_path_guard` | 55 |
-| `lifecycle_task_guard.rs` | `background_task_ownership_guard`, `supervisor_task_ownership_guard`, `unified_server_lifecycle_ownership_guard` | 47 |
+| `lifecycle_task_guard.rs` | `background_task_ownership_guard`, `supervisor_task_ownership_guard`, `unified_server_lifecycle_ownership_guard` | 48 |
 | `plugin_guard.rs` | `plugin_capability_boundary_guard`, `plugin_lifecycle_guard`, `plugin_signature_policy_guard` | 52 |
 | `cli_admin_guard.rs` | `cli_command_dispatch_guard`, `manual_enforcement_provenance_guard`, `unified_worker_composition_root_guard` | 79 |
 | `security_guard.rs` | `security_observability_guard`, `threat_intel_boundary_guard`, `threat_intel_consumer_actionability_guard` | 46 |
@@ -51,7 +51,7 @@ Consolidated guards were validated by running all test suites and confirming:
 - **plugin_guard**: 52/52 pass
 - **cli_admin_guard**: 79/79 pass
 - **security_guard**: 46/46 pass
-- **lifecycle_task_guard**: 47/48 pass (1 pre-existing failure unrelated to consolidation — `plugin_runtime_owner_is_stored_for_runtime_lifetime` checks for a mutable variable pattern in `run()` that pre-dates consolidation)
+- **lifecycle_task_guard**: 48/48 pass
 
 The consolidated files preserve all original test logic including simulated violation detection, allowlist liveness checks, and structural boundary assertions. No coverage was lost.
 
@@ -106,7 +106,7 @@ Fixed 2 pre-existing broken doctests in `src/serder.rs`:
 | Metric | Value |
 |--------|-------|
 | Build time | 1.4s (5 binaries, cached) |
-| Execution time | 4.2s (279 tests across 5 binaries) |
+| Execution time | 4.2s (280 tests across 5 binaries) |
 | Files | 5 consolidated (down from 17 individual) |
 | Total size | 370K (vs ~450K for original 17 files) |
 
@@ -119,7 +119,7 @@ Fixed 2 pre-existing broken doctests in `src/serder.rs`:
 | Guard crate test functions | 0 | 26 | New capability (16 smoke + 10 negative fixtures) |
 | Guard crate build time | N/A | 0.3s | No root dependency graph |
 | Consolidated guard build time | N/A | 1.4s | 5 binaries vs 17 |
-| Consolidated guard test time | N/A | 4.2s | 279 tests in 4.2s |
+| Consolidated guard test time | N/A | 4.2s | 280 tests in 4.2s |
 | CI jobs | 24 | 23 | -1 (docs-link-guard removed) |
 | Nextest config overrides | 0 | 4 | Serialization policies documented |
 | JUnit output | None | Per-job XML + Markdown summary | New capability |
@@ -129,7 +129,7 @@ Fixed 2 pre-existing broken doctests in `src/serder.rs`:
 
 | Category | Files | Notes |
 |----------|-------|-------|
-| Consolidated | 5 | ~282 tests across 5 domain-grouped binaries |
+| Consolidated | 5 | ~280 tests across 5 domain-grouped binaries |
 | Standalone | 6 | Individual files (small, feature-gated, or large assertion sets) |
 | RUNTIME | 6 | Core types, process spawning, serialization roundtrips |
 | **Total root guard files** | **17** | Down from 33 |
@@ -140,7 +140,7 @@ Fixed 2 pre-existing broken doctests in `src/serder.rs`:
 | Component | Build | Test | Notes |
 |-----------|-------|------|-------|
 | Guard crate (`synvoid-repo-guards`) | 0.3s | 0.8s | 26 tests, no root dependency |
-| 5 consolidated root guards | 1.4s | 4.2s | 279 tests across 5 binaries |
+| 5 consolidated root guards | 1.4s | 4.2s | 280 tests across 5 binaries |
 | All root guards (17 files) | 0.7s* | 1.6s | *cached from consolidated run |
 | Full workspace doctests | — | 0.3s | 3 passed, 5 ignored |
 
@@ -190,8 +190,7 @@ Remaining root integration test binaries (non-guard):
 
 ## Known Issues
 
-- `cargo nextest list -p synvoid-repo-guards` produces empty output (cosmetic quirk; `cargo nextest run -p synvoid-repo-guards` works correctly — 26 tests pass).
-- 1 pre-existing test failure in `lifecycle_task_guard::plugin_runtime_owner_is_stored_for_runtime_lifetime` — not caused by consolidation.
+- `cargo test -p synvoid-repo-guards -- --list` produces no output (known integration-test listing quirk; `cargo nextest list -p synvoid-repo-guards` and `cargo nextest run` work correctly — 26 tests pass).
 
 ## What Remains for Milestone E
 

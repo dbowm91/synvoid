@@ -217,4 +217,3 @@ No routine/PR test uses `--release`. The architecture correctly separates routin
 | Test | Profile | Status | Notes |
 |------|---------|--------|-------|
 | `platform::sandbox::tests::test_basic_sandbox_succeeds_with_stub` | ci | FAILING | Pre-existing; assertion at `src/platform/sandbox.rs:1247` |
-| `unified_server_lifecycle_ownership_guard` | ci | FAILING | Static/source guard; needs investigation |

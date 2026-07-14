@@ -16,7 +16,7 @@ In Milestone B Phase 12, 17 individual root guard test files were consolidated i
 | Consolidated File | Original Files | Test Count |
 |-------------------|---------------|------------|
 | `boundary_composition_guard.rs` | `data_plane_composition_boundary_guard`, `request_path_capability_boundary_guard`, `http_request_pipeline_boundary_guard`, `http3_waf_boundary_guard`, `manifest_authority_load_path_guard` | ~59 |
-| `lifecycle_task_guard.rs` | `background_task_ownership_guard`, `supervisor_task_ownership_guard`, `unified_server_lifecycle_ownership_guard` | ~46 |
+| `lifecycle_task_guard.rs` | `background_task_ownership_guard`, `supervisor_task_ownership_guard`, `unified_server_lifecycle_ownership_guard` | ~48 |
 | `plugin_guard.rs` | `plugin_capability_boundary_guard`, `plugin_lifecycle_guard`, `plugin_signature_policy_guard` | ~52 |
 | `cli_admin_guard.rs` | `cli_command_dispatch_guard`, `manual_enforcement_provenance_guard`, `unified_worker_composition_root_guard` | ~79 |
 | `security_guard.rs` | `security_observability_guard`, `threat_intel_boundary_guard`, `threat_intel_consumer_actionability_guard` | ~46 |
@@ -54,7 +54,7 @@ In Milestone B Phase 12, 17 individual root guard test files were consolidated i
 | Classification | Count | Location |
 |---------------|-------|----------|
 | STATIC (Fully Replicated) | 4 | Removed from root `tests/`; covered by `tools/synvoid-repo-guards/tests/` |
-| CONSOLIDATED | 5 | Root `tests/` (grouped domain files, ~282 tests total) |
+| CONSOLIDATED | 5 | Root `tests/` (grouped domain files, ~280 tests total) |
 | STANDALONE | 6 | Root `tests/` (individual files) |
 | RUNTIME | 6 | Root `tests/` |
 
