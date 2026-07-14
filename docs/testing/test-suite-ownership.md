@@ -7,36 +7,22 @@ Every new test target must declare an owner, lane, and profile before merge. Uno
 
 | Test Target | Owning Crate | Lane | Profile | Features | Platform | Serialization | Notes |
 |-------------|-------------|------|---------|----------|----------|---------------|-------|
+| boundary_composition_guard | synvoid (root) | PR | ci | default | any | None | Consolidated: data-plane, request-path, HTTP pipeline, HTTP/3 WAF, manifest authority |
+| lifecycle_task_guard | synvoid (root) | PR | ci | default | any | None | Consolidated: background tasks, supervisor spawns, unified server lifecycle |
+| plugin_guard | synvoid (root) | PR | ci | default | any | None | Consolidated: plugin capability, lifecycle, signature policy |
+| cli_admin_guard | synvoid (root) | PR | ci | default | any | None | Consolidated: CLI dispatch, enforcement provenance, worker composition |
+| security_guard | synvoid (root) | PR | ci | default | any | None | Consolidated: security observability, threat-intel boundary, consumer actionability |
 | root_facade_boundary_guard | synvoid (root) | PR | ci | default | any | None | Architecture guard |
-
-| unified_server_lifecycle_ownership_guard | synvoid (root) | PR | ci | default | any | None | Architecture guard |
-| supervisor_task_ownership_guard | synvoid (root) | PR | ci | default | any | None | Architecture guard |
-| request_path_capability_boundary_guard | synvoid (root) | PR | ci | default | any | None | Architecture guard |
-| data_plane_composition_boundary_guard | synvoid (root) | PR | ci | default | any | None | Architecture guard |
-| http_request_pipeline_boundary_guard | synvoid (root) | PR | ci | default | any | None | Architecture guard |
-| http3_waf_boundary_guard | synvoid (root) | PR | ci | default | any | None | Architecture guard |
 | mesh_id_boundary_guard | synvoid (root) | PR | ci | default | any | None | Architecture guard |
-| threat_intel_boundary_guard | synvoid (root) | PR | ci | default | any | None | Architecture guard |
-| threat_intel_consumer_actionability_guard | synvoid (root) | PR | ci | mesh,dns | any | None | Architecture guard |
 | admin_mutation_response_guard | synvoid (root) | PR | ci | default | any | None | Architecture guard |
 | admin_mutation_blocklist | synvoid (root) | PR | ci | default | any | None | Architecture guard |
 | admin_auth_boundary | synvoid (root) | PR | ci | default | any | None | Architecture guard |
 | mesh_admin_edge_cases | synvoid (root) | PR | ci | default | any | None | Architecture guard |
-| security_observability_guard | synvoid (root) | PR | ci | default | any | None | Architecture guard |
 | failure_injection | synvoid (root) | PR | ci | default | any | None | Architecture guard |
 | worker_mesh_supervision_boundary_guard | synvoid (root) | PR | ci | mesh,dns | any | None | Architecture guard |
 | mesh_task_ownership_guard | synvoid (root) | PR | ci | mesh,dns | any | None | Architecture guard |
-| cli_command_dispatch_guard | synvoid (root) | PR | ci | default | any | None | Architecture guard |
-| manual_enforcement_provenance_guard | synvoid (root) | PR | ci | default | any | None | Architecture guard |
-| background_task_ownership_guard | synvoid (root) | PR | ci | default | any | None | Architecture guard |
-| unified_worker_composition_root_guard | synvoid (root) | PR | ci | default | any | None | Architecture guard |
-| plugin_lifecycle_guard | synvoid (root) | PR | ci | default | any | None | Plugin guard (owned by guard-suite) |
-
 | abi_memory_boundary_guard | synvoid-plugin-runtime | PR | ci | default | any | None | Plugin guard (owned by plugin-runtime-guardrails) |
-| plugin_capability_boundary_guard | synvoid-plugin-runtime | PR | ci | default | any | None | Plugin guard (owned by plugin-runtime-guardrails) |
-| plugin_signature_policy_guard | synvoid-plugin-runtime | PR | ci | default | any | None | Plugin guard (owned by plugin-runtime-guardrails) |
 | manifest_authority_wiring | synvoid-plugin-runtime | PR | ci | default | any | None | Plugin guard (owned by plugin-runtime-guardrails) |
-| manifest_authority_load_path_guard | synvoid-plugin-runtime | PR | ci | default | any | None | Plugin guard (owned by plugin-runtime-guardrails) |
 | plugin_failure_does_not_poison_manager | synvoid-plugin-runtime | PR | ci | default | any | None | Plugin guard (owned by plugin-runtime-guardrails) |
 | security_regression | synvoid (root) | PR | ci | default | linux | full binary | Serial execution required |
 

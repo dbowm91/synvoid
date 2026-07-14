@@ -1,10 +1,11 @@
-//! Guardrail test: Background task ownership and structured concurrency.
+//! Guardrail test: Lifecycle and task ownership guards (consolidated).
 //!
-//! Iteration 61 — Worker Structured Concurrency and Lifecycle Audit.
-//! Iteration 62 — Registry-owned lifecycle spawns (heartbeat, bandwidth persist,
-//! IPC loop migrated from tokio::spawn to WorkerTaskRegistry).
-//! Iteration 63 — Supervision changes: registry-owned server run, subscribe-before-spawn,
-//! noncritical exit handling, bandwidth final flush, deprecated spawn_server_run_task removed.
+//! Consolidates the following three guard test files into one:
+//!   1. `tests/background_task_ownership_guard.rs` — Worker structured concurrency
+//!      and lifecycle audit (Iterations 61–67).
+//!   2. `tests/supervisor_task_ownership_guard.rs` — Supervisor spawn allowlists.
+//!   3. `tests/unified_server_lifecycle_ownership_guard.rs` — UnifiedServer
+//!      lifecycle handles, reason comments, and registration enforcement.
 //!
 //! Verifies that long-lived background tasks in the highest-priority
 //! audited paths are either:
@@ -18,6 +19,10 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
 
 fn workspace_root() -> PathBuf {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -51,6 +56,8 @@ fn collect_rs_files(dir: &Path) -> Vec<PathBuf> {
     files
 }
 
+/// Strip string literals, line comments (`//`), and block comments (`/* */`).
+/// Preserves string content (used by background/supervisor spawn audits).
 fn strip_comments(content: &str) -> String {
     let mut result = String::with_capacity(content.len());
     let mut chars = content.chars().peekable();
@@ -107,6 +114,57 @@ fn strip_comments(content: &str) -> String {
     result
 }
 
+/// Strip comments AND string-literal contents (string bodies are discarded).
+/// Used by the unified-server lifecycle audits to avoid false matches inside
+/// string constants.
+fn strip_comments_and_strings(content: &str) -> String {
+    let mut result = String::with_capacity(content.len());
+    let mut chars = content.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '/' if chars.peek() == Some(&'/') => {
+                while let Some(&next) = chars.peek() {
+                    if next == '\n' {
+                        break;
+                    }
+                    chars.next();
+                }
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                let mut depth = 1;
+                while depth > 0 {
+                    match chars.next() {
+                        Some('/') if chars.peek() == Some(&'*') => {
+                            chars.next();
+                            depth += 1;
+                        }
+                        Some('*') if chars.peek() == Some(&'/') => {
+                            chars.next();
+                            depth -= 1;
+                        }
+                        Some(_) => {}
+                        None => break,
+                    }
+                }
+            }
+            '"' => loop {
+                match chars.next() {
+                    Some('\\') => {
+                        chars.next();
+                    }
+                    Some('"') => break,
+                    Some(_) => {}
+                    None => break,
+                }
+            },
+            _ => result.push(ch),
+        }
+    }
+    result
+}
+
+/// Strip `#[cfg(test)] mod tests { ... }` blocks so test-only spawns are ignored.
 fn strip_cfg_test_modules(content: &str) -> String {
     let mut result = String::with_capacity(content.len());
     let mut depth: i32 = 0;
@@ -201,40 +259,6 @@ fn enclosing_function(content: &str, line_num: usize) -> Option<String> {
     None
 }
 
-// ---------------------------------------------------------------------------
-// Allowlist: (file_suffix, function_name) where tokio::spawn is acceptable
-// ---------------------------------------------------------------------------
-
-const SPAWN_FUNCTION_ALLOWLIST: &[(&str, &str)] = &[
-    // One-shot initialization spawns
-    ("init_mesh.rs", "init_mesh_and_threat_intel"),
-    ("init_apps.rs", "spawn_granian_supervisors"),
-    // ThreatFeedClient migrated to use select! (Iteration 61)
-    ("feed_client.rs", "start_background_fetching"),
-    // Port honeypot has internal shutdown_tx
-    ("init_waf.rs", "spawn_port_honeypot"),
-    // Shared connection heartbeat (fire-and-forget, documented as known issue)
-    ("state.rs", "start_shared_connection_heartbeat"),
-    // Combined shutdown signal propagation (short-lived, documented Iteration 87)
-    ("mod.rs", "register_mesh_generation_support"),
-];
-
-/// Files where interval loops must have cancellation select.
-const INTERVAL_AUDIT_PATHS: &[&str] = &["src/waf/threat_intel/"];
-
-// ---------------------------------------------------------------------------
-// Pattern matching helpers
-// ---------------------------------------------------------------------------
-
-fn has_cancel_select(content: &str) -> bool {
-    content.contains("select!")
-        && (content.contains("shutdown")
-            || content.contains("cancel")
-            || content.contains("running")
-            || content.contains("child_token")
-            || content.contains("is_running"))
-}
-
 fn is_in_test_or_dead_code(content: &str, line_num: usize) -> bool {
     let lines: Vec<&str> = content.lines().take(line_num).collect();
     let mut cfg_test_depth: i32 = -1;
@@ -267,6 +291,86 @@ fn is_in_test_or_dead_code(content: &str, line_num: usize) -> bool {
 
     cfg_test_depth >= 0 || cfg_any_depth >= 0
 }
+
+/// Check whether a block of code contains a cancellation `select!`.
+fn has_cancel_select(content: &str) -> bool {
+    content.contains("select!")
+        && (content.contains("shutdown")
+            || content.contains("cancel")
+            || content.contains("running")
+            || content.contains("child_token")
+            || content.contains("is_running"))
+}
+
+/// Read a file relative to the workspace root.
+fn read_file(path: &str) -> String {
+    let root = workspace_root();
+    let full = root.join(path);
+    fs::read_to_string(&full).unwrap_or_else(|e| panic!("Failed to read {}: {}", full.display(), e))
+}
+
+/// Extract a section of a file starting from the first occurrence of `marker`.
+fn find_section<'a>(content: &'a str, marker: &str) -> &'a str {
+    let start = content
+        .find(marker)
+        .unwrap_or_else(|| panic!("Marker '{}' not found in content", marker));
+    &content[start..]
+}
+
+/// Recursively find all `.rs` files under the given directories.
+fn rust_files_under(dirs: &[PathBuf]) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    for dir in dirs {
+        if !dir.is_dir() {
+            continue;
+        }
+        for entry in std::fs::read_dir(dir).expect("read_dir") {
+            let entry = entry.expect("dir entry");
+            let path = entry.path();
+            if path.is_dir() {
+                files.extend(rust_files_under(&[path]));
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                files.push(path);
+            }
+        }
+    }
+    files
+}
+
+/// Collect lines with their 1-indexed line numbers from cleaned text.
+#[allow(dead_code)]
+fn cleaned_lines(cleaned: &str) -> Vec<(usize, &str)> {
+    cleaned
+        .lines()
+        .enumerate()
+        .map(|(i, l)| (i + 1, l))
+        .collect()
+}
+
+// ===========================================================================
+// SECTION 1: background_task_ownership_guard
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Allowlist: (file_suffix, function_name) where tokio::spawn is acceptable
+// ---------------------------------------------------------------------------
+
+const SPAWN_FUNCTION_ALLOWLIST: &[(&str, &str)] = &[
+    // One-shot initialization spawns
+    ("init_mesh.rs", "init_mesh_and_threat_intel"),
+    ("init_apps.rs", "spawn_granian_supervisors"),
+    // ThreatFeedClient migrated to use select! (Iteration 61)
+    ("feed_client.rs", "start_background_fetching"),
+    // Port honeypot has internal shutdown_tx
+    ("init_waf.rs", "spawn_port_honeypot"),
+    // Shared connection heartbeat (fire-and-forget, documented as known issue)
+    ("state.rs", "start_shared_connection_heartbeat"),
+    // Combined shutdown signal propagation (short-lived, documented Iteration 87)
+    ("mod.rs", "register_mesh_generation_support"),
+];
+
+/// Files where interval loops must have cancellation select.
+const INTERVAL_AUDIT_PATHS: &[&str] = &["src/waf/threat_intel/"];
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -483,20 +587,6 @@ fn managed_service_trait_exists() {
 // ---------------------------------------------------------------------------
 // Iteration 63 — Supervision guardrails
 // ---------------------------------------------------------------------------
-
-fn read_file(path: &str) -> String {
-    let root = workspace_root();
-    let full = root.join(path);
-    fs::read_to_string(&full).unwrap_or_else(|e| panic!("Failed to read {}: {}", full.display(), e))
-}
-
-/// Extract a section of a file starting from the first occurrence of `marker`.
-fn find_section<'a>(content: &'a str, marker: &str) -> &'a str {
-    let start = content
-        .find(marker)
-        .unwrap_or_else(|| panic!("Marker '{}' not found in content", marker));
-    &content[start..]
-}
 
 /// Server run task must be registered under WorkerTaskRegistry via spawn_critical_result.
 #[test]
@@ -1027,4 +1117,516 @@ fn server_exited_unexpectedly_carries_detail() {
         content.contains("ServerExitedUnexpectedly(NamedTaskExit)"),
         "ServerExitedUnexpectedly must carry NamedTaskExit for diagnostic detail"
     );
+}
+
+// ===========================================================================
+// SECTION 2: supervisor_task_ownership_guard
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Supervisor spawn allowlist
+// ---------------------------------------------------------------------------
+
+/// Approved (file, function) pairs where `tokio::spawn` is permitted.
+const SUPERVISOR_SPAWN_FUNCTION_ALLOWLIST: &[(&str, &str)] = &[
+    // --- src/supervisor/task_registry.rs ---
+    // Task registration internals; test code also uses tokio::spawn.
+    ("task_registry.rs", ""),
+    // --- src/supervisor/process.rs ---
+    // Registry registration spawns (spawn task + register with SupervisorTaskRegistry).
+    ("process.rs", "run"),
+    // Per-connection IPC accept loop handlers.
+    ("process.rs", "run_supervisor_ipc_accept_loop"),
+    // Control API server task.
+    ("process.rs", "run_supervisor_control_api_task"),
+    // --- src/supervisor/api.rs ---
+    // Delayed shutdown trigger — short-lived utility spawn.
+    ("api.rs", "stop"),
+    // --- src/supervisor/mesh.rs ---
+    // Mesh topology/DHT background tasks — documented exception, not yet
+    // integrated into registry.
+    ("mesh.rs", ""),
+    // --- src/supervisor/ipc.rs ---
+    // Per-connection handler — short-lived cert-reload broadcast utility spawn.
+    ("ipc.rs", "handle_worker_connection_internal"),
+];
+
+/// Files that are fully allowlisted (any function may contain tokio::spawn).
+const SUPERVISOR_FULLY_ALLOWLISTED_FILES: &[&str] = &[
+    "src/supervisor/task_registry.rs", // task registration internals + tests
+    "src/supervisor/mesh.rs",          // documented mesh exception
+];
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+/// Scan all `.rs` files under `src/supervisor/` and verify every `tokio::spawn`
+/// call is either in an approved file+function pair or in dead/test code.
+#[test]
+fn supervisor_tokio_spawns_are_allowlisted() {
+    let root = workspace_root();
+    let supervisor_dir = root.join("src/supervisor");
+    let files = collect_rs_files(&supervisor_dir);
+
+    assert!(
+        !files.is_empty(),
+        "No .rs files found under src/supervisor/ — is the directory present?"
+    );
+
+    let mut violations = Vec::new();
+
+    for file in &files {
+        let content = fs::read_to_string(file).unwrap_or_default();
+        let cleaned = strip_cfg_test_modules(&content);
+        let cleaned = strip_comments(&cleaned);
+        let rel_path = file.strip_prefix(&root).unwrap_or(file);
+        let path_str = rel_path.to_string_lossy();
+
+        for (line_num, line) in cleaned.lines().enumerate() {
+            let trimmed = line.trim();
+            if !trimmed.contains("tokio::spawn") {
+                continue;
+            }
+
+            if is_in_test_or_dead_code(&cleaned, line_num + 1) {
+                continue;
+            }
+
+            let func_name = enclosing_function(&cleaned, line_num + 1).unwrap_or_default();
+
+            // Check: fully allowlisted file (any function)?
+            let fully_allowed = SUPERVISOR_FULLY_ALLOWLISTED_FILES
+                .iter()
+                .any(|suffix| path_str.ends_with(suffix));
+
+            if fully_allowed {
+                continue;
+            }
+
+            // Check: file + function pair in allowlist?
+            let allowed = SUPERVISOR_SPAWN_FUNCTION_ALLOWLIST
+                .iter()
+                .any(|(suffix, func)| {
+                    path_str.ends_with(suffix) && (func.is_empty() || func_name == *func)
+                });
+
+            if !allowed {
+                violations.push(format!(
+                    "{}:{}: unapproved tokio::spawn in '{}' — add to allowlist or migrate to registry",
+                    path_str,
+                    line_num + 1,
+                    func_name,
+                ));
+            }
+        }
+    }
+
+    if !violations.is_empty() {
+        panic!(
+            "Found unapproved tokio::spawn calls in supervisor paths:\n{}",
+            violations.join("\n")
+        );
+    }
+}
+
+/// Verify that every file+function pair in `SUPERVISOR_SPAWN_FUNCTION_ALLOWLIST` actually
+/// exists in the codebase. Stale entries silently permit regressions.
+#[test]
+fn spawn_allowlist_entries_are_live() {
+    let root = workspace_root();
+    let supervisor_dir = root.join("src/supervisor");
+
+    for (file_suffix, func_name) in SUPERVISOR_SPAWN_FUNCTION_ALLOWLIST {
+        // Find the file
+        let matching_files: Vec<PathBuf> = collect_rs_files(&supervisor_dir)
+            .iter()
+            .filter(|p| p.to_string_lossy().ends_with(file_suffix))
+            .cloned()
+            .collect();
+
+        assert!(
+            !matching_files.is_empty(),
+            "SUPERVISOR_SPAWN_FUNCTION_ALLOWLIST file suffix '{}' matches no files under src/supervisor/ — \
+             entry is stale",
+            file_suffix
+        );
+
+        // If a function name is specified, verify it exists in the file
+        if !func_name.is_empty() {
+            let content = fs::read_to_string(&matching_files[0]).unwrap_or_default();
+            let cleaned = strip_comments(&content);
+            let func_pattern = format!("fn {}(", func_name);
+            assert!(
+                cleaned.contains(&func_pattern),
+                "SUPERVISOR_SPAWN_FUNCTION_ALLOWLIST function '{}' not found in '{}' — \
+                 entry is stale or function was renamed",
+                func_name,
+                file_suffix
+            );
+        }
+    }
+}
+
+/// Verify that every file in `SUPERVISOR_FULLY_ALLOWLISTED_FILES` actually exists.
+#[test]
+fn fully_allowlisted_files_are_live() {
+    let root = workspace_root();
+    let supervisor_dir = root.join("src/supervisor");
+    let all_files = collect_rs_files(&supervisor_dir);
+
+    for file_suffix in SUPERVISOR_FULLY_ALLOWLISTED_FILES {
+        let exists = all_files
+            .iter()
+            .any(|p| p.to_string_lossy().ends_with(file_suffix));
+        assert!(
+            exists,
+            "SUPERVISOR_FULLY_ALLOWLISTED_FILES entry '{}' matches no files under src/supervisor/ — \
+             entry is stale",
+            file_suffix
+        );
+    }
+}
+
+/// Verify that `process.rs` does NOT bare-spawn tasks inside the main `run()` body.
+/// Tasks should be registered, not spawned ad-hoc.
+#[test]
+fn process_run_method_has_no_bare_spawns() {
+    let root = workspace_root();
+    let path = root.join("src/supervisor/process.rs");
+    if !path.exists() {
+        eprintln!("skipping: src/supervisor/process.rs not found");
+        return;
+    }
+
+    let content = fs::read_to_string(&path).unwrap();
+    let cleaned = strip_comments(&content);
+
+    // Find the main `pub fn run()` or `pub async fn run()` function.
+    let run_start = cleaned
+        .find("pub fn run(")
+        .or_else(|| cleaned.find("pub async fn run("));
+    let Some(start) = run_start else {
+        eprintln!("skipping: no pub fn run() found in process.rs");
+        return;
+    };
+
+    // Extract the function body by matching braces.
+    let mut brace_depth = 0;
+    let mut found_open = false;
+    let mut run_body = String::new();
+    for ch in cleaned[start..].chars() {
+        match ch {
+            '{' => {
+                brace_depth += 1;
+                found_open = true;
+                run_body.push(ch);
+            }
+            '}' => {
+                brace_depth -= 1;
+                run_body.push(ch);
+                if found_open && brace_depth == 0 {
+                    break;
+                }
+            }
+            _ => {
+                run_body.push(ch);
+            }
+        }
+    }
+
+    // Allowed function names that may be called via tokio::spawn inside run().
+    // These are the registered task entry points — the spawn is followed by
+    // supervisor_tasks.register() on the next line.
+    let allowed_spawn_targets = [
+        "run_supervisor_ipc_accept_loop",
+        "run_supervisor_control_api_task",
+    ];
+
+    let bare_spawns: Vec<_> = run_body
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains("tokio::spawn"))
+        .filter(|(_, l)| {
+            // Allow spawns that call registered task functions (registry pattern:
+            // tokio::spawn(function_call) followed by supervisor_tasks.register()).
+            !allowed_spawn_targets.iter().any(|name| l.contains(name))
+        })
+        .map(|(i, _)| i + 1)
+        .collect();
+
+    assert!(
+        bare_spawns.is_empty(),
+        "src/supervisor/process.rs run() contains bare tokio::spawn at relative lines {:?} \
+         — tasks must be registered via the task registry, not spawned ad-hoc",
+        bare_spawns,
+    );
+}
+
+// ===========================================================================
+// SECTION 3: unified_server_lifecycle_ownership_guard
+// ===========================================================================
+
+/// Server/runtime lifecycle handles must be owned, not leaked via `mem::forget`.
+#[test]
+fn server_runtime_does_not_leak_lifecycle_handles() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let roots = [repo.join("src/server"), repo.join("src/plugin")];
+    let mut offenders = Vec::new();
+
+    for file in rust_files_under(&roots) {
+        let text = std::fs::read_to_string(&file).unwrap();
+        let cleaned = strip_comments_and_strings(&text);
+        for (idx, line) in cleaned.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.contains("std::mem::forget") || trimmed.contains("mem::forget") {
+                offenders.push(format!("{}:{}: {}", file.display(), idx + 1, trimmed));
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "server/plugin lifecycle handles must be owned, not leaked.\n\
+         Found mem::forget in production code — replace with explicit Drop or RAII ownership.\n\n\
+         Offenders:\n{}",
+        offenders.join("\n")
+    );
+}
+
+/// Every `tokio::spawn` in server/plugin production code must have a `// reason:` comment
+/// on the same line or within the 5 preceding lines. This ensures each spawn
+/// has a documented owner or rationale, preventing untracked fire-and-forget tasks.
+/// Test modules (`#[cfg(test)]`) are excluded.
+#[test]
+fn tokio_spawns_require_reason_comments() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let roots = [repo.join("src/server"), repo.join("src/plugin")];
+    let mut unreasoned = Vec::new();
+
+    for file in rust_files_under(&roots) {
+        let text = std::fs::read_to_string(&file).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+
+        // Track whether we're inside a #[cfg(test)] module
+        let mut in_test_module = false;
+        let mut test_module_depth = 0u32;
+
+        for (idx, line) in lines.iter().enumerate() {
+            let trimmed = line.trim();
+
+            // Detect entry into test modules
+            if trimmed.contains("#[cfg(test)]") {
+                in_test_module = true;
+                test_module_depth = 0;
+                continue;
+            }
+
+            // Track brace depth inside test modules
+            if in_test_module {
+                for ch in trimmed.bytes() {
+                    match ch {
+                        b'{' => test_module_depth += 1,
+                        b'}' => {
+                            if test_module_depth == 0 {
+                                in_test_module = false;
+                            } else {
+                                test_module_depth -= 1;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                continue;
+            }
+
+            // Skip comments and attributes (but NOT string content — those are real code)
+            if trimmed.starts_with("//") || trimmed.starts_with("#[") {
+                continue;
+            }
+            if !trimmed.contains("tokio::spawn") {
+                continue;
+            }
+            // Check if this line or any of the 5 preceding lines has a reason comment
+            let has_reason = (idx.saturating_sub(5)..=idx).any(|i| {
+                let l = lines[i].trim();
+                l.contains("// reason:") || l.contains("//reason:")
+            });
+            if !has_reason {
+                unreasoned.push(format!("{}:{}: {}", file.display(), idx + 1, trimmed));
+            }
+        }
+    }
+
+    assert!(
+        unreasoned.is_empty(),
+        "Every tokio::spawn in server/plugin must have a `// reason:` comment.\n\
+         Add `// reason: <owner or rationale>` on the spawn line or within 5 lines above it.\n\
+         This prevents untracked fire-and-forget tasks that cannot be cleanly shut down.\n\n\
+         Unreasoned spawns:\n{}",
+        unreasoned.join("\n")
+    );
+}
+
+/// UnifiedServerRuntimeHandles must be instantiated in run(), not left as dead code.
+/// This test verifies integration by checking that `UnifiedServerRuntimeHandles::new()`
+/// appears in src/server/mod.rs.
+#[test]
+fn unified_server_runtime_handles_are_integrated() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mod_rs = repo.join("src/server/mod.rs");
+    let text = std::fs::read_to_string(&mod_rs).unwrap();
+    let cleaned = strip_comments_and_strings(&text);
+    assert!(
+        cleaned.contains("UnifiedServerRuntimeHandles::new()")
+            || cleaned.contains("UnifiedServerRuntime::"),
+        "UnifiedServerRuntimeHandles must be instantiated in run(), not left as dead code"
+    );
+}
+
+/// Long-lived server spawns in src/server/mod.rs must go through spawn_registered
+/// or register with UnifiedServerRuntimeHandles. Direct tokio::spawn calls
+/// are only allowed in:
+/// - runtime_handles.rs (the registration infrastructure itself)
+/// - plugin_runtime.rs (short-lived callback spawns)
+/// - waf_handler.rs (short-lived request processing)
+/// - Test modules
+///   All other direct tokio::spawn calls in src/server/ are rejected.
+#[test]
+fn server_long_lived_spawns_go_through_registration() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let server_dir = repo.join("src/server");
+    let mut offenders = Vec::new();
+
+    // Files where direct tokio::spawn is allowed (infrastructure/short-lived)
+    let allowed_files: &[&str] = &[
+        "runtime_handles.rs",
+        "plugin_runtime.rs",
+        "waf_handler.rs",
+        "mod.rs", // short-lived ACME cert reload callback
+    ];
+
+    for file in rust_files_under(&[server_dir]) {
+        let file_name = file.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if allowed_files.contains(&file_name) {
+            continue;
+        }
+
+        let text = std::fs::read_to_string(&file).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        let cleaned = strip_comments_and_strings(&text);
+        let cleaned_line_strings: Vec<String> = cleaned.lines().map(|s| s.to_string()).collect();
+        let cleaned_lines_vec: Vec<(usize, &str)> = cleaned_line_strings
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (i + 1, s.as_str()))
+            .collect();
+
+        // Track test modules
+        let mut in_test_module = false;
+        let mut test_module_depth = 0u32;
+
+        for (idx, line) in lines.iter().enumerate() {
+            let trimmed = line.trim();
+
+            if trimmed.contains("#[cfg(test)]") {
+                in_test_module = true;
+                test_module_depth = 0;
+                continue;
+            }
+
+            if in_test_module {
+                for ch in trimmed.bytes() {
+                    match ch {
+                        b'{' => test_module_depth += 1,
+                        b'}' => {
+                            if test_module_depth == 0 {
+                                in_test_module = false;
+                            } else {
+                                test_module_depth -= 1;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                continue;
+            }
+
+            // Only check lines that actually contain tokio::spawn
+            if !trimmed.contains("tokio::spawn") {
+                continue;
+            }
+            // Skip if it's in a comment
+            if trimmed.starts_with("//") {
+                continue;
+            }
+
+            // Check if this spawn goes through registration helpers
+            // Look for spawn_registered or spawn_registered_unit in the surrounding context
+            let has_registration = (idx.saturating_sub(10)..=idx.min(cleaned_lines_vec.len() - 1))
+                .any(|i| {
+                    let l = cleaned_lines_vec[i].1;
+                    l.contains("spawn_registered")
+                        || l.contains("spawn_registered_unit")
+                        || l.contains("handles.register(")
+                });
+
+            if !has_registration {
+                offenders.push(format!("{}:{}: {}", file.display(), idx + 1, trimmed));
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "Long-lived server spawns must use spawn_registered/register.\n\
+         Direct tokio::spawn is only allowed in runtime_handles.rs, plugin_runtime.rs,\n\
+         waf_handler.rs, and test modules.\n\n\
+         Offenders:\n{}",
+        offenders.join("\n")
+    );
+}
+
+/// PluginRuntimeOwner must be integrated into run() — it should appear as a
+/// variable that is kept alive (not immediately dropped).
+#[test]
+fn plugin_runtime_owner_is_stored_for_runtime_lifetime() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mod_rs = repo.join("src/server/mod.rs");
+    let text = std::fs::read_to_string(&mod_rs).unwrap();
+    let cleaned = strip_comments_and_strings(&text);
+
+    // Check that plugin_owner is created and not immediately dropped
+    // The pattern: `let mut plugin_owner = ...` must appear
+    assert!(
+        cleaned.contains("let mut plugin_owner ="),
+        "PluginRuntimeOwner must be created as a mutable variable in run(), not immediately dropped"
+    );
+
+    // Check that it's dropped after shutdown_and_join
+    assert!(
+        cleaned.contains("drop(plugin_owner)"),
+        "PluginRuntimeOwner must be explicitly dropped after shutdown_and_join to ensure it lives for the full runtime lifetime"
+    );
+}
+
+#[test]
+fn allowed_files_exist_on_disk() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let server_dir = repo.join("src/server");
+    let allowed_files: &[&str] = &[
+        "runtime_handles.rs",
+        "plugin_runtime.rs",
+        "waf_handler.rs",
+        "mod.rs",
+    ];
+    for name in allowed_files {
+        let path = server_dir.join(name);
+        assert!(
+            path.exists(),
+            "allowed_files entry '{}' does not exist at {} — remove stale entry or update allowlist",
+            name,
+            path.display()
+        );
+    }
 }

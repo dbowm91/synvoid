@@ -168,7 +168,7 @@ cargo test -p synvoid-dns --test dns_interop_recursive
 ./scripts/dns/conformance.sh
 
 # Supervisor lifecycle (Phase 3)
-cargo test --test supervisor_task_ownership_guard
+cargo test --test lifecycle_task_guard
 cargo test -p synvoid supervisor::task_registry
 cargo test -p synvoid supervisor::shutdown
 
@@ -223,31 +223,23 @@ cargo check --no-default-features --features mesh,dns  # Full
 These enforce architectural invariants. Run them after touching relevant areas:
 
 ```bash
-cargo test --test data_plane_composition_boundary_guard  # Request-path vs composition-root
-cargo test --test root_facade_boundary_guard             # Domain crates can't import root
-cargo nextest run -p synvoid-repo-guards                 # Static guards (lightweight crate)
-cargo test --test mesh_id_boundary_guard                 # Mesh-ID blocks: admin only, not WAF
-cargo test --test threat_intel_boundary_guard            # Threat-intel consumer enforcement
-cargo test --test threat_intel_consumer_actionability_guard
-cargo test --test http3_waf_boundary_guard               # HTTP/3 WAF boundary
-cargo test --test http_request_pipeline_boundary_guard   # HTTP pipeline stages
-cargo test --test background_task_ownership_guard
+cargo test --test boundary_composition_guard     # Request-path vs composition-root, HTTP pipeline, HTTP/3 WAF, manifest authority
+cargo test --test root_facade_boundary_guard     # Domain crates can't import root
+cargo nextest run -p synvoid-repo-guards         # Static guards (lightweight crate)
+cargo test --test mesh_id_boundary_guard         # Mesh-ID blocks: admin only, not WAF
+cargo test --test security_guard                 # Threat-intel boundary, consumer actionability, security observability
+cargo test --test lifecycle_task_guard           # Background task ownership, supervisor spawns, unified server lifecycle
+cargo test --test cli_admin_guard                # CLI dispatch, enforcement provenance, worker composition root
+cargo test --test plugin_guard                   # Plugin capability boundary, lifecycle, signature policy
 cargo test --test worker_mesh_supervision_boundary_guard --features mesh,dns
-cargo test --test cli_command_dispatch_guard
-cargo test --test manual_enforcement_provenance_guard
-cargo test --test unified_server_lifecycle_ownership_guard  # 5 tests: mem::forget, reason comments, handles integrated, spawns registered, plugin owner lifetime
-cargo test --test request_path_capability_boundary_guard  # Request-path capability boundary
+cargo test --test mesh_task_ownership_guard --features mesh,dns
 cargo test --test admin_mutation_response_guard  # Mutating admin endpoints must return AdminMutationResult
 cargo test --test admin_mutation_blocklist       # Blocklist mutation behavior tests
 cargo test --test admin_auth_boundary            # Auth authority boundary tests
 cargo test --test mesh_admin_edge_cases          # Mesh admin edge case tests
-cargo test --test plugin_capability_boundary_guard  # Plugin sandbox capability gates, manifest parsing, mem::forget
 cargo test --test plugin_failure_does_not_poison_manager  # Plugin failure isolation: one plugin's failure doesn't poison others
-cargo test --test plugin_signature_policy_guard  # Plugin signature policy enforcement (includes Phase 2 strict verification)
 cargo test --test manifest_authority_wiring        # Manifest-to-runtime authority differentiation (M1 Phase 01)
-cargo test --test manifest_authority_load_path_guard  # All load paths use PreparedPluginLoad, not raw default_limits
 cargo test --test abi_memory_boundary_guard  # ABI memory boundary hardening: GuestAbiPolicy, guest_alloc+guest_free required, single-frame allocation, checked arithmetic
-cargo test --test plugin_lifecycle_guard  # Lifecycle state transitions, generation tracking, hot-reload gates, replace policy
 cargo test -p synvoid-plugin-runtime -- test_plugin_failure       # Failure policy defaults and failure class classification
 cargo test -p synvoid-plugin-runtime -- test_classify_failure     # Error-to-failure-class mapping
 cargo test -p synvoid-plugin-runtime -- test_guard_               # Guard state, quarantine, blocking invoke
@@ -273,8 +265,6 @@ cargo test -p synvoid-plugin-runtime -- test_signing_payload_includes   # Signin
 cargo test -p synvoid-plugin-runtime -- test_manifest_validate_trust    # Trust consistency mesh sub-policy
 cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci  # Static guards (lightweight crate)
 cargo test --test failure_injection  # Failure-injection tests for lifecycle, convergence, plugin, startup
-cargo test --test security_observability_guard  # Security observability invariants: metric labels, doc coverage, registry signals
-cargo test --test unified_worker_composition_root_guard  # Composition root ≤80 lines
 cargo test --test worker_mesh_supervision_boundary_guard --features mesh,dns  # Mesh supervision structural invariants
 cargo test --test mesh_task_ownership_guard --features mesh,dns  # Mesh task ownership and lifecycle invariants
 cargo test -p synvoid-tarpit --all-targets  # Tarpit escaping, admission, budgets, edge cases
