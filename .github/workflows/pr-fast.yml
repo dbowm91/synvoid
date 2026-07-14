@@ -23,7 +23,6 @@ jobs:
   select-affected:
     name: Select Affected Packages
     runs-on: ubuntu-latest
-    continue-on-error: true
     outputs:
       mode: ${{ steps.normalize.outputs.mode }}
       packages: ${{ steps.normalize.outputs.packages }}
@@ -39,6 +38,7 @@ jobs:
           python-version: '3.x'
       - name: Run affected package selector
         id: select
+        continue-on-error: true
         run: |
           FORCE_FULL=""
           if [ "${{ inputs.force-full }}" = "true" ]; then
