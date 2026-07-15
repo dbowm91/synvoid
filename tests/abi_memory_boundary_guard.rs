@@ -143,3 +143,8 @@ fn test_single_frame_allocation_struct_exists() {
         "free_guest_input_frame method must exist"
     );
 }
+
+#[test]
+fn injected_root_composition_failure() {
+    assert!(false, "injected root composition failure");
+}
