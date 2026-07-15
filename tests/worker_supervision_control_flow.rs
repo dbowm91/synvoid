@@ -3487,7 +3487,7 @@ mod mesh_supervision_behavioral {
 
         // Verify last_transition is updated each time
         let t_before = status.last_transition;
-        std::thread::sleep(Duration::from_millis(1));
+        tokio::time::sleep(Duration::from_millis(1)).await;
         status.transition_running();
         assert!(status.last_transition > t_before);
     }

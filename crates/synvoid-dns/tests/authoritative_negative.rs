@@ -1,37 +1,17 @@
+mod support;
+
 use std::net::IpAddr;
 use std::sync::Arc;
 
 use parking_lot::RwLock;
 use synvoid_dns::edns::EcsFilterConfig;
 use synvoid_dns::server::RecordType;
-use synvoid_dns::server::{DnsServer, DnsZoneRecord, QueryContext, ShardedZoneStore, Zone};
+use synvoid_dns::server::{DnsServer, DnsZoneRecord, ShardedZoneStore, Zone};
 use synvoid_dns::zone_trie::ZoneTrie;
 
-/// Build a raw DNS query in wire format.
-fn build_query(id: u16, qname: &str, qtype: u16) -> Vec<u8> {
-    let mut q = Vec::with_capacity(12 + 256 + 4);
-    q.extend_from_slice(&id.to_be_bytes());
-    q.extend_from_slice(&0x0100u16.to_be_bytes()); // flags: RD=1
-    q.extend_from_slice(&1u16.to_be_bytes()); // QDCOUNT
-    q.extend_from_slice(&0u16.to_be_bytes()); // ANCOUNT
-    q.extend_from_slice(&0u16.to_be_bytes()); // NSCOUNT
-    q.extend_from_slice(&0u16.to_be_bytes()); // ARCOUNT
-
-    if qname.is_empty() || qname == "." {
-        q.push(0);
-    } else {
-        for label in qname.split('.').filter(|s| !s.is_empty()) {
-            q.push(label.len() as u8);
-            q.extend_from_slice(label.as_bytes());
-        }
-        q.push(0);
-    }
-
-    q.extend_from_slice(&qtype.to_be_bytes());
-    q.extend_from_slice(&1u16.to_be_bytes()); // CLASS IN
-
-    q
-}
+use support::context::{make_ctx, setup};
+use support::query::build_query;
+use support::response::*;
 
 /// Build the test zone: test.local with standard records.
 fn build_test_zone() -> Zone {
@@ -109,80 +89,7 @@ fn build_test_zone() -> Zone {
     zone
 }
 
-/// Set up the minimal QueryContext for testing.
-///
-/// Returns the Arc-wrapped stores so they outlive the context.
-fn setup() -> (
-    Arc<ShardedZoneStore>,
-    Arc<RwLock<ZoneTrie>>,
-    EcsFilterConfig,
-) {
-    let zone = build_test_zone();
-
-    let zones = Arc::new(ShardedZoneStore::new());
-    zones.insert("test.local".to_string(), zone);
-
-    let mut trie = ZoneTrie::new();
-    trie.insert("test.local");
-    let zone_trie = Arc::new(RwLock::new(trie));
-
-    let ecs_config = EcsFilterConfig::default();
-
-    (zones, zone_trie, ecs_config)
-}
-
-fn make_ctx<'a>(
-    zones: &'a Arc<ShardedZoneStore>,
-    zone_trie: &'a Arc<RwLock<ZoneTrie>>,
-    ecs_filter_config: &'a EcsFilterConfig,
-) -> QueryContext<'a> {
-    QueryContext {
-        zones,
-        zone_trie,
-        geoip_lookup: None,
-        min_geo_ttl: 0,
-        negative_cache_ttl: 300,
-        cache: None,
-        dnssec: None,
-        signer_name: None,
-        query_validator: None,
-        firewall: None,
-        connection_limits: None,
-        max_idle_time: None,
-        zone_transfer: None,
-        ecs_filter_config,
-        rate_limiter: None,
-        rrl_enabled: false,
-        update_handler: None,
-        notify_handler: None,
-        query_coalescer: None,
-        dns64_translator: None,
-        acme_dns_challenges: None,
-        cookie_server: None,
-        #[cfg(feature = "mesh")]
-        mesh_registry: None,
-    }
-}
-
 // ── Response parsing helpers ────────────────────────────────────────────
-
-/// Skip past a DNS wire-format name (handles compression pointers).
-/// Returns the byte position after the terminating zero/pointer.
-fn skip_wire_name(resp: &[u8], start: usize) -> usize {
-    let mut pos = start;
-    while pos < resp.len() {
-        let len = resp[pos] as usize;
-        if len == 0 {
-            return pos + 1;
-        }
-        // Compression pointer: top 2 bits are 11
-        if (len & 0xC0) == 0xC0 {
-            return pos + 2;
-        }
-        pos += 1 + len;
-    }
-    pos
-}
 
 /// Skip past the question section in a DNS response.
 /// Returns the byte offset of the first answer record (after the header).
@@ -304,37 +211,8 @@ fn response_id(resp: &[u8]) -> u16 {
     u16::from_be_bytes([resp[0], resp[1]])
 }
 
-fn response_flags(resp: &[u8]) -> u16 {
-    u16::from_be_bytes([resp[2], resp[3]])
-}
-
-fn response_rcode(resp: &[u8]) -> u8 {
-    (response_flags(resp) & 0x000F) as u8
-}
-
 fn response_qdcount(resp: &[u8]) -> u16 {
     u16::from_be_bytes([resp[4], resp[5]])
-}
-
-fn response_ancount(resp: &[u8]) -> u16 {
-    u16::from_be_bytes([resp[6], resp[7]])
-}
-
-fn response_nscount(resp: &[u8]) -> u16 {
-    u16::from_be_bytes([resp[8], resp[9]])
-}
-
-#[allow(dead_code)]
-fn response_arcount(resp: &[u8]) -> u16 {
-    u16::from_be_bytes([resp[10], resp[11]])
-}
-
-fn is_authoritative(resp: &[u8]) -> bool {
-    response_flags(resp) & 0x0400 != 0
-}
-
-fn is_response(resp: &[u8]) -> bool {
-    response_flags(resp) & 0x8000 != 0
 }
 
 // ── RCODE constants ────────────────────────────────────────────────────

@@ -4,125 +4,18 @@
 //! bypass the query cache and coalescing layer, and that cache invalidation
 //! is correctly triggered after mutations.
 
+mod support;
+
 use std::net::IpAddr;
 use std::sync::Arc;
 
+use support::query::{build_axfr_query, build_notify_query, build_update_add_record};
+use support::zone::{zone_with_records, zone_with_soa};
 use synvoid_dns::cache::{CacheKey, CacheNamespace, DnsCache, InvalidationReason, TransportClass};
 use synvoid_dns::notify::{NotifyConfig, NotifyHandler};
-use synvoid_dns::server::{DnsZoneRecord, RecordType, ShardedZoneStore, Zone};
-use synvoid_dns::transfer::{ZoneTransfer, AXFR_QUERY_TYPE};
+use synvoid_dns::server::{RecordType, ShardedZoneStore};
+use synvoid_dns::transfer::ZoneTransfer;
 use synvoid_dns::update::DynamicUpdateHandler;
-
-// ── Helpers ─────────────────────────────────────────────────────────────
-
-fn zone_with_soa(origin: &str, serial: u32) -> Zone {
-    let mut z = Zone::new(origin.to_string());
-    z.serial = serial;
-    z.records.insert(
-        ("@".to_string(), RecordType::SOA),
-        vec![DnsZoneRecord {
-            name: "@".to_string(),
-            record_type: RecordType::SOA,
-            value: format!(
-                "ns1.{}. admin.{}. {} 3600 600 604800 300",
-                origin, origin, serial
-            ),
-            ttl: 300,
-            priority: None,
-        }],
-    );
-    z
-}
-
-fn zone_with_records(origin: &str, serial: u32) -> Zone {
-    let mut z = zone_with_soa(origin, serial);
-    z.records.insert(
-        ("www".to_string(), RecordType::A),
-        vec![DnsZoneRecord {
-            name: "www".to_string(),
-            record_type: RecordType::A,
-            value: "192.0.2.10".to_string(),
-            ttl: 300,
-            priority: None,
-        }],
-    );
-    z
-}
-
-fn encode_qname(name: &str) -> Vec<u8> {
-    let mut out = Vec::new();
-    for label in name.trim_end_matches('.').split('.') {
-        out.push(label.len() as u8);
-        out.extend_from_slice(label.as_bytes());
-    }
-    out.push(0);
-    out
-}
-
-fn build_update_header(qdcount: u16, ancount: u16, nscount: u16, arcount: u16) -> Vec<u8> {
-    let mut buf = Vec::new();
-    buf.extend_from_slice(&0x1234u16.to_be_bytes());
-    let flags: u16 = (5u16) << 11;
-    buf.extend_from_slice(&flags.to_be_bytes());
-    buf.extend_from_slice(&qdcount.to_be_bytes());
-    buf.extend_from_slice(&ancount.to_be_bytes());
-    buf.extend_from_slice(&nscount.to_be_bytes());
-    buf.extend_from_slice(&arcount.to_be_bytes());
-    buf
-}
-
-fn build_zone_question(zone: &str) -> Vec<u8> {
-    let mut buf = encode_qname(zone);
-    buf.extend_from_slice(&6u16.to_be_bytes());
-    buf.extend_from_slice(&1u16.to_be_bytes());
-    buf
-}
-
-fn build_rr_add(name: &str, rtype: u16, rdata: &[u8], ttl: u32) -> Vec<u8> {
-    let mut buf = encode_qname(name);
-    buf.extend_from_slice(&rtype.to_be_bytes());
-    buf.extend_from_slice(&1u16.to_be_bytes());
-    buf.extend_from_slice(&ttl.to_be_bytes());
-    buf.extend_from_slice(&(rdata.len() as u16).to_be_bytes());
-    buf.extend_from_slice(rdata);
-    buf
-}
-
-fn build_update_add_record(zone: &str, name: &str, rtype: u16, rdata: &[u8], ttl: u32) -> Vec<u8> {
-    let mut buf = build_update_header(1, 0, 0, 1);
-    buf.extend_from_slice(&build_zone_question(zone));
-    buf.extend_from_slice(&build_rr_add(name, rtype, rdata, ttl));
-    buf
-}
-
-fn build_notify_query(zone_name: &str) -> Vec<u8> {
-    let mut buf = Vec::new();
-    buf.extend_from_slice(&0x9Au16.to_be_bytes());
-    let flags: u16 = (4u16) << 11;
-    buf.extend_from_slice(&flags.to_be_bytes());
-    buf.extend_from_slice(&1u16.to_be_bytes());
-    buf.extend_from_slice(&0u16.to_be_bytes());
-    buf.extend_from_slice(&0u16.to_be_bytes());
-    buf.extend_from_slice(&0u16.to_be_bytes());
-    buf.extend_from_slice(&encode_qname(zone_name));
-    buf.extend_from_slice(&6u16.to_be_bytes());
-    buf.extend_from_slice(&1u16.to_be_bytes());
-    buf
-}
-
-fn build_axfr_query(zone_name: &str) -> Vec<u8> {
-    let mut buf = Vec::new();
-    buf.extend_from_slice(&0xCAFEu16.to_be_bytes());
-    buf.extend_from_slice(&0u16.to_be_bytes());
-    buf.extend_from_slice(&1u16.to_be_bytes());
-    buf.extend_from_slice(&0u16.to_be_bytes());
-    buf.extend_from_slice(&0u16.to_be_bytes());
-    buf.extend_from_slice(&0u16.to_be_bytes());
-    buf.extend_from_slice(&encode_qname(zone_name));
-    buf.extend_from_slice(&AXFR_QUERY_TYPE.to_be_bytes());
-    buf.extend_from_slice(&1u16.to_be_bytes());
-    buf
-}
 
 #[allow(dead_code)]
 struct ParsedRecord {
@@ -285,7 +178,7 @@ fn notify_invalidates_zone_cache() {
         .with_source_allowlist(vec!["10.0.0.1".to_string()])
         .with_cache(cache.clone());
     let client: IpAddr = "10.0.0.1".parse().unwrap();
-    let query = build_notify_query("test.local");
+    let query = build_notify_query(0x9A, "test.local");
     let _ = handler.handle_notify(&query, client);
 
     assert!(
@@ -324,7 +217,7 @@ fn axfr_reads_from_zone_store() {
             client,
             None,
             0xCAFE,
-            &build_axfr_query("test.local"),
+            &build_axfr_query(0xCAFE, "test.local"),
             true,
         )
         .unwrap();
@@ -363,7 +256,7 @@ fn axfr_concurrent_requests_independent() {
             client,
             None,
             0x1111,
-            &build_axfr_query("test.local"),
+            &build_axfr_query(0xCAFE, "test.local"),
             true,
         )
         .unwrap();
@@ -373,7 +266,7 @@ fn axfr_concurrent_requests_independent() {
             client,
             None,
             0x2222,
-            &build_axfr_query("test.local"),
+            &build_axfr_query(0xCAFE, "test.local"),
             true,
         )
         .unwrap();

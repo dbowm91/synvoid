@@ -11,59 +11,23 @@
 //! `NotifyHandler`, `ZoneTransfer`) directly — no live network sockets —
 //! so they are deterministic and run in the unit/integration test tier.
 
+mod support;
+
 use std::net::IpAddr;
 use std::sync::Arc;
 
 use synvoid_dns::notify::{NotifyConfig, NotifyHandler};
-use synvoid_dns::server::{DnsZoneRecord, RecordType, ShardedZoneStore, Zone};
+use synvoid_dns::server::ShardedZoneStore;
 use synvoid_dns::transfer::{ZoneTransfer, AXFR_QUERY_TYPE, IXFR_QUERY_TYPE};
 use synvoid_dns::update::DynamicUpdateHandler;
 use synvoid_dns::wire;
 
-fn zone_with_soa(origin: &str, serial: u32) -> Zone {
-    let mut z = Zone::new(origin.to_string());
-    z.serial = serial;
-    z.records.insert(
-        ("@".to_string(), RecordType::SOA),
-        vec![DnsZoneRecord {
-            name: "@".to_string(),
-            record_type: RecordType::SOA,
-            value: format!(
-                "ns1.{}. admin.{}. {} 3600 600 604800 300",
-                origin, origin, serial
-            ),
-            ttl: 300,
-            priority: None,
-        }],
-    );
-    z
-}
-
-// Wire format helper: encode a question qname as length-prefixed labels.
-fn encode_qname(name: &str) -> Vec<u8> {
-    let mut out = Vec::new();
-    for label in name.trim_end_matches('.').split('.') {
-        out.push(label.len() as u8);
-        out.extend_from_slice(label.as_bytes());
-    }
-    out.push(0);
-    out
-}
+use support::query::encode_qname;
+use support::zone::zone_with_soa;
 
 fn build_minimal_update_query(zone_name: &str) -> Vec<u8> {
-    let mut buf = Vec::new();
-    // Header: ID=0x1234, OPCODE=5 (UPDATE)
-    buf.extend_from_slice(&0x1234u16.to_be_bytes());
-    let flags: u16 = (5u16) << 11;
-    buf.extend_from_slice(&flags.to_be_bytes());
-    buf.extend_from_slice(&1u16.to_be_bytes()); // QDCOUNT=1
-    buf.extend_from_slice(&0u16.to_be_bytes());
-    buf.extend_from_slice(&0u16.to_be_bytes());
-    buf.extend_from_slice(&0u16.to_be_bytes());
-
-    buf.extend_from_slice(&encode_qname(zone_name));
-    buf.extend_from_slice(&6u16.to_be_bytes()); // QTYPE=SOA
-    buf.extend_from_slice(&1u16.to_be_bytes()); // QCLASS=IN
+    let mut buf = support::query::build_update_header(1, 0, 0, 0);
+    buf.extend_from_slice(&support::query::build_zone_question(zone_name));
     buf
 }
 
@@ -112,18 +76,7 @@ fn build_minimal_notify_query(zone_name: &str, serial: u32) -> Vec<u8> {
 }
 
 fn build_minimal_axfr_query(zone_name: &str) -> Vec<u8> {
-    let mut buf = Vec::new();
-    buf.extend_from_slice(&0xCAFEu16.to_be_bytes());
-    buf.extend_from_slice(&0u16.to_be_bytes());
-    buf.extend_from_slice(&1u16.to_be_bytes());
-    buf.extend_from_slice(&0u16.to_be_bytes());
-    buf.extend_from_slice(&0u16.to_be_bytes());
-    buf.extend_from_slice(&0u16.to_be_bytes());
-
-    buf.extend_from_slice(&encode_qname(zone_name));
-    buf.extend_from_slice(&AXFR_QUERY_TYPE.to_be_bytes());
-    buf.extend_from_slice(&1u16.to_be_bytes());
-    buf
+    support::query::build_axfr_query(0xCAFE, zone_name)
 }
 
 fn build_minimal_ixfr_query(zone_name: &str, serial: u32) -> Vec<u8> {

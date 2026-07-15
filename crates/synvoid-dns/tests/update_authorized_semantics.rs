@@ -1,68 +1,17 @@
+mod support;
+
 use std::net::IpAddr;
 use std::sync::Arc;
 
 use synvoid_dns::cache::{CacheKey, DnsCache};
-use synvoid_dns::server::{DnsZoneRecord, RecordType, ShardedZoneStore, Zone};
+use synvoid_dns::server::{DnsZoneRecord, RecordType, ShardedZoneStore};
 use synvoid_dns::update::DynamicUpdateHandler;
 use synvoid_dns::wire;
 
-fn zone_with_soa(origin: &str, serial: u32) -> Zone {
-    let mut z = Zone::new(origin.to_string());
-    z.serial = serial;
-    z.records.insert(
-        ("@".to_string(), RecordType::SOA),
-        vec![DnsZoneRecord {
-            name: "@".to_string(),
-            record_type: RecordType::SOA,
-            value: format!(
-                "ns1.{}. admin.{}. {} 3600 600 604800 300",
-                origin, origin, serial
-            ),
-            ttl: 300,
-            priority: None,
-        }],
-    );
-    z
-}
-
-fn encode_qname(name: &str) -> Vec<u8> {
-    let mut out = Vec::new();
-    for label in name.trim_end_matches('.').split('.') {
-        out.push(label.len() as u8);
-        out.extend_from_slice(label.as_bytes());
-    }
-    out.push(0);
-    out
-}
-
-fn build_update_header(qdcount: u16, ancount: u16, nscount: u16, arcount: u16) -> Vec<u8> {
-    let mut buf = Vec::new();
-    buf.extend_from_slice(&0x1234u16.to_be_bytes());
-    let flags: u16 = (5u16) << 11;
-    buf.extend_from_slice(&flags.to_be_bytes());
-    buf.extend_from_slice(&qdcount.to_be_bytes());
-    buf.extend_from_slice(&ancount.to_be_bytes());
-    buf.extend_from_slice(&nscount.to_be_bytes());
-    buf.extend_from_slice(&arcount.to_be_bytes());
-    buf
-}
-
-fn build_zone_question(zone: &str) -> Vec<u8> {
-    let mut buf = encode_qname(zone);
-    buf.extend_from_slice(&6u16.to_be_bytes());
-    buf.extend_from_slice(&1u16.to_be_bytes());
-    buf
-}
-
-fn build_rr_add(name: &str, rtype: u16, rdata: &[u8], ttl: u32) -> Vec<u8> {
-    let mut buf = encode_qname(name);
-    buf.extend_from_slice(&rtype.to_be_bytes());
-    buf.extend_from_slice(&1u16.to_be_bytes());
-    buf.extend_from_slice(&ttl.to_be_bytes());
-    buf.extend_from_slice(&(rdata.len() as u16).to_be_bytes());
-    buf.extend_from_slice(rdata);
-    buf
-}
+use support::query::{
+    build_rr, build_update_add_record, build_update_header, build_zone_question, encode_qname,
+};
+use support::zone::zone_with_soa;
 
 fn build_rr_delete(name: &str, rtype: u16) -> Vec<u8> {
     let mut buf = encode_qname(name);
@@ -79,13 +28,6 @@ fn build_prerequisite_rr(name: &str, rtype: u16, condition_class: u16) -> Vec<u8
     buf.extend_from_slice(&condition_class.to_be_bytes());
     buf.extend_from_slice(&0u32.to_be_bytes());
     buf.extend_from_slice(&0u16.to_be_bytes());
-    buf
-}
-
-fn build_update_add_record(zone: &str, name: &str, rtype: u16, rdata: &[u8], ttl: u32) -> Vec<u8> {
-    let mut buf = build_update_header(1, 0, 0, 1);
-    buf.extend_from_slice(&build_zone_question(zone));
-    buf.extend_from_slice(&build_rr_add(name, rtype, rdata, ttl));
     buf
 }
 
@@ -123,15 +65,15 @@ fn build_update_duplicate_soa_add(zone: &str) -> Vec<u8> {
     let soa_rdata = format!("ns1.{}. admin.{}. 999 3600 600 604800 300", zone, zone);
     let mut buf = build_update_header(1, 0, 0, 1);
     buf.extend_from_slice(&build_zone_question(zone));
-    buf.extend_from_slice(&build_rr_add("@", 6, soa_rdata.as_bytes(), 300));
+    buf.extend_from_slice(&build_rr("@", 6, soa_rdata.as_bytes(), 300));
     buf
 }
 
 fn build_update_invalid_cname_coexistence(zone: &str) -> Vec<u8> {
     let mut buf = build_update_header(1, 0, 0, 2);
     buf.extend_from_slice(&build_zone_question(zone));
-    buf.extend_from_slice(&build_rr_add("www", 1, &[1, 2, 3, 4], 300));
-    buf.extend_from_slice(&build_rr_add("www", 5, b"target.example.test.", 300));
+    buf.extend_from_slice(&build_rr("www", 1, &[1, 2, 3, 4], 300));
+    buf.extend_from_slice(&build_rr("www", 5, b"target.example.test.", 300));
     buf
 }
 

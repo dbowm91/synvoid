@@ -26,6 +26,12 @@ max-threads = 2
 [test-groups.network-heavy]
 max-threads = 4
 
+# Tests sharing fixed resources (SQLite, named pipes, Unix sockets).
+# Currently no tests require this group — all temp files are RAII-managed.
+# Reserve for future use when shared-resource tests are added.
+[test-groups.fixed-resource]
+max-threads = 1
+
 # --- Overrides ---
 
 # Security regression: mutates SYNVOID_IPC_KEY_FILE env var

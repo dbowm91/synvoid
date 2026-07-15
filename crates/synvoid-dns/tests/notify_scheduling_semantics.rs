@@ -4,44 +4,21 @@
 //! invalidation on receipt, rate limiting, source allowlist enforcement,
 //! and response shape correctness.
 
+mod support;
+
 use std::net::IpAddr;
 use std::sync::Arc;
 
 use synvoid_dns::cache::{CacheKey, DnsCache};
 use synvoid_dns::notify::{NotifyConfig, NotifyHandler};
-use synvoid_dns::server::{DnsZoneRecord, RecordType, ShardedZoneStore, Zone};
+use synvoid_dns::server::{RecordType, ShardedZoneStore};
 use synvoid_dns::wire;
 
+use support::query::encode_qname;
+use support::response::{response_flags, response_rcode};
+use support::zone::zone_with_soa;
+
 // ── Helpers ─────────────────────────────────────────────────────────────
-
-fn zone_with_soa(origin: &str, serial: u32) -> Zone {
-    let mut z = Zone::new(origin.to_string());
-    z.serial = serial;
-    z.records.insert(
-        ("@".to_string(), RecordType::SOA),
-        vec![DnsZoneRecord {
-            name: "@".to_string(),
-            record_type: RecordType::SOA,
-            value: format!(
-                "ns1.{}. admin.{}. {} 3600 600 604800 300",
-                origin, origin, serial
-            ),
-            ttl: 300,
-            priority: None,
-        }],
-    );
-    z
-}
-
-fn encode_qname(name: &str) -> Vec<u8> {
-    let mut out = Vec::new();
-    for label in name.trim_end_matches('.').split('.') {
-        out.push(label.len() as u8);
-        out.extend_from_slice(label.as_bytes());
-    }
-    out.push(0);
-    out
-}
 
 fn build_notify_query(zone_name: &str) -> Vec<u8> {
     let mut buf = Vec::new();
@@ -56,14 +33,6 @@ fn build_notify_query(zone_name: &str) -> Vec<u8> {
     buf.extend_from_slice(&6u16.to_be_bytes());
     buf.extend_from_slice(&1u16.to_be_bytes());
     buf
-}
-
-fn parse_response_rcode(response: &[u8]) -> u8 {
-    response[3] & 0x0F
-}
-
-fn parse_response_flags(response: &[u8]) -> u16 {
-    u16::from_be_bytes([response[2], response[3]])
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -84,7 +53,7 @@ fn notify_response_has_qr_bit() {
     let client: IpAddr = "10.0.0.1".parse().unwrap();
     let query = build_notify_query("test.local");
     let response = handler.handle_notify(&query, client).unwrap();
-    let flags = parse_response_flags(&response);
+    let flags = response_flags(&response);
     assert!(
         flags & 0x8000 != 0,
         "response must have QR bit set (0x8000), got 0x{:04X}",
@@ -106,7 +75,7 @@ fn notify_response_has_aa_bit() {
     let client: IpAddr = "10.0.0.1".parse().unwrap();
     let query = build_notify_query("test.local");
     let response = handler.handle_notify(&query, client).unwrap();
-    let flags = parse_response_flags(&response);
+    let flags = response_flags(&response);
     assert!(
         flags & 0x0400 != 0,
         "response must have AA bit set (0x0400), got 0x{:04X}",
@@ -128,7 +97,7 @@ fn notify_response_preserves_opcode() {
     let client: IpAddr = "10.0.0.1".parse().unwrap();
     let query = build_notify_query("test.local");
     let response = handler.handle_notify(&query, client).unwrap();
-    let opcode = (parse_response_flags(&response) >> 11) & 0xF;
+    let opcode = (response_flags(&response) >> 11) & 0xF;
     assert_eq!(
         opcode, 4,
         "response opcode must be NOTIFY (4), got {}",
@@ -279,11 +248,11 @@ fn notify_rapid_second_still_returns_noerror() {
     let query = build_notify_query("test.local");
 
     let r1 = handler.handle_notify(&query, client).unwrap();
-    assert_eq!(parse_response_rcode(&r1), wire::RCODE_NOERROR);
+    assert_eq!(response_rcode(&r1), wire::RCODE_NOERROR);
 
     let r2 = handler.handle_notify(&query, client).unwrap();
     assert_eq!(
-        parse_response_rcode(&r2),
+        response_rcode(&r2),
         wire::RCODE_NOERROR,
         "rate-limited NOTIFY must still return NOERROR"
     );
@@ -305,13 +274,13 @@ fn notify_long_interval_both_succeed() {
     let query = build_notify_query("test.local");
 
     let r1 = handler.handle_notify(&query, client).unwrap();
-    assert_eq!(parse_response_rcode(&r1), wire::RCODE_NOERROR);
+    assert_eq!(response_rcode(&r1), wire::RCODE_NOERROR);
 
     // Wait longer than the minimum interval
     std::thread::sleep(std::time::Duration::from_millis(5));
 
     let r2 = handler.handle_notify(&query, client).unwrap();
-    assert_eq!(parse_response_rcode(&r2), wire::RCODE_NOERROR);
+    assert_eq!(response_rcode(&r2), wire::RCODE_NOERROR);
 }
 
 // ══════════════════════════════════════════════════════════════════════

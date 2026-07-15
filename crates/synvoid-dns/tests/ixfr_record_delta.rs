@@ -4,42 +4,18 @@
 //! deltas: individual adds, deletes, and modifications across multiple
 //! SOA-bracketed messages.
 
+mod support;
+
 use std::net::IpAddr;
 use std::sync::Arc;
 
 use synvoid_dns::server::{DnsZoneRecord, RecordType, ShardedZoneStore, Zone};
 use synvoid_dns::transfer::ZoneTransfer;
 
+use support::query::encode_qname;
+use support::zone::zone_with_soa;
+
 // ── Helpers ─────────────────────────────────────────────────────────────
-
-fn zone_with_soa(origin: &str, serial: u32) -> Zone {
-    let mut z = Zone::new(origin.to_string());
-    z.serial = serial;
-    z.records.insert(
-        ("@".to_string(), RecordType::SOA),
-        vec![DnsZoneRecord {
-            name: "@".to_string(),
-            record_type: RecordType::SOA,
-            value: format!(
-                "ns1.{}. admin.{}. {} 3600 600 604800 300",
-                origin, origin, serial
-            ),
-            ttl: 300,
-            priority: None,
-        }],
-    );
-    z
-}
-
-fn encode_qname(name: &str) -> Vec<u8> {
-    let mut out = Vec::new();
-    for label in name.trim_end_matches('.').split('.') {
-        out.push(label.len() as u8);
-        out.extend_from_slice(label.as_bytes());
-    }
-    out.push(0);
-    out
-}
 
 fn build_ixfr_query(zone_name: &str, serial: u32) -> Vec<u8> {
     let mut buf = Vec::new();

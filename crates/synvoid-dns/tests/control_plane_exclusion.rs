@@ -4,140 +4,20 @@
 //! do NOT enter the standard query cache or the query coalescer. They take
 //! dedicated control-plane code paths that bypass both subsystems.
 
+mod support;
+
 use std::net::IpAddr;
 use std::sync::Arc;
 
+use support::query::{build_axfr_query, build_notify_query, build_update_add_record, encode_qname};
+use support::response::response_rcode as parse_response_rcode;
+use support::zone::{zone_with_records, zone_with_soa};
 use synvoid_dns::cache::{CacheKey, DnsCache, TransportClass};
 use synvoid_dns::query_coalesce::{should_skip_coalescing, QueryCoalescer, QueryKey};
-use synvoid_dns::server::{DnsZoneRecord, RecordType, ShardedZoneStore, Zone};
-use synvoid_dns::transfer::{ZoneTransfer, AXFR_QUERY_TYPE};
+use synvoid_dns::server::{DnsZoneRecord, RecordType, ShardedZoneStore};
+use synvoid_dns::transfer::ZoneTransfer;
 use synvoid_dns::update::DynamicUpdateHandler;
 use synvoid_dns::wire;
-
-// ── Helpers ──────────────────────────────────────────────────────────────
-
-fn zone_with_soa(origin: &str, serial: u32) -> Zone {
-    let mut z = Zone::new(origin.to_string());
-    z.serial = serial;
-    z.records.insert(
-        ("@".to_string(), RecordType::SOA),
-        vec![DnsZoneRecord {
-            name: "@".to_string(),
-            record_type: RecordType::SOA,
-            value: format!(
-                "ns1.{}. admin.{}. {} 3600 600 604800 300",
-                origin, origin, serial
-            ),
-            ttl: 300,
-            priority: None,
-        }],
-    );
-    z
-}
-
-fn zone_with_records(origin: &str, serial: u32) -> Zone {
-    let mut z = zone_with_soa(origin, serial);
-    z.records.insert(
-        ("www".to_string(), RecordType::A),
-        vec![DnsZoneRecord {
-            name: "www".to_string(),
-            record_type: RecordType::A,
-            value: "192.0.2.10".to_string(),
-            ttl: 300,
-            priority: None,
-        }],
-    );
-    z.records.insert(
-        ("@".to_string(), RecordType::NS),
-        vec![DnsZoneRecord {
-            name: "@".to_string(),
-            record_type: RecordType::NS,
-            value: format!("ns1.{}", origin),
-            ttl: 3600,
-            priority: None,
-        }],
-    );
-    z
-}
-
-fn encode_qname(name: &str) -> Vec<u8> {
-    let mut out = Vec::new();
-    for label in name.trim_end_matches('.').split('.') {
-        out.push(label.len() as u8);
-        out.extend_from_slice(label.as_bytes());
-    }
-    out.push(0);
-    out
-}
-
-fn build_axfr_query(zone_name: &str) -> Vec<u8> {
-    let mut buf = Vec::new();
-    buf.extend_from_slice(&0xCAFEu16.to_be_bytes());
-    buf.extend_from_slice(&0u16.to_be_bytes());
-    buf.extend_from_slice(&1u16.to_be_bytes());
-    buf.extend_from_slice(&0u16.to_be_bytes());
-    buf.extend_from_slice(&0u16.to_be_bytes());
-    buf.extend_from_slice(&0u16.to_be_bytes());
-    buf.extend_from_slice(&encode_qname(zone_name));
-    buf.extend_from_slice(&AXFR_QUERY_TYPE.to_be_bytes());
-    buf.extend_from_slice(&1u16.to_be_bytes());
-    buf
-}
-
-fn build_update_header(qdcount: u16, ancount: u16, nscount: u16, arcount: u16) -> Vec<u8> {
-    let mut buf = Vec::new();
-    buf.extend_from_slice(&0x1234u16.to_be_bytes());
-    let flags: u16 = (5u16) << 11; // opcode = UPDATE (5)
-    buf.extend_from_slice(&flags.to_be_bytes());
-    buf.extend_from_slice(&qdcount.to_be_bytes());
-    buf.extend_from_slice(&ancount.to_be_bytes());
-    buf.extend_from_slice(&nscount.to_be_bytes());
-    buf.extend_from_slice(&arcount.to_be_bytes());
-    buf
-}
-
-fn build_zone_question(zone: &str) -> Vec<u8> {
-    let mut buf = encode_qname(zone);
-    buf.extend_from_slice(&6u16.to_be_bytes()); // SOA
-    buf.extend_from_slice(&1u16.to_be_bytes()); // IN
-    buf
-}
-
-fn build_rr_add(name: &str, rtype: u16, rdata: &[u8], ttl: u32) -> Vec<u8> {
-    let mut buf = encode_qname(name);
-    buf.extend_from_slice(&rtype.to_be_bytes());
-    buf.extend_from_slice(&1u16.to_be_bytes());
-    buf.extend_from_slice(&ttl.to_be_bytes());
-    buf.extend_from_slice(&(rdata.len() as u16).to_be_bytes());
-    buf.extend_from_slice(rdata);
-    buf
-}
-
-fn build_update_add_record(zone: &str, name: &str, rtype: u16, rdata: &[u8], ttl: u32) -> Vec<u8> {
-    let mut buf = build_update_header(1, 0, 0, 1);
-    buf.extend_from_slice(&build_zone_question(zone));
-    buf.extend_from_slice(&build_rr_add(name, rtype, rdata, ttl));
-    buf
-}
-
-fn build_notify_query(zone_name: &str) -> Vec<u8> {
-    let mut buf = Vec::new();
-    buf.extend_from_slice(&0x9Au16.to_be_bytes());
-    let flags: u16 = (4u16) << 11; // opcode = NOTIFY (4)
-    buf.extend_from_slice(&flags.to_be_bytes());
-    buf.extend_from_slice(&1u16.to_be_bytes());
-    buf.extend_from_slice(&0u16.to_be_bytes());
-    buf.extend_from_slice(&0u16.to_be_bytes());
-    buf.extend_from_slice(&0u16.to_be_bytes());
-    buf.extend_from_slice(&encode_qname(zone_name));
-    buf.extend_from_slice(&6u16.to_be_bytes());
-    buf.extend_from_slice(&1u16.to_be_bytes());
-    buf
-}
-
-fn parse_response_rcode(response: &[u8]) -> u8 {
-    response[3] & 0x0F
-}
 
 fn cache_key_for_a(origin: &str, name: &str, client: IpAddr) -> CacheKey {
     let qname = if name == "@" || name.is_empty() {
@@ -190,7 +70,7 @@ fn axfr_bypasses_cache_returns_full_zone() {
     );
 
     // Build AXFR query
-    let query = build_axfr_query(origin);
+    let query = build_axfr_query(0xCAFE, origin);
 
     // The AXFR handler reads directly from zone store.
     // We can't call handle_axfr_request without a TCP socket, so we verify
@@ -500,7 +380,7 @@ fn notify_bypasses_cache_and_invalidates() {
         .with_source_allowlist(vec!["*".to_string()]);
 
     // Build and send NOTIFY
-    let query = build_notify_query(origin);
+    let query = build_notify_query(0x9A, origin);
     let response = handler.handle_notify(&query, client);
 
     assert!(
@@ -620,7 +500,7 @@ fn axfr_reflects_zone_store_not_cache() {
         false, // tcp_only
     );
 
-    let query = build_axfr_query(origin);
+    let query = build_axfr_query(0xCAFE, origin);
     let response =
         zt.handle_axfr_request(&format!("{}.", origin), client, None, 0xCAF, &query, false);
 
@@ -726,7 +606,7 @@ fn notify_uses_notify_received_invalidation_reason() {
         .with_cache(cache.clone())
         .with_source_allowlist(vec!["*".to_string()]);
 
-    let query = build_notify_query(origin);
+    let query = build_notify_query(0x9A, origin);
     let response = handler.handle_notify(&query, client);
     assert!(response.is_some(), "NOTIFY must return a response");
 

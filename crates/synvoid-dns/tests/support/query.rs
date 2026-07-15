@@ -1,7 +1,8 @@
-/// Common DNS query builders for integration tests.
-///
-/// All functions return explicit `Vec<u8>` wire-format buffers.
-/// No global state is mutated.  Callers own the returned buffers.
+//! Common DNS query builders for integration tests.
+//!
+//! All functions return explicit `Vec<u8>` wire-format buffers.
+//! No global state is mutated.  Callers own the returned buffers.
+#![allow(dead_code)]
 
 /// Build a standard DNS query in wire format.
 ///
@@ -66,7 +67,7 @@ pub fn build_ixfr_query(id: u16, qname: &str) -> Vec<u8> {
 /// the RD bit, matching RFC 1996 semantics.
 pub fn build_notify_query(id: u16, qname: &str) -> Vec<u8> {
     let mut q = build_query(id, qname, 6); // SOA = 6
-    // Set opcode to 4 (NOTIFY): bits 15-11 of the flags word.
+                                           // Set opcode to 4 (NOTIFY): bits 15-11 of the flags word.
     let flags = u16::from_be_bytes([q[2], q[3]]);
     let new_flags = (flags & 0x87FF) | (4 << 11);
     q[2] = (new_flags >> 8) as u8;
@@ -89,7 +90,7 @@ pub fn build_query_with_do_bit(id: u16, qname: &str, qtype: u16) -> Vec<u8> {
     q.extend_from_slice(&4096u16.to_be_bytes()); // class = UDP payload size
     q.extend_from_slice(&0x0000_8000u32.to_be_bytes()); // TTL: DO=1
     q.extend_from_slice(&0u16.to_be_bytes()); // RDLENGTH
-    // Update ARCOUNT to 1
+                                              // Update ARCOUNT to 1
     let arcount_pos = 10;
     q[arcount_pos] = 0;
     q[arcount_pos + 1] = 1;
@@ -152,7 +153,13 @@ pub fn build_rr(name: &str, rtype: u16, rdata: &[u8], ttl: u32) -> Vec<u8> {
 /// - 0 prerequisites
 /// - 1 update RR
 /// - 0 additional data
-pub fn build_update_add_record(zone: &str, name: &str, rtype: u16, rdata: &[u8], ttl: u32) -> Vec<u8> {
+pub fn build_update_add_record(
+    zone: &str,
+    name: &str,
+    rtype: u16,
+    rdata: &[u8],
+    ttl: u32,
+) -> Vec<u8> {
     let mut buf = build_update_header(1, 0, 0, 1);
     buf.extend_from_slice(&build_zone_question(zone));
     buf.extend_from_slice(&build_rr(name, rtype, rdata, ttl));

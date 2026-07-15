@@ -1,7 +1,8 @@
-/// DNS response wire-format parsing helpers for integration tests.
-///
-/// These functions read fields from raw DNS response buffers without
-/// allocating.  All indices are bounds-checked against `resp.len()`.
+//! DNS response wire-format parsing helpers for integration tests.
+//!
+//! These functions read fields from raw DNS response buffers without
+//! allocating.  All indices are bounds-checked against `resp.len()`.
+#![allow(dead_code)]
 
 /// Extract the flags word (bytes 2–3) from a DNS response.
 pub fn response_flags(resp: &[u8]) -> u16 {

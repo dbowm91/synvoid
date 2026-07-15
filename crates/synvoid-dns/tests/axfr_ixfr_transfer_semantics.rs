@@ -1,86 +1,16 @@
+mod support;
+
 use std::net::IpAddr;
 use std::sync::Arc;
 
 use synvoid_dns::server::{DnsZoneRecord, RecordType, ShardedZoneStore, Zone};
-use synvoid_dns::transfer::{ZoneTransfer, AXFR_QUERY_TYPE, IXFR_QUERY_TYPE};
+use synvoid_dns::transfer::{ZoneTransfer, IXFR_QUERY_TYPE};
 
-fn zone_with_soa(origin: &str, serial: u32) -> Zone {
-    let mut z = Zone::new(origin.to_string());
-    z.serial = serial;
-    z.records.insert(
-        ("@".to_string(), RecordType::SOA),
-        vec![DnsZoneRecord {
-            name: "@".to_string(),
-            record_type: RecordType::SOA,
-            value: format!(
-                "ns1.{}. admin.{}. {} 3600 600 604800 300",
-                origin, origin, serial
-            ),
-            ttl: 300,
-            priority: None,
-        }],
-    );
-    z
-}
-
-fn zone_with_records(origin: &str, serial: u32) -> Zone {
-    let mut z = zone_with_soa(origin, serial);
-    z.records.insert(
-        ("www".to_string(), RecordType::A),
-        vec![DnsZoneRecord {
-            name: "www".to_string(),
-            record_type: RecordType::A,
-            value: "192.0.2.10".to_string(),
-            ttl: 300,
-            priority: None,
-        }],
-    );
-    z.records.insert(
-        ("@".to_string(), RecordType::NS),
-        vec![DnsZoneRecord {
-            name: "@".to_string(),
-            record_type: RecordType::NS,
-            value: format!("ns1.{}", origin),
-            ttl: 3600,
-            priority: None,
-        }],
-    );
-    z
-}
-
-fn update_soa_value(zone: &mut Zone, origin: &str, serial: u32) {
-    if let Some(soa_records) = zone.records.get_mut(&("@".to_string(), RecordType::SOA)) {
-        for r in soa_records.iter_mut() {
-            r.value = format!(
-                "ns1.{}. admin.{}. {} 3600 600 604800 300",
-                origin, origin, serial
-            );
-        }
-    }
-}
-
-fn encode_qname(name: &str) -> Vec<u8> {
-    let mut out = Vec::new();
-    for label in name.trim_end_matches('.').split('.') {
-        out.push(label.len() as u8);
-        out.extend_from_slice(label.as_bytes());
-    }
-    out.push(0);
-    out
-}
+use support::query::encode_qname;
+use support::zone::{update_soa_value, zone_with_records, zone_with_soa};
 
 fn build_axfr_query(zone_name: &str) -> Vec<u8> {
-    let mut buf = Vec::new();
-    buf.extend_from_slice(&0xCAFEu16.to_be_bytes());
-    buf.extend_from_slice(&0u16.to_be_bytes());
-    buf.extend_from_slice(&1u16.to_be_bytes());
-    buf.extend_from_slice(&0u16.to_be_bytes());
-    buf.extend_from_slice(&0u16.to_be_bytes());
-    buf.extend_from_slice(&0u16.to_be_bytes());
-    buf.extend_from_slice(&encode_qname(zone_name));
-    buf.extend_from_slice(&AXFR_QUERY_TYPE.to_be_bytes());
-    buf.extend_from_slice(&1u16.to_be_bytes());
-    buf
+    support::query::build_axfr_query(0xCAFE, zone_name)
 }
 
 fn build_ixfr_query(zone_name: &str, serial: u32) -> Vec<u8> {
@@ -92,7 +22,7 @@ fn build_ixfr_query(zone_name: &str, serial: u32) -> Vec<u8> {
     buf.extend_from_slice(&0u16.to_be_bytes());
     buf.extend_from_slice(&1u16.to_be_bytes());
     buf.extend_from_slice(&encode_qname(zone_name));
-    buf.extend_from_slice(&IXFR_QUERY_TYPE.to_be_bytes());
+    buf.extend_from_slice(&synvoid_dns::transfer::IXFR_QUERY_TYPE.to_be_bytes());
     buf.extend_from_slice(&1u16.to_be_bytes());
     let origin_bytes = zone_name.trim_end_matches('.').as_bytes();
     buf.push(origin_bytes.len() as u8);

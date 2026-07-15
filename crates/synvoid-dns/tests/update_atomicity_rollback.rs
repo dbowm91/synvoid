@@ -4,6 +4,8 @@
 //! or the zone remains unchanged. Tests prerequisite failures, serial
 //! preservation, and concurrent update safety.
 
+mod support;
+
 use std::net::IpAddr;
 use std::sync::Arc;
 
@@ -12,26 +14,12 @@ use synvoid_dns::server::{DnsZoneRecord, RecordType, ShardedZoneStore, Zone};
 use synvoid_dns::update::DynamicUpdateHandler;
 use synvoid_dns::wire;
 
-// ── Helpers ─────────────────────────────────────────────────────────────
+use support::query::{
+    build_rr, build_update_add_record, build_update_header, build_zone_question, encode_qname,
+};
+use support::zone::zone_with_soa;
 
-fn zone_with_soa(origin: &str, serial: u32) -> Zone {
-    let mut z = Zone::new(origin.to_string());
-    z.serial = serial;
-    z.records.insert(
-        ("@".to_string(), RecordType::SOA),
-        vec![DnsZoneRecord {
-            name: "@".to_string(),
-            record_type: RecordType::SOA,
-            value: format!(
-                "ns1.{}. admin.{}. {} 3600 600 604800 300",
-                origin, origin, serial
-            ),
-            ttl: 300,
-            priority: None,
-        }],
-    );
-    z
-}
+// ── Helpers ─────────────────────────────────────────────────────────────
 
 fn zone_with_a_record(origin: &str, serial: u32, name: &str, ip: &str) -> Zone {
     let mut z = zone_with_soa(origin, serial);
@@ -48,58 +36,12 @@ fn zone_with_a_record(origin: &str, serial: u32, name: &str, ip: &str) -> Zone {
     z
 }
 
-fn encode_qname(name: &str) -> Vec<u8> {
-    let mut out = Vec::new();
-    for label in name.trim_end_matches('.').split('.') {
-        out.push(label.len() as u8);
-        out.extend_from_slice(label.as_bytes());
-    }
-    out.push(0);
-    out
-}
-
-fn build_update_header(qdcount: u16, ancount: u16, nscount: u16, arcount: u16) -> Vec<u8> {
-    let mut buf = Vec::new();
-    buf.extend_from_slice(&0x1234u16.to_be_bytes());
-    let flags: u16 = (5u16) << 11;
-    buf.extend_from_slice(&flags.to_be_bytes());
-    buf.extend_from_slice(&qdcount.to_be_bytes());
-    buf.extend_from_slice(&ancount.to_be_bytes());
-    buf.extend_from_slice(&nscount.to_be_bytes());
-    buf.extend_from_slice(&arcount.to_be_bytes());
-    buf
-}
-
-fn build_zone_question(zone: &str) -> Vec<u8> {
-    let mut buf = encode_qname(zone);
-    buf.extend_from_slice(&6u16.to_be_bytes());
-    buf.extend_from_slice(&1u16.to_be_bytes());
-    buf
-}
-
-fn build_rr_add(name: &str, rtype: u16, rdata: &[u8], ttl: u32) -> Vec<u8> {
-    let mut buf = encode_qname(name);
-    buf.extend_from_slice(&rtype.to_be_bytes());
-    buf.extend_from_slice(&1u16.to_be_bytes());
-    buf.extend_from_slice(&ttl.to_be_bytes());
-    buf.extend_from_slice(&(rdata.len() as u16).to_be_bytes());
-    buf.extend_from_slice(rdata);
-    buf
-}
-
 fn build_rr_delete(name: &str, rtype: u16) -> Vec<u8> {
     let mut buf = encode_qname(name);
     buf.extend_from_slice(&rtype.to_be_bytes());
     buf.extend_from_slice(&2u16.to_be_bytes());
     buf.extend_from_slice(&0u32.to_be_bytes());
     buf.extend_from_slice(&0u16.to_be_bytes());
-    buf
-}
-
-fn build_update_add_record(zone: &str, name: &str, rtype: u16, rdata: &[u8], ttl: u32) -> Vec<u8> {
-    let mut buf = build_update_header(1, 0, 0, 1);
-    buf.extend_from_slice(&build_zone_question(zone));
-    buf.extend_from_slice(&build_rr_add(name, rtype, rdata, ttl));
     buf
 }
 
@@ -114,7 +56,7 @@ fn build_multi_record_update(zone: &str, records: &[(&str, u16, Vec<u8>, u32)]) 
     let mut buf = build_update_header(1, 0, 0, records.len() as u16);
     buf.extend_from_slice(&build_zone_question(zone));
     for (name, rtype, rdata, ttl) in records {
-        buf.extend_from_slice(&build_rr_add(name, *rtype, rdata, *ttl));
+        buf.extend_from_slice(&build_rr(name, *rtype, rdata, *ttl));
     }
     buf
 }
@@ -286,8 +228,8 @@ fn atomic_cname_coexistence_preserves_zone() {
     // Add CNAME + A for same name
     let mut buf = build_update_header(1, 0, 0, 2);
     buf.extend_from_slice(&build_zone_question("test.local"));
-    buf.extend_from_slice(&build_rr_add("www", 5, b"target.test.local.", 300)); // CNAME
-    buf.extend_from_slice(&build_rr_add("www", 1, &[10, 0, 0, 1], 300)); // A
+    buf.extend_from_slice(&build_rr("www", 5, b"target.test.local.", 300)); // CNAME
+    buf.extend_from_slice(&build_rr("www", 1, &[10, 0, 0, 1], 300)); // A
 
     let _result = handler.handle_update(&buf, client);
     // May succeed or fail depending on validation, but zone must be consistent

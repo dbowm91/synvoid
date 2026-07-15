@@ -1,33 +1,17 @@
+mod support;
+
 use std::net::IpAddr;
 use std::sync::Arc;
 
 use parking_lot::RwLock;
 use synvoid_dns::edns::EcsFilterConfig;
 use synvoid_dns::server::RecordType;
-use synvoid_dns::server::{DnsServer, DnsZoneRecord, QueryContext, ShardedZoneStore, Zone};
+use synvoid_dns::server::{DnsServer, DnsZoneRecord, ShardedZoneStore, Zone};
 use synvoid_dns::zone_trie::ZoneTrie;
 
-fn build_query(id: u16, qname: &str, qtype: u16) -> Vec<u8> {
-    let mut q = Vec::with_capacity(12 + 256 + 4);
-    q.extend_from_slice(&id.to_be_bytes());
-    q.extend_from_slice(&0x0100u16.to_be_bytes());
-    q.extend_from_slice(&1u16.to_be_bytes());
-    q.extend_from_slice(&0u16.to_be_bytes());
-    q.extend_from_slice(&0u16.to_be_bytes());
-    q.extend_from_slice(&0u16.to_be_bytes());
-    if qname.is_empty() || qname == "." {
-        q.push(0);
-    } else {
-        for label in qname.split('.').filter(|s| !s.is_empty()) {
-            q.push(label.len() as u8);
-            q.extend_from_slice(label.as_bytes());
-        }
-        q.push(0);
-    }
-    q.extend_from_slice(&qtype.to_be_bytes());
-    q.extend_from_slice(&1u16.to_be_bytes());
-    q
-}
+use support::context::make_ctx;
+use support::query::build_query;
+use support::response::*;
 
 fn build_test_zone() -> Zone {
     let mut zone = Zone::new("test.local".to_string());
@@ -107,55 +91,6 @@ fn setup() -> (
     let zone_trie = Arc::new(RwLock::new(trie));
     let ecs_config = EcsFilterConfig::default();
     (zones, zone_trie, ecs_config)
-}
-
-fn make_ctx<'a>(
-    zones: &'a Arc<ShardedZoneStore>,
-    zone_trie: &'a Arc<RwLock<ZoneTrie>>,
-    ecs_filter_config: &'a EcsFilterConfig,
-) -> QueryContext<'a> {
-    QueryContext {
-        zones,
-        zone_trie,
-        geoip_lookup: None,
-        min_geo_ttl: 0,
-        negative_cache_ttl: 300,
-        cache: None,
-        dnssec: None,
-        signer_name: None,
-        query_validator: None,
-        firewall: None,
-        connection_limits: None,
-        max_idle_time: None,
-        zone_transfer: None,
-        ecs_filter_config,
-        rate_limiter: None,
-        rrl_enabled: false,
-        update_handler: None,
-        notify_handler: None,
-        query_coalescer: None,
-        dns64_translator: None,
-        acme_dns_challenges: None,
-        cookie_server: None,
-        #[cfg(feature = "mesh")]
-        mesh_registry: None,
-    }
-}
-
-fn response_flags(resp: &[u8]) -> u16 {
-    u16::from_be_bytes([resp[2], resp[3]])
-}
-
-fn response_rcode(resp: &[u8]) -> u8 {
-    (response_flags(resp) & 0x000F) as u8
-}
-
-fn response_ancount(resp: &[u8]) -> u16 {
-    u16::from_be_bytes([resp[6], resp[7]])
-}
-
-fn is_authoritative(resp: &[u8]) -> bool {
-    response_flags(resp) & 0x0400 != 0
 }
 
 fn flag_tc(resp: &[u8]) -> bool {

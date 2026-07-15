@@ -1,18 +1,18 @@
-/// Common test context and DnsServer setup helpers.
-///
-/// These functions build `QueryContext` values with sensible defaults
-/// (all optional fields `None`).  Tests that need non-default context
-/// fields (cache, DNSSEC, update handler, etc.) should construct
-/// `QueryContext` directly and may still use [`super::zone::build_test_zone`]
-/// for zone creation.
-///
-/// No global state is mutated.  All values are returned explicitly.
-
+//! Common test context and DnsServer setup helpers.
+//!
+//! These functions build `QueryContext` values with sensible defaults
+//! (all optional fields `None`).  Tests that need non-default context
+//! fields (cache, DNSSEC, update handler, etc.) should construct
+//! `QueryContext` directly and may still use [`super::zone::build_test_zone`]
+//! for zone creation.
+//!
+//! No global state is mutated.  All values are returned explicitly.
+#![allow(dead_code)]
 use std::sync::Arc;
 
 use parking_lot::RwLock;
 use synvoid_dns::edns::EcsFilterConfig;
-use synvoid_dns::server::{QueryContext, ShardedZoneStore, Zone};
+use synvoid_dns::server::{QueryContext, ShardedZoneStore};
 use synvoid_dns::zone_trie::ZoneTrie;
 
 /// Set up the default zone store, zone trie, and ECS config for testing.
@@ -25,7 +25,11 @@ use synvoid_dns::zone_trie::ZoneTrie;
 ///
 /// Callers keep the returned Arcs alive for the test duration; they
 /// must outlive any `QueryContext` built from them.
-pub fn setup() -> (Arc<ShardedZoneStore>, Arc<RwLock<ZoneTrie>>, EcsFilterConfig) {
+pub fn setup() -> (
+    Arc<ShardedZoneStore>,
+    Arc<RwLock<ZoneTrie>>,
+    EcsFilterConfig,
+) {
     let zone = super::zone::build_test_zone();
     let zones = Arc::new(ShardedZoneStore::new());
     zones.insert("test.local".to_string(), zone);

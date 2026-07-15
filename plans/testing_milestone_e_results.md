@@ -187,15 +187,17 @@ strategy:
 
 ### E11 — Impact Measurement
 
-| Metric | Before | After |
-|--------|--------|-------|
-| Fixed-port test count | 1 (tunnel fallback) | 0 (production code, not test) |
-| Env-var race risk | 3 unserialized tests | 0 |
-| Process leak risk | 1 unguarded spawn | 0 |
-| Nextest override patterns | 4 broad | 6 evidence-based |
-| DNS fixture duplication | ~1600 lines across 8+ files | Centralized in 5 support modules |
-| Fuzz CI execution | Serial loop | Parallel matrix (4 concurrent) |
-| Test failures introduced | — | 0 |
+| Metric | Before | After (Initial) | After (Gap Closure) |
+|--------|--------|-----------------|---------------------|
+| Fixed-port test count | 1 (tunnel fallback) | 0 (production code, not test) | 0 (documented as production fallback) |
+| Env-var race risk | 3 unserialized tests | 0 | 0 |
+| Process leak risk | 1 unguarded spawn | 0 | 0 |
+| Nextest override patterns | 4 broad | 6 evidence-based | 6 evidence-based + fixed-resource group |
+| DNS fixture duplication | ~1600 lines across 16+ files | Centralized in 5 support modules | **1,419 lines removed** across 16 files |
+| Fuzz CI execution | Serial loop | Parallel matrix (4 concurrent) | Parallel matrix (4 concurrent) |
+| `std::thread::sleep` blocking tokio | 1 site | 1 site | **0** (replaced with `tokio::time::sleep`) |
+| Repetition validation | None | None | **5/5 passes** (security_regression, DNS interop, control plane) |
+| Test failures introduced | — | 0 | 0 |
 
 No test failures introduced. All existing tests continue to pass.
 
@@ -213,11 +215,11 @@ cargo test --profile ci --tests
 
 ## Known Limitations
 
-- **DNS test support module**: Created but not yet adopted by existing tests (incremental adoption)
-- **`std::thread::sleep(1ms)`**: Remains in `worker_supervision_control_flow.rs:3490` (low severity, 1ms, timing behavior under test)
-- **5s startup sleep**: Remains in `fault_injection_test.rs` (OS process initialization requirement)
+- **5s startup sleep**: Remains in `fault_injection_test.rs` (OS process initialization requirement — cannot be replaced with readiness signal)
 - **`synvoid-testkit`**: Has zero consumers (documented, available for future use per ≥2-consumer rule)
 - **No `start_paused` time tests**: Not introduced (would require semantic validation per test)
+- **DNS interop_authoritative/truncation**: Local `build_test_zone` retained (extended records beyond support module's base zone). Local `setup` wrappers use local zone.
+- **`fault_injection_test`**: Pre-existing failure (requires built binary + running worker process; not caused by Milestone E changes)
 
 ## Milestone F Handoff
 
@@ -225,18 +227,31 @@ Milestone E provides:
 
 - **Resource inventory** (`docs/testing/test-resource-inventory.md`) — authoritative baseline for performance budgets
 - **Test taxonomy** (`docs/testing/test-taxonomy.md`) — lane assignments for scheduling optimization
-- **Nextest groups** (`.config/nextest.toml`) — foundation for further concurrency improvements
-- **DNS support module** (`crates/synvoid-dns/tests/support/`) — ready for incremental adoption to reduce test code duplication
-- **Process guards** — `ProcessGuard` pattern available for other process-spawning tests
-- **Env serialization guard** — `OnceLock<Mutex<()>>` pattern available for other global-state mutations
-- **Fuzz matrix** — parallel execution infrastructure for nightly fuzz smoke runs
+- **Nextest groups** (`.config/nextest.toml`) — 4 evidence-based groups (global-env, process-spawn, network-heavy, fixed-resource) with targeted concurrency limits
+- **DNS support module** (`crates/synvoid-dns/tests/support/`) — 1,419 lines of duplication removed across 16 files; remaining tests use local zones with extended records
+- **Process guards** — `ProcessGuard` RAII pattern used in `fault_injection_test.rs`
+- **Env serialization guard** — `OnceLock<Mutex<()>>` pattern used in `security_regression.rs`
+- **Fuzz matrix** — parallel execution infrastructure for nightly fuzz smoke runs (17 targets, max-parallel: 4)
+- **Repetition validation** — 5/5 passes on security_regression, DNS interop (37 tests), and control plane (91 tests) suites
 
 ## Documentation Updated
 
-- `docs/testing/test-resource-inventory.md` — created
+- `docs/testing/test-resource-inventory.md` — created, updated with tunnel port rationale
 - `docs/testing/test-taxonomy.md` — created
-- `crates/synvoid-dns/tests/support/` — created (5 modules)
+- `crates/synvoid-dns/tests/support/` — created (5 modules), adopted in 16 test files
 - `crates/synvoid-testkit/README.md` — created
-- `.config/nextest.toml` — updated with evidence-based groups
+- `.config/nextest.toml` — updated with 4 evidence-based groups + fixed-resource
 - `.github/workflows/` — fuzz-smoke job converted to matrix strategy
 - `AGENTS.md` — updated fuzz target list
+- `plans/testing_milestone_e_results.md` — gap closure metrics and validation
+
+## Gap Closure Validation
+
+Repetition campaigns (5 runs each):
+
+| Suite | Tests | Result |
+|-------|-------|--------|
+| `security_regression` | 15 | 5/5 pass |
+| DNS interop (6 files) | 37 | 5/5 pass |
+| DNS control plane (9 files) | 91 | 5/5 pass |
+| `fault_injection_test` | 1 | Pre-existing failure (env-dependent) |

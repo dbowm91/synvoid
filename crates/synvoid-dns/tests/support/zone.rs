@@ -1,7 +1,7 @@
-/// Common zone construction helpers for integration tests.
-///
-/// All functions return owned `Zone` values.  No global state is mutated.
-
+//! Common zone construction helpers for integration tests.
+//!
+//! All functions return owned `Zone` values.  No global state is mutated.
+#![allow(dead_code)]
 use synvoid_dns::server::{DnsZoneRecord, RecordType, Zone};
 
 /// Build a minimal test zone with SOA, NS, ns1 A, and www A records.

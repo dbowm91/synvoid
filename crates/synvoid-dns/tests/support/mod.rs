@@ -39,13 +39,18 @@ pub mod response;
 pub mod zone;
 
 // Re-export the most commonly used items at crate level for convenience.
+// Not all re-exports are used by every test file — that's expected.
+#[allow(unused_imports)]
 pub use context::{ephemeral_port, make_config, make_ctx, setup};
+#[allow(unused_imports)]
 pub use query::{
     build_axfr_query, build_ixfr_query, build_notify_query, build_query, build_query_with_do_bit,
     build_rr, build_update_add_record, build_update_header, build_zone_question, encode_qname,
 };
+#[allow(unused_imports)]
 pub use response::{
     is_authoritative, is_recursion_available, is_response, parse_answer_types, response_ancount,
     response_arcount, response_flags, response_nscount, response_rcode, skip_name, skip_wire_name,
 };
+#[allow(unused_imports)]
 pub use zone::{build_test_zone, update_soa_value, zone_with_records, zone_with_soa};

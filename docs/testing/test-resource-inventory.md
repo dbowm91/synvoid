@@ -149,6 +149,8 @@ All temp files are RAII-managed. No manual cleanup gaps.
 
 **All other port references are either ephemeral (`:0`) or string-only (never bound).**
 
+**Retained fixed port rationale**: `0.0.0.0:51821` is a production fallback in `bind_address()` for malformed config — no test binds to it. No serialization rule required; this is not a test resource conflict.
+
 ---
 
 ## 10. Top Slow Tests (Estimated >10s)
@@ -169,7 +171,7 @@ All temp files are RAII-managed. No manual cleanup gaps.
 |---|---|---|---|---|
 | 1 | `security_regression.rs` | `set_var`/`remove_var` without explicit lock | **HIGH** | Add `OnceLock<Mutex<()>>` guard; remove `--test-threads=1` reliance |
 | 2 | `fault_injection_test.rs` | No panic guard on process cleanup | **HIGH** | Add `scopeguard` or RAII wrapper around `Command` child |
-| 3 | `synvoid-tunnel` `quic/runtime.rs:431` | Fixed port `51821` | **HIGH** | Change to `0.0.0.0:0` or serialize test |
+| 3 | `synvoid-tunnel` `quic/runtime.rs:431` | Fixed port `51821` | **RESOLVED** | Production fallback for malformed config; no test binds to it — no serialization needed |
 | 4 | `worker_supervision_control_flow.rs:3490` | `std::thread::sleep(1ms)` blocks tokio | **MEDIUM** | Replace with `tokio::time::sleep(Duration::from_millis(1)).await` |
 | 5 | `worker_supervision_control_flow.rs` | 100s sleep as task body | **MEDIUM** | Add nextest override `timeout = 120s` |
 | 6 | `fault_injection_test.rs` | No nextest timeout override | **MEDIUM** | Add `threads-required = 1` and `timeout = 60s` |

@@ -244,3 +244,49 @@ Root test binary count reduced from ~43 to ~26 integration targets. Estimated co
 - Estimated total root compile reduction: ~40-80s on cold build
 - Localized domain changes no longer rebuild unrelated root integration targets
 - Per-crate test suites (synvoid-dns, synvoid-core, etc.) compile independently without root dependency graph
+
+## Milestone E: Test-Level Efficiency (Gap Closure)
+
+### DNS Fixture Deduplication
+
+1,419 lines of duplicated test code removed across 16 DNS integration test files:
+
+| File | Lines Removed |
+|------|---------------|
+| `authoritative_negative.rs` | 118 |
+| `dns_interop_authoritative.rs` | 93 |
+| `dns_interop_truncation.rs` | 76 |
+| `dns_interop_transfers.rs` | 151 |
+| `dns_interop_recursive.rs` | 137 |
+| `dns_interop_update_notify.rs` | 120 |
+| `dns_interop_dnssec.rs` | 185 |
+| `control_plane_exclusion.rs` | 117 |
+| `control_plane_cache_completion.rs` | 107 |
+| `notify_behavior.rs` | 27 |
+| `notify_scheduling_semantics.rs` | 31 |
+| `update_authorized_semantics.rs` | 58 |
+| `update_atomicity_rollback.rs` | 58 |
+| `axfr_ixfr_transfer_semantics.rs` | 70 |
+| `ixfr_record_delta.rs` | 24 |
+| `control_plane_authorization.rs` | 47 |
+
+### Nextest Groups
+
+4 evidence-based test groups replacing broad pattern overrides:
+
+| Group | Max Threads | Tests |
+|-------|-------------|-------|
+| `global-env` | 1 | security_regression, metrics_wiring |
+| `process-spawn` | 2 | fault_injection |
+| `network-heavy` | 4 | DNS integration tests |
+| `fixed-resource` | 1 | Reserved (no current consumers) |
+
+### Repetition Validation
+
+5-run campaigns on touched suites — 0 flakes:
+
+| Suite | Tests | Runs | Result |
+|-------|-------|------|--------|
+| security_regression | 15 | 5 | 5/5 pass |
+| DNS interop (6 files) | 37 | 5 | 5/5 pass |
+| DNS control plane (9 files) | 91 | 5 | 5/5 pass |
