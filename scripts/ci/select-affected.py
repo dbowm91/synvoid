@@ -5,6 +5,8 @@ Used by CI to select which workspace packages, root tests, and feature
 classes need validation for a pull request or commit range.
 
 Falls back to full validation (exit 0) on any error — fail-safe by design.
+
+See docs/testing/ci-lane-policy.md for the CI lane architecture.
 """
 
 from __future__ import annotations
