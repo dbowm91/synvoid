@@ -361,6 +361,14 @@ fn ci_lane_consistency_guard() {
             "cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci",
         ),
         ("core-compile", "cargo check --no-default-features"),
+        // clippy must use --all-targets but NOT --all-features in PR fast lane
+        // (--all-features clippy belongs in release lane only)
+        ("clippy", "cargo clippy --all-targets -- -D warnings"),
+        // security-regression must use nextest with CI profile and --test-threads=1
+        (
+            "security-regression",
+            "cargo nextest run --test security_regression --cargo-profile ci --profile ci",
+        ),
     ];
 
     for (name, cmd) in &checks {
@@ -397,6 +405,21 @@ fn ci_lane_consistency_guard() {
                 i + 1,
                 trimmed
             ));
+        }
+    }
+
+    // Check that PR fast clippy does NOT use --all-features (--all-features clippy
+    // belongs in release lane only; PR fast uses --all-targets only)
+    for (i, line) in pr_fast_content.lines().enumerate() {
+        if line.contains("clippy") && line.contains("--all-features") {
+            let trimmed = line.trim();
+            if !trimmed.starts_with('#') {
+                violations.push(format!(
+                    "pr-fast.yml:{}: clippy with --all-features found in PR fast lane (belongs in release lane only): {}",
+                    i + 1,
+                    trimmed
+                ));
+            }
         }
     }
 

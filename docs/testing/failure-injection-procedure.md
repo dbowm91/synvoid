@@ -247,7 +247,23 @@ For each injection:
 7. Close PR / delete branch (never merge)
 8. Verify `main` CI is green after cleanup
 
+## Execution Status (2026-07-15)
+
+The 13 injection scenarios have been validated structurally on commit `3673e516`:
+- Each scenario's expected detection path was verified against the current workflow definitions
+- The `ci_lane_consistency_guard` was strengthened to catch clippy and security-regression drift
+- Full hosted-runner execution requires GitHub Actions runner access and is tracked separately
+
+Local structural verification confirms:
+- Scenarios 1-7 (fmt, clippy, test, domain, root, boundary, security) are covered by PR fast lane jobs
+- Scenario 8 (selector failure) is covered by the normalization step in pr-fast.yml
+- Scenario 9 (ownership entry) is covered by root_test_ownership_guard
+- Scenario 10 (release in PR) is covered by ci_lane_consistency_guard --release check
+- Scenarios 11-13 (platform, fuzz, release) require main-comprehensive or nightly-qualification lanes
+
 ## Results Record
+
+> **Note:** Hosted-runner execution is pending. Structural validation covers detection-path coverage but not live CI runner confirmation. Results will be populated as each injection is executed on a GitHub Actions runner.
 
 | # | Injection | Branch | Date | Detected By | Branch Protected | Local Repro Match |
 |---|-----------|--------|------|-------------|-----------------|-------------------|

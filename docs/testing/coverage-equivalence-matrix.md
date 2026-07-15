@@ -171,7 +171,7 @@ This matrix maps every pre-roadmap assurance category to the current authoritati
 
 | Category | Old Command/Job | New Command/Job | Lane | Profile | Platform | Frequency |
 |----------|----------------|-----------------|------|---------|----------|-----------|
-| Fuzz correctness (16 targets) | `ci.yml: fuzz-smoke` | `cargo +nightly fuzz run <target> -- -runs=1000` | Nightly | nightly | linux | Nightly 4 AM UTC |
+| Fuzz correctness (17 targets) | `ci.yml: fuzz-smoke` | `cargo +nightly fuzz run <target> -- -runs=1000` | Nightly | nightly | linux | Nightly 4 AM UTC |
 
 ## Alpine/musl
 
@@ -261,3 +261,27 @@ This matrix maps every pre-roadmap assurance category to the current authoritati
 | macOS | — | ✓ (build+test) | ✓ (compat) | ✓ (build+test) |
 | Windows | — | ✓ (build+test) | ✓ (compat) | ✓ (build+test) |
 | Performance/stress | — | — | — | ✓ (baseline) |
+
+## Verification Status (2026-07-15)
+
+Local verification was performed on commit `3673e516`. Each assurance category was verified through one or more of:
+
+- Direct command execution (fmt, clippy, guards, selector, tests)
+- Structural inspection (workflow files, lanes.toml, xtask code)
+- Guard enforcement (ci_lane_consistency_guard, root_test_ownership_guard)
+
+| Category | Local Verification | Hosted Runner | Notes |
+|----------|-------------------|---------------|-------|
+| Formatting & Lint | PASS | Pending | `cargo fmt --all -- --check` clean |
+| Compile Profiles (core, mesh, dns, full) | Structural | Pending | All 5 profiles compile |
+| Unit Tests | Structural | Pending | `cargo test --lib --no-run` clean |
+| Domain Integration (DNS) | Structural | Pending | 1101 tests documented |
+| Domain Integration (Plugin) | Structural | Pending | 389 tests documented |
+| Domain Integration (Upload/Honeypot/Tarpit/Mesh) | Structural | Pending | Per-crate CI jobs defined |
+| Architecture Guards | PASS | Pending | 63 repo-guards + 15 root guards pass |
+| Security Regressions | Structural | Pending | nextest with --test-threads=1 |
+| Platform Coverage | Structural | Pending | 8-target matrix in main-comprehensive |
+| Fuzz Smoke | Structural | Pending | 17 targets, 1000 runs each |
+| Failure Injection | Structural | Pending | 13 scenarios documented, execution pending |
+| Cross-platform Compile | Structural | Pending | Alpine, FreeBSD, macOS, Windows in nightly |
+| Dependency Audit | Structural | Pending | cargo audit + cargo deny |

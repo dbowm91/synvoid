@@ -172,7 +172,7 @@ continue_on_error = true
 [lanes.nightly.commands.fuzz-smoke]
 command = "cargo +nightly fuzz run <target> -- -runs=1000"
 assurance = "Fuzz correctness"
-fuzz_targets = 16
+fuzz_targets = 17
 
 [lanes.nightly.commands.outdated-deps]
 command = "cargo outdated --release --exit-code 2"

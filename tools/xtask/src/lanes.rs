@@ -33,9 +33,9 @@ pub fn build_lanes() -> HashMap<&'static str, Lane> {
                 "Fast PR lane: format check, clippy, guard tests, security regression, core compile, affected domain tests. Target <10 min.",
             steps: vec![
                 Step::new("fmt", "cargo fmt --all -- --check"),
-                Step::new("clippy", "cargo clippy --all-targets --all-features -- -D warnings"),
+                Step::new("clippy", "cargo clippy --all-targets -- -D warnings"),
                 Step::new("guards", "cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci"),
-                Step::new("security", "cargo test --test security_regression -- --test-threads=1"),
+                Step::new("security", "cargo nextest run --test security_regression --cargo-profile ci --profile ci -- --test-threads=1"),
                 Step::new("compile", "cargo test --lib --no-run"),
                 Step::new(
                     "affected",
@@ -133,7 +133,7 @@ pub fn build_lanes() -> HashMap<&'static str, Lane> {
             description: "Run security regression tests (single-threaded, uses env var serialization guard).",
             steps: vec![Step::new(
                 "security-regression",
-                "cargo test --test security_regression -- --test-threads=1",
+                "cargo nextest run --test security_regression --cargo-profile ci --profile ci -- --test-threads=1",
             )],
         },
     );
@@ -155,7 +155,7 @@ pub fn build_lanes() -> HashMap<&'static str, Lane> {
                 Step::new("nextest-all", "cargo nextest run --workspace --cargo-profile ci --profile ci --exclude synvoid-fuzz"),
                 Step::new("doctests", "cargo test --workspace --doc --profile ci"),
                 Step::new("guards", "cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci"),
-                Step::new("security", "cargo test --test security_regression -- --test-threads=1"),
+                Step::new("security", "cargo nextest run --test security_regression --cargo-profile ci --profile ci -- --test-threads=1"),
                 Step::new("root-ownership", "cargo test --test root_test_ownership_guard"),
             ],
         },
@@ -174,7 +174,7 @@ pub fn build_lanes() -> HashMap<&'static str, Lane> {
                 Step::new("nextest-all", "cargo nextest run --workspace --cargo-profile ci --profile ci --exclude synvoid-fuzz"),
                 Step::new("doctests", "cargo test --workspace --doc --profile ci"),
                 Step::new("guards", "cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci"),
-                Step::new("security", "cargo test --test security_regression -- --test-threads=1"),
+                Step::new("security", "cargo nextest run --test security_regression --cargo-profile ci --profile ci -- --test-threads=1"),
                 Step::new("platform-compat", "cargo check --target x86_64-unknown-linux-musl"),
                 Step::new("deny", "cargo deny check"),
             ],
@@ -194,7 +194,7 @@ pub fn build_lanes() -> HashMap<&'static str, Lane> {
                 Step::new("nextest-all", "cargo nextest run --workspace --cargo-profile ci --profile ci --exclude synvoid-fuzz"),
                 Step::new("doctests", "cargo test --workspace --doc --profile ci"),
                 Step::new("guards", "cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci"),
-                Step::new("security", "cargo test --test security_regression -- --test-threads=1"),
+                Step::new("security", "cargo nextest run --test security_regression --cargo-profile ci --profile ci -- --test-threads=1"),
                 Step::new("root-ownership", "cargo test --test root_test_ownership_guard"),
                 Step::new("deny", "cargo deny check"),
             ],
@@ -214,7 +214,7 @@ pub fn build_lanes() -> HashMap<&'static str, Lane> {
                 Step::new("nextest-release", "cargo nextest run --workspace --release --exclude synvoid-fuzz"),
                 Step::new("doctests", "cargo test --workspace --doc --release"),
                 Step::new("guards", "cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci"),
-                Step::new("security", "cargo test --test security_regression -- --test-threads=1"),
+                Step::new("security", "cargo nextest run --test security_regression --cargo-profile ci --profile ci -- --test-threads=1"),
             ],
         },
     );

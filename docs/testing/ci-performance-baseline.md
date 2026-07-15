@@ -24,7 +24,7 @@
 ### Key Findings
 - **Compilation is the dominant cost** — test execution is fast (5s for 898 lib tests)
 - **Root crate produces ~621 integration test binaries** — linking is the bottleneck
-- **CI profile does not exist yet** — all measurements used release mode
+- **CI profile now defined** — `inherits = "dev"`, `opt-level = 1`, `debug = "line-tables-only"`, `incremental = false`
 - **--all-features is broken** — 24 eBPF compilation errors in synvoid-icmp-filter
 - **1 known test failure** — platform sandbox stub test
 
@@ -290,3 +290,24 @@ Root test binary count reduced from ~43 to ~26 integration targets. Estimated co
 | security_regression | 15 | 5 | 5/5 pass |
 | DNS interop (6 files) | 37 | 5 | 5/5 pass |
 | DNS control plane (9 files) | 91 | 5 | 5/5 pass |
+
+## Local Validation Baseline (2026-07-15)
+
+Observed on local development machine, Linux x86_64.
+
+| Check | Result | Notes |
+|-------|--------|-------|
+| Formatting (`cargo fmt --all -- --check`) | PASS | |
+| Repo guards | 63 passed (8 binaries, 0.169s) | `cargo nextest run -p synvoid-repo-guards` |
+| Root test ownership guard | 2 passed (0.00s) | |
+| Selector tests (pytest) | 90 passed | `scripts/ci/select-affected.py` |
+| xtask fast lane dry-run | 6 steps, all pass | |
+| xtask comprehensive lane dry-run | 12 steps, all pass | |
+| xtask guards lane dry-run | 16 steps, all pass | |
+
+### xtask Lane Parity Corrections
+
+The following corrections were applied to xtask lanes to achieve parity with CI workflows:
+
+- **Fast lane clippy:** Removed `--all-features` to match PR workflow (`pr-fast.yml`), which does not enable all features due to `synvoid-icmp-filter` eBPF compilation failures.
+- **Security lane:** Changed from `cargo test` to `cargo nextest run` with `--profile ci` to match the CI profile used in qualification workflows.

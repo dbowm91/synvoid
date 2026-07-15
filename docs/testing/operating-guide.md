@@ -34,7 +34,7 @@ xtask is the primary entry point for local test execution. Run from workspace ro
 | `cargo xtask test affected --base <ref>` | Affected package tests only | selector → per-package nextest → root tests → doctests |
 | `cargo xtask test package <name>` | Single package | `cargo nextest run -p <name> --cargo-profile ci --profile ci` |
 | `cargo xtask test guards` | All guard tests | repo-guards crate (nextest) + 15 standalone `cargo test --test` |
-| `cargo xtask test security` | Security regression | `cargo test --test security_regression -- --test-threads=1` |
+| `cargo xtask test security` | Security regression | `cargo nextest run --test security_regression --cargo-profile ci --profile ci -- --test-threads=1` |
 | `cargo xtask test comprehensive` | Full workspace validation | fmt, clippy, 5 profile checks, nextest all, doctests, guards, security |
 | `cargo xtask test nightly-plan` | Preview nightly qualification | Prints commands without executing |
 | `cargo xtask test qualification` | Preview release qualification | Prints commands without executing |
@@ -181,7 +181,7 @@ SynVoid CI uses four validation lanes. Each lane has a specific trigger, permitt
 **What it runs:**
 
 1. `cargo fmt --all -- --check` — formatting gate
-2. `cargo clippy --all-targets --all-features -- -D warnings` — lint gate
+2. `cargo clippy --all-targets -- -D warnings` — lint gate
 3. `cargo check --no-default-features` — core-only compilation
 4. `python scripts/check_imports.py` — forbidden import boundary
 5. `cargo nextest run --test security_regression -- --test-threads=1` — security regression
@@ -665,6 +665,15 @@ Every test must have an owner. The `tests/OWNERSHIP.toml` manifest enforces this
 - Check selector logs for errors
 - All tests run (safe fallback, but slower)
 
+**xtask commands diverge from CI workflows:**
+- xtask lane definitions in `lanes.rs` must match CI workflow steps exactly
+- Use this to verify parity after changes:
+  ```bash
+  # Verify xtask commands match CI workflows
+  cargo xtask test fast --dry-run --json | jq '.steps[].command'
+  # Compare against pr-fast.yml job steps
+  ```
+
 ### Debugging Techniques
 
 ```bash
@@ -695,6 +704,7 @@ cargo clippy --all-targets -- -D warnings
 
 | Document | Purpose |
 |----------|---------|
+| `testing/lanes.toml` | Machine-readable lane definitions for xtask and CI |
 | `docs/testing/ci-lane-policy.md` | Lane definitions and permitted workload |
 | `docs/testing/performance-budgets.md` | Budget thresholds and remediation |
 | `docs/testing/flaky-test-policy.md` | Quarantine process and criteria |

@@ -93,33 +93,25 @@ Superseded PR runs are automatically cancelled.
 ## Branch Protection
 
 ### Required status checks (PR fast lane):
-- `fmt`
-- `clippy`
-- `security-regression`
-- `guard-suite` (or equivalent)
-- At least one per-crate test job
+- `PR Fast / Rustfmt`
+- `PR Fast / Clippy (default features)`
+- `PR Fast / No Unsafe in DNS`
+- `PR Fast / Core Profile (No Default Features)`
+- `PR Fast / Forbidden Import Patterns`
+- `PR Fast / Security Regression Tests`
+- `PR Fast / Architecture Guard Tests`
+- `PR Fast / PR Fast Summary`
+
+Per-crate tests (`upload-tests`, `honeypot-tests`, `tarpit-tests`, `mesh-tests`) are selector-gated and not individually required.
 
 ### Not required (but tracked):
 - All scheduled qualification jobs
 - Release qualification jobs
 - Summary jobs
 
-### Manual Action Required
+### Manual Action Required — Branch Protection
 
-**Branch protection rules must be updated by a repository admin.** The old `ci.yml` workflow has been replaced with 4 targeted workflows. Branch protection currently references the old workflow job names and must be migrated:
-
-1. **Remove** old required status checks referencing `ci.yml` job names
-2. **Add** new required status checks referencing `pr-fast.yml` job IDs:
-   - `pr-fast / fmt`
-   - `pr-fast / clippy`
-   - `pr-fast / security-regression`
-   - `pr-fast / guard-suite`
-   - `pr-fast / plugin-runtime-guardrails`
-   - At least one of: `pr-fast / dns-tests`, `pr-fast / upload-tests`, `pr-fast / honeypot-tests`, `pr-fast / tarpit-tests`, `pr-fast / mesh-tests`
-3. **Verify** that the old `ci.yml` redirect no longer triggers on PRs (fixed: triggers removed, only `workflow_dispatch` remains)
-4. **Test** by opening a PR and confirming only `pr-fast.yml` runs
-
-**Until branch protection is updated**, the old `ci.yml` checks may still appear as required. The redirect workflow now only triggers on `workflow_dispatch`, so it will not produce passing checks for PRs — this will **block merging** until branch protection is updated.
+Branch protection must reference the current PR fast lane check names (listed above in "Required status checks"). Repository admin must update branch protection rules to use the current check names from `pr-fast.yml`. The old `ci.yml` workflow no longer triggers on PRs.
 
 ### Predicate Polarity (Milestone D Corrective)
 
@@ -135,6 +127,14 @@ Repository guards enforce this pattern:
 
 The normalization step in `select-affected` falls back to `mode=full` when the selector fails or produces invalid output, ensuring no tests are silently skipped.
 
+## xtask-Lane Parity
+
+The xtask commands must produce identical commands to the CI workflows. Corrections applied:
+
+- **xtask `fast` clippy**: corrected to use `cargo clippy --all-targets -- -D warnings` (without `--all-features`) to match the PR workflow.
+- **xtask `security` lane**: corrected to use `cargo nextest run --test security_regression --cargo-profile ci --profile ci -- --test-threads=1` to match the PR workflow.
+- **`ci_lane_consistency_guard`**: strengthened to verify clippy and security-regression commands match between xtask and CI workflows.
+
 ## Migration Notes
 
 ### From the legacy ci.yml:
@@ -145,3 +145,4 @@ The normalization step in `select-affected` falls back to `mode=full` when the s
 - `--release` replaced with `--profile ci` for routine correctness tests
 - Concurrency cancellation added for PR iteration
 - Feature/target matrix documented in `docs/testing/feature-target-matrix.md`
+- `testing/lanes.toml` fuzz_targets corrected from 16 to 17 to match the actual workflow
