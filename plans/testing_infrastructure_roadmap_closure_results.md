@@ -319,15 +319,18 @@ Branch protection rules reference the **old `ci.yml` workflow job names** and mu
 ### Required Actions (manual, by repo admin)
 
 1. **Remove** old required status checks referencing `ci.yml` job names
-2. **Add** new required status checks referencing `pr-fast.yml` job IDs:
-   - `pr-fast / fmt`
-   - `pr-fast / clippy`
-   - `pr-fast / security-regression`
-   - `pr-fast / guard-suite`
-   - `pr-fast / plugin-runtime-guardrails`
-   - At least one of: `pr-fast / dns-tests`, `pr-fast / upload-tests`, `pr-fast / honeypot-tests`, `pr-fast / tarpit-tests`, `pr-fast / mesh-tests`
+2. **Add** new required status checks referencing `pr-fast.yml` job IDs (format: `PR Fast / <job-name>`):
+   - `PR Fast / fmt`
+   - `PR Fast / clippy`
+   - `PR Fast / unsafe-dns`
+   - `PR Fast / core-profile`
+   - `PR Fast / import-check`
+   - `PR Fast / security-regression`
+   - `PR Fast / guard-suite`
+   - At least one of: `PR Fast / upload-tests`, `PR Fast / honeypot-tests`, `PR Fast / tarpit-tests`, `PR Fast / mesh-tests`
 3. **Verify** that `ci.yml` redirect no longer triggers on PRs (fixed: triggers removed, only `workflow_dispatch` remains)
 4. **Test** by opening a PR and confirming only `pr-fast.yml` runs
+5. **Verify** `ci_lane_consistency_guard` passes (validates CI commands match `testing/lanes.toml`)
 
 ### Known Issue
 
@@ -395,7 +398,7 @@ Machine-readable lane definition with:
 
 ### Structural Regression Guards
 
-**12 guard tests** in `tests/` enforcing architectural invariants:
+**13 guard tests** in `tests/` enforcing architectural invariants:
 
 | Guard | Type | Tests |
 |-------|------|-------|
@@ -411,10 +414,11 @@ Machine-readable lane definition with:
 | `admin_mutation_response_guard` | static/source | Admin mutation contract |
 | `abi_memory_boundary_guard` | static/source | ABI memory boundary |
 | `root_test_ownership_guard` | static/source | Root test manifest completeness |
+| `ci_lane_consistency_guard` | static/source | CI/lane-manifest command alignment |
 
 Plus **3 runtime guards**: `admin_auth_boundary`, `admin_mutation_blocklist`, `failure_injection`.
 
-Plus **26 guards in `synvoid-repo-guards` crate** (static/source, run via nextest).
+Plus **63 guards in `synvoid-repo-guards` crate** (static/source, run via nextest) across 7 test files including `ci_policy_guard`, `negative_fixtures`, `composition_boundary`, `docs_and_misc`, `lifecycle_ownership`, `module_ownership`, and `cache_and_selector`.
 
 ### Performance Budgets (`docs/testing/performance-budgets.md`)
 

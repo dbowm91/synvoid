@@ -250,6 +250,8 @@ fn run_affected(
         });
     }
 
+    report.check_budgets();
+
     if json_output {
         println!("{}", serde_json::to_string_pretty(&report).unwrap());
     } else {
@@ -258,6 +260,13 @@ fn run_affected(
 
     if !report.is_success() {
         return Err(format!("{} step(s) failed", report.failed));
+    }
+
+    if report.blocking_breaches() > 0 {
+        return Err(format!(
+            "{} blocking budget breach(es)",
+            report.blocking_breaches()
+        ));
     }
 
     Ok(())
@@ -404,6 +413,8 @@ fn run_lane_inner(
         });
     }
 
+    report.check_budgets();
+
     if json_output {
         println!("{}", serde_json::to_string_pretty(&report).unwrap());
     } else {
@@ -412,6 +423,13 @@ fn run_lane_inner(
 
     if !report.is_success() {
         return Err(format!("{} step(s) failed", report.failed));
+    }
+
+    if report.blocking_breaches() > 0 {
+        return Err(format!(
+            "{} blocking budget breach(es)",
+            report.blocking_breaches()
+        ));
     }
 
     Ok(())

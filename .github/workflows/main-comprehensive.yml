@@ -1,3 +1,5 @@
+# Main Comprehensive Lane — mirrors `cargo xtask test comprehensive` and `testing/lanes.toml` [lanes.comprehensive]
+# Authority: testing/lanes.toml is the source of truth for command definitions.
 name: Main Comprehensive
 
 on:

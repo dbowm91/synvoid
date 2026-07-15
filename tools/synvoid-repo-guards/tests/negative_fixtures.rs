@@ -744,3 +744,203 @@ fn ownership_guard_detects_unowned_test_file() {
         unowned
     );
 }
+
+// ===========================================================================
+// CI Lane Consistency Guard Negative Fixtures
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// ci_lane_consistency_guard: detects missing command in CI workflow
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ci_lane_consistency_guard_detects_missing_command() {
+    let tmp = TempDir::new().unwrap();
+
+    // Create a lanes.toml with a command
+    let testing_dir = tmp.path().join("testing");
+    fs::create_dir_all(&testing_dir).unwrap();
+    fs::write(
+        testing_dir.join("lanes.toml"),
+        "[lanes.fast.commands.fmt]\ncommand = \"cargo fmt --all -- --check\"\n",
+    )
+    .unwrap();
+
+    // Create a pr-fast.yml that DOESN'T contain the command
+    let workflows_dir = tmp.path().join(".github").join("workflows");
+    fs::create_dir_all(&workflows_dir).unwrap();
+    fs::write(
+        workflows_dir.join("pr-fast.yml"),
+        "jobs:\n  fmt:\n    run: cargo format --check\n",
+    )
+    .unwrap();
+
+    let _lanes_content = fs::read_to_string(testing_dir.join("lanes.toml")).unwrap();
+    let pr_fast_content = fs::read_to_string(workflows_dir.join("pr-fast.yml")).unwrap();
+
+    let mut violations = Vec::new();
+    let checks: Vec<(&str, &str)> = vec![("fmt", "cargo fmt --all -- --check")];
+
+    for (name, cmd) in &checks {
+        if !pr_fast_content.contains(cmd) {
+            violations.push(format!(
+                "lanes.toml [lanes.fast.commands.{name}] command '{}' not found in pr-fast.yml",
+                cmd
+            ));
+        }
+    }
+
+    assert!(
+        !violations.is_empty(),
+        "guard should detect missing fmt command in CI workflow but found no violations"
+    );
+}
+
+// ===========================================================================
+// File-Exists Guard Negative Fixtures
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// xtask_exists_guard: detects missing xtask crate
+// ---------------------------------------------------------------------------
+
+#[test]
+fn xtask_exists_guard_detects_missing_xtask() {
+    let tmp = TempDir::new().unwrap();
+    // No tools/xtask/Cargo.toml created
+    let xtask = tmp.path().join("tools").join("xtask").join("Cargo.toml");
+    assert!(!xtask.exists(), "test setup: xtask should not exist");
+}
+
+// ---------------------------------------------------------------------------
+// selector_script_exists_guard: detects missing selector script
+// ---------------------------------------------------------------------------
+
+#[test]
+fn selector_script_guard_detects_missing_script() {
+    let tmp = TempDir::new().unwrap();
+    // No scripts/ci/select-affected.py created
+    let script = tmp
+        .path()
+        .join("scripts")
+        .join("ci")
+        .join("select-affected.py");
+    assert!(
+        !script.exists(),
+        "test setup: selector script should not exist"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// test_affected_script_exists_guard: detects missing test-affected script
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_affected_script_guard_detects_missing_script() {
+    let tmp = TempDir::new().unwrap();
+    // No scripts/test-affected.sh created
+    let script = tmp.path().join("scripts").join("test-affected.sh");
+    assert!(
+        !script.exists(),
+        "test setup: test-affected script should not exist"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// performance_budgets_exist_guard: detects missing budgets doc
+// ---------------------------------------------------------------------------
+
+#[test]
+fn performance_budgets_guard_detects_missing_doc() {
+    let tmp = TempDir::new().unwrap();
+    // Create a doc that's missing required sections
+    let doc_dir = tmp.path().join("docs").join("testing");
+    fs::create_dir_all(&doc_dir).unwrap();
+    fs::write(
+        doc_dir.join("performance-budgets.md"),
+        "# Budgets\n\nSome content without required sections.\n",
+    )
+    .unwrap();
+
+    let content = fs::read_to_string(doc_dir.join("performance-budgets.md")).unwrap();
+    let required_sections = ["Budget", "Threshold"];
+    let mut missing = Vec::new();
+    for section in &required_sections {
+        if !content.to_lowercase().contains(&section.to_lowercase()) {
+            missing.push(*section);
+        }
+    }
+
+    assert!(
+        !missing.is_empty(),
+        "guard should detect missing Budget/Threshold sections but found none"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// flaky_test_policy_exist_guard: detects missing policy doc
+// ---------------------------------------------------------------------------
+
+#[test]
+fn flaky_test_policy_guard_detects_missing_doc() {
+    let tmp = TempDir::new().unwrap();
+    let doc_dir = tmp.path().join("docs").join("testing");
+    fs::create_dir_all(&doc_dir).unwrap();
+    fs::write(
+        doc_dir.join("flaky-test-policy.md"),
+        "# Policy\n\nSome content without required sections.\n",
+    )
+    .unwrap();
+
+    let content = fs::read_to_string(doc_dir.join("flaky-test-policy.md")).unwrap();
+    let required_sections = ["Quarantine", "Flaky"];
+    let mut missing = Vec::new();
+    for section in &required_sections {
+        if !content.to_lowercase().contains(&section.to_lowercase()) {
+            missing.push(*section);
+        }
+    }
+
+    assert!(
+        !missing.is_empty(),
+        "guard should detect missing Quarantine/Flaky sections but found none"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// coverage_matrix_exist_guard: detects missing matrix doc
+// ---------------------------------------------------------------------------
+
+#[test]
+fn coverage_matrix_guard_detects_missing_doc() {
+    let tmp = TempDir::new().unwrap();
+    // No docs/testing/coverage-equivalence-matrix.md created
+    let doc = tmp
+        .path()
+        .join("docs")
+        .join("testing")
+        .join("coverage-equivalence-matrix.md");
+    assert!(
+        !doc.exists(),
+        "test setup: coverage matrix doc should not exist"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// operating_guide_exist_guard: detects missing guide doc
+// ---------------------------------------------------------------------------
+
+#[test]
+fn operating_guide_guard_detects_missing_doc() {
+    let tmp = TempDir::new().unwrap();
+    // No docs/testing/operating-guide.md created
+    let doc = tmp
+        .path()
+        .join("docs")
+        .join("testing")
+        .join("operating-guide.md");
+    assert!(
+        !doc.exists(),
+        "test setup: operating guide doc should not exist"
+    );
+}

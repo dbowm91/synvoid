@@ -167,6 +167,8 @@ Per-crate tests run within each crate's own directory and are the preferred loca
 
 SynVoid CI uses four validation lanes. Each lane has a specific trigger, permitted workload, and merge-blocking authority.
 
+**Source of truth:** `testing/lanes.toml` defines the canonical commands for each lane. CI workflows are validated against it by `ci_lane_consistency_guard` in `synvoid-repo-guards`. If you change a command in CI, update `testing/lanes.toml` and the xtask `lanes.rs` to match.
+
 ### 3.1 PR Fast Lane
 
 | Property | Value |
@@ -697,6 +699,7 @@ cargo clippy --all-targets -- -D warnings
 | `docs/testing/performance-budgets.md` | Budget thresholds and remediation |
 | `docs/testing/flaky-test-policy.md` | Quarantine process and criteria |
 | `docs/testing/coverage-equivalence-matrix.md` | Where every assurance category runs |
+| `docs/testing/failure-injection-procedure.md` | Controlled failure injection for CI lane validation |
 | `docs/testing/test-suite-ownership.md` | Test ownership manifest |
 | `docs/testing/feature-target-matrix.md` | Complete CI command×feature×target matrix |
 | `docs/testing/cache-policy.md` | Cache architecture and invalidation rules |

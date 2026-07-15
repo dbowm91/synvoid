@@ -1,3 +1,6 @@
+# PR Fast Lane — mirrors `cargo xtask test fast` and `testing/lanes.toml` [lanes.fast]
+# Authority: testing/lanes.toml is the source of truth for command definitions.
+# Drift is caught by ci_lane_consistency_guard in synvoid-repo-guards.
 name: PR Fast
 
 on:

@@ -331,6 +331,84 @@ fn new_root_test_ownership_guard() {
 }
 
 // ---------------------------------------------------------------------------
+// ci_lane_consistency_guard
+// ---------------------------------------------------------------------------
+
+/// Verify CI workflow commands match `testing/lanes.toml` definitions.
+/// Ensures local xtask and CI share authoritative logic — drift fails fast.
+#[test]
+fn ci_lane_consistency_guard() {
+    let root = workspace_root();
+    let lanes_toml = root.join("testing/lanes.toml");
+    let pr_fast = root.join(".github/workflows/pr-fast.yml");
+
+    if !lanes_toml.exists() || !pr_fast.exists() {
+        return;
+    }
+
+    let _lanes_content = std::fs::read_to_string(&lanes_toml)
+        .expect("ci_lane_consistency_guard: failed to read testing/lanes.toml");
+    let pr_fast_content = std::fs::read_to_string(&pr_fast)
+        .expect("ci_lane_consistency_guard: failed to read pr-fast.yml");
+
+    let mut violations = Vec::new();
+
+    // Check key commands from lanes.fast exist in pr-fast.yml
+    let checks: Vec<(&str, &str)> = vec![
+        ("fmt", "cargo fmt --all -- --check"),
+        (
+            "guards",
+            "cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci",
+        ),
+        ("core-compile", "cargo check --no-default-features"),
+    ];
+
+    for (name, cmd) in &checks {
+        if !pr_fast_content.contains(cmd) {
+            violations.push(format!(
+                "lanes.toml [lanes.fast.commands.{name}] command '{}' not found in pr-fast.yml",
+                cmd
+            ));
+        }
+    }
+
+    // Check that security regression uses --test-threads=1 (serialization requirement)
+    if pr_fast_content.contains("security_regression")
+        && !pr_fast_content.contains("--test-threads=1")
+    {
+        violations.push(
+            "pr-fast.yml security regression job missing --test-threads=1 (required by lanes.toml serialization = 'global-env')".to_string()
+        );
+    }
+
+    // Check that PR fast lane doesn't use --release (except security regression)
+    for (i, line) in pr_fast_content.lines().enumerate() {
+        if line.contains("--release") {
+            let lower = line.to_lowercase();
+            if lower.contains("security") && lower.contains("regression") {
+                continue;
+            }
+            let trimmed = line.trim();
+            if trimmed.starts_with('#') {
+                continue;
+            }
+            violations.push(format!(
+                "pr-fast.yml:{}: --release found outside security-regression: {}",
+                i + 1,
+                trimmed
+            ));
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "ci_lane_consistency_guard: CI/lane-manifest drift detected ({} violations):\n{}",
+        violations.len(),
+        violations.join("\n")
+    );
+}
+
+// ---------------------------------------------------------------------------
 // no_lto_in_ci_profile_guard
 // ---------------------------------------------------------------------------
 
