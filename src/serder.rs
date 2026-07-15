@@ -23,7 +23,7 @@
 //! ### Step 2: Identify compatible types
 //!
 //! Not all serde types are rkyv-compatible. Compatible types include:
-//! - Primitives (u8, u32, String, Vec<u8>, etc.)
+//! - Primitives (u8, u32, String, Vec&lt;u8&gt;, etc.)
 //! - Structs with rkyv-compatible fields
 //! - Enums with primitive discriminants
 //!
@@ -69,7 +69,7 @@
 //!
 //! Replace bincode calls with rkyv API:
 //!
-//! ```rust
+//! ```text
 //! // Use rkyv::to_bytes for serialization
 //! // Use rkyv::from_bytes for deserialization
 //! ```
