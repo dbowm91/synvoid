@@ -23,3 +23,11 @@ pub mod anycast_sync;
 pub mod mesh_dnssec;
 #[cfg(feature = "mesh")]
 pub mod mesh_sync;
+
+#[cfg(test)]
+mod injected_domain_failure {
+    #[test]
+    fn domain_integration_fail() {
+        assert_eq!(1, 2, "injected domain integration failure");
+    }
+}
