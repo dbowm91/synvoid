@@ -1,0 +1,236 @@
+# SynVoid CI Lane Manifest
+# Source: docs/testing/ci-lane-policy.md, test-suite-ownership.md, feature-target-matrix.md
+
+[metadata]
+version = "1.0.0"
+last_updated = "2026-07-14"
+documentation = [
+  "docs/testing/ci-lane-policy.md",
+  "docs/testing/test-suite-ownership.md",
+  "docs/testing/feature-target-matrix.md",
+]
+
+# ---------------------------------------------------------------------------
+# Lane: fast — Pull-Request Fast Lane
+# Trigger: Pull requests to main/master
+# Purpose: Fast developer feedback (<10 min target)
+# ---------------------------------------------------------------------------
+
+[lanes.fast]
+profile = "ci"
+affected = true
+required = true
+merge_blocking = true
+platform = "linux"
+timeout_class = "fast"
+description = "PR fast lane: formatting, lint, core compile, guards, security, affected package tests"
+
+[lanes.fast.commands.fmt]
+command = "cargo fmt --all -- --check"
+assurance = "Formatting conformance"
+
+[lanes.fast.commands.clippy]
+command = "cargo clippy --all-targets -- -D warnings"
+assurance = "Lint correctness"
+
+[lanes.fast.commands.core-compile]
+command = "cargo check --no-default-features"
+assurance = "Core-only compiles"
+
+[lanes.fast.commands.guards]
+command = "cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci"
+assurance = "Architecture static guards"
+
+[lanes.fast.commands.security-regression]
+command = "cargo nextest run --test security_regression --cargo-profile ci --profile ci -- --test-threads=1"
+assurance = "Security regression detection"
+serialization = "global-env"
+
+[lanes.fast.commands.affected-packages]
+command = "python scripts/ci/select-affected.py"
+assurance = "Per-crate tests gated by affected selection"
+
+[lanes.fast.feature_classes]
+default = ["socket-handoff", "mesh", "dns", "erased_pool", "swagger-ui"]
+guard_specific = ["mesh,dns"]
+
+[lanes.fast.package_groups]
+crate_tests = ["synvoid-dns", "synvoid-plugin-runtime", "synvoid-upload", "synvoid-honeypot", "synvoid-tarpit", "synvoid-mesh"]
+guard_crates = ["synvoid-repo-guards"]
+
+# ---------------------------------------------------------------------------
+# Lane: comprehensive — Main Comprehensive Lane
+# Trigger: Push to main/master/develop
+# Purpose: Full validation after merge
+# ---------------------------------------------------------------------------
+
+[lanes.comprehensive]
+profile = "ci"
+affected = false
+required = false
+merge_blocking = false
+platform = "all"
+timeout_class = "medium"
+description = "Post-merge full validation: build matrix, DNS, plugin, profiles, docs, audit"
+
+[lanes.comprehensive.commands.full-build-matrix]
+command = "cross build --target <target> --release --features wireguard,icmp-filter"
+assurance = "Cross-platform release compilation"
+profile_override = "release"
+
+[lanes.comprehensive.commands.full-build-matrix.targets]
+linux-gnu = "x86_64-unknown-linux-gnu"
+linux-musl = "x86_64-unknown-linux-musl"
+linux-arm64 = "aarch64-unknown-linux-gnu"
+macos-intel = "x86_64-apple-darwin"
+macos-arm64 = "aarch64-apple-darwin"
+windows = "x86_64-pc-windows-msvc"
+freebsd = "x86_64-unknown-freebsd"
+
+[lanes.comprehensive.commands.dns-full]
+command = "cargo nextest run -p synvoid-dns --cargo-profile ci --profile ci"
+assurance = "DNS full test suite"
+
+[lanes.comprehensive.commands.plugin-full]
+command = "cargo nextest run -p synvoid-plugin-runtime --cargo-profile ci --profile ci"
+assurance = "Plugin runtime full suite"
+
+[lanes.comprehensive.commands.profile-matrix]
+command = "cargo check <features>"
+assurance = "5 profile check variants"
+
+[lanes.comprehensive.commands.profile-matrix.variants]
+default = ""
+core = "--no-default-features"
+mesh = "--no-default-features --features mesh"
+dns = "--no-default-features --features dns"
+full = "--no-default-features --features mesh,dns"
+
+[lanes.comprehensive.commands.doc-build]
+command = "cargo doc --no-deps --release"
+assurance = "Documentation builds clean"
+
+[lanes.comprehensive.commands.security-audit]
+command = "cargo audit"
+assurance = "Advisory check"
+
+[lanes.comprehensive.commands.dep-audit]
+command = "cargo deny check"
+assurance = "License/ban/sources check"
+
+[lanes.comprehensive.feature_classes]
+build_matrix = ["wireguard", "wireguard,icmp-filter"]
+profile_matrix = ["none", "default", "mesh", "dns", "mesh,dns", "all"]
+test_profiles = ["default", "mesh"]
+
+[lanes.comprehensive.package_groups]
+dns = ["synvoid-dns"]
+plugin = ["synvoid-plugin-runtime"]
+guards = ["synvoid-repo-guards"]
+
+# ---------------------------------------------------------------------------
+# Lane: nightly — Scheduled Qualification Lane
+# Trigger: Nightly schedule (4 AM UTC) or manual dispatch
+# Purpose: Expensive qualification that doesn't block PR iteration
+# ---------------------------------------------------------------------------
+
+[lanes.nightly]
+profile = "release"
+affected = false
+required = false
+merge_blocking = false
+platform = "all"
+timeout_class = "slow"
+description = "Nightly qualification: Alpine, FreeBSD, platform-compat, Miri, fuzz, outdated-deps"
+
+[lanes.nightly.commands.alpine]
+command = "cargo build --release && cargo test --release -- --test-threads=1"
+assurance = "Alpine/musl build and test"
+target = "x86_64-unknown-linux-musl"
+
+[lanes.nightly.commands.freebsd]
+command = "cargo build --release && cargo test --release -- --test-threads=1"
+assurance = "FreeBSD build and test"
+target = "x86_64-unknown-freebsd"
+
+[lanes.nightly.commands.platform-compat]
+command = "cargo check --tests --target <target>"
+assurance = "Cross-target compilation check"
+
+[lanes.nightly.commands.platform-compat.targets]
+linux-gnu = "x86_64-unknown-linux-gnu"
+linux-musl = "x86_64-unknown-linux-musl"
+macos-intel = "x86_64-apple-darwin"
+windows = "x86_64-pc-windows-msvc"
+freebsd = "x86_64-unknown-freebsd"
+
+[lanes.nightly.commands.miri]
+command = "cargo miri test -p synvoid-utils"
+assurance = "Memory safety (Miri)"
+continue_on_error = true
+
+[lanes.nightly.commands.fuzz-smoke]
+command = "cargo +nightly fuzz run <target> -- -runs=1000"
+assurance = "Fuzz correctness"
+fuzz_targets = 16
+
+[lanes.nightly.commands.outdated-deps]
+command = "cargo outdated --release --exit-code 2"
+assurance = "Dependency freshness"
+continue_on_error = true
+
+[lanes.nightly.feature_classes]
+default = ["socket-handoff", "mesh", "dns", "erased_pool", "swagger-ui"]
+
+[lanes.nightly.package_groups]
+target_crates = ["synvoid-utils"]
+
+# ---------------------------------------------------------------------------
+# Lane: release — Release Qualification Lane
+# Trigger: Version tags (v*) or manual dispatch
+# Purpose: Production artifact validation
+# ---------------------------------------------------------------------------
+
+[lanes.release]
+profile = "release"
+affected = false
+required = false
+merge_blocking = false
+platform = "all"
+timeout_class = "slow"
+description = "Release qualification: build matrix, full tests, all-features lint, packaging"
+
+[lanes.release.commands.release-build-matrix]
+command = "cross build --target <target> --release --features wireguard,icmp-filter"
+assurance = "Release build for all targets"
+
+[lanes.release.commands.release-build-matrix.targets]
+linux-gnu = "x86_64-unknown-linux-gnu"
+linux-musl = "x86_64-unknown-linux-musl"
+linux-arm64 = "aarch64-unknown-linux-gnu"
+macos-intel = "x86_64-apple-darwin"
+macos-arm64 = "aarch64-apple-darwin"
+windows = "x86_64-pc-windows-msvc"
+freebsd = "x86_64-unknown-freebsd"
+
+[lanes.release.commands.full-tests-release]
+command = "cargo nextest run --cargo-profile ci --profile ci --no-fail-fast"
+assurance = "Full default + mesh test suite"
+
+[lanes.release.commands.all-features-clippy]
+command = "cargo clippy --all-targets --all-features -- -D warnings"
+assurance = "All-features lint correctness"
+
+[lanes.release.commands.packaging]
+command = "cargo build --release"
+assurance = "Release artifact smoke tests"
+target = "x86_64-unknown-linux-gnu"
+
+[lanes.release.feature_classes]
+default = ["socket-handoff", "mesh", "dns", "erased_pool", "swagger-ui"]
+build_matrix = ["wireguard", "wireguard,icmp-filter"]
+test_profiles = ["default", "mesh"]
+
+[lanes.release.package_groups]
+full_test = ["synvoid-dns", "synvoid-plugin-runtime", "synvoid-honeypot", "synvoid-tarpit", "synvoid-mesh"]
+guards = ["synvoid-repo-guards"]

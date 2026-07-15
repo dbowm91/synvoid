@@ -84,6 +84,19 @@ Key docs:
 - `docs/testing/ci-lane-policy.md` — Four-lane CI policy and branch protection
 - `docs/testing/cache-policy.md` — Cache architecture, layers, and invalidation rules
 
+## Lane Manifest
+
+`testing/lanes.toml` — Machine-readable lane definitions consumed by xtask and CI.
+
+## Testing Infrastructure Docs
+
+- `docs/testing/operating-guide.md` — Developer operating guide
+- `docs/testing/performance-budgets.md` — Timing and structural budgets
+- `docs/testing/flaky-test-policy.md` — Flaky test quarantine policy
+- `docs/testing/coverage-equivalence-matrix.md` — Assurance category mapping
+- `docs/testing/ci-lane-policy.md` — Four-lane CI policy
+- `docs/testing/ci-performance-baseline.md` — Timing baselines
+
 # DNS config fidelity tests (Phase 5 + Phase 2 closure)
 cargo test -p synvoid-dns --test dns_config_fidelity
 cargo test -p synvoid-dns --test dns_recursive_isolation
@@ -221,6 +234,27 @@ cargo test -p synvoid-tarpit --all-targets
 cargo clippy -p synvoid-tarpit --all-targets -- -D warnings
 ```
 
+## Test Orchestration (xtask)
+
+```bash
+cargo xtask test fast            # PR fast lane: fmt, clippy, guards, security, affected
+cargo xtask test affected --base origin/main  # Affected package selection and testing
+cargo xtask test package synvoid-dns  # Test a specific package
+cargo xtask test guards          # All architectural guard tests
+cargo xtask test security        # Security regression tests
+cargo xtask test comprehensive   # Full workspace validation
+cargo xtask test nightly-plan    # Print nightly qualification plan
+cargo xtask test qualification   # Print release qualification plan
+cargo xtask test release         # Print release validation (never substitutes CI profile)
+cargo xtask test list            # List all available lanes
+cargo xtask test explain fast    # Explain what a lane does
+
+# Options:
+#   --dry-run    Print commands without executing
+#   --json       Machine-readable JSON output
+#   --verbose    Detailed output
+```
+
 ## Feature Profiles
 
 Default features: `socket-handoff`, `mesh`, `dns`, `erased_pool`, `swagger-ui`. Always verify all profiles compile:
@@ -284,6 +318,7 @@ cargo test --test worker_mesh_supervision_boundary_guard --features mesh,dns  # 
 cargo test --test mesh_task_ownership_guard --features mesh,dns  # Mesh task ownership and lifecycle invariants
 cargo test --test root_test_ownership_guard  # Enforces root test ownership manifest (OWNERSHIP.toml)
 cargo test -p synvoid-tarpit --all-targets  # Tarpit escaping, admission, budgets, edge cases
+cargo test -p synvoid-repo-guards -- ci_policy   # CI policy structural guards
 ```
 
 ## Critical Security Rules

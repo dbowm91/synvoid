@@ -4,3 +4,6 @@ opt-level = 0
 [profile.release]
 opt-level = 3
 lto = true
+
+[alias]
+xtask = "run --package xtask --bin cargo-xtask --"
