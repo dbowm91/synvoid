@@ -112,6 +112,23 @@ All xtask lane commands now match their corresponding CI workflow definitions:
 | `docs/testing/operating-guide.md` | Fixed clippy command, added parity verification, added lanes.toml link |
 | `docs/testing/hosted-runner-baseline.md` | Created new document with local baseline |
 
+## CI Fixes Applied (2026-07-15)
+
+- **Fixed rustc 1.97.0 clippy lints:**
+  - `clippy::question_mark` (synvoid-geoip)
+  - `clippy::for_kv_map` (synvoid-dns, synvoid-mesh, synvoid-serverless)
+  - `clippy::useless_borrows_in_formatting` (synvoid-mesh, synvoid-admin, synvoid-config)
+  - `clippy::byte_char_slices` (synvoid-upload)
+  - `clippy::unneeded_pattern` (synvoid-mesh)
+- **Updated yanked spin crate** 0.9.8 → 0.9.9
+- **Added protoc installation** to CI workflows (setup-rust-ci composite action + direct steps)
+- **Added cargo-audit --ignore flags** for wasmtime CVEs (RUSTSEC-2026-0085 through RUSTSEC-2026-0114)
+- **Fixed rustdoc errors** in `src/serder.rs` (`invalid_html_tags`, `invalid_rust_codeblocks`)
+- **Updated testing/lanes.toml** fuzz_targets from 16 to 17
+- **Fixed xtask fast lane clippy** (`--all-targets` without `--all-features`)
+- **Fixed xtask security lane** (`cargo nextest run` with CI profile)
+- **Strengthened ci_lane_consistency_guard** with clippy and security-regression checks
+
 ## Remaining Limitations
 
 | Item | Owner | Disposition |

@@ -293,7 +293,7 @@ Root test binary count reduced from ~43 to ~26 integration targets. Estimated co
 
 ## Local Validation Baseline (2026-07-15)
 
-Observed on local development machine, Linux x86_64.
+Observed on local development machine, Linux x86_64. **Active rustc version: 1.97.0**.
 
 | Check | Result | Notes |
 |-------|--------|-------|
