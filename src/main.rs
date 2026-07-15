@@ -15,3 +15,4 @@ fn main() {
     let exit_code = synvoid::commands::execute_command(plan);
     std::process::exit(exit_code);
 }
+fn  bad_format( ){
