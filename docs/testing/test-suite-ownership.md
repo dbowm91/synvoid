@@ -25,12 +25,12 @@ Root integration tests are governed by `tests/OWNERSHIP.toml`. Every root test m
 | mesh_task_ownership_guard | synvoid (root) | PR | ci | mesh,dns | any | None | Architecture guard |
 | root_test_ownership_guard | synvoid (root) | PR | ci | default | any | None | Enforces OWNERSHIP.toml manifest completeness |
 | abi_memory_boundary_guard | synvoid (root) | PR | ci | default | any | None | ABI memory boundary (cross-crate plugin boundary) |
-| security_regression | synvoid (root) | PR | ci | default | linux | full binary | Serial execution required |
+| security_regression | synvoid (root) | PR | ci | default | linux | env-var-guard (OnceLock<Mutex>) | Serial execution required |
 | composition_root_behavioral | synvoid (root) | PR | ci | mesh,dns | any | None | Validates worker+mesh composition root dataflow |
 | drain_e2e_test | synvoid (root) | PR | ci | default | any | None | Validates IPC drain end-to-end |
 | dht_integration_test | synvoid (root) | PR | ci | mesh | any | None | Validates mesh DHT integration |
 | e2e_process_test | synvoid (root) | PR | ci | default | any | None | Validates IPC end-to-end |
-| fault_injection_test | synvoid (root) | PR | ci | default | any | None | Validates fault injection across supervisor, block-store, plugin |
+| fault_injection_test | synvoid (root) | PR | ci | default | any | None | Validates fault injection across supervisor, block-store, plugin. ProcessGuard RAII cleanup |
 | integration_test | synvoid (root) | PR | ci | default | any | None | Validates full-stack composition across all major subsystems |
 | architecture_test | synvoid (root) | PR | ci | default | any | None | Validates architecture boundary constraints across workspace |
 | mesh_startup_rollback | synvoid (root) | PR | ci | mesh | any | None | Validates mesh startup composition |
@@ -44,6 +44,7 @@ Root integration tests are governed by `tests/OWNERSHIP.toml`. Every root test m
 | Crate | Lane | Profile | Features | Notes |
 |-------|------|---------|----------|-------|
 | synvoid-dns | PR (main for full) | ci | default | 1101 tests, 31 binaries (+5 migrated from root: dns_config_test, dns_config_fidelity, dns_recursive_isolation, authoritative_negative, property_tests) |
+| synvoid-dns (support) | DNS team | ci | default | New: crates/synvoid-dns/tests/support/ — shared query/zone/context/response helpers |
 | synvoid-plugin-runtime | PR | ci | default | 389 tests (+2 migrated from root: manifest_authority_wiring, plugin_failure_does_not_poison_manager) |
 | synvoid-upload | PR | ci | default, mesh | Unit + mesh tests |
 | synvoid-honeypot | PR | ci | default | Unit tests |
@@ -82,3 +83,20 @@ Root integration tests are governed by `tests/OWNERSHIP.toml`. Every root test m
 | miri-test | Scheduled | Safety | continue-on-error |
 | fuzz-smoke | Scheduled | Security | 16 fuzz targets |
 | outdated-deps | Scheduled | Maintenance | continue-on-error |
+
+## Test Resource Classes (Milestone E)
+
+| Class | Max Threads | Tests | Rationale |
+|-------|-------------|-------|-----------|
+| global-env | 1 | security_regression, metrics_wiring | Process-global state mutation |
+| process-spawn | 2 | fault_injection_test | OS process lifecycle |
+| network-heavy | 4 | (reserved) | Future use for network-bound tests |
+
+## synvoid-testkit Boundary (Milestone E)
+
+The `synvoid-testkit` crate is intentionally minimal with zero current consumers. It contains:
+- Generic assertion macros
+- Config fixtures (temp dirs, minimal config)
+- Request fixtures (test request contexts)
+
+New helpers require ≥2 crate consumers, tests, and doc comments. See `crates/synvoid-testkit/README.md`.

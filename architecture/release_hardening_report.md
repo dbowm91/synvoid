@@ -125,7 +125,7 @@ All 27 guard tests pass.
 
 - 5 profile checks: all pass
 - 27 guard tests: all pass
-- 16 fuzz targets: all exist (11 existing + 5 new in Phase 14)
+- 17 fuzz targets: all exist (11 existing + 5 new in Phase 14 + 1 existing `parsed_query_parse` added to CI)
 - No known release-blocking defects
 - All architectural invariants enforced by automated guards
 - Public surface classified and documented

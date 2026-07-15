@@ -26,13 +26,16 @@ cargo test --profile ci --no-fail-fast
 cargo nextest run --workspace --cargo-profile ci --profile ci --exclude synvoid-fuzz
 cargo test --workspace --doc --profile ci  # doctests (nextest doesn't run these)
 
+# DNS test support module (Milestone E)
+# Shared fixtures in crates/synvoid-dns/tests/support/
+
 # Repository guard tests (lightweight crate, no root dependency)
 cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci
 
 # Full test suite (release mode — only for release qualification)
 cargo test --release --no-fail-fast
 
-# Security regression tests (must run single-threaded)
+# Security regression tests (must run single-threaded; uses env var serialization guard)
 cargo test --test security_regression -- --test-threads=1
 
 # Root test ownership guard (enforces OWNERSHIP.toml manifest)
@@ -391,7 +394,7 @@ Each subsystem has specialized `AGENTS.override.md` files. Load the relevant one
 
 ## CI, Fuzzing & Failure Injection
 
-Phase 8 added profile CI, fuzz targets, failure-injection tests, and a docs link guard. Phase 11 fixed the CI workflow summary job (broken dynamic expressions prevented all jobs from running) and aligned `scripts/verify_architecture.sh` with the CI guard-suite (added `docs_path_reference_guard`, now in `synvoid-repo-guards` crate). Phase 14 added 5 new parser boundary fuzz targets (16 total). Milestone D Phase 4 added dedicated tarpit and mesh CI jobs, fixed tarpit non-deterministic sentence generation and mesh Ed25519 test key generation. See `architecture/ci_fuzz_failure_injection.md` for the full profile matrix and fuzz target inventory.
+Phase 8 added profile CI, fuzz targets, failure-injection tests, and a docs link guard. Phase 11 fixed the CI workflow summary job (broken dynamic expressions prevented all jobs from running) and aligned `scripts/verify_architecture.sh` with the CI guard-suite (added `docs_path_reference_guard`, now in `synvoid-repo-guards` crate). Phase 14 added 5 new parser boundary fuzz targets (17 total). Milestone D Phase 4 added dedicated tarpit and mesh CI jobs, fixed tarpit non-deterministic sentence generation and mesh Ed25519 test key generation. See `architecture/ci_fuzz_failure_injection.md` for the full profile matrix and fuzz target inventory.
 
 ```bash
 # Local verification script (profile checks + guard suite)
@@ -407,17 +410,23 @@ cargo test --test failure_injection
 cargo test --test security_observability_guard
 
 # Fuzz smoke tests (requires nightly toolchain + cargo-fuzz)
+cargo +nightly fuzz run admin_mutation_result_decode -- -runs=1000
+cargo +nightly fuzz run blocklist_event_decode -- -runs=1000
+cargo +nightly fuzz run blocklist_snapshot_decode -- -runs=1000
 cargo +nightly fuzz run dns_message_decode -- -runs=1000
-cargo +nightly fuzz run plugin_manifest -- -runs=1000
-cargo +nightly fuzz run http_path_normalization -- -runs=1000
 cargo +nightly fuzz run fuzz_attack_detection -- -runs=1000
 cargo +nightly fuzz run fuzz_early_parse -- -runs=1000
 cargo +nightly fuzz run fuzz_ipc -- -runs=1000
-cargo +nightly fuzz run blocklist_event_decode -- -runs=1000
-cargo +nightly fuzz run blocklist_snapshot_decode -- -runs=1000
-cargo +nightly fuzz run admin_mutation_result_decode -- -runs=1000
+cargo +nightly fuzz run fuzz_protocol_proto_decode -- -runs=1000
+cargo +nightly fuzz run fuzz_raft_commit_notification -- -runs=1000
+cargo +nightly fuzz run fuzz_raft_response -- -runs=1000
+cargo +nightly fuzz run fuzz_serialization -- -runs=1000
+cargo +nightly fuzz run fuzz_serialization_new -- -runs=1000
 cargo +nightly fuzz run http_header_normalization -- -runs=1000
+cargo +nightly fuzz run http_path_normalization -- -runs=1000
 cargo +nightly fuzz run mesh_protocol_compressed_decode -- -runs=1000
+cargo +nightly fuzz run parsed_query_parse -- -runs=1000
+cargo +nightly fuzz run plugin_manifest -- -runs=1000
 ```
 
 ## Architecture Quick Reference
@@ -480,8 +489,11 @@ The `architecture/` directory (87 docs) and `.opencode/skills/` directory contai
 - `src/admin/alerting/mod.rs:349` — Email alerting is a stub (logs, returns Ok).
 - `spin` idle instance eviction never cleans up old UUID entries (plan DOC-L7).
 - `wasmtime` 40.0.4 (via yara-x) has known CVEs but only used for YARA compilation, not wasm sandbox — mitigated by `[patch.crates-io]` for direct dep. 11 advisory ignores in `deny.toml` with re-audit dates 2026-10-01.
+- `synvoid-testkit` has zero consumers — documented boundary policy in `crates/synvoid-testkit/README.md`
 
 ## Recent Completions
+
+- **Testing Infrastructure Milestone E: Improve Test-Level Efficiency** — 12-workstream efficiency pass. (1) Created `docs/testing/test-resource-inventory.md` (28 root tests + 9 crate suites inventoried). (2) Created `docs/testing/test-taxonomy.md` (15 modalities, 4 lanes). (3) Added `OnceLock<Mutex<()>>` env var serialization guard to `security_regression.rs` (3 tests). (4) Added `ProcessGuard` RAII wrapper to `fault_injection_test.rs` (process leak fix). (5) Refined `.config/nextest.toml` with 3 test groups (`global-env`, `process-spawn`, `network-heavy`) and 6 evidence-based overrides. (6) Created `crates/synvoid-dns/tests/support/` with 5 modules (query, zone, context, response, mod) deduplicating ~1600 lines across 8+ files. (7) Updated `synvoid-testkit` with doc comments and boundary documentation (zero consumers documented). (8) Converted `fuzz-smoke` CI to matrix strategy (17 targets, max-parallel 4, artifact uploads). See `plans/testing_milestone_e_results.md`.
 
 - **Testing Infrastructure Milestone D: Corrective Closure** — Fixed inverted affected-package predicate polarity (`mode != 'full'` → `mode == 'full'` in 4 gated jobs: upload-tests, honeypot-tests, tarpit-tests, mesh-tests). Added fail-closed selector normalization step (`if: always()`) that falls back to `mode=full` on selector failure. Adopted shared `setup-rust-ci` composite action in 6 eligible PR jobs (25 setup steps eliminated). Removed 23 redundant entries from release-qualification lane (DNS, plugin, honeypot, tarpit, mesh crate tests, guards, security-regression, docs, audit — all duplicates of PR fast or main comprehensive). Added 3 repo-guard regression tests (polarity, structure, normalization) and 10 Python integration tests. See `plans/testing_milestone_d_corrective_closure_results.md`.
 

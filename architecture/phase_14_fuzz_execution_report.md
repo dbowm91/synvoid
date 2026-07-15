@@ -39,7 +39,7 @@ Phase 14: Fuzz Smoke Execution and Parser Boundary Expansion.
 | `http_header_normalization` | WAF input normalizer | `synvoid-waf` | High |
 | `mesh_protocol_compressed_decode` | gzip+protobuf MeshMessage | `synvoid-mesh` | High |
 
-**Total: 16 fuzz targets** (11 existing + 5 new)
+**Total: 17 fuzz targets** (11 existing + 5 new + 1 `parsed_query_parse` added to CI)
 
 ## Smoke Runs
 
@@ -63,9 +63,9 @@ No crashes observed (smoke tests blocked by compilation time).
 
 ## CI / Manual Workflow Status
 
-- **CI integration**: ✅ Added `fuzz-smoke` job to `.github/workflows/ci.yml`
+- **CI integration**: ✅ Added `fuzz-smoke` matrix job to `.github/workflows/nightly-qualification.yml`
 - **Manual workflow**: Documented in `AGENTS.md` quick commands
-- **Job details**: Runs all 16 targets with `-runs=1000`, nightly toolchain, cargo-fuzz cached
+- **Job details**: Runs all 17 targets in parallel matrix (max-parallel: 4), `-runs=1000`, nightly toolchain, cargo-fuzz cached, per-target timeout 15min, corpus+crash artifact upload
 - **Trigger**: Runs on push to main/master/develop and pull requests (same as other CI jobs)
 
 ## Residual Risks

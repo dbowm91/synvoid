@@ -7,6 +7,27 @@ mod tests {
     use std::time::{Duration, Instant};
     use tokio::time::sleep;
 
+    /// RAII guard that ensures a child process is killed and waited on,
+    /// even if the test panics.
+    struct ProcessGuard {
+        child: Option<std::process::Child>,
+    }
+
+    impl ProcessGuard {
+        fn new(child: std::process::Child) -> Self {
+            Self { child: Some(child) }
+        }
+    }
+
+    impl Drop for ProcessGuard {
+        fn drop(&mut self) {
+            if let Some(ref mut child) = self.child {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+
     #[tokio::test]
     async fn test_worker_crash_recovery() {
         // This test requires a built binary.
@@ -21,12 +42,14 @@ mod tests {
         }
 
         // 1. Spawn Overseer in background
-        let mut overseer = Command::new(binary_path)
-            .arg("--foreground")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("Failed to spawn overseer");
+        let _overseer = ProcessGuard::new(
+            Command::new(binary_path)
+                .arg("--foreground")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("Failed to spawn overseer"),
+        );
 
         // Wait for workers to be ready
         sleep(Duration::from_secs(5)).await;
@@ -72,9 +95,5 @@ mod tests {
         }
 
         assert!(recovered, "Worker did not recover within 15 seconds");
-
-        // Cleanup
-        let _ = overseer.kill();
-        let _ = overseer.wait();
     }
 }

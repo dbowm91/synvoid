@@ -22,6 +22,7 @@ Architecture doc for Phase 8: profile CI matrix, fuzz target inventory, and fail
 | `admin_mutation_result_decode` | `&[u8]` → JSON AdminMutationResult | **New** | 1s smoke / manual long | `synvoid-core` | Medium |
 | `http_header_normalization` | `&[u8]` → WAF input normalizer | **New** | 1s smoke / manual long | `synvoid-waf` | High |
 | `mesh_protocol_compressed_decode` | `&[u8]` → gzip+protobuf MeshMessage | **New** | 1s smoke / manual long | `synvoid-mesh` | High |
+| `parsed_query_parse` | `&[u8]` → DNS query bytes | Existing | 1s smoke / manual long | `synvoid-dns` | Medium |
 
 ### Tooling Status
 
@@ -42,20 +43,24 @@ Architecture doc for Phase 8: profile CI matrix, fuzz target inventory, and fail
 ### CI Smoke Commands
 
 ```bash
-# Existing targets
+# All 17 fuzz targets (sorted alphabetically)
+cargo +nightly fuzz run admin_mutation_result_decode -- -runs=1000
+cargo +nightly fuzz run blocklist_event_decode -- -runs=1000
+cargo +nightly fuzz run blocklist_snapshot_decode -- -runs=1000
 cargo +nightly fuzz run dns_message_decode -- -runs=1000
-cargo +nightly fuzz run plugin_manifest -- -runs=1000
-cargo +nightly fuzz run http_path_normalization -- -runs=1000
 cargo +nightly fuzz run fuzz_attack_detection -- -runs=1000
 cargo +nightly fuzz run fuzz_early_parse -- -runs=1000
 cargo +nightly fuzz run fuzz_ipc -- -runs=1000
-
-# New targets (Phase 14)
-cargo +nightly fuzz run blocklist_event_decode -- -runs=1000
-cargo +nightly fuzz run blocklist_snapshot_decode -- -runs=1000
-cargo +nightly fuzz run admin_mutation_result_decode -- -runs=1000
+cargo +nightly fuzz run fuzz_protocol_proto_decode -- -runs=1000
+cargo +nightly fuzz run fuzz_raft_commit_notification -- -runs=1000
+cargo +nightly fuzz run fuzz_raft_response -- -runs=1000
+cargo +nightly fuzz run fuzz_serialization -- -runs=1000
+cargo +nightly fuzz run fuzz_serialization_new -- -runs=1000
 cargo +nightly fuzz run http_header_normalization -- -runs=1000
+cargo +nightly fuzz run http_path_normalization -- -runs=1000
 cargo +nightly fuzz run mesh_protocol_compressed_decode -- -runs=1000
+cargo +nightly fuzz run parsed_query_parse -- -runs=1000
+cargo +nightly fuzz run plugin_manifest -- -runs=1000
 ```
 
 Long fuzz runs are manual/nightly only.

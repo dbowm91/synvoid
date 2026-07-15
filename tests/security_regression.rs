@@ -4,9 +4,19 @@
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::sync::{Mutex, OnceLock};
     use std::time::Duration;
 
     use tempfile::TempDir;
+
+    static ENV_VAR_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn env_var_guard() -> std::sync::MutexGuard<'static, ()> {
+        ENV_VAR_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
 
     #[test]
     fn test_ipc_auth_bypass_rejected() {
@@ -55,6 +65,7 @@ mod tests {
         let symlink_path = temp_dir.path().join("key_symlink");
         std::os::unix::fs::symlink(&key_path, &symlink_path).unwrap();
 
+        let _guard = env_var_guard();
         std::env::set_var("SYNVOID_IPC_KEY_FILE", symlink_path.to_str().unwrap());
         let result = IpcSigner::try_from_env();
         std::env::remove_var("SYNVOID_IPC_KEY_FILE");
@@ -76,6 +87,7 @@ mod tests {
         fs::write(&key_path, "a".repeat(64).as_bytes()).unwrap();
         fs::set_permissions(&key_path, fs::Permissions::from_mode(0o644)).unwrap();
 
+        let _guard = env_var_guard();
         std::env::set_var("SYNVOID_IPC_KEY_FILE", key_path.to_str().unwrap());
         let result = IpcSigner::try_from_env();
         std::env::remove_var("SYNVOID_IPC_KEY_FILE");
@@ -174,6 +186,7 @@ mod tests {
         let symlink_key = temp_dir.path().join("key_link.txt");
         std::os::unix::fs::symlink(&real_key, &symlink_key).unwrap();
 
+        let _guard = env_var_guard();
         std::env::set_var("SYNVOID_IPC_KEY_FILE", symlink_key.to_str().unwrap());
         let result = IpcSigner::try_from_env();
         std::env::remove_var("SYNVOID_IPC_KEY_FILE");

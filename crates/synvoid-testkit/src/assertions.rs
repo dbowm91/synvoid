@@ -1,4 +1,12 @@
-/// Assert that a string contains a substring (convenience macro).
+/// Assert that `haystack` contains `needle` as a substring.
+///
+/// Produces a descriptive panic message showing both values on failure.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// assert_contains!("hello world", "world");
+/// ```
 #[macro_export]
 macro_rules! assert_contains {
     ($haystack:expr, $needle:expr) => {
@@ -11,7 +19,15 @@ macro_rules! assert_contains {
     };
 }
 
-/// Assert that a string does not contain a substring.
+/// Assert that `haystack` does **not** contain `needle` as a substring.
+///
+/// Produces a descriptive panic message showing both values on failure.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// assert_not_contains!("hello world", "xyz");
+/// ```
 #[macro_export]
 macro_rules! assert_not_contains {
     ($haystack:expr, $needle:expr) => {

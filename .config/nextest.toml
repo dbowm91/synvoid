@@ -11,22 +11,51 @@ retries = 0
 [profile.ci.junit]
 path = "target/nextest/ci/junit.xml"
 
-# Serial execution for tests with global state or fixed ports
-[[profile.ci.overrides]]
-filter = 'test(/fixed_port|global_state|process_global/)'
-threads-required = "num-cpus"
+# --- Test Groups ---
 
-# Longer timeouts for stress/interop/live tests
+# Tests that mutate process-global state (env vars, metrics recorder)
+# Must run single-threaded within the group.
+[test-groups.global-env]
+max-threads = 1
+
+# Tests that spawn OS processes or require exclusive port access
+[test-groups.process-spawn]
+max-threads = 2
+
+# Network-heavy tests with extended timeouts
+[test-groups.network-heavy]
+max-threads = 4
+
+# --- Overrides ---
+
+# Security regression: mutates SYNVOID_IPC_KEY_FILE env var
+[[profile.ci.overrides]]
+filter = 'test(security_regression)'
+test-group = 'global-env'
+slow-timeout = { period = "60s", terminate-after = 2 }
+
+# Metrics wiring: calls metrics::set_global_recorder (process-global one-shot)
+[[profile.ci.overrides]]
+filter = 'package(synvoid-dns) and test(metrics_wiring)'
+test-group = 'global-env'
+
+# Fault injection: spawns OS processes, needs cleanup time
+[[profile.ci.overrides]]
+filter = 'test(fault_injection_test)'
+test-group = 'process-spawn'
+slow-timeout = { period = "60s", terminate-after = 2 }
+
+# Worker supervision: heavy sleep usage, extended timeout
+[[profile.ci.overrides]]
+filter = 'test(worker_supervision_control_flow)'
+slow-timeout = { period = "60s", terminate-after = 2 }
+
+# DNS integration tests: extended timeout for zone/DNSSEC operations
+[[profile.ci.overrides]]
+filter = 'package(synvoid-dns) and test(/server_test|config_fidelity|recursive_isolation|zone_lifecycle|dnssec|encrypted_transport|control_plane|verification_gate|notify|axfr|ixfr|update_authorized|dnssec_known_vectors|tsig|dnssec_live_signing|dns_config_fidelity|dns_recursive_isolation|authoritative_negative|property_tests/)'
+slow-timeout = { period = "60s", terminate-after = 2 }
+
+# Stress/interop/live tests: longest timeouts
 [[profile.ci.overrides]]
 filter = 'test(/stress|interop|live_signing|recursion/)'
 slow-timeout = { period = "120s", terminate-after = 1 }
-
-# Security regression tests use process-global state (blockstore, IPC mocks)
-[[profile.ci.overrides]]
-filter = 'test(security_regression)'
-threads-required = "num-cpus"
-
-# DNS integration tests bind to fixed ports (port 53 alternatives)
-[[profile.ci.overrides]]
-filter = 'package(synvoid-dns) and test(/server_test|config_fidelity|recursive_isolation/)'
-slow-timeout = { period = "60s", terminate-after = 2 }
