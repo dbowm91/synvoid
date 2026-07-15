@@ -208,7 +208,7 @@ jobs:
       - name: Nextest version
         run: cargo nextest --version
       - name: Run static guards (synvoid-repo-guards)
-        run: cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci
+        run: cargo nextest run -p synvoid-repo-guards --release --cargo-profile ci --profile ci
       - name: Run root guard tests (consolidated + standalone)
         run: |
           cargo test --test boundary_composition_guard
