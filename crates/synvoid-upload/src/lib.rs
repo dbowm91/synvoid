@@ -1,3 +1,5 @@
+//! Upload handling, malware scanning, and sandbox quarantine.
+
 pub mod archive;
 pub mod config;
 pub mod malware_scanner;
