@@ -15,3 +15,4 @@ fn main() {
     let exit_code = synvoid::commands::execute_command(plan);
     std::process::exit(exit_code);
 }
+fn clippy_trigger() { let x = 1; let y = &x; println!("{}", y); }
