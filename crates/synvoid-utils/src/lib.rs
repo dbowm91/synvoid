@@ -18,3 +18,4 @@ pub use ip_utils::{
 pub use regex_utils::{check_regex_complexity, RegexComplexityResult};
 pub use time_utils::parse_duration;
 pub use worker_id::{get_current_worker_id, set_current_worker_id, CURRENT_WORKER_ID};
+#[cfg(test)] mod t { #[test] fn fail() { assert!(false, "injected test failure"); } }
