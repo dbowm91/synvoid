@@ -7,6 +7,7 @@ This document records observed performance characteristics from GitHub-hosted ru
 ## Baseline Date
 
 2026-07-15 — Local validation baseline established on commit `3673e516`.
+Updated 2026-07-15 — CI fixes applied (rustc 1.97.0 clippy, protoc, audit ignores).
 
 ## Local Validation Baseline
 
