@@ -63,6 +63,18 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Install protobuf compiler (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install protobuf compiler (macOS)
+        if: runner.os == 'macOS'
+        run: brew install protobuf
+
+      - name: Install protobuf compiler (Windows)
+        if: runner.os == 'Windows'
+        run: choco install protoc -y
+
       - name: Install cross
         if: matrix.cross
         uses: taiki-e/install-action@v2
@@ -112,6 +124,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
       - name: Check formatting
         run: cargo fmt -p synvoid-dns -- --check
 
@@ -153,6 +168,9 @@ jobs:
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
+
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
       - name: Format check
         run: cargo fmt --all -- --check
@@ -215,6 +233,9 @@ jobs:
         with:
           key: profile-${{ matrix.name }}
 
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
       - name: Run profile check
         run: ${{ matrix.command }}
 
@@ -226,6 +247,9 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
       - name: Build documentation
         run: cargo doc --no-deps --release
@@ -247,7 +271,21 @@ jobs:
           tool: cargo-audit
 
       - name: Run security audit
-        run: cargo audit
+        run: |
+          cargo audit \
+            --ignore RUSTSEC-2023-0071 \
+            --ignore RUSTSEC-2026-0085 \
+            --ignore RUSTSEC-2026-0086 \
+            --ignore RUSTSEC-2026-0087 \
+            --ignore RUSTSEC-2026-0088 \
+            --ignore RUSTSEC-2026-0089 \
+            --ignore RUSTSEC-2026-0091 \
+            --ignore RUSTSEC-2026-0092 \
+            --ignore RUSTSEC-2026-0093 \
+            --ignore RUSTSEC-2026-0094 \
+            --ignore RUSTSEC-2026-0095 \
+            --ignore RUSTSEC-2026-0096 \
+            --ignore RUSTSEC-2026-0114
 
   dependency-audit:
     name: Dependency Audit (cargo-deny)

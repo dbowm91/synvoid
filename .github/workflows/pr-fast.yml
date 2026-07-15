@@ -130,6 +130,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - name: Run clippy
         run: cargo clippy --all-targets -- -D warnings
 
@@ -202,6 +204,7 @@ jobs:
         with:
           nextest: 'true'
           cache-key: pr-guard-suite
+          protoc: 'true'
       - name: Nextest version
         run: cargo nextest --version
       - name: Run static guards (synvoid-repo-guards)
@@ -382,6 +385,7 @@ jobs:
           components: clippy,rustfmt
           nextest: 'true'
           cache-key: pr-mesh
+          protoc: 'true'
       - name: Check mesh crate compiles
         run: cargo check -p synvoid-mesh --features mesh --all-targets
       - name: Clippy mesh crate

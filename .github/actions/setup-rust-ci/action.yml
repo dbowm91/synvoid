@@ -34,6 +34,10 @@ inputs:
     description: Whether to install cross for cross-compilation
     required: false
     default: 'false'
+  protoc:
+    description: Whether to install protobuf compiler (needed for synvoid-mesh prost-build)
+    required: false
+    default: 'false'
 
 runs:
   using: composite
@@ -76,6 +80,21 @@ runs:
       with:
         tool: cross
 
+    - name: Install protobuf compiler
+      if: inputs.protoc == 'true' && runner.os == 'Linux'
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+    - name: Install protobuf compiler
+      if: inputs.protoc == 'true' && runner.os == 'macOS'
+      shell: bash
+      run: brew install protobuf
+
+    - name: Install protobuf compiler
+      if: inputs.protoc == 'true' && runner.os == 'Windows'
+      shell: bash
+      run: choco install protoc -y
+
     - name: Print CI configuration
       if: always()
       shell: bash
@@ -92,6 +111,7 @@ runs:
         echo "| Nextest | ${{ inputs.nextest }} |" >> "$GITHUB_STEP_SUMMARY"
         echo "| sccache | ${{ inputs.sccache }} |" >> "$GITHUB_STEP_SUMMARY"
         echo "| Cross | ${{ inputs.cross }} |" >> "$GITHUB_STEP_SUMMARY"
+        echo "| Protoc | ${{ inputs.protoc }} |" >> "$GITHUB_STEP_SUMMARY"
         echo "" >> "$GITHUB_STEP_SUMMARY"
         echo '```' >> "$GITHUB_STEP_SUMMARY"
         rustc --version >> "$GITHUB_STEP_SUMMARY"
