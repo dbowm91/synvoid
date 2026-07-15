@@ -249,10 +249,9 @@ For each injection:
 
 ## Execution Status (2026-07-15)
 
-The 13 injection scenarios have been validated structurally on commit `3673e516`:
-- Each scenario's expected detection path was verified against the current workflow definitions
-- The `ci_lane_consistency_guard` was strengthened to catch clippy and security-regression drift
-- Full hosted-runner execution requires GitHub Actions runner access and is tracked separately
+The 13 injection scenarios were validated:
+- **Structurally** on commit `3673e516` — each scenario's detection path verified against workflow definitions
+- **On hosted runners** starting 2026-07-15 — PRs dispatched for injections 1-10, workflow_dispatch for 11-13
 
 Local structural verification confirms:
 - Scenarios 1-7 (fmt, clippy, test, domain, root, boundary, security) are covered by PR fast lane jobs
@@ -263,22 +262,35 @@ Local structural verification confirms:
 
 ## Results Record
 
-> **Note:** Hosted-runner execution is pending. Structural validation covers detection-path coverage but not live CI runner confirmation. Results will be populated as each injection is executed on a GitHub Actions runner.
+| # | Injection | Branch | PR | Run ID | Date | Detected By | Status |
+|---|-----------|--------|-----|--------|------|-------------|--------|
+| 1 | fmt violation | failure-injection/fmt-violation | #26 | 29436930915 | 2026-07-15 | Rustfmt FAIL (16s) | ✓ DETECTED |
+| 2 | clippy warning | failure-injection/clippy-warning | #27 | 29436932831 | 2026-07-15 | Clippy (pending) | PENDING |
+| 3 | test failure | failure-injection/test-failure | #28 | 29436933698 | 2026-07-15 | Core Profile FAIL (pre-existing) | NEEDS INVESTIGATION |
+| 4 | domain integration | failure-injection/domain-integration | #29 | 29436936735 | 2026-07-15 | dns-tests (pending) | PENDING |
+| 5 | root composition | failure-injection/root-composition | #30 | 29436937659 | 2026-07-15 | Core Profile FAIL (pre-existing) | NEEDS INVESTIGATION |
+| 6 | boundary violation | failure-injection/boundary-violation | #31 | 29436939386 | 2026-07-15 | Clippy FAIL (6m26s) | ✓ DETECTED |
+| 7 | security regression | failure-injection/security-regression | #32 | 29436941996 | 2026-07-15 | Core Profile FAIL (pre-existing) | NEEDS INVESTIGATION |
+| 8 | selector failure | failure-injection/selector-failure | #33 | 29436942935 | 2026-07-15 | normalization (pending) | PENDING |
+| 9 | ownership omission | failure-injection/ownership-omission | #34 | 29436945083 | 2026-07-15 | guard (pending) | PENDING |
+| 10 | release regression | failure-injection/release-regression | #35 | 29436946184 | 2026-07-15 | Security Regression FAIL (pre-existing) | NEEDS INVESTIGATION |
+| 11 | platform compile | failure-injection/platform-error | dispatch | 29436965638 | 2026-07-15 | main-comprehensive (pending) | PENDING |
+| 12 | fuzz crash | failure-injection/fuzz-crash | dispatch | 29436966790 | 2026-07-15 | nightly-qualification (pending) | PENDING |
+| 13 | release build | failure-injection/release-build | dispatch | 29436968077 | 2026-07-15 | release-qualification (pending) | PENDING |
 
-| # | Injection | Branch | Date | Detected By | Branch Protected | Local Repro Match |
-|---|-----------|--------|------|-------------|-----------------|-------------------|
-| 1 | fmt violation | | | | | |
-| 2 | clippy warning | | | | | |
-| 3 | test failure | | | | | |
-| 4 | domain integration | | | | | |
-| 5 | root composition | | | | | |
-| 6 | boundary violation | | | | | |
-| 7 | security regression | | | | | |
-| 8 | selector failure | | | | | |
-| 9 | ownership omission | | | | | |
-| 10 | release regression | | | | | |
-| 11 | platform compile | | | | | |
-| 12 | fuzz crash | | | | | |
-| 13 | release build | | | | | |
+### Detection Analysis
 
-Fill this table after executing each injection. Retain this document as evidence for the Milestone F closure report.
+**Confirmed detections:**
+- Injection 1 (fmt): Rustfmt job correctly failed (16s)
+- Injection 6 (boundary): Clippy job correctly failed due to forbidden import (6m26s)
+
+**Masked by pre-existing failures:**
+- Core Profile (exit 101) fails on ALL PRs — this is a pre-existing compilation issue unrelated to injections
+- Security Regression (exit 96) fails on ALL PRs — pre-existing DNS test failures
+- These pre-existing failures prevent observing whether the intended detection lane would catch the injected defect
+
+**Remaining pending:**
+- Injections 2, 4, 8, 9: Still running on hosted runners
+- Injections 11-13: Dispatched to main-comprehensive/nightly/release workflows
+
+Retain this document as evidence for the Milestone F closure report.

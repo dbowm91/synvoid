@@ -73,39 +73,60 @@ sccache remains formally deferred. No workflow currently enables it. The `setup-
 
 ## Hosted-Runner Measurements
 
-> **Pending.** Hosted-runner timing data will be recorded here as GitHub Actions workflow runs complete on the `validation/testing-operational-proof` branch. Each entry will include run ID, runner OS, workflow duration, job durations, queue time, cache hit rate, and artifact availability.
+> Hosted-runner timing data collected from GitHub Actions workflow runs.
 
 ### PR Runs
 
 | Run | Scenario | Total Duration | Longest Job | Cache State | Run ID |
 |-----|----------|---------------|-------------|-------------|--------|
-| — | Documentation-only | — | — | — | — |
-| — | Single-crate affected | — | — | — | — |
-| — | Full-validation PR | — | — | — | — |
+| 1 | Documentation-only (proof branch) | ~10m | Clippy (7m38s) | Warm | 29436788977 |
+| 2 | Single-crate affected | — | — | — | — |
+| 3 | Full-validation PR | — | — | — | — |
 
 ### Main Runs
 
 | Run | Scenario | Total Duration | Longest Job | Cache State | Run ID |
 |-----|----------|---------------|-------------|-------------|--------|
-| — | Cold comprehensive | — | — | — | — |
-| — | Warm comprehensive | — | — | — | — |
-| — | Post-dependency-change | — | — | — | — |
+| 1 | Cold comprehensive | In progress | — | Cold | 29436815104 |
+| 2 | Warm comprehensive | — | — | — | — |
+| 3 | Post-dependency-change | — | — | — | — |
 
 ### Nightly/Release Runs
 
 | Run | Scenario | Total Duration | Longest Job | Cache State | Run ID |
 |-----|----------|---------------|-------------|-------------|--------|
-| — | Nightly qualification | — | — | — | — |
-| — | Release qualification | — | — | — | — |
+| 1 | Nightly qualification | In progress | — | — | 29436966790 |
+| 2 | Release qualification | In progress | — | — | 29436968077 |
+
+### PR Fast Lane Timing (Proof Branch — Documentation-Only)
+
+| Phase | Duration |
+|-------|----------|
+| Queue to first job | ~3s |
+| Fastest job (No Unsafe in DNS) | 6s |
+| Slowest passing job (Clippy) | 7m38s |
+| Total wall-clock (to last job) | ~10m |
+| Jobs skipped (selector-gated) | 4 (tarpit, honeypot, upload, mesh) |
+
+### Main Comprehensive Timing (In Progress)
+
+| Phase | Duration |
+|-------|----------|
+| Security Audit (cargo-audit) | Completed |
+| Dependency Audit (cargo-deny) | Completed |
+| Profile Matrix (5 checks) | All completed — all PASS |
+| Cross-compiled builds | musl/aarch64-linux FAIL (protoc) |
+| Platform builds | FreeBSD/Windows FAIL (pre-existing) |
+| macOS builds | In progress |
 
 ## Budget Interpretation
 
 | Budget | Threshold | Local Status | Hosted Status |
 |--------|-----------|-------------|---------------|
-| PR fast total | <10 min warning, >15 min blocking | N/A (dry-run) | Pending |
-| Selector execution | <30s warning, >60s blocking | <1s (local) | Pending |
-| Cargo invocations | <50 warning, >70 blocking | 6 (fast lane) | Pending |
-| Guard binary count | <30 warning, >40 blocking | 63 tests | Pending |
+| PR fast total | <10 min warning, >15 min blocking | N/A (dry-run) | ~10m (warning — Clippy dominates) |
+| Selector execution | <30s warning, >60s blocking | <1s (local) | 9s (PASS) |
+| Cargo invocations | <50 warning, >70 blocking | 6 (fast lane) | 8 (fast lane with skipped jobs) |
+| Guard binary count | <30 warning, >40 blocking | 63 tests | 63 tests |
 
 ## Limitations
 
