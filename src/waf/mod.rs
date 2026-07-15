@@ -1071,3 +1071,4 @@ pub fn get_yara_rules() -> Option<Arc<crate::mesh::YaraRulesManager>> {
 pub fn get_yara_rules() -> Option<Arc<()>> {
     None
 }
+use crate::block_store::BlockStore;
