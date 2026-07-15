@@ -865,7 +865,7 @@ impl MeshCertManager {
         use std::time::SystemTime;
 
         let mut root_store = RootCertStore::empty();
-        for (_, trusted_cert) in trusted.iter() {
+        for trusted_cert in trusted.values() {
             root_store
                 .add(trusted_cert.clone())
                 .map_err(|e| MeshCertError::ConfigError(format!("Failed to add CA: {}", e)))?;

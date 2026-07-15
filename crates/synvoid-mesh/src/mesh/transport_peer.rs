@@ -2351,7 +2351,6 @@ impl MeshTransport {
                 write_quorum: _,
                 timestamp: _,
                 source_node_id,
-                signature: _,
                 ..
             } => {
                 if self
@@ -4415,9 +4414,6 @@ impl MeshTransport {
                 provider_node_id,
                 hops,
                 ttl_secs,
-                upstream_url: _,
-                waf_policy: _,
-                priority_tier: _,
                 ..
             } => {
                 let _ = query_id;

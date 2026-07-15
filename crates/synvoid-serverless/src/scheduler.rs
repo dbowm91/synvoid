@@ -64,7 +64,7 @@ impl ServerlessScheduler {
         let mut fired_events = Vec::new();
         let mut timers = self.timers.write();
 
-        for (_, entry) in timers.iter_mut() {
+        for entry in timers.values_mut() {
             if entry.should_fire() {
                 entry.mark_fired();
                 tracing::info!(

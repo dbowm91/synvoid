@@ -2873,7 +2873,7 @@ impl ThreatIntelligenceManager {
         let indicators = self.indicators.read();
         let now = synvoid_utils::safe_unix_timestamp();
 
-        for (_key, entry) in indicators.iter() {
+        for entry in indicators.values() {
             let expires_at = entry.indicator.timestamp + entry.indicator.ttl_seconds;
             if now > expires_at {
                 continue;

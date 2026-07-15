@@ -1053,7 +1053,7 @@ impl RecordStoreManager {
                 continue;
             }
 
-            let request_id = format!("rebalance-{}-{}", &key, uuid::Uuid::new_v4());
+            let request_id = format!("rebalance-{}-{}", key, uuid::Uuid::new_v4());
             let announce = MeshMessage::DhtRecordAnnounce {
                 request_id: request_id.into(),
                 records: vec![record.clone()],

@@ -1781,10 +1781,7 @@ pub fn parse_multipart(
         }
 
         if in_part {
-            let header_end = part
-                .windows(2)
-                .position(|w| w == [b'\r', b'\n'])
-                .map(|p| p + 2);
+            let header_end = part.windows(2).position(|w| w == b"\r\n").map(|p| p + 2);
             let header_section = match header_end {
                 Some(pos) => &part[..pos],
                 None => &[],

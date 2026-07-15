@@ -99,10 +99,7 @@ impl GeoIpLookup {
     }
 
     pub fn lookup_city(&self, ip: IpAddr) -> Option<String> {
-        let reader = match &self.reader {
-            Some(r) => r,
-            None => return None,
-        };
+        let reader = self.reader.as_ref()?;
 
         let result = reader.lookup(ip).ok()?;
 
@@ -119,10 +116,7 @@ impl GeoIpLookup {
     }
 
     pub fn lookup_asn(&self, ip: IpAddr) -> Option<(u32, String)> {
-        let reader = match &self.reader {
-            Some(r) => r,
-            None => return None,
-        };
+        let reader = self.reader.as_ref()?;
 
         let result = reader.lookup(ip).ok()?;
 
@@ -147,10 +141,7 @@ impl GeoIpLookup {
     }
 
     pub fn lookup_location(&self, ip: IpAddr) -> Option<(f64, f64)> {
-        let reader = match &self.reader {
-            Some(r) => r,
-            None => return None,
-        };
+        let reader = self.reader.as_ref()?;
 
         let result = reader.lookup(ip).ok()?;
 
@@ -171,10 +162,7 @@ impl GeoIpLookup {
     }
 
     pub fn lookup_location_info(&self, ip: IpAddr) -> Option<GeoLocationInfo> {
-        let reader = match &self.reader {
-            Some(r) => r,
-            None => return None,
-        };
+        let reader = self.reader.as_ref()?;
 
         let result = reader.lookup(ip).ok()?;
 

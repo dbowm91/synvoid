@@ -107,7 +107,7 @@ impl MeshTransport {
         {
             let mut failures = self.auth_failures.write();
             let window = Duration::from_secs(self.config.connection.auth_failure_window_secs);
-            for (_, v) in failures.iter_mut() {
+            for v in failures.values_mut() {
                 v.retain(|t| now.duration_since(*t) < window);
             }
             failures.retain(|_, v| !v.is_empty());
@@ -116,7 +116,7 @@ impl MeshTransport {
         {
             let mut times = self.peer_message_times.write();
             let window = Duration::from_secs(PEER_RATE_LIMIT_WINDOW_SECS);
-            for (_, v) in times.iter_mut() {
+            for v in times.values_mut() {
                 v.retain(|t| now.duration_since(*t) < window);
             }
             times.retain(|_, v| !v.is_empty());

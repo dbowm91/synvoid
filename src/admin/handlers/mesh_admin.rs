@@ -1060,7 +1060,7 @@ pub async fn get_mesh_status(
                 hasher.update(genesis_pk.as_bytes());
                 let result = hasher.finalize();
                 genesis_public_key_fingerprint =
-                    Some(format!("sha256:{}...", &hex::encode(&result[..8])));
+                    Some(format!("sha256:{}...", hex::encode(&result[..8])));
             }
         }
     }

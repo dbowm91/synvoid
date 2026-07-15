@@ -1430,7 +1430,7 @@ fn derive_node_id_hash(private_key: &[u8]) -> Vec<u8> {
 
 fn derive_node_id(private_key: &[u8]) -> String {
     let node_hash = derive_node_id_hash(private_key);
-    format!("node-{}", &hex::encode(&node_hash[..8]))
+    format!("node-{}", hex::encode(&node_hash[..8]))
 }
 
 pub fn derive_router_id(private_key: &[u8]) -> String {
