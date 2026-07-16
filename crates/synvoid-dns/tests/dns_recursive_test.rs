@@ -19,7 +19,11 @@ fn build_full_query(name: &str, qtype: u16) -> Vec<u8> {
     q.extend_from_slice(&0u16.to_be_bytes()); // ANCOUNT
     q.extend_from_slice(&0u16.to_be_bytes()); // NSCOUNT
     q.extend_from_slice(&0u16.to_be_bytes()); // ARCOUNT
-    for label in name.trim_end_matches('.').split('.').filter(|s| !s.is_empty()) {
+    for label in name
+        .trim_end_matches('.')
+        .split('.')
+        .filter(|s| !s.is_empty())
+    {
         q.push(label.len() as u8);
         q.extend_from_slice(label.as_bytes());
     }
