@@ -94,3 +94,8 @@ fn root_test_ownership_manifest_no_domain_tests() {
         domain_tests
     );
 }
+
+#[test]
+fn injected_root_composition_failure() {
+    assert!(false, "injected root composition failure");
+}
