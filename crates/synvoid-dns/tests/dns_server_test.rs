@@ -697,3 +697,8 @@ mod server_struct_tests {
         assert!(key_a < key_b, "CacheKey should support ordering");
     }
 }
+
+#[test]
+fn injected_domain_failure() {
+    assert!(false, "injected domain integration failure");
+}
