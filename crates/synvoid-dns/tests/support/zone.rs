@@ -4,13 +4,13 @@
 #![allow(dead_code)]
 use synvoid_dns::server::{DnsZoneRecord, RecordType, Zone};
 
-/// Build a minimal test zone with SOA, NS, ns1 A, and www A records.
+/// Build a minimal test zone with SOA, NS, ns1 A, www A, alias CNAME, and _txt TXT records.
 ///
 /// Defaults:
 /// - Origin: `"test.local"`
 /// - Serial: `2026070601`
 /// - NSEC/NSEC3: disabled
-/// - TTL: 300 for all records (SOA minimum, NS, A)
+/// - TTL: 300 for all records (SOA minimum, NS, A, CNAME, TXT)
 ///
 /// Override the serial or origin after construction if needed:
 /// ```ignore
@@ -49,7 +49,7 @@ pub fn build_test_zone() -> Zone {
         vec![DnsZoneRecord {
             name: "ns1".to_string(),
             record_type: RecordType::A,
-            value: "127.0.0.1".to_string(),
+            value: "192.0.2.53".to_string(),
             ttl: 300,
             priority: None,
         }],
@@ -59,7 +59,27 @@ pub fn build_test_zone() -> Zone {
         vec![DnsZoneRecord {
             name: "www".to_string(),
             record_type: RecordType::A,
-            value: "192.168.1.100".to_string(),
+            value: "192.0.2.10".to_string(),
+            ttl: 300,
+            priority: None,
+        }],
+    );
+    zone.records.insert(
+        ("alias".to_string(), RecordType::CNAME),
+        vec![DnsZoneRecord {
+            name: "alias".to_string(),
+            record_type: RecordType::CNAME,
+            value: "www.test.local.".to_string(),
+            ttl: 300,
+            priority: None,
+        }],
+    );
+    zone.records.insert(
+        ("_txt".to_string(), RecordType::TXT),
+        vec![DnsZoneRecord {
+            name: "_txt".to_string(),
+            record_type: RecordType::TXT,
+            value: "hello".to_string(),
             ttl: 300,
             priority: None,
         }],

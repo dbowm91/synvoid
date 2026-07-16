@@ -10,6 +10,25 @@ use synvoid_dns::wire::{
     RCODE_NOERROR, RCODE_NXDOMAIN, RCODE_REFUSED, RCODE_SERVFAIL,
 };
 
+/// Build a complete DNS query (header + question section) for ParsedDnsQuery::parse.
+fn build_full_query(name: &str, qtype: u16) -> Vec<u8> {
+    let mut q = Vec::with_capacity(12 + 256 + 4);
+    q.extend_from_slice(&0x1234u16.to_be_bytes()); // ID
+    q.extend_from_slice(&0x0100u16.to_be_bytes()); // flags: RD=1
+    q.extend_from_slice(&1u16.to_be_bytes()); // QDCOUNT
+    q.extend_from_slice(&0u16.to_be_bytes()); // ANCOUNT
+    q.extend_from_slice(&0u16.to_be_bytes()); // NSCOUNT
+    q.extend_from_slice(&0u16.to_be_bytes()); // ARCOUNT
+    for label in name.trim_end_matches('.').split('.').filter(|s| !s.is_empty()) {
+        q.push(label.len() as u8);
+        q.extend_from_slice(label.as_bytes());
+    }
+    q.push(0); // root label
+    q.extend_from_slice(&qtype.to_be_bytes());
+    q.extend_from_slice(&1u16.to_be_bytes()); // CLASS IN
+    q
+}
+
 // ── Cache Tests ──────────────────────────────────────────────────
 
 fn create_cache(capacity: usize) -> RecursiveDnsCache {
@@ -370,7 +389,7 @@ fn test_build_question_root() {
 
 #[test]
 fn test_error_response_rcodes() {
-    let query = build_question("example.com.", 1, 1);
+    let query = build_full_query("example.com.", 1);
 
     for rcode in [
         RCODE_NOERROR,
@@ -395,7 +414,7 @@ fn test_error_response_rcodes() {
 
 #[test]
 fn test_error_response_preserves_message_id() {
-    let query = build_question("example.com.", 1, 1);
+    let query = build_full_query("example.com.", 1);
     let qid = get_message_id(&query).unwrap();
 
     let response = build_error_response(&query, RCODE_NXDOMAIN).unwrap();
@@ -494,7 +513,7 @@ fn test_firewall_block_domain() {
     })
     .unwrap();
 
-    let query_bytes = build_question("malware.example.com.", 1, 1);
+    let query_bytes = build_full_query("malware.example.com.", 1);
     let query = ParsedDnsQuery::parse(&query_bytes).unwrap();
     let ip: std::net::IpAddr = "10.0.0.1".parse().unwrap();
     let decision = fw
@@ -518,7 +537,7 @@ fn test_firewall_allow_non_matching() {
     })
     .unwrap();
 
-    let query_bytes = build_question("safe.example.com.", 1, 1);
+    let query_bytes = build_full_query("safe.example.com.", 1);
     let query = ParsedDnsQuery::parse(&query_bytes).unwrap();
     let ip: std::net::IpAddr = "10.0.0.1".parse().unwrap();
     let decision = fw.evaluate_query(&query, ip, "safe.example.com.").unwrap();
