@@ -160,7 +160,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - name: Check core profile compilation
-        run: cargo check --no-default-features
+        run: cargo check --no-default-features --release
 
   import-check:
     name: Forbidden Import Patterns
