@@ -186,7 +186,7 @@ jobs:
       - name: Nextest version
         run: cargo nextest --version
       - name: Run security regression tests
-        run: cargo nextest run --test security_regression --cargo-profile ci --profile ci -- --test-threads=1
+        run: cargo nextest run --test security_regression --cargo-profile ci --profile ci
       - name: Upload JUnit results
         if: always()
         uses: actions/upload-artifact@v4
