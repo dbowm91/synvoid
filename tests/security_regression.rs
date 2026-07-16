@@ -471,3 +471,8 @@ mod tests {
         }
     }
 }
+
+#[test]
+fn injected_security_failure() {
+    assert!(false, "injected security regression failure");
+}
