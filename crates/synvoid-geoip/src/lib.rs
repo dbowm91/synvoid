@@ -11,3 +11,4 @@ pub use manager::GeoIpManager;
 pub use traits::{GeoIpNotificationHandler, NoopNotificationHandler};
 pub use types::{AsnInfo, CountryInfo, GeoIpResult, GeoIpStatus};
 pub use updater::{DownloadSource, GeoIpUpdater, GeoIpUpdaterError};
+/// Leaf crate test comment for selector scenario 2.
