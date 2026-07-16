@@ -247,50 +247,54 @@ For each injection:
 7. Close PR / delete branch (never merge)
 8. Verify `main` CI is green after cleanup
 
-## Execution Status (2026-07-15)
+## Execution Status (2026-07-16)
 
 The 13 injection scenarios were validated:
 - **Structurally** on commit `3673e516` — each scenario's detection path verified against workflow definitions
 - **On hosted runners** starting 2026-07-15 — PRs dispatched for injections 1-10, workflow_dispatch for 11-13
+- **Re-run** on 2026-07-16 after fixing Core Profile, Security Regression, and nextest issues
 
-Local structural verification confirms:
-- Scenarios 1-7 (fmt, clippy, test, domain, root, boundary, security) are covered by PR fast lane jobs
-- Scenario 8 (selector failure) is covered by the normalization step in pr-fast.yml
-- Scenario 9 (ownership entry) is covered by root_test_ownership_guard
-- Scenario 10 (release in PR) is covered by ci_lane_consistency_guard --release check
-- Scenarios 11-13 (platform, fuzz, release) require main-comprehensive or nightly-qualification lanes
-
-## Results Record
+### Results Record
 
 | # | Injection | Branch | PR | Run ID | Date | Detected By | Status |
 |---|-----------|--------|-----|--------|------|-------------|--------|
 | 1 | fmt violation | failure-injection/fmt-violation | #26 | 29436930915 | 2026-07-15 | Rustfmt FAIL (16s) | ✓ DETECTED |
-| 2 | clippy warning | failure-injection/clippy-warning | #27 | 29436932831 | 2026-07-15 | Clippy (pending) | PENDING |
-| 3 | test failure | failure-injection/test-failure | #28 | 29436933698 | 2026-07-15 | Core Profile FAIL (pre-existing) | NEEDS INVESTIGATION |
-| 4 | domain integration | failure-injection/domain-integration | #29 | 29436936735 | 2026-07-15 | dns-tests (pending) | PENDING |
-| 5 | root composition | failure-injection/root-composition | #30 | 29436937659 | 2026-07-15 | Core Profile FAIL (pre-existing) | NEEDS INVESTIGATION |
+| 2 | clippy warning | failure-injection/clippy-warning-r2 | #36 | — | 2026-07-16 | Clippy FAIL (7m4s) | ✓ DETECTED |
+| 3 | test failure | failure-injection/test-failure-r2 | #37 | — | 2026-07-16 | Architecture Guard Tests FAIL | ⚠ EARLIER LANE |
+| 4 | domain integration | failure-injection/domain-integration-r2 | #38 | — | 2026-07-16 | Architecture Guard Tests FAIL | ⚠ EARLIER LANE |
+| 5 | root composition | failure-injection/root-composition-r2 | #39 | — | 2026-07-16 | Clippy FAIL | ⚠ EARLIER LANE |
 | 6 | boundary violation | failure-injection/boundary-violation | #31 | 29436939386 | 2026-07-15 | Clippy FAIL (6m26s) | ✓ DETECTED |
-| 7 | security regression | failure-injection/security-regression | #32 | 29436941996 | 2026-07-15 | Core Profile FAIL (pre-existing) | NEEDS INVESTIGATION |
-| 8 | selector failure | failure-injection/selector-failure | #33 | 29436942935 | 2026-07-15 | normalization (pending) | PENDING |
-| 9 | ownership omission | failure-injection/ownership-omission | #34 | 29436945083 | 2026-07-15 | guard (pending) | PENDING |
-| 10 | release regression | failure-injection/release-regression | #35 | 29436946184 | 2026-07-15 | Security Regression FAIL (pre-existing) | NEEDS INVESTIGATION |
+| 7 | security regression | failure-injection/security-regression-r2 | #40 | — | 2026-07-16 | Clippy FAIL | ⚠ EARLIER LANE |
+| 8 | selector failure | failure-injection/selector-failure-r2 | #41 | — | 2026-07-16 | Architecture Guard Tests FAIL | ⚠ EARLIER LANE |
+| 9 | ownership omission | failure-injection/ownership-omission-r2 | #42 | — | 2026-07-16 | Rustfmt FAIL (20s) | ⚠ EARLIER LANE |
+| 10 | release regression | failure-injection/release-regression-r2 | #43 | — | 2026-07-16 | Architecture Guard Tests FAIL | ⚠ EARLIER LANE |
 | 11 | platform compile | failure-injection/platform-error | dispatch | 29436965638 | 2026-07-15 | main-comprehensive (pending) | PENDING |
 | 12 | fuzz crash | failure-injection/fuzz-crash | dispatch | 29436966790 | 2026-07-15 | nightly-qualification (pending) | PENDING |
 | 13 | release build | failure-injection/release-build | dispatch | 29436968077 | 2026-07-15 | release-qualification (pending) | PENDING |
 
 ### Detection Analysis
 
-**Confirmed detections:**
+**Confirmed detections (intended lane):**
 - Injection 1 (fmt): Rustfmt job correctly failed (16s)
+- Injection 2 (clippy): Clippy job correctly failed on `clippy::needless_return` (7m4s)
 - Injection 6 (boundary): Clippy job correctly failed due to forbidden import (6m26s)
 
-**Masked by pre-existing failures:**
-- Core Profile (exit 101) fails on ALL PRs — this is a pre-existing compilation issue unrelated to injections
-- Security Regression (exit 96) fails on ALL PRs — pre-existing DNS test failures
-- These pre-existing failures prevent observing whether the intended detection lane would catch the injected defect
+**Earlier-lane detections (injection caught, but not by intended lane):**
+- Injections 3-5, 7-10: Adding test code or modifying files triggered earlier pipeline stages (formatting, clippy, compilation) before the intended detector ran
+- Root cause: The injection patches were too broad — they triggered format/clippy/compilation errors that are checked earlier in the pipeline
+- The injected failures were real and detected, but not by the specific lane designed to catch them
+
+**Pre-existing failures fixed (2026-07-16):**
+- Core Profile (exit 101): Protobuf compilation gated behind mesh feature
+- Security Regression (exit 96): Added `protoc: 'true'` to job, removed unsupported `--test-threads=1` from nextest
 
 **Remaining pending:**
-- Injections 2, 4, 8, 9: Still running on hosted runners
-- Injections 11-13: Dispatched to main-comprehensive/nightly/release workflows
+- Injections 11-13: Dispatched to main-comprehensive/nightly/release workflows (not re-run)
+
+### Lessons Learned
+
+1. **Injection patches must be surgical**: Adding `assert!(false)` to test files can trigger format/clippy errors. Future injections should use `#[allow(...)]` attributes or modify only the specific code path being tested.
+2. **Pipeline ordering matters**: Clippy runs before test execution, so any code change that triggers a clippy warning will be caught by Clippy before the test failure detector runs.
+3. **Security Regression needs protoc**: The test compiles the root crate which depends on synvoid-mesh, requiring protoc.
 
 Retain this document as evidence for the Milestone F closure report.

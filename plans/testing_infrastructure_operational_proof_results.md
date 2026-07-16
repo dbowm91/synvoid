@@ -258,6 +258,37 @@ All xtask lane commands now match their corresponding CI workflow definitions:
 
 **Result**: All formatting checks pass.
 
+## Hosted-Runner Evidence (OP6 — Failure Injection, re-run)
+
+### Re-run Results (2026-07-16, post-fix)
+
+After fixing Core Profile exit 101, Security Regression protoc, and nextest `--test-threads=1` incompatibility, we re-ran injections 2-10:
+
+| # | Injection | PR | Expected Detector | Actual Detector | Status |
+|---|-----------|-----|-------------------|-----------------|--------|
+| 2 | clippy warning | #36 | Clippy | Clippy FAIL (7m4s) | ✓ DETECTED |
+| 3 | test failure | #37 | Architecture Guard Tests | Architecture Guard Tests FAIL (9m37s) | ✓ DETECTED |
+| 4 | domain integration | #38 | DNS Crate Tests | Architecture Guard Tests FAIL (10m21s) | ⚠ INCORRECT LANE |
+| 5 | root composition | #39 | Architecture Guard Tests | Clippy FAIL (6m37s) | ⚠ INCORRECT LANE |
+| 6 | boundary violation | #31 (orig) | Clippy | Clippy FAIL (6m26s) | ✓ DETECTED |
+| 7 | security regression | #40 | Security Regression Tests | Clippy FAIL (6m24s) | ⚠ INCORRECT LANE |
+| 8 | selector failure | #41 | Normalization fallback | Architecture Guard Tests FAIL (9m57s) | ⚠ INCORRECT LANE |
+| 9 | ownership omission | #42 | root_test_ownership_guard | Rustfmt FAIL (20s) | ⚠ INCORRECT LANE |
+| 10 | release regression | #43 | ci_lane_consistency_guard | Architecture Guard Tests FAIL (1m28s) | ⚠ INCORRECT LANE |
+
+### Analysis
+
+**Confirmed detections:**
+- Injection 2 (clippy): Clippy correctly failed on `clippy::needless_return`
+- Injection 6 (boundary): Clippy correctly failed on forbidden import
+
+**Incorrect lane detections (pre-existing issues):**
+- Injections 3-5, 7-10: Architecture Guard Tests or Clippy failed BEFORE the intended detector ran
+- Root cause: Adding test code to files triggered compilation warnings/errors that Clippy or guard tests caught first
+- The injected failures were real, but the detection path was not the intended one
+
+**Key finding:** The injection procedure needs refinement. Simply adding `assert!(false)` to a test file can trigger earlier-detecting guards (formatting, clippy, compilation) before the intended detector runs. Future injections should be more surgical to avoid triggering earlier pipeline stages.
+
 ## Hosted-Runner Evidence (OP4 — Main Comprehensive, post-fix)
 
 ### Main Comprehensive Run (post-fix)
