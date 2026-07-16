@@ -132,43 +132,46 @@ impl SupervisorProcess {
             tracing::info!("Registered IPC accept loop as critical control-plane task");
         }
 
-        // Register gRPC control server as a managed task
-        let grpc_addr = self
-            .state
-            .config
-            .read()
-            .await
-            .main
-            .supervisor
-            .control_api_addr
-            .parse();
-        let control_api_tls = self
-            .state
-            .config
-            .read()
-            .await
-            .main
-            .supervisor
-            .control_api_tls
-            .clone()
-            .map(crate::tls::config::InternalTlsConfig::from);
-        if let Ok(addr) = grpc_addr {
-            let pm = self.process_manager.clone();
-            let state = self.state.clone();
-            let handle = tokio::spawn(run_supervisor_control_api_task(
-                addr,
-                pm,
-                state,
-                control_api_tls,
-            ));
-            self.supervisor_tasks.register(
-                "supervisor_grpc_control_api",
-                SupervisorTaskClass::CriticalControlPlane,
-                handle,
-            );
-            tracing::info!("Registered gRPC control API as critical control-plane task");
-        } else {
-            tracing::error!("Invalid gRPC control API address configured");
+        // Register gRPC control server as a managed task (mesh feature only)
+        #[cfg(feature = "mesh")]
+        {
+            let grpc_addr = self
+                .state
+                .config
+                .read()
+                .await
+                .main
+                .supervisor
+                .control_api_addr
+                .parse();
+            let control_api_tls = self
+                .state
+                .config
+                .read()
+                .await
+                .main
+                .supervisor
+                .control_api_tls
+                .clone()
+                .map(crate::tls::config::InternalTlsConfig::from);
+            if let Ok(addr) = grpc_addr {
+                let pm = self.process_manager.clone();
+                let state = self.state.clone();
+                let handle = tokio::spawn(run_supervisor_control_api_task(
+                    addr,
+                    pm,
+                    state,
+                    control_api_tls,
+                ));
+                self.supervisor_tasks.register(
+                    "supervisor_grpc_control_api",
+                    SupervisorTaskClass::CriticalControlPlane,
+                    handle,
+                );
+                tracing::info!("Registered gRPC control API as critical control-plane task");
+            } else {
+                tracing::error!("Invalid gRPC control API address configured");
+            }
         }
 
         let mut shutdown_rx = self.state.subscribe_shutdown();
@@ -422,6 +425,7 @@ async fn run_supervisor_ipc_accept_loop(
 }
 
 /// Long-lived gRPC control API server task.
+#[cfg(feature = "mesh")]
 ///
 /// Registered as a critical control-plane task in `SupervisorTaskRegistry`.
 async fn run_supervisor_control_api_task(

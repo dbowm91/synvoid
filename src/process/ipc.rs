@@ -18,6 +18,7 @@ pub enum CommandMethod {
     UnixSocket,
     NamedPipe,
     Signal,
+    #[cfg(feature = "mesh")]
     GRpc,
 }
 

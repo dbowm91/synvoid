@@ -3,6 +3,7 @@
 //! Owns the unified supervisor process for worker lifecycle, upgrades, and control plane operations. The supervisor handles zero-downtime upgrades,
 //! IPC communications, and uses `ProcessManager` to orchestrate worker processes.
 
+#[cfg(feature = "mesh")]
 pub mod api;
 pub mod cli_commands;
 pub mod commands;

@@ -63,10 +63,12 @@ impl CommandClient {
             super::ipc::CommandMethod::UnixSocket => self.send_via_socket(command),
             super::ipc::CommandMethod::NamedPipe => self.send_via_named_pipe(command),
             super::ipc::CommandMethod::Signal => self.send_via_signal(command),
+            #[cfg(feature = "mesh")]
             super::ipc::CommandMethod::GRpc => self.send_via_grpc(command),
         }
     }
 
+    #[cfg(feature = "mesh")]
     fn send_via_grpc(&self, command: SupervisorCommand) -> Result<String, CommandError> {
         let addr = self.grpc_addr.as_ref().ok_or(CommandError::NoSocket)?;
         let rt = tokio::runtime::Runtime::new()
@@ -293,6 +295,7 @@ impl CommandClient {
             super::ipc::CommandMethod::Signal => Err(CommandError::NotSupported(
                 "Status not available via signal".to_string(),
             )),
+            #[cfg(feature = "mesh")]
             super::ipc::CommandMethod::GRpc => {
                 let addr = self.grpc_addr.as_ref().ok_or(CommandError::NoSocket)?;
                 let rt = tokio::runtime::Runtime::new()
