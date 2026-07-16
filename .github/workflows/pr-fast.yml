@@ -182,6 +182,7 @@ jobs:
       - uses: ./.github/actions/setup-rust-ci
         with:
           nextest: 'true'
+          protoc: 'true'
           cache-key: pr-security-regression
       - name: Nextest version
         run: cargo nextest --version
