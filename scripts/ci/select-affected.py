@@ -1,3 +1,4 @@
+import sys; sys.exit(1)  # injected selector failure
 #!/usr/bin/env python3
 """Compute the affected package set for a given commit range.
 
