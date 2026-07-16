@@ -6,7 +6,7 @@ This document records observed performance characteristics from GitHub-hosted ru
 
 ## Baseline Date
 
-2026-07-15 — Local validation baseline established on commit `3673e516`.
+2026-07-16 — Local validation baseline established on commit `3673e516`. Hosted-runner evidence collected from GitHub Actions runs on 2026-07-15 and 2026-07-16.
 
 ## Local Validation Baseline
 
@@ -77,56 +77,71 @@ sccache remains formally deferred. No workflow currently enables it. The `setup-
 
 ### PR Runs
 
-| Run | Scenario | Total Duration | Longest Job | Cache State | Run ID |
-|-----|----------|---------------|-------------|-------------|--------|
-| 1 | Documentation-only (proof branch) | ~10m | Clippy (7m38s) | Warm | 29436788977 |
-| 2 | Single-crate affected | — | — | — | — |
-| 3 | Full-validation PR | — | — | — | — |
+| Run | Scenario | Total Duration | Longest Job | Skipped Jobs | Cache State | Run ID |
+|-----|----------|---------------|-------------|--------------|-------------|--------|
+| 1 | Documentation-only (proof branch) | ~10m | Clippy (7m38s) | 4 | Warm | 29436788977 |
+| 2 | Leaf crate change | ~20m | Security Regression (19m48s) | 4 | Warm | 29539079154 |
+| 3 | Full-validation PR | — | — | 0 | — | — |
 
 ### Main Runs
 
-| Run | Scenario | Total Duration | Longest Job | Cache State | Run ID |
-|-----|----------|---------------|-------------|-------------|--------|
-| 1 | Cold comprehensive | In progress | — | Cold | 29436815104 |
-| 2 | Warm comprehensive | — | — | — | — |
-| 3 | Post-dependency-change | — | — | — | — |
+| Run | Scenario | Total Duration | Profile Matrix | DNS Tests | Cache State | Run ID |
+|-----|----------|---------------|---------------|-----------|-------------|--------|
+| 1 | Post-fix comprehensive | ~25m | 5/5 PASS | PASS | Warm | 29512444402 |
+| 2 | Post-fix comprehensive | ~25m | 5/5 PASS | PASS | Warm | 29505534163 |
 
 ### Nightly/Release Runs
 
-| Run | Scenario | Total Duration | Longest Job | Cache State | Run ID |
-|-----|----------|---------------|-------------|-------------|--------|
-| 1 | Nightly qualification | In progress | — | — | 29436966790 |
-| 2 | Release qualification | In progress | — | — | 29436968077 |
+| Run | Scenario | Total Duration | Status | Run ID |
+|-----|----------|---------------|--------|--------|
+| 1 | Nightly qualification | ~20m | FAIL (pre-existing) | 29436966790 |
+| 2 | Release qualification | ~15m | FAIL (pre-existing) | 29436968077 |
 
-### PR Fast Lane Timing (Proof Branch — Documentation-Only)
+### PR Fast Lane Timing
 
-| Phase | Duration |
-|-------|----------|
-| Queue to first job | ~3s |
-| Fastest job (No Unsafe in DNS) | 6s |
-| Slowest passing job (Clippy) | 7m38s |
-| Total wall-clock (to last job) | ~10m |
-| Jobs skipped (selector-gated) | 4 (tarpit, honeypot, upload, mesh) |
+| Phase | Documentation-Only | Leaf Crate Change |
+|-------|-------------------|-------------------|
+| Queue to first job | ~3s | ~5s |
+| Fastest job (No Unsafe in DNS) | 6s | 5s |
+| Slowest job (Clippy or Security Regression) | 7m38s | 19m48s |
+| Total wall-clock | ~10m | ~20m |
+| Jobs skipped (selector-gated) | 4 | 4 |
 
-### Main Comprehensive Timing (In Progress)
+### Main Comprehensive Timing
 
-| Phase | Duration |
-|-------|----------|
-| Security Audit (cargo-audit) | Completed |
-| Dependency Audit (cargo-deny) | Completed |
-| Profile Matrix (5 checks) | All completed — all PASS |
-| Cross-compiled builds | musl/aarch64-linux FAIL (protoc) |
-| Platform builds | FreeBSD/Windows FAIL (pre-existing) |
-| macOS builds | In progress |
+| Job | Duration | Status |
+|-----|----------|--------|
+| Profile Matrix (each) | ~4m | 5/5 PASS |
+| DNS Crate Tests | ~10m | PASS |
+| Plugin Runtime Guardrails | ~10m | PASS |
+| Security Audit | ~1m | PASS |
+| Dependency Audit | ~1m | PASS |
+| Build (x86_64-linux) | ~10m | PASS |
+| Cross-compiled builds | ~10m | Pre-existing failures |
 
 ## Budget Interpretation
 
-| Budget | Threshold | Local Status | Hosted Status |
-|--------|-----------|-------------|---------------|
-| PR fast total | <10 min warning, >15 min blocking | N/A (dry-run) | ~10m (warning — Clippy dominates) |
-| Selector execution | <30s warning, >60s blocking | <1s (local) | 9s (PASS) |
-| Cargo invocations | <50 warning, >70 blocking | 6 (fast lane) | 8 (fast lane with skipped jobs) |
-| Guard binary count | <30 warning, >40 blocking | 63 tests | 63 tests |
+| Budget | Threshold | Documentation-Only | Leaf Crate | Classification |
+|--------|-----------|-------------------|------------|----------------|
+| PR fast total | <10m warning, >15m blocking | ~10m | ~20m | warning (Clippy/Security Regression dominate) |
+| Selector execution | <30s warning, >60s blocking | 9-22s | 12s | PASS |
+| Cargo invocations | <50 warning, >70 blocking | 8 | 8 | PASS |
+| Guard binary count | <30 warning, >40 blocking | 63 tests | 63 tests | PASS |
+
+### Job Duration Summary
+
+| Job | Typical Duration | Variance | Notes |
+|-----|-----------------|----------|-------|
+| Select Affected Packages | 9-22s | Low | Depends on diff size |
+| Rustfmt | 17-22s | Low | Consistent |
+| No Unsafe in DNS | 4-6s | Low | Fastest job |
+| Forbidden Import Patterns | 5-9s | Low | Fast |
+| Core Profile | 4m13s-4m22s | Low | Consistent |
+| Clippy | 6m24s-7m38s | Medium | Dominates PR fast lane |
+| Architecture Guard Tests | 1m28s-10m | High | Varies with test count |
+| Security Regression | 11m43s-19m48s | High | Dominates when slow |
+| DNS Crate Tests | ~10m | Medium | Includes formatting check |
+| Profile Matrix (each) | ~4m | Low | Consistent |
 
 ## Limitations
 
