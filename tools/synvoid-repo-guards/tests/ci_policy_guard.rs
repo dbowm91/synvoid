@@ -380,14 +380,8 @@ fn ci_lane_consistency_guard() {
         }
     }
 
-    // Check that security regression uses --test-threads=1 (serialization requirement)
-    if pr_fast_content.contains("security_regression")
-        && !pr_fast_content.contains("--test-threads=1")
-    {
-        violations.push(
-            "pr-fast.yml security regression job missing --test-threads=1 (required by lanes.toml serialization = 'global-env')".to_string()
-        );
-    }
+    // Note: security regression serialization is handled by nextest test-groups.global-env (max-threads=1)
+    // in .config/nextest.toml, NOT by --test-threads=1 (which is a cargo-test argument, not nextest).
 
     // Check that PR fast lane doesn't use --release (except security regression)
     for (i, line) in pr_fast_content.lines().enumerate() {
