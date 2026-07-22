@@ -63,4 +63,4 @@ This gives us full control over the validation process and trust anchor manageme
 
 ## References
 - `crates/synvoid-dns/src/trust_anchor.rs` - RFC 5011 state machine
-- `skills/dns_dnssec.md` - Detailed DNSSEC architecture documentation
+- [DNS/DNSSEC Skill](../../.opencode/skills/dns_dnssec/SKILL.md) - Detailed DNSSEC architecture documentation

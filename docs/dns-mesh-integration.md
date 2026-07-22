@@ -127,8 +127,8 @@ The `dns_serving_healthy` field is:
 
 ## Relevant Source
 
-- `src/mesh/` — Transport, protocol, DHT, cert distribution
+- `crates/synvoid-mesh/src/mesh/` — Transport, protocol, DHT, cert distribution
 - `crates/synvoid-dns/src/server/` — DNS server mesh integration
-- `src/mesh/cert_dist.rs` — Certificate distribution (origin → edge)
+- `crates/synvoid-mesh/src/mesh/cert_dist.rs` — Certificate distribution (origin → edge)
 - `crates/synvoid-dns/src/trust_anchor.rs` — RFC 5011 trust anchor management
 - `crates/synvoid-tls/src/acme.rs` — ACME client implementation

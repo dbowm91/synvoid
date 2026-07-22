@@ -137,7 +137,7 @@ Examples:
 - `threat_indicator:10.0.0.1:RateLimitViolation`
 - `threat_indicator:192.168.1.100:SuspiciousActivity`
 
-The `make_indicator_key()` function in `src/mesh/threat_intel.rs:25-27` creates these keys.
+The `make_indicator_key()` function in `crates/synvoid-mesh/src/mesh/threat_intel.rs:25-27` creates these keys.
 
 ### Local Announcements
 
@@ -719,9 +719,9 @@ The system records metrics for monitoring:
 
 | File | Description |
 |------|-------------|
-| `src/mesh/threat_intel.rs` | ThreatIntelligenceManager implementation |
-| `src/mesh/yara_rules.rs` | YaraRulesManager implementation |
-| `src/mesh/dht/keys.rs` | DHT key definitions and formats |
-| `src/mesh/config.rs` | Configuration structures |
+| `crates/synvoid-mesh/src/mesh/threat_intel.rs` | ThreatIntelligenceManager implementation |
+| `crates/synvoid-mesh/src/mesh/yara_rules.rs` | YaraRulesManager implementation |
+| `crates/synvoid-mesh/src/mesh/dht/keys.rs` | DHT key definitions and formats |
+| `crates/synvoid-mesh/src/mesh/config.rs` | Configuration structures |
 | `src/static_files/file_manager.rs` | YARA integration for file scanning |
 | `src/block_store.rs` | IP blocking implementation |

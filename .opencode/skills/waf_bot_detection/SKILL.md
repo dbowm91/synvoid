@@ -111,7 +111,7 @@ pub async fn check_request_full(
 ## Bot Detection Result
 
 ```rust
-// src/waf/bot.rs
+// crates/synvoid-waf/src/bot.rs
 pub enum BotDetectionResult {
     Allowed,
     Blocked { reason: String, bot_type: String },
@@ -139,7 +139,7 @@ known_bot_ja4_hashes = [
 ### BotDetector Structure
 
 ```rust
-// src/waf/bot.rs
+// crates/synvoid-waf/src/bot.rs
 pub struct BotDetector {
     known_bot_ja3_hashes: HashSet<String>,
     known_bot_ja4_hashes: HashSet<String>,

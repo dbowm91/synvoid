@@ -855,7 +855,7 @@ Site configuration can override limits per plugin via `site_config.wasm_plugins`
 ## 11. Related Documentation
 
 - [`plugin_deep_dive.md`](plugin_deep_dive.md) — Detailed deep dive including Spin and serverless comparison
-- [`skills/spin_wasm.md`](skills/spin_wasm.md) — Spin WASM runtime patterns
-- [`skills/serverless_wasm.md`](skills/serverless_wasm.md) — Serverless WASM patterns
-- [`skills/wasm_components.md`](skills/wasm_components.md) — WASM component model patterns
+- [`skills/spin_wasm.md`](../.opencode/skills/serverless_wasm/SKILL.md) — Spin WASM runtime patterns
+- [`skills/serverless_wasm.md`](../.opencode/skills/serverless_wasm/SKILL.md) — Serverless WASM patterns
+- [`skills/wasm_components.md`](../.opencode/skills/serverless_wasm/SKILL.md) — WASM component model patterns
 - [`src/plugin/AGENTS.override.md`](src/plugin/AGENTS.override.md) — Agent-specific guidance

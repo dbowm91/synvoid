@@ -18,21 +18,21 @@ SynVoid has two layers of hybrid signature support:
 
 | Type | Location | Purpose |
 |------|----------|---------|
-| **`HybridSigner`** trait | `src/mesh/hybrid_signature.rs:190` | Generic trait for any hybrid signer implementing `sign_hybrid()` / `verify_hybrid()` |
-| **`HybridSignature`** struct | `src/mesh/hybrid_signature.rs:36-58` | Generic signature containing `ed25519_signature` (64 bytes), `ml_dsa_signature` (2420 bytes), and public keys |
-| **`MeshHybridSigner`** | `src/mesh/ml_dsa.rs:122` | Concrete mesh-specific signer that uses Ed25519 + ML-DSA-44 for DHT/mesh messages |
+| **`HybridSigner`** trait | `crates/synvoid-mesh/src/mesh/hybrid_signature.rs:190` | Generic trait for any hybrid signer implementing `sign_hybrid()` / `verify_hybrid()` |
+| **`HybridSignature`** struct | `crates/synvoid-mesh/src/mesh/hybrid_signature.rs:36-58` | Generic signature containing `ed25519_signature` (64 bytes), `ml_dsa_signature` (2420 bytes), and public keys |
+| **`MeshHybridSigner`** | `crates/synvoid-mesh/src/mesh/ml_dsa.rs:122` | Concrete mesh-specific signer that uses Ed25519 + ML-DSA-44 for DHT/mesh messages |
 
 The generic `HybridSigner` trait provides a consistent interface; `MeshHybridSigner` is the concrete implementation for mesh control plane messages. The `HybridSignature` struct stores the raw signature bytes for serialization.
 
 ### Hybrid Signature Verification (BUG-L1)
 
-The `verify_hybrid()` function at `src/mesh/ml_dsa.rs:189-219` implements fail-safe hybrid signature verification:
+The `verify_hybrid()` function at `crates/synvoid-mesh/src/mesh/ml_dsa.rs:189-219` implements fail-safe hybrid signature verification:
 
 1. **Ed25519 First:** Always verifies the classical Ed25519 signature first
 2. **ML-DSA Optional:** If `signature.has_ml_dsa()` is true, verifies the ML-DSA signature
 3. **Fail-Safe Behavior:** If ML-DSA data is absent (`has_ml_dsa()` returns false), the function returns `true` (treating as valid)
 
-This fail-safe approach ensures that if the PQC algorithm is broken or unavailable, the system can still operate on classical Ed25519 signatures alone. See `verify_hybrid()` at `src/mesh/ml_dsa.rs:206-218`.
+This fail-safe approach ensures that if the PQC algorithm is broken or unavailable, the system can still operate on classical Ed25519 signatures alone. See `verify_hybrid()` at `crates/synvoid-mesh/src/mesh/ml_dsa.rs:206-218`.
 
 ### Post-Quantum TLS Provider Installation (L35-4)
 
@@ -46,7 +46,7 @@ rustls-post-quantum = { version = "0.2", optional = true }  # Cargo.toml:156
 This installs `rustls_post_quantum::provider()` which provides X25519MLKEM768 hybrid key exchange for all TLS 1.3 connections, securing Layer 3 (TLS & Proxy) traffic against quantum attacks.
 
 ```rust
-// src/mesh/cert.rs:87-139 — verify_post_quantum_tls()
+// crates/synvoid-mesh/src/mesh/cert.rs:87-139 — verify_post_quantum_tls()
 #[cfg(feature = "post-quantum")]
 {
     use rustls_post_quantum::provider;
@@ -66,16 +66,16 @@ This installs `rustls_post_quantum::provider()` which provides X25519MLKEM768 hy
 
 ### Async Hybrid Verification
 
-The `verify_hybrid_async()` function (`src/mesh/protocol.rs:197-232`) uses `CryptoVerificationPool` for parallel ML-DSA signature verification.
+The `verify_hybrid_async()` function (`crates/synvoid-mesh/src/mesh/protocol.rs:197-232`) uses `CryptoVerificationPool` for parallel ML-DSA signature verification.
 
 ### ML-KEM Proof-of-Possession (BUG-L3)
 
-The ML-KEM key exchange includes proof-of-possession verification at `src/mesh/ml_kem_key_exchange.rs:204-264`. The `confirm_key` method:
+The ML-KEM key exchange includes proof-of-possession verification at `crates/synvoid-mesh/src/mesh/ml_kem_key_exchange.rs:204-264`. The `confirm_key` method:
 
 1. **Verifies Client Public Key:** Confirms the client public key matches the stored session public key
 2. **Decapsulation Test:** Calls `MlKem768::decapsulate()` with the client's key to confirm the client can actually use the shared secret
 
-This prevents a rogue server from successfully completing key exchange without the client being able to decapsulate. See `confirm_key()` at `src/mesh/ml_kem_key_exchange.rs:241`.
+This prevents a rogue server from successfully completing key exchange without the client being able to decapsulate. See `confirm_key()` at `crates/synvoid-mesh/src/mesh/ml_kem_key_exchange.rs:241`.
 
 ### ML-KEM Timing Side-Channel Consideration (L35-6)
 
@@ -102,7 +102,7 @@ Yes, the mesh layer (`Layer 5`) is **highly complex** and represents the greates
 *   **Current Architecture:** It uses a custom Kademlia-style DHT (`ShardedRecordStore`) over QUIC for peer discovery, threat intelligence sharing, and dynamic routing, combined with a custom PKI trust chain and PQC handshakes.
 *   **The Issue:** Maintaining state consistency and preventing split-brain scenarios in a high-churn, globally distributed Kademlia DHT is notoriously difficult. Custom cryptographic wrappers over QUIC streams increase the surface area for logic bugs compared to standard mTLS.
 *   **Room for Simplification:**
-    1.  **Raft Consensus:** Global nodes use Raft consensus (`src/mesh/raft/`) for state consistency. The Raft implementation handles leader election and log replication, though quorum deadlock risks during network partitions remain a known limitation (see MESH-15).
+    1.  **Raft Consensus:** Global nodes use Raft consensus (`crates/synvoid-mesh/src/mesh/raft/`) for state consistency. The Raft implementation handles leader election and log replication, though quorum deadlock risks during network partitions remain a known limitation (see MESH-15).
     2.  **Standardize mTLS:** Edge and Origin nodes could simply connect to Global nodes using standard TLS 1.3 mTLS (with PQC enabled) rather than custom KEM handshake protocols over raw QUIC streams.
 
 ## 4. The Trust Model: Genesis to Edge
@@ -197,13 +197,13 @@ Hybrid signatures (Ed25519 + ML-DSA-44) have significant size overhead:
 
 ### Raft Consensus Quorum Deadlock Risk (L35-9, MESH-15)
 
-The mesh Global tier uses Raft consensus (`src/mesh/raft/`) for state consistency. Known limitation:
+The mesh Global tier uses Raft consensus (`crates/synvoid-mesh/src/mesh/raft/`) for state consistency. Known limitation:
 
 > **MESH-15**: Quorum Deadlock Risk During Partition
 >
 > The reliance on a `2/3 Quorum` of Global nodes to sign new `OrgPublicKey` records is dangerous in a purely DHT-based system without a consensus leader. If the network experiences a temporary partition, or if exactly 1/3 of the global nodes go offline, the entire network loses the ability to onboard new organizations or rotate keys.
 
-See `skills/raft_consensus.md` for detailed Raft implementation status.
+See [Raft Consensus Skill](../.opencode/skills/raft_consensus/SKILL.md) for detailed Raft implementation status.
 
 ### rustls-post-quantum Dependency (L35-10)
 

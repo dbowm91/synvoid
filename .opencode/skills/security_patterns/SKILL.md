@@ -201,7 +201,7 @@ use pqc_kyber_edit::*;
 
 ### Path Traversal Prevention in Template Loading
 
-**Location**: `src/static_files/directory.rs:30-74`
+**Location**: `crates/synvoid-static-files/src/directory.rs:30-74`
 
 **Fix**: Ensure template paths can't escape allowed directories:
 
@@ -243,7 +243,7 @@ pub fn load_directory_template(template_path: &str) -> Result<String, StaticErro
 
 ### XSS Prevention in Directory Listing
 
-**Location**: `src/static_files/directory.rs`, `src/theme/dir_listing.rs`
+**Location**: `crates/synvoid-static-files/src/directory.rs`, `src/theme/dir_listing.rs`
 
 **Fix**: Always escape user-controlled data in HTML:
 
@@ -1568,7 +1568,7 @@ use subtle::ConstantTimeEq;
 
 ### Serverless WAF Bypass Removed
 
-**Location**: `src/http/server.rs`, `src/config/serverless.rs`
+**Location**: `src/http/server.rs`, `crates/synvoid-config/src/serverless.rs`
 
 **Issue**: `serverless_only` flag bypassed `waf.check_request_full()` unconditionally.
 

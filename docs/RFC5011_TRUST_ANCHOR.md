@@ -367,4 +367,4 @@ SynVoid provides bundled default anchors for the root zone that are updated with
 - [DNS & DNSSEC Architecture](dns-dnssec-architecture.md) - Complete DNS and DNSSEC documentation
 - [WAF Mesh](WAF_MESH.md) - Mesh networking for global node coordination
 - [Troubleshooting](TROUBLESHOOTING.md) - General debugging techniques
-- [skills/dns_dnssec.md](../../skills/dns_dnssec.md) - Detailed DNS architecture for developers
+- [DNS/DNSSEC Skill](../.opencode/skills/dns_dnssec/SKILL.md) - Detailed DNS architecture for developers

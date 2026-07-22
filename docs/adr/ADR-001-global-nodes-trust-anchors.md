@@ -48,9 +48,9 @@ A consensus-based election was considered where nodes vote on global status. Rej
 - Global node list must be maintained manually
 
 ## References
-- `src/mesh/peer_auth.rs` - `validate_peer_role()` validates global node status; now accepts `raft_attestation` and `allow_v1_raft_attestations` parameters for Edge node validation via value-bound Raft attestation
-- `src/mesh/dht/keys.rs` - GlobalNode* DHT key types
-- `src/mesh/config_identity.rs` - Genesis key configuration
+- `crates/synvoid-mesh/src/mesh/peer_auth.rs` - `validate_peer_role()` validates global node status; now accepts `raft_attestation` and `allow_v1_raft_attestations` parameters for Edge node validation via value-bound Raft attestation
+- `crates/synvoid-mesh/src/mesh/dht/keys.rs` - GlobalNode* DHT key types
+- `crates/synvoid-mesh/src/mesh/config_identity.rs` - Genesis key configuration
 
 ## Update (2026-06): Raft Consensus Hardening
 

@@ -32,7 +32,7 @@ Node                          Global Node
   │   (X.509, CA-signed)          │
 ```
 
-For TLS site certificates, origin nodes distribute to edges via `src/mesh/cert_dist.rs`:
+For TLS site certificates, origin nodes distribute to edges via `crates/synvoid-mesh/src/mesh/cert_dist.rs`:
 
 1. Origin encrypts cert + private key with AES-256-GCM.
 2. Per-site encryption key derived via HKDF from the mesh session key.
@@ -52,6 +52,6 @@ Compromise of a global node's private key allows impersonation of any node in th
 
 ## Relevant Source
 
-- `src/mesh/cert_dist.rs` — Site TLS cert distribution (origin → edge)
-- `src/mesh/` — Mesh protocol, peer authentication
+- `crates/synvoid-mesh/src/mesh/cert_dist.rs` — Site TLS cert distribution (origin → edge)
+- `crates/synvoid-mesh/src/mesh/` — Mesh protocol, peer authentication
 - `crates/synvoid-tls/src/acme.rs` — ACME client (separate from mesh CA)

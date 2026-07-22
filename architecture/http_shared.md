@@ -266,7 +266,7 @@ Client negotiates with server — both protocols supported.
 
 ### Known Limitation: HTTP/2 Pooling
 
-From `skills/AGENTS.override.md`:
+From `src/http/AGENTS.override.md`:
 > **HTTP2-POOL | ErasedHttpClient HTTP/2 pooling** — hyper http2_client::handshake() API incompatible with current hyper-util
 
 The `Http2PooledConnection` stub exists but `is_available()` always returns `false`:

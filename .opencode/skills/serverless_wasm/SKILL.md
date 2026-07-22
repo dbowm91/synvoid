@@ -39,7 +39,7 @@ pub struct InstancePool {
 
 ### FunctionDefinition
 
-Defines function metadata at `src/config/serverless.rs`:
+Defines function metadata at `crates/synvoid-config/src/serverless.rs`:
 
 ```rust
 pub struct FunctionDefinition {
