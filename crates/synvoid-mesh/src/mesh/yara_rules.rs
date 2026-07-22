@@ -165,10 +165,8 @@ impl RuleChangeTracker {
     pub fn record_change(&mut self, new_version: &str) {
         if self.last_version.is_none() {
             self.last_full_sync = Some(Instant::now());
-            self.changes_since_full = 0;
-        } else {
-            self.changes_since_full += 1;
         }
+        self.changes_since_full += 1;
         self.last_version = Some(new_version.to_string());
         self.incremental_versions.push(new_version.to_string());
         if self.incremental_versions.len() > 100 {

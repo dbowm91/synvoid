@@ -371,6 +371,17 @@ impl AttackDetector {
 
             if self.is_fast_path_safe(&inputs) {
                 tracing::debug!("Fast-path safe for request from {}", client_ip);
+                while let Some(join_result) = join_set.join_next().await {
+                    if let Ok(Some((result, score))) = join_result {
+                        if !anomaly_enabled {
+                            return (Some(result), 0);
+                        }
+                        if first_result.is_none() {
+                            first_result = Some(result);
+                        }
+                        total_score += score;
+                    }
+                }
                 return (first_result, total_score);
             }
 
