@@ -1,8 +1,6 @@
 # SynVoid Architecture Overview
 
-## 1. Project Summary
-
-SynVoid is a high-performance, multi-process Web Application Firewall (WAF) and reverse proxy written in Rust. The default deployment model is one latency-sensitive UnifiedServerWorker plus bounded CPU offload workers, coordinated by a Supervisor-owned control plane. It provides comprehensive request filtering, attack detection, load balancing, TLS termination, and optional mesh networking — designed for 1M+ RPS with millions of tenants.
+SynVoid is a high-performance, multi-process Web Application Firewall (WAF) and reverse proxy written in Rust. It provides Layer 7 request filtering, attack detection, load balancing, TLS termination, and optional mesh networking — designed for 1M+ RPS with millions of tenants.
 
 **Key Capabilities:**
 - Layer 7 WAF with 13 attack detectors, bot protection, rate limiting
@@ -16,32 +14,33 @@ SynVoid is a high-performance, multi-process Web Application Firewall (WAF) and 
 
 ---
 
-## 2. Project Structure
+## Project Structure
 
 ```
 synvoid/
-├── src/                    # Main application source
-├── crates/                 # Workspace crates (43 workspace members, 34 synvoid-* library crates)
-│   ├── synvoid-config/     # Configuration types and defaults
-│   ├── synvoid-utils/      # Shared utilities (buffer pool, serialization)
-│   ├── synvoid-mesh/       # Mesh networking (DHT, Raft, PQ crypto)
-│   ├── synvoid-http-client/# HTTP upstream client
-│   ├── synvoid-http3/      # HTTP/3 QUIC server
-│   ├── synvoid-dns/        # DNS server and resolver
-│   ├── synvoid-tunnel/     # Tunnel routing (QUIC, WireGuard)
-│   └── ...                 # Additional crates: icmp-filter, honeypot, plugin-runtime, etc.
-├── skills/                 # Detailed subsystem documentation
-├── architecture/           # Architecture documentation
-├── docs/                   # User guides, ADRs, and reference documentation
+├── src/                    # Root crate (binary + library, ~50 modules)
+├── crates/                 # 34 dedicated synvoid-* library crates
+├── pqc/                    # Post-quantum cryptography (ML-KEM, ML-DSA)
+├── admin-ui/               # Yew-based WASM admin frontend
+├── tools/                  # xtask runner + repo-guards
+├── fuzz/                   # 17 fuzz targets
+├── examples/               # 2 example apps (dynamic-plugin, embedded-app)
+├── architecture/           # Architecture documentation (100+ docs)
+├── .opencode/skills/       # 30 subsystem skill docs
+├── docs/                   # User guides, ADRs
 ├── plans/                  # Implementation tracking
 ├── proto/                  # Protobuf definitions
 ├── config/                 # Default configuration files
-└── Cargo.toml              # Workspace manifest
+├── rules/                  # WAF rules
+├── scripts/                # CI/build scripts
+└── Cargo.toml              # Workspace manifest (43 members)
 ```
+
+**Workspace**: 45 members total — 34 `synvoid-*` library crates, root crate, `pqc`, `admin-ui`, 2 examples, `fuzz`, `synvoid-repo-guards`, and `xtask`.
 
 ---
 
-## 3. Process Architecture
+## Process Architecture
 
 SynVoid uses a two-tier architecture: a Supervisor-owned control plane and a data plane built around one UnifiedServerWorker plus bounded CPU offload workers.
 
@@ -87,14 +86,12 @@ SynVoid uses a two-tier architecture: a Supervisor-owned control plane and a dat
 |---------|------|---------|---------|
 | **Supervisor** | (default) | Control plane, lifecycle, gRPC API | 1 |
 | **UnifiedServerWorker** | `--unified-server-worker` | Latency-sensitive HTTP/HTTPS/HTTP3 + WAF + proxy | 1 |
-| **CPU Offload Worker** | `--cpu-worker` (`--static-worker` compat) | Bounded heavy transforms | 1 |
+| **CPU Offload Worker** | `--cpu-worker` | Bounded heavy transforms | 1 |
 | **BaseWorkerProcess** | `--worker` | Legacy raw TCP/UDP proxy (deprecated) | — |
-
-The default scaling knobs are `worker_threads` for Tokio runtime parallelism, `tcp.worker_pool_size` for accept throughput, and CPU offload worker capacity for heavy transforms. `unified_server_workers > 1` remains an advanced isolation mode, not the primary scaling path.
 
 ---
 
-## 4. Request Flow
+## Request Flow
 
 ```
 Client ──► TLS Termination ──► HTTP Server ──► WAF Pipeline ──► Proxy Dispatch ──► Upstream Pool ──► Backend
@@ -116,22 +113,22 @@ Client ──► TLS Termination ──► HTTP Server ──► WAF Pipeline �
 
 ---
 
-## 5. Feature Gates
+## Feature Gates
 
 | Feature | Purpose | Default |
 |---------|---------|---------|
-| `dns` | DNS server with DNSSEC, DoT/DoH/DoQ | ✅ |
-| `mesh` | Mesh networking, DHT, Raft consensus | ✅ | See `architecture/mesh_trust_domains.md` for trust-domain classification of mesh modules. See `CanonicalTrustReader` in `crates/synvoid-mesh/src/mesh/canonical.rs` (Iteration 8) and `architecture/mesh_trust_domains.md`.
-| `socket-handoff` | Socket transfer between processes | ✅ |
-| `erased_pool` | Type-erased HTTP client pool | ✅ |
-| `swagger-ui` | OpenAPI documentation UI | ✅ |
-| `post-quantum` | Post-quantum TLS key exchange (ML-KEM) | — |
-| `wireguard` | WireGuard VPN tunnel support | — |
-| `icmp-filter` | ICMP flood filtering | — |
-| `flood-ebpf` | eBPF-based flood protection (Linux) | — |
-| `macos-sandbox` | macOS sandbox enforcement | — |
-| `pqc-mesh` | Post-quantum mesh signatures (ML-DSA-44) | — |
-| `fastcgi_streaming` | Streaming FastCGI response handling | — |
+| `dns` | DNS server with DNSSEC, DoT/DoH/DoQ | Yes |
+| `mesh` | Mesh networking, DHT, Raft consensus | Yes |
+| `socket-handoff` | Socket transfer between processes | Yes |
+| `erased_pool` | Type-erased HTTP client pool | Yes |
+| `swagger-ui` | OpenAPI documentation UI | Yes |
+| `post-quantum` | Post-quantum TLS key exchange (ML-KEM) | No |
+| `wireguard` | WireGuard VPN tunnel support | No |
+| `icmp-filter` | ICMP flood filtering | No |
+| `flood-ebpf` | eBPF-based flood protection (Linux) | No |
+| `macos-sandbox` | macOS sandbox enforcement | No |
+| `pqc-mesh` | Post-quantum mesh signatures (ML-DSA-44) | No |
+| `fastcgi_streaming` | Streaming FastCGI response handling | No |
 
 **Compilation Profiles:**
 - **Core** (`--no-default-features`): Minimal
@@ -141,103 +138,116 @@ Client ──► TLS Termination ──► HTTP Server ──► WAF Pipeline �
 
 ---
 
-## 6. Module Index
+## Module Index
+
+Each component below links to its architecture doc and deep-dive document. Use the deep-dive links for detailed review of implementation internals, state machines, and integration points.
 
 ### Layer 1: Core Infrastructure
 
-| Module | Purpose | Architecture Doc | Deep Dive |
-|--------|---------|------------------|-----------|
-| [Config](./config.md) | Configuration types, validation, site-based config | [`config.md`](./config.md) | [`config_deep_dive.md`](./config_deep_dive.md) |
-| [Platform](./platform.md) | OS abstraction, sandboxing, filesystem, IPC | [`platform.md`](./platform.md) | [`platform_deep_dive.md`](./platform_deep_dive.md) |
-| [Process & IPC](./ipc_process.md) | IPC communication, process lifecycle, FD passing | [`ipc_process.md`](./ipc_process.md) | [`process_lifecycle.md`](./process_lifecycle.md) |
-| [Supervisor](./supervisor.md) | Process supervision, drain protocol, gRPC API | [`supervisor.md`](./supervisor.md) | [`supervisor_lifecycle.md`](./supervisor_lifecycle.md) |
-| [Worker](./worker_architecture.md) | Worker process architecture, Tokio runtime | [`worker_architecture.md`](./worker_architecture.md) | — |
-| [Startup](./platform_deep_dive.md) | Bootstrap, daemonization, PID management | [`platform_deep_dive.md`](./platform_deep_dive.md) | — |
-| [Drain](./drain.md) | Connection drain state for graceful shutdown | [`drain.md`](./drain.md) | — |
+| Component | Crate(s) | Purpose | Arch Doc | Deep Dive |
+|-----------|----------|---------|----------|-----------|
+| **Configuration** | `synvoid-config` | Strongly-typed config structs, TOML parsing, validation, encryption | [`config.md`](./config.md) | [`config_deep_dive.md`](./config_deep_dive.md) |
+| **Platform** | `synvoid-platform` | OS detection, filesystem utils, socket bind, process sandboxing | [`platform.md`](./platform.md) | [`platform_deep_dive.md`](./platform_deep_dive.md) |
+| **IPC & Process** | `synvoid-ipc` | Unix socket transport, FD passing, signed messages, process spawning | [`ipc_process.md`](./ipc_process.md) | [`process_lifecycle.md`](./process_lifecycle.md) |
+| **Supervisor** | `src/supervisor/` | Process supervision, drain protocol, gRPC API, worker lifecycle | [`supervisor.md`](./supervisor.md) | [`supervisor_lifecycle.md`](./supervisor_lifecycle.md) |
+| **Worker** | `src/worker/` | UnifiedServerWorker + CPU offload, Tokio runtime, task registry | [`worker_architecture.md`](./worker_architecture.md) | [`worker_task_lifecycle.md`](./worker_task_lifecycle.md) |
+| **CLI** | `synvoid-cli` | Clap-based argument parsing, feature flag dispatch | — | — |
+| **Core Types** | `synvoid-core` | Dependency-light shared types: admin mutation, verdicts, request context | — | — |
+| **Utils** | `synvoid-utils` | Buffer pool, ArcStr, drain/running flags, IP utils, serialization | — | — |
+| **Drain** | `src/drain/` | Connection drain state for graceful shutdown | [`drain.md`](./drain.md) | — |
 
 ### Layer 2: Security & WAF
 
-| Module | Purpose | Architecture Doc | Deep Dive |
-|--------|---------|------------------|-----------|
-| [WAF](./waf.md) | Core WAF engine, attack detection, rate limiting | [`waf.md`](./waf.md) | [`waf_deep_dive.md`](./waf_deep_dive.md) |
-| [Auth](./auth.md) | User authentication, sessions, brute-force protection | [`auth.md`](./auth.md) | — |
-| [Challenge](./challenge.md) | Browser verification (PoW, CSS challenges, honeypot) | [`challenge.md`](./challenge.md) | — |
-| ~~[CAPTCHA](./captcha.md)~~ | ~~Text-based CAPTCHA generation/verification~~ — **Removed** (dead code, zero consumers) | — | — |
-| [Block Store](./block_store.md) | Persistent IP blocklist with LRU eviction | [`block_store.md`](./block_store.md) | — |
-| [Tarpit](./tarpit.md) | Anti-scraping tarpit (Markov chain HTML) | [`tarpit.md`](./tarpit.md) | — |
-| [Honeypot](./honeypot.md) | Port-based + URL honeypots, threat intel extraction | [`honeypot.md`](./honeypot.md) | — |
-| [Upload](./upload.md) | File upload validation, YARA scanning, sandbox quarantine | [`upload.md`](./upload.md) | — |
-| [GeoIP](./geoip.md) | GeoIP lookup, country/ASN blocking, auto-update | [`geoip.md`](./geoip.md) | — |
-| [ICMP Filter](./icmp_filter.md) | ICMP flood filtering (nftables, eBPF, pf, WFP) | [`icmp_filter.md`](./icmp_filter.md) | — |
-| [Integrity](./integrity.md) | Signed HTTP integrity verification (Ed25519) | [`integrity.md`](./integrity.md) | — |
+| Component | Crate(s) | Purpose | Arch Doc | Deep Dive |
+|-----------|----------|---------|----------|-----------|
+| **WAF Engine** | `synvoid-waf` | 13 attack detectors (SQLi, XSS, path traversal), normalization, bot detection | [`waf.md`](./waf.md) | [`waf_deep_dive.md`](./waf_deep_dive.md) |
+| **Auth** | `src/auth/` | User authentication, sessions, bcrypt, brute-force protection, CSRF | [`auth.md`](./auth.md) | — |
+| **Challenge** | `synvoid-challenge` | Browser verification: PoW, CSS challenges, honeypot, adaptive difficulty | [`challenge.md`](./challenge.md) | — |
+| **Block Store** | `synvoid-block-store` | Persistent IP/mesh-ID blocklist, LRU eviction, mesh propagation | [`block_store.md`](./block_store.md) | — |
+| **Tarpit** | `synvoid-tarpit` | Anti-scraping tarpit: Markov chain HTML, session budgets, admission control | [`tarpit.md`](./tarpit.md) | — |
+| **Honeypot** | `synvoid-honeypot` | Port/URL honeypots, AI responders, protocol fingerprinting, threat intel | [`honeypot.md`](./honeypot.md) | — |
+| **Upload** | `synvoid-upload` | File upload validation, YARA scanning, sandbox quarantine | [`upload.md`](./upload.md) | — |
+| **GeoIP** | `synvoid-geoip` | MaxMind GeoIP lookup, country/ASN blocking, auto-update | [`geoip.md`](./geoip.md) | — |
+| **ICMP Filter** | `synvoid-icmp-filter` | ICMP flood filtering (nftables, eBPF, pf, WFP) | [`icmp_filter.md`](./icmp_filter.md) | — |
+| **Integrity** | `synvoid-integrity` | Signed HTTP integrity verification (Ed25519, X25519 key exchange) | [`integrity.md`](./integrity.md) | — |
 
 ### Layer 3: Networking & Proxy
 
-| Module | Purpose | Architecture Doc | Deep Dive |
-|--------|---------|------------------|-----------|
-| [HTTP Server](./http_server.md) | HTTP request handling, 18-phase pipeline | [`http_server.md`](./http_server.md) | — |
-| [HTTP Client](./http_shared.md) | Upstream connection pooling, HTTP client | [`http_shared.md`](./http_shared.md) | [`http_shared.md`](./http_shared.md) |
-| [HTTP/3](./http_shared.md) | HTTP/3 QUIC server and client | [`http_shared.md`](./http_shared.md) | [`networking_deep_dive.md`](./networking_deep_dive.md) |
-| [Proxy](./proxy.md) | Reverse proxy, load balancing, caching | [`proxy.md`](./proxy.md) | [`proxy_deep_dive.md`](./proxy_deep_dive.md) |
-| [Upstream](./upstream.md) | Upstream server pools, health checks, circuit breaker | [`upstream.md`](./upstream.md) | [`proxy_deep_dive.md`](./proxy_deep_dive.md) |
-| [TLS](./tls.md) | TLS termination, ACME, post-quantum, mTLS | [`tls.md`](./tls.md) | [`networking_deep_dive.md`](./networking_deep_dive.md) |
-| [Router](./routing_deep_dive.md) | Request routing, domain/path matching | [`routing_deep_dive.md`](./routing_deep_dive.md) | — |
-| [Listener](./listener.md) | Network listener configuration primitives | [`listener.md`](./listener.md) | [`networking_deep_dive.md`](./networking_deep_dive.md) |
-| Tunnel | VPN tunnels (QUIC, WireGuard) | — | [`networking_deep_dive.md`](./networking_deep_dive.md) |
-| [Streaming](./streaming.md) | Bidirectional proxy streaming with WAF scanning | [`streaming.md`](./streaming.md) | — |
-| [Proxy Cache](./proxy_cache.md) | HTTP response caching (moka + disk) | [`proxy_cache.md`](./proxy_cache.md) | — |
-| [Location Matcher](./location_matcher.md) | Nginx-style location matching | [`location_matcher.md`](./location_matcher.md) | — |
+| Component | Crate(s) | Purpose | Arch Doc | Deep Dive |
+|-----------|----------|---------|----------|-----------|
+| **HTTP Server** | `synvoid-http` | HTTP/1.1 + HTTP/2, 7-stage request pipeline, WebSocket, compression | [`http_server.md`](./http_server.md) | [`http_request_pipeline.md`](./http_request_pipeline.md) |
+| **HTTP/3** | `synvoid-http3` | HTTP/3 QUIC server, WAF boundary | [`http3_request_waf_boundary.md`](./http3_request_waf_boundary.md) | [`networking_deep_dive.md`](./networking_deep_dive.md) |
+| **HTTP Client** | `synvoid-http-client` | Upstream HTTP client, connection pooling, erased body, PQ TLS | [`http_shared.md`](./http_shared.md) | [`networking_deep_dive.md`](./networking_deep_dive.md) |
+| **Proxy** | `synvoid-proxy` | Reverse proxy, load balancing, retry/backoff, header manipulation | [`proxy.md`](./proxy.md) | [`proxy_deep_dive.md`](./proxy_deep_dive.md) |
+| **Upstream** | `synvoid-upstream` | Backend pools, health checking, QUIC tunnel support, load balancing | [`upstream.md`](./upstream.md) | [`proxy_deep_dive.md`](./proxy_deep_dive.md) |
+| **TLS** | `synvoid-tls` | TLS termination, ACME, SNI peeking, JA4 fingerprinting, cert resolution | [`tls.md`](./tls.md) | [`networking_deep_dive.md`](./networking_deep_dive.md) |
+| **Router** | `src/router.rs` | Request routing, domain/path matching, radix tree | — | [`routing_deep_dive.md`](./routing_deep_dive.md) |
+| **Location Matcher** | `src/location_matcher.rs` | Nginx-style location matching (`=`, `^~`, `~`, `~*`, prefix) | [`location_matcher.md`](./location_matcher.md) | — |
+| **Listener** | `src/listener/` | Network listener configuration primitives | [`listener.md`](./listener.md) | [`networking_deep_dive.md`](./networking_deep_dive.md) |
+| **Tunnel** | `synvoid-tunnel` | VPN tunnels (QUIC, WireGuard), TUN interfaces, tunnel routing | — | [`tunnel_deep_dive.md`](./tunnel_deep_dive.md) |
+| **VPN Client** | `synvoid-vpn-client` | VPN client connectivity, port mapping, reconnection | — | [`vpn_client_deep_dive.md`](./vpn_client_deep_dive.md) |
+| **Streaming** | `src/streaming/` | Bidirectional proxy streaming with WAF scanning | [`streaming.md`](./streaming.md) | — |
+| **Proxy Cache** | `synvoid-proxy-cache` | HTTP response caching, LRU eviction, TTL, Cache-Control parsing | [`proxy_cache.md`](./proxy_cache.md) | — |
+| **Filter** | `synvoid-filter` | Generic protocol filter framework (allowlist/denylist) | [`filter.md`](./filter.md) | — |
 
 ### Layer 4: Application Handlers
 
-| Module | Purpose | Architecture Doc | Deep Dive |
-|--------|---------|------------------|-----------|
-| [App Handlers](./app_handlers.md) | Static files, FastCGI, CGI, Python, WASM, Spin | [`app_handlers.md`](./app_handlers.md) | — |
-| [Static Files](./static_files.md) | Static file serving, compression, minification | [`static_files.md`](./static_files.md) | — |
-| [FastCGI](./fastcgi.md) | FastCGI client, connection pool, streaming | [`fastcgi.md`](./fastcgi.md) | — |
-| [CGI](./cgi.md) | Classic CGI script execution | [`cgi.md`](./cgi.md) | — |
-| [MIME](./mime.md) | MIME type registry, content detection | [`mime.md`](./mime.md) | — |
-| [Theme](./theme.md) | WAF theme rendering (CSS, dark mode, SVG) | [`theme.md`](./theme.md) | — |
+| Component | Crate(s) | Purpose | Arch Doc | Deep Dive |
+|-----------|----------|---------|----------|-----------|
+| **App Handlers** | `synvoid-app-handlers` | CGI, FastCGI, PHP dispatch, MIME detection | [`app_handlers.md`](./app_handlers.md) | — |
+| **Static Files** | `synvoid-static-files` | Static serving, gzip/brotli compression, CSS/JS/HTML minification | [`static_files.md`](./static_files.md) | — |
+| **FastCGI** | (via `synvoid-app-handlers`) | FastCGI client, connection pool, streaming | [`fastcgi.md`](./fastcgi.md) | — |
+| **CGI** | (via `synvoid-app-handlers`) | Classic CGI script execution | [`cgi.md`](./cgi.md) | — |
+| **MIME** | `src/mime/` | MIME type registry, content detection | [`mime.md`](./mime.md) | — |
+| **Theme** | `synvoid-theme` | CSS theming for challenge/error pages, dark/light mode | [`theme.md`](./theme.md) | — |
+| **App Server** | `synvoid-app-server` | Granian application server management, supervisor lifecycle | — | — |
 
 ### Layer 5: WASM & Plugin Runtime
 
-| Module | Purpose | Architecture Doc | Deep Dive |
-|--------|---------|------------------|-----------|
-| [Plugin/WASM](./plugin_wasm.md) | WASM plugin execution sandbox | [`plugin_wasm.md`](./plugin_wasm.md) | [`plugin_deep_dive.md`](./plugin_deep_dive.md) |
-| [Serverless](./serverless.md) | WASM serverless function execution | [`serverless.md`](./serverless.md) | [`plugin_deep_dive.md`](./plugin_deep_dive.md) |
-| [Spin](./spin.md) | Spin WASM runtime integration | [`spin.md`](./spin.md) | [`plugin_deep_dive.md`](./plugin_deep_dive.md) |
+| Component | Crate(s) | Purpose | Arch Doc | Deep Dive |
+|-----------|----------|---------|----------|-----------|
+| **Plugin/WASM** | `synvoid-plugin-runtime` | WASM plugin sandbox: trust tiers, capabilities, ABI, hot-reload | [`plugin_wasm.md`](./plugin_wasm.md) | [`plugin_runtime_sandbox.md`](./plugin_runtime_sandbox.md) |
+| **Serverless** | `synvoid-serverless` | WASM serverless functions: registry, routing, instance pooling | [`serverless.md`](./serverless.md) | — |
+| **Spin** | `src/spin/` | Spin Framework WASM runtime integration | [`spin.md`](./spin.md) | — |
+| **WASM PoW** | `synvoid-wasm-pow` | WASM proof-of-work solver for browser challenges | — | — |
+| **Native Extensions** | (via `synvoid-plugin-runtime`) | Unsafe native library loading with path allowlist | — | [`unsafe_native_extensions.md`](./unsafe_native_extensions.md) |
 
 ### Layer 6: Distributed Systems
 
-| Module | Purpose | Architecture Doc | Deep Dive |
-|--------|---------|------------------|-----------|
-| [Mesh](./mesh.md) | P2P networking, DHT, Raft, post-quantum | [`mesh.md`](./mesh.md) | [`mesh_deep_dive.md`](./mesh_deep_dive.md) |
-| [DNS](./dns.md) | DNS server, DNSSEC, DoT/DoH/DoQ, TSIG, interop conformance | [`dns.md`](./dns.md), [`dns_zone_lifecycle.md`](./dns_zone_lifecycle.md) | [`dns_deep_dive.md`](./dns_deep_dive.md) |
-| [VPN Client](./dns_deep_dive.md) | VPN client connectivity | — | [`dns_deep_dive.md`](./dns_deep_dive.md) |
+| Component | Crate(s) | Purpose | Arch Doc | Deep Dive |
+|-----------|----------|---------|----------|-----------|
+| **Mesh** | `synvoid-mesh` | P2P networking, DHT, Raft consensus, transport, peer auth | [`mesh.md`](./mesh.md) | [`mesh_deep_dive.md`](./mesh_deep_dive.md) |
+| **DNS** | `synvoid-dns` | Authoritative/recursive DNS, DNSSEC, DoT/DoH/DoQ, TSIG | [`dns.md`](./dns.md) | [`dns_deep_dive.md`](./dns_deep_dive.md) |
+| **DNS Operations** | (via `synvoid-dns`) | Zone lifecycle, health checks, production diagnostics | [`dns_zone_lifecycle.md`](./dns_zone_lifecycle.md) | [`dns_operations_diagnostics.md`](./dns_operations_diagnostics.md) |
+| **PQC** | `pqc` | Post-quantum crypto: ML-KEM-768/1024, ML-DSA-44 | — | — |
+| **Threat Intel** | (mesh + block-store) | Federated threat intel, mesh propagation, enforcement rules | [`threat_intel_consumer_actionability.md`](./threat_intel_consumer_actionability.md) | [`threat_intel_request_waf_audit.md`](./threat_intel_request_waf_audit.md) |
 
 ### Layer 7: Observability & Admin
 
-| Module | Purpose | Architecture Doc | Deep Dive |
-|--------|---------|------------------|-----------|
-| [Admin API](./admin_deep_dive.md) | Admin REST API, metrics, alerting | — | [`admin_deep_dive.md`](./admin_deep_dive.md) |
-| [Metrics](./metrics.md) | Atomic counters, per-site metrics, bandwidth | [`metrics.md`](./metrics.md) | — |
-| [Logging](./logging.md) | Syslog integration, dynamic log levels | [`logging.md`](./logging.md) | — |
-| [Log Controller](./log_controller.md) | Runtime log level management | [`log_controller.md`](./log_controller.md) | — |
-| [Protocol](./protocol.md) | Protocol detection framework (HTTP, WS, gRPC) | [`protocol.md`](./protocol.md) | — |
+| Component | Crate(s) | Purpose | Arch Doc | Deep Dive |
+|-----------|----------|---------|----------|-----------|
+| **Admin API** | `synvoid-admin` | REST API, token auth, metrics, alerting, Swagger UI | [`admin_control_plane_authority.md`](./admin_control_plane_authority.md) | [`admin_deep_dive.md`](./admin_deep_dive.md) |
+| **Admin UI** | `admin-ui` | Yew-based WASM admin dashboard frontend | — | — |
+| **Metrics** | `synvoid-metrics` | Atomic counters, per-site metrics, bandwidth tracking | [`metrics.md`](./metrics.md) | — |
+| **Logging** | `src/common/` | Syslog integration, dynamic log levels | [`logging.md`](./logging.md) | [`log_controller.md`](./log_controller.md) |
+| **Protocol Detection** | `src/protocol/` | Protocol detection framework (HTTP, WebSocket, gRPC) | [`protocol.md`](./protocol.md) | — |
 
-### Cross-Cutting Utilities
+### Cross-Cutting Concerns
 
-| Module | Purpose | Architecture Doc | Deep Dive |
-|--------|---------|------------------|-----------|
-| [Buffer Pool](./config_deep_dive.md) | Sharded mutex buffer pool (4 tiers) | [`config_deep_dive.md`](./config_deep_dive.md) | — |
-| [Zero Copy](./zero_copy.md) | Kernel-level file-to-socket transfer | [`zero_copy.md`](./zero_copy.md) | — |
-| [Filter](./filter.md) | Generic protocol filter framework | [`filter.md`](./filter.md) | — |
-| [Common](./common.md) | Panic handler, shared utilities | [`common.md`](./common.md) | — |
-| [Serialization](./serde.md) | Postcard/rkyv serialization strategy | [`serde.md`](./serde.md) | — |
+| Component | Crate(s) | Purpose | Arch Doc | Deep Dive |
+|-----------|----------|---------|----------|-----------|
+| **Buffer Pool** | `synvoid-utils` | Sharded mutex buffer pool (4 tiers), ABA-safe | — | [`config_deep_dive.md`](./config_deep_dive.md) |
+| **Serialization** | `synvoid-utils` | Postcard/rkyv strategy, typed structs | [`serder.md`](./serder.md) | — |
+| **Root Module Ledger** | — | Module ownership classification (84 modules) | [`root_module_ledger.md`](./root_module_ledger.md) | — |
+| **Composition Boundary** | — | Request-path vs composition root rules | [`worker_data_plane_composition_root.md`](./worker_data_plane_composition_root.md) | — |
+| **Request Path Boundary** | — | Trait-based capability boundary enforcement | [`request_path_capability_boundary.md`](./request_path_capability_boundary.md) | — |
+| **Testkit** | `synvoid-testkit` | Shared test utilities (TCP/UDP fixtures, temp certs) | — | — |
+| **Repo Guards** | `tools/synvoid-repo-guards` | Static architecture guard tests, CI policy | — | — |
+| **xtask** | `tools/xtask` | Test orchestration runner (`cargo xtask test`) | — | — |
 
 ---
 
-## 7. Key Integration Patterns
+## Key Integration Patterns
 
 ### IPC Message Categories (60+ types)
 
@@ -258,9 +268,9 @@ Client ──► TLS Termination ──► HTTP Server ──► WAF Pipeline �
 | Constant-time comparison | `subtle::ConstantTimeEq` | All secrets, MACs, tokens |
 | CSRF protection | `ct_eq()` validation | `src/admin/state.rs` |
 | Brute-force protection | Account locking after N failures | `src/auth/mod.rs` |
-| Path traversal prevention | Canonicalize + prefix check | `src/static_files/`, `src/upload/` |
+| Path traversal prevention | Canonicalize + prefix check | `synvoid-static-files`, `synvoid-upload` |
 | ReDoS prevention | Regex complexity checking | `src/location_matcher.rs` |
-| Sandboxing | Per-platform backends | `src/sandbox/` |
+| Sandboxing | Per-platform backends | `synvoid-platform` |
 
 ### Serialization Strategy
 
@@ -273,51 +283,37 @@ Client ──► TLS Termination ──► HTTP Server ──► WAF Pipeline �
 
 ---
 
-## 8. Key Source Files
+## Key Source Files
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `src/http/server.rs` | ~4848 | HTTP request handling pipeline |
-| `src/waf/mod.rs` | ~936 | WAF core orchestrator |
-| `crates/synvoid-mesh/src/mesh/` | ~72400 | Mesh networking (DHT, transport, Raft, peer auth) |
-| `src/proxy/mod.rs` | ~1405 | Reverse proxy dispatch |
-| `src/supervisor/mod.rs` | ~17 | Process supervision (re-exports) |
-| `src/admin/mod.rs` | ~972 | Admin API handlers |
-| `src/tls/server.rs` | ~2252 | TLS termination + ACME |
-| `src/http_client/mod.rs` | ~1307 | HTTP client pool (compat shim, canonical: `crates/synvoid-http-client/`) |
-| `src/upstream/pool.rs` | ~1540 | Upstream connection pool |
-| `src/plugin/mod.rs` | ~424 | WASM plugin runtime (compat shim, canonical: `crates/synvoid-plugin-runtime/`) |
+| `src/worker/unified_server/mod.rs` | ~1305 | Primary composition root |
+| `crates/synvoid-http/src/` | ~58 modules | HTTP pipeline (largest crate) |
+| `crates/synvoid-mesh/src/mesh/` | ~72400 | Mesh networking (DHT, transport, Raft) |
+| `crates/synvoid-dns/src/` | ~1174+ | DNS server with DNSSEC |
+| `crates/synvoid-plugin-runtime/src/` | ~935 | WASM plugin sandbox |
+| `src/commands/plan.rs` | ~942 | Command planning/dispatch |
+| `src/supervisor/` | ~875 | Process supervision |
 | `crates/synvoid-config/src/lib.rs` | ~447 | Configuration types |
-| `src/static_files/mod.rs` | ~1126 | Static file serving, `StaticResponseBody` defined at line 96 |
+| `crates/synvoid-waf/src/` | ~702 | WAF engine |
 
 ---
 
-## 9. Documentation Index
+## Documentation Index
 
-### This Directory (`architecture/`)
+### Architecture Docs (`architecture/`)
 
 | File | Description |
 |------|-------------|
-| [`overview.md`](./overview.md) | This file — bird's eye view |
-| [`root_module_ledger.md`](./root_module_ledger.md) | Root module ownership classification |
+| [`overview.md`](./overview.md) | This file — bird's eye view and component index |
+| [`root_module_ledger.md`](./root_module_ledger.md) | Root module ownership classification (84 modules) |
 | [`worker_data_plane_composition_root.md`](./worker_data_plane_composition_root.md) | Composition boundary rules |
 | [`http_request_pipeline.md`](./http_request_pipeline.md) | 7-stage HTTP pipeline |
-| [`http3_request_waf_boundary.md`](./http3_request_waf_boundary.md) | HTTP/3 WAF boundary |
 | [`mesh_trust_domains.md`](./mesh_trust_domains.md) | 7 trust domains, CanonicalTrustReader |
-| [`threat_intel_consumer_actionability.md`](./threat_intel_consumer_actionability.md) | 46 consumers classified by enforcement |
-| [`block_store.md`](./block_store.md) | BlockStore architecture |
-| [`cli_supervisor_command_dispatch.md`](./cli_supervisor_command_dispatch.md) | Typed command dispatch |
-| [`mesh_transport_lifecycle.md`](./mesh_transport_lifecycle.md) | 20-task mesh lifecycle |
-| [`worker_task_lifecycle.md`](./worker_task_lifecycle.md) | 40+ background tasks |
-| [`supervisor.md`](./supervisor.md) | Process lifecycle, drain, gRPC |
-| [`supervisor_lifecycle.md`](./supervisor_lifecycle.md) | Task classes, shutdown cause taxonomy, drain report |
+| [`release_profile_matrix.md`](./release_profile_matrix.md) | Compilation profiles, feature gates |
+| [`ci_fuzz_failure_injection.md`](./ci_fuzz_failure_injection.md) | 17 fuzz targets, failure-injection seams |
 | [`deep_dive_review.md`](./deep_dive_review.md) | Layered architectural review |
 | [`review_plan.md`](./review_plan.md) | Review methodology and status |
-| [`process_lifecycle.md`](./process_lifecycle.md) | Process execution model |
-| [`final_surface_audit.md`](./final_surface_audit.md) | Public surface classification and stability audit (Phase 10) |
-| [`release_hardening_report.md`](./release_hardening_report.md) | Release hardening checklist and verification results (Phase 10) |
-
-> **Note:** There is no separate `tunnel.md` or `admin.md`. Tunnel documentation is in [`networking_deep_dive.md`](./networking_deep_dive.md). Admin API documentation is in [`admin_deep_dive.md`](./admin_deep_dive.md).
 
 ### External Documentation
 
