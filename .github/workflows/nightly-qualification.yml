@@ -18,7 +18,7 @@ jobs:
     steps:
       - name: Install dependencies
         run: |
-          apk add --no-cache curl git build-base musl-dev
+          apk add --no-cache curl git build-base musl-dev protobuf
 
       - name: Install Rust
         run: |
@@ -44,7 +44,7 @@ jobs:
         with:
           usesh: true
           prepare: |
-            pkg install -y curl git
+            pkg install -y curl git protobuf
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           run: |
             . $HOME/.cargo/env
@@ -61,6 +61,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-linux-gnu,x86_64-unknown-linux-musl,x86_64-apple-darwin,x86_64-pc-windows-msvc,x86_64-unknown-freebsd
+
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
       - name: Check compilation for all targets
         run: |
@@ -122,6 +125,9 @@ jobs:
         with:
           path: ~/.cargo/bin/cargo-fuzz
           key: ${{ runner.os }}-cargo-fuzz-0.13.2
+
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
       - name: Install cargo-fuzz
         if: steps.cache-fuzz.outputs.cache-hit != 'true'
@@ -194,6 +200,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: profile-${{ matrix.name }}
+
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
       - name: Run profile check
         run: ${{ matrix.command }}
