@@ -13,6 +13,7 @@ mod request;
 mod response;
 mod streaming_waf_body;
 mod tls;
+#[cfg(unix)]
 mod unix;
 
 // Re-export erased and streaming items unchanged.
@@ -24,9 +25,11 @@ pub use streaming_waf_body::{StreamingWafBody, StreamingWafDecision, StreamingWa
 // Client type aliases and entry points (client.rs owns the impls + EmptyBody).
 pub use client::{
     create_http_client, create_http_client_with_config, create_simple_http_client,
-    create_unix_http_client, create_upstream_client, create_upstream_streaming_client,
-    is_quictunnel_url, EmptyBody, HttpClient, StreamingHttpClient, UnixHttpClient,
+    create_upstream_client, create_upstream_streaming_client, is_quictunnel_url, EmptyBody,
+    HttpClient, StreamingHttpClient,
 };
+#[cfg(unix)]
+pub use client::{create_unix_http_client, UnixHttpClient};
 
 // BoxErasedBody is re-exported directly from its owning module (erased_pool) for public API.
 // (client.rs uses it privately to define StreamingHttpClient type alias.)
@@ -36,6 +39,7 @@ pub use erased_pool::BoxErasedBody;
 pub use tls::{upstream_tls_from_site_config, UpstreamTlsConfig};
 
 // Unix helpers (public surface).
+#[cfg(unix)]
 pub use unix::{is_unix_socket_url, send_unix_request_with_body, send_unix_request_with_timeout};
 
 // Response wrapper.

@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
-use hyperlocal::UnixConnector;
 
 use crate::erased_pool::BoxErasedBody;
 use crate::pool::{
@@ -15,10 +14,12 @@ use crate::tls::UpstreamTlsConfig;
 
 pub type HttpClient = Client<HttpsConnector<HttpConnector>, http_body_util::Full<bytes::Bytes>>;
 pub type StreamingHttpClient = Client<HttpsConnector<HttpConnector>, BoxErasedBody>;
-pub type UnixHttpClient = Client<UnixConnector, http_body_util::Full<bytes::Bytes>>;
+#[cfg(unix)]
+pub type UnixHttpClient = Client<hyperlocal::UnixConnector, http_body_util::Full<bytes::Bytes>>;
 
 // Re-export create_unix from unix module (unix owns the impl; this keeps client.rs as the
 // documented owner of the public creation entrypoint per split plan, while avoiding fn duplication).
+#[cfg(unix)]
 pub use crate::unix::create_unix_http_client;
 
 /// Empty body type for HEAD/empty requests (re-exported for API compat).

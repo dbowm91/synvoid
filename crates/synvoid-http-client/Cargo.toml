@@ -12,7 +12,6 @@ http-body-util = "0.1"
 hyper = { version = "1", features = ["http1", "http2", "client"] }
 hyper-util = { version = "0.1", features = ["tokio", "http1", "http2", "client", "client-legacy"] }
 hyper-rustls = { version = "0.27", features = ["http2"] }
-hyperlocal = { version = "0.9", features = ["hyper-util"] }
 moka = { version = "0.12", features = ["sync"] }
 anyhow = "1"
 synvoid-config = { path = "../synvoid-config" }
@@ -27,6 +26,9 @@ rustls = { version = "0.23", features = ["prefer-post-quantum", "aws-lc-rs"] }
 rustls-native-certs = "0.8"
 rustls-pki-types = "1"
 webpki-roots = "0.26"
+
+[target.'cfg(unix)'.dependencies]
+hyperlocal = { version = "0.9", features = ["hyper-util"] }
 
 [features]
 post-quantum = []

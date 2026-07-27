@@ -237,9 +237,6 @@ pub use platform::{add_route, delete_interface, delete_route, AsyncTunDevice, Li
 #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
 mod bsd_platform {
     use super::*;
-    use std::fs::OpenOptions;
-    use std::os::unix::fs::OpenOptionsExt;
-    use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd};
 
     const TUNSETIFF: libc::c_ulong = 0x400454ca;
     const IFF_TUN: libc::c_int = 0x0001;
@@ -248,7 +245,7 @@ mod bsd_platform {
     #[repr(C)]
     struct IfReq {
         name: [u8; 16],
-        flags: libc::c_short,
+        flags: libc::c_int,
         _pad: [u8; 22],
     }
 
@@ -314,10 +311,14 @@ mod bsd_platform {
         }
 
         pub fn into_async(self) -> Result<AsyncTunDevice, io::Error> {
-            Ok(AsyncTunDevice {
-                fd: self.fd,
-                name: self.name,
-            })
+            let fd = self.fd;
+            let name = self.name.clone();
+
+            // SAFETY: We've extracted the fields we need; prevent Drop from closing fd
+            // since ownership is transferred to AsyncTunDevice.
+            std::mem::forget(self);
+
+            Ok(AsyncTunDevice { fd, name })
         }
     }
 
@@ -340,18 +341,23 @@ mod bsd_platform {
     impl AsyncTunDevice {
         pub async fn read_packet(&self, buf: &mut [u8]) -> io::Result<usize> {
             let fd = self.fd;
-            tokio::task::spawn_blocking(move || {
+            let buf_len = buf.len();
+            let mut read_buf = vec![0u8; buf_len];
+            let (n, read_buf) = tokio::task::spawn_blocking(move || {
                 // SAFETY: read is called with a valid fd and buffer; we check result.
                 let result =
-                    unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+                    unsafe { libc::read(fd, read_buf.as_mut_ptr() as *mut libc::c_void, buf_len) };
                 if result < 0 {
                     Err(io::Error::last_os_error())
                 } else {
-                    Ok(result as usize)
+                    Ok((result as usize, read_buf))
                 }
             })
             .await
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))??;
+
+            buf[..n].copy_from_slice(&read_buf[..n]);
+            Ok(n)
         }
 
         pub async fn write_packet(&self, data: &[u8]) -> io::Result<usize> {
