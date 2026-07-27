@@ -100,6 +100,12 @@ owners = ["synvoid-mesh"]
 reason = "validates mesh startup composition across transport, lifecycle, cert, topology"
 
 [[test]]
+name = "mesh_lifecycle_tests"
+class = "composition"
+owners = ["synvoid-mesh"]
+reason = "validates mesh lifecycle and topology builder background tasks"
+
+[[test]]
 name = "mesh_task_ownership_guard"
 class = "static_policy"
 owners = ["synvoid-mesh"]
