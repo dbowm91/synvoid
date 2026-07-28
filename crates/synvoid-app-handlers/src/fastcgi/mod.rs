@@ -74,10 +74,20 @@ impl FastCgiClient {
         if self.is_tcp {
             self.execute_tcp(method, uri, headers, body, config).await
         } else {
-            self.execute_unix(method, uri, headers, body, config).await
+            #[cfg(unix)]
+            {
+                self.execute_unix(method, uri, headers, body, config).await
+            }
+            #[cfg(not(unix))]
+            {
+                Err(FastCgiError::ConnectionFailed(
+                    "Unix socket connections are not supported on this platform".to_string(),
+                ))
+            }
         }
     }
 
+    #[cfg(unix)]
     async fn execute_unix(
         &self,
         method: &Method,

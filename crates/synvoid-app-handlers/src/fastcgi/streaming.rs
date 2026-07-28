@@ -196,10 +196,20 @@ impl StreamingFastCgiClient {
         if self.is_tcp {
             self.execute_stream_tcp(params, body_stream, config).await
         } else {
-            self.execute_stream_unix(params, body_stream, config).await
+            #[cfg(unix)]
+            {
+                self.execute_stream_unix(params, body_stream, config).await
+            }
+            #[cfg(not(unix))]
+            {
+                Err(FastCgiError::ConnectionFailed(
+                    "Unix socket connections are not supported on this platform".to_string(),
+                ))
+            }
         }
     }
 
+    #[cfg(unix)]
     async fn execute_stream_unix<S>(
         &self,
         params: std::collections::HashMap<String, String>,
