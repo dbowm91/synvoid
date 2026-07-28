@@ -503,7 +503,7 @@ pub mod capsicum {
         }
 
         fn is_capsicum_available() -> bool {
-            let mut mode: libc::c_int = 0;
+            let mut mode: u32 = 0;
             let result = unsafe { libc::cap_getmode(&mut mode) };
             result == 0 && mode != 0
         }
