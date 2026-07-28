@@ -4,6 +4,7 @@
 
 use std::io;
 use std::os::windows::ffi::OsStrExt;
+use std::os::windows::io::{AsRawHandle, FromRawHandle};
 
 pub const PIPE_BUFFER_SIZE: u32 = 65536;
 pub const MAX_PIPE_INSTANCES: u32 = 1;

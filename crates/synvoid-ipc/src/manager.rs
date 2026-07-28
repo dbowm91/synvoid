@@ -1828,16 +1828,23 @@ impl ProcessManager {
         drop(unified_server_workers);
 
         for (pid, is_graceful) in pids {
-            if is_graceful {
-                let _ = nix::sys::signal::kill(
-                    nix::unistd::Pid::from_raw(pid as i32),
-                    nix::sys::signal::Signal::SIGTERM,
-                );
-            } else {
-                let _ = nix::sys::signal::kill(
-                    nix::unistd::Pid::from_raw(pid as i32),
-                    nix::sys::signal::Signal::SIGKILL,
-                );
+            #[cfg(unix)]
+            {
+                if is_graceful {
+                    let _ = nix::sys::signal::kill(
+                        nix::unistd::Pid::from_raw(pid as i32),
+                        nix::sys::signal::Signal::SIGTERM,
+                    );
+                } else {
+                    let _ = nix::sys::signal::kill(
+                        nix::unistd::Pid::from_raw(pid as i32),
+                        nix::sys::signal::Signal::SIGKILL,
+                    );
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = (pid, is_graceful);
             }
         }
     }

@@ -167,6 +167,8 @@ impl PidFileManager {
     #[cfg(windows)]
     pub fn try_acquire(&mut self, pid: u32, version: &str) -> std::io::Result<bool> {
         use std::fs::OpenOptions;
+        use std::io::{Seek, SeekFrom, Write};
+        use std::os::windows::io::AsRawHandle;
 
         let path = self.pid_file_path();
 
@@ -205,13 +207,14 @@ impl PidFileManager {
 
     #[cfg(windows)]
     fn lock_file_exclusive(file: &File) -> bool {
-        use windows_sys::Win32::FileManagement::LockFileEx;
-        use windows_sys::Win32::Foundation::OVERLAPPED;
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Storage::FileSystem::LockFileEx;
+        use windows_sys::Win32::System::IO::OVERLAPPED;
 
         let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
         let result = unsafe {
             LockFileEx(
-                file.as_raw_fd() as _,
+                file.as_raw_handle() as _,
                 0x00000001,
                 0,
                 0,
@@ -225,6 +228,7 @@ impl PidFileManager {
     #[cfg(not(any(unix, windows)))]
     pub fn try_acquire(&mut self, pid: u32, version: &str) -> std::io::Result<bool> {
         use std::fs::OpenOptions;
+        use std::io::{Seek, SeekFrom, Write};
 
         let path = self.pid_file_path();
 

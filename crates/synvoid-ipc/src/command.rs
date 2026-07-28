@@ -69,6 +69,7 @@ impl CommandClient {
         }
     }
 
+    #[cfg(unix)]
     fn send_via_socket(&self, command: SupervisorCommand) -> Result<String, CommandError> {
         let socket_path = self.socket_path.as_ref().ok_or(CommandError::NoSocket)?;
 
@@ -103,6 +104,13 @@ impl CommandClient {
                 Ok(serde_json::to_string_pretty(&status).unwrap_or_default())
             }
         }
+    }
+
+    #[cfg(not(unix))]
+    fn send_via_socket(&self, _command: SupervisorCommand) -> Result<String, CommandError> {
+        Err(CommandError::NotSupported(
+            "Unix sockets not supported on this platform".to_string(),
+        ))
     }
 
     #[cfg(windows)]
@@ -199,6 +207,7 @@ impl CommandClient {
 
     pub fn get_status(&self) -> Result<SupervisorStatus, CommandError> {
         match self.method {
+            #[cfg(unix)]
             super::ipc::CommandMethod::UnixSocket => {
                 let socket_path = self.socket_path.as_ref().ok_or(CommandError::NoSocket)?;
 
@@ -222,6 +231,10 @@ impl CommandClient {
                     CommandResponse::Error(msg) => Err(CommandError::ServerError(msg)),
                 }
             }
+            #[cfg(not(unix))]
+            super::ipc::CommandMethod::UnixSocket => Err(CommandError::NotSupported(
+                "Unix sockets not supported on this platform".to_string(),
+            )),
             super::ipc::CommandMethod::NamedPipe => {
                 let pipe_name = "\\\\.\\pipe\\synvoid-commands";
 

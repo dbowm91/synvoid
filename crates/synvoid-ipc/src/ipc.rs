@@ -2384,8 +2384,8 @@ impl WindowsIpcListener {
     }
 
     pub fn bind(&self) -> io::Result<()> {
-        use windows_sys::Win32::Foundation::FILE_FLAG_OVERLAPPED;
         use windows_sys::Win32::Foundation::HANDLE;
+        use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OVERLAPPED;
         use windows_sys::Win32::System::Pipes::CreateNamedPipeW;
         use windows_sys::Win32::System::Pipes::PIPE_ACCESS_DUPLEX;
         use windows_sys::Win32::System::Pipes::PIPE_READMODE_MESSAGE;
@@ -2471,7 +2471,7 @@ impl WindowsIpcListener {
 
         if connected == 0 {
             // SAFETY: GetLastError returns thread-local error code.
-            let error = unsafe { *windows_sys::Win32::Foundation::GetLastError() };
+            let error = unsafe { windows_sys::Win32::Foundation::GetLastError() };
             if error != windows_sys::Win32::Foundation::ERROR_PIPE_CONNECTED {
                 // SAFETY: CloseHandle on valid handle we own on error path.
                 unsafe {

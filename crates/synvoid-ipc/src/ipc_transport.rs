@@ -13,8 +13,8 @@ use tokio::net::windows::named_pipe::{NamedPipeClient, NamedPipeServer};
 
 #[allow(unused_imports)]
 use super::ipc_framing::{
-    endpoint_to_socket_path, read_message, read_message_with_timeout, write_message,
-    DEFAULT_BUFFER_SIZE,
+    endpoint_to_pipe_name, endpoint_to_socket_path, read_message, read_message_with_timeout,
+    write_message, DEFAULT_BUFFER_SIZE,
 };
 use super::ipc_signed::IpcSigner;
 
@@ -198,7 +198,7 @@ impl IpcListener {
     }
 
     #[cfg(windows)]
-    pub async fn accept(&self) -> io::Result<IpcStream> {
+    pub async fn accept(&mut self) -> io::Result<IpcStream> {
         let server = self
             .server
             .as_ref()
@@ -225,7 +225,7 @@ impl IpcListener {
     #[cfg(windows)]
     pub fn local_addr(&self) -> io::Result<tokio::net::unix::SocketAddr> {
         Err(io::Error::new(
-            io::ErrorKind::NotSupported,
+            io::ErrorKind::Unsupported,
             "local_addr not supported for named pipes",
         ))
     }
@@ -330,7 +330,7 @@ impl IpcStream {
         let max_attempts = 10;
 
         loop {
-            match NamedPipeClient::connect(pipe_name) {
+            match NamedPipeClient::connect(pipe_name).await {
                 Ok(client) => {
                     return Ok(Self {
                         inner: Box::new(client),
@@ -360,7 +360,7 @@ impl IpcStream {
         let max_attempts = 10;
 
         loop {
-            match NamedPipeClient::connect(pipe_name) {
+            match NamedPipeClient::connect(pipe_name).await {
                 Ok(client) => {
                     return Ok(Self {
                         inner: Box::new(client),
