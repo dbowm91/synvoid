@@ -1243,7 +1243,8 @@ mod tests {
 
     #[test]
     fn test_basic_sandbox_succeeds_with_stub() {
-        let result = ProcessSandbox::with_paths(SandboxLevel::Basic, SandboxPaths::new());
-        assert!(result.is_ok());
+        let sandbox = ProcessSandbox::with_stub(SandboxLevel::Basic);
+        assert_eq!(sandbox.level(), SandboxLevel::Basic);
+        assert!(!sandbox.capabilities().can_enforce_strict());
     }
 }

@@ -7,6 +7,7 @@ license.workspace = true
 [features]
 default = []
 mesh = ["dep:synvoid-mesh", "synvoid-mesh/mesh"]
+anycast-tcp = ["dep:tokio-dstip"]
 
 [dependencies]
 synvoid-core = { path = "../synvoid-core" }
@@ -41,7 +42,7 @@ sha1 = "0.10"
 digest = { version = "0.10", features = ["oid"] }
 quinn = { version = "0.11", features = ["runtime-tokio"] }
 base64 = "0.22"
-tokio-dstip = "0.1"
+tokio-dstip = { version = "0.1", optional = true }
 hex = "0.4"
 ipnetwork = "0.18"
 ahash = "0.8"
@@ -51,7 +52,7 @@ cryptoki = "0.12"
 getrandom = { version = "0.2", features = ["std"] }
 libc = "0.2"
 lru_time_cache = "0.11"
-nix = { version = "0.29", features = ["socket"] }
+nix = { version = "0.29", features = ["socket", "uio", "net"] }
 moka = { version = "0.12", features = ["sync", "future"] }
 rand = "0.9"
 rand_core_06 = { package = "rand_core", version = "0.6" }

@@ -94,6 +94,8 @@ jobs:
             cargo build --target ${{ matrix.target }} --release --features "${FEATURES:-default}"
           fi
         shell: bash
+        env:
+          CARGO_BUILD_JOBS: "2"  # Limit parallelism to avoid OOM in cross containers (fat LTO + codegen-units=1)
 
       - name: Install nextest
         if: matrix.test && !matrix.cross

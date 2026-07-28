@@ -379,62 +379,70 @@ impl IpcStream {
     }
 
     pub async fn send<T: Serialize>(&mut self, msg: &T) -> io::Result<()> {
-        if let Some(ref signer) = self.signer {
-            use super::ipc_signed::SignedIpcMessage;
-            let data = SignedIpcMessage::serialize_signed(msg, signer)?;
-            self.inner.write_all(&data).await?;
-            self.inner.flush().await?;
-            Ok(())
+        if self._enforce_signing {
+            if let Some(ref signer) = self.signer {
+                use super::ipc_signed::SignedIpcMessage;
+                let data = SignedIpcMessage::serialize_signed(msg, signer)?;
+                self.inner.write_all(&data).await?;
+                self.inner.flush().await?;
+                Ok(())
+            } else {
+                tracing::error!(
+                    "IPC signing is enforced but no signer configured - rejecting unsigned message"
+                );
+                Err(io::Error::other(
+                    "IPC signing enforced but no signer configured",
+                ))
+            }
         } else {
-            tracing::error!(
-                "IPC signing is enforced but no signer configured - rejecting unsigned message"
-            );
-            Err(io::Error::other(
-                "IPC signing enforced but no signer configured",
-            ))
+            super::ipc_framing::write_message(&mut self.inner, msg).await
         }
     }
 
     pub async fn recv<T: DeserializeOwned>(&mut self) -> io::Result<Option<T>> {
-        if let Some(ref signer) = self.signer {
-            use super::ipc_signed::SignedIpcMessage;
+        if self._enforce_signing {
+            if let Some(ref signer) = self.signer {
+                use super::ipc_signed::SignedIpcMessage;
 
-            let mut len_buf = [0u8; 4];
-            match self.inner.read_exact(&mut len_buf).await {
-                Ok(_) => {}
-                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
-                Err(e) => return Err(e),
-            }
+                let mut len_buf = [0u8; 4];
+                match self.inner.read_exact(&mut len_buf).await {
+                    Ok(_) => {}
+                    Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
+                    Err(e) => return Err(e),
+                }
 
-            let len = u32::from_be_bytes(len_buf) as usize;
-            if len > super::ipc_framing::MAX_MESSAGE_SIZE {
-                super::ipc_signed::increment_oversized_rejected();
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "message too large",
-                ));
-            }
+                let len = u32::from_be_bytes(len_buf) as usize;
+                if len > super::ipc_framing::MAX_MESSAGE_SIZE {
+                    super::ipc_signed::increment_oversized_rejected();
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "message too large",
+                    ));
+                }
 
-            let mut data = vec![0u8; len];
-            self.inner
-                .read_exact(&mut data)
-                .await
-                .map_err(io::Error::other)?;
+                let mut data = vec![0u8; len];
+                self.inner
+                    .read_exact(&mut data)
+                    .await
+                    .map_err(io::Error::other)?;
 
-            let mut framed = Vec::with_capacity(4 + data.len());
-            framed.extend_from_slice(&len_buf);
-            framed.extend_from_slice(&data);
-            match SignedIpcMessage::deserialize_signed(&framed, signer) {
-                Ok(msg) => Ok(Some(msg)),
-                Err(e) => Err(e),
+                let mut framed = Vec::with_capacity(4 + data.len());
+                framed.extend_from_slice(&len_buf);
+                framed.extend_from_slice(&data);
+                match SignedIpcMessage::deserialize_signed(&framed, signer) {
+                    Ok(msg) => Ok(Some(msg)),
+                    Err(e) => Err(e),
+                }
+            } else {
+                tracing::error!(
+                    "IPC signing is enforced but no signer configured - rejecting unsigned connection"
+                );
+                Err(io::Error::other(
+                    "IPC signing enforced but no signer configured",
+                ))
             }
         } else {
-            tracing::error!(
-                "IPC signing is enforced but no signer configured - rejecting unsigned connection"
-            );
-            Err(io::Error::other(
-                "IPC signing enforced but no signer configured",
-            ))
+            super::ipc_framing::read_message(&mut self.inner, &mut self.read_buffer).await
         }
     }
 
@@ -442,22 +450,13 @@ impl IpcStream {
         &mut self,
         timeout_ms: u64,
     ) -> io::Result<Option<T>> {
-        if self.signer.is_some() {
-            use tokio::time::{timeout, Duration};
+        use tokio::time::{timeout, Duration};
 
-            let result = timeout(Duration::from_millis(timeout_ms), self.recv::<T>()).await;
+        let result = timeout(Duration::from_millis(timeout_ms), self.recv::<T>()).await;
 
-            match result {
-                Ok(r) => r,
-                Err(_) => Ok(None),
-            }
-        } else {
-            tracing::error!(
-                "IPC signing is enforced but no signer configured - rejecting unsigned connection"
-            );
-            Err(io::Error::other(
-                "IPC signing enforced but no signer configured",
-            ))
+        match result {
+            Ok(r) => r,
+            Err(_) => Ok(None),
         }
     }
 

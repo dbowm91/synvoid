@@ -14,6 +14,7 @@ use metrics::counter;
 use parking_lot::RwLock;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
+#[cfg(feature = "anycast-tcp")]
 use tokio_dstip::TcpListenerWithDst;
 
 use crate::platform::AnycastSocketPlatform;
@@ -30,6 +31,7 @@ pub struct BoundSocket {
     pub error_count: Arc<AtomicU64>,
 }
 
+#[cfg(feature = "anycast-tcp")]
 pub struct BoundTcpListener {
     pub listener: TcpListenerWithDst,
     pub local_addr: SocketAddr,
@@ -39,6 +41,7 @@ pub struct BoundTcpListener {
     pub error_count: Arc<AtomicU64>,
 }
 
+#[cfg(feature = "anycast-tcp")]
 #[derive(Debug)]
 pub struct AnycastTcpConnection {
     pub stream: tokio::net::TcpStream,
@@ -55,6 +58,7 @@ pub struct AnycastPacketInfo {
 
 pub struct AnycastSocketManager {
     sockets: Vec<BoundSocket>,
+    #[cfg(feature = "anycast-tcp")]
     tcp_listeners: Vec<Arc<BoundTcpListener>>,
     platform: Arc<dyn AnycastSocketPlatform>,
     config: DnsAnycastConfig,
@@ -78,6 +82,7 @@ impl AnycastSocketManager {
         platform: Arc<dyn AnycastSocketPlatform>,
     ) -> Result<Self, String> {
         let mut sockets = Vec::new();
+        #[cfg(feature = "anycast-tcp")]
         let mut tcp_listeners = Vec::new();
 
         for addr_str in &config.bind_addresses {
@@ -110,21 +115,24 @@ impl AnycastSocketManager {
             tracing::info!("Anycast UDP socket bound to {}", socket_addr);
             sockets.push(bound_socket);
 
-            let tcp_listener = TcpListenerWithDst::bind(socket_addr)
-                .await
-                .map_err(|e| format!("Failed to bind TCP to {}: {}", socket_addr, e))?;
+            #[cfg(feature = "anycast-tcp")]
+            {
+                let tcp_listener = TcpListenerWithDst::bind(socket_addr)
+                    .await
+                    .map_err(|e| format!("Failed to bind TCP to {}: {}", socket_addr, e))?;
 
-            let bound_tcp = BoundTcpListener {
-                listener: tcp_listener,
-                local_addr: socket_addr,
-                ip: addr,
-                healthy: true,
-                connection_count: Arc::new(AtomicU64::new(0)),
-                error_count: Arc::new(AtomicU64::new(0)),
-            };
+                let bound_tcp = BoundTcpListener {
+                    listener: tcp_listener,
+                    local_addr: socket_addr,
+                    ip: addr,
+                    healthy: true,
+                    connection_count: Arc::new(AtomicU64::new(0)),
+                    error_count: Arc::new(AtomicU64::new(0)),
+                };
 
-            tracing::info!("Anycast TCP listener bound to {}", socket_addr);
-            tcp_listeners.push(Arc::new(bound_tcp));
+                tracing::info!("Anycast TCP listener bound to {}", socket_addr);
+                tcp_listeners.push(Arc::new(bound_tcp));
+            }
         }
 
         if sockets.is_empty() {
@@ -135,6 +143,7 @@ impl AnycastSocketManager {
 
         Ok(Self {
             sockets,
+            #[cfg(feature = "anycast-tcp")]
             tcp_listeners,
             platform,
             config: config.clone(),
@@ -156,18 +165,22 @@ impl AnycastSocketManager {
         self.sockets.iter().map(|s| s.local_addr).collect()
     }
 
+    #[cfg(feature = "anycast-tcp")]
     pub fn get_tcp_listeners(&self) -> &[Arc<BoundTcpListener>] {
         &self.tcp_listeners
     }
 
+    #[cfg(feature = "anycast-tcp")]
     pub fn get_tcp_listener_addresses(&self) -> Vec<SocketAddr> {
         self.tcp_listeners.iter().map(|l| l.local_addr).collect()
     }
 
+    #[cfg(feature = "anycast-tcp")]
     pub fn supports_tcp_pktinfo(&self) -> bool {
         self.platform.supports_tcp_pktinfo()
     }
 
+    #[cfg(feature = "anycast-tcp")]
     pub async fn accept_tcp(&self) -> Result<AnycastTcpConnection, String> {
         for listener in &self.tcp_listeners {
             match listener.listener.accept_with_dst().await {

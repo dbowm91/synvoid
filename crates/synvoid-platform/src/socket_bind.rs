@@ -48,6 +48,7 @@ pub fn bind_tcp_reuse(addr: SocketAddr) -> io::Result<std::net::TcpListener> {
     let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
 
     socket.set_reuse_address(true)?;
+    #[cfg(unix)]
     if is_reuse_port_available() {
         socket.set_reuse_port(true)?;
     }
@@ -68,6 +69,7 @@ pub fn bind_udp_reuse(addr: SocketAddr) -> io::Result<std::net::UdpSocket> {
     let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
 
     socket.set_reuse_address(true)?;
+    #[cfg(unix)]
     if is_reuse_port_available() {
         socket.set_reuse_port(true)?;
     }
