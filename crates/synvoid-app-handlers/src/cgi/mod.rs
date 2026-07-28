@@ -171,14 +171,17 @@ impl CgiHandler {
             return Err(CgiError::Forbidden("Script has no extension".to_string()));
         }
 
-        use std::os::unix::fs::PermissionsExt;
-        let metadata = std::fs::metadata(path).map_err(|e| {
-            tracing::warn!("Failed to get CGI script metadata: {}", e);
-            CgiError::NotFound(format!("Cannot access script: {}", e))
-        })?;
-        let mode = metadata.permissions().mode();
-        if mode & 0o111 == 0 {
-            return Err(CgiError::Forbidden("Script not executable".to_string()));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let metadata = std::fs::metadata(path).map_err(|e| {
+                tracing::warn!("Failed to get CGI script metadata: {}", e);
+                CgiError::NotFound(format!("Cannot access script: {}", e))
+            })?;
+            let mode = metadata.permissions().mode();
+            if mode & 0o111 == 0 {
+                return Err(CgiError::Forbidden("Script not executable".to_string()));
+            }
         }
 
         Ok(path.clone())

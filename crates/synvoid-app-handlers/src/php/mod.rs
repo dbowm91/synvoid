@@ -45,10 +45,13 @@ static COMMON_PHP_SOCKETS: LazyLock<Vec<PathBuf>> = LazyLock::new(|| {
 });
 
 fn is_unix_socket(path: &PathBuf) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    if let Ok(meta) = std::fs::metadata(path) {
-        let mode = meta.mode();
-        return mode & 0o140000 == 0o140000;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let Ok(meta) = std::fs::metadata(path) {
+            let mode = meta.mode();
+            return mode & 0o140000 == 0o140000;
+        }
     }
     false
 }
