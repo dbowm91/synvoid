@@ -14,7 +14,7 @@ use metrics::counter;
 use parking_lot::RwLock;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-#[cfg(feature = "anycast-tcp")]
+#[cfg(target_os = "linux")]
 use tokio_dstip::TcpListenerWithDst;
 
 use crate::platform::AnycastSocketPlatform;
@@ -31,7 +31,7 @@ pub struct BoundSocket {
     pub error_count: Arc<AtomicU64>,
 }
 
-#[cfg(feature = "anycast-tcp")]
+#[cfg(target_os = "linux")]
 pub struct BoundTcpListener {
     pub listener: TcpListenerWithDst,
     pub local_addr: SocketAddr,
@@ -41,7 +41,7 @@ pub struct BoundTcpListener {
     pub error_count: Arc<AtomicU64>,
 }
 
-#[cfg(feature = "anycast-tcp")]
+#[cfg(target_os = "linux")]
 #[derive(Debug)]
 pub struct AnycastTcpConnection {
     pub stream: tokio::net::TcpStream,
@@ -58,7 +58,7 @@ pub struct AnycastPacketInfo {
 
 pub struct AnycastSocketManager {
     sockets: Vec<BoundSocket>,
-    #[cfg(feature = "anycast-tcp")]
+    #[cfg(target_os = "linux")]
     tcp_listeners: Vec<Arc<BoundTcpListener>>,
     platform: Arc<dyn AnycastSocketPlatform>,
     config: DnsAnycastConfig,
@@ -82,7 +82,7 @@ impl AnycastSocketManager {
         platform: Arc<dyn AnycastSocketPlatform>,
     ) -> Result<Self, String> {
         let mut sockets = Vec::new();
-        #[cfg(feature = "anycast-tcp")]
+        #[cfg(target_os = "linux")]
         let mut tcp_listeners = Vec::new();
 
         for addr_str in &config.bind_addresses {
@@ -115,7 +115,7 @@ impl AnycastSocketManager {
             tracing::info!("Anycast UDP socket bound to {}", socket_addr);
             sockets.push(bound_socket);
 
-            #[cfg(feature = "anycast-tcp")]
+            #[cfg(target_os = "linux")]
             {
                 let tcp_listener = TcpListenerWithDst::bind(socket_addr)
                     .await
@@ -143,7 +143,7 @@ impl AnycastSocketManager {
 
         Ok(Self {
             sockets,
-            #[cfg(feature = "anycast-tcp")]
+            #[cfg(target_os = "linux")]
             tcp_listeners,
             platform,
             config: config.clone(),
@@ -165,22 +165,22 @@ impl AnycastSocketManager {
         self.sockets.iter().map(|s| s.local_addr).collect()
     }
 
-    #[cfg(feature = "anycast-tcp")]
+    #[cfg(target_os = "linux")]
     pub fn get_tcp_listeners(&self) -> &[Arc<BoundTcpListener>] {
         &self.tcp_listeners
     }
 
-    #[cfg(feature = "anycast-tcp")]
+    #[cfg(target_os = "linux")]
     pub fn get_tcp_listener_addresses(&self) -> Vec<SocketAddr> {
         self.tcp_listeners.iter().map(|l| l.local_addr).collect()
     }
 
-    #[cfg(feature = "anycast-tcp")]
+    #[cfg(target_os = "linux")]
     pub fn supports_tcp_pktinfo(&self) -> bool {
         self.platform.supports_tcp_pktinfo()
     }
 
-    #[cfg(feature = "anycast-tcp")]
+    #[cfg(target_os = "linux")]
     pub async fn accept_tcp(&self) -> Result<AnycastTcpConnection, String> {
         for listener in &self.tcp_listeners {
             match listener.listener.accept_with_dst().await {

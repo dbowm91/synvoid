@@ -7,7 +7,6 @@ license.workspace = true
 [features]
 default = []
 mesh = ["dep:synvoid-mesh", "synvoid-mesh/mesh"]
-anycast-tcp = ["dep:tokio-dstip"]
 
 [dependencies]
 synvoid-core = { path = "../synvoid-core" }
@@ -88,4 +87,4 @@ name = "limits_bench"
 harness = false
 
 [target.'cfg(target_os = "linux")'.dependencies]
-tokio-dstip = { version = "0.1", optional = true }
+tokio-dstip = "0.1"
