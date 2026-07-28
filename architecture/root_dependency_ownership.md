@@ -74,7 +74,7 @@ Classification values:
 | hickory-resolver | dns | composition_runtime | dns | DNS resolver with recursive support | keep |
 | thiserror | throughout | composition_runtime | default | Derive macro for error types | keep |
 | getrandom | dns | composition_runtime | dns | Cryptographic random for DNSSEC | keep |
-| tokio-dstip | dns | composition_runtime | dns | Dual-stack IPv4/IPv6 socket support | keep |
+| tokio-dstip | dns | composition_runtime | dns | Dual-stack IPv4/IPv6 socket support | remove_candidate |
 | clap | commands | composition_runtime | default | CLI subcommand parsing | keep |
 | tempfile | test_or_tooling | test_or_tooling | default | Temporary files for tests | keep |
 | uuid | config, tests | composition_runtime | default | UUID generation for request IDs | keep |

@@ -8022,7 +8022,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
- "tokio-dstip",
  "tokio-rustls",
  "toml 0.8.23",
  "tonic",
