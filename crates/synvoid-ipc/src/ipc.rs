@@ -2386,8 +2386,8 @@ impl WindowsIpcListener {
     pub fn bind(&self) -> io::Result<()> {
         use windows_sys::Win32::Foundation::HANDLE;
         use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OVERLAPPED;
+        use windows_sys::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
         use windows_sys::Win32::System::Pipes::CreateNamedPipeW;
-        use windows_sys::Win32::System::Pipes::PIPE_ACCESS_DUPLEX;
         use windows_sys::Win32::System::Pipes::PIPE_READMODE_MESSAGE;
         use windows_sys::Win32::System::Pipes::PIPE_TYPE_MESSAGE;
         use windows_sys::Win32::System::Pipes::PIPE_WAIT;
@@ -2411,7 +2411,7 @@ impl WindowsIpcListener {
                 std::ptr::null_mut(),
             );
 
-            if handle == 0 {
+            if handle.is_null() {
                 return Err(io::Error::last_os_error());
             }
         }
@@ -2443,11 +2443,11 @@ impl WindowsIpcListener {
             .collect();
 
         // SAFETY: CreateNamedPipeW is called with a valid UTF-16 pipe name
-        // and correct pipe type/access flags. The handle is checked for zero.
+        // and correct pipe type/access flags. The handle is checked for validity.
         let pipe_handle = unsafe {
             windows_sys::Win32::System::Pipes::CreateNamedPipeW(
                 pipe_name_wide.as_ptr(),
-                windows_sys::Win32::System::Pipes::PIPE_ACCESS_DUPLEX,
+                windows_sys::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX,
                 windows_sys::Win32::System::Pipes::PIPE_TYPE_MESSAGE
                     | windows_sys::Win32::System::Pipes::PIPE_READMODE_MESSAGE
                     | windows_sys::Win32::System::Pipes::PIPE_WAIT,
@@ -2459,7 +2459,7 @@ impl WindowsIpcListener {
             )
         };
 
-        if pipe_handle == 0 {
+        if pipe_handle.is_null() {
             return Err(io::Error::last_os_error());
         }
 

@@ -19,11 +19,11 @@ pub fn pipe_name_to_wide(name: &str) -> Vec<u16> {
 pub fn create_named_pipe_server(pipe_name: &str) -> io::Result<std::fs::File> {
     let wide_name = pipe_name_to_wide(pipe_name);
 
-    // SAFETY: CreateNamedPipeW is called with valid parameters; we check for zero handle.
+    // SAFETY: CreateNamedPipeW is called with valid parameters; we check for validity.
     let handle = unsafe {
         windows_sys::Win32::System::Pipes::CreateNamedPipeW(
             wide_name.as_ptr(),
-            windows_sys::Win32::System::Pipes::PIPE_ACCESS_DUPLEX,
+            windows_sys::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX,
             windows_sys::Win32::System::Pipes::PIPE_TYPE_MESSAGE
                 | windows_sys::Win32::System::Pipes::PIPE_READMODE_MESSAGE
                 | windows_sys::Win32::System::Pipes::PIPE_WAIT,
@@ -35,7 +35,7 @@ pub fn create_named_pipe_server(pipe_name: &str) -> io::Result<std::fs::File> {
         )
     };
 
-    if handle == 0 {
+    if handle.is_null() {
         return Err(io::Error::last_os_error());
     }
 
@@ -87,17 +87,7 @@ pub fn connect_to_named_pipe(pipe_name: &str, max_attempts: u32) -> io::Result<s
 pub fn close_pipe_handle(handle: &std::fs::File) {
     // SAFETY: CloseHandle is called on a valid handle we own.
     unsafe {
-        windows_sys::Win32::Foundation::CloseHandle(handle.as_raw_handle() as _);
-    }
-}
-
-pub trait RawHandleExt {
-    fn as_raw_handle(&self) -> std::os::windows::io::RawHandle;
-}
-
-impl RawHandleExt for std::fs::File {
-    fn as_raw_handle(&self) -> std::os::windows::io::RawHandle {
-        std::os::windows::io::AsRawHandle::as_raw_handle(self)
+        windows_sys::Win32::Foundation::CloseHandle(AsRawHandle::as_raw_handle(handle) as _);
     }
 }
 

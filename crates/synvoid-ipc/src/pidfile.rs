@@ -174,7 +174,7 @@ impl PidFileManager {
 
         let mut file = OpenOptions::new().write(true).create(true).open(&path)?;
 
-        if !lock_file_exclusive(&file) {
+        if !Self::lock_file_exclusive(&file) {
             return Ok(false);
         }
 
@@ -294,17 +294,16 @@ impl PidFileManager {
             }
             #[cfg(windows)]
             {
-                use windows_sys::Win32::Foundation::HANDLE;
+                use windows_sys::Win32::Foundation::STILL_ACTIVE;
                 use windows_sys::Win32::System::Threading::{
                     GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-                    STILL_ACTIVE,
                 };
 
                 let pid = content.pid;
                 let process_handle =
                     unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
 
-                if process_handle != 0 {
+                if !process_handle.is_null() {
                     let mut exit_code: u32 = 0;
                     let result = unsafe { GetExitCodeProcess(process_handle, &mut exit_code) };
                     unsafe { windows_sys::Win32::Foundation::CloseHandle(process_handle) };
@@ -500,17 +499,17 @@ impl SupervisorLockFile {
                                     }
                                     #[cfg(windows)]
                                     {
-                                        use windows_sys::Win32::Foundation::HANDLE;
+                                        use windows_sys::Win32::Foundation::STILL_ACTIVE;
                                         use windows_sys::Win32::System::Threading::{
                                             GetExitCodeProcess, OpenProcess,
-                                            PROCESS_QUERY_LIMITED_INFORMATION, STILL_ACTIVE,
+                                            PROCESS_QUERY_LIMITED_INFORMATION,
                                         };
 
                                         let check_handle = unsafe {
                                             OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid)
                                         };
 
-                                        if check_handle != 0 {
+                                        if !check_handle.is_null() {
                                             let mut exit_code: u32 = 0;
                                             let result = unsafe {
                                                 GetExitCodeProcess(check_handle, &mut exit_code)

@@ -223,7 +223,7 @@ impl IpcListener {
     }
 
     #[cfg(windows)]
-    pub fn local_addr(&self) -> io::Result<tokio::net::unix::SocketAddr> {
+    pub fn local_addr(&self) -> io::Result<()> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "local_addr not supported for named pipes",
@@ -324,13 +324,14 @@ impl IpcStream {
     #[cfg(windows)]
     pub async fn connect(endpoint: &IpcEndpoint) -> io::Result<Self> {
         use std::time::Duration;
+        use tokio::net::windows::named_pipe::ClientOptions;
 
         let pipe_name = endpoint.pipe_name();
         let mut attempts = 0;
         let max_attempts = 10;
 
         loop {
-            match NamedPipeClient::connect(pipe_name).await {
+            match ClientOptions::new().open(pipe_name) {
                 Ok(client) => {
                     return Ok(Self {
                         inner: Box::new(client),
@@ -354,13 +355,14 @@ impl IpcStream {
         signer: Arc<IpcSigner>,
     ) -> io::Result<Self> {
         use std::time::Duration;
+        use tokio::net::windows::named_pipe::ClientOptions;
 
         let pipe_name = endpoint.pipe_name();
         let mut attempts = 0;
         let max_attempts = 10;
 
         loop {
-            match NamedPipeClient::connect(pipe_name).await {
+            match ClientOptions::new().open(pipe_name) {
                 Ok(client) => {
                     return Ok(Self {
                         inner: Box::new(client),
