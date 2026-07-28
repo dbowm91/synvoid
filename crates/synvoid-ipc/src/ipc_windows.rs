@@ -53,7 +53,7 @@ pub fn accept_pipe_connection(handle: &std::fs::File) -> io::Result<()> {
     };
 
     if connected == 0 {
-        let error = windows_sys::Win32::Foundation::GetLastError();
+        let error = unsafe { windows_sys::Win32::Foundation::GetLastError() };
         if error != windows_sys::Win32::Foundation::ERROR_PIPE_CONNECTED {
             return Err(io::Error::new(
                 io::ErrorKind::ConnectionRefused,
