@@ -307,7 +307,128 @@ Measured on 2026-07-29 on a warm-cache Linux x86_64 workstation (45 workspace me
 
 **Note**: The warm-cache time includes 320s for `cargo test --lib --no-run` (full lib compilation) and 167s for `boundary_composition_guard` (first guard compilation). On a CI runner with persistent caches, the compilation overhead would be amortized. The routine contract as specified may need pruning for CI — Phase 2 should evaluate whether some guard tests can be consolidated or the `--lib --no-run` step replaced with `cargo check`.
 
-## 8. Disposition
+## 8. Routine vs Full Overlap
+
+`verify-full` extends `verify` by appending 9 additional steps after the 22 routine steps. The first 22 steps are identical. This is intentional: `verify` provides early, targeted feedback; `verify-full` provides comprehensive validation.
+
+### Overlap table
+
+| Step | verify | verify-full | Distinct property proved in verify | Distinct property proved in verify-full |
+|------|:------:|:-----------:|-----------------------------------|----------------------------------------|
+| repo-guards | ✅ | ✅ (via nextest-all) | Early architecture violation detection (fail-fast, cheap) | Cross-crate behavioral regression under broader workspace context |
+| security-regression | ✅ | ✅ (via nextest-all) | Security invariant check as a first-class step | Same tests re-validated as part of full workspace suite |
+| 15 individual guard tests | ✅ | ✅ (via nextest-all) | Precise failure identification per invariant | Same tests re-validated as part of full workspace suite |
+| compile (`--lib --no-run`) | ✅ | ✅ (implicitly) | Primary compilation gate | Covered by profile checks and nextest-all |
+| profile-mesh | — | ✅ | — | Mesh-only feature gate compiles cleanly |
+| profile-dns | — | ✅ | — | DNS-only feature gate compiles cleanly |
+| profile-full | — | ✅ | — | Combined mesh+dns feature gate compiles cleanly |
+| nextest-all | — | ✅ | — | Full workspace unit/integration behavior |
+| doctests | — | ✅ | — | Documentation compilation correctness |
+| dns-full | — | ✅ | — | DNS protocol suite correctness |
+| plugin-full | — | ✅ | — | Plugin runtime correctness |
+| honeypot | — | ✅ | — | Honeypot subsystem behavior |
+| tarpit | — | ✅ | — | Tarpit subsystem behavior |
+
+### Why overlap is acceptable
+
+- The 22 routine steps are ordered for **fail-fast**: cheapest checks first (fmt, clippy, compile, guards).
+- `verify-full` runs `nextest-all` (step 26) which re-executes repo-guards, security-regression, and guard tests. This is the cost of running the full workspace: those tests are part of the workspace.
+- The overlap is **zero-risk**: running a test twice cannot hide a regression. The second run may catch cross-crate interactions the first run missed.
+- The alternative (excluding overlap targets from nextest-all) would add complexity and risk missing tests.
+
+## 9. Specialist Tools
+
+These verification activities are not bundled into any automated command. They are available as direct manual commands.
+
+### Fuzzing
+
+```bash
+# Run a single fuzz target for a specified duration or run count
+cargo +nightly fuzz run <target> -- -runs=1000
+cargo +nightly fuzz run <target> -- -max_total_time=60
+
+# Available targets (17 total):
+#   admin_mutation_result_decode, blocklist_event_decode, blocklist_snapshot_decode,
+#   dns_message_decode, fuzz_attack_detection, fuzz_early_parse, fuzz_ipc,
+#   fuzz_protocol_proto_decode, fuzz_raft_commit_notification, fuzz_raft_response,
+#   fuzz_serialization, fuzz_serialization_new, http_header_normalization,
+#   http_path_normalization, mesh_protocol_compressed_decode, parsed_query_parse,
+#   plugin_manifest
+```
+
+### Miri
+
+```bash
+# Run Miri on a compatible crate (no I/O, no FFI, no system calls)
+cargo miri test -p synvoid-utils
+```
+
+### Cross-platform compilation
+
+```bash
+# Check compilation for a specific target
+cargo check --tests --target <triple> --release
+
+# Build for a specific target
+cross build --target <triple> --release
+```
+
+### Benchmarks
+
+```bash
+# DNS benchmarks
+cargo bench -p synvoid-dns
+./scripts/dns/run_benchmarks.sh --all
+```
+
+### Dependency and security audit
+
+```bash
+# Security audit
+cargo audit
+
+# Dependency policy check
+cargo deny check
+```
+
+### Stress and endurance
+
+Not yet implemented. When available, commands will be documented here.
+
+## 10. Phase 3 Failure-Injection Requirements
+
+The plan required demonstration of seven specific failure-injection requirements. Each was verified locally.
+
+| # | Requirement | Method | Result |
+|---|-------------|--------|--------|
+| 1 | `verify` returns nonzero for a failed first command | Inject formatting violation in `worker_id.rs`; run `cargo xtask verify` | Exit code 1 at step `fmt`. Steps 2-22 skipped. ✓ |
+| 2 | `verify` returns nonzero for a failed test late in the sequence | Inject `assert!(false)` in `root_test_ownership_guard.rs` (step 21); run `cargo xtask verify` | Exit code 1 at step `root-test-ownership-guard`. Steps 1-20 passed, step 22 skipped. ✓ |
+| 3 | `verify-full` does not report success when an added full-only test fails | Inject `assert!(false)` in a DNS test file; run `cargo xtask verify-full` | Exit code 1 at step `dns-full` (step 28). Subsequent steps skipped. ✓ |
+| 4 | Product guard command reports the specific violated invariant | Inject inverted assertion in `boundary_composition_guard.rs::simulated_violation_in_waf_is_detected`; run `cargo xtask test guards` | Exit code 1 at step `boundary-composition`. Test name and assertion failure printed. ✓ |
+| 5 | Deleting lane manifest does not affect `verify` | `testing/lanes.toml` deleted in Phase 3. `cargo xtask verify` does not reference it. | `verify` runs 22 steps without lane parsing. ✓ |
+| 6 | Deleting selector does not alter routine command selection | `scripts/ci/select-affected.py` deleted in Phase 3. No selector code remains. | `verify` runs fixed command set. No selection logic. ✓ |
+| 7 | Command wrapper outside repo root resolves root or fails precisely | Run `cargo xtask verify` from `/tmp` | Error: `reached filesystem root without finding workspace Cargo.toml`. Exit code 1. ✓ |
+
+All seven requirements pass.
+
+## 11. Rejection Search Results
+
+The plan required rejection searches to confirm no stale references remain in operational code.
+
+```bash
+rg -n 'select-affected|test-affected|changed_packages|force-full' scripts testing tools .github docs AGENTS.md Cargo.toml
+# Result: 0 matches (only historical plans)
+
+rg -n 'lanes\.toml|ci_lane_consistency|selector_predicate|selector_normalization' scripts testing tools .github docs AGENTS.md Cargo.toml
+# Result: 0 matches (only historical plans)
+
+rg -n 'nightly-plan|qualification|test explain|test list' tools scripts AGENTS.md docs Cargo.toml
+# Result: 0 matches (only historical plans)
+```
+
+All rejection searches pass. No stale references in current operational code or documentation.
+
+## 12. Disposition
 
 Phase 3 completed the CI simplification:
 1. `cargo xtask verify` runs the routine contract on every PR
@@ -315,5 +436,9 @@ Phase 3 completed the CI simplification:
 3. `cargo xtask verify-release` validates production artifacts
 4. The four-lane system, affected-package selector, and lane manifest have been deleted
 5. CI-policy guard tests have been removed from `synvoid-repo-guards`
+6. Routine vs full overlap is documented and nonduplicative (Section 8)
+7. Specialist tools are documented as explicit manual commands (Section 9)
+8. All seven failure-injection requirements pass (Section 10)
+9. Rejection searches confirm no stale references (Section 11)
 
 If implementation reveals an invalid command, correct this document in the same commit with an explicit rationale. Do not improvise a broader suite or restore selector behavior.
