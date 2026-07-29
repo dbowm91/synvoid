@@ -4,10 +4,126 @@ use std::time::Instant;
 
 use crate::report::{LaneReport, StepResult, StepStatus};
 
-/// Canonical routine verification steps.
-///
-/// This is the single source of truth for what CI runs on every pull request.
-/// Derived from `docs/testing/verification-contract.md` Section 1.
+/// Shared helper: find workspace root by walking up to Cargo.toml with [workspace].
+fn find_workspace_root() -> Result<std::path::PathBuf, String> {
+    let mut dir = std::env::current_dir().map_err(|e| format!("failed to get cwd: {e}"))?;
+
+    loop {
+        let cargo_toml = dir.join("Cargo.toml");
+        if cargo_toml.exists() {
+            let content = std::fs::read_to_string(&cargo_toml)
+                .map_err(|e| format!("failed to read {}: {e}", cargo_toml.display()))?;
+            if content.contains("[workspace]") {
+                return Ok(dir);
+            }
+        }
+
+        dir = dir
+            .parent()
+            .ok_or("reached filesystem root without finding workspace Cargo.toml")?
+            .to_path_buf();
+    }
+}
+
+/// Shared helper: run a single shell command. Returns (success, duration_ms).
+fn run_command(cmd: &str, workspace_root: &Path, verbose: bool) -> (bool, u64) {
+    let start = Instant::now();
+
+    let status = Command::new("sh")
+        .arg("-c")
+        .arg(cmd)
+        .current_dir(workspace_root)
+        .status();
+
+    let duration_ms = start.elapsed().as_millis() as u64;
+
+    match status {
+        Ok(s) => (s.success(), duration_ms),
+        Err(e) => {
+            if verbose {
+                eprintln!("  failed to execute `{cmd}`: {e}");
+            }
+            (false, duration_ms)
+        }
+    }
+}
+
+/// Execute a named verification contract with fail-fast behavior.
+fn run_contract(
+    name: &str,
+    steps: &[(&str, &str)],
+    dry_run: bool,
+    json_output: bool,
+    verbose: bool,
+) -> Result<(), String> {
+    let workspace_root = find_workspace_root()?;
+
+    if !json_output {
+        println!("═══════════════════════════════════════════════════════════");
+        println!("  cargo xtask {name}");
+        println!("═══════════════════════════════════════════════════════════");
+        println!();
+    }
+
+    let mut report = LaneReport::new(name);
+
+    for (step_name, cmd) in steps {
+        if dry_run {
+            let result = StepResult {
+                name: step_name.to_string(),
+                command: cmd.to_string(),
+                status: StepStatus::DryRun,
+                duration_ms: 0,
+            };
+            report.add_result(result);
+            continue;
+        }
+
+        if verbose {
+            println!("  → {cmd}");
+        }
+
+        let (success, duration_ms) = run_command(cmd, &workspace_root, verbose);
+        let status = if success {
+            StepStatus::Success
+        } else {
+            StepStatus::Failed
+        };
+
+        report.add_result(StepResult {
+            name: step_name.to_string(),
+            command: cmd.to_string(),
+            status,
+            duration_ms,
+        });
+
+        if !success && !dry_run {
+            if !json_output {
+                println!();
+                println!("  ✗ Failed at step: {step_name}");
+                println!("    Command: {cmd}");
+            }
+            break;
+        }
+    }
+
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&report).unwrap());
+    } else {
+        println!("{report}");
+    }
+
+    if !report.is_success() {
+        return Err(format!("{} step(s) failed", report.failed));
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Routine verification (what CI runs on every PR)
+// ---------------------------------------------------------------------------
+
 fn verify_steps() -> Vec<(&'static str, &'static str)> {
     vec![
         ("fmt", "cargo fmt --all -- --check"),
@@ -77,114 +193,173 @@ fn verify_steps() -> Vec<(&'static str, &'static str)> {
     ]
 }
 
-/// Run a single shell command. Returns (success, duration_ms).
-fn run_command(cmd: &str, workspace_root: &Path, verbose: bool) -> (bool, u64) {
-    let start = Instant::now();
-
-    let status = Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
-        .current_dir(workspace_root)
-        .status();
-
-    let duration_ms = start.elapsed().as_millis() as u64;
-
-    match status {
-        Ok(s) => (s.success(), duration_ms),
-        Err(e) => {
-            if verbose {
-                eprintln!("  failed to execute `{cmd}`: {e}");
-            }
-            (false, duration_ms)
-        }
-    }
-}
-
-/// Find the workspace root by walking up to find Cargo.toml with [workspace].
-fn find_workspace_root() -> Result<std::path::PathBuf, String> {
-    let mut dir = std::env::current_dir().map_err(|e| format!("failed to get cwd: {e}"))?;
-
-    loop {
-        let cargo_toml = dir.join("Cargo.toml");
-        if cargo_toml.exists() {
-            let content = std::fs::read_to_string(&cargo_toml)
-                .map_err(|e| format!("failed to read {}: {e}", cargo_toml.display()))?;
-            if content.contains("[workspace]") {
-                return Ok(dir);
-            }
-        }
-
-        dir = dir
-            .parent()
-            .ok_or("reached filesystem root without finding workspace Cargo.toml")?
-            .to_path_buf();
-    }
-}
-
-/// Execute the canonical routine verification contract.
+/// Run the canonical routine verification contract.
 pub fn run_verify(dry_run: bool, json_output: bool, verbose: bool) -> Result<(), String> {
-    let workspace_root = find_workspace_root()?;
-    let steps = verify_steps();
+    run_contract("verify", &verify_steps(), dry_run, json_output, verbose)
+}
 
-    if !json_output {
-        println!("═══════════════════════════════════════════════════════════");
-        println!("  synvoid xtask verify");
-        println!("═══════════════════════════════════════════════════════════");
-        println!();
-    }
+// ---------------------------------------------------------------------------
+// Full local verification (broader than routine, manually invoked)
+// ---------------------------------------------------------------------------
 
-    let mut report = LaneReport::new("verify");
+fn verify_full_steps() -> Vec<(&'static str, &'static str)> {
+    let mut steps = verify_steps();
 
-    for (name, cmd) in &steps {
-        if dry_run {
-            let result = StepResult {
-                name: name.to_string(),
-                command: cmd.to_string(),
-                status: StepStatus::DryRun,
-                duration_ms: 0,
-            };
-            report.add_result(result);
-            continue;
-        }
+    steps.extend_from_slice(&[
+        // Feature profile compilation
+        (
+            "profile-mesh",
+            "cargo check --no-default-features --features mesh",
+        ),
+        (
+            "profile-dns",
+            "cargo check --no-default-features --features dns",
+        ),
+        (
+            "profile-full",
+            "cargo check --no-default-features --features mesh,dns",
+        ),
+        // Full workspace tests
+        (
+            "nextest-all",
+            "cargo nextest run --workspace --cargo-profile ci --profile ci --exclude synvoid-fuzz",
+        ),
+        // Doctests
+        ("doctests", "cargo test --workspace --doc --profile ci"),
+        // Domain-specific suites
+        (
+            "dns-full",
+            "cargo nextest run -p synvoid-dns --cargo-profile ci --profile ci",
+        ),
+        (
+            "plugin-full",
+            "cargo nextest run -p synvoid-plugin-runtime --cargo-profile ci --profile ci",
+        ),
+        ("honeypot", "cargo test -p synvoid-honeypot --all-targets"),
+        ("tarpit", "cargo test -p synvoid-tarpit --all-targets"),
+    ]);
 
-        if verbose {
-            println!("  → {cmd}");
-        }
+    steps
+}
 
-        let (success, duration_ms) = run_command(cmd, &workspace_root, verbose);
-        let status = if success {
-            StepStatus::Success
-        } else {
-            StepStatus::Failed
-        };
+/// Run full local verification (broader than routine, manually invoked).
+pub fn run_verify_full(dry_run: bool, json_output: bool, verbose: bool) -> Result<(), String> {
+    run_contract(
+        "verify-full",
+        &verify_full_steps(),
+        dry_run,
+        json_output,
+        verbose,
+    )
+}
 
-        report.add_result(StepResult {
-            name: name.to_string(),
-            command: cmd.to_string(),
-            status,
-            duration_ms,
-        });
+// ---------------------------------------------------------------------------
+// Release verification (production artifacts)
+// ---------------------------------------------------------------------------
 
-        // Stop on first failure (fail-fast)
-        if !success && !dry_run {
-            if !json_output {
-                println!();
-                println!("  ✗ Failed at step: {name}");
-                println!("    Command: {cmd}");
-            }
-            break;
-        }
-    }
+fn verify_release_steps() -> Vec<(&'static str, &'static str)> {
+    let mut steps = verify_full_steps();
 
-    if json_output {
-        println!("{}", serde_json::to_string_pretty(&report).unwrap());
-    } else {
-        println!("{report}");
-    }
+    steps.extend_from_slice(&[
+        // All-features clippy
+        (
+            "clippy-all-features",
+            "cargo clippy --all-targets --all-features -- -D warnings",
+        ),
+        // Release profile compilation
+        ("compile-release", "cargo test --lib --no-run --release"),
+        (
+            "nextest-release",
+            "cargo nextest run --workspace --release --exclude synvoid-fuzz",
+        ),
+        ("doctests-release", "cargo test --workspace --doc --release"),
+    ]);
 
-    if !report.is_success() {
-        return Err(format!("{} step(s) failed", report.failed));
-    }
+    steps
+}
 
-    Ok(())
+/// Run release verification (production artifacts).
+pub fn run_verify_release(dry_run: bool, json_output: bool, verbose: bool) -> Result<(), String> {
+    run_contract(
+        "verify-release",
+        &verify_release_steps(),
+        dry_run,
+        json_output,
+        verbose,
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Test subcommands
+// ---------------------------------------------------------------------------
+
+/// Run a specific package test.
+pub fn run_package(
+    pkg: &str,
+    dry_run: bool,
+    json_output: bool,
+    verbose: bool,
+) -> Result<(), String> {
+    let cmd = format!("cargo nextest run -p {pkg} --cargo-profile ci --profile ci");
+    run_contract(
+        &format!("test package {pkg}"),
+        &[(pkg, &cmd)],
+        dry_run,
+        json_output,
+        verbose,
+    )
+}
+
+/// Run all guard tests (repo-guards crate + root guard tests).
+pub fn run_guards(dry_run: bool, json_output: bool, verbose: bool) -> Result<(), String> {
+    let steps: Vec<(&str, &str)> = vec![
+        (
+            "repo-guards",
+            "cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci",
+        ),
+        (
+            "boundary-composition",
+            "cargo test --test boundary_composition_guard",
+        ),
+        (
+            "root-facade",
+            "cargo test --test root_facade_boundary_guard",
+        ),
+        ("mesh-id", "cargo test --test mesh_id_boundary_guard"),
+        ("security", "cargo test --test security_guard"),
+        ("lifecycle", "cargo test --test lifecycle_task_guard"),
+        ("cli-admin", "cargo test --test cli_admin_guard"),
+        ("plugin", "cargo test --test plugin_guard"),
+        (
+            "worker-mesh",
+            "cargo test --test worker_mesh_supervision_boundary_guard --features mesh,dns",
+        ),
+        (
+            "mesh-task",
+            "cargo test --test mesh_task_ownership_guard --features mesh,dns",
+        ),
+        (
+            "admin-mutation",
+            "cargo test --test admin_mutation_response_guard",
+        ),
+        (
+            "admin-mutation-blocklist",
+            "cargo test --test admin_mutation_blocklist",
+        ),
+        (
+            "admin-auth",
+            "cargo test -p synvoid-core --test admin_auth_boundary",
+        ),
+        (
+            "mesh-admin",
+            "cargo test -p synvoid-core --test mesh_admin_edge_cases",
+        ),
+        ("abi-memory", "cargo test --test abi_memory_boundary_guard"),
+        (
+            "root-ownership",
+            "cargo test --test root_test_ownership_guard",
+        ),
+    ];
+
+    run_contract("test guards", &steps, dry_run, json_output, verbose)
 }

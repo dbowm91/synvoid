@@ -43,10 +43,6 @@ cargo test --test mesh_task_ownership_guard --features mesh,dns
 cargo test --test worker_supervision_control_flow --features mesh,dns
 cargo test --test composition_root_behavioral --features mesh,dns
 
-# Affected package tests (runs only packages changed since base ref)
-# NOTE: Affected-package selection was removed in Phase 2 CI simplification.
-# Use `cargo xtask verify` for routine CI, or full test suite for comprehensive validation.
-
 # DNS full suite (all unit + integration tests)
 cargo test -p synvoid-dns --profile ci
 
@@ -75,34 +71,24 @@ cargo test -p synvoid-tarpit --all-targets
 
 ## CI Testing Infrastructure
 
-**Pending authority**: `docs/testing/verification-contract.md` — frozen routine, full, and release verification contracts. Phase 1 of CI Simplification is complete; Phase 2 will implement the new single-command CI.
+**Pending authority**: `docs/testing/verification-contract.md` — frozen routine, full, and release verification contracts. Phase 3 of CI Simplification is complete.
 
-The current four-lane system (`pr-fast.yml`, `main-comprehensive.yml`, `nightly-qualification.yml`, `release-qualification.yml`) is scheduled for simplification. See `docs/testing/ci-deletion-inventory.md` for the deletion manifest.
+The single routine workflow (`ci.yml`) runs `cargo xtask verify`. The four-lane system has been removed.
 
 **CI profile** (routine tests): `cargo test --profile ci`
 **Release profile** (production artifacts): `cargo test --release`
 
 Key docs:
 - `docs/testing/verification-contract.md` — **Authoritative** verification specification (routine, full, release)
-- `docs/testing/ci-deletion-inventory.md` — Deletion manifest for Phases 2–4
-- `docs/testing/ci-performance-baseline.md` — Timing baseline and before/after results
-- `docs/testing/test-suite-ownership.md` — Every test target's owner, lane, and profile
-- `docs/testing/ci-lane-policy.md` — Four-lane CI policy (historical, being replaced)
 
 ## Test Orchestration (xtask)
 
 ```bash
 cargo xtask verify             # Canonical routine verification contract (what CI runs)
-cargo xtask test fast           # PR fast lane: fmt, clippy, guards, security, affected
+cargo xtask verify-full        # Full local verification (broader than routine)
+cargo xtask verify-release     # Release verification (production artifacts)
 cargo xtask test package synvoid-dns  # Test a specific package
-cargo xtask test guards          # All architectural guard tests
-cargo xtask test security        # Security regression tests
-cargo xtask test comprehensive   # Full workspace validation
-cargo xtask test nightly-plan    # Print nightly qualification plan
-cargo xtask test qualification   # Print release qualification plan
-cargo xtask test release         # Print release validation (never substitutes CI profile)
-cargo xtask test list            # List all available lanes
-cargo xtask test explain fast    # Explain what a lane does
+cargo xtask test guards        # All architectural guard tests
 
 # Options:
 #   --dry-run    Print commands without executing
@@ -128,7 +114,7 @@ These enforce architectural invariants. Run them after touching relevant areas:
 ```bash
 cargo test --test boundary_composition_guard     # Request-path vs composition-root, HTTP pipeline, HTTP/3 WAF, manifest authority
 cargo test --test root_facade_boundary_guard     # Domain crates can't import root
-cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci  # Static guards (lightweight, includes cache/selector)
+cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci  # Static guards (lightweight)
 cargo test --test mesh_id_boundary_guard         # Mesh-ID blocks: admin only, not WAF
 cargo test --test security_guard                 # Threat-intel boundary, consumer actionability, security observability
 cargo test --test lifecycle_task_guard           # Background task ownership, supervisor spawns, unified server lifecycle
@@ -265,9 +251,6 @@ cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci
 
 # Failure-injection tests
 cargo test --test failure_injection
-
-# Security observability guard (metric labels, doc coverage, registry signals)
-cargo test --test security_observability_guard
 
 # Fuzz smoke tests (requires nightly toolchain + cargo-fuzz)
 cargo +nightly fuzz run admin_mutation_result_decode -- -runs=1000

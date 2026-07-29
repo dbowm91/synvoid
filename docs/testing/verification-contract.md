@@ -1,7 +1,7 @@
 # Verification Contract
 
 > Frozen: 2026-07-29 | Phase 1 of CI Simplification Roadmap
-> Updated: 2026-07-29 | Phase 2 completed — single workflow collapse
+> Updated: 2026-07-29 | Phase 3 completed — local verification and guard reduction
 
 This document is the single source of truth for what SynVoid CI must verify, at what frequency, and with what commands. It replaces the four-lane system as the authoritative verification specification.
 
@@ -74,11 +74,7 @@ cargo test --test root_test_ownership_guard
 
 ### No affected-package selection
 
-The routine contract runs the same fixed command set regardless of which files changed. This eliminates:
-- The `select-affected.py` script and its maintenance burden
-- The `test-affected.sh` wrapper
-- Per-package gating logic in CI workflows
-- Selector normalization, fallback, and polarity guards
+The routine contract runs the same fixed command set regardless of which files changed. The `select-affected.py` script, `test-affected.sh` wrapper, and all selector infrastructure have been deleted.
 
 ### No matrix or OS variation
 
@@ -311,13 +307,13 @@ Measured on 2026-07-29 on a warm-cache Linux x86_64 workstation (45 workspace me
 
 **Note**: The warm-cache time includes 320s for `cargo test --lib --no-run` (full lib compilation) and 167s for `boundary_composition_guard` (first guard compilation). On a CI runner with persistent caches, the compilation overhead would be amortized. The routine contract as specified may need pruning for CI — Phase 2 should evaluate whether some guard tests can be consolidated or the `--lib --no-run` step replaced with `cargo check`.
 
-## 8. Handoff to Phase 2
+## 8. Disposition
 
-Phase 2 must:
-1. Implement `cargo xtask verify` exactly as specified in Section 1
-2. Replace the current `pr-fast.yml` workflow with a single-workflow CI that runs the routine contract
-3. Remove affected-package selection from the PR path
-4. Update branch protection to reference the new workflow
-5. Remove or simplify CI-specific guard tests that no longer apply
+Phase 3 completed the CI simplification:
+1. `cargo xtask verify` runs the routine contract on every PR
+2. `cargo xtask verify-full` provides broader local verification
+3. `cargo xtask verify-release` validates production artifacts
+4. The four-lane system, affected-package selector, and lane manifest have been deleted
+5. CI-policy guard tests have been removed from `synvoid-repo-guards`
 
 If implementation reveals an invalid command, correct this document in the same commit with an explicit rationale. Do not improvise a broader suite or restore selector behavior.

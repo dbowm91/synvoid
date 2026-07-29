@@ -1,7 +1,8 @@
-//! Static guards for cache policy, action setup, and ownership manifest.
+//! Static guards for workflow security and ownership manifest.
 //!
-//! Ensures workflow files use pinned action versions, required scripts/configs
-//! exist, and the ownership manifest is valid.
+//! Ensures workflow files use pinned action versions and the ownership
+//! manifest is valid. CI-policy guards (cache-key naming, setup-rust
+//! action presence, etc.) were removed in Phase 3.
 
 use synvoid_repo_guards::workspace_root;
 
@@ -38,24 +39,18 @@ fn pinned_action_versions_guard() {
             if !trimmed.contains("uses:") {
                 continue;
             }
-            // Extract the ref after the last '@'
             if let Some(at_pos) = trimmed.rfind('@') {
                 let ref_part = &trimmed[at_pos + 1..];
-                // SHA refs (40+ hex chars) are pinned by definition
                 if ref_part.len() >= 40 && ref_part.chars().all(|c| c.is_ascii_hexdigit()) {
                     continue;
                 }
-                // Version tags like @v4, @v2, @v5 are pinned
                 if ref_part.starts_with('v') && ref_part.len() <= 6 {
                     continue;
                 }
-                // dtolnay/rust-toolchain uses @stable and @nightly pseudo-tags
-                // — these are intentional and maintained by a trusted author.
                 if trimmed.contains("dtolnay/rust-toolchain@") {
                     continue;
                 }
 
-                // Flag unpinned refs (@main, @master, @latest, branch names)
                 if ref_part == "main" || ref_part == "master" || ref_part == "latest" {
                     violations.push(format!(
                         "  {}:{}: unpinned action ref '{}' in: {}",
@@ -74,48 +69,6 @@ fn pinned_action_versions_guard() {
         "pinned_action_versions_guard found {} violations:\n{}",
         violations.len(),
         violations.join("\n")
-    );
-}
-
-// ---------------------------------------------------------------------------
-// cache_policy_exists_guard
-// ---------------------------------------------------------------------------
-
-#[test]
-fn cache_policy_exists_guard() {
-    let root = workspace_root();
-    let doc = root.join("docs/testing/cache-policy.md");
-
-    assert!(
-        doc.exists(),
-        "cache_policy_exists_guard: docs/testing/cache-policy.md must exist — it documents the CI cache strategy"
-    );
-
-    let content = std::fs::read_to_string(&doc)
-        .expect("cache_policy_exists_guard: failed to read docs/testing/cache-policy.md");
-
-    let required_sections = ["Cache Layers", "Invalidation Rules"];
-    for section in &required_sections {
-        assert!(
-            content.contains(section),
-            "cache_policy_exists_guard: docs/testing/cache-policy.md must contain '{}' section",
-            section
-        );
-    }
-}
-
-// ---------------------------------------------------------------------------
-// setup_rust_action_exists_guard
-// ---------------------------------------------------------------------------
-
-#[test]
-fn setup_rust_action_exists_guard() {
-    let root = workspace_root();
-    let action = root.join(".github/actions/setup-rust-ci/action.yml");
-
-    assert!(
-        action.exists(),
-        "setup_rust_action_exists_guard: .github/actions/setup-rust-ci/action.yml must exist — retained for potential future workflow expansion"
     );
 }
 
@@ -146,9 +99,7 @@ fn ownership_manifest_guard() {
     for (i, line) in content.lines().enumerate() {
         let trimmed = line.trim();
 
-        // Start of a new [[test]] block
         if trimmed == "[[test]]" {
-            // Validate the previous entry if we were inside one
             if in_test_entry {
                 let mut missing = Vec::new();
                 if !has_name {
@@ -189,7 +140,6 @@ fn ownership_manifest_guard() {
         }
     }
 
-    // Validate the last entry
     if in_test_entry {
         let mut missing = Vec::new();
         if !has_name {
@@ -212,7 +162,6 @@ fn ownership_manifest_guard() {
         }
     }
 
-    // Check that there is at least one [[test]] entry
     if !content.contains("[[test]]") {
         violations
             .push("  tests/OWNERSHIP.toml contains no [[test]] entries — manifest is empty".into());

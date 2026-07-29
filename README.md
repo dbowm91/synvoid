@@ -143,7 +143,7 @@ cargo test --lib --no-run
 
 ### CI Caching
 
-SynVoid CI uses `Swatinem/rust-cache` for Cargo source and target metadata caching. See [`docs/testing/cache-policy.md`](docs/testing/cache-policy.md) for the full cache architecture.
+SynVoid CI uses `Swatinem/rust-cache` for Cargo source and target metadata caching.
 
 ## Documentation
 

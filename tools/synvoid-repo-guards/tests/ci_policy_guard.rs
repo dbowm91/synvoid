@@ -1,7 +1,9 @@
-//! Static guards for CI policy invariants.
+//! Static guards for CI infrastructure invariants.
 //!
-//! Ensures required infrastructure files exist, CI profiles are correctly
-//! configured, and new root tests are tracked in the ownership manifest.
+//! Ensures required infrastructure files exist and CI profiles are correctly
+//! configured. CI-policy guards (lane workflow presence, selector predicates,
+//! cache-key naming, etc.) were removed in Phase 3 when the four-lane system
+//! was deleted.
 
 use synvoid_repo_guards::workspace_root;
 
@@ -49,105 +51,6 @@ fn ci_profile_configured_guard() {
 }
 
 // ---------------------------------------------------------------------------
-// performance_budgets_exist_guard
-// ---------------------------------------------------------------------------
-
-/// Verify `docs/testing/performance-budgets.md` exists and contains key sections.
-#[test]
-fn performance_budgets_exist_guard() {
-    let root = workspace_root();
-    let doc = root.join("docs/testing/performance-budgets.md");
-
-    assert!(
-        doc.exists(),
-        "performance_budgets_exist_guard: docs/testing/performance-budgets.md must exist — defines CI performance thresholds"
-    );
-
-    let content = std::fs::read_to_string(&doc).expect(
-        "performance_budgets_exist_guard: failed to read docs/testing/performance-budgets.md",
-    );
-
-    let required_sections = ["Budget", "Threshold"];
-    let mut missing = Vec::new();
-    for section in &required_sections {
-        if !content.to_lowercase().contains(&section.to_lowercase()) {
-            missing.push(*section);
-        }
-    }
-
-    assert!(
-        missing.is_empty(),
-        "performance_budgets_exist_guard: docs/testing/performance-budgets.md missing sections: {:?}",
-        missing
-    );
-}
-
-// ---------------------------------------------------------------------------
-// flaky_test_policy_exist_guard
-// ---------------------------------------------------------------------------
-
-/// Verify `docs/testing/flaky-test-policy.md` exists and contains required sections.
-#[test]
-fn flaky_test_policy_exist_guard() {
-    let root = workspace_root();
-    let doc = root.join("docs/testing/flaky-test-policy.md");
-
-    assert!(
-        doc.exists(),
-        "flaky_test_policy_exist_guard: docs/testing/flaky-test-policy.md must exist — defines flaky test quarantine policy"
-    );
-
-    let content = std::fs::read_to_string(&doc)
-        .expect("flaky_test_policy_exist_guard: failed to read docs/testing/flaky-test-policy.md");
-
-    let required_sections = ["Quarantine", "Flaky"];
-    let mut missing = Vec::new();
-    for section in &required_sections {
-        if !content.to_lowercase().contains(&section.to_lowercase()) {
-            missing.push(*section);
-        }
-    }
-
-    assert!(
-        missing.is_empty(),
-        "flaky_test_policy_exist_guard: docs/testing/flaky-test-policy.md missing sections: {:?}",
-        missing
-    );
-}
-
-// ---------------------------------------------------------------------------
-// coverage_matrix_exist_guard
-// ---------------------------------------------------------------------------
-
-/// Verify `docs/testing/coverage-equivalence-matrix.md` exists.
-#[test]
-fn coverage_matrix_exist_guard() {
-    let root = workspace_root();
-    let doc = root.join("docs/testing/coverage-equivalence-matrix.md");
-
-    assert!(
-        doc.exists(),
-        "coverage_matrix_exist_guard: docs/testing/coverage-equivalence-matrix.md must exist — maps test coverage across CI lanes"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// operating_guide_exist_guard
-// ---------------------------------------------------------------------------
-
-/// Verify `docs/testing/operating-guide.md` exists.
-#[test]
-fn operating_guide_exist_guard() {
-    let root = workspace_root();
-    let doc = root.join("docs/testing/operating-guide.md");
-
-    assert!(
-        doc.exists(),
-        "operating_guide_exist_guard: docs/testing/operating-guide.md must exist — operator guide for CI test infrastructure"
-    );
-}
-
-// ---------------------------------------------------------------------------
 // new_root_test_ownership_guard
 // ---------------------------------------------------------------------------
 
@@ -164,7 +67,6 @@ fn new_root_test_ownership_guard() {
         return;
     }
 
-    // Parse ownership manifest to extract registered test names
     let content = std::fs::read_to_string(&ownership)
         .expect("new_root_test_ownership_guard: failed to read tests/OWNERSHIP.toml");
     let manifest: toml::Value = content
@@ -180,7 +82,6 @@ fn new_root_test_ownership_guard() {
         }
     }
 
-    // Collect .rs files in tests/ (non-recursive, only direct children)
     let mut unowned = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&tests_dir) {
         for entry in entries.flatten() {
@@ -223,7 +124,6 @@ fn no_lto_in_ci_profile_guard() {
     let content = std::fs::read_to_string(&cargo_toml)
         .expect("no_lto_in_ci_profile_guard: failed to read root Cargo.toml");
 
-    // Extract the [profile.ci] section
     let lines: Vec<&str> = content.lines().collect();
     let mut in_ci_profile = false;
     let mut ci_section = String::new();
@@ -237,7 +137,6 @@ fn no_lto_in_ci_profile_guard() {
             continue;
         }
         if in_ci_profile {
-            // Stop at any next section (including other [profile.*] sections)
             if trimmed.starts_with('[') && trimmed != "[profile.ci]" {
                 break;
             }
@@ -247,10 +146,9 @@ fn no_lto_in_ci_profile_guard() {
     }
 
     if !in_ci_profile {
-        return; // Already caught by ci_profile_configured_guard
+        return;
     }
 
-    // Check for lto = true (or lto=true, lto = "fat", etc.)
     let has_lto = ci_section.contains("lto")
         && (ci_section.contains("lto = true")
             || ci_section.contains("lto=true")
@@ -263,86 +161,5 @@ fn no_lto_in_ci_profile_guard() {
          CI profile should use fast compilation. LTO is reserved for [profile.release].\n\n\
          Detected in [profile.ci]:\n{}",
         ci_section.trim()
-    );
-}
-
-// ---------------------------------------------------------------------------
-// ci_workflow_active_guard
-// ---------------------------------------------------------------------------
-
-/// Verify `.github/workflows/ci.yml` exists and runs `cargo xtask verify`.
-#[test]
-fn ci_workflow_active_guard() {
-    let root = workspace_root();
-    let ci_yml = root.join(".github/workflows/ci.yml");
-
-    assert!(
-        ci_yml.exists(),
-        "ci_workflow_active_guard: .github/workflows/ci.yml must exist — single routine CI workflow"
-    );
-
-    let content = std::fs::read_to_string(&ci_yml)
-        .expect("ci_workflow_active_guard: failed to read .github/workflows/ci.yml");
-
-    assert!(
-        content.contains("cargo xtask verify"),
-        "ci_workflow_active_guard: ci.yml must invoke `cargo xtask verify` — the canonical routine verification command"
-    );
-
-    // Must not contain old lane workflow references
-    let violations: Vec<&str> = content
-        .lines()
-        .filter(|l| {
-            l.contains("pr-fast")
-                || l.contains("main-comprehensive")
-                || l.contains("nightly-qualification")
-                || l.contains("release-qualification")
-        })
-        .collect();
-
-    assert!(
-        violations.is_empty(),
-        "ci_workflow_active_guard: ci.yml references deleted lane workflows: {:?}",
-        violations
-    );
-}
-
-// ---------------------------------------------------------------------------
-// no_lane_workflows_guard
-// ---------------------------------------------------------------------------
-
-/// Verify old lane workflow files are deleted.
-#[test]
-fn no_lane_workflows_guard() {
-    let root = workspace_root();
-    let workflows_dir = root.join(".github/workflows");
-
-    if !workflows_dir.exists() {
-        return;
-    }
-
-    let deleted_files = &[
-        "pr-fast.yml",
-        "main-comprehensive.yml",
-        "nightly-qualification.yml",
-        "release-qualification.yml",
-    ];
-
-    let mut violations = Vec::new();
-    for file_name in deleted_files {
-        let path = workflows_dir.join(file_name);
-        if path.exists() {
-            violations.push(format!(
-                "  {} still exists — should have been deleted in Phase 2",
-                file_name
-            ));
-        }
-    }
-
-    assert!(
-        violations.is_empty(),
-        "no_lane_workflows_guard found {} violations:\n{}",
-        violations.len(),
-        violations.join("\n")
     );
 }
