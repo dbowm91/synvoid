@@ -1,24 +1,39 @@
-name: CI (Redirect)
+name: CI
 
 on:
+  pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
-  redirect-notice:
-    name: CI has been split
+  ci:
+    name: ci
     runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: 1
     steps:
-      - name: Notice
-        run: |
-          echo "## CI Workflow Split" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "This workflow has been split into 4 targeted workflows:" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Workflow | Trigger | Purpose |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|---------|---------|" >> $GITHUB_STEP_SUMMARY
-          echo "| \`pr-fast.yml\` | PRs | Fast feedback: fmt, clippy, guards, per-crate tests |" >> $GITHUB_STEP_SUMMARY
-          echo "| \`main-comprehensive.yml\` | Push to main | Build matrix, DNS, plugins, docs, audits |" >> $GITHUB_STEP_SUMMARY
-          echo "| \`nightly-qualification.yml\` | Daily 4AM UTC | Alpine, FreeBSD, miri, fuzz, outdated deps |" >> $GITHUB_STEP_SUMMARY
-          echo "| \`release-qualification.yml\` | Tags / dispatch | Full release build + test matrix |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Branch protection should reference the new workflow files." >> $GITHUB_STEP_SUMMARY
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
+      - name: Verify
+        run: cargo xtask verify

@@ -1,39 +1,9 @@
 //! Static guards for CI policy invariants.
 //!
 //! Ensures required infrastructure files exist, CI profiles are correctly
-//! configured, PR lanes don't use production flags, and new root tests
-//! are tracked in the ownership manifest.
+//! configured, and new root tests are tracked in the ownership manifest.
 
 use synvoid_repo_guards::workspace_root;
-
-// ---------------------------------------------------------------------------
-// lane_manifest_exists_guard
-// ---------------------------------------------------------------------------
-
-/// Verify `testing/lanes.toml` exists and is valid TOML.
-#[test]
-fn lane_manifest_exists_guard() {
-    let root = workspace_root();
-    let manifest = root.join("testing/lanes.toml");
-
-    assert!(
-        manifest.exists(),
-        "lane_manifest_exists_guard: testing/lanes.toml must exist — it defines CI lane configuration"
-    );
-
-    let content = std::fs::read_to_string(&manifest)
-        .expect("lane_manifest_exists_guard: failed to read testing/lanes.toml");
-
-    assert!(
-        !content.trim().is_empty(),
-        "lane_manifest_exists_guard: testing/lanes.toml must not be empty"
-    );
-
-    // Must parse as valid TOML
-    content
-        .parse::<toml::Value>()
-        .expect("lane_manifest_exists_guard: testing/lanes.toml is not valid TOML");
-}
 
 // ---------------------------------------------------------------------------
 // xtask_exists_guard
@@ -60,55 +30,6 @@ fn xtask_exists_guard() {
 }
 
 // ---------------------------------------------------------------------------
-// no_release_in_pr_guard
-// ---------------------------------------------------------------------------
-
-/// Verify PR fast lane workflow doesn't contain `--release` (except for
-/// security regression which is allowed to use release mode).
-#[test]
-fn no_release_in_pr_guard() {
-    let root = workspace_root();
-    let pr_fast = root.join(".github/workflows/pr-fast.yml");
-
-    if !pr_fast.exists() {
-        return;
-    }
-
-    let content = std::fs::read_to_string(&pr_fast)
-        .expect("no_release_in_pr_guard: failed to read pr-fast.yml");
-
-    let mut violations = Vec::new();
-
-    for (i, line) in content.lines().enumerate() {
-        if line.contains("--release") {
-            // Security regression is explicitly allowed to use --release
-            let lower = line.to_lowercase();
-            if lower.contains("security") && lower.contains("regression") {
-                continue;
-            }
-            // Also skip lines inside comments
-            let trimmed = line.trim();
-            if trimmed.starts_with('#') {
-                continue;
-            }
-            violations.push(format!(
-                "  pr-fast.yml:{}: --release found in PR fast lane: {}",
-                i + 1,
-                trimmed
-            ));
-        }
-    }
-
-    assert!(
-        violations.is_empty(),
-        "no_release_in_pr_guard found {} violations:\n{}\n\n\
-         PR fast lane must use --profile ci, not --release, for fast feedback loops.",
-        violations.len(),
-        violations.join("\n")
-    );
-}
-
-// ---------------------------------------------------------------------------
 // ci_profile_configured_guard
 // ---------------------------------------------------------------------------
 
@@ -123,49 +44,7 @@ fn ci_profile_configured_guard() {
 
     assert!(
         content.contains("[profile.ci]"),
-        "ci_profile_configured_guard: root Cargo.toml must contain [profile.ci] — CI lanes depend on this profile for fast feedback"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// selector_script_exists_guard
-// ---------------------------------------------------------------------------
-
-/// Verify `scripts/ci/select-affected.py` exists.
-#[test]
-fn selector_script_exists_guard() {
-    let root = workspace_root();
-    let script = root.join("scripts/ci/select-affected.py");
-
-    assert!(
-        script.exists(),
-        "selector_script_exists_guard: scripts/ci/select-affected.py must exist — PR-fast CI jobs depend on this selector"
-    );
-
-    assert!(
-        script.metadata().map(|m| m.len()).unwrap_or(0) > 0,
-        "selector_script_exists_guard: scripts/ci/select-affected.py must not be empty"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// test_affected_script_exists_guard
-// ---------------------------------------------------------------------------
-
-/// Verify `scripts/test-affected.sh` exists.
-#[test]
-fn test_affected_script_exists_guard() {
-    let root = workspace_root();
-    let script = root.join("scripts/test-affected.sh");
-
-    assert!(
-        script.exists(),
-        "test_affected_script_exists_guard: scripts/test-affected.sh must exist — runs only crates affected by changeset"
-    );
-
-    assert!(
-        script.metadata().map(|m| m.len()).unwrap_or(0) > 0,
-        "test_affected_script_exists_guard: scripts/test-affected.sh must not be empty"
+        "ci_profile_configured_guard: root Cargo.toml must contain [profile.ci] — CI depends on this profile for fast feedback"
     );
 }
 
@@ -331,101 +210,6 @@ fn new_root_test_ownership_guard() {
 }
 
 // ---------------------------------------------------------------------------
-// ci_lane_consistency_guard
-// ---------------------------------------------------------------------------
-
-/// Verify CI workflow commands match `testing/lanes.toml` definitions.
-/// Ensures local xtask and CI share authoritative logic — drift fails fast.
-#[test]
-fn ci_lane_consistency_guard() {
-    let root = workspace_root();
-    let lanes_toml = root.join("testing/lanes.toml");
-    let pr_fast = root.join(".github/workflows/pr-fast.yml");
-
-    if !lanes_toml.exists() || !pr_fast.exists() {
-        return;
-    }
-
-    let _lanes_content = std::fs::read_to_string(&lanes_toml)
-        .expect("ci_lane_consistency_guard: failed to read testing/lanes.toml");
-    let pr_fast_content = std::fs::read_to_string(&pr_fast)
-        .expect("ci_lane_consistency_guard: failed to read pr-fast.yml");
-
-    let mut violations = Vec::new();
-
-    // Check key commands from lanes.fast exist in pr-fast.yml
-    let checks: Vec<(&str, &str)> = vec![
-        ("fmt", "cargo fmt --all -- --check"),
-        (
-            "guards",
-            "cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci",
-        ),
-        ("core-compile", "cargo check --no-default-features"),
-        // clippy must use --all-targets but NOT --all-features in PR fast lane
-        // (--all-features clippy belongs in release lane only)
-        ("clippy", "cargo clippy --all-targets -- -D warnings"),
-        // security-regression must use nextest with CI profile and --test-threads=1
-        (
-            "security-regression",
-            "cargo nextest run --test security_regression --cargo-profile ci --profile ci",
-        ),
-    ];
-
-    for (name, cmd) in &checks {
-        if !pr_fast_content.contains(cmd) {
-            violations.push(format!(
-                "lanes.toml [lanes.fast.commands.{name}] command '{}' not found in pr-fast.yml",
-                cmd
-            ));
-        }
-    }
-
-    // Note: security regression serialization is handled by nextest test-groups.global-env (max-threads=1)
-    // in .config/nextest.toml, NOT by --test-threads=1 (which is a cargo-test argument, not nextest).
-
-    // Check that PR fast lane doesn't use --release (except security regression)
-    for (i, line) in pr_fast_content.lines().enumerate() {
-        if line.contains("--release") {
-            let lower = line.to_lowercase();
-            if lower.contains("security") && lower.contains("regression") {
-                continue;
-            }
-            let trimmed = line.trim();
-            if trimmed.starts_with('#') {
-                continue;
-            }
-            violations.push(format!(
-                "pr-fast.yml:{}: --release found outside security-regression: {}",
-                i + 1,
-                trimmed
-            ));
-        }
-    }
-
-    // Check that PR fast clippy does NOT use --all-features (--all-features clippy
-    // belongs in release lane only; PR fast uses --all-targets only)
-    for (i, line) in pr_fast_content.lines().enumerate() {
-        if line.contains("clippy") && line.contains("--all-features") {
-            let trimmed = line.trim();
-            if !trimmed.starts_with('#') {
-                violations.push(format!(
-                    "pr-fast.yml:{}: clippy with --all-features found in PR fast lane (belongs in release lane only): {}",
-                    i + 1,
-                    trimmed
-                ));
-            }
-        }
-    }
-
-    assert!(
-        violations.is_empty(),
-        "ci_lane_consistency_guard: CI/lane-manifest drift detected ({} violations):\n{}",
-        violations.len(),
-        violations.join("\n")
-    );
-}
-
-// ---------------------------------------------------------------------------
 // no_lto_in_ci_profile_guard
 // ---------------------------------------------------------------------------
 
@@ -479,5 +263,86 @@ fn no_lto_in_ci_profile_guard() {
          CI profile should use fast compilation. LTO is reserved for [profile.release].\n\n\
          Detected in [profile.ci]:\n{}",
         ci_section.trim()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// ci_workflow_active_guard
+// ---------------------------------------------------------------------------
+
+/// Verify `.github/workflows/ci.yml` exists and runs `cargo xtask verify`.
+#[test]
+fn ci_workflow_active_guard() {
+    let root = workspace_root();
+    let ci_yml = root.join(".github/workflows/ci.yml");
+
+    assert!(
+        ci_yml.exists(),
+        "ci_workflow_active_guard: .github/workflows/ci.yml must exist — single routine CI workflow"
+    );
+
+    let content = std::fs::read_to_string(&ci_yml)
+        .expect("ci_workflow_active_guard: failed to read .github/workflows/ci.yml");
+
+    assert!(
+        content.contains("cargo xtask verify"),
+        "ci_workflow_active_guard: ci.yml must invoke `cargo xtask verify` — the canonical routine verification command"
+    );
+
+    // Must not contain old lane workflow references
+    let violations: Vec<&str> = content
+        .lines()
+        .filter(|l| {
+            l.contains("pr-fast")
+                || l.contains("main-comprehensive")
+                || l.contains("nightly-qualification")
+                || l.contains("release-qualification")
+        })
+        .collect();
+
+    assert!(
+        violations.is_empty(),
+        "ci_workflow_active_guard: ci.yml references deleted lane workflows: {:?}",
+        violations
+    );
+}
+
+// ---------------------------------------------------------------------------
+// no_lane_workflows_guard
+// ---------------------------------------------------------------------------
+
+/// Verify old lane workflow files are deleted.
+#[test]
+fn no_lane_workflows_guard() {
+    let root = workspace_root();
+    let workflows_dir = root.join(".github/workflows");
+
+    if !workflows_dir.exists() {
+        return;
+    }
+
+    let deleted_files = &[
+        "pr-fast.yml",
+        "main-comprehensive.yml",
+        "nightly-qualification.yml",
+        "release-qualification.yml",
+    ];
+
+    let mut violations = Vec::new();
+    for file_name in deleted_files {
+        let path = workflows_dir.join(file_name);
+        if path.exists() {
+            violations.push(format!(
+                "  {} still exists — should have been deleted in Phase 2",
+                file_name
+            ));
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "no_lane_workflows_guard found {} violations:\n{}",
+        violations.len(),
+        violations.join("\n")
     );
 }

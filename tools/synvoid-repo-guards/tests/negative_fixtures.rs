@@ -748,55 +748,6 @@ fn ownership_guard_detects_unowned_test_file() {
 // ===========================================================================
 // CI Lane Consistency Guard Negative Fixtures
 // ===========================================================================
-
-// ---------------------------------------------------------------------------
-// ci_lane_consistency_guard: detects missing command in CI workflow
-// ---------------------------------------------------------------------------
-
-#[test]
-fn ci_lane_consistency_guard_detects_missing_command() {
-    let tmp = TempDir::new().unwrap();
-
-    // Create a lanes.toml with a command
-    let testing_dir = tmp.path().join("testing");
-    fs::create_dir_all(&testing_dir).unwrap();
-    fs::write(
-        testing_dir.join("lanes.toml"),
-        "[lanes.fast.commands.fmt]\ncommand = \"cargo fmt --all -- --check\"\n",
-    )
-    .unwrap();
-
-    // Create a pr-fast.yml that DOESN'T contain the command
-    let workflows_dir = tmp.path().join(".github").join("workflows");
-    fs::create_dir_all(&workflows_dir).unwrap();
-    fs::write(
-        workflows_dir.join("pr-fast.yml"),
-        "jobs:\n  fmt:\n    run: cargo format --check\n",
-    )
-    .unwrap();
-
-    let _lanes_content = fs::read_to_string(testing_dir.join("lanes.toml")).unwrap();
-    let pr_fast_content = fs::read_to_string(workflows_dir.join("pr-fast.yml")).unwrap();
-
-    let mut violations = Vec::new();
-    let checks: Vec<(&str, &str)> = vec![("fmt", "cargo fmt --all -- --check")];
-
-    for (name, cmd) in &checks {
-        if !pr_fast_content.contains(cmd) {
-            violations.push(format!(
-                "lanes.toml [lanes.fast.commands.{name}] command '{}' not found in pr-fast.yml",
-                cmd
-            ));
-        }
-    }
-
-    assert!(
-        !violations.is_empty(),
-        "guard should detect missing fmt command in CI workflow but found no violations"
-    );
-}
-
-// ===========================================================================
 // File-Exists Guard Negative Fixtures
 // ===========================================================================
 
@@ -810,40 +761,6 @@ fn xtask_exists_guard_detects_missing_xtask() {
     // No tools/xtask/Cargo.toml created
     let xtask = tmp.path().join("tools").join("xtask").join("Cargo.toml");
     assert!(!xtask.exists(), "test setup: xtask should not exist");
-}
-
-// ---------------------------------------------------------------------------
-// selector_script_exists_guard: detects missing selector script
-// ---------------------------------------------------------------------------
-
-#[test]
-fn selector_script_guard_detects_missing_script() {
-    let tmp = TempDir::new().unwrap();
-    // No scripts/ci/select-affected.py created
-    let script = tmp
-        .path()
-        .join("scripts")
-        .join("ci")
-        .join("select-affected.py");
-    assert!(
-        !script.exists(),
-        "test setup: selector script should not exist"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// test_affected_script_exists_guard: detects missing test-affected script
-// ---------------------------------------------------------------------------
-
-#[test]
-fn test_affected_script_guard_detects_missing_script() {
-    let tmp = TempDir::new().unwrap();
-    // No scripts/test-affected.sh created
-    let script = tmp.path().join("scripts").join("test-affected.sh");
-    assert!(
-        !script.exists(),
-        "test setup: test-affected script should not exist"
-    );
 }
 
 // ---------------------------------------------------------------------------

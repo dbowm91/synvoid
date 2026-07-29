@@ -2,14 +2,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
-use crate::affected;
 use crate::lanes;
 use crate::report::{LaneReport, StepResult, StepStatus};
 
 /// Dispatch a `test` subcommand.
 pub fn dispatch(
     positional: &[&str],
-    flags: &[&str],
+    _flags: &[&str],
     dry_run: bool,
     json_output: bool,
     verbose: bool,
@@ -18,10 +17,6 @@ pub fn dispatch(
 
     match positional.first().copied() {
         Some("fast") => run_fast(&workspace_root, dry_run, json_output, verbose),
-        Some("affected") => {
-            let base_ref = find_flag_value(flags, "--base").unwrap_or("origin/main".to_string());
-            run_affected(&workspace_root, &base_ref, dry_run, json_output, verbose)
-        }
         Some("package") => {
             let pkg = positional
                 .get(1)
@@ -122,16 +117,6 @@ fn find_workspace_root() -> Result<PathBuf, String> {
     }
 }
 
-/// Find the value of a flag like --base from a list of flags.
-fn find_flag_value(flags: &[&str], key: &str) -> Option<String> {
-    for (i, flag) in flags.iter().enumerate() {
-        if *flag == key {
-            return flags.get(i + 1).map(|s| s.to_string());
-        }
-    }
-    None
-}
-
 /// Run a single shell command. Returns (success, duration_ms).
 fn run_command(cmd: &str, workspace_root: &Path, _verbose: bool) -> (bool, u64) {
     let start = Instant::now();
@@ -170,106 +155,6 @@ fn run_fast(
         None,
         None,
     )
-}
-
-/// Run the affected lane.
-fn run_affected(
-    workspace_root: &Path,
-    base_ref: &str,
-    dry_run: bool,
-    json_output: bool,
-    verbose: bool,
-) -> Result<(), String> {
-    if !json_output {
-        println!("═══════════════════════════════════════════════════════════");
-        println!("  synvoid xtask test affected");
-        println!("═══════════════════════════════════════════════════════════");
-        println!();
-        println!("  Base: {base_ref}");
-        println!("  Head: HEAD");
-        println!();
-    }
-
-    let selector_output =
-        affected::run_selector(base_ref, "HEAD", dry_run, verbose, workspace_root)?;
-
-    let mode = selector_output["mode"].as_str().unwrap_or("unknown");
-    let reason = selector_output["reason"].as_str().unwrap_or("none");
-
-    if !json_output {
-        println!("  Mode:   {mode}");
-        println!("  Reason: {reason}");
-        println!();
-    }
-
-    if dry_run {
-        let steps = affected::build_affected_steps(&selector_output, workspace_root);
-
-        let mut report = LaneReport::new("affected");
-
-        for step in &steps {
-            let cmd = affected::resolve_command(step, Some(base_ref), None);
-            let result = StepResult {
-                name: step.name.to_string(),
-                command: cmd,
-                status: StepStatus::DryRun,
-                duration_ms: 0,
-            };
-            report.add_result(result);
-        }
-
-        if json_output {
-            println!("{}", serde_json::to_string_pretty(&report).unwrap());
-        } else {
-            println!("{report}");
-        }
-        return Ok(());
-    }
-
-    let steps = affected::build_affected_steps(&selector_output, workspace_root);
-    let mut report = LaneReport::new("affected");
-
-    for step in &steps {
-        let cmd = affected::resolve_command(step, Some(base_ref), None);
-        if verbose {
-            println!("  → {cmd}");
-        }
-
-        let (success, duration_ms) = run_command(&cmd, workspace_root, verbose);
-        let status = if success {
-            StepStatus::Success
-        } else {
-            StepStatus::Failed
-        };
-
-        report.add_result(StepResult {
-            name: step.name.to_string(),
-            command: cmd,
-            status,
-            duration_ms,
-        });
-    }
-
-    report.check_budgets();
-
-    if json_output {
-        println!("{}", serde_json::to_string_pretty(&report).unwrap());
-    } else {
-        println!("{report}");
-    }
-
-    if !report.is_success() {
-        return Err(format!("{} step(s) failed", report.failed));
-    }
-
-    if report.blocking_breaches() > 0 {
-        return Err(format!(
-            "{} blocking budget breach(es)",
-            report.blocking_breaches()
-        ));
-    }
-
-    Ok(())
 }
 
 /// Run a specific package test.

@@ -1,7 +1,7 @@
-mod affected;
 mod lanes;
 mod report;
 mod test;
+mod verify;
 
 use std::process;
 
@@ -26,6 +26,7 @@ fn main() {
 
     let result = match positional.first().copied() {
         Some("test") => test::dispatch(&positional[1..], &flag_args, dry_run, json_output, verbose),
+        Some("verify") => verify::run_verify(dry_run, json_output, verbose),
         Some("help") | Some("--help") | Some("-h") => {
             print_usage();
             Ok(())
@@ -53,7 +54,12 @@ fn print_usage() {
 cargo xtask — SynVoid build task runner
 
 USAGE:
+    cargo xtask verify [options]    Run the canonical routine verification contract
     cargo xtask test <lane> [options]
+
+VERIFY:
+    Runs the single canonical routine verification contract (formatting, linting,
+    compilation, guards, security regression). This is what CI runs on every PR.
 
 TEST LANES:
     fast            Format, clippy, guards, security, core compile, affected domain tests

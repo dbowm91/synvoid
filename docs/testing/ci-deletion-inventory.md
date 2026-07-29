@@ -1,6 +1,7 @@
 # CI Deletion Inventory
 
 > Frozen: 2026-07-29 | Phase 1 of CI Simplification Roadmap
+> Updated: 2026-07-29 | Phase 2 completed — single workflow collapse
 
 This document lists every file, code section, and infrastructure component scheduled for deletion or rewrite in Phases 2–4. It is the execution manifest for the CI simplification work.
 

@@ -8,7 +8,7 @@ SynVoid is a high-speed, multi-process Web Application Firewall (WAF) and revers
 
 ### Development Status
 
-The architecture-hardening roadmap is **complete** through Phase 16 and locally verified. All 27 guard tests pass, all feature profile checks are green, and the release-hardening report is at `architecture/release_hardening_report.md`. Phase 16 added runtime operations drill documents (`architecture/runtime_operations_drill.md`, `architecture/runtime_operations_drill_report.md`) and refined the plugin capability boundary guard heuristic. CI uses 4 lane-specific workflows: `pr-fast.yml`, `main-comprehensive.yml`, `nightly-qualification.yml`, `release-qualification.yml` (split from legacy `ci.yml` in Milestone A). Local verification is authoritative. See `plans/roadmap.md` for the full roadmap and `architecture/final_surface_audit.md` for the public surface inventory.
+The architecture-hardening roadmap is **complete** through Phase 16 and locally verified. All 27 guard tests pass, all feature profile checks are green, and the release-hardening report is at `architecture/release_hardening_report.md`. Phase 16 added runtime operations drill documents (`architecture/runtime_operations_drill.md`, `architecture/runtime_operations_drill_report.md`) and refined the plugin capability boundary guard heuristic. CI uses a single routine workflow (`ci.yml`) running `cargo xtask verify` (simplified from 4 lane-specific workflows in Phase 2). Local verification is authoritative. See `plans/roadmap.md` for the full roadmap and `architecture/final_surface_audit.md` for the public surface inventory.
 
 ### 1. Unified Data Plane
 The `UnifiedServerWorker` keeps socket accept, TLS, HTTP parsing, routing, WAF checks, and streaming proxying inline.
@@ -123,35 +123,27 @@ See `architecture/release_profile_matrix.md` for detailed per-platform feature a
 
 ## CI Testing
 
-SynVoid uses a four-lane CI system with a dedicated `[profile.ci]` for fast routine correctness testing. PRs get fast feedback; comprehensive validation runs on main; qualification runs nightly.
+SynVoid uses a single routine CI workflow (`ci.yml`) with a dedicated `[profile.ci]` for fast correctness testing. The canonical verification command is `cargo xtask verify`, which runs formatting, linting, compilation, guard tests, and security regression tests.
 
-| Lane | Trigger | Duration Target |
-|------|---------|----------------|
-| PR Fast | Pull requests | <10 minutes |
-| Main Comprehensive | Push to main | Full suite |
-| Scheduled Qualification | Nightly | Expensive checks |
-| Release Qualification | Version tags | Production validation |
+See [`docs/testing/verification-contract.md`](docs/testing/verification-contract.md) for the full verification specification.
 
 ### Developer Testing
 
-Run tests for only the packages affected by your changes:
+Run the routine verification contract locally:
 
 ```bash
-# Preview what would be tested
-bash scripts/test-affected.sh origin/main --dry-run
+# Run the canonical verification contract (what CI runs)
+cargo xtask verify
 
-# Run affected tests
-bash scripts/test-affected.sh origin/main
-
-# Force full validation
-bash scripts/test-affected.sh origin/main --full
+# Or run individual steps
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test --lib --no-run
 ```
 
 ### CI Caching
 
-SynVoid CI uses `Swatinem/rust-cache` for Cargo source and target metadata caching. `sccache` compiler output caching is dormant (deferred pending backend verification). See [`docs/testing/cache-policy.md`](docs/testing/cache-policy.md) for the full cache architecture.
-
-See [`docs/testing/ci-lane-policy.md`](docs/testing/ci-lane-policy.md) for the full CI policy.
+SynVoid CI uses `Swatinem/rust-cache` for Cargo source and target metadata caching. See [`docs/testing/cache-policy.md`](docs/testing/cache-policy.md) for the full cache architecture.
 
 ## Documentation
 
@@ -164,7 +156,7 @@ See [`docs/testing/ci-lane-policy.md`](docs/testing/ci-lane-policy.md) for the f
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Production deployment guide |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Configuration reference |
 | [SECURITY.md](SECURITY.md) | Security model and advisory policy |
-| [docs/testing/ci-lane-policy.md](docs/testing/ci-lane-policy.md) | CI testing lanes and policy |
+| [docs/testing/verification-contract.md](docs/testing/verification-contract.md) | CI verification specification |
 
 ### Subsystem Guides
 

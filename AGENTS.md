@@ -44,13 +44,8 @@ cargo test --test worker_supervision_control_flow --features mesh,dns
 cargo test --test composition_root_behavioral --features mesh,dns
 
 # Affected package tests (runs only packages changed since base ref)
-bash scripts/test-affected.sh origin/main
-bash scripts/test-affected.sh origin/main --dry-run  # preview only
-bash scripts/test-affected.sh origin/main --full      # force full validation
-
-# Affected package selector (standalone)
-python3 scripts/ci/select-affected.py --base HEAD~1 --head HEAD --format text
-python3 scripts/ci/select-affected.py --base HEAD~1 --head HEAD --format json --dry-run
+# NOTE: Affected-package selection was removed in Phase 2 CI simplification.
+# Use `cargo xtask verify` for routine CI, or full test suite for comprehensive validation.
 
 # DNS full suite (all unit + integration tests)
 cargo test -p synvoid-dns --profile ci
@@ -97,8 +92,8 @@ Key docs:
 ## Test Orchestration (xtask)
 
 ```bash
-cargo xtask test fast            # PR fast lane: fmt, clippy, guards, security, affected
-cargo xtask test affected --base origin/main  # Affected package selection and testing
+cargo xtask verify             # Canonical routine verification contract (what CI runs)
+cargo xtask test fast           # PR fast lane: fmt, clippy, guards, security, affected
 cargo xtask test package synvoid-dns  # Test a specific package
 cargo xtask test guards          # All architectural guard tests
 cargo xtask test security        # Security regression tests

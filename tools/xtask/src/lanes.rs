@@ -37,28 +37,6 @@ pub fn build_lanes() -> HashMap<&'static str, Lane> {
                 Step::new("guards", "cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci"),
                 Step::new("security", "cargo nextest run --test security_regression --cargo-profile ci --profile ci -- --test-threads=1"),
                 Step::new("compile", "cargo test --lib --no-run"),
-                Step::new(
-                    "affected",
-                    "python3 scripts/ci/select-affected.py --base <BASE_REF> --head HEAD --format json",
-                ),
-            ],
-        },
-    );
-
-    lanes.insert(
-        "affected",
-        Lane {
-            name: "affected",
-            description:
-                "Run tests only for packages and root tests affected by changes since a base ref.",
-            steps: vec![
-                Step::new(
-                    "select",
-                    "python3 scripts/ci/select-affected.py --base <BASE_REF> --head HEAD --format json",
-                ),
-                Step::new("packages", "cargo nextest run -p <PKG> --cargo-profile ci --profile ci"),
-                Step::new("root-tests", "cargo test --test <TEST>"),
-                Step::new("doctests", "cargo test --workspace --doc --profile ci"),
             ],
         },
     );
@@ -231,7 +209,6 @@ pub fn get_lane(name: &str) -> Option<Lane> {
 pub fn list_lane_names() -> Vec<&'static str> {
     vec![
         "fast",
-        "affected",
         "package",
         "guards",
         "security",
