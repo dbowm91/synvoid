@@ -80,25 +80,19 @@ cargo test -p synvoid-tarpit --all-targets
 
 ## CI Testing Infrastructure
 
-SynVoid CI uses four validation lanes with a dedicated `[profile.ci]` for routine correctness testing. See `docs/testing/ci-lane-policy.md` for the full policy.
+**Pending authority**: `docs/testing/verification-contract.md` — frozen routine, full, and release verification contracts. Phase 1 of CI Simplification is complete; Phase 2 will implement the new single-command CI.
 
-| Lane | Trigger | Purpose |
-|------|---------|---------|
-| PR Fast | Pull requests | Fast feedback (<10 min target) |
-| Main Comprehensive | Push to main | Full validation after merge |
-| Scheduled Qualification | Nightly 4 AM UTC | Expensive portability/safety checks |
-| Release Qualification | Version tags / dispatch | Production artifact validation |
+The current four-lane system (`pr-fast.yml`, `main-comprehensive.yml`, `nightly-qualification.yml`, `release-qualification.yml`) is scheduled for simplification. See `docs/testing/ci-deletion-inventory.md` for the deletion manifest.
 
 **CI profile** (routine tests): `cargo test --profile ci`
 **Release profile** (production artifacts): `cargo test --release`
 
 Key docs:
+- `docs/testing/verification-contract.md` — **Authoritative** verification specification (routine, full, release)
+- `docs/testing/ci-deletion-inventory.md` — Deletion manifest for Phases 2–4
 - `docs/testing/ci-performance-baseline.md` — Timing baseline and before/after results
 - `docs/testing/test-suite-ownership.md` — Every test target's owner, lane, and profile
-- `docs/testing/ci-lane-policy.md` — Four-lane CI policy and branch protection
-- `docs/testing/cache-policy.md` — Cache architecture, layers, and invalidation rules
-
-`testing/lanes.toml` — Machine-readable lane definitions consumed by xtask and CI.
+- `docs/testing/ci-lane-policy.md` — Four-lane CI policy (historical, being replaced)
 
 ## Test Orchestration (xtask)
 

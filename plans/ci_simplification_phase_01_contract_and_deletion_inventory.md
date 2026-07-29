@@ -2,7 +2,11 @@
 
 ## Status
 
-Planned. This is the first implementation phase of `plans/ci_verification_release_simplification_roadmap.md`.
+**Complete.** See deliverables:
+- `docs/testing/verification-contract.md` — frozen routine, full, and release contracts
+- `docs/testing/ci-deletion-inventory.md` — deletion manifest for Phases 2–4
+
+Completed: 2026-07-29
 
 ## Objective
 
