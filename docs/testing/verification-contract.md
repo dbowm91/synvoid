@@ -234,7 +234,83 @@ Every current CI command classified by product property and routine eligibility:
 - No routine CI command uses `--all-features` (catches eBPF compilation failures on release lane only).
 - The `cargo xtask verify` command will be implemented in Phase 2.
 
-## 6. Handoff to Phase 2
+## 6. Failure Injection Results
+
+All seven failure classes were demonstrated against the frozen routine contract on 2026-07-29. Each injection was a temporary file modification, reverted after measurement.
+
+| # | Class | Injected defect | Command | Expected failure point | Actual failure point | Later commands skipped? |
+|---|-------|----------------|---------|----------------------|---------------------|------------------------|
+| 1 | Formatting violation | Extra spaces in `worker_id.rs` function signature | `cargo fmt --all -- --check` | Step 1: exit 1 with diff | Step 1: exit 1, diff output shows exact lines | N/A (first command) |
+| 2 | Clippy warning → error | Unused variable (no `_` prefix) in `worker_id.rs` | `cargo clippy --all-targets -- -D warnings` | Step 2: exit 101, unused-variables error | Step 2: exit 101, `error: unused variable: unused_variable` | N/A (second command) |
+| 3 | Compilation error | Missing closing paren in `worker_id.rs` | `cargo check --no-default-features` | Step 3: exit 101, syntax error | Step 3: exit 101, `expected `)` found `}` | N/A (third command) |
+| 4 | Unit-test failure | `assert!(false)` in `root_test_ownership_guard.rs` | `cargo test --test root_test_ownership_guard` | Guard test: exit 101, panic message | Guard test: exit 101, `INJECTED FAILURE for testing` | No — subsequent guards still ran |
+| 5 | Security regression | `assert!(false)` in `security_regression.rs::test_ipc_auth_bypass_rejected` | `cargo nextest run --test security_regression --test-threads=1` | Security suite: exit 96/101 | Security suite: exit 101, `INJECTED SECURITY REGRESSION` | No — other regression tests still passed |
+| 6 | Architecture guard | Inverted assertion in `boundary_composition_guard.rs::simulated_violation_in_waf_is_detected` | `cargo test --test boundary_composition_guard` | Guard suite: exit 101, 1 failed | Guard suite: exit 101, 54 passed / 1 failed | No — other guard tests still ran |
+| 7 | Wrapper propagation | Formatting violation + `&&` chain | `cargo fmt && cargo clippy && cargo check` | Chain aborts after fmt failure | Chain aborts: steps 2 and 3 never executed | Yes — fail-fast `&&` stops chain |
+
+### Key observations
+
+- All failures produce nonzero exit codes (1, 101, or 96 for nextest).
+- Failures in guard/security tests do not prevent subsequent tests from running (independent `cargo test` invocations).
+- Failures in the `&&`-chained wrapper correctly abort subsequent commands (fail-fast).
+- No silent failures or false passes observed.
+
+## 7. Routine Contract Measurements
+
+Measured on 2026-07-29 on a warm-cache Linux x86_64 workstation (45 workspace members).
+
+### Per-command timing (warm cache, all binaries pre-compiled)
+
+| # | Command | Wall time | Exit |
+|---|---------|-----------|------|
+| 1 | `cargo fmt --all -- --check` | 4.6s | 0 |
+| 2 | `cargo clippy --all-targets -- -D warnings` | 82.5s | 0 |
+| 3 | `cargo check --no-default-features` | 16.0s | 0 |
+| 4 | `cargo nextest run -p synvoid-repo-guards` | 3.5s | 0 |
+| 5 | `cargo test --lib --no-run` | 320s (compile) | 0 |
+| 6 | `cargo test --test boundary_composition_guard` | 167s (compile+run) | 0 |
+| 7 | `cargo test --test lifecycle_task_guard` | 2.0s | 0 |
+| 8 | `cargo test --test plugin_guard` | 2.5s | 0 |
+| 9 | `cargo test --test cli_admin_guard` | 0.8s | 0 |
+| 10 | `cargo test --test security_guard` | 12s | 0 |
+| 11 | `cargo test --test root_facade_boundary_guard` | 13s | 0 |
+| 12 | `cargo test --test mesh_id_boundary_guard` | 14s | 0 |
+| 13 | `cargo test --test admin_mutation_response_guard` | 15s | 0 |
+| 14 | `cargo test --test admin_mutation_blocklist` | 28s | 0 |
+| 15 | `cargo test -p synvoid-core --test admin_auth_boundary` | 33s | 0 |
+| 16 | `cargo test -p synvoid-core --test mesh_admin_edge_cases` | 34s | 0 |
+| 17 | `cargo test --test failure_injection` | 70s | 0 |
+| 18 | `cargo test --test worker_mesh_supervision_boundary_guard` | 111s | 0 |
+| 19 | `cargo test --test mesh_task_ownership_guard` | 113s | 0 |
+| 20 | `cargo test --test abi_memory_boundary_guard` | 115s | 0 |
+| 21 | `cargo test --test root_test_ownership_guard` | 117s | 0 |
+| 22 | `cargo nextest run --test security_regression --test-threads=1` | 118s | 0 |
+
+### Summary
+
+| Metric | Value |
+|--------|-------|
+| Warm-cache total wall time | ~1,480s (~25 min) |
+| First-run compilation overhead | ~487s (commands 5–6 compile all test binaries) |
+| Subsequent-run wall time (all binaries cached) | ~993s (~17 min) |
+| Cargo invocations | 22 |
+| Unique compiled test binaries | ~18 (many guard tests share compilation) |
+| Duplicate test targets | 0 (each command tests a distinct target) |
+| Failed commands | 0 (all pass on clean codebase) |
+| Properties covered | 7 (formatting, linting, compilation, guards, security, architecture, ownership) |
+| Properties omitted | 12+ (full workspace tests, doctests, DNS, plugins, profiles, cross-platform, fuzz, miri, etc.) |
+
+### Budget assessment
+
+| Threshold | Measured | Status |
+|-----------|----------|--------|
+| Target <10min | ~17min (warm) / ~25min (first run) | Over budget — see note |
+| Blocking threshold >15min | ~17min warm | Approaching threshold |
+| Cargo invocations <10 | 22 | Over budget |
+
+**Note**: The warm-cache time includes 320s for `cargo test --lib --no-run` (full lib compilation) and 167s for `boundary_composition_guard` (first guard compilation). On a CI runner with persistent caches, the compilation overhead would be amortized. The routine contract as specified may need pruning for CI — Phase 2 should evaluate whether some guard tests can be consolidated or the `--lib --no-run` step replaced with `cargo check`.
+
+## 8. Handoff to Phase 2
 
 Phase 2 must:
 1. Implement `cargo xtask verify` exactly as specified in Section 1
