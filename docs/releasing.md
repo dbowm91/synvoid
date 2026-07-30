@@ -102,6 +102,10 @@ Every publishable crate must have these Cargo.toml fields:
 | `plans/` | Planning documents |
 | `corpus/` | Test corpora |
 | `crash-` | Crash artifacts |
+| `.key`, `.pem`, `.p12`, `.pfx`, `.keystore` | Private key / certificate files |
+| `id_rsa`, `id_ed25519`, `id_ecdsa` | SSH key files |
+| `htpasswd` | Password files |
+| `secret`, `.secret`, `private_key` | Generic secret patterns |
 
 Each crate's package contents are verified against these patterns before dry-run packaging.
 
@@ -120,6 +124,8 @@ cargo xtask verify-release
 ```
 
 This runs full verification, package metadata validation, package content inspection, and dry-run packaging. It never publishes.
+
+**Dirty-tree policy**: `verify-release` warns on a dirty working tree but does not fail. This is deliberate — a local dev tool that hard-fails on uncommitted changes would block iterative development. Publication still requires a clean, tagged commit. The warning is advisory, not a gate.
 
 ### Dry Run
 

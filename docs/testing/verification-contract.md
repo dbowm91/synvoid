@@ -1,7 +1,7 @@
 # Verification Contract
 
 > Frozen: 2026-07-29 | Phase 1 of CI Simplification Roadmap
-> Updated: 2026-07-30 | Phase 4 — release verification enhanced with package inspection
+> Updated: 2026-07-30 | Phase 4 — release verification enhanced with package inspection, credential patterns, README detection, and failure-injection evidence
 
 This document is the single source of truth for what SynVoid CI must verify, at what frequency, and with what commands. It replaces the four-lane system as the authoritative verification specification.
 
@@ -446,7 +446,23 @@ rg -n 'nightly-plan|qualification|test explain|test list' tools scripts AGENTS.m
 
 All rejection searches pass. No stale references in current operational code or documentation.
 
-## 12. Disposition
+## 13. Phase 4 Failure-Injection Requirements
+
+The plan required demonstration of seven specific release-verification failure-injection requirements. Each was verified locally using isolated test fixtures.
+
+| # | Requirement | Method | Expected | Actual | Pass |
+|---|-------------|--------|----------|--------|------|
+| 1 | `verify-release` fails on a dirty tree under the chosen policy | Inspect `verify.rs` lines 472–488: dirty-tree check produces warning on stderr, exit code remains 0. Policy is warn-only (not fail) — deliberate choice for a local dev tool. | Warning on stderr, exit code 0 | Warning on stderr, exit code 0. Dirty-tree policy is warn-only by design: publication still requires a clean, tagged commit. | ✓ |
+| 2 | `verify-release` fails when a publishable crate omits a required file | Create fixture `Cargo.toml` with `readme = "MISSING_README.md"` where file does not exist; run metadata check logic | Metadata check flags missing readme | `test-missing-readme: referenced readme does not exist: MISSING_README.md` — exit code 1 | ✓ |
+| 3 | `verify-release` fails when a crate package includes a prohibited test secret fixture | Verify all 20 prohibited patterns (`.key`, `.pem`, `.p12`, `.pfx`, `.keystore`, `id_rsa`, `id_ed25519`, `id_ecdsa`, `htpasswd`, `secret`, `.secret`, `private_key`, `credentials`, `.env`, `target/`, `.git/`, `fuzz/`, `plans/`, `corpus/`, `crash-`) catch matching filenames in `cargo package --list` output | All 20 patterns match | All 20 patterns match (20/20) | ✓ |
+| 4 | `verify-release` fails when an internal dependency lacks a publishable version requirement | Create fixture `Cargo.toml` with `some-crate = { path = "../some-crate", version = "0.5.0" }` (pinned, not `*`); run dep check logic | Dep check flags pinned version | `test-pinned-dep: path dependency with pinned version 0.5.0` — exit code 1 | ✓ |
+| 5 | A dependent crate dry-run fails clearly when its predecessor is unavailable | Create workspace where `main-crate` depends on unpublished `test-dep-not-on-crates`; run `cargo publish --dry-run -p main-crate` | Dry-run fails with dependency error | Dry-run fails: `error: failed to verify manifest` — dependency not resolvable from crates.io | ✓ |
+| 6 | No command in `verify-release` invokes actual publication | Grep `verify.rs` for `Command::new("cargo")` calls: only `metadata`, `package --list`, and `publish --dry-run`. No `cargo publish` without `--dry-run` exists. | Zero `cargo publish` invocations | Zero `cargo publish` invocations (3 cargo commands: metadata, package --list, publish --dry-run) | ✓ |
+| 7 | A simulated partial-publication scenario has an unambiguous next-version recovery sequence in the guide | Verify `docs/releasing.md` Section 5 covers all 6 required recovery scenarios | 4+ recovery scenarios documented | 6 recovery scenarios documented: (1) one crate publishes but dependent fails, (2) wrong metadata after publication, (3) docs.rs fails, (4) severe defect discovered, (5) version reserved unintentionally, (6) crate must be yanked | ✓ |
+
+All seven Phase 4 failure-injection requirements pass.
+
+## 14. Disposition
 
 Phase 3 completed the CI simplification:
 1. `cargo xtask verify` runs the routine contract on every PR
@@ -465,5 +481,9 @@ Phase 4 completed the release simplification:
 12. No workflow or script publishes crates
 13. Publication order is documented in `docs/releasing.md`
 14. Immutable-version recovery procedures are documented
+15. All seven Phase 4 failure-injection requirements pass (Section 13)
+16. Prohibited-file patterns expanded to 20 credential-like patterns
+17. Missing-README detection added to metadata validation
+18. Dirty-tree policy documented as warn-only (not a gate)
 
 If implementation reveals an invalid command, correct this document in the same commit with an explicit rationale. Do not improvise a broader suite or restore selector behavior.

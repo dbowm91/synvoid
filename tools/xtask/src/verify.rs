@@ -470,6 +470,11 @@ pub fn run_verify_release(dry_run: bool, json_output: bool, verbose: bool) -> Re
     let workspace_root = find_workspace_root()?;
 
     // --- Phase 1: Clean working tree check ---
+    //
+    // Policy: warn-only, not fail. A local dev tool that hard-fails on a dirty
+    // tree would block iterative development (e.g., running verify-release after
+    // partial edits). Publication still requires a clean, tagged commit — this
+    // check is advisory, not a gate.
     if !dry_run {
         let status = Command::new("git")
             .args(["status", "--porcelain"])
@@ -480,8 +485,9 @@ pub fn run_verify_release(dry_run: bool, json_output: bool, verbose: bool) -> Re
         let stdout = String::from_utf8_lossy(&status.stdout);
         if !stdout.trim().is_empty() {
             if !json_output {
-                eprintln!("⚠  Working tree is not clean. Release verification proceeds but");
-                eprintln!("   publication should only happen from a clean, tagged commit.");
+                eprintln!("⚠  Working tree is not clean (dirty-tree policy: warn-only).");
+                eprintln!("   Release verification proceeds. Publication should only");
+                eprintln!("   happen from a clean, tagged commit.");
                 eprintln!();
             }
         }
@@ -561,6 +567,24 @@ pub fn run_verify_release(dry_run: bool, json_output: bool, verbose: bool) -> Re
                 ));
             }
         }
+
+        // Check that readme file exists if explicitly referenced
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("readme") {
+                if let Some(start) = trimmed.find('"') {
+                    if let Some(end) = trimmed[start + 1..].find('"') {
+                        let readme_path = manifest_dir.join(&trimmed[start + 1..start + 1 + end]);
+                        if !readme_path.exists() {
+                            metadata_issues.push(format!(
+                                "{name}: referenced readme does not exist: {}",
+                                readme_path.display()
+                            ));
+                        }
+                    }
+                }
+            }
+        }
     }
 
     if !metadata_issues.is_empty() {
@@ -604,7 +628,9 @@ pub fn run_verify_release(dry_run: bool, json_output: bool, verbose: bool) -> Re
 
                 let listing = String::from_utf8_lossy(&out.stdout);
 
-                // Check for prohibited patterns
+                // Check for prohibited patterns — credential-like files, build
+                // outputs, planning docs, and test corpora must never ship in a
+                // published crate.
                 let prohibited = [
                     "target/",
                     ".git/",
@@ -614,6 +640,18 @@ pub fn run_verify_release(dry_run: bool, json_output: bool, verbose: bool) -> Re
                     "plans/",
                     "corpus/",
                     "crash-",
+                    ".key",
+                    ".pem",
+                    ".p12",
+                    ".pfx",
+                    ".keystore",
+                    "id_rsa",
+                    "id_ed25519",
+                    "id_ecdsa",
+                    "htpasswd",
+                    "secret",
+                    ".secret",
+                    "private_key",
                 ];
 
                 for line in listing.lines() {
