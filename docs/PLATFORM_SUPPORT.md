@@ -4,13 +4,13 @@ SynVoid is designed for consistent performance across modern operating systems, 
 
 ## Support Matrix
 
-| Platform | Support Level | CI Tested | Notes |
-|----------|--------------|-----------|-------|
-| Linux (glibc) | Production | Yes | Primary target, full socket/affinity support |
-| Alpine Linux (musl) | Production | Yes | Full feature support |
-| macOS | Production | Yes | Full socket feature support |
-| Windows (10+) | Production | Yes | Modern socket feature support |
-| FreeBSD | Production | Yes | Full feature support |
+| Platform | Support Level | Notes |
+|----------|--------------|-------|
+| Linux (glibc) | Primary | Full socket/affinity support. Routinely verified in CI. |
+| Alpine Linux (musl) | Primary | Full feature support. Routinely verified in CI. |
+| macOS | Best effort | Full socket feature support. Manually verified. |
+| Windows (10+) | Best effort | Modern socket feature support. Manually verified. |
+| FreeBSD | Best effort | Full feature support. Manually verified. |
 
 ## Feature Availability by Platform
 

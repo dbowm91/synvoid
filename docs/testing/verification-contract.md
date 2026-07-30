@@ -1,7 +1,7 @@
 # Verification Contract
 
 > Frozen: 2026-07-29 | Phase 1 of CI Simplification Roadmap
-> Updated: 2026-07-29 | Phase 3 completed — local verification and guard reduction
+> Updated: 2026-07-30 | Phase 4 — release verification enhanced with package inspection
 
 This document is the single source of truth for what SynVoid CI must verify, at what frequency, and with what commands. It replaces the four-lane system as the authoritative verification specification.
 
@@ -141,7 +141,13 @@ cargo nextest run --test security_regression --cargo-profile ci --profile ci -- 
 
 ## 3. Release Verification
 
-Release verification includes routine + full local + additional release-specific checks. It is invoked before version tags and production artifact publication.
+Release verification includes routine + full local + additional release-specific checks and package inspection. It is invoked before version tags and production artifact publication.
+
+```bash
+cargo xtask verify-release
+```
+
+Or equivalently, the raw sequence:
 
 ```bash
 # Routine verification (all commands above)
@@ -154,13 +160,12 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --lib --no-run --release
 cargo nextest run --workspace --release --exclude synvoid-fuzz
 
-# Package assembly inspection
-cargo package --list --workspace
+# Doctests in release mode
+cargo test --workspace --doc --release
 
-# Publish dry-run (dependency order)
-cargo publish --dry-run -p synvoid-utils
-cargo publish --dry-run -p synvoid-core
-# ... (all publishable crates in dependency order)
+# Package metadata validation (description, license fields)
+# Package content inspection (cargo package --list for each publishable crate)
+# Dry-run packaging (cargo publish --dry-run for each publishable crate in dependency order)
 ```
 
 ### What it proves (beyond full local)
@@ -169,8 +174,21 @@ cargo publish --dry-run -p synvoid-core
 |----------|---------|
 | Release-mode correctness | `cargo nextest run --release` |
 | All-features lint correctness | `cargo clippy --all-features` |
-| Package file lists | `cargo package --list` |
-| Publish metadata validity | `cargo publish --dry-run` |
+| Package metadata validity | Metadata validation per publishable crate |
+| Package file lists | `cargo package --list` per publishable crate |
+| Publish metadata validity | `cargo publish --dry-run` per publishable crate |
+| Internal dependency version specs | Path deps use `*` version |
+| Clean working tree | `git status --porcelain` check |
+
+### What it deliberately omits
+
+- It never runs `cargo publish`.
+- It never creates a Git tag.
+- It never uploads binaries.
+- It never creates a GitHub release.
+- It never reads a crates.io token.
+
+See [`docs/releasing.md`](../releasing.md) for the manual publication procedure.
 
 ### Not bundled into release
 
@@ -433,12 +451,19 @@ All rejection searches pass. No stale references in current operational code or 
 Phase 3 completed the CI simplification:
 1. `cargo xtask verify` runs the routine contract on every PR
 2. `cargo xtask verify-full` provides broader local verification
-3. `cargo xtask verify-release` validates production artifacts
+3. `cargo xtask verify-release` validates production artifacts and package contents
 4. The four-lane system, affected-package selector, and lane manifest have been deleted
 5. CI-policy guard tests have been removed from `synvoid-repo-guards`
 6. Routine vs full overlap is documented and nonduplicative (Section 8)
 7. Specialist tools are documented as explicit manual commands (Section 9)
 8. All seven failure-injection requirements pass (Section 10)
 9. Rejection searches confirm no stale references (Section 11)
+
+Phase 4 completed the release simplification:
+10. `verify-release` now includes package metadata validation, content inspection, and dry-run packaging
+11. Publication is explicitly manual through `cargo publish` only
+12. No workflow or script publishes crates
+13. Publication order is documented in `docs/releasing.md`
+14. Immutable-version recovery procedures are documented
 
 If implementation reveals an invalid command, correct this document in the same commit with an explicit rationale. Do not improvise a broader suite or restore selector behavior.

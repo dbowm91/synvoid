@@ -32,6 +32,9 @@ cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci
 # Full test suite (release mode — only for release qualification)
 cargo test --release --no-fail-fast
 
+# Release verification (package inspection + dry-run, no publish)
+cargo xtask verify-release
+
 # Security regression tests (must run single-threaded; uses env var serialization guard)
 cargo test --test security_regression -- --test-threads=1
 
@@ -71,22 +74,23 @@ cargo test -p synvoid-tarpit --all-targets
 
 ## CI Testing Infrastructure
 
-**Pending authority**: `docs/testing/verification-contract.md` — frozen routine, full, and release verification contracts. Phase 3 of CI Simplification is complete.
+**Authority**: `docs/testing/verification-contract.md` — frozen routine, full, and release verification contracts.
 
-The single routine workflow (`ci.yml`) runs `cargo xtask verify`. The four-lane system has been removed.
+The single routine workflow (`ci.yml`) runs `cargo xtask verify`. Publication is manual through `cargo publish` only — see `docs/releasing.md`.
 
 **CI profile** (routine tests): `cargo test --profile ci`
 **Release profile** (production artifacts): `cargo test --release`
 
 Key docs:
-- `docs/testing/verification-contract.md` — **Authoritative** verification specification (routine, full, release)
+- `docs/testing/verification-contract.md` — **Authoritative** verification specification
+- `docs/releasing.md` — Manual publication procedure and publication order
 
 ## Test Orchestration (xtask)
 
 ```bash
 cargo xtask verify             # Canonical routine verification contract (what CI runs)
 cargo xtask verify-full        # Full local verification (broader than routine)
-cargo xtask verify-release     # Release verification (production artifacts)
+cargo xtask verify-release     # Release verification (production artifacts + package inspection)
 cargo xtask test package synvoid-dns  # Test a specific package
 cargo xtask test guards        # All architectural guard tests
 
@@ -302,6 +306,7 @@ The `architecture/` directory (103 docs) and `.opencode/skills/` directory conta
 | `architecture/dns_config_runtime_matrix.md` | DNS config field inventory with runtime status, defaults, and wiring |
 | `architecture/release_profile_matrix.md` | Compilation profiles, feature gate classifications, platform coverage |
 | `docs/RELEASE.md` | Release lifecycle, versioning policy, build profiles, hotfix, deprecation |
+| `docs/releasing.md` | Manual publication procedure and publication order |
 
 ## Known Issues
 

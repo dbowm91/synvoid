@@ -13,32 +13,13 @@ Use this checklist for every SynVoid release. Copy this template and fill in the
 
 All gates must pass before cutting the RC tag.
 
-### Compilation Profiles
-
-| Profile | Command | Status |
-|---------|---------|--------|
-| Default | `cargo build --release` | [ ] |
-| Core | `cargo build --release --no-default-features` | [ ] |
-| Mesh | `cargo build --release --no-default-features --features mesh` | [ ] |
-| DNS | `cargo build --release --no-default-features --features dns` | [ ] |
-| Full | `cargo build --release --no-default-features --features mesh,dns` | [ ] |
-
-### Code Quality
+### Verification
 
 | Check | Command | Status |
 |-------|---------|--------|
-| Formatting | `cargo fmt --all -- --check` | [ ] |
-| Clippy | `cargo clippy --all-targets --all-features -- -D warnings` | [ ] |
-| Documentation | `cargo doc --all-features -- -D warnings` | [ ] |
-
-### Tests
-
-| Check | Command | Status |
-|-------|---------|--------|
-| Full test suite | `cargo test --release --no-fail-fast` | [ ] |
-| Security regression | `cargo test --test security_regression -- --test-threads=1` | [ ] |
-| Guard suite | `cargo test --test guard_suite` | [ ] |
-| Plugin guardrails | `cargo test -p synvoid-plugin-runtime` | [ ] |
+| Routine verification | `cargo xtask verify` | [ ] |
+| Full local verification | `cargo xtask verify-full` | [ ] |
+| Release verification | `cargo xtask verify-release` | [ ] |
 
 ### Security & Dependencies
 
@@ -46,26 +27,6 @@ All gates must pass before cutting the RC tag.
 |-------|---------|--------|
 | Dependency audit | `cargo deny check` | [ ] |
 | Security audit | `cargo audit` | [ ] |
-
-### CI Verification
-
-| Job | Status | Notes |
-|-----|--------|-------|
-| build (8-target matrix) | [ ] | |
-| clippy | [ ] | |
-| fmt | [ ] | |
-| dns-tests | [ ] | |
-| honeypot-tests | [ ] | |
-| tarpit-tests | [ ] | |
-| mesh-tests | [ ] | |
-| upload-tests | [ ] | |
-| security-audit | [ ] | |
-| dependency-audit | [ ] | |
-| profile-matrix | [ ] | |
-| guard-suite | [ ] | |
-| plugin-runtime-guardrails | [ ] | |
-| fuzz-smoke | [ ] | |
-| platform-compat | [ ] | |
 
 ## Documentation
 
@@ -79,7 +40,7 @@ All gates must pass before cutting the RC tag.
 | README.md updated | [ ] | |
 | FEATURE_STATUS.md updated | [ ] | |
 
-## Release
+## Publication
 
 | Step | Status | Notes |
 |------|--------|-------|
@@ -87,11 +48,28 @@ All gates must pass before cutting the RC tag.
 | Stabilization period (min 3 days) | [ ] | |
 | All gates re-pass after stabilization | [ ] | |
 | Final CHANGELOG entry committed | [ ] | |
-| Release tag created (`vX.Y.Z`) | [ ] | |
-| Binaries built for supported platforms | [ ] | |
-| Checksums generated (`SHA256SUMS.txt`) | [ ] | |
-| GitHub Release published | [ ] | |
+| `cargo xtask verify-release` passes | [ ] | |
+| All crates published to crates.io in dependency order | [ ] | |
+| Crates.io availability verified for each published crate | [ ] | |
+| Release tag created (`vX.Y.Z`) — after publication | [ ] | |
+| Tag pushed to origin | [ ] | |
+| GitHub Release created manually (optional) | [ ] | |
 | Release notes announced | [ ] | |
+
+### Publication Order
+
+Publish crates in this exact order (see `docs/releasing.md` for the full table):
+
+```bash
+cargo publish -p pqc
+cargo publish -p synvoid-utils
+cargo publish -p synvoid-platform
+cargo publish -p synvoid-core
+# ... (see docs/releasing.md for the complete list)
+cargo publish -p synvoid
+```
+
+After each crate, verify it resolves from crates.io before publishing dependents.
 
 ## Post-Release
 
@@ -122,4 +100,5 @@ List Beta features included:
 - [ ] Release Manager approval
 - [ ] All pre-release gates pass
 - [ ] Documentation complete
-- [ ] Release artifacts published
+- [ ] All crates published to crates.io
+- [ ] Release tag created and pushed

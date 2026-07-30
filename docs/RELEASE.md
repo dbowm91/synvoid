@@ -50,17 +50,10 @@ A release candidate (RC) is cut when all release gates pass:
 
 ```bash
 # Required gates — all must pass
-cargo fmt --all -- --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo check                                          # Default profile
-cargo check --no-default-features                    # Core profile
-cargo check --no-default-features --features mesh    # Mesh profile
-cargo check --no-default-features --features dns     # DNS profile
-cargo check --no-default-features --features mesh,dns # Full profile
-cargo test --release --no-fail-fast
-cargo deny check
-cargo audit
+cargo xtask verify-release
 ```
+
+The `verify-release` command runs the full verification suite plus package metadata validation, content inspection, and dry-run packaging for every publishable crate.
 
 The RC tag follows the pattern `vMAJOR.MINOR.PATCH-rc.N` (e.g., `v1.1.0-rc.1`).
 
@@ -78,9 +71,10 @@ The stabilization period begins after the RC tag is cut:
 When the stabilization period ends with no outstanding issues:
 
 1. Final CHANGELOG entry is committed.
-2. The release tag is created (e.g., `v1.1.0`).
-3. GitHub Release is published with artifacts.
-4. Release notes are announced.
+2. All crates are published to crates.io in dependency order (see [`docs/releasing.md`](releasing.md)).
+3. Crates.io availability is verified.
+4. The release tag is created and pushed.
+5. Optionally, a GitHub Release is created manually with release notes.
 
 ## 3. Build Profiles
 
@@ -122,13 +116,13 @@ Beta features are listed in release notes and do not block the release gate for 
 
 Full details in [`docs/PLATFORM_SUPPORT.md`](PLATFORM_SUPPORT.md).
 
-| Platform | Support Level | CI Tested | Notes |
-|----------|--------------|-----------|-------|
-| Linux x86_64 (glibc) | Production | Yes | Primary target; CPU pinning, Landlock sandboxing |
-| Linux x86_64 (musl/Alpine) | Production | Yes | Full feature support |
-| macOS x86_64/aarch64 | Production | Yes | Full socket support, SO_REUSEPORT |
-| Windows x86_64 (10+) | Production | Yes | Named pipe IPC, Windows Service support |
-| FreeBSD x86_64 | Production | Yes | SO_REUSEPORT_LB kernel distribution |
+| Platform | Support Level | Notes |
+|----------|--------------|-------|
+| Linux x86_64 (glibc) | Primary | CPU pinning, Landlock sandboxing. Routinely verified in CI. |
+| Linux x86_64 (musl/Alpine) | Primary | Full feature support. Routinely verified in CI. |
+| macOS x86_64/aarch64 | Best effort | Full socket support, SO_REUSEPORT. Manually verified. |
+| Windows x86_64 (10+) | Best effort | Named pipe IPC, Windows Service support. Manually verified. |
+| FreeBSD x86_64 | Best effort | SO_REUSEPORT_LB kernel distribution. Manually verified. |
 
 ### Feature availability by platform
 
@@ -142,31 +136,20 @@ Full details in [`docs/PLATFORM_SUPPORT.md`](PLATFORM_SUPPORT.md).
 
 ## 5. Release Artifacts
 
-### What gets produced
+### What gets published
 
 | Artifact | Description |
 |----------|-------------|
+| **crates.io packages** | Library and binary crates published to crates.io |
 | **Source tarball** | Tagged source from GitHub (`Source code (tar.gz)` / `Source code (zip)`) |
-| **Binary artifacts** | Pre-built binaries for supported platforms (Linux x86_64, macOS aarch64, Windows x86_64) |
-| **Docker images** | Container images published to the registry (if applicable) |
 
-### Checksums and signatures
+### What is not automated
 
-Every release artifact is accompanied by:
-
-- **SHA-256 checksums** (`SHA256SUMS.txt`) for all binaries and tarballs.
-- **GPG signatures** (`SHA256SUMS.txt.sig`) for checksum verification.
-
-To verify a release:
-
-```bash
-sha256sum -c SHA256SUMS.txt
-gpg --verify SHA256SUMS.txt.sig SHA256SUMS.txt
-```
+Binary artifacts, checksums, signatures, and Docker images are not produced by CI. If binary distribution is desired, it must be built and published separately by the maintainer.
 
 ### Where artifacts are published
 
-All release artifacts are published on the [GitHub Releases](https://github.com/synvoid/synvoid/releases) page for the corresponding tag.
+Library and binary crates are published on [crates.io](https://crates.io/crates/synvoid). Source archives are available on the [GitHub repository](https://github.com/dbowm91/synvoid) for each tag.
 
 ## 6. Release Process Checklist
 
@@ -188,11 +171,14 @@ All release artifacts are published on the [GitHub Releases](https://github.com/
 
 - [ ] Stabilization period complete (minimum 3 days after RC tag)
 - [ ] All gates re-pass after stabilization fixes
-- [ ] Git tag created: `vMAJOR.MINOR.PATCH`
-- [ ] Binaries built for all supported platforms
-- [ ] Checksums and signatures generated
-- [ ] GitHub Release created with release notes and artifacts
+- [ ] `cargo xtask verify-release` passes (package inspection + dry-run)
+- [ ] All crates published to crates.io in dependency order
+- [ ] Crates.io availability verified for each published crate
+- [ ] Git tag created: `vMAJOR.MINOR.PATCH` (after publication succeeds)
+- [ ] Tag pushed to origin
 - [ ] CHANGELOG.md entry finalized and committed
+- [ ] GitHub Release created manually (optional)
+- [ ] Release notes announced
 
 ### Post-release
 

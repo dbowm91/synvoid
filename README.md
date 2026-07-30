@@ -8,7 +8,7 @@ SynVoid is a high-speed, multi-process Web Application Firewall (WAF) and revers
 
 ### Development Status
 
-The architecture-hardening roadmap is **complete** through Phase 16 and locally verified. All 27 guard tests pass, all feature profile checks are green, and the release-hardening report is at `architecture/release_hardening_report.md`. Phase 16 added runtime operations drill documents (`architecture/runtime_operations_drill.md`, `architecture/runtime_operations_drill_report.md`) and refined the plugin capability boundary guard heuristic. CI uses a single routine workflow (`ci.yml`) running `cargo xtask verify` (simplified from 4 lane-specific workflows in Phase 2). Local verification is authoritative. See `plans/roadmap.md` for the full roadmap and `architecture/final_surface_audit.md` for the public surface inventory.
+The architecture-hardening roadmap is **complete** through Phase 16 and locally verified. All 27 guard tests pass, all feature profile checks are green, and the release-hardening report is at `architecture/release_hardening_report.md`. CI uses a single routine workflow (`ci.yml`) running `cargo xtask verify`. Local verification is authoritative. Publication to crates.io is manual — see `docs/releasing.md`. See `plans/roadmap.md` for the full roadmap and `architecture/final_surface_audit.md` for the public surface inventory.
 
 ### 1. Unified Data Plane
 The `UnifiedServerWorker` keeps socket accept, TLS, HTTP parsing, routing, WAF checks, and streaming proxying inline.
@@ -111,19 +111,21 @@ cargo build --release --all-features
 
 ## Platform Support
 
-| Platform | Support Level | CI Tested | Notes |
-|----------|--------------|-----------|-------|
-| Linux x86_64 (glibc) | Full | Yes | Primary target, full socket/affinity/eBPF support |
-| Linux x86_64 (musl) | Full | Yes | Full feature support |
-| macOS (x86_64/aarch64) | Full | Yes | Full support except eBPF |
-| Windows 10+ | Full | Yes | Full support except eBPF, uses Named Pipes for IPC |
-| FreeBSD x86_64 | Full | Yes | Full support except eBPF, native `SO_REUSEPORT_LB` |
+| Platform | Support Level | Notes |
+|----------|--------------|-------|
+| Linux x86_64 (glibc) | Primary | Full socket/affinity/eBPF support. Routinely verified in CI. |
+| Linux x86_64 (musl) | Primary | Full feature support. Routinely verified in CI. |
+| macOS (x86_64/aarch64) | Best effort | Full support except eBPF. Manually verified. |
+| Windows 10+ | Best effort | Full support except eBPF, uses Named Pipes for IPC. Manually verified. |
+| FreeBSD x86_64 | Best effort | Full support except eBPF, native `SO_REUSEPORT_LB`. Manually verified. |
 
 See `architecture/release_profile_matrix.md` for detailed per-platform feature availability.
 
 ## CI Testing
 
-SynVoid uses a single routine CI workflow (`ci.yml`) with a dedicated `[profile.ci]` for fast correctness testing. The canonical verification command is `cargo xtask verify`, which runs formatting, linting, compilation, guard tests, and security regression tests.
+SynVoid uses a single routine CI workflow (`ci.yml`) running on Linux x86_64 with a dedicated `[profile.ci]` for fast correctness testing. The canonical verification command is `cargo xtask verify`, which runs formatting, linting, compilation, guard tests, and security regression tests.
+
+Publication to crates.io is manual — see [`docs/releasing.md`](docs/releasing.md).
 
 See [`docs/testing/verification-contract.md`](docs/testing/verification-contract.md) for the full verification specification.
 
@@ -153,6 +155,7 @@ SynVoid CI uses `Swatinem/rust-cache` for Cargo source and target metadata cachi
 |-------|-------------|
 | [CHANGELOG.md](CHANGELOG.md) | Release history and migration notes |
 | [docs/RELEASE.md](docs/RELEASE.md) | Release process, versioning, hotfix, deprecation |
+| [docs/releasing.md](docs/releasing.md) | Manual publication procedure and publication order |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Production deployment guide |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Configuration reference |
 | [SECURITY.md](SECURITY.md) | Security model and advisory policy |

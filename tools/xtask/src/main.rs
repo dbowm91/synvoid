@@ -84,7 +84,9 @@ VERIFY-FULL (manual):
     domain-specific DNS/plugin/honeypot/tarpit tests.
 
 VERIFY-RELEASE (manual):
-    Adds release-profile compilation, all-features clippy, and packaging checks.
+    Full verification plus release-profile compilation, all-features clippy,
+    package metadata validation, package content inspection, and dry-run
+    packaging for every publishable workspace crate. Does NOT publish.
 
 OPTIONS:
     --dry-run       Print commands without executing
