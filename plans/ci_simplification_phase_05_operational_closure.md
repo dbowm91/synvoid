@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned. This is the independent closure phase for `plans/ci_verification_release_simplification_roadmap.md`.
+**INCOMPLETE** — Local verification passes, rejection searches clean, documentation updated. Pending: hosted runner proof (requires push) and branch-protection configuration. See `plans/ci_verification_release_simplification_closure_results.md`.
 
 ## Objective
 

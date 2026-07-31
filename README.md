@@ -69,7 +69,7 @@ SynVoid ships five tested compilation profiles. Choose the one that matches your
 | **Default** | `cargo build --release` | Production WAF + mesh + DNS |
 | **Full** | `cargo build --release --all-features` | All features including Beta (see below) |
 
-All profiles must compile cleanly on every CI run. The `profile-matrix` CI job and `scripts/verify_architecture.sh` enforce this. See `architecture/release_profile_matrix.md` for the full matrix.
+All profiles must compile cleanly. The routine CI workflow (`ci.yml`) runs `cargo xtask verify`, which includes a core-profile compilation check. Full profile matrix verification is available locally via `cargo xtask verify-full` or `scripts/verify_architecture.sh`. See `architecture/release_profile_matrix.md` for the full matrix.
 
 > **Supported profiles** compile and pass tests in CI. The **Full** profile includes Beta features that have limited real-world validation — see [Beta Features](#beta-features) below.
 

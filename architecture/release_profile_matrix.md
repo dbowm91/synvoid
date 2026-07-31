@@ -15,7 +15,7 @@ Six compilation profiles are tested in CI and locally:
 | **DNS** | `cargo check --no-default-features --features dns` | DNS server only |
 | **Full** | `cargo check --no-default-features --features mesh,dns` | All features |
 
-The **CI profile** is used for routine correctness testing across all lanes. It avoids expensive LTO settings used by `--release`, providing fast feedback without sacrificing coverage. The five feature profiles must compile cleanly on every CI run. The `profile-matrix` CI job and `scripts/verify_architecture.sh` enforce this.
+The **CI profile** is used for routine correctness testing. It avoids expensive LTO settings used by `--release`, providing fast feedback without sacrificing coverage. The core profile must compile cleanly on every CI run via `cargo xtask verify`. Full profile matrix verification (all five feature profiles) is available locally via `cargo xtask verify-full` or `scripts/verify_architecture.sh`.
 
 ## Feature Gate Classification
 
@@ -89,18 +89,16 @@ The `icmp-ebpf` feature is classified as **Beta** (not Supported):
 
 ## CI Enforcement
 
-The following CI jobs enforce profile and release boundaries:
+The single routine CI workflow (`ci.yml`) runs `cargo xtask verify` on every pull request and push to `main`. It enforces:
 
-| Job | Purpose |
-|-----|---------|
-| `profile-matrix` | Verifies all 5 compilation profiles compile |
-| `core-profile` | Dedicated core profile check |
-| `build` | Cross-platform build matrix (8 targets) |
-| `clippy` | Workspace-wide lint |
-| `fmt` | Format check |
-| `guard-suite` | Architecture guard tests |
-| `security-audit` | cargo-audit advisory check |
-| `dependency-audit` | cargo-deny license/ban/sources check |
-| `security-regression` | Security regression tests |
-| `fuzz-smoke` | Fuzz target smoke tests |
-| `docs-link-guard` | Stale markdown link detection |
+| Property | Command in `verify` |
+|----------|---------------------|
+| Formatting | `cargo fmt --all -- --check` |
+| Lint (default features) | `cargo clippy --all-targets -- -D warnings` |
+| Core profile compilation | `cargo check --no-default-features` |
+| Architecture guards | `cargo nextest run -p synvoid-repo-guards` |
+| Security regression | `cargo test --test security_regression --test-threads=1` |
+| Full compilation | `cargo test --lib --no-run` |
+| 15 composition boundary guards | individual `cargo test --test` invocations |
+
+Full profile matrix verification (all five feature profiles) is available locally via `cargo xtask verify-full`. Release verification with package inspection is available via `cargo xtask verify-release`. See `docs/testing/verification-contract.md` for the complete specification.

@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned for implementation. This roadmap supersedes the current four-lane CI operating model for ordinary development and release handling. It is anchored to repository state `2a85396a87e9f7b7598a594f68b5c099cd4b53fe`.
+**INCOMPLETE** — Implementation complete, closure pending branch-protection configuration and hosted runner proof. See `plans/ci_verification_release_simplification_closure_results.md` for details.
 
 ## Purpose
 
