@@ -10,10 +10,10 @@ cargo build --release
 
 # Format + lint (CI order: fmt → clippy)
 cargo fmt --all -- --check
-cargo clippy --all-targets --all-features -- -D warnings
+cargo clippy --profile ci --all-targets -- -D warnings
 
 # Quick compile check
-cargo test --lib --no-run
+cargo check --no-default-features --profile ci
 
 # Run a single test by name
 cargo test --lib <test_name>
@@ -36,7 +36,7 @@ cargo test --release --no-fail-fast
 cargo xtask verify-release
 
 # Security regression tests (must run single-threaded; uses env var serialization guard)
-cargo test --test security_regression -- --test-threads=1
+cargo test --test security_regression --profile ci -- --test-threads=1
 
 # Root test ownership guard (enforces OWNERSHIP.toml manifest)
 cargo test --test root_test_ownership_guard
@@ -116,20 +116,27 @@ cargo check --no-default-features --features mesh,dns  # Full
 These enforce architectural invariants. Run them after touching relevant areas:
 
 ```bash
-cargo test --test boundary_composition_guard     # Request-path vs composition-root, HTTP pipeline, HTTP/3 WAF, manifest authority
-cargo test --test root_facade_boundary_guard     # Domain crates can't import root
-cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci  # Static guards (lightweight)
-cargo test --test mesh_id_boundary_guard         # Mesh-ID blocks: admin only, not WAF
-cargo test --test security_guard                 # Threat-intel boundary, consumer actionability, security observability
-cargo test --test lifecycle_task_guard           # Background task ownership, supervisor spawns, unified server lifecycle
-cargo test --test cli_admin_guard                # CLI dispatch, enforcement provenance, worker composition root
-cargo test --test plugin_guard                   # Plugin capability boundary, lifecycle, signature policy
-cargo test --test admin_mutation_response_guard  # Mutating admin endpoints must return AdminMutationResult
-cargo test --test abi_memory_boundary_guard      # ABI memory boundary hardening
-cargo test --test failure_injection              # Failure-injection tests for lifecycle, convergence, plugin, startup
-cargo test --test root_test_ownership_guard      # Enforces root test ownership manifest (OWNERSHIP.toml)
-cargo test --test worker_mesh_supervision_boundary_guard --features mesh,dns
-cargo test --test mesh_task_ownership_guard --features mesh,dns
+# Consolidated root guard tests (single nextest invocation, ci profile)
+cargo nextest run --cargo-profile ci --profile ci \
+  --test boundary_composition_guard --test lifecycle_task_guard \
+  --test plugin_guard --test cli_admin_guard --test security_guard \
+  --test root_facade_boundary_guard --test mesh_id_boundary_guard \
+  --test admin_mutation_response_guard --test admin_mutation_blocklist \
+  --test abi_memory_boundary_guard --test root_test_ownership_guard \
+  --test worker_mesh_supervision_boundary_guard --test mesh_task_ownership_guard \
+  --features mesh
+
+# Static guards (lightweight, no root dependency)
+cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci
+
+# synvoid-core admin/mesh edge cases
+cargo nextest run -p synvoid-core --cargo-profile ci --profile ci \
+  --test admin_auth_boundary --test mesh_admin_edge_cases
+
+# Failure injection (separate: distinct composition domain)
+cargo test --test failure_injection --profile ci
+
+# Domain-specific guard tests (not in routine CI)
 cargo test -p synvoid-plugin-runtime --test plugin_failure_does_not_poison_manager
 cargo test -p synvoid-plugin-runtime --test manifest_authority_wiring
 cargo test -p synvoid-tarpit --all-targets
@@ -254,7 +261,7 @@ Phase 8 added profile CI, fuzz targets, failure-injection tests, and a docs link
 cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci
 
 # Failure-injection tests
-cargo test --test failure_injection
+cargo test --test failure_injection --profile ci
 
 # Fuzz smoke tests (requires nightly toolchain + cargo-fuzz)
 cargo +nightly fuzz run admin_mutation_result_decode -- -runs=1000

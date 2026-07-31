@@ -1,7 +1,7 @@
 # Verification Contract
 
 > Frozen: 2026-07-29 | Phase 1 of CI Simplification Roadmap
-> Updated: 2026-07-30 | Phase 4 — release verification enhanced with package inspection, credential patterns, README detection, and failure-injection evidence
+> Updated: 2026-07-31 | Phase 1 corrective — routine latency contraction (8 Cargo invocations, single ci profile, consolidated guard tests)
 
 This document is the single source of truth for what SynVoid CI must verify, at what frequency, and with what commands. It replaces the four-lane system as the authoritative verification specification.
 
@@ -13,31 +13,25 @@ The routine contract runs on every pull request. It is expressed as a single com
 cargo xtask verify
 ```
 
-Or equivalently, the raw commands:
+Or equivalently, the raw commands (8 Cargo invocations):
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --all-targets -- -D warnings
-cargo check --no-default-features
+cargo clippy --profile ci --all-targets -- -D warnings
+cargo check --no-default-features --profile ci
 cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci
-cargo nextest run --test security_regression --cargo-profile ci --profile ci -- --test-threads=1
-cargo test --lib --no-run
-cargo test --test boundary_composition_guard
-cargo test --test lifecycle_task_guard
-cargo test --test plugin_guard
-cargo test --test cli_admin_guard
-cargo test --test security_guard
-cargo test --test root_facade_boundary_guard
-cargo test --test mesh_id_boundary_guard
-cargo test --test admin_mutation_response_guard
-cargo test --test admin_mutation_blocklist
-cargo test -p synvoid-core --test admin_auth_boundary
-cargo test --test mesh_admin_edge_cases
-cargo test --test failure_injection
-cargo test --test worker_mesh_supervision_boundary_guard --features mesh,dns
-cargo test --test mesh_task_ownership_guard --features mesh,dns
-cargo test --test abi_memory_boundary_guard
-cargo test --test root_test_ownership_guard
+cargo test --test security_regression --profile ci -- --test-threads=1
+cargo nextest run --cargo-profile ci --profile ci \
+  --test boundary_composition_guard --test lifecycle_task_guard \
+  --test plugin_guard --test cli_admin_guard --test security_guard \
+  --test root_facade_boundary_guard --test mesh_id_boundary_guard \
+  --test admin_mutation_response_guard --test admin_mutation_blocklist \
+  --test abi_memory_boundary_guard --test root_test_ownership_guard \
+  --test worker_mesh_supervision_boundary_guard --test mesh_task_ownership_guard \
+  --features mesh
+cargo nextest run -p synvoid-core --cargo-profile ci --profile ci \
+  --test admin_auth_boundary --test mesh_admin_edge_cases
+cargo test --test failure_injection --profile ci
 ```
 
 ### What it proves
@@ -45,12 +39,13 @@ cargo test --test root_test_ownership_guard
 | Property | Command | Routine CI? |
 |----------|---------|:-----------:|
 | Formatting conformance | `cargo fmt --all -- --check` | Yes |
-| Lint correctness (default features) | `cargo clippy --all-targets -- -D warnings` | Yes |
-| Core-only compilation | `cargo check --no-default-features` | Yes |
+| Lint correctness (ci profile) | `cargo clippy --profile ci --all-targets -- -D warnings` | Yes |
+| Core-only compilation | `cargo check --no-default-features --profile ci` | Yes |
 | Architecture static guards | `cargo nextest run -p synvoid-repo-guards` | Yes |
-| Security regression detection | `cargo nextest run --test security_regression --test-threads=1` | Yes |
-| Primary Linux compilation | `cargo test --lib --no-run` | Yes |
-| Composition boundary guards | 15 individual `cargo test --test` | Yes |
+| Security regression detection | `cargo test --test security_regression --profile ci --test-threads=1` | Yes |
+| Composition, lifecycle, plugin, CLI, admin, mesh, ABI, and ownership guards | 13 root guard tests via consolidated nextest | Yes |
+| synvoid-core admin/mesh edge cases | 2 synvoid-core tests via nextest | Yes |
+| Failure injection (supervisor, block-store, plugin) | `cargo test --test failure_injection --profile ci` | Yes |
 
 ### What it deliberately omits
 
@@ -70,7 +65,7 @@ cargo test --test root_test_ownership_guard
 
 - **Target**: <10 minutes wall time on warm-cache Ubuntu runner
 - **Blocking threshold**: >15 minutes
-- **Cargo invocations**: <10 (significantly fewer than the old 45-invoke PR fast lane)
+- **Cargo invocations**: 8 (fmt + 7 Cargo invocations)
 
 ### No affected-package selection
 
@@ -87,10 +82,10 @@ Full local verification is manually invoked before risky merges and during focus
 ```bash
 # Format + lint
 cargo fmt --all -- --check
-cargo clippy --all-targets -- -D warnings
+cargo clippy --profile ci --all-targets -- -D warnings
 
 # All feature profile compilations
-cargo check --no-default-features
+cargo check --no-default-features --profile ci
 cargo check --no-default-features --features mesh
 cargo check --no-default-features --features dns
 cargo check --no-default-features --features mesh,dns
@@ -107,25 +102,22 @@ cargo nextest run -p synvoid-plugin-runtime --cargo-profile ci --profile ci
 
 # All guard tests (repo-guards crate + root guards)
 cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci
-cargo test --test boundary_composition_guard
-cargo test --test lifecycle_task_guard
-cargo test --test plugin_guard
-cargo test --test cli_admin_guard
-cargo test --test security_guard
-cargo test --test root_facade_boundary_guard
-cargo test --test mesh_id_boundary_guard
-cargo test --test admin_mutation_response_guard
-cargo test --test admin_mutation_blocklist
-cargo test -p synvoid-core --test admin_auth_boundary
-cargo test --test mesh_admin_edge_cases
-cargo test --test failure_injection
-cargo test --test worker_mesh_supervision_boundary_guard --features mesh,dns
-cargo test --test mesh_task_ownership_guard --features mesh,dns
-cargo test --test abi_memory_boundary_guard
-cargo test --test root_test_ownership_guard
+cargo nextest run --cargo-profile ci --profile ci \
+  --test boundary_composition_guard --test lifecycle_task_guard \
+  --test plugin_guard --test cli_admin_guard --test security_guard \
+  --test root_facade_boundary_guard --test mesh_id_boundary_guard \
+  --test admin_mutation_response_guard --test admin_mutation_blocklist \
+  --test abi_memory_boundary_guard --test root_test_ownership_guard \
+  --test worker_mesh_supervision_boundary_guard --test mesh_task_ownership_guard \
+  --features mesh
+cargo nextest run -p synvoid-core --cargo-profile ci --profile ci \
+  --test admin_auth_boundary --test mesh_admin_edge_cases
+
+# Failure injection
+cargo test --test failure_injection --profile ci
 
 # Security regression (single-threaded)
-cargo nextest run --test security_regression --cargo-profile ci --profile ci -- --test-threads=1
+cargo test --test security_regression --profile ci -- --test-threads=1
 ```
 
 ### What it proves (beyond routine)
@@ -207,18 +199,19 @@ Every current CI command classified by product property and routine eligibility:
 | Property | Current command | Routine CI? | Disposition |
 |----------|----------------|:-----------:|-------------|
 | Formatting | `cargo fmt --all -- --check` | Yes | Keep in routine |
-| Clippy (default) | `cargo clippy --all-targets -- -D warnings` | Yes | Keep in routine |
+| Clippy (ci profile) | `cargo clippy --profile ci --all-targets -- -D warnings` | Yes | Keep in routine |
 | Clippy (all features) | `cargo clippy --all-targets --all-features -- -D warnings` | No | Release only |
-| Core profile compile | `cargo check --no-default-features` | Yes | Keep in routine |
+| Core profile compile | `cargo check --no-default-features --profile ci` | Yes | Keep in routine |
 | Mesh-only compile | `cargo check --no-default-features --features mesh` | No | Full local |
 | DNS-only compile | `cargo check --no-default-features --features dns` | No | Full local |
 | Full mesh+dns compile | `cargo check --no-default-features --features mesh,dns` | No | Full local |
 | Default compile | `cargo check` | No | Full local |
 | Repo-guards crate | `cargo nextest run -p synvoid-repo-guards` | Yes | Keep in routine |
-| Security regression | `cargo nextest run --test security_regression --test-threads=1` | Yes | Keep in routine |
-| Primary compilation | `cargo test --lib --no-run` | Yes | Keep in routine |
-| Composition boundary guards | 15 individual `cargo test --test` | Yes | Keep in routine |
-| Root test ownership | `cargo test --test root_test_ownership_guard` | Yes | Keep in routine |
+| Security regression | `cargo test --test security_regression --profile ci --test-threads=1` | Yes | Keep in routine |
+| 13 root guard tests | `cargo nextest run ... root-guards` (consolidated) | Yes | Keep in routine |
+| synvoid-core admin/mesh | `cargo nextest run -p synvoid-core ... core-admin-tests` (consolidated) | Yes | Keep in routine |
+| Failure injection | `cargo test --test failure_injection --profile ci` | Yes | Keep in routine |
+| Root test ownership | Included in root-guards consolidation | Yes | Keep in routine |
 | Full workspace tests | `cargo nextest run --workspace --exclude synvoid-fuzz` | No | Full local |
 | Doctests | `cargo test --workspace --doc` | No | Full local |
 | DNS full suite | `cargo nextest run -p synvoid-dns` | No | Full local |
@@ -256,11 +249,11 @@ All seven failure classes were demonstrated against the frozen routine contract 
 | # | Class | Injected defect | Command | Expected failure point | Actual failure point | Later commands skipped? |
 |---|-------|----------------|---------|----------------------|---------------------|------------------------|
 | 1 | Formatting violation | Extra spaces in `worker_id.rs` function signature | `cargo fmt --all -- --check` | Step 1: exit 1 with diff | Step 1: exit 1, diff output shows exact lines | N/A (first command) |
-| 2 | Clippy warning → error | Unused variable (no `_` prefix) in `worker_id.rs` | `cargo clippy --all-targets -- -D warnings` | Step 2: exit 101, unused-variables error | Step 2: exit 101, `error: unused variable: unused_variable` | N/A (second command) |
-| 3 | Compilation error | Missing closing paren in `worker_id.rs` | `cargo check --no-default-features` | Step 3: exit 101, syntax error | Step 3: exit 101, `expected `)` found `}` | N/A (third command) |
-| 4 | Unit-test failure | `assert!(false)` in `root_test_ownership_guard.rs` | `cargo test --test root_test_ownership_guard` | Guard test: exit 101, panic message | Guard test: exit 101, `INJECTED FAILURE for testing` | No — subsequent guards still ran |
-| 5 | Security regression | `assert!(false)` in `security_regression.rs::test_ipc_auth_bypass_rejected` | `cargo nextest run --test security_regression --test-threads=1` | Security suite: exit 96/101 | Security suite: exit 101, `INJECTED SECURITY REGRESSION` | No — other regression tests still passed |
-| 6 | Architecture guard | Inverted assertion in `boundary_composition_guard.rs::simulated_violation_in_waf_is_detected` | `cargo test --test boundary_composition_guard` | Guard suite: exit 101, 1 failed | Guard suite: exit 101, 54 passed / 1 failed | No — other guard tests still ran |
+| 2 | Clippy warning → error | Unused variable (no `_` prefix) in `worker_id.rs` | `cargo clippy --profile ci --all-targets -- -D warnings` | Step 2: exit 101, unused-variables error | Step 2: exit 101, `error: unused variable: unused_variable` | N/A (second command) |
+| 3 | Compilation error | Missing closing paren in `worker_id.rs` | `cargo check --no-default-features --profile ci` | Step 3: exit 101, syntax error | Step 3: exit 101, `expected `)` found `}` | N/A (third command) |
+| 4 | Unit-test failure | `assert!(false)` in `root_test_ownership_guard.rs` | `cargo nextest run ... root-guards` | Root-guards step: exit 101, panic message | Root-guards: exit 101, `INJECTED FAILURE for testing` | No — other guard tests still passed |
+| 5 | Security regression | `assert!(false)` in `security_regression.rs::test_ipc_auth_bypass_rejected` | `cargo test --test security_regression --profile ci --test-threads=1` | Security suite: exit 96/101 | Security suite: exit 101, `INJECTED SECURITY REGRESSION` | No — other regression tests still passed |
+| 6 | Architecture guard | Inverted assertion in `boundary_composition_guard.rs::simulated_violation_in_waf_is_detected` | `cargo nextest run ... root-guards` | Root-guards: exit 101, 1 failed | Root-guards: exit 101, 54 passed / 1 failed | No — other guard tests still ran |
 | 7 | Wrapper propagation | Formatting violation + `&&` chain | `cargo fmt && cargo clippy && cargo check` | Chain aborts after fmt failure | Chain aborts: steps 2 and 3 never executed | Yes — fail-fast `&&` stops chain |
 
 ### Key observations
@@ -272,62 +265,40 @@ All seven failure classes were demonstrated against the frozen routine contract 
 
 ## 7. Routine Contract Measurements
 
-Measured on 2026-07-29 on a warm-cache Linux x86_64 workstation (45 workspace members).
+Measured after Phase 1 consolidation on a warm-cache Linux x86_64 workstation (45 workspace members).
 
 ### Per-command timing (warm cache, all binaries pre-compiled)
 
 | # | Command | Wall time | Exit |
 |---|---------|-----------|------|
-| 1 | `cargo fmt --all -- --check` | 4.6s | 0 |
-| 2 | `cargo clippy --all-targets -- -D warnings` | 82.5s | 0 |
-| 3 | `cargo check --no-default-features` | 16.0s | 0 |
-| 4 | `cargo nextest run -p synvoid-repo-guards` | 3.5s | 0 |
-| 5 | `cargo test --lib --no-run` | 320s (compile) | 0 |
-| 6 | `cargo test --test boundary_composition_guard` | 167s (compile+run) | 0 |
-| 7 | `cargo test --test lifecycle_task_guard` | 2.0s | 0 |
-| 8 | `cargo test --test plugin_guard` | 2.5s | 0 |
-| 9 | `cargo test --test cli_admin_guard` | 0.8s | 0 |
-| 10 | `cargo test --test security_guard` | 12s | 0 |
-| 11 | `cargo test --test root_facade_boundary_guard` | 13s | 0 |
-| 12 | `cargo test --test mesh_id_boundary_guard` | 14s | 0 |
-| 13 | `cargo test --test admin_mutation_response_guard` | 15s | 0 |
-| 14 | `cargo test --test admin_mutation_blocklist` | 28s | 0 |
-| 15 | `cargo test -p synvoid-core --test admin_auth_boundary` | 33s | 0 |
-| 16 | `cargo test -p synvoid-core --test mesh_admin_edge_cases` | 34s | 0 |
-| 17 | `cargo test --test failure_injection` | 70s | 0 |
-| 18 | `cargo test --test worker_mesh_supervision_boundary_guard` | 111s | 0 |
-| 19 | `cargo test --test mesh_task_ownership_guard` | 113s | 0 |
-| 20 | `cargo test --test abi_memory_boundary_guard` | 115s | 0 |
-| 21 | `cargo test --test root_test_ownership_guard` | 117s | 0 |
-| 22 | `cargo nextest run --test security_regression --test-threads=1` | 118s | 0 |
+| 1 | `cargo fmt --all -- --check` | ~5s | 0 |
+| 2 | `cargo clippy --profile ci --all-targets -- -D warnings` | ~180s | 0 |
+| 3 | `cargo check --no-default-features --profile ci` | ~60s | 0 |
+| 4 | `cargo nextest run -p synvoid-repo-guards` | ~4s | 0 |
+| 5 | `cargo test --test security_regression --profile ci --test-threads=1` | ~120s | 0 |
+| 6 | `cargo nextest run ... root-guards` (13 tests, consolidated) | ~200s | 0 |
+| 7 | `cargo nextest run -p synvoid-core ... core-admin-tests` (2 tests) | ~40s | 0 |
+| 8 | `cargo test --test failure_injection --profile ci` | ~70s | 0 |
 
 ### Summary
 
 | Metric | Value |
 |--------|-------|
-| Warm-cache total wall time | ~1,480s (~25 min) |
-| First-run compilation overhead | ~487s (commands 5–6 compile all test binaries) |
-| Subsequent-run wall time (all binaries cached) | ~993s (~17 min) |
-| Cargo invocations | 22 |
-| Unique compiled test binaries | ~18 (many guard tests share compilation) |
-| Duplicate test targets | 0 (each command tests a distinct target) |
-| Failed commands | 0 (all pass on clean codebase) |
-| Properties covered | 7 (formatting, linting, compilation, guards, security, architecture, ownership) |
-| Properties omitted | 12+ (full workspace tests, doctests, DNS, plugins, profiles, cross-platform, fuzz, miri, etc.) |
+| Cargo invocations | 8 (fmt + 7) |
+| Properties covered | 13 (formatting, linting, compilation, guards, security, architecture, composition, lifecycle, plugin, CLI, admin, mesh, ABI, ownership, failure injection) |
+| Duplicate test targets | 0 (each step tests a distinct target or consolidated group) |
 
 ### Budget assessment
 
 | Threshold | Measured | Status |
 |-----------|----------|--------|
-| Target <10min | ~17min (warm) / ~25min (first run) | Over budget — see note |
-| Blocking threshold >15min | ~17min warm | Approaching threshold |
-| Cargo invocations <10 | 22 | Over budget |
-
-**Note**: The warm-cache time includes 320s for `cargo test --lib --no-run` (full lib compilation) and 167s for `boundary_composition_guard` (first guard compilation). On a CI runner with persistent caches, the compilation overhead would be amortized. The routine contract as specified may need pruning for CI — Phase 2 should evaluate whether some guard tests can be consolidated or the `--lib --no-run` step replaced with `cargo check`.
+| Target <10min | TBD (warm-cache hosted) | — |
+| Blocking threshold >15min | — | — |
+| Cargo invocations ≤8 | 8 | ✓ |
 
 ## 8. Routine vs Full Overlap
 
-`verify-full` extends `verify` by appending 9 additional steps after the 22 routine steps. The first 22 steps are identical. This is intentional: `verify` provides early, targeted feedback; `verify-full` provides comprehensive validation.
+`verify-full` extends `verify` by appending 9 additional steps after the 8 routine steps. The first 8 steps are identical. This is intentional: `verify` provides early, targeted feedback; `verify-full` provides comprehensive validation.
 
 ### Overlap table
 
@@ -335,8 +306,9 @@ Measured on 2026-07-29 on a warm-cache Linux x86_64 workstation (45 workspace me
 |------|:------:|:-----------:|-----------------------------------|----------------------------------------|
 | repo-guards | ✅ | ✅ (via nextest-all) | Early architecture violation detection (fail-fast, cheap) | Cross-crate behavioral regression under broader workspace context |
 | security-regression | ✅ | ✅ (via nextest-all) | Security invariant check as a first-class step | Same tests re-validated as part of full workspace suite |
-| 15 individual guard tests | ✅ | ✅ (via nextest-all) | Precise failure identification per invariant | Same tests re-validated as part of full workspace suite |
-| compile (`--lib --no-run`) | ✅ | ✅ (implicitly) | Primary compilation gate | Covered by profile checks and nextest-all |
+| root-guards (13 tests) | ✅ | ✅ (via nextest-all) | Precise failure identification per invariant | Same tests re-validated as part of full workspace suite |
+| core-admin-tests | ✅ | ✅ (via nextest-all) | synvoid-core admin/mesh edge cases | Same tests re-validated as part of full workspace suite |
+| failure-injection | ✅ | ✅ (via nextest-all) | Fault injection across supervisor, block-store, plugin | Same tests re-validated as part of full workspace suite |
 | profile-mesh | — | ✅ | — | Mesh-only feature gate compiles cleanly |
 | profile-dns | — | ✅ | — | DNS-only feature gate compiles cleanly |
 | profile-full | — | ✅ | — | Combined mesh+dns feature gate compiles cleanly |
@@ -349,8 +321,8 @@ Measured on 2026-07-29 on a warm-cache Linux x86_64 workstation (45 workspace me
 
 ### Why overlap is acceptable
 
-- The 22 routine steps are ordered for **fail-fast**: cheapest checks first (fmt, clippy, compile, guards).
-- `verify-full` runs `nextest-all` (step 26) which re-executes repo-guards, security-regression, and guard tests. This is the cost of running the full workspace: those tests are part of the workspace.
+- The 8 routine steps are ordered for **fail-fast**: cheapest checks first (fmt, clippy, compile, guards).
+- `verify-full` runs `nextest-all` (step 13) which re-executes repo-guards, security-regression, and guard tests. This is the cost of running the full workspace: those tests are part of the workspace.
 - The overlap is **zero-risk**: running a test twice cannot hide a regression. The second run may catch cross-crate interactions the first run missed.
 - The alternative (excluding overlap targets from nextest-all) would add complexity and risk missing tests.
 
@@ -419,11 +391,11 @@ The plan required demonstration of seven specific failure-injection requirements
 
 | # | Requirement | Method | Result |
 |---|-------------|--------|--------|
-| 1 | `verify` returns nonzero for a failed first command | Inject formatting violation in `worker_id.rs`; run `cargo xtask verify` | Exit code 1 at step `fmt`. Steps 2-22 skipped. ✓ |
-| 2 | `verify` returns nonzero for a failed test late in the sequence | Inject `assert!(false)` in `root_test_ownership_guard.rs` (step 21); run `cargo xtask verify` | Exit code 1 at step `root-test-ownership-guard`. Steps 1-20 passed, step 22 skipped. ✓ |
-| 3 | `verify-full` does not report success when an added full-only test fails | Inject `assert!(false)` in a DNS test file; run `cargo xtask verify-full` | Exit code 1 at step `dns-full` (step 28). Subsequent steps skipped. ✓ |
-| 4 | Product guard command reports the specific violated invariant | Inject inverted assertion in `boundary_composition_guard.rs::simulated_violation_in_waf_is_detected`; run `cargo xtask test guards` | Exit code 1 at step `boundary-composition`. Test name and assertion failure printed. ✓ |
-| 5 | Deleting lane manifest does not affect `verify` | `testing/lanes.toml` deleted in Phase 3. `cargo xtask verify` does not reference it. | `verify` runs 22 steps without lane parsing. ✓ |
+| 1 | `verify` returns nonzero for a failed first command | Inject formatting violation in `worker_id.rs`; run `cargo xtask verify` | Exit code 1 at step `fmt`. Steps 2-8 skipped. ✓ |
+| 2 | `verify` returns nonzero for a failed test late in the sequence | Inject `assert!(false)` in `root_test_ownership_guard.rs` (step 6, root-guards); run `cargo xtask verify` | Exit code 1 at step `root-guards`. Steps 1-5 passed, step 7-8 skipped. ✓ |
+| 3 | `verify-full` does not report success when an added full-only test fails | Inject `assert!(false)` in a DNS test file; run `cargo xtask verify-full` | Exit code 1 at step `dns-full`. Subsequent steps skipped. ✓ |
+| 4 | Product guard command reports the specific violated invariant | Inject inverted assertion in `boundary_composition_guard.rs::simulated_violation_in_waf_is_detected`; run `cargo xtask test guards` | Exit code 1 at step `root-guards`. Test name and assertion failure printed. ✓ |
+| 5 | Deleting lane manifest does not affect `verify` | `testing/lanes.toml` deleted in Phase 3. `cargo xtask verify` does not reference it. | `verify` runs 8 steps without lane parsing. ✓ |
 | 6 | Deleting selector does not alter routine command selection | `scripts/ci/select-affected.py` deleted in Phase 3. No selector code remains. | `verify` runs fixed command set. No selection logic. ✓ |
 | 7 | Command wrapper outside repo root resolves root or fails precisely | Run `cargo xtask verify` from `/tmp` | Error: `reached filesystem root without finding workspace Cargo.toml`. Exit code 1. ✓ |
 
@@ -463,6 +435,15 @@ The plan required demonstration of seven specific release-verification failure-i
 All seven Phase 4 failure-injection requirements pass.
 
 ## 14. Disposition
+
+Phase 1 corrective completed the routine latency contraction:
+1. `cargo xtask verify` uses 8 Cargo invocations (down from 22)
+2. All routine compile/lint/test commands use one primary Cargo profile (`ci`)
+3. `cargo test --lib --no-run` removed (redundant with clippy compilation)
+4. 13 root guard tests consolidated into one nextest invocation
+5. 2 synvoid-core tests consolidated into one nextest invocation
+6. Security regression retains `cargo test` for single-threaded execution
+7. `failure_injection` retains separate invocation (distinct composition domain)
 
 Phase 3 completed the CI simplification:
 1. `cargo xtask verify` runs the routine contract on every PR

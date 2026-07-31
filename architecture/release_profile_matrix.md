@@ -94,11 +94,12 @@ The single routine CI workflow (`ci.yml`) runs `cargo xtask verify` on every pul
 | Property | Command in `verify` |
 |----------|---------------------|
 | Formatting | `cargo fmt --all -- --check` |
-| Lint (default features) | `cargo clippy --all-targets -- -D warnings` |
-| Core profile compilation | `cargo check --no-default-features` |
-| Architecture guards | `cargo nextest run -p synvoid-repo-guards` |
-| Security regression | `cargo test --test security_regression --test-threads=1` |
-| Full compilation | `cargo test --lib --no-run` |
-| 15 composition boundary guards | individual `cargo test --test` invocations |
+| Lint (ci profile) | `cargo clippy --profile ci --all-targets -- -D warnings` |
+| Core profile compilation | `cargo check --no-default-features --profile ci` |
+| Architecture guards | `cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci` |
+| Security regression | `cargo test --test security_regression --profile ci --test-threads=1` |
+| 13 root guard tests | consolidated nextest invocation |
+| synvoid-core admin/mesh | consolidated nextest invocation |
+| Failure injection | `cargo test --test failure_injection --profile ci` |
 
 Full profile matrix verification (all five feature profiles) is available locally via `cargo xtask verify-full`. Release verification with package inspection is available via `cargo xtask verify-release`. See `docs/testing/verification-contract.md` for the complete specification.

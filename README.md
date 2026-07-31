@@ -139,8 +139,8 @@ cargo xtask verify
 
 # Or run individual steps
 cargo fmt --all -- --check
-cargo clippy --all-targets -- -D warnings
-cargo test --lib --no-run
+cargo clippy --profile ci --all-targets -- -D warnings
+cargo check --no-default-features --profile ci
 ```
 
 ### CI Caching

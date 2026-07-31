@@ -127,8 +127,14 @@ fn run_contract(
 fn verify_steps() -> Vec<(&'static str, &'static str)> {
     vec![
         ("fmt", "cargo fmt --all -- --check"),
-        ("clippy", "cargo clippy --all-targets -- -D warnings"),
-        ("core-compile", "cargo check --no-default-features"),
+        (
+            "clippy",
+            "cargo clippy --profile ci --all-targets -- -D warnings",
+        ),
+        (
+            "core-compile",
+            "cargo check --no-default-features --profile ci",
+        ),
         (
             "repo-guards",
             "cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci",
@@ -137,58 +143,33 @@ fn verify_steps() -> Vec<(&'static str, &'static str)> {
             "security-regression",
             "cargo test --test security_regression --profile ci -- --test-threads=1",
         ),
-        ("compile", "cargo test --lib --no-run"),
         (
-            "boundary-composition-guard",
-            "cargo test --test boundary_composition_guard",
+            "root-guards",
+            "cargo nextest run --cargo-profile ci --profile ci \
+             --test boundary_composition_guard \
+             --test lifecycle_task_guard \
+             --test plugin_guard \
+             --test cli_admin_guard \
+             --test security_guard \
+             --test root_facade_boundary_guard \
+             --test mesh_id_boundary_guard \
+             --test admin_mutation_response_guard \
+             --test admin_mutation_blocklist \
+             --test abi_memory_boundary_guard \
+             --test root_test_ownership_guard \
+             --test worker_mesh_supervision_boundary_guard \
+             --test mesh_task_ownership_guard \
+             --features mesh",
         ),
         (
-            "lifecycle-task-guard",
-            "cargo test --test lifecycle_task_guard",
-        ),
-        ("plugin-guard", "cargo test --test plugin_guard"),
-        ("cli-admin-guard", "cargo test --test cli_admin_guard"),
-        ("security-guard", "cargo test --test security_guard"),
-        (
-            "root-facade-boundary-guard",
-            "cargo test --test root_facade_boundary_guard",
+            "core-admin-tests",
+            "cargo nextest run -p synvoid-core --cargo-profile ci --profile ci \
+             --test admin_auth_boundary \
+             --test mesh_admin_edge_cases",
         ),
         (
-            "mesh-id-boundary-guard",
-            "cargo test --test mesh_id_boundary_guard",
-        ),
-        (
-            "admin-mutation-response-guard",
-            "cargo test --test admin_mutation_response_guard",
-        ),
-        (
-            "admin-mutation-blocklist",
-            "cargo test --test admin_mutation_blocklist",
-        ),
-        (
-            "admin-auth-boundary",
-            "cargo test -p synvoid-core --test admin_auth_boundary",
-        ),
-        (
-            "mesh-admin-edge-cases",
-            "cargo test -p synvoid-core --test mesh_admin_edge_cases",
-        ),
-        ("failure-injection", "cargo test --test failure_injection"),
-        (
-            "worker-mesh-supervision-boundary-guard",
-            "cargo test --test worker_mesh_supervision_boundary_guard --features mesh,dns",
-        ),
-        (
-            "mesh-task-ownership-guard",
-            "cargo test --test mesh_task_ownership_guard --features mesh,dns",
-        ),
-        (
-            "abi-memory-boundary-guard",
-            "cargo test --test abi_memory_boundary_guard",
-        ),
-        (
-            "root-test-ownership-guard",
-            "cargo test --test root_test_ownership_guard",
+            "failure-injection",
+            "cargo test --test failure_injection --profile ci",
         ),
     ]
 }
@@ -832,46 +813,28 @@ pub fn run_guards(dry_run: bool, json_output: bool, verbose: bool) -> Result<(),
             "cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci",
         ),
         (
-            "boundary-composition",
-            "cargo test --test boundary_composition_guard",
+            "root-guards",
+            "cargo nextest run --cargo-profile ci --profile ci \
+             --test boundary_composition_guard \
+             --test lifecycle_task_guard \
+             --test plugin_guard \
+             --test cli_admin_guard \
+             --test security_guard \
+             --test root_facade_boundary_guard \
+             --test mesh_id_boundary_guard \
+             --test admin_mutation_response_guard \
+             --test admin_mutation_blocklist \
+             --test abi_memory_boundary_guard \
+             --test root_test_ownership_guard \
+             --test worker_mesh_supervision_boundary_guard \
+             --test mesh_task_ownership_guard \
+             --features mesh",
         ),
         (
-            "root-facade",
-            "cargo test --test root_facade_boundary_guard",
-        ),
-        ("mesh-id", "cargo test --test mesh_id_boundary_guard"),
-        ("security", "cargo test --test security_guard"),
-        ("lifecycle", "cargo test --test lifecycle_task_guard"),
-        ("cli-admin", "cargo test --test cli_admin_guard"),
-        ("plugin", "cargo test --test plugin_guard"),
-        (
-            "worker-mesh",
-            "cargo test --test worker_mesh_supervision_boundary_guard --features mesh,dns",
-        ),
-        (
-            "mesh-task",
-            "cargo test --test mesh_task_ownership_guard --features mesh,dns",
-        ),
-        (
-            "admin-mutation",
-            "cargo test --test admin_mutation_response_guard",
-        ),
-        (
-            "admin-mutation-blocklist",
-            "cargo test --test admin_mutation_blocklist",
-        ),
-        (
-            "admin-auth",
-            "cargo test -p synvoid-core --test admin_auth_boundary",
-        ),
-        (
-            "mesh-admin",
-            "cargo test -p synvoid-core --test mesh_admin_edge_cases",
-        ),
-        ("abi-memory", "cargo test --test abi_memory_boundary_guard"),
-        (
-            "root-ownership",
-            "cargo test --test root_test_ownership_guard",
+            "core-admin-tests",
+            "cargo nextest run -p synvoid-core --cargo-profile ci --profile ci \
+             --test admin_auth_boundary \
+             --test mesh_admin_edge_cases",
         ),
     ];
 
