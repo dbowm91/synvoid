@@ -84,7 +84,6 @@ Across all platforms, SynVoid achieves zero-downtime upgrades via:
 
 ## Testing
 
-Each platform is verified in CI:
-- **Unit Tests:** All core logic.
-- **Integration Tests:** Supervisor-Worker IPC and gRPC command handling.
-- **Load Tests:** Verified unified-worker throughput and offload-worker isolation behavior.
+Verification is split between routine CI and manual local checks:
+- **Routine CI** (Linux x86_64 only): Unit tests, integration tests, architecture guards, security regression, failure injection via `cargo xtask verify`.
+- **Manual local** (all platforms): Cross-compilation checks, feature profile compilation, full test suites via `cargo xtask verify-full`.

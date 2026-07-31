@@ -47,16 +47,15 @@ The **CI profile** is used for routine correctness testing. It avoids expensive 
 
 ## Platform Coverage
 
-| Platform | CI Job | Build Features | Test Suite |
-|----------|--------|----------------|------------|
-| Linux x86_64 (glibc) | `build` (matrix) | `wireguard,icmp-filter` | Full |
-| Linux x86_64 (musl) | `alpine-test` | `wireguard,icmp-filter` | Full |
-| Linux aarch64 | `build` (matrix) | `wireguard` | Cross-compile only |
-| macOS x86_64 | `build` (matrix) | `wireguard` | Cross-compile only |
-| macOS aarch64 | `build` (matrix) | `wireguard` | Cross-compile only |
-| Windows x86_64 | `build` (matrix) | `wireguard` | Cross-compile only |
-| FreeBSD x86_64 | `freebsd-test` | `wireguard` | Build + limited tests |
-| Platform compat | `platform-compat` | Cross-target checks | Compilation only |
+| Platform | CI Verification | Build Features | Test Suite |
+|----------|----------------|----------------|------------|
+| Linux x86_64 (glibc) | Routine (`cargo xtask verify`) | `wireguard,icmp-filter` | Full |
+| Linux x86_64 (musl) | Routine (`cargo xtask verify`) | `wireguard,icmp-filter` | Full |
+| Linux aarch64 | Manual local | `wireguard` | Cross-compile only |
+| macOS x86_64 | Manual local | `wireguard` | Cross-compile only |
+| macOS aarch64 | Manual local | `wireguard` | Cross-compile only |
+| Windows x86_64 | Manual local | `wireguard` | Cross-compile only |
+| FreeBSD x86_64 | Manual local | `wireguard` | Build + limited tests |
 
 ## eBPF Feature Classification
 

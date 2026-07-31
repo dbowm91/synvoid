@@ -1,7 +1,7 @@
 # Verification Contract
 
 > Frozen: 2026-07-29 | Phase 1 of CI Simplification Roadmap
-> Updated: 2026-07-31 | Phase 1 corrective — routine latency contraction (8 Cargo invocations, single ci profile, consolidated guard tests)
+> Updated: 2026-07-31 | Corrective Phase 3 — residual cleanup and operational closure
 
 This document is the single source of truth for what SynVoid CI must verify, at what frequency, and with what commands. It replaces the four-lane system as the authoritative verification specification.
 
@@ -51,15 +51,15 @@ cargo test --test failure_injection --profile ci
 
 | Property | Why omitted from routine |
 |----------|------------------------|
-| Full workspace tests | Too expensive for every commit (~7min cold compile) |
-| Feature profile matrix | Not a regression risk per-commit; caught on main merge |
-| Doctests | Not the only test for any critical behavior |
-| Cross-platform builds | Expensive; caught on main merge or nightly |
-| DNS full suite | Large suite; caught on main merge |
-| Plugin runtime full suite | Large suite; caught on main merge |
-| Dependency audit | Not per-commit; caught on main merge or nightly |
-| Fuzz smoke | Expensive; nightly only |
-| Miri | Expensive; nightly only |
+| Full workspace tests | Too expensive for every commit (~7min cold compile); run locally via `verify-full` |
+| Feature profile matrix | Not a regression risk per-commit; run locally via `verify-full` |
+| Doctests | Not the only test for any critical behavior; run locally via `verify-full` |
+| Cross-platform builds | Expensive; manual local verification |
+| DNS full suite | Large suite; run locally via `verify-full` |
+| Plugin runtime full suite | Large suite; run locally via `verify-full` |
+| Dependency audit | Not per-commit; manual `cargo deny check` or `cargo audit` |
+| Fuzz smoke | Expensive; manual `cargo +nightly fuzz run <target>` |
+| Miri | Expensive; manual `cargo miri test -p synvoid-utils` |
 
 ### Budget
 
@@ -69,7 +69,7 @@ cargo test --test failure_injection --profile ci
 
 ### No affected-package selection
 
-The routine contract runs the same fixed command set regardless of which files changed. The `select-affected.py` script, `test-affected.sh` wrapper, and all selector infrastructure have been deleted.
+The routine contract runs the same fixed command set regardless of which files changed. There is no affected-package selector or dynamic command scheduler.
 
 ### No matrix or OS variation
 
@@ -239,8 +239,8 @@ Every current CI command classified by product property and routine eligibility:
 - Security regression tests must run single-threaded (`--test-threads=1`) due to env var serialization.
 - The repository guard crate (`synvoid-repo-guards`) must not depend on the root `synvoid` crate.
 - No routine CI command uses `--release` profile.
-- No routine CI command uses `--all-features` (catches eBPF compilation failures on release lane only).
-- The `cargo xtask verify` command will be implemented in Phase 2.
+- No routine CI command uses `--all-features` (reserved for release verification).
+- `cargo xtask verify` is the canonical routine verification command.
 
 ## 6. Failure Injection Results
 
@@ -446,25 +446,31 @@ Phase 1 corrective completed the routine latency contraction:
 7. `failure_injection` retains separate invocation (distinct composition domain)
 
 Phase 3 completed the CI simplification:
-1. `cargo xtask verify` runs the routine contract on every PR
-2. `cargo xtask verify-full` provides broader local verification
-3. `cargo xtask verify-release` validates production artifacts and package contents
-4. The four-lane system, affected-package selector, and lane manifest have been deleted
-5. CI-policy guard tests have been removed from `synvoid-repo-guards`
-6. Routine vs full overlap is documented and nonduplicative (Section 8)
-7. Specialist tools are documented as explicit manual commands (Section 9)
-8. All seven failure-injection requirements pass (Section 10)
-9. Rejection searches confirm no stale references (Section 11)
+8. `cargo xtask verify` runs the routine contract on every PR
+9. `cargo xtask verify-full` provides broader local verification
+10. `cargo xtask verify-release` validates production artifacts and package contents
+11. The four-lane system, affected-package selector, and lane manifest have been deleted
+12. CI-policy guard tests have been removed from `synvoid-repo-guards`
+13. Routine vs full overlap is documented and nonduplicative (Section 8)
+14. Specialist tools are documented as explicit manual commands (Section 9)
+15. All seven failure-injection requirements pass (Section 10)
+16. Rejection searches confirm no stale references (Section 11)
 
 Phase 4 completed the release simplification:
-10. `verify-release` now includes package metadata validation, content inspection, and dry-run packaging
-11. Publication is explicitly manual through `cargo publish` only
-12. No workflow or script publishes crates
-13. Publication order is documented in `docs/releasing.md`
-14. Immutable-version recovery procedures are documented
-15. All seven Phase 4 failure-injection requirements pass (Section 13)
-16. Prohibited-file patterns expanded to 20 credential-like patterns
-17. Missing-README detection added to metadata validation
-18. Dirty-tree policy documented as warn-only (not a gate)
+17. `verify-release` now includes package metadata validation, content inspection, and dry-run packaging
+18. Publication is explicitly manual through `cargo publish` only
+19. No workflow or script publishes crates
+20. Publication order is documented in `docs/releasing.md`
+21. Immutable-version recovery procedures are documented
+22. All seven Phase 4 failure-injection requirements pass (Section 13)
+23. Prohibited-file patterns expanded to 20 credential-like patterns
+24. Missing-README detection added to metadata validation
+25. Dirty-tree policy documented as warn-only (not a gate)
+
+Corrective Phase 3 completed residual cleanup:
+26. Obsolete CI-policy negative fixtures removed from `synvoid-repo-guards`
+27. Stale CI-policy language removed from operational documentation
+28. Platform coverage table updated to reflect single-workflow model
+29. Platform support testing clarified (routine CI vs manual local)
 
 If implementation reveals an invalid command, correct this document in the same commit with an explicit rationale. Do not improvise a broader suite or restore selector behavior.

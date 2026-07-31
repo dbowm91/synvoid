@@ -2,7 +2,7 @@
 
 ## Status
 
-Planned. Baseline reviewed at `a154a6adc4f62700034c35b59130a2c363ee9f64`.
+**COMPLETE** — All three corrective phases finished. Phase 3 residual cleanup and operational closure completed 2026-07-31. See `plans/ci_verification_release_simplification_closure_results.md` for final results.
 
 ## Purpose
 

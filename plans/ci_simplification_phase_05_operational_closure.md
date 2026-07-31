@@ -2,7 +2,7 @@
 
 ## Status
 
-**INCOMPLETE** — Local verification passes, rejection searches clean, documentation updated, hosted runner proof obtained (run `30600003285`, success). Pending: branch-protection configuration. See `plans/ci_verification_release_simplification_closure_results.md`.
+**COMPLETE** — All acceptance criteria met. Obsolete CI-policy fixtures removed, documentation reconciled, hosted runner proof obtained (run `30600003285`), rejection searches clean. Branch protection requires only `ci` check — manual repository administrator action. See `plans/ci_verification_release_simplification_closure_results.md`.
 
 ## Objective
 

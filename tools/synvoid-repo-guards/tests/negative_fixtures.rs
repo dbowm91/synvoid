@@ -507,181 +507,8 @@ fn comments_in_strings_do_not_trigger_violations() {
 }
 
 // ===========================================================================
-// CI Policy Guard Negative Fixtures
+// CI Infrastructure Guard Negative Fixtures
 // ===========================================================================
-
-// ---------------------------------------------------------------------------
-// no_release_in_pr_guard: detects --release in PR workflow
-// ---------------------------------------------------------------------------
-
-#[test]
-fn ci_no_release_guard_detects_release_flag() {
-    let tmp = TempDir::new().unwrap();
-    let workflows_dir = tmp.path().join(".github").join("workflows");
-    fs::create_dir_all(&workflows_dir).unwrap();
-
-    fs::write(
-        workflows_dir.join("pr-fast.yml"),
-        "jobs:\n  test:\n    run: cargo test --release\n",
-    )
-    .unwrap();
-
-    let content = fs::read_to_string(workflows_dir.join("pr-fast.yml")).unwrap();
-    let mut violations = Vec::new();
-
-    for (i, line) in content.lines().enumerate() {
-        if line.contains("--release") {
-            let lower = line.to_lowercase();
-            if lower.contains("security") && lower.contains("regression") {
-                continue;
-            }
-            let trimmed = line.trim();
-            if trimmed.starts_with('#') {
-                continue;
-            }
-            violations.push(format!("line {}: --release in PR lane: {}", i + 1, trimmed));
-        }
-    }
-
-    assert!(
-        !violations.is_empty(),
-        "guard should detect --release in PR workflow but found no violations"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// no_release_in_pr_guard: security regression is allowed
-// ---------------------------------------------------------------------------
-
-#[test]
-fn ci_no_release_guard_allows_security_regression() {
-    let tmp = TempDir::new().unwrap();
-    let workflows_dir = tmp.path().join(".github").join("workflows");
-    fs::create_dir_all(&workflows_dir).unwrap();
-
-    fs::write(
-        workflows_dir.join("pr-fast.yml"),
-        "jobs:\n  security-regression:\n    run: cargo test --release security_regression\n",
-    )
-    .unwrap();
-
-    let content = fs::read_to_string(workflows_dir.join("pr-fast.yml")).unwrap();
-    let mut violations = Vec::new();
-
-    for (i, line) in content.lines().enumerate() {
-        if line.contains("--release") {
-            let lower = line.to_lowercase();
-            if lower.contains("security") && lower.contains("regression") {
-                continue;
-            }
-            violations.push(format!("line {}: {}", i + 1, line.trim()));
-        }
-    }
-
-    assert_eq!(
-        violations.len(),
-        0,
-        "security regression should be allowed to use --release but got {} violations",
-        violations.len()
-    );
-}
-
-// ---------------------------------------------------------------------------
-// ci_profile_configured_guard: detects missing [profile.ci]
-// ---------------------------------------------------------------------------
-
-#[test]
-fn ci_profile_guard_detects_missing_profile() {
-    let tmp = TempDir::new().unwrap();
-    fs::write(
-        tmp.path().join("Cargo.toml"),
-        "[package]\nname = \"test\"\nversion = \"0.1.0\"\n\n[profile.release]\nlto = true\n",
-    )
-    .unwrap();
-
-    let content = fs::read_to_string(tmp.path().join("Cargo.toml")).unwrap();
-    assert!(
-        !content.contains("[profile.ci]"),
-        "test setup should not contain [profile.ci]"
-    );
-
-    assert!(
-        !content.contains("[profile.ci]"),
-        "guard should detect missing [profile.ci] but it was found"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// no_lto_in_ci_profile_guard: detects lto = true in CI profile
-// ---------------------------------------------------------------------------
-
-#[test]
-fn ci_no_lto_guard_detects_lto_in_ci() {
-    let tmp = TempDir::new().unwrap();
-    fs::write(
-        tmp.path().join("Cargo.toml"),
-        "[package]\nname = \"test\"\nversion = \"0.1.0\"\n\n[profile.ci]\ninherits = \"dev\"\nlto = true\nopt-level = 1\n",
-    )
-    .unwrap();
-
-    let content = fs::read_to_string(tmp.path().join("Cargo.toml")).unwrap();
-
-    // Extract [profile.ci] section
-    let lines: Vec<&str> = content.lines().collect();
-    let mut in_ci_profile = false;
-    let mut ci_section = String::new();
-
-    for line in &lines {
-        let trimmed = line.trim();
-        if trimmed == "[profile.ci]" {
-            in_ci_profile = true;
-            ci_section.push_str(line);
-            ci_section.push('\n');
-            continue;
-        }
-        if in_ci_profile {
-            if trimmed.starts_with('[') && trimmed != "[profile.ci]" {
-                break;
-            }
-            ci_section.push_str(line);
-            ci_section.push('\n');
-        }
-    }
-
-    let has_lto = ci_section.contains("lto")
-        && (ci_section.contains("lto = true")
-            || ci_section.contains("lto=true")
-            || ci_section.contains("lto = \"fat\"")
-            || ci_section.contains("lto=\"fat\""));
-
-    assert!(
-        has_lto,
-        "guard should detect lto = true in [profile.ci] but it was not found in:\n{}",
-        ci_section
-    );
-}
-
-// ---------------------------------------------------------------------------
-// lane_manifest_guard: detects invalid TOML
-// ---------------------------------------------------------------------------
-
-#[test]
-fn lane_manifest_guard_detects_invalid_toml() {
-    let tmp = TempDir::new().unwrap();
-    fs::write(
-        tmp.path().join("testing.toml"),
-        "[lanes]\npr_fast = { invalid toml content\n",
-    )
-    .unwrap();
-
-    let content = fs::read_to_string(tmp.path().join("testing.toml")).unwrap();
-    let result = content.parse::<toml::Value>();
-
-    assert!(
-        result.is_err(),
-        "guard should detect invalid TOML but parsing succeeded"
-    );
-}
 
 // ---------------------------------------------------------------------------
 // new_root_test_ownership_guard: detects unowned test files
@@ -693,18 +520,15 @@ fn ownership_guard_detects_unowned_test_file() {
     let tests_dir = tmp.path().join("tests");
     fs::create_dir_all(&tests_dir).unwrap();
 
-    // Create an ownership manifest with one entry
     fs::write(
         tests_dir.join("OWNERSHIP.toml"),
         "[[test]]\nname = \"existing_test\"\nclass = \"static_policy\"\nowners = []\nreason = \"test\"\n",
     )
     .unwrap();
 
-    // Create two .rs files: one owned, one not
     fs::write(tests_dir.join("existing_test.rs"), "# test\n").unwrap();
     fs::write(tests_dir.join("new_untracked.rs"), "# test\n").unwrap();
 
-    // Parse ownership manifest
     let content = fs::read_to_string(tests_dir.join("OWNERSHIP.toml")).unwrap();
     let manifest: toml::Value = content.parse().unwrap();
     let mut owned = std::collections::HashSet::new();
@@ -716,7 +540,6 @@ fn ownership_guard_detects_unowned_test_file() {
         }
     }
 
-    // Collect unowned files
     let mut unowned = Vec::new();
     if let Ok(entries) = fs::read_dir(&tests_dir) {
         for entry in entries.flatten() {
@@ -745,12 +568,6 @@ fn ownership_guard_detects_unowned_test_file() {
     );
 }
 
-// ===========================================================================
-// CI Lane Consistency Guard Negative Fixtures
-// ===========================================================================
-// File-Exists Guard Negative Fixtures
-// ===========================================================================
-
 // ---------------------------------------------------------------------------
 // xtask_exists_guard: detects missing xtask crate
 // ---------------------------------------------------------------------------
@@ -758,106 +575,6 @@ fn ownership_guard_detects_unowned_test_file() {
 #[test]
 fn xtask_exists_guard_detects_missing_xtask() {
     let tmp = TempDir::new().unwrap();
-    // No tools/xtask/Cargo.toml created
     let xtask = tmp.path().join("tools").join("xtask").join("Cargo.toml");
     assert!(!xtask.exists(), "test setup: xtask should not exist");
-}
-
-// ---------------------------------------------------------------------------
-// performance_budgets_exist_guard: detects missing budgets doc
-// ---------------------------------------------------------------------------
-
-#[test]
-fn performance_budgets_guard_detects_missing_doc() {
-    let tmp = TempDir::new().unwrap();
-    // Create a doc that's missing required sections
-    let doc_dir = tmp.path().join("docs").join("testing");
-    fs::create_dir_all(&doc_dir).unwrap();
-    fs::write(
-        doc_dir.join("performance-budgets.md"),
-        "# Budgets\n\nSome content without required sections.\n",
-    )
-    .unwrap();
-
-    let content = fs::read_to_string(doc_dir.join("performance-budgets.md")).unwrap();
-    let required_sections = ["Budget", "Threshold"];
-    let mut missing = Vec::new();
-    for section in &required_sections {
-        if !content.to_lowercase().contains(&section.to_lowercase()) {
-            missing.push(*section);
-        }
-    }
-
-    assert!(
-        !missing.is_empty(),
-        "guard should detect missing Budget/Threshold sections but found none"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// flaky_test_policy_exist_guard: detects missing policy doc
-// ---------------------------------------------------------------------------
-
-#[test]
-fn flaky_test_policy_guard_detects_missing_doc() {
-    let tmp = TempDir::new().unwrap();
-    let doc_dir = tmp.path().join("docs").join("testing");
-    fs::create_dir_all(&doc_dir).unwrap();
-    fs::write(
-        doc_dir.join("flaky-test-policy.md"),
-        "# Policy\n\nSome content without required sections.\n",
-    )
-    .unwrap();
-
-    let content = fs::read_to_string(doc_dir.join("flaky-test-policy.md")).unwrap();
-    let required_sections = ["Quarantine", "Flaky"];
-    let mut missing = Vec::new();
-    for section in &required_sections {
-        if !content.to_lowercase().contains(&section.to_lowercase()) {
-            missing.push(*section);
-        }
-    }
-
-    assert!(
-        !missing.is_empty(),
-        "guard should detect missing Quarantine/Flaky sections but found none"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// coverage_matrix_exist_guard: detects missing matrix doc
-// ---------------------------------------------------------------------------
-
-#[test]
-fn coverage_matrix_guard_detects_missing_doc() {
-    let tmp = TempDir::new().unwrap();
-    // No docs/testing/coverage-equivalence-matrix.md created
-    let doc = tmp
-        .path()
-        .join("docs")
-        .join("testing")
-        .join("coverage-equivalence-matrix.md");
-    assert!(
-        !doc.exists(),
-        "test setup: coverage matrix doc should not exist"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// operating_guide_exist_guard: detects missing guide doc
-// ---------------------------------------------------------------------------
-
-#[test]
-fn operating_guide_guard_detects_missing_doc() {
-    let tmp = TempDir::new().unwrap();
-    // No docs/testing/operating-guide.md created
-    let doc = tmp
-        .path()
-        .join("docs")
-        .join("testing")
-        .join("operating-guide.md");
-    assert!(
-        !doc.exists(),
-        "test setup: operating guide doc should not exist"
-    );
 }

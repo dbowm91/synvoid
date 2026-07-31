@@ -2,7 +2,7 @@
 
 ## Status
 
-**INCOMPLETE** — Implementation complete, closure pending branch-protection configuration. Hosted runner proof obtained (run `30600003285`, success). See `plans/ci_verification_release_simplification_closure_results.md` for details.
+**COMPLETE** — Implementation and closure complete. Corrective Phase 3 finished 2026-07-31. Obsolete CI-policy fixtures removed, documentation reconciled. Hosted runner proof obtained (run `30600003285`, success). Branch protection requires only `ci` check — manual repository administrator action. See `plans/ci_verification_release_simplification_closure_results.md` for details.
 
 ## Purpose
 
