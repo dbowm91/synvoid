@@ -73,9 +73,15 @@
 
 ## Hosted Runner Proof
 
-**Status**: PENDING — requires push to `main` and GitHub Actions observation.
+**Status**: **COMPLETE**
 
-The workflow file `.github/workflows/ci.yml` has been inspected and confirmed correct. The hosted runner proof will be obtained when this commit is pushed.
+- Workflow run ID: `30600003285`
+- Run URL: https://github.com/dbowm91/synvoid/actions/runs/30600003285
+- Commit SHA: `27c296909128f99afc39abedb722fdcd01c147ec` (closure changes)
+- Conclusion: **success**
+- Only the intended routine workflow (`CI`) started
+- No nightly, comprehensive, release, platform, or tag workflow started
+- Final required job (`ci`) succeeded
 
 ## Branch-Protection Reconciliation
 
@@ -169,7 +175,7 @@ All 8 rejection searches passed. No active operational references to deleted CI 
 | `verify-full` fails at `nextest-all` (30 pre-existing test failures) | `DEFERRED_PRODUCT_TESTING` | Pre-existing WAF wave10 and proxy integration test failures; not caused by CI simplification |
 | `verify-release` fails (33 crates missing `description` field) | `NONBLOCKING_DOCUMENTATION` | Pre-existing metadata gaps; not caused by CI simplification |
 | Branch protection requires manual GitHub configuration | `BLOCKING_SETTINGS` | Must set required check to `ci` in repository settings |
-| Hosted CI run not yet observed | `BLOCKING_SETTINGS` | Requires push and GitHub Actions confirmation |
+| Hosted CI run not yet observed | ~~`BLOCKING_SETTINGS`~~ | **RESOLVED** — run `30600003285` succeeded |
 | `scripts/verify_architecture.sh` is a local-only tool | `HISTORICAL_ONLY` | Updated to match current test inventory; not used by CI |
 | Historical reports reference `profile-matrix` job | `HISTORICAL_ONLY` | `architecture/phase_8_verification_report.md`, `CHANGELOG.md` — frozen snapshots |
 | `src/admin/mod.rs:940` unused_mut warning | `NONBLOCKING_DOCUMENTATION` | Non-blocking clippy warning in product code |

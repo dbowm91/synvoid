@@ -2,7 +2,7 @@
 
 ## Status
 
-**INCOMPLETE** — Local verification passes, rejection searches clean, documentation updated. Pending: hosted runner proof (requires push) and branch-protection configuration. See `plans/ci_verification_release_simplification_closure_results.md`.
+**INCOMPLETE** — Local verification passes, rejection searches clean, documentation updated, hosted runner proof obtained (run `30600003285`, success). Pending: branch-protection configuration. See `plans/ci_verification_release_simplification_closure_results.md`.
 
 ## Objective
 

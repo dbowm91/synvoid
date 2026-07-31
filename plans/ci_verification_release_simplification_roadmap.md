@@ -2,7 +2,7 @@
 
 ## Status
 
-**INCOMPLETE** — Implementation complete, closure pending branch-protection configuration and hosted runner proof. See `plans/ci_verification_release_simplification_closure_results.md` for details.
+**INCOMPLETE** — Implementation complete, closure pending branch-protection configuration. Hosted runner proof obtained (run `30600003285`, success). See `plans/ci_verification_release_simplification_closure_results.md` for details.
 
 ## Purpose
 
