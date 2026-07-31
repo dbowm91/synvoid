@@ -3,9 +3,10 @@
 ## Review Metadata
 
 - **Reviewed commit SHA**: `3c3b64180fd75d3886ff4342cf1a3d7cc5d33eba` (initial review)
-- **Corrective Phase 3 commit SHA**: TBD (pending final commit)
+- **Corrective Phase 3 commit SHA**: `33e400025c2d14a9577a4fc5a1d562b89dd750a5`
 - **Review date**: 2026-07-31
 - **Corrective Phase 3 date**: 2026-07-31
+- **Corrective Phase 3 hosted run**: `30640775286` (success, ~15.5min cold cache)
 - **Reviewer**: opencode agent (eggpool/mimo-v2.5/opencode-go)
 - **Roadmap**: `plans/ci_verification_release_simplification_roadmap.md`
 - **Closure plan**: `plans/ci_simplification_phase_05_operational_closure.md`
@@ -223,3 +224,14 @@ Retained negative fixtures prove current product/security boundaries: facade iso
 - `docs/testing/verification-contract.md`: Removed stale "caught on main merge" / "caught nightly" language; removed `select-affected.py` reference; updated "release lane" to "release verification"; corrected `cargo xtask verify` status from "will be implemented" to current.
 - `architecture/release_profile_matrix.md`: Updated Platform Coverage table to replace stale CI job names (`build` (matrix), `alpine-test`, `freebsd-test`, `platform-compat`) with current verification model.
 - `docs/PLATFORM_SUPPORT.md`: Corrected "Each platform is verified in CI" to distinguish routine CI (Linux only) from manual local (all platforms).
+
+### Hosted proof (Corrective Phase 3)
+
+- Run ID: `30640775286`
+- Commit SHA: `33e400025c2d14a9577a4fc5a1d562b89dd750a5`
+- Trigger: `push` to `main`
+- Workflows started: 1 (`CI`)
+- Jobs started: 1 (`ci`)
+- Conclusion: **success**
+- Duration: ~15.5 minutes (cold cache; warm-cache target is ≤10 minutes)
+- Note: Cold-cache run — first push after fixture deletion causes partial recompilation. Subsequent pushes will hit warm cache.
