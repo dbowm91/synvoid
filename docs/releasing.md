@@ -127,7 +127,7 @@ The requirement is validated using cargo metadata's parsed `req` field, not subs
 cargo xtask verify-release
 ```
 
-This runs full verification, package metadata validation, package content inspection, and pre-publication package assembly. It never publishes.
+This runs full verification, package metadata validation, package content inspection, pre-publication package assembly, and a bounded packaged-source check (for crates whose deps are all resolvable). It never publishes.
 
 **Dirty-tree policy**: `verify-release` **fails by default** on a dirty working tree. Use `--allow-dirty` to override for local experimentation. When used, a prominent warning is printed and package output is NOT release evidence.
 

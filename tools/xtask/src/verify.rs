@@ -877,6 +877,98 @@ pub fn run_verify_release(
         println!();
     }
 
+    // --- Phase 3b: Bounded packaged-source check ---
+    // For crates whose dependencies are all resolvable from crates.io (no
+    // unpublished internal path deps), run `cargo package --verify` to validate
+    // the packaged source builds correctly. Crates with unpublished internal
+    // deps are skipped — their correctness is ensured by the full source
+    // verification in Phase 1.
+    if !json_output {
+        println!("  Packaged-source check (feasible crates):");
+    }
+    let mut source_check_skipped: Vec<String> = Vec::new();
+    let mut source_check_passed: Vec<String> = Vec::new();
+    let mut source_check_failed: Vec<String> = Vec::new();
+
+    for (name, _manifest_dir) in &publishable {
+        // Check if all path deps are other publishable crates (resolvable
+        // after sequential publication) or external (already on crates.io).
+        let pkg = metadata["packages"]
+            .as_array()
+            .and_then(|pkgs| pkgs.iter().find(|p| p["name"].as_str() == Some(name)));
+        let has_unpublished_path_dep = pkg
+            .and_then(|p| p["dependencies"].as_array())
+            .map(|deps| {
+                deps.iter().any(|d| {
+                    if d["path"].as_str().is_some() {
+                        // A path dep is "unpublished" if it's not in the
+                        // publishable set (would not resolve from crates.io).
+                        !publishable
+                            .iter()
+                            .any(|(pn, _)| pn == d["name"].as_str().unwrap_or(""))
+                    } else {
+                        false
+                    }
+                })
+            })
+            .unwrap_or(false);
+
+        if has_unpublished_path_dep {
+            source_check_skipped.push(name.clone());
+            continue;
+        }
+
+        let mut args = vec!["package", "--verify", "-p", name];
+        if allow_dirty {
+            args.push("--allow-dirty");
+        }
+        let output = Command::new("cargo")
+            .args(&args)
+            .current_dir(&workspace_root)
+            .output();
+
+        match output {
+            Ok(out) if out.status.success() => {
+                source_check_passed.push(name.clone());
+            }
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                source_check_failed.push(format!("{name}: {stderr}"));
+            }
+            Err(e) => {
+                source_check_failed.push(format!("{name}: {e}"));
+            }
+        }
+    }
+
+    if !json_output {
+        if !source_check_passed.is_empty() {
+            println!(
+                "    ✓ Packaged-source verified: {}",
+                source_check_passed.join(", ")
+            );
+        }
+        if !source_check_skipped.is_empty() {
+            println!(
+                "    ⊘ Skipped (unpublished internal deps): {}",
+                source_check_skipped.join(", ")
+            );
+        }
+        if !source_check_failed.is_empty() {
+            for fail in &source_check_failed {
+                eprintln!("    ✗ {fail}");
+            }
+        }
+        println!();
+    }
+
+    if !source_check_failed.is_empty() {
+        return Err(format!(
+            "{} packaged-source check(s) failed",
+            source_check_failed.len()
+        ));
+    }
+
     // --- Phase 4: Print manual publication order ---
     if !json_output {
         println!("═══════════════════════════════════════════════════════════");

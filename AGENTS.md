@@ -95,6 +95,12 @@ cargo xtask verify-release     # Release verification (fails on dirty tree; --al
 cargo xtask test package synvoid-dns  # Test a specific package
 cargo xtask test guards        # All architectural guard tests
 
+# Stress/endurance (not in verify-full; run directly)
+cargo test -p synvoid-dns --test dns_stress --profile ci
+cargo test -p synvoid-dns --test dns_interop_authoritative --profile ci
+cargo test --test worker_supervision_control_flow --profile ci -- --test-threads=1
+cargo test --test fault_injection_test --profile ci
+
 # Options:
 #   --dry-run    Print commands without executing
 #   --json       Machine-readable JSON output
