@@ -3,16 +3,18 @@ name = "synvoid-app-handlers"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
+repository.workspace = true
+description = "Application request handlers"
 
 [lib]
 path = "src/lib.rs"
 
 [dependencies]
-synvoid-core = { path = "../synvoid-core" }
-synvoid-config = { path = "../synvoid-config" }
-synvoid-serverless = { path = "../synvoid-serverless" }
-synvoid-plugin-runtime = { path = "../synvoid-plugin-runtime" }
-synvoid-http-client = { path = "../synvoid-http-client" }
+synvoid-core = { path = "../synvoid-core" , version = "0.1" }
+synvoid-config = { path = "../synvoid-config" , version = "0.1" }
+synvoid-serverless = { path = "../synvoid-serverless" , version = "0.1" }
+synvoid-plugin-runtime = { path = "../synvoid-plugin-runtime" , version = "0.1" }
+synvoid-http-client = { path = "../synvoid-http-client" , version = "0.1" }
 bytes = "1"
 http = "1"
 http-body-util = "0.1"

@@ -21,6 +21,8 @@ All gates must pass before cutting the RC tag.
 | Full local verification | `cargo xtask verify-full` | [ ] |
 | Release verification | `cargo xtask verify-release` | [ ] |
 
+Note: `verify-release` fails on dirty working trees by default. Ensure the tree is clean before running.
+
 ### Security & Dependencies
 
 | Check | Command | Status |
@@ -48,6 +50,8 @@ All gates must pass before cutting the RC tag.
 | Stabilization period (min 3 days) | [ ] | |
 | All gates re-pass after stabilization | [ ] | |
 | Final CHANGELOG entry committed | [ ] | |
+| Working tree is clean | [ ] | Dirty trees block `verify-release` |
+| Internal deps use compatible semver (not `*`) | [ ] | |
 | `cargo xtask verify-release` passes | [ ] | |
 | All crates published to crates.io in dependency order | [ ] | |
 | Crates.io availability verified for each published crate | [ ] | |

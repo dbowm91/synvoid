@@ -3,7 +3,8 @@ name = "pqc"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
-description = "Post-Quantum Cryptography utilities for SynVoid"
+repository.workspace = true
+description = "Post-quantum cryptography primitives"
 
 [dependencies]
 aws-lc-rs = { version = "1", features = ["unstable"] }

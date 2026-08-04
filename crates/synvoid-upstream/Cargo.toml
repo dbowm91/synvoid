@@ -3,10 +3,12 @@ name = "synvoid-upstream"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
+repository.workspace = true
+description = "Upstream server selection and health checking"
 
 [dependencies]
-synvoid-utils = { path = "../synvoid-utils" }
-synvoid-http-client = { path = "../synvoid-http-client" }
+synvoid-utils = { path = "../synvoid-utils" , version = "0.1" }
+synvoid-http-client = { path = "../synvoid-http-client" , version = "0.1" }
 parking_lot = "0.12"
 dashmap = "7.0.0-rc2"
 rand = "0.9"

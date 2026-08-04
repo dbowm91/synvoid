@@ -3,6 +3,8 @@ name = "synvoid-challenge"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
+repository.workspace = true
+description = "Browser challenge and proof-of-work system"
 
 [dependencies]
 parking_lot = "0.12"
@@ -12,6 +14,6 @@ sha2 = "0.10"
 base64 = "0.22"
 hex = "0.4"
 subtle = "2"
-synvoid-theme = { path = "../synvoid-theme" }
-synvoid-utils = { path = "../synvoid-utils", features = ["buffer"] }
+synvoid-theme = { path = "../synvoid-theme" , version = "0.1" }
+synvoid-utils = { path = "../synvoid-utils", features = ["buffer"] , version = "0.1" }
 tracing = "0.1"

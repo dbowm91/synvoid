@@ -3,18 +3,20 @@ name = "synvoid-dns"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
+repository.workspace = true
+description = "DNS server with DNSSEC and dual-mode architecture"
 
 [features]
 default = []
 mesh = ["dep:synvoid-mesh", "synvoid-mesh/mesh"]
 
 [dependencies]
-synvoid-core = { path = "../synvoid-core" }
-synvoid-mesh = { path = "../synvoid-mesh", optional = true }
-synvoid-config = { path = "../synvoid-config", features = ["dns"] }
-synvoid-tls = { path = "../synvoid-tls", features = ["dns"] }
-synvoid-utils = { path = "../synvoid-utils" }
-synvoid-geoip = { path = "../synvoid-geoip" }
+synvoid-core = { path = "../synvoid-core" , version = "0.1" }
+synvoid-mesh = { path = "../synvoid-mesh", optional = true , version = "0.1" }
+synvoid-config = { path = "../synvoid-config", features = ["dns"] , version = "0.1" }
+synvoid-tls = { path = "../synvoid-tls", features = ["dns"] , version = "0.1" }
+synvoid-utils = { path = "../synvoid-utils" , version = "0.1" }
+synvoid-geoip = { path = "../synvoid-geoip" , version = "0.1" }
 hickory-proto = { version = "0.26", features = ["dnssec-ring"] }
 hickory-resolver = { version = "0.26", features = ["system-config", "recursor", "dnssec-ring"] }
 tokio = { version = "1", features = ["rt", "net", "time", "sync", "macros", "io-util", "fs"] }

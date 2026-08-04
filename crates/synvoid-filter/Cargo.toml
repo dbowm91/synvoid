@@ -3,6 +3,7 @@ name = "synvoid-filter"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
-description = "Protocol filtering traits and generic filter engine for TCP/UDP proxy"
+repository.workspace = true
+description = "Request filtering and transformation primitives"
 
 [dependencies]

@@ -3,16 +3,18 @@ name = "synvoid-http3"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
+repository.workspace = true
+description = "HTTP/3 QUIC transport integration"
 
 [dependencies]
-synvoid-core = { path = "../synvoid-core" }
-synvoid-config = { path = "../synvoid-config" }
-synvoid-http = { path = "../synvoid-http" }
-synvoid-http-client = { path = "../synvoid-http-client" }
-synvoid-proxy = { path = "../synvoid-proxy" }
-synvoid-waf = { path = "../synvoid-waf" }
-synvoid-metrics = { path = "../synvoid-metrics" }
-synvoid-platform = { path = "../synvoid-platform" }
+synvoid-core = { path = "../synvoid-core" , version = "0.1" }
+synvoid-config = { path = "../synvoid-config" , version = "0.1" }
+synvoid-http = { path = "../synvoid-http" , version = "0.1" }
+synvoid-http-client = { path = "../synvoid-http-client" , version = "0.1" }
+synvoid-proxy = { path = "../synvoid-proxy" , version = "0.1" }
+synvoid-waf = { path = "../synvoid-waf" , version = "0.1" }
+synvoid-metrics = { path = "../synvoid-metrics" , version = "0.1" }
+synvoid-platform = { path = "../synvoid-platform" , version = "0.1" }
 quinn = { version = "0.11", features = ["runtime-tokio"] }
 h3 = "0.0.8"
 h3-quinn = "0.0.10"

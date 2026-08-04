@@ -3,17 +3,19 @@ name = "synvoid-waf"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
+repository.workspace = true
+description = "Web Application Firewall rule engine"
 
 [dev-dependencies]
 proptest = "1.5"
 proptest-derive = "0.4"
-synvoid-mesh = { path = "../synvoid-mesh", features = ["mesh"] }
+synvoid-mesh = { path = "../synvoid-mesh", features = ["mesh"] , version = "0.1" }
 
 [dependencies]
-synvoid-core = { path = "../synvoid-core" }
-synvoid-utils = { path = "../synvoid-utils", features = ["buffer"] }
-synvoid-challenge = { path = "../synvoid-challenge" }
-synvoid-config = { path = "../synvoid-config" }
+synvoid-core = { path = "../synvoid-core" , version = "0.1" }
+synvoid-utils = { path = "../synvoid-utils", features = ["buffer"] , version = "0.1" }
+synvoid-challenge = { path = "../synvoid-challenge" , version = "0.1" }
+synvoid-config = { path = "../synvoid-config" , version = "0.1" }
 serde = { version = "1", features = ["derive"] }
 parking_lot = "0.12"
 regex = "1"

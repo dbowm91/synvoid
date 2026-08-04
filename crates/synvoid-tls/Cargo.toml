@@ -3,13 +3,15 @@ name = "synvoid-tls"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
+repository.workspace = true
+description = "TLS termination and ACME certificate management"
 
 [features]
 default = []
 dns = []
 
 [dependencies]
-synvoid-config = { path = "../synvoid-config" }
+synvoid-config = { path = "../synvoid-config" , version = "0.1" }
 rustls = { version = "0.23", features = ["prefer-post-quantum", "aws-lc-rs"] }
 rustls-pki-types = "1"
 tokio-rustls = "0.26"

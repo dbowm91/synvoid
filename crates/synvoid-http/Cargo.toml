@@ -3,28 +3,30 @@ name = "synvoid-http"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
+repository.workspace = true
+description = "HTTP/1 and HTTP/3 server pipeline"
 
 [features]
 mesh = ["synvoid-config/mesh", "dep:synvoid-mesh", "synvoid-mesh/mesh"]
 dns = []
 
 [dependencies]
-synvoid-core = { path = "../synvoid-core" }
-synvoid-config = { path = "../synvoid-config" }
-synvoid-metrics = { path = "../synvoid-metrics" }
-synvoid-waf = { path = "../synvoid-waf" }
-synvoid-challenge = { path = "../synvoid-challenge" }
-synvoid-http-client = { path = "../synvoid-http-client" }
-synvoid-app-server = { path = "../synvoid-app-server" }
-synvoid-app-handlers = { path = "../synvoid-app-handlers" }
-synvoid-proxy = { path = "../synvoid-proxy" }
-synvoid-upload = { path = "../synvoid-upload" }
-synvoid-plugin-runtime = { path = "../synvoid-plugin-runtime" }
-synvoid-utils = { path = "../synvoid-utils" }
-synvoid-mesh = { path = "../synvoid-mesh", optional = true }
-synvoid-serverless = { path = "../synvoid-serverless" }
-synvoid-static-files = { path = "../synvoid-static-files" }
-synvoid-ipc = { path = "../synvoid-ipc" }
+synvoid-core = { path = "../synvoid-core" , version = "0.1" }
+synvoid-config = { path = "../synvoid-config" , version = "0.1" }
+synvoid-metrics = { path = "../synvoid-metrics" , version = "0.1" }
+synvoid-waf = { path = "../synvoid-waf" , version = "0.1" }
+synvoid-challenge = { path = "../synvoid-challenge" , version = "0.1" }
+synvoid-http-client = { path = "../synvoid-http-client" , version = "0.1" }
+synvoid-app-server = { path = "../synvoid-app-server" , version = "0.1" }
+synvoid-app-handlers = { path = "../synvoid-app-handlers" , version = "0.1" }
+synvoid-proxy = { path = "../synvoid-proxy" , version = "0.1" }
+synvoid-upload = { path = "../synvoid-upload" , version = "0.1" }
+synvoid-plugin-runtime = { path = "../synvoid-plugin-runtime" , version = "0.1" }
+synvoid-utils = { path = "../synvoid-utils" , version = "0.1" }
+synvoid-mesh = { path = "../synvoid-mesh", optional = true , version = "0.1" }
+synvoid-serverless = { path = "../synvoid-serverless" , version = "0.1" }
+synvoid-static-files = { path = "../synvoid-static-files" , version = "0.1" }
+synvoid-ipc = { path = "../synvoid-ipc" , version = "0.1" }
 ahash = "0.8"
 anyhow = "1"
 bytes = "1"

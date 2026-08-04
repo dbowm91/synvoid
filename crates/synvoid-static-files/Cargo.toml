@@ -3,6 +3,8 @@ name = "synvoid-static-files"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
+repository.workspace = true
+description = "Static file serving and directory listings"
 
 [lib]
 path = "src/lib.rs"
@@ -36,8 +38,8 @@ sha2 = "0.10"
 hex = "0.4"
 
 # SynVoid crates
-synvoid-config = { path = "../synvoid-config" }
-synvoid-ipc = { path = "../synvoid-ipc" }
-synvoid-theme = { path = "../synvoid-theme" }
-synvoid-utils = { path = "../synvoid-utils" }
-synvoid-app-handlers = { path = "../synvoid-app-handlers" }
+synvoid-config = { path = "../synvoid-config" , version = "0.1" }
+synvoid-ipc = { path = "../synvoid-ipc" , version = "0.1" }
+synvoid-theme = { path = "../synvoid-theme" , version = "0.1" }
+synvoid-utils = { path = "../synvoid-utils" , version = "0.1" }
+synvoid-app-handlers = { path = "../synvoid-app-handlers" , version = "0.1" }

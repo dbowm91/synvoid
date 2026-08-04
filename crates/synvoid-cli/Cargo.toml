@@ -3,7 +3,8 @@ name = "synvoid-cli"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
-description = "CLI argument parsing for SynVoid"
+repository.workspace = true
+description = "Command-line interface for SynVoid"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

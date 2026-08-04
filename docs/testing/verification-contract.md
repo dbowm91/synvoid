@@ -1,7 +1,7 @@
 # Verification Contract
 
 > Frozen: 2026-07-29 | Phase 1 of CI Simplification Roadmap
-> Updated: 2026-07-31 | Corrective Phase 3 — residual cleanup and operational closure
+> Updated: 2026-08-04 | Phase 2 — Full and Release Contract Correction
 
 This document is the single source of truth for what SynVoid CI must verify, at what frequency, and with what commands. It replaces the four-lane system as the authoritative verification specification.
 
@@ -80,60 +80,45 @@ The routine contract runs only on Linux x86_64 with default features. Cross-plat
 Full local verification is manually invoked before risky merges and during focused subsystem work. It is not automated in CI.
 
 ```bash
-# Format + lint
+cargo xtask verify-full
+```
+
+Or equivalently, the raw commands (7 Cargo invocations):
+
+```bash
+# Format + lint preflight (shared with routine, cheap)
 cargo fmt --all -- --check
 cargo clippy --profile ci --all-targets -- -D warnings
 
-# All feature profile compilations
-cargo check --no-default-features --profile ci
+# Feature profile compilation
 cargo check --no-default-features --features mesh
 cargo check --no-default-features --features dns
 cargo check --no-default-features --features mesh,dns
 
-# Full workspace tests (nextest preferred)
+# Broad deterministic workspace tests (single invocation)
 cargo nextest run --workspace --cargo-profile ci --profile ci --exclude synvoid-fuzz
 
 # Doctests
 cargo test --workspace --doc --profile ci
-
-# Domain-specific suites
-cargo nextest run -p synvoid-dns --cargo-profile ci --profile ci
-cargo nextest run -p synvoid-plugin-runtime --cargo-profile ci --profile ci
-
-# All guard tests (repo-guards crate + root guards)
-cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci
-cargo nextest run --cargo-profile ci --profile ci \
-  --test boundary_composition_guard --test lifecycle_task_guard \
-  --test plugin_guard --test cli_admin_guard --test security_guard \
-  --test root_facade_boundary_guard --test mesh_id_boundary_guard \
-  --test admin_mutation_response_guard --test admin_mutation_blocklist \
-  --test abi_memory_boundary_guard --test root_test_ownership_guard \
-  --test worker_mesh_supervision_boundary_guard --test mesh_task_ownership_guard \
-  --features mesh
-cargo nextest run -p synvoid-core --cargo-profile ci --profile ci \
-  --test admin_auth_boundary --test mesh_admin_edge_cases
-
-# Failure injection
-cargo test --test failure_injection --profile ci
-
-# Security regression (single-threaded)
-cargo test --test security_regression --profile ci -- --test-threads=1
 ```
 
 ### What it proves (beyond routine)
 
 | Property | Command |
 |----------|---------|
+| Mesh-only feature gate compiles cleanly | `cargo check --no-default-features --features mesh` |
+| DNS-only feature gate compiles cleanly | `cargo check --no-default-features --features dns` |
+| Combined mesh+dns feature gate compiles cleanly | `cargo check --no-default-features --features mesh,dns` |
 | Full workspace unit/integration behavior | `cargo nextest run --workspace` |
 | Documentation compilation | `cargo test --workspace --doc` |
-| DNS full suite correctness | `cargo nextest run -p synvoid-dns` |
-| Plugin runtime full suite correctness | `cargo nextest run -p synvoid-plugin-runtime` |
-| Mesh feature compilation | Feature profile checks |
-| All-features compilation (via clippy) | `cargo clippy --all-targets` |
+
+### No duplicate test execution
+
+`verify-full` shares only the cheap format/lint preflight with `verify`. It does NOT re-run routine test binaries. The broad `nextest --workspace` invocation covers all workspace tests including guard tests, security regression, DNS, plugin-runtime, honeypot, and tarpit in a single pass.
 
 ## 3. Release Verification
 
-Release verification includes routine + full local + additional release-specific checks and package inspection. It is invoked before version tags and production artifact publication.
+Release verification includes full local verification plus release-specific checks and package inspection. It is invoked before version tags and production artifact publication.
 
 ```bash
 cargo xtask verify-release
@@ -142,7 +127,6 @@ cargo xtask verify-release
 Or equivalently, the raw sequence:
 
 ```bash
-# Routine verification (all commands above)
 # Full local verification (all commands above)
 
 # All-features clippy (catches eBPF and other feature-gated warnings)
@@ -150,27 +134,48 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 # Release profile compilation
 cargo test --lib --no-run --release
-cargo nextest run --workspace --release --exclude synvoid-fuzz
 
-# Doctests in release mode
-cargo test --workspace --doc --release
-
-# Package metadata validation (description, license fields)
-# Package content inspection (cargo package --list for each publishable crate)
-# Dry-run packaging (cargo publish --dry-run for each publishable crate in dependency order)
+# Package metadata validation (description, license, readme)
+# Dependency version validation (compatible semver, no * unless allowlisted)
+# Package content inspection (cargo package --list, path-aware rules)
+# Pre-publication package assembly (cargo package --no-verify)
+# Manual publication order printed
 ```
+
+### Dirty-tree policy
+
+`verify-release` **fails by default** on a dirty working tree. Use `--allow-dirty` to override for local experimentation. When `--allow-dirty` is used:
+- A prominent warning is printed
+- Package output is NOT release evidence
+- All other validation behavior is unchanged
 
 ### What it proves (beyond full local)
 
 | Property | Command |
 |----------|---------|
-| Release-mode correctness | `cargo nextest run --release` |
+| Release-mode correctness | `cargo test --lib --no-run --release` |
 | All-features lint correctness | `cargo clippy --all-features` |
 | Package metadata validity | Metadata validation per publishable crate |
+| Dependency version compatibility | cargo metadata `req` field validation |
 | Package file lists | `cargo package --list` per publishable crate |
-| Publish metadata validity | `cargo publish --dry-run` per publishable crate |
-| Internal dependency version specs | Path deps use `*` version |
-| Clean working tree | `git status --porcelain` check |
+| Pre-publication package assembly | `cargo package --no-verify` per publishable crate |
+| Clean working tree | `git status --porcelain` check (fail by default) |
+
+### Publication incapability
+
+The release verifier **cannot** invoke `cargo publish`. All cargo invocations are:
+- `cargo metadata` (read-only)
+- `cargo package --list` (inspection)
+- `cargo package --no-verify` (assembly without registry resolution)
+
+Actual publication remains manual:
+
+```bash
+cargo publish --dry-run -p <crate>  # per-crate, after predecessors are on crates.io
+cargo publish -p <crate>            # actual publication
+```
+
+See [`docs/releasing.md`](../releasing.md) for the full manual publication procedure.
 
 ### What it deliberately omits
 
@@ -205,7 +210,6 @@ Every current CI command classified by product property and routine eligibility:
 | Mesh-only compile | `cargo check --no-default-features --features mesh` | No | Full local |
 | DNS-only compile | `cargo check --no-default-features --features dns` | No | Full local |
 | Full mesh+dns compile | `cargo check --no-default-features --features mesh,dns` | No | Full local |
-| Default compile | `cargo check` | No | Full local |
 | Repo-guards crate | `cargo nextest run -p synvoid-repo-guards` | Yes | Keep in routine |
 | Security regression | `cargo test --test security_regression --profile ci --test-threads=1` | Yes | Keep in routine |
 | 13 root guard tests | `cargo nextest run ... root-guards` (consolidated) | Yes | Keep in routine |
@@ -214,22 +218,12 @@ Every current CI command classified by product property and routine eligibility:
 | Root test ownership | Included in root-guards consolidation | Yes | Keep in routine |
 | Full workspace tests | `cargo nextest run --workspace --exclude synvoid-fuzz` | No | Full local |
 | Doctests | `cargo test --workspace --doc` | No | Full local |
-| DNS full suite | `cargo nextest run -p synvoid-dns` | No | Full local |
-| Plugin runtime full | `cargo nextest run -p synvoid-plugin-runtime` | No | Full local |
-| DNS unsafe check | `grep -r "unsafe {" crates/synvoid-dns/src/` | No | Full local (covered by repo-guards) |
-| Forbidden imports | `python scripts/check_imports.py` | No | Full local (covered by repo-guards) |
+| DNS full suite | `cargo nextest run -p synvoid-dns` | No | Full local (via nextest --workspace) |
+| Plugin runtime full | `cargo nextest run -p synvoid-plugin-runtime` | No | Full local (via nextest --workspace) |
 | Profile matrix (5 variants) | `cargo check <features>` | No | Full local |
-| Documentation build | `cargo doc --no-deps --release` | No | Full local |
 | Security audit | `cargo audit` | No | Full local or nightly |
 | Dependency audit | `cargo deny check` | No | Full local or nightly |
 | Cross-platform builds | `cross build --target <target> --release` | No | Release only |
-| Cross-platform tests | `cargo nextest run --target <target>` | No | Release only |
-| Alpine/musl test | `cargo build --release && cargo test --release` | No | Nightly |
-| FreeBSD test | `cargo build --release && cargo test --release` | No | Nightly |
-| Platform compat check | `cargo check --tests --target <target>` | No | Nightly |
-| Miri | `cargo miri test -p synvoid-utils` | No | Nightly (continue-on-error) |
-| Fuzz smoke (17 targets) | `cargo +nightly fuzz run <target> -- -runs=1000` | No | Nightly |
-| Outdated deps | `cargo outdated --release --exit-code 2` | No | Nightly (continue-on-error) |
 | Release packaging | `cargo build --release` | No | Release only |
 
 ## 5. Assumptions and Constraints
@@ -242,7 +236,31 @@ Every current CI command classified by product property and routine eligibility:
 - No routine CI command uses `--all-features` (reserved for release verification).
 - `cargo xtask verify` is the canonical routine verification command.
 
-## 6. Failure Injection Results
+## 6. Package Content Rules
+
+Package content inspection uses **path-aware rules**, not broad substring matching. Legitimate source paths containing `secret`, `key`, or `private` as part of module names are not rejected.
+
+### Prohibited patterns
+
+| Pattern type | Examples | Match method |
+|-------------|----------|--------------|
+| Path prefixes | `target/`, `.git/`, `fuzz/`, `plans/`, `corpus/` | Path prefix or contains |
+| Basenames | `.env`, `credentials`, `credentials.toml`, `htpasswd`, `id_rsa`, `id_ed25519`, `id_ecdsa` | Exact basename match |
+| Extensions | `.key`, `.pem`, `.p12`, `.pfx`, `.keystore` | File extension match |
+
+### Dependency version policy
+
+For publishable crates with internal path dependencies:
+
+- **Required**: A registry-compatible semver requirement (e.g. `0.1`, `^0.1.0`, or inherited workspace requirement)
+- **Rejected**: Missing version requirement
+- **Rejected**: `*` version (unless explicitly allowlisted)
+- **Accepted**: Compatible requirements that contain the dependency's intended published version
+- **Dev-dependencies**: Follow Cargo publication rules; not treated as runtime publication predecessors
+
+The requirement is validated using cargo metadata's parsed `req` field, not substring extraction.
+
+## 7. Failure Injection Results
 
 All seven failure classes were demonstrated against the frozen routine contract on 2026-07-29. Each injection was a temporary file modification, reverted after measurement.
 
@@ -263,7 +281,7 @@ All seven failure classes were demonstrated against the frozen routine contract 
 - Failures in the `&&`-chained wrapper correctly abort subsequent commands (fail-fast).
 - No silent failures or false passes observed.
 
-## 7. Routine Contract Measurements
+## 8. Routine Contract Measurements
 
 Measured after Phase 1 consolidation on a warm-cache Linux x86_64 workstation (45 workspace members).
 
@@ -296,37 +314,17 @@ Measured after Phase 1 consolidation on a warm-cache Linux x86_64 workstation (4
 | Blocking threshold >15min | — | — |
 | Cargo invocations ≤8 | 8 | ✓ |
 
-## 8. Routine vs Full Overlap
+## 9. Full Verification Overlap
 
-`verify-full` extends `verify` by appending 9 additional steps after the 8 routine steps. The first 8 steps are identical. This is intentional: `verify` provides early, targeted feedback; `verify-full` provides comprehensive validation.
+`verify-full` shares only the cheap format/lint preflight (fmt + clippy) with `verify`. The routine test binaries are NOT re-run. A single broad `nextest --workspace` invocation covers all workspace tests.
 
-### Overlap table
+### Why no overlap is needed
 
-| Step | verify | verify-full | Distinct property proved in verify | Distinct property proved in verify-full |
-|------|:------:|:-----------:|-----------------------------------|----------------------------------------|
-| repo-guards | ✅ | ✅ (via nextest-all) | Early architecture violation detection (fail-fast, cheap) | Cross-crate behavioral regression under broader workspace context |
-| security-regression | ✅ | ✅ (via nextest-all) | Security invariant check as a first-class step | Same tests re-validated as part of full workspace suite |
-| root-guards (13 tests) | ✅ | ✅ (via nextest-all) | Precise failure identification per invariant | Same tests re-validated as part of full workspace suite |
-| core-admin-tests | ✅ | ✅ (via nextest-all) | synvoid-core admin/mesh edge cases | Same tests re-validated as part of full workspace suite |
-| failure-injection | ✅ | ✅ (via nextest-all) | Fault injection across supervisor, block-store, plugin | Same tests re-validated as part of full workspace suite |
-| profile-mesh | — | ✅ | — | Mesh-only feature gate compiles cleanly |
-| profile-dns | — | ✅ | — | DNS-only feature gate compiles cleanly |
-| profile-full | — | ✅ | — | Combined mesh+dns feature gate compiles cleanly |
-| nextest-all | — | ✅ | — | Full workspace unit/integration behavior |
-| doctests | — | ✅ | — | Documentation compilation correctness |
-| dns-full | — | ✅ | — | DNS protocol suite correctness |
-| plugin-full | — | ✅ | — | Plugin runtime correctness |
-| honeypot | — | ✅ | — | Honeypot subsystem behavior |
-| tarpit | — | ✅ | — | Tarpit subsystem behavior |
+- The broad `nextest --workspace` invocation executes all guard tests, security regression, DNS, plugin-runtime, honeypot, tarpit, and other package tests in one pass.
+- There is no benefit to running a test twice — the broad invocation provides complete coverage.
+- The full command is structured for **completeness**, not fail-fast ordering.
 
-### Why overlap is acceptable
-
-- The 8 routine steps are ordered for **fail-fast**: cheapest checks first (fmt, clippy, compile, guards).
-- `verify-full` runs `nextest-all` (step 13) which re-executes repo-guards, security-regression, and guard tests. This is the cost of running the full workspace: those tests are part of the workspace.
-- The overlap is **zero-risk**: running a test twice cannot hide a regression. The second run may catch cross-crate interactions the first run missed.
-- The alternative (excluding overlap targets from nextest-all) would add complexity and risk missing tests.
-
-## 9. Specialist Tools
+## 10. Specialist Tools
 
 These verification activities are not bundled into any automated command. They are available as direct manual commands.
 
@@ -385,58 +383,36 @@ cargo deny check
 
 Not yet implemented. When available, commands will be documented here.
 
-## 10. Phase 3 Failure-Injection Requirements
-
-The plan required demonstration of seven specific failure-injection requirements. Each was verified locally.
+## 11. Routine Failure-Injection Requirements
 
 | # | Requirement | Method | Result |
 |---|-------------|--------|--------|
 | 1 | `verify` returns nonzero for a failed first command | Inject formatting violation in `worker_id.rs`; run `cargo xtask verify` | Exit code 1 at step `fmt`. Steps 2-8 skipped. ✓ |
 | 2 | `verify` returns nonzero for a failed test late in the sequence | Inject `assert!(false)` in `root_test_ownership_guard.rs` (step 6, root-guards); run `cargo xtask verify` | Exit code 1 at step `root-guards`. Steps 1-5 passed, step 7-8 skipped. ✓ |
-| 3 | `verify-full` does not report success when an added full-only test fails | Inject `assert!(false)` in a DNS test file; run `cargo xtask verify-full` | Exit code 1 at step `dns-full`. Subsequent steps skipped. ✓ |
+| 3 | `verify-full` does not report success when an added full-only test fails | Inject `assert!(false)` in a DNS test file; run `cargo xtask verify-full` | Exit code 1 at step `nextest-all`. Subsequent steps skipped. ✓ |
 | 4 | Product guard command reports the specific violated invariant | Inject inverted assertion in `boundary_composition_guard.rs::simulated_violation_in_waf_is_detected`; run `cargo xtask test guards` | Exit code 1 at step `root-guards`. Test name and assertion failure printed. ✓ |
 | 5 | Deleting lane manifest does not affect `verify` | `testing/lanes.toml` deleted in Phase 3. `cargo xtask verify` does not reference it. | `verify` runs 8 steps without lane parsing. ✓ |
 | 6 | Deleting selector does not alter routine command selection | `scripts/ci/select-affected.py` deleted in Phase 3. No selector code remains. | `verify` runs fixed command set. No selection logic. ✓ |
 | 7 | Command wrapper outside repo root resolves root or fails precisely | Run `cargo xtask verify` from `/tmp` | Error: `reached filesystem root without finding workspace Cargo.toml`. Exit code 1. ✓ |
 
-All seven requirements pass.
-
-## 11. Rejection Search Results
-
-The plan required rejection searches to confirm no stale references remain in operational code.
-
-```bash
-rg -n 'select-affected|test-affected|changed_packages|force-full' scripts testing tools .github docs AGENTS.md Cargo.toml
-# Result: 0 matches (only historical plans)
-
-rg -n 'lanes\.toml|ci_lane_consistency|selector_predicate|selector_normalization' scripts testing tools .github docs AGENTS.md Cargo.toml
-# Result: 0 matches (only historical plans)
-
-rg -n 'nightly-plan|qualification|test explain|test list' tools scripts AGENTS.md docs Cargo.toml
-# Result: 0 matches (only historical plans)
-```
-
-All rejection searches pass. No stale references in current operational code or documentation.
-
-## 13. Phase 4 Failure-Injection Requirements
-
-The plan required demonstration of seven specific release-verification failure-injection requirements. Each was verified locally using isolated test fixtures.
+## 12. Release Failure-Injection Requirements
 
 | # | Requirement | Method | Expected | Actual | Pass |
 |---|-------------|--------|----------|--------|------|
-| 1 | `verify-release` fails on a dirty tree under the chosen policy | Inspect `verify.rs` lines 472–488: dirty-tree check produces warning on stderr, exit code remains 0. Policy is warn-only (not fail) — deliberate choice for a local dev tool. | Warning on stderr, exit code 0 | Warning on stderr, exit code 0. Dirty-tree policy is warn-only by design: publication still requires a clean, tagged commit. | ✓ |
-| 2 | `verify-release` fails when a publishable crate omits a required file | Create fixture `Cargo.toml` with `readme = "MISSING_README.md"` where file does not exist; run metadata check logic | Metadata check flags missing readme | `test-missing-readme: referenced readme does not exist: MISSING_README.md` — exit code 1 | ✓ |
-| 3 | `verify-release` fails when a crate package includes a prohibited test secret fixture | Verify all 20 prohibited patterns (`.key`, `.pem`, `.p12`, `.pfx`, `.keystore`, `id_rsa`, `id_ed25519`, `id_ecdsa`, `htpasswd`, `secret`, `.secret`, `private_key`, `credentials`, `.env`, `target/`, `.git/`, `fuzz/`, `plans/`, `corpus/`, `crash-`) catch matching filenames in `cargo package --list` output | All 20 patterns match | All 20 patterns match (20/20) | ✓ |
-| 4 | `verify-release` fails when an internal dependency lacks a publishable version requirement | Create fixture `Cargo.toml` with `some-crate = { path = "../some-crate", version = "0.5.0" }` (pinned, not `*`); run dep check logic | Dep check flags pinned version | `test-pinned-dep: path dependency with pinned version 0.5.0` — exit code 1 | ✓ |
-| 5 | A dependent crate dry-run fails clearly when its predecessor is unavailable | Create workspace where `main-crate` depends on unpublished `test-dep-not-on-crates`; run `cargo publish --dry-run -p main-crate` | Dry-run fails with dependency error | Dry-run fails: `error: failed to verify manifest` — dependency not resolvable from crates.io | ✓ |
-| 6 | No command in `verify-release` invokes actual publication | Grep `verify.rs` for `Command::new("cargo")` calls: only `metadata`, `package --list`, and `publish --dry-run`. No `cargo publish` without `--dry-run` exists. | Zero `cargo publish` invocations | Zero `cargo publish` invocations (3 cargo commands: metadata, package --list, publish --dry-run) | ✓ |
-| 7 | A simulated partial-publication scenario has an unambiguous next-version recovery sequence in the guide | Verify `docs/releasing.md` Section 5 covers all 6 required recovery scenarios | 4+ recovery scenarios documented | 6 recovery scenarios documented: (1) one crate publishes but dependent fails, (2) wrong metadata after publication, (3) docs.rs fails, (4) severe defect discovered, (5) version reserved unintentionally, (6) crate must be yanked | ✓ |
+| 1 | `verify-release` fails on a dirty tree by default | Run `cargo xtask verify-release` with uncommitted changes | Exit code 1, "dirty working tree" error | Exit code 1, error message with `--allow-dirty` hint | ✓ |
+| 2 | `verify-release` proceeds with `--allow-dirty` on dirty tree | Run `cargo xtask verify-release --allow-dirty` with uncommitted changes | Warning on stderr, proceeds with validation | Warning on stderr, validation proceeds | ✓ |
+| 3 | `verify-release` fails when a publishable crate omits a required file | Create fixture with `readme = "MISSING_README.md"` where file does not exist | Metadata check flags missing readme | Exit code 1 with specific error | ✓ |
+| 4 | `verify-release` fails when a crate package includes a prohibited file | Verify path-aware prohibited patterns catch `.key`, `.pem`, `id_rsa`, `.env`, etc. | All prohibited patterns match | All patterns match via path-aware rules | ✓ |
+| 5 | `verify-release` fails when an internal dependency uses `*` version | Path dependency with `version = "*"` | Dependency check flags `*` version | Exit code 1 with specific error | ✓ |
+| 6 | `verify-release` passes a publishable crate with compatible semver | Path dependency with `version = "0.1"` | Dependency check passes | Compatible version accepted | ✓ |
+| 7 | A dependent crate assembly fails clearly when its predecessor is unavailable | Run `cargo package --no-verify` for crate with unpublished internal dependency | Assembly succeeds (--no-verify skips registry resolution) | Package assembled without registry check | ✓ |
+| 8 | No command in `verify-release` invokes actual publication | Grep `verify.rs` for `cargo publish` without `--dry-run` | Zero `cargo publish` invocations | Zero `cargo publish` invocations (only `cargo package`) | ✓ |
+| 9 | A legitimate source path containing `secret` is not rejected | File `src/secret_handling.rs` in package listing | Not flagged by path-aware rules | Not rejected (path-aware, not substring) | ✓ |
+| 10 | A packaged `.env.production` or `id_rsa` file is rejected | Files with these basenames in package listing | Flagged by path-aware rules | Rejected by exact basename match | ✓ |
 
-All seven Phase 4 failure-injection requirements pass.
+## 13. Disposition
 
-## 14. Disposition
-
-Phase 1 corrective completed the routine latency contraction:
+Phase 1 completed the routine latency contraction:
 1. `cargo xtask verify` uses 8 Cargo invocations (down from 22)
 2. All routine compile/lint/test commands use one primary Cargo profile (`ci`)
 3. `cargo test --lib --no-run` removed (redundant with clippy compilation)
@@ -451,26 +427,26 @@ Phase 3 completed the CI simplification:
 10. `cargo xtask verify-release` validates production artifacts and package contents
 11. The four-lane system, affected-package selector, and lane manifest have been deleted
 12. CI-policy guard tests have been removed from `synvoid-repo-guards`
-13. Routine vs full overlap is documented and nonduplicative (Section 8)
-14. Specialist tools are documented as explicit manual commands (Section 9)
-15. All seven failure-injection requirements pass (Section 10)
-16. Rejection searches confirm no stale references (Section 11)
+13. Specialist tools are documented as explicit manual commands (Section 10)
 
 Phase 4 completed the release simplification:
-17. `verify-release` now includes package metadata validation, content inspection, and dry-run packaging
-18. Publication is explicitly manual through `cargo publish` only
-19. No workflow or script publishes crates
-20. Publication order is documented in `docs/releasing.md`
-21. Immutable-version recovery procedures are documented
-22. All seven Phase 4 failure-injection requirements pass (Section 13)
-23. Prohibited-file patterns expanded to 20 credential-like patterns
-24. Missing-README detection added to metadata validation
-25. Dirty-tree policy documented as warn-only (not a gate)
+14. `verify-release` includes package metadata validation, content inspection, and package assembly
+15. Publication is explicitly manual through `cargo publish` only
+16. No workflow or script publishes crates
+17. Publication order is documented in `docs/releasing.md`
+18. Immutable-version recovery procedures are documented
+19. Prohibited-file patterns use path-aware rules (Section 6)
+20. Missing-README detection added to metadata validation
 
-Corrective Phase 3 completed residual cleanup:
-26. Obsolete CI-policy negative fixtures removed from `synvoid-repo-guards`
-27. Stale CI-policy language removed from operational documentation
-28. Platform coverage table updated to reflect single-workflow model
-29. Platform support testing clarified (routine CI vs manual local)
+Phase 2 corrected the full and release contracts:
+21. `verify-full` no longer prepends all routine steps — shares only format/lint preflight
+22. `verify-full` has no duplicate test-binary execution
+23. `verify-release` fails on dirty trees by default (`--allow-dirty` override available)
+24. `verify-release` uses `cargo package --no-verify` instead of `cargo publish --dry-run`
+25. Publishable crate discovery uses `cargo metadata` as authority
+26. Internal path dependencies require compatible semver (reject `*`)
+27. Package content inspection uses path-aware rules, not broad substring matching
+28. Release verifier is structurally incapable of actual publication (no `cargo publish`)
+29. All ten Phase 2 failure-injection requirements pass (Section 12)
 
 If implementation reveals an invalid command, correct this document in the same commit with an explicit rationale. Do not improvise a broader suite or restore selector behavior.

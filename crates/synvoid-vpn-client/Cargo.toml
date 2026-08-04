@@ -3,12 +3,14 @@ name = "synvoid-vpn-client"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
+repository.workspace = true
+description = "VPN client for WireGuard tunnels"
 
 [dependencies]
-synvoid-config = { path = "../synvoid-config" }
-synvoid-tunnel = { path = "../synvoid-tunnel" }
-synvoid-platform = { path = "../synvoid-platform" }
-synvoid-utils = { path = "../synvoid-utils", features = ["buffer"] }
+synvoid-config = { path = "../synvoid-config" , version = "0.1" }
+synvoid-tunnel = { path = "../synvoid-tunnel" , version = "0.1" }
+synvoid-platform = { path = "../synvoid-platform" , version = "0.1" }
+synvoid-utils = { path = "../synvoid-utils", features = ["buffer"] , version = "0.1" }
 tokio = { version = "1", features = ["full"] }
 dashmap = "7.0.0-rc2"
 metrics = "0.22"

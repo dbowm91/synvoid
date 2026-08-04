@@ -3,15 +3,17 @@ name = "synvoid-admin"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
+repository.workspace = true
+description = "Admin control-plane API and handlers"
 
 [dependencies]
-synvoid-core = { path = "../synvoid-core" }
-synvoid-config = { path = "../synvoid-config" }
-synvoid-ipc = { path = "../synvoid-ipc" }
-synvoid-waf = { path = "../synvoid-waf" }
-synvoid-metrics = { path = "../synvoid-metrics" }
-synvoid-static-files = { path = "../synvoid-static-files" }
-synvoid-app-server = { path = "../synvoid-app-server" }
+synvoid-core = { path = "../synvoid-core" , version = "0.1" }
+synvoid-config = { path = "../synvoid-config" , version = "0.1" }
+synvoid-ipc = { path = "../synvoid-ipc" , version = "0.1" }
+synvoid-waf = { path = "../synvoid-waf" , version = "0.1" }
+synvoid-metrics = { path = "../synvoid-metrics" , version = "0.1" }
+synvoid-static-files = { path = "../synvoid-static-files" , version = "0.1" }
+synvoid-app-server = { path = "../synvoid-app-server" , version = "0.1" }
 axum = { version = "0.8", features = ["ws", "macros", "json"] }
 axum-extra = { version = "0.10", features = ["typed-header"] }
 tower-http = { version = "0.6", features = ["cors"] }

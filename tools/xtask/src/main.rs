@@ -9,6 +9,7 @@ fn main() {
     let dry_run = args.contains(&"--dry-run".to_string());
     let json_output = args.contains(&"--json".to_string());
     let verbose = args.contains(&"--verbose".to_string());
+    let allow_dirty = args.contains(&"--allow-dirty".to_string());
 
     let positional: Vec<&str> = args
         .iter()
@@ -19,7 +20,9 @@ fn main() {
     let result = match positional.first().copied() {
         Some("verify") => verify::run_verify(dry_run, json_output, verbose),
         Some("verify-full") => verify::run_verify_full(dry_run, json_output, verbose),
-        Some("verify-release") => verify::run_verify_release(dry_run, json_output, verbose),
+        Some("verify-release") => {
+            verify::run_verify_release(dry_run, json_output, verbose, allow_dirty)
+        }
         Some("test") => dispatch_test(&positional[1..], dry_run, json_output, verbose),
         Some("help") | Some("--help") | Some("-h") => {
             print_usage();
@@ -80,18 +83,20 @@ VERIFY (routine):
     compilation, guards, security regression). This is what CI runs on every PR.
 
 VERIFY-FULL (manual):
-    Broader than routine: adds workspace tests, doctests, feature profiles,
-    domain-specific DNS/plugin/honeypot/tarpit tests.
+    Broader than routine: format/lint preflight, feature profile compilation,
+    broad deterministic workspace tests, and doctests. Does NOT re-run routine
+    test binaries separately.
 
 VERIFY-RELEASE (manual):
     Full verification plus release-profile compilation, all-features clippy,
-    package metadata validation, package content inspection, and dry-run
-    packaging for every publishable workspace crate. Does NOT publish.
+    package metadata validation, package content inspection, and pre-publication
+    package assembly. Fails on dirty tree by default. Does NOT publish.
 
 OPTIONS:
     --dry-run       Print commands without executing
     --json          Machine-readable JSON output
     --verbose       Detailed output for each command
+    --allow-dirty   Allow release verification on a dirty working tree
     -h, --help      Show this help message"
     );
 }

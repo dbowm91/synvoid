@@ -3,17 +3,19 @@ name = "synvoid-ipc"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
+repository.workspace = true
+description = "Inter-process communication and signing"
 
 [features]
 default = []
 rkyv = []
 
 [dependencies]
-synvoid-config = { path = "../synvoid-config" }
-synvoid-utils = { path = "../synvoid-utils" }
-synvoid-platform = { path = "../synvoid-platform" }
-synvoid-metrics = { path = "../synvoid-metrics" }
-synvoid-tls = { path = "../synvoid-tls" }
+synvoid-config = { path = "../synvoid-config" , version = "0.1" }
+synvoid-utils = { path = "../synvoid-utils" , version = "0.1" }
+synvoid-platform = { path = "../synvoid-platform" , version = "0.1" }
+synvoid-metrics = { path = "../synvoid-metrics" , version = "0.1" }
+synvoid-tls = { path = "../synvoid-tls" , version = "0.1" }
 parking_lot = "0.12"
 tokio = { version = "1", features = ["rt", "net", "time", "sync", "macros", "io-util"] }
 serde = { version = "1", features = ["derive"] }

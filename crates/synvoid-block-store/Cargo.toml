@@ -3,18 +3,19 @@ name = "synvoid-block-store"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
-description = "Persistent IP block store with LRU eviction and disk persistence"
+repository.workspace = true
+description = "Block store for IP reputation and threat intelligence"
 
 [features]
 default = []
 mesh = ["dep:synvoid-mesh", "synvoid-mesh/mesh"]
 
 [dependencies]
-synvoid-config = { path = "../synvoid-config" }
-synvoid-core = { path = "../synvoid-core" }
-synvoid-utils = { path = "../synvoid-utils" }
-synvoid-waf = { path = "../synvoid-waf" }
-synvoid-mesh = { path = "../synvoid-mesh", optional = true }
+synvoid-config = { path = "../synvoid-config" , version = "0.1" }
+synvoid-core = { path = "../synvoid-core" , version = "0.1" }
+synvoid-utils = { path = "../synvoid-utils" , version = "0.1" }
+synvoid-waf = { path = "../synvoid-waf" , version = "0.1" }
+synvoid-mesh = { path = "../synvoid-mesh", optional = true , version = "0.1" }
 parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

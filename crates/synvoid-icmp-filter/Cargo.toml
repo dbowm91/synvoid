@@ -3,6 +3,8 @@ name = "synvoid-icmp-filter"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
+repository.workspace = true
+description = "ICMP filtering with eBPF and nftables fallback"
 
 [features]
 default = []

@@ -1,8 +1,10 @@
 [package]
 name = "synvoid"
 version = "1.1.0"
+description = "High-performance WAF and reverse proxy with mesh networking"
 edition = "2021"
 license = "MIT"
+exclude = ["plans/", ".opencode/", "fuzz/", "corpus/", "crash-*/", ".github/", "scripts/", "docs/", "architecture/", "tests/", "trusted-key.key"]
 
 [lib]
 path = "src/lib.rs"
@@ -64,7 +66,7 @@ tokio = { version = "1", features = ["full"] }
 tower = { version = "0.5", features = ["util"] }
 axum = "0.8"
 sha2 = "0.10"
-synvoid-filter = { path = "crates/synvoid-filter" }
+synvoid-filter = { path = "crates/synvoid-filter" , version = "0.1" }
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
@@ -117,17 +119,17 @@ aho-corasick = "1.1"
 unicode-normalization = "0.1"
 libinjectionrs = "0.1"
 serde_bytes = "0.11"
-synvoid-cli = { path = "crates/synvoid-cli" }
-synvoid-config = { path = "crates/synvoid-config" }
-synvoid-dns = { path = "crates/synvoid-dns", optional = true }
-synvoid-icmp-filter = { path = "crates/synvoid-icmp-filter", optional = true }
-synvoid-honeypot = { path = "crates/synvoid-honeypot" }
-synvoid-upload = { path = "crates/synvoid-upload" }
-synvoid-ipc = { path = "crates/synvoid-ipc" }
-synvoid-http-client = { path = "crates/synvoid-http-client" }
-synvoid-platform = { path = "crates/synvoid-platform" }
-synvoid-upstream = { path = "crates/synvoid-upstream" }
-synvoid-tunnel = { path = "crates/synvoid-tunnel" }
+synvoid-cli = { path = "crates/synvoid-cli" , version = "0.1" }
+synvoid-config = { path = "crates/synvoid-config" , version = "0.1" }
+synvoid-dns = { path = "crates/synvoid-dns", optional = true , version = "0.1" }
+synvoid-icmp-filter = { path = "crates/synvoid-icmp-filter", optional = true , version = "0.1" }
+synvoid-honeypot = { path = "crates/synvoid-honeypot" , version = "0.1" }
+synvoid-upload = { path = "crates/synvoid-upload" , version = "0.1" }
+synvoid-ipc = { path = "crates/synvoid-ipc" , version = "0.1" }
+synvoid-http-client = { path = "crates/synvoid-http-client" , version = "0.1" }
+synvoid-platform = { path = "crates/synvoid-platform" , version = "0.1" }
+synvoid-upstream = { path = "crates/synvoid-upstream" , version = "0.1" }
+synvoid-tunnel = { path = "crates/synvoid-tunnel" , version = "0.1" }
 
 # DNS support
 hickory-proto = { version = "0.26", features = ["dnssec-ring"], optional = true }
@@ -146,7 +148,7 @@ flate2 = "1"
 tar = "0.4"
 
 # Post-Quantum Cryptography
-pqc = { path = "pqc", features = ["async"] }
+pqc = { path = "pqc", features = ["async"] , version = "0.1" }
 zeroize = { version = "1", features = ["derive"] }
 
 # Minification deps: all moved to synvoid-static-files (see plans/root_dependency_ownership.md)
@@ -189,30 +191,30 @@ libloading = "0.8"
 # eBPF support (Linux-only - aya uses netlink APIs not available on other platforms)
 aya = { version = "0.13", optional = true }
 
-synvoid-utils = { path = "crates/synvoid-utils", features = ["buffer"] }
-synvoid-core = { path = "crates/synvoid-core", features = ["utoipa"] }
-synvoid-tarpit = { path = "crates/synvoid-tarpit" }
-synvoid-challenge = { path = "crates/synvoid-challenge" }
-synvoid-waf = { path = "crates/synvoid-waf" }
-synvoid-plugin-runtime = { path = "crates/synvoid-plugin-runtime" }
-synvoid-tls = { path = "crates/synvoid-tls" }
-synvoid-proxy-cache = { path = "crates/synvoid-proxy-cache" }
-synvoid-admin = { path = "crates/synvoid-admin" }
-synvoid-proxy = { path = "crates/synvoid-proxy" }
-synvoid-http = { path = "crates/synvoid-http" }
-synvoid-http3 = { path = "crates/synvoid-http3" }
-synvoid-serverless = { path = "crates/synvoid-serverless" }
-synvoid-geoip = { path = "crates/synvoid-geoip" }
-synvoid-integrity = { path = "crates/synvoid-integrity" }
-synvoid-mesh = { path = "crates/synvoid-mesh", optional = true }
-synvoid-app-handlers = { path = "crates/synvoid-app-handlers" }
-synvoid-metrics = { path = "crates/synvoid-metrics" }
-synvoid-theme = { path = "crates/synvoid-theme" }
-synvoid-block-store = { path = "crates/synvoid-block-store" }
-synvoid-app-server = { path = "crates/synvoid-app-server" }
-synvoid-vpn-client = { path = "crates/synvoid-vpn-client" }
-synvoid-static-files = { path = "crates/synvoid-static-files" }
-synvoid-filter = { path = "crates/synvoid-filter" }
+synvoid-utils = { path = "crates/synvoid-utils", features = ["buffer"] , version = "0.1" }
+synvoid-core = { path = "crates/synvoid-core", features = ["utoipa"] , version = "0.1" }
+synvoid-tarpit = { path = "crates/synvoid-tarpit" , version = "0.1" }
+synvoid-challenge = { path = "crates/synvoid-challenge" , version = "0.1" }
+synvoid-waf = { path = "crates/synvoid-waf" , version = "0.1" }
+synvoid-plugin-runtime = { path = "crates/synvoid-plugin-runtime" , version = "0.1" }
+synvoid-tls = { path = "crates/synvoid-tls" , version = "0.1" }
+synvoid-proxy-cache = { path = "crates/synvoid-proxy-cache" , version = "0.1" }
+synvoid-admin = { path = "crates/synvoid-admin" , version = "0.1" }
+synvoid-proxy = { path = "crates/synvoid-proxy" , version = "0.1" }
+synvoid-http = { path = "crates/synvoid-http" , version = "0.1" }
+synvoid-http3 = { path = "crates/synvoid-http3" , version = "0.1" }
+synvoid-serverless = { path = "crates/synvoid-serverless" , version = "0.1" }
+synvoid-geoip = { path = "crates/synvoid-geoip" , version = "0.1" }
+synvoid-integrity = { path = "crates/synvoid-integrity" , version = "0.1" }
+synvoid-mesh = { path = "crates/synvoid-mesh", optional = true , version = "0.1" }
+synvoid-app-handlers = { path = "crates/synvoid-app-handlers" , version = "0.1" }
+synvoid-metrics = { path = "crates/synvoid-metrics" , version = "0.1" }
+synvoid-theme = { path = "crates/synvoid-theme" , version = "0.1" }
+synvoid-block-store = { path = "crates/synvoid-block-store" , version = "0.1" }
+synvoid-app-server = { path = "crates/synvoid-app-server" , version = "0.1" }
+synvoid-vpn-client = { path = "crates/synvoid-vpn-client" , version = "0.1" }
+synvoid-static-files = { path = "crates/synvoid-static-files" , version = "0.1" }
+synvoid-filter = { path = "crates/synvoid-filter" , version = "0.1" }
 
 # WASM support for plugins
 # wasmtime: moved to synvoid-plugin-runtime (see plans/root_dependency_ownership.md)
@@ -296,8 +298,8 @@ panic = "unwind"
 strip = true
 
 [dev-dependencies]
-synvoid = { path = ".", features = ["test-utils"] }
-synvoid-testkit = { path = "crates/synvoid-testkit" }
+synvoid = { path = ".", features = ["test-utils"] , version = "1.1" }
+synvoid-testkit = { path = "crates/synvoid-testkit" , version = "0.1" }
 libfuzzer-sys = "0.4"
 proptest = "1.5"
 proptest-derive = "0.4"

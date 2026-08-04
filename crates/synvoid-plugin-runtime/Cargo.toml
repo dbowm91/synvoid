@@ -3,6 +3,8 @@ name = "synvoid-plugin-runtime"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
+repository.workspace = true
+description = "WASM plugin runtime with sandboxing"
 
 [features]
 default = []
@@ -25,7 +27,7 @@ parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-synvoid-utils = { path = "../synvoid-utils", features = ["buffer"] }
+synvoid-utils = { path = "../synvoid-utils", features = ["buffer"] , version = "0.1" }
 thiserror = "2"
 tokio = { version = "1", features = ["sync", "rt"] }
 toml = "0.8"

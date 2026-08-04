@@ -3,6 +3,8 @@ name = "synvoid-tunnel"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
+repository.workspace = true
+description = "WireGuard tunnel integration"
 
 [features]
 default = []
@@ -10,9 +12,9 @@ wireguard = ["dep:defguard_boringtun"]
 tun-rs = []
 
 [dependencies]
-synvoid-config = { path = "../synvoid-config" }
-synvoid-upstream = { path = "../synvoid-upstream" }
-synvoid-utils = { path = "../synvoid-utils", features = ["buffer"] }
+synvoid-config = { path = "../synvoid-config" , version = "0.1" }
+synvoid-upstream = { path = "../synvoid-upstream" , version = "0.1" }
+synvoid-utils = { path = "../synvoid-utils", features = ["buffer"] , version = "0.1" }
 quinn = { version = "0.11", features = ["runtime-tokio"] }
 rustls = "0.23"
 rustls-pki-types = "1"

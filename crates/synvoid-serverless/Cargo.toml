@@ -3,14 +3,16 @@ name = "synvoid-serverless"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
+repository.workspace = true
+description = "Serverless function execution and pooling"
 
 [features]
 default = []
 mesh = []
 
 [dependencies]
-synvoid-config = { path = "../synvoid-config" }
-synvoid-plugin-runtime = { path = "../synvoid-plugin-runtime" }
+synvoid-config = { path = "../synvoid-config" , version = "0.1" }
+synvoid-plugin-runtime = { path = "../synvoid-plugin-runtime" , version = "0.1" }
 bytes = "1"
 http = "1"
 http-body = "1"

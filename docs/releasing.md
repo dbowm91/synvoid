@@ -90,52 +90,56 @@ Every publishable crate must have these Cargo.toml fields:
 
 ## 3. Package-Content Inspection
 
-`verify-release` runs `cargo package --list` for each publishable crate and rejects packages containing:
+`verify-release` runs `cargo package --list` for each publishable crate and rejects packages using **path-aware rules**. Legitimate source paths containing `secret`, `key`, or `private` as part of module names are not rejected.
 
-| Pattern | Reason |
-|---------|--------|
-| `target/` | Build output |
-| `.git/` | Repository metadata |
-| `.env` files | Secrets / configuration |
-| `credentials` | Secrets |
-| `fuzz/` | Fuzz corpora and crash artifacts |
-| `plans/` | Planning documents |
-| `corpus/` | Test corpora |
-| `crash-` | Crash artifacts |
-| `.key`, `.pem`, `.p12`, `.pfx`, `.keystore` | Private key / certificate files |
-| `id_rsa`, `id_ed25519`, `id_ecdsa` | SSH key files |
-| `htpasswd` | Password files |
-| `secret`, `.secret`, `private_key` | Generic secret patterns |
+### Prohibited patterns
 
-Each crate's package contents are verified against these patterns before dry-run packaging.
+| Pattern type | Values | Match method |
+|-------------|--------|--------------|
+| Path prefixes | `target/`, `.git/`, `fuzz/`, `plans/`, `corpus/` | Path prefix or contains |
+| Basenames | `.env`, `credentials`, `credentials.toml`, `htpasswd`, `id_rsa`, `id_ed25519`, `id_ecdsa` | Exact basename match |
+| Extensions | `.key`, `.pem`, `.p12`, `.pfx`, `.keystore` | File extension match |
 
-## 4. Release Procedure
+## 4. Dependency Version Policy
+
+For publishable crates with internal path dependencies:
+
+- **Required**: A registry-compatible semver requirement (e.g. `0.1`, `^0.1.0`, or inherited workspace requirement)
+- **Rejected**: Missing version requirement
+- **Rejected**: `*` version (unless explicitly allowlisted for a specific crate)
+- **Accepted**: Compatible requirements that contain the dependency's intended published version
+- **Dev-dependencies**: Follow Cargo publication rules; not treated as runtime publication predecessors
+
+The requirement is validated using cargo metadata's parsed `req` field, not substring extraction.
+
+## 5. Release Procedure
 
 ### Prepare
 
 1. Update intended crate versions in each crate's `Cargo.toml`.
-2. Update internal dependency version constraints (path deps use `*`).
+2. Update internal dependency version constraints to compatible semver requirements (e.g. `0.1`, `^0.1.0`).
 3. Update CHANGELOG.md or release notes.
 4. Confirm repository state and target commit.
-5. Run `verify-release`:
+5. Ensure the working tree is clean (uncommitted changes block release verification).
+6. Run `verify-release`:
 
 ```bash
 cargo xtask verify-release
 ```
 
-This runs full verification, package metadata validation, package content inspection, and dry-run packaging. It never publishes.
+This runs full verification, package metadata validation, package content inspection, and pre-publication package assembly. It never publishes.
 
-**Dirty-tree policy**: `verify-release` warns on a dirty working tree but does not fail. This is deliberate — a local dev tool that hard-fails on uncommitted changes would block iterative development. Publication still requires a clean, tagged commit. The warning is advisory, not a gate.
+**Dirty-tree policy**: `verify-release` **fails by default** on a dirty working tree. Use `--allow-dirty` to override for local experimentation. When used, a prominent warning is printed and package output is NOT release evidence.
 
 ### Dry Run
 
-The dry run is included in `verify-release`. For manual verification:
+The pre-publication assembly is included in `verify-release` via `cargo package --no-verify`. For manual per-crate verification after predecessors are on crates.io:
 
 ```bash
 # Verify package file lists
 cargo package --list -p <crate-name>
 
-# Dry-run package assembly (each crate)
+# Dry-run package assembly (each crate, after predecessors are published)
 cargo publish --dry-run -p <crate-name>
 ```
 
@@ -184,7 +188,7 @@ git push origin v1.1.0
 
 **Why tag after publish**: A public tag implies successful publication. If the tag is created before publication and publication fails, the tag points to an unpublished state. Tagging after successful publication avoids this confusion.
 
-## 5. Immutable-Version Recovery
+## 6. Immutable-Version Recovery
 
 crates.io published versions are immutable. You cannot overwrite a published version. A failed or defective publication is corrected with a new version.
 
@@ -249,7 +253,7 @@ cargo yank --version <version> --crate <crate-name>
 cargo yank --version <version> --crate <crate-name> --undo
 ```
 
-## 6. Release Tag Policy
+## 7. Release Tag Policy
 
 The preferred tag ordering is:
 
@@ -260,9 +264,9 @@ The preferred tag ordering is:
 
 This avoids a public tag implying successful publication before crates.io accepts the release.
 
-If repository policy chooses tag-before-publish, the recovery procedure must explicitly cover a failed publication after tagging (see Section 5).
+If repository policy chooses tag-before-publish, the recovery procedure must explicitly cover a failed publication after tagging (see Section 6).
 
-## 7. Security Rules
+## 8. Security Rules
 
 - No crates.io token is referenced in repository workflows or scripts.
 - No publication credential is expected by `verify-release`.
@@ -270,3 +274,4 @@ If repository policy chooses tag-before-publish, the recovery procedure must exp
 - Package-content inspection rejects files matching secret and credential patterns.
 - Publication commands print no tokens.
 - Do not commit `~/.cargo/credentials.toml` or any file containing a crates.io token.
+- The release verifier cannot invoke `cargo publish` — all cargo invocations are read-only or assembly-only.

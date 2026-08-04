@@ -3,6 +3,8 @@ name = "synvoid-core"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
+repository.workspace = true
+description = "Core types, traits, and utilities"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

@@ -3,6 +3,8 @@ name = "synvoid-integrity"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
+repository.workspace = true
+description = "File integrity monitoring and verification"
 
 [features]
 default = []
@@ -22,4 +24,4 @@ sha3 = "0.10"
 tracing = "0.1"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 zeroize = { version = "1", features = ["derive"] }
-pqc = { path = "../../pqc" }
+pqc = { path = "../../pqc" , version = "0.1" }

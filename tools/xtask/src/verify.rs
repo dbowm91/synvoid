@@ -4,7 +4,11 @@ use std::time::Instant;
 
 use crate::report::{LaneReport, StepResult, StepStatus};
 
-/// Shared helper: find workspace root by walking up to Cargo.toml with [workspace].
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+/// Find workspace root by walking up to Cargo.toml with [workspace].
 fn find_workspace_root() -> Result<std::path::PathBuf, String> {
     let mut dir = std::env::current_dir().map_err(|e| format!("failed to get cwd: {e}"))?;
 
@@ -25,7 +29,7 @@ fn find_workspace_root() -> Result<std::path::PathBuf, String> {
     }
 }
 
-/// Shared helper: run a single shell command. Returns (success, duration_ms).
+/// Run a single shell command. Returns (success, duration_ms).
 fn run_command(cmd: &str, workspace_root: &Path, verbose: bool) -> (bool, u64) {
     let start = Instant::now();
 
@@ -181,12 +185,20 @@ pub fn run_verify(dry_run: bool, json_output: bool, verbose: bool) -> Result<(),
 
 // ---------------------------------------------------------------------------
 // Full local verification (broader than routine, manually invoked)
+//
+// verify-full shares the cheap format/lint preflight with verify but does NOT
+// re-run the routine test binaries. A single broad nextest invocation covers
+// workspace tests, guard tests, security regression, and subsystem suites.
 // ---------------------------------------------------------------------------
 
 fn verify_full_steps() -> Vec<(&'static str, &'static str)> {
-    let mut steps = verify_steps();
-
-    steps.extend_from_slice(&[
+    vec![
+        // Format + lint preflight (shared with routine, cheap)
+        ("fmt", "cargo fmt --all -- --check"),
+        (
+            "clippy",
+            "cargo clippy --profile ci --all-targets -- -D warnings",
+        ),
         // Feature profile compilation
         (
             "profile-mesh",
@@ -200,27 +212,16 @@ fn verify_full_steps() -> Vec<(&'static str, &'static str)> {
             "profile-full",
             "cargo check --no-default-features --features mesh,dns",
         ),
-        // Full workspace tests
+        // Broad deterministic tests — covers workspace unit/integration,
+        // guard tests, security regression, DNS, plugin-runtime, honeypot,
+        // tarpit, and all other package tests in one invocation.
         (
             "nextest-all",
             "cargo nextest run --workspace --cargo-profile ci --profile ci --exclude synvoid-fuzz",
         ),
         // Doctests
         ("doctests", "cargo test --workspace --doc --profile ci"),
-        // Domain-specific suites
-        (
-            "dns-full",
-            "cargo nextest run -p synvoid-dns --cargo-profile ci --profile ci",
-        ),
-        (
-            "plugin-full",
-            "cargo nextest run -p synvoid-plugin-runtime --cargo-profile ci --profile ci",
-        ),
-        ("honeypot", "cargo test -p synvoid-honeypot --all-targets"),
-        ("tarpit", "cargo test -p synvoid-tarpit --all-targets"),
-    ]);
-
-    steps
+    ]
 }
 
 /// Run full local verification (broader than routine, manually invoked).
@@ -238,13 +239,66 @@ pub fn run_verify_full(dry_run: bool, json_output: bool, verbose: bool) -> Resul
 // Release verification (production artifacts + package inspection)
 // ---------------------------------------------------------------------------
 
-/// Crates that are explicitly not publishable.
+/// Crates that are explicitly not publishable (must match manifest `publish = false`).
 const NONPUBLISHABLE: &[&str] = &["synvoid-fuzz", "xtask", "admin-ui", "synvoid-repo-guards"];
 
 /// Example / demo crates that should never be published.
 const EXAMPLE_CRATES: &[&str] = &["myapp-dynamic", "my-waf-app"];
 
-/// Check if a crate is publishable by reading its Cargo.toml.
+/// Path-prohibited file patterns for package content inspection.
+///
+/// These are checked against normalized relative paths from `cargo package --list`.
+/// Patterns use exact component or extension matching, not broad substring matching.
+const PROHIBITED_PATH_PREFIXES: &[&str] = &["target/", ".git/", "fuzz/", "plans/", "corpus/"];
+
+const PROHIBITED_BASENAMES: &[&str] = &[
+    ".env",
+    "credentials",
+    "credentials.toml",
+    "htpasswd",
+    "id_rsa",
+    "id_ed25519",
+    "id_ecdsa",
+];
+
+const PROHIBITED_EXTENSIONS: &[&str] = &[".key", ".pem", ".p12", ".pfx", ".keystore"];
+
+/// Check if a file path is prohibited in a published package.
+fn is_prohibited_path(path: &str) -> bool {
+    let normalized = path.replace('\\', "/");
+
+    // Check path prefixes (directories)
+    for prefix in PROHIBITED_PATH_PREFIXES {
+        if normalized.starts_with(prefix) || normalized.contains(prefix) {
+            return true;
+        }
+    }
+
+    // Check basename patterns
+    let basename = normalized.rsplit('/').next().unwrap_or(&normalized);
+    for name in PROHIBITED_BASENAMES {
+        if basename == *name || basename.starts_with(&format!("{name}.")) {
+            return true;
+        }
+    }
+
+    // Check extensions
+    if let Some(dot_pos) = basename.rfind('.') {
+        let ext = &basename[dot_pos..];
+        for prohibited_ext in PROHIBITED_EXTENSIONS {
+            if ext == *prohibited_ext {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Check if a crate is nonpublishable by reading its Cargo.toml `publish` field.
+///
+/// This is a narrow manifest read for a field that cargo metadata does not
+/// reliably expose for workspace-inherited packages.
 fn is_publishable(crate_dir: &Path) -> bool {
     let cargo_toml = crate_dir.join("Cargo.toml");
     if !cargo_toml.exists() {
@@ -254,18 +308,20 @@ fn is_publishable(crate_dir: &Path) -> bool {
         Ok(c) => c,
         Err(_) => return false,
     };
-    // Check for explicit publish = false
     for line in content.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("publish") && trimmed.contains("false") {
+        if trimmed == "publish = false" || trimmed == "publish=false" {
             return false;
         }
     }
     true
 }
 
-/// Discover all publishable workspace crates in dependency order.
-/// Returns Vec of (package_name, manifest_dir_path).
+/// Discover all publishable workspace crates using `cargo metadata`.
+///
+/// Returns a topologically sorted Vec of (package_name, manifest_dir_path).
+/// Detects publishable crates that depend on nonpublishable internal crates
+/// via path dependencies — such dependencies cannot resolve from crates.io.
 fn discover_publishable_crates(workspace_root: &Path) -> Result<Vec<(String, PathBuf)>, String> {
     let output = Command::new("cargo")
         .args(["metadata", "--no-deps", "--format-version", "1"])
@@ -294,7 +350,9 @@ fn discover_publishable_crates(workspace_root: &Path) -> Result<Vec<(String, Pat
         .as_array()
         .ok_or("missing packages in metadata")?;
 
+    // Classify each workspace member
     let mut publishable = Vec::new();
+    let mut all_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for member_id in &workspace_members {
         let pkg = packages
@@ -315,6 +373,8 @@ fn discover_publishable_crates(workspace_root: &Path) -> Result<Vec<(String, Pat
             .ok_or("invalid manifest_path")?
             .to_path_buf();
 
+        all_names.insert(name.clone());
+
         // Skip nonpublishable and example crates
         if NONPUBLISHABLE.contains(&name.as_str()) || EXAMPLE_CRATES.contains(&name.as_str()) {
             continue;
@@ -327,13 +387,14 @@ fn discover_publishable_crates(workspace_root: &Path) -> Result<Vec<(String, Pat
         publishable.push((name, manifest_dir));
     }
 
-    // Topological sort by workspace path dependencies
+    // Topological sort with dependency validation
     let mut sorted = Vec::new();
     let mut visited = std::collections::HashSet::new();
 
     fn visit(
         name: &str,
         packages: &[serde_json::Value],
+        all_names: &std::collections::HashSet<String>,
         visited: &mut std::collections::HashSet<String>,
         sorted: &mut Vec<(String, PathBuf)>,
         nonpublishable: &[&str],
@@ -354,16 +415,29 @@ fn discover_publishable_crates(workspace_root: &Path) -> Result<Vec<(String, Pat
             for dep in deps {
                 if let Some(_path) = dep["path"].as_str() {
                     let dep_name = dep["name"].as_str().unwrap_or("");
-                    if !nonpublishable.contains(&dep_name) && !examples.contains(&dep_name) {
-                        visit(
-                            dep_name,
-                            packages,
-                            visited,
-                            sorted,
-                            nonpublishable,
-                            examples,
-                        )?;
+                    let is_internal = nonpublishable.contains(&dep_name)
+                        || examples.contains(&dep_name)
+                        || !all_names.contains(dep_name);
+
+                    if is_internal {
+                        // A publishable crate depends on a nonpublishable crate
+                        // via path — this cannot resolve from crates.io.
+                        return Err(format!(
+                            "publishable crate `{name}` depends on nonpublishable \
+                             internal crate `{dep_name}` via path dependency — this \
+                             cannot be published to crates.io"
+                        ));
                     }
+
+                    visit(
+                        dep_name,
+                        packages,
+                        all_names,
+                        visited,
+                        sorted,
+                        nonpublishable,
+                        examples,
+                    )?;
                 }
             }
         }
@@ -396,14 +470,13 @@ fn discover_publishable_crates(workspace_root: &Path) -> Result<Vec<(String, Pat
         }
 
         if !is_publishable(
-            &PathBuf::from(
+            Path::new(
                 pkg["manifest_path"]
                     .as_str()
                     .ok_or("missing manifest_path")?,
             )
             .parent()
-            .unwrap()
-            .to_path_buf(),
+            .unwrap(),
         ) {
             continue;
         }
@@ -411,6 +484,7 @@ fn discover_publishable_crates(workspace_root: &Path) -> Result<Vec<(String, Pat
         visit(
             &name,
             packages,
+            &all_names,
             &mut visited,
             &mut sorted,
             NONPUBLISHABLE,
@@ -421,60 +495,245 @@ fn discover_publishable_crates(workspace_root: &Path) -> Result<Vec<(String, Pat
     Ok(sorted)
 }
 
-fn verify_release_steps() -> Vec<(&'static str, &'static str)> {
-    let mut steps = verify_full_steps();
+/// Validate metadata for all publishable crates.
+fn validate_package_metadata(
+    publishable: &[(String, PathBuf)],
+    workspace_root: &Path,
+) -> Result<(), String> {
+    let mut issues: Vec<String> = Vec::new();
 
-    steps.extend_from_slice(&[
-        // All-features clippy
-        (
-            "clippy-all-features",
-            "cargo clippy --all-targets --all-features -- -D warnings",
-        ),
-        // Release profile compilation
-        ("compile-release", "cargo test --lib --no-run --release"),
-        (
-            "nextest-release",
-            "cargo nextest run --workspace --release --exclude synvoid-fuzz",
-        ),
-        ("doctests-release", "cargo test --workspace --doc --release"),
-    ]);
+    for (name, manifest_dir) in publishable {
+        let cargo_toml = manifest_dir.join("Cargo.toml");
+        let content = match std::fs::read_to_string(&cargo_toml) {
+            Ok(c) => c,
+            Err(e) => {
+                issues.push(format!("{name}: cannot read {}: {e}", cargo_toml.display()));
+                continue;
+            }
+        };
 
-    steps
-}
+        let has_description = content.lines().any(|l| l.trim().starts_with("description"));
+        let has_license = content.lines().any(|l| {
+            let t = l.trim();
+            t.starts_with("license") || t.starts_with("license-file")
+        });
 
-/// Run release verification (production artifacts + package inspection).
-///
-/// This runs verify-full, then adds release-specific checks and package
-/// inspection for every publishable workspace crate. It never invokes
-/// `cargo publish` — publication is always manual.
-pub fn run_verify_release(dry_run: bool, json_output: bool, verbose: bool) -> Result<(), String> {
-    let workspace_root = find_workspace_root()?;
+        if !has_description {
+            issues.push(format!("{name}: missing `description` field"));
+        }
+        if !has_license {
+            let root_cargo = workspace_root.join("Cargo.toml");
+            let root_content = std::fs::read_to_string(&root_cargo).unwrap_or_default();
+            if !root_content.contains("[workspace.package]") || !root_content.contains("license") {
+                issues.push(format!(
+                    "{name}: missing `license` field (no workspace fallback)"
+                ));
+            }
+        }
 
-    // --- Phase 1: Clean working tree check ---
-    //
-    // Policy: warn-only, not fail. A local dev tool that hard-fails on a dirty
-    // tree would block iterative development (e.g., running verify-release after
-    // partial edits). Publication still requires a clean, tagged commit — this
-    // check is advisory, not a gate.
-    if !dry_run {
-        let status = Command::new("git")
-            .args(["status", "--porcelain"])
-            .current_dir(&workspace_root)
-            .output()
-            .map_err(|e| format!("failed to run git status: {e}"))?;
-
-        let stdout = String::from_utf8_lossy(&status.stdout);
-        if !stdout.trim().is_empty() {
-            if !json_output {
-                eprintln!("⚠  Working tree is not clean (dirty-tree policy: warn-only).");
-                eprintln!("   Release verification proceeds. Publication should only");
-                eprintln!("   happen from a clean, tagged commit.");
-                eprintln!();
+        // Check that referenced readme file exists
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("readme") {
+                if let Some(start) = trimmed.find('"') {
+                    if let Some(end) = trimmed[start + 1..].find('"') {
+                        let readme_path = manifest_dir.join(&trimmed[start + 1..start + 1 + end]);
+                        if !readme_path.exists() {
+                            issues.push(format!(
+                                "{name}: referenced readme does not exist: {}",
+                                readme_path.display()
+                            ));
+                        }
+                    }
+                }
             }
         }
     }
 
-    // --- Phase 2: verify-full (includes verify) ---
+    if !issues.is_empty() {
+        return Err(format!(
+            "{} package metadata issue(s) found:\n  {}",
+            issues.len(),
+            issues.join("\n  ")
+        ));
+    }
+
+    Ok(())
+}
+
+/// Validate that internal path dependencies use compatible semver requirements.
+///
+/// Uses cargo metadata's parsed `req` field rather than substring extraction.
+/// Rejects missing version requirements and `*` (unless explicitly allowlisted).
+fn validate_dependency_versions(
+    publishable: &[(String, PathBuf)],
+    metadata: &serde_json::Value,
+) -> Result<(), String> {
+    let mut issues: Vec<String> = Vec::new();
+    let packages = metadata["packages"]
+        .as_array()
+        .ok_or("missing packages in metadata")?;
+
+    for (name, _manifest_dir) in publishable {
+        let pkg = packages
+            .iter()
+            .find(|p| p["name"].as_str() == Some(name.as_str()))
+            .ok_or_else(|| format!("package not found in metadata: {name}"))?;
+
+        if let Some(deps) = pkg["dependencies"].as_array() {
+            for dep in deps {
+                let dep_name = dep["name"].as_str().unwrap_or("");
+
+                // Only check workspace path dependencies (internal crates)
+                if dep["path"].is_null() {
+                    continue;
+                }
+
+                // Only check normal/build dependencies (dev-dependencies follow
+                // Cargo publication rules and are excluded from resolution).
+                let dep_kind = dep["kind"].as_str().unwrap_or("normal");
+                if dep_kind == "dev" {
+                    continue;
+                }
+
+                let req_str = dep["req"].as_str().unwrap_or("");
+
+                if req_str.is_empty() {
+                    issues.push(format!(
+                        "{name}: path dependency `{dep_name}` has no version requirement — \
+                         publishable crates must specify a registry-compatible semver requirement"
+                    ));
+                    continue;
+                }
+
+                if req_str == "*" {
+                    issues.push(format!(
+                        "{name}: path dependency `{dep_name}` uses `*` version requirement — \
+                         use a compatible semver requirement (e.g. `0.1` or `^0.1.0`)"
+                    ));
+                    continue;
+                }
+            }
+        }
+    }
+
+    if !issues.is_empty() {
+        return Err(format!(
+            "{} dependency version issue(s) found:\n  {}",
+            issues.len(),
+            issues.join("\n  ")
+        ));
+    }
+
+    Ok(())
+}
+
+/// Inspect package contents for each publishable crate using `cargo package --list`.
+///
+/// Uses path-aware rules: exact component or extension matching, not broad
+/// substring matching. Legitimate source paths containing `secret` or `key`
+/// as part of module names are not rejected.
+fn validate_package_contents(
+    publishable: &[(String, PathBuf)],
+    workspace_root: &Path,
+    verbose: bool,
+    allow_dirty: bool,
+) -> Result<(), String> {
+    let mut issues: Vec<String> = Vec::new();
+
+    for (name, _manifest_dir) in publishable {
+        let mut args = vec!["package", "--list", "-p", name];
+        if allow_dirty {
+            args.push("--allow-dirty");
+        }
+        let output = Command::new("cargo")
+            .args(&args)
+            .current_dir(workspace_root)
+            .output();
+
+        match output {
+            Ok(out) => {
+                if !out.status.success() {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    issues.push(format!("{name}: cargo package --list failed: {stderr}"));
+                    continue;
+                }
+
+                let listing = String::from_utf8_lossy(&out.stdout);
+
+                for line in listing.lines() {
+                    if is_prohibited_path(line) {
+                        issues.push(format!("{name}: prohibited file in package: {line}"));
+                    }
+                }
+
+                if verbose && issues.is_empty() {
+                    let file_count = listing.lines().count();
+                    println!("    {name}: {file_count} files");
+                }
+            }
+            Err(e) => {
+                issues.push(format!("{name}: failed to run cargo package: {e}"));
+            }
+        }
+    }
+
+    if !issues.is_empty() {
+        return Err(format!(
+            "{} package content issue(s) found:\n  {}",
+            issues.len(),
+            issues.join("\n  ")
+        ));
+    }
+
+    Ok(())
+}
+
+/// Check that the working tree is clean (no uncommitted changes).
+fn check_dirty_tree(workspace_root: &Path) -> Result<bool, String> {
+    let status = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(workspace_root)
+        .output()
+        .map_err(|e| format!("failed to run git status: {e}"))?;
+
+    let stdout = String::from_utf8_lossy(&status.stdout);
+    Ok(!stdout.trim().is_empty())
+}
+
+/// Run release verification (production artifacts + package inspection).
+///
+/// This validates the exact source and package surfaces that can be validated
+/// before publication. It never invokes `cargo publish` — publication is
+/// always manual through `cargo publish -p <crate>` in topological order.
+pub fn run_verify_release(
+    dry_run: bool,
+    json_output: bool,
+    verbose: bool,
+    allow_dirty: bool,
+) -> Result<(), String> {
+    let workspace_root = find_workspace_root()?;
+
+    // --- Phase 0: Dirty working tree check ---
+    // Policy: fail by default. Provide --allow-dirty for local experimentation.
+    if !dry_run {
+        let is_dirty = check_dirty_tree(&workspace_root)?;
+        if is_dirty && !allow_dirty {
+            if !json_output {
+                eprintln!("✗ Working tree is not clean.");
+                eprintln!("  Release verification requires a clean working tree.");
+                eprintln!("  Use --allow-dirty to override (package output will not be release evidence).");
+            }
+            return Err("dirty working tree (use --allow-dirty to override)".to_string());
+        }
+        if is_dirty && allow_dirty && !json_output {
+            eprintln!("⚠  Working tree is not clean (--allow-dirty specified).");
+            eprintln!("   Package output is NOT release evidence.");
+            eprintln!();
+        }
+    }
+
+    // --- Phase 1: Verification (fmt + clippy + feature compilation + broad tests + doctests) ---
     if !json_output {
         println!("═══════════════════════════════════════════════════════════");
         println!("  cargo xtask verify-release (phase 1: verification)");
@@ -482,16 +741,26 @@ pub fn run_verify_release(dry_run: bool, json_output: bool, verbose: bool) -> Re
         println!();
     }
 
-    let verify_steps = verify_release_steps();
+    let mut release_steps = verify_full_steps();
+    release_steps.extend_from_slice(&[
+        // All-features clippy (catches eBPF and other feature-gated warnings)
+        (
+            "clippy-all-features",
+            "cargo clippy --all-targets --all-features -- -D warnings",
+        ),
+        // Release profile compilation
+        ("compile-release", "cargo test --lib --no-run --release"),
+    ]);
+
     run_contract(
         "verify-release",
-        &verify_steps,
+        &release_steps,
         dry_run,
         json_output,
         verbose,
     )?;
 
-    // --- Phase 3: Package inspection ---
+    // --- Phase 2: Package metadata and content inspection ---
     if !json_output {
         println!();
         println!("═══════════════════════════════════════════════════════════");
@@ -500,6 +769,7 @@ pub fn run_verify_release(dry_run: bool, json_output: bool, verbose: bool) -> Re
         println!();
     }
 
+    // Discover publishable crates via cargo metadata
     let publishable = discover_publishable_crates(&workspace_root)?;
 
     if publishable.is_empty() {
@@ -517,221 +787,61 @@ pub fn run_verify_release(dry_run: bool, json_output: bool, verbose: bool) -> Re
         println!();
     }
 
-    // Validate metadata: each publishable crate must have description, license, repository
-    let mut metadata_issues: Vec<String> = Vec::new();
-    for (name, manifest_dir) in &publishable {
-        let cargo_toml = manifest_dir.join("Cargo.toml");
-        let content = match std::fs::read_to_string(&cargo_toml) {
-            Ok(c) => c,
-            Err(e) => {
-                metadata_issues.push(format!("{name}: cannot read {}: {e}", cargo_toml.display()));
-                continue;
-            }
-        };
+    // Load metadata for dependency validation
+    let metadata_output = Command::new("cargo")
+        .args(["metadata", "--no-deps", "--format-version", "1"])
+        .current_dir(&workspace_root)
+        .output()
+        .map_err(|e| format!("failed to run cargo metadata: {e}"))?;
 
-        let has_description = content.lines().any(|l| l.trim().starts_with("description"));
-        let has_license = content.lines().any(|l| {
-            let t = l.trim();
-            t.starts_with("license") || t.starts_with("license-file")
-        });
-
-        if !has_description {
-            metadata_issues.push(format!("{name}: missing `description` field"));
-        }
-        if !has_license {
-            // Check if workspace license applies
-            let root_cargo = workspace_root.join("Cargo.toml");
-            let root_content = std::fs::read_to_string(&root_cargo).unwrap_or_default();
-            if !root_content.contains("[workspace.package]") || !root_content.contains("license") {
-                metadata_issues.push(format!(
-                    "{name}: missing `license` field (no workspace fallback)"
-                ));
-            }
-        }
-
-        // Check that readme file exists if explicitly referenced
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with("readme") {
-                if let Some(start) = trimmed.find('"') {
-                    if let Some(end) = trimmed[start + 1..].find('"') {
-                        let readme_path = manifest_dir.join(&trimmed[start + 1..start + 1 + end]);
-                        if !readme_path.exists() {
-                            metadata_issues.push(format!(
-                                "{name}: referenced readme does not exist: {}",
-                                readme_path.display()
-                            ));
-                        }
-                    }
-                }
-            }
-        }
+    if !metadata_output.status.success() {
+        return Err("cargo metadata failed during release verification".to_string());
     }
 
-    if !metadata_issues.is_empty() {
-        if !json_output {
-            eprintln!("  Package metadata issues:");
-            for issue in &metadata_issues {
-                eprintln!("    ✗ {issue}");
-            }
-            eprintln!();
-        }
-        return Err(format!(
-            "{} package metadata issue(s) found",
-            metadata_issues.len()
-        ));
-    }
+    let metadata: serde_json::Value = serde_json::from_slice(&metadata_output.stdout)
+        .map_err(|e| format!("failed to parse cargo metadata: {e}"))?;
 
+    // Validate metadata fields
+    validate_package_metadata(&publishable, &workspace_root)?;
     if !json_output {
         println!("  ✓ Package metadata valid for all publishable crates");
         println!();
     }
 
-    // Run cargo package --list for each publishable crate
-    let mut package_issues: Vec<String> = Vec::new();
-    for (name, _manifest_dir) in &publishable {
-        if verbose {
-            println!("  → cargo publish --dry-run -p {name}");
-        }
-
-        let output = Command::new("cargo")
-            .args(["package", "--list", "-p", name])
-            .current_dir(&workspace_root)
-            .output();
-
-        match output {
-            Ok(out) => {
-                if !out.status.success() {
-                    let stderr = String::from_utf8_lossy(&out.stderr);
-                    package_issues.push(format!("{name}: cargo package --list failed: {stderr}"));
-                    continue;
-                }
-
-                let listing = String::from_utf8_lossy(&out.stdout);
-
-                // Check for prohibited patterns — credential-like files, build
-                // outputs, planning docs, and test corpora must never ship in a
-                // published crate.
-                let prohibited = [
-                    "target/",
-                    ".git/",
-                    ".env",
-                    "credentials",
-                    "fuzz/",
-                    "plans/",
-                    "corpus/",
-                    "crash-",
-                    ".key",
-                    ".pem",
-                    ".p12",
-                    ".pfx",
-                    ".keystore",
-                    "id_rsa",
-                    "id_ed25519",
-                    "id_ecdsa",
-                    "htpasswd",
-                    "secret",
-                    ".secret",
-                    "private_key",
-                ];
-
-                for line in listing.lines() {
-                    for pattern in &prohibited {
-                        if line.contains(pattern) {
-                            package_issues
-                                .push(format!("{name}: prohibited file in package: {line}"));
-                        }
-                    }
-                }
-
-                if verbose && package_issues.is_empty() {
-                    let file_count = listing.lines().count();
-                    println!("    {name}: {file_count} files");
-                }
-            }
-            Err(e) => {
-                package_issues.push(format!("{name}: failed to run cargo package: {e}"));
-            }
-        }
-    }
-
-    if !package_issues.is_empty() {
-        if !json_output {
-            eprintln!("  Package content issues:");
-            for issue in &package_issues {
-                eprintln!("    ✗ {issue}");
-            }
-            eprintln!();
-        }
-        return Err(format!(
-            "{} package content issue(s) found",
-            package_issues.len()
-        ));
-    }
-
-    if !json_output {
-        println!("  ✓ Package contents valid for all publishable crates");
-        println!();
-    }
-
-    // Check that internal path dependencies use * version specs
-    let mut dep_issues: Vec<String> = Vec::new();
-    for (name, manifest_dir) in &publishable {
-        let cargo_toml = manifest_dir.join("Cargo.toml");
-        let content = match std::fs::read_to_string(&cargo_toml) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        // Simple check: look for path deps with pinned versions (not `*`)
-        // This is a heuristic — exact version pins on path deps cause publish failures
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if trimmed.contains("path = ") && trimmed.contains("version = ") {
-                // Check if version is a specific number (not `*`)
-                if let Some(vstart) = trimmed.find("version = \"") {
-                    let vstr = &trimmed[vstart + 11..];
-                    if let Some(vend) = vstr.find('"') {
-                        let ver = &vstr[..vend];
-                        if ver != "*" && !ver.contains('{') {
-                            dep_issues.push(format!(
-                                "{name}: path dependency with pinned version `{ver}` — use `*` for local path deps"
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if !dep_issues.is_empty() {
-        if !json_output {
-            eprintln!("  Internal dependency version issues:");
-            for issue in &dep_issues {
-                eprintln!("    ✗ {issue}");
-            }
-            eprintln!();
-        }
-        return Err(format!(
-            "{} internal dependency issue(s) found",
-            dep_issues.len()
-        ));
-    }
-
+    // Validate dependency version requirements
+    validate_dependency_versions(&publishable, &metadata)?;
     if !json_output {
         println!("  ✓ Internal path dependencies use compatible version specs");
         println!();
     }
 
-    // Dry-run package assembly for each crate
-    let mut dry_run_issues: Vec<String> = Vec::new();
+    // Inspect package contents
+    validate_package_contents(&publishable, &workspace_root, verbose, allow_dirty)?;
+    if !json_output {
+        println!("  ✓ Package contents valid for all publishable crates");
+        println!();
+    }
+
+    // --- Phase 3: Package assembly (no-verify, no registry resolution) ---
+    if !json_output {
+        println!("═══════════════════════════════════════════════════════════");
+        println!("  cargo xtask verify-release (phase 3: package assembly)");
+        println!("═══════════════════════════════════════════════════════════");
+        println!();
+    }
+
+    let mut assembly_issues: Vec<String> = Vec::new();
     for (name, _manifest_dir) in &publishable {
         if verbose {
-            println!("  → cargo publish --dry-run -p {name}");
+            println!("  → cargo package --no-verify -p {name}");
         }
 
+        let mut args = vec!["package", "--no-verify", "-p", name];
+        if allow_dirty {
+            args.push("--allow-dirty");
+        }
         let output = Command::new("cargo")
-            .args(["publish", "--dry-run", "-p", name])
+            .args(&args)
             .current_dir(&workspace_root)
             .output();
 
@@ -739,34 +849,35 @@ pub fn run_verify_release(dry_run: bool, json_output: bool, verbose: bool) -> Re
             Ok(out) => {
                 if !out.status.success() {
                     let stderr = String::from_utf8_lossy(&out.stderr);
-                    dry_run_issues.push(format!("{name}: dry-run failed: {stderr}"));
+                    assembly_issues.push(format!("{name}: package assembly failed: {stderr}"));
                 }
             }
             Err(e) => {
-                dry_run_issues.push(format!(
-                    "{name}: failed to run cargo publish --dry-run: {e}"
-                ));
+                assembly_issues.push(format!("{name}: failed to run cargo package: {e}"));
             }
         }
     }
 
-    if !dry_run_issues.is_empty() {
+    if !assembly_issues.is_empty() {
         if !json_output {
-            eprintln!("  Dry-run issues:");
-            for issue in &dry_run_issues {
+            eprintln!("  Package assembly issues:");
+            for issue in &assembly_issues {
                 eprintln!("    ✗ {issue}");
             }
             eprintln!();
         }
-        return Err(format!("{} dry-run issue(s) found", dry_run_issues.len()));
+        return Err(format!(
+            "{} package assembly issue(s) found",
+            assembly_issues.len()
+        ));
     }
 
     if !json_output {
-        println!("  ✓ Dry-run packaging successful for all publishable crates");
+        println!("  ✓ Package assembly successful for all publishable crates");
         println!();
     }
 
-    // Print manual publication order
+    // --- Phase 4: Print manual publication order ---
     if !json_output {
         println!("═══════════════════════════════════════════════════════════");
         println!("  Manual publication order ({} crates):", publishable.len());

@@ -3,7 +3,8 @@ name = "synvoid-platform"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
-description = "Platform detection, filesystem utilities, and sandbox primitives for SynVoid"
+repository.workspace = true
+description = "Platform-specific abstractions and syscall wrappers"
 
 [dependencies]
 thiserror = "2"
@@ -15,4 +16,4 @@ socket2 = { version = "0.6", features = ["all"] }
 tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net"] }
 serde_json = "1"
-synvoid-ipc = { path = "../synvoid-ipc" }
+synvoid-ipc = { path = "../synvoid-ipc" , version = "0.1" }

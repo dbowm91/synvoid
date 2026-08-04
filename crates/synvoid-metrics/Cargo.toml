@@ -3,15 +3,17 @@ name = "synvoid-metrics"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
+repository.workspace = true
+description = "Metrics collection and Prometheus export"
 
 [features]
 default = []
 rkyv = []
 
 [dependencies]
-synvoid-core = { path = "../synvoid-core" }
-synvoid-utils = { path = "../synvoid-utils" }
-synvoid-waf = { path = "../synvoid-waf" }
+synvoid-core = { path = "../synvoid-core" , version = "0.1" }
+synvoid-utils = { path = "../synvoid-utils" , version = "0.1" }
+synvoid-waf = { path = "../synvoid-waf" , version = "0.1" }
 chrono = "0.4"
 parking_lot = "0.12"
 schemars = "0.8"
