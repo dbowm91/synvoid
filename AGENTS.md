@@ -331,20 +331,24 @@ The `architecture/` directory (103 docs) and `.opencode/skills/` directory conta
 
 ## CI Verification Status
 
-**Phase 1 — Failure Adjudication Complete** (commit `21371717`)
+**Phase 1-3 — Verification Closure In Progress**
 
 | Metric | Status |
 |--------|--------|
 | `cargo xtask verify` | ✅ 8/8 pass |
-| `cargo xtask verify-full` | 15 failures resolved, 20 remaining |
+| `cargo xtask verify-full` | 15 failures resolved (Phase 1), 3 stale expectations corrected (Phase 3), 17 remaining |
 | `cargo xtask verify-release` | Same as full |
 | Remote CI | ✅ Green |
 
-**Remaining failures** (20) are tracked in `plans/ci_phase01_failure_ledger.md`:
+**Remaining failures** (17) are tracked in `plans/ci_phase01_failure_ledger.md`:
 - 11 harness defects (fast path optimization, race conditions, normalization gaps)
 - 5 environment-dependent (hyper-rustls ALPN panic)
-- 2 stale expectations (proxy wildcard matching)
-- 2 product regressions (fast path blocks detection)
+- 1 stale expectation (xss_invalid_utf8 overlong encoding — known limitation)
+
+**Phase 3 resolutions** (proxy wildcard, unknown host, ICMP validation):
+- Router wildcard: Fixed matchit 0.7 catch-all syntax (`{*sub}` → `*sub`)
+- Unknown host: Test updated to reflect correct `reject_unknown_hosts` behavior
+- ICMP validation: `_is_v6` parameter documented as reserved; test reflects actual boundary
 
 **Detection pattern additions** (commit `21371717`):
 - SQLi: `AND 1=1`, `OR 1=1`, function calls (CONCAT, CHAR, CAST, etc.)

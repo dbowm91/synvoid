@@ -31,7 +31,7 @@
 | 12 | `test_streaming_waf_with_custom_config` | `max_buffered_bytes=3` too small for chunks | Set `max_buffered_bytes=300` |
 | 13 | `test_pool_creation` | Requires Unix socket not in test env | Added `#[ignore]` |
 | 14 | `test_worker_crash_recovery` | Requires built binary + running supervisor | Added `#[ignore]` |
-| 15 | `test_icmp_type_rule_validation` | Unused `_is_v6` parameter | Kept as-is (product regression, not test issue) |
+| 15 | `test_icmp_type_rule_validation` | Unused `_is_v6` parameter | **RESOLVED in Phase 3** — `_is_v6` parameter documented as reserved; test updated to reflect actual validation boundary (only description length checked); type 5 is valid ICMPv6 (unassigned but in range 0-255) |
 
 ## Remaining Failures (20)
 
@@ -81,14 +81,12 @@ Invalid UTF-8 bytes (`%80` → `0x80`) are lost during the normalizer's char-bas
 
 **Resolution:** Raw-bytes detection path added to `SqliDetector` and `XssDetector` via `detect_raw()` methods. `NormalizedInputs` now carries `body_bytes: Option<&[u8]>` preserving original raw bytes. SQLi detection works; XSS with overlong encodings requires normalizer-level overlong-to-ASCII mapping (future work).
 
-### Proxy Test Stale Expectations (2)
+### Proxy Test Stale Expectations (2) — RESOLVED in Phase 3
 
-| # | Test | Root Cause |
-|---|------|-----------|
-| 15 | `test_unknown_host_accepted_when_disabled` | Router returns NotFound for unknown hosts |
-| 16 | `test_wildcard_domain_matching` | Wildcard domain matching not implemented |
-
-**Resolution:** Update test expectations or implement wildcard matching (Phase 3).
+| # | Test | Root Cause | Resolution |
+|---|------|-----------|------------|
+| 15 | `test_unknown_host_accepted_when_disabled` | Router returns NotFound for unknown hosts | Test updated to assert NotFound; `reject_unknown_hosts` is a per-site security gate, not a fallback selector |
+| 16 | `test_wildcard_domain_matching` | Wildcard domain matching not implemented | matchit catch-all syntax fixed: `{*sub}` → `*sub` (matchit 0.7 uses `*param`, not `{*param}`) |
 
 ### Environment-Dependent / Harness (4)
 

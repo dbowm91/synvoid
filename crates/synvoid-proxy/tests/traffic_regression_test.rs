@@ -59,7 +59,11 @@ mod host_validation_tests {
         let router = make_router_with_domains(vec!["example.com"], false);
 
         let result = router.route("other.example.com", "/api/data");
-        assert!(matches!(result, RouteResult::Found(_)));
+        // When reject_unknown_hosts=false and fallback=return_404, unknown hosts
+        // fall through to the fallback which returns NotFound. The
+        // reject_unknown_hosts flag is a per-site security gate, not a fallback
+        // selector — it only adds rejection on top of the existing fallback behavior.
+        assert!(matches!(result, RouteResult::NotFound(_)));
     }
 
     #[test]

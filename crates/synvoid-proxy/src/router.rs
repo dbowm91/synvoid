@@ -273,7 +273,7 @@ impl Router {
                 let reversed = Self::reverse_domain_for_router(&pattern);
                 let _ = wildcard_domain_router.insert(reversed.clone(), config_arc.clone());
                 let _ = wildcard_domain_router
-                    .insert(format!("{}/{{*sub}}", reversed), config_arc.clone());
+                    .insert(format!("{}/{}", reversed, "*sub"), config_arc.clone());
 
                 suffixes.push(clean_domain.clone());
             } else {
@@ -376,7 +376,8 @@ impl Router {
                         let reversed = Self::reverse_domain_for_router(&pattern);
                         let router = ip_wildcard_routers.entry(bind_addr).or_default();
                         let _ = router.insert(reversed.clone(), config_arc.clone());
-                        let _ = router.insert(format!("{}/{{*sub}}", reversed), config_arc.clone());
+                        let _ =
+                            router.insert(format!("{}/{}", reversed, "*sub"), config_arc.clone());
                     } else {
                         ip_domain_map.insert((bind_addr, clean_domain.clone()), config_arc.clone());
                     }
@@ -1249,7 +1250,7 @@ impl Router {
                     let reversed = Self::reverse_domain_for_router(&pattern);
                     let _ = wildcard_domain_router.insert(reversed.clone(), config_arc.clone());
                     let _ = wildcard_domain_router
-                        .insert(format!("{}/{{*sub}}", reversed), config_arc.clone());
+                        .insert(format!("{}/{}", reversed, "*sub"), config_arc.clone());
 
                     suffixes.push(clean_domain.clone());
                 } else {
