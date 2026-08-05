@@ -4,10 +4,28 @@ mod waf_anomaly_scoring_tests {
     use synvoid_waf::attack_detection::{AttackDetectionConfig, AttackDetector};
 
     #[test]
-    fn test_anomaly_scoring_default_disabled() {
+    fn test_anomaly_scoring_default_enabled() {
         let config = AttackDetectionConfig::default();
         assert!(config.anomaly_scoring.enabled);
         assert_eq!(config.anomaly_scoring.threshold, 100);
+    }
+
+    #[test]
+    fn test_anomaly_scoring_override_to_disabled() {
+        let mut config = AttackDetectionConfig::default();
+        assert!(config.anomaly_scoring.enabled);
+
+        config.anomaly_scoring.enabled = false;
+        assert!(!config.anomaly_scoring.enabled);
+    }
+
+    #[test]
+    fn test_anomaly_scoring_override_threshold() {
+        let mut config = AttackDetectionConfig::default();
+        assert_eq!(config.anomaly_scoring.threshold, 100);
+
+        config.anomaly_scoring.threshold = 50;
+        assert_eq!(config.anomaly_scoring.threshold, 50);
     }
 
     #[tokio::test]
@@ -810,6 +828,73 @@ mod mesh_proxy_circuit_breaker_tests {
         assert_eq!(stats.circuit_state, CircuitState::Open);
         assert_eq!(stats.consecutive_failures, 3);
         assert!(stats.circuit_open_until.is_some());
+    }
+
+    #[test]
+    fn test_circuit_below_threshold_stays_closed() {
+        let mut stats = ProviderStats {
+            total_requests: 10,
+            successful_requests: 10,
+            consecutive_failures: 1,
+            consecutive_successes: 0,
+            last_failure: None,
+            last_success: Some(Instant::now()),
+            circuit_state: CircuitState::Closed,
+            circuit_open_until: None,
+            half_open_requests: 0,
+        };
+
+        // threshold=3, consecutive_failures=1 -> after record_failure, failures=2 < 3
+        stats.record_failure(3, 30);
+
+        assert_eq!(stats.circuit_state, CircuitState::Closed);
+        assert_eq!(stats.consecutive_failures, 2);
+        assert!(stats.circuit_open_until.is_none());
+    }
+
+    #[test]
+    fn test_circuit_at_threshold_opens() {
+        let mut stats = ProviderStats {
+            total_requests: 10,
+            successful_requests: 10,
+            consecutive_failures: 2,
+            consecutive_successes: 0,
+            last_failure: None,
+            last_success: Some(Instant::now()),
+            circuit_state: CircuitState::Closed,
+            circuit_open_until: None,
+            half_open_requests: 0,
+        };
+
+        // threshold=3, consecutive_failures=2 -> after record_failure, failures=3 >= 3
+        stats.record_failure(3, 30);
+
+        assert_eq!(stats.circuit_state, CircuitState::Open);
+        assert_eq!(stats.consecutive_failures, 3);
+        assert!(stats.circuit_open_until.is_some());
+    }
+
+    #[test]
+    fn test_circuit_already_open_extends_timeout() {
+        let open_until = Instant::now() + std::time::Duration::from_secs(30);
+        let mut stats = ProviderStats {
+            total_requests: 10,
+            successful_requests: 5,
+            consecutive_failures: 5,
+            consecutive_successes: 0,
+            last_failure: Some(Instant::now()),
+            last_success: Some(Instant::now() - std::time::Duration::from_secs(60)),
+            circuit_state: CircuitState::Open,
+            circuit_open_until: Some(open_until),
+            half_open_requests: 0,
+        };
+
+        // Already open — record_failure just extends the timeout
+        let original_until = stats.circuit_open_until.unwrap();
+        stats.record_failure(3, 30);
+
+        assert_eq!(stats.circuit_state, CircuitState::Open);
+        assert!(stats.circuit_open_until.unwrap() >= original_until);
     }
 
     #[test]

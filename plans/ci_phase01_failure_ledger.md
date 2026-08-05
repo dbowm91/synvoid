@@ -85,8 +85,34 @@ Invalid UTF-8 bytes (`%80` → `0x80`) are lost during the normalizer's char-bas
 
 | # | Test | Root Cause | Resolution |
 |---|------|-----------|------------|
-| 15 | `test_unknown_host_accepted_when_disabled` | Router returns NotFound for unknown hosts | Test updated to assert NotFound; `reject_unknown_hosts` is a per-site security gate, not a fallback selector |
-| 16 | `test_wildcard_domain_matching` | Wildcard domain matching not implemented | matchit catch-all syntax fixed: `{*sub}` → `*sub` (matchit 0.7 uses `*param`, not `{*param}`) |
+| 15 | `test_unknown_host_accepted_when_disabled` | Router returns NotFound for unknown hosts | Test updated to assert NotFound; `reject_unknown_hosts` is a per-site security gate, not a fallback selector. Added `test_unknown_host_does_not_silently_route_to_unrelated_site` for two-site isolation. |
+| 16 | `test_wildcard_domain_matching` | Wildcard domain matching not implemented | matchit catch-all syntax fixed: `{*sub}` → `*sub` (matchit 0.7 uses `*param`, not `{*param}`). Added tests for apex match, case insensitivity, unrelated host rejection, and exact vs wildcard precedence. |
+
+### ICMP Validation Cleanup — RESOLVED in Phase 3
+
+| # | Change | Resolution |
+|---|--------|------------|
+| — | `IcmpTypeRule::validate(_is_v6)` unused parameter | Removed `_is_v6` parameter; API accepts any type 0-255 regardless of address family. Only description length is validated. |
+
+### WAF Category Contract — DOCUMENTED in Phase 3
+
+| # | Change | Resolution |
+|---|--------|------------|
+| — | No category contract model documented | Added outcome-first contract documentation to `AttackType` enum in both `crates/synvoid-waf/src/attack_detection/config.rs` and `src/waf/attack_detection/config.rs`. |
+
+### Circuit Breaker Boundary Tests — ADDED in Phase 3
+
+| # | Test | Resolution |
+|---|------|------------|
+| — | `test_circuit_below_threshold_stays_closed` | Verifies threshold-1 stays Closed |
+| — | `test_circuit_at_threshold_opens` | Verifies exactly-threshold opens |
+| — | `test_circuit_already_open_extends_timeout` | Verifies already-Open extends timeout |
+
+### Anomaly Scoring Tests — UPDATED in Phase 3
+
+| # | Test | Resolution |
+|---|------|------------|
+| — | `test_anomaly_scoring_default_disabled` | Renamed to `test_anomaly_scoring_default_enabled` (name was stale). Added `test_anomaly_scoring_override_to_disabled` and `test_anomaly_scoring_override_threshold` for override behavior. |
 
 ### Environment-Dependent / Harness (4)
 

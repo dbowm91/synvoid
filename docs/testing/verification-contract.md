@@ -124,7 +124,7 @@ Every test that fails or times out under `verify-full` is classified below. Real
 |------|----------|----------------|-----------|
 | `test_unknown_host_accepted_when_disabled` | proxy | STALE_EXPECTATION (resolved) | Router returns NotFound for unknown hosts when fallback=return_404; test updated in Phase 3 |
 | `test_wildcard_domain_matching` | proxy | STALE_EXPECTATION (resolved) | matchit catch-all syntax fixed (`{*sub}` → `*sub`) in Phase 3 |
-| `test_icmp_type_rule_validation` | icmp-filter | STALE_EXPECTATION (resolved) | `_is_v6` parameter documented as reserved; test updated in Phase 3 |
+| `test_icmp_type_rule_validation` | icmp-filter | STALE_EXPECTATION (resolved) | `_is_v6` parameter removed (was unused); test updated in Phase 3 |
 | `test_waf_corpus_sqli_with_invalid_utf8` | waf corpus | HARNESS_DEFECT | Normalizer loses invalid UTF-8 bytes; needs raw-bytes detection path |
 | `test_waf_corpus_xss_invalid_utf8` | waf corpus | HARNESS_DEFECT | Same as above |
 | `test_anomaly_scoring_multiple_attacks` | waf wave10 | HARNESS_DEFECT | Fast path optimization skips SQLi detection for this payload |

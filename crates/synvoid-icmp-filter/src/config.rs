@@ -82,11 +82,10 @@ impl IcmpTypeRule {
 
     /// Validate this ICMP type rule.
     ///
-    /// The `is_v6` parameter is reserved for future address-family-specific
-    /// validation. Currently, the API accepts any type code 0-255 regardless
-    /// of address family, since both ICMPv4 and ICMPv6 define valid types
-    /// across the full u8 range. Only description length is validated.
-    pub fn validate(&self, _is_v6: bool) -> Result<(), String> {
+    /// The API accepts any type code 0-255 regardless of address family,
+    /// since both ICMPv4 and ICMPv6 define valid types across the full u8
+    /// range. Only description length is validated.
+    pub fn validate(&self) -> Result<(), String> {
         if let Some(ref desc) = self.description {
             if desc.len() > 256 {
                 return Err("Description too long (max 256 chars)".to_string());
@@ -247,11 +246,11 @@ impl IcmpFilterConfig {
         }
 
         for rule in &self.icmp_type_rules {
-            rule.validate(false)?;
+            rule.validate()?;
         }
 
         for rule in &self.icmpv6_type_rules {
-            rule.validate(true)?;
+            rule.validate()?;
         }
 
         if let Some(ref rate_limit) = self.rate_limit {
@@ -556,19 +555,19 @@ mod tests {
     #[test]
     fn test_icmp_type_rule_validation() {
         let valid_v4_rule = IcmpTypeRule::new(8, IcmpAction::Block);
-        assert!(valid_v4_rule.validate(false).is_ok());
+        assert!(valid_v4_rule.validate().is_ok());
 
         let valid_v6_rule = IcmpTypeRule::new(128, IcmpAction::Block);
-        assert!(valid_v6_rule.validate(true).is_ok());
+        assert!(valid_v6_rule.validate().is_ok());
 
         // Type 5 is a valid ICMPv6 type code (reserved/unassigned but in range 0-255).
         // The API accepts any type 0-255 regardless of address family.
         let type_5_rule = IcmpTypeRule::new(5, IcmpAction::Block);
-        assert!(type_5_rule.validate(true).is_ok());
+        assert!(type_5_rule.validate().is_ok());
 
         // Only description length is validated
         let long_desc = IcmpTypeRule::new(8, IcmpAction::Block).with_description("x".repeat(257));
-        assert!(long_desc.validate(false).is_err());
+        assert!(long_desc.validate().is_err());
     }
 
     #[test]

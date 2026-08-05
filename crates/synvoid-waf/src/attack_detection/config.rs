@@ -185,6 +185,25 @@ pub struct AttackDetectionResult {
     pub input_location: InputLocation,
 }
 
+/// Attack classification categories returned by the detection engine.
+///
+/// # Category Contract
+///
+/// The WAF uses an **outcome-first** contract: the public guarantee is that a
+/// malicious request is detected and enforcement (block/challenge/stall) is
+/// applied. The specific `AttackType` category is diagnostic and may vary when
+/// payloads match multiple detector signatures.
+///
+/// When a payload matches multiple detectors (e.g., an open redirect that also
+/// contains XSS), the detector priority ordering determines which category is
+/// reported. Priority: Xxe(1) > XPathInjection(2) > LdapInjection(3) >
+/// Sqli(4) > Xss(5) > PathTraversal(6) > CmdInjection(7) > Ssti(8) >
+/// Rfi(9) > Ssrf(10) > OpenRedirect(11) > RequestSmuggling(12) >
+/// Jwt(13) > Other(14).
+///
+/// Tests should assert the enforcement outcome (block/challenge/allow) and
+/// that the category is non-benign, without requiring an exact category match
+/// for payloads that legitimately cross detector boundaries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AttackType {
     Sqli,

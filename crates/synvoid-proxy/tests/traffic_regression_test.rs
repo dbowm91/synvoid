@@ -100,6 +100,41 @@ mod host_validation_tests {
         let result = router.route("", "/path");
         assert!(matches!(result, RouteResult::NotFound(_)));
     }
+
+    #[test]
+    fn test_unknown_host_does_not_silently_route_to_unrelated_site() {
+        let mut site_a = SiteConfig::default();
+        site_a.site.domains = vec!["alpha.com".to_string()];
+        site_a.site.upstream.default = "http://127.0.0.1:8081".to_string();
+        site_a.security.reject_unknown_hosts = Some(true);
+
+        let mut site_b = SiteConfig::default();
+        site_b.site.domains = vec!["beta.com".to_string()];
+        site_b.site.upstream.default = "http://127.0.0.1:8082".to_string();
+        site_b.security.reject_unknown_hosts = Some(true);
+
+        let mut main_config = MainConfig::default();
+        main_config.fallback.mode = "return_404".to_string();
+
+        let mut sites = HashMap::new();
+        // site_id() returns first domain, so use that as key
+        let site_a_id = site_a.site_id();
+        let site_b_id = site_b.site_id();
+        sites.insert(site_a_id, site_a);
+        sites.insert(site_b_id, site_b);
+
+        let router = Router::new(&main_config, sites);
+
+        // Known hosts route correctly
+        let result = router.route("alpha.com", "/path");
+        assert!(matches!(result, RouteResult::Found(_)));
+        let result = router.route("beta.com", "/path");
+        assert!(matches!(result, RouteResult::Found(_)));
+
+        // Unknown host does NOT silently route to alpha or beta
+        let result = router.route("gamma.com", "/path");
+        assert!(matches!(result, RouteResult::NotFound(_)));
+    }
 }
 
 #[cfg(test)]
@@ -715,6 +750,94 @@ mod router_fallback_tests {
         assert!(matches!(result, RouteResult::Found(_)));
 
         let result = router.route("deep.sub.example.com", "/path");
+        assert!(matches!(result, RouteResult::Found(_)));
+    }
+
+    #[test]
+    fn test_wildcard_apex_matches() {
+        let mut site_config = SiteConfig::default();
+        site_config.site.domains = vec![".example.com".to_string()];
+        site_config.site.upstream.default = "http://127.0.0.1:8080".to_string();
+
+        let mut main_config = MainConfig::default();
+        main_config.fallback.mode = "return_404".to_string();
+
+        let mut sites = HashMap::new();
+        sites.insert(site_config.site_id(), site_config);
+
+        let router = Router::new(&main_config, sites);
+
+        // Apex domain matches because the wildcard router inserts the base pattern
+        let result = router.route("example.com", "/path");
+        assert!(matches!(result, RouteResult::Found(_)));
+    }
+
+    #[test]
+    fn test_wildcard_case_insensitive() {
+        let mut site_config = SiteConfig::default();
+        site_config.site.domains = vec![".example.com".to_string()];
+        site_config.site.upstream.default = "http://127.0.0.1:8080".to_string();
+
+        let mut main_config = MainConfig::default();
+        main_config.fallback.mode = "return_404".to_string();
+
+        let mut sites = HashMap::new();
+        sites.insert(site_config.site_id(), site_config);
+
+        let router = Router::new(&main_config, sites);
+
+        // clean_domain lowercases the host, so case should not matter
+        let result = router.route("SUB.Example.COM", "/path");
+        assert!(matches!(result, RouteResult::Found(_)));
+
+        let result = router.route("Sub.Example.Com", "/path");
+        assert!(matches!(result, RouteResult::Found(_)));
+    }
+
+    #[test]
+    fn test_wildcard_does_not_match_unrelated_host() {
+        let mut site_config = SiteConfig::default();
+        site_config.site.domains = vec![".example.com".to_string()];
+        site_config.site.upstream.default = "http://127.0.0.1:8080".to_string();
+
+        let mut main_config = MainConfig::default();
+        main_config.fallback.mode = "return_404".to_string();
+
+        let mut sites = HashMap::new();
+        sites.insert(site_config.site_id(), site_config);
+
+        let router = Router::new(&main_config, sites);
+
+        // Unrelated domain should not match the wildcard
+        let result = router.route("sub.example.org", "/path");
+        assert!(matches!(result, RouteResult::NotFound(_)));
+    }
+
+    #[test]
+    fn test_wildcard_exact_vs_wildcard_precedence() {
+        let mut exact_site = SiteConfig::default();
+        exact_site.site.domains = vec!["www.example.com".to_string()];
+        exact_site.site.upstream.default = "http://127.0.0.1:8080".to_string();
+
+        let mut wildcard_site = SiteConfig::default();
+        wildcard_site.site.domains = vec![".example.com".to_string()];
+        wildcard_site.site.upstream.default = "http://127.0.0.1:9090".to_string();
+
+        let mut main_config = MainConfig::default();
+        main_config.fallback.mode = "return_404".to_string();
+
+        let mut sites = HashMap::new();
+        sites.insert(exact_site.site_id(), exact_site);
+        sites.insert(wildcard_site.site_id(), wildcard_site);
+
+        let router = Router::new(&main_config, sites);
+
+        // Exact match takes precedence — domain_map is checked before wildcard_domain_router
+        let result = router.route("www.example.com", "/path");
+        assert!(matches!(result, RouteResult::Found(_)));
+
+        // Subdomain still matches wildcard
+        let result = router.route("sub.example.com", "/path");
         assert!(matches!(result, RouteResult::Found(_)));
     }
 }
