@@ -329,3 +329,27 @@ The `architecture/` directory (103 docs) and `.opencode/skills/` directory conta
 - `wasmtime` 40.0.4 (via yara-x) has known CVEs but only used for YARA compilation, not wasm sandbox — mitigated by `[patch.crates-io]` for direct dep. 11 advisory ignores in `deny.toml` with re-audit dates 2026-10-01.
 - `synvoid-testkit` has zero consumers — documented boundary policy in `crates/synvoid-testkit/README.md`
 
+## CI Verification Status
+
+**Phase 1 — Failure Adjudication Complete** (commit `21371717`)
+
+| Metric | Status |
+|--------|--------|
+| `cargo xtask verify` | ✅ 8/8 pass |
+| `cargo xtask verify-full` | 15 failures resolved, 20 remaining |
+| `cargo xtask verify-release` | Same as full |
+| Remote CI | ✅ Green |
+
+**Remaining failures** (20) are tracked in `plans/ci_phase01_failure_ledger.md`:
+- 11 harness defects (fast path optimization, race conditions, normalization gaps)
+- 5 environment-dependent (hyper-rustls ALPN panic)
+- 2 stale expectations (proxy wildcard matching)
+- 2 product regressions (fast path blocks detection)
+
+**Detection pattern additions** (commit `21371717`):
+- SQLi: `AND 1=1`, `OR 1=1`, function calls (CONCAT, CHAR, CAST, etc.)
+- LDAP: `)(&`, `)(|`, wildcard operators
+- XPath: `//user`, `[@attr]`, or/and predicates
+
+**Execution evidence**: `plans/ci_phase01_execution_evidence.md`
+

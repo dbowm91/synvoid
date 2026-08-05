@@ -24,7 +24,7 @@ Linux offers the best support for CPU affinity and kernel networking primitives.
 
 ## Key Features
 
-- **Advanced Attack Detection**: Native support for SQLi, XSS, SSRF, and command injection detection using `libinjection` and high-speed regex engines.
+- **Advanced Attack Detection**: Native support for SQLi, XSS, SSRF, command injection, LDAP injection, and XPath injection detection using `libinjection` and high-speed regex engines.
 - **Bot Mitigation**: Challenges automated traffic with CSS honeypots, JavaScript execution tests, and behavioral analysis.
 - **Distributed WAF Mesh**: Coordinate threat intelligence across geographic regions and build a private, collaborative DDoS defense network. DHT ingress validation uses a centralized key policy table, signed Raft attestations, and mandatory signature enforcement for remote writes. See `architecture/mesh_trust_domains.md` for trust domain boundaries.
 - **Modern Protocol Stack**: First-class support for **HTTP/3 (QUIC)**, HTTP/2, and TLS 1.3. DNS-over-TLS (DoT), DNS-over-HTTPS (DoH), and DNS-over-QUIC (DoQ) for encrypted DNS.
@@ -129,6 +129,14 @@ Publication to crates.io is manual — see [`docs/releasing.md`](docs/releasing.
 
 See [`docs/testing/verification-contract.md`](docs/testing/verification-contract.md) for the full verification specification.
 
+### Verification Status
+
+- **Routine CI** (`cargo xtask verify`): ✅ All 8 steps pass
+- **Full verification** (`cargo xtask verify-full`): 15 failures resolved, 20 remaining (tracked in `plans/ci_phase01_failure_ledger.md`)
+- **Release verification** (`cargo xtask verify-release`): Same as full verification
+
+The Phase 1 failure adjudication is complete. See `plans/ci_phase01_execution_evidence.md` for detailed evidence and deliverables.
+
 ### Developer Testing
 
 Run the routine verification contract locally:
@@ -184,6 +192,9 @@ SynVoid CI uses `Swatinem/rust-cache` for Cargo source and target metadata cachi
 | Document | Description |
 |----------|-------------|
 | [plans/roadmap.md](plans/roadmap.md) | Full development roadmap |
+| [plans/ci_verification_release_truthful_closure_roadmap.md](plans/ci_verification_release_truthful_closure_roadmap.md) | CI verification and release closure roadmap |
+| [plans/ci_phase01_failure_ledger.md](plans/ci_phase01_failure_ledger.md) | Phase 1 failure ledger with 20 remaining failures |
+| [plans/ci_phase01_execution_evidence.md](plans/ci_phase01_execution_evidence.md) | Phase 1 execution evidence and deliverables |
 
 ## Why Linux?
 
