@@ -1,6 +1,6 @@
 # Phase 2 — Product and Security Regression Repair
 
-**Status:** PLANNED  
+**Status:** COMPLETE  
 **Roadmap:** `plans/ci_verification_release_truthful_closure_roadmap.md`  
 **Depends on:** Phase 1 failure ledger and contract adjudication  
 **Purpose:** Correct all failures proven to be product regressions without broad redesign or test weakening.

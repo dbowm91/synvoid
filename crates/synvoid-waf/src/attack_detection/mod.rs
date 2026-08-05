@@ -151,6 +151,24 @@ impl AttackDetector {
             r#"(?i)insert\s+into"#,
             r#"(?i)update\s+.*\s+set"#,
             r#"(?i)alter\s+"#,
+            r#"(?i)'\s+OR\s+'"#,
+            r#"(?i)\bAND\s+\d+\s*=\s*\d+"#,
+            r#"(?i)\bOR\s+\d+\s*=\s*\d+"#,
+            r#"(?i)\bSLEEP\s*\("#,
+            r#"(?i)\bBENCHMARK\s*\("#,
+            r#"(?i)\bWAITFOR\s+DELAY\b"#,
+            r#"(?i)\bCONCAT\s*\("#,
+            r#"(?i)\bCHAR\s*\("#,
+            r#"(?i)\bCAST\s*\("#,
+            r#"(?i)\bCONVERT\s*\("#,
+            r#"(?i)\bINTO\s+(OUTFILE|DUMPFILE)"#,
+            r#"(?i)\bLOAD_FILE\s*\("#,
+            r#"\)\(&"#,
+            r#"\)\(\|"#,
+            r#"\*\*\*"#,
+            r#"\|\|\*"#,
+            r#"(?i)//\w+\("#,
+            r#"[@]\w+"#,
             r#"<script"#,
             r#"javascript:"#,
             r#"onload="#,
@@ -182,6 +200,7 @@ impl AttackDetector {
             r#"<!DOCTYPE"#,
             r#"<!ENTITY"#,
             r#"<!\[CDATA\["#,
+            r#"%xxe"#,
             r#"transfer-encoding"#,
             r#"content-length"#,
         ];
@@ -505,14 +524,43 @@ impl AttackDetector {
                     return (Some(result), 0);
                 }
 
-                if first_result.is_none() {
-                    first_result = Some(result);
-                }
                 total_score += score;
+
+                let new_priority = Self::attack_priority(&result.attack_type);
+                match &first_result {
+                    None => {
+                        first_result = Some(result);
+                    }
+                    Some(existing) => {
+                        let existing_priority = Self::attack_priority(&existing.attack_type);
+                        if new_priority < existing_priority {
+                            first_result = Some(result);
+                        }
+                    }
+                }
             }
         }
 
         (first_result, total_score)
+    }
+
+    fn attack_priority(attack_type: &AttackType) -> u8 {
+        match attack_type {
+            AttackType::Xxe => 1,
+            AttackType::XPathInjection => 2,
+            AttackType::LdapInjection => 3,
+            AttackType::Sqli => 4,
+            AttackType::Xss => 5,
+            AttackType::PathTraversal => 6,
+            AttackType::CmdInjection => 7,
+            AttackType::Ssti => 8,
+            AttackType::Rfi => 9,
+            AttackType::Ssrf => 10,
+            AttackType::OpenRedirect => 11,
+            AttackType::RequestSmuggling => 12,
+            AttackType::Jwt => 13,
+            AttackType::Other => 14,
+        }
     }
 
     fn check_sqli_internal(

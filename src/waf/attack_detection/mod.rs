@@ -167,6 +167,23 @@ impl AttackDetector {
             r#"(?i)update\s+.*\s+set"#,             // SQL update
             r#"(?i)alter\s+"#,                      // SQL alter
             r#"(?i)'\s+OR\s+'"#,                    // SQL OR injection (e.g. OR '1'='1)
+            r#"(?i)\bAND\s+\d+\s*=\s*\d+"#,         // Boolean-based SQLi
+            r#"(?i)\bOR\s+\d+\s*=\s*\d+"#,          // Boolean-based SQLi
+            r#"(?i)\bSLEEP\s*\("#,                  // Time-based SQLi
+            r#"(?i)\bBENCHMARK\s*\("#,              // Time-based SQLi
+            r#"(?i)\bWAITFOR\s+DELAY\b"#,           // Time-based SQLi (MSSQL)
+            r#"(?i)\bCONCAT\s*\("#,                 // SQLi function calls
+            r#"(?i)\bCHAR\s*\("#,                   // SQLi function calls
+            r#"(?i)\bCAST\s*\("#,                   // SQLi function calls
+            r#"(?i)\bCONVERT\s*\("#,                // SQLi function calls
+            r#"(?i)\bINTO\s+(OUTFILE|DUMPFILE)"#,   // SQLi file write
+            r#"(?i)\bLOAD_FILE\s*\("#,              // SQLi file read
+            r#"\)\(&"#,                             // LDAP injection operators
+            r#"\)\(\|"#,                            // LDAP injection operators
+            r#"\*\*\*"#,                            // LDAP injection wildcard
+            r#"\|\|\*"#,                            // LDAP injection wildcard
+            r#"(?i)//\w+\("#,                       // XPath injection
+            r#"[@]\w+"#,                            // XPath attribute selector
             r#"<script"#,                           // XSS
             r#"javascript:"#,                       // XSS JS protocol
             r#"onload="#,                           // XSS event handler
@@ -594,14 +611,43 @@ impl AttackDetector {
                     return (Some(result), 0);
                 }
 
-                if first_result.is_none() {
-                    first_result = Some(result);
-                }
                 total_score += score;
+
+                let new_priority = Self::attack_priority(&result.attack_type);
+                match &first_result {
+                    None => {
+                        first_result = Some(result);
+                    }
+                    Some(existing) => {
+                        let existing_priority = Self::attack_priority(&existing.attack_type);
+                        if new_priority < existing_priority {
+                            first_result = Some(result);
+                        }
+                    }
+                }
             }
         }
 
         (first_result, total_score)
+    }
+
+    fn attack_priority(attack_type: &AttackType) -> u8 {
+        match attack_type {
+            AttackType::Xxe => 1,
+            AttackType::XPathInjection => 2,
+            AttackType::LdapInjection => 3,
+            AttackType::Sqli => 4,
+            AttackType::Xss => 5,
+            AttackType::PathTraversal => 6,
+            AttackType::CmdInjection => 7,
+            AttackType::Ssti => 8,
+            AttackType::Rfi => 9,
+            AttackType::Ssrf => 10,
+            AttackType::OpenRedirect => 11,
+            AttackType::RequestSmuggling => 12,
+            AttackType::Jwt => 13,
+            AttackType::Other => 14,
+        }
     }
 
     fn check_sqli_internal(
