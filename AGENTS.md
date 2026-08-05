@@ -331,19 +331,23 @@ The `architecture/` directory (103 docs) and `.opencode/skills/` directory conta
 
 ## CI Verification Status
 
-**Phase 1-3 — Verification Closure In Progress**
+**Phase 1-4 — Verification Closure In Progress**
 
 | Metric | Status |
 |--------|--------|
 | `cargo xtask verify` | ✅ 8/8 pass |
-| `cargo xtask verify-full` | 15 failures resolved (Phase 1), 3 stale expectations corrected (Phase 3), 17 remaining |
+| `cargo xtask verify-full` | 15 failures resolved (Phase 1), 3 stale expectations corrected (Phase 3), 7 environment-dependent resolved (Phase 4), 12 remaining |
 | `cargo xtask verify-release` | Same as full |
 | Remote CI | ✅ Green |
 
-**Remaining failures** (17) are tracked in `plans/ci_phase01_failure_ledger.md`:
+**Remaining failures** (12) are tracked in `plans/ci_phase01_failure_ledger.md`:
 - 11 harness defects (fast path optimization, race conditions, normalization gaps)
-- 5 environment-dependent (hyper-rustls ALPN panic)
-- 1 stale expectation (xss_invalid_utf8 overlong encoding — known limitation)
+- 1 specialist test (`test_worker_crash_recovery` — still `#[ignore]`, requires full supervisor)
+
+**Phase 4 resolutions** (harness isolation):
+- Proxy pipeline ALPN: `build_tls_config` set ALPN protocols; `hyper-rustls` `with_tls_config()` requires empty. Cleared ALPN before connector builder, switched to `enable_all_versions()`.
+- Pool creation: Self-contained `tempfile` + `UnixListener` fixture; removed `#[ignore]`.
+- Worker crash recovery: Uses `CARGO_BIN_EXE_synvoid` for binary discovery and `/proc/<pid>/task/<tid>/children` for process discovery.
 
 **Phase 3 resolutions** (proxy wildcard, unknown host, ICMP validation):
 - Router wildcard: Fixed matchit 0.7 catch-all syntax (`{*sub}` → `*sub`)

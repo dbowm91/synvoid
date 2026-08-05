@@ -62,12 +62,16 @@ where
     http_connector.set_nodelay(true);
     http_connector.set_keepalive(Some(Duration::from_secs(60)));
 
-    let tls_config = tls_config.unwrap_or_else(|| build_tls_config(None, false, None));
+    let mut tls_config = tls_config.unwrap_or_else(|| build_tls_config(None, false, None));
+
+    // hyper-rustls HttpsConnectorBuilder requires empty ALPN protocols — it
+    // sets them itself based on which HTTP versions are enabled.
+    tls_config.alpn_protocols.clear();
 
     let https_connector = hyper_rustls::HttpsConnectorBuilder::new()
         .with_tls_config(tls_config)
         .https_or_http()
-        .enable_http2()
+        .enable_all_versions()
         .wrap_connector(http_connector);
 
     Client::builder(TokioExecutor::new())
@@ -87,11 +91,15 @@ where
     B: http_body::Body<Data = Bytes> + Send + Sync + Unpin + 'static,
     B::Error: std::fmt::Debug + Send + Sync + std::error::Error,
 {
-    let rustls_config = build_tls_config(
+    let mut rustls_config = build_tls_config(
         tls_config.ca_cert_path.as_deref(),
         tls_config.skip_verify,
         tls_config.skip_verify_reason.as_deref(),
     );
+
+    // hyper-rustls HttpsConnectorBuilder requires empty ALPN protocols — it
+    // sets them itself based on which HTTP versions are enabled.
+    rustls_config.alpn_protocols.clear();
 
     let mut http_connector = HttpConnector::new();
     http_connector.set_connect_timeout(Some(connect_timeout));
@@ -114,7 +122,7 @@ where
         builder.https_only()
     };
 
-    let https_connector = builder.enable_http2().wrap_connector(http_connector);
+    let https_connector = builder.enable_all_versions().wrap_connector(http_connector);
 
     Client::builder(TokioExecutor::new())
         .pool_max_idle_per_host(pool_max_idle_per_host)

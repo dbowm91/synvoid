@@ -138,11 +138,11 @@ Every test that fails or times out under `verify-full` is classified below. Real
 | `test_sqli_time_based` | waf wave10 | HARNESS_DEFECT | Fast path blocks SQLi detector; pattern `SLEEP(` works in isolation |
 | `test_xpath_injection` | waf wave10 | HARNESS_DEFECT | Fast path blocks XPath detector; pattern `//user` works in isolation |
 | `test_xxe_external_entity` | waf wave10 | HARNESS_DEFECT | Race condition: XSS (libinjection) finishes before XXE detector |
-| `proxy_pipeline_tests` (5 tests) | integration | ENVIRONMENT_DEPENDENT | hyper-rustls ALPN panic; requires library update |
-| `test_pool_creation` | app-handlers | ENVIRONMENT_DEPENDENT | Requires Unix socket at `/tmp/test.sock` (marked `#[ignore]`) |
-| `test_worker_crash_recovery` | fault-injection | ENVIRONMENT_DEPENDENT | Requires built binary + running supervisor (marked `#[ignore]`) |
+| `test_pool_creation` | app-handlers | RESOLVED (Phase 4) | Self-contained temp-directory socket fixture; no fixed-path collision |
+| `test_worker_crash_recovery` | fault-injection | SPECIALIST (Phase 4) | Still `#[ignore]`; uses `CARGO_BIN_EXE_synvoid` and `/proc` children for deterministic discovery |
+| `proxy_pipeline_tests` (5 tests) | integration | RESOLVED (Phase 4) | hyper-rustls ALPN conflict: `build_tls_config` set ALPN but connector builder requires empty; cleared ALPN before builder, uses `enable_all_versions()` |
 
-**Summary**: 0 real product regressions (resolved), 4 stale expectations (resolved), 11 harness defects (detection pipeline issues), 5 environment-dependent.
+**Summary**: 0 real product regressions (resolved), 4 stale expectations (resolved), 11 harness defects (detection pipeline issues), 1 specialist test (worker crash recovery), 7 environment-dependent resolved (5 proxy pipeline + 1 pool creation + 1 dashmap deadlock).
 
 ## 3. Release Verification
 

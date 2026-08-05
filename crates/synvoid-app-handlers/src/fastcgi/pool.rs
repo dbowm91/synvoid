@@ -450,11 +450,27 @@ mod tests {
         assert_eq!(config.max_idle_time, Duration::from_secs(300));
     }
 
+    #[cfg(unix)]
+    fn create_test_socket_pair() -> (tempfile::TempDir, String) {
+        let tmp = tempfile::tempdir().expect("failed to create temp dir");
+        let sock_path = tmp.path().join("test.sock");
+        let sock_str = sock_path
+            .to_str()
+            .expect("non-UTF8 socket path")
+            .to_string();
+        let _listener =
+            std::os::unix::net::UnixListener::bind(&sock_path).expect("failed to bind test socket");
+        // Keep listener alive for the test; it will be dropped with `tmp` cleanup.
+        // The socket file remains valid while the fd is open.
+        std::mem::forget(_listener);
+        (tmp, sock_str)
+    }
+
     #[tokio::test]
-    #[ignore = "requires Unix socket at /tmp/test.sock"]
     async fn test_pool_creation() {
+        let (_tmp, sock_path) = create_test_socket_pair();
         let config = FastCgiPoolConfig {
-            socket: "/tmp/test.sock".to_string(),
+            socket: sock_path,
             ..Default::default()
         };
         let pool = FastCgiPool::new(config);
@@ -463,14 +479,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_pool_creation_missing_socket_returns_false() {
+        let config = FastCgiPoolConfig {
+            socket: "/nonexistent/path/test.sock".to_string(),
+            ..Default::default()
+        };
+        let pool = FastCgiPool::new(config);
+        assert!(!pool.health_check());
+        pool.close();
+    }
+
+    #[tokio::test]
     async fn test_pool_manager() {
+        let (_tmp, sock_path) = create_test_socket_pair();
         let manager = FastCgiPoolManager::new();
         let config = synvoid_config::site::FastCgiConfig::default();
 
-        let pool1 = manager.get_or_create_pool("/tmp/test.sock", &config);
-        let pool2 = manager.get_or_create_pool("/tmp/test.sock", &config);
+        let pool1 = manager.get_or_create_pool(&sock_path, &config);
+        let pool2 = manager.get_or_create_pool(&sock_path, &config);
 
         assert!(Arc::ptr_eq(&pool1, &pool2));
+
+        manager.close_all();
+    }
+
+    #[tokio::test]
+    async fn test_pool_manager_different_sockets_are_distinct() {
+        let tmp = tempfile::tempdir().expect("failed to create temp dir");
+        let sock_a = tmp.path().join("a.sock");
+        let sock_b = tmp.path().join("b.sock");
+
+        // Bind both sockets so they exist
+        let _la = std::os::unix::net::UnixListener::bind(&sock_a).expect("failed to bind socket a");
+        let _lb = std::os::unix::net::UnixListener::bind(&sock_b).expect("failed to bind socket b");
+
+        let sock_a = sock_a.to_str().unwrap().to_string();
+        let sock_b = sock_b.to_str().unwrap().to_string();
+
+        let manager = FastCgiPoolManager::new();
+        let config = synvoid_config::site::FastCgiConfig::default();
+
+        let pool1 = manager.get_or_create_pool(&sock_a, &config);
+        let pool2 = manager.get_or_create_pool(&sock_b, &config);
+
+        assert!(!Arc::ptr_eq(&pool1, &pool2));
 
         manager.close_all();
     }

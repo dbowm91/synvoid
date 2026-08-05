@@ -114,13 +114,15 @@ Invalid UTF-8 bytes (`%80` → `0x80`) are lost during the normalizer's char-bas
 |---|------|------------|
 | — | `test_anomaly_scoring_default_disabled` | Renamed to `test_anomaly_scoring_default_enabled` (name was stale). Added `test_anomaly_scoring_override_to_disabled` and `test_anomaly_scoring_override_threshold` for override behavior. |
 
-### Environment-Dependent / Harness (4)
+### Environment-Dependent / Harness (7) — RESOLVED in Phase 4
 
-| # | Test | Root Cause |
-|---|------|-----------|
-| 17-21 | `proxy_pipeline_tests` (5 tests) | hyper-rustls ALPN panic + timeout |
+| # | Test | Root Cause | Resolution |
+|---|------|-----------|------------|
+| 17-21 | `proxy_pipeline_tests` (5 tests) | hyper-rustls ALPN conflict: `build_tls_config` set ALPN protocols, but `with_tls_config()` asserts empty | Cleared ALPN before passing to connector builder; uses `enable_all_versions()` |
+| 22 | `test_pool_creation` | Required Unix socket at `/tmp/test.sock` not in test env | Self-contained `tempfile` + `UnixListener` fixture; added 4 new tests |
+| 23 | `test_worker_crash_recovery` | Required built binary + running supervisor; used `pgrep` | Still `#[ignore]` (specialist); uses `CARGO_BIN_EXE_synvoid` and `/proc/<pid>/task/<tid>/children` |
 
-**Resolution:** Requires hyper-rustls version update or TLS config fix (Phase 4).
+**Resolution summary**: 5 proxy pipeline tests resolved by clearing ALPN before connector builder. 1 pool test resolved with self-contained socket fixture. 1 crash recovery test improved with deterministic binary/process discovery (still specialist `#[ignore]`).
 
 ## Pattern Additions Made
 
