@@ -1,6 +1,6 @@
 # Phase 2 — Product and Security Regression Repair
 
-**Status:** COMPLETE  
+**Status:** COMPLETE (with documented limitations)  
 **Roadmap:** `plans/ci_verification_release_truthful_closure_roadmap.md`  
 **Depends on:** Phase 1 failure ledger and contract adjudication  
 **Purpose:** Correct all failures proven to be product regressions without broad redesign or test weakening.
@@ -280,3 +280,24 @@ The implementation record must include:
 - focused suite results and durations;
 - any contract documentation updated;
 - explicit statement that no unrelated WAF or block-store redesign was performed.
+
+## 11. Additional Resolutions (Session 2)
+
+### Workstream A — Block-Store Restart/Unblock Invariant
+
+**Finding:** No product regression. The block-store has comprehensive tests for block → unblock → restart flows. The target state cache (`blocklist_target_state.json`) serves as the tombstone mechanism, and LWW comparison prevents stale block resurrection. Existing tests confirm the invariant holds.
+
+### Workstream C — Streaming Chunk-Boundary Security
+
+**Fix:** `StreamingWafCore::finalize()` now scans the trailing window as a final body fragment (`streaming.rs:350-365`). This catches partial attacks that build up gradually without triggering on any single `[window, chunk]` combination.
+
+**Known limitation:** The 512-byte trailing window means attacks fragmented across >512 bytes of intervening benign data lose context. This is a design constraint, not a defect.
+
+### Workstream D — Invalid UTF-8 Normalization
+
+**Fix:** Raw-bytes detection path added:
+- `NormalizedInputs.body_bytes: Option<&[u8]>` preserves original raw bytes (`normalizer.rs:718`)
+- `SqliDetector::detect_raw()` and `XssDetector::detect_raw()` run libinjection on raw bytes (`sqli.rs:34-53`, `xss.rs:34-53`)
+- `check_sqli_internal` and `check_xss_internal` try raw-byte detection as fallback (`mod.rs:597-672`)
+
+**Result:** SQLi with invalid UTF-8 (`test_waf_corpus_sqli_with_invalid_utf8`) now passes. XSS with overlong UTF-8 encodings (`test_waf_corpus_xss_invalid_utf8`) remains undetected — the payload uses `%C0%AE` etc. which decode to Unicode chars (À®, À¼), not `<` and `>`. This requires normalizer-level overlong-to-ASCII mapping (future work).

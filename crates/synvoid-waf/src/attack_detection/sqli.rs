@@ -31,6 +31,27 @@ impl SqliDetector {
         self.detect_normalized(&normalized, location)
     }
 
+    pub fn detect_raw(&self, raw: &[u8], location: InputLocation) -> Option<AttackDetectionResult> {
+        let result = libinjectionrs::detect_sqli(raw);
+        if result.is_injection() {
+            let fingerprint = result.fingerprint.map(|fp| fp.to_string());
+            tracing::warn!(
+                attack_type = "sqli",
+                fingerprint = ?fingerprint,
+                location = %location,
+                "SQL injection detected (libinjection raw bytes)"
+            );
+            Some(AttackDetectionResult {
+                attack_type: AttackType::Sqli,
+                fingerprint,
+                matched_pattern: None,
+                input_location: location,
+            })
+        } else {
+            None
+        }
+    }
+
     pub fn detect_normalized(
         &self,
         normalized: &crate::attack_detection::normalizer::NormalizedInput,

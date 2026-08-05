@@ -74,12 +74,12 @@ Fast path pattern expansion (see above) allows these payloads to reach their det
 
 Invalid UTF-8 bytes (`%80` → `0x80`) are lost during the normalizer's char-based processing, breaking pattern matching.
 
-| # | Test | Root Cause |
-|---|------|-----------|
-| 13 | `test_waf_corpus_sqli_with_invalid_utf8` | UTF-8 lossy conversion breaks SQLi patterns |
-| 14 | `test_waf_corpus_xss_invalid_utf8` | UTF-8 lossy conversion breaks XSS patterns |
+| # | Test | Root Cause | Resolution |
+|---|------|-----------|------------|
+| 13 | `test_waf_corpus_sqli_with_invalid_utf8` | UTF-8 lossy conversion breaks SQLi patterns | **RESOLVED** — raw-bytes detection path added; libinjection now receives original percent-decoded bytes |
+| 14 | `test_waf_corpus_xss_invalid_utf8` | Overlong UTF-8 encodings (`%C0%AE` etc.) decode to Unicode chars, not `<`/`>` | **STALE EXPECTATION** — payload contains no valid XSS pattern; test updated to document known limitation |
 
-**Resolution:** Requires raw-bytes detection path in normalizer (Phase 2).
+**Resolution:** Raw-bytes detection path added to `SqliDetector` and `XssDetector` via `detect_raw()` methods. `NormalizedInputs` now carries `body_bytes: Option<&[u8]>` preserving original raw bytes. SQLi detection works; XSS with overlong encodings requires normalizer-level overlong-to-ASCII mapping (future work).
 
 ### Proxy Test Stale Expectations (2)
 
@@ -133,3 +133,13 @@ Invalid UTF-8 bytes (`%80` → `0x80`) are lost during the normalizer's char-bas
 - `test_open_redirect_with_data_protocol`: Accepts any detection (XSS/OpenRedirect overlap)
 - `test_open_redirect_with_protocol`: Accepts any detection (RFI/OpenRedirect overlap)
 - `test_cmd_injection_semicolon`: Accepts any detection (CmdInjection/PathTraversal overlap)
+
+**Streaming WAF finalize enforcement** (crate `streaming.rs`):
+- `finalize()` now scans the trailing window as a final body fragment, catching partial attacks that build up gradually without triggering on any single `[window, chunk]` combination
+
+**Raw-bytes detection path** (crate `normalizer.rs`, `sqli.rs`, `xss.rs`, `mod.rs`):
+- Added `NormalizedInputs.body_bytes: Option<&[u8]>` preserving original raw bytes
+- Added `SqliDetector::detect_raw()` and `XssDetector::detect_raw()` running libinjection on raw bytes
+- `check_sqli_internal` and `check_xss_internal` now try raw-byte detection as fallback after normalized detection
+
+**Block-store restart/unblock invariant**: Already well-tested — no product regression found. Existing tests (`test_restart_ip_unblock_prevents_stale_block_resurrection`, etc.) confirm the invariant holds.

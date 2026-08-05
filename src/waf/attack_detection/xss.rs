@@ -32,6 +32,25 @@ impl XssDetector {
         self.detect_normalized(&normalized, location)
     }
 
+    pub fn detect_raw(&self, raw: &[u8], location: InputLocation) -> Option<AttackDetectionResult> {
+        let result = libinjectionrs::detect_xss(raw);
+        if result.is_injection() {
+            tracing::warn!(
+                attack_type = "xss",
+                location = %location,
+                "XSS attack detected (libinjection raw bytes)"
+            );
+            Some(AttackDetectionResult {
+                attack_type: AttackType::Xss,
+                fingerprint: None,
+                matched_pattern: None,
+                input_location: location,
+            })
+        } else {
+            None
+        }
+    }
+
     pub fn detect_normalized(
         &self,
         normalized: &NormalizedInput,

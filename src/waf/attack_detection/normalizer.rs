@@ -668,6 +668,10 @@ impl<'a> NormalizedInputs<'a> {
                 .collect(),
             body: self.body, // body is already static
             body_raw: self.body_raw,
+            body_bytes: self.body_bytes.map(|b| {
+                let owned: &'static [u8] = Vec::leak(b.to_vec());
+                owned
+            }),
         }
     }
 
@@ -715,6 +719,7 @@ pub struct NormalizedInputs<'a> {
     pub headers_raw: Vec<(Arc<str>, Cow<'a, str>)>,
     pub body: Option<NormalizedInput<'static>>,
     pub body_raw: Option<Cow<'static, str>>,
+    pub body_bytes: Option<&'a [u8]>,
 }
 
 impl<'a> NormalizedInputs<'a> {
@@ -770,6 +775,7 @@ impl<'a> NormalizedInputs<'a> {
             headers_raw: raw_headers,
             body: body_norm,
             body_raw,
+            body_bytes: body,
         }
     }
 }

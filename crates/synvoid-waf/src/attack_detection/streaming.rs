@@ -347,7 +347,21 @@ impl StreamingWafCore {
         }
     }
 
-    pub fn finalize(&self) -> Option<AttackDetectionResult> {
+    pub fn finalize(&mut self) -> Option<AttackDetectionResult> {
+        if self.state.last_result.is_some() {
+            return self.state.last_result.clone();
+        }
+
+        if !self.state.trailing_window.is_empty() {
+            if let Some(result) = self
+                .inner
+                .check_body_fragments(&[self.state.trailing_window.as_slice()])
+            {
+                self.state.last_result = Some(result.clone());
+                return Some(result);
+            }
+        }
+
         self.state.last_result.clone()
     }
 

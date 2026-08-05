@@ -678,6 +678,36 @@ impl AttackDetector {
             }
         }
 
+        if let Some(ref path_raw) = inputs.path_raw {
+            if let Some(result) =
+                detector.detect_raw(path_raw.as_ref().as_bytes(), InputLocation::Path)
+            {
+                return Some(result);
+            }
+        }
+
+        if let Some(ref qs_raw) = inputs.query_string_raw {
+            if let Some(result) =
+                detector.detect_raw(qs_raw.as_ref().as_bytes(), InputLocation::QueryString)
+            {
+                return Some(result);
+            }
+        }
+
+        for (name, raw) in &inputs.headers_raw {
+            if let Some(result) =
+                detector.detect_raw(raw.as_ref().as_bytes(), InputLocation::header(name))
+            {
+                return Some(result);
+            }
+        }
+
+        if let Some(body_bytes) = inputs.body_bytes {
+            if let Some(result) = detector.detect_raw(body_bytes, InputLocation::PostBody) {
+                return Some(result);
+            }
+        }
+
         None
     }
 
@@ -705,6 +735,36 @@ impl AttackDetector {
 
         if let Some(ref body) = inputs.body {
             if let Some(result) = detector.detect_normalized(body, InputLocation::PostBody) {
+                return Some(result);
+            }
+        }
+
+        if let Some(ref path_raw) = inputs.path_raw {
+            if let Some(result) =
+                detector.detect_raw(path_raw.as_ref().as_bytes(), InputLocation::Path)
+            {
+                return Some(result);
+            }
+        }
+
+        if let Some(ref qs_raw) = inputs.query_string_raw {
+            if let Some(result) =
+                detector.detect_raw(qs_raw.as_ref().as_bytes(), InputLocation::QueryString)
+            {
+                return Some(result);
+            }
+        }
+
+        for (name, raw) in &inputs.headers_raw {
+            if let Some(result) =
+                detector.detect_raw(raw.as_ref().as_bytes(), InputLocation::header(name))
+            {
+                return Some(result);
+            }
+        }
+
+        if let Some(body_bytes) = inputs.body_bytes {
+            if let Some(result) = detector.detect_raw(body_bytes, InputLocation::PostBody) {
                 return Some(result);
             }
         }
