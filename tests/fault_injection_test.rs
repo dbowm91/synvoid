@@ -29,6 +29,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires built binary, pgrep, and running supervisor"]
     async fn test_worker_crash_recovery() {
         // This test requires a built binary.
         // We'll skip it if not running in a CI-like environment with the binary available.

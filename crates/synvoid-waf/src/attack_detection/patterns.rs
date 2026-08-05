@@ -721,6 +721,10 @@ impl DefaultPatterns {
             "(mail=",
             "(telephoneNumber=",
             "(userPassword=",
+            ")(&",
+            ")(|",
+            "*&*",
+            "|*|",
         ]
     }
 
@@ -853,6 +857,14 @@ impl DefaultPatterns {
             "local-name(",
             "namespace-uri(",
             "position()",
+            "//user",
+            "//",
+            "[@",
+            "[@password]",
+            "[@id]",
+            "[@name]",
+            "or '",
+            "and '",
         ]
     }
 
@@ -1104,6 +1116,19 @@ impl DefaultPatterns {
             "sys.databases",
             "pg_sleep",
             "DBMS_LOCK.SLEEP",
+            "AND 1=1",
+            "AND 1=2",
+            "OR 1=1",
+            "OR 1=2",
+            "' AND ",
+            "' OR ",
+            "INTO OUTFILE",
+            "INTO DUMPFILE",
+            "LOAD_FILE(",
+            "CONCAT(",
+            "CHAR(",
+            "CAST(",
+            "CONVERT(",
         ]
     }
 

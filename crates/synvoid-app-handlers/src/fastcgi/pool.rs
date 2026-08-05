@@ -451,6 +451,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires Unix socket at /tmp/test.sock"]
     async fn test_pool_creation() {
         let config = FastCgiPoolConfig {
             socket: "/tmp/test.sock".to_string(),
