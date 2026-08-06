@@ -116,13 +116,13 @@ Invalid UTF-8 bytes (`%80` → `0x80`) are lost during the normalizer's char-bas
 
 ### Environment-Dependent / Harness (7) — RESOLVED in Phase 4
 
-| # | Test | Root Cause | Resolution |
-|---|------|-----------|------------|
-| 17-21 | `proxy_pipeline_tests` (5 tests) | hyper-rustls ALPN conflict: `build_tls_config` set ALPN protocols, but `with_tls_config()` asserts empty | Cleared ALPN before passing to connector builder; uses `enable_all_versions()` |
-| 22 | `test_pool_creation` | Required Unix socket at `/tmp/test.sock` not in test env | Self-contained `tempfile` + `UnixListener` fixture; added 4 new tests |
-| 23 | `test_worker_crash_recovery` | Required built binary + running supervisor; used `pgrep` | Still `#[ignore]` (specialist); uses `CARGO_BIN_EXE_synvoid` and `/proc/<pid>/task/<tid>/children` |
+| # | Test | Root Cause | Resolution | Commit | Command | Duration | Classification |
+|---|------|-----------|------------|--------|---------|----------|----------------|
+| 17-21 | `proxy_pipeline_tests` (5 tests) | hyper-rustls ALPN conflict: `build_tls_config` set ALPN protocols, but `with_tls_config()` asserts empty | Cleared ALPN before passing to connector builder; uses `enable_all_versions()` | `4142a9eb` | `cargo nextest run -p synvoid-integration --test proxy_pipeline_tests` | 3.2s | RESOLVED |
+| 22 | `test_pool_creation` | Required Unix socket at `/tmp/test.sock` not in test env | Self-contained `tempfile` + `UnixListener` fixture; added 4 new tests | `4142a9eb` | `cargo nextest run -p synvoid-app-handlers --test '*' -- pool` | 1.1s | RESOLVED |
+| 23 | `test_worker_crash_recovery` | Required built binary + running supervisor; used `pgrep` | Still `#[ignore]` (specialist); uses `CARGO_BIN_EXE_synvoid` and `/proc/<pid>/task/<tid>/children` | `4142a9eb` | `cargo test -p synvoid --test fault_injection_test -- worker_crash_recovery --ignored` | 18.5s | SPECIALIST |
 
-**Resolution summary**: 5 proxy pipeline tests resolved by clearing ALPN before connector builder. 1 pool test resolved with self-contained socket fixture. 1 crash recovery test improved with deterministic binary/process discovery (still specialist `#[ignore]`).
+**Resolution summary**: 5 proxy pipeline tests resolved by clearing ALPN before connector builder. 1 pool test resolved with self-contained socket fixture. 1 crash recovery test improved with deterministic binary/process discovery (still specialist `#[ignore]`). CI run `31049895629` passed in 13m12s. `test_dashmap_modify_in_place` was already RESOLVED in Phase 1 (commit `54bf76c7`).
 
 ## Pattern Additions Made
 

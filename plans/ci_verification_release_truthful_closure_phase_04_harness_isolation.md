@@ -1,6 +1,9 @@
 # Phase 4 — Harness and Environment Isolation
 
-**Status:** PLANNED  
+**Status:** COMPLETED  
+**Completed:** 2026-08-06  
+**Commit:** `4142a9eb`  
+**Verification:** `cargo xtask verify` 8/8 pass; CI run `31049895629` passed (13m12s)  
 **Roadmap:** `plans/ci_verification_release_truthful_closure_roadmap.md`  
 **Depends on:** Phase 1 adjudication  
 **Purpose:** Make the remaining environment- and harness-classified tests deterministic, self-contained, and truthful without increasing routine CI complexity.
