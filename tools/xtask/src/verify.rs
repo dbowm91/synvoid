@@ -927,19 +927,7 @@ pub fn run_verify_release(
             .and_then(|pkgs| pkgs.iter().find(|p| p["name"].as_str() == Some(name)));
         let has_unpublished_path_dep = pkg
             .and_then(|p| p["dependencies"].as_array())
-            .map(|deps| {
-                deps.iter().any(|d| {
-                    if d["path"].as_str().is_some() {
-                        // A path dep is "unpublished" if it's not in the
-                        // publishable set (would not resolve from crates.io).
-                        !publishable
-                            .iter()
-                            .any(|(pn, _)| pn == d["name"].as_str().unwrap_or(""))
-                    } else {
-                        false
-                    }
-                })
-            })
+            .map(|deps| deps.iter().any(|d| d["path"].as_str().is_some()))
             .unwrap_or(false);
 
         if has_unpublished_path_dep {
