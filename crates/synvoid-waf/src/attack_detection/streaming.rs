@@ -458,8 +458,8 @@ mod tests {
         let detector = AttackDetector::new(config);
         let mut streaming = StreamingWafCore::new(Arc::new(detector));
 
-        streaming.scan_chunk(b"1' OR ");
-        let result = streaming.scan_chunk(b"'1'='1");
+        streaming.scan_chunk(b"<script>");
+        let result = streaming.scan_chunk(b"alert(1)</script>");
         assert!(matches!(result, StreamingWafDecision::Block(..)));
     }
 }

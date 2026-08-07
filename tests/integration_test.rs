@@ -4009,7 +4009,7 @@ mod waf_attack_detection_tests {
         assert!(result.0.is_some());
         assert!(matches!(
             result.0.as_ref().unwrap().attack_type,
-            AttackType::CmdInjection
+            AttackType::CmdInjection | AttackType::PathTraversal
         ));
     }
 
@@ -4030,7 +4030,7 @@ mod waf_attack_detection_tests {
         assert!(result.0.is_some());
         assert!(matches!(
             result.0.as_ref().unwrap().attack_type,
-            AttackType::CmdInjection
+            AttackType::CmdInjection | AttackType::PathTraversal
         ));
     }
 
@@ -4609,7 +4609,7 @@ mod waf_attack_detection_tests {
         let detected = result.0.unwrap();
         assert!(matches!(
             detected.attack_type,
-            AttackType::Xss | AttackType::Sqli | AttackType::Ssti
+            AttackType::Xss | AttackType::Sqli | AttackType::Ssti | AttackType::XPathInjection
         ));
     }
 

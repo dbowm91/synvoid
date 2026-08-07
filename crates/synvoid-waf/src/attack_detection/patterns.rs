@@ -837,7 +837,6 @@ impl DefaultPatterns {
             "/text()",
             "/comment()",
             "/processing-instruction(",
-            "='",
             "='*",
             "=']",
             "=substring(",
@@ -852,8 +851,6 @@ impl DefaultPatterns {
             "[@password]",
             "[@id]",
             "[@name]",
-            "or '",
-            "and '",
         ]
     }
 

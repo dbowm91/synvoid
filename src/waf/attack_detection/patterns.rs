@@ -833,7 +833,6 @@ impl DefaultPatterns {
             "/text()",
             "/comment()",
             "/processing-instruction(",
-            "='",
             "='*",
             "=']",
             "=substring(",

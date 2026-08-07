@@ -180,6 +180,15 @@ impl InputNormalizer {
         buffer.clear();
         self.apply_normalizations_with_chars(buffer, chars);
 
+        // NFKC normalization can create new percent-encoding sequences
+        // (e.g., %b2 → ² → NFKC → 2, forming %02 with preceding literal).
+        // Run one additional decode pass to handle them.
+        let post_norm = buffer.clone();
+        chars.clear();
+        chars.extend(post_norm.chars());
+        buffer.clear();
+        self.decode_single_pass_with_chars(buffer, chars);
+
         let normalized = if buffer.as_str() == input {
             NormalizedData::Borrowed(input)
         } else {
