@@ -947,7 +947,7 @@ pub fn run_verify_release(
             continue;
         }
 
-        let mut args = vec!["package", "--verify", "-p", name];
+        let mut args = vec!["package", "-p", name];
         if allow_dirty {
             args.push("--allow-dirty");
         }
