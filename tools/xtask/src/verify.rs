@@ -831,7 +831,33 @@ pub fn run_verify_release(
     }
 
     let mut assembly_issues: Vec<String> = Vec::new();
+    let mut assembly_skipped: Vec<String> = Vec::new();
     for (name, _manifest_dir) in &publishable {
+        // Skip crates with unpublished internal path deps — `cargo package`
+        // (even with --no-verify) requires dependency resolution from crates.io.
+        let pkg = metadata["packages"]
+            .as_array()
+            .and_then(|pkgs| pkgs.iter().find(|p| p["name"].as_str() == Some(name)));
+        let has_unpublished_path_dep = pkg
+            .and_then(|p| p["dependencies"].as_array())
+            .map(|deps| {
+                deps.iter().any(|d| {
+                    if d["path"].as_str().is_some() {
+                        !publishable
+                            .iter()
+                            .any(|(pn, _)| pn == d["name"].as_str().unwrap_or(""))
+                    } else {
+                        false
+                    }
+                })
+            })
+            .unwrap_or(false);
+
+        if has_unpublished_path_dep {
+            assembly_skipped.push(name.clone());
+            continue;
+        }
+
         if verbose {
             println!("  → cargo package --no-verify -p {name}");
         }
@@ -864,6 +890,13 @@ pub fn run_verify_release(
             for issue in &assembly_issues {
                 eprintln!("    ✗ {issue}");
             }
+            if !assembly_skipped.is_empty() {
+                eprintln!();
+                eprintln!("  Package assembly skipped (unpublished internal deps):");
+                for name in &assembly_skipped {
+                    eprintln!("    ⊘ {name}");
+                }
+            }
             eprintln!();
         }
         return Err(format!(
@@ -874,6 +907,12 @@ pub fn run_verify_release(
 
     if !json_output {
         println!("  ✓ Package assembly successful for all publishable crates");
+        if !assembly_skipped.is_empty() {
+            println!(
+                "  ⊘ Skipped (unpublished internal deps): {}",
+                assembly_skipped.len()
+            );
+        }
         println!();
     }
 
