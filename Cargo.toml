@@ -4,7 +4,7 @@ version = "1.1.0"
 description = "High-performance WAF and reverse proxy with mesh networking"
 edition = "2021"
 license = "MIT"
-exclude = ["plans/", ".opencode/", "fuzz/", "corpus/", "crash-*/", ".github/", "scripts/", "docs/", "architecture/", "tests/", "trusted-key.key"]
+exclude = ["plans/", ".opencode/", "fuzz/", "corpus/", "crash-*/", ".github/", "scripts/", "docs/", "architecture/", "tests/", "trusted-key.key", ".skills"]
 
 [lib]
 path = "src/lib.rs"
