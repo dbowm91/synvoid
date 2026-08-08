@@ -263,6 +263,68 @@ const PROHIBITED_BASENAMES: &[&str] = &[
 
 const PROHIBITED_EXTENSIONS: &[&str] = &[".key", ".pem", ".p12", ".pfx", ".keystore"];
 
+// ---------------------------------------------------------------------------
+// Release qualification types
+// ---------------------------------------------------------------------------
+
+/// Release qualification state for a publishable crate.
+#[derive(Debug, Clone)]
+enum CrateQualification {
+    /// `cargo package --no-verify` succeeded.
+    Assembled,
+    /// `cargo package` (with verify) succeeded.
+    PackagedSourceVerified,
+    /// Cannot package because named publishable predecessors are not on crates.io.
+    BlockedOnUnpublishedInternalDeps { predecessors: Vec<String> },
+    /// Cannot be published to crates.io (depends on non-publishable internal crate).
+    NotPrepublishable { reason: String },
+    /// Package step failed for an unexpected reason.
+    Failed { phase: String, reason: String },
+}
+
+/// Dependency analysis for a publishable crate.
+#[derive(Debug, Clone)]
+struct CrateDepInfo {
+    /// Normal/build dependencies that are publishable workspace crates.
+    publishable_predecessors: Vec<String>,
+    /// Normal/build dependencies that are non-publishable workspace crates.
+    nonpublishable_deps: Vec<String>,
+}
+
+/// Summary of release qualification results (for JSON output).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct ReleaseQualificationSummary {
+    assembled: Vec<String>,
+    packaged_source_verified: Vec<String>,
+    blocked_on_unpublished: Vec<BlockedCrate>,
+    not_prepublishable: Vec<NotPrepublishableCrate>,
+    failed: Vec<FailedCrate>,
+    publication_order: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct BlockedCrate {
+    name: String,
+    predecessors: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct NotPrepublishableCrate {
+    name: String,
+    reason: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct FailedCrate {
+    name: String,
+    phase: String,
+    reason: String,
+}
+
+// ---------------------------------------------------------------------------
+// Package content inspection
+// ---------------------------------------------------------------------------
+
 /// Check if a file path is prohibited in a published package.
 fn is_prohibited_path(path: &str) -> bool {
     let normalized = path.replace('\\', "/");
@@ -495,6 +557,191 @@ fn discover_publishable_crates(workspace_root: &Path) -> Result<Vec<(String, Pat
     Ok(sorted)
 }
 
+// ---------------------------------------------------------------------------
+// Dependency graph and cycle detection
+// ---------------------------------------------------------------------------
+
+/// Build a dependency graph for publishable crates.
+///
+/// For each publishable crate, classifies its normal/build path dependencies as
+/// either publishable predecessors or non-publishable internal dependencies.
+/// Dev-dependencies are excluded because they follow Cargo publication rules.
+fn build_publishable_dependency_graph(
+    metadata: &serde_json::Value,
+    publishable_names: &std::collections::HashSet<String>,
+    nonpublishable_names: &std::collections::HashSet<String>,
+) -> Result<std::collections::HashMap<String, CrateDepInfo>, String> {
+    let packages = metadata["packages"]
+        .as_array()
+        .ok_or("missing packages in metadata")?;
+
+    let mut graph = std::collections::HashMap::new();
+
+    for name in publishable_names {
+        let pkg = packages
+            .iter()
+            .find(|p| p["name"].as_str() == Some(name.as_str()))
+            .ok_or_else(|| format!("package not found: {name}"))?;
+
+        let mut publishable_predecessors = Vec::new();
+        let mut nonpublishable_deps = Vec::new();
+
+        if let Some(deps) = pkg["dependencies"].as_array() {
+            for dep in deps {
+                let dep_name = dep["name"].as_str().unwrap_or("");
+
+                // Only check normal and build dependencies (dev-dependencies
+                // follow Cargo publication rules and are excluded from resolution).
+                let dep_kind = dep["kind"].as_str().unwrap_or("normal");
+                if dep_kind == "dev" {
+                    continue;
+                }
+
+                // Only check workspace path dependencies
+                if dep["path"].is_null() {
+                    continue;
+                }
+
+                if publishable_names.contains(dep_name) {
+                    publishable_predecessors.push(dep_name.to_string());
+                } else if nonpublishable_names.contains(dep_name) {
+                    nonpublishable_deps.push(dep_name.to_string());
+                }
+            }
+        }
+
+        graph.insert(
+            name.clone(),
+            CrateDepInfo {
+                publishable_predecessors,
+                nonpublishable_deps,
+            },
+        );
+    }
+
+    Ok(graph)
+}
+
+/// Detect cycles in the publishable dependency graph.
+///
+/// Returns an error if any cycle is found, naming one of the crates involved.
+fn detect_cycles(graph: &std::collections::HashMap<String, CrateDepInfo>) -> Result<(), String> {
+    let mut visited = std::collections::HashSet::new();
+    let mut in_stack = std::collections::HashSet::new();
+
+    fn dfs(
+        node: &str,
+        graph: &std::collections::HashMap<String, CrateDepInfo>,
+        visited: &mut std::collections::HashSet<String>,
+        in_stack: &mut std::collections::HashSet<String>,
+    ) -> Result<(), String> {
+        if in_stack.contains(node) {
+            return Err(format!("cycle detected involving crate `{node}`"));
+        }
+        if visited.contains(node) {
+            return Ok(());
+        }
+
+        visited.insert(node.to_string());
+        in_stack.insert(node.to_string());
+
+        if let Some(info) = graph.get(node) {
+            for pred in &info.publishable_predecessors {
+                dfs(pred, graph, visited, in_stack)?;
+            }
+        }
+
+        in_stack.remove(node);
+        Ok(())
+    }
+
+    for node in graph.keys() {
+        dfs(node, graph, &mut visited, &mut in_stack)?;
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Package assembly and source verification helpers
+// ---------------------------------------------------------------------------
+
+/// Attempt `cargo package --no-verify` for a crate.
+fn attempt_assembly(
+    name: &str,
+    allow_dirty: bool,
+    verbose: bool,
+    workspace_root: &Path,
+) -> CrateQualification {
+    if verbose {
+        println!("  → cargo package --no-verify -p {name}");
+    }
+
+    let mut args = vec!["package", "--no-verify", "-p", name];
+    if allow_dirty {
+        args.push("--allow-dirty");
+    }
+    let output = Command::new("cargo")
+        .args(&args)
+        .current_dir(workspace_root)
+        .output();
+
+    match output {
+        Ok(out) if out.status.success() => CrateQualification::Assembled,
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            CrateQualification::Failed {
+                phase: "assembly".to_string(),
+                reason: stderr.to_string(),
+            }
+        }
+        Err(e) => CrateQualification::Failed {
+            phase: "assembly".to_string(),
+            reason: e.to_string(),
+        },
+    }
+}
+
+/// Attempt `cargo package` (with verify) for a crate.
+fn attempt_source_verification(
+    name: &str,
+    allow_dirty: bool,
+    verbose: bool,
+    workspace_root: &Path,
+) -> CrateQualification {
+    if verbose {
+        println!("  → cargo package -p {name}");
+    }
+
+    let mut args = vec!["package", "-p", name];
+    if allow_dirty {
+        args.push("--allow-dirty");
+    }
+    let output = Command::new("cargo")
+        .args(&args)
+        .current_dir(workspace_root)
+        .output();
+
+    match output {
+        Ok(out) if out.status.success() => CrateQualification::PackagedSourceVerified,
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            CrateQualification::Failed {
+                phase: "source-verification".to_string(),
+                reason: stderr.to_string(),
+            }
+        }
+        Err(e) => CrateQualification::Failed {
+            phase: "source-verification".to_string(),
+            reason: e.to_string(),
+        },
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Metadata validation
+// ---------------------------------------------------------------------------
+
 /// Validate metadata for all publishable crates.
 fn validate_package_metadata(
     publishable: &[(String, PathBuf)],
@@ -701,11 +948,22 @@ fn check_dirty_tree(workspace_root: &Path) -> Result<bool, String> {
     Ok(!stdout.trim().is_empty())
 }
 
+// ---------------------------------------------------------------------------
+// Release verification
+// ---------------------------------------------------------------------------
+
 /// Run release verification (production artifacts + package inspection).
 ///
 /// This validates the exact source and package surfaces that can be validated
 /// before publication. It never invokes `cargo publish` — publication is
 /// always manual through `cargo publish -p <crate>` in topological order.
+///
+/// Every publishable crate receives an explicit qualification state:
+/// - `Assembled`: `cargo package --no-verify` succeeded
+/// - `PackagedSourceVerified`: `cargo package` (with verify) succeeded
+/// - `BlockedOnUnpublishedInternalDeps`: named predecessors not yet on crates.io
+/// - `NotPrepublishable`: depends on non-publishable internal crate (release blocker)
+/// - `Failed`: unexpected failure (release blocker)
 pub fn run_verify_release(
     dry_run: bool,
     json_output: bool,
@@ -822,168 +1080,207 @@ pub fn run_verify_release(
         println!();
     }
 
-    // --- Phase 3: Package assembly (no-verify, no registry resolution) ---
+    // --- Phase 3: Package assembly with qualification model ---
     if !json_output {
         println!("═══════════════════════════════════════════════════════════");
-        println!("  cargo xtask verify-release (phase 3: package assembly)");
+        println!("  cargo xtask verify-release (phase 3: package qualification)");
         println!("═══════════════════════════════════════════════════════════");
         println!();
     }
 
-    let mut assembly_issues: Vec<String> = Vec::new();
-    let mut assembly_skipped: Vec<String> = Vec::new();
-    for (name, _manifest_dir) in &publishable {
-        // Skip crates with unpublished internal path deps — `cargo package`
-        // (even with --no-verify) requires dependency resolution from crates.io.
-        let pkg = metadata["packages"]
-            .as_array()
-            .and_then(|pkgs| pkgs.iter().find(|p| p["name"].as_str() == Some(name)));
-        let has_unpublished_path_dep = pkg
-            .and_then(|p| p["dependencies"].as_array())
-            .map(|deps| deps.iter().any(|d| d["path"].as_str().is_some()))
-            .unwrap_or(false);
+    // Build dependency graph for qualification
+    let publishable_names: std::collections::HashSet<String> =
+        publishable.iter().map(|(n, _)| n.clone()).collect();
+    let mut nonpublishable_names: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+    for name in NONPUBLISHABLE {
+        nonpublishable_names.insert(name.to_string());
+    }
+    for name in EXAMPLE_CRATES {
+        nonpublishable_names.insert(name.to_string());
+    }
 
-        if has_unpublished_path_dep {
-            assembly_skipped.push(name.clone());
+    let dep_graph =
+        build_publishable_dependency_graph(&metadata, &publishable_names, &nonpublishable_names)?;
+
+    // Detect cycles in publishable dependency graph
+    detect_cycles(&dep_graph).map_err(|e| format!("publication graph has a cycle: {e}"))?;
+
+    // Classify and attempt assembly for each publishable crate
+    let mut assembly_results: Vec<(String, CrateQualification)> = Vec::new();
+
+    for (name, _) in &publishable {
+        let info = dep_graph
+            .get(name)
+            .ok_or_else(|| format!("missing dependency info for `{name}`"))?;
+
+        // Non-publishable deps are a release blocker
+        if !info.nonpublishable_deps.is_empty() {
+            assembly_results.push((
+                name.clone(),
+                CrateQualification::NotPrepublishable {
+                    reason: format!(
+                        "depends on non-publishable internal crate(s): {}",
+                        info.nonpublishable_deps.join(", ")
+                    ),
+                },
+            ));
             continue;
         }
 
-        if verbose {
-            println!("  → cargo package --no-verify -p {name}");
-        }
-
-        let mut args = vec!["package", "--no-verify", "-p", name];
-        if allow_dirty {
-            args.push("--allow-dirty");
-        }
-        let output = Command::new("cargo")
-            .args(&args)
-            .current_dir(&workspace_root)
-            .output();
-
-        match output {
-            Ok(out) => {
-                if !out.status.success() {
-                    let stderr = String::from_utf8_lossy(&out.stderr);
-                    assembly_issues.push(format!("{name}: package assembly failed: {stderr}"));
-                }
-            }
-            Err(e) => {
-                assembly_issues.push(format!("{name}: failed to run cargo package: {e}"));
-            }
-        }
-    }
-
-    if !assembly_issues.is_empty() {
-        if !json_output {
-            eprintln!("  Package assembly issues:");
-            for issue in &assembly_issues {
-                eprintln!("    ✗ {issue}");
-            }
-            if !assembly_skipped.is_empty() {
-                eprintln!();
-                eprintln!("  Package assembly skipped (unpublished internal deps):");
-                for name in &assembly_skipped {
-                    eprintln!("    ⊘ {name}");
-                }
-            }
-            eprintln!();
-        }
-        return Err(format!(
-            "{} package assembly issue(s) found",
-            assembly_issues.len()
-        ));
-    }
-
-    if !json_output {
-        println!("  ✓ Package assembly successful for all publishable crates");
-        if !assembly_skipped.is_empty() {
-            println!(
-                "  ⊘ Skipped (unpublished internal deps): {}",
-                assembly_skipped.len()
-            );
-        }
-        println!();
-    }
-
-    // --- Phase 3b: Bounded packaged-source check ---
-    // For crates whose dependencies are all resolvable from crates.io (no
-    // unpublished internal path deps), run `cargo package --verify` to validate
-    // the packaged source builds correctly. Crates with unpublished internal
-    // deps are skipped — their correctness is ensured by the full source
-    // verification in Phase 1.
-    if !json_output {
-        println!("  Packaged-source check (feasible crates):");
-    }
-    let mut source_check_skipped: Vec<String> = Vec::new();
-    let mut source_check_passed: Vec<String> = Vec::new();
-    let mut source_check_failed: Vec<String> = Vec::new();
-
-    for (name, _manifest_dir) in &publishable {
-        // Check if all path deps are other publishable crates (resolvable
-        // after sequential publication) or external (already on crates.io).
-        let pkg = metadata["packages"]
-            .as_array()
-            .and_then(|pkgs| pkgs.iter().find(|p| p["name"].as_str() == Some(name)));
-        let has_unpublished_path_dep = pkg
-            .and_then(|p| p["dependencies"].as_array())
-            .map(|deps| deps.iter().any(|d| d["path"].as_str().is_some()))
-            .unwrap_or(false);
-
-        if has_unpublished_path_dep {
-            source_check_skipped.push(name.clone());
+        // Publishable predecessors mean the crate is blocked on publication
+        if !info.publishable_predecessors.is_empty() {
+            assembly_results.push((
+                name.clone(),
+                CrateQualification::BlockedOnUnpublishedInternalDeps {
+                    predecessors: info.publishable_predecessors.clone(),
+                },
+            ));
             continue;
         }
 
-        let mut args = vec!["package", "-p", name];
-        if allow_dirty {
-            args.push("--allow-dirty");
-        }
-        let output = Command::new("cargo")
-            .args(&args)
-            .current_dir(&workspace_root)
-            .output();
+        // No internal publishable predecessors — attempt assembly
+        assembly_results.push((
+            name.clone(),
+            attempt_assembly(name, allow_dirty, verbose, &workspace_root),
+        ));
+    }
 
-        match output {
-            Ok(out) if out.status.success() => {
-                source_check_passed.push(name.clone());
+    // --- Phase 3b: Packaged-source verification for assembled crates ---
+    let mut source_results: Vec<(String, CrateQualification)> = Vec::new();
+
+    for (name, qual) in &assembly_results {
+        match qual {
+            CrateQualification::Assembled => {
+                // Attempt source verification for assembled crates
+                source_results.push((
+                    name.clone(),
+                    attempt_source_verification(name, allow_dirty, verbose, &workspace_root),
+                ));
             }
-            Ok(out) => {
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                source_check_failed.push(format!("{name}: {stderr}"));
-            }
-            Err(e) => {
-                source_check_failed.push(format!("{name}: {e}"));
+            _ => {
+                // Carry forward the qualification state
+                source_results.push((name.clone(), qual.clone()));
             }
         }
     }
 
-    if !json_output {
-        if !source_check_passed.is_empty() {
+    // --- Build and print summary ---
+    let mut summary = ReleaseQualificationSummary {
+        assembled: Vec::new(),
+        packaged_source_verified: Vec::new(),
+        blocked_on_unpublished: Vec::new(),
+        not_prepublishable: Vec::new(),
+        failed: Vec::new(),
+        publication_order: publishable.iter().map(|(n, _)| n.clone()).collect(),
+    };
+
+    for (name, qual) in &source_results {
+        match qual {
+            CrateQualification::PackagedSourceVerified => {
+                summary.packaged_source_verified.push(name.clone());
+            }
+            CrateQualification::Assembled => {
+                summary.assembled.push(name.clone());
+            }
+            CrateQualification::BlockedOnUnpublishedInternalDeps { predecessors } => {
+                summary.blocked_on_unpublished.push(BlockedCrate {
+                    name: name.clone(),
+                    predecessors: predecessors.clone(),
+                });
+            }
+            CrateQualification::NotPrepublishable { reason } => {
+                summary.not_prepublishable.push(NotPrepublishableCrate {
+                    name: name.clone(),
+                    reason: reason.clone(),
+                });
+            }
+            CrateQualification::Failed { phase, reason } => {
+                summary.failed.push(FailedCrate {
+                    name: name.clone(),
+                    phase: phase.clone(),
+                    reason: reason.clone(),
+                });
+            }
+        }
+    }
+
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&summary).unwrap());
+    } else {
+        // Print qualification summary
+        println!("  Package qualification summary:");
+        println!("    Assembled: {} crate(s)", summary.assembled.len());
+        if !summary.assembled.is_empty() {
+            for name in &summary.assembled {
+                println!("      ✓ {name}");
+            }
+        }
+        println!(
+            "    Packaged-source verified: {} crate(s)",
+            summary.packaged_source_verified.len()
+        );
+        if !summary.packaged_source_verified.is_empty() {
+            for name in &summary.packaged_source_verified {
+                println!("      ✓ {name}");
+            }
+        }
+        println!(
+            "    Deferred (unpublished predecessors): {} crate(s)",
+            summary.blocked_on_unpublished.len()
+        );
+        for blocked in &summary.blocked_on_unpublished {
             println!(
-                "    ✓ Packaged-source verified: {}",
-                source_check_passed.join(", ")
+                "      ⊘ {} — blocked on: {}",
+                blocked.name,
+                blocked.predecessors.join(", ")
             );
         }
-        if !source_check_skipped.is_empty() {
+        if !summary.not_prepublishable.is_empty() {
             println!(
-                "    ⊘ Skipped (unpublished internal deps): {}",
-                source_check_skipped.join(", ")
+                "    Not prepublishable: {} crate(s)",
+                summary.not_prepublishable.len()
             );
+            for np in &summary.not_prepublishable {
+                println!("      ✗ {} — {}", np.name, np.reason);
+            }
         }
-        if !source_check_failed.is_empty() {
-            for fail in &source_check_failed {
-                eprintln!("    ✗ {fail}");
+        if !summary.failed.is_empty() {
+            println!("    Failed: {} crate(s)", summary.failed.len());
+            for f in &summary.failed {
+                println!("      ✗ {} ({})", f.name, f.phase);
+                eprintln!("        {}", f.reason);
             }
         }
         println!();
-    }
 
-    if !source_check_failed.is_empty() {
-        return Err(format!(
-            "{} packaged-source check(s) failed",
-            source_check_failed.len()
-        ));
+        // Print follow-up instructions for deferred crates
+        if !summary.blocked_on_unpublished.is_empty() {
+            println!("  Follow-up after publishing predecessors:");
+            for blocked in &summary.blocked_on_unpublished {
+                println!("    After publishing {}:", blocked.predecessors.join(", "));
+                println!("      cargo package --no-verify -p {}", blocked.name);
+                println!("      cargo package -p {}", blocked.name);
+            }
+            println!();
+        }
+
+        // Exit message
+        let has_blockers = !summary.not_prepublishable.is_empty() || !summary.failed.is_empty();
+        let has_deferred = !summary.blocked_on_unpublished.is_empty();
+
+        if has_blockers {
+            eprintln!("  ✗ Release verification FAILED — blockers found");
+        } else if has_deferred {
+            println!("  PRE-PUBLICATION READY WITH DEFERRED REGISTRY CHECKS");
+            println!(
+                "  {} crate(s) deferred until predecessors are published",
+                summary.blocked_on_unpublished.len()
+            );
+        } else {
+            println!("  ✓ All publishable crates fully qualified");
+        }
+        println!();
     }
 
     // --- Phase 4: Print manual publication order ---
@@ -999,6 +1296,14 @@ pub fn run_verify_release(
         println!("  After each crate, verify it resolves from crates.io before");
         println!("  publishing dependents. Wait for docs.rs to index if needed.");
         println!();
+    }
+
+    // Exit policy: nonzero for blockers/failures, zero when only deferred
+    if !summary.not_prepublishable.is_empty() || !summary.failed.is_empty() {
+        return Err(format!(
+            "{} release blocker(s)/failure(s) found",
+            summary.not_prepublishable.len() + summary.failed.len()
+        ));
     }
 
     Ok(())
@@ -1059,4 +1364,375 @@ pub fn run_guards(dry_run: bool, json_output: bool, verbose: bool) -> Result<(),
     ];
 
     run_contract("test guards", &steps, dry_run, json_output, verbose)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Helper to create a mock metadata JSON value for a crate with given deps
+    fn mock_metadata(crates: &[(&str, &str, Vec<(&str, &str, &str)>)]) -> serde_json::Value {
+        // crates: Vec of (name, version, deps)
+        // deps: Vec of (dep_name, dep_kind, dep_path_or_empty)
+        let packages: Vec<serde_json::Value> = crates
+            .iter()
+            .map(|(name, version, deps)| {
+                let deps_json: Vec<serde_json::Value> = deps
+                    .iter()
+                    .map(|(dep_name, dep_kind, dep_path)| {
+                        let mut dep = serde_json::json!({
+                            "name": dep_name,
+                            "kind": dep_kind,
+                            "req": format!("^{version}"),
+                        });
+                        if !dep_path.is_empty() {
+                            dep["path"] = serde_json::json!(dep_path);
+                        }
+                        dep
+                    })
+                    .collect();
+                serde_json::json!({
+                    "name": name,
+                    "version": version,
+                    "manifest_path": format!("/workspace/{name}/Cargo.toml"),
+                    "dependencies": deps_json,
+                })
+            })
+            .collect();
+
+        let members: Vec<String> = crates
+            .iter()
+            .map(|(name, _, _)| format!("{name}:0.0.0"))
+            .collect();
+
+        serde_json::json!({
+            "workspace_members": members,
+            "packages": packages,
+        })
+    }
+
+    // --- Workstream A: Dependency graph tests ---
+
+    #[test]
+    fn test_crate_with_no_internal_deps_is_assembly_eligible() {
+        let metadata = mock_metadata(&[("synvoid-utils", "0.1.0", vec![])]);
+        let publishable: std::collections::HashSet<String> =
+            ["synvoid-utils".to_string()].into_iter().collect();
+        let nonpublishable: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        let graph =
+            build_publishable_dependency_graph(&metadata, &publishable, &nonpublishable).unwrap();
+        let info = graph.get("synvoid-utils").unwrap();
+
+        assert!(info.publishable_predecessors.is_empty());
+        assert!(info.nonpublishable_deps.is_empty());
+    }
+
+    #[test]
+    fn test_publishable_predecessor_is_classified() {
+        let metadata = mock_metadata(&[
+            ("synvoid-core", "0.1.0", vec![]),
+            (
+                "synvoid-config",
+                "0.1.0",
+                vec![("synvoid-core", "normal", "../../synvoid-core")],
+            ),
+        ]);
+        let publishable: std::collections::HashSet<String> =
+            ["synvoid-core".to_string(), "synvoid-config".to_string()]
+                .into_iter()
+                .collect();
+        let nonpublishable: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        let graph =
+            build_publishable_dependency_graph(&metadata, &publishable, &nonpublishable).unwrap();
+
+        let core_info = graph.get("synvoid-core").unwrap();
+        assert!(core_info.publishable_predecessors.is_empty());
+
+        let config_info = graph.get("synvoid-config").unwrap();
+        assert_eq!(config_info.publishable_predecessors, vec!["synvoid-core"]);
+        assert!(config_info.nonpublishable_deps.is_empty());
+    }
+
+    #[test]
+    fn test_nonpublishable_dep_is_classified() {
+        let metadata = mock_metadata(&[(
+            "synvoid-core",
+            "0.1.0",
+            vec![("xtask", "normal", "../../tools/xtask")],
+        )]);
+        let publishable: std::collections::HashSet<String> =
+            ["synvoid-core".to_string()].into_iter().collect();
+        let mut nonpublishable: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        nonpublishable.insert("xtask".to_string());
+
+        let graph =
+            build_publishable_dependency_graph(&metadata, &publishable, &nonpublishable).unwrap();
+        let info = graph.get("synvoid-core").unwrap();
+
+        assert!(info.publishable_predecessors.is_empty());
+        assert_eq!(info.nonpublishable_deps, vec!["xtask"]);
+    }
+
+    #[test]
+    fn test_dev_dependency_is_excluded() {
+        let metadata = mock_metadata(&[
+            (
+                "synvoid-core",
+                "0.1.0",
+                vec![("synvoid-utils", "dev", "../../synvoid-utils")],
+            ),
+            ("synvoid-utils", "0.1.0", vec![]),
+        ]);
+        let publishable: std::collections::HashSet<String> =
+            ["synvoid-core".to_string(), "synvoid-utils".to_string()]
+                .into_iter()
+                .collect();
+        let nonpublishable: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        let graph =
+            build_publishable_dependency_graph(&metadata, &publishable, &nonpublishable).unwrap();
+        let info = graph.get("synvoid-core").unwrap();
+
+        // Dev-dependencies should not appear in the graph
+        assert!(info.publishable_predecessors.is_empty());
+        assert!(info.nonpublishable_deps.is_empty());
+    }
+
+    // --- Cycle detection tests ---
+
+    #[test]
+    fn test_no_cycle_in_acyclic_graph() {
+        let mut graph = std::collections::HashMap::new();
+        graph.insert(
+            "a".to_string(),
+            CrateDepInfo {
+                publishable_predecessors: vec!["b".to_string()],
+                nonpublishable_deps: vec![],
+            },
+        );
+        graph.insert(
+            "b".to_string(),
+            CrateDepInfo {
+                publishable_predecessors: vec![],
+                nonpublishable_deps: vec![],
+            },
+        );
+
+        assert!(detect_cycles(&graph).is_ok());
+    }
+
+    #[test]
+    fn test_cycle_is_detected() {
+        let mut graph = std::collections::HashMap::new();
+        graph.insert(
+            "a".to_string(),
+            CrateDepInfo {
+                publishable_predecessors: vec!["b".to_string()],
+                nonpublishable_deps: vec![],
+            },
+        );
+        graph.insert(
+            "b".to_string(),
+            CrateDepInfo {
+                publishable_predecessors: vec!["a".to_string()],
+                nonpublishable_deps: vec![],
+            },
+        );
+
+        let result = detect_cycles(&graph);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("cycle"));
+    }
+
+    #[test]
+    fn test_self_cycle_is_detected() {
+        let mut graph = std::collections::HashMap::new();
+        graph.insert(
+            "a".to_string(),
+            CrateDepInfo {
+                publishable_predecessors: vec!["a".to_string()],
+                nonpublishable_deps: vec![],
+            },
+        );
+
+        let result = detect_cycles(&graph);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_long_chain_has_no_cycle() {
+        let mut graph = std::collections::HashMap::new();
+        for i in 0..10 {
+            let name = format!("crate_{i}");
+            let mut predecessors = Vec::new();
+            if i > 0 {
+                predecessors.push(format!("crate_{}", i - 1));
+            }
+            graph.insert(
+                name.clone(),
+                CrateDepInfo {
+                    publishable_predecessors: predecessors,
+                    nonpublishable_deps: vec![],
+                },
+            );
+        }
+
+        assert!(detect_cycles(&graph).is_ok());
+    }
+
+    // --- Qualification summary tests ---
+
+    #[test]
+    fn test_summary_counts() {
+        let source_results = vec![
+            (
+                "crate_a".to_string(),
+                CrateQualification::PackagedSourceVerified,
+            ),
+            ("crate_b".to_string(), CrateQualification::Assembled),
+            (
+                "crate_c".to_string(),
+                CrateQualification::BlockedOnUnpublishedInternalDeps {
+                    predecessors: vec!["crate_a".to_string()],
+                },
+            ),
+            (
+                "crate_d".to_string(),
+                CrateQualification::Failed {
+                    phase: "assembly".to_string(),
+                    reason: "some error".to_string(),
+                },
+            ),
+        ];
+        let publishable = vec![
+            ("crate_a".to_string(), PathBuf::from("/a")),
+            ("crate_b".to_string(), PathBuf::from("/b")),
+            ("crate_c".to_string(), PathBuf::from("/c")),
+            ("crate_d".to_string(), PathBuf::from("/d")),
+        ];
+
+        let mut summary = ReleaseQualificationSummary {
+            assembled: Vec::new(),
+            packaged_source_verified: Vec::new(),
+            blocked_on_unpublished: Vec::new(),
+            not_prepublishable: Vec::new(),
+            failed: Vec::new(),
+            publication_order: publishable.iter().map(|(n, _)| n.clone()).collect(),
+        };
+
+        for (name, qual) in &source_results {
+            match qual {
+                CrateQualification::PackagedSourceVerified => {
+                    summary.packaged_source_verified.push(name.clone());
+                }
+                CrateQualification::Assembled => {
+                    summary.assembled.push(name.clone());
+                }
+                CrateQualification::BlockedOnUnpublishedInternalDeps { predecessors } => {
+                    summary.blocked_on_unpublished.push(BlockedCrate {
+                        name: name.clone(),
+                        predecessors: predecessors.clone(),
+                    });
+                }
+                CrateQualification::Failed { phase, reason } => {
+                    summary.failed.push(FailedCrate {
+                        name: name.clone(),
+                        phase: phase.clone(),
+                        reason: reason.clone(),
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        assert_eq!(summary.packaged_source_verified.len(), 1);
+        assert_eq!(summary.assembled.len(), 1);
+        assert_eq!(summary.blocked_on_unpublished.len(), 1);
+        assert_eq!(summary.failed.len(), 1);
+        assert_eq!(summary.not_prepublishable.len(), 0);
+    }
+
+    #[test]
+    fn test_deferred_crate_not_counted_as_assembled() {
+        let source_results = vec![(
+            "crate_a".to_string(),
+            CrateQualification::BlockedOnUnpublishedInternalDeps {
+                predecessors: vec!["crate_b".to_string()],
+            },
+        )];
+
+        let mut assembled = Vec::new();
+        let mut verified = Vec::new();
+        let mut blocked = Vec::new();
+
+        for (name, qual) in &source_results {
+            match qual {
+                CrateQualification::PackagedSourceVerified => verified.push(name.clone()),
+                CrateQualification::Assembled => assembled.push(name.clone()),
+                CrateQualification::BlockedOnUnpublishedInternalDeps { .. } => {
+                    blocked.push(name.clone())
+                }
+                _ => {}
+            }
+        }
+
+        assert_eq!(assembled.len(), 0);
+        assert_eq!(verified.len(), 0);
+        assert_eq!(blocked.len(), 1);
+    }
+
+    // --- is_prohibited_path tests ---
+
+    #[test]
+    fn test_prohibited_path_prefixes() {
+        assert!(is_prohibited_path("target/debug/foo"));
+        assert!(is_prohibited_path(".git/config"));
+        assert!(is_prohibited_path("fuzz/corpus/foo"));
+        assert!(is_prohibited_path("plans/foo.md"));
+        assert!(is_prohibited_path("corpus/foo.bin"));
+    }
+
+    #[test]
+    fn test_prohibited_basenames() {
+        assert!(is_prohibited_path(".env"));
+        assert!(is_prohibited_path(".env.production"));
+        assert!(is_prohibited_path("credentials"));
+        assert!(is_prohibited_path("credentials.toml"));
+        assert!(is_prohibited_path("id_rsa"));
+        assert!(is_prohibited_path("id_ed25519"));
+        assert!(is_prohibited_path("id_ecdsa"));
+        assert!(is_prohibited_path("htpasswd"));
+    }
+
+    #[test]
+    fn test_prohibited_extensions() {
+        assert!(is_prohibited_path("server.key"));
+        assert!(is_prohibited_path("cert.pem"));
+        assert!(is_prohibited_path("keystore.p12"));
+        assert!(is_prohibited_path("cert.pfx"));
+        assert!(is_prohibited_path("cert.keystore"));
+    }
+
+    #[test]
+    fn test_legitimate_paths_not_prohibited() {
+        assert!(!is_prohibited_path("src/secret_handling.rs"));
+        assert!(!is_prohibited_path("src/crypto/key_exchange.rs"));
+        assert!(!is_prohibited_path("src/auth/private_key_store.rs"));
+        assert!(!is_prohibited_path("src/main.rs"));
+        assert!(!is_prohibited_path("Cargo.toml"));
+        assert!(!is_prohibited_path("README.md"));
+    }
+
+    #[test]
+    fn test_windows_path_normalization() {
+        assert!(is_prohibited_path("target\\debug\\foo"));
+        assert!(!is_prohibited_path("src\\main.rs"));
+    }
 }

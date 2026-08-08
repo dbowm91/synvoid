@@ -53,7 +53,7 @@ A release candidate (RC) is cut when all release gates pass:
 cargo xtask verify-release
 ```
 
-The `verify-release` command runs the full verification suite plus package metadata validation, content inspection, and pre-publication package assembly for every publishable crate. It fails on dirty trees by default.
+The `verify-release` command runs the full verification suite plus package metadata validation, content inspection, and per-crate package qualification. Each publishable crate receives an explicit state (Assembled, PackagedSourceVerified, BlockedOnUnpublishedInternalDeps, NotPrepublishable, or Failed). Deferred crates name their exact predecessors and required follow-up commands. It fails on dirty trees by default.
 
 The RC tag follows the pattern `vMAJOR.MINOR.PATCH-rc.N` (e.g., `v1.1.0-rc.1`).
 
@@ -173,7 +173,7 @@ Library and binary crates are published on [crates.io](https://crates.io/crates/
 - [ ] Working tree is clean (dirty trees block release verification)
 - [ ] Stabilization period complete (minimum 3 days after RC tag)
 - [ ] All gates re-pass after stabilization fixes
-- [ ] `cargo xtask verify-release` passes (package inspection + assembly)
+- [ ] `cargo xtask verify-release` passes (per-crate qualification + package inspection)
 - [ ] All crates published to crates.io in dependency order
 - [ ] Crates.io availability verified for each published crate
 - [ ] Git tag created: `vMAJOR.MINOR.PATCH` (after publication succeeds)

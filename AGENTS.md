@@ -32,7 +32,7 @@ cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci
 # Full test suite (release mode — only for release qualification)
 cargo test --release --no-fail-fast
 
-# Release verification (package inspection + assembly, no publish; fails on dirty tree)
+# Release verification (per-crate qualification + package inspection, no publish; fails on dirty tree)
 cargo xtask verify-release
 cargo xtask verify-release --allow-dirty  # override dirty-tree check for local experimentation
 
@@ -91,7 +91,7 @@ Key docs:
 ```bash
 cargo xtask verify             # Canonical routine verification contract (what CI runs)
 cargo xtask verify-full        # Full local verification (broader than routine, no duplicate tests)
-cargo xtask verify-release     # Release verification (fails on dirty tree; --allow-dirty to override)
+cargo xtask verify-release     # Release verification (per-crate qualification; --allow-dirty to override)
 cargo xtask test package synvoid-dns  # Test a specific package
 cargo xtask test guards        # All architectural guard tests
 

@@ -1,7 +1,7 @@
 # Verification Contract
 
 > Frozen: 2026-07-29 | Phase 1 of CI Simplification Roadmap
-> Updated: 2026-08-07 | Phase 5 — WAF detection resolution and verify-release fixes
+> Updated: 2026-08-08 | Phase 1 follow-up — Release qualification semantics
 
 This document is the single source of truth for what SynVoid CI must verify, at what frequency, and with what commands. It replaces the four-lane system as the authoritative verification specification.
 
@@ -166,14 +166,56 @@ cargo test --lib --no-run --release
 # Package metadata validation (description, license, readme)
 # Dependency version validation (compatible semver, no * unless allowlisted)
 # Package content inspection (cargo package --list, path-aware rules)
-# Pre-publication package assembly (cargo package --no-verify)
-# Bounded packaged-source check (cargo package --verify for resolvable crates)
+# Dependency graph analysis (publishable predecessors, non-publishable blockers, cycle detection)
+# Per-crate package qualification (assembly + source verification)
 # Manual publication order printed
 ```
 
-### Packaged-source verification (D3)
+### Package qualification model
 
-After `cargo package --no-verify` assembly, `verify-release` attempts `cargo package --verify` for each publishable crate whose dependencies are all resolvable from crates.io (no unpublished internal path deps). Crates with unpublished internal deps are skipped — their correctness is ensured by the full source verification in Phase 1. Crates with path dependencies are also skipped from assembly and packaged-source phases, since they cannot be verified against a registry. This provides a bounded packaged-source check without requiring a local registry emulator.
+Every publishable crate receives one explicit qualification state:
+
+| State | Meaning |
+|-------|---------|
+| `Assembled` | `cargo package --no-verify` succeeded |
+| `PackagedSourceVerified` | `cargo package` (with verify) succeeded |
+| `BlockedOnUnpublishedInternalDeps` | Named publishable predecessors are not yet on crates.io |
+| `NotPrepublishable` | Depends on non-publishable internal crate (release blocker) |
+| `Failed` | Package step failed for an unexpected reason (release blocker) |
+
+### Dependency graph analysis
+
+The verifier builds a precise internal dependency graph from Cargo metadata:
+
+- Only normal/build dependencies are checked (dev-dependencies follow Cargo publication rules)
+- Publishable workspace predecessors are distinguished from non-publishable internal dependencies
+- Cycles in the publishable dependency graph are detected and reported as errors
+- No hardcoded crate-name list — classification comes from Cargo metadata
+
+### Deferred qualification contract
+
+A publishable crate may be `BlockedOnUnpublishedInternalDeps` without failing the overall pre-publication readiness command only if all of the following are true:
+
+1. every blocking dependency is a named publishable workspace predecessor
+2. its path dependency has a compatible, explicit semver requirement
+3. package-content inspection passes
+4. metadata validation passes
+5. there is no non-publishable internal dependency
+6. the publication graph is acyclic
+7. the manual publication order places every blocking predecessor first
+8. the output explicitly says the crate is **deferred**, not assembled or verified
+
+After publishing predecessors, the operator must rerun the dependent crate's `cargo package` validation before publishing it.
+
+### Exit semantics
+
+- Nonzero exit for any `NotPrepublishable` or `Failed` state
+- Zero exit when the only non-passed states are `BlockedOnUnpublishedInternalDeps` satisfying the deferred contract
+- Summary text says `PRE-PUBLICATION READY WITH DEFERRED REGISTRY CHECKS` when deferred states exist
+
+### Packaged-source verification
+
+After assembly, `verify-release` attempts `cargo package` (with verify) for each assembled crate. Crates blocked by unpublished internal predecessors are skipped — their correctness is ensured by the full source verification in Phase 1. This provides a bounded packaged-source check without requiring a local registry emulator.
 
 ### Dirty-tree policy
 
@@ -191,7 +233,9 @@ After `cargo package --no-verify` assembly, `verify-release` attempts `cargo pac
 | Package metadata validity | Metadata validation per publishable crate |
 | Dependency version compatibility | cargo metadata `req` field validation |
 | Package file lists | `cargo package --list` per publishable crate |
-| Pre-publication package assembly | `cargo package --no-verify` per publishable crate |
+| Dependency graph correctness | Cycle detection, predecessor classification |
+| Pre-publication package assembly | `cargo package --no-verify` per eligible crate |
+| Packaged-source verification | `cargo package` per assembled crate |
 | Clean working tree | `git status --porcelain` check (fail by default) |
 
 ### Publication incapability
@@ -200,6 +244,7 @@ The release verifier **cannot** invoke `cargo publish`. All cargo invocations ar
 - `cargo metadata` (read-only)
 - `cargo package --list` (inspection)
 - `cargo package --no-verify` (assembly without registry resolution)
+- `cargo package` (source verification for assembled crates)
 
 Actual publication remains manual:
 
@@ -520,5 +565,16 @@ Phase 5 resolved WAF detection false positives:
 34. Normalizer idempotency bug fixed — NFKC normalization no longer creates new percent-encoding sequences
 35. `verify-release` assembly and packaged-source phases correctly skip crates with path dependencies
 36. Eight WAF wave10 tests resolved (test disposition table updated in Section 2)
+
+Phase 1 follow-up (release qualification semantics):
+37. Per-crate qualification states: Assembled, PackagedSourceVerified, BlockedOnUnpublishedInternalDeps, NotPrepublishable, Failed
+38. Dependency graph built from Cargo metadata — publishable predecessors distinguished from non-publishable internal deps
+39. Dev-dependencies excluded from publication resolution checks
+40. Cycle detection in publishable dependency graph
+41. Deferred crates name exact predecessors and required follow-up commands
+42. Summary distinguishes assembled/verified/deferred/failed counts
+43. Exit policy: nonzero for blockers, zero when only deferred
+44. 15 unit tests for dependency classification, cycle detection, qualification summary, and path rules
+45. JSON output carries qualification summary for machine consumption
 
 If implementation reveals an invalid command, correct this document in the same commit with an explicit rationale. Do not improvise a broader suite or restore selector behavior.

@@ -133,7 +133,7 @@ This runs full verification, package metadata validation, package content inspec
 
 ### Dry Run
 
-The pre-publication assembly is included in `verify-release` via `cargo package --no-verify`. For manual per-crate verification after predecessors are on crates.io:
+The pre-publication assembly and source verification are included in `verify-release`. Each publishable crate receives an explicit qualification state (Assembled, PackagedSourceVerified, BlockedOnUnpublishedInternalDeps, NotPrepublishable, or Failed). For manual per-crate verification after predecessors are on crates.io:
 
 ```bash
 # Verify package file lists
@@ -143,7 +143,7 @@ cargo package --list -p <crate-name>
 cargo publish --dry-run -p <crate-name>
 ```
 
-Run these in dependency order (see the publication order table above).
+Run these in dependency order (see the publication order table above). After publishing predecessors, rerun the dependent crate's `cargo package` validation before publishing it.
 
 ### Publish
 
