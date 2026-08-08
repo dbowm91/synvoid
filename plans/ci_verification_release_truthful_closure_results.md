@@ -60,7 +60,15 @@
 
 ## Hosted Routine Result
 
-Pending push and CI run observation.
+- **Workflow run ID:** 31228985966
+- **Job ID:** 93028782965
+- **Final SHA:** `de494b7`
+- **Conclusion:** **SUCCESS**
+- **Job duration:** 14m11s
+- **Verify step:** Completed (within budget)
+- **Cache hit:** Partial (post Phase 4 changes triggered recompilation)
+
+Note: 14m11s is slightly above the 10-minute warm-cache target but below the 15-minute blocking threshold. This is expected for the first push after significant pattern/normalizer changes causing partial cache invalidation.
 
 ## Full Verification Result
 
