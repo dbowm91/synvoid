@@ -1,7 +1,7 @@
 # Verification Contract
 
 > Frozen: 2026-07-29 | Phase 1 of CI Simplification Roadmap
-> Updated: 2026-08-05 | Phase 1 — Failure Adjudication and Pattern Fixes
+> Updated: 2026-08-07 | Phase 5 — WAF detection resolution and verify-release fixes
 
 This document is the single source of truth for what SynVoid CI must verify, at what frequency, and with what commands. It replaces the four-lane system as the authoritative verification specification.
 
@@ -126,23 +126,23 @@ Every test that fails or times out under `verify-full` is classified below. Real
 | `test_wildcard_domain_matching` | proxy | STALE_EXPECTATION (resolved) | matchit catch-all syntax fixed (`{*sub}` → `*sub`) in Phase 3 |
 | `test_icmp_type_rule_validation` | icmp-filter | STALE_EXPECTATION (resolved) | `_is_v6` parameter removed (was unused); test updated in Phase 3 |
 | `test_waf_corpus_sqli_with_invalid_utf8` | waf corpus | HARNESS_DEFECT | Normalizer loses invalid UTF-8 bytes; needs raw-bytes detection path |
-| `test_waf_corpus_xss_invalid_utf8` | waf corpus | HARNESS_DEFECT | Same as above |
-| `test_anomaly_scoring_multiple_attacks` | waf wave10 | HARNESS_DEFECT | Fast path optimization skips SQLi detection for this payload |
-| `test_anomaly_scoring_xss_attack` | waf wave10 | HARNESS_DEFECT | Same as above |
-| `test_open_redirect_with_data_protocol` | waf wave10 | HARNESS_DEFECT | Race condition: XSS finishes before OpenRedirect detector |
-| `test_open_redirect_with_protocol` | waf wave10 | HARNESS_DEFECT | Race condition: RFI finishes before OpenRedirect detector |
-| `test_path_traversal_double_encoded` | waf wave10 | HARNESS_DEFECT | Race condition: CmdInjection finishes before PathTraversal |
-| `test_path_traversal_encoded` | waf wave10 | HARNESS_DEFECT | Same as above |
-| `test_ldap_injection` | waf wave10 | HARNESS_DEFECT | Fast path blocks LDAP detector; pattern `)(&` works in isolation |
-| `test_sqli_boolean_based` | waf wave10 | HARNESS_DEFECT | Fast path blocks SQLi detector; pattern `AND 1=1` works in isolation |
-| `test_sqli_time_based` | waf wave10 | HARNESS_DEFECT | Fast path blocks SQLi detector; pattern `SLEEP(` works in isolation |
-| `test_xpath_injection` | waf wave10 | HARNESS_DEFECT | Fast path blocks XPath detector; pattern `//user` works in isolation |
+| `test_waf_corpus_xss_invalid_utf8` | waf corpus | HARNESS_DEFECT | Normalizer loses invalid UTF-8 bytes; needs raw-bytes detection path |
+| `test_anomaly_scoring_multiple_attacks` | waf wave10 | RESOLVED (Phase 5) | XPath base pattern `"='"` false-positived on SQLi payload `1' OR '1'='1`; narrowed XPath base patterns |
+| `test_anomaly_scoring_xss_attack` | waf wave10 | RESOLVED (Phase 5) | XSS payload triggered XPath false-positive via broad base patterns; narrowed XPath base patterns |
+| `test_open_redirect_with_data_protocol` | waf wave10 | RESOLVED (Phase 5) | Normalizer idempotency bug created new percent-encoding sequences; added post-normalization decode pass |
+| `test_open_redirect_with_protocol` | waf wave10 | RESOLVED (Phase 5) | Normalizer idempotency bug created new percent-encoding sequences; added post-normalization decode pass |
+| `test_path_traversal_double_encoded` | waf wave10 | RESOLVED (Phase 5) | XPath base pattern false-positived on path traversal payload; narrowed XPath base patterns |
+| `test_path_traversal_encoded` | waf wave10 | RESOLVED (Phase 5) | XPath base pattern false-positived on path traversal payload; narrowed XPath base patterns |
+| `test_ldap_injection` | waf wave10 | RESOLVED (Phase 5) | XPath base pattern false-positived on LDAP payload `admin)(&password=123`; narrowed XPath base patterns |
+| `test_sqli_boolean_based` | waf wave10 | RESOLVED (Phase 5) | XPath base pattern false-positived on SQLi payload `test' AND 1=1--`; narrowed XPath base patterns |
+| `test_sqli_time_based` | waf wave10 | RESOLVED (Phase 5) | XPath base pattern false-positived on SQLi payload `test' AND SLEEP(5)--`; narrowed XPath base patterns |
+| `test_xpath_injection` | waf wave10 | RESOLVED (Phase 5) | XPath detection itself was blocked by overly broad base patterns; narrowed base patterns to `//\w+` and `[@...]` |
 | `test_xxe_external_entity` | waf wave10 | HARNESS_DEFECT | Race condition: XSS (libinjection) finishes before XXE detector |
 | `test_pool_creation` | app-handlers | RESOLVED (Phase 4) | Self-contained temp-directory socket fixture; no fixed-path collision |
 | `test_worker_crash_recovery` | fault-injection | SPECIALIST (Phase 4) | Still `#[ignore]`; uses `CARGO_BIN_EXE_synvoid` and `/proc` children for deterministic discovery |
 | `proxy_pipeline_tests` (5 tests) | integration | RESOLVED (Phase 4) | hyper-rustls ALPN conflict: `build_tls_config` set ALPN but connector builder requires empty; cleared ALPN before builder, uses `enable_all_versions()` |
 
-**Summary**: 0 real product regressions (resolved), 4 stale expectations (resolved), 11 harness defects (detection pipeline issues), 1 specialist test (worker crash recovery), 7 environment-dependent resolved (5 proxy pipeline + 1 pool creation + 1 dashmap deadlock).
+**Summary**: 0 real product regressions (resolved), 4 stale expectations (resolved), 8 WAF detection (resolved Phase 5), 3 harness defects remaining (1 WAF detection pipeline, 2 invalid UTF-8 corpus), 1 specialist test (worker crash recovery), 7 environment-dependent resolved (5 proxy pipeline + 1 pool creation + 1 dashmap deadlock).
 
 ## 3. Release Verification
 
@@ -173,7 +173,7 @@ cargo test --lib --no-run --release
 
 ### Packaged-source verification (D3)
 
-After `cargo package --no-verify` assembly, `verify-release` attempts `cargo package --verify` for each publishable crate whose dependencies are all resolvable from crates.io (no unpublished internal path deps). Crates with unpublished internal deps are skipped — their correctness is ensured by the full source verification in Phase 1. This provides a bounded packaged-source check without requiring a local registry emulator.
+After `cargo package --no-verify` assembly, `verify-release` attempts `cargo package --verify` for each publishable crate whose dependencies are all resolvable from crates.io (no unpublished internal path deps). Crates with unpublished internal deps are skipped — their correctness is ensured by the full source verification in Phase 1. Crates with path dependencies are also skipped from assembly and packaged-source phases, since they cannot be verified against a registry. This provides a bounded packaged-source check without requiring a local registry emulator.
 
 ### Dirty-tree policy
 
@@ -514,5 +514,11 @@ Phase 2 corrected the full and release contracts:
 30. Test disposition table classifies all verify-full failures (Section 2)
 31. Bounded packaged-source check for crates with resolvable deps (Section 3)
 32. Stress/endurance specialist commands documented (Section 10)
+
+Phase 5 resolved WAF detection false positives:
+33. XPath base patterns narrowed — removed `"='"`, `"or '"`, `"and '"` which false-positived on SQLi payloads
+34. Normalizer idempotency bug fixed — NFKC normalization no longer creates new percent-encoding sequences
+35. `verify-release` assembly and packaged-source phases correctly skip crates with path dependencies
+36. Eight WAF wave10 tests resolved (test disposition table updated in Section 2)
 
 If implementation reveals an invalid command, correct this document in the same commit with an explicit rationale. Do not improvise a broader suite or restore selector behavior.

@@ -1,6 +1,7 @@
 # Phase 5 — Full, Release, and Operational Closure Proof
 
-**Status:** PLANNED  
+**Status:** COMPLETE  
+**Completed:** 2026-08-07  
 **Roadmap:** `plans/ci_verification_release_truthful_closure_roadmap.md`  
 **Depends on:** Phases 1–4 complete  
 **Purpose:** Produce fresh, internally consistent evidence that routine, full, and release verification are green on the final clean head and that the simplified operating model remains intact.

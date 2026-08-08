@@ -1,8 +1,10 @@
 # CI, Full Verification, and Release Truthful Closure Roadmap
 
-**Status:** PLANNED  
+**Status:** COMPLETE  
 **Created:** 2026-08-04  
+**Completed:** 2026-08-07  
 **Baseline:** `f8c19b0f8c4abe73818ae8794d45abcf293d9b78`  
+**Final SHA:** (see closure record)  
 **Scope:** Correct the remaining test, harness, release-evidence, and closure-accounting gaps after the CI simplification work.  
 **Primary constraint:** Preserve the simplified one-workflow, one-job, manually released operating model.
 
