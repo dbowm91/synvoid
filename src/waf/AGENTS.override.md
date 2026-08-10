@@ -50,6 +50,12 @@ let body_str = std::str::from_utf8(body).unwrap_or("");
 let body_str = String::from_utf8_lossy(body);
 ```
 
+### Overlong UTF-8 Percent-Encoding
+
+The normalizer decodes overlong UTF-8 percent-encoded sequences (e.g., `%C0%BE` → `>`) to their intended ASCII equivalents. This prevents attackers from bypassing XSS/SQLi detection via overlong encodings. The `OVERLONG` flag is set on `NormalizationFlags` when overlong sequences are detected. `strict_normalization` mode rejects requests containing overlong sequences.
+
+Key function: `InputNormalizer::decode_overlong_sequence()` in `crates/synvoid-waf/src/attack_detection/normalizer.rs`.
+
 ### Behavioral Analysis Mesh-Only Limitation
 
 The `BehavioralIntelligenceManager` in `src/waf/attack_detection/mod.rs:263-314` is only available when the `mesh` feature is enabled. Without `mesh`, the standalone `BehavioralEngine` is used, which lacks DHT-based collaborative threat intelligence.

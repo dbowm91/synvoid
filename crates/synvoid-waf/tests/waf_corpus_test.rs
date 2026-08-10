@@ -165,11 +165,11 @@ mod waf_corpus_tests {
         .await;
 
         assert!(
-            result.is_none(),
-            "XSS with overlong UTF-8 encodings (%C0%AE etc.) is not detected — \
-             these decode to Unicode chars (À®, À¼), not < and >. \
-             This is a known limitation: overlong encoding handling requires \
-             normalizer-level overlong-to-ASCII mapping."
+            result.is_some(),
+            "XSS with overlong UTF-8 encodings (%C0%AE etc.) is detected via \
+             normalizer overlong-to-ASCII mapping. Overlong sequences like %C0%AE \
+             (>), %C0%BC (<), %C0%BE (/) are decoded to their intended ASCII \
+             equivalents, allowing the XSS pattern matcher to identify the attack."
         );
     }
 
@@ -416,6 +416,8 @@ mod waf_corpus_tests {
             "serverless_route_bypass",
             "sqli_invalid_utf8",
             "xss_invalid_utf8",
+            "xss_percent_encoded",
+            "xss_mixed_overlong_canonical",
             "path_traversal_literal",
             "multipart_field_attack",
             "chunk_boundary_split",
@@ -434,6 +436,8 @@ mod waf_corpus_tests {
             "benign_query_strings",
             "benign_json_body",
             "benign_url_encoding",
+            "benign_overlong_unicode",
+            "benign_percent_encoded_unicode",
         ];
 
         let loaded_ids: std::collections::HashSet<String> =

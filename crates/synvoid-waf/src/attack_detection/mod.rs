@@ -1275,7 +1275,9 @@ impl AttackDetector {
         &self,
         inputs: &NormalizedInputs,
     ) -> Option<AttackDetectionResult> {
-        let risky_flags = NormalizationFlags::NULL_BYTE | NormalizationFlags::ZERO_WIDTH;
+        let risky_flags = NormalizationFlags::NULL_BYTE
+            | NormalizationFlags::ZERO_WIDTH
+            | NormalizationFlags::OVERLONG;
 
         if let (Some(norm), Some(raw)) = (&inputs.path, &inputs.path_raw) {
             if norm.flags.intersects(risky_flags) {

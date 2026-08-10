@@ -1,0 +1,17 @@
+{
+  "id": "benign_percent_encoded_unicode",
+  "description": "Benign percent-encoded Unicode characters in path",
+  "entry_point": "path",
+  "expected_result": "pass",
+  "attack_type": "none",
+  "notes": "Standard percent-encoded UTF-8 characters (é, ñ, etc.) should not be flagged",
+  "request": {
+    "method": "GET",
+    "path": "/caf%C3%A9/menu/%C3%B1",
+    "headers": [
+      ["Host", "example.com"]
+    ],
+    "query_string": null,
+    "body": null
+  }
+}

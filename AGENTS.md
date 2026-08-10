@@ -162,6 +162,7 @@ cargo test -p synvoid-repo-guards -- ci_policy
 - **Plugin ABI frame serialization**: Use `abi_frame::serialize_headers_canonical` and `abi_frame::build_request_frame` — never ad-hoc header encoding. `SerializationFailureClass` classifies rejections for bounded metrics.
 - **Unsafe native extensions**: Disabled by default. Production loading requires explicit risk acknowledgement, path allowlist, and optional SHA-256 hash verification. The `Library` handle is retained via `Arc` for the lifetime of any plugin-derived values. Native extensions are NOT sandboxed and have full process authority.
 - **Plugin lifecycle**: Reload is prepare-then-commit with generation-aware atomic swaps. Failed reloads must never replace a working plugin. Hot reload waits for stable files and debounces watcher events. Lifecycle states and transitions are explicit and auditable.
+- **Overlong UTF-8 handling**: The WAF normalizer decodes overlong UTF-8 percent-encoded sequences (e.g., `%C0%BE` → `>`) to their intended ASCII equivalents before pattern matching. This prevents attackers from bypassing XSS/SQLi detection via overlong encodings. The `OVERLONG` flag is set on `NormalizationFlags` when overlong sequences are detected. `strict_normalization` mode rejects requests containing overlong sequences. Tests: `test_overlong_*` in `normalizer.rs`, `test_waf_corpus_xss_invalid_utf8` in `waf_corpus_test.rs`.
 
 ## Admin Control-Plane Authority
 

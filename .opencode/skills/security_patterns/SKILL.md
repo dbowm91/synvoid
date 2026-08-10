@@ -1582,6 +1582,16 @@ use subtle::ConstantTimeEq;
 
 **Fix**: Changed to `String::from_utf8_lossy(body)` to decode invalid UTF-8 with replacement characters instead of empty string.
 
+### Overlong UTF-8 Percent-Encoding Decoding
+
+**Location**: `crates/synvoid-waf/src/attack_detection/normalizer.rs`
+
+**Issue**: Overlong UTF-8 percent-encoded sequences (e.g., `%C0%BE` for `>`, `%C0%BC` for `<`) decoded to Unicode characters (À, ¼) via `byte as char`, not the intended ASCII characters. This allowed XSS payloads using overlong encodings to bypass pattern matching and libinjection detection.
+
+**Fix**: Added `decode_overlong_sequence()` helper that detects overlong UTF-8 start bytes (0xC0-0xFD) in percent-decoded output and decodes the full multi-byte sequence to the intended ASCII codepoint when the decoded codepoint falls in the ASCII range (0x00-0x7F). The `OVERLONG` flag is set on `NormalizationFlags`. `strict_normalization` mode rejects requests containing overlong sequences.
+
+**Security contract**: The WAF normalizer canonicalizes overlong encodings to their intended ASCII equivalents before pattern matching. This ensures the WAF sees the same semantic content as a conforming parser would after decoding. The fix is bounded (consumes exactly 2-4 percent-encoded triplets) and idempotent.
+
 ### Retry Policy Honesty
 
 **Location**: `src/proxy/mod.rs`, `src/proxy/retry.rs`

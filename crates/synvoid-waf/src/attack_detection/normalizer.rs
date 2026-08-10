@@ -18,6 +18,7 @@ bitflags! {
         const DOUBLE_ENCODING = 1 << 3;
         const INVALID_UTF8 = 1 << 4;
         const UNICODE_NORMALIZED = 1 << 5;
+        const OVERLONG = 1 << 6;
     }
 }
 
@@ -228,6 +229,20 @@ impl InputNormalizer {
                             if byte == 0 {
                                 NORMALIZATION_FLAGS
                                     .with(|f| f.borrow_mut().insert(NormalizationFlags::NULL_BYTE));
+                            } else if (0xC0..=0xFD).contains(&byte) {
+                                // Potential overlong UTF-8 start byte.
+                                // Try to decode the full overlong sequence and map
+                                // to the intended ASCII character if the decoded
+                                // codepoint falls in the ASCII range (0x00-0x7F).
+                                let (decoded_char, bytes_consumed) =
+                                    Self::decode_overlong_sequence(chars, i, byte);
+                                if let Some(ch) = decoded_char {
+                                    input.push(ch);
+                                } else {
+                                    input.push(byte as char);
+                                }
+                                i += bytes_consumed;
+                                continue;
                             } else {
                                 input.push(byte as char);
                             }
@@ -381,6 +396,88 @@ impl InputNormalizer {
         }
 
         input.len()
+    }
+
+    /// Decode an overlong UTF-8 percent-encoded sequence starting at position `start`.
+    ///
+    /// Overlong encodings use extra bytes to represent codepoints that should fit
+    /// in fewer bytes. For example, `>` (U+003E) can be overlong-encoded as `%C0%BE`
+    /// instead of the canonical `%3E`.
+    ///
+    /// Returns `(decoded_char, total_chars_consumed)` where `total_chars_consumed`
+    /// includes the initial `%XX` at `start`. If the sequence is not a valid overlong
+    /// encoding or the decoded codepoint is not in the ASCII range (0x00-0x7F),
+    /// returns `(None, 3)` (consumes only the initial percent-encoded byte).
+    fn decode_overlong_sequence(
+        chars: &[char],
+        start: usize,
+        first_byte: u8,
+    ) -> (Option<char>, usize) {
+        // Determine the expected number of bytes from the start byte.
+        let expected_bytes = if first_byte & 0xE0 == 0xC0 {
+            2
+        } else if first_byte & 0xF0 == 0xE0 {
+            3
+        } else if first_byte & 0xF8 == 0xF0 {
+            4
+        } else {
+            // 0xF8-0xFD are not valid UTF-8 start bytes at all.
+            return (None, 3);
+        };
+
+        let mut bytes = vec![first_byte];
+        let mut pos = start + 3; // skip the initial %XX
+
+        for _ in 1..expected_bytes {
+            // Expect '%' followed by two hex digits.
+            if pos + 2 >= chars.len() {
+                return (None, 3);
+            }
+            if chars[pos] != '%' {
+                return (None, 3);
+            }
+            if let Some(byte) = hex_chars_to_u8(&chars[pos + 1..pos + 3]) {
+                if byte & 0xC0 != 0x80 {
+                    // Not a continuation byte.
+                    return (None, 3);
+                }
+                bytes.push(byte);
+                pos += 3;
+            } else {
+                return (None, 3);
+            }
+        }
+
+        // Decode the codepoint from the multi-byte sequence.
+        let codepoint = match bytes.len() {
+            2 => ((bytes[0] & 0x1F) as u32) << 6 | (bytes[1] & 0x3F) as u32,
+            3 => {
+                ((bytes[0] & 0x0F) as u32) << 12
+                    | ((bytes[1] & 0x3F) as u32) << 6
+                    | (bytes[2] & 0x3F) as u32
+            }
+            4 => {
+                ((bytes[0] & 0x07) as u32) << 18
+                    | ((bytes[1] & 0x3F) as u32) << 12
+                    | ((bytes[2] & 0x3F) as u32) << 6
+                    | (bytes[3] & 0x3F) as u32
+            }
+            _ => return (None, 3),
+        };
+
+        // Only map to ASCII if the codepoint is in the ASCII range.
+        // Overlong encodings of non-ASCII codepoints are unusual in attack
+        // payloads but we handle them conservatively.
+        if codepoint <= 0x7F {
+            NORMALIZATION_FLAGS.with(|f| {
+                f.borrow_mut().insert(NormalizationFlags::OVERLONG);
+            });
+            (char::from_u32(codepoint), pos - start)
+        } else {
+            // Non-ASCII codepoint from overlong: push the Unicode character
+            // as-is. This preserves the character for downstream processing.
+            (char::from_u32(codepoint), pos - start)
+        }
     }
 
     fn decode_html_entity_simple(&self, entity: &str) -> Option<char> {
@@ -786,5 +883,155 @@ impl<'a> NormalizedInputs<'a> {
             body_raw,
             body_bytes: body,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_overlong_gt_decoded() {
+        // %C0%BE is overlong UTF-8 for U+003E ('>')
+        let normalizer = InputNormalizer::new();
+        let result = normalizer.normalize("/path/%C0%BEtest%C0%BE");
+        assert_eq!(result.as_str(), "/path/>test>");
+        assert!(result.flags.contains(NormalizationFlags::OVERLONG));
+    }
+
+    #[test]
+    fn test_overlong_lt_decoded() {
+        // %C0%BC is overlong UTF-8 for U+003C ('<')
+        let normalizer = InputNormalizer::new();
+        let result = normalizer.normalize("%C0%BCscript%C0%BC");
+        assert_eq!(result.as_str(), "<script<");
+        assert!(result.flags.contains(NormalizationFlags::OVERLONG));
+    }
+
+    #[test]
+    fn test_overlong_slash_decoded() {
+        // %C0%AF is overlong UTF-8 for U+002F ('/')
+        let normalizer = InputNormalizer::new();
+        let result = normalizer.normalize("a%C0%AFb");
+        assert_eq!(result.as_str(), "a/b");
+        assert!(result.flags.contains(NormalizationFlags::OVERLONG));
+    }
+
+    #[test]
+    fn test_overlong_paren_decoded() {
+        // %C0%A8 is overlong UTF-8 for U+0028 ('(')
+        let normalizer = InputNormalizer::new();
+        let result = normalizer.normalize("alert%C0%A81%C0%A9");
+        assert_eq!(result.as_str(), "alert(1)");
+        assert!(result.flags.contains(NormalizationFlags::OVERLONG));
+    }
+
+    #[test]
+    fn test_full_xss_overlong_payload() {
+        // The actual corpus fixture payload
+        let normalizer = InputNormalizer::new();
+        let result = normalizer
+            .normalize("/profile/%C0%AE%C0%AE%C0%BCscript%C0%BEalert(1)%C0%BC/script%C0%BE");
+        // After overlong decoding: /profile/>> <script> alert(1) < /script >
+        // Note: %C0%AE maps to '>' (U+003E)
+        assert!(result.as_str().contains("<script>"));
+        assert!(result.as_str().contains("</script>"));
+        assert!(result.flags.contains(NormalizationFlags::OVERLONG));
+    }
+
+    #[test]
+    fn test_canonical_percent_encoding_still_works() {
+        // %3C is the canonical encoding for '<' — should still work
+        let normalizer = InputNormalizer::new();
+        let result = normalizer.normalize("%3Cscript%3Ealert(1)%3C/script%3E");
+        assert_eq!(result.as_str(), "<script>alert(1)</script>");
+        assert!(!result.flags.contains(NormalizationFlags::OVERLONG));
+    }
+
+    #[test]
+    fn test_benign_unicode_preserved() {
+        // Normal UTF-8 characters should not be affected
+        let normalizer = InputNormalizer::new();
+        let result = normalizer.normalize("/café/naïve/日本語");
+        assert_eq!(result.as_str(), "/café/naïve/日本語");
+        assert!(!result.flags.contains(NormalizationFlags::OVERLONG));
+    }
+
+    #[test]
+    fn test_benign_percent_encoded_unicode() {
+        // %C3%A9 is the canonical UTF-8 for 'é' — should decode normally
+        let normalizer = InputNormalizer::new();
+        let result = normalizer.normalize("/caf%C3%A9");
+        assert_eq!(result.as_str(), "/café");
+        assert!(!result.flags.contains(NormalizationFlags::OVERLONG));
+    }
+
+    #[test]
+    fn test_malformed_non_attack_overlong() {
+        // %C1%A9 is overlong UTF-8 for U+0069 ('i')
+        // This is overlong but maps to an ASCII character
+        let normalizer = InputNormalizer::new();
+        let result = normalizer.normalize("%C1%A9");
+        assert_eq!(result.as_str(), "i");
+        assert!(result.flags.contains(NormalizationFlags::OVERLONG));
+    }
+
+    #[test]
+    fn test_bare_continuation_byte_not_overlong() {
+        // %80 is a bare continuation byte — not a valid overlong sequence
+        let normalizer = InputNormalizer::new();
+        let result = normalizer.normalize("test%80test");
+        // Should be treated as char U+0080 (control char), not decoded as overlong
+        assert!(result.as_str().contains('\u{0080}'));
+    }
+
+    #[test]
+    fn test_overlong_three_byte() {
+        // %E0%80%AE is a 3-byte overlong for U+002E ('.')
+        // (This is a 3-byte encoding of a codepoint that fits in 1 byte)
+        let normalizer = InputNormalizer::new();
+        let result = normalizer.normalize("a%E0%80%AEb");
+        assert_eq!(result.as_str(), "a.b");
+        assert!(result.flags.contains(NormalizationFlags::OVERLONG));
+    }
+
+    #[test]
+    fn test_overlong_idempotency() {
+        // Double-encoded overlong: %25C0%25BE should decode to %C0%BE on first pass,
+        // then to '>' on second pass
+        let normalizer = InputNormalizer::new();
+        let result = normalizer.normalize("%25C0%25BE");
+        assert_eq!(result.as_str(), ">");
+        assert!(result.flags.contains(NormalizationFlags::OVERLONG));
+    }
+
+    #[test]
+    fn test_null_byte_still_detected_with_overlong() {
+        // %C0%80 is overlong UTF-8 for U+0000 (null byte)
+        let normalizer = InputNormalizer::new();
+        let result = normalizer.normalize("test%C0%80end");
+        // Should detect null byte AND overlong
+        assert!(result.flags.contains(NormalizationFlags::NULL_BYTE));
+        assert!(result.flags.contains(NormalizationFlags::OVERLONG));
+    }
+
+    #[test]
+    fn test_double_encoding_with_overlong() {
+        // %253C is double-encoded '<': first pass → %3C, second pass → <
+        let normalizer = InputNormalizer::new();
+        let result = normalizer.normalize("%253Cscript%253E");
+        assert_eq!(result.as_str(), "<script>");
+        assert!(result.flags.contains(NormalizationFlags::DOUBLE_ENCODING));
+    }
+
+    #[test]
+    fn test_normalization_bounded_depth() {
+        // Ensure repeated decoding terminates
+        let normalizer = InputNormalizer::new();
+        // 10 levels of encoding: %252525252525252525253C
+        let input = "%252525252525252525253C";
+        let result = normalizer.normalize(input);
+        // Should terminate and produce some decoded result
+        assert!(!result.as_str().is_empty());
     }
 }

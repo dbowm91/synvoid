@@ -1,0 +1,17 @@
+{
+  "id": "xss_percent_encoded",
+  "description": "Canonical percent-encoded XSS in path",
+  "entry_point": "path",
+  "expected_result": "detect",
+  "attack_type": "xss",
+  "notes": "Standard percent-encoding of <script>alert(1)</script>",
+  "request": {
+    "method": "GET",
+    "path": "/search/%3Cscript%3Ealert(1)%3C/script%3E",
+    "headers": [
+      ["Host", "example.com"]
+    ],
+    "query_string": null,
+    "body": null
+  }
+}

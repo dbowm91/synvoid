@@ -1,0 +1,17 @@
+{
+  "id": "benign_overlong_unicode",
+  "description": "Benign overlong encoding that does not form an attack pattern",
+  "entry_point": "path",
+  "expected_result": "pass",
+  "attack_type": "none",
+  "notes": "Overlong encoding of non-dangerous characters in a benign URL path",
+  "request": {
+    "method": "GET",
+    "path": "/users/%C0%A8profile%C0%A9",
+    "headers": [
+      ["Host", "example.com"]
+    ],
+    "query_string": null,
+    "body": null
+  }
+}

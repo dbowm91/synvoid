@@ -77,9 +77,9 @@ Invalid UTF-8 bytes (`%80` → `0x80`) are lost during the normalizer's char-bas
 | # | Test | Root Cause | Resolution |
 |---|------|-----------|------------|
 | 13 | `test_waf_corpus_sqli_with_invalid_utf8` | UTF-8 lossy conversion breaks SQLi patterns | **RESOLVED** — raw-bytes detection path added; libinjection now receives original percent-decoded bytes |
-| 14 | `test_waf_corpus_xss_invalid_utf8` | Overlong UTF-8 encodings (`%C0%AE` etc.) decode to Unicode chars, not `<`/`>` | **STALE EXPECTATION** — payload contains no valid XSS pattern; test updated to document known limitation |
+| 14 | `test_waf_corpus_xss_invalid_utf8` | Overlong UTF-8 encodings (`%C0%AE` etc.) decode to Unicode chars, not `<`/`>` | **RESOLVED** — normalizer now decodes overlong UTF-8 to intended ASCII equivalents; test updated to assert detection |
 
-**Resolution:** Raw-bytes detection path added to `SqliDetector` and `XssDetector` via `detect_raw()` methods. `NormalizedInputs` now carries `body_bytes: Option<&[u8]>` preserving original raw bytes. SQLi detection works; XSS with overlong encodings requires normalizer-level overlong-to-ASCII mapping (future work).
+**Resolution:** Raw-bytes detection path added to `SqliDetector` and `XssDetector` via `detect_raw()` methods. `NormalizedInputs` now carries `body_bytes: Option<&[u8]>` preserving original raw bytes. SQLi detection works. XSS overlong encodings resolved via normalizer-level overlong-to-ASCII mapping in `decode_overlong_sequence()`. The `OVERLONG` flag tracks when overlong sequences are decoded; `strict_normalization` mode rejects them.
 
 ### Proxy Test Stale Expectations (2) — RESOLVED in Phase 3
 

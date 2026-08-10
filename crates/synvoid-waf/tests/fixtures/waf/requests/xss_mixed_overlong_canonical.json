@@ -1,0 +1,17 @@
+{
+  "id": "xss_mixed_overlong_canonical",
+  "description": "XSS with overlong bytes adjacent to canonical syntax",
+  "entry_point": "path",
+  "expected_result": "detect",
+  "attack_type": "xss",
+  "notes": "Mix of overlong and canonical encoding in same XSS payload",
+  "request": {
+    "method": "GET",
+    "path": "/page/%C0%BCscript%C0%BEalert(1)%3C/script%3E",
+    "headers": [
+      ["Host", "example.com"]
+    ],
+    "query_string": null,
+    "body": null
+  }
+}

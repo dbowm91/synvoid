@@ -125,8 +125,8 @@ Every test that fails or times out under `verify-full` is classified below. Real
 | `test_unknown_host_accepted_when_disabled` | proxy | STALE_EXPECTATION (resolved) | Router returns NotFound for unknown hosts when fallback=return_404; test updated in Phase 3 |
 | `test_wildcard_domain_matching` | proxy | STALE_EXPECTATION (resolved) | matchit catch-all syntax fixed (`{*sub}` → `*sub`) in Phase 3 |
 | `test_icmp_type_rule_validation` | icmp-filter | STALE_EXPECTATION (resolved) | `_is_v6` parameter removed (was unused); test updated in Phase 3 |
-| `test_waf_corpus_sqli_with_invalid_utf8` | waf corpus | HARNESS_DEFECT | Normalizer loses invalid UTF-8 bytes; needs raw-bytes detection path |
-| `test_waf_corpus_xss_invalid_utf8` | waf corpus | HARNESS_DEFECT | Normalizer loses invalid UTF-8 bytes; needs raw-bytes detection path |
+| `test_waf_corpus_sqli_with_invalid_utf8` | waf corpus | RESOLVED (Phase 2) | Raw-bytes detection path added; libinjection receives original percent-decoded bytes |
+| `test_waf_corpus_xss_invalid_utf8` | waf corpus | RESOLVED (Phase 2) | Normalizer now decodes overlong UTF-8 to intended ASCII equivalents via `decode_overlong_sequence()`; test updated to assert detection |
 | `test_anomaly_scoring_multiple_attacks` | waf wave10 | RESOLVED (Phase 5) | XPath base pattern `"='"` false-positived on SQLi payload `1' OR '1'='1`; narrowed XPath base patterns |
 | `test_anomaly_scoring_xss_attack` | waf wave10 | RESOLVED (Phase 5) | XSS payload triggered XPath false-positive via broad base patterns; narrowed XPath base patterns |
 | `test_open_redirect_with_data_protocol` | waf wave10 | RESOLVED (Phase 5) | Normalizer idempotency bug created new percent-encoding sequences; added post-normalization decode pass |

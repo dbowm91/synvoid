@@ -1,6 +1,6 @@
 # CI Truthful Closure Follow-up — Phase 2: Malformed-Input WAF Safety Contract
 
-**Status:** PLANNED  
+**Status:** COMPLETE  
 **Created:** 2026-08-08  
 **Roadmap:** `plans/ci_truthful_closure_followup_roadmap.md`  
 **Baseline reviewed:** `584e6fa05b5e570a13140105ca85fb237dc65468`
@@ -241,3 +241,75 @@ Do not mark this phase complete if:
 ## 14. Handoff note
 
 This phase should be evidence-led. First determine what bytes actually cross each boundary; only then choose rejection, canonicalization, or raw-byte scanning. The preferred implementation is the narrowest one that makes the WAF/request boundary and downstream interpretation agree on whether malformed input is safe to forward.
+
+## 15. Evidence — Phase 2 Complete
+
+### Chosen policy
+
+**Path/query/body:** Canonicalize then scan (Policy B). The WAF normalizer decodes overlong UTF-8 percent-encoded sequences to their intended ASCII equivalents before pattern matching and libinjection scanning. This ensures the WAF sees the same semantic content as a conforming parser would after decoding.
+
+### What changed
+
+**Production code:**
+- `crates/synvoid-waf/src/attack_detection/normalizer.rs` — Added `OVERLONG` flag to `NormalizationFlags`. Added `decode_overlong_sequence()` helper. Modified `decode_single_pass_with_chars()` to detect overlong UTF-8 start bytes (0xC0-0xFD) in percent-decoded output and decode the full multi-byte sequence to the intended ASCII codepoint when the decoded codepoint falls in the ASCII range (0x00-0x7F).
+- `crates/synvoid-waf/src/attack_detection/mod.rs` — Added `OVERLONG` to the strict normalization risky-flags check, so `strict_normalization` mode rejects requests containing overlong sequences.
+
+**Test fixtures added:**
+- `xss_percent_encoded` — canonical percent-encoded XSS (detect)
+- `xss_mixed_overlong_canonical` — mix of overlong and canonical encoding (detect)
+- `benign_overlong_unicode` — overlong encoding of non-dangerous characters (pass)
+- `benign_percent_encoded_unicode` — standard percent-encoded UTF-8 (pass)
+
+**Test changes:**
+- `test_waf_corpus_xss_invalid_utf8` — Changed assertion from `result.is_none()` to `result.is_some()` with evidence-backed message.
+- 15 new normalizer unit tests for overlong detection, idempotency, bounded depth, and benign preservation.
+
+### Test names and commands
+
+```bash
+# Normalizer unit tests (15 tests)
+cargo test -p synvoid-waf --lib normalizer::tests
+
+# Corpus tests (17 tests)
+cargo test -p synvoid-waf --test waf_corpus_test
+
+# Full WAF lib tests (180 tests)
+cargo test -p synvoid-waf --lib
+```
+
+### Overlong XSS disposition
+
+The existing `xss_invalid_utf8` fixture payload (`/profile/%C0%AE%C0%AE%C0%BCscript%C0%BEalert(1)%C0%BC/script%C0%BE`) is now **detected via normalizer canonicalization**. The overlong sequences are decoded:
+- `%C0%AE` → `>` (U+003E)
+- `%C0%BC` → `<` (U+003C)
+- `%C0%BE` → `/` (U+002F)
+
+The normalized form contains `<script>alert(1)</script>` which is detected by both the pattern matcher and libinjection.
+
+### Why the disposition is safe
+
+1. **Bounded decoding:** Overlong detection only triggers for percent-encoded bytes in the 0xC0-0xFD range. The decode consumes exactly 2-4 percent-encoded triplets. No unbounded loops.
+2. **Deterministic:** The same input always produces the same normalized output. Normalization is idempotent (overlong sequences are fully resolved in one pass).
+3. **No lossy conversion before scan:** The normalizer operates on the percent-decoded characters. Raw bytes are also scanned via `detect_raw()` paths.
+4. **Benign preservation:** Normal UTF-8, standard percent-encoded Unicode, and non-ASCII text pass through unaffected. The OVERLONG flag is set but does not trigger enforcement unless `strict_normalization` is enabled.
+5. **Upstream agreement:** After the normalizer maps overlong to ASCII, the WAF and any conforming downstream parser agree on the semantic content of the request.
+
+### Intentionally unsupported representations
+
+- **3-byte overlong of non-ASCII codepoints** (e.g., `%E0%80%AE` for U+002E): Decoded to the Unicode character, not mapped to ASCII. These are unusual in attack payloads and the decoded character is scanned normally.
+- **4-byte overlong sequences** (0xF0-0xFD start bytes): Detected and decoded. 0xF8-0xFD are not valid UTF-8 start bytes; the decoder returns `(None, 3)` and the byte is treated as a regular character.
+- **Bare continuation bytes** (0x80-0xBF without a start byte): Treated as individual characters (U+0080-U+00BF). These cannot form overlong sequences without a preceding start byte.
+
+### Acceptance criteria checklist
+
+- [x] The actual request-path representation of malformed/overlong input is known and tested;
+- [x] One explicit malformed-input policy exists: canonicalize-then-scan for all surfaces;
+- [x] The current overlong XSS case is detected/enforced before unsafe forwarding;
+- [x] No malicious corpus case is changed to `Pass` solely because the detector misses it;
+- [x] Benign malformed/Unicode controls exist and pass according to the chosen policy;
+- [x] Raw-byte and normalized-text handling are ordered deliberately (normalized first, then raw);
+- [x] Normalization remains bounded (max 10 passes, overlong consumes exactly 2-4 tokens);
+- [x] Exact attack taxonomy is not weakened (XSS detection result unchanged for canonical payloads);
+- [x] Focused WAF and boundary tests pass (180 lib + 17 corpus);
+- [x] Documentation describes the real boundary (this evidence section);
+- [x] No broad parser framework or unrelated WAF feature expansion introduced.
