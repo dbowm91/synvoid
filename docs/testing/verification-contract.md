@@ -577,4 +577,18 @@ Phase 1 follow-up (release qualification semantics):
 44. 15 unit tests for dependency classification, cycle detection, qualification summary, and path rules
 45. JSON output carries qualification summary for machine consumption
 
+Phase 2 follow-up (malformed-input WAF safety):
+46. Overlong UTF-8 percent-encoded sequences decoded to intended ASCII equivalents via `decode_overlong_sequence()`
+47. `OVERLONG` flag tracks overlong detection; `strict_normalization` mode rejects overlong sequences
+48. Raw-byte detection paths for SQLi and XSS via `detect_raw()` methods
+49. 15 new normalizer unit tests for overlong detection, idempotency, bounded depth, and benign preservation
+50. Malformed XSS corpus test updated to assert detection (was previously a known non-detection)
+
+Phase 3 follow-up (evidence reconciliation):
+51. Crates with path dev-dependencies on deferred workspace crates correctly classified as `BlockedOnUnpublishedInternalDeps` (not `Failed`)
+52. All three verification commands (verify, verify-full, verify-release) pass on clean final head
+53. Final implementation SHA recorded; documentation SHA distinguished where separate
+54. Failure ledger reconciled to final authoritative state
+55. Verification contract reconciled to match `verify.rs` exactly
+
 If implementation reveals an invalid command, correct this document in the same commit with an explicit rationale. Do not improvise a broader suite or restore selector behavior.

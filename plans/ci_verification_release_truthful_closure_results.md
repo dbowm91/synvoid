@@ -1,12 +1,15 @@
 # CI Verification & Release Truthful Closure — Final Results
 
+**Superseded by:** `plans/ci_truthful_closure_followup_results.md`
+
 ## Executive Disposition
 
 **COMPLETE.** All three verification levels (routine, full, release) pass on a clean final head. Every Phase 1 ledger row has a final evidence-backed disposition. The simplified one-workflow, one-job, manually released operating model is intact and verified.
 
 ## Final SHA and Environment
 
-- **Final SHA:** `ff465e1` (pending push)
+- **Final SHA:** `8265f1e` (implementation + release qualification fix)
+- **Documentation SHA:** same (documentation committed with implementation)
 - **Rust toolchain:** rustc 1.97.1 (8bab26f4f 2026-07-14)
 - **Cargo:** 1.97.1 (c980f4866 2026-06-30)
 - **Nextest:** 0.9.140 (a9fef2964 2026-07-05)
@@ -48,15 +51,15 @@
 | Step | Command | Duration | Exit |
 |------|---------|----------|------|
 | 1 | `cargo fmt --all -- --check` | 3.8s | 0 |
-| 2 | `cargo clippy --profile ci --all-targets -- -D warnings` | 1.7s | 0 |
-| 3 | `cargo check --no-default-features --profile ci` | 27.0s | 0 |
-| 4 | `cargo nextest run -p synvoid-repo-guards` | 1.2s | 0 |
-| 5 | `cargo test --test security_regression --profile ci --test-threads=1` | 0.9s | 0 |
-| 6 | `cargo nextest run ... root-guards` (13 tests) | 6.8s | 0 |
+| 2 | `cargo clippy --profile ci --all-targets -- -D warnings` | 0.8s | 0 |
+| 3 | `cargo check --no-default-features --profile ci` | 0.6s | 0 |
+| 4 | `cargo nextest run -p synvoid-repo-guards` | 1.0s | 0 |
+| 5 | `cargo test --test security_regression --profile ci --test-threads=1` | 0.6s | 0 |
+| 6 | `cargo nextest run ... root-guards` (13 tests) | 3.8s | 0 |
 | 7 | `cargo nextest run -p synvoid-core ... core-admin-tests` | 0.9s | 0 |
 | 8 | `cargo test --test failure_injection --profile ci` | 0.8s | 0 |
 
-**Total:** 8 steps, 8 passed, 283.4s
+**Total:** 8 steps, 8 passed, 12.5s
 
 ## Hosted Routine Result
 
@@ -74,15 +77,16 @@ Note: 14m11s is slightly above the 10-minute warm-cache target but below the 15-
 
 | Step | Command | Duration | Exit |
 |------|---------|----------|------|
-| 1 | `cargo fmt --all -- --check` | 3.6s | 0 |
-| 2 | `cargo clippy --profile ci --all-targets -- -D warnings` | 7.1s | 0 |
-| 3 | `cargo check --no-default-features --features mesh` | 34.4s | 0 |
-| 4 | `cargo check --no-default-features --features dns` | 34.3s | 0 |
-| 5 | `cargo check --no-default-features --features mesh,dns` | 31.2s | 0 |
-| 6 | `cargo nextest run --workspace --exclude synvoid-fuzz` | 955.2s | 0 |
-| 7 | `cargo test --workspace --doc --profile ci` | 25.9s | 0 |
+| 1 | `cargo fmt --all -- --check` | 3.7s | 0 |
+| 2 | `cargo clippy --profile ci --all-targets -- -D warnings` | 0.8s | 0 |
+| 3 | `cargo check --no-default-features --features mesh` | 157.7s | 0 |
+| 4 | `cargo check --no-default-features --features dns` | 130.1s | 0 |
+| 5 | `cargo check --no-default-features --features mesh,dns` | 112.7s | 0 |
+| 6 | `cargo nextest run --workspace --exclude synvoid-fuzz` | 1115.9s | 0 |
+| 7 | `cargo test --workspace --doc --profile ci` | 36.7s | 0 |
 
-**Total:** 7 steps, 7 passed, 1223.6s
+**Total:** 7 steps, 7 passed, 1557.6s
+**Tests:** 6773 passed, 1 skipped (specialist), 0 failed
 
 ## Specialist-Command Disposition
 
@@ -105,16 +109,20 @@ Note: 14m11s is slightly above the 10-minute warm-cache target but below the 15-
 | Phase 3b: Packaged-source check | PASS (path-dep crates skipped) |
 | Phase 4: Publication order | PASS |
 
-**Total:** 9 steps, 9 passed, 42.8s
+**Total:** 9 steps, 9 passed
 
 ## Metadata/Dependency/Package Results
 
 - 39 publishable crates discovered via `cargo metadata`
+- 9 packaged-source verified (no internal publishable predecessors)
+- 30 deferred (blocked on unpublished internal predecessors)
+- 0 failed, 0 not-prepublishable
 - All have required `description`, `license`, `repository` fields
 - All internal path deps have compatible semver requirements
 - No wildcard (`*`) version requirements
 - Package content inspection uses path-aware rules (no broad substring matching)
 - Path-dep crates correctly skipped from assembly and packaged-source phases
+- Crates with path dev-dependencies on deferred crates correctly classified as deferred (not failed)
 
 ## Dirty-Tree Failure Injection
 

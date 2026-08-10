@@ -332,18 +332,22 @@ The `architecture/` directory (103 docs) and `.opencode/skills/` directory conta
 
 ## CI Verification Status
 
-**Phase 1-4 — Verification Closure In Progress**
+**Phase 1-4 + Follow-up Phases 1-3 — Verification Closure COMPLETE**
 
 | Metric | Status |
 |--------|--------|
-| `cargo xtask verify` | ✅ 8/8 pass |
-| `cargo xtask verify-full` | 15 failures resolved (Phase 1), 3 stale expectations corrected (Phase 3), 7 environment-dependent resolved (Phase 4), 12 remaining |
-| `cargo xtask verify-release` | Same as full |
+| `cargo xtask verify` | ✅ 8/8 pass (12.5s warm cache) |
+| `cargo xtask verify-full` | ✅ 7/7 pass (6773 tests, 1 skipped specialist) |
+| `cargo xtask verify-release` | ✅ 9/9 pass (39 crates: 9 verified, 30 deferred) |
 | Remote CI | ✅ Green |
 
-**Remaining failures** (12) are tracked in `plans/ci_phase01_failure_ledger.md`:
-- 11 harness defects (fast path optimization, race conditions, normalization gaps)
-- 1 specialist test (`test_worker_crash_recovery` — still `#[ignore]`, requires full supervisor)
+**Follow-up Phase 3 closure** (`8265f1e`):
+- All three verification commands pass on clean final head
+- Every Phase 1 ledger row has a final evidence-backed disposition
+- Failure ledger reconciled: 0 remaining failures
+- Verification contract matches `verify.rs` exactly
+- Release qualification: crates with path dev-deps on deferred crates correctly classified as deferred
+- Branch protection: EXTERNALLY UNVERIFIED (requires GitHub settings access)
 
 **Phase 4 resolutions** (harness isolation):
 - Proxy pipeline ALPN: `build_tls_config` set ALPN protocols; `hyper-rustls` `with_tls_config()` requires empty. Cleared ALPN before connector builder, switched to `enable_all_versions()`.

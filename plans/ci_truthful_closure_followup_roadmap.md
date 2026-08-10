@@ -1,8 +1,10 @@
 # CI Truthful Closure Follow-up Roadmap
 
-**Status:** PLANNED  
+**Status:** COMPLETE  
 **Created:** 2026-08-08  
+**Completed:** 2026-08-10  
 **Baseline reviewed:** `584e6fa05b5e570a13140105ca85fb237dc65468`  
+**Final implementation SHA:** `8265f1e`  
 **Purpose:** Close the remaining correctness and evidence gaps in the CI verification/release simplification line without re-expanding CI or introducing release automation.
 
 ## 1. Why this follow-up exists

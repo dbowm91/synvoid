@@ -1,5 +1,7 @@
 # CI Verification & Release Simplification — Closure Results
 
+**Superseded by:** `plans/ci_verification_release_truthful_closure_results.md` (follow-up Phases 1-3 completed 2026-08-10)
+
 ## Review Metadata
 
 - **Reviewed commit SHA**: `3c3b64180fd75d3886ff4342cf1a3d7cc5d33eba` (initial review)

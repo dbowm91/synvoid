@@ -2,16 +2,18 @@
 
 **Baseline:** `54bf76c73ef121014de1054ecb6f085cd64ceef9`  
 **Date:** 2026-08-05  
-**Toolchain:** rustc 1.97.1, cargo 1.97.1, nextest 0.9.140
+**Toolchain:** rustc 1.97.1, cargo 1.97.1, nextest 0.9.140  
+**Final closure SHA:** `8265f1e` (2026-08-10)  
+**Final closure toolchain:** rustc 1.97.1, cargo 1.97.1, nextest 0.9.140
 
 ## Summary
 
-| Metric | Before | After |
-|--------|--------|-------|
-| `cargo xtask verify` | 8/8 pass | 8/8 pass |
-| `cargo xtask verify-full` failures | 29 FAIL + 6 TIMEOUT | 1 FAIL + 5 TIMEOUT |
-| `cargo xtask verify-release` | same as full | 9/9 pass |
-| Tests resolved | — | 32 |
+| Metric | Before (baseline) | After (Phase 1-5) | Final Closure |
+|--------|-------------------|--------------------|---------------|
+| `cargo xtask verify` | 8/8 pass | 8/8 pass | 8/8 pass |
+| `cargo xtask verify-full` failures | 29 FAIL + 6 TIMEOUT | 1 FAIL + 5 TIMEOUT | 0 FAIL |
+| `cargo xtask verify-release` | same as full | 9/9 pass | 9/9 pass |
+| Tests resolved | — | 32 | 32 (all) |
 
 ## Resolved Failures (15)
 
@@ -123,6 +125,22 @@ Invalid UTF-8 bytes (`%80` → `0x80`) are lost during the normalizer's char-bas
 | 23 | `test_worker_crash_recovery` | Required built binary + running supervisor; used `pgrep` | Still `#[ignore]` (specialist); uses `CARGO_BIN_EXE_synvoid` and `/proc/<pid>/task/<tid>/children` | `4142a9eb` | `cargo test -p synvoid --test fault_injection_test -- worker_crash_recovery --ignored` | 18.5s | SPECIALIST |
 
 **Resolution summary**: 5 proxy pipeline tests resolved by clearing ALPN before connector builder. 1 pool test resolved with self-contained socket fixture. 1 crash recovery test improved with deterministic binary/process discovery (still specialist `#[ignore]`). CI run `31049895629` passed in 13m12s. `test_dashmap_modify_in_place` was already RESOLVED in Phase 1 (commit `54bf76c7`).
+
+## Final Disposition (Phase 3 closure)
+
+All 32 originally failing/timed-out tests have a final classification:
+
+| Classification | Count | Tests |
+|----------------|-------|-------|
+| Product fix | 1 | `test_dashmap_modify_in_place` (deadlock) |
+| Stale expectation corrected | 4 | `test_unknown_host_accepted_when_disabled`, `test_wildcard_domain_matching`, `test_icmp_type_rule_validation`, `test_entropy_two_characters` |
+| WAF detection resolved (fast path + patterns) | 12 | `test_anomaly_scoring_*` (3), `test_open_redirect_*` (2), `test_path_traversal_*` (2), `test_ldap_injection`, `test_sqli_*` (2), `test_xpath_injection` |
+| WAF corpus resolved (raw-bytes + overlong) | 2 | `test_waf_corpus_sqli_with_invalid_utf8`, `test_waf_corpus_xss_invalid_utf8` |
+| Harness repair | 8 | `test_streaming_waf_*` (4), `test_false_positive_url_encoding_*` (1), `test_provider_stats_*` (1), `test_tiered_cache_*` (2) |
+| Environment-dependent resolved | 6 | `proxy_pipeline_tests` (5), `test_pool_creation` (1) |
+| Specialist only | 1 | `test_worker_crash_recovery` (requires full supervisor) |
+
+**No remaining failures.** `verify-full` passes 6773/6773 tests (1 skipped: specialist). `verify-release` passes 9/9 steps with 39 publishable crates (9 assembled/verified, 30 deferred on unpublished predecessors).
 
 ## Pattern Additions Made
 

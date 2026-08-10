@@ -1,7 +1,8 @@
 # CI Truthful Closure Follow-up — Phase 1: Release Qualification Semantics
 
-**Status:** PLANNED  
+**Status:** COMPLETE  
 **Created:** 2026-08-08  
+**Completed:** 2026-08-08  
 **Roadmap:** `plans/ci_truthful_closure_followup_roadmap.md`  
 **Baseline reviewed:** `584e6fa05b5e570a13140105ca85fb237dc65468`
 

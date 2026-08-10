@@ -1,10 +1,12 @@
 # CI Truthful Closure Follow-up — Phase 3: Final Evidence Reconciliation
 
-**Status:** PLANNED  
+**Status:** COMPLETE  
 **Created:** 2026-08-08  
+**Completed:** 2026-08-10  
 **Roadmap:** `plans/ci_truthful_closure_followup_roadmap.md`  
 **Depends on:** Follow-up Phases 1 and 2 complete  
-**Baseline reviewed:** `584e6fa05b5e570a13140105ca85fb237dc65468`
+**Baseline reviewed:** `584e6fa05b5e570a13140105ca85fb237dc65468`  
+**Final implementation SHA:** `8265f1e`
 
 ## 1. Objective
 
