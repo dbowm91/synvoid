@@ -1106,6 +1106,12 @@ pub fn run_verify_release(
     // Detect cycles in publishable dependency graph
     detect_cycles(&dep_graph).map_err(|e| format!("publication graph has a cycle: {e}"))?;
 
+    // Precompute which publishable crates have been resolved (assembled or verified).
+    // A crate is "resolved" once we know its predecessors are on crates.io.
+    // We iterate topologically (publishable is topologically sorted), so we can
+    // build this set incrementally.
+    let mut resolved_set: std::collections::HashSet<String> = std::collections::HashSet::new();
+
     // Classify and attempt assembly for each publishable crate
     let mut assembly_results: Vec<(String, CrateQualification)> = Vec::new();
 
@@ -1139,11 +1145,52 @@ pub fn run_verify_release(
             continue;
         }
 
+        // Check if any path dependency (including dev-deps) references a workspace
+        // crate that is itself blocked or not yet resolved. This catches crates like
+        // synvoid-platform that have dev-dependencies on deferred workspace crates.
+        let pkg = metadata["packages"]
+            .as_array()
+            .ok_or("missing packages in metadata")?
+            .iter()
+            .find(|p| p["name"].as_str() == Some(name.as_str()))
+            .ok_or_else(|| format!("package not found: {name}"))?;
+
+        let mut blocked_on_unresolved: Vec<String> = Vec::new();
+        if let Some(deps) = pkg["dependencies"].as_array() {
+            for dep in deps {
+                if dep["path"].is_string() {
+                    let dep_name = dep["name"].as_str().unwrap_or("");
+                    // Check if this path dependency is a workspace crate that we haven't resolved yet
+                    if publishable_names.contains(dep_name)
+                        && !nonpublishable_names.contains(dep_name)
+                        && !resolved_set.contains(dep_name)
+                    {
+                        blocked_on_unresolved.push(dep_name.to_string());
+                    }
+                }
+            }
+        }
+
+        if !blocked_on_unresolved.is_empty() {
+            assembly_results.push((
+                name.clone(),
+                CrateQualification::BlockedOnUnpublishedInternalDeps {
+                    predecessors: blocked_on_unresolved,
+                },
+            ));
+            continue;
+        }
+
         // No internal publishable predecessors — attempt assembly
-        assembly_results.push((
-            name.clone(),
-            attempt_assembly(name, allow_dirty, verbose, &workspace_root),
-        ));
+        let result = attempt_assembly(name, allow_dirty, verbose, &workspace_root);
+        // If assembly succeeded (assembled or verified), mark as resolved
+        if matches!(
+            result,
+            CrateQualification::Assembled | CrateQualification::PackagedSourceVerified
+        ) {
+            resolved_set.insert(name.clone());
+        }
+        assembly_results.push((name.clone(), result));
     }
 
     // --- Phase 3b: Packaged-source verification for assembled crates ---
