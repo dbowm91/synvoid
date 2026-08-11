@@ -1,7 +1,8 @@
 # CI Truthful Closure — Final Corrective Pass
 
-**Status:** PLANNED  
+**Status:** COMPLETE  
 **Created:** 2026-08-11  
+**Closed:** 2026-08-11  
 **Baseline reviewed:** `eb74304cce8146171e81eab08ae976e9873b460e`  
 **Depends on:** `plans/ci_truthful_closure_followup_roadmap.md` and completed follow-up Phases 1-3  
 **Purpose:** Remove the last small truthfulness and documentation inconsistencies in the CI/release-verification closure line without reopening the architecture, expanding CI, or changing the manual release model.

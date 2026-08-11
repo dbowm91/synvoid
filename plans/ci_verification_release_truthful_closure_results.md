@@ -10,10 +10,10 @@
 
 | Evidence role | SHA | Meaning |
 |---|---|---|
-| Implementation qualification | `8265f1ef678f91ceeded86092dcbf5c073d3e8c9` | Code state on which local full/release verification was executed |
+| Prior implementation qualification | `8265f1ef678f91ceeded86092dcbf5c073d3e8c9` | Historical local evidence before the final state rename |
+| Corrective implementation | `3aced41c33b79a6e301ebb3ed4d777136becc65e` | Commit that introduced truthful defer naming and evidence corrections |
 | Hosted routine CI | `232e2de154e2fafe4a8c597fa5a7efa608f55457` | Exact commit exercised by GitHub Actions run `31426515369` / job `93579387906` |
-| Documentation reconciliation | `232e2de154e2fafe4a8c597fa5a7efa608f55457` | Commit that reconciled closure docs with implementation |
-| Final corrective pass | `eb74304cce8146171e81eab08ae976e9873b460e` | Documentation/evidence head before this corrective pass |
+| Pre-closeout documentation head | `eb74304cce8146171e81eab08ae976e9873b460e` | Documentation/evidence head before the final closeout pass |
 
 - **Rust toolchain:** rustc 1.97.1 (8bab26f4f 2026-07-14)
 - **Cargo:** 1.97.1 (c980f4866 2026-06-30)

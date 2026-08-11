@@ -215,7 +215,7 @@ After publishing predecessors, the operator must rerun the dependent crate's `ca
 
 ### Packaged-source verification
 
-After assembly, `verify-release` attempts `cargo package` (with verify) for each assembled crate. Crates blocked by unpublished internal predecessors are skipped — their correctness is ensured by the full source verification in Phase 1. This provides a bounded packaged-source check without requiring a local registry emulator.
+After assembly, `verify-release` attempts `cargo package` (with verify) for each assembled crate. Crates deferred on internal publishable predecessors do not run packaged-source verification in the pre-publication pass — their package/source verification remains deferred until the required predecessors are available through the normal manual publication sequence. This provides a bounded packaged-source check without requiring a local registry emulator.
 
 ### Dirty-tree policy
 
