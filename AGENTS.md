@@ -1,6 +1,6 @@
 # AGENTS.md
 
-SynVoid is a high-performance WAF & reverse proxy in Rust with a mesh networking layer, multi-process architecture (Supervisor + UnifiedServerWorker + CPU offload), and 45 workspace members (37 dedicated `synvoid-*` library crates plus root, pqc, admin-ui, examples, fuzz, and 2 tools crates).
+SynVoid is a high-performance WAF & reverse proxy in Rust with a mesh networking layer, multi-process architecture (Supervisor + UnifiedServerWorker + CPU offload), and 45 workspace members (38 dedicated `synvoid-*` crates plus root, pqc, admin-ui, examples, fuzz, and xtask).
 
 ## Quick Commands
 
@@ -259,8 +259,6 @@ Each subsystem has specialized `AGENTS.override.md` files. Load the relevant one
 
 ## CI, Fuzzing & Failure Injection
 
-Phase 8 added profile CI, fuzz targets, failure-injection tests, and a docs link guard. Phase 11 fixed the CI workflow summary job (broken dynamic expressions prevented all jobs from running) and aligned `scripts/verify_architecture.sh` with the CI guard-suite (added `docs_path_reference_guard`, now in `synvoid-repo-guards` crate). Phase 14 added 5 new parser boundary fuzz targets (17 total). Milestone D Phase 4 added dedicated tarpit and mesh CI jobs, fixed tarpit non-deterministic sentence generation and mesh Ed25519 test key generation. See `architecture/ci_fuzz_failure_injection.md` for the full profile matrix and fuzz target inventory.
-
 ```bash
 # Local verification script (profile checks + guard suite)
 ./scripts/verify_architecture.sh
@@ -290,6 +288,8 @@ cargo +nightly fuzz run mesh_protocol_compressed_decode -- -runs=1000
 cargo +nightly fuzz run parsed_query_parse -- -runs=1000
 cargo +nightly fuzz run plugin_manifest -- -runs=1000
 ```
+
+See `architecture/ci_fuzz_failure_injection.md` for the full profile matrix and fuzz target inventory.
 
 ## Architecture Quick Reference
 
@@ -325,44 +325,8 @@ The `architecture/` directory (103 docs) and `.opencode/skills/` directory conta
 
 ## Known Issues
 
-- `src/admin/alerting/mod.rs:349` — Email alerting is a stub (logs, returns Ok).
+- `src/admin/alerting/mod.rs:376` — Email alerting is a stub (logs, returns Ok).
 - `spin` idle instance eviction never cleans up old UUID entries (plan DOC-L7).
 - `wasmtime` 40.0.4 (via yara-x) has known CVEs but only used for YARA compilation, not wasm sandbox — mitigated by `[patch.crates-io]` for direct dep. 11 advisory ignores in `deny.toml` with re-audit dates 2026-10-01.
 - `synvoid-testkit` has zero consumers — documented boundary policy in `crates/synvoid-testkit/README.md`
-
-## CI Verification Status
-
-**Phase 1-4 + Follow-up Phases 1-3 — Verification Closure COMPLETE**
-
-| Metric | Status |
-|--------|--------|
-| `cargo xtask verify` | ✅ 8/8 pass (12.5s warm cache) |
-| `cargo xtask verify-full` | ✅ 7/7 pass (6773 tests, 1 skipped specialist) |
-| `cargo xtask verify-release` | ✅ 9/9 pass (39 crates: 9 verified, 30 deferred) |
-| Remote CI | ✅ Green |
-
-**Follow-up Phase 3 closure** (`8265f1e`):
-- All three verification commands pass on clean final head
-- Every Phase 1 ledger row has a final evidence-backed disposition
-- Failure ledger reconciled: 0 remaining failures
-- Verification contract matches `verify.rs` exactly
-- Release qualification: crates with path dev-deps on deferred crates correctly classified as deferred
-- Branch protection: EXTERNALLY UNVERIFIED (requires GitHub settings access)
-
-**Phase 4 resolutions** (harness isolation):
-- Proxy pipeline ALPN: `build_tls_config` set ALPN protocols; `hyper-rustls` `with_tls_config()` requires empty. Cleared ALPN before connector builder, switched to `enable_all_versions()`.
-- Pool creation: Self-contained `tempfile` + `UnixListener` fixture; removed `#[ignore]`.
-- Worker crash recovery: Uses `CARGO_BIN_EXE_synvoid` for binary discovery and `/proc/<pid>/task/<tid>/children` for process discovery.
-
-**Phase 3 resolutions** (proxy wildcard, unknown host, ICMP validation):
-- Router wildcard: Fixed matchit 0.7 catch-all syntax (`{*sub}` → `*sub`)
-- Unknown host: Test updated to reflect correct `reject_unknown_hosts` behavior
-- ICMP validation: `_is_v6` parameter documented as reserved; test reflects actual boundary
-
-**Detection pattern additions** (commit `21371717`):
-- SQLi: `AND 1=1`, `OR 1=1`, function calls (CONCAT, CHAR, CAST, etc.)
-- LDAP: `)(&`, `)(|`, wildcard operators
-- XPath: `//user`, `[@attr]`, or/and predicates
-
-**Execution evidence**: `plans/ci_phase01_execution_evidence.md`
 
