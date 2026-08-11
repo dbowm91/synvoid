@@ -13,8 +13,9 @@
 | Prior implementation qualification | `8265f1ef678f91ceeded86092dcbf5c073d3e8c9` | Historical local evidence before the final state rename |
 | Corrective implementation | `3aced41c33b79a6e301ebb3ed4d777136becc65e` | Commit that introduced truthful defer naming and evidence corrections |
 | Proof-bearing SHA | `ab9c787f95d1bf65ca3ef1aff302dd1edbb67756` | Clean commit on which final verify, verify-full, and verify-release were executed |
-| Hosted routine CI | `232e2de154e2fafe4a8c597fa5a7efa608f55457` | Exact commit exercised by GitHub Actions run `31426515369` / job `93579387906` |
-| Pre-closeout documentation head | `eb74304cce8146171e81eab08ae976e9873b460e` | Documentation/evidence head before the final closeout pass |
+| Hosted routine CI (earlier) | `232e2de154e2fafe4a8c597fa5a7efa608f55457` | Exact commit exercised by GitHub Actions run `31426515369` / job `93579387906` |
+| Hosted routine CI (closeout) | `c601ab1116b23ba8d3a733ca65f12a259edc9704` | Exact commit exercised by GitHub Actions run `31505156002` (docs-only reconciliation) |
+| Final evidence/documentation SHA | `c601ab1116b23ba8d3a733ca65f12a259edc9704` | Commit containing reconciled closure record, checked acceptance criteria, and this evidence update |
 
 - **Rust toolchain:** rustc 1.97.1 (8bab26f4f 2026-07-14)
 - **Cargo:** 1.97.1 (c980f4866 2026-06-30)
@@ -69,9 +70,11 @@
 
 ## Hosted Routine Result
 
+### Run 1 — implementation-qualified SHA
+
 - **Workflow run ID:** 31426515369
 - **Job ID:** 93579387906
-- **Final SHA:** `232e2de154e2fafe4a8c597fa5a7efa608f55457`
+- **SHA:** `232e2de154e2fafe4a8c597fa5a7efa608f55457`
 - **Conclusion:** **SUCCESS**
 - **Run created:** 2026-08-10T19:55:47Z
 - **Run completed:** 2026-08-10T20:09:04Z
@@ -84,6 +87,14 @@
   3. `core-admin-tests` (2 tests): ~11s
   4. `security_regression`: ~52s
   5. `repo-guards`: ~2.5s
+
+### Run 2 — closeout documentation SHA
+
+- **Workflow run ID:** 31505156002
+- **SHA:** `c601ab1116b23ba8d3a733ca65f12a259edc9704` (docs-only reconciliation)
+- **Conclusion:** **SUCCESS**
+- **Overall duration:** 13m22s (below 15m blocking threshold)
+- **Note:** Exercises documentation-only commit; same routine verification code path as Run 1
 
 ### Timing interpretation
 
@@ -174,9 +185,12 @@ The truthful-closure line is **COMPLETE**. All acceptance criteria in the roadma
 - Every Phase 1 ledger row has a final evidence-backed disposition
 - No `#[ignore]` added for closure items
 - No removed CI architecture restored
-- Documentation reconciled (SHA `232e2de`, closeout evidence `ab9c787`)
+- Documentation reconciled (SHA `232e2de`, closeout evidence `ab9c787`, final doc SHA `c601ab1`)
 - No xtask or workflow can publish, tag, release, or consume registry credentials
-- Hosted routine proof recorded: run `31426515369`, job `93579387906`, SHA `232e2de`, **SUCCESS**, 13m12s (below 15m blocking threshold)
+- Hosted routine proof recorded (two successful runs):
+  - Run `31426515369`, job `93579387906`, SHA `232e2de`, **SUCCESS**, 13m12s
+  - Run `31505156002`, SHA `c601ab1`, **SUCCESS**, 13m22s
+- Both hosted runs below 15m blocking threshold; `<10m` target not demonstrated
 - Branch protection: EXTERNALLY UNVERIFIED (requires GitHub settings access)
 - Dirty-tree injection: fails by default; `--allow-dirty` is diagnostic-only
 - Verification contract: 55 entries reconciled to `verify.rs`

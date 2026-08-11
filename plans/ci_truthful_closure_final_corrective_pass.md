@@ -384,49 +384,49 @@ This final corrective pass is complete only when all of the following are true:
 
 ### Release truthfulness
 
-- [ ] the deferred release state name does not claim that predecessor crates are unpublished unless direct registry evidence exists;
-- [ ] every deferred crate still names its internal predecessors;
-- [ ] deferred crates are not counted as assembled or packaged-source verified;
-- [ ] real package failures remain failures;
-- [ ] `NotPrepublishable` remains a release blocker;
-- [ ] the verifier still performs no publication and consumes no registry credentials;
-- [ ] publication ordering remains topological;
-- [ ] focused qualification tests pass.
+- [x] the deferred release state name does not claim that predecessor crates are unpublished unless direct registry evidence exists;
+- [x] every deferred crate still names its internal predecessors;
+- [x] deferred crates are not counted as assembled or packaged-source verified;
+- [x] real package failures remain failures;
+- [x] `NotPrepublishable` remains a release blocker;
+- [x] the verifier still performs no publication and consumes no registry credentials;
+- [x] publication ordering remains topological;
+- [x] focused qualification tests pass.
 
 ### Closure-document authority
 
-- [ ] no authoritative closure document points to a nonexistent `ci_truthful_closure_followup_results.md` file;
-- [ ] exactly one current closure record is clearly authoritative;
-- [ ] older superseded records point only to existing, more-current records;
-- [ ] no current `COMPLETE` document contradicts another current `COMPLETE` document.
+- [x] no authoritative closure document points to a nonexistent `ci_truthful_closure_followup_results.md` file;
+- [x] exactly one current closure record is clearly authoritative;
+- [x] older superseded records point only to existing, more-current records;
+- [x] no current `COMPLETE` document contradicts another current `COMPLETE` document.
 
 ### Evidence reconciliation
 
-- [ ] implementation verification SHA is recorded distinctly from hosted CI SHA and documentation SHA when they differ;
-- [ ] any executable change in this pass receives fresh `verify`, `verify-full`, and `verify-release` proof on a clean committed head;
-- [ ] the authoritative release table uses `verified` / `deferred` semantics rather than `skipped = pass` language;
-- [ ] actual final publishable/verified/deferred counts are taken from the final verifier output;
-- [ ] dirty-tree release behavior remains fail-by-default with explicit `--allow-dirty` diagnostic override;
-- [ ] branch protection remains explicitly `EXTERNALLY UNVERIFIED` unless directly inspected.
+- [x] implementation verification SHA is recorded distinctly from hosted CI SHA and documentation SHA when they differ;
+- [x] any executable change in this pass receives fresh `verify`, `verify-full`, and `verify-release` proof on a clean committed head;
+- [x] the authoritative release table uses `verified` / `deferred` semantics rather than `skipped = pass` language;
+- [x] actual final publishable/verified/deferred counts are taken from the final verifier output;
+- [x] dirty-tree release behavior remains fail-by-default with explicit `--allow-dirty` diagnostic override;
+- [x] branch protection remains explicitly `EXTERNALLY UNVERIFIED` unless directly inspected.
 
 ### Hosted timing truthfulness
 
-- [ ] the recorded hosted run's full cache-key match is stated accurately;
-- [ ] no unsupported `partially warm` characterization remains for that run;
-- [ ] routine verify duration and overall job duration are distinguished;
-- [ ] the under-10-minute target is explicitly recorded as not demonstrated if the observed run remains ~12-13 minutes;
-- [ ] the 15-minute blocking threshold is explicitly recorded as not exceeded;
-- [ ] no CI complexity is added solely to improve this nonblocking timing residual.
+- [x] the recorded hosted run's full cache-key match is stated accurately;
+- [x] no unsupported `partially warm` characterization remains for that run;
+- [x] routine verify duration and overall job duration are distinguished;
+- [x] the under-10-minute target is explicitly recorded as not demonstrated if the observed run remains ~12-13 minutes;
+- [x] the 15-minute blocking threshold is explicitly recorded as not exceeded;
+- [x] no CI complexity is added solely to improve this nonblocking timing residual.
 
 ### Scope preservation
 
-- [ ] routine CI remains one Ubuntu job;
-- [ ] no CI matrix or additional routine lane is introduced;
-- [ ] no registry emulator is introduced;
-- [ ] no release automation is introduced;
-- [ ] no WAF/product behavior changes are included;
-- [ ] no tests are ignored, filtered, or weakened for closure;
-- [ ] no unrelated refactor is bundled into the pass.
+- [x] routine CI remains one Ubuntu job;
+- [x] no CI matrix or additional routine lane is introduced;
+- [x] no registry emulator is introduced;
+- [x] no release automation is introduced;
+- [x] no WAF/product behavior changes are included;
+- [x] no tests are ignored, filtered, or weakened for closure;
+- [x] no unrelated refactor is bundled into the pass.
 
 ## 10. Stop conditions
 

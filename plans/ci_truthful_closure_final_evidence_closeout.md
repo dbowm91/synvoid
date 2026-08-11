@@ -349,82 +349,82 @@ This closeout is complete only when every applicable item below is true.
 
 ### 9.1 Operational wording
 
-- [ ] `docs/testing/verification-contract.md` contains no current claim that deferred predecessors are known to be unpublished unless direct registry evidence exists.
-- [ ] packaged-source documentation uses `deferred` semantics rather than `skipped = passed` semantics.
-- [ ] current operational docs use `DeferredOnInternalPredecessors` consistently.
-- [ ] no current operational document points to nonexistent `plans/ci_truthful_closure_followup_results.md`.
-- [ ] no current authoritative evidence uses unsupported `partially warm` cache wording.
+- [x] `docs/testing/verification-contract.md` contains no current claim that deferred predecessors are known to be unpublished unless direct registry evidence exists.
+- [x] packaged-source documentation uses `deferred` semantics rather than `skipped = passed` semantics.
+- [x] current operational docs use `DeferredOnInternalPredecessors` consistently.
+- [x] no current operational document points to nonexistent `plans/ci_truthful_closure_followup_results.md`.
+- [x] no current authoritative evidence uses unsupported `partially warm` cache wording.
 
 ### 9.2 Proof-bearing repository state
 
-- [ ] a specific proof-bearing commit SHA is recorded.
-- [ ] the worktree is clean before authoritative verification begins.
-- [ ] no executable code changes occur after the proof-bearing SHA without restarting verification.
-- [ ] no test assertions, ignores, filters, or product behavior are modified solely to obtain green evidence.
+- [x] a specific proof-bearing commit SHA is recorded.
+- [x] the worktree is clean before authoritative verification begins.
+- [x] no executable code changes occur after the proof-bearing SHA without restarting verification.
+- [x] no test assertions, ignores, filters, or product behavior are modified solely to obtain green evidence.
 
 ### 9.3 Routine verification
 
-- [ ] `cargo xtask verify` exits zero on the proof-bearing SHA.
-- [ ] every routine verifier step passes.
-- [ ] the end-to-end duration is recorded accurately.
-- [ ] no additional hosted CI job/lane is introduced.
+- [x] `cargo xtask verify` exits zero on the proof-bearing SHA.
+- [x] every routine verifier step passes.
+- [x] the end-to-end duration is recorded accurately.
+- [x] no additional hosted CI job/lane is introduced.
 
 ### 9.4 Full verification
 
-- [ ] `cargo xtask verify-full` exits zero on the same proof-bearing SHA.
-- [ ] final test pass/fail/skip counts are recorded from actual output.
-- [ ] there are zero unexplained failures.
-- [ ] any remaining specialist skip is explicitly named and retains its evidence-backed disposition.
-- [ ] no new `#[ignore]` or hidden selector is added for closure.
-- [ ] the end-to-end duration is recorded accurately.
+- [x] `cargo xtask verify-full` exits zero on the same proof-bearing SHA.
+- [x] final test pass/fail/skip counts are recorded from actual output.
+- [x] there are zero unexplained failures.
+- [x] any remaining specialist skip is explicitly named and retains its evidence-backed disposition.
+- [x] no new `#[ignore]` or hidden selector is added for closure.
+- [x] the end-to-end duration is recorded accurately.
 
 ### 9.5 Release verification
 
-- [ ] `cargo xtask verify-release` exits zero on the same clean proof-bearing SHA.
-- [ ] the actual final publishable-crate count is recorded.
-- [ ] the actual packaged-source-verified count is recorded.
-- [ ] the actual deferred count is recorded.
-- [ ] every deferred crate names its internal predecessors.
-- [ ] deferred crates are not counted as packaged-source verified.
-- [ ] there are zero unexpected `Failed` states.
-- [ ] there are zero `NotPrepublishable` states, or the closeout remains blocked with the real release blocker documented.
-- [ ] publication ordering remains valid/topological.
-- [ ] the command performs no publication and consumes no registry credentials.
-- [ ] the end-to-end duration is recorded accurately.
+- [x] `cargo xtask verify-release` exits zero on the same clean proof-bearing SHA.
+- [x] the actual final publishable-crate count is recorded.
+- [x] the actual packaged-source-verified count is recorded.
+- [x] the actual deferred count is recorded.
+- [x] every deferred crate names its internal predecessors.
+- [x] deferred crates are not counted as packaged-source verified.
+- [x] there are zero unexpected `Failed` states.
+- [x] there are zero `NotPrepublishable` states, or the closeout remains blocked with the real release blocker documented.
+- [x] publication ordering remains valid/topological.
+- [x] the command performs no publication and consumes no registry credentials.
+- [x] the end-to-end duration is recorded accurately.
 
 ### 9.6 Dirty-tree behavior
 
-- [ ] normal `verify-release` remains fail-by-default on a dirty tree.
-- [ ] `--allow-dirty` remains an explicit diagnostic/local override and is not used as release evidence.
+- [x] normal `verify-release` remains fail-by-default on a dirty tree.
+- [x] `--allow-dirty` remains an explicit diagnostic/local override and is not used as release evidence.
 
 ### 9.7 Evidence record
 
-- [ ] the authoritative closure record names exactly one authoritative document.
-- [ ] the evidence table no longer labels `eb74304...` as the final corrective pass.
-- [ ] prior evidence, corrective implementation, proof-bearing SHA, hosted SHA, and final documentation SHA are distinguished when they differ.
-- [ ] local final verification data corresponds to the proof-bearing SHA actually tested.
-- [ ] release qualification counts come from the final verifier output rather than copied historical values.
-- [ ] hosted timing/cache claims are limited to directly observed facts.
-- [ ] `<10m` hosted target remains recorded as not demonstrated unless a qualifying run actually demonstrates it.
-- [ ] the 15-minute blocking threshold remains the blocking criterion; no CI architecture is expanded to chase the nonblocking target.
-- [ ] branch protection is still `EXTERNALLY UNVERIFIED` unless directly inspected.
+- [x] the authoritative closure record names exactly one authoritative document.
+- [x] the evidence table no longer labels `eb74304...` as the final corrective pass.
+- [x] prior evidence, corrective implementation, proof-bearing SHA, hosted SHA, and final documentation SHA are distinguished when they differ.
+- [x] local final verification data corresponds to the proof-bearing SHA actually tested.
+- [x] release qualification counts come from the final verifier output rather than copied historical values.
+- [x] hosted timing/cache claims are limited to directly observed facts.
+- [x] `<10m` hosted target remains recorded as not demonstrated unless a qualifying run actually demonstrates it.
+- [x] the 15-minute blocking threshold remains the blocking criterion; no CI architecture is expanded to chase the nonblocking target.
+- [x] branch protection is still `EXTERNALLY UNVERIFIED` unless directly inspected.
 
 ### 9.8 Planning/status closure
 
-- [ ] `plans/ci_truthful_closure_final_corrective_pass.md` is marked `COMPLETE` only after its acceptance criteria are met.
-- [ ] its acceptance checklist is reconciled to actual evidence rather than mechanically checked.
-- [ ] this closeout plan is marked `COMPLETE` only after this plan's criteria are met.
-- [ ] the authoritative results document points to the final proof-bearing and documentation SHAs.
-- [ ] no current plan/result pair simultaneously claims both `PLANNED` and completed closure for the same final pass.
+- [x] `plans/ci_truthful_closure_final_corrective_pass.md` is marked `COMPLETE` only after its acceptance criteria are met.
+- [x] its acceptance checklist is reconciled to actual evidence rather than mechanically checked.
+- [x] this closeout plan is marked `COMPLETE` only after this plan's criteria are met.
+- [x] the authoritative results document points to the final proof-bearing and documentation SHAs.
+- [x] no current plan/result pair simultaneously claims both `PLANNED` and completed closure for the same final pass.
 
 ### 9.9 Scope preservation
 
-- [ ] routine CI remains one Ubuntu job.
-- [ ] no matrix, selector, scheduled lane, release lane, or evidence pipeline is added.
-- [ ] no local registry emulator or registry probing subsystem is added.
-- [ ] crates.io publication remains manual.
-- [ ] no WAF/product behavior change is included.
-- [ ] no unrelated architecture/skills/documentation cleanup is bundled into the closeout commit.
+- [x] routine CI remains one Ubuntu job.
+- [x] no matrix, selector, scheduled lane, release lane, or evidence pipeline is added.
+- [x] no local registry emulator or registry probing subsystem is added.
+- [x] crates.io publication remains manual.
+- [x] no WAF/product behavior change is included.
+- [x] no unrelated architecture/skills/documentation cleanup is bundled into the closeout commit.
 
 ## 10. Stop conditions
 
