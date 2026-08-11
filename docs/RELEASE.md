@@ -53,7 +53,7 @@ A release candidate (RC) is cut when all release gates pass:
 cargo xtask verify-release
 ```
 
-The `verify-release` command runs the full verification suite plus package metadata validation, content inspection, and per-crate package qualification. Each publishable crate receives an explicit state (Assembled, PackagedSourceVerified, BlockedOnUnpublishedInternalDeps, NotPrepublishable, or Failed). Deferred crates name their exact predecessors and required follow-up commands. It fails on dirty trees by default.
+The `verify-release` command runs the full verification suite plus package metadata validation, content inspection, and per-crate package qualification. Each publishable crate receives an explicit state (Assembled, PackagedSourceVerified, DeferredOnInternalPredecessors, NotPrepublishable, or Failed). Deferred crates name their exact predecessors and required follow-up commands. It fails on dirty trees by default.
 
 The RC tag follows the pattern `vMAJOR.MINOR.PATCH-rc.N` (e.g., `v1.1.0-rc.1`).
 

@@ -179,7 +179,7 @@ Every publishable crate receives one explicit qualification state:
 |-------|---------|
 | `Assembled` | `cargo package --no-verify` succeeded |
 | `PackagedSourceVerified` | `cargo package` (with verify) succeeded |
-| `BlockedOnUnpublishedInternalDeps` | Named publishable predecessors are not yet on crates.io |
+| `DeferredOnInternalPredecessors` | Registry qualification deferred until named publishable predecessors are published |
 | `NotPrepublishable` | Depends on non-publishable internal crate (release blocker) |
 | `Failed` | Package step failed for an unexpected reason (release blocker) |
 
@@ -194,7 +194,7 @@ The verifier builds a precise internal dependency graph from Cargo metadata:
 
 ### Deferred qualification contract
 
-A publishable crate may be `BlockedOnUnpublishedInternalDeps` without failing the overall pre-publication readiness command only if all of the following are true:
+A publishable crate may be `DeferredOnInternalPredecessors` without failing the overall pre-publication readiness command only if all of the following are true:
 
 1. every blocking dependency is a named publishable workspace predecessor
 2. its path dependency has a compatible, explicit semver requirement
@@ -210,7 +210,7 @@ After publishing predecessors, the operator must rerun the dependent crate's `ca
 ### Exit semantics
 
 - Nonzero exit for any `NotPrepublishable` or `Failed` state
-- Zero exit when the only non-passed states are `BlockedOnUnpublishedInternalDeps` satisfying the deferred contract
+- Zero exit when the only non-passed states are `DeferredOnInternalPredecessors` satisfying the deferred contract
 - Summary text says `PRE-PUBLICATION READY WITH DEFERRED REGISTRY CHECKS` when deferred states exist
 
 ### Packaged-source verification
@@ -567,7 +567,7 @@ Phase 5 resolved WAF detection false positives:
 36. Eight WAF wave10 tests resolved (test disposition table updated in Section 2)
 
 Phase 1 follow-up (release qualification semantics):
-37. Per-crate qualification states: Assembled, PackagedSourceVerified, BlockedOnUnpublishedInternalDeps, NotPrepublishable, Failed
+37. Per-crate qualification states: Assembled, PackagedSourceVerified, DeferredOnInternalPredecessors, NotPrepublishable, Failed
 38. Dependency graph built from Cargo metadata — publishable predecessors distinguished from non-publishable internal deps
 39. Dev-dependencies excluded from publication resolution checks
 40. Cycle detection in publishable dependency graph
@@ -585,7 +585,7 @@ Phase 2 follow-up (malformed-input WAF safety):
 50. Malformed XSS corpus test updated to assert detection (was previously a known non-detection)
 
 Phase 3 follow-up (evidence reconciliation):
-51. Crates with path dev-dependencies on deferred workspace crates correctly classified as `BlockedOnUnpublishedInternalDeps` (not `Failed`)
+51. Crates with path dev-dependencies on deferred workspace crates correctly classified as `DeferredOnInternalPredecessors` (not `Failed`)
 52. All three verification commands (verify, verify-full, verify-release) pass on clean final head
 53. Final implementation SHA recorded; documentation SHA distinguished where separate
 54. Failure ledger reconciled to final authoritative state

@@ -91,7 +91,7 @@ VERIFY-RELEASE (manual):
     Full verification plus release-profile compilation, all-features clippy,
     package metadata validation, package content inspection, and per-crate
     package qualification. Each publishable crate receives an explicit state:
-    Assembled, PackagedSourceVerified, BlockedOnUnpublishedInternalDeps,
+    Assembled, PackagedSourceVerified, DeferredOnInternalPredecessors,
     NotPrepublishable, or Failed. Deferred crates name their exact predecessors.
     Fails on dirty tree by default. Does NOT publish.
 

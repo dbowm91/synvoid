@@ -274,8 +274,8 @@ enum CrateQualification {
     Assembled,
     /// `cargo package` (with verify) succeeded.
     PackagedSourceVerified,
-    /// Cannot package because named publishable predecessors are not on crates.io.
-    BlockedOnUnpublishedInternalDeps { predecessors: Vec<String> },
+    /// Registry qualification deferred until named publishable predecessors are published.
+    DeferredOnInternalPredecessors { predecessors: Vec<String> },
     /// Cannot be published to crates.io (depends on non-publishable internal crate).
     NotPrepublishable { reason: String },
     /// Package step failed for an unexpected reason.
@@ -296,14 +296,14 @@ struct CrateDepInfo {
 struct ReleaseQualificationSummary {
     assembled: Vec<String>,
     packaged_source_verified: Vec<String>,
-    blocked_on_unpublished: Vec<BlockedCrate>,
+    deferred_on_predecessors: Vec<DeferredCrate>,
     not_prepublishable: Vec<NotPrepublishableCrate>,
     failed: Vec<FailedCrate>,
     publication_order: Vec<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct BlockedCrate {
+struct DeferredCrate {
     name: String,
     predecessors: Vec<String>,
 }
@@ -961,7 +961,7 @@ fn check_dirty_tree(workspace_root: &Path) -> Result<bool, String> {
 /// Every publishable crate receives an explicit qualification state:
 /// - `Assembled`: `cargo package --no-verify` succeeded
 /// - `PackagedSourceVerified`: `cargo package` (with verify) succeeded
-/// - `BlockedOnUnpublishedInternalDeps`: named predecessors not yet on crates.io
+/// - `DeferredOnInternalPredecessors`: registry qualification deferred until named predecessors are published
 /// - `NotPrepublishable`: depends on non-publishable internal crate (release blocker)
 /// - `Failed`: unexpected failure (release blocker)
 pub fn run_verify_release(
@@ -1138,7 +1138,7 @@ pub fn run_verify_release(
         if !info.publishable_predecessors.is_empty() {
             assembly_results.push((
                 name.clone(),
-                CrateQualification::BlockedOnUnpublishedInternalDeps {
+                CrateQualification::DeferredOnInternalPredecessors {
                     predecessors: info.publishable_predecessors.clone(),
                 },
             ));
@@ -1174,7 +1174,7 @@ pub fn run_verify_release(
         if !blocked_on_unresolved.is_empty() {
             assembly_results.push((
                 name.clone(),
-                CrateQualification::BlockedOnUnpublishedInternalDeps {
+                CrateQualification::DeferredOnInternalPredecessors {
                     predecessors: blocked_on_unresolved,
                 },
             ));
@@ -1216,7 +1216,7 @@ pub fn run_verify_release(
     let mut summary = ReleaseQualificationSummary {
         assembled: Vec::new(),
         packaged_source_verified: Vec::new(),
-        blocked_on_unpublished: Vec::new(),
+        deferred_on_predecessors: Vec::new(),
         not_prepublishable: Vec::new(),
         failed: Vec::new(),
         publication_order: publishable.iter().map(|(n, _)| n.clone()).collect(),
@@ -1230,8 +1230,8 @@ pub fn run_verify_release(
             CrateQualification::Assembled => {
                 summary.assembled.push(name.clone());
             }
-            CrateQualification::BlockedOnUnpublishedInternalDeps { predecessors } => {
-                summary.blocked_on_unpublished.push(BlockedCrate {
+            CrateQualification::DeferredOnInternalPredecessors { predecessors } => {
+                summary.deferred_on_predecessors.push(DeferredCrate {
                     name: name.clone(),
                     predecessors: predecessors.clone(),
                 });
@@ -1273,12 +1273,12 @@ pub fn run_verify_release(
             }
         }
         println!(
-            "    Deferred (unpublished predecessors): {} crate(s)",
-            summary.blocked_on_unpublished.len()
+            "    Deferred (pending internal predecessors): {} crate(s)",
+            summary.deferred_on_predecessors.len()
         );
-        for blocked in &summary.blocked_on_unpublished {
+        for blocked in &summary.deferred_on_predecessors {
             println!(
-                "      ⊘ {} — blocked on: {}",
+                "      ⊘ {} — deferred on: {}",
                 blocked.name,
                 blocked.predecessors.join(", ")
             );
@@ -1302,9 +1302,9 @@ pub fn run_verify_release(
         println!();
 
         // Print follow-up instructions for deferred crates
-        if !summary.blocked_on_unpublished.is_empty() {
+        if !summary.deferred_on_predecessors.is_empty() {
             println!("  Follow-up after publishing predecessors:");
-            for blocked in &summary.blocked_on_unpublished {
+            for blocked in &summary.deferred_on_predecessors {
                 println!("    After publishing {}:", blocked.predecessors.join(", "));
                 println!("      cargo package --no-verify -p {}", blocked.name);
                 println!("      cargo package -p {}", blocked.name);
@@ -1314,7 +1314,7 @@ pub fn run_verify_release(
 
         // Exit message
         let has_blockers = !summary.not_prepublishable.is_empty() || !summary.failed.is_empty();
-        let has_deferred = !summary.blocked_on_unpublished.is_empty();
+        let has_deferred = !summary.deferred_on_predecessors.is_empty();
 
         if has_blockers {
             eprintln!("  ✗ Release verification FAILED — blockers found");
@@ -1322,7 +1322,7 @@ pub fn run_verify_release(
             println!("  PRE-PUBLICATION READY WITH DEFERRED REGISTRY CHECKS");
             println!(
                 "  {} crate(s) deferred until predecessors are published",
-                summary.blocked_on_unpublished.len()
+                summary.deferred_on_predecessors.len()
             );
         } else {
             println!("  ✓ All publishable crates fully qualified");
@@ -1646,7 +1646,7 @@ mod tests {
             ("crate_b".to_string(), CrateQualification::Assembled),
             (
                 "crate_c".to_string(),
-                CrateQualification::BlockedOnUnpublishedInternalDeps {
+                CrateQualification::DeferredOnInternalPredecessors {
                     predecessors: vec!["crate_a".to_string()],
                 },
             ),
@@ -1668,7 +1668,7 @@ mod tests {
         let mut summary = ReleaseQualificationSummary {
             assembled: Vec::new(),
             packaged_source_verified: Vec::new(),
-            blocked_on_unpublished: Vec::new(),
+            deferred_on_predecessors: Vec::new(),
             not_prepublishable: Vec::new(),
             failed: Vec::new(),
             publication_order: publishable.iter().map(|(n, _)| n.clone()).collect(),
@@ -1682,8 +1682,8 @@ mod tests {
                 CrateQualification::Assembled => {
                     summary.assembled.push(name.clone());
                 }
-                CrateQualification::BlockedOnUnpublishedInternalDeps { predecessors } => {
-                    summary.blocked_on_unpublished.push(BlockedCrate {
+                CrateQualification::DeferredOnInternalPredecessors { predecessors } => {
+                    summary.deferred_on_predecessors.push(DeferredCrate {
                         name: name.clone(),
                         predecessors: predecessors.clone(),
                     });
@@ -1701,7 +1701,7 @@ mod tests {
 
         assert_eq!(summary.packaged_source_verified.len(), 1);
         assert_eq!(summary.assembled.len(), 1);
-        assert_eq!(summary.blocked_on_unpublished.len(), 1);
+        assert_eq!(summary.deferred_on_predecessors.len(), 1);
         assert_eq!(summary.failed.len(), 1);
         assert_eq!(summary.not_prepublishable.len(), 0);
     }
@@ -1710,7 +1710,7 @@ mod tests {
     fn test_deferred_crate_not_counted_as_assembled() {
         let source_results = vec![(
             "crate_a".to_string(),
-            CrateQualification::BlockedOnUnpublishedInternalDeps {
+            CrateQualification::DeferredOnInternalPredecessors {
                 predecessors: vec!["crate_b".to_string()],
             },
         )];
@@ -1723,7 +1723,7 @@ mod tests {
             match qual {
                 CrateQualification::PackagedSourceVerified => verified.push(name.clone()),
                 CrateQualification::Assembled => assembled.push(name.clone()),
-                CrateQualification::BlockedOnUnpublishedInternalDeps { .. } => {
+                CrateQualification::DeferredOnInternalPredecessors { .. } => {
                     blocked.push(name.clone())
                 }
                 _ => {}
