@@ -456,3 +456,7 @@ Expected implementation size should be small:
 Prefer deleting inaccurate wording over adding abstractions. Prefer precise evidence roles over a generic `Final SHA`. Prefer `deferred on internal predecessors` over guessing registry publication state. Preserve the intentionally simple CI and manual-release model.
 
 Once the acceptance criteria above are met, this CI verification/release-simplification line can be marked complete without another roadmap extension.
+
+## Closure Note
+
+Closed 2026-08-11. Proof-bearing SHA: `ab9c787f95d1bf65ca3ef1aff302dd1edbb67756`. Authoritative results: `plans/ci_verification_release_truthful_closure_results.md`.

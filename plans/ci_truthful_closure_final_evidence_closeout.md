@@ -457,3 +457,7 @@ At successful completion:
 - the verification/release-simplification roadmap has no remaining implementation or evidence blocker.
 
 Once these criteria are satisfied, this line of work should be closed rather than extended again.
+
+## Closure Note
+
+Closed 2026-08-11. Proof-bearing SHA: `ab9c787f95d1bf65ca3ef1aff302dd1edbb67756`. Authoritative results: `plans/ci_verification_release_truthful_closure_results.md`.

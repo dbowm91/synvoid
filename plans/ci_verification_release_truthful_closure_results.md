@@ -12,6 +12,7 @@
 |---|---|---|
 | Prior implementation qualification | `8265f1ef678f91ceeded86092dcbf5c073d3e8c9` | Historical local evidence before the final state rename |
 | Corrective implementation | `3aced41c33b79a6e301ebb3ed4d777136becc65e` | Commit that introduced truthful defer naming and evidence corrections |
+| Proof-bearing SHA | `ab9c787f95d1bf65ca3ef1aff302dd1edbb67756` | Clean commit on which final verify, verify-full, and verify-release were executed |
 | Hosted routine CI | `232e2de154e2fafe4a8c597fa5a7efa608f55457` | Exact commit exercised by GitHub Actions run `31426515369` / job `93579387906` |
 | Pre-closeout documentation head | `eb74304cce8146171e81eab08ae976e9873b460e` | Documentation/evidence head before the final closeout pass |
 
@@ -51,20 +52,20 @@
 
 - Streaming WAF split-attack test updated to use XSS payload (`<script>alert(1)</script>`) instead of relying on XPath false-positive pathway.
 
-## Routine Local Result
+## Routine Local Result (proof-bearing SHA `ab9c787`)
 
 | Step | Command | Duration | Exit |
 |------|---------|----------|------|
-| 1 | `cargo fmt --all -- --check` | 3.8s | 0 |
-| 2 | `cargo clippy --profile ci --all-targets -- -D warnings` | 0.8s | 0 |
-| 3 | `cargo check --no-default-features --profile ci` | 0.6s | 0 |
-| 4 | `cargo nextest run -p synvoid-repo-guards` | 1.0s | 0 |
-| 5 | `cargo test --test security_regression --profile ci --test-threads=1` | 0.6s | 0 |
-| 6 | `cargo nextest run ... root-guards` (13 tests) | 3.8s | 0 |
-| 7 | `cargo nextest run -p synvoid-core ... core-admin-tests` | 0.9s | 0 |
-| 8 | `cargo test --test failure_injection --profile ci` | 0.8s | 0 |
+| 1 | `cargo fmt --all -- --check` | 4.4s | 0 |
+| 2 | `cargo clippy --profile ci --all-targets -- -D warnings` | 7.1s | 0 |
+| 3 | `cargo check --no-default-features --profile ci` | 28.5s | 0 |
+| 4 | `cargo nextest run -p synvoid-repo-guards` | 1.3s | 0 |
+| 5 | `cargo test --test security_regression --profile ci --test-threads=1` | 1.0s | 0 |
+| 6 | `cargo nextest run ... root-guards` (13 tests) | 8.8s | 0 |
+| 7 | `cargo nextest run -p synvoid-core ... core-admin-tests` | 1.2s | 0 |
+| 8 | `cargo test --test failure_injection --profile ci` | 0.9s | 0 |
 
-**Total:** 8 steps, 8 passed, 12.5s
+**Total:** 8 steps, 8 passed, 53.2s
 
 ## Hosted Routine Result
 
@@ -93,19 +94,19 @@
 - **15m blocking threshold:** Not exceeded
 - **Assessment:** The run is a valid pass. Substantial recompilation occurred despite the full cache-key restore (first `clippy` compile took 3m36s under the ci profile). The 13m12s duration does not breach the 15-minute blocking threshold.
 
-## Full Verification Result
+## Full Verification Result (proof-bearing SHA `ab9c787`)
 
 | Step | Command | Duration | Exit |
 |------|---------|----------|------|
-| 1 | `cargo fmt --all -- --check` | 3.7s | 0 |
-| 2 | `cargo clippy --profile ci --all-targets -- -D warnings` | 0.8s | 0 |
-| 3 | `cargo check --no-default-features --features mesh` | 157.7s | 0 |
-| 4 | `cargo check --no-default-features --features dns` | 130.1s | 0 |
-| 5 | `cargo check --no-default-features --features mesh,dns` | 112.7s | 0 |
-| 6 | `cargo nextest run --workspace --exclude synvoid-fuzz` | 1115.9s | 0 |
-| 7 | `cargo test --workspace --doc --profile ci` | 36.7s | 0 |
+| 1 | `cargo fmt --all -- --check` | 4.7s | 0 |
+| 2 | `cargo clippy --profile ci --all-targets -- -D warnings` | 1.2s | 0 |
+| 3 | `cargo check --no-default-features --features mesh` | 1.1s | 0 |
+| 4 | `cargo check --no-default-features --features dns` | 7.7s | 0 |
+| 5 | `cargo check --no-default-features --features mesh,dns` | 0.9s | 0 |
+| 6 | `cargo nextest run --workspace --cargo-profile ci --profile ci --exclude synvoid-fuzz` | 19.9s | 0 |
+| 7 | `cargo test --workspace --doc --profile ci` | 34.4s | 0 |
 
-**Total:** 7 steps, 7 passed, 1557.6s
+**Total:** 7 steps, 7 passed, 69.9s
 **Tests:** 6773 passed, 1 skipped (specialist), 0 failed
 
 ## Specialist-Command Disposition
@@ -115,7 +116,7 @@
 - **DNS conformance**: Available via `./scripts/dns/conformance.sh`. Not executed (specialist-only).
 - **Stress/endurance**: Available as documented manual commands. Not executed (specialist-only).
 
-## Release Verification Result
+## Release Verification Result (proof-bearing SHA `ab9c787`)
 
 | Step | Result |
 |------|--------|
@@ -129,7 +130,7 @@
 | Phase 3b: Packaged-source check | PASS — 9 verified now; 30 registry checks deferred |
 | Phase 4: Publication order | PASS |
 
-**Total:** 9 steps, 9 passed
+**Total:** 9 steps, 9 passed, 60.9s
 
 ## Metadata/Dependency/Package Results
 
@@ -163,17 +164,17 @@ All 12 rejection searches passed. No active operational references to deleted CI
 |------|-------|-----------|
 | Branch protection not verified | ops | Requires GitHub settings access. Must set required check to `ci` only. |
 | 1 specialist test still `#[ignore]` | worker | `test_worker_crash_recovery` requires full supervisor environment. Deterministic preflight added in Phase 4. |
-| Warm-cache target not yet proven on hosted runner | ops | 13m12s observed; target is <10min. Full cache-key match did not prevent substantial recompilation. Not a blocking issue. |
+| Hosted warm-cache target not yet proven | ops | 13m12s observed on prior hosted run; target is <10min. Full cache-key match did not prevent substantial recompilation. Not a blocking issue. |
 
 ## Statement
 
 The truthful-closure line is **COMPLETE**. All acceptance criteria in the roadmap are met:
 
-- All three verification commands pass on clean final head (implementation SHA `8265f1e`)
+- All three verification commands pass on clean proof-bearing SHA `ab9c787`
 - Every Phase 1 ledger row has a final evidence-backed disposition
 - No `#[ignore]` added for closure items
 - No removed CI architecture restored
-- Documentation reconciled (SHA `232e2de`)
+- Documentation reconciled (SHA `232e2de`, closeout evidence `ab9c787`)
 - No xtask or workflow can publish, tag, release, or consume registry credentials
 - Hosted routine proof recorded: run `31426515369`, job `93579387906`, SHA `232e2de`, **SUCCESS**, 13m12s (below 15m blocking threshold)
 - Branch protection: EXTERNALLY UNVERIFIED (requires GitHub settings access)

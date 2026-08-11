@@ -132,10 +132,10 @@ See [`docs/testing/verification-contract.md`](docs/testing/verification-contract
 ### Verification Status
 
 - **Routine CI** (`cargo xtask verify`): ✅ All 8 steps pass
-- **Full verification** (`cargo xtask verify-full`): 15 failures resolved in Phase 1, 3 Phase 3 stale expectations corrected, 17 remaining (tracked in `plans/ci_phase01_failure_ledger.md`)
-- **Release verification** (`cargo xtask verify-release`): Same as full verification
+- **Full verification** (`cargo xtask verify-full`): ✅ 6773 tests pass, 1 specialist skip (`test_worker_crash_recovery`)
+- **Release verification** (`cargo xtask verify-release`): ✅ 9/9 phases pass, 39 publishable crates (9 verified, 30 deferred on internal predecessors)
 
-Phases 1-3 of the CI verification closure roadmap are complete. See `plans/ci_verification_release_truthful_closure_roadmap.md` for the full roadmap.
+CI verification/release simplification is COMPLETE. See `plans/ci_verification_release_truthful_closure_results.md` for the authoritative evidence record.
 
 ### Developer Testing
 
