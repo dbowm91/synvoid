@@ -1,8 +1,35 @@
+use gloo::net::http::Request;
 use yew::prelude::*;
 use yew_router::prelude::*;
 
 use crate::app::Route;
 use crate::hooks::use_theme::Theme;
+
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct Capabilities {
+    #[serde(default)]
+    pub mesh_admin: bool,
+    #[serde(default)]
+    pub dns_admin: bool,
+    #[serde(default)]
+    pub icmp_admin: bool,
+    #[serde(default)]
+    pub honeypot: bool,
+    #[serde(default)]
+    pub process_manager: bool,
+}
+
+impl Default for Capabilities {
+    fn default() -> Self {
+        Self {
+            mesh_admin: true,
+            dns_admin: true,
+            icmp_admin: true,
+            honeypot: true,
+            process_manager: true,
+        }
+    }
+}
 
 #[derive(Properties, PartialEq)]
 pub struct SidebarProps {
@@ -10,78 +37,91 @@ pub struct SidebarProps {
     pub on_toggle_theme: Callback<()>,
 }
 
-pub struct Sidebar {
-    #[allow(dead_code)]
-    current_route: String,
-}
+#[function_component]
+pub fn Sidebar(props: &SidebarProps) -> Html {
+    let on_toggle = props.on_toggle_theme.reform(|_| ());
+    let capabilities = use_state(Capabilities::default);
 
-impl Component for Sidebar {
-    type Message = ();
-    type Properties = SidebarProps;
-
-    fn create(_ctx: &Context<Self>) -> Self {
-        Self {
-            current_route: "/".to_string(),
-        }
+    {
+        let capabilities = capabilities.clone();
+        use_effect_with((), move |_| {
+            let capabilities = capabilities.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                if let Ok(resp) = Request::get("/api/system/capabilities").send().await {
+                    if let Ok(cap) = resp.json::<Capabilities>().await {
+                        capabilities.set(cap);
+                    }
+                }
+            });
+            || ()
+        });
     }
 
-    fn view(&self, ctx: &Context<Self>) -> Html {
-        let on_toggle = ctx.props().on_toggle_theme.reform(|_| ());
+    let cap = (*capabilities).clone();
 
-        html! {
-            <nav class="w-64 bg-secondary border-r border-default min-h-screen flex flex-col">
-                <div class="p-4 border-b border-default">
-                    <h1 class="text-xl font-bold accent">
-                        { "SynVoid" }
-                    </h1>
-                    <p class="text-sm text-secondary">{"Admin Dashboard"}</p>
-                </div>
+    html! {
+        <nav class="w-64 bg-secondary border-r border-default min-h-screen flex flex-col">
+            <div class="p-4 border-b border-default">
+                <h1 class="text-xl font-bold accent">
+                    { "SynVoid" }
+                </h1>
+                <p class="text-sm text-secondary">{"Admin Dashboard"}</p>
+            </div>
 
-                <div class="flex-1 p-4">
-                    <NavSection title="Overview">
-                        <NavItem to={Route::Dashboard} icon="dashboard" label="Dashboard" />
-                        <NavItem to={Route::Logs} icon="logs" label="WAF Logs" />
-                        <NavItem to={Route::RequestLogs} icon="request" label="Request Logs" />
-                    </NavSection>
+            <div class="flex-1 p-4">
+                <NavSection title="Overview">
+                    <NavItem to={Route::Dashboard} icon="dashboard" label="Dashboard" />
+                    <NavItem to={Route::Logs} icon="logs" label="WAF Logs" />
+                    <NavItem to={Route::RequestLogs} icon="request" label="Request Logs" />
+                </NavSection>
 
-                    <NavSection title="Security">
-                        <NavItem to={Route::Probes} icon="radar" label="Probing Activity" />
-                    </NavSection>
+                <NavSection title="Security">
+                    <NavItem to={Route::Probes} icon="radar" label="Probing Activity" />
+                </NavSection>
 
-                    <NavSection title="Management">
-                        <NavItem to={Route::Workers} icon="cpu" label="Workers" />
-                        <NavItem to={Route::Upstreams} icon="server" label="Upstreams" />
-                        <NavItem to={Route::Sites} icon="globe" label="Sites" />
+                <NavSection title="Management">
+                    <NavItem to={Route::Workers} icon="cpu" label="Workers" />
+                    <NavItem to={Route::Upstreams} icon="server" label="Upstreams" />
+                    <NavItem to={Route::Sites} icon="globe" label="Sites" />
+                    if cap.mesh_admin {
                         <NavItem to={Route::Mesh} icon="mesh" label="Mesh" />
                         <NavItem to={Route::TierKeys} icon="key" label="Tier Keys" />
-                    </NavSection>
+                    }
+                </NavSection>
 
-                    <NavSection title="Configuration">
-                        <NavItem to={Route::Settings} icon="settings" label="Settings" />
+                <NavSection title="Configuration">
+                    <NavItem to={Route::Settings} icon="settings" label="Settings" />
+                    if cap.dns_admin {
                         <NavItem to={Route::Dns} icon="dns" label="DNS" />
+                    }
+                    if cap.process_manager {
                         <NavItem to={Route::ProcessManagement} icon="process" label="Process Management" />
-                        <NavItem to={Route::ThreatLevel} icon="shield" label="Threat Level" />
-                        <NavItem to={Route::Alerts} icon="bell" label="Alerts" />
-                    </NavSection>
+                    }
+                    <NavItem to={Route::ThreatLevel} icon="shield" label="Threat Level" />
+                    <NavItem to={Route::Alerts} icon="bell" label="Alerts" />
+                </NavSection>
 
-                    <NavSection title="System">
-                        <NavItem to={Route::SystemStatus} icon="status" label="System Status" />
+                <NavSection title="System">
+                    <NavItem to={Route::SystemStatus} icon="status" label="System Status" />
+                    if cap.honeypot {
                         <NavItem to={Route::Honeypot} icon="honeypot" label="Port Honeypot" />
+                    }
+                    if cap.icmp_admin {
                         <NavItem to={Route::Icmp} icon="network" label="ICMP Filter" />
-                    </NavSection>
-                </div>
+                    }
+                </NavSection>
+            </div>
 
-                <div class="p-4 border-t border-default">
-                    <button
-                        onclick={on_toggle}
-                        class="w-full px-4 py-2 rounded-lg bg-tertiary hover:opacity-80 transition flex items-center justify-between"
-                    >
-                        <span>{ "Theme" }</span>
-                        <span>{ ctx.props().theme.label() }</span>
-                    </button>
-                </div>
-            </nav>
-        }
+            <div class="p-4 border-t border-default">
+                <button
+                    onclick={on_toggle}
+                    class="w-full px-4 py-2 rounded-lg bg-tertiary hover:opacity-80 transition flex items-center justify-between"
+                >
+                    <span>{ "Theme" }</span>
+                    <span>{ props.theme.label() }</span>
+                </button>
+            </div>
+        </nav>
     }
 }
 

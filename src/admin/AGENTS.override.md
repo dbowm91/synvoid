@@ -2,6 +2,27 @@
 
 Specialized guidance for Admin API patterns.
 
+## Router Architecture (Phase 1)
+
+The admin router uses a two-tier architecture:
+
+1. **Protected API router** (`/api/*`): Auth + CSRF middleware applied
+2. **Public router**: Static SPA fallback, health check, WebSocket routes (no auth middleware)
+
+Key design decisions:
+- SPA assets are resolved deterministically via `resolve_admin_ui_assets()` — not CWD-relative
+- SPA fallback serves `index.html` for browser navigation, 404 for missing static assets
+- `/api/*` misses return API 404 (never SPA shell)
+- Feature-gated routes: mesh routes under `#[cfg(feature = "mesh")]`, ICMP under `#[cfg(feature = "icmp-filter")]`, DNS under `#[cfg(feature = "dns")]`
+- Core routes (system, alerts, theme, auth) are always available regardless of mesh feature
+
+### Static Asset Resolution Priority
+
+1. `SYNVOID_ADMIN_UI_DIR` env var
+2. `{exe_dir}/admin-ui/dist`
+3. `{CARGO_MANIFEST_DIR}/admin-ui/dist`
+4. `./admin-ui/dist` (CWD fallback)
+
 ## Security Patterns
 
 ### Constant-Time Comparison
@@ -25,32 +46,15 @@ Admin auth now includes timing normalization to prevent session enumeration atta
 The Admin API middleware stack (in order, from outermost to innermost):
 1. Rate Limit Layer (`src/admin/rate_limit.rs`)
 2. YARA Rate Limit Layer
-3. CSRF Middleware (`src/admin/middleware.rs:185-266`)
-4. Auth Middleware (`src/admin/middleware.rs:103-183`)
-5. Client IP Extraction (`src/admin/middleware.rs:61-101`)
+3. Client IP Extraction (`src/admin/middleware.rs:61-101`)
 
-**Note**: Documentation in `admin_deep_dive.md` has this order reversed — verify against source before relying on docs.
+**Protected API routes** (nested under `/api`) additionally have:
+4. CSRF Middleware (`src/admin/middleware.rs:185-266`)
+5. Auth Middleware (`src/admin/middleware.rs:103-183`)
 
-**Note**: CORS implementation status:
-- CORS layer IS implemented via `create_cors_layer()` at `src/admin/mod.rs:50-97`
-- CORS is applied to outer router at line 173 in `build_router_from_state()` (`.layer(create_cors_layer(&admin_cors_config))`)
-- Nested `/api` routes (lines 179-189) do NOT have CORS applied
-- Since Admin API uses bearer/session tokens rather than browser-based cross-origin requests, this gap may be intentional
-- BUG-CORS-1 was fixed by removing dead code (`let _cors_config = cfg.cors.clone()`) at `src/admin/mod.rs:860`
+**Public routes** (health, SPA fallback, WebSocket) do NOT have auth/CSRF middleware.
 
-### CORS Configuration Bug (BUG-CORS-1 - P0)
-
-`src/admin/mod.rs:860`:
-
-```rust
-let _cors_config = cfg.cors.clone();  // underscore = dropped!
-```
-
-**Problem**: The CORS config is cloned into `_cors_config`, but the underscore prefix means it is immediately dropped. The CORS layer is only applied to the outer router at line 173 in `build_router_from_state()`, but nested `/api` routes (lines 179-189) do NOT have CORS.
-
-**Impact**: Even when `cfg.cors` is configured, CORS headers may not be properly applied to nested routes if they use a different router builder.
-
-**Fix Direction**: Ensure `create_admin_router_with_state()` applies CORS layer consistently, or clarify whether CORS is intentionally not applied to nested routes.
+**Note**: CORS layer is applied to the outer router via `create_cors_layer()` at `src/admin/mod.rs`.
 
 ## Skills Reference
 

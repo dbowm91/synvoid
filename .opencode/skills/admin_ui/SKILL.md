@@ -39,7 +39,7 @@ admin-ui/
 │   │   ├── mod.rs         # Type exports
 │   │   └── presets.rs     # Preset configurations
 │   ├── components/       # Reusable UI components
-│   │   ├── layout/sidebar.rs  # Navigation sidebar
+│   │   ├── layout/sidebar.rs  # Navigation sidebar (capability-gated)
 │   │   ├── forms/             # Form inputs, selects, toggles
 │   │   ├── charts/           # Chart components
 │   │   └── tables/           # Data table components
@@ -71,6 +71,23 @@ pub enum Route {
 ```
 
 The `switch()` function maps routes to page components.
+
+### Capability-Gated Navigation
+
+The sidebar fetches `/api/system/capabilities` on mount and conditionally shows/hides navigation items based on feature availability:
+
+```rust
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct Capabilities {
+    pub mesh_admin: bool,    // Mesh, Tier Keys pages
+    pub dns_admin: bool,     // DNS page
+    pub icmp_admin: bool,    // ICMP Filter page
+    pub honeypot: bool,      // Port Honeypot page
+    pub process_manager: bool, // Process Management page
+}
+```
+
+Navigation items are gated with `if cap.mesh_admin { ... }` etc. This prevents showing pages for build-time unavailable features.
 
 ### `services/api.rs` - API Client
 

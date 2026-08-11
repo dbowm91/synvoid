@@ -129,12 +129,23 @@ pub async fn update_my_feature_config(
 
 4. **Register routes** in `src/admin/mod.rs`:
 
+Routes are registered in `build_router_from_state()` with feature gates:
+
 ```rust
+// Core routes (always available)
 let api_routes = Router::new()
     .route("/my-feature/config", get(get_my_feature_config))
-    .route("/my-feature/config", put(update_my_feature_config))
-    // ...
+    .route("/my-feature/config", put(update_my_feature_config));
+
+// Feature-gated routes
+#[cfg(feature = "mesh")]
+let api_routes = api_routes.route("/mesh/specific", get(handler));
+
+#[cfg(feature = "icmp-filter")]
+let api_routes = api_routes.route("/icmp/status", get(handler));
 ```
+
+**Important**: Auth middleware is applied to the `/api` nest, not individual routes. Public routes (health, OpenAPI) are exempted by path in the auth middleware.
 
 ## Supervisor Status Pattern
 

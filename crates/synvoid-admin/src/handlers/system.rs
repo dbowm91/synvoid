@@ -54,6 +54,13 @@ pub struct CapabilitiesResponse {
     pub sandboxing: bool,
     pub post_quantum: bool,
     pub ebpf_support: bool,
+    pub mesh_admin: bool,
+    pub dns_admin: bool,
+    pub icmp_admin: bool,
+    pub honeypot: bool,
+    pub process_manager: bool,
+    pub plugins: bool,
+    pub serverless: bool,
 }
 
 #[utoipa::path(
@@ -110,6 +117,13 @@ pub async fn get_capabilities<S: AdminStateProvider>(
         sandboxing: cfg!(feature = "macos-sandbox") || cfg!(target_os = "linux"),
         post_quantum: cfg!(feature = "post-quantum"),
         ebpf_support: cfg!(feature = "flood-ebpf") || cfg!(feature = "icmp-filter"),
+        mesh_admin: cfg!(feature = "mesh"),
+        dns_admin: cfg!(feature = "dns"),
+        icmp_admin: cfg!(feature = "icmp-filter"),
+        honeypot: cfg!(feature = "mesh"),
+        process_manager: true,
+        plugins: cfg!(feature = "mesh"),
+        serverless: cfg!(feature = "mesh"),
     }))
 }
 

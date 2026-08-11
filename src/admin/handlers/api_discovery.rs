@@ -172,22 +172,6 @@ fn get_api_endpoints() -> Vec<ApiCategory> {
                     method: "PUT".to_string(),
                 },
                 ApiEndpoint {
-                    path: "/config/dns".to_string(),
-                    method: "GET".to_string(),
-                },
-                ApiEndpoint {
-                    path: "/config/dns".to_string(),
-                    method: "PUT".to_string(),
-                },
-                ApiEndpoint {
-                    path: "/config/mesh".to_string(),
-                    method: "GET".to_string(),
-                },
-                ApiEndpoint {
-                    path: "/config/mesh".to_string(),
-                    method: "PUT".to_string(),
-                },
-                ApiEndpoint {
                     path: "/config/supervisor".to_string(),
                     method: "GET".to_string(),
                 },
@@ -201,14 +185,6 @@ fn get_api_endpoints() -> Vec<ApiCategory> {
                 },
                 ApiEndpoint {
                     path: "/config/process-manager".to_string(),
-                    method: "PUT".to_string(),
-                },
-                ApiEndpoint {
-                    path: "/config/supervisor".to_string(),
-                    method: "GET".to_string(),
-                },
-                ApiEndpoint {
-                    path: "/config/supervisor".to_string(),
                     method: "PUT".to_string(),
                 },
             ],
@@ -303,6 +279,10 @@ fn get_api_endpoints() -> Vec<ApiCategory> {
                     method: "GET".to_string(),
                 },
                 ApiEndpoint {
+                    path: "/system/capabilities".to_string(),
+                    method: "GET".to_string(),
+                },
+                ApiEndpoint {
                     path: "/system/supervisor".to_string(),
                     method: "GET".to_string(),
                 },
@@ -325,10 +305,6 @@ fn get_api_endpoints() -> Vec<ApiCategory> {
                 ApiEndpoint {
                     path: "/system/workers/batch-restart".to_string(),
                     method: "POST".to_string(),
-                },
-                ApiEndpoint {
-                    path: "/system/supervisor".to_string(),
-                    method: "GET".to_string(),
                 },
                 ApiEndpoint {
                     path: "/system/php-pools".to_string(),

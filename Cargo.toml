@@ -146,6 +146,7 @@ bcrypt = "0.19"
 dirs = "5"
 flate2 = "1"
 tar = "0.4"
+mime_guess = "2"
 
 # Post-Quantum Cryptography
 pqc = { path = "pqc", features = ["async"] , version = "0.1" }

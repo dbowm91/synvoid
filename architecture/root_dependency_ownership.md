@@ -82,6 +82,7 @@ Classification values:
 | dirs | startup | composition_runtime | default | Platform directory resolution | keep |
 | flate2 | serverless | composition_runtime | default | Gzip compression for serverless bundles | keep |
 | tar | serverless | composition_runtime | default | Tar archive extraction for WASM bundles | keep |
+| mime_guess | admin | composition_runtime | default | MIME type detection for SPA static file serving | keep |
 | pqc | mesh, auth | composition_runtime | default | Post-quantum cryptography primitives | keep |
 | zeroize | auth, ipc | composition_runtime | default | Secure memory zeroing for secrets | keep |
 | walkdir | serverless, static_files | composition_runtime | default | Recursive directory traversal | keep |

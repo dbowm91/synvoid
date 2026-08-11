@@ -25,6 +25,7 @@ pub use audit::{AuditLog, AuditState, ConfigVersion, ConfigVersionManager};
 pub use auth::{hash_admin_token, hash_admin_token_with_cost, verify_admin_token};
 use axum::{
     http::StatusCode,
+    response::IntoResponse,
     routing::{delete, get, post},
     Json, Router,
 };
@@ -33,7 +34,7 @@ pub use state::{
     get_cpu_memory_usage, get_current_connections, set_current_connections, AdminRateLimiter,
     AdminState, AggregatedMetrics, SystemResources, YaraRateLimiter, SESSION_COOKIE_NAME,
 };
-use tower_http::{cors::CorsLayer, services::ServeDir};
+use tower_http::cors::CorsLayer;
 #[allow(unused_imports)]
 use utoipa::OpenApi;
 #[cfg(feature = "swagger-ui")]
@@ -102,7 +103,6 @@ use crate::mesh::transport::MeshTransport;
 use std::sync::Arc;
 use tokio::sync::RwLock as TokioRwLock;
 
-#[cfg(feature = "mesh")]
 pub fn create_admin_router(
     config: Arc<TokioRwLock<ConfigManager>>,
     admin_token: String,
@@ -114,7 +114,7 @@ pub fn create_admin_router(
     upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
     threat_level_manager: Option<Arc<ThreatLevelManager>>,
     rule_feed_manager: Option<Arc<RuleFeedManagerForWaf>>,
-    mesh_transport: Option<Arc<MeshTransport>>,
+    #[cfg(feature = "mesh")] mesh_transport: Option<Arc<MeshTransport>>,
     #[cfg(feature = "icmp-filter")] icmp_filter: Option<Arc<TokioRwLock<IcmpFilterManager>>>,
 ) -> Router {
     let token_hash = match hash_admin_token(&admin_token) {
@@ -134,7 +134,10 @@ pub fn create_admin_router(
         .with_suspicious_word_tracker(suspicious_word_tracker)
         .with_upstream_error_tracker(upstream_error_tracker)
         .with_threat_level_manager(threat_level_manager)
-        .with_rule_feed_manager(rule_feed_manager)
+        .with_rule_feed_manager(rule_feed_manager);
+
+    #[cfg(feature = "mesh")]
+    let state_builder = state_builder
         .with_mesh_transport(mesh_transport.clone())
         .with_org_key_manager(mesh_transport.as_ref().map(|m| m.get_org_key_manager()));
 
@@ -169,12 +172,133 @@ pub async fn create_admin_router_with_state(state: Arc<AdminState>) -> Router {
     router
 }
 
+/// Resolve the admin UI asset directory deterministically, independent of process CWD.
+///
+/// Priority:
+/// 1. `SYNVOID_ADMIN_UI_DIR` environment variable
+/// 2. `{exe_dir}/admin-ui/dist` (installed binary layout)
+/// 3. `{CARGO_MANIFEST_DIR}/admin-ui/dist` (development, compile-time)
+/// 4. `./admin-ui/dist` (last-resort fallback)
+fn resolve_admin_ui_assets() -> std::path::PathBuf {
+    // 1. Explicit env var override
+    if let Ok(dir) = std::env::var("SYNVOID_ADMIN_UI_DIR") {
+        let path = std::path::PathBuf::from(dir);
+        if path.exists() {
+            tracing::info!(
+                "Admin UI assets resolved from SYNVOID_ADMIN_UI_DIR: {}",
+                path.display()
+            );
+            return path;
+        }
+        tracing::warn!(
+            "SYNVOID_ADMIN_UI_DIR set to {} but directory does not exist",
+            path.display()
+        );
+    }
+
+    // 2. Relative to the running executable
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            let path = exe_dir.join("admin-ui").join("dist");
+            if path.exists() {
+                tracing::info!(
+                    "Admin UI assets resolved relative to executable: {}",
+                    path.display()
+                );
+                return path;
+            }
+        }
+    }
+
+    // 3. Compile-time manifest directory (development builds)
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let path = manifest_dir.join("admin-ui").join("dist");
+    if path.exists() {
+        tracing::info!(
+            "Admin UI assets resolved from CARGO_MANIFEST_DIR: {}",
+            path.display()
+        );
+        return path;
+    }
+
+    // 4. CWD-relative fallback
+    let path = std::path::PathBuf::from("admin-ui").join("dist");
+    tracing::warn!(
+        "Admin UI assets not found at any standard location. \
+         Checked: SYNVOID_ADMIN_UI_DIR, executable dir, CARGO_MANIFEST_DIR ({}), CWD. \
+         SPA will not be served until assets are available at: {}",
+        manifest_dir.display(),
+        path.display()
+    );
+    path
+}
+
+/// SPA fallback: serves `index.html` for browser navigation to non-existent paths.
+/// Static assets that don't exist return 404 (no MIME confusion).
+/// `/api/*` misses are handled by the API router's catch-all, not here.
+async fn spa_fallback_handler(
+    req: axum::http::Request<axum::body::Body>,
+) -> axum::response::Response {
+    let asset_dir = resolve_admin_ui_assets();
+    let uri_path = req.uri().path();
+
+    // Try to serve the exact static file first
+    let file_path = asset_dir.join(uri_path.trim_start_matches('/'));
+    if file_path.is_file() {
+        if let Ok(bytes) = tokio::fs::read(&file_path).await {
+            let mime = mime_guess::from_path(&file_path)
+                .first_or_octet_stream()
+                .to_string();
+            return axum::response::IntoResponse::into_response((
+                [(axum::http::header::CONTENT_TYPE, mime)],
+                bytes,
+            ));
+        }
+    }
+
+    // Not a static file — check if this is a browser navigation (Accept: text/html)
+    let is_html_request = req
+        .headers()
+        .get("accept")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.contains("text/html"))
+        .unwrap_or(false);
+
+    if is_html_request {
+        let index_path = asset_dir.join("index.html");
+        match tokio::fs::read_to_string(&index_path).await {
+            Ok(content) => axum::response::IntoResponse::into_response((
+                [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                content,
+            )),
+            Err(_) => {
+                tracing::warn!(
+                    "SPA fallback: index.html not found at {}",
+                    index_path.display()
+                );
+                axum::http::StatusCode::NOT_FOUND.into_response()
+            }
+        }
+    } else {
+        axum::http::StatusCode::NOT_FOUND.into_response()
+    }
+}
+
 fn build_router_from_state(
     state: Arc<AdminState>,
     admin_cors_config: AdminCorsConfig,
     rate_limit_config: crate::config::admin::AdminRateLimitConfig,
     _trusted_proxies: Vec<String>,
 ) -> Router {
+    let asset_dir = resolve_admin_ui_assets();
+    if !asset_dir.join("index.html").exists() {
+        tracing::warn!(
+            "Admin UI index.html not found at {}. SPA deep links will not work.",
+            asset_dir.join("index.html").display()
+        );
+    }
+
+    // ── Core API routes (always available regardless of feature flags) ──────
     let api_routes = Router::new()
         .route("/health", get(health_check))
         .route(
@@ -389,11 +513,6 @@ fn build_router_from_state(
                 .put(handlers::config::update_process_manager_config),
         )
         .route(
-            "/config/supervisor",
-            get(handlers::config::get_supervisor_config)
-                .put(handlers::config::update_supervisor_config),
-        )
-        .route(
             "/config/defaults/honeypot",
             get(handlers::config::get_honeypot_defaults)
                 .put(handlers::config::update_honeypot_defaults),
@@ -480,15 +599,7 @@ fn build_router_from_state(
             "/tcp-udp/listeners/{listener_id}",
             delete(handlers::tcp_udp::delete_listener),
         )
-        .route("/tcp-udp/protocols", get(handlers::tcp_udp::list_protocols));
-
-    #[cfg(feature = "dns")]
-    let api_routes = api_routes.route(
-        "/config/dns",
-        get(handlers::config::get_dns_config).put(handlers::config::update_dns_config),
-    );
-
-    let api_routes = api_routes
+        .route("/tcp-udp/protocols", get(handlers::tcp_udp::list_protocols))
         .route("/probes", get(handlers::probes::list_probes))
         .route("/probes/stats", get(handlers::probes::get_probe_stats))
         .route("/probes/block", post(handlers::probes::block_probes))
@@ -535,11 +646,7 @@ fn build_router_from_state(
         )
         .route(
             "/threat-level/history/backups",
-            get(handlers::threat_level::list_backups),
-        )
-        .route(
-            "/threat-level/history/backups",
-            delete(handlers::threat_level::delete_backup),
+            get(handlers::threat_level::list_backups).delete(handlers::threat_level::delete_backup),
         )
         .route(
             "/threat-level/history/prune",
@@ -563,6 +670,82 @@ fn build_router_from_state(
         .route("/rules/apply", post(handlers::rule_feed::apply_pending))
         .route("/rules/discard", post(handlers::rule_feed::discard_pending));
 
+    // ── DNS-only routes ────────────────────────────────────────────────────
+    #[cfg(feature = "dns")]
+    let api_routes = api_routes.route(
+        "/config/dns",
+        get(handlers::config::get_dns_config).put(handlers::config::update_dns_config),
+    );
+
+    // ── ICMP-filter routes (gated by icmp-filter, not mesh) ────────────────
+    #[cfg(feature = "icmp-filter")]
+    let api_routes = api_routes
+        .route("/icmp/status", get(handlers::icmp::get_status))
+        .route(
+            "/icmp/config",
+            get(handlers::icmp::get_config).put(handlers::icmp::update_config),
+        )
+        .route("/icmp/enable", post(handlers::icmp::enable))
+        .route("/icmp/disable", post(handlers::icmp::disable))
+        .route("/icmp/backends", get(handlers::icmp::list_backends));
+
+    // ── Core system/auth/theme routes (always available, not mesh-gated) ───
+    let api_routes = api_routes
+        .route("/system/info", get(handlers::system::get_system_info))
+        .route(
+            "/system/capabilities",
+            get(handlers::system::get_capabilities),
+        )
+        .route(
+            "/system/supervisor",
+            get(handlers::system::get_supervisor_status),
+        )
+        .route("/system/workers", get(handlers::system::get_workers))
+        .route(
+            "/system/workers/count",
+            get(handlers::system::get_worker_count),
+        )
+        .route(
+            "/system/workers/scale",
+            post(handlers::system::scale_workers),
+        )
+        .route(
+            "/system/workers/{worker_id}/restart",
+            post(handlers::system::restart_worker),
+        )
+        .route(
+            "/system/workers/batch-restart",
+            post(handlers::system::batch_restart_workers),
+        )
+        .route(
+            "/system/app-servers/{site_id}/logs",
+            get(handlers::system::get_granian_logs),
+        )
+        .route("/system/php-pools", get(handlers::php::list_php_pools))
+        .route(
+            "/system/php-pools/reload",
+            post(handlers::php::reload_php_pool),
+        )
+        .route(
+            "/alerts/config",
+            get(handlers::alerting::get_alert_config).put(handlers::alerting::update_alert_config),
+        )
+        .route(
+            "/alerts/test-webhook",
+            post(handlers::alerting::test_webhook),
+        )
+        .route(
+            "/theme",
+            get(handlers::theme::get_theme).put(handlers::theme::update_theme),
+        )
+        .route("/theme/css", get(handlers::theme::get_theme_css))
+        .route("/theme/presets", get(handlers::theme::get_theme_presets))
+        .route("/auth/session", post(handlers::auth::create_session))
+        .route("/auth/csrf", get(handlers::auth::get_csrf_token))
+        .route("/auth/session", delete(handlers::auth::delete_session))
+        .route("/api", get(handlers::api_discovery::get_api_discovery));
+
+    // ── Mesh-only routes ───────────────────────────────────────────────────
     #[cfg(feature = "mesh")]
     let api_routes = api_routes
         .route("/yara/status", get(handlers::yara_rules::get_status))
@@ -596,60 +779,6 @@ fn build_router_from_state(
             "/yara/submissions/{submission_id}",
             delete(handlers::yara_rules::delete_submission),
         )
-        .route("/icmp/status", get(handlers::icmp::get_status))
-        .route(
-            "/icmp/config",
-            get(handlers::icmp::get_config).put(handlers::icmp::update_config),
-        )
-        .route("/icmp/enable", post(handlers::icmp::enable))
-        .route("/icmp/disable", post(handlers::icmp::disable))
-        .route("/icmp/backends", get(handlers::icmp::list_backends))
-        .route("/system/info", get(handlers::system::get_system_info))
-        .route(
-            "/system/capabilities",
-            get(handlers::system::get_capabilities),
-        )
-        .route(
-            "/system/supervisor",
-            get(handlers::system::get_supervisor_status),
-        )
-        .route("/system/workers", get(handlers::system::get_workers))
-        .route(
-            "/system/workers/count",
-            get(handlers::system::get_worker_count),
-        )
-        .route(
-            "/system/workers/scale",
-            post(handlers::system::scale_workers),
-        )
-        .route(
-            "/system/workers/{worker_id}/restart",
-            post(handlers::system::restart_worker),
-        )
-        .route(
-            "/system/workers/batch-restart",
-            post(handlers::system::batch_restart_workers),
-        )
-        .route("/system/supervisor", get(handlers::system::get_supervisor))
-        .route(
-            "/system/app-servers/{site_id}/logs",
-            get(handlers::system::get_granian_logs),
-        )
-        .route("/system/php-pools", get(handlers::php::list_php_pools))
-        .route(
-            "/system/php-pools/reload",
-            post(handlers::php::reload_php_pool),
-        )
-        .route(
-            "/alerts/config",
-            get(handlers::alerting::get_alert_config).put(handlers::alerting::update_alert_config),
-        )
-        .route(
-            "/alerts/test-webhook",
-            post(handlers::alerting::test_webhook),
-        );
-    #[cfg(feature = "mesh")]
-    let api_routes = api_routes
         .route("/mesh/status", get(handlers::mesh_admin::get_mesh_status))
         .route(
             "/mesh/raft/status",
@@ -659,10 +788,7 @@ fn build_router_from_state(
         .route(
             "/mesh/attest-capability",
             post(handlers::mesh_admin::attest_capability),
-        );
-
-    #[cfg(feature = "mesh")]
-    let api_routes = api_routes
+        )
         .route(
             "/v1/mesh/raft/status",
             get(handlers::mesh_admin::get_raft_status),
@@ -672,10 +798,6 @@ fn build_router_from_state(
             get(handlers::mesh_admin::get_dht_stats),
         )
         .route(
-            "/mesh/attest-capability",
-            post(handlers::mesh_admin::attest_capability),
-        )
-        .route(
             "/mesh/derive-signing-key",
             post(handlers::mesh_admin::derive_signing_key),
         )
@@ -683,10 +805,7 @@ fn build_router_from_state(
         .route(
             "/mesh/nodes/{node_id}",
             get(handlers::mesh_admin::get_mesh_node),
-        );
-
-    #[cfg(feature = "mesh")]
-    let api_routes = api_routes
+        )
         .route(
             "/mesh/organizations",
             post(handlers::mesh_admin::create_organization),
@@ -706,10 +825,7 @@ fn build_router_from_state(
         .route(
             "/mesh/blocklist/catchup-stats",
             get(handlers::mesh_admin::get_blocklist_catchup_stats),
-        );
-
-    #[cfg(feature = "mesh")]
-    let api_routes = api_routes
+        )
         .route(
             "/mesh/threat-intel/policy-shadow",
             get(handlers::threat_intel_policy::get_policy_shadow),
@@ -717,10 +833,7 @@ fn build_router_from_state(
         .route(
             "/mesh/threat-intel/policy-shadow/stats",
             get(handlers::threat_intel_policy::get_policy_shadow_stats),
-        );
-
-    #[cfg(feature = "mesh")]
-    let api_routes = api_routes
+        )
         .route(
             "/mesh/topology",
             get(handlers::mesh_topology::get_mesh_topology),
@@ -804,19 +917,7 @@ fn build_router_from_state(
             "/honeypot/config",
             get(handlers::honeypot::get_honeypot_port_config)
                 .put(handlers::honeypot::update_honeypot_port_config),
-        )
-        .route("/api", get(handlers::api_discovery::get_api_discovery))
-        .route(
-            "/theme",
-            get(handlers::theme::get_theme).put(handlers::theme::update_theme),
-        )
-        .route("/theme/css", get(handlers::theme::get_theme_css))
-        .route("/theme/presets", get(handlers::theme::get_theme_presets))
-        .route("/auth/session", post(handlers::auth::create_session))
-        .route("/auth/csrf", get(handlers::auth::get_csrf_token))
-        .route("/auth/session", delete(handlers::auth::delete_session))
-        .route("/ws/metrics", get(ws::ws_metrics_handler))
-        .route("/ws/logs", get(ws::ws_logs_handler));
+        );
 
     let rate_limit_layer =
         rate_limit::AdminRateLimitLayer::from_config(rate_limit::AdminRateLimitConfig {
@@ -829,27 +930,18 @@ fn build_router_from_state(
         middleware::yara_rate_limit::yara_rate_limit_middleware,
     );
 
-    let router = {
-        let router = Router::new()
-            .nest("/api", api_routes)
-            .route("/api/openapi.json", get(openapi::get_openapi_json));
+    // ── Protected API router (auth + CSRF middleware) ──────────────────────
+    let api_router = Router::new()
+        .nest("/api", api_routes)
+        .route("/api/openapi.json", get(openapi::get_openapi_json))
+        .fallback(|| async { axum::http::StatusCode::NOT_FOUND });
 
-        #[cfg(feature = "swagger-ui")]
-        let router = router.merge(
-            SwaggerUi::new("/api/docs")
-                .url("/api/openapi.json", openapi::synvoidOpenApi::openapi()),
-        );
+    #[cfg(feature = "swagger-ui")]
+    let api_router = api_router.merge(
+        SwaggerUi::new("/api/docs").url("/api/openapi.json", openapi::synvoidOpenApi::openapi()),
+    );
 
-        router
-    };
-
-    router
-        .route("/health", get(health_check))
-        .fallback_service(ServeDir::new("admin-ui/dist"))
-        .layer(create_cors_layer(&admin_cors_config))
-        .layer(axum::middleware::from_fn(
-            middleware::extract_client_ip_middleware,
-        ))
+    let protected_api = api_router
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::auth_middleware_with_state,
@@ -857,6 +949,28 @@ fn build_router_from_state(
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::csrf_middleware,
+        ));
+
+    // ── WebSocket routes (auth handled per-connection, not blanket) ────────
+    let ws_routes = Router::new()
+        .route("/ws/metrics", get(ws::ws_metrics_handler))
+        .route("/ws/logs", get(ws::ws_logs_handler));
+
+    // ── Root health (public, no auth) ─────────────────────────────────────
+    let health_route = Router::new().route("/health", get(health_check));
+
+    // ── Public SPA fallback (no auth) ─────────────────────────────────────
+    let static_router = Router::new().fallback_service(axum::routing::any(spa_fallback_handler));
+
+    // ── Combine: protected API + public routes + SPA fallback ──────────────
+    Router::new()
+        .merge(health_route)
+        .merge(protected_api)
+        .merge(ws_routes)
+        .merge(static_router)
+        .layer(create_cors_layer(&admin_cors_config))
+        .layer(axum::middleware::from_fn(
+            middleware::extract_client_ip_middleware,
         ))
         .layer(yara_rate_limit_layer)
         .layer(rate_limit_layer)
@@ -937,6 +1051,7 @@ pub async fn start_admin_server(
 
     tracing::info!("Admin API server starting on http://{}", addr);
 
+    #[allow(unused_mut)]
     let mut admin_state_builder = AdminState::new(config, token.clone())
         .with_probe_tracker(probe_tracker)
         .with_suspicious_word_tracker(suspicious_word_tracker)
