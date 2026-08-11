@@ -103,7 +103,7 @@ The `HoneypotTracker` (`src/challenge/honeypot.rs`) generates trap URLs:
 Browser verification via WASM-compiled JavaScript (`src/challenge/pow.rs`). Client must execute JavaScript to solve a SHA-256 proof-of-work puzzle, proving browser identity.
 
 #### Proof of Work (PoW)
-Computational puzzle requiring client to solve a computational challenge (`src/wasm_pow/`), effective against high-volume automated tools.
+Computational puzzle requiring client to solve a computational challenge (`crates/synvoid-wasm-pow/`), effective against high-volume automated tools.
 
 #### Behavioral Analysis
 (Mesh mode only) Analyzes request timing, sequence entropy, and request patterns to identify non-human traffic.

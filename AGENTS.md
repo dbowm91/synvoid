@@ -1,6 +1,6 @@
 # AGENTS.md
 
-SynVoid is a high-performance WAF & reverse proxy in Rust with a mesh networking layer, multi-process architecture (Supervisor + UnifiedServerWorker + CPU offload), and 45 workspace members (38 dedicated `synvoid-*` crates plus root, pqc, admin-ui, examples, fuzz, and xtask).
+SynVoid is a high-performance WAF & reverse proxy in Rust with a mesh networking layer, multi-process architecture (Supervisor + UnifiedServerWorker + CPU offload), and 46 workspace members (36 dedicated `synvoid-*` crates plus root, pqc, admin-ui, examples, fuzz, xtask, and repo-guards).
 
 ## Quick Commands
 
@@ -293,7 +293,7 @@ See `architecture/ci_fuzz_failure_injection.md` for the full profile matrix and 
 
 ## Architecture Quick Reference
 
-The `architecture/` directory (103 docs) and `.opencode/skills/` directory contain detailed subsystem docs. Key entrypoints:
+The `architecture/` directory (119 active docs) and `.opencode/skills/` directory contain detailed subsystem docs. Key entrypoints:
 
 - **Entry point**: `src/main.rs` → delegates to `src/commands/` (plan/execute/runtime_launch)
 - **Supervisor**: `src/supervisor/` — lifecycle, IPC, control-plane
@@ -306,6 +306,44 @@ The `architecture/` directory (103 docs) and `.opencode/skills/` directory conta
 **Process model**: Supervisor (1) → UnifiedServerWorker (1, single Tokio event loop) + CpuWorker (1, bounded transforms). Workers are NOT process-per-tenant. `--worker` flag spawns a legacy `BaseWorkerProcess` unused for HTTP.
 
 **Root crate ownership**: tracked in `architecture/root_module_ledger.md`. Prefer dedicated `synvoid-*` crates over root `synvoid::` paths unless the ledger says `keep_app_root`.
+
+### Skills Index
+
+The `.opencode/skills/` directory contains 27 specialized skill files. Load the relevant skill when working in that subsystem:
+
+| Skill | Subsystem | Key Coverage |
+|-------|-----------|-------------|
+| `admin_api` | Admin REST API | Mutation results, auth, audit, handler patterns |
+| `admin_ui` | Yew WASM frontend | Pages, components, API service, state management |
+| `behavioral_intel` | Mesh intelligence | Behavioral fingerprints, LSH matching, privacy design |
+| `buffer_pool` | Buffer allocation | Sharded mutex pool, ABA safety, tiered arenas |
+| `crypto_dependencies` | Crypto supply chain | Dependency inventory, CVE tracking, feature flags |
+| `dht_persistence` | DHT storage | Disk-backed storage, L1/L2 cache, Merkle trees, quorum |
+| `dns_dnssec` | DNS/DNSSEC | Dual-mode resolver, trust anchors, encrypted transports |
+| `ebpf_blocking` | Kernel-level blocking | XDP SYN dropping, block store integration |
+| `filter` | Protocol filtering | Allow/deny lists, strict mode, per-port matching |
+| `h3_proxy` | HTTP/3 QUIC | QUIC proxy, streaming, WAF integration |
+| `honeypot` | Deception layer | AI responders, protocol detection, port rotation, threat intel |
+| `httpserver` | HTTP server | Dual-mode, JA4, WebSocket, connection meta trait |
+| `hybrid_post_quantum` | Post-quantum crypto | Ed25519+ML-DSA-44, async verification, key sizes |
+| `implementation_patterns` | Cross-cutting | Semaphore, debounce, atomic writes, worktree workflows |
+| `ipc_hardening` | IPC security | HMAC-SHA3-256 signing, replay protection, key loading |
+| `org_key_trust chain` | Mesh trust | Genesis key, org keys, member certificates |
+| `raft_consensus` | Raft control plane | State machine, snapshots, linearizable reads, attestation |
+| `rule_feed_persistence` | WAF rules | Signed rule feed, hot-reload, cross-worker sync |
+| `sandboxing` | OS sandboxing | Landlock, Capsicum, Pledge, Job Objects, Seatbelt |
+| `security_patterns` | Security fixes | CSRF, XSS, SSRF, timing attacks, nonce poisoning |
+| `serverless_wasm` | Serverless WASM | Instance pooling, ABI frame serialization, plugin sandbox |
+| `static_files` | Static serving | Directory listing, per-location themes, minification |
+| `streaming_waf` | Streaming WAF | Trailing window, fail-closed, type-erased body |
+| `supply_chain_hashes` | Supply chain | pip --require-hashes, Granian verification |
+| `synvoid_mesh` | Mesh networking | DHT, transport, Raft, peer auth, HTTP framing |
+| `tarpit` | Anti-scraping | Markov chains, admission control, session budgets |
+| `threat_feed_production` | Threat intel | Signed feeds, key hierarchy, production workflow |
+| `topology_visualizer` | Mesh visualization | Topology API, D3.js graph data, route registration |
+| `upstream` | Backend pool | Connection pooling, load balancing, health checking |
+| `waf_bot_detection` | Bot detection | UA analysis, JA3/JA4, configurable policies |
+| `windows_service` | Windows platform | Service management, WFP, firewall rules |
 
 ### Key Architecture Documents
 

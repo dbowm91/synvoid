@@ -208,7 +208,7 @@ impl ServerlessRegistry {
 ### WASM Runtime Types
 
 ```rust
-// src/plugin/wasm_runtime.rs
+// crates/synvoid-plugin-runtime/src/wasm_runtime.rs
 
 // Resource limits for WASM execution sandbox
 pub struct WasmResourceLimits {
@@ -421,7 +421,7 @@ impl InstancePool {
 }
 ```
 
-### WasmRuntime (src/plugin/wasm_runtime.rs)
+### WasmRuntime (crates/synvoid-plugin-runtime/src/wasm_runtime.rs)
 
 ```rust
 impl WasmRuntime {

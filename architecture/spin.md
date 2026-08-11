@@ -356,7 +356,7 @@ impl SpinHttpHandler {
 
 ### 5.3 WASM Module Loading and Execution
 
-**WasmRuntime (src/plugin/wasm_runtime.rs)** provides the underlying WASM execution:
+**WasmRuntime (crates/synvoid-plugin-runtime/src/wasm_runtime.rs)** provides the underlying WASM execution:
 
 ```rust
 pub struct WasmRuntime {
@@ -595,7 +595,7 @@ enabled = true
 
 ### 9.1 Plugin Module Integration
 
-The Spin module reuses `WasmRuntime` from `src/plugin/wasm_runtime.rs` which provides:
+The Spin module reuses `WasmRuntime` from `crates/synvoid-plugin-runtime/src/wasm_runtime.rs` which provides:
 - WASM module loading and compilation
 - Instance pooling (`WasmInstancePool`)
 - Guest ABI function resolution

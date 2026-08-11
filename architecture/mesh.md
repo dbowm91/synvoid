@@ -714,5 +714,5 @@ crates/synvoid-mesh/src/mesh/
 | `src/plugin/` | WASM plugins are distributed via `WasmDistManager`. |
 | `src/serverless/` | Serverless function invocation goes over mesh via `transport_serverless.rs`. |
 | `src/tunnel/` | QUIC runtime (`crate::tunnel::quic::runtime`) is used by `MeshTransport` for actual I/O. |
-| `src/wasm_pow/` | WASM-based proof-of-work used for edge node PoW requirements. |
+| `crates/synvoid-wasm-pow/` | WASM-based proof-of-work used for edge node PoW requirements. |
 | `crates/synvoid-config/` | Provides `MeshConfig` types, feature-gated `mesh` and `dns` features. |

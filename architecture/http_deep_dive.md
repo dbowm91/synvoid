@@ -158,4 +158,4 @@ pub fn apply_minification(
 | `PreparedRequest` | `src/http/request_preparation.rs` | Body-collected request |
 | `BackendDispatchContext` | `src/http/backend_dispatch.rs` | Dispatch context |
 | `EarlyHttpRequest` | `src/http/early_parse.rs` | Zero-copy early parse |
-| `WafStreamedBody` | `src/http/shared_handler.rs` | Streaming WAF body wrapper |
+| `WafStreamedBody` | `crates/synvoid-http/src/shared_handler.rs` | Streaming WAF body wrapper |

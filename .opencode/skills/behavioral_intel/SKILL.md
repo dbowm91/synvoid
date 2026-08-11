@@ -64,7 +64,7 @@ pub struct BehavioralFingerprint {
 fn compute_lsh_bucket(features: &BehavioralFeatures) -> u64 {
     let mut hasher = SipHasher::new();
     hasher.update(&features.header_timing_variance_ms.to_le_bytes());
-    hasher.update(&(features.url_entropy * 100.0) as u32).to_le_bytes());
+    hasher.update(&((features.url_entropy * 100.0) as u32).to_le_bytes());
     // Combine multiple features into bucket
     hasher.finish()
 }

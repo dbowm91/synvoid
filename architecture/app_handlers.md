@@ -99,4 +99,4 @@ Serverless WASM functions can be distributed across the mesh:
 - `ServerlessManager` registers functions in DHT via `RecordStoreManager::store_and_announce()`
 - Announces via `MeshTransport::announce_serverless()`
 - Hierarchical routing as `serverless_function:{name}`
-- Implementation: `src/serverless/manager.rs:117` + mesh integration at `src/mesh/transport.rs:1464`
+- Implementation: `src/serverless/manager.rs:117` + mesh integration at `crates/synvoid-mesh/src/mesh/`
