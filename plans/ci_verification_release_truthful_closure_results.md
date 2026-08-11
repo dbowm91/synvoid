@@ -14,7 +14,7 @@
 | Corrective implementation | `3aced41c33b79a6e301ebb3ed4d777136becc65e` | Commit that introduced truthful defer naming and evidence corrections |
 | Proof-bearing SHA | `ab9c787f95d1bf65ca3ef1aff302dd1edbb67756` | Clean commit on which final verify, verify-full, and verify-release were executed |
 | Hosted routine CI (earlier) | `232e2de154e2fafe4a8c597fa5a7efa608f55457` | Exact commit exercised by GitHub Actions run `31426515369` / job `93579387906` |
-| Hosted routine CI (closeout) | `c601ab1116b23ba8d3a733ca65f12a259edc9704` | Exact commit exercised by GitHub Actions run `31505156002` (docs-only reconciliation) |
+| Hosted routine CI (closeout) | `c601ab1116b23ba8d3a733ca65f12a259edc9704` | Exact commit exercised by GitHub Actions run `31507992646` (docs-only reconciliation, 13m5s) |
 | Final evidence/documentation SHA | `c601ab1116b23ba8d3a733ca65f12a259edc9704` | Commit containing reconciled closure record, checked acceptance criteria, and this evidence update |
 
 - **Rust toolchain:** rustc 1.97.1 (8bab26f4f 2026-07-14)
@@ -90,10 +90,10 @@
 
 ### Run 2 — closeout documentation SHA
 
-- **Workflow run ID:** 31505156002
+- **Workflow run ID:** 31507992646
 - **SHA:** `c601ab1116b23ba8d3a733ca65f12a259edc9704` (docs-only reconciliation)
 - **Conclusion:** **SUCCESS**
-- **Overall duration:** 13m22s (below 15m blocking threshold)
+- **Overall duration:** 13m5s (below 15m blocking threshold)
 - **Note:** Exercises documentation-only commit; same routine verification code path as Run 1
 
 ### Timing interpretation
@@ -189,7 +189,7 @@ The truthful-closure line is **COMPLETE**. All acceptance criteria in the roadma
 - No xtask or workflow can publish, tag, release, or consume registry credentials
 - Hosted routine proof recorded (two successful runs):
   - Run `31426515369`, job `93579387906`, SHA `232e2de`, **SUCCESS**, 13m12s
-  - Run `31505156002`, SHA `c601ab1`, **SUCCESS**, 13m22s
+  - Run `31507992646`, SHA `c601ab1`, **SUCCESS**, 13m5s
 - Both hosted runs below 15m blocking threshold; `<10m` target not demonstrated
 - Branch protection: EXTERNALLY UNVERIFIED (requires GitHub settings access)
 - Dirty-tree injection: fails by default; `--allow-dirty` is diagnostic-only
