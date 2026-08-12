@@ -227,9 +227,11 @@ pub fn use_websocket_or_poll_with_token<T: DeserializeOwned + Clone + 'static>(
     let refresh = {
         let state = state.clone();
         let poll_path = poll_path.to_string();
+        let interval_ref = interval_ref.clone();
         Callback::from(move |_: ()| {
             let state = state.clone();
             let poll_path = poll_path.clone();
+            let interval_ref = interval_ref.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let api = crate::services::api::ApiService::new();
                 match api.get::<T>(&poll_path).await {
@@ -237,6 +239,9 @@ pub fn use_websocket_or_poll_with_token<T: DeserializeOwned + Clone + 'static>(
                         state.set(UseWebSocketState::Connected(data));
                     }
                     Err(e) => {
+                        if e == "Session expired" {
+                            *interval_ref.borrow_mut() = None;
+                        }
                         state.set(UseWebSocketState::Error(e));
                     }
                 }

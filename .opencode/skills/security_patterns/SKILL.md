@@ -1000,6 +1000,112 @@ pub struct UpgradeConfig { ... }
 
 ---
 
+## Admin Panel Browser Security (Phase 2)
+
+### Session-First Browser Authentication
+
+**Location**: `admin-ui/src/services/api.rs`, `src/admin/middleware.rs`
+
+**Pattern**: Browser clients authenticate via HttpOnly session cookie, never via JavaScript-readable bearer token:
+
+1. **Login**: `POST /api/auth/session` with bearer token → server sets HttpOnly session cookie + returns CSRF token
+2. **Session restore**: `GET /api/auth/csrf` with session cookie → returns new CSRF token
+3. **API requests**: Session cookie (`credentials: Include`) + `X-CSRF-Token` header
+4. **Bearer token**: Only used for session exchange, then discarded from component memory
+
+**Forbidden patterns**:
+- Storing bearer token in `localStorage`/`sessionStorage`
+- Writing bearer token to JavaScript-readable cookies
+- Including bearer token in WebSocket URLs/subprotocols
+- `synvoid_ws_token` JavaScript-readable cookie (removed in Phase 2)
+
+### CSRF Protection
+
+**Location**: `src/admin/middleware.rs:csrf_middleware`
+
+**Pattern**: Session-authenticated mutating requests (POST/PUT/PATCH/DELETE) require `X-CSRF-Token` header. Bearer token requests bypass CSRF (API clients).
+
+```rust
+// Bearer requests bypass CSRF
+if bearer_token.is_some() {
+    return next.run(request).await;
+}
+
+// Session requests require CSRF token
+let csrf_token = request.headers().get("x-csrf-token");
+// Validate against session using constant-time comparison
+state.validate_csrf(&csrf_token, &session_id)
+```
+
+### Session Expiry Recovery
+
+**Location**: `admin-ui/src/services/api.rs:handle_auth_error`
+
+**Pattern**: Frontend handles both 401 and 403 as session expiry:
+```rust
+fn handle_auth_error(status: u16) -> Result<(), String> {
+    if status == 401 || status == 403 {
+        clear_auth_state();
+        return Err("Session expired".to_string());
+    }
+    Ok(())
+}
+```
+
+WebSocket polling stops automatically on session expiry to prevent repeated failed requests.
+
+### Security Headers
+
+**Location**: `src/admin/middleware.rs:security_headers_middleware`
+
+**Pattern**: All admin responses include:
+- `X-Content-Type-Options: nosniff`
+- `Referrer-Policy: strict-origin-when-cross-origin`
+- `X-Frame-Options: DENY`
+- `Content-Security-Policy` with `frame-ancestors 'none'`, `connect-src 'self' ws: wss:`
+
+### Cookie Security
+
+**Location**: `src/admin/handlers/auth.rs`, `src/admin/mod.rs`
+
+**Pattern**: Cookie `Secure` flag based on actual deployment transport (`is_external_bind()`), not debug/release build:
+```rust
+fn is_external_bind(bind_address: &str) -> bool {
+    match bind_address.parse::<std::net::IpAddr>() {
+        Ok(ip) => !ip.is_loopback(),
+        Err(_) => bind_address != "127.0.0.1" && bind_address != "::1" && bind_address != "localhost"
+    }
+}
+```
+
+Session cookie: `HttpOnly`, `SameSite=Strict`, `Path=/`, `Max-Age=3600`, `Secure` (when external).
+
+### WebSocket Session-Only Auth
+
+**Location**: `src/admin/ws/mod.rs`
+
+**Pattern**: WebSocket endpoints authenticate via session cookie or bearer token. The legacy `synvoid_ws_token` JavaScript-readable cookie is removed:
+```rust
+let has_valid_auth = validate_bearer_token(&headers, &state.security.admin_token).is_ok()
+    || validate_session_cookie(&headers, &state);
+
+if !has_valid_auth {
+    return StatusCode::UNAUTHORIZED.into_response();
+}
+```
+
+### Audit Log Session ID Redaction
+
+**Location**: `src/admin/handlers/auth.rs`
+
+**Pattern**: Session IDs are SHA-256 hashed before any audit record:
+```rust
+let session_id_hash = hex::encode(sha2::Sha256::digest(session_id.as_bytes()));
+// Use session_id_hash in audit event, never raw session_id
+```
+
+---
+
 ## Verification Commands
 
 ```bash

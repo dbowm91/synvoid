@@ -1,41 +1,6 @@
 pub mod yara_rate_limit;
 
-// Admin authentication middleware.
-//
-// # Single Admin Token Model
-//
-// SynVoid implements a **single admin token authentication model** with a hybrid
-// CSRF/session approach for browser clients:
-//
-// - **Bearer token requests**: Bypass CSRF validation (API clients)
-// - **Session cookie requests**: Require valid CSRF token (browser clients)
-//
-// ## Authentication Flow
-//
-// 1. Client exchanges bearer token for session via `POST /api/auth/session`
-// 2. Server returns session cookie (`HttpOnly`, `Secure`, `SameSite=Strict`)
-// 3. Client receives CSRF token via response header and cookie
-// 4. Client includes CSRF token in `x-csrf-token` header for mutating requests
-// 5. CSRF middleware validates token against session
-//
-// ## AuthenticatedUser
-//
-// All valid bearer tokens or sessions result in an `AuthenticatedUser` with:
-// - `username`: Always `"admin"` (single admin user)
-// - `role`: Always `RequiredRole::Admin` (no role-based access control)
-//
-// This means there is currently no distinction between multiple admin users or
-// role-based permissions. The `RequiredRole::User` variant exists for future
-// expansion but all authenticated users are treated as admins.
-//
-// ## Public Routes
-//
-// The following routes bypass authentication:
-// - `GET /health` - Returns health status, no sensitive data
-// - `GET /api/openapi.json` - OpenAPI specification
-// - `GET /api/docs/*` - Swagger UI
-// - `WS /ws/*` - WebSocket endpoints (auth handled per-connection)
-
+use axum::http::HeaderValue;
 use axum::http::StatusCode;
 use axum::{
     extract::Request,
@@ -278,4 +243,158 @@ fn get_session_cookie(request: &Request) -> Option<String> {
                 }
             })
         })
+}
+
+pub async fn security_headers_middleware(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+
+    let headers = response.headers_mut();
+
+    headers
+        .entry("x-content-type-options")
+        .or_insert_with(|| HeaderValue::from_static("nosniff"));
+
+    headers
+        .entry("referrer-policy")
+        .or_insert_with(|| HeaderValue::from_static("strict-origin-when-cross-origin"));
+
+    headers
+        .entry("x-frame-options")
+        .or_insert_with(|| HeaderValue::from_static("DENY"));
+
+    headers.entry("content-security-policy").or_insert_with(|| {
+        HeaderValue::from_static(
+            "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'"
+        )
+    });
+
+    response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_client_ip_direct_connection() {
+        let mut request = Request::builder().body(axum::body::Body::empty()).unwrap();
+
+        let addr: std::net::SocketAddr = "192.168.1.100:8080".parse().unwrap();
+        request
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo(addr));
+
+        let ip = extract_client_ip(&request, &[]);
+        assert_eq!(ip, "192.168.1.100");
+    }
+
+    #[test]
+    fn test_extract_client_ip_untrusted_proxy_ignored() {
+        let mut request = Request::builder().body(axum::body::Body::empty()).unwrap();
+
+        let addr: std::net::SocketAddr = "192.168.1.1:8080".parse().unwrap();
+        request
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo(addr));
+
+        request.headers_mut().insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("10.0.0.1, 192.168.1.1"),
+        );
+
+        let ip = extract_client_ip(&request, &[]);
+        assert_eq!(ip, "192.168.1.1");
+    }
+
+    #[test]
+    fn test_extract_client_ip_trusted_proxy_forwards() {
+        let mut request = Request::builder().body(axum::body::Body::empty()).unwrap();
+
+        let addr: std::net::SocketAddr = "10.0.0.1:8080".parse().unwrap();
+        request
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo(addr));
+
+        request.headers_mut().insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("203.0.113.50, 10.0.0.1"),
+        );
+
+        let ip = extract_client_ip(&request, &["10.0.0.1".to_string()]);
+        assert_eq!(ip, "203.0.113.50");
+    }
+
+    #[test]
+    fn test_extract_client_ip_trusted_proxy_invalid_header_falls_back() {
+        let mut request = Request::builder().body(axum::body::Body::empty()).unwrap();
+
+        let addr: std::net::SocketAddr = "10.0.0.1:8080".parse().unwrap();
+        request
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo(addr));
+
+        request
+            .headers_mut()
+            .insert("x-forwarded-for", HeaderValue::from_static("not-an-ip"));
+
+        let ip = extract_client_ip(&request, &["10.0.0.1".to_string()]);
+        assert_eq!(ip, "10.0.0.1");
+    }
+
+    #[test]
+    fn test_extract_client_ip_no_connect_info() {
+        let request = Request::builder().body(axum::body::Body::empty()).unwrap();
+
+        let ip = extract_client_ip(&request, &[]);
+        assert_eq!(ip, "unknown");
+    }
+
+    #[test]
+    fn test_extract_client_ip_multiple_xff_uses_first() {
+        let mut request = Request::builder().body(axum::body::Body::empty()).unwrap();
+
+        let addr: std::net::SocketAddr = "10.0.0.1:8080".parse().unwrap();
+        request
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo(addr));
+
+        request.headers_mut().insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("203.0.113.50, 70.41.3.18, 10.0.0.1"),
+        );
+
+        let ip = extract_client_ip(&request, &["10.0.0.1".to_string()]);
+        assert_eq!(ip, "203.0.113.50");
+    }
+
+    #[tokio::test]
+    async fn test_auth_rate_limiter_independent_ips() {
+        let limiter = super::super::auth::AuthRateLimiter::new();
+        let id_a = "192.168.1.10";
+        let id_b = "192.168.1.20";
+
+        for _ in 0..super::super::auth::MAX_AUTH_ATTEMPTS {
+            limiter.record_failure(id_a);
+        }
+
+        assert!(limiter.is_locked(id_a));
+        assert!(!limiter.is_locked(id_b));
+    }
+
+    #[tokio::test]
+    async fn test_auth_rate_limiter_success_clears_only_that_ip() {
+        let limiter = super::super::auth::AuthRateLimiter::new();
+        let id_a = "10.0.0.1";
+        let id_b = "10.0.0.2";
+
+        for _ in 0..super::super::auth::MAX_AUTH_ATTEMPTS {
+            limiter.record_failure(id_a);
+            limiter.record_failure(id_b);
+        }
+
+        limiter.record_success(id_a);
+
+        assert!(!limiter.is_locked(id_a));
+        assert!(limiter.is_locked(id_b));
+    }
 }

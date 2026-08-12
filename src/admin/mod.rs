@@ -958,6 +958,9 @@ fn build_router_from_state(
         .fallback_service(axum::routing::any(spa_fallback_handler))
         .layer(create_cors_layer(&admin_cors_config))
         .layer(axum::middleware::from_fn(
+            middleware::security_headers_middleware,
+        ))
+        .layer(axum::middleware::from_fn(
             middleware::extract_client_ip_middleware,
         ))
         .layer(yara_rate_limit_layer)

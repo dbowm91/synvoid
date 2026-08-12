@@ -154,13 +154,18 @@ impl ApiService {
             .map_err(|e| format!("Request failed: {}", e))
     }
 
-    pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, String> {
-        let response = self.request("GET", path).await?;
-
-        if response.status() == 401 {
+    fn handle_auth_error(status: u16) -> Result<(), String> {
+        if status == 401 || status == 403 {
             clear_auth_state();
             return Err("Session expired".to_string());
         }
+        Ok(())
+    }
+
+    pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, String> {
+        let response = self.request("GET", path).await?;
+
+        Self::handle_auth_error(response.status())?;
 
         if !response.ok() {
             return Err(format!("HTTP error: {}", response.status()));
@@ -175,10 +180,7 @@ impl ApiService {
     pub async fn get_text(&self, path: &str) -> Result<String, String> {
         let response = self.request("GET", path).await?;
 
-        if response.status() == 401 {
-            clear_auth_state();
-            return Err("Session expired".to_string());
-        }
+        Self::handle_auth_error(response.status())?;
 
         if !response.ok() {
             return Err(format!("HTTP error: {}", response.status()));
@@ -342,10 +344,7 @@ impl ApiService {
             .await
             .map_err(|e| format!("Request failed: {}", e))?;
 
-        if response.status() == 401 {
-            clear_auth_state();
-            return Err("Session expired".to_string());
-        }
+        Self::handle_auth_error(response.status())?;
 
         if !response.ok() {
             return Err(format!("HTTP error: {}", response.status()));
@@ -395,10 +394,7 @@ impl ApiService {
             .await
             .map_err(|e| format!("Request failed: {}", e))?;
 
-        if response.status() == 401 {
-            clear_auth_state();
-            return Err("Session expired".to_string());
-        }
+        Self::handle_auth_error(response.status())?;
 
         if !response.ok() {
             return Err(format!("HTTP error: {}", response.status()));

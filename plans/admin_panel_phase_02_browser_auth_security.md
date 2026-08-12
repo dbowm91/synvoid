@@ -2,7 +2,15 @@
 
 ## Status
 
-**COMPLETE**
+**COMPLETE** (2026-08-12)
+
+### Changes Implemented
+
+1. **Removed `synvoid_ws_token` cookie fallback** — WebSocket auth now session-only + bearer
+2. **Added security headers middleware** — CSP, X-Content-Type-Options, X-Frame-Options, Referrer-Policy
+3. **Frontend 403 handling** — CSRF failures clear auth state and stop polling
+4. **WebSocket polling stops on session expiry** — prevents repeated failed requests
+5. **All focused tests pass** — middleware, CSRF, session, WebSocket auth, security headers
 
 ## Objective
 

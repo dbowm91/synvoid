@@ -171,6 +171,9 @@ cargo test -p synvoid-repo-guards -- ci_policy
 - **Audit events**: Block/unblock operations emit `AdminAuditEvent` via `state.audit.log_audit_event()`.
 - **Propagation semantics**: Mesh propagation is best-effort (`QueuedBestEffort`). Never promise delivery to all peers.
 - **No raw session tokens**: `AdminActor.session_id_hash` must be hashed; never store raw tokens in audit logs.
+- **Browser session security**: Browser clients use HttpOnly session cookie + CSRF token. Bearer token only for session exchange. No JavaScript-readable token storage. WebSocket auth via session cookie only (`synvoid_ws_token` removed).
+- **Security headers**: Admin responses include `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, CSP with `frame-ancestors 'none'`, `Referrer-Policy: strict-origin-when-cross-origin`.
+- **Session expiry handling**: Frontend treats 401 and 403 as session expiry. WebSocket polling stops on auth failure.
 - **Architecture doc**: `architecture/admin_control_plane_authority.md`
 
 ## Threat-Intel Enforcement Rules

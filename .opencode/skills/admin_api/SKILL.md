@@ -292,6 +292,26 @@ After 5 failed auth attempts within 60 seconds, the client is locked out for 5 m
 
 The admin server uses `ConnectInfo<SocketAddr>` for direct peer IP extraction. Trusted proxies can be configured via `admin.trusted_proxies` config. `x-forwarded-for` is only trusted when the direct peer is in the trusted proxies list. Untrusted direct peers cannot spoof client identity.
 
+### WebSocket Authentication
+
+WebSocket endpoints (`/ws/metrics`, `/ws/logs`) authenticate via:
+1. Bearer token in `Authorization` header (API clients)
+2. HttpOnly session cookie (browser clients)
+
+The legacy `synvoid_ws_token` JavaScript-readable cookie is **not** supported. Browser WebSockets authenticate from the bounded session cookie.
+
+### Security Headers
+
+All admin responses include:
+- `X-Content-Type-Options: nosniff`
+- `Referrer-Policy: strict-origin-when-cross-origin`
+- `X-Frame-Options: DENY`
+- `Content-Security-Policy` with `frame-ancestors 'none'`
+
+### Session Expiry Handling
+
+The admin-ui frontend handles both `401` and `403` as session expiry, clearing auth state and redirecting to login. WebSocket polling stops automatically on session expiry to prevent repeated failed requests.
+
 ## Audit Logging
 
 All mutating operations are audit logged with:
