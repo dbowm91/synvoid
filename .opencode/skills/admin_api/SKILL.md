@@ -260,17 +260,21 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/config/versions
 
 ## Authentication and Session Model
 
-The Admin API uses a **hybrid authentication model**:
+The Admin API uses a **hybrid authentication model** with two distinct client classes:
 
 ### Bearer Token (API Clients)
 - Send `Authorization: Bearer <token>` header
 - Bypasses CSRF validation (API clients don't need it)
 - Rate limited and lockout-protected
+- Suitable for CLI, curl, scripts, and non-browser automation
 
 ### Session + CSRF (Browser Clients)
-1. **Login**: `POST /api/auth/session` with bearer token → receives session cookie
-2. **Get CSRF token**: `GET /api/auth/csrf` → returns CSRF token for session
-3. **Mutating requests**: Include `x-csrf-token` header and session cookie
+1. **Login**: `POST /api/auth/session` with bearer token → receives session cookie (`HttpOnly`, `SameSite=Strict`, optionally `Secure`)
+2. **Session restore**: On page reload, `GET /api/auth/csrf` with session cookie → returns new CSRF token (no bearer token needed)
+3. **Mutating requests**: Include `X-CSRF-Token` header and session cookie
+4. **Logout**: `DELETE /api/auth/session` → invalidates session and all associated CSRF tokens
+
+**Critical**: After session creation, the browser must **never** retain the raw bearer token in `localStorage`, `sessionStorage`, cookies, or any JavaScript-readable storage. The bearer token is used once for session exchange and then discarded.
 
 ### Session Endpoints
 
@@ -282,11 +286,11 @@ The Admin API uses a **hybrid authentication model**:
 
 ### Auth Lockout
 
-After 5 failed auth attempts within 60 seconds, the client is locked out for 5 minutes. Lockout is enforced BEFORE bcrypt verification to prevent DoS attacks.
+After 5 failed auth attempts within 60 seconds, the client is locked out for 5 minutes. Lockout is enforced BEFORE bcrypt verification to prevent DoS attacks. Lockout state is keyed to the resolved client IP.
 
 ### Client IP Extraction
 
-The admin server uses `ConnectInfo<SocketAddr>` for direct peer IP extraction. Trusted proxies can be configured via `admin.trusted_proxies` config. `x-forwarded-for` is only trusted when the direct peer is in the trusted proxies list.
+The admin server uses `ConnectInfo<SocketAddr>` for direct peer IP extraction. Trusted proxies can be configured via `admin.trusted_proxies` config. `x-forwarded-for` is only trusted when the direct peer is in the trusted proxies list. Untrusted direct peers cannot spoof client identity.
 
 ## Audit Logging
 

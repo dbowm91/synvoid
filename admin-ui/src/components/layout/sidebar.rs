@@ -35,11 +35,13 @@ impl Default for Capabilities {
 pub struct SidebarProps {
     pub theme: Theme,
     pub on_toggle_theme: Callback<()>,
+    pub on_logout: Callback<()>,
 }
 
 #[function_component]
 pub fn Sidebar(props: &SidebarProps) -> Html {
     let on_toggle = props.on_toggle_theme.reform(|_| ());
+    let on_logout = props.on_logout.reform(|_| ());
     let capabilities = use_state(Capabilities::default);
 
     {
@@ -112,7 +114,16 @@ pub fn Sidebar(props: &SidebarProps) -> Html {
                 </NavSection>
             </div>
 
-            <div class="p-4 border-t border-default">
+            <div class="p-4 border-t border-default space-y-2">
+                <button
+                    onclick={on_logout}
+                    class="w-full px-4 py-2 rounded-lg bg-red-600/20 text-red-400 hover:bg-red-600/30 transition flex items-center justify-center gap-2"
+                >
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                    </svg>
+                    <span>{ "Logout" }</span>
+                </button>
                 <button
                     onclick={on_toggle}
                     class="w-full px-4 py-2 rounded-lg bg-tertiary hover:opacity-80 transition flex items-center justify-between"

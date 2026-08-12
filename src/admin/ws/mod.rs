@@ -56,6 +56,13 @@ fn validate_ws_cookie_token(headers: &HeaderMap, admin_token: &str) -> Result<()
     }
 }
 
+fn validate_session_cookie(headers: &HeaderMap, state: &AdminState) -> bool {
+    let Some(session_id) = get_cookie_value(headers, super::SESSION_COOKIE_NAME) else {
+        return false;
+    };
+    state.validate_session(&session_id)
+}
+
 pub async fn ws_metrics_handler(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AdminState>>,
@@ -63,7 +70,9 @@ pub async fn ws_metrics_handler(
 ) -> Response {
     if validate_bearer_token(&headers, &state.security.admin_token).is_err() {
         if validate_ws_cookie_token(&headers, &state.security.admin_token).is_err() {
-            return StatusCode::UNAUTHORIZED.into_response();
+            if !validate_session_cookie(&headers, &state) {
+                return StatusCode::UNAUTHORIZED.into_response();
+            }
         }
     }
 
@@ -83,7 +92,9 @@ pub async fn ws_logs_handler(
 ) -> Response {
     if validate_bearer_token(&headers, &state.security.admin_token).is_err() {
         if validate_ws_cookie_token(&headers, &state.security.admin_token).is_err() {
-            return StatusCode::UNAUTHORIZED.into_response();
+            if !validate_session_cookie(&headers, &state) {
+                return StatusCode::UNAUTHORIZED.into_response();
+            }
         }
     }
 

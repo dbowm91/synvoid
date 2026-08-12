@@ -193,8 +193,7 @@ pub async fn csrf_middleware(
         && !path.starts_with("/ws/")
         && !path.starts_with("/stats")
         && !path.eq("/health")
-        && !path.eq("/config/schema")
-        && !path.eq("/logs");
+        && !path.eq("/config/schema");
 
     if !requires_csrf {
         return next.run(request).await;

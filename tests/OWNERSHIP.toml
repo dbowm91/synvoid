@@ -22,6 +22,12 @@ owners = ["synvoid-admin"]
 reason = "validates admin mutation response contract across workspace"
 
 [[test]]
+name = "admin_router_composition"
+class = "composition"
+owners = ["synvoid-admin"]
+reason = "validates admin router composition, public/protected delivery, and feature boundaries"
+
+[[test]]
 name = "architecture_test"
 class = "static_policy"
 owners = []

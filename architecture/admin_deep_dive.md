@@ -31,13 +31,22 @@ SynVoid supports two fundamentally different authentication systems that serve d
 - Token verified via `verify_admin_token()` using bcrypt verify
 - No registration flow - token is configured, not created
 
+**Client Classes:**
+
+SynVoid supports two client classes with distinct trust boundaries:
+
+1. **Non-browser API clients** (CLI, curl, scripts): Present the long-lived bearer token in `Authorization: Bearer ...`. These clients do not require CSRF because ambient browser credentials are not involved.
+
+2. **Browser clients** (admin SPA): Present the bearer token only to `POST /api/auth/session`, receive an HttpOnly bounded session cookie, and subsequently authenticate through that session. State-changing browser requests carry a CSRF token tied to the session. The browser must **never** retain the raw bearer token in JavaScript-readable storage after session creation.
+
 **Key Files:**
 - `src/admin/auth.rs:16-26` - `hash_admin_token()` and `verify_admin_token()`
 
 **When Admin Auth is Used:**
 - All Admin API endpoints (`/api/*`, `/config/*`, `/sites/*`, `/system/*`, etc.)
-- Bearer token authentication via `Authorization: Bearer <token>`
+- Bearer token authentication via `Authorization: Bearer <token>` (API clients)
 - Session cookie authentication for browser-based admin dashboard
+- WebSocket connections: session cookie, bearer token, or legacy WS cookie
 
 ---
 

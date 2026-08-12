@@ -1,20 +1,38 @@
 use gloo::net::http::{Request, Response};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json;
+use std::cell::RefCell;
 
 use crate::types::{MasterStatus, OverseerStatus, SystemInfo, WorkerStatus};
 
-fn load_admin_token() -> Option<String> {
-    web_sys::window()
-        .and_then(|w| w.local_storage().ok())
-        .flatten()
-        .and_then(|storage| storage.get_item("admin_token").ok())
-        .flatten()
+thread_local! {
+    static CSRF_TOKEN: RefCell<Option<String>> = const { RefCell::new(None) };
+    static IS_AUTHENTICATED: RefCell<bool> = const { RefCell::new(false) };
+}
+
+pub fn set_csrf_token(token: Option<String>) {
+    CSRF_TOKEN.with(|cell| *cell.borrow_mut() = token);
+}
+
+pub fn get_csrf_token() -> Option<String> {
+    CSRF_TOKEN.with(|cell| cell.borrow().clone())
+}
+
+pub fn set_authenticated(auth: bool) {
+    IS_AUTHENTICATED.with(|cell| *cell.borrow_mut() = auth);
+}
+
+pub fn is_authenticated() -> bool {
+    IS_AUTHENTICATED.with(|cell| *cell.borrow())
+}
+
+pub fn clear_auth_state() {
+    set_csrf_token(None);
+    set_authenticated(false);
 }
 
 pub struct ApiService {
     base_url: String,
-    token: Option<String>,
 }
 
 impl Default for ApiService {
@@ -23,24 +41,95 @@ impl Default for ApiService {
     }
 }
 
-#[allow(dead_code)]
 impl ApiService {
     pub fn new() -> Self {
         Self {
             base_url: "/api".to_string(),
-            token: load_admin_token(),
         }
     }
 
-    #[allow(dead_code)]
-    pub fn with_token(mut self, token: String) -> Self {
-        self.token = Some(token);
-        self
+    pub fn with_base_url(base_url: String) -> Self {
+        Self { base_url }
     }
 
-    #[allow(dead_code)]
-    pub fn set_token(&mut self, token: String) {
-        self.token = Some(token);
+    /// Bootstrap a browser session using the bearer token.
+    /// Sends the token only to /api/auth/session, then discards it.
+    /// Returns the CSRF token on success.
+    pub async fn login(bearer_token: &str) -> Result<String, String> {
+        let url = "/api/auth/session";
+        let request = Request::post(url)
+            .header("Authorization", &format!("Bearer {}", bearer_token))
+            .header("Content-Type", "application/json")
+            .send()
+            .await
+            .map_err(|e| format!("Login request failed: {}", e))?;
+
+        if !request.ok() {
+            return Err(format!("Login failed (HTTP {})", request.status()));
+        }
+
+        let csrf_token = request.headers().get("X-CSRF-Token").unwrap_or_default();
+
+        set_csrf_token(Some(csrf_token.clone()));
+        set_authenticated(true);
+
+        Ok(csrf_token)
+    }
+
+    /// Attempt to restore an existing session via the CSRF endpoint.
+    /// Used on page reload when the HttpOnly session cookie is still valid.
+    pub async fn restore_session() -> Result<String, String> {
+        let url = "/api/auth/csrf";
+        let request = Request::get(url)
+            .send()
+            .await
+            .map_err(|e| format!("Session restore request failed: {}", e))?;
+
+        if !request.ok() {
+            clear_auth_state();
+            return Err(format!(
+                "Session restore failed (HTTP {})",
+                request.status()
+            ));
+        }
+
+        let body: serde_json::Value = request
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse CSRF response: {}", e))?;
+
+        let csrf_token = body
+            .get("csrf_token")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        if csrf_token.is_empty() {
+            clear_auth_state();
+            return Err("Empty CSRF token".to_string());
+        }
+
+        set_csrf_token(Some(csrf_token.clone()));
+        set_authenticated(true);
+
+        Ok(csrf_token)
+    }
+
+    /// Logout: invalidate the server session and clear client state.
+    pub async fn logout() -> Result<(), String> {
+        let url = "/api/auth/session";
+        let request = Request::delete(url)
+            .send()
+            .await
+            .map_err(|e| format!("Logout request failed: {}", e))?;
+
+        clear_auth_state();
+
+        if request.ok() {
+            Ok(())
+        } else {
+            Err(format!("Logout failed (HTTP {})", request.status()))
+        }
     }
 
     async fn request(&self, method: &str, path: &str) -> Result<Response, String> {
@@ -54,11 +143,12 @@ impl ApiService {
             _ => return Err(format!("Unsupported HTTP method: {}", method)),
         };
 
-        if let Some(token) = &self.token {
-            builder = builder.header("Authorization", &format!("Bearer {}", token));
+        if let Some(csrf) = get_csrf_token() {
+            builder = builder.header("X-CSRF-Token", &csrf);
         }
 
         builder
+            .credentials(web_sys::RequestCredentials::Include)
             .send()
             .await
             .map_err(|e| format!("Request failed: {}", e))
@@ -66,6 +156,11 @@ impl ApiService {
 
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, String> {
         let response = self.request("GET", path).await?;
+
+        if response.status() == 401 {
+            clear_auth_state();
+            return Err("Session expired".to_string());
+        }
 
         if !response.ok() {
             return Err(format!("HTTP error: {}", response.status()));
@@ -79,6 +174,11 @@ impl ApiService {
 
     pub async fn get_text(&self, path: &str) -> Result<String, String> {
         let response = self.request("GET", path).await?;
+
+        if response.status() == 401 {
+            clear_auth_state();
+            return Err("Session expired".to_string());
+        }
 
         if !response.ok() {
             return Err(format!("HTTP error: {}", response.status()));
@@ -227,11 +327,13 @@ impl ApiService {
 
         let mut builder = Request::post(&url);
 
-        if let Some(token) = &self.token {
-            builder = builder.header("Authorization", &format!("Bearer {}", token));
+        if let Some(csrf) = get_csrf_token() {
+            builder = builder.header("X-CSRF-Token", &csrf);
         }
 
-        builder = builder.header("Content-Type", "application/json");
+        builder = builder
+            .header("Content-Type", "application/json")
+            .credentials(web_sys::RequestCredentials::Include);
 
         let response = builder
             .body(body_str)
@@ -239,6 +341,11 @@ impl ApiService {
             .send()
             .await
             .map_err(|e| format!("Request failed: {}", e))?;
+
+        if response.status() == 401 {
+            clear_auth_state();
+            return Err("Session expired".to_string());
+        }
 
         if !response.ok() {
             return Err(format!("HTTP error: {}", response.status()));
@@ -273,11 +380,13 @@ impl ApiService {
 
         let mut builder = Request::put(&url);
 
-        if let Some(token) = &self.token {
-            builder = builder.header("Authorization", &format!("Bearer {}", token));
+        if let Some(csrf) = get_csrf_token() {
+            builder = builder.header("X-CSRF-Token", &csrf);
         }
 
-        builder = builder.header("Content-Type", "application/json");
+        builder = builder
+            .header("Content-Type", "application/json")
+            .credentials(web_sys::RequestCredentials::Include);
 
         let response = builder
             .body(body_str)
@@ -285,6 +394,11 @@ impl ApiService {
             .send()
             .await
             .map_err(|e| format!("Request failed: {}", e))?;
+
+        if response.status() == 401 {
+            clear_auth_state();
+            return Err("Session expired".to_string());
+        }
 
         if !response.ok() {
             return Err(format!("HTTP error: {}", response.status()));

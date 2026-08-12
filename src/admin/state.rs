@@ -266,6 +266,7 @@ pub struct AdminState {
     pub plugins: PluginsState,
     pub audit: AuditState,
     pub config_versions: ConfigVersionManager,
+    pub secure_cookie: bool,
 }
 
 #[derive(Clone)]
@@ -380,7 +381,13 @@ impl AdminState {
             },
             audit: AuditState::new(),
             config_versions: ConfigVersionManager::new(std::path::PathBuf::new()),
+            secure_cookie: false,
         }
+    }
+
+    pub fn with_secure_cookie(mut self, secure: bool) -> Self {
+        self.secure_cookie = secure;
+        self
     }
 
     pub fn with_config_versions(mut self, config_versions: ConfigVersionManager) -> Self {
@@ -865,6 +872,10 @@ impl AdminState {
         let mut sessions = self.security.sessions.write();
         sessions
             .retain(|_, v| now.duration_since(v.last_used) < Duration::from_secs(SESSION_TTL_SECS));
+    }
+
+    pub fn session_id_hash(session_id: &str) -> String {
+        hex::encode(sha2::Sha256::digest(session_id.as_bytes()))
     }
 }
 

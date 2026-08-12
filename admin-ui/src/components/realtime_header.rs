@@ -1,15 +1,7 @@
 use crate::components::charts::Sparkline;
-use crate::hooks::use_websocket::{use_websocket_or_poll_with_token, UseWebSocketState};
+use crate::hooks::use_websocket::{use_websocket_or_poll, UseWebSocketState};
 use crate::types::RealtimeMetrics;
 use yew::prelude::*;
-
-fn get_auth_token() -> Option<String> {
-    web_sys::window()
-        .and_then(|w| w.local_storage().ok())
-        .flatten()
-        .and_then(|storage| storage.get_item("admin_token").ok())
-        .flatten()
-}
 
 fn get_threat_level_color_and_label(level: u8) -> (&'static str, &'static str) {
     match level {
@@ -22,11 +14,10 @@ fn get_threat_level_color_and_label(level: u8) -> (&'static str, &'static str) {
 
 #[function_component]
 pub fn RealtimeHeader() -> Html {
-    let metrics_state = use_websocket_or_poll_with_token::<RealtimeMetrics>(
+    let metrics_state = use_websocket_or_poll::<RealtimeMetrics>(
         "/api/ws/metrics",
         "/api/stats/history?seconds=60",
         5000,
-        get_auth_token().as_deref(),
     );
 
     let (ws_state, _refresh) = metrics_state;

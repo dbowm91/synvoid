@@ -127,6 +127,7 @@ pub fn create_admin_router(
 
     let config_dir = config.blocking_read().config_dir.clone();
     let config_versions = ConfigVersionManager::new(config_dir);
+    let admin_bind_address = config.blocking_read().main.admin.bind_address.clone();
 
     let state_builder = AdminState::new(config, token_hash)
         .with_config_versions(config_versions)
@@ -134,7 +135,8 @@ pub fn create_admin_router(
         .with_suspicious_word_tracker(suspicious_word_tracker)
         .with_upstream_error_tracker(upstream_error_tracker)
         .with_threat_level_manager(threat_level_manager)
-        .with_rule_feed_manager(rule_feed_manager);
+        .with_rule_feed_manager(rule_feed_manager)
+        .with_secure_cookie(is_external_bind(&admin_bind_address));
 
     #[cfg(feature = "mesh")]
     let state_builder = state_builder
@@ -150,22 +152,6 @@ pub fn create_admin_router(
         state,
         admin_cors_config,
         admin_rate_limit_config,
-        trusted_proxies.clone(),
-    );
-    middleware::set_trusted_proxies(trusted_proxies);
-    router
-}
-
-pub async fn create_admin_router_with_state(state: Arc<AdminState>) -> Router {
-    let cfg = state.process.config.read().await;
-    let admin_cors_config = cfg.main.admin.cors.clone();
-    let rate_limit_config = cfg.main.admin.rate_limit.clone();
-    let trusted_proxies = cfg.main.admin.trusted_proxies.clone();
-    drop(cfg);
-    let router = build_router_from_state(
-        state,
-        admin_cors_config,
-        rate_limit_config,
         trusted_proxies.clone(),
     );
     middleware::set_trusted_proxies(trusted_proxies);
@@ -300,7 +286,6 @@ fn build_router_from_state(
 
     // ── Core API routes (always available regardless of feature flags) ──────
     let api_routes = Router::new()
-        .route("/health", get(health_check))
         .route(
             "/observability/security-summary",
             get(handlers::observability::security_observability_summary),
@@ -931,15 +916,21 @@ fn build_router_from_state(
     );
 
     // ── Protected API router (auth + CSRF middleware) ──────────────────────
-    let api_router = Router::new()
-        .nest("/api", api_routes)
-        .route("/api/openapi.json", get(openapi::get_openapi_json))
-        .fallback(|| async { axum::http::StatusCode::NOT_FOUND });
+    #[allow(unused_mut)]
+    let mut api_router = Router::new().nest("/api", api_routes);
+
+    #[cfg(not(feature = "swagger-ui"))]
+    {
+        api_router = api_router.route("/api/openapi.json", get(openapi::get_openapi_json));
+    }
 
     #[cfg(feature = "swagger-ui")]
-    let api_router = api_router.merge(
-        SwaggerUi::new("/api/docs").url("/api/openapi.json", openapi::synvoidOpenApi::openapi()),
-    );
+    {
+        api_router = api_router.merge(
+            SwaggerUi::new("/api/docs")
+                .url("/api/openapi.json", openapi::synvoidOpenApi::openapi()),
+        );
+    }
 
     let protected_api = api_router
         .layer(axum::middleware::from_fn_with_state(
@@ -959,15 +950,12 @@ fn build_router_from_state(
     // ── Root health (public, no auth) ─────────────────────────────────────
     let health_route = Router::new().route("/health", get(health_check));
 
-    // ── Public SPA fallback (no auth) ─────────────────────────────────────
-    let static_router = Router::new().fallback_service(axum::routing::any(spa_fallback_handler));
-
     // ── Combine: protected API + public routes + SPA fallback ──────────────
     Router::new()
         .merge(health_route)
         .merge(protected_api)
         .merge(ws_routes)
-        .merge(static_router)
+        .fallback_service(axum::routing::any(spa_fallback_handler))
         .layer(create_cors_layer(&admin_cors_config))
         .layer(axum::middleware::from_fn(
             middleware::extract_client_ip_middleware,
@@ -977,6 +965,18 @@ fn build_router_from_state(
         .with_state(state)
 }
 
+/// Returns true if the admin bind address is not a loopback address,
+/// indicating the server is likely behind a TLS-terminating reverse proxy.
+fn is_external_bind(bind_address: &str) -> bool {
+    match bind_address.parse::<std::net::IpAddr>() {
+        Ok(ip) => !ip.is_loopback(),
+        Err(_) => {
+            // Non-IP hostnames like "0.0.0.0" are not loopback
+            bind_address != "127.0.0.1" && bind_address != "::1" && bind_address != "localhost"
+        }
+    }
+}
+
 async fn health_check() -> (StatusCode, Json<serde_json::Value>) {
     (
         StatusCode::OK,
@@ -984,149 +984,4 @@ async fn health_check() -> (StatusCode, Json<serde_json::Value>) {
             "status": "ok"
         })),
     )
-}
-
-pub async fn start_admin_server(
-    config: Arc<TokioRwLock<ConfigManager>>,
-    probe_tracker: Option<Arc<ProbeTracker>>,
-    suspicious_word_tracker: Option<Arc<SuspiciousWordTracker>>,
-    upstream_error_tracker: Option<Arc<UpstreamErrorTracker>>,
-    threat_level_manager: Option<Arc<ThreatLevelManager>>,
-    rule_feed_manager: Option<Arc<RuleFeedManagerForWaf>>,
-    #[cfg(feature = "mesh")] yara_rules: Option<Arc<crate::mesh::yara_rules::YaraRulesManager>>,
-    #[cfg(feature = "mesh")] mesh_transport: Option<Arc<MeshTransport>>,
-    #[cfg(feature = "icmp-filter")] icmp_filter: Option<Arc<TokioRwLock<IcmpFilterManager>>>,
-    process_manager: Option<Arc<crate::process::ProcessManager>>,
-    plugin_manager: Option<Arc<crate::plugin::PluginManager>>,
-) {
-    let cfg = config.read().await.main.admin.clone();
-    if !cfg.enabled {
-        return;
-    }
-
-    let metrics_config = config.read().await.main.metrics.clone();
-
-    let port = cfg.port;
-    let token = match hash_admin_token_with_cost(&cfg.resolve_token(), cfg.bcrypt_cost) {
-        Ok(h) => h,
-        Err(e) => {
-            tracing::error!("Failed to hash admin token: {}", e);
-            return;
-        }
-    };
-    let rate_limit_config = cfg.rate_limit.clone();
-    tracing::info!("Admin API token resolved from config/env var");
-
-    let bind_addr = if cfg.bind_address.is_empty() {
-        "127.0.0.1".to_string()
-    } else {
-        cfg.bind_address.clone()
-    };
-
-    let rate_limiter = if rate_limit_config.requests_per_minute > 0 {
-        Some(Arc::new(AdminRateLimiter::new(
-            rate_limit_config.requests_per_minute,
-            rate_limit_config.burst,
-        )))
-    } else {
-        None
-    };
-
-    let yara_rate_limiter = Some(Arc::new(YaraRateLimiter::default_for_yara()));
-    if let Some(ref limiter) = yara_rate_limiter {
-        limiter.clone().start_cleanup_task();
-    }
-
-    let addr: std::net::SocketAddr =
-        format!("{}:{}", bind_addr, port)
-            .parse()
-            .unwrap_or_else(|_| {
-                tracing::error!(
-                    "Invalid admin bind address: {}, using 127.0.0.1:{}",
-                    bind_addr,
-                    port
-                );
-                std::net::SocketAddr::from(([127, 0, 0, 1], 8081))
-            });
-
-    tracing::info!("Admin API server starting on http://{}", addr);
-
-    #[allow(unused_mut)]
-    let mut admin_state_builder = AdminState::new(config, token.clone())
-        .with_probe_tracker(probe_tracker)
-        .with_suspicious_word_tracker(suspicious_word_tracker)
-        .with_upstream_error_tracker(upstream_error_tracker)
-        .with_threat_level_manager(threat_level_manager)
-        .with_rule_feed_manager(rule_feed_manager)
-        .with_process_manager(process_manager.clone())
-        .with_plugin_manager(plugin_manager)
-        .with_rate_limiter(rate_limiter)
-        .with_yara_rate_limiter(yara_rate_limiter);
-
-    #[cfg(feature = "mesh")]
-    {
-        admin_state_builder = admin_state_builder
-            .with_yara_rules(yara_rules)
-            .with_mesh_transport(mesh_transport.clone())
-            .with_org_key_manager(mesh_transport.as_ref().map(|m| m.get_org_key_manager()));
-    }
-
-    #[cfg(feature = "icmp-filter")]
-    {
-        admin_state_builder = admin_state_builder.with_icmp_filter(icmp_filter);
-    }
-
-    let admin_state = Arc::new(admin_state_builder);
-
-    #[cfg(feature = "mesh")]
-    admin_state.setup_site_config_sync().await;
-
-    let app = create_admin_router_with_state(admin_state.clone()).await;
-
-    let listener = match tokio::net::TcpListener::bind(addr).await {
-        Ok(l) => l,
-        Err(e) => {
-            tracing::error!("Failed to bind admin server: {}", e);
-            return;
-        }
-    };
-
-    let (shutdown_tx, shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
-
-    if let Some(pm) = process_manager {
-        let state_for_metrics = admin_state.clone();
-        let alert_manager = admin_state.process.alert_manager.clone();
-        tokio::spawn(async move {
-            start_metrics_publisher(state_for_metrics, pm, alert_manager, shutdown_rx).await;
-        });
-    }
-
-    {
-        let metrics_cfg = metrics_config.clone();
-        let (_metrics_shutdown_tx, metrics_shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
-        tokio::spawn(async move {
-            crate::admin::prometheus_exporter::start_prometheus_exporter(
-                &metrics_cfg,
-                metrics_shutdown_rx,
-            )
-            .await;
-        });
-    }
-
-    let server = axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-    );
-
-    tokio::select! {
-        result = server => {
-            if let Err(e) = result {
-                tracing::error!("Admin server error: {}", e);
-            }
-        }
-        _ = tokio::signal::ctrl_c() => {
-            tracing::info!("Admin server received Ctrl+C, shutting down");
-            let _ = shutdown_tx.send(()).await;
-        }
-    }
 }

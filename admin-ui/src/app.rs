@@ -1,3 +1,4 @@
+use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
 use yew_router::prelude::*;
 
@@ -9,6 +10,7 @@ use crate::pages::{
     RequestLogs, Settings, SiteDetail, SiteEditor, Sites, SystemStatus, ThreatLevel, TierKeys,
     TrafficShaping, Upstreams, Workers,
 };
+use crate::services::api::ApiService;
 use crate::types::UpdateThemeRequest;
 
 #[derive(Clone, Routable, PartialEq)]
@@ -66,6 +68,25 @@ pub enum Route {
 pub fn App() -> Html {
     let (_theme_data, update_theme) = use_api_theme();
     let theme = use_state(|| Theme::Dark);
+    let auth_state = use_state(|| AuthState::Restoring);
+
+    {
+        let auth_state = auth_state.clone();
+        use_effect_with((), move |_| {
+            let auth_state = auth_state.clone();
+            spawn_local(async move {
+                match ApiService::restore_session().await {
+                    Ok(_) => {
+                        auth_state.set(AuthState::Authenticated);
+                    }
+                    Err(_) => {
+                        auth_state.set(AuthState::Unauthenticated);
+                    }
+                }
+            });
+            || ()
+        });
+    }
 
     let current_theme = *theme;
 
@@ -85,28 +106,63 @@ pub fn App() -> Html {
         })
     };
 
+    let on_logout = {
+        let auth_state = auth_state.clone();
+        Callback::from(move |_| {
+            let auth_state = auth_state.clone();
+            spawn_local(async move {
+                let _ = ApiService::logout().await;
+                auth_state.set(AuthState::Unauthenticated);
+                if let Some(window) = web_sys::window() {
+                    let _ = window.location().set_href("/login");
+                }
+            });
+        })
+    };
+
     let theme_class = current_theme.class().to_string();
 
-    html! {
-        <BrowserRouter>
-            <ToastContainer />
-            <div class={classes!("min-h-screen", "flex", &theme_class)}>
-                <Sidebar
-                    theme={current_theme}
-                    on_toggle_theme={toggle_theme.clone()}
-                />
-                <main class="flex-1 p-6 overflow-auto">
-                    <Switch<Route> render={switch} />
-                </main>
+    match *auth_state {
+        AuthState::Restoring => html! {
+            <div class="min-h-screen flex items-center justify-center bg-primary">
+                <div class="text-secondary">{"Restoring session..."}</div>
             </div>
-        </BrowserRouter>
+        },
+        AuthState::Unauthenticated => html! {
+            <BrowserRouter>
+                <ToastContainer />
+                <Switch<Route> render={switch} />
+            </BrowserRouter>
+        },
+        AuthState::Authenticated => html! {
+            <BrowserRouter>
+                <ToastContainer />
+                <div class={classes!("min-h-screen", "flex", &theme_class)}>
+                    <Sidebar
+                        theme={current_theme}
+                        on_toggle_theme={toggle_theme.clone()}
+                        on_logout={on_logout}
+                    />
+                    <main class="flex-1 p-6 overflow-auto">
+                        <Switch<Route> render={switch} />
+                    </main>
+                </div>
+            </BrowserRouter>
+        },
     }
+}
+
+#[derive(PartialEq)]
+enum AuthState {
+    Restoring,
+    Authenticated,
+    Unauthenticated,
 }
 
 fn switch(route: Route) -> Html {
     match route {
-        Route::Home | Route::Dashboard => html! { <Dashboard /> },
         Route::Login => html! { <Login /> },
+        Route::Home | Route::Dashboard => html! { <Dashboard /> },
         Route::Logs => html! { <Logs /> },
         Route::RequestLogs => html! { <RequestLogs /> },
         Route::Upstreams => html! { <Upstreams /> },

@@ -51,13 +51,14 @@ pub async fn create_session(
 
     let audit_id = Uuid::new_v4().to_string();
 
+    let session_id_hash = hex::encode(sha2::Sha256::digest(session_id.as_bytes()));
     let audit_event = AdminAuditEvent {
         audit_id: audit_id.clone(),
         timestamp: synvoid_utils::safe_unix_timestamp(),
         actor: AdminActor::new(AdminMutationAuthority::AdminManual),
         action: "create_session".to_string(),
         target_kind: "session".to_string(),
-        target_id: session_id.clone(),
+        target_id: session_id_hash,
         prior_state: None,
         requested_state: None,
         resulting_state: Some(serde_json::json!({
@@ -85,7 +86,7 @@ pub async fn create_session(
         SESSION_COOKIE_NAME, session_id
     );
 
-    if cfg!(not(debug_assertions)) {
+    if state.secure_cookie {
         cookie = format!("{}; Secure", cookie);
     }
 
@@ -202,10 +203,13 @@ pub async fn delete_session(
     };
     let mut response = Json(result).into_response();
 
-    let cookie = format!(
+    let mut cookie = format!(
         "{}={}; Path=/; HttpOnly; SameSite=Strict; Max-Age=0",
         SESSION_COOKIE_NAME, ""
     );
+    if state.secure_cookie {
+        cookie = format!("{}; Secure", cookie);
+    }
     response.headers_mut().insert(
         axum::http::header::SET_COOKIE,
         HeaderValue::from_str(&cookie).unwrap_or_else(|_| HeaderValue::from_static("")),

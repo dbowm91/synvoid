@@ -89,21 +89,29 @@ pub struct Capabilities {
 
 Navigation items are gated with `if cap.mesh_admin { ... }` etc. This prevents showing pages for build-time unavailable features.
 
-### `services/api.rs` - API Client
+### `services/api.rs` - API Client (Session-First)
 
-The `ApiService` struct provides all HTTP communication:
+The `ApiService` struct provides all HTTP communication using session-based authentication:
 
 ```rust
 pub struct ApiService {
     base_url: String,  // "/api"
-    token: Option<String>,
 }
 ```
 
+**Authentication model**: The browser never stores or reuses the raw bearer token. Instead:
+1. `ApiService::login(bearer_token)` — exchanges the bearer token for an HttpOnly session cookie via `POST /api/auth/session`. The token is discarded after this call.
+2. `ApiService::restore_session()` — on page reload, calls `GET /api/auth/csrf` with the session cookie to obtain a new CSRF token. No bearer token needed.
+3. `ApiService::logout()` — calls `DELETE /api/auth/session` to invalidate the server session and clear client state.
+
+**CSRF token management**: Stored in thread-local state via `set_csrf_token()` / `get_csrf_token()`. Automatically attached as `X-CSRF-Token` header on mutating requests (POST/PUT/PATCH/DELETE). GET requests use only the session cookie.
+
+**Session expiry handling**: All requests check for 401 responses and call `clear_auth_state()` to transition the app to unauthenticated state.
+
 Common patterns:
-- `get<T: DeserializeOwned>(&self, path: &str)` - GET request
-- `post<T, B>(&self, path: &str, body: &B)` - POST with JSON body
-- `put<T, B>(&self, path: &str, body: &B)` - PUT with JSON body
+- `get<T: DeserializeOwned>(&self, path: &str)` - GET request (session cookie only)
+- `post<T, B>(&self, path: &str, body: &B)` - POST with JSON body (session cookie + CSRF)
+- `put<T, B>(&self, path: &str, body: &B)` - PUT with JSON body (session cookie + CSRF)
 
 All methods return `Result<T, String>` with error messages.
 

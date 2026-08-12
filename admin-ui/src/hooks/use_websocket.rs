@@ -27,9 +27,12 @@ fn build_ws_url(path: &str) -> String {
     if let Some(window) = web_sys::window() {
         if let Ok(location) = window.location().href() {
             if let Some(idx) = location.find("://") {
+                let scheme = &location[..idx];
                 let rest = &location[idx + 3..];
                 if let Some(path_start) = rest.find('/') {
-                    return format!("ws://{}{}", &rest[..path_start], path);
+                    let host = &rest[..path_start];
+                    let ws_scheme = if scheme == "https" { "wss" } else { "ws" };
+                    return format!("{}://{}{}", ws_scheme, host, path);
                 }
             }
         }
@@ -208,7 +211,7 @@ pub fn use_websocket_or_poll<T: DeserializeOwned + Clone + 'static>(
     poll_path: &str,
     poll_interval_ms: u32,
 ) -> (UseWebSocketState<T>, Callback<()>) {
-    use_websocket_or_poll_with_token(ws_path, poll_path, poll_interval_ms, None)
+    use_websocket_or_poll_with_token(ws_path, poll_path, poll_interval_ms)
 }
 
 #[hook]
@@ -216,7 +219,6 @@ pub fn use_websocket_or_poll_with_token<T: DeserializeOwned + Clone + 'static>(
     ws_path: &str,
     poll_path: &str,
     poll_interval_ms: u32,
-    _token: Option<&str>,
 ) -> (UseWebSocketState<T>, Callback<()>) {
     let state = use_state(|| UseWebSocketState::<T>::Connecting);
     let ws_ref = use_mut_ref(|| None::<WebSocket>);

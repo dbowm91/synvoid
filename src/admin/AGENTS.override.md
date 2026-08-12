@@ -25,6 +25,19 @@ Key design decisions:
 
 ## Security Patterns
 
+### Session-First Browser Auth (Phase 2)
+
+Browser clients must use session-based authentication, not the raw bearer token:
+
+1. **Login**: Browser sends bearer token to `POST /api/auth/session` → receives `HttpOnly` session cookie
+2. **Session restore**: On page reload, `GET /api/auth/csrf` with session cookie → returns CSRF token
+3. **Mutating requests**: `X-CSRF-Token` header + session cookie
+4. **Logout**: `DELETE /api/auth/session` → invalidates session + CSRF tokens, expires cookie
+
+**Never**: Store bearer token in `localStorage`, `sessionStorage`, JS-readable cookies, or WebSocket URLs.
+
+**Cookie policy**: `Secure` flag is based on bind address (external = Secure, loopback = no Secure), not `debug_assertions`.
+
 ### Constant-Time Comparison
 
 Always use `subtle::ConstantTimeEq` for comparing secrets, tokens, keys, MACs:
@@ -45,16 +58,19 @@ Admin auth now includes timing normalization to prevent session enumeration atta
 
 The Admin API middleware stack (in order, from outermost to innermost):
 1. Rate Limit Layer (`src/admin/rate_limit.rs`)
-2. YARA Rate Limit Layer
-3. Client IP Extraction (`src/admin/middleware.rs:61-101`)
+2. Client IP Extraction (`src/admin/middleware.rs:61-101`)
+3. CORS Layer (`create_cors_layer()`)
+4. YARA Rate Limit Layer
 
 **Protected API routes** (nested under `/api`) additionally have:
-4. CSRF Middleware (`src/admin/middleware.rs:185-266`)
-5. Auth Middleware (`src/admin/middleware.rs:103-183`)
+5. CSRF Middleware (`src/admin/middleware.rs:185-266`) — validates `X-CSRF-Token` for session-authenticated mutations
+6. Auth Middleware (`src/admin/middleware.rs:103-183`) — bearer token or session cookie
 
-**Public routes** (health, SPA fallback, WebSocket) do NOT have auth/CSRF middleware.
+**Public routes** (health, SPA fallback) do NOT have auth/CSRF middleware.
 
-**Note**: CORS layer is applied to the outer router via `create_cors_layer()` at `src/admin/mod.rs`.
+**WebSocket routes**: Auth handled per-connection (bearer token, session cookie, or legacy WS cookie), not via blanket middleware.
+
+**Note**: CSRF exclusion list: `/health`, `/ws/*`, `/stats*`, `/config/schema`. All other mutating endpoints require CSRF for session-authenticated requests.
 
 ## Skills Reference
 

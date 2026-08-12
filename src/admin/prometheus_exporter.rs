@@ -1,6 +1,7 @@
 use metrics_exporter_prometheus::PrometheusBuilder;
 use std::net::SocketAddr;
 
+#[allow(dead_code)]
 pub async fn start_prometheus_exporter(
     metrics_config: &crate::config::admin::MetricsConfig,
     mut shutdown_rx: tokio::sync::mpsc::Receiver<()>,
