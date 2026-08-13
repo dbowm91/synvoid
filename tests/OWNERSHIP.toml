@@ -28,6 +28,12 @@ owners = ["synvoid-admin"]
 reason = "validates admin router composition, public/protected delivery, and feature boundaries"
 
 [[test]]
+name = "admin_route_contract"
+class = "static_policy"
+owners = ["synvoid-admin", "admin-ui"]
+reason = "validates frontend/backend API contract alignment (route paths, HTTP methods)"
+
+[[test]]
 name = "architecture_test"
 class = "static_policy"
 owners = []

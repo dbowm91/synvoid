@@ -381,6 +381,68 @@ impl OrgKeyManager {
         self.organizations.read().get(org_id).cloned()
     }
 
+    pub fn list_all_tier_keys(&self) -> Vec<(String, crate::organization::TierKey)> {
+        let orgs = self.organizations.read();
+        let mut result = Vec::new();
+        for (org_id, org) in orgs.iter() {
+            for key in &org.tier_keys {
+                result.push((org_id.clone(), key.clone()));
+            }
+        }
+        result
+    }
+
+    pub fn issue_tier_key(
+        &self,
+        org_id: &str,
+        tier: u32,
+    ) -> Result<crate::organization::TierKey, OrgKeyError> {
+        let mut orgs = self.organizations.write();
+        let org = orgs
+            .get_mut(org_id)
+            .ok_or_else(|| OrgKeyError::OrgNotFound(org_id.to_string()))?;
+
+        let valid_from = synvoid_utils::safe_unix_timestamp();
+        let valid_until = valid_from + 365 * 24 * 3600; // 1 year validity
+        let key = vec![0u8; 32]; // Placeholder key material
+        let issued_by = self.node_id.clone();
+
+        let tier_key =
+            crate::organization::TierKey::new(tier, key, valid_from, valid_until, issued_by);
+        let result = tier_key.clone();
+        org.tier_keys.push(tier_key);
+
+        Ok(result)
+    }
+
+    pub fn revoke_tier_key(&self, org_id: &str, key_id: &str) -> Result<bool, OrgKeyError> {
+        let mut orgs = self.organizations.write();
+        let org = orgs
+            .get_mut(org_id)
+            .ok_or_else(|| OrgKeyError::OrgNotFound(org_id.to_string()))?;
+
+        if let Some(key) = org.tier_keys.iter_mut().find(|k| k.key_id == key_id) {
+            key.revoke();
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    pub fn unbind_tier_key(&self, org_id: &str, key_id: &str) -> Result<bool, OrgKeyError> {
+        let mut orgs = self.organizations.write();
+        let org = orgs
+            .get_mut(org_id)
+            .ok_or_else(|| OrgKeyError::OrgNotFound(org_id.to_string()))?;
+
+        if let Some(key) = org.tier_keys.iter_mut().find(|k| k.key_id == key_id) {
+            key.unbind();
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
     pub async fn request_quorum_signatures(&self, org_id: &str) -> Result<String, OrgKeyError> {
         if !self.node_role.is_global() {
             return Err(OrgKeyError::NotAuthorized(

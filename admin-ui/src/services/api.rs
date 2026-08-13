@@ -3,7 +3,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use serde_json;
 use std::cell::RefCell;
 
-use crate::types::{MasterStatus, OverseerStatus, SystemInfo, WorkerStatus};
+use crate::types::{MasterStatus, SystemInfo, WorkerStatus};
 
 thread_local! {
     static CSRF_TOKEN: RefCell<Option<String>> = const { RefCell::new(None) };
@@ -282,21 +282,21 @@ impl ApiService {
         self.get("/system/workers").await
     }
 
-    pub async fn get_overseer(&self) -> Result<OverseerStatus, String> {
-        self.get("/system/overseer").await
+    pub async fn get_supervisor(&self) -> Result<MasterStatus, String> {
+        self.get("/system/supervisor").await
     }
 
     pub async fn get_workers_status(&self) -> Result<Vec<WorkerStatus>, String> {
         self.get_workers().await
     }
 
-    pub async fn get_overseer_status(&self) -> Result<OverseerStatus, String> {
-        self.get_overseer().await
+    pub async fn get_supervisor_status(&self) -> Result<MasterStatus, String> {
+        self.get_supervisor().await
     }
 
     pub async fn restart_worker(&self, worker_id: &str) -> Result<serde_json::Value, String> {
         self.post(
-            &format!("/system/worker/{}/restart", worker_id),
+            &format!("/system/workers/{}/restart", worker_id),
             &serde_json::json!({}),
         )
         .await
@@ -586,17 +586,6 @@ impl ApiService {
     pub async fn test_alert_webhook(&self) -> Result<serde_json::Value, String> {
         self.post("/alerts/test-webhook", &serde_json::json!({}))
             .await
-    }
-
-    pub async fn get_overseer_config(&self) -> Result<serde_json::Value, String> {
-        self.get("/config/overseer").await
-    }
-
-    pub async fn update_overseer_config(
-        &self,
-        config: &serde_json::Value,
-    ) -> Result<serde_json::Value, String> {
-        self.put("/config/overseer", config).await
     }
 
     pub async fn get_process_manager_config(&self) -> Result<serde_json::Value, String> {
@@ -898,7 +887,7 @@ impl ApiService {
         &self,
         config: &serde_json::Value,
     ) -> Result<serde_json::Value, String> {
-        self.post("/icmp/config", config).await
+        self.put("/icmp/config", config).await
     }
 
     pub async fn get_yara_status(&self) -> Result<serde_json::Value, String> {
@@ -915,5 +904,45 @@ impl ApiService {
 
     pub async fn get_serverless_functions(&self) -> Result<serde_json::Value, String> {
         self.get("/serverless/functions").await
+    }
+
+    pub async fn list_tier_keys(&self) -> Result<serde_json::Value, String> {
+        self.get("/tier-keys").await
+    }
+
+    pub async fn issue_tier_key(
+        &self,
+        org_id: &str,
+        tier: u32,
+    ) -> Result<serde_json::Value, String> {
+        self.post(
+            "/tier-keys/issue",
+            &serde_json::json!({ "org_id": org_id, "tier": tier }),
+        )
+        .await
+    }
+
+    pub async fn revoke_tier_key(
+        &self,
+        org_id: &str,
+        key_id: &str,
+    ) -> Result<serde_json::Value, String> {
+        self.post(
+            "/tier-keys/revoke",
+            &serde_json::json!({ "org_id": org_id, "key_id": key_id }),
+        )
+        .await
+    }
+
+    pub async fn unbind_tier_key(
+        &self,
+        org_id: &str,
+        key_id: &str,
+    ) -> Result<serde_json::Value, String> {
+        self.post(
+            "/tier-keys/unbind",
+            &serde_json::json!({ "org_id": org_id, "key_id": key_id }),
+        )
+        .await
     }
 }

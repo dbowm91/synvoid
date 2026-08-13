@@ -167,18 +167,7 @@ pub struct ScaleWorkersResponse {
     pub target_count: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OverseerStatus {
-    pub running: bool,
-    pub pid: Option<u32>,
-    pub master_pid: Option<u32>,
-    pub master_status: String,
-    pub uptime_secs: u64,
-    pub upgrade_mode: String,
-    pub drain_status: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct RealtimeMetrics {
     pub total_requests: u64,
     pub blocked: u64,
@@ -442,33 +431,6 @@ pub struct BackupInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackupsListResponse {
     pub backups: Vec<BackupInfo>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct OverseerConfig {
-    pub auto_restart: bool,
-    #[serde(rename = "restart_delay_secs")]
-    pub restart_delay_secs: u64,
-    #[serde(rename = "max_restart_attempts")]
-    pub max_restart_attempts: u32,
-    #[serde(rename = "health_check_interval_secs")]
-    pub health_check_interval_secs: u64,
-    #[serde(rename = "stable_uptime_secs")]
-    pub stable_uptime_secs: u64,
-    #[serde(rename = "upgrade_validation_timeout_secs")]
-    pub upgrade_validation_timeout_secs: u64,
-    #[serde(rename = "upgrade_drain_timeout_secs")]
-    pub upgrade_drain_timeout_secs: u64,
-    #[serde(rename = "upgrade_health_check_retries")]
-    pub upgrade_health_check_retries: u32,
-    #[serde(rename = "upgrade_health_check_interval_secs")]
-    pub upgrade_health_check_interval_secs: u64,
-    #[serde(rename = "ipc_read_timeout_ms")]
-    pub ipc_read_timeout_ms: u64,
-    #[serde(rename = "ipc_write_timeout_ms")]
-    pub ipc_write_timeout_ms: u64,
-    #[serde(rename = "master_startup_timeout_secs")]
-    pub master_startup_timeout_secs: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]

@@ -1,11 +1,11 @@
 use crate::services::ApiService;
-use crate::types::{OverseerStatus, WorkerCountResponse, WorkerStatus};
+use crate::types::{MasterStatus, WorkerCountResponse, WorkerStatus};
 use yew::prelude::*;
 
 #[function_component]
 pub fn Workers() -> Html {
     let workers = use_state(Vec::<WorkerStatus>::new);
-    let overseer = use_state(|| None as Option<OverseerStatus>);
+    let supervisor = use_state(|| None as Option<MasterStatus>);
     let worker_count = use_state(|| None as Option<WorkerCountResponse>);
     let error = use_state(|| None as Option<String>);
     let restarting = use_state(|| None as Option<String>);
@@ -13,13 +13,13 @@ pub fn Workers() -> Html {
 
     {
         let workers = workers.clone();
-        let overseer = overseer.clone();
+        let supervisor = supervisor.clone();
         let worker_count = worker_count.clone();
         let error = error.clone();
 
         use_effect_with((), move |_| {
             let workers = workers.clone();
-            let overseer = overseer.clone();
+            let supervisor = supervisor.clone();
             let worker_count = worker_count.clone();
             let error = error.clone();
 
@@ -31,9 +31,9 @@ pub fn Workers() -> Html {
                     Err(e) => error.set(Some(e)),
                 }
 
-                match api.get_overseer_status().await {
-                    Ok(o) => overseer.set(Some(o)),
-                    Err(e) => error.set(Some(e)),
+                match api.get_supervisor_status().await {
+                    Ok(s) => supervisor.set(Some(s)),
+                    Err(e) => tracing::error!("Failed to get supervisor status: {}", e),
                 }
 
                 match api.get_worker_count().await {
@@ -186,7 +186,7 @@ pub fn Workers() -> Html {
     html! {
         <div class="space-y-6">
             <div class="flex justify-between items-center">
-                <h1 class="text-2xl font-bold">{ "Workers & Overseer" }</h1>
+                <h1 class="text-2xl font-bold">{ "Workers & Supervisor" }</h1>
             </div>
 
             if let Some(err) = &*error {
@@ -197,8 +197,8 @@ pub fn Workers() -> Html {
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div class="bg-secondary rounded-lg border border-default p-6">
-                    <h2 class="text-lg font-semibold mb-4">{ "Overseer Status" }</h2>
-                    if let Some(status) = &*overseer {
+                    <h2 class="text-lg font-semibold mb-4">{ "Supervisor Status" }</h2>
+                    if let Some(status) = &*supervisor {
                         <div class="space-y-3">
                             <div class="flex justify-between">
                                 <span class="text-secondary">{ "Status" }</span>
@@ -207,32 +207,28 @@ pub fn Workers() -> Html {
                                 </span>
                             </div>
                             <div class="flex justify-between">
-                                <span class="text-secondary">{ "Overseer PID" }</span>
+                                <span class="text-secondary">{ "PID" }</span>
                                 <span class="text-primary font-medium">
                                     { status.pid.map(|p| p.to_string()).unwrap_or_else(|| "N/A".to_string()) }
                                 </span>
                             </div>
                             <div class="flex justify-between">
-                                <span class="text-secondary">{ "Master PID" }</span>
+                                <span class="text-secondary">{ "Uptime" }</span>
                                 <span class="text-primary font-medium">
-                                    { status.master_pid.map(|p| p.to_string()).unwrap_or_else(|| "N/A".to_string()) }
+                                    { status.uptime_secs.map(|u| format_uptime(u)).unwrap_or_else(|| "N/A".to_string()) }
                                 </span>
                             </div>
                             <div class="flex justify-between">
-                                <span class="text-secondary">{ "Master Status" }</span>
-                                <span class="text-primary font-medium">{ &status.master_status }</span>
+                                <span class="text-secondary">{ "Version" }</span>
+                                <span class="text-primary font-medium">{ &status.version }</span>
                             </div>
                             <div class="flex justify-between">
-                                <span class="text-secondary">{ "Uptime" }</span>
-                                <span class="text-primary font-medium">{ format_uptime(status.uptime_secs) }</span>
+                                <span class="text-secondary">{ "Mode" }</span>
+                                <span class="text-primary font-medium">{ &status.mode }</span>
                             </div>
                             <div class="flex justify-between">
-                                <span class="text-secondary">{ "Upgrade Mode" }</span>
-                                <span class="text-primary font-medium">{ &status.upgrade_mode }</span>
-                            </div>
-                            <div class="flex justify-between">
-                                <span class="text-secondary">{ "Drain Status" }</span>
-                                <span class="text-primary font-medium">{ &status.drain_status }</span>
+                                <span class="text-secondary">{ "Worker Mode" }</span>
+                                <span class="text-primary font-medium">{ &status.worker_mode }</span>
                             </div>
                         </div>
                     } else {
@@ -249,9 +245,9 @@ pub fn Workers() -> Html {
                         <div class="flex items-center gap-8">
                             <div class="text-center">
                                 <div class="w-20 h-20 rounded-full bg-blue-600 flex items-center justify-center text-white font-bold text-sm">
-                                    { "Overseer" }
+                                    { "Supervisor" }
                                 </div>
-                                <p class="text-xs text-secondary mt-2">{ "Supervisor" }</p>
+                                <p class="text-xs text-secondary mt-2">{ "Process Manager" }</p>
                             </div>
                             <div class="w-12 h-1 bg-tertiary"></div>
                             <div class="text-center">

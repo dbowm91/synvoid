@@ -39,6 +39,8 @@ pub mod theme;
 #[cfg(feature = "mesh")]
 pub mod threat_intel_policy;
 pub mod threat_level;
+#[cfg(feature = "mesh")]
+pub mod tier_keys;
 pub mod upstreams;
 #[cfg(feature = "mesh")]
 pub mod yara_rules;

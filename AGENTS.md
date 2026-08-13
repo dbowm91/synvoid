@@ -143,6 +143,9 @@ cargo nextest run -p synvoid-core --cargo-profile ci --profile ci \
 # Failure injection (separate: distinct composition domain)
 cargo test --test failure_injection --profile ci
 
+# Admin route contract (validates frontend/backend API alignment)
+cargo test --test admin_route_contract --profile ci
+
 # Domain-specific guard tests (not in routine CI)
 cargo test -p synvoid-plugin-runtime --test plugin_failure_does_not_poison_manager
 cargo test -p synvoid-plugin-runtime --test manifest_authority_wiring

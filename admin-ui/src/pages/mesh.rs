@@ -16,6 +16,61 @@ pub fn Mesh() -> Html {
 
     let edited_config = use_state(MeshConfig::default);
 
+    {
+        let mesh_status = mesh_status.clone();
+        let mesh_config = mesh_config.clone();
+        let loading = loading.clone();
+        let error = error.clone();
+        let edited_config = edited_config.clone();
+
+        use_effect_with((), move |_| {
+            let mesh_status = mesh_status.clone();
+            let mesh_config = mesh_config.clone();
+            let loading = loading.clone();
+            let error = error.clone();
+            let edited_config = edited_config.clone();
+
+            wasm_bindgen_futures::spawn_local(async move {
+                let api = ApiService::new();
+
+                let status_result = api.get_mesh_status().await;
+                let config_result = api.get_mesh_config().await;
+
+                match status_result {
+                    Ok(s) => mesh_status.set(Some(s)),
+                    Err(e) => error.set(Some(format!("Failed to load mesh status: {}", e))),
+                }
+
+                match config_result {
+                    Ok(c) => {
+                        mesh_config.set(Some(c.clone()));
+                        if let Some(obj) = c.as_object() {
+                            let mut config = MeshConfig::default();
+                            if let Some(v) = obj.get("enabled").and_then(|v| v.as_bool()) {
+                                config.enabled = Some(v);
+                            }
+                            if let Some(v) = obj.get("node_id").and_then(|v| v.as_str()) {
+                                config.node_id = Some(v.to_string());
+                            }
+                            if let Some(v) = obj.get("port").and_then(|v| v.as_u64()) {
+                                config.listen_port = Some(v as u16);
+                            }
+                            if let Some(v) = obj.get("dht").and_then(|v| v.as_bool()) {
+                                config.dht_enabled = Some(v);
+                            }
+                            edited_config.set(config);
+                        }
+                    }
+                    Err(e) => error.set(Some(format!("Failed to load mesh config: {}", e))),
+                }
+
+                loading.set(false);
+            });
+
+            || {}
+        });
+    }
+
     let edited_config_for_save = edited_config.clone();
     let edited_config_for_render = edited_config.clone();
 

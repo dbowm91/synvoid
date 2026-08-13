@@ -29,6 +29,8 @@ pub struct TierKeys {
     show_issue_modal: bool,
     issue_org_id: String,
     issue_tier: u32,
+    issuing: bool,
+    issue_error: Option<String>,
 }
 
 pub enum Msg {
@@ -39,8 +41,11 @@ pub enum Msg {
     SetOrgId(String),
     SetTier(u32),
     IssueKey,
+    IssueKeyResult(Result<serde_json::Value, String>),
     RevokeKey(String, String),
+    RevokeKeyResult(String, Result<serde_json::Value, String>),
     UnbindKey(String, String),
+    UnbindKeyResult(String, Result<serde_json::Value, String>),
 }
 
 #[derive(Properties, PartialEq)]
@@ -59,6 +64,8 @@ impl Component for TierKeys {
             show_issue_modal: false,
             issue_org_id: String::new(),
             issue_tier: 1,
+            issuing: false,
+            issue_error: None,
         }
     }
 
@@ -66,12 +73,21 @@ impl Component for TierKeys {
         match msg {
             Msg::LoadTierKeys => {
                 self.loading = true;
+                self.error = None;
                 let link = ctx.link().clone();
                 spawn_local(async move {
                     let api = ApiService::new();
-                    match api.get::<TierKeyListResponse>("/tier-keys").await {
-                        Ok(response) => {
-                            link.send_message(Msg::TierKeysLoaded(response.tier_keys));
+                    match api.list_tier_keys().await {
+                        Ok(value) => {
+                            if let Ok(response) =
+                                serde_json::from_value::<TierKeyListResponse>(value)
+                            {
+                                link.send_message(Msg::TierKeysLoaded(response.tier_keys));
+                            } else {
+                                link.send_message(Msg::LoadError(
+                                    "Invalid tier keys response".to_string(),
+                                ));
+                            }
                         }
                         Err(e) => {
                             link.send_message(Msg::LoadError(e));
@@ -92,6 +108,7 @@ impl Component for TierKeys {
             }
             Msg::ToggleIssueModal => {
                 self.show_issue_modal = !self.show_issue_modal;
+                self.issue_error = None;
                 if self.show_issue_modal {
                     self.issue_org_id.clear();
                     self.issue_tier = 1;
@@ -109,33 +126,74 @@ impl Component for TierKeys {
             Msg::IssueKey => {
                 let org_id = self.issue_org_id.clone();
                 let tier = self.issue_tier;
-                if !org_id.is_empty() {
-                    let api = ApiService::new();
-                    let body = serde_json::json!({ "org_id": org_id, "tier": tier });
-                    spawn_local(async move {
-                        let _: Result<serde_json::Value, _> =
-                            api.post("/tier-keys/issue", &body).await;
-                    });
+                if org_id.is_empty() {
+                    self.issue_error = Some("Organization ID is required".to_string());
+                    return true;
                 }
-                self.show_issue_modal = false;
+                self.issuing = true;
+                self.issue_error = None;
+                let link = ctx.link().clone();
+                spawn_local(async move {
+                    let api = ApiService::new();
+                    let result = api.issue_tier_key(&org_id, tier).await;
+                    link.send_message(Msg::IssueKeyResult(result));
+                });
+                true
+            }
+            Msg::IssueKeyResult(result) => {
+                self.issuing = false;
+                match result {
+                    Ok(_) => {
+                        self.show_issue_modal = false;
+                        self.issue_error = None;
+                        ctx.link().send_message(Msg::LoadTierKeys);
+                    }
+                    Err(e) => {
+                        self.issue_error = Some(format!("Failed to issue key: {}", e));
+                    }
+                }
                 true
             }
             Msg::RevokeKey(org_id, key_id) => {
-                let api = ApiService::new();
-                let body = serde_json::json!({ "org_id": org_id, "key_id": key_id });
+                let link = ctx.link().clone();
+                let key_id_clone = key_id.clone();
                 spawn_local(async move {
-                    let _: Result<serde_json::Value, _> =
-                        api.post("/tier-keys/revoke", &body).await;
+                    let api = ApiService::new();
+                    let result = api.revoke_tier_key(&org_id, &key_id_clone).await;
+                    link.send_message(Msg::RevokeKeyResult(key_id_clone, result));
                 });
                 true
             }
+            Msg::RevokeKeyResult(key_id, result) => {
+                match result {
+                    Ok(_) => {
+                        ctx.link().send_message(Msg::LoadTierKeys);
+                    }
+                    Err(e) => {
+                        self.error = Some(format!("Failed to revoke key {}: {}", key_id, e));
+                    }
+                }
+                true
+            }
             Msg::UnbindKey(org_id, key_id) => {
-                let api = ApiService::new();
-                let body = serde_json::json!({ "org_id": org_id, "key_id": key_id });
+                let link = ctx.link().clone();
+                let key_id_clone = key_id.clone();
                 spawn_local(async move {
-                    let _: Result<serde_json::Value, _> =
-                        api.post("/tier-keys/unbind", &body).await;
+                    let api = ApiService::new();
+                    let result = api.unbind_tier_key(&org_id, &key_id_clone).await;
+                    link.send_message(Msg::UnbindKeyResult(key_id_clone, result));
                 });
+                true
+            }
+            Msg::UnbindKeyResult(key_id, result) => {
+                match result {
+                    Ok(_) => {
+                        ctx.link().send_message(Msg::LoadTierKeys);
+                    }
+                    Err(e) => {
+                        self.error = Some(format!("Failed to unbind key {}: {}", key_id, e));
+                    }
+                }
                 true
             }
         }
@@ -153,6 +211,13 @@ impl Component for TierKeys {
                             <div class="bg-secondary rounded-lg p-6 w-full max-w-md border border-default">
                                 <h2 class="text-xl font-bold mb-4">{ "Issue New Key" }</h2>
                                 <p class="text-secondary mb-4">{ "Issue a new tier key with specified tier level" }</p>
+
+                                if let Some(err) = &self.issue_error {
+                                    <div class="bg-red-500/10 border border-red-500 rounded-lg p-3 mb-4 text-red-500 text-sm">
+                                        { err }
+                                    </div>
+                                }
+
                                 <div class="mb-4">
                                     <label class="block text-sm font-medium mb-2">{ "Organization ID" }</label>
                                     <input
@@ -188,9 +253,10 @@ impl Component for TierKeys {
                                     </button>
                                     <button
                                         onclick={ctx.link().callback(|_| Msg::IssueKey)}
-                                        class="px-4 py-2 bg-accent text-white rounded-lg"
+                                        disabled={self.issuing}
+                                        class="px-4 py-2 bg-accent text-white rounded-lg disabled:opacity-50"
                                     >
-                                        { "Issue Key" }
+                                        { if self.issuing { "Issuing..." } else { "Issue Key" } }
                                     </button>
                                 </div>
                             </div>
@@ -245,7 +311,11 @@ impl Component for TierKeys {
                                     };
 
                                     let bound_to = key.bound_to.clone().unwrap_or_else(|| "None".to_string());
-                                    let _key_id = key.key_id.clone();
+                                    let display_key_id = if key.key_id.len() >= 8 {
+                                        key.key_id[..8].to_string()
+                                    } else {
+                                        key.key_id.clone()
+                                    };
                                     let bound_for_revoke = key.bound_to.clone().unwrap_or_default();
                                     let key_id_for_revoke = key.key_id.clone();
                                     let bound_for_unbind = key.bound_to.clone().unwrap_or_default();
@@ -266,7 +336,7 @@ impl Component for TierKeys {
 
                                     html! {
                                         <tr class="hover:bg-tertiary/50">
-                                            <td class="px-4 py-3 font-mono text-sm">{ &key.key_id[..8] }</td>
+                                            <td class="px-4 py-3 font-mono text-sm">{ display_key_id }</td>
                                             <td class="px-4 py-3">{ key.tier }</td>
                                             <td class="px-4 py-3">{ bound_to }</td>
                                             <td class="px-4 py-3">{ status }</td>

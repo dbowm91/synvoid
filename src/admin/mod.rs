@@ -662,6 +662,13 @@ fn build_router_from_state(
         get(handlers::config::get_dns_config).put(handlers::config::update_dns_config),
     );
 
+    // ── Mesh-only config routes ────────────────────────────────────────────
+    #[cfg(feature = "mesh")]
+    let api_routes = api_routes.route(
+        "/config/mesh",
+        get(handlers::config::get_mesh_config).put(handlers::config::update_mesh_config),
+    );
+
     // ── ICMP-filter routes (gated by icmp-filter, not mesh) ────────────────
     #[cfg(feature = "icmp-filter")]
     let api_routes = api_routes
@@ -902,6 +909,19 @@ fn build_router_from_state(
             "/honeypot/config",
             get(handlers::honeypot::get_honeypot_port_config)
                 .put(handlers::honeypot::update_honeypot_port_config),
+        )
+        .route("/tier-keys", get(handlers::tier_keys::list_tier_keys))
+        .route(
+            "/tier-keys/issue",
+            post(handlers::tier_keys::issue_tier_key),
+        )
+        .route(
+            "/tier-keys/revoke",
+            post(handlers::tier_keys::revoke_tier_key),
+        )
+        .route(
+            "/tier-keys/unbind",
+            post(handlers::tier_keys::unbind_tier_key),
         );
 
     let rate_limit_layer =
