@@ -187,6 +187,14 @@ fn get_api_endpoints() -> Vec<ApiCategory> {
                     path: "/config/process-manager".to_string(),
                     method: "PUT".to_string(),
                 },
+                ApiEndpoint {
+                    path: "/config/mesh".to_string(),
+                    method: "GET".to_string(),
+                },
+                ApiEndpoint {
+                    path: "/config/mesh".to_string(),
+                    method: "PUT".to_string(),
+                },
             ],
         },
         ApiCategory {
@@ -247,6 +255,27 @@ fn get_api_endpoints() -> Vec<ApiCategory> {
                 ApiEndpoint {
                     path: "/mesh/behavioral/config".to_string(),
                     method: "GET".to_string(),
+                },
+            ],
+        },
+        ApiCategory {
+            name: "tier_keys".to_string(),
+            endpoints: vec![
+                ApiEndpoint {
+                    path: "/tier-keys".to_string(),
+                    method: "GET".to_string(),
+                },
+                ApiEndpoint {
+                    path: "/tier-keys/issue".to_string(),
+                    method: "POST".to_string(),
+                },
+                ApiEndpoint {
+                    path: "/tier-keys/revoke".to_string(),
+                    method: "POST".to_string(),
+                },
+                ApiEndpoint {
+                    path: "/tier-keys/unbind".to_string(),
+                    method: "POST".to_string(),
                 },
             ],
         },

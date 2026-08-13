@@ -393,3 +393,46 @@ async fn admin_route_contract_supervisor_config_routes() {
         .unwrap();
     assert_route_exists(response, "PUT /api/config/supervisor");
 }
+
+/// Negative test: the contract check fails when given fabricated/wrong paths.
+/// Proves the test infrastructure detects drift (acceptance criteria requirement).
+#[tokio::test]
+async fn admin_route_contract_fails_on_wrong_fixture() {
+    let router = build_test_router().await;
+
+    // Fabricated routes that should NOT exist — pure 404s (unregistered paths)
+    let wrong_fixture: Vec<(&str, &str, &str)> = vec![
+        ("GET", "/api/nonexistent/route", "nonexistent GET"),
+        ("POST", "/api/config/overseer", "old overseer POST"),
+        (
+            "PUT",
+            "/api/system/worker/1/restart",
+            "singular worker restart",
+        ),
+        ("GET", "/api/mesh/tier-keys", "namespaced tier-keys"),
+        ("POST", "/api/admin/ghost", "completely fabricated"),
+        ("GET", "/api/sites/broken/edit", "nonexistent sites subpath"),
+    ];
+
+    for (method, path, description) in &wrong_fixture {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(*method)
+                    .uri(*path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "Wrong fixture '{}' ({}) should return 404, got {}",
+            description,
+            path,
+            response.status()
+        );
+    }
+}
