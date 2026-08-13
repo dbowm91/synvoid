@@ -64,11 +64,8 @@ pub fn SiteDetail(props: &SiteDetailProps) -> Html {
     let sites_list = use_state(Vec::<SiteStats>::new);
     let error = use_state(|| None as Option<String>);
 
-    let (ws_state, _) = use_websocket_or_poll::<RealtimeMetrics>(
-        "ws://localhost:8081/api/ws/metrics",
-        "/api/stats/summary",
-        5000,
-    );
+    let (ws_state, _) =
+        use_websocket_or_poll::<RealtimeMetrics>("/api/ws/metrics", "/api/stats/summary", 5000);
 
     {
         let site_stats = site_stats.clone();

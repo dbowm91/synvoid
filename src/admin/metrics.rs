@@ -173,6 +173,11 @@ pub async fn start_metrics_publisher(
                     0.0
                 };
 
+                let (threat_level, threat_level_is_manual) = admin_state
+                    .threat_level_manager()
+                    .map(|m| (Some(m.get_level().as_u8()), m.is_manual()))
+                    .unwrap_or((None, false));
+
                 let metrics = AggregatedMetrics {
                     total_requests,
                     blocked: total_blocked,
@@ -196,6 +201,8 @@ pub async fn start_metrics_publisher(
                     unhealthy_workers,
                     blocked_by_type,
                     metrics_timestamp_ms: now_ms,
+                    threat_level,
+                    threat_level_is_manual,
                 };
 
                 latest_metrics = Some(metrics.clone());

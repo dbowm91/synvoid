@@ -172,6 +172,10 @@ pub struct AggregatedMetrics {
     pub unhealthy_workers: usize,
     pub blocked_by_type: std::collections::HashMap<String, u64>,
     pub metrics_timestamp_ms: u64,
+    #[serde(default)]
+    pub threat_level: Option<u8>,
+    #[serde(default)]
+    pub threat_level_is_manual: bool,
 }
 
 #[derive(Clone, Default)]
@@ -1415,5 +1419,59 @@ mod tests {
         );
 
         assert_ne!(entry1.id, entry2.id);
+    }
+
+    #[test]
+    fn test_aggregated_metrics_threat_level_default() {
+        let metrics = AggregatedMetrics::default();
+        assert_eq!(metrics.threat_level, None);
+        assert!(!metrics.threat_level_is_manual);
+    }
+
+    #[test]
+    fn test_aggregated_metrics_threat_level_serialization() {
+        let metrics = AggregatedMetrics {
+            threat_level: Some(3),
+            threat_level_is_manual: true,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&metrics).unwrap();
+        assert!(json.contains("\"threat_level\":3"));
+        assert!(json.contains("\"threat_level_is_manual\":true"));
+    }
+
+    #[test]
+    fn test_aggregated_metrics_threat_level_deserialization_backward_compat() {
+        let json = r#"{"total_requests":100,"blocked":5,"challenged":0,"proxied":0,"errors":0,"current_concurrent":0,"peak_concurrent":0,"avg_latency_ms":0.0,"p50_latency_ms":0.0,"p95_latency_ms":0.0,"p99_latency_ms":0.0,"uptime_secs":0,"memory_bytes":0,"cpu_percent":0.0,"requests_per_second":0.0,"blocked_per_second":0.0,"healthy_backends":0,"unhealthy_backends":0,"healthy_workers":0,"unhealthy_workers":0,"blocked_by_type":{},"metrics_timestamp_ms":0,"threat_level":2,"threat_level_is_manual":false}"#;
+        let metrics: AggregatedMetrics = serde_json::from_str(json).unwrap();
+        assert_eq!(metrics.threat_level, Some(2));
+        assert!(!metrics.threat_level_is_manual);
+        assert_eq!(metrics.total_requests, 100);
+    }
+
+    #[test]
+    fn test_aggregated_metrics_threat_level_missing_fields_default() {
+        let json = r#"{"total_requests":42,"blocked":0,"challenged":0,"proxied":0,"errors":0,"current_concurrent":0,"peak_concurrent":0,"avg_latency_ms":0.0,"p50_latency_ms":0.0,"p95_latency_ms":0.0,"p99_latency_ms":0.0,"uptime_secs":0,"memory_bytes":0,"cpu_percent":0.0,"requests_per_second":0.0,"blocked_per_second":0.0,"healthy_backends":0,"unhealthy_backends":0,"healthy_workers":0,"unhealthy_workers":0,"blocked_by_type":{},"metrics_timestamp_ms":0}"#;
+        let metrics: AggregatedMetrics = serde_json::from_str(json).unwrap();
+        assert_eq!(metrics.threat_level, None);
+        assert!(!metrics.threat_level_is_manual);
+        assert_eq!(metrics.total_requests, 42);
+    }
+
+    #[test]
+    fn test_aggregated_metrics_history_cap() {
+        let state = create_test_state();
+        let mut metrics_vec = Vec::new();
+        for i in 0..5 {
+            let m = AggregatedMetrics {
+                total_requests: i,
+                threat_level: Some(1),
+                ..Default::default()
+            };
+            state.add_metrics_to_history(m);
+            metrics_vec.push(i);
+        }
+        let history = state.get_metrics_history(3600);
+        assert!(!history.is_empty());
     }
 }

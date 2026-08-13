@@ -129,6 +129,29 @@ pub struct SomeResponse {
 }
 ```
 
+### `hooks/use_websocket.rs` - WebSocket with Polling Fallback
+
+The `use_websocket_or_poll` hook provides a WebSocket connection with automatic HTTP polling fallback:
+
+```rust
+pub fn use_websocket_or_poll<T: DeserializeOwned + Clone + 'static>(
+    ws_path: &str,       // Relative WebSocket path (e.g., "/api/ws/metrics")
+    poll_path: &str,     // HTTP poll endpoint (e.g., "/api/stats/history?seconds=60")
+    poll_interval_ms: u32,
+) -> (UseWebSocketState<T>, Callback<()>)
+```
+
+**State machine**: `Connecting` → `Connected(T)` | `Polling` | `Disconnected` | `Error(String)`
+
+**Key behaviors**:
+- URL construction: Derives `ws://` or `wss://` from `window.location` automatically. Always use relative paths (never hardcoded `ws://localhost:...`).
+- At most one polling interval per hook instance (deduplication flag prevents duplicate timers on `onerror`+`onclose` sequences).
+- Session expiry (`401`/`403`/`Session expired`) stops polling and transitions to `Disconnected`.
+- Cleanup closes the WebSocket and cancels any active polling interval.
+- The second return value `Callback<()>` triggers an immediate manual poll.
+
+**Do not**: pass bearer tokens to WebSocket hooks (auth uses HttpOnly session cookies).
+
 ## Adding a New API Method
 
 1. **Add method to `api.rs`**:

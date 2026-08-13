@@ -558,15 +558,14 @@ curl -X PUT \
 
 ### Connecting to WebSocket
 
-```javascript
-const ws = new WebSocket('ws://127.0.0.1:8081/api/ws/metrics');
-const ws = new WebSocket('ws://127.0.0.1:8081/api/ws/metrics?token=your-admin-token');
+WebSocket URLs are derived from the page location (http → ws, https → wss). Use relative paths:
 
-ws.onmessage = (event) => {
-  const data = JSON.parse(event.data);
-  console.log(data);
-};
+```javascript
+const wsScheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
+const ws = new WebSocket(`${wsScheme}//${location.host}/api/ws/metrics`);
 ```
+
+WebSocket authentication uses the HttpOnly session cookie — no bearer token is needed.
 
 ---
 

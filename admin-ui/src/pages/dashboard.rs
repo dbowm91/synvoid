@@ -124,11 +124,8 @@ pub fn Dashboard() -> Html {
     let bandwidth = use_state(|| None::<crate::types::BandwidthPayload>);
     let blocking_history = use_state(Vec::<std::collections::HashMap<String, u64>>::new);
 
-    let (ws_state, _) = use_websocket_or_poll::<RealtimeMetrics>(
-        "ws://localhost:8081/api/ws/metrics",
-        "/api/stats/summary",
-        5000,
-    );
+    let (ws_state, _) =
+        use_websocket_or_poll::<RealtimeMetrics>("/api/ws/metrics", "/api/stats/summary", 5000);
 
     {
         let selected_window = selected_window.clone();

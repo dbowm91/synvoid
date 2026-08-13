@@ -255,18 +255,18 @@ Destructive actions (like deleting sites) show confirmation dialogs to prevent a
 
 ## Real-time Updates
 
-The admin UI uses WebSocket for real-time updates:
+The admin UI uses WebSocket for real-time updates. The WebSocket URL is derived automatically from the page location (http → ws, https → wss):
 
 ### Metrics WebSocket
 
 ```
-ws://localhost:8081/api/ws/metrics
+/api/ws/metrics
 ```
 
 ### Logs WebSocket
 
 ```
-ws://localhost:8081/api/logs/realtime
+/api/logs/realtime
 ```
 
 ## Keyboard Shortcuts

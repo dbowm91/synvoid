@@ -189,6 +189,10 @@ pub struct RealtimeMetrics {
     pub unhealthy_backends: usize,
     #[serde(default)]
     pub blocked_by_type: std::collections::HashMap<String, u64>,
+    #[serde(default)]
+    pub threat_level: Option<u8>,
+    #[serde(default)]
+    pub threat_level_is_manual: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

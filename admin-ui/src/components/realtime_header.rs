@@ -5,10 +5,12 @@ use yew::prelude::*;
 
 fn get_threat_level_color_and_label(level: u8) -> (&'static str, &'static str) {
     match level {
-        0..=2 => ("bg-green-500", "Low"),
-        3..=5 => ("bg-yellow-500", "Medium"),
-        6..=8 => ("bg-orange-500", "High"),
-        _ => ("bg-red-500", "Critical"),
+        1 => ("bg-green-500", "Normal"),
+        2 => ("bg-yellow-500", "Elevated"),
+        3 => ("bg-orange-500", "High"),
+        4 => ("bg-red-500", "Severe"),
+        5 => ("bg-red-700", "Critical"),
+        _ => ("bg-gray-500", "Unknown"),
     }
 }
 
@@ -26,6 +28,7 @@ pub fn RealtimeHeader() -> Html {
     let blocked_history = use_state(|| vec![0.0; 10]);
     let current_metrics = use_state(|| None::<RealtimeMetrics>);
     let last_updated = use_state(|| String::from("--:--:--"));
+    let selected_range = use_state(|| 60u64);
 
     {
         let ws_state = ws_state.clone();
@@ -56,19 +59,22 @@ pub fn RealtimeHeader() -> Html {
 
     let (req_per_sec, blocked_per_sec, connections, success_rate, avg_latency) =
         if let Some(ref m) = metrics {
+            let total = m.total_requests;
+            let blocked = m.blocked;
+            let errors = m.errors;
+            let valid = total.saturating_add(errors).min(total);
+            let success_numerator = total.saturating_sub(blocked).saturating_sub(errors);
+            let success_pct = if total > 0 {
+                (success_numerator as f64 / total as f64 * 100.0).clamp(0.0, 100.0)
+            } else {
+                100.0
+            };
+            let _ = valid;
             (
                 format!("{:.1}", m.requests_per_second),
                 format!("{:.1}", m.blocked_per_second),
                 m.current_concurrent.to_string(),
-                format!(
-                    "{:.1}%",
-                    if m.total_requests > 0 {
-                        (m.total_requests - m.blocked - m.errors) as f64 / m.total_requests as f64
-                            * 100.0
-                    } else {
-                        100.0
-                    }
-                ),
+                format!("{:.1}%", success_pct),
                 format!("{:.0}ms", m.avg_latency_ms),
             )
         } else {
@@ -81,38 +87,65 @@ pub fn RealtimeHeader() -> Html {
             )
         };
 
-    let threat_level = metrics
+    let threat_level = metrics.as_ref().and_then(|m| m.threat_level).unwrap_or(1);
+    let is_manual = metrics
         .as_ref()
-        .map(|m| m.requests_per_second as u8 / 50)
-        .unwrap_or(0)
-        .min(10);
+        .map(|m| m.threat_level_is_manual)
+        .unwrap_or(false);
     let (threat_bg, threat_label) = get_threat_level_color_and_label(threat_level);
+    let threat_display = if is_manual {
+        format!("{} (Manual)", threat_label)
+    } else {
+        threat_label.to_string()
+    };
+
+    let connection_status = match &ws_state {
+        UseWebSocketState::Connected(_) => {
+            ("w-2 h-2 rounded-full bg-green-500 animate-pulse", "Live")
+        }
+        UseWebSocketState::Connecting => (
+            "w-2 h-2 rounded-full bg-yellow-500 animate-pulse",
+            "Connecting",
+        ),
+        UseWebSocketState::Polling => ("w-2 h-2 rounded-full bg-blue-500 animate-pulse", "Polling"),
+        UseWebSocketState::Disconnected => ("w-2 h-2 rounded-full bg-red-500", "Disconnected"),
+        UseWebSocketState::Error(_) => ("w-2 h-2 rounded-full bg-red-500", "Error"),
+    };
+
+    let on_range_change = {
+        let selected_range = selected_range.clone();
+        Callback::from(move |secs: u64| {
+            selected_range.set(secs);
+        })
+    };
 
     html! {
         <div class="bg-secondary rounded-lg border border-default p-4 mb-6">
             <div class="flex items-center justify-between mb-4">
                 <div class="flex items-center gap-2">
-                    <div class={
-                        match ws_state {
-                            UseWebSocketState::Connected(_) => "w-2 h-2 rounded-full bg-green-500 animate-pulse",
-                            UseWebSocketState::Connecting => "w-2 h-2 rounded-full bg-yellow-500 animate-pulse",
-                            _ => "w-2 h-2 rounded-full bg-red-500",
-                        }
-                    } />
-                    <span class="text-sm text-secondary">{ "Live Metrics" }</span>
+                    <div class={connection_status.0} />
+                    <span class="text-sm text-secondary">{ connection_status.1 }</span>
                     <span class="text-xs text-secondary ml-2">{ format!("Updated: {}", *last_updated) }</span>
                 </div>
-                <div class="flex items-center gap-4">
-                    <button class="px-3 py-1 text-xs bg-tertiary rounded hover:opacity-80">
+                <div class="flex items-center gap-2">
+                    <button
+                        onclick={let cb = on_range_change.clone(); move |_| cb.emit(60)}
+                        class={if *selected_range == 60 { "px-3 py-1 text-xs bg-blue-600 text-white rounded" } else { "px-3 py-1 text-xs bg-tertiary rounded hover:opacity-80" }}>
                         { "1m" }
                     </button>
-                    <button class="px-3 py-1 text-xs bg-tertiary rounded hover:opacity-80">
+                    <button
+                        onclick={let cb = on_range_change.clone(); move |_| cb.emit(300)}
+                        class={if *selected_range == 300 { "px-3 py-1 text-xs bg-blue-600 text-white rounded" } else { "px-3 py-1 text-xs bg-tertiary rounded hover:opacity-80" }}>
                         { "5m" }
                     </button>
-                    <button class="px-3 py-1 text-xs bg-tertiary rounded hover:opacity-80">
+                    <button
+                        onclick={let cb = on_range_change.clone(); move |_| cb.emit(900)}
+                        class={if *selected_range == 900 { "px-3 py-1 text-xs bg-blue-600 text-white rounded" } else { "px-3 py-1 text-xs bg-tertiary rounded hover:opacity-80" }}>
                         { "15m" }
                     </button>
-                    <button class="px-3 py-1 text-xs bg-tertiary rounded hover:opacity-80">
+                    <button
+                        onclick={let cb = on_range_change.clone(); move |_| cb.emit(3600)}
+                        class={if *selected_range == 3600 { "px-3 py-1 text-xs bg-blue-600 text-white rounded" } else { "px-3 py-1 text-xs bg-tertiary rounded hover:opacity-80" }}>
                         { "1h" }
                     </button>
                 </div>
@@ -140,7 +173,7 @@ pub fn RealtimeHeader() -> Html {
                 <div class="flex flex-col justify-center">
                     <span class="text-xs text-secondary">{ "Threat Level" }</span>
                     <div class={format!("px-2 py-1 rounded text-xs font-medium text-white {} w-fit", threat_bg)}>
-                        { threat_label }
+                        { threat_display }
                     </div>
                 </div>
                 <div class="flex flex-col justify-center">
